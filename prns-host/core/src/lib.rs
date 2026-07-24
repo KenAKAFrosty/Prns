@@ -6,6 +6,7 @@ extern crate alloc;
 mod capability;
 mod config;
 mod contract;
+mod delivery;
 mod events;
 mod lifecycle;
 mod limits;
@@ -21,9 +22,11 @@ pub use config::{
 pub use contract::{
     verify_host_contract, HostContract, HostContractMismatch, HOST_CONTRACT, HOST_CONTRACT_ABI,
 };
+pub use delivery::{EventDelivery, EventDeliveryAdmission, EventDeliveryQueue};
 pub use events::{
     ApplicationEvent, ChannelMessage, DiagnosticBatch, DiagnosticEvent, LinkClosedReason,
-    RequestAvailable, ResponseAvailable, SingleDelivery,
+    RequestAvailable, ResourceNeedsDecompression, ResourceSegmentAvailable, ResponseAvailable,
+    ResponseSegmentAvailable, SingleDelivery,
 };
 pub use lifecycle::{
     HostFailure, LifecyclePhase, LifecycleSnapshot, LifecycleState, LifecycleTransitionError,

@@ -13,8 +13,8 @@ import type {
   LinkId,
   PrnsCreateOptions,
   PrnsLimits,
-  ResourceStream,
 } from "../contract.js";
+import type { StreamClaim } from "../async_lanes.js";
 import type { Tag as Tagged } from "../casework.js";
 
 type Buffer = Uint8Array;
@@ -28,6 +28,7 @@ declare function require(path: string): unknown;
 const casework = require("../../dist-cjs/casework.js") as typeof import("../casework.js");
 const contract = require("../../dist-cjs/contract.js") as typeof import("../contract.js");
 const lanes = require("../../dist-cjs/async_lanes.js") as typeof import("../async_lanes.js");
+const resources = require("../../dist-cjs/memory_resource.js") as typeof import("../memory_resource.js");
 const addon = require("../../native/addon.cjs") as NativeBinding;
 
 export const {
@@ -49,6 +50,7 @@ export const {
   LINK_ID_LENGTH,
   REQUEST_ID_LENGTH,
   REQUEST_PATH_HASH_LENGTH,
+  RESOURCE_HASH_LENGTH,
   IDENTITY_SECRET_LENGTH,
   PrnsValidationError,
   balancedLimits,
@@ -58,6 +60,7 @@ export const {
   linkId,
   requestId,
   requestPathHash,
+  resourceHash,
   identitySecret,
 } = contract;
 export type {
@@ -80,6 +83,7 @@ export type {
   PrnsValidationCode,
   RequestId,
   RequestPathHash,
+  ResourceHash,
   ResourceStream,
 } from "../contract.js";
 export type {
@@ -87,6 +91,7 @@ export type {
   Tag as Tagged,
   TagFrom,
 } from "../casework.js";
+export type { StreamClaim } from "../async_lanes.js";
 
 type RawIdentity = {
   secret?: Buffer;
@@ -106,6 +111,9 @@ type RawNodeOptions = {
   transport?: boolean;
   destinations?: RawDestination[];
   eventQueueLimit?: number;
+  applicationEventQueueLimit?: number;
+  retainedEventBytesLimit?: number;
+  diagnosticEventQueueLimit?: number;
 };
 
 type RawNode = {
@@ -189,8 +197,6 @@ const NATIVE_CAPABILITIES: ReadonlySet<CapabilityName> = new Set([
   "I2p",
   "Weave",
 ]);
-
-export const PrnsConsumerError = lanes.PrnsConsumerError;
 
 export class NativeInterface {
   readonly id: InterfaceId;
@@ -281,12 +287,12 @@ export class Prns {
     return this.#lifecycle;
   }
 
-  events(): AsyncIterable<ApplicationEvent> {
-    return this.#events;
+  claimEvents(): StreamClaim<ApplicationEvent> {
+    return this.#events.claim();
   }
 
-  diagnostics(): AsyncIterable<DiagnosticEvent> {
-    return this.#diagnostics;
+  claimDiagnostics(): StreamClaim<DiagnosticEvent> {
+    return this.#diagnostics.claim();
   }
 
   async stop(): Promise<StopOutcome> {
@@ -394,26 +400,34 @@ export class Prns {
 
   handleRawEvent(raw: unknown): void {
     const parsed = parseRawEvent(raw);
-    if (parsed.tag === "Application") {
-      this.#events.push(parsed.data);
-      return;
-    }
-    if (parsed.tag === "Diagnostic") {
-      this.#diagnostics.push(parsed.data);
-      return;
-    }
-    if (parsed.tag === "Stopped") {
-      if (!isStopped(this.#lifecycle)) {
-        this.#lifecycle = casework.Tag("Stopped", { reason: "BackendExited" });
-      }
-      this.#events.finish();
-      this.#diagnostics.finish();
-      return;
-    }
-    if (parsed.tag === "CommandSettled") {
-      return;
-    }
-    this.#failBackend(parsed.data.detail);
+    casework.match(parsed, {
+      Application: (event) => {
+        this.#events.push(event);
+      },
+      Diagnostic: (event) => {
+        this.#diagnostics.push(event);
+      },
+      BackpressureExceeded: ({ rejectedEventBytes }) => {
+        this.#failBackpressure(rejectedEventBytes);
+      },
+      Stopped: ({ cause }) => {
+        if (cause !== "stopped") {
+          this.#failBackend(cause);
+          return;
+        }
+        if (!isStopped(this.#lifecycle)) {
+          this.#lifecycle = casework.Tag("Stopped", {
+            reason: "BackendExited",
+          });
+        }
+        this.#events.finish();
+        this.#diagnostics.finish();
+      },
+      CommandSettled: () => undefined,
+      ContractViolation: ({ detail }) => {
+        this.#failBackend(detail);
+      },
+    });
   }
 
   async finishStarting(): Promise<PrnsCreateOutcome> {
@@ -478,94 +492,159 @@ export class Prns {
   }
 }
 
-class MemoryResourceStream implements ResourceStream {
-  readonly totalBytes: number;
-  readonly #data: Uint8Array;
-  #claimed = false;
-
-  constructor(data: Uint8Array) {
-    this.#data = data;
-    this.totalBytes = data.length;
-  }
-
-  [Symbol.asyncIterator](): AsyncIterator<Uint8Array> {
-    if (this.#claimed) {
-      throw new PrnsConsumerError("Resource");
-    }
-    this.#claimed = true;
-    let offset = 0;
-    return {
-      next: async () => {
-        if (offset === this.#data.length) {
-          return { done: true, value: undefined };
-        }
-        const end = Math.min(offset + 64 * 1_024, this.#data.length);
-        const value = this.#data.slice(offset, end);
-        offset = end;
-        return { done: false, value };
-      },
-    };
-  }
-}
-
 type ParsedRawEvent =
   | Tagged<"Application", ApplicationEvent>
   | Tagged<"Diagnostic", DiagnosticEvent>
   | Tagged<"CommandSettled">
-  | Tagged<"Stopped">
+  | Tagged<"BackpressureExceeded", { readonly rejectedEventBytes: number }>
+  | Tagged<"Stopped", { readonly cause: string }>
   | Tagged<"ContractViolation", { readonly detail: string }>;
+
+type RawNativeEventType =
+  | "singleDelivery"
+  | "request"
+  | "response"
+  | "responseSegment"
+  | "resourceReceived"
+  | "resourceSegment"
+  | "resourceNeedsDecompression"
+  | "channelMessage"
+  | "announce"
+  | "linkEstablished"
+  | "peerIdentified"
+  | "linkClosed"
+  | "linkInterfaceMismatch"
+  | "resourceAssembled"
+  | "resourceFailed"
+  | "resourceSendProgress"
+  | "selfRatchetRotated"
+  | "announceHeldDropped"
+  | "delivered"
+  | "routeExpired"
+  | "routeEvicted"
+  | "routeInterfaceGone"
+  | "routeDropped"
+  | "commandSettled"
+  | "eventBackpressureExceeded"
+  | "nodeStopped"
+  | "eventOverflow"
+  | "message";
+
+type RawNativeEvent = {
+  [Name in RawNativeEventType]: Tagged<Name, Record<string, unknown>>;
+}[RawNativeEventType];
+
+const RAW_NATIVE_EVENT_TYPES: ReadonlySet<string> =
+  new Set<RawNativeEventType>([
+    "singleDelivery",
+    "request",
+    "response",
+    "responseSegment",
+    "resourceReceived",
+    "resourceSegment",
+    "resourceNeedsDecompression",
+    "channelMessage",
+    "announce",
+    "linkEstablished",
+    "peerIdentified",
+    "linkClosed",
+    "linkInterfaceMismatch",
+    "resourceAssembled",
+    "resourceFailed",
+    "resourceSendProgress",
+    "selfRatchetRotated",
+    "announceHeldDropped",
+    "delivered",
+    "routeExpired",
+    "routeEvicted",
+    "routeInterfaceGone",
+    "routeDropped",
+    "commandSettled",
+    "eventBackpressureExceeded",
+    "nodeStopped",
+    "eventOverflow",
+    "message",
+  ]);
 
 function parseRawEvent(raw: unknown): ParsedRawEvent {
   const event = record("native event", raw);
   const type = text("native event type", event.type);
-  switch (type) {
-    case "singleDelivery":
-      return casework.Tag(
+  if (!RAW_NATIVE_EVENT_TYPES.has(type)) {
+    return casework.Tag("ContractViolation", {
+      detail: `native backend emitted unknown event ${type}`,
+    });
+  }
+  const tagged = casework.Tag(
+    type as RawNativeEventType,
+    event,
+  ) as RawNativeEvent;
+  return casework.match_into<ParsedRawEvent>().from(tagged, {
+    singleDelivery: (data) =>
+      casework.Tag(
         "Application",
         casework.Tag("SingleDelivery", {
-          destination: contract.destinationHash(bytes("destination", event.destination)),
-          sourceInterface: contract.interfaceId(bytes("sourceInterface", event.sourceInterface)),
-          plaintext: bytes("plaintext", event.plaintext).slice(),
+          destination: contract.destinationHash(
+            bytes("destination", data.destination),
+          ),
+          sourceInterface: contract.interfaceId(
+            bytes("sourceInterface", data.sourceInterface),
+          ),
+          plaintext: bytes("plaintext", data.plaintext).slice(),
         }),
-      );
-    case "request": {
-      const data = {
-        destination: contract.destinationHash(bytes("destination", event.destination)),
-        linkId: contract.linkId(bytes("linkId", event.linkId)),
-        requestId: contract.requestId(bytes("requestId", event.requestId)),
-        pathHash: contract.requestPathHash(bytes("pathHash", event.pathHash)),
-        rttMillis: finiteNonNegative("rttMillis", event.rttMillis),
-        data: bytes("data", event.data).slice(),
-        responseToken: event.token,
+      ),
+    request: (rawRequest) => {
+      const request = {
+        destination: contract.destinationHash(
+          bytes("destination", rawRequest.destination),
+        ),
+        linkId: contract.linkId(bytes("linkId", rawRequest.linkId)),
+        requestId: contract.requestId(
+          bytes("requestId", rawRequest.requestId),
+        ),
+        pathHash: contract.requestPathHash(
+          bytes("pathHash", rawRequest.pathHash),
+        ),
+        rttMillis: finiteNonNegative("rttMillis", rawRequest.rttMillis),
+        data: bytes("data", rawRequest.data).slice(),
       };
-      const requester = optionalBytes(event.requester);
+      const requester = optionalBytes(rawRequest.requester);
       return casework.Tag(
         "Application",
         casework.Tag(
           "Request",
           requester
-            ? { ...data, requester: contract.identityHash(requester) }
-            : data,
+            ? { ...request, requester: contract.identityHash(requester) }
+            : request,
         ),
       );
-    }
-    case "response":
-      return casework.Tag(
+    },
+    response: (data) =>
+      casework.Tag(
         "Application",
         casework.Tag("Response", {
-          linkId: contract.linkId(bytes("linkId", event.linkId)),
-          requestId: contract.requestId(bytes("requestId", event.requestId)),
-          data: bytes("data", event.data).slice(),
+          linkId: contract.linkId(bytes("linkId", data.linkId)),
+          requestId: contract.requestId(bytes("requestId", data.requestId)),
+          data: bytes("data", data.data).slice(),
         }),
-      );
-    case "resourceReceived": {
-      const data = bytes("data", event.data).slice();
+      ),
+    responseSegment: (data) =>
+      casework.Tag(
+        "Application",
+        casework.Tag("ResponseSegment", {
+          linkId: contract.linkId(bytes("linkId", data.linkId)),
+          requestId: contract.requestId(bytes("requestId", data.requestId)),
+          segmentIndex: finiteNonNegative("segmentIndex", data.segmentIndex),
+          totalSegments: finiteNonNegative("totalSegments", data.totalSegments),
+          data: bytes("data", data.data).slice(),
+        }),
+      ),
+    resourceReceived: (data) => {
       const details = {
-        linkId: contract.linkId(bytes("linkId", event.linkId)),
-        hash: bytes("hash", event.hash).slice(),
-        resource: new MemoryResourceStream(data),
+        linkId: contract.linkId(bytes("linkId", data.linkId)),
+        hash: contract.resourceHash(bytes("hash", data.hash)),
+        resource: new resources.MemoryResourceStream(bytes("data", data.data)),
       };
-      const metadata = optionalBytes(event.metadata);
+      const metadata = optionalBytes(data.metadata);
       return casework.Tag(
         "Application",
         casework.Tag(
@@ -573,86 +652,227 @@ function parseRawEvent(raw: unknown): ParsedRawEvent {
           metadata ? { ...details, metadata: metadata.slice() } : details,
         ),
       );
-    }
-    case "channelMessage":
+    },
+    resourceSegment: (data) => {
+      const details = {
+        linkId: contract.linkId(bytes("linkId", data.linkId)),
+        originalHash: contract.resourceHash(
+          bytes("originalHash", data.originalHash),
+        ),
+        segmentIndex: finiteNonNegative("segmentIndex", data.segmentIndex),
+        totalSegments: finiteNonNegative("totalSegments", data.totalSegments),
+        data: bytes("data", data.data).slice(),
+      };
+      const metadata = optionalBytes(data.metadata);
       return casework.Tag(
         "Application",
-        casework.Tag("ChannelMessage", {
-          linkId: contract.linkId(bytes("linkId", event.linkId)),
-          messageType: text("messageType", event.messageType),
-          data: bytes("data", event.data).slice(),
-        }),
+        casework.Tag(
+          "ResourceSegment",
+          metadata ? { ...details, metadata: metadata.slice() } : details,
+        ),
       );
-    case "announce":
-      return casework.Tag(
+    },
+    resourceNeedsDecompression: (data) =>
+      casework.Tag(
+        "Application",
+        casework.Tag("ResourceNeedsDecompression", {
+          linkId: contract.linkId(bytes("linkId", data.linkId)),
+          hash: contract.resourceHash(bytes("hash", data.hash)),
+          stream: bytes("stream", data.stream).slice(),
+          uncompressedDataBytes: finiteNonNegative(
+            "uncompressedDataBytes",
+            data.uncompressedDataBytes,
+          ),
+        }),
+      ),
+    channelMessage: (data) =>
+      casework.Tag(
+        "Application",
+        casework.Tag("ChannelMessage", {
+          linkId: contract.linkId(bytes("linkId", data.linkId)),
+          messageType: text("messageType", data.messageType),
+          data: bytes("data", data.data).slice(),
+        }),
+      ),
+    announce: (data) =>
+      casework.Tag(
         "Diagnostic",
         casework.Tag("AnnounceHeard", {
-          destination: contract.destinationHash(bytes("destination", event.destination)),
-          hops: finiteNonNegative("hops", event.hops),
-          sourceInterface: contract.interfaceId(bytes("sourceInterface", event.sourceInterface)),
+          destination: contract.destinationHash(
+            bytes("destination", data.destination),
+          ),
+          hops: finiteNonNegative("hops", data.hops),
+          sourceInterface: contract.interfaceId(
+            bytes("sourceInterface", data.sourceInterface),
+          ),
         }),
-      );
-    case "linkEstablished":
-      return casework.Tag(
+      ),
+    linkEstablished: (data) =>
+      casework.Tag(
         "Diagnostic",
         casework.Tag("LinkEstablished", {
-          linkId: contract.linkId(bytes("linkId", event.linkId)),
-          rttMillis: finiteNonNegative("rttMillis", event.rttMillis),
+          linkId: contract.linkId(bytes("linkId", data.linkId)),
+          rttMillis: finiteNonNegative("rttMillis", data.rttMillis),
         }),
-      );
-    case "peerIdentified":
-      return casework.Tag(
+      ),
+    peerIdentified: (data) =>
+      casework.Tag(
         "Diagnostic",
         casework.Tag("PeerIdentified", {
-          linkId: contract.linkId(bytes("linkId", event.linkId)),
-          identity: contract.identityHash(bytes("identity", event.identity)),
+          linkId: contract.linkId(bytes("linkId", data.linkId)),
+          identity: contract.identityHash(bytes("identity", data.identity)),
         }),
-      );
-    case "linkClosed":
-      return casework.Tag(
+      ),
+    linkClosed: (data) =>
+      casework.Tag(
         "Diagnostic",
         casework.Tag("LinkClosed", {
-          linkId: contract.linkId(bytes("linkId", event.linkId)),
-          reason: linkClosedReason(event.reason),
+          linkId: contract.linkId(bytes("linkId", data.linkId)),
+          reason: linkClosedReason(data.reason),
         }),
-      );
-    case "commandSettled":
-      return casework.Tag("CommandSettled");
-    case "nodeStopped":
-      return casework.Tag("Stopped");
-    case "eventOverflow":
-      return casework.Tag(
+      ),
+    linkInterfaceMismatch: (data) =>
+      casework.Tag(
+        "Diagnostic",
+        casework.Tag("LinkInterfaceMismatch", {
+          linkId: contract.linkId(bytes("linkId", data.linkId)),
+          attachedInterface: contract.interfaceId(
+            bytes("attachedInterface", data.attachedInterface),
+          ),
+          arrivedOn: contract.interfaceId(bytes("arrivedOn", data.arrivedOn)),
+        }),
+      ),
+    resourceAssembled: (data) =>
+      casework.Tag(
+        "Diagnostic",
+        casework.Tag("ResourceAssembled", {
+          linkId: contract.linkId(bytes("linkId", data.linkId)),
+          originalHash: contract.resourceHash(
+            bytes("originalHash", data.originalHash),
+          ),
+          totalSizeBytes: finiteNonNegative(
+            "totalSizeBytes",
+            data.totalSizeBytes,
+          ),
+        }),
+      ),
+    resourceFailed: (data) =>
+      casework.Tag(
+        "Diagnostic",
+        casework.Tag("ResourceFailed", {
+          linkId: contract.linkId(bytes("linkId", data.linkId)),
+          hash: contract.resourceHash(bytes("hash", data.hash)),
+          cause: text("cause", data.cause),
+        }),
+      ),
+    resourceSendProgress: (data) =>
+      casework.Tag(
+        "Diagnostic",
+        casework.Tag("ResourceSendProgress", {
+          linkId: contract.linkId(bytes("linkId", data.linkId)),
+          transferredBytes: finiteNonNegative(
+            "transferredBytes",
+            data.transferredBytes,
+          ),
+          totalBytes: finiteNonNegative("totalBytes", data.totalBytes),
+          physicalTransferredBytes: finiteNonNegative(
+            "physicalTransferredBytes",
+            data.physicalTransferredBytes,
+          ),
+          segmentIndex: finiteNonNegative("segmentIndex", data.segmentIndex),
+          totalSegments: finiteNonNegative(
+            "totalSegments",
+            data.totalSegments,
+          ),
+        }),
+      ),
+    selfRatchetRotated: (data) =>
+      casework.Tag(
+        "Diagnostic",
+        casework.Tag("SelfRatchetRotated", {
+          destination: contract.destinationHash(
+            bytes("destination", data.destination),
+          ),
+        }),
+      ),
+    announceHeldDropped: (data) =>
+      casework.Tag(
+        "Diagnostic",
+        casework.Tag("AnnounceHeldDropped", {
+          destination: contract.destinationHash(
+            bytes("destination", data.destination),
+          ),
+          sourceInterface: contract.interfaceId(
+            bytes("sourceInterface", data.sourceInterface),
+          ),
+          cause: text("cause", data.cause),
+        }),
+      ),
+    delivered: (data) =>
+      casework.Tag(
+        "Diagnostic",
+        casework.Tag("Delivered", {
+          detail: text("detail", data.detail),
+        }),
+      ),
+    routeExpired: (data) => routeDiagnostic("RouteExpired", data),
+    routeEvicted: (data) => routeDiagnostic("RouteEvicted", data),
+    routeInterfaceGone: (data) =>
+      routeDiagnostic("RouteInterfaceGone", data),
+    routeDropped: (data) => routeDiagnostic("RouteDropped", data),
+    commandSettled: () => casework.Tag("CommandSettled"),
+    eventBackpressureExceeded: (data) =>
+      casework.Tag("BackpressureExceeded", {
+        rejectedEventBytes: finiteNonNegative(
+          "rejectedEventBytes",
+          data.rejectedEventBytes,
+        ),
+      }),
+    nodeStopped: (data) =>
+      casework.Tag("Stopped", {
+        cause: text("cause", data.cause),
+      }),
+    eventOverflow: (data) =>
+      casework.Tag(
         "Diagnostic",
         casework.Tag("DiagnosticsDropped", {
-          count: BigInt(finiteNonNegative("droppedDiagnostics", event.droppedDiagnostics)),
+          count: BigInt(
+            finiteNonNegative(
+              "droppedDiagnostics",
+              data.droppedDiagnostics,
+            ),
+          ),
         }),
-      );
-    case "responseSegment":
-    case "resourceSegment":
-    case "selfRatchetRotated":
-    case "announceHeldDropped":
-    case "linkInterfaceMismatch":
-    case "resourceAssembled":
-    case "resourceFailed":
-    case "resourceSendProgress":
-    case "routeExpired":
-    case "routeEvicted":
-    case "routeInterfaceGone":
-    case "routeDropped":
-    case "delivered":
-    case "message":
-      return casework.Tag(
+      ),
+    message: (data) =>
+      casework.Tag(
         "Diagnostic",
         casework.Tag("BackendDiagnostic", {
-          kind: type,
-          detail: stringify(event),
+          kind: "message",
+          detail: stringify(data),
         }),
-      );
-    default:
-      return casework.Tag("ContractViolation", {
-        detail: `native backend emitted unknown event ${type}`,
-      });
-  }
+      ),
+  });
+}
+
+type RouteDiagnosticName =
+  | "RouteExpired"
+  | "RouteEvicted"
+  | "RouteInterfaceGone"
+  | "RouteDropped";
+
+function routeDiagnostic(
+  name: RouteDiagnosticName,
+  event: Record<string, unknown>,
+): ParsedRawEvent {
+  return casework.Tag(
+    "Diagnostic",
+    casework.Tag(name, {
+      destination: contract.destinationHash(
+        bytes("destination", event.destination),
+      ),
+    }),
+  );
 }
 
 function validateCreateOptions(options: PrnsCreateOptions): {
@@ -662,6 +882,9 @@ function validateCreateOptions(options: PrnsCreateOptions): {
   const limits = validateLimits(options.limits ?? contract.balancedLimits());
   const raw: RawNodeOptions = {
     eventQueueLimit: limits.applicationEvents + limits.diagnostics,
+    applicationEventQueueLimit: limits.applicationEvents,
+    retainedEventBytesLimit: limits.retainedEventBytes,
+    diagnosticEventQueueLimit: limits.diagnostics,
   };
   const identity = rawIdentity(options.identity);
   if (identity !== undefined) {
@@ -677,14 +900,13 @@ function validateCreateOptions(options: PrnsCreateOptions): {
 }
 
 function rawIdentity(identity: IdentityConfig): RawIdentity | undefined {
-  switch (identity.tag) {
-    case "Existing":
-      return { secret: Buffer.from(identity.data.secret) };
-    case "GenerateEphemeral":
-      return undefined;
-    case "LoadOrCreate":
-      return { path: nonEmpty("identity path", identity.data.path) };
-  }
+  return casework.match(identity, {
+    Existing: ({ secret }) => ({ secret: Buffer.from(secret) }),
+    GenerateEphemeral: () => undefined,
+    LoadOrCreate: ({ path }) => ({
+      path: nonEmpty("identity path", path),
+    }),
+  });
 }
 
 function rawDestination(destination: DestinationConfig): RawDestination {
@@ -699,22 +921,24 @@ function rawDestination(destination: DestinationConfig): RawDestination {
   const aspects = name.aspects.map((aspect) =>
     nonEmpty("destination aspect", aspect),
   );
-  if (destination.tag === "Plain") {
-    return { appName, aspects, kind: "plain" };
-  }
-  const raw: RawDestination = { appName, aspects, kind: "single" };
-  if (destination.data.identity !== undefined) {
-    const identity = rawIdentity(destination.data.identity);
-    if (identity !== undefined) {
-      raw.identity = identity;
-    }
-  }
-  if (destination.data.announceAppData !== undefined) {
-    raw.announceAppData = Buffer.from(
-      bytes("announceAppData", destination.data.announceAppData),
-    );
-  }
-  return raw;
+  return casework.match(destination, {
+    Plain: (): RawDestination => ({ appName, aspects, kind: "plain" }),
+    Single: ({ identity, announceAppData }): RawDestination => {
+      const raw: RawDestination = { appName, aspects, kind: "single" };
+      if (identity !== undefined) {
+        const configuredIdentity = rawIdentity(identity);
+        if (configuredIdentity !== undefined) {
+          raw.identity = configuredIdentity;
+        }
+      }
+      if (announceAppData !== undefined) {
+        raw.announceAppData = Buffer.from(
+          bytes("announceAppData", announceAppData),
+        );
+      }
+      return raw;
+    },
+  });
 }
 
 function validateLimits(limits: PrnsLimits): PrnsLimits {
@@ -733,18 +957,19 @@ function validateLimits(limits: PrnsLimits): PrnsLimits {
 }
 
 function retainedEventBytes(event: ApplicationEvent): number {
-  switch (event.tag) {
-    case "SingleDelivery":
-      return event.data.plaintext.length;
-    case "Request":
-      return event.data.data.length;
-    case "Response":
-      return event.data.data.length;
-    case "ResourceAvailable":
-      return event.data.metadata?.length ?? 0;
-    case "ChannelMessage":
-      return event.data.messageType.length + event.data.data.length;
-  }
+  return casework.match_into<number>().from(event, {
+    SingleDelivery: ({ plaintext }) => plaintext.length,
+    Request: ({ data }) => data.length,
+    Response: ({ data }) => data.length,
+    ResponseSegment: ({ data }) => data.length,
+    ResourceAvailable: ({ resource, metadata }) =>
+      resource.totalBytes + (metadata?.length ?? 0),
+    ResourceSegment: ({ data, metadata }) =>
+      data.length + (metadata?.length ?? 0),
+    ResourceNeedsDecompression: ({ stream }) => stream.length,
+    ChannelMessage: ({ messageType, data }) =>
+      messageType.length + data.length,
+  });
 }
 
 function isStopped(state: LifecycleState): boolean {
@@ -867,22 +1092,32 @@ function record(name: string, value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+type RawLinkClosedReason = "timeout" | "peerClosed" | "malformedRtt";
+
+const RAW_LINK_CLOSED_REASONS: ReadonlySet<string> =
+  new Set<RawLinkClosedReason>([
+    "timeout",
+    "peerClosed",
+    "malformedRtt",
+  ]);
+
 function linkClosedReason(
   value: unknown,
 ): "Timeout" | "PeerClosed" | "MalformedRtt" {
-  switch (value) {
-    case "timeout":
-      return "Timeout";
-    case "peerClosed":
-      return "PeerClosed";
-    case "malformedRtt":
-      return "MalformedRtt";
-    default:
-      throw new contract.PrnsValidationError(
-        "EmptyString",
-        `unknown link close reason ${String(value)}`,
-      );
+  if (
+    typeof value !== "string" ||
+    !RAW_LINK_CLOSED_REASONS.has(value)
+  ) {
+    throw new contract.PrnsValidationError(
+      "EmptyString",
+      `unknown link close reason ${String(value)}`,
+    );
   }
+  return casework.match(value as RawLinkClosedReason, {
+    timeout: () => "Timeout" as const,
+    peerClosed: () => "PeerClosed" as const,
+    malformedRtt: () => "MalformedRtt" as const,
+  });
 }
 
 function stringify(value: unknown): string {

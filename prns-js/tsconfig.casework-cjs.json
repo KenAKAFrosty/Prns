@@ -13,6 +13,7 @@
   "include": [
     "src/async_lanes.ts",
     "src/casework.ts",
-    "src/contract.ts"
+    "src/contract.ts",
+    "src/memory_resource.ts"
   ]
 }

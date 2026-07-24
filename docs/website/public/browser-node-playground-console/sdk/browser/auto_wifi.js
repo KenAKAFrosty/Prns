@@ -1,4 +1,4 @@
-import { Tag } from "./casework.js";
+import { Tag, match_into } from "../casework.js";
 const RENDEZVOUS_PORT = 42_721;
 const RENDEZVOUS_PATH = "/prns";
 const CATALOG_PATH = "/.well-known/prns-transport";
@@ -1030,14 +1030,11 @@ function websocketPayloadLength(value) {
     return Tag("UnsupportedFrame");
 }
 function describeWebSocketDecodeFailure(failure) {
-    switch (failure.tag) {
-        case "UnsupportedFrame":
-            return `gateway returned an unsupported ${failure.data.format.toLowerCase()} frame`;
-        case "FrameTooLarge":
-            return `gateway frame is ${failure.data.length} bytes; maximum is ${failure.data.maximum}`;
-        case "TransferFailed":
-            return `gateway ${failure.data.direction.toLowerCase()} transfer failed: ${failure.data.detail}`;
-    }
+    return match_into().from(failure, {
+        UnsupportedFrame: ({ format }) => `gateway returned an unsupported ${format.toLowerCase()} frame`,
+        FrameTooLarge: ({ length, maximum }) => `gateway frame is ${length} bytes; maximum is ${maximum}`,
+        TransferFailed: ({ direction, detail }) => `gateway ${direction.toLowerCase()} transfer failed: ${detail}`,
+    });
 }
 function bytesHex(bytes) {
     let value = "";

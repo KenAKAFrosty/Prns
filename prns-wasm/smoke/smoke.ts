@@ -36,6 +36,7 @@ import {
   entropyBytes,
   hardwareMtu,
   identitySecretKey,
+  match,
   match_into,
   nowMillis,
   packetFrame,
@@ -238,17 +239,31 @@ async function sendAnnounce(): Promise<void> {
 }
 
 async function consumeEvents(node: Prns): Promise<void> {
-  for await (const event of node.events()) {
-    eventCount += 1;
-    log(`event ${eventCount}: ${describeEvent(event)}`);
-  }
+  await match(node.claimEvents(), {
+    Claimed: async (events) => {
+      for await (const event of events) {
+        eventCount += 1;
+        log(`event ${eventCount}: ${describeEvent(event)}`);
+      }
+    },
+    AlreadyClaimed: async ({ lane }) => {
+      log(`${lane} already has a consumer`);
+    },
+  });
 }
 
 async function consumeDiagnostics(node: Prns): Promise<void> {
-  for await (const event of node.diagnostics()) {
-    eventCount += 1;
-    log(`diagnostic ${eventCount}: ${describeEvent(event)}`);
-  }
+  await match(node.claimDiagnostics(), {
+    Claimed: async (diagnostics) => {
+      for await (const event of diagnostics) {
+        eventCount += 1;
+        log(`diagnostic ${eventCount}: ${describeEvent(event)}`);
+      }
+    },
+    AlreadyClaimed: async ({ lane }) => {
+      log(`${lane} already has a consumer`);
+    },
+  });
 }
 
 async function closeUsb(): Promise<void> {
@@ -314,6 +329,64 @@ function describeEvent(event: PrnsEvent): string {
       `announce destination=${hex(destination)} hops=${hops} interface=${hex(sourceInterface)}`,
     SingleDelivery: ({ destination, plaintext, sourceInterface }) =>
       `single delivery destination=${hex(destination)} bytes=${plaintext.length} interface=${hex(sourceInterface)}`,
+    Request: ({ destination, linkId, requestId, data }) =>
+      `request destination=${hex(destination)} link=${hex(linkId)} request=${hex(requestId)} bytes=${data.length}`,
+    Response: ({ linkId, requestId, data }) =>
+      `response link=${hex(linkId)} request=${hex(requestId)} bytes=${data.length}`,
+    ResponseSegment: ({
+      linkId,
+      requestId,
+      segmentIndex,
+      totalSegments,
+      data,
+    }) =>
+      `response segment link=${hex(linkId)} request=${hex(requestId)} segment=${segmentIndex + 1}/${totalSegments} bytes=${data.length}`,
+    ResourceAvailable: ({ linkId, hash, resource }) =>
+      `resource link=${hex(linkId)} hash=${hex(hash)} bytes=${resource.totalBytes}`,
+    ResourceSegment: ({
+      linkId,
+      originalHash,
+      segmentIndex,
+      totalSegments,
+      data,
+    }) =>
+      `resource segment link=${hex(linkId)} hash=${hex(originalHash)} segment=${segmentIndex + 1}/${totalSegments} bytes=${data.length}`,
+    ChannelMessage: ({ linkId, messageType, data }) =>
+      `channel link=${hex(linkId)} type=${messageType} bytes=${data.length}`,
+    LinkEstablished: ({ linkId, rttMillis }) =>
+      `link established=${hex(linkId)} rtt=${rttMillis}ms`,
+    PeerIdentified: ({ linkId, identity }) =>
+      `peer identified link=${hex(linkId)} identity=${hex(identity)}`,
+    LinkClosed: ({ linkId, reason }) =>
+      `link closed=${hex(linkId)} reason=${reason}`,
+    LinkInterfaceMismatch: ({ linkId, attachedInterface, arrivedOn }) =>
+      `link mismatch=${hex(linkId)} attached=${hex(attachedInterface)} arrived=${hex(arrivedOn)}`,
+    ResourceNeedsDecompression: ({
+      linkId,
+      hash,
+      stream,
+      uncompressedDataBytes,
+    }) =>
+      `resource compressed link=${hex(linkId)} hash=${hex(hash)} compressed=${stream.length} uncompressed=${uncompressedDataBytes}`,
+    ResourceAssembled: ({ linkId, originalHash, totalSizeBytes }) =>
+      `resource assembled link=${hex(linkId)} hash=${hex(originalHash)} bytes=${totalSizeBytes}`,
+    ResourceFailed: ({ linkId, hash, cause }) =>
+      `resource failed link=${hex(linkId)} hash=${hex(hash)} cause=${cause}`,
+    ResourceSendProgress: ({
+      linkId,
+      transferredBytes,
+      totalBytes,
+      physicalTransferredBytes,
+      segmentIndex,
+      totalSegments,
+    }) =>
+      `resource progress link=${hex(linkId)} bytes=${transferredBytes}/${totalBytes} physical=${physicalTransferredBytes} segment=${segmentIndex + 1}/${totalSegments}`,
+    SelfRatchetRotated: ({ destination }) =>
+      `self ratchet rotated destination=${hex(destination)}`,
+    AnnounceHeldDropped: ({ destination, sourceInterface, cause }) =>
+      `announce held dropped destination=${hex(destination)} interface=${hex(sourceInterface)} cause=${cause}`,
+    Delivered: ({ detail }) => `delivered ${detail}`,
+    BackendDiagnostic: ({ kind, detail }) => `${kind}: ${detail}`,
     RouteExpired: ({ destination }) =>
       `RouteExpired destination=${hex(destination)}`,
     RouteEvicted: ({ destination }) =>

@@ -590,6 +590,7 @@ module.exports = nativeBinding
 module.exports.InterfaceHandle = nativeBinding.InterfaceHandle
 module.exports.PrnsNode = nativeBinding.PrnsNode
 module.exports.generateIdentitySecret = nativeBinding.generateIdentitySecret
+module.exports.hostContractAbi = nativeBinding.hostContractAbi
 module.exports.requestPathHash = nativeBinding.requestPathHash
 module.exports.startNode = nativeBinding.startNode
 module.exports.version = nativeBinding.version

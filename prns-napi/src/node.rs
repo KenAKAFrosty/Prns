@@ -43,11 +43,10 @@ use personal_rns::{
     AttachedInterface, AttachedSupervisor, AutoBluetoothLe, AutoUsb, PacketReceiptDelivered,
     Zeroizing, IDENTITY_SECRET_KEY_LEN,
 };
-
-use std::sync::atomic::{AtomicUsize, Ordering};
+use prns_host::PrnsLimits;
 
 use crate::errors::{code_err, send_error, CodeResult, ErrorCode, Fallible};
-use crate::events::bridge::{EventSink, DEFAULT_EVENT_QUEUE_LIMIT};
+use crate::events::bridge::{EventQueue, EventSink};
 use crate::events::owned::OwnedEvent;
 use crate::events::translate;
 use crate::marshal;
@@ -101,6 +100,9 @@ pub struct NodeOptions {
     pub transport: Option<bool>,
     pub destinations: Option<Vec<DestinationSpec>>,
     pub event_queue_limit: Option<u32>,
+    pub application_event_queue_limit: Option<u32>,
+    pub retained_event_bytes_limit: Option<u32>,
+    pub diagnostic_event_queue_limit: Option<u32>,
 }
 
 #[napi(object)]
@@ -668,32 +670,60 @@ pub fn start_node(
     options: NodeOptions,
     #[napi(ts_arg_type = "(event: PrnsNodeEvent) => void")] on_event: Function<(), ()>,
 ) -> Result<PrnsNode, ErrorCode> {
-    let limit = match options.event_queue_limit {
-        None => DEFAULT_EVENT_QUEUE_LIMIT,
-        Some(0) => {
-            return Err(code_err(
-                ErrorCode::InvalidArgument,
-                "eventQueueLimit must be at least 1",
-            ))
-        }
-        Some(limit) => limit as usize,
-    };
+    let balanced = PrnsLimits::balanced();
+    let application_events = event_limit(
+        options
+            .application_event_queue_limit
+            .or(options.event_queue_limit),
+        balanced.application_events(),
+        "applicationEventQueueLimit",
+    )?;
+    let retained_event_bytes = event_limit(
+        options.retained_event_bytes_limit,
+        balanced.retained_event_bytes(),
+        "retainedEventBytesLimit",
+    )?;
+    let diagnostics = event_limit(
+        options
+            .diagnostic_event_queue_limit
+            .or(options.event_queue_limit),
+        balanced.diagnostics(),
+        "diagnosticEventQueueLimit",
+    )?;
+    let limits = PrnsLimits::try_new(
+        balanced.pending_commands(),
+        application_events,
+        retained_event_bytes,
+        diagnostics,
+    )
+    .map_err(|error| code_err(ErrorCode::InvalidArgument, format!("{error:?}")))?;
     let config = parse_options(options)?;
     let hashes = crate::runtime::destination_hashes(&config)?;
-    let queued = Arc::new(AtomicUsize::new(0));
-    let dequeue = queued.clone();
+    let queue = EventQueue::new(limits);
+    let dequeue = queue.clone();
     let tsfn = on_event
         .build_threadsafe_function::<OwnedEvent>()
         .build_callback(move |ctx: ThreadsafeCallContext<OwnedEvent>| {
-            dequeue.fetch_sub(1, Ordering::Relaxed);
+            dequeue.complete(&ctx.value);
             translate::event_to_object(&ctx.env, ctx.value)
         })
         .map_err(|error| code_err(ErrorCode::Internal, format!("{error}")))?;
-    let manager = NodeManager::start(config, EventSink::new(tsfn, queued, limit))?;
+    let manager = NodeManager::start(config, EventSink::new(tsfn, queue))?;
     Ok(PrnsNode {
         manager: Arc::new(manager),
         hashes,
     })
+}
+
+fn event_limit(configured: Option<u32>, default: usize, name: &str) -> CodeResult<usize> {
+    match configured {
+        Some(0) => Err(code_err(
+            ErrorCode::InvalidArgument,
+            format!("{name} must be at least 1"),
+        )),
+        Some(value) => Ok(value as usize),
+        None => Ok(default),
+    }
 }
 
 #[napi]

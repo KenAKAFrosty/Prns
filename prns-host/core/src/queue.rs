@@ -1,3 +1,4 @@
+use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 
@@ -26,7 +27,7 @@ pub struct ConsumerUnavailable {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApplicationEventPushError {
-    pub event: ApplicationEvent,
+    pub event: Box<ApplicationEvent>,
     pub failure: HostFailure,
 }
 
@@ -136,7 +137,10 @@ impl<C> BoundedHostQueue<C> {
                 self.lifecycle.revision = self.lifecycle.revision.saturating_add(1);
                 self.lifecycle.state = LifecycleState::Failed(failure.clone());
             }
-            return Err(ApplicationEventPushError { event, failure });
+            return Err(ApplicationEventPushError {
+                event: Box::new(event),
+                failure,
+            });
         }
         self.retained_event_bytes += event_bytes;
         self.application_events.push_back(event);
@@ -242,7 +246,7 @@ mod tests {
             Ok(()) => return,
             Err(rejected) => rejected,
         };
-        assert_eq!(rejected.event, event(2));
+        assert_eq!(*rejected.event, event(2));
         assert!(matches!(
             queue.lifecycle().state,
             LifecycleState::Failed(HostFailure::EventBackpressureExceeded { .. })
@@ -260,8 +264,8 @@ mod tests {
             }
         };
         let mut queue = BoundedHostQueue::<()>::new(limits);
-        let diagnostic = DiagnosticEvent::Backend {
-            component: "test".into(),
+        let diagnostic = DiagnosticEvent::BackendDiagnostic {
+            kind: "test".into(),
             detail: "first".into(),
         };
         assert_eq!(
@@ -270,8 +274,8 @@ mod tests {
         );
         for _ in 0..3 {
             assert_eq!(
-                queue.push_diagnostic(DiagnosticEvent::Backend {
-                    component: "test".into(),
+                queue.push_diagnostic(DiagnosticEvent::BackendDiagnostic {
+                    kind: "test".into(),
                     detail: "dropped".into(),
                 }),
                 DiagnosticPushOutcome::DroppedNewest

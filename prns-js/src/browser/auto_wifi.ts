@@ -1,4 +1,4 @@
-import { Tag } from "../casework.js";
+import { Tag, match_into } from "../casework.js";
 import type {
   AlreadyActive,
   BitrateBps,
@@ -1356,14 +1356,14 @@ function websocketPayloadLength(value: unknown): WebSocketPayloadLengthOutcome {
 function describeWebSocketDecodeFailure(
   failure: Exclude<AutoWifiWebSocketDecodeOutcome, Tag<"Decoded", unknown>>,
 ): string {
-  switch (failure.tag) {
-    case "UnsupportedFrame":
-      return `gateway returned an unsupported ${failure.data.format.toLowerCase()} frame`;
-    case "FrameTooLarge":
-      return `gateway frame is ${failure.data.length} bytes; maximum is ${failure.data.maximum}`;
-    case "TransferFailed":
-      return `gateway ${failure.data.direction.toLowerCase()} transfer failed: ${failure.data.detail}`;
-  }
+  return match_into<string>().from(failure, {
+    UnsupportedFrame: ({ format }) =>
+      `gateway returned an unsupported ${format.toLowerCase()} frame`,
+    FrameTooLarge: ({ length, maximum }) =>
+      `gateway frame is ${length} bytes; maximum is ${maximum}`,
+    TransferFailed: ({ direction, detail }) =>
+      `gateway ${direction.toLowerCase()} transfer failed: ${detail}`,
+  });
 }
 
 function bytesHex(bytes: Uint8Array): string {

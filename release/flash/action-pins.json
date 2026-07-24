@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "verified_at": "2026-07-21",
+  "verified_at": "2026-07-23",
   "actions": {
     "Swatinem/rust-cache": {
       "resolved_ref": "v2",
@@ -53,6 +53,10 @@
     "dtolnay/rust-toolchain": {
       "resolved_ref": "stable@2026-07-21",
       "sha": "4cda84d5c5c54efe2404f9d843567869ab1699d4"
+    },
+    "oven-sh/setup-bun": {
+      "resolved_ref": "v2",
+      "sha": "0c5077e51419868618aeaa5fe8019c62421857d6"
     }
   }
 }

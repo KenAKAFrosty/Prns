@@ -1,24 +1,66 @@
 import { Tag, from, match, match_into } from "../casework.js";
-import { BoundedAsyncLane, PrnsConsumerError } from "../async_lanes.js";
+import { BoundedAsyncLane } from "../async_lanes.js";
+import type { StreamClaim } from "../async_lanes.js";
 import {
+  DESTINATION_HASH_LENGTH,
   HOST_CONTRACT_ABI,
+  INTERFACE_ID_LENGTH,
   PRODUCT_VERSION,
+  RESOURCE_HASH_LENGTH,
   balancedLimits,
+  destinationHash,
+  identityHash,
+  interfaceId,
+  linkId,
+  requestId,
+  requestPathHash,
+  resourceHash,
 } from "../contract.js";
 import type {
+  ApplicationEvent as HostApplicationEvent,
+  DestinationHash,
+  DiagnosticEvent as HostDiagnosticEvent,
+  IdentityHash,
+  InterfaceId,
   LifecycleState as HostLifecycleState,
+  LinkId,
   PrnsLimits as HostLimits,
+  RequestId,
+  RequestPathHash,
+  ResourceHash,
+  ResourceStream,
 } from "../contract.js";
+import { MemoryResourceStream } from "../memory_resource.js";
 import { AutoWifiInterface } from "./auto_wifi.js";
 
 export { Tag, from, match, match_into };
 export {
+  DESTINATION_HASH_LENGTH,
   HOST_CONTRACT_ABI,
+  INTERFACE_ID_LENGTH,
   PRODUCT_VERSION,
-  PrnsConsumerError,
+  RESOURCE_HASH_LENGTH,
   balancedLimits,
+  destinationHash,
+  identityHash,
+  interfaceId,
+  linkId,
+  requestId,
+  requestPathHash,
+  resourceHash,
 };
 export type { DataFrom, TagFrom } from "../casework.js";
+export type { StreamClaim } from "../async_lanes.js";
+export type {
+  DestinationHash,
+  IdentityHash,
+  InterfaceId,
+  LinkId,
+  RequestId,
+  RequestPathHash,
+  ResourceHash,
+  ResourceStream,
+} from "../contract.js";
 export {
   AutoWifiController,
   AutoWifiInterface,
@@ -41,15 +83,11 @@ type BrandedBytes<Name extends string> = Uint8Array & Brand<Name>;
 type BrandedNumber<Name extends string> = number & Brand<Name>;
 type BrandedBigInt<Name extends string> = bigint & Brand<Name>;
 
-export const INTERFACE_ID_LENGTH = 8;
-export const DESTINATION_HASH_LENGTH = 16;
 export const MIN_ENTROPY_BYTES = 128;
 export const BLE_IDENTITY_LENGTH = 16;
 
 export type IdentitySecretKey = BrandedBytes<"IdentitySecretKey">;
 export type BleIdentity = BrandedBytes<"BleIdentity">;
-export type InterfaceId = BrandedBytes<"InterfaceId">;
-export type DestinationHash = BrandedBytes<"DestinationHash">;
 export type ChannelTag = BrandedBytes<"ChannelTag">;
 export type PacketFrame = BrandedBytes<"PacketFrame">;
 export type EntropyBytes = BrandedBytes<"EntropyBytes">;
@@ -478,22 +516,37 @@ export type RuntimeIngestOptions = {
   entropy: EntropyBytes;
 };
 
-export type AnnounceEvent = Tag<
-  "AnnounceHeard",
-  {
-    readonly destination: DestinationHash;
-    readonly hops: HopCount;
-    readonly sourceInterface: InterfaceId;
-  }
+export type AnnounceEvent = Extract<
+  HostDiagnosticEvent,
+  Tag<"AnnounceHeard", unknown>
 >;
-
-export type SingleDeliveryEvent = Tag<
-  "SingleDelivery",
-  {
-    readonly destination: DestinationHash;
-    readonly plaintext: Uint8Array;
-    readonly sourceInterface: InterfaceId;
-  }
+export type SingleDeliveryEvent = Extract<
+  HostApplicationEvent,
+  Tag<"SingleDelivery", unknown>
+>;
+export type RequestEvent = Extract<
+  HostApplicationEvent,
+  Tag<"Request", unknown>
+>;
+export type ResponseEvent = Extract<
+  HostApplicationEvent,
+  Tag<"Response", unknown>
+>;
+export type ResponseSegmentEvent = Extract<
+  HostApplicationEvent,
+  Tag<"ResponseSegment", unknown>
+>;
+export type ResourceAvailableEvent = Extract<
+  HostApplicationEvent,
+  Tag<"ResourceAvailable", unknown>
+>;
+export type ResourceSegmentEvent = Extract<
+  HostApplicationEvent,
+  Tag<"ResourceSegment", unknown>
+>;
+export type ChannelMessageEvent = Extract<
+  HostApplicationEvent,
+  Tag<"ChannelMessage", unknown>
 >;
 
 type CommandSettledEvent = Tag<
@@ -504,37 +557,121 @@ type CommandSettledEvent = Tag<
   }
 >;
 
-export type RouteEvent =
-  | Tag<"RouteExpired", { readonly destination: DestinationHash }>
-  | Tag<"RouteEvicted", { readonly destination: DestinationHash }>
-  | Tag<"RouteInterfaceGone", { readonly destination: DestinationHash }>
-  | Tag<"RouteDropped", { readonly destination: DestinationHash }>;
-
-export type DiagnosticsDroppedEvent = Tag<
-  "DiagnosticsDropped",
-  { readonly count: bigint }
+export type RouteEvent = Extract<
+  HostDiagnosticEvent,
+  Tag<
+    "RouteExpired" | "RouteEvicted" | "RouteInterfaceGone" | "RouteDropped",
+    unknown
+  >
+>;
+export type DiagnosticsDroppedEvent = Extract<
+  HostDiagnosticEvent,
+  Tag<"DiagnosticsDropped", unknown>
+>;
+export type LinkEvent = Extract<
+  HostDiagnosticEvent,
+  Tag<
+    | "LinkEstablished"
+    | "PeerIdentified"
+    | "LinkClosed"
+    | "LinkInterfaceMismatch",
+    unknown
+  >
+>;
+export type ResourceDiagnosticEvent = Extract<
+  HostDiagnosticEvent,
+  Tag<
+    | "ResourceAssembled"
+    | "ResourceFailed"
+    | "ResourceSendProgress",
+    unknown
+  >
+>;
+export type RuntimeDiagnosticEvent = Extract<
+  HostDiagnosticEvent,
+  Tag<
+    "SelfRatchetRotated" | "AnnounceHeldDropped" | "Delivered",
+    unknown
+  >
 >;
 
-export type PrnsApplicationEvent = SingleDeliveryEvent;
-export type PrnsDiagnosticEvent =
-  | AnnounceEvent
-  | RouteEvent
-  | DiagnosticsDroppedEvent;
+export type PrnsApplicationEvent = HostApplicationEvent;
+export type PrnsDiagnosticEvent = HostDiagnosticEvent;
 export type PrnsEvent = PrnsApplicationEvent | PrnsDiagnosticEvent;
 type ParsedPrnsEvent =
-  | AnnounceEvent
-  | SingleDeliveryEvent
-  | CommandSettledEvent
-  | RouteEvent;
+  | Tag<"Application", PrnsApplicationEvent>
+  | Tag<"Diagnostic", Exclude<PrnsDiagnosticEvent, DiagnosticsDroppedEvent>>
+  | CommandSettledEvent;
+
+type RawEventType =
+  | "announce"
+  | "selfRatchetRotated"
+  | "announceHeldDropped"
+  | "commandSettled"
+  | "linkEstablished"
+  | "peerIdentified"
+  | "request"
+  | "response"
+  | "responseSegment"
+  | "channelMessage"
+  | "singleDelivery"
+  | "delivered"
+  | "linkClosed"
+  | "linkInterfaceMismatch"
+  | "resourceReceived"
+  | "resourceFailed"
+  | "resourceNeedsDecompression"
+  | "resourceSegment"
+  | "resourceAssembled"
+  | "routeExpired"
+  | "routeEvicted"
+  | "routeInterfaceGone"
+  | "routeDropped";
+
+type RawEvent = {
+  [Name in RawEventType]: Tag<Name, Record<string, unknown>>;
+}[RawEventType];
+
+const RAW_EVENT_TYPES: ReadonlySet<string> = new Set<RawEventType>([
+  "announce",
+  "selfRatchetRotated",
+  "announceHeldDropped",
+  "commandSettled",
+  "linkEstablished",
+  "peerIdentified",
+  "request",
+  "response",
+  "responseSegment",
+  "channelMessage",
+  "singleDelivery",
+  "delivered",
+  "linkClosed",
+  "linkInterfaceMismatch",
+  "resourceReceived",
+  "resourceFailed",
+  "resourceNeedsDecompression",
+  "resourceSegment",
+  "resourceAssembled",
+  "routeExpired",
+  "routeEvicted",
+  "routeInterfaceGone",
+  "routeDropped",
+]);
 
 export type FanTarget =
-  | { type: "all" }
-  | { type: "only"; interfaceId: InterfaceId }
-  | { type: "allExcept"; interfaceId: InterfaceId };
+  | Tag<"All">
+  | Tag<"Only", InterfaceId>
+  | Tag<"AllExcept", InterfaceId>;
 
 export type OutboundTarget =
-  | { type: "interface"; interfaceId: InterfaceId }
-  | { type: "broadcast"; supervisorKind: RuntimeInterfaceKind; fan: FanTarget };
+  | Tag<"Interface", InterfaceId>
+  | Tag<
+      "Broadcast",
+      {
+        readonly supervisorKind: RuntimeInterfaceKind;
+        readonly fan: FanTarget;
+      }
+    >;
 
 export type PrnsOutboundFrame = {
   type: "frame" | "announce";
@@ -714,14 +851,14 @@ type BrowserUsbOutTransferResult = {
 };
 
 type UsbAutoInboundMessage =
-  | { type: "hello" }
-  | { type: "helloAck"; tag: Uint8Array }
-  | { type: "data"; bytes: Uint8Array };
+  | Tag<"Hello">
+  | Tag<"HelloAck", Uint8Array>
+  | Tag<"Data", Uint8Array>;
 
 type BluetoothControl =
-  | { type: "hello"; identity: Uint8Array }
-  | { type: "welcome"; identity: Uint8Array }
-  | { type: "close"; reason: string };
+  | Tag<"Hello", Uint8Array>
+  | Tag<"Welcome", Uint8Array>
+  | Tag<"Close", string>;
 
 type SessionWriteOutcome = Tag<"Written"> | InterfaceSessionFailure;
 type SessionHandleOutcome = Tag<"Handled"> | InterfaceSessionFailure;
@@ -1229,8 +1366,8 @@ class BrowserUsbAutoSession implements UsbAutoSession {
   }
 
   async #handleInbound(message: UsbAutoInboundMessage): Promise<SessionHandleOutcome> {
-    switch (message.type) {
-      case "hello": {
+    return match_into<Promise<SessionHandleOutcome>>().from(message, {
+      Hello: async () => {
         const written = await this.#writeFrame(
           this.#host.usbAutoHostHelloAckFrame(this.#nodeTag),
         );
@@ -1239,20 +1376,22 @@ class BrowserUsbAutoSession implements UsbAutoSession {
         }
         this.#confirmPeer();
         return Tag("Handled");
-      }
-      case "helloAck":
+      },
+      HelloAck: async () => {
         this.#confirmPeer();
         return Tag("Handled");
-      case "data":
-        if (this.#confirmed && message.bytes.length > 0) {
+      },
+      Data: async (bytes) => {
+        if (this.#confirmed && bytes.length > 0) {
           const ingested = this.#host.ingest(
             this.interfaceId,
-            packetFrame(message.bytes),
+            packetFrame(bytes),
           );
           return ingested.tag === "Accepted" ? Tag("Handled") : ingested;
         }
         return Tag("Handled");
-    }
+      },
+    });
   }
 
   #confirmPeer(): void {
@@ -2046,43 +2185,45 @@ class BrowserBluetoothSession implements BluetoothSession {
         detail: describeHostError(error),
       });
     }
-    if (control.type === "welcome") {
-      if (this.#confirmed) {
+    return match_into<BluetoothHandleOutcome>().from(control, {
+      Hello: () =>
+        this.#data === this.#control
+          ? this.#handleDataBytes(bytes)
+          : Tag("Handled"),
+      Welcome: (identity) => {
+        if (this.#confirmed) {
+          return Tag("Handled");
+        }
+        let registration: HostedInterfaceRegistration<"bluetooth">;
+        try {
+          registration = {
+            interfaceName: "bluetooth",
+            supervisorKind: "bluetooth-auto",
+            kind: "bluetooth-peer",
+            channelTag: channelTag(identity),
+            bitrateBps: this.#host.bluetoothBitrateBps(),
+            hardwareMtu: this.#host.bluetoothHardwareMtu(),
+          };
+        } catch (error) {
+          return Tag("ProtocolViolation", {
+            protocol: "Bluetooth",
+            detail: describeHostError(error),
+          });
+        }
+        const registered = this.#host.registerInterface(registration);
+        if (registered.tag !== "Registered") {
+          return registered;
+        }
+        this.#interfaceId = registered.data;
+        this.#confirmed = true;
+        this.#status = Tag("Active");
         return Tag("Handled");
-      }
-      let registration: HostedInterfaceRegistration<"bluetooth">;
-      try {
-        registration = {
-          interfaceName: "bluetooth",
-          supervisorKind: "bluetooth-auto",
-          kind: "bluetooth-peer",
-          channelTag: channelTag(control.identity),
-          bitrateBps: this.#host.bluetoothBitrateBps(),
-          hardwareMtu: this.#host.bluetoothHardwareMtu(),
-        };
-      } catch (error) {
-        return Tag("ProtocolViolation", {
-          protocol: "Bluetooth",
-          detail: describeHostError(error),
-        });
-      }
-      const registered = this.#host.registerInterface(registration);
-      if (registered.tag !== "Registered") {
-        return registered;
-      }
-      this.#interfaceId = registered.data;
-      this.#confirmed = true;
-      this.#status = Tag("Active");
-      return Tag("Handled");
-    }
-    if (control.type === "close") {
-      void this.close();
-      return Tag("Handled");
-    }
-    if (this.#data === this.#control) {
-      return this.#handleDataBytes(bytes);
-    }
-    return Tag("Handled");
+      },
+      Close: () => {
+        void this.close();
+        return Tag("Handled");
+      },
+    });
   }
 
   #handleDataEvent(
@@ -2252,7 +2393,7 @@ export class Prns {
       name: "ApplicationEvents",
       maximumValues: limits.applicationEvents,
       maximumBytes: limits.retainedEventBytes,
-      measure: (event) => event.data.plaintext.length,
+      measure: retainedBrowserEventBytes,
       onRejected: (rejectedEventBytes) =>
         this.#failBackpressure(rejectedEventBytes),
       onBeforeNext: () => this.#pumpEvents(),
@@ -2440,14 +2581,14 @@ export class Prns {
     return this.#lifecycle;
   }
 
-  events(): AsyncIterable<PrnsApplicationEvent> {
+  claimEvents(): StreamClaim<PrnsApplicationEvent> {
     this.#pumpEvents();
-    return this.#events;
+    return this.#events.claim();
   }
 
-  diagnostics(): AsyncIterable<PrnsDiagnosticEvent> {
+  claimDiagnostics(): StreamClaim<PrnsDiagnosticEvent> {
     this.#pumpEvents();
-    return this.#diagnostics;
+    return this.#diagnostics.claim();
   }
 
   snapshot(): SnapshotOutcome {
@@ -2475,11 +2616,11 @@ export class Prns {
     }
     for (const event of parsed) {
       match(event, {
-        AnnounceHeard: (data) => {
-          this.#diagnostics.push(Tag("AnnounceHeard", data));
+        Application: (application) => {
+          this.#events.push(application);
         },
-        SingleDelivery: (data) => {
-          this.#events.push(Tag("SingleDelivery", data));
+        Diagnostic: (diagnostic) => {
+          this.#diagnostics.push(diagnostic);
         },
         CommandSettled: ({ commandId, debugSettlement }) => {
           const settle = this.#pendingAnnounces.get(commandId);
@@ -2492,18 +2633,6 @@ export class Prns {
               ? Tag("CommandFailed", { detail: debugSettlement })
               : Tag("Announced"),
           );
-        },
-        RouteExpired: (data) => {
-          this.#diagnostics.push(Tag("RouteExpired", data));
-        },
-        RouteEvicted: (data) => {
-          this.#diagnostics.push(Tag("RouteEvicted", data));
-        },
-        RouteInterfaceGone: (data) => {
-          this.#diagnostics.push(Tag("RouteInterfaceGone", data));
-        },
-        RouteDropped: (data) => {
-          this.#diagnostics.push(Tag("RouteDropped", data));
         },
       });
     }
@@ -2864,18 +2993,6 @@ export function bleIdentity(bytes: Uint8Array): BleIdentityValidationOutcome {
     : Tag("InvalidBleIdentity", { actualLength: bytes.length });
 }
 
-export function interfaceId(bytes: Uint8Array): InterfaceId {
-  return exactBytes(bytes, INTERFACE_ID_LENGTH, "InterfaceId") as InterfaceId;
-}
-
-export function destinationHash(bytes: Uint8Array): DestinationHash {
-  return exactBytes(
-    bytes,
-    DESTINATION_HASH_LENGTH,
-    "DestinationHash",
-  ) as DestinationHash;
-}
-
 export function channelTag(bytes: Uint8Array): ChannelTag {
   return nonEmptyBytes(bytes, "ChannelTag") as ChannelTag;
 }
@@ -2967,55 +3084,61 @@ function outboundTargets(
   interfaceId: InterfaceId,
   supervisorKind: RuntimeInterfaceKind,
 ): boolean {
-  if (target.type === "interface") {
-    return equalBytes(target.interfaceId, interfaceId);
-  }
-  if (target.supervisorKind !== supervisorKind) {
-    return false;
-  }
-  switch (target.fan.type) {
-    case "all":
-      return true;
-    case "only":
-      return equalBytes(target.fan.interfaceId, interfaceId);
-    case "allExcept":
-      return !equalBytes(target.fan.interfaceId, interfaceId);
-  }
+  return match_into<boolean>().from(target, {
+    Interface: (targetInterface) =>
+      equalBytes(targetInterface, interfaceId),
+    Broadcast: ({ supervisorKind: targetKind, fan }) =>
+      targetKind === supervisorKind &&
+      match_into<boolean>().from(fan, {
+        All: () => true,
+        Only: (targetInterface) =>
+          equalBytes(targetInterface, interfaceId),
+        AllExcept: (targetInterface) =>
+          !equalBytes(targetInterface, interfaceId),
+      }),
+  });
 }
+
+type RawUsbAutoMessageType = "hello" | "helloAck" | "data";
+
+const RAW_USB_AUTO_MESSAGE_TYPES: ReadonlySet<string> =
+  new Set<RawUsbAutoMessageType>(["hello", "helloAck", "data"]);
 
 function parseUsbAutoMessage(raw: unknown): UsbAutoInboundMessage {
   const object = record(raw, "UsbAutoInboundMessage");
   const type = stringField(object, "type");
-  switch (type) {
-    case "hello":
-      return { type };
-    case "helloAck":
-      return { type, tag: bytesField(object, "tag") };
-    case "data":
-      return { type, bytes: bytesField(object, "bytes") };
-    default:
-      throw new PrnsValidationError(
-        "invalid-component",
-        `unknown USB-auto message ${type}`,
-      );
+  if (!RAW_USB_AUTO_MESSAGE_TYPES.has(type)) {
+    throw new PrnsValidationError(
+      "invalid-component",
+      `unknown USB-auto message ${type}`,
+    );
   }
+  return match(type as RawUsbAutoMessageType, {
+    hello: () => Tag("Hello"),
+    helloAck: () => Tag("HelloAck", bytesField(object, "tag")),
+    data: () => Tag("Data", bytesField(object, "bytes")),
+  });
 }
+
+type RawBluetoothControlType = "hello" | "welcome" | "close";
+
+const RAW_BLUETOOTH_CONTROL_TYPES: ReadonlySet<string> =
+  new Set<RawBluetoothControlType>(["hello", "welcome", "close"]);
 
 function parseBluetoothControl(raw: unknown): BluetoothControl {
   const object = record(raw, "BluetoothControl");
   const type = stringField(object, "type");
-  switch (type) {
-    case "hello":
-    case "welcome":
-      return { type, identity: bytesField(object, "identity") };
-    case "close":
-      return { type, reason: stringField(object, "reason") };
-    default:
-      throw new PrnsValidationError(
-        "invalid-component",
-        `unknown Bluetooth control ${type}`,
-      );
+  if (!RAW_BLUETOOTH_CONTROL_TYPES.has(type)) {
+    throw new PrnsValidationError(
+      "invalid-component",
+      `unknown Bluetooth control ${type}`,
+    );
   }
+  return match(type as RawBluetoothControlType, {
+    hello: () => Tag("Hello", bytesField(object, "identity")),
+    welcome: () => Tag("Welcome", bytesField(object, "identity")),
+    close: () => Tag("Close", stringField(object, "reason")),
+  });
 }
 
 function parseOutboundFrame(raw: unknown): PrnsOutboundFrame {
@@ -3043,17 +3166,16 @@ function parseOutboundTarget(raw: unknown): OutboundTarget {
   const object = record(raw, "OutboundTarget");
   const type = stringField(object, "type");
   if (type === "interface") {
-    return {
-      type,
-      interfaceId: interfaceId(bytesField(object, "interfaceId")),
-    };
+    return Tag(
+      "Interface",
+      interfaceId(bytesField(object, "interfaceId")),
+    );
   }
   if (type === "broadcast") {
-    return {
-      type,
+    return Tag("Broadcast", {
       supervisorKind: parseRuntimeInterfaceKind(stringField(object, "supervisorKind")),
       fan: parseFanTarget(field(object, "fan")),
-    };
+    });
   }
   throw new PrnsValidationError(
     "unknown-outbound-target",
@@ -3065,13 +3187,19 @@ function parseFanTarget(raw: unknown): FanTarget {
   const object = record(raw, "FanTarget");
   const type = stringField(object, "type");
   if (type === "all") {
-    return { type };
+    return Tag("All");
   }
-  if (type === "only" || type === "allExcept") {
-    return {
-      type,
-      interfaceId: interfaceId(bytesField(object, "interfaceId")),
-    };
+  if (type === "only") {
+    return Tag(
+      "Only",
+      interfaceId(bytesField(object, "interfaceId")),
+    );
+  }
+  if (type === "allExcept") {
+    return Tag(
+      "AllExcept",
+      interfaceId(bytesField(object, "interfaceId")),
+    );
   }
   throw new PrnsValidationError(
     "unknown-outbound-target",
@@ -3081,47 +3209,260 @@ function parseFanTarget(raw: unknown): FanTarget {
 
 function parseEvent(raw: unknown): ParsedPrnsEvent {
   const object = record(raw, "PrnsEvent");
-  const type = stringField(object, "type");
-  switch (type) {
-    case "announce":
-      return Tag("AnnounceHeard", {
-        destination: destinationHash(bytesField(object, "destination")),
-        hops: hopCount(numberField(object, "hops")),
-        sourceInterface: interfaceId(bytesField(object, "sourceInterface")),
-      });
-    case "singleDelivery":
-      return Tag("SingleDelivery", {
-        destination: destinationHash(bytesField(object, "destination")),
-        plaintext: copyBytes(bytesField(object, "plaintext")),
-        sourceInterface: interfaceId(bytesField(object, "sourceInterface")),
-      });
-    case "commandSettled":
-      return Tag("CommandSettled", {
-        commandId: commandId(bigintField(object, "id")),
-        debugSettlement: stringField(object, "settlement"),
-      });
-    case "routeExpired":
-      return Tag("RouteExpired", {
-        destination: destinationHash(bytesField(object, "destination")),
-      });
-    case "routeEvicted":
-      return Tag("RouteEvicted", {
-        destination: destinationHash(bytesField(object, "destination")),
-      });
-    case "routeInterfaceGone":
-      return Tag("RouteInterfaceGone", {
-        destination: destinationHash(bytesField(object, "destination")),
-      });
-    case "routeDropped":
-      return Tag("RouteDropped", {
-        destination: destinationHash(bytesField(object, "destination")),
-      });
-    default:
-      throw new PrnsValidationError(
-        "invalid-component",
-        `runtime emitted event outside host contract: ${type}`,
+  const event = Tag(
+    rawEventType(stringField(object, "type")),
+    object,
+  ) as RawEvent;
+  return match_into<ParsedPrnsEvent>().from(event, {
+    announce: (data) =>
+      Tag(
+        "Diagnostic",
+        Tag("AnnounceHeard", {
+          destination: destinationHash(bytesField(data, "destination")),
+          hops: hopCount(numberField(data, "hops")),
+          sourceInterface: interfaceId(bytesField(data, "sourceInterface")),
+        }),
+      ),
+    selfRatchetRotated: (data) =>
+      Tag(
+        "Diagnostic",
+        Tag("SelfRatchetRotated", {
+          destination: destinationHash(bytesField(data, "destination")),
+        }),
+      ),
+    announceHeldDropped: (data) =>
+      Tag(
+        "Diagnostic",
+        Tag("AnnounceHeldDropped", {
+          destination: destinationHash(bytesField(data, "destination")),
+          sourceInterface: interfaceId(bytesField(data, "sourceInterface")),
+          cause: stringField(data, "cause"),
+        }),
+      ),
+    commandSettled: (data) =>
+      Tag("CommandSettled", {
+        commandId: commandId(bigintField(data, "id")),
+        debugSettlement: stringField(data, "settlement"),
+      }),
+    linkEstablished: (data) =>
+      Tag(
+        "Diagnostic",
+        Tag("LinkEstablished", {
+          linkId: linkId(bytesField(data, "linkId")),
+          rttMillis: nonNegativeInteger(
+            numberField(data, "rttMillis"),
+            "rttMillis",
+          ),
+        }),
+      ),
+    peerIdentified: (data) =>
+      Tag(
+        "Diagnostic",
+        Tag("PeerIdentified", {
+          linkId: linkId(bytesField(data, "linkId")),
+          identity: identityHash(bytesField(data, "identity")),
+        }),
+      ),
+    request: (data) => {
+      const request = {
+        destination: destinationHash(bytesField(data, "destination")),
+        linkId: linkId(bytesField(data, "linkId")),
+        requestId: requestId(bytesField(data, "requestId")),
+        pathHash: requestPathHash(bytesField(data, "pathHash")),
+        rttMillis: nonNegativeInteger(
+          numberField(data, "rttMillis"),
+          "rttMillis",
+        ),
+        data: copyBytes(bytesField(data, "data")),
+      };
+      const requester = optionalBytesField(data, "requester");
+      return Tag(
+        "Application",
+        Tag(
+          "Request",
+          requester
+            ? { ...request, requester: identityHash(requester) }
+            : request,
+        ),
       );
-  }
+    },
+    response: (data) => {
+      bigintField(data, "commandId");
+      return Tag(
+        "Application",
+        Tag("Response", {
+          linkId: linkId(bytesField(data, "linkId")),
+          requestId: requestId(bytesField(data, "requestId")),
+          data: copyBytes(bytesField(data, "data")),
+        }),
+      );
+    },
+    responseSegment: (data) => {
+      bigintField(data, "commandId");
+      return Tag(
+        "Application",
+        Tag("ResponseSegment", {
+          linkId: linkId(bytesField(data, "linkId")),
+          requestId: requestId(bytesField(data, "requestId")),
+          segmentIndex: nonNegativeInteger(
+            numberField(data, "segmentIndex"),
+            "segmentIndex",
+          ),
+          totalSegments: positiveInteger(
+            numberField(data, "totalSegments"),
+            "totalSegments",
+          ),
+          data: copyBytes(bytesField(data, "data")),
+        }),
+      );
+    },
+    channelMessage: (data) =>
+      Tag(
+        "Application",
+        Tag("ChannelMessage", {
+          linkId: linkId(bytesField(data, "linkId")),
+          messageType: stringField(data, "messageType"),
+          data: copyBytes(bytesField(data, "data")),
+        }),
+      ),
+    singleDelivery: (data) =>
+      Tag(
+        "Application",
+        Tag("SingleDelivery", {
+          destination: destinationHash(bytesField(data, "destination")),
+          plaintext: copyBytes(bytesField(data, "plaintext")),
+          sourceInterface: interfaceId(bytesField(data, "sourceInterface")),
+        }),
+      ),
+    delivered: (data) =>
+      Tag(
+        "Diagnostic",
+        Tag("Delivered", { detail: stringField(data, "detail") }),
+      ),
+    linkClosed: (data) =>
+      Tag(
+        "Diagnostic",
+        Tag("LinkClosed", {
+          linkId: linkId(bytesField(data, "linkId")),
+          reason: linkClosedReason(stringField(data, "reason")),
+        }),
+      ),
+    linkInterfaceMismatch: (data) =>
+      Tag(
+        "Diagnostic",
+        Tag("LinkInterfaceMismatch", {
+          linkId: linkId(bytesField(data, "linkId")),
+          attachedInterface: interfaceId(
+            bytesField(data, "attachedInterface"),
+          ),
+          arrivedOn: interfaceId(bytesField(data, "arrivedOn")),
+        }),
+      ),
+    resourceReceived: (data) => {
+      const details = {
+        linkId: linkId(bytesField(data, "linkId")),
+        hash: resourceHash(bytesField(data, "hash")),
+        resource: new MemoryResourceStream(bytesField(data, "data")),
+      };
+      const metadata = optionalBytesField(data, "metadata");
+      return Tag(
+        "Application",
+        Tag(
+          "ResourceAvailable",
+          metadata
+            ? { ...details, metadata: copyBytes(metadata) }
+            : details,
+        ),
+      );
+    },
+    resourceFailed: (data) =>
+      Tag(
+        "Diagnostic",
+        Tag("ResourceFailed", {
+          linkId: linkId(bytesField(data, "linkId")),
+          hash: resourceHash(bytesField(data, "hash")),
+          cause: stringField(data, "cause"),
+        }),
+      ),
+    resourceNeedsDecompression: (data) =>
+      Tag(
+        "Application",
+        Tag("ResourceNeedsDecompression", {
+          linkId: linkId(bytesField(data, "linkId")),
+          hash: resourceHash(bytesField(data, "hash")),
+          stream: copyBytes(bytesField(data, "stream")),
+          uncompressedDataBytes: nonNegativeInteger(
+            numberField(data, "uncompressedDataBytes"),
+            "uncompressedDataBytes",
+          ),
+        }),
+      ),
+    resourceSegment: (data) => {
+      const details = {
+        linkId: linkId(bytesField(data, "linkId")),
+        originalHash: resourceHash(bytesField(data, "originalHash")),
+        segmentIndex: nonNegativeInteger(
+          numberField(data, "segmentIndex"),
+          "segmentIndex",
+        ),
+        totalSegments: positiveInteger(
+          numberField(data, "totalSegments"),
+          "totalSegments",
+        ),
+        data: copyBytes(bytesField(data, "data")),
+      };
+      const metadata = optionalBytesField(data, "metadata");
+      return Tag(
+        "Application",
+        Tag(
+          "ResourceSegment",
+          metadata
+            ? { ...details, metadata: copyBytes(metadata) }
+            : details,
+        ),
+      );
+    },
+    resourceAssembled: (data) =>
+      Tag(
+        "Diagnostic",
+        Tag("ResourceAssembled", {
+          linkId: linkId(bytesField(data, "linkId")),
+          originalHash: resourceHash(bytesField(data, "originalHash")),
+          totalSizeBytes: nonNegativeInteger(
+            numberField(data, "totalSizeBytes"),
+            "totalSizeBytes",
+          ),
+        }),
+      ),
+    routeExpired: (data) =>
+      Tag(
+        "Diagnostic",
+        Tag("RouteExpired", {
+          destination: destinationHash(bytesField(data, "destination")),
+        }),
+      ),
+    routeEvicted: (data) =>
+      Tag(
+        "Diagnostic",
+        Tag("RouteEvicted", {
+          destination: destinationHash(bytesField(data, "destination")),
+        }),
+      ),
+    routeInterfaceGone: (data) =>
+      Tag(
+        "Diagnostic",
+        Tag("RouteInterfaceGone", {
+          destination: destinationHash(bytesField(data, "destination")),
+        }),
+      ),
+    routeDropped: (data) =>
+      Tag(
+        "Diagnostic",
+        Tag("RouteDropped", {
+          destination: destinationHash(bytesField(data, "destination")),
+        }),
+      ),
+  });
 }
 
 function parseSnapshot(raw: unknown): PrnsSnapshot {
@@ -3308,6 +3649,13 @@ function optionalNumber<T>(
     return undefined;
   }
   return parse(numberField(object, key));
+}
+
+function optionalBytesField(
+  object: Record<string, unknown>,
+  key: string,
+): Uint8Array | undefined {
+  return key in object ? bytesField(object, key) : undefined;
 }
 
 function bigintField(object: Record<string, unknown>, key: string): bigint {
@@ -3980,14 +4328,12 @@ async function loadOrCreateBleIdentity(
 function describeStableIdentityStoreFailure(
   failure: StableIdentityStoreFailure,
 ): string {
-  switch (failure.tag) {
-    case "HostApiUnavailable":
-      return `${failure.data.api} is unavailable`;
-    case "StableIdentityStoreFailed":
-      return `${failure.data.operation} stable identity: ${failure.data.detail}`;
-    case "StoredStableIdentityInvalid":
-      return failure.data.detail;
-  }
+  return match_into<string>().from(failure, {
+    HostApiUnavailable: ({ api }) => `${api} is unavailable`,
+    StableIdentityStoreFailed: ({ operation, detail }) =>
+      `${operation} stable identity: ${detail}`,
+    StoredStableIdentityInvalid: ({ detail }) => detail,
+  });
 }
 
 function unexpectedSessionFailure(error: unknown): Extract<
@@ -4053,35 +4399,26 @@ function describeBluetoothConnectFailure(
 function describeInterfaceSessionFailure(
   failure: InterfaceSessionFailure,
 ): string {
-  switch (failure.tag) {
-    case "Disconnected":
-    case "UnexpectedSessionFailure":
-    case "EntropySourceFailed":
-      return failure.data.detail;
-    case "TransferFailed":
-      return `${failure.data.direction} transfer: ${failure.data.detail}`;
-    case "ProtocolViolation":
-      return `${failure.data.protocol}: ${failure.data.detail}`;
-    case "UnsupportedFrame":
-      return `unsupported ${failure.data.format.toLowerCase()} frame`;
-    case "FrameTooLarge":
-      return `frame is ${failure.data.length} bytes; maximum is ${failure.data.maximum}`;
-    case "OutboundQueueFull":
-      return `outbound queue reached ${failure.data.capacity} frames`;
-    case "CloseFailed":
-      return failure.data.causes
-        .map((cause) => cause.data.detail)
-        .join("; ");
-    case "HostApiUnavailable":
-      return `${failure.data.api} is unavailable`;
-    case "InsufficientEntropy":
-      return (
-        `entropy source returned ${failure.data.actual} bytes; ` +
-        `minimum is ${failure.data.minimum}`
-      );
-    case "RuntimeRejected":
-      return `${failure.data.operation}: ${failure.data.detail}`;
-  }
+  return match_into<string>().from(failure, {
+    Disconnected: ({ detail }) => detail,
+    UnexpectedSessionFailure: ({ detail }) => detail,
+    EntropySourceFailed: ({ detail }) => detail,
+    TransferFailed: ({ direction, detail }) =>
+      `${direction} transfer: ${detail}`,
+    ProtocolViolation: ({ protocol, detail }) => `${protocol}: ${detail}`,
+    UnsupportedFrame: ({ format }) =>
+      `unsupported ${format.toLowerCase()} frame`,
+    FrameTooLarge: ({ length, maximum }) =>
+      `frame is ${length} bytes; maximum is ${maximum}`,
+    OutboundQueueFull: ({ capacity }) =>
+      `outbound queue reached ${capacity} frames`,
+    CloseFailed: ({ causes }) =>
+      causes.map((cause) => cause.data.detail).join("; "),
+    HostApiUnavailable: ({ api }) => `${api} is unavailable`,
+    InsufficientEntropy: ({ actual, minimum }) =>
+      `entropy source returned ${actual} bytes; minimum is ${minimum}`,
+    RuntimeRejected: ({ operation, detail }) => `${operation}: ${detail}`,
+  });
 }
 
 function normalizedWebSocketProtocols(
@@ -4157,6 +4494,57 @@ function browserLimits(limits: HostLimits): HostLimits {
     ),
     diagnostics: positiveInteger(limits.diagnostics, "diagnostic limit"),
   };
+}
+
+function retainedBrowserEventBytes(event: PrnsApplicationEvent): number {
+  return match_into<number>().from(event, {
+    SingleDelivery: ({ plaintext }) => plaintext.length,
+    Request: ({ data }) => data.length,
+    Response: ({ data }) => data.length,
+    ResponseSegment: ({ data }) => data.length,
+    ResourceAvailable: ({ resource, metadata }) =>
+      resource.totalBytes + (metadata?.length ?? 0),
+    ResourceSegment: ({ data, metadata }) =>
+      data.length + (metadata?.length ?? 0),
+    ResourceNeedsDecompression: ({ stream }) => stream.length,
+    ChannelMessage: ({ messageType, data }) =>
+      messageType.length + data.length,
+  });
+}
+
+function rawEventType(value: string): RawEventType {
+  if (!RAW_EVENT_TYPES.has(value)) {
+    throw new PrnsValidationError(
+      "invalid-component",
+      `runtime emitted event outside host contract: ${value}`,
+    );
+  }
+  return value as RawEventType;
+}
+
+type RawLinkClosedReason = "timeout" | "peerClosed" | "malformedRtt";
+
+const RAW_LINK_CLOSED_REASONS: ReadonlySet<string> =
+  new Set<RawLinkClosedReason>([
+    "timeout",
+    "peerClosed",
+    "malformedRtt",
+  ]);
+
+function linkClosedReason(
+  value: string,
+): "Timeout" | "PeerClosed" | "MalformedRtt" {
+  if (!RAW_LINK_CLOSED_REASONS.has(value)) {
+    throw new PrnsValidationError(
+      "invalid-component",
+      `unknown link close reason ${value}`,
+    );
+  }
+  return match(value as RawLinkClosedReason, {
+    timeout: () => "Timeout" as const,
+    peerClosed: () => "PeerClosed" as const,
+    malformedRtt: () => "MalformedRtt" as const,
+  });
 }
 
 function delay(ms: number): Promise<void> {

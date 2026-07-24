@@ -225,6 +225,12 @@ pub fn event_to_object(env: &Env, event: OwnedEvent) -> napi::Result<Object<'sta
             object.set("type", "eventOverflow")?;
             object.set("droppedDiagnostics", dropped_diagnostics as f64)?;
         }
+        OwnedEvent::EventBackpressureExceeded {
+            rejected_event_bytes,
+        } => {
+            object.set("type", "eventBackpressureExceeded")?;
+            object.set("rejectedEventBytes", rejected_event_bytes as f64)?;
+        }
         OwnedEvent::NodeStopped { cause } => {
             object.set("type", "nodeStopped")?;
             object.set("cause", cause)?;

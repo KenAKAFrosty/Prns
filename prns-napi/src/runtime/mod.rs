@@ -372,6 +372,7 @@ async fn run_node(
             }
         }
     }
+    let failure_sink = sink.clone();
     let mut node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: config.transport_identity.clone(),
         pre_configured_destinations: destinations,
@@ -406,6 +407,7 @@ async fn run_node(
     }
     tokio::select! {
         _ = &mut shutdown_rx => Exit::Stopped,
+        () = failure_sink.wait_failed() => Exit::Crashed("eventBackpressureExceeded".to_string()),
         result = node.run() => match result {
             Ok(()) => Exit::Crashed("engineStopped".to_string()),
             Err(error) => Exit::Crashed(format!("{error}")),

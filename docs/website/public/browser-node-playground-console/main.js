@@ -1,7 +1,7 @@
 import init, * as wasm from "./pkg/prns_wasm.js";
-import { BrowserLocalStorageIdentityStore, Prns, Tag } from "./sdk/index.js";
+import { BrowserLocalStorageIdentityStore, Prns, Tag, match, match_into, } from "./sdk/index.js";
 import { BROWSER_PLAYGROUND_LXMF_DELIVERY, LXMF_DELIVERY_DISPLAY_NAME, } from "./lxmf.js";
-import { describeAutoWifiFailure, describeEntropyFailure, describeHostError, describeHostOperationFailure, describeRuntimeRejected, describeStartupFailure, describeUnknownOutcome, describeUsbCloseFailure, describeUsbConnectFailure, hostOperationFailed, } from "./outcomes.js";
+import { describeAutoWifiFailure, describeHostError, describeHostOperationFailure, describeStartupFailure, describeUsbCloseFailure, describeUsbConnectFailure, hostOperationFailed, } from "./outcomes.js";
 import { hex, presentPacketContent } from "./presentation.js";
 import { controlAvailability, sameAutoWifiStatus, } from "./state.js";
 import { PlaygroundView, bindPlaygroundView, renderBindingFailure, } from "./view.js";
@@ -106,21 +106,36 @@ class BrowserPlayground {
         globalThis.addEventListener("pagehide", () => {
             void this.close();
         });
+        match(this.#prns.claimEvents(), {
+            Claimed: (events) => {
+                void this.#consumeEvents(events);
+            },
+            AlreadyClaimed: ({ lane }) => {
+                this.#recordRuntimeFailure("Runtime application event stream unavailable", `${lane} already has a consumer`);
+            },
+        });
+        match(this.#prns.claimDiagnostics(), {
+            Claimed: (diagnostics) => {
+                void this.#consumeDiagnostics(diagnostics);
+            },
+            AlreadyClaimed: ({ lane }) => {
+                this.#recordRuntimeFailure("Runtime diagnostic stream unavailable", `${lane} already has a consumer`);
+            },
+        });
         this.#pollTimer = globalThis.setInterval(() => {
             this.#poll();
         }, POLL_INTERVAL_MS);
         this.#poll();
     }
     #startAutoWifi() {
-        switch (this.#autoWifi.tag) {
-            case "Ready":
-            case "Closed":
-                break;
-            case "Waiting":
-            case "Running":
-                return;
-            default:
-                return unknownState(this.#autoWifi);
+        const available = match_into().from(this.#autoWifi, {
+            Waiting: () => false,
+            Ready: () => true,
+            Running: () => false,
+            Closed: () => true,
+        });
+        if (!available) {
+            return;
         }
         const controller = this.#prns.interfaces.autoWifi.start();
         this.#autoWifi = Tag("Running", {
@@ -139,17 +154,15 @@ class BrowserPlayground {
         const controller = this.#autoWifi.data.controller;
         try {
             const outcome = await controller.close();
-            switch (outcome.tag) {
-                case "Closed":
+            match(outcome, {
+                Closed: () => {
                     this.#autoWifi = Tag("Closed");
                     this.#view.record("Auto Wi-Fi", "Transport closed", null);
-                    break;
-                case "RuntimeRejected":
-                    this.#view.record("Failure", "Auto Wi-Fi close was rejected", describeRuntimeRejected(outcome));
-                    break;
-                default:
-                    this.#view.record("Failure", "Auto Wi-Fi returned an unknown close outcome", describeUnknownOutcome("Auto Wi-Fi close", outcome));
-            }
+                },
+                RuntimeRejected: ({ operation, detail }) => {
+                    this.#view.record("Failure", "Auto Wi-Fi close was rejected", `${operation}: ${detail}`);
+                },
+            });
         }
         catch (error) {
             const outcome = hostOperationFailed("Close Auto Wi-Fi", error);
@@ -160,20 +173,19 @@ class BrowserPlayground {
         this.#syncControls();
     }
     async #connectUsb() {
-        switch (this.#usb.tag) {
-            case "Ready":
-            case "ConnectFailed":
-            case "Closed":
-                break;
-            case "Waiting":
-            case "Unavailable":
-            case "Connecting":
-            case "Connected":
-            case "Closing":
-            case "CloseFailed":
-                return;
-            default:
-                return unknownState(this.#usb);
+        const available = match_into().from(this.#usb, {
+            Waiting: () => false,
+            Ready: () => true,
+            Unavailable: () => false,
+            Connecting: () => false,
+            Connected: () => false,
+            Closing: () => false,
+            ConnectFailed: () => true,
+            Closed: () => true,
+            CloseFailed: () => false,
+        });
+        if (!available) {
+            return;
         }
         this.#usb = Tag("Connecting");
         this.#view.renderUsb(this.#usb);
@@ -191,26 +203,25 @@ class BrowserPlayground {
             this.#syncControls();
             return;
         }
-        switch (outcome.tag) {
-            case "Connected":
-                this.#usb = Tag("Connected", outcome.data);
-                this.#view.record("USB Auto", "Session opened", `Interface ${hex(outcome.data.interfaceId)}`);
-                break;
-            case "HostApiUnavailable":
-            case "PermissionDenied":
-            case "Cancelled":
-            case "AlreadyActive":
-            case "UnsupportedDevice":
-            case "ConnectionFailed":
-            case "RuntimeRejected":
-                this.#usb = Tag("ConnectFailed", outcome);
-                this.#view.record("Failure", "USB Auto did not connect", describeUsbConnectFailure(outcome));
-                break;
-            default:
-                this.#view.record("Failure", "USB Auto returned an unknown connection outcome", describeUnknownOutcome("USB Auto connection", outcome));
-        }
+        match(outcome, {
+            Connected: (session) => {
+                this.#usb = Tag("Connected", session);
+                this.#view.record("USB Auto", "Session opened", `Interface ${hex(session.interfaceId)}`);
+            },
+            HostApiUnavailable: (data) => this.#usbConnectFailed(Tag("HostApiUnavailable", data)),
+            PermissionDenied: (data) => this.#usbConnectFailed(Tag("PermissionDenied", data)),
+            Cancelled: (data) => this.#usbConnectFailed(Tag("Cancelled", data)),
+            AlreadyActive: (data) => this.#usbConnectFailed(Tag("AlreadyActive", data)),
+            UnsupportedDevice: (data) => this.#usbConnectFailed(Tag("UnsupportedDevice", data)),
+            ConnectionFailed: (data) => this.#usbConnectFailed(Tag("ConnectionFailed", data)),
+            RuntimeRejected: (data) => this.#usbConnectFailed(Tag("RuntimeRejected", data)),
+        });
         this.#view.renderUsb(this.#usb);
         this.#syncControls();
+    }
+    #usbConnectFailed(failure) {
+        this.#usb = Tag("ConnectFailed", failure);
+        this.#view.record("Failure", "USB Auto did not connect", describeUsbConnectFailure(failure));
     }
     async #closeUsb() {
         const session = usbClosableSession(this.#usb);
@@ -232,18 +243,17 @@ class BrowserPlayground {
             this.#syncControls();
             return;
         }
-        switch (outcome.tag) {
-            case "Closed":
+        match(outcome, {
+            Closed: () => {
                 this.#usb = Tag("Closed");
                 this.#view.record("USB Auto", "Session closed", null);
-                break;
-            case "CloseFailed":
-                this.#usb = Tag("CloseFailed", { session, failure: outcome });
-                this.#view.record("Failure", "USB Auto close failed", describeUsbCloseFailure(outcome));
-                break;
-            default:
-                this.#view.record("Failure", "USB Auto returned an unknown close outcome", describeUnknownOutcome("USB Auto close", outcome));
-        }
+            },
+            CloseFailed: (data) => {
+                const failure = Tag("CloseFailed", data);
+                this.#usb = Tag("CloseFailed", { session, failure });
+                this.#view.record("Failure", "USB Auto close failed", describeUsbCloseFailure(failure));
+            },
+        });
         this.#view.renderUsb(this.#usb);
         this.#syncControls();
     }
@@ -251,26 +261,37 @@ class BrowserPlayground {
         if ((this.#snapshot?.interfaces.length ?? 0) === 0) {
             return;
         }
-        this.#announceDestination("LXMF delivery", this.#destination);
-        this.#announceDestination("Node page", this.#pageDestination);
+        void this.#announceDestination("LXMF delivery", this.#destination);
+        void this.#announceDestination("Node page", this.#pageDestination);
     }
-    #announceDestination(label, destination) {
-        const outcome = this.#prns.announce(destination);
-        switch (outcome.tag) {
-            case "Queued":
-                this.#view.record("Announce", `${label} announce queued`, `Command ${outcome.data.toString()}`);
-                return;
-            case "HostApiUnavailable":
-            case "EntropySourceFailed":
-            case "InsufficientEntropy":
-                this.#view.record("Failure", `${label} announce was not queued`, describeEntropyFailure(outcome));
-                return;
-            case "RuntimeRejected":
-                this.#view.record("Failure", `${label} announce was rejected`, describeRuntimeRejected(outcome));
-                return;
-            default:
-                this.#view.record("Failure", "Announce returned an unknown outcome", describeUnknownOutcome("announce", outcome));
-        }
+    async #announceDestination(label, destination) {
+        const outcome = await this.#prns.announce(destination);
+        match(outcome, {
+            Announced: () => {
+                this.#view.record("Announce", `${label} announce settled`, null);
+            },
+            Busy: () => {
+                this.#view.record("Failure", `${label} announce was not accepted`, "The pending command limit is full");
+            },
+            NodeStopped: () => {
+                this.#view.record("Failure", `${label} announce was not accepted`, "The node is no longer running");
+            },
+            CommandFailed: ({ detail }) => {
+                this.#view.record("Failure", `${label} announce failed`, detail);
+            },
+            HostApiUnavailable: ({ api }) => {
+                this.#view.record("Failure", `${label} announce was not accepted`, `${api} is unavailable in this browser`);
+            },
+            EntropySourceFailed: ({ detail }) => {
+                this.#view.record("Failure", `${label} announce was not accepted`, detail);
+            },
+            InsufficientEntropy: ({ actual, minimum }) => {
+                this.#view.record("Failure", `${label} announce was not accepted`, `${actual} bytes received; ${minimum} required`);
+            },
+            RuntimeRejected: ({ operation, detail }) => {
+                this.#view.record("Failure", `${label} announce was rejected`, `${operation}: ${detail}`);
+            },
+        });
     }
     #poll() {
         if (this.#closed) {
@@ -303,25 +324,23 @@ class BrowserPlayground {
         this.#recordAutoWifiStatus(status);
     }
     #recordAutoWifiStatus(status) {
-        switch (status.tag) {
-            case "Starting":
+        match(status, {
+            Starting: () => {
                 this.#view.record("Auto Wi-Fi", "Transport starting", null);
-                return;
-            case "Discovering":
-                this.#view.record("Auto Wi-Fi", `Discovery attempt ${status.data.attempt}`, null);
-                return;
-            case "Active":
-                this.#view.record("Auto Wi-Fi", `${status.data.gateways.length} gateway${status.data.gateways.length === 1 ? "" : "s"} active`, status.data.gateways.map((gateway) => gateway.url).join(" · "));
-                return;
-            case "Unavailable":
-                this.#view.record("Failure", "Auto Wi-Fi is unavailable", describeAutoWifiFailure(status.data));
-                return;
-            case "Closed":
+            },
+            Discovering: ({ attempt }) => {
+                this.#view.record("Auto Wi-Fi", `Discovery attempt ${attempt}`, null);
+            },
+            Active: ({ gateways }) => {
+                this.#view.record("Auto Wi-Fi", `${gateways.length} gateway${gateways.length === 1 ? "" : "s"} active`, gateways.map((gateway) => gateway.url).join(" · "));
+            },
+            Unavailable: (failure) => {
+                this.#view.record("Failure", "Auto Wi-Fi is unavailable", describeAutoWifiFailure(failure));
+            },
+            Closed: () => {
                 this.#view.record("Auto Wi-Fi", "Transport closed", null);
-                return;
-            default:
-                this.#view.record("Failure", "Auto Wi-Fi returned an unknown status", describeUnknownOutcome("Auto Wi-Fi status", status));
-        }
+            },
+        });
     }
     #pollUsb() {
         if (this.#usb.tag !== "Connected") {
@@ -337,77 +356,133 @@ class BrowserPlayground {
         this.#view.renderUsb(this.#usb);
     }
     #pollRuntime() {
-        const drained = this.#prns.drainEvents();
-        switch (drained.tag) {
-            case "Drained":
-                for (const event of drained.data) {
-                    this.#recordEvent(event);
-                }
-                break;
-            case "RuntimeRejected":
-                this.#recordRuntimeFailure("Runtime event drain was rejected", describeRuntimeRejected(drained));
-                break;
-            default:
-                this.#recordRuntimeFailure("Runtime returned an unknown event-drain outcome", describeUnknownOutcome("event drain", drained));
-        }
         const captured = this.#prns.snapshot();
-        switch (captured.tag) {
-            case "Captured":
-                this.#snapshot = captured.data;
-                this.#view.renderSnapshot(captured.data);
+        match(captured, {
+            Captured: (snapshot) => {
+                this.#snapshot = snapshot;
+                this.#view.renderSnapshot(snapshot);
                 this.#lastRuntimeFailure = "";
-                return;
-            case "RuntimeRejected":
-                this.#recordRuntimeFailure("Runtime snapshot was rejected", describeRuntimeRejected(captured));
-                return;
-            default:
-                this.#recordRuntimeFailure("Runtime returned an unknown snapshot outcome", describeUnknownOutcome("snapshot", captured));
+            },
+            RuntimeRejected: ({ operation, detail }) => {
+                this.#recordRuntimeFailure("Runtime snapshot was rejected", `${operation}: ${detail}`);
+            },
+        });
+    }
+    async #consumeEvents(events) {
+        try {
+            for await (const event of events) {
+                if (this.#closed) {
+                    return;
+                }
+                this.#recordEvent(event);
+            }
+        }
+        catch (error) {
+            this.#recordRuntimeFailure("Runtime application event stream failed", describeHostError(error));
+        }
+    }
+    async #consumeDiagnostics(diagnostics) {
+        try {
+            for await (const event of diagnostics) {
+                if (this.#closed) {
+                    return;
+                }
+                this.#recordEvent(event);
+            }
+        }
+        catch (error) {
+            this.#recordRuntimeFailure("Runtime diagnostic stream failed", describeHostError(error));
         }
     }
     #recordEvent(event) {
-        switch (event.type) {
-            case "announce":
-                this.#view.record("Network", "Announce received", `${hex(event.destination)} · ${event.hops} hop${event.hops === 1 ? "" : "s"} · interface ${hex(event.sourceInterface)}`);
-                return;
-            case "singleDelivery": {
-                const metadata = `destination ${hex(event.destination)} · interface ${hex(event.sourceInterface)}`;
-                const content = presentPacketContent(event.plaintext);
-                switch (content.tag) {
-                    case "Empty":
+        match(event, {
+            AnnounceHeard: ({ destination, hops, sourceInterface }) => {
+                this.#view.record("Network", "Announce received", `${hex(destination)} · ${hops} hop${hops === 1 ? "" : "s"} · interface ${hex(sourceInterface)}`);
+            },
+            SingleDelivery: ({ destination, plaintext, sourceInterface }) => {
+                const metadata = `destination ${hex(destination)} · interface ${hex(sourceInterface)}`;
+                match(presentPacketContent(plaintext), {
+                    Empty: () => {
                         this.#view.record("Network", "Single packet received", `${metadata}\n(empty payload)`);
-                        return;
-                    case "Text":
-                        this.#view.record("Network", "Single packet received", `${metadata}\n${content.data.value}`);
-                        return;
-                    case "Binary":
-                        this.#view.record("Network", "Binary single packet received", `${metadata}\n${content.data.byteLength} bytes · ${content.data.hexadecimal}`);
-                        return;
-                    default:
-                        this.#view.record("Failure", "Single packet returned an unknown presentation outcome", describeUnknownOutcome("single packet presentation", content));
-                        return;
-                }
-            }
-            case "commandSettled":
-                this.#view.record("Announce", `Command ${event.commandId.toString()} settled`, event.debugSettlement);
-                return;
-            case "routeExpired":
-                this.#view.record("Route", "Route expired", hex(event.destination));
-                return;
-            case "routeEvicted":
-                this.#view.record("Route", "Route evicted", hex(event.destination));
-                return;
-            case "routeInterfaceGone":
-                this.#view.record("Route", "Route interface disappeared", hex(event.destination));
-                return;
-            case "routeDropped":
-                this.#view.record("Route", "Route dropped", hex(event.destination));
-                return;
-            case "unknown":
-                this.#view.record("Runtime", "Runtime emitted an event this playground does not recognize", null);
-                return;
-            default:
-                this.#view.record("Failure", "Runtime returned an unknown event", describeUnknownOutcome("runtime event", event));
-        }
+                    },
+                    Text: ({ value }) => {
+                        this.#view.record("Network", "Single packet received", `${metadata}\n${value}`);
+                    },
+                    Binary: ({ byteLength, hexadecimal }) => {
+                        this.#view.record("Network", "Binary single packet received", `${metadata}\n${byteLength} bytes · ${hexadecimal}`);
+                    },
+                });
+            },
+            Request: ({ destination, linkId, requestId, data }) => {
+                this.#view.record("Network", "Request received", `destination ${hex(destination)} · link ${hex(linkId)} · request ${hex(requestId)} · ${data.length} bytes`);
+            },
+            Response: ({ linkId, requestId, data }) => {
+                this.#view.record("Network", "Response received", `link ${hex(linkId)} · request ${hex(requestId)} · ${data.length} bytes`);
+            },
+            ResponseSegment: ({ linkId, requestId, segmentIndex, totalSegments, data, }) => {
+                this.#view.record("Network", "Response segment received", `link ${hex(linkId)} · request ${hex(requestId)} · segment ${segmentIndex + 1}/${totalSegments} · ${data.length} bytes`);
+            },
+            ResourceAvailable: ({ linkId, hash, resource }) => {
+                this.#view.record("Network", "Resource available", `link ${hex(linkId)} · hash ${hex(hash)} · ${resource.totalBytes} bytes`);
+            },
+            ResourceSegment: ({ linkId, originalHash, segmentIndex, totalSegments, data, }) => {
+                this.#view.record("Network", "Resource segment received", `link ${hex(linkId)} · hash ${hex(originalHash)} · segment ${segmentIndex + 1}/${totalSegments} · ${data.length} bytes`);
+            },
+            ChannelMessage: ({ linkId, messageType, data }) => {
+                this.#view.record("Network", "Channel message received", `link ${hex(linkId)} · ${messageType} · ${data.length} bytes`);
+            },
+            LinkEstablished: ({ linkId, rttMillis }) => {
+                this.#view.record("Network", "Link established", `${hex(linkId)} · ${rttMillis} ms RTT`);
+            },
+            PeerIdentified: ({ linkId, identity }) => {
+                this.#view.record("Network", "Peer identified", `link ${hex(linkId)} · identity ${hex(identity)}`);
+            },
+            LinkClosed: ({ linkId, reason }) => {
+                this.#view.record("Network", "Link closed", `${hex(linkId)} · ${reason}`);
+            },
+            LinkInterfaceMismatch: ({ linkId, attachedInterface, arrivedOn, }) => {
+                this.#view.record("Network", "Packet arrived on the wrong interface", `link ${hex(linkId)} · attached ${hex(attachedInterface)} · arrived ${hex(arrivedOn)}`);
+            },
+            ResourceNeedsDecompression: ({ linkId, hash, stream, uncompressedDataBytes, }) => {
+                this.#view.record("Network", "Resource needs decompression", `link ${hex(linkId)} · hash ${hex(hash)} · ${stream.length} compressed bytes · ${uncompressedDataBytes} uncompressed bytes`);
+            },
+            ResourceAssembled: ({ linkId, originalHash, totalSizeBytes }) => {
+                this.#view.record("Network", "Resource assembled", `link ${hex(linkId)} · hash ${hex(originalHash)} · ${totalSizeBytes} bytes`);
+            },
+            ResourceFailed: ({ linkId, hash, cause }) => {
+                this.#view.record("Failure", "Resource transfer failed", `link ${hex(linkId)} · hash ${hex(hash)} · ${cause}`);
+            },
+            ResourceSendProgress: ({ linkId, transferredBytes, totalBytes, physicalTransferredBytes, segmentIndex, totalSegments, }) => {
+                this.#view.record("Network", "Resource send progress", `link ${hex(linkId)} · ${transferredBytes}/${totalBytes} bytes · ${physicalTransferredBytes} physical bytes · segment ${segmentIndex + 1}/${totalSegments}`);
+            },
+            SelfRatchetRotated: ({ destination }) => {
+                this.#view.record("Runtime", "Self ratchet rotated", hex(destination));
+            },
+            AnnounceHeldDropped: ({ destination, sourceInterface, cause, }) => {
+                this.#view.record("Network", "Held announce dropped", `destination ${hex(destination)} · interface ${hex(sourceInterface)} · ${cause}`);
+            },
+            Delivered: ({ detail }) => {
+                this.#view.record("Network", "Packet delivered", detail);
+            },
+            BackendDiagnostic: ({ kind, detail }) => {
+                this.#view.record("Runtime", kind, detail);
+            },
+            DiagnosticsDropped: ({ count }) => {
+                this.#view.record("Runtime", `${count.toString()} diagnostic event${count === 1n ? "" : "s"} dropped`, null);
+            },
+            RouteExpired: ({ destination }) => {
+                this.#view.record("Route", "Route expired", hex(destination));
+            },
+            RouteEvicted: ({ destination }) => {
+                this.#view.record("Route", "Route evicted", hex(destination));
+            },
+            RouteInterfaceGone: ({ destination }) => {
+                this.#view.record("Route", "Route interface disappeared", hex(destination));
+            },
+            RouteDropped: ({ destination }) => {
+                this.#view.record("Route", "Route dropped", hex(destination));
+            },
+        });
     }
     #recordRuntimeFailure(summary, detail) {
         const key = `${summary}:${detail}`;
@@ -446,40 +521,30 @@ async function boot(document) {
     view.record("Failure", "Browser node could not start", describeStartupFailure(startup));
 }
 function usbSession(state) {
-    switch (state.tag) {
-        case "Connected":
-        case "Closing":
-            return state.data;
-        case "CloseFailed":
-            return state.data.session;
-        case "Waiting":
-        case "Ready":
-        case "Unavailable":
-        case "Connecting":
-        case "ConnectFailed":
-        case "Closed":
-            return undefined;
-        default:
-            return unknownState(state);
-    }
+    return match_into().from(state, {
+        Waiting: () => undefined,
+        Ready: () => undefined,
+        Unavailable: () => undefined,
+        Connecting: () => undefined,
+        Connected: (session) => session,
+        Closing: (session) => session,
+        ConnectFailed: () => undefined,
+        Closed: () => undefined,
+        CloseFailed: ({ session }) => session,
+    });
 }
 function usbClosableSession(state) {
-    switch (state.tag) {
-        case "Connected":
-            return state.data;
-        case "CloseFailed":
-            return state.data.session;
-        case "Waiting":
-        case "Ready":
-        case "Unavailable":
-        case "Connecting":
-        case "Closing":
-        case "ConnectFailed":
-        case "Closed":
-            return undefined;
-        default:
-            return unknownState(state);
-    }
+    return match_into().from(state, {
+        Waiting: () => undefined,
+        Ready: () => undefined,
+        Unavailable: () => undefined,
+        Connecting: () => undefined,
+        Connected: (session) => session,
+        Closing: () => undefined,
+        ConnectFailed: () => undefined,
+        Closed: () => undefined,
+        CloseFailed: ({ session }) => session,
+    });
 }
 function wasmModule() {
     // wasm-bindgen exposes byte newtypes as Uint8Array; this is the one boundary
@@ -488,6 +553,8 @@ function wasmModule() {
         PrnsRuntime: wasm.PrnsRuntime,
         UsbAutoDecoder: wasm.UsbAutoDecoder,
         BluetoothReassembler: wasm.BluetoothReassembler,
+        hostContractAbi: wasm.hostContractAbi,
+        productVersion: wasm.productVersion,
         identitySecretKeyLength: wasm.identitySecretKeyLength,
         bluetoothServiceUuid: wasm.bluetoothServiceUuid,
         bluetoothControlUuid: wasm.bluetoothControlUuid,
@@ -512,8 +579,5 @@ function wasmModule() {
 }
 function webUsbAvailable() {
     return "usb" in navigator;
-}
-function unknownState(_state) {
-    return undefined;
 }
 void boot(document);

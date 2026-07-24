@@ -47,6 +47,7 @@ export type PrnsNodeEvent =
   | { type: 'routeExpired' | 'routeEvicted' | 'routeInterfaceGone' | 'routeDropped'; destination: Buffer }
   | { type: 'delivered' | 'message'; detail: string }
   | { type: 'eventOverflow'; droppedDiagnostics: number }
+  | { type: 'eventBackpressureExceeded'; rejectedEventBytes: number }
   | { type: 'nodeStopped'; cause: string }
 export declare class InterfaceHandle {
   get id(): Buffer
@@ -226,6 +227,9 @@ export interface NodeOptions {
   transport?: boolean
   destinations?: Array<DestinationSpec>
   eventQueueLimit?: number
+  applicationEventQueueLimit?: number
+  retainedEventBytesLimit?: number
+  diagnosticEventQueueLimit?: number
 }
 
 export interface PacketReceipt {

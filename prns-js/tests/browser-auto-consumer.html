@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>RUNNING</title>
+  </head>
+  <body data-outcome="Pending">
+    <script type="module">
+      import { Prns } from "/prns-js/dist/browser/index.js";
+
+      const outcome = await Prns.create({});
+      document.body.dataset.outcome = outcome.tag;
+      document.title = outcome.tag === "Ready" ? "PASS" : "FAIL";
+    </script>
+  </body>
+</html>

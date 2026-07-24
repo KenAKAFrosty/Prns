@@ -1,3 +1,4 @@
+import { match_into } from "./sdk/index.js";
 export function controlAvailability(autoWifi, usb, snapshot) {
     return {
         autoWifiStart: autoWifiStartAvailable(autoWifi),
@@ -8,81 +9,56 @@ export function controlAvailability(autoWifi, usb, snapshot) {
     };
 }
 export function sameAutoWifiStatus(left, right) {
-    switch (left.tag) {
-        case "Starting":
-            return right.tag === "Starting";
-        case "Discovering":
-            return (right.tag === "Discovering" &&
-                left.data.attempt === right.data.attempt);
-        case "Active":
-            return (right.tag === "Active" &&
-                sameGateways(left.data.gateways, right.data.gateways));
-        case "Unavailable":
-            return (right.tag === "Unavailable" &&
-                sameAutoWifiFailure(left.data, right.data));
-        case "Closed":
-            return right.tag === "Closed";
-        default:
-            return sameUnknownAutoWifiStatus(left);
-    }
+    return match_into().from(left, {
+        Starting: () => right.tag === "Starting",
+        Discovering: ({ attempt }) => right.tag === "Discovering" && attempt === right.data.attempt,
+        Active: ({ gateways }) => right.tag === "Active" && sameGateways(gateways, right.data.gateways),
+        Unavailable: (failure) => right.tag === "Unavailable" &&
+            sameAutoWifiFailure(failure, right.data),
+        Closed: () => right.tag === "Closed",
+    });
 }
 function autoWifiStartAvailable(state) {
-    switch (state.tag) {
-        case "Waiting":
-        case "Running":
-            return false;
-        case "Ready":
-        case "Closed":
-            return true;
-        default:
-            return unavailableForUnknownState(state);
-    }
+    return match_into().from(state, {
+        Waiting: () => false,
+        Ready: () => true,
+        Running: () => false,
+        Closed: () => true,
+    });
 }
 function autoWifiCloseAvailable(state) {
-    switch (state.tag) {
-        case "Waiting":
-        case "Ready":
-        case "Closed":
-            return false;
-        case "Running":
-            return true;
-        default:
-            return unavailableForUnknownState(state);
-    }
+    return match_into().from(state, {
+        Waiting: () => false,
+        Ready: () => false,
+        Running: () => true,
+        Closed: () => false,
+    });
 }
 function usbConnectAvailable(state) {
-    switch (state.tag) {
-        case "Ready":
-        case "ConnectFailed":
-        case "Closed":
-            return true;
-        case "Waiting":
-        case "Unavailable":
-        case "Connecting":
-        case "Connected":
-        case "Closing":
-        case "CloseFailed":
-            return false;
-        default:
-            return unavailableForUnknownState(state);
-    }
+    return match_into().from(state, {
+        Waiting: () => false,
+        Ready: () => true,
+        Unavailable: () => false,
+        Connecting: () => false,
+        Connected: () => false,
+        Closing: () => false,
+        ConnectFailed: () => true,
+        Closed: () => true,
+        CloseFailed: () => false,
+    });
 }
 function usbCloseAvailable(state) {
-    switch (state.tag) {
-        case "Connected":
-        case "CloseFailed":
-            return true;
-        case "Waiting":
-        case "Ready":
-        case "Unavailable":
-        case "Connecting":
-        case "Closing":
-        case "ConnectFailed":
-        case "Closed":
-            return false;
-        default:
-            return unavailableForUnknownState(state);
-    }
+    return match_into().from(state, {
+        Waiting: () => false,
+        Ready: () => false,
+        Unavailable: () => false,
+        Connecting: () => false,
+        Connected: () => true,
+        Closing: () => false,
+        ConnectFailed: () => false,
+        Closed: () => false,
+        CloseFailed: () => true,
+    });
 }
 function sameGateways(left, right) {
     if (left.length !== right.length) {
@@ -98,44 +74,26 @@ function sameGateways(left, right) {
     });
 }
 function sameAutoWifiFailure(left, right) {
-    if (left.tag !== right.tag) {
-        return false;
-    }
-    switch (left.tag) {
-        case "HostApiUnavailable":
-            return right.tag === left.tag && left.data.api === right.data.api;
-        case "PermissionDenied":
-            return (right.tag === left.tag &&
-                left.data.interface === right.data.interface &&
-                left.data.stage === right.data.stage &&
-                left.data.detail === right.data.detail);
-        case "AlreadyActive":
-            return (right.tag === left.tag &&
-                left.data.interface === right.data.interface &&
-                left.data.target === right.data.target);
-        case "SelectionIdentityUnavailable":
-        case "DiscoveryFailed":
-            return right.tag === left.tag && left.data.detail === right.data.detail;
-        case "RuntimeRejected":
-            return (right.tag === left.tag &&
-                left.data.operation === right.data.operation &&
-                left.data.detail === right.data.detail);
-        default:
-            return sameUnknownAutoWifiFailure(left);
-    }
+    return match_into().from(left, {
+        HostApiUnavailable: ({ api }) => right.tag === "HostApiUnavailable" && api === right.data.api,
+        PermissionDenied: ({ interface: interfaceName, stage, detail }) => right.tag === "PermissionDenied" &&
+            interfaceName === right.data.interface &&
+            stage === right.data.stage &&
+            detail === right.data.detail,
+        AlreadyActive: ({ interface: interfaceName, target }) => right.tag === "AlreadyActive" &&
+            interfaceName === right.data.interface &&
+            target === right.data.target,
+        SelectionIdentityUnavailable: ({ detail }) => right.tag === "SelectionIdentityUnavailable" &&
+            detail === right.data.detail,
+        DiscoveryFailed: ({ detail }) => right.tag === "DiscoveryFailed" && detail === right.data.detail,
+        RuntimeRejected: ({ operation, detail }) => right.tag === "RuntimeRejected" &&
+            operation === right.data.operation &&
+            detail === right.data.detail,
+    });
 }
 function sameBytes(left, right) {
     if (left.length !== right.length) {
         return false;
     }
     return left.every((byte, index) => byte === right[index]);
-}
-function unavailableForUnknownState(_state) {
-    return false;
-}
-function sameUnknownAutoWifiStatus(_status) {
-    return false;
-}
-function sameUnknownAutoWifiFailure(_failure) {
-    return false;
 }

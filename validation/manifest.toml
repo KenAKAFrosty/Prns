@@ -43,8 +43,6 @@ cargo_manifests = [
     "prns-host/impls/tokio/Cargo.toml",
     "prns-interfaces/impls/embassy/Cargo.toml",
     "prns-interfaces/impls/tokio/Cargo.toml",
-    "prns-host/impls/cooperative/Cargo.toml",
-    "prns-host/impls/tokio/Cargo.toml",
     "prns-napi/Cargo.toml",
     "prns-runtime/core/Cargo.toml",
     "prns-runtime/impls/embassy/Cargo.toml",
@@ -432,6 +430,41 @@ inputs = [
     "prns-interfaces/impls/tokio/src/wifi_direct",
 ]
 artifacts = "validation-artifacts/results/wifi-direct-hwsim"
+
+[[suite]]
+id = "javascript-contract"
+domain = "platform"
+group = "wasm"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "node"
+timeout_seconds = 600
+command = ["npm", "--prefix", "prns-js", "test"]
+inputs = [
+  "prns-js/package.json",
+  "prns-js/package-lock.json",
+  "prns-js/src",
+  "prns-js/tests",
+]
+artifacts = "validation-artifacts/results/javascript-contract"
+
+[[suite]]
+id = "javascript-browser-package"
+domain = "platform"
+group = "wasm"
+tiers = ["release", "scheduled"]
+platform = "linux"
+toolchain = "node"
+timeout_seconds = 1200
+command = ["npm", "--prefix", "prns-js", "run", "test:browser:full"]
+inputs = [
+  "prns-js/package.json",
+  "prns-js/src",
+  "prns-js/tests/browser-auto-consumer.html",
+  "prns-js/tests/browser-smoke.mjs",
+  "prns-wasm/package.json",
+]
+artifacts = "validation-artifacts/results/javascript-browser-package"
 
 [[suite]]
 id = "wasm-casework"

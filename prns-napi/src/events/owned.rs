@@ -1,6 +1,7 @@
 use personal_rns::engine::{LinkClosedReason, RouteRemovalCause};
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::runtime::{Diagnostic, Message, PrnsEvent};
+use prns_host::EventDelivery;
 
 pub enum OwnedEvent {
     Announce {
@@ -111,25 +112,70 @@ pub enum OwnedEvent {
     EventOverflow {
         dropped_diagnostics: u64,
     },
+    EventBackpressureExceeded {
+        rejected_event_bytes: u64,
+    },
     NodeStopped {
         cause: String,
     },
 }
 
 impl OwnedEvent {
-    pub fn droppable(&self) -> bool {
-        !matches!(
+    pub fn application_bytes(&self) -> Option<usize> {
+        match self {
+            Self::SingleDelivery { plaintext, .. } => Some(plaintext.len()),
+            Self::Request { data, .. }
+            | Self::Response { data, .. }
+            | Self::ResponseSegment { data, .. } => Some(data.len()),
+            Self::Resource {
+                hash,
+                metadata,
+                data,
+                ..
+            } => Some(
+                hash.len()
+                    .saturating_add(metadata.as_ref().map_or(0, Vec::len))
+                    .saturating_add(data.len()),
+            ),
+            Self::ResourceSegment {
+                original_hash,
+                metadata,
+                data,
+                ..
+            } => Some(
+                original_hash
+                    .len()
+                    .saturating_add(metadata.as_ref().map_or(0, Vec::len))
+                    .saturating_add(data.len()),
+            ),
+            Self::ChannelMessage {
+                message_type, data, ..
+            } => Some(message_type.len().saturating_add(data.len())),
+            _ => None,
+        }
+    }
+
+    pub fn terminal(&self) -> bool {
+        matches!(
             self,
-            Self::SingleDelivery { .. }
-                | Self::Request { .. }
-                | Self::Response { .. }
-                | Self::ResponseSegment { .. }
-                | Self::Resource { .. }
-                | Self::ResourceSegment { .. }
-                | Self::ChannelMessage { .. }
-                | Self::EventOverflow { .. }
-                | Self::NodeStopped { .. }
+            Self::EventBackpressureExceeded { .. } | Self::NodeStopped { .. }
         )
+    }
+}
+
+impl EventDelivery for OwnedEvent {
+    fn application_bytes(&self) -> Option<usize> {
+        Self::application_bytes(self)
+    }
+
+    fn terminal(&self) -> bool {
+        Self::terminal(self)
+    }
+
+    fn diagnostic_gap(dropped_diagnostics: u64) -> Self {
+        Self::EventOverflow {
+            dropped_diagnostics,
+        }
     }
 }
 

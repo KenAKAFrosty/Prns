@@ -7,6 +7,7 @@ import {
   identitySecretKey,
   interfaceId,
   nowMillis,
+  match_into,
 } from "../../prns-js/src/browser/index.js";
 import type {
   BleIdentity,
@@ -23,6 +24,7 @@ import type {
   RuntimeRegisterSingleDestinationOptions,
   RuntimeRemoveInterfaceInput,
   StableIdentityStore,
+  StreamClaim,
   UsbAutoDecoderBinding,
 } from "../../prns-js/src/browser/index.js";
 import type { PacketContentPresentation } from "../examples/browser-playground/presentation.js";
@@ -111,7 +113,7 @@ async function main(): Promise<void> {
     plaintext,
     sourceInterface,
   });
-  const delivered = await prns.events()[Symbol.asyncIterator]().next();
+  const delivered = await claimed(prns.claimEvents()).next();
   assert(!delivered.done, "single delivery streams");
   const event = delivered.value;
   assert(event.tag === "SingleDelivery", "single delivery is tagged");
@@ -137,7 +139,7 @@ async function main(): Promise<void> {
     { type: "commandSettled", id: 7n, settlement: "Sent" },
     { type: "routeExpired", destination },
   );
-  const diagnostics = prns.diagnostics()[Symbol.asyncIterator]();
+  const diagnostics = claimed(prns.claimDiagnostics());
   const announce = await diagnostics.next();
   const route = await diagnostics.next();
   assert(!announce.done && !route.done, "diagnostics stream");
@@ -176,7 +178,7 @@ async function main(): Promise<void> {
     const malformedPrns = await readyPrns();
     const malformedRuntime = MockRuntime.latest;
     assert(malformedRuntime, "malformed runtime exists");
-    const malformedEvents = malformedPrns.events()[Symbol.asyncIterator]();
+    const malformedEvents = claimed(malformedPrns.claimEvents());
     malformedRuntime.events.push(malformed);
     assert(
       await rejects(malformedEvents.next()),
@@ -197,9 +199,22 @@ async function rejects(operation: Promise<unknown>): Promise<boolean> {
   }
 }
 
+function claimed<Value>(
+  claim: StreamClaim<Value>,
+): AsyncIterableIterator<Value> {
+  return match_into<AsyncIterableIterator<Value>>().from(claim, {
+    Claimed: (stream) => stream,
+    AlreadyClaimed: ({ lane }) => fail(`${lane} was already claimed`),
+  });
+}
+
+function fail(message: string): never {
+  throw new Error(message);
+}
+
 async function validatePresentations(): Promise<void> {
   const presentationUrl = new URL(
-    "../../../../docs/website/public/browser-node-playground-console/presentation.js",
+    "../../../../../docs/website/public/browser-node-playground-console/presentation.js",
     import.meta.url,
   );
   const presentation: {

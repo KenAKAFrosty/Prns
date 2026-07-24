@@ -1,17 +1,14 @@
+import { Tag } from "./casework.js";
+import type { Tag as Tagged } from "./casework.js";
+
 export type AsyncLaneName =
   | "ApplicationEvents"
   | "Diagnostics"
   | "Resource";
 
-export class PrnsConsumerError extends Error {
-  readonly lane: AsyncLaneName;
-
-  constructor(lane: AsyncLaneName) {
-    super(`${lane} already has a consumer`);
-    this.name = "PrnsConsumerError";
-    this.lane = lane;
-  }
-}
+export type StreamClaim<Value> =
+  | Tagged<"Claimed", AsyncIterableIterator<Value>>
+  | Tagged<"AlreadyClaimed", { readonly lane: AsyncLaneName }>;
 
 export type LanePushOutcome = "Queued" | "Delivered" | "Dropped" | "Rejected";
 
@@ -25,7 +22,7 @@ export type AsyncLaneOptions<Value> = {
   readonly onBeforeNext?: () => void;
 };
 
-export class BoundedAsyncLane<Value> implements AsyncIterable<Value> {
+export class BoundedAsyncLane<Value> {
   readonly #options: AsyncLaneOptions<Value>;
   readonly #queued: Array<{ readonly value: Value; readonly bytes: number }> =
     [];
@@ -91,14 +88,16 @@ export class BoundedAsyncLane<Value> implements AsyncIterable<Value> {
     }
   }
 
-  [Symbol.asyncIterator](): AsyncIterator<Value> {
+  claim(): StreamClaim<Value> {
     if (this.#claimed) {
-      throw new PrnsConsumerError(this.#options.name);
+      return Tag("AlreadyClaimed", { lane: this.#options.name });
     }
     this.#claimed = true;
-    return {
+    const iterator: AsyncIterableIterator<Value> = {
       next: () => this.#serializedNext(),
+      [Symbol.asyncIterator]: () => iterator,
     };
+    return Tag("Claimed", iterator);
   }
 
   #serializedNext(): Promise<IteratorResult<Value>> {

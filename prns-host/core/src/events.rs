@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 
 use crate::{
     DestinationHash, IdentityHash, InterfaceId, LinkId, RequestId, RequestPathHash,
-    ResourceAvailable,
+    ResourceAvailable, ResourceHash,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -32,6 +32,33 @@ pub struct ResponseAvailable {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResponseSegmentAvailable {
+    pub link_id: LinkId,
+    pub request_id: RequestId,
+    pub segment_index: u64,
+    pub total_segments: u64,
+    pub data: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResourceSegmentAvailable {
+    pub link_id: LinkId,
+    pub original_hash: ResourceHash,
+    pub segment_index: u64,
+    pub total_segments: u64,
+    pub metadata: Option<Vec<u8>>,
+    pub data: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResourceNeedsDecompression {
+    pub link_id: LinkId,
+    pub hash: ResourceHash,
+    pub stream: Vec<u8>,
+    pub uncompressed_data_bytes: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChannelMessage {
     pub link_id: LinkId,
     pub message_type: String,
@@ -43,7 +70,10 @@ pub enum ApplicationEvent {
     SingleDelivery(SingleDelivery),
     Request(RequestAvailable),
     Response(ResponseAvailable),
+    ResponseSegment(ResponseSegmentAvailable),
     ResourceAvailable(ResourceAvailable),
+    ResourceSegment(ResourceSegmentAvailable),
+    ResourceNeedsDecompression(ResourceNeedsDecompression),
     ChannelMessage(ChannelMessage),
 }
 
@@ -54,7 +84,13 @@ impl ApplicationEvent {
             Self::SingleDelivery(event) => event.plaintext.len(),
             Self::Request(event) => event.data.len(),
             Self::Response(event) => event.data.len(),
+            Self::ResponseSegment(event) => event.data.len(),
             Self::ResourceAvailable(event) => event.metadata.as_ref().map_or(0, Vec::len),
+            Self::ResourceSegment(event) => event
+                .data
+                .len()
+                .saturating_add(event.metadata.as_ref().map_or(0, Vec::len)),
+            Self::ResourceNeedsDecompression(event) => event.stream.len(),
             Self::ChannelMessage(event) => {
                 event.message_type.len().saturating_add(event.data.len())
             }
@@ -88,8 +124,54 @@ pub enum DiagnosticEvent {
         link_id: LinkId,
         reason: LinkClosedReason,
     },
-    Backend {
-        component: String,
+    LinkInterfaceMismatch {
+        link_id: LinkId,
+        attached_interface: InterfaceId,
+        arrived_on: InterfaceId,
+    },
+    ResourceAssembled {
+        link_id: LinkId,
+        original_hash: ResourceHash,
+        total_size_bytes: u64,
+    },
+    ResourceFailed {
+        link_id: LinkId,
+        hash: ResourceHash,
+        cause: String,
+    },
+    ResourceSendProgress {
+        link_id: LinkId,
+        transferred_bytes: u64,
+        total_bytes: u64,
+        physical_transferred_bytes: u64,
+        segment_index: u64,
+        total_segments: u64,
+    },
+    SelfRatchetRotated {
+        destination: DestinationHash,
+    },
+    AnnounceHeldDropped {
+        destination: DestinationHash,
+        source_interface: InterfaceId,
+        cause: String,
+    },
+    Delivered {
+        detail: String,
+    },
+    RouteExpired {
+        destination: DestinationHash,
+    },
+    RouteEvicted {
+        destination: DestinationHash,
+    },
+    RouteInterfaceGone {
+        destination: DestinationHash,
+    },
+    RouteDropped {
+        destination: DestinationHash,
+    },
+    BackendDiagnostic {
+        kind: String,
         detail: String,
     },
 }

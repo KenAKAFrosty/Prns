@@ -1,7 +1,10 @@
 # prns-wasm
 
-Browser and JavaScript-host bindings for Prns. The TypeScript layer is the
-consumer API; the runtime still lives in the shared Rust core.
+The cooperative WebAssembly backend for the unified `personal-rns` JavaScript
+package. Applications normally import `personal-rns` or
+`personal-rns/browser`; the browser entry loads the bundled WebAssembly module
+and presents the same bounded, casework-shaped event contract as the native
+Node.js and Bun entry.
 
 The browser-facing transport helpers live under `prns.interfaces`: WebUSB and
 Bluetooth LE talk to nearby devices, while `prns.interfaces.webSocket.connect(url)`
@@ -10,25 +13,29 @@ Each binary WebSocket message carries one Prns wire frame.
 
 Fallible host operations resolve semantic tagged outcomes. They do not reject
 for expected conditions such as cancellation, unavailable browser APIs,
-duplicate connections, transport failure, or runtime rejection.
+duplicate connections, transport failure, stream ownership conflicts, or
+runtime rejection.
 
 ```ts
-const created = await Prns.create({ wasm });
-if (created.tag !== "Ready") {
-  handleCreationFailure(created);
-  return;
-}
+import { Prns, match } from "personal-rns/browser";
 
-const connected = await created.data.interfaces.webSocket.connect(url);
-if (connected.tag !== "Connected") {
-  handleConnectionFailure(connected);
-  return;
-}
-
-const session = connected.data;
-if (session.status.tag === "Failed") {
-  handleSessionFailure(session.status.data);
-}
+const created = await Prns.create({});
+match(created, {
+  Ready: (node) => {
+    match(node.claimDiagnostics(), {
+      Claimed: (diagnostics) => consumeDiagnostics(diagnostics),
+      AlreadyClaimed: ({ lane }) => reportConsumerConflict(lane),
+    });
+  },
+  WasmLoadFailed: handleWasmLoadFailure,
+  ContractMismatch: handleContractMismatch,
+  IdentityStoreFailed: handleIdentityStoreFailure,
+  StoredIdentityInvalid: handleStoredIdentityInvalid,
+  HostApiUnavailable: handleUnavailableHostApi,
+  EntropySourceFailed: handleEntropyFailure,
+  InsufficientEntropy: handleInsufficientEntropy,
+  RuntimeRejected: handleRuntimeRejection,
+});
 ```
 
 The package exports its zero-dependency `Tag`, `match`, `match_into`, and

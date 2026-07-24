@@ -65,9 +65,17 @@
   },
   "scripts": {
     "clean": "node scripts/clean.mjs",
-    "build": "npm run clean && tsc -p tsconfig.json && tsc -p tsconfig.casework-cjs.json && node scripts/stage.mjs",
+    "build:code": "npm run clean && tsc -p tsconfig.json && tsc -p tsconfig.casework-cjs.json && node scripts/stage-code.mjs",
+    "build:native": "npm run build:code && node scripts/stage.mjs native",
+    "build:browser": "npm run build:code && node scripts/stage.mjs browser",
+    "build": "npm run build:code && node scripts/stage.mjs",
     "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.casework-cjs.json --noEmit",
-    "test": "npm run build && node --test tests/*.test.mjs",
+    "test": "npm run build:code && node --test tests/async-lanes.test.mjs tests/browser-contract.test.mjs tests/casework.test.mjs",
+    "test:browser": "npm run build:browser && node tests/browser-smoke.mjs",
+    "test:browser:full": "npm --prefix ../prns-wasm run build:wasm && npm run test:browser",
+    "test:native": "npm run build:native && node --test tests/native-consumer.test.mjs",
+    "test:native:full": "npm --prefix ../prns-napi run build:debug && npm run test:native",
+    "test:bun": "npm run build:native && bun tests/bun-consumer.ts",
     "pack:check": "npm run build && npm pack --dry-run"
   },
   "devDependencies": {

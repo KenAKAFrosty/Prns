@@ -1,0 +1,79 @@
+import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
+import { createServer } from "node:http";
+import { dirname, extname, resolve } from "node:path";
+import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
+
+const execute = promisify(execFile);
+const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const repositoryRoot = resolve(packageRoot, "..");
+const chromium = [
+  process.env.CHROMIUM_PATH,
+  "/snap/bin/chromium",
+  "/usr/bin/chromium",
+  "/usr/bin/chromium-browser",
+  "/usr/bin/google-chrome",
+].find((candidate) => candidate && existsSync(candidate));
+assert.ok(chromium, "Chromium is required for the browser package smoke");
+
+const contentTypes = new Map([
+  [".html", "text/html; charset=utf-8"],
+  [".js", "text/javascript; charset=utf-8"],
+  [".wasm", "application/wasm"],
+]);
+const server = createServer(async (request, response) => {
+  try {
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    const path = resolve(repositoryRoot, `.${decodeURIComponent(url.pathname)}`);
+    const metadata = await stat(path);
+    assert.ok(path.startsWith(`${repositoryRoot}/`) && metadata.isFile());
+    response.writeHead(200, {
+      "content-type":
+        contentTypes.get(extname(path)) ?? "application/octet-stream",
+    });
+    response.end(await readFile(path));
+  } catch {
+    response.writeHead(404);
+    response.end();
+  }
+});
+
+await new Promise((resolveListening) => {
+  server.listen(0, "127.0.0.1", resolveListening);
+});
+
+try {
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const url =
+    `http://127.0.0.1:${address.port}` +
+    "/prns-js/tests/browser-auto-consumer.html";
+  const { stdout } = await execute(
+    chromium,
+    [
+      "--headless=new",
+      "--no-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--virtual-time-budget=10000",
+      "--dump-dom",
+      url,
+    ],
+    { maxBuffer: 4 * 1_024 * 1_024 },
+  );
+  assert.match(stdout, /<title>PASS<\/title>/);
+  assert.match(stdout, /data-outcome="Ready"/);
+} finally {
+  await new Promise((resolveClosed, rejectClosed) => {
+    server.close((error) => {
+      if (error) {
+        rejectClosed(error);
+      } else {
+        resolveClosed();
+      }
+    });
+  });
+}

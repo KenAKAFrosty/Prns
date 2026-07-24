@@ -315,6 +315,14 @@ export function destinationHashLength() {
 /**
  * @returns {number}
  */
+export function hostContractAbi() {
+    const ret = wasm.hostContractAbi();
+    return ret >>> 0;
+}
+
+/**
+ * @returns {number}
+ */
 export function identitySecretKeyLength() {
     const ret = wasm.identitySecretKeyLength();
     return ret >>> 0;
@@ -326,6 +334,22 @@ export function identitySecretKeyLength() {
 export function interfaceIdLength() {
     const ret = wasm.interfaceIdLength();
     return ret >>> 0;
+}
+
+/**
+ * @returns {string}
+ */
+export function productVersion() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.productVersion();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
 }
 
 /**

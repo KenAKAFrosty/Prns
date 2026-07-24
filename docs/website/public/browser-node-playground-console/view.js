@@ -1,5 +1,5 @@
-import { Tag } from "./sdk/index.js";
-import { describeAutoWifiFailure, describeSessionFailure, describeStartupFailure, describeUnknownOutcome, describeUsbCloseFailure, describeUsbConnectFailure, } from "./outcomes.js";
+import { Tag, match } from "./sdk/index.js";
+import { describeAutoWifiFailure, describeSessionFailure, describeStartupFailure, describeUsbCloseFailure, describeUsbConnectFailure, } from "./outcomes.js";
 import { boundedDetail, formatBitrate, hex } from "./presentation.js";
 const MAX_ACTIVITY_ENTRIES = 120;
 export class PlaygroundView {
@@ -24,78 +24,69 @@ export class PlaygroundView {
         this.elements.destination.textContent = describeStartupFailure(outcome);
     }
     renderAutoWifi(state) {
-        switch (state.tag) {
-            case "Waiting":
+        match(state, {
+            Waiting: () => {
                 setStatus(this.elements.autoWifiState, "Waiting", "idle");
                 this.elements.autoWifiDetail.textContent = "Waiting for the runtime";
                 renderEmpty(this.elements.gatewayList, "No selected gateways yet.");
-                return;
-            case "Ready":
+            },
+            Ready: () => {
                 setStatus(this.elements.autoWifiState, "Ready", "active");
                 this.elements.autoWifiDetail.textContent =
                     "Choose Start Auto Wi-Fi to discover local gateways";
                 renderEmpty(this.elements.gatewayList, "Auto Wi-Fi has not been started.");
-                return;
-            case "Running":
-                this.#renderAutoWifiController(state.data.status);
-                return;
-            case "Closed":
+            },
+            Running: ({ status }) => {
+                this.#renderAutoWifiController(status);
+            },
+            Closed: () => {
                 setStatus(this.elements.autoWifiState, "Closed", "closed");
                 this.elements.autoWifiDetail.textContent = "Discovery and sessions stopped";
                 renderEmpty(this.elements.gatewayList, "Auto Wi-Fi is closed.");
-                return;
-            default: {
-                const detail = describeUnknownOutcome("Auto Wi-Fi display state", state);
-                setStatus(this.elements.autoWifiState, "Protocol mismatch", "failed");
-                this.elements.autoWifiDetail.textContent = detail;
-                renderEmpty(this.elements.gatewayList, detail);
-            }
-        }
+            },
+        });
     }
     renderUsb(status) {
-        switch (status.tag) {
-            case "Waiting":
+        match(status, {
+            Waiting: () => {
                 setStatus(this.elements.usbState, "Waiting", "idle");
                 this.elements.usbDetail.textContent = "Waiting for the runtime";
-                return;
-            case "Ready":
+            },
+            Ready: () => {
                 setStatus(this.elements.usbState, "Ready", "active");
                 this.elements.usbDetail.textContent =
                     "Choose Connect USB when a Hopspot is attached";
-                return;
-            case "Unavailable":
+            },
+            Unavailable: ({ api }) => {
                 setStatus(this.elements.usbState, "Unavailable", "failed");
-                this.elements.usbDetail.textContent = `${status.data.api} is not exposed by this browser`;
-                return;
-            case "Connecting":
+                this.elements.usbDetail.textContent = `${api} is not exposed by this browser`;
+            },
+            Connecting: () => {
                 setStatus(this.elements.usbState, "Selecting device", "working");
                 this.elements.usbDetail.textContent = "Complete the browser device prompt";
-                return;
-            case "Connected":
-                this.#renderUsbSession(status.data);
-                return;
-            case "Closing":
+            },
+            Connected: (session) => {
+                this.#renderUsbSession(session);
+            },
+            Closing: (session) => {
                 setStatus(this.elements.usbState, "Closing", "working");
-                this.elements.usbDetail.textContent = `interface ${hex(status.data.interfaceId)}`;
-                return;
-            case "ConnectFailed":
+                this.elements.usbDetail.textContent = `interface ${hex(session.interfaceId)}`;
+            },
+            ConnectFailed: (failure) => {
                 setStatus(this.elements.usbState, "Not connected", "failed");
-                this.elements.usbDetail.textContent = describeUsbConnectFailure(status.data);
-                return;
-            case "Closed":
+                this.elements.usbDetail.textContent =
+                    describeUsbConnectFailure(failure);
+            },
+            Closed: () => {
                 setStatus(this.elements.usbState, "Closed", "closed");
                 this.elements.usbDetail.textContent = "The USB transport is closed";
-                return;
-            case "CloseFailed":
+            },
+            CloseFailed: ({ failure }) => {
                 setStatus(this.elements.usbState, "Close failed", "failed");
-                this.elements.usbDetail.textContent = describeUsbCloseFailure(status.data.failure);
-                return;
-            default: {
-                const detail = describeUnknownOutcome("USB display status", status);
-                setStatus(this.elements.usbState, "Protocol mismatch", "failed");
-                this.elements.usbDetail.textContent = detail;
-            }
-        }
+                this.elements.usbDetail.textContent =
+                    describeUsbCloseFailure(failure);
+            },
+        });
     }
     renderSnapshot(snapshot) {
         this.elements.interfaceCount.textContent = snapshot.interfaces.length.toString();
@@ -140,69 +131,60 @@ export class PlaygroundView {
         this.elements.activityList.replaceChildren();
     }
     #renderAutoWifiController(status) {
-        switch (status.tag) {
-            case "Starting":
+        match(status, {
+            Starting: () => {
                 setStatus(this.elements.autoWifiState, "Starting", "working");
                 this.elements.autoWifiDetail.textContent = "Preparing local discovery";
                 renderEmpty(this.elements.gatewayList, "Looking for local gateways.");
-                return;
-            case "Discovering":
+            },
+            Discovering: ({ attempt }) => {
                 setStatus(this.elements.autoWifiState, "Discovering", "working");
-                this.elements.autoWifiDetail.textContent = `attempt ${status.data.attempt}`;
+                this.elements.autoWifiDetail.textContent = `attempt ${attempt}`;
                 renderEmpty(this.elements.gatewayList, "Probing localhost and the local network.");
-                return;
-            case "Active":
+            },
+            Active: ({ gateways }) => {
                 setStatus(this.elements.autoWifiState, "Active", "active");
-                this.elements.autoWifiDetail.textContent = `${status.data.gateways.length} selected gateway${status.data.gateways.length === 1 ? "" : "s"}`;
-                this.elements.gatewayList.replaceChildren(...status.data.gateways.map((gateway) => dataCard(gateway.localhost ? "Localhost gateway" : "LAN gateway", [
+                this.elements.autoWifiDetail.textContent = `${gateways.length} selected gateway${gateways.length === 1 ? "" : "s"}`;
+                this.elements.gatewayList.replaceChildren(...gateways.map((gateway) => dataCard(gateway.localhost ? "Localhost gateway" : "LAN gateway", [
                     ["id", gateway.id],
                     ["url", gateway.url],
                     ["interface", hex(gateway.interfaceId)],
                 ])));
-                return;
-            case "Unavailable":
+            },
+            Unavailable: (failure) => {
                 setStatus(this.elements.autoWifiState, "Unavailable", "failed");
-                this.elements.autoWifiDetail.textContent = describeAutoWifiFailure(status.data);
+                this.elements.autoWifiDetail.textContent =
+                    describeAutoWifiFailure(failure);
                 renderEmpty(this.elements.gatewayList, "No gateway is currently attached. Discovery will retry within its bounds.");
-                return;
-            case "Closed":
+            },
+            Closed: () => {
                 setStatus(this.elements.autoWifiState, "Closed", "closed");
                 this.elements.autoWifiDetail.textContent = "Discovery and sessions stopped";
                 renderEmpty(this.elements.gatewayList, "Auto Wi-Fi is closed.");
-                return;
-            default: {
-                const detail = describeUnknownOutcome("Auto Wi-Fi status", status);
-                setStatus(this.elements.autoWifiState, "Protocol mismatch", "failed");
-                this.elements.autoWifiDetail.textContent = detail;
-                renderEmpty(this.elements.gatewayList, detail);
-            }
-        }
+            },
+        });
     }
     #renderUsbSession(session) {
         const interfaceId = hex(session.interfaceId);
-        switch (session.status.tag) {
-            case "Negotiating":
+        match(session.status, {
+            Negotiating: () => {
                 setStatus(this.elements.usbState, "Negotiating", "working");
                 this.elements.usbDetail.textContent = `interface ${interfaceId}`;
-                return;
-            case "Active":
+            },
+            Active: () => {
                 setStatus(this.elements.usbState, "Active", "active");
                 this.elements.usbDetail.textContent = `interface ${interfaceId}`;
-                return;
-            case "Closed":
+            },
+            Closed: () => {
                 setStatus(this.elements.usbState, "Closed", "closed");
                 this.elements.usbDetail.textContent = `interface ${interfaceId}`;
-                return;
-            case "Failed":
+            },
+            Failed: (failure) => {
                 setStatus(this.elements.usbState, "Session failed", "failed");
-                this.elements.usbDetail.textContent = describeSessionFailure(session.status.data);
-                return;
-            default: {
-                const detail = describeUnknownOutcome("USB session status", session.status);
-                setStatus(this.elements.usbState, "Protocol mismatch", "failed");
-                this.elements.usbDetail.textContent = detail;
-            }
-        }
+                this.elements.usbDetail.textContent =
+                    describeSessionFailure(failure);
+            },
+        });
     }
 }
 export function bindPlaygroundView(document) {

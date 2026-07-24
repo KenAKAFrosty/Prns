@@ -1,5 +1,5 @@
 use js_sys::{Object, Reflect, Uint8Array};
-use personal_rns::engine::{FanTarget, Journaled, RouteRemovalCause};
+use personal_rns::engine::{FanTarget, Journaled, LinkClosedReason, RouteRemovalCause};
 use personal_rns::interfaces::bluetooth_auto as bluetooth_contract;
 use personal_rns::interfaces::usb_auto;
 use personal_rns::interfaces::InterfaceKind;
@@ -42,38 +42,52 @@ pub(crate) fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
         }
         Journaled::LinkEstablished(link) => {
             set_str(&object, "type", "linkEstablished");
-            set_str(&object, "detail", &format!("{link:?}"));
+            set_bytes(&object, "linkId", link.link_id.as_bytes());
+            set_u64(&object, "rttMillis", link.rtt_millis);
         }
         Journaled::PeerIdentified { link_id, identity } => {
             set_str(&object, "type", "peerIdentified");
-            set_str(&object, "linkId", &format!("{link_id:?}"));
+            set_bytes(&object, "linkId", link_id.as_bytes());
             set_bytes(&object, "identity", identity.as_bytes());
         }
         Journaled::RequestReceived {
+            destination,
             link_id,
+            request_id,
+            requester,
             path_hash,
+            rtt,
             data,
             ..
         } => {
             set_str(&object, "type", "request");
-            set_str(&object, "linkId", &format!("{link_id:?}"));
-            set_str(&object, "pathHash", &format!("{path_hash:?}"));
+            set_bytes(&object, "destination", destination.as_bytes());
+            set_bytes(&object, "linkId", link_id.as_bytes());
+            set_bytes(&object, "requestId", &request_id.0);
+            if let Some(requester) = requester {
+                set_bytes(&object, "requester", requester.as_bytes());
+            }
+            set_bytes(&object, "pathHash", path_hash.as_bytes());
+            set_u64(&object, "rttMillis", rtt.millis());
             set_bytes(&object, "data", data);
         }
         Journaled::ResponseReceived {
             command_id,
             link_id,
+            request_id,
             data,
             ..
         } => {
             set_str(&object, "type", "response");
             set_u64(&object, "commandId", command_id.0);
-            set_str(&object, "linkId", &format!("{link_id:?}"));
+            set_bytes(&object, "linkId", link_id.as_bytes());
+            set_bytes(&object, "requestId", &request_id.0);
             set_bytes(&object, "data", data);
         }
         Journaled::ResponseSegmentReceived {
             command_id,
             link_id,
+            request_id,
             segment_index,
             total_segments,
             data,
@@ -81,7 +95,8 @@ pub(crate) fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
         } => {
             set_str(&object, "type", "responseSegment");
             set_u64(&object, "commandId", command_id.0);
-            set_str(&object, "linkId", &format!("{link_id:?}"));
+            set_bytes(&object, "linkId", link_id.as_bytes());
+            set_bytes(&object, "requestId", &request_id.0);
             set_u64(&object, "segmentIndex", segment_index);
             set_u64(&object, "totalSegments", total_segments);
             set_bytes(&object, "data", data);
@@ -92,7 +107,7 @@ pub(crate) fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
             data,
         } => {
             set_str(&object, "type", "channelMessage");
-            set_str(&object, "linkId", &format!("{link_id:?}"));
+            set_bytes(&object, "linkId", link_id.as_bytes());
             set_str(&object, "messageType", &format!("{message_type:?}"));
             set_bytes(&object, "data", data);
         }
@@ -120,8 +135,16 @@ pub(crate) fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
         }
         Journaled::LinkClosed { link_id, reason } => {
             set_str(&object, "type", "linkClosed");
-            set_str(&object, "linkId", &format!("{link_id:?}"));
-            set_str(&object, "reason", &format!("{reason:?}"));
+            set_bytes(&object, "linkId", link_id.as_bytes());
+            set_str(
+                &object,
+                "reason",
+                match reason {
+                    LinkClosedReason::Timeout => "timeout",
+                    LinkClosedReason::PeerClosed => "peerClosed",
+                    LinkClosedReason::MalformedRtt => "malformedRtt",
+                },
+            );
         }
         Journaled::LinkInterfaceMismatch {
             link_id,
@@ -129,7 +152,7 @@ pub(crate) fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
             arrived_on,
         } => {
             set_str(&object, "type", "linkInterfaceMismatch");
-            set_str(&object, "linkId", &format!("{link_id:?}"));
+            set_bytes(&object, "linkId", link_id.as_bytes());
             set_bytes(&object, "attachedInterface", attached_interface.as_bytes());
             set_bytes(&object, "arrivedOn", arrived_on.as_bytes());
         }
@@ -140,8 +163,8 @@ pub(crate) fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
             data,
         } => {
             set_str(&object, "type", "resourceReceived");
-            set_str(&object, "linkId", &format!("{link_id:?}"));
-            set_str(&object, "hash", &format!("{hash:?}"));
+            set_bytes(&object, "linkId", link_id.as_bytes());
+            set_bytes(&object, "hash", hash.as_bytes());
             if let Some(metadata) = metadata {
                 set_bytes(&object, "metadata", metadata);
             }
@@ -153,8 +176,8 @@ pub(crate) fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
             cause,
         } => {
             set_str(&object, "type", "resourceFailed");
-            set_str(&object, "linkId", &format!("{link_id:?}"));
-            set_str(&object, "hash", &format!("{hash:?}"));
+            set_bytes(&object, "linkId", link_id.as_bytes());
+            set_bytes(&object, "hash", hash.as_bytes());
             set_str(&object, "cause", &format!("{cause:?}"));
         }
         Journaled::ResourceNeedsDecompression {
@@ -164,8 +187,8 @@ pub(crate) fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
             uncompressed_data_bytes,
         } => {
             set_str(&object, "type", "resourceNeedsDecompression");
-            set_str(&object, "linkId", &format!("{link_id:?}"));
-            set_str(&object, "hash", &format!("{hash:?}"));
+            set_bytes(&object, "linkId", link_id.as_bytes());
+            set_bytes(&object, "hash", hash.as_bytes());
             set_bytes(&object, "stream", stream);
             set_u64(&object, "uncompressedDataBytes", uncompressed_data_bytes);
         }
@@ -178,8 +201,8 @@ pub(crate) fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
             data,
         } => {
             set_str(&object, "type", "resourceSegment");
-            set_str(&object, "linkId", &format!("{link_id:?}"));
-            set_str(&object, "originalHash", &format!("{original_hash:?}"));
+            set_bytes(&object, "linkId", link_id.as_bytes());
+            set_bytes(&object, "originalHash", original_hash.as_bytes());
             set_u64(&object, "segmentIndex", segment_index);
             set_u64(&object, "totalSegments", total_segments);
             if let Some(metadata) = metadata {
@@ -193,8 +216,8 @@ pub(crate) fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
             total_size_bytes,
         } => {
             set_str(&object, "type", "resourceAssembled");
-            set_str(&object, "linkId", &format!("{link_id:?}"));
-            set_str(&object, "originalHash", &format!("{original_hash:?}"));
+            set_bytes(&object, "linkId", link_id.as_bytes());
+            set_bytes(&object, "originalHash", original_hash.as_bytes());
             set_u64(&object, "totalSizeBytes", total_size_bytes);
         }
         Journaled::RouteRemoved { destination, cause } => {

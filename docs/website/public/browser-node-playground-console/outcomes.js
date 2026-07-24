@@ -1,116 +1,70 @@
-import { Tag } from "./sdk/index.js";
+import { Tag, match_into } from "./sdk/index.js";
 import { boundedDetail } from "./presentation.js";
 export function describeStartupFailure(outcome) {
-    switch (outcome.tag) {
-        case "WasmLoadFailed":
-            return `WebAssembly load: ${outcome.data.detail}`;
-        case "LxmfDisplayNameTooLong":
-            return `LXMF display name is ${outcome.data.actual} bytes; the maximum is ${outcome.data.maximum}`;
-        case "HostOperationFailed":
-            return describeHostOperationFailure(outcome);
-        case "HostApiUnavailable":
-            return `${outcome.data.api} is unavailable in this browser`;
-        case "IdentityStoreFailed":
-            return `${outcome.data.operation} identity: ${outcome.data.detail}`;
-        case "StoredIdentityInvalid":
-            return `Stored identity: ${outcome.data.detail}`;
-        case "EntropySourceFailed":
-        case "InsufficientEntropy":
-            return describeEntropyFailure(outcome);
-        case "RuntimeRejected":
-            return describeRuntimeRejected(outcome);
-        default:
-            return describeUnknownOutcome("runtime startup", outcome);
-    }
+    return match_into().from(outcome, {
+        WasmLoadFailed: ({ detail }) => `WebAssembly load: ${detail}`,
+        LxmfDisplayNameTooLong: ({ actual, maximum }) => `LXMF display name is ${actual} bytes; the maximum is ${maximum}`,
+        HostOperationFailed: ({ operation, detail }) => `${operation}: ${detail}`,
+        ContractMismatch: ({ actualAbi, actualProductVersion, requiredAbi, requiredProductVersion, }) => `Host contract ${actualAbi}/${actualProductVersion} ` +
+            `does not match ${requiredAbi}/${requiredProductVersion}`,
+        HostApiUnavailable: ({ api }) => `${api} is unavailable in this browser`,
+        IdentityStoreFailed: ({ operation, detail }) => `${operation} identity: ${detail}`,
+        StoredIdentityInvalid: ({ detail }) => `Stored identity: ${detail}`,
+        EntropySourceFailed: ({ detail }) => detail,
+        InsufficientEntropy: ({ actual, minimum }) => `${actual} bytes received; ${minimum} required`,
+        RuntimeRejected: ({ operation, detail }) => `${operation}: ${detail}`,
+    });
 }
 export function describeUsbConnectFailure(outcome) {
-    switch (outcome.tag) {
-        case "HostOperationFailed":
-            return describeHostOperationFailure(outcome);
-        case "HostApiUnavailable":
-            return `${outcome.data.api} is unavailable in this browser`;
-        case "PermissionDenied":
-            return `${outcome.data.stage}: ${outcome.data.detail}`;
-        case "Cancelled":
-            return `Cancelled during ${outcome.data.stage}`;
-        case "AlreadyActive":
-            return `Already active for ${outcome.data.target}`;
-        case "UnsupportedDevice":
-            return `Selected device lacks ${outcome.data.capability}`;
-        case "ConnectionFailed":
-            return `${outcome.data.stage}: ${outcome.data.detail}`;
-        case "RuntimeRejected":
-            return describeRuntimeRejected(outcome);
-        default:
-            return describeUnknownOutcome("USB Auto connection failure", outcome);
-    }
+    return match_into().from(outcome, {
+        HostOperationFailed: ({ operation, detail }) => `${operation}: ${detail}`,
+        HostApiUnavailable: ({ api }) => `${api} is unavailable in this browser`,
+        PermissionDenied: ({ stage, detail }) => `${stage}: ${detail}`,
+        Cancelled: ({ stage }) => `Cancelled during ${stage}`,
+        AlreadyActive: ({ target }) => `Already active for ${target}`,
+        UnsupportedDevice: ({ capability }) => `Selected device lacks ${capability}`,
+        ConnectionFailed: ({ stage, detail }) => `${stage}: ${detail}`,
+        RuntimeRejected: ({ operation, detail }) => `${operation}: ${detail}`,
+    });
 }
 export function describeUsbCloseFailure(outcome) {
-    switch (outcome.tag) {
-        case "HostOperationFailed":
-            return describeHostOperationFailure(outcome);
-        case "CloseFailed":
-            return outcome.data.causes.map(describeCleanupFailure).join("; ");
-        default:
-            return describeUnknownOutcome("USB Auto close failure", outcome);
-    }
+    return match_into().from(outcome, {
+        HostOperationFailed: ({ operation, detail }) => `${operation}: ${detail}`,
+        CloseFailed: ({ causes }) => causes.map(describeCleanupFailure).join("; "),
+    });
 }
 export function describeAutoWifiFailure(outcome) {
-    switch (outcome.tag) {
-        case "HostApiUnavailable":
-            return `${outcome.data.api} is unavailable in this browser`;
-        case "PermissionDenied":
-            return `${outcome.data.stage}: ${outcome.data.detail}`;
-        case "AlreadyActive":
-            return `Already active for ${outcome.data.target}`;
-        case "SelectionIdentityUnavailable":
-        case "DiscoveryFailed":
-            return outcome.data.detail;
-        case "RuntimeRejected":
-            return describeRuntimeRejected(outcome);
-        default:
-            return describeUnknownOutcome("Auto Wi-Fi failure", outcome);
-    }
+    return match_into().from(outcome, {
+        HostApiUnavailable: ({ api }) => `${api} is unavailable in this browser`,
+        PermissionDenied: ({ stage, detail }) => `${stage}: ${detail}`,
+        AlreadyActive: ({ target }) => `Already active for ${target}`,
+        SelectionIdentityUnavailable: ({ detail }) => detail,
+        DiscoveryFailed: ({ detail }) => detail,
+        RuntimeRejected: ({ operation, detail }) => `${operation}: ${detail}`,
+    });
 }
 export function describeSessionFailure(outcome) {
-    switch (outcome.tag) {
-        case "Disconnected":
-            return outcome.data.detail;
-        case "TransferFailed":
-            return `${outcome.data.direction}: ${outcome.data.detail}`;
-        case "ProtocolViolation":
-            return `${outcome.data.protocol}: ${outcome.data.detail}`;
-        case "UnsupportedFrame":
-            return `${outcome.data.format} frame is unsupported`;
-        case "FrameTooLarge":
-            return `${outcome.data.length} bytes exceeds the ${outcome.data.maximum}-byte limit`;
-        case "OutboundQueueFull":
-            return `${outcome.data.capacity}-frame outbound queue is full`;
-        case "CloseFailed":
-            return outcome.data.causes.map(describeCleanupFailure).join("; ");
-        case "UnexpectedSessionFailure":
-            return outcome.data.detail;
-        case "HostApiUnavailable":
-        case "EntropySourceFailed":
-        case "InsufficientEntropy":
-            return describeEntropyFailure(outcome);
-        case "RuntimeRejected":
-            return describeRuntimeRejected(outcome);
-        default:
-            return describeUnknownOutcome("interface session failure", outcome);
-    }
+    return match_into().from(outcome, {
+        Disconnected: ({ detail }) => detail,
+        TransferFailed: ({ direction, detail }) => `${direction}: ${detail}`,
+        ProtocolViolation: ({ protocol, detail }) => `${protocol}: ${detail}`,
+        UnsupportedFrame: ({ format }) => `${format} frame is unsupported`,
+        FrameTooLarge: ({ length, maximum }) => `${length} bytes exceeds the ${maximum}-byte limit`,
+        OutboundQueueFull: ({ capacity }) => `${capacity}-frame outbound queue is full`,
+        CloseFailed: ({ causes }) => causes.map(describeCleanupFailure).join("; "),
+        UnexpectedSessionFailure: ({ detail }) => detail,
+        HostApiUnavailable: ({ api }) => `${api} is unavailable in this browser`,
+        EntropySourceFailed: ({ detail }) => detail,
+        InsufficientEntropy: ({ actual, minimum }) => `${actual} bytes received; ${minimum} required`,
+        RuntimeRejected: ({ operation, detail }) => `${operation}: ${detail}`,
+    });
 }
 export function describeEntropyFailure(outcome) {
-    switch (outcome.tag) {
-        case "HostApiUnavailable":
-            return `${outcome.data.api} is unavailable in this browser`;
-        case "EntropySourceFailed":
-            return outcome.data.detail;
-        case "InsufficientEntropy":
-            return `${outcome.data.actual} bytes received; ${outcome.data.minimum} required`;
-        default:
-            return describeUnknownOutcome("entropy failure", outcome);
-    }
+    return match_into().from(outcome, {
+        HostApiUnavailable: ({ api }) => `${api} is unavailable in this browser`,
+        EntropySourceFailed: ({ detail }) => detail,
+        InsufficientEntropy: ({ actual, minimum }) => `${actual} bytes received; ${minimum} required`,
+    });
 }
 export function describeRuntimeRejected(outcome) {
     return `${outcome.data.operation}: ${outcome.data.detail}`;
@@ -124,18 +78,11 @@ export function hostOperationFailed(operation, error) {
 export function describeHostOperationFailure(outcome) {
     return `${outcome.data.operation}: ${outcome.data.detail}`;
 }
-export function describeUnknownOutcome(context, _outcome) {
-    return `${context} returned an outcome this playground does not recognize`;
-}
 function describeCleanupFailure(outcome) {
-    switch (outcome.tag) {
-        case "RuntimeDetachFailed":
-            return `runtime detach: ${outcome.data.detail}`;
-        case "TransportCloseFailed":
-            return `transport close: ${outcome.data.detail}`;
-        default:
-            return describeUnknownOutcome("interface cleanup failure", outcome);
-    }
+    return match_into().from(outcome, {
+        RuntimeDetachFailed: ({ detail }) => `runtime detach: ${detail}`,
+        TransportCloseFailed: ({ detail }) => `transport close: ${detail}`,
+    });
 }
 export function describeHostError(error) {
     if (error instanceof DOMException) {
