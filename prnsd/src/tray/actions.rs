@@ -316,8 +316,8 @@ fn windows_terminal_script(context: &TrayActionContext, command: TerminalCommand
         script.push('"');
     }
     script.push_str("\r\nset \"PRNSD_TRAY_EXIT=%ERRORLEVEL%\"\r\n");
-    script.push_str("del /q \"%~f0\"\r\n");
     script.push_str("echo.\r\necho prnsd command exited with status %PRNSD_TRAY_EXIT%.\r\n");
+    script.push_str("(goto) 2>nul & del /q \"%~f0\"\r\n");
     script
 }
 
@@ -351,12 +351,14 @@ fn launch_terminal(script: &Path) -> Result<(), TrayActionError> {
 
 #[cfg(windows)]
 fn launch_terminal(script: &Path) -> Result<(), TrayActionError> {
-    const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
     Command::new("cmd.exe")
-        .args(["/D", "/V:OFF", "/K"])
+        .args(["/D", "/C", "start"])
+        .raw_arg("\"Prns\"")
+        .args(["cmd.exe", "/D", "/V:OFF", "/K"])
         .arg(script)
-        .creation_flags(CREATE_NEW_CONSOLE)
+        .creation_flags(CREATE_NO_WINDOW)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
