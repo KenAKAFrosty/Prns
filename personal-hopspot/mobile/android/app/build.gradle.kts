@@ -108,6 +108,7 @@ tasks.named("preBuild").configure {
 }
 
 tasks.register("assembleProduction") {
+    notCompatibleWithConfigurationCache("signing credentials must not be serialized")
     dependsOn("assembleRelease")
 }
 
