@@ -1,11 +1,20 @@
 use std::path::{Component, Path, PathBuf};
 
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub enum GuideSection {
+    Start,
+    Operate,
+    Contribute,
+    Maintain,
+}
+
 #[derive(Clone, Copy)]
 pub struct RepositoryDocument {
     pub slug: &'static str,
     pub title: &'static str,
+    pub summary: &'static str,
+    pub section: GuideSection,
     pub source_path: &'static str,
-    pub route: &'static str,
     pub source: &'static str,
 }
 
@@ -13,99 +22,113 @@ pub const GUIDE_DOCUMENTS: &[RepositoryDocument] = &[
     RepositoryDocument {
         slug: "getting-started",
         title: "Getting Started",
+        summary: "Run a node, try the Rust API, test a change, and measure performance.",
+        section: GuideSection::Start,
         source_path: "docs/getting-started.md",
-        route: "/guides/getting-started",
         source: include_str!("../../getting-started.md"),
     },
     RepositoryDocument {
         slug: "testing",
         title: "Testing Changes",
+        summary: "Choose the right verification rung and report useful evidence.",
+        section: GuideSection::Start,
         source_path: "docs/testing.md",
-        route: "/guides/testing",
         source: include_str!("../../testing.md"),
     },
     RepositoryDocument {
         slug: "embedded",
         title: "Embedded Prns",
+        summary: "Build a real board target and follow the node recipe into hardware.",
+        section: GuideSection::Start,
         source_path: "docs/embedded.md",
-        route: "/guides/embedded",
         source: include_str!("../../embedded.md"),
     },
     RepositoryDocument {
         slug: "personal-hopspot",
         title: "Personal Hopspot",
+        summary: "Understand the board-backed node application across supported platforms.",
+        section: GuideSection::Operate,
         source_path: "personal-hopspot/README.md",
-        route: "/guides/personal-hopspot",
         source: include_str!("../../../personal-hopspot/README.md"),
     },
     RepositoryDocument {
         slug: "benchmarks",
         title: "Benchmarking Prns",
+        summary: "Run smoke or full measurements and interpret qualified results.",
+        section: GuideSection::Start,
         source_path: "benchmarks/README.md",
-        route: "/guides/benchmarks",
         source: include_str!("../../../benchmarks/README.md"),
     },
     RepositoryDocument {
         slug: "configuration",
         title: "Prnsd Configuration",
+        summary: "Configure interfaces, policy, discovery, and managed live changes.",
+        section: GuideSection::Operate,
         source_path: "docs/prnsd-config.md",
-        route: "/guides/configuration",
         source: include_str!("../../prnsd-config.md"),
     },
     RepositoryDocument {
         slug: "utilities",
         title: "Prnsd Utilities",
+        summary: "Use status, path, probe, identity, copy, and execution commands.",
+        section: GuideSection::Operate,
         source_path: "docs/prnsd-utilities.md",
-        route: "/guides/utilities",
         source: include_str!("../../prnsd-utilities.md"),
     },
     RepositoryDocument {
         slug: "validation",
         title: "Validation",
+        summary: "Understand suite registration, evidence, and release aggregation.",
+        section: GuideSection::Maintain,
         source_path: "docs/validation.md",
-        route: "/guides/validation",
         source: include_str!("../../validation.md"),
     },
     RepositoryDocument {
         slug: "observability",
         title: "Observability",
+        summary: "Operate lifecycle logs, structured events, metrics, and traces.",
+        section: GuideSection::Operate,
         source_path: "docs/observability.md",
-        route: "/guides/observability",
         source: include_str!("../../observability.md"),
     },
     RepositoryDocument {
         slug: "profiling",
         title: "Benchmark Profiling",
+        summary: "Use focused microscopes and platform profilers on measured hot paths.",
+        section: GuideSection::Contribute,
         source_path: "benchmarks/PROFILING.md",
-        route: "/guides/profiling",
         source: include_str!("../../../benchmarks/PROFILING.md"),
     },
     RepositoryDocument {
         slug: "benchmark-methodology",
         title: "Benchmark Qualification",
+        summary: "Apply the methodology and publication rules behind performance claims.",
+        section: GuideSection::Maintain,
         source_path: "benchmarks/CONTRIBUTING.md",
-        route: "/guides/benchmark-methodology",
         source: include_str!("../../../benchmarks/CONTRIBUTING.md"),
     },
     RepositoryDocument {
         slug: "repository-tools",
         title: "Repository Tools",
+        summary: "Discover supported build, device, release, and repository operations.",
+        section: GuideSection::Contribute,
         source_path: "tools/README.md",
-        route: "/guides/repository-tools",
         source: include_str!("../../../tools/README.md"),
     },
     RepositoryDocument {
         slug: "website",
         title: "Website Development",
+        summary: "Run and test the canonical guides through the local Dioxus site.",
+        section: GuideSection::Contribute,
         source_path: "docs/website/README.md",
-        route: "/guides/website",
         source: include_str!("../README.md"),
     },
     RepositoryDocument {
         slug: "release",
         title: "Release Guidance",
+        summary: "Build, validate, sign, and publish through the release-custody path.",
+        section: GuideSection::Maintain,
         source_path: "docs/release.md",
-        route: "/guides/release",
         source: include_str!("../../release.md"),
     },
 ];
@@ -245,9 +268,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn guide_registry_has_unique_slugs_routes_and_sources() {
+    fn guide_registry_has_unique_slugs_and_sources() {
         let mut slugs = HashSet::new();
-        let mut routes = HashSet::new();
+        let mut sections = HashSet::new();
         for document in GUIDE_DOCUMENTS {
             assert!(
                 slugs.insert(document.slug),
@@ -255,20 +278,26 @@ mod tests {
                 document.slug
             );
             assert!(
-                routes.insert(document.route),
-                "duplicate route {}",
-                document.route
-            );
-            assert!(
                 !document.source.trim().is_empty(),
                 "missing {}",
                 document.source_path
             );
-            assert_eq!(
-                guide(document.slug).map(|found| found.route),
-                Some(document.route)
+            assert!(
+                !document.summary.trim().is_empty(),
+                "missing summary for {}",
+                document.slug
             );
+            assert_eq!(
+                guide(document.slug).map(|found| found.source_path),
+                Some(document.source_path)
+            );
+            sections.insert(document.section);
         }
+        assert_eq!(
+            sections.len(),
+            4,
+            "every guide section must contain a guide"
+        );
     }
 
     #[test]
@@ -321,14 +350,14 @@ mod tests {
     fn every_resolved_repository_target_is_a_live_site_route() {
         let guide_routes = GUIDE_DOCUMENTS
             .iter()
-            .map(|document| document.route)
+            .map(|document| format!("/guides/{}", document.slug))
             .collect::<HashSet<_>>();
         for (_, route) in ROUTE_MAPPINGS {
             assert!(
                 matches!(
                     *route,
                     "/" | "/contributing" | "/crates/prnsd" | "/crates/personal-rns"
-                ) || guide_routes.contains(route),
+                ) || guide_routes.contains(*route),
                 "dead local route {route}"
             );
         }

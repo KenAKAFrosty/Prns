@@ -37,10 +37,9 @@ cargo tools release candidate build -- target/candidate preview KEY_ID
 ```
 
 The two forms accept the same task paths and arguments. `cargo tools` does not
-own any task definitions or setup logic; CI and bootstrap documentation can
-therefore continue to use `./tools/prns` without creating a second command
-system. Product and daemon commands remain separately named under
-`cargo prnsd`.
+own task definitions or setup logic, so bootstrap checks and CI can use
+`./tools/prns` without requiring Cargo. Product and daemon commands use the
+separate `cargo prnsd` entrypoint.
 
 The declarative doctor profiles are `getting-started`, `node`, `rust`, `docs`,
 `tests`, and `benchmarks`. Profiles check the commands and important versions

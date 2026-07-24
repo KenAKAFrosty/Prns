@@ -52,7 +52,7 @@ pub const PAGE_PACKED_RESPONSE_LEN: usize = match packed_binary_len(LARGEST_PAGE
 pub const PAGE_RESPONSE_TRANSFER_BYTES: usize =
     sealed_transfer_bytes(RESPONSE_WIRE_OVERHEAD + PAGE_PACKED_RESPONSE_LEN);
 
-// Kept as aliases for storage profiles and downstream code written before the quickstart route.
+// Compatibility aliases for storage profiles and downstream users.
 pub const INDEX_PACKED_RESPONSE_LEN: usize = PAGE_PACKED_RESPONSE_LEN;
 pub const INDEX_RESPONSE_TRANSFER_BYTES: usize = PAGE_RESPONSE_TRANSFER_BYTES;
 
@@ -299,6 +299,9 @@ mod tests {
             assert!(page.contains(expected), "quickstart is missing {expected}");
         }
         assert!(page.contains("same node-recipe API"));
+        assert!(page.contains("source clone or source.zip"));
+        assert!(page.contains("Both built-in page variants include this guide"));
+        assert!(page.contains("compact nodes may provide it without carrying source.zip"));
         assert!(page.contains(INDEX_PATH));
         assert!(QUICKSTART_PAGE.len() < LARGEST_INDEX_PAGE_LEN);
     }

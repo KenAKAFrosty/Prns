@@ -1,10 +1,17 @@
 # Personal Hopspot
 
-Personal Hopspot is one Reticulum-based application rendered across many platforms. It features a status screen and control surface for a Personal Reticulum (Prns) node. It runs on desktop, mobile, and embedded.
+Personal Hopspot is one Reticulum-based node application across desktop, mobile,
+and embedded platforms. It provides a status and control surface where the
+platform has a display or interactive shell.
 
-The `core` directory holds the platform-agnostic screen renderer. Each entry under `desktop/`, `mobile/`, and `embedded/` binds that renderer & control surface (along with Reticulum) to one platform: its display, user input, eligible interfaces, and power source readings. Adding a platform means adding one directory that fills in those platform-specific pieces. 
+The `core` directory holds the platform-agnostic screen renderer. Each entry
+under `desktop/`, `mobile/`, and `embedded/` binds the shared application and
+Reticulum node to the platform's display, input, eligible interfaces, and power
+readings.
 
-> NOTE: Having a screen is not necessary. Embedded devices without screens can still run this Hopspot application and forego the renderer and control surface. This is common, expected, normal behavior, as most embedded devices are used as relays and/or remote-controlled from another Reticulum-based application on a standard host machine. Hopspot is *the* canonical way to run a Prns node on embedded devices of all kinds.
+Personal Hopspot is also the board-backed embedded reference application. A
+screen is optional: headless boards run the node and expose their supported
+remote controls without compiling a display surface.
 
 ## The built-in NomadNet page
 

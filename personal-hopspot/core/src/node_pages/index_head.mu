@@ -21,18 +21,18 @@ Prns is high-performance Reticulum with one engine and one API, the same on embe
 
 `[Open the offline Prns quickstart`:/page/quickstart.mu]
 
-Full guides: source clone or `B6eb`F222 https://prns.dev `f`b
+Full guides: the source repository or `B6eb`F222 https://prns.dev `f`b
 
 >>`!Why Prns?`!
 
 `F6eb•`f `F6eb`!Faster`!`f
 >>>
-2-24× the speed of stock RNS 1.4.0 across every measured scenario, in published, reproducible benchmarks.
+At least 2×, and over 20× in some scenarios, in the published, reproducible benchmark suite.
 
 >>
 `F6eb•`f `F6eb`!Drop-in`!`f
 >>>
-Reads your existing ~/.reticulum config, and stock apps (including the nomadnet you're reading this in) attach to the Prns daemon as their shared instance, unchanged.
+Reads standard Reticulum configuration, and compatible stock apps can attach to prnsd as their shared instance.
 
 >>
 `F6eb•`f `F6eb`!Goes where Python can't`!`f
@@ -42,12 +42,12 @@ The same engine runs on bare-metal microcontrollers, directly inside Android and
 >>
 `F6eb•`f `F6eb`!Ready-to-flash embedded nodes`!`f
 >>>
-The Personal Hopspot firmware ships today for a growing catalog of affordable boards: a complete node with on-device controls, a status screen, and flashing from your browser or the CLI.
+Personal Hopspot provides ready-to-flash nodes for supported boards, with on-device or remote controls and a status screen where the hardware includes one.
 
 >>
 `F6eb•`f `F6eb`!New interfaces for the same network`!`f
 >>>
-Bluetooth LE Auto-interface, Auto USB, improved Wi-Fi Auto-interface, ESP-NOW (2.4 GHz broadcast), Wi-Fi Aware/NAN, and WebSocket server/client (including browser client). All alongside every interface you already run.
+Bluetooth LE Auto, Auto USB, Wi-Fi Auto, ESP-NOW (2.4 GHz broadcast), Wi-Fi Aware/NAN, and WebSocket client/server, including browser clients.
 
 >>
 `F6eb•`f `F6eb`!Built for operators`!`f
@@ -62,7 +62,7 @@ Library-first, with a focus on DX and a deliberate API designed to make it easy 
 >>
 `F6eb•`f `F6eb`!Thoroughly tested`!`f
 >>>
-Byte-for-byte wire parity with the reference implementation, a live interop suite against stock RNS, formal proofs, fuzzing, mutation testing, and sanitizers.
+Wire-compatibility oracles and live interoperability suites against stock RNS, plus formal proofs, fuzzing, mutation testing, and sanitizers.
 
 >>
 `F6eb•`f `F6eb`!Free and open source`!`f

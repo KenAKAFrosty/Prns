@@ -20,9 +20,9 @@ espup install --targets esp32s3
 rustc +esp --version
 ```
 
-The release pipeline uses a stricter isolated installer; these commands are for
-an ordinary developer workstation. Then build the real firmware without
-touching a connected device:
+These commands prepare an ordinary developer workstation. Release builds use
+the repository's isolated, reproducible toolchain task. Build the real firmware
+without touching a connected device:
 
 ```console
 cd personal-hopspot/embedded/esp32
@@ -50,7 +50,7 @@ The important files form a short path:
 5. `personal-hopspot/core/src/node_pages.rs` is the reusable static-route
    example that serves the built-in NomadNet index and quickstart.
 
-The center of the firmware is still a `PrnsNodeRecipe`: transport identity,
+The center of the firmware is a `PrnsNodeRecipe`: transport identity,
 application destinations, storage, routes, interfaces, application state, and
 an event callback. Hardware code supplies those same obligations under
 `no_std`; it does not switch to a separate networking API.
@@ -113,6 +113,6 @@ cross-builds and T-Echo firmware:
 python3 validation/run.py run --suite embedded-builds --platform linux
 ```
 
-Shipping release qualification builds all four boards through the release
-custody path. See the [testing guide](testing.md) before choosing a broader
-lane.
+Release qualification builds the Heltec V4, T-Beam Supreme, XIAO ESP32-C6, and
+T-Echo through the release-custody path. See the
+[testing guide](testing.md) before choosing a broader lane.

@@ -1,9 +1,10 @@
 # Prnsd
 
-`prnsd` is the native Prns daemon and the source checkout's direct replacement
-for the stock Reticulum daemon and command-line utilities. The repository-local
-`cargo prnsd` command builds it, manages one per-user process, and exposes its
-inspection commands.
+`prnsd` is the native Prns daemon. It runs a Reticulum node, supports stock
+Reticulum configuration and shared-instance clients, and provides compatible
+utilities for status, paths, probes, identities, file transfer, and remote
+execution. The repository-local `cargo prnsd` command builds it, manages one
+per-user process, and exposes its inspection commands.
 
 ## Run an isolated node
 
@@ -65,8 +66,9 @@ They are documented in [Prnsd utilities](../docs/prnsd-utilities.md).
 
 ## Configure a node
 
-Prnsd reads the stock config file at the same location as stock RNS. Pass `--config DIR` to select `DIR/config`. The interactive
-editor preserves comments and unrelated settings:
+Prnsd reads the stock Reticulum ConfigObj format and uses the standard
+configuration locations. Pass `--config DIR` to select `DIR/config`. The
+interactive editor preserves comments and unrelated settings:
 
 ```console
 cargo prnsd interfaces --config target/quickstart-node

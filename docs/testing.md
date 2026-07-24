@@ -11,7 +11,7 @@ Run a specific package, test target, or test name while iterating:
 
 ```console
 cargo test --locked -p personal-rns
-cargo test --locked -p prns-core packet_roundtrip
+cargo test --locked -p prns-core type1_header_round_trips
 python3 -m unittest tools.tests.test_task_runner
 ```
 
@@ -56,7 +56,7 @@ Platform selection is explicit:
 Run one affected suite by ID:
 
 ```console
-python3 validation/run.py run --suite runtime-integration
+python3 validation/run.py run --suite integration-capstones
 ```
 
 An explicitly selected incompatible suite still fails closed. A selection that

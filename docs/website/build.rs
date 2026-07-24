@@ -2,13 +2,14 @@ mod build_support;
 
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use build_support::{generate_board_catalog, generate_board_images};
 
 const REPO_VERSION_PATH: &str = "../../VERSION";
 const EMBEDDED_SITE_ENV: &str = "PRNS_EMBEDDED_SITE";
+const SOURCE_ARCHIVE_ENV: &str = "PRNS_SOURCE_ARCHIVE";
 
 fn main() {
     let version = build_version();
@@ -33,11 +34,16 @@ fn main() {
     println!("cargo:rustc-env=PRNS_GIT_COMMIT={commit}");
     println!("cargo:rustc-env=PRNS_GIT_COMMIT_SHORT={short}");
     println!("cargo:rustc-env=PRNS_BUILD_CHANNEL={channel}");
+    println!(
+        "cargo:rustc-env=PRNS_SOURCE_ARCHIVE_AVAILABLE={}",
+        staged_source_available()
+    );
     println!("cargo:rerun-if-env-changed=PRNS_BUILD_VERSION");
     println!("cargo:rerun-if-env-changed=PRNS_BUILD_COMMIT");
     println!("cargo:rerun-if-env-changed=PRNS_BUILD_COMMIT_SHORT");
     println!("cargo:rerun-if-env-changed=PRNS_BUILD_CHANNEL");
     println!("cargo:rerun-if-env-changed={EMBEDDED_SITE_ENV}");
+    println!("cargo:rerun-if-env-changed={SOURCE_ARCHIVE_ENV}");
 
     if let Some(head) = git_output(&["rev-parse", "--git-path", "HEAD"]) {
         println!("cargo:rerun-if-changed={head}");
@@ -49,6 +55,16 @@ fn main() {
             }
         }
     }
+}
+
+fn staged_source_available() -> bool {
+    let Some(archive) = env::var_os(SOURCE_ARCHIVE_ENV) else {
+        return false;
+    };
+    let archive = PathBuf::from(archive);
+    let mut checksum = archive.as_os_str().to_os_string();
+    checksum.push(".sha256");
+    archive.is_file() && Path::new(&checksum).is_file()
 }
 
 fn build_version() -> String {

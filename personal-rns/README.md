@@ -2,9 +2,8 @@
 
 `personal-rns` is the application-facing Rust crate for Prns. It curates the
 pure protocol engine, high-level Tokio and Embassy node runtimes, storage
-profiles, and interface families behind one feature-selected API. It is a
-workspace crate and is not currently published, so depend on it by path from
-this clone.
+profiles, and interface families behind one feature-selected API. Its manifest
+sets `publish = false`, so consumers use a path dependency from the repository.
 
 All public packages use the same engine, release version, and dual
 MIT/Apache-2.0 license. The hosted reference at
@@ -39,12 +38,13 @@ success condition.
 
 | Need | Features |
 | --- | --- |
-| Pure engine and standard-library storage | defaults |
+| Protocol engine and standard-library storage | defaults |
 | Native async application node | `tokio-host` |
 | Embedded async node | `embassy-host` |
 | TCP, UDP, serial, or radio family | its named feature, such as `tcp` |
 | Native automatic media | `wifi-auto`, `usb`, `bluetooth-auto` |
-| Bounded embedded storage profile | `external-alloc` or the relevant storage type |
+| Fixed nRF52840 storage | `Nrf52840` |
+| Fixed ESP32 storage | `external-alloc` with `Esp32C6` or `Esp32S3` |
 
 Interface features select code; they do not silently attach hardware. A node
 recipe's `interfaces` field owns attachment policy.

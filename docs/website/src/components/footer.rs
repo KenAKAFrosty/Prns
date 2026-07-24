@@ -2,8 +2,8 @@ use dioxus::prelude::*;
 use dioxus_i18n::t;
 
 use crate::links::{
-    source_zip_download_name, source_zip_sha256_download_name, BUILD_COMMIT, BUILD_COMMIT_SHORT,
-    BUILD_VERSION, SOURCE_ZIP_HREF, SOURCE_ZIP_SHA256_HREF,
+    source_archive_available, source_zip_download_name, source_zip_sha256_download_name,
+    BUILD_COMMIT, BUILD_COMMIT_SHORT, BUILD_VERSION, SOURCE_ZIP_HREF, SOURCE_ZIP_SHA256_HREF,
 };
 use crate::routes::Route;
 
@@ -13,6 +13,7 @@ use super::PrnsMark;
 pub fn Footer() -> Element {
     let source_zip_download = source_zip_download_name();
     let source_zip_sha256_download = source_zip_sha256_download_name();
+    let source_archive_available = source_archive_available();
 
     rsx! {
         footer { class: "mt-auto border-t border-line/60 bg-surface/35",
@@ -69,11 +70,13 @@ pub fn Footer() -> Element {
                                 class: "hover:text-accent transition-colors",
                                 {t!("nav-api")}
                             }
-                            a {
-                                href: SOURCE_ZIP_HREF,
-                                download: "{source_zip_download}",
-                                class: "font-medium text-accent hover:text-accent-strong transition-colors",
-                                "Source ZIP"
+                            if source_archive_available {
+                                a {
+                                    href: SOURCE_ZIP_HREF,
+                                    download: "{source_zip_download}",
+                                    class: "font-medium text-accent hover:text-accent-strong transition-colors",
+                                    "Source ZIP"
+                                }
                             }
                             a {
                                 href: "https://github.com/KenAKAFrosty/Prns",
@@ -91,14 +94,16 @@ pub fn Footer() -> Element {
                             title: "Prns {BUILD_VERSION} from commit {BUILD_COMMIT}",
                             "Prns "
                             code { class: "font-mono text-paper", "{BUILD_VERSION}" }
-                            " · source "
+                            " · commit "
                             code { class: "font-mono text-paper", "{BUILD_COMMIT_SHORT}" }
-                            " · "
-                            a {
-                                href: SOURCE_ZIP_SHA256_HREF,
-                                download: "{source_zip_sha256_download}",
-                                class: "text-accent hover:text-accent-strong transition-colors",
-                                "SHA-256"
+                            if source_archive_available {
+                                " · "
+                                a {
+                                    href: SOURCE_ZIP_SHA256_HREF,
+                                    download: "{source_zip_sha256_download}",
+                                    class: "text-accent hover:text-accent-strong transition-colors",
+                                    "Source SHA-256"
+                                }
                             }
                         }
                     }

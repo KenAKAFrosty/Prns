@@ -12,8 +12,8 @@
 [![no_std](https://img.shields.io/badge/no__std-core-success.svg)](#embedded-and-no_std)
 
 Prns is a Rust implementation of Reticulum for applications, daemons, browsers,
-phones, and embedded devices. This clone contains the code, essential guides,
-tests, benchmarks, and a locally runnable documentation site.
+phones, and embedded devices. The repository contains the code, essential
+guides, tests, benchmarks, and a locally runnable documentation site.
 
 ## Prerequisites
 
@@ -25,7 +25,8 @@ your machine without installing anything:
 ```
 
 On Windows, use `tools\prns.cmd`. First-time dependency downloads may require
-network access, but the instructions and source material are all in this clone.
+network access, but the instructions and source material are all in the
+repository.
 
 ## What do you want to do?
 
@@ -55,7 +56,7 @@ Run the normal core test path:
 cargo test --locked
 ```
 
-Serve the documentation site from the clone:
+Serve the documentation site locally:
 
 ```console
 cargo run -p docs

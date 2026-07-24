@@ -1,7 +1,10 @@
 use dioxus::prelude::*;
 use dioxus_i18n::t;
 
-use crate::links::{source_zip_download_name, BUILD_COMMIT_SHORT, BUILD_VERSION, SOURCE_ZIP_HREF};
+use crate::links::{
+    source_archive_available, source_zip_download_name, BUILD_COMMIT_SHORT, BUILD_VERSION,
+    SOURCE_ZIP_HREF,
+};
 use crate::routes::Route;
 
 use super::{LanguageSwitcher, PrnsMark};
@@ -9,6 +12,7 @@ use super::{LanguageSwitcher, PrnsMark};
 #[component]
 pub fn TopNav() -> Element {
     let source_zip_download = source_zip_download_name();
+    let source_archive_available = source_archive_available();
 
     rsx! {
         header { class: "border-b border-line/60 backdrop-blur-md sticky top-0 z-30 bg-ink/85",
@@ -38,13 +42,15 @@ pub fn TopNav() -> Element {
                         class: "hover:text-accent transition-colors",
                         {t!("nav-api")}
                     }
-                    a {
-                        href: SOURCE_ZIP_HREF,
-                        download: "{source_zip_download}",
-                        title: "Download Prns {BUILD_VERSION} source snapshot {BUILD_COMMIT_SHORT}",
-                        class: "inline-flex items-center gap-1.5 rounded-full border border-accent/45 px-3 py-1.5 text-accent hover:bg-accent/10 transition-colors",
-                        "Source ZIP"
-                        span { "↓" }
+                    if source_archive_available {
+                        a {
+                            href: SOURCE_ZIP_HREF,
+                            download: "{source_zip_download}",
+                            title: "Download Prns {BUILD_VERSION} source snapshot {BUILD_COMMIT_SHORT}",
+                            class: "inline-flex items-center gap-1.5 rounded-full border border-accent/45 px-3 py-1.5 text-accent hover:bg-accent/10 transition-colors",
+                            "Source ZIP"
+                            span { "↓" }
+                        }
                     }
                     a {
                         href: "https://github.com/KenAKAFrosty/Prns",

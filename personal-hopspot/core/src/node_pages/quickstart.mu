@@ -1,8 +1,11 @@
 `c
 `F6eb`!Prns quickstart`!`f
 
-Small, real paths from a source clone to a running node.
+Developer paths from a Prns source clone or source.zip to a running node.
 `a
+
+These commands run from the repository root unless a section says otherwise.
+Both built-in page variants include this guide; compact nodes may provide it without carrying source.zip.
 
 >>`!Run and inspect a node`!
 
@@ -30,7 +33,7 @@ The smallest board-backed starting point is the XIAO ESP32-C6 Hopspot:
 `F999cd personal-hopspot/embedded/esp32`f
 `F999cargo c6 --locked`f
 
-Its entrypoint calls the shared C6 firmware recipe, which attaches USB, ESP-NOW, and Bluetooth. Read docs/embedded.md and personal-hopspot/README.md in the clone before flashing hardware.
+Its entrypoint calls the shared C6 firmware recipe, which attaches USB, ESP-NOW, and Bluetooth. Read docs/embedded.md and personal-hopspot/README.md in the repository before flashing hardware.
 
 >>`!Test and measure`!
 
@@ -41,7 +44,7 @@ The first is the normal core test path. The second checks the benchmark machiner
 
 >>`!Read the full guides`!
 
-Everything essential is in the source clone. Render the canonical Markdown locally with:
+The repository contains the complete guides. Render their canonical Markdown locally with:
 
 `F999cargo run -p docs`f
 
