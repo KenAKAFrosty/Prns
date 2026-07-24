@@ -14,6 +14,7 @@ from flasher_build_metadata import validate_metadata
 from flasher_reproducibility import validate_report as validate_reproducibility_report
 from flasher_sparse_sizes import build_report as build_sparse_size_report
 from flasher_website_history import allowed_historical_signatures, validate_candidate_history
+from source_snapshot import verify_source_snapshot
 
 
 CLI_TARGETS = {
@@ -32,6 +33,8 @@ REQUIRED_RELEASE_FILES = (
     "LICENSE-MIT",
     "THIRD_PARTY_NOTICES.md",
     "metadata/build.json",
+    "metadata/source.json",
+    "metadata/source-capabilities.json",
     "metadata/sparse-sizes.json",
     "metadata/reproducibility.json",
     "metadata/release-history.json",
@@ -48,6 +51,9 @@ REQUIRED_RELEASE_FILES = (
     "qualification/tester-roster.json",
     "website/index.html",
     "website/assets/flasher/prns-flash.js",
+    "website/source.zip",
+    "website/source.zip.sha256",
+    "website/browser-node-playground-console/pkg/prns_wasm_bg.wasm",
 )
 FORBIDDEN_PRODUCTION_REFERENCES = (
     b"esp-web-install-button",
@@ -178,10 +184,23 @@ def verify_production_website(root: Path) -> None:
     if fixture_key_path.is_file():
         lines = fixture_key_path.read_bytes().splitlines()
         fixture_key_payload = lines[1] if len(lines) > 1 else None
+    source_archive_path = root / "website" / "source.zip"
+    source_archive = (
+        source_archive_path.read_bytes() if source_archive_path.is_file() else None
+    )
     for path in (root / "website").rglob("*"):
         if not path.is_file():
             continue
+        relative = path.relative_to(root / "website").as_posix()
+        if relative in {"source.zip", "source.zip.sha256"}:
+            # The exact commit-bound source archive legitimately contains browser
+            # test fixtures. verify_source_snapshot validates it separately.
+            continue
         value = path.read_bytes()
+        if source_archive:
+            # Source-capable WASM and firmware contain this already-verified repository
+            # archive as inert data. Keep scanning every byte around that exact blob.
+            value = value.replace(source_archive, b"")
         if BROWSER_FIXTURE_MARKER in value or (
             fixture_key_payload and fixture_key_payload in value
         ):
@@ -234,7 +253,6 @@ def verify(arguments: argparse.Namespace) -> dict:
     if not root.is_dir():
         raise ValueError(f"candidate directory does not exist: {root}")
     verify_required_release_files(root)
-    verify_production_website(root)
     validate_candidate_history(root)
     allowed_signatures = allowed_historical_signatures(root)
     signatures = {
@@ -269,6 +287,42 @@ def verify(arguments: argparse.Namespace) -> dict:
         and all(character in "0123456789abcdef" for character in arguments.expected_commit)
     ):
         raise ValueError("expected source commit must be a lowercase full Git commit")
+    verify_source_snapshot(
+        repository=arguments.source_repository,
+        commit=arguments.expected_commit,
+        version=version,
+        archive=root / "website" / "source.zip",
+        checksum=root / "website" / "source.zip.sha256",
+        metadata=root / "metadata" / "source.json",
+    )
+    verify_production_website(root)
+    source_metadata = json.loads(
+        (root / "metadata" / "source.json").read_text(encoding="utf-8")
+    )
+    source_identity = {
+        "route": "/file/source.zip",
+        "checksum_route": "/file/source.zip.sha256",
+        "size": source_metadata["size"],
+        "sha256": source_metadata["sha256"],
+    }
+    source_archive = (root / "website" / "source.zip").read_bytes()
+    browser_wasm = (
+        root
+        / "website"
+        / "browser-node-playground-console"
+        / "pkg"
+        / "prns_wasm_bg.wasm"
+    ).read_bytes()
+    for marker in (
+        source_metadata["sha256"].encode(),
+        arguments.expected_commit[:12].encode(),
+        b"/file/source.zip",
+        b"/file/source.zip.sha256",
+    ):
+        if marker not in browser_wasm:
+            raise ValueError(
+                "source-enabled browser playground does not carry the candidate source identity"
+            )
 
     manifest_path = root / "flash-manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -300,6 +354,35 @@ def verify(arguments: argparse.Namespace) -> dict:
         parts = target.get("parts")
         if not isinstance(parts, list) or not parts:
             raise ValueError(f"candidate target {target.get('board_slug')!r} has no firmware parts")
+        board_slug = target.get("board_slug")
+        source = target.get("source")
+        if board_slug in {"xiao-esp32-c6", "t-echo"} and source is not None:
+            raise ValueError(f"constrained target {board_slug} must not carry source metadata")
+        if (
+            board_slug in {"heltec-v4", "t-beam-supreme"}
+            and source is not None
+            and source != source_identity
+        ):
+            raise ValueError(f"target {board_slug} has the wrong embedded source identity")
+        if source is not None:
+            application = next(
+                (
+                    part
+                    for part in parts
+                    if isinstance(part, dict) and part.get("kind") == "application"
+                ),
+                None,
+            )
+            if (
+                application is None
+                or not isinstance(application.get("size"), int)
+                or application["size"] + 1024 * 1024 > 0x7F0000
+            ):
+                raise ValueError(
+                    f"target {board_slug} does not retain 1 MiB application headroom"
+                )
+        else:
+            application = None
         for part in parts:
             if not isinstance(part, dict):
                 raise ValueError("candidate manifest contains a malformed firmware part")
@@ -319,6 +402,78 @@ def verify(arguments: argparse.Namespace) -> dict:
                 raise ValueError(f"candidate firmware part does not match manifest: {relative}")
             if not hosted.is_file() or hosted.read_bytes() != artifact.read_bytes():
                 raise ValueError(f"hosted firmware part differs from candidate payload: {relative}")
+        if application is not None:
+            application_bytes = safe_path(root, application["path"]).read_bytes()
+            if application_bytes.count(source_archive) != 1:
+                raise ValueError(
+                    f"target {board_slug} must embed the exact source.zip bytes exactly once"
+                )
+            for marker in (
+                version.encode(),
+                source_metadata["sha256"].encode(),
+                arguments.expected_commit[:12].encode(),
+                b"/file/source.zip",
+                b"/file/source.zip.sha256",
+            ):
+                if marker not in application_bytes:
+                    raise ValueError(
+                        f"target {board_slug} source page does not carry the candidate identity"
+                    )
+        elif board_slug in {"heltec-v4", "t-beam-supreme"}:
+            application_part = next(
+                (
+                    part
+                    for part in parts
+                    if isinstance(part, dict) and part.get("kind") == "application"
+                ),
+                None,
+            )
+            if (
+                application_part is not None
+                and source_archive in safe_path(root, application_part["path"]).read_bytes()
+            ):
+                raise ValueError(
+                    f"target {board_slug} claims no source capability but embeds source.zip"
+                )
+
+    capability_metadata = json.loads(
+        (root / "metadata" / "source-capabilities.json").read_text(encoding="utf-8")
+    )
+    if (
+        capability_metadata.get("schema") != 1
+        or capability_metadata.get("version") != version
+        or capability_metadata.get("commit") != arguments.expected_commit
+    ):
+        raise ValueError("source capability metadata has the wrong release identity")
+    capabilities = capability_metadata.get("targets")
+    if not isinstance(capabilities, list) or len(capabilities) != len(SHIPPING_BOARDS):
+        raise ValueError("source capability metadata must cover every shipping board")
+    capability_by_board = {
+        item.get("board_slug"): item for item in capabilities if isinstance(item, dict)
+    }
+    if set(capability_by_board) != SHIPPING_BOARDS:
+        raise ValueError("source capability metadata has a malformed board set")
+    target_by_board = {target["board_slug"]: target for target in targets}
+    for board_slug, capability in capability_by_board.items():
+        expected_nominal = board_slug in {"heltec-v4", "t-beam-supreme"}
+        if capability.get("nominally_capable") is not expected_nominal:
+            raise ValueError(
+                f"{board_slug} source capability metadata disagrees with the board catalog"
+            )
+    for board_slug in {"heltec-v4", "t-beam-supreme"}:
+        capability = capability_by_board[board_slug]
+        status = capability.get("status")
+        if status == "serving":
+            if target_by_board[board_slug].get("source") != source_identity:
+                raise ValueError(f"{board_slug} serving claim disagrees with its target metadata")
+        elif status == "capacity-downgrade":
+            if target_by_board[board_slug].get("source") is not None:
+                raise ValueError(f"{board_slug} downgrade still claims an embedded archive")
+        else:
+            raise ValueError(f"{board_slug} has an invalid source capability status")
+    for board_slug in {"xiao-esp32-c6", "t-echo"}:
+        if capability_by_board[board_slug].get("status") != "absent":
+            raise ValueError(f"{board_slug} must explicitly record source capability as absent")
 
     channel_directory = root / "channels"
     channel_files = sorted(channel_directory.glob("*.json")) if channel_directory.is_dir() else []
@@ -378,6 +533,11 @@ def main() -> int:
     parser.add_argument("--repository-version", type=Path, required=True)
     parser.add_argument("--pinned-key", type=Path, required=True)
     parser.add_argument("--tester-roster", type=Path, required=True)
+    parser.add_argument(
+        "--source-repository",
+        type=Path,
+        default=Path(__file__).resolve().parents[2],
+    )
     parser.add_argument("--identity-output", type=Path)
     arguments = parser.parse_args()
     try:

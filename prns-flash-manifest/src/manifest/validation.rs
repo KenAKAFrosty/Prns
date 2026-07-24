@@ -53,6 +53,16 @@ pub(super) fn validate_target(
                 && target.after_reset.is_none() => {}
         _ => return Err(mismatch(target, "flash/reset parameters")),
     }
+    if let Some(source) = &target.source {
+        if !board.source_archive_capable
+            || source.route != "/file/source.zip"
+            || source.checksum_route != "/file/source.zip.sha256"
+            || source.size == 0
+            || validate_sha256(&source.sha256).is_err()
+        {
+            return Err(mismatch(target, "source archive identity"));
+        }
+    }
     validate_parts(target, version)
 }
 

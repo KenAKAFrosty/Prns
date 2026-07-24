@@ -352,6 +352,7 @@ mod tests {
             preparation_profile: board.preparation_profile.clone(),
             parts,
             provisioning: board.provisioning.clone(),
+            source: None,
         }
         .into_validated(board, &version)
         .expect("typed ESP target");
@@ -383,6 +384,7 @@ mod tests {
                 sha256: sha256_hex(bytes),
             }],
             provisioning: None,
+            source: None,
         }
         .into_validated(board, &version)
         .expect("typed UF2 target");

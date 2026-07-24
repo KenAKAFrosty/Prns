@@ -23,10 +23,17 @@ sys.path.insert(0, str(SCRIPTS))
 from flasher_build_metadata import EXPECTED_TOOLS, EXPECTED_WEB_PACKAGES
 from flasher_reproducibility import SEPARATE_ENVELOPES, payload_identity, payload_manifest
 from flasher_sparse_sizes import build_report as build_sparse_size_report
+from source_snapshot import package_source_snapshot
 
 
-VERSION = "0.2.6"
-SOURCE_COMMIT = "a" * 40
+VERSION = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+SOURCE_COMMIT = subprocess.run(
+    ("git", "rev-parse", "HEAD"),
+    cwd=ROOT,
+    text=True,
+    capture_output=True,
+    check=True,
+).stdout.strip()
 SOURCE_DATE_EPOCH = 1_774_358_400
 ACCEPTANCE_COMMIT = "b" * 40
 KEY_ID = "0123456789ABCDEF"
@@ -104,6 +111,39 @@ class CandidateFixture:
         flasher_bundle = root / "website" / "assets" / "flasher" / "prns-flash.js"
         flasher_bundle.parent.mkdir(parents=True)
         flasher_bundle.write_text("export const fixture = true;\n", encoding="utf-8")
+        browser_wasm = (
+            root
+            / "website"
+            / "browser-node-playground-console"
+            / "pkg"
+            / "prns_wasm_bg.wasm"
+        )
+        browser_wasm.parent.mkdir(parents=True)
+        browser_wasm.write_bytes(b"fixture source-enabled wasm")
+        package_source_snapshot(
+            repository=ROOT,
+            commit=SOURCE_COMMIT,
+            version=VERSION,
+            output=root / "website" / "source.zip",
+            metadata=root / "metadata" / "source.json",
+        )
+        source_metadata = json.loads(
+            (root / "metadata" / "source.json").read_text(encoding="utf-8")
+        )
+        source_identity = {
+            "route": "/file/source.zip",
+            "checksum_route": "/file/source.zip.sha256",
+            "size": source_metadata["size"],
+            "sha256": source_metadata["sha256"],
+        }
+        source_archive = (root / "website" / "source.zip").read_bytes()
+        browser_wasm.write_bytes(
+            b"fixture source-enabled wasm "
+            + source_metadata["sha256"].encode()
+            + b" "
+            + SOURCE_COMMIT[:12].encode()
+            + b" /file/source.zip /file/source.zip.sha256"
+        )
         (root / "LICENSE-APACHE").write_text("fixture Apache license\n", encoding="utf-8")
         (root / "LICENSE-MIT").write_text("fixture MIT license\n", encoding="utf-8")
         (root / "THIRD_PARTY_NOTICES.md").write_text("fixture notices\n", encoding="utf-8")
@@ -115,26 +155,75 @@ class CandidateFixture:
             relative = f"firmware/{board}/application.bin"
             artifact = root / relative
             artifact.parent.mkdir(parents=True, exist_ok=True)
-            artifact.write_bytes(f"firmware-{index}-{board}".encode())
+            payload = f"firmware-{index}-{board}".encode()
+            if board in {"heltec-v4", "t-beam-supreme"}:
+                payload = (
+                    source_archive
+                    + b" "
+                    + VERSION.encode()
+                    + b" "
+                    + source_metadata["sha256"].encode()
+                    + b" "
+                    + SOURCE_COMMIT[:12].encode()
+                    + b" /file/source.zip /file/source.zip.sha256 "
+                    + payload
+                )
+            artifact.write_bytes(payload)
             self.firmware_paths.append(artifact)
             hosted = root / "website" / "releases" / VERSION / relative
             hosted.parent.mkdir(parents=True, exist_ok=True)
             hosted.write_bytes(artifact.read_bytes())
-            targets.append(
-                {
-                    "board_slug": board,
-                    "transport": (
-                        "uf2-mass-storage" if board == "t-echo" else "esp-serial"
-                    ),
-                    "parts": [
-                        {
-                            "path": relative,
-                            "size": artifact.stat().st_size,
-                            "sha256": sha256(artifact),
-                        }
-                    ],
-                }
-            )
+            target = {
+                "board_slug": board,
+                "transport": (
+                    "uf2-mass-storage" if board == "t-echo" else "esp-serial"
+                ),
+                "parts": [
+                    {
+                        "kind": (
+                            "uf2" if board == "t-echo" else "application"
+                        ),
+                        "path": relative,
+                        "size": artifact.stat().st_size,
+                        "sha256": sha256(artifact),
+                    }
+                ],
+            }
+            if board in {"heltec-v4", "t-beam-supreme"}:
+                target["source"] = source_identity
+            targets.append(target)
+        write_json(
+            root / "metadata" / "source-capabilities.json",
+            {
+                "schema": 1,
+                "version": VERSION,
+                "commit": SOURCE_COMMIT,
+                "targets": [
+                    {
+                        "schema": 1,
+                        "board_slug": board,
+                        "nominally_capable": board
+                        in {"heltec-v4", "t-beam-supreme"},
+                        "status": (
+                            "serving"
+                            if board in {"heltec-v4", "t-beam-supreme"}
+                            else "absent"
+                        ),
+                        "source": (
+                            source_identity
+                            if board in {"heltec-v4", "t-beam-supreme"}
+                            else None
+                        ),
+                    }
+                    for board in (
+                        "heltec-v4",
+                        "t-beam-supreme",
+                        "xiao-esp32-c6",
+                        "t-echo",
+                    )
+                ],
+            },
+        )
         self.manifest = {
             "schema": 2,
             "release": {
@@ -366,6 +455,33 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         result = self.validate_unsigned()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("SHA-256 mismatch", result.stderr)
+
+    def test_hosted_source_snapshot_is_bound_to_the_exact_commit(self) -> None:
+        archive = self.fixture.root / "website" / "source.zip"
+        archive.write_bytes(archive.read_bytes() + b"tampered")
+        checksum = self.fixture.root / "website" / "source.zip.sha256"
+        checksum.write_text(
+            f"{sha256(archive)}  source.zip\n",
+            encoding="utf-8",
+        )
+        report_path = self.fixture.root / "metadata" / "reproducibility.json"
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        report["payload"] = payload_identity(
+            payload_manifest(self.fixture.root, exclude_report=True)
+        )
+        write_json(report_path, report)
+        self.fixture.write_sums()
+
+        result = self.validate_unsigned()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("differs from the exact stamped Git commit", result.stderr)
+
+    def test_hosted_source_snapshot_checksum_cannot_go_stale(self) -> None:
+        checksum = self.fixture.root / "website" / "source.zip.sha256"
+        checksum.write_text(f"{'0' * 64}  source.zip\n", encoding="utf-8")
+        result = self.validate_unsigned()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("checksum is malformed or stale", result.stderr)
 
     def test_fake_signer_injection_signs_documents_and_hosted_copies(self) -> None:
         result = self.sign_candidate()

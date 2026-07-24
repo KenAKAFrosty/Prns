@@ -372,6 +372,33 @@ async fn serve_site_connection(
     if is_captive_probe_path(path) {
         return send_captive_portal_redirect(socket, is_head).await;
     }
+    #[cfg(feature = "source-archive")]
+    if let Some((body, content_type)) = match path {
+        "/source.zip" => Some((
+            personal_hopspot_core::node_pages::SOURCE_ARCHIVE,
+            "application/zip",
+        )),
+        "/source.zip.sha256" => Some((
+            personal_hopspot_core::node_pages::SOURCE_CHECKSUM,
+            "text/plain; charset=utf-8",
+        )),
+        _ => None,
+    } {
+        return send_site_response(
+            socket,
+            SiteResponse {
+                status: "200 OK",
+                content_type,
+                body,
+                head_only: is_head,
+                content_encoding: None,
+                vary_accept_encoding: false,
+                cache_control: "no-cache",
+                content_disposition: site_content_disposition(path).as_deref(),
+            },
+        )
+        .await;
+    }
     let Some(asset) = find_site_asset(path) else {
         return send_site_response(
             socket,
@@ -536,13 +563,7 @@ fn site_content_disposition(path: &str) -> Option<alloc::string::String> {
 
 #[cfg(feature = "wifi-auto")]
 fn source_zip_download_name() -> alloc::string::String {
-    let commit = option_env!("HOPSPOT_BUILD_COMMIT_SHORT").unwrap_or("unknown");
-    let commit = commit.trim();
-    if commit.is_empty() || commit == "unknown" {
-        alloc::string::String::from("prns-source.zip")
-    } else {
-        alloc::format!("prns-source-{commit}.zip")
-    }
+    alloc::string::String::from("source.zip")
 }
 
 #[cfg(feature = "wifi-auto")]

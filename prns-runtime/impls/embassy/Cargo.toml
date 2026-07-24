@@ -21,6 +21,7 @@ rnx = ["alloc", "prns-runtime/rnx"]
 external-alloc = ["alloc", "prns-runtime/external-alloc"]
 std = ["alloc", "prns-runtime/std"]
 log = ["dep:log"]
+large-static-responses = ["prns-core/large-static-responses"]
 
 [dependencies]
 prns-core = { path = "../../../prns-core", default-features = false, features = ["embassy-host"] }

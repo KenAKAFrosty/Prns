@@ -19,6 +19,11 @@ use super::request_router::{
 enum RunnerResponse {
     Buffered(RespondData),
     StaticBytes(&'static [u8]),
+    #[cfg(feature = "large-static-responses")]
+    StaticFile {
+        name: &'static str,
+        bytes: &'static [u8],
+    },
 }
 
 impl ResponseSink for RunnerResponse {
@@ -28,6 +33,8 @@ impl ResponseSink for RunnerResponse {
                 .extend_from_slice(bytes)
                 .map_err(|()| ResponseCapacityExceeded),
             RunnerResponse::StaticBytes(_) => Err(ResponseCapacityExceeded),
+            #[cfg(feature = "large-static-responses")]
+            RunnerResponse::StaticFile { .. } => Err(ResponseCapacityExceeded),
         }
     }
 
@@ -35,6 +42,8 @@ impl ResponseSink for RunnerResponse {
         match self {
             RunnerResponse::Buffered(body) => ResponseSink::put_bytes(body, bytes),
             RunnerResponse::StaticBytes(_) => Err(ResponseCapacityExceeded),
+            #[cfg(feature = "large-static-responses")]
+            RunnerResponse::StaticFile { .. } => Err(ResponseCapacityExceeded),
         }
     }
 
@@ -42,6 +51,21 @@ impl ResponseSink for RunnerResponse {
         match self {
             RunnerResponse::Buffered(body) if body.is_empty() => {
                 *self = RunnerResponse::StaticBytes(bytes);
+                Ok(())
+            }
+            _ => Err(ResponseCapacityExceeded),
+        }
+    }
+
+    #[cfg(feature = "large-static-responses")]
+    fn put_static_file(
+        &mut self,
+        name: &'static str,
+        bytes: &'static [u8],
+    ) -> Result<(), ResponseCapacityExceeded> {
+        match self {
+            RunnerResponse::Buffered(body) if body.is_empty() => {
+                *self = RunnerResponse::StaticFile { name, bytes };
                 Ok(())
             }
             _ => Err(ResponseCapacityExceeded),
@@ -148,6 +172,10 @@ async fn dispatch<
             RunnerResponse::StaticBytes(bytes) => {
                 commands.respond_static_bytes(responder, bytes);
             }
+            #[cfg(feature = "large-static-responses")]
+            RunnerResponse::StaticFile { name, bytes } => {
+                commands.respond_static_file(responder, name, bytes);
+            }
         },
         Err(Decline::Ignore | Decline::ResponseTooLarge) => {}
         Err(Decline::CloseLink) => {
@@ -197,6 +225,18 @@ mod tests {
     struct StaticPage;
     struct StaticRoutes;
     static PAGE: [u8; 1200] = [0x21; 1200];
+
+    #[cfg(feature = "large-static-responses")]
+    #[test]
+    fn static_file_sink_preserves_filename_and_borrowed_bytes() {
+        let mut response = RunnerResponse::Buffered(RespondData::new());
+        ResponseSink::put_static_file(&mut response, "source.zip", &PAGE).unwrap();
+        let RunnerResponse::StaticFile { name, bytes } = response else {
+            panic!("static file response");
+        };
+        assert_eq!(name, "source.zip");
+        assert_eq!(bytes.as_ptr(), PAGE.as_ptr());
+    }
 
     impl RequestRoute<()> for StaticPage {
         const PATH: &'static str = "/page";

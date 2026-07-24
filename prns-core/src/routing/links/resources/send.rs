@@ -3,6 +3,7 @@
 use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis, Journaled};
 use crate::engine::{RespondFailure, SendResourceFailure, SendResourceRejection, Settlement};
 use crate::interfaces::InterfaceId;
+use crate::rncp::write_file_metadata;
 use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
 use crate::routing::ingress::{DataPacket, IgnoreReason, IngestPacketOutcome};
 use crate::routing::links::data::LINK_TRAFFIC_TIMEOUT_FACTOR;
@@ -17,6 +18,7 @@ use crate::routing::links::request::{
 use crate::routing::links::resources::advertisement::{
     write_hashmap_update_plaintext, ResourceAdvertisement, ResourceFlags,
 };
+use crate::routing::links::resources::assembly::StaticResponseContinuation;
 use crate::routing::links::resources::build_outgoing::{
     build_outgoing_resource_enveloped, seal_staged_resource, winning_candidate,
     BuildOutgoingResourceError, SealedStagedResource, STAGED_STREAM_OFFSET,
@@ -41,6 +43,10 @@ use crate::storage::StorageLayout;
 #[cfg(test)]
 use crate::wire::DestinationHash;
 use crate::wire::{DestinationType, PacketType, WireContext};
+
+/// Automatic static responses keep no more than this much plaintext in one resource window.
+pub const STATIC_RESPONSE_SEGMENT_BYTES: usize = 256 * 1024;
+const STATIC_FILE_METADATA_BYTES: usize = 6 + 2 + u8::MAX as usize;
 
 /// A pool worker's finished seal, exactly as it returns: the identity that finds the row, the bytes that land on it, and the outcome that gates them.
 pub struct OffloadedStagedSeal<'a> {
@@ -86,6 +92,18 @@ pub(crate) fn resource_settlement(
     }
 }
 
+fn static_response_stream_capacity(transfer_capacity: usize) -> usize {
+    let mut stream_bytes = STATIC_RESPONSE_SEGMENT_BYTES
+        .min(crate::routing::links::resources::MAX_EFFICIENT_SIZE)
+        .min(transfer_capacity.saturating_sub(48));
+    while stream_bytes > 0
+        && crate::routing::links::resources::sealed_transfer_bytes(stream_bytes) > transfer_capacity
+    {
+        stream_bytes -= 1;
+    }
+    stream_bytes
+}
+
 impl<S: StorageLayout> EngineState<S> {
     pub fn ingest_send_resource_into<F>(
         &mut self,
@@ -117,14 +135,20 @@ impl<S: StorageLayout> EngineState<S> {
     where
         F: FnMut(&mut [u8]),
     {
-        let crate::engine::RespondPayload::StaticBytes(data) = &respond.payload else {
-            sink(EngineReaction::Journaled(Journaled::CommandSettled {
-                id,
-                settlement: Settlement::Respond(Err(crate::engine::RespondFailure::WriteFailed)),
-            }));
-            return crate::engine::WakeSchedules::UNCHANGED;
+        let (data, file_name): (&'static [u8], Option<&'static str>) = match &respond.payload {
+            crate::engine::RespondPayload::StaticBytes(data) => (*data, None),
+            #[cfg(any(feature = "large-static-responses", test))]
+            crate::engine::RespondPayload::StaticFile { name, bytes } => (*bytes, Some(*name)),
+            crate::engine::RespondPayload::Packed(_) => {
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id,
+                    settlement: Settlement::Respond(Err(
+                        crate::engine::RespondFailure::WriteFailed,
+                    )),
+                }));
+                return crate::engine::WakeSchedules::UNCHANGED;
+            }
         };
-        let data = *data;
         let response_envelope = response_envelope_prefix(&respond.request_id);
         let mut envelope = [0u8; RESPONSE_WIRE_OVERHEAD + MAX_PACKED_BINARY_HEADER_LEN];
         envelope[..RESPONSE_WIRE_OVERHEAD].copy_from_slice(&response_envelope);
@@ -138,23 +162,175 @@ impl<S: StorageLayout> EngineState<S> {
             return crate::engine::WakeSchedules::UNCHANGED;
         };
         let envelope_len = RESPONSE_WIRE_OVERHEAD + binary_header_len;
-        self.ingest_send_resource_segment_enveloped(
+        let mut metadata_buffer = [0u8; STATIC_FILE_METADATA_BYTES];
+        let metadata = match file_name {
+            Some(name) => {
+                let Ok(packed_len) = write_file_metadata(name.as_bytes(), &mut metadata_buffer)
+                else {
+                    sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                        id,
+                        settlement: Settlement::Respond(Err(
+                            crate::engine::RespondFailure::WriteFailed,
+                        )),
+                    }));
+                    return crate::engine::WakeSchedules::UNCHANGED;
+                };
+                ResourceMetadata::Packed(&metadata_buffer[..packed_len])
+            }
+            None => ResourceMetadata::None,
+        };
+        let segment_stream_bytes =
+            static_response_stream_capacity(self.outgoing_resources.transfer_capacity());
+        let first_overhead = envelope_len + metadata.block_len();
+        if segment_stream_bytes <= first_overhead {
+            sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                id,
+                settlement: Settlement::Respond(Err(crate::engine::RespondFailure::Resource(
+                    SendResourceFailure::Rejected(SendResourceRejection::Build(
+                        BuildOutgoingResourceError::DataTooLarge,
+                    )),
+                ))),
+            }));
+            return crate::engine::WakeSchedules::UNCHANGED;
+        }
+        let first_bytes = data.len().min(segment_stream_bytes - first_overhead);
+        let remaining = data.len() - first_bytes;
+        let following_segments = remaining.div_ceil(segment_stream_bytes);
+        let Ok(total_segments) = u64::try_from(following_segments + 1) else {
+            sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                id,
+                settlement: Settlement::Respond(Err(crate::engine::RespondFailure::WriteFailed)),
+            }));
+            return crate::engine::WakeSchedules::UNCHANGED;
+        };
+        if total_segments > 1 && !self.outgoing_assemblies.supports_static_continuations() {
+            sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                id,
+                settlement: Settlement::Respond(Err(crate::engine::RespondFailure::Resource(
+                    SendResourceFailure::Rejected(SendResourceRejection::Build(
+                        BuildOutgoingResourceError::DataTooLarge,
+                    )),
+                ))),
+            }));
+            return crate::engine::WakeSchedules::UNCHANGED;
+        }
+        let Ok(total_data_bytes) = u64::try_from(envelope_len + data.len()) else {
+            sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                id,
+                settlement: Settlement::Respond(Err(crate::engine::RespondFailure::WriteFailed)),
+            }));
+            return crate::engine::WakeSchedules::UNCHANGED;
+        };
+        let wake = self.ingest_send_resource_segment_enveloped(
             &ResourceSend {
                 id,
                 link_id: respond.link_id,
                 body: ResourceBody {
-                    data,
+                    data: &data[..first_bytes],
                     compressed_candidate: None,
-                    metadata: ResourceMetadata::None,
+                    metadata,
                 },
                 correlation: ResourceCorrelation::Response(respond.request_id),
             },
-            ResourceSegment::whole((envelope_len + data.len()) as u64),
+            ResourceSegment {
+                index: 1,
+                total_segments,
+                total_data_bytes,
+            },
             &envelope[..envelope_len],
             now,
             fill_entropy,
             sink,
-        )
+        );
+        if total_segments > 1 {
+            let metadata_packed_len = match metadata {
+                ResourceMetadata::Packed(packed) => packed.len() as u32,
+                ResourceMetadata::None | ResourceMetadata::SentInFirstSegment { .. } => 0,
+            };
+            let _ = self.outgoing_assemblies.set_static_continuation(
+                &respond.link_id,
+                StaticResponseContinuation {
+                    command_id: id,
+                    request_id: respond.request_id,
+                    bytes: data,
+                    next_offset: first_bytes,
+                    next_segment_index: 2,
+                    total_segments,
+                    total_data_bytes,
+                    metadata_packed_len,
+                    segment_stream_bytes,
+                },
+            );
+        }
+        wake
+    }
+
+    pub(crate) fn continue_static_response_into<F>(
+        &mut self,
+        link_id: &LinkId,
+        now: InstantMillis,
+        fill_entropy: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> crate::engine::WakeSchedules
+    where
+        F: FnMut(&mut [u8]),
+    {
+        let Some(mut continuation) = self.outgoing_assemblies.static_continuation(link_id) else {
+            return crate::engine::WakeSchedules::UNCHANGED;
+        };
+        let end = continuation
+            .next_offset
+            .saturating_add(continuation.segment_stream_bytes)
+            .min(continuation.bytes.len());
+        if end <= continuation.next_offset
+            || continuation.next_segment_index > continuation.total_segments
+        {
+            self.outgoing_assemblies.clear(link_id);
+            sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                id: continuation.command_id,
+                settlement: Settlement::Respond(Err(crate::engine::RespondFailure::Resource(
+                    SendResourceFailure::Sequencing,
+                ))),
+            }));
+            return crate::engine::WakeSchedules::UNCHANGED;
+        }
+        let metadata = if continuation.metadata_packed_len == 0 {
+            ResourceMetadata::None
+        } else {
+            ResourceMetadata::SentInFirstSegment {
+                packed_len: continuation.metadata_packed_len,
+            }
+        };
+        let wake = self.ingest_send_resource_segment_into(
+            &ResourceSend {
+                id: continuation.command_id,
+                link_id: *link_id,
+                body: ResourceBody {
+                    data: &continuation.bytes[continuation.next_offset..end],
+                    compressed_candidate: None,
+                    metadata,
+                },
+                correlation: ResourceCorrelation::Response(continuation.request_id),
+            },
+            ResourceSegment {
+                index: continuation.next_segment_index,
+                total_segments: continuation.total_segments,
+                total_data_bytes: continuation.total_data_bytes,
+            },
+            now,
+            fill_entropy,
+            sink,
+        );
+        continuation.next_offset = end;
+        continuation.next_segment_index += 1;
+        if self.outgoing_resources.is_empty() {
+            self.outgoing_assemblies.clear(link_id);
+        } else {
+            let _ = self
+                .outgoing_assemblies
+                .set_static_continuation(link_id, continuation);
+        }
+        wake
     }
 
     /// Segment 1 of a split records its hash as the chain's `original_hash`; every later segment re-advertises it, so the host threads no hashes of its own.
@@ -473,6 +649,7 @@ impl<S: StorageLayout> EngineState<S> {
             id,
             link_id,
             correlation,
+            last_segment,
         })
     }
 
@@ -1768,6 +1945,239 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn a_static_file_advances_one_bounded_segment_per_proof() {
+        use crate::engine::{Respond, RespondPayload};
+        use crate::routing::links::request::RequestId;
+
+        let bytes: &'static [u8] =
+            std::vec![0x42; STATIC_RESPONSE_SEGMENT_BYTES * 2 + 31_337].leak();
+        let request_id = RequestId([0xA7; 16]);
+        let mut engine = heap_sender_with_active_link();
+        let mut first = SendCapture {
+            frames: std::vec::Vec::new(),
+            settlements: std::vec::Vec::new(),
+        };
+        engine.ingest_send_static_response_into(
+            CommandId(41),
+            &Respond {
+                link_id: link_id(),
+                request_id,
+                payload: RespondPayload::StaticFile {
+                    name: "source.zip",
+                    bytes,
+                },
+            },
+            InstantMillis(1_500),
+            &mut |entropy: &mut [u8]| entropy.fill(0xA5),
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::EmitFrame { target, fill, .. }) => {
+                    if let Some(frame) = filled_frame(fill) {
+                        first.frames.push((target, frame));
+                    }
+                }
+                EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                    first.settlements.push((id, settlement));
+                }
+                _ => {}
+            },
+        );
+        assert!(first.settlements.is_empty());
+        assert_eq!(first.frames.len(), 1);
+
+        let mut current_hash = advertised_hash(&first.frames[0].1);
+        let first_index = engine
+            .outgoing_resources
+            .lookup(&link_id(), &current_hash)
+            .unwrap();
+        let first_state = engine.outgoing_resources.state(first_index);
+        assert!(first_state.has_metadata, "the filename travels as metadata");
+        let mut transfer = engine
+            .outgoing_resources
+            .sealed_transfer(first_index)
+            .to_vec();
+        let opened = crate::routing::links::resources::assemble_incoming::open_transfer(
+            &link_key(),
+            &mut transfer,
+        )
+        .unwrap();
+        let metadata_len = u32::from_be_bytes([0, opened[0], opened[1], opened[2]]) as usize;
+        assert_eq!(
+            crate::rncp::parse_file_metadata(&opened[3..3 + metadata_len]).unwrap(),
+            b"source.zip"
+        );
+        assert!(
+            first_state.sealed_transfer_bytes <= engine.outgoing_resources.transfer_capacity(),
+            "one segment fits the configured outgoing window"
+        );
+        assert!(
+            engine
+                .outgoing_assemblies
+                .static_continuation(&link_id())
+                .is_some(),
+            "only offsets and the static source survive between segments"
+        );
+
+        let mut advertised_segments = 1u64;
+        loop {
+            let index = engine
+                .outgoing_resources
+                .lookup(&link_id(), &current_hash)
+                .unwrap();
+            let state = *engine.outgoing_resources.state(index);
+            let capture = feed(
+                &mut engine,
+                &proof_frame(&current_hash, &state.expected_proof),
+                2_000 + advertised_segments,
+            );
+            if state.segment_index == state.total_segments {
+                assert!(matches!(
+                    capture.settlements.as_slice(),
+                    [(CommandId(41), Settlement::Respond(Ok(())))]
+                ));
+                assert!(capture.frames.is_empty());
+                assert!(engine.outgoing_resources.is_empty());
+                assert!(engine
+                    .outgoing_assemblies
+                    .static_continuation(&link_id())
+                    .is_none());
+                break;
+            }
+
+            assert!(
+                capture.settlements.is_empty(),
+                "intermediate proofs do not settle the response"
+            );
+            assert_eq!(
+                capture.frames.len(),
+                1,
+                "exactly one next segment is advertised"
+            );
+            let (_, payload) = WirePacketHeader::parse(&capture.frames[0].1).unwrap();
+            let mut sealed = payload.to_vec();
+            let opened = link_key().open_in_place(&mut sealed).unwrap();
+            let advertisement = ResourceAdvertisement::parse(opened).unwrap();
+            advertised_segments += 1;
+            assert_eq!(advertisement.segment_index, advertised_segments);
+            assert_eq!(
+                advertisement.original_hash,
+                advertised_hash(&first.frames[0].1)
+            );
+            assert!(advertisement.flags.is_response);
+            current_hash = advertisement.hash;
+        }
+        assert!(advertised_segments > 1);
+    }
+
+    #[test]
+    fn a_rejected_static_segment_clears_the_remaining_file() {
+        use crate::engine::{Respond, RespondPayload};
+        use crate::routing::links::request::RequestId;
+
+        let bytes: &'static [u8] = std::vec![0x42; STATIC_RESPONSE_SEGMENT_BYTES * 2 + 1].leak();
+        let mut engine = heap_sender_with_active_link();
+        let mut first = SendCapture {
+            frames: std::vec::Vec::new(),
+            settlements: std::vec::Vec::new(),
+        };
+        engine.ingest_send_static_response_into(
+            CommandId(43),
+            &Respond {
+                link_id: link_id(),
+                request_id: RequestId([0xA9; 16]),
+                payload: RespondPayload::StaticFile {
+                    name: "source.zip",
+                    bytes,
+                },
+            },
+            InstantMillis(1_500),
+            &mut |entropy: &mut [u8]| entropy.fill(0xA5),
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::EmitFrame { target, fill, .. }) => {
+                    if let Some(frame) = filled_frame(fill) {
+                        first.frames.push((target, frame));
+                    }
+                }
+                EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                    first.settlements.push((id, settlement));
+                }
+                _ => {}
+            },
+        );
+        let live = advertised_hash(&first.frames[0].1);
+        let rejected = feed(&mut engine, &receiver_cancel_frame(&live), 2_000);
+
+        assert!(matches!(
+            rejected.settlements.as_slice(),
+            [(
+                CommandId(43),
+                Settlement::Respond(Err(RespondFailure::Resource(
+                    SendResourceFailure::RejectedByPeer
+                )))
+            )]
+        ));
+        assert!(engine.outgoing_resources.is_empty());
+        assert!(engine
+            .outgoing_assemblies
+            .static_continuation(&link_id())
+            .is_none());
+    }
+
+    #[test]
+    fn fixed_layouts_without_continuation_storage_reject_split_static_files() {
+        use crate::engine::{Respond, RespondPayload};
+        use crate::routing::links::request::RequestId;
+
+        let bytes: &'static [u8] = std::vec![0x42; 12_000].leak();
+        let mut engine = sender_with_active_link();
+        let mut capture = SendCapture {
+            frames: std::vec::Vec::new(),
+            settlements: std::vec::Vec::new(),
+        };
+        engine.ingest_send_static_response_into(
+            CommandId(42),
+            &Respond {
+                link_id: link_id(),
+                request_id: RequestId([0xA8; 16]),
+                payload: RespondPayload::StaticFile {
+                    name: "source.zip",
+                    bytes,
+                },
+            },
+            InstantMillis(1_500),
+            &mut |entropy: &mut [u8]| entropy.fill(0xA5),
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::EmitFrame { target, fill, .. }) => {
+                    if let Some(frame) = filled_frame(fill) {
+                        capture.frames.push((target, frame));
+                    }
+                }
+                EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                    capture.settlements.push((id, settlement));
+                }
+                _ => {}
+            },
+        );
+
+        assert!(capture.frames.is_empty());
+        assert!(matches!(
+            capture.settlements.as_slice(),
+            [(
+                CommandId(42),
+                Settlement::Respond(Err(RespondFailure::Resource(
+                    SendResourceFailure::Rejected(SendResourceRejection::Build(
+                        BuildOutgoingResourceError::DataTooLarge
+                    ))
+                )))
+            )]
+        ));
+        assert!(engine.outgoing_resources.is_empty());
+        assert!(engine
+            .outgoing_assemblies
+            .original_hash(&link_id())
+            .is_none());
     }
 
     pub(crate) struct InboundCapture {

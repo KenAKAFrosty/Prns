@@ -375,6 +375,10 @@ impl<S: StorageLayout> EngineState<S> {
                         },
                     }
                 }
+                #[cfg(any(feature = "large-static-responses", test))]
+                RespondPayload::StaticFile { .. } => {
+                    CommandOutcome::OwesResourceResponse { id, respond }
+                }
             },
         }
     }

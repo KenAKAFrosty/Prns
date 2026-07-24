@@ -4,6 +4,9 @@ pub use fixed_incoming_assembly_columns::FixedIncomingAssemblyTable;
 mod fixed_outgoing_assembly_columns;
 pub use fixed_outgoing_assembly_columns::FixedOutgoingAssemblyTable;
 
+mod fixed_static_outgoing_assembly_columns;
+pub use fixed_static_outgoing_assembly_columns::FixedStaticOutgoingAssemblyTable;
+
 cfg_if::cfg_if! {
     if #[cfg(feature = "alloc")] {
         mod heap_incoming_assembly_columns;

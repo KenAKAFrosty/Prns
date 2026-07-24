@@ -16,6 +16,7 @@ use crate::wire::DestinationHash;
 
 use super::node_facade::PrnsNodeHandle;
 use super::request_router::{dispatch_request, Decline, InboundRequest, RouteSet};
+use super::request_router::{ResponseCapacityExceeded, ResponseSink};
 
 pub(super) const REQUEST_QUEUE_DEPTH: usize = 1024;
 const MAX_IN_FLIGHT: usize = 256;
@@ -29,6 +30,44 @@ pub(super) struct RunnerRequest {
     pub requested_at: InstantMillis,
     pub rtt: RttMillis,
     pub data: std::vec::Vec<u8>,
+}
+
+enum RunnerResponse {
+    Buffered(std::vec::Vec<u8>),
+    StaticFile {
+        name: &'static str,
+        bytes: &'static [u8],
+    },
+}
+
+impl ResponseSink for RunnerResponse {
+    fn put_packed(&mut self, bytes: &[u8]) -> Result<(), ResponseCapacityExceeded> {
+        match self {
+            Self::Buffered(body) => ResponseSink::put_packed(body, bytes),
+            Self::StaticFile { .. } => Err(ResponseCapacityExceeded),
+        }
+    }
+
+    fn put_bytes(&mut self, bytes: &[u8]) -> Result<(), ResponseCapacityExceeded> {
+        match self {
+            Self::Buffered(body) => ResponseSink::put_bytes(body, bytes),
+            Self::StaticFile { .. } => Err(ResponseCapacityExceeded),
+        }
+    }
+
+    fn put_static_file(
+        &mut self,
+        name: &'static str,
+        bytes: &'static [u8],
+    ) -> Result<(), ResponseCapacityExceeded> {
+        match self {
+            Self::Buffered(body) if body.is_empty() => {
+                *self = Self::StaticFile { name, bytes };
+                Ok(())
+            }
+            _ => Err(ResponseCapacityExceeded),
+        }
+    }
 }
 
 pub(super) async fn run_router<St, R: RouteSet<St>>(
@@ -101,11 +140,21 @@ async fn dispatch<St, R: RouteSet<St>>(
         &request.data,
     );
     let responder = inbound.respond_token();
-    let mut body = std::vec::Vec::new();
+    let mut body = RunnerResponse::Buffered(std::vec::Vec::new());
     match dispatch_request::<St, R>(state, request.path_hash, inbound, &mut body).await {
         Ok(()) => {
             let _response_guard = response_lane.lock().await;
-            if let Err(error) = commands.respond_owned_packed_settled(responder, body).await {
+            let result = match body {
+                RunnerResponse::Buffered(body) => {
+                    commands.respond_owned_packed_settled(responder, body).await
+                }
+                RunnerResponse::StaticFile { name, bytes } => {
+                    commands
+                        .respond_static_file_settled(responder, name, bytes)
+                        .await
+                }
+            };
+            if let Err(error) = result {
                 eprintln!(
                     "REQUEST_RESPONSE_FAILURE link_id={:?} error={error}",
                     link_id.as_bytes()
@@ -128,6 +177,18 @@ mod tests {
     use crate::manifold::driver::HostCommand;
     use crate::routing::request_handlers::RequestPathHash;
     use crate::runtime::request_router::{RequestContext, RoutePolicy};
+
+    #[test]
+    fn static_file_sink_preserves_filename_and_borrowed_bytes() {
+        static FILE: [u8; 32] = [0x42; 32];
+        let mut response = RunnerResponse::Buffered(std::vec::Vec::new());
+        ResponseSink::put_static_file(&mut response, "source.zip", &FILE).unwrap();
+        let RunnerResponse::StaticFile { name, bytes } = response else {
+            panic!("static file response");
+        };
+        assert_eq!(name, "source.zip");
+        assert_eq!(bytes.as_ptr(), FILE.as_ptr());
+    }
 
     struct PanickingRouteSet;
 

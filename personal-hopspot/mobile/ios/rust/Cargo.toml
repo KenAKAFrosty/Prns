@@ -9,6 +9,10 @@ description = "Personal Hopspot iOS face: a C-ABI + DrawTarget bridge that rende
 [workspace]
 resolver = "2"
 
+[features]
+default = []
+source-archive = ["personal-hopspot-core/source-archive"]
+
 [lib]
 name = "personal_hopspot_ios"
 crate-type = ["staticlib", "lib"]

@@ -25,13 +25,15 @@ use crate::routing::group_keys::FixedGroupKeyTable;
 use crate::routing::links::channel::channel_mdu;
 use crate::routing::links::channel::receive::WINDOW_MAX_MESSAGES;
 use crate::routing::links::channel::table::impls::FixedHeapChannelTable;
-use crate::routing::links::resources::assembly::{
-    FixedIncomingAssemblyTable, FixedOutgoingAssemblyTable,
-};
-use crate::routing::links::resources::max_part_count;
+use crate::routing::links::resources::assembly::FixedIncomingAssemblyTable;
+#[cfg(not(feature = "large-static-responses"))]
+use crate::routing::links::resources::assembly::FixedOutgoingAssemblyTable;
+#[cfg(feature = "large-static-responses")]
+use crate::routing::links::resources::assembly::FixedStaticOutgoingAssemblyTable;
 use crate::routing::links::resources::table::{
     FixedHeapResourceTable, IncomingResourceState, OutgoingResourceState,
 };
+use crate::routing::links::resources::{max_part_count, sealed_transfer_bytes};
 use crate::routing::links::table::FixedLinkTable;
 use crate::routing::links::transported::FixedTransportedLinkTable;
 use crate::routing::path_requests::interface_path_request_limit::FixedInterfacePathRequestLimitTable;
@@ -64,14 +66,28 @@ const RETAINED_RATCHETS_PER_DESTINATION: usize = 8;
 const MAX_CONCURRENT_CHANNELS: usize = 8;
 /// The real PSRAM dial; a channel that finds the pool dry cannot grow its window until another drains a slot.
 const CHANNEL_WINDOW_POOL: usize = 192;
-const MAX_RESOURCE_TRANSFER_BYTES: usize = 8192;
+/// Incoming resources retain the existing conservative PSRAM bound.
+const MAX_INCOMING_RESOURCE_TRANSFER_BYTES: usize = 8192;
+/// Source-capable S3 nodes reuse one outgoing plaintext window for each archive segment.
+#[cfg(feature = "large-static-responses")]
+const MAX_OUTGOING_RESOURCE_PLAINTEXT_BYTES: usize = 256 * 1024;
+#[cfg(not(feature = "large-static-responses"))]
+const MAX_OUTGOING_RESOURCE_PLAINTEXT_BYTES: usize = 8192;
+const MAX_OUTGOING_RESOURCE_TRANSFER_BYTES: usize =
+    sealed_transfer_bytes(MAX_OUTGOING_RESOURCE_PLAINTEXT_BYTES);
 const RETAINED_ANNOUNCE_APP_DATA_BYTES: usize = 40 * 1024;
 const ROUTE_INDEX_BUCKETS: usize = route_index_buckets(MAX_TRACKED_DESTINATIONS);
 const DESTINATION_ANNOUNCE_LIMIT_INDEX_BUCKETS: usize =
     destination_announce_limit_index_buckets(MAX_TRACKED_DESTINATIONS);
-const MAX_RESOURCE_PARTS: usize = max_part_count(MAX_RESOURCE_TRANSFER_BYTES);
+const MAX_OUTGOING_RESOURCE_PARTS: usize = max_part_count(MAX_OUTGOING_RESOURCE_TRANSFER_BYTES);
+const MAX_INCOMING_RESOURCE_PARTS: usize = max_part_count(MAX_INCOMING_RESOURCE_TRANSFER_BYTES);
 const CHANNEL_REORDER_DEPTH: usize = WINDOW_MAX_MESSAGES as usize;
 const CHANNEL_MESSAGE_BYTES: usize = channel_mdu(EMBEDDED_MAX_LINK_MTU);
+
+#[cfg(feature = "large-static-responses")]
+type Esp32S3OutgoingAssemblies = FixedStaticOutgoingAssemblyTable<MAX_CONCURRENT_LINKS>;
+#[cfg(not(feature = "large-static-responses"))]
+type Esp32S3OutgoingAssemblies = FixedOutgoingAssemblyTable<MAX_CONCURRENT_LINKS>;
 
 pub struct Esp32S3<A: Allocator = Global>(PhantomData<A>);
 
@@ -93,7 +109,7 @@ impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
         channel_window_pool: Some(CHANNEL_WINDOW_POOL),
         channel_reorder_depth: StorageCapacity::Fixed(CHANNEL_REORDER_DEPTH),
         link_mtu: StorageCapacity::Fixed(EMBEDDED_MAX_LINK_MTU),
-        resource_transfer_bytes: StorageCapacity::Fixed(MAX_RESOURCE_TRANSFER_BYTES),
+        resource_transfer_bytes: StorageCapacity::Fixed(MAX_INCOMING_RESOURCE_TRANSFER_BYTES),
         receipts: StorageCapacity::Fixed(MAX_OUTSTANDING_RECEIPTS),
         packet_hashes: StorageCapacity::Fixed(MAX_PACKET_HASHES),
         blackholed_identities: StorageCapacity::Fixed(MAX_BLACKHOLED_IDENTITIES),
@@ -150,19 +166,19 @@ impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
     type OutgoingResources = FixedHeapResourceTable<
         OutgoingResourceState,
         1,
-        MAX_RESOURCE_TRANSFER_BYTES,
-        MAX_RESOURCE_PARTS,
+        MAX_OUTGOING_RESOURCE_TRANSFER_BYTES,
+        MAX_OUTGOING_RESOURCE_PARTS,
         A,
     >;
     type IncomingResources = FixedHeapResourceTable<
         IncomingResourceState,
         1,
-        MAX_RESOURCE_TRANSFER_BYTES,
-        MAX_RESOURCE_PARTS,
+        MAX_INCOMING_RESOURCE_TRANSFER_BYTES,
+        MAX_INCOMING_RESOURCE_PARTS,
         A,
     >;
     type IncomingAssemblies = FixedIncomingAssemblyTable<MAX_CONCURRENT_LINKS>;
-    type OutgoingAssemblies = FixedOutgoingAssemblyTable<MAX_CONCURRENT_LINKS>;
+    type OutgoingAssemblies = Esp32S3OutgoingAssemblies;
     type Channels = FixedHeapChannelTable<
         MAX_CONCURRENT_CHANNELS,
         CHANNEL_REORDER_DEPTH,
@@ -188,6 +204,23 @@ mod tests {
         assert_eq!(
             <L as StorageLayout>::LIMITS.held_identities,
             StorageCapacity::Fixed(super::MAX_HELD_IDENTITIES)
+        );
+        let engine = EngineState::<L>::default();
+        assert_eq!(
+            engine.incoming_resources.transfer_capacity(),
+            super::MAX_INCOMING_RESOURCE_TRANSFER_BYTES,
+            "source serving must not raise the incoming resource limit"
+        );
+        assert_eq!(
+            engine.outgoing_resources.transfer_capacity(),
+            super::MAX_OUTGOING_RESOURCE_TRANSFER_BYTES
+        );
+        #[cfg(feature = "large-static-responses")]
+        assert_eq!(super::MAX_OUTGOING_RESOURCE_PLAINTEXT_BYTES, 256 * 1024);
+        #[cfg(not(feature = "large-static-responses"))]
+        assert_eq!(
+            super::MAX_OUTGOING_RESOURCE_PLAINTEXT_BYTES,
+            super::MAX_INCOMING_RESOURCE_TRANSFER_BYTES
         );
     }
 

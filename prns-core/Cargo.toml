@@ -30,6 +30,9 @@ tokio-host = ["std"]
 embassy-host = []
 runtime-metrics = ["alloc"]
 stream-compression = ["std"]
+# Gives capable fixed-storage targets one 256 KiB outgoing static-response window. Incoming
+# resource limits are deliberately unchanged.
+large-static-responses = []
 # Fan a resource build's per-part SHA-256 hashmap across a rayon work-stealing pool. Bit-identical output (same names, same slots), so wire format and parity are unchanged; std-only, off by default, so embedded and default builds keep the serial loop.
 parallel-resource-hash = ["std", "dep:rayon"]
 parallel-persistence = ["std", "dep:rayon"]

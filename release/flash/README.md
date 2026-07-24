@@ -134,7 +134,14 @@ workaround.
 ## Qualify and finalize evidence
 
 Testers extract the signed candidate. CLI qualification imports/uses only its verified cache
-contents; web qualification serves `CANDIDATE/website` from localhost and opens `/flash`. Hardware
+contents; web qualification serves `CANDIDATE/website` from localhost and opens `/flash`. The
+hosted website also carries the exact commit-bound `source.zip` and
+`source.zip.sha256`; unsigned-candidate validation reproduces the archive and requires both the
+website and NomadNet page source trees before signing. The Heltec V4 and T-Beam Supreme serve
+those exact embedded bytes at both SoftAP `/source.zip` and NomadNet `/file/source.zip`; the XIAO
+ESP32-C6 and T-Echo page explicitly says the compact build does not carry them. Per-target facts
+and any automatic 1 MiB partition-reserve downgrade are recorded in
+`metadata/source-capabilities.json`. Hardware
 results follow `release/acceptance/README.md`. No unsigned or locally rebuilt artifact counts.
 
 Commit the completed record at `release/acceptance/records/VERSION.json` through normal review.

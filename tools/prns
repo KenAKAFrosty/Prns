@@ -78,7 +78,11 @@ def implementation_inventory() -> set[str]:
         if not root.is_dir():
             continue
         for path in root.rglob("*"):
-            if path.is_file():
+            if (
+                path.is_file()
+                and "__pycache__" not in path.parts
+                and path.suffix not in {".pyc", ".pyo"}
+            ):
                 inventory.add(path.relative_to(ROOT).as_posix())
     return inventory
 
@@ -335,13 +339,15 @@ def resolve_hierarchical(tasks: dict[str, dict], arguments: list[str]) -> tuple[
                 remainder = remainder[1:]
             return tasks[identifier], remainder
     raise ToolingError(
-        f"unknown task path {' '.join(arguments)!r}; run `./tools/prns list`"
+        f"unknown task path {' '.join(arguments)!r}; run `./tools/prns list` "
+        "or `cargo tools list`"
     )
 
 
 def print_help() -> None:
     print(
         """usage: ./tools/prns COMMAND
+       cargo tools COMMAND
 
 Supported commands:
   list [--domain NAME] [--effect NAME] [--audience NAME]
@@ -353,9 +359,9 @@ Supported commands:
 
 Examples:
   ./tools/prns list --domain release
-  ./tools/prns explain release.candidate.build
+  cargo tools explain release.candidate.build
   ./tools/prns doctor release
-  ./tools/prns release candidate verify -- target/candidate
+  cargo tools release candidate verify -- target/candidate
 """
     )
 

@@ -1,3 +1,5 @@
+use crate::engine::CommandId;
+use crate::routing::links::request::RequestId;
 use crate::routing::links::resources::ResourceHash;
 use crate::routing::links::LinkId;
 
@@ -110,8 +112,41 @@ pub trait OutgoingAssemblyTable {
     fn link_ids(&self) -> &[LinkId];
     fn original_hashes(&self) -> &[ResourceHash];
 
+    fn supports_static_continuations(&self) -> bool {
+        false
+    }
+
+    fn static_continuation(&self, _index: usize) -> Option<StaticResponseContinuation> {
+        None
+    }
+
+    fn set_static_continuation(
+        &mut self,
+        _index: usize,
+        _continuation: StaticResponseContinuation,
+    ) -> bool {
+        false
+    }
+
     fn push(&mut self, link_id: LinkId, original_hash: ResourceHash);
     fn swap_remove(&mut self, index: usize);
+}
+
+/// The flash-backed source for the next automatically segmented response window.
+///
+/// Only offsets and a static borrow survive between proofs. The live encrypted resource owns at
+/// most one segment, so the complete file is never copied into the transfer store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StaticResponseContinuation {
+    pub command_id: CommandId,
+    pub request_id: RequestId,
+    pub bytes: &'static [u8],
+    pub next_offset: usize,
+    pub next_segment_index: u64,
+    pub total_segments: u64,
+    pub total_data_bytes: u64,
+    pub metadata_packed_len: u32,
+    pub segment_stream_bytes: usize,
 }
 
 #[derive(Debug, Default)]
@@ -128,6 +163,26 @@ impl<C: OutgoingAssemblyTable> OutgoingAssemblies<C> {
         if self.table.len() < self.table.capacity() {
             self.table.push(link_id, original_hash);
         }
+    }
+
+    pub fn supports_static_continuations(&self) -> bool {
+        self.table.supports_static_continuations()
+    }
+
+    pub fn set_static_continuation(
+        &mut self,
+        link_id: &LinkId,
+        continuation: StaticResponseContinuation,
+    ) -> bool {
+        let Some(index) = self.index_of(link_id) else {
+            return false;
+        };
+        self.table.set_static_continuation(index, continuation)
+    }
+
+    pub fn static_continuation(&self, link_id: &LinkId) -> Option<StaticResponseContinuation> {
+        self.index_of(link_id)
+            .and_then(|index| self.table.static_continuation(index))
     }
 
     pub fn original_hash(&self, link_id: &LinkId) -> Option<ResourceHash> {
