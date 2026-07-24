@@ -20,6 +20,32 @@ pub fn ContributingPage() -> Element {
                 {t!("contributing-lead")}
             }
         }
-        MarkdownBody { source: CONTRIBUTING_MD.to_string() }
+        MarkdownBody { source: contributing_markup() }
+    }
+}
+
+fn contributing_markup() -> String {
+    CONTRIBUTING_MD
+        .strip_prefix("# Contributing\n")
+        .unwrap_or(CONTRIBUTING_MD)
+        .replace(
+            "](README.md#license)",
+            "](https://github.com/KenAKAFrosty/Prns/blob/main/README.md#license)",
+        )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn site_copy_uses_its_page_heading_and_resolves_repo_links() {
+        let markup = contributing_markup();
+
+        assert!(!markup.starts_with("# Contributing"));
+        assert!(!markup.contains("](README.md#license)"));
+        assert!(
+            markup.contains("](https://github.com/KenAKAFrosty/Prns/blob/main/README.md#license)")
+        );
     }
 }

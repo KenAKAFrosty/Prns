@@ -70,6 +70,8 @@ fn bench_dir() -> PathBuf {
 
 fn render_all() -> Vec<(PathBuf, String)> {
     let implementations = load_implementations();
+    let output_dir = bench_dir();
+    let website_assets = website_asset_dir(&output_dir);
     let mut by_host: BTreeMap<String, Vec<ResultRow>> = BTreeMap::new();
     for row in load_all_rows() {
         assert_eq!(
@@ -87,12 +89,28 @@ fn render_all() -> Vec<(PathBuf, String)> {
     for (host, rows) in &by_host {
         let mut assets = Vec::new();
         let body = render_host(host, rows, &implementations, &mut assets);
-        files.push((bench_dir().join(format!("RESULTS-{host}.md")), body));
+        files.push((output_dir.join(format!("RESULTS-{host}.md")), body));
+        if let Some(website_assets) = &website_assets {
+            for (asset, body) in &assets {
+                let file_name = asset
+                    .file_name()
+                    .expect("generated benchmark assets always have a file name");
+                files.push((website_assets.join(file_name), body.clone()));
+            }
+        }
         files.append(&mut assets);
         hosts.push((host.clone(), machine_label(host)));
     }
-    files.push((bench_dir().join("RESULTS.md"), render_index(&hosts)));
+    files.push((output_dir.join("RESULTS.md"), render_index(&hosts)));
     files
+}
+
+fn website_asset_dir(output_dir: &Path) -> Option<PathBuf> {
+    let benchmark_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    if output_dir != benchmark_dir {
+        return None;
+    }
+    Some(benchmark_dir.parent()?.join("docs/website/public/assets"))
 }
 
 fn machine_label(host: &str) -> String {
@@ -1384,6 +1402,18 @@ mod tests {
         let output = render_host("test-host", &rows, &load_implementations(), &mut assets);
         assert!(!output.contains("<picture>"));
         assert!(assets.is_empty());
+    }
+
+    #[test]
+    fn canonical_results_publish_charts_to_the_website() {
+        let benchmark_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        assert_eq!(
+            website_asset_dir(benchmark_dir),
+            benchmark_dir
+                .parent()
+                .map(|root| root.join("docs/website/public/assets")),
+        );
+        assert_eq!(website_asset_dir(&benchmark_dir.join("local-run")), None);
     }
 
     #[test]

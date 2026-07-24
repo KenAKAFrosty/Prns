@@ -5,13 +5,19 @@ use crate::components::MarkdownBody;
 use crate::routes::Route;
 
 // Generated from the result substrate by `benchmarks/render_results`; GitHub and this
-// page render the same files, so the tables can't drift. The index links to a per-host
-// page; add a line to HOST_PAGES when a new host's results land.
+// page render the same files. Tests hold the index, host pages, and published assets
+// together so a newly published host cannot leave a dead site route behind.
 const INDEX_MD: &str = include_str!("../../../../benchmarks/RESULTS.md");
-const HOST_PAGES: &[(&str, &str)] = &[(
-    "aarch64-apple-darwin",
-    include_str!("../../../../benchmarks/RESULTS-aarch64-apple-darwin.md"),
-)];
+const HOST_PAGES: &[(&str, &str)] = &[
+    (
+        "aarch64-apple-darwin",
+        include_str!("../../../../benchmarks/RESULTS-aarch64-apple-darwin.md"),
+    ),
+    (
+        "x86_64-pc-windows-msvc",
+        include_str!("../../../../benchmarks/RESULTS-x86_64-pc-windows-msvc.md"),
+    ),
+];
 
 #[component]
 pub fn BenchmarksPage() -> Element {
@@ -107,31 +113,77 @@ fn index_markup() -> String {
         rest = &candidate[end + SUFFIX.len()..];
     }
     out.push_str(rest);
-    out
+    out.replacen("# Benchmark results\n\n", "", 1)
 }
 
-/// Repoint a host page's back-link at the site index, and make the icon `src` absolute
-/// (a relative `assets/` would resolve under `/benchmarks/<host>/` here, not `/assets/`).
+/// Repoint a host page's back-link at the site index, and make asset URLs absolute
+/// (relative assets would resolve under `/benchmarks/<host>/`, not `/assets/`).
 fn host_markup(md: &str) -> String {
     md.replace("](RESULTS.md)", "](/benchmarks)")
         .replace("src=\"assets/", "src=\"/assets/")
+        .replace("srcset=\"assets/", "srcset=\"/assets/")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
+    use std::path::Path;
 
     #[test]
     fn rewrites_results_links_to_site_routes() {
         let md = index_markup();
 
         assert!(md.contains("](/benchmarks/aarch64-apple-darwin)"));
+        assert!(md.contains("](/benchmarks/x86_64-pc-windows-msvc)"));
         assert!(!md.contains("](RESULTS-aarch64-apple-darwin.md)"));
+        assert!(!md.contains("# Benchmark results"));
     }
 
     #[test]
     fn includes_each_measured_host_page() {
-        assert_eq!(HOST_PAGES.len(), 1);
-        assert_eq!(HOST_PAGES[0].0, "aarch64-apple-darwin");
+        let mut indexed = BTreeSet::new();
+        let mut rest = INDEX_MD;
+        const PREFIX: &str = "](RESULTS-";
+        const SUFFIX: &str = ".md)";
+        while let Some(start) = rest.find(PREFIX) {
+            let candidate = &rest[start + PREFIX.len()..];
+            let end = candidate
+                .find(SUFFIX)
+                .expect("every benchmark result link has a Markdown suffix");
+            indexed.insert(&candidate[..end]);
+            rest = &candidate[end + SUFFIX.len()..];
+        }
+        let published = HOST_PAGES
+            .iter()
+            .map(|(host, _)| *host)
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(published, indexed);
+    }
+
+    #[test]
+    fn host_assets_are_absolute_and_published() {
+        let public_assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("public/assets");
+        for (_, source) in HOST_PAGES {
+            let markup = host_markup(source);
+            assert!(!markup.contains("\"assets/"));
+
+            for marker in ["src=\"/assets/", "srcset=\"/assets/"] {
+                let mut rest = markup.as_str();
+                while let Some(start) = rest.find(marker) {
+                    let candidate = &rest[start + marker.len()..];
+                    let end = candidate
+                        .find('"')
+                        .expect("benchmark asset reference is quoted");
+                    assert!(
+                        public_assets.join(&candidate[..end]).is_file(),
+                        "missing public benchmark asset {}",
+                        &candidate[..end],
+                    );
+                    rest = &candidate[end + 1..];
+                }
+            }
+        }
     }
 }

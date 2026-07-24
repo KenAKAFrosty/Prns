@@ -33,7 +33,8 @@ doesn't care.
 
 ## Status
 
-The engine is under active development as the wire contract is
-re-grown from the Reticulum reference. Today it handles the
-announce path and routing table on real traffic across Linux and
-embedded hosts. Links and resources are the next layer landing.
+The engine handles announces, routing, single-packet delivery, links,
+requests, resources, channels, and transport forwarding across host and
+embedded runtimes. Cross-implementation suites continuously exercise its wire
+compatibility with Reticulum 1.4.0. Prns remains pre-1.0, with each supported
+surface held behind explicit conformance and interoperability checks.
