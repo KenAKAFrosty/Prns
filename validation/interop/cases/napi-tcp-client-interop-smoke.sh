@@ -1,15 +1,5 @@
 #!/usr/bin/env bash
-# Direction-A TCP parity smoke for the Node addon: the napi TcpClient dials stock RNS.
-#
-# Stands up a stock RNS node whose only interface is a `TCPServerInterface` hosting a ProveAll
-# `hopspot.host` destination it announces (`rns_tcp_server_peer.py`), then the Node addon's
-# tcp_client_probe driver dialing it. The napi client hears the announce, sends the destination a
-# single, and awaits the stock node's proof — the napi `sendSinglePacket` resolving with proof
-# evidence is the pass condition, exercising the binding's TcpClient in both directions.
-#
-# The reference RNS is the pinned venv (benchmarks/reference; $SMOKE_PYTHON if set). Prints PASS or
-# FAIL and exits accordingly. Set PRNS_NAPI_PREBUILT=1 to skip the npm build when the addon binary
-# already sits in prns-napi/.
+# The Node addon dials stock RNS's TCP server and proves a packet in both directions.
 set -u
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -46,14 +36,12 @@ if [ -z "${PRNS_NAPI_PREBUILT:-}" ]; then
         || { echo "FAIL: napi addon build"; exit 1; }
 fi
 
-# 1) Stock RNS: a TCPServerInterface hosting a ProveAll destination it announces.
 PRNS_TCP_LISTEN_PORT="$PORT" "$VENV_PY" "$SERVER" > "$SERVER_LOG" 2>/dev/null &
 SERVER_PID=$!
 for _ in $(seq 1 100); do grep -q "SERVER_UP" "$SERVER_LOG" && break; sleep 0.1; done
 grep -q "SERVER_UP" "$SERVER_LOG" || { echo "FAIL: stock TCP server never came up"; cat "$SERVER_LOG"; exit 1; }
 echo "stock TCP server up"
 
-# 2) The napi client: dial, hear the announce, send a single, await the proof.
 PRNS_TCP_TARGET="127.0.0.1:$PORT" node "$CLIENT_DRIVER" > "$CLIENT_LOG" 2>&1 &
 CLIENT_PID=$!
 

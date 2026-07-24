@@ -31,8 +31,6 @@ impl AndroidMdnsBridge {
         let _ = self.sightings.send(addr);
     }
 
-    /// The engine takes the receiver exactly once, to hand to `AutoWifi::with_mdns`. `None` on any
-    /// later call.
     #[must_use]
     pub fn take_receiver(&self) -> Option<UnboundedReceiver<SocketAddr>> {
         self.receiver.lock().ok().and_then(|mut guard| guard.take())

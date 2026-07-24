@@ -63,6 +63,10 @@ sha256sum personal-hopspot/mobile/android/app/build/outputs/apk/release/app-rele
 ${ANDROID_HOME}/build-tools/34.0.0/apksigner verify --verbose --print-certs personal-hopspot/mobile/android/app/build/outputs/apk/release/app-release.apk
 ```
 
+The signer check must report `Verifies`, v1 signing for API 19, and v2 signing
+for modern Android. Record the certificate digest and reject an unexpected
+signing identity.
+
 Do not install an unsigned or debug APK for production evidence.
 
 Set the four release-signing values and build the production artifact:
@@ -74,12 +78,13 @@ export PRNS_ANDROID_KEY_ALIAS='<release alias>'
 export PRNS_ANDROID_KEY_PASSWORD='<from the release credential store>'
 (
   cd personal-hopspot/mobile/android
-  ./gradlew --no-daemon :app:assembleProduction
+  ./gradlew --no-daemon --no-configuration-cache :app:assembleProduction
 )
 ```
 
-`assembleProduction` fails when any credential is absent or the keystore path
-is not a file. Do not commit the keystore, passwords, or generated APK.
+`assembleProduction` does not permit a reusable configuration-cache entry and
+fails when any credential is absent or the keystore path is not a file. Do not
+commit the keystore, passwords, or generated APK.
 
 ## Device inventory
 
@@ -315,8 +320,8 @@ adb -s "${ANDROID_SERIAL}" logcat -d -v threadtime
 ```
 
 Fail on crash, ANR, native panic, stuck starting state, unexpected failed state,
-unbounded memory growth, dead listener, unrecovered transport, or identity
-change.
+unbounded memory growth, dead listener, unrecovered transport, repeated denied
+host-network discovery, or identity change.
 
 ## API 19 ARMv7 matrix
 

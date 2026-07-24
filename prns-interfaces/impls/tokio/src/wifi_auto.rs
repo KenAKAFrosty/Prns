@@ -155,6 +155,12 @@ pub struct AutoWifi {
     status: AutoWifiStatus,
     mdns: Option<UnboundedReceiver<SocketAddr>>,
     rendezvous_listener: Option<TcpListener>,
+    host_network_discovery: HostNetworkDiscovery,
+}
+
+enum HostNetworkDiscovery {
+    Enumerated,
+    PlatformRendezvous,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -351,6 +357,7 @@ impl AutoWifi {
             status: AutoWifiStatus::new(id),
             mdns: None,
             rendezvous_listener: None,
+            host_network_discovery: HostNetworkDiscovery::Enumerated,
         }
     }
 
@@ -367,6 +374,13 @@ impl AutoWifi {
     #[must_use]
     pub fn with_rendezvous_listener(mut self, listener: TcpListener) -> Self {
         self.rendezvous_listener = Some(listener);
+        self
+    }
+
+    #[must_use]
+    pub fn with_platform_rendezvous(mut self, sightings: UnboundedReceiver<SocketAddr>) -> Self {
+        self.mdns = Some(sightings);
+        self.host_network_discovery = HostNetworkDiscovery::PlatformRendezvous;
         self
     }
 
@@ -514,12 +528,30 @@ impl InterfaceSupervisor for AutoWifi {
 
     async fn run(self, fleet: Fleet) {
         // RNS AutoInterface is multi-interface: each eligible link-local NIC owns its token and peer table, and inbound datagrams demultiplex by source scope. Multicast is best-effort so rendezvous, gateway, and mDNS still run when it is unavailable.
-        let settings = self.settings;
-        let mut nics = link_local_nics(&settings.devices);
+        let AutoWifi {
+            policy,
+            settings,
+            status,
+            mdns,
+            rendezvous_listener,
+            host_network_discovery,
+        } = self;
+        let enumerate_host_network =
+            matches!(host_network_discovery, HostNetworkDiscovery::Enumerated);
+        let mut nics = if enumerate_host_network {
+            link_local_nics(&settings.devices)
+        } else {
+            std::vec::Vec::new()
+        };
         let sockets = if nics.is_empty() {
             None
         } else {
             open_sockets(&nics, &settings).ok()
+        };
+        let prefixes = if enumerate_host_network {
+            local_prefixes(&settings.devices)
+        } else {
+            std::vec::Vec::new()
         };
         let mut sup = Supervisor {
             brains: if sockets.is_some() {
@@ -541,17 +573,19 @@ impl InterfaceSupervisor for AutoWifi {
             gateways: HashMap::new(),
             mdns_dials: HashMap::new(),
             accepted: std::vec::Vec::new(),
-            prefixes: local_prefixes(&settings.devices),
+            prefixes,
             fleet,
             data: sockets.as_ref().map(|s| s.data.clone()),
-            policy: self.policy,
+            policy,
             settings: settings.clone(),
-            status: self.status,
+            status,
         };
-        sup.dial_initial_gateways(&nics);
+        if enumerate_host_network {
+            sup.dial_initial_gateways(&nics);
+        }
         sup.publish_status();
 
-        let mut mdns = self.mdns;
+        let mut mdns = mdns;
         let started = tokio::time::Instant::now();
         let mut beacon = tokio::time::interval(BEACON_INTERVAL);
         let mut beacon_cycle: u32 = 0;
@@ -559,7 +593,7 @@ impl InterfaceSupervisor for AutoWifi {
         let mut unicast_buf = [0u8; 64];
         let mut data_buf = [0u8; contract::HARDWARE_MTU];
         let mut rendezvous = if settings.prns_rendezvous_enabled() {
-            match self.rendezvous_listener {
+            match rendezvous_listener {
                 Some(listener) => Some(listener),
                 None => TcpListener::bind(("0.0.0.0", contract::TCP_RENDEZVOUS_PORT))
                     .await
@@ -1255,6 +1289,18 @@ mod tests {
         assert!(!configured.allows("en0", false));
         assert!(!configured.allows("wlan0", false));
         assert!(!configured.allows("awdl0", true));
+    }
+
+    #[test]
+    fn platform_rendezvous_replaces_host_network_discovery() {
+        let (_, sightings) = tokio::sync::mpsc::unbounded_channel();
+        let wifi = AutoWifi::new().with_platform_rendezvous(sightings);
+
+        assert!(wifi.mdns.is_some());
+        assert!(matches!(
+            wifi.host_network_discovery,
+            HostNetworkDiscovery::PlatformRendezvous
+        ));
     }
 
     #[test]

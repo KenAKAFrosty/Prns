@@ -162,10 +162,10 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
     };
     tokio::spawn(rpc.run());
 
-    let wifi = match platform.mdns.take_receiver() {
-        Some(rx) => AutoWifi::new().with_mdns(rx),
-        None => AutoWifi::new(),
+    let Some(mdns_rx) = platform.mdns.take_receiver() else {
+        return fail_start(ready_tx, EngineStartError::WorkerStopped);
     };
+    let wifi = AutoWifi::new().with_platform_rendezvous(mdns_rx);
     let wifi_status = wifi.status();
     handle.supervise(wifi);
 
