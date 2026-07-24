@@ -11,7 +11,7 @@
 
 High-performance Reticulum, built to run on any device.
 `a
--∿
+-∿Fana
 
 >>`!What is Prns?`!
 
@@ -27,7 +27,7 @@ With internet access, visit the docs site to learn more. A future update is plan
 
 `F6eb•`f `F6eb`!Faster`!`f
 >>>
-2× to 24× stock RNS 1.4.0 across every measured scenario, in published, reproducible benchmarks.
+2-24× the speed of stock RNS 1.4.0 across every measured scenario, in published, reproducible benchmarks.
 
 >>
 `F6eb•`f `F6eb`!Drop-in`!`f
@@ -47,7 +47,7 @@ The Personal Hopspot firmware ships today for a growing catalog of affordable bo
 >>
 `F6eb•`f `F6eb`!New interfaces for the same network`!`f
 >>>
-Auto BLE, Auto USB, improved Auto-Wifi, ESP-NOW (2.4 Ghz broadcast), Wi-Fi Aware/NAN, and WebSocket server/client (including browser client). All alongside every interface you already run.
+Auto Bluetooth, Auto USB, improved Auto Wifi, ESP-NOW (2.4 GHz broadcast), Wi-Fi Aware/NAN, and WebSocket server/client (including browser client). All alongside every interface you already run.
 
 >>
 `F6eb•`f `F6eb`!Built for operators`!`f
