@@ -43,11 +43,17 @@ success condition.
 | Embedded async node | `embassy-host` |
 | TCP, UDP, serial, or radio family | its named feature, such as `tcp` |
 | Native automatic media | `wifi-auto`, `usb`, `bluetooth-auto` |
-| Fixed nRF52840 storage | `Nrf52840` |
-| Fixed ESP32 storage | `external-alloc` with `Esp32C6` or `Esp32S3` |
+| PSRAM-backed ESP32-S3 storage | `external-alloc` with `Esp32S3` |
+| SRAM-constrained board storage | a board-owned `StorageLayout` |
 
 Interface features select code; they do not silently attach hardware. A node
 recipe's `interfaces` field owns attachment policy.
+
+SRAM-only board profiles are application-specific: their interface mix, link
+count, MTU, channel windows, retained routes, and resource limits share one
+physical memory budget. Define that `StorageLayout` beside the board recipe
+rather than selecting a chip-named library preset. The XIAO ESP32-C6 and T-Echo
+firmware are compact examples.
 
 ## Read a node recipe
 

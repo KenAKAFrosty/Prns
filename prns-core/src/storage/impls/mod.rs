@@ -1,9 +1,3 @@
-mod esp32c6;
-mod nrf52840;
-
-pub use esp32c6::Esp32C6;
-pub use nrf52840::Nrf52840;
-
 cfg_if::cfg_if! {
     if #[cfg(feature = "external-alloc")] {
         mod esp32s3;

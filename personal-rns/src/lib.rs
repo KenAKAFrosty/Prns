@@ -82,14 +82,13 @@ pub use prns_runtime::runtime::{
     Diagnostic, Manual, Message, PreConfiguredDestination, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe,
     RuntimeHealth, SendError,
 };
-pub use prns_runtime::storage::Nrf52840;
 pub use prns_runtime::wire::{DestinationHash, TransportId};
 
 #[cfg(feature = "alloc")]
 pub use prns_runtime::storage::GrowableHeap;
 
 #[cfg(feature = "external-alloc")]
-pub use prns_runtime::storage::{Esp32C6, Esp32S3};
+pub use prns_runtime::storage::Esp32S3;
 
 #[cfg(feature = "tokio-host")]
 pub use prns_runtime_tokio::runtime::{

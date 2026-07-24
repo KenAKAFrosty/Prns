@@ -70,7 +70,11 @@ where
     pub transport_identity: Option<Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>>,
     pub pre_configured_destinations: Destinations,
     pub app_state: AppState,
-    /// The storage layout the engine's columns run on: `GrowableHeap` on a std host, a fixed prepackage (`Esp32S3`/`Esp32C6`/`Nrf52840`) on a board. A type-level choice carried as a value so the recipe owns it and `PrnsNode::new` no longer assumes one.
+    /// The storage layout the engine's columns run on: `GrowableHeap` on a std
+    /// host, `Esp32S3` for the PSRAM-backed reference target, or a board-owned
+    /// fixed layout for an SRAM-constrained application. A type-level choice
+    /// carried as a value so the recipe owns it and `PrnsNode::new` no longer
+    /// assumes one.
     pub storage: Storage,
     pub routes: Routes,
     pub interfaces: Interfaces,

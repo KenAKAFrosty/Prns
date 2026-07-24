@@ -94,11 +94,10 @@ mod riscv {
     use personal_rns::routing::warmth::FixedDepartedInterfaceTable;
     use personal_rns::storage::{DisplayedStorageLimits, StorageCapacity, StorageLayout};
 
-    /// The C6's storage profile, sized to internal SRAM. Distinct from the library's
-    /// `personal_rns::storage::Esp32C6`, whose `LINK_MTU = 8192` + reorder 8 needs ~256 KiB of channel
-    /// buffers and overflows the chip it is named for. This board is a headless USB/ESP-NOW/BLE mesh
-    /// bridge: keep one local app identity, bias the budget toward heard destinations, and leave links,
-    /// resources, and channel windows modest.
+    /// The XIAO ESP32-C6 Hopspot's storage profile, sized to its internal SRAM
+    /// and application role. This board is a headless USB/ESP-NOW/BLE mesh
+    /// bridge: keep one local app identity, bias the budget toward heard
+    /// destinations, and leave links, resources, and channel windows modest.
     pub struct C6Storage;
 
     impl C6Storage {

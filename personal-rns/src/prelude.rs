@@ -9,7 +9,7 @@ pub use crate::{
 pub use crate::GrowableHeap;
 
 #[cfg(feature = "external-alloc")]
-pub use crate::{Esp32C6, Esp32S3};
+pub use crate::Esp32S3;
 
 #[cfg(feature = "tokio-host")]
 pub use crate::{
