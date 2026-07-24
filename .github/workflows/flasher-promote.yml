@@ -43,6 +43,7 @@ env:
 jobs:
   verify:
     runs-on: ubuntu-24.04
+    timeout-minutes: 120
     permissions:
       actions: read
       attestations: read
@@ -415,11 +416,13 @@ jobs:
         with:
           name: ${{ steps.pages-artifacts.outputs.candidate_pages }}
           path: target/signed-candidate/website
+          retention-days: 1
 
   publish-and-deploy:
     name: Deploy and verify exact signed website before publishing release state
     needs: verify
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     concurrency:
       group: prns-public-pages
       cancel-in-progress: false
@@ -554,6 +557,7 @@ jobs:
     name: Post-promotion signed channel and installer smoke
     needs: [verify, publish-and-deploy]
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     permissions:
       contents: read
     env:
@@ -659,6 +663,7 @@ jobs:
     name: Enable future full-site deployments
     needs: post-promotion-smoke
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     permissions:
       actions: write
       contents: read
@@ -677,6 +682,7 @@ jobs:
            needs.mark-promoted.result != 'success') }}
     needs: [verify, publish-and-deploy, post-promotion-smoke, mark-promoted]
     runs-on: ubuntu-24.04
+    timeout-minutes: 90
     concurrency:
       group: prns-public-pages
       cancel-in-progress: false

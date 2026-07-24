@@ -27,6 +27,7 @@ jobs:
   sign:
     name: Sign, attest, and publish immutable prerelease
     runs-on: ubuntu-24.04
+    timeout-minutes: 90
     environment: release-signing
     env:
       CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
@@ -196,7 +197,7 @@ jobs:
           path: |
             target/release/*
             target/candidate/cli/hopspot-flash-*
-          retention-days: 90
+          retention-days: 30
           if-no-files-found: error
       - name: Publish immutable signed candidate as a prerelease
         id: prerelease
@@ -322,6 +323,7 @@ jobs:
     name: Complete protected 24-hour public review
     needs: sign
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     environment: public-release
     permissions:
       actions: read

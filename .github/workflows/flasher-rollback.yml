@@ -253,6 +253,7 @@ jobs:
         uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa
         with:
           path: target/rollback-website
+          retention-days: 1
       - name: Carry the exact staged website inventory into deployment
         if: inputs.mode == 'deploy'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -291,7 +292,7 @@ jobs:
           path: |
             target/rollback-dry-run.json
             target/rollback-website
-          retention-days: 90
+          retention-days: 30
           if-no-files-found: error
 
   deploy-and-finalize:
@@ -299,6 +300,7 @@ jobs:
     if: inputs.mode == 'deploy'
     needs: stage
     runs-on: ubuntu-24.04
+    timeout-minutes: 90
     concurrency:
       group: prns-public-pages
       cancel-in-progress: false

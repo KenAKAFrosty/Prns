@@ -43,6 +43,7 @@ jobs:
   history:
     name: Verify one cumulative signed website-history input
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     permissions:
       actions: read
       attestations: read
@@ -221,6 +222,7 @@ jobs:
     name: CLI ${{ matrix.build_pass }} ${{ matrix.platform.target }}
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         build_pass: [primary, reproduction]
         platform:
@@ -245,6 +247,7 @@ jobs:
             binary: target/x86_64-pc-windows-msvc/release/hopspot-flash.exe
             rustflags: -D warnings -C link-arg=/Brepro
     runs-on: ${{ matrix.platform.os }}
+    timeout-minutes: 180
     env:
       RUSTFLAGS: ${{ matrix.platform.rustflags }}
     steps:
@@ -274,11 +277,13 @@ jobs:
           name: flasher-cli-${{ matrix.build_pass }}-${{ matrix.platform.target }}
           path: target/flasher-cli/*
           if-no-files-found: error
+          retention-days: 7
 
   core-candidate:
     name: Sparse firmware and hosted site ${{ matrix.build_pass }}
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         build_pass: [primary, reproduction]
     runs-on: ubuntu-24.04
@@ -358,11 +363,13 @@ jobs:
           name: flasher-core-candidate-${{ matrix.build_pass }}
           path: target/flasher-candidate/**
           if-no-files-found: error
+          retention-days: 7
 
   dependency-audit:
     name: Release dependency and notice evidence ${{ matrix.build_pass }}
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         build_pass: [primary, reproduction]
     runs-on: ubuntu-24.04
@@ -402,15 +409,18 @@ jobs:
           name: flasher-audit-evidence-${{ matrix.build_pass }}
           path: target/release-audit-evidence.md
           if-no-files-found: error
+          retention-days: 7
 
   assemble:
     name: Assemble ${{ matrix.build_pass }} unsigned candidate
     needs: [cli, core-candidate, dependency-audit]
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         build_pass: [primary, reproduction]
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -447,6 +457,7 @@ jobs:
     name: Independent candidate byte reproducibility
     needs: assemble
     runs-on: ubuntu-24.04
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:

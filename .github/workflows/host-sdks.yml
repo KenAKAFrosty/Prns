@@ -71,6 +71,7 @@ env:
 jobs:
   contract:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -135,6 +136,7 @@ jobs:
     needs: contract
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix:
         settings:
           - host: ubuntu-latest
@@ -211,6 +213,7 @@ jobs:
             upload: "*.whl"
     name: native (${{ matrix.settings.target }})
     runs-on: ${{ matrix.settings.host }}
+    timeout-minutes: 90
     env:
       MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
@@ -281,6 +284,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: host-native-${{ matrix.settings.target }}
+          retention-days: 7
           path: |
             dist/host-native-${{ matrix.settings.target }}
             dist/personal-rns-*.${{ matrix.settings.archive }}
@@ -290,11 +294,13 @@ jobs:
           name: host-python-${{ matrix.settings.target }}
           path: prns-host/bindings/python/dist/${{ matrix.settings.upload }}
           if-no-files-found: error
+          retention-days: 7
 
   android:
     needs: contract
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix:
         settings:
           - ndk: arm64-v8a
@@ -305,6 +311,7 @@ jobs:
             archive: tar.gz
     name: android (${{ matrix.settings.target }})
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -342,6 +349,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: host-native-${{ matrix.settings.target }}
+          retention-days: 7
           path: |
             dist/host-native-${{ matrix.settings.target }}
             dist/personal-rns-*.${{ matrix.settings.archive }}
@@ -350,6 +358,7 @@ jobs:
   rust-packages:
     needs: contract
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -373,6 +382,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: host-rust
+          retention-days: 7
           path: |
             dist/rust/crates
             dist/rust/rust-crates.json
@@ -381,6 +391,7 @@ jobs:
   managed:
     needs: [native, android]
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -429,6 +440,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: host-nuget
+          retention-days: 7
           path: |
             dist/nuget/*.nupkg
             dist/nuget/*.snupkg
@@ -438,11 +450,13 @@ jobs:
           name: host-maven
           path: prns-host/bindings/jvm/build/staging-repository
           if-no-files-found: error
+          retention-days: 7
 
   dotnet-package-smoke:
     needs: managed
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix:
         host:
           - ubuntu-latest
@@ -452,6 +466,7 @@ jobs:
           - windows-latest
           - windows-11-arm
     runs-on: ${{ matrix.host }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -474,6 +489,7 @@ jobs:
       inputs.expected_sha == github.sha
     needs: [native, managed]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: host-sdk-release
     permissions:
       contents: read
@@ -495,6 +511,7 @@ jobs:
       inputs.expected_sha == github.sha
     needs: dotnet-package-smoke
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: host-sdk-release
     permissions:
       contents: read

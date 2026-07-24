@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail closed when release workflows regain mutable actions or toolchains."""
+"""Fail closed when workflows regain mutable inputs or unbounded CI resources."""
 
 from __future__ import annotations
 
@@ -13,6 +13,65 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = tuple(sorted((ROOT / ".github" / "workflows").glob("*.yml")))
 ACTION_PATTERN = re.compile(r"^\s*(?:-\s*)?uses:\s*([^\s#]+)", re.MULTILINE)
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+JOB_PATTERN = re.compile(r"(?m)^  ([A-Za-z0-9_-]+):\n")
+AUTOMATIC_WORKFLOWS = frozenset(
+    {"ci.yml", "deep-validation.yml", "hardening.yml", "host-sdks.yml", "napi.yml"}
+)
+
+
+def workflow_jobs(text: str) -> tuple[tuple[str, str], ...]:
+    jobs = text.find("\njobs:\n")
+    if jobs < 0:
+        return ()
+    body = text[jobs + len("\njobs:\n") :]
+    matches = tuple(JOB_PATTERN.finditer(body))
+    return tuple(
+        (
+            match.group(1),
+            body[match.end() : matches[index + 1].start()]
+            if index + 1 < len(matches)
+            else body[match.end() :],
+        )
+        for index, match in enumerate(matches)
+    )
+
+
+def validate_resource_bounds(workflow: Path, text: str) -> list[str]:
+    errors: list[str] = []
+    relative = workflow.relative_to(ROOT)
+    artifact_limit = 7 if workflow.name in AUTOMATIC_WORKFLOWS else 30
+    for job_name, block in workflow_jobs(text):
+        if re.search(r"(?m)^    runs-on:", block):
+            timeout = re.search(r"(?m)^    timeout-minutes:\s*(\d+)\s*$", block)
+            if timeout is None:
+                errors.append(f"{relative}: {job_name} has no explicit timeout")
+            elif not 1 <= int(timeout.group(1)) <= 360:
+                errors.append(f"{relative}: {job_name} has an invalid timeout")
+
+        strategy = re.search(
+            r"(?ms)^    strategy:\n(.*?)(?=^    [A-Za-z0-9_-]+:|\Z)", block
+        )
+        if strategy is not None and re.search(r"(?m)^      matrix:", strategy.group(1)):
+            parallel = re.search(
+                r"(?m)^      max-parallel:\s*(\d+)\s*$", strategy.group(1)
+            )
+            if parallel is None:
+                errors.append(f"{relative}: {job_name} has an unbounded matrix")
+            elif not 1 <= int(parallel.group(1)) <= 4:
+                errors.append(f"{relative}: {job_name} exceeds four parallel matrix jobs")
+
+        steps = re.split(r"(?m)(?=^      - )", block)
+        for step in steps:
+            if not re.search(r"(?m)^\s+uses: actions/upload-(?:artifact|pages-artifact)@", step):
+                continue
+            retention = re.search(r"(?m)^          retention-days:\s*(\d+)\s*$", step)
+            if retention is None:
+                errors.append(f"{relative}: {job_name} uploads an artifact without retention")
+            elif not 1 <= int(retention.group(1)) <= artifact_limit:
+                errors.append(
+                    f"{relative}: {job_name} artifact retention exceeds {artifact_limit} days"
+                )
+    return errors
 
 
 def validate() -> list[str]:
@@ -26,6 +85,7 @@ def validate() -> list[str]:
     used: set[str] = set()
     for workflow in WORKFLOWS:
         text = workflow.read_text(encoding="utf-8")
+        errors.extend(validate_resource_bounds(workflow, text))
         for reference in ACTION_PATTERN.findall(text):
             if reference.startswith("./"):
                 continue
@@ -103,6 +163,28 @@ def validate() -> list[str]:
             errors.append(f"ci.yml is missing required browser gate {browser_gate!r}")
     if "release-critical:" not in ci:
         errors.append("ci.yml lacks the stable release-critical aggregate check")
+
+    deep = (ROOT / ".github" / "workflows" / "deep-validation.yml").read_text(
+        encoding="utf-8"
+    )
+    for resource_gate in (
+        'cron: "17 9 1 * *"',
+        "group: ${{ github.workflow }}",
+        "cancel-in-progress: false",
+    ):
+        if resource_gate not in deep:
+            errors.append(f"deep-validation.yml is missing resource gate {resource_gate!r}")
+
+    hardening = (ROOT / ".github" / "workflows" / "hardening.yml").read_text(
+        encoding="utf-8"
+    )
+    for resource_gate in (
+        'cron: "41 8 * * 1"',
+        "group: ${{ github.workflow }}",
+        "cancel-in-progress: false",
+    ):
+        if resource_gate not in hardening:
+            errors.append(f"hardening.yml is missing resource gate {resource_gate!r}")
 
     signing = (ROOT / ".github" / "workflows" / "flasher-sign.yml").read_text(
         encoding="utf-8"
@@ -301,7 +383,7 @@ def main() -> int:
         for error in errors:
             print(error, file=sys.stderr)
         return 1
-    print("release workflows use only reviewed full-SHA actions and exact production tools")
+    print("workflows use reviewed immutable inputs and bounded CI resources")
     return 0
 
 

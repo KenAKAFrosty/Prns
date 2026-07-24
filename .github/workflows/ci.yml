@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -22,6 +22,7 @@ env:
 jobs:
   fmt:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -35,6 +36,7 @@ jobs:
 
   clippy:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -47,6 +49,7 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -64,6 +67,7 @@ jobs:
     # `clippy::expect_used` and a non-exhaustive `match` in an embassy test both reached main
     # unseen. This job lints, tests, and doc-checks each lane on its own.
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -171,6 +175,7 @@ jobs:
 
   flasher-contracts:
     runs-on: ubuntu-24.04
+    timeout-minutes: 90
     env:
       RUSTUP_TOOLCHAIN: 1.96.0
     steps:
@@ -235,6 +240,7 @@ jobs:
   release-workflow-contracts:
     name: Release workflow contracts
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -251,6 +257,7 @@ jobs:
     # declared workspace floor (1.90); catches a feature or a dependency bump that
     # quietly requires a newer compiler than we advertise.
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     env:
       RUSTUP_TOOLCHAIN: 1.90.0
     steps:
@@ -277,6 +284,7 @@ jobs:
     # The forcing-function gate: the core stays no_std + alloc-free and cross-compiles
     # to the ESP32-C6 (riscv32imac). Reuses the committed script verbatim.
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -303,6 +311,7 @@ jobs:
     # libraries for the shipped ABIs, assembles the APK, and asserts the merged manifest keeps the
     # foreground-service + signature bind contract intact.
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -332,6 +341,7 @@ jobs:
 
   macos-ble:
     runs-on: macos-latest
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -377,6 +387,7 @@ jobs:
           name: ios-simulator-${{ github.sha }}
           path: validation-artifacts/results/ios-simulator
           if-no-files-found: error
+          retention-days: 7
 
   windows-desktop:
     # The Hopspot desktop face is the cross-platform proving ground, and nothing else in CI builds on
@@ -387,6 +398,7 @@ jobs:
     # `bundled` + `static-link`, see its Cargo.toml + .cargo/config.toml); that build needs CMake + the
     # MSVC toolchain, both preinstalled on windows-latest.
     runs-on: windows-latest
+    timeout-minutes: 90
     env:
       RUSTUP_TOOLCHAIN: stable
     steps:
@@ -419,6 +431,7 @@ jobs:
     # Real-RNS interop: the LocalServer shared instance against a stock RNS client, proving the wire
     # and control RPC match what Sideband/NomadNet/MeshChat actually speak — not just our own framing.
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -445,7 +458,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: pr-oracles-${{ github.run_id }}
-          retention-days: 14
+          retention-days: 7
           if-no-files-found: ignore
           path: validation-artifacts/results/**
 
@@ -484,6 +497,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: release-dependency-audit
+          retention-days: 7
           path: |
             release-audit-evidence.md
             docs/release-dependency-audit.md
@@ -509,6 +523,7 @@ jobs:
       - local-interop
       - deny
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     env:
       FMT_RESULT: ${{ needs.fmt.result }}
       CLIPPY_RESULT: ${{ needs.clippy.result }}

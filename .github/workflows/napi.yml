@@ -71,6 +71,7 @@ env:
 jobs:
   host-contract:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -100,6 +101,7 @@ jobs:
 
   napi-clippy:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -116,6 +118,7 @@ jobs:
   napi-build:
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix:
         settings:
           - host: windows-latest
@@ -144,6 +147,7 @@ jobs:
             cross: "--use-napi-cross"
     name: napi-build (${{ matrix.settings.target }})
     runs-on: ${{ matrix.settings.host }}
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -170,11 +174,13 @@ jobs:
           name: bindings-${{ matrix.settings.target }}
           path: prns-napi/*.node
           if-no-files-found: error
+          retention-days: 7
 
   napi-test:
     needs: napi-build
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix:
         settings:
           - host: windows-latest
@@ -191,6 +197,7 @@ jobs:
             target: aarch64-unknown-linux-gnu
     name: napi-test (${{ matrix.settings.target }})
     runs-on: ${{ matrix.settings.host }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -214,6 +221,7 @@ jobs:
   napi-test-linux-slim:
     needs: napi-build
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     container: node:24-slim
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -232,6 +240,7 @@ jobs:
     needs: napi-build
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         settings:
           - host: ubuntu-latest
@@ -240,6 +249,7 @@ jobs:
             target: aarch64-unknown-linux-musl
     name: napi-test (${{ matrix.settings.target }})
     runs-on: ${{ matrix.settings.host }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -263,6 +273,7 @@ jobs:
   javascript-hosts:
     needs: napi-build
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -314,6 +325,7 @@ jobs:
       - javascript-hosts
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: require every napi lane to succeed
         run: |
@@ -327,6 +339,7 @@ jobs:
   npm-stage:
     needs: [napi-build, napi-release-critical]
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -387,11 +400,13 @@ jobs:
           name: host-npm
           path: dist/npm/*.tgz
           if-no-files-found: error
+          retention-days: 7
 
   napi-publish:
     needs: npm-stage
     if: github.event_name == 'workflow_dispatch' && inputs.npm_publish == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: host-sdk-release
     permissions:
       contents: read

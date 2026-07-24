@@ -29,6 +29,7 @@ jobs:
   finalize:
     name: Validate and sign physical acceptance
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     environment: release-signing
     env:
       RELEASE_VERSION: ${{ inputs.version }}

@@ -27,6 +27,7 @@ env:
 jobs:
   inventory:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     outputs:
       matrix: ${{ steps.inventory.outputs.matrix }}
       commit: ${{ steps.inventory.outputs.commit }}
@@ -54,6 +55,7 @@ jobs:
     timeout-minutes: 260
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix: ${{ fromJSON(needs.inventory.outputs.matrix) }}
     defaults:
       run:
@@ -148,13 +150,14 @@ jobs:
         with:
           name: release-readiness-${{ matrix.id }}-${{ github.run_id }}
           if-no-files-found: error
-          retention-days: 90
+          retention-days: 30
           path: validation-artifacts/**
 
   aggregate:
     if: always()
     needs: [inventory, qualify]
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -172,5 +175,5 @@ jobs:
         with:
           name: release-readiness-manifest-${{ needs.inventory.outputs.commit }}
           if-no-files-found: error
-          retention-days: 180
+          retention-days: 30
           path: validation-artifacts/release-manifest.json

@@ -5,6 +5,10 @@ on:
   schedule:
     - cron: "41 8 * * 1"
 
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
@@ -19,6 +23,7 @@ jobs:
     timeout-minutes: 60
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         sanitizer: [address, leak, thread]
     steps:
@@ -36,6 +41,7 @@ jobs:
         with:
           name: hardening-sanitizer-${{ matrix.sanitizer }}-${{ github.run_id }}
           path: validation-artifacts/results/sanitizer-${{ matrix.sanitizer }}/**
+          retention-days: 7
 
   miri:
     runs-on: ubuntu-latest
@@ -55,6 +61,7 @@ jobs:
         with:
           name: hardening-miri-${{ github.run_id }}
           path: validation-artifacts/results/miri-quick/**
+          retention-days: 7
 
   unsafe-inventory:
     runs-on: ubuntu-latest
@@ -84,6 +91,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: cargo-geiger-evidence
+          retention-days: 7
           path: |
             hardening-logs/*.log
             validation-artifacts/results/unsafe-entrypoints/**
