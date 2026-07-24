@@ -23,7 +23,7 @@ Host(
                 is CommandOutcomeInterfaceAttached -> println(outcome.`interface`)
                 else -> Unit
             }
-            is CommandFailed -> error("${settlement.failure}: ${settlement.detail}")
+            is CommandFailed -> handleFailure(settlement.failure)
         }
     }
 }

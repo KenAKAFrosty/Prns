@@ -5,26 +5,25 @@ The Swift package is a thin adapter over the stable Personal RNS C capsule. The 
 Install the matching native capsule so `pkg-config personal-rns` resolves it, then add the package:
 
 ```swift
-let host = try Host(
-    options: .ephemeralEndpoint(requiredCapabilities: [.tcpClient])
-)
-
-if case .claimed(let events) = try host.claimApplicationEvents() {
+func run(_ host: Host) async throws {
+    guard case .claimed(let events) = try host.claimApplicationEvents() else {
+        return
+    }
     Task {
         for try await event in events {
             handle(event)
         }
     }
-}
 
-let command = try host.execute(
-    .attachTcpClient(target: "127.0.0.1:4242", bitrate: .auto)
-)
-switch try await command.value() {
-case .succeeded(let outcome):
-    handle(outcome)
-case .failed(let kind, let detail):
-    handleFailure(kind, detail)
+    let command = try host.execute(
+        .attachTcpClient(target: "127.0.0.1:4242", bitrate: .auto)
+    )
+    switch try await command.value() {
+    case .succeeded(let outcome):
+        handle(outcome)
+    case .failed(let failure):
+        handleFailure(failure)
+    }
 }
 ```
 

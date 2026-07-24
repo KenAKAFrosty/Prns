@@ -32,7 +32,7 @@ switch value := settlement.(type) {
 case prns.CommandSucceeded:
     handle(value.Outcome)
 case prns.CommandFailed:
-    handleFailure(value.Kind, value.Detail)
+    handleFailure(value.Failure)
 }
 ```
 

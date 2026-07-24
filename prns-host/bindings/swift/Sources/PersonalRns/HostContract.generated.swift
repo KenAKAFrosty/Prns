@@ -105,6 +105,9 @@ public enum CommandFailureKind: UInt32, Sendable {
     case invalidBitrate = 12
     case bindFailed = 13
     case writeFailed = 14
+    case unsupportedByBackend = 15
+    case unknownLink = 16
+    case linkNotActive = 17
 }
 
 public enum DeliveryEvidenceKind: UInt32, Sendable {
@@ -369,6 +372,26 @@ public enum CommandOutcome: Sendable {
     case linkCloseQueued
     case interfaceAttached(interface: InterfaceId)
     case interfaceDetached(interface: InterfaceId)
+}
+
+public enum CommandFailure: Sendable {
+    case nodeStopped
+    case busy
+    case payloadTooLarge
+    case unknownDestination
+    case notSingleDestination
+    case announceAppDataTooLong
+    case unknownInterface
+    case noRouteToDestination
+    case notDirectlyReachable
+    case packetCulled
+    case deliveryTimedOut
+    case invalidBitrate
+    case bindFailed(detail: String)
+    case writeFailed(detail: String)
+    case unsupportedByBackend
+    case unknownLink
+    case linkNotActive
 }
 
 public enum ApplicationEvent: Sendable {

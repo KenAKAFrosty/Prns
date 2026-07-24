@@ -1,13 +1,5 @@
-export const HOST_CONTRACT_ABI = 1;
-export const PRODUCT_VERSION = "0.2.8";
-export const DESTINATION_HASH_LENGTH = 16;
-export const IDENTITY_HASH_LENGTH = 16;
-export const INTERFACE_ID_LENGTH = 8;
-export const LINK_ID_LENGTH = 16;
-export const REQUEST_ID_LENGTH = 16;
-export const REQUEST_PATH_HASH_LENGTH = 16;
-export const RESOURCE_HASH_LENGTH = 32;
-export const IDENTITY_SECRET_LENGTH = 64;
+import { DESTINATION_HASH_LENGTH, IDENTITY_HASH_LENGTH, IDENTITY_SECRET_LENGTH, INTERFACE_ID_LENGTH, LINK_ID_LENGTH, PACKET_HASH_LENGTH, REQUEST_ID_LENGTH, REQUEST_PATH_HASH_LENGTH, RESOURCE_HASH_LENGTH, } from "./contract.generated.js";
+export * from "./contract.generated.js";
 export class PrnsValidationError extends Error {
     code;
     constructor(code, message) {
@@ -15,14 +7,6 @@ export class PrnsValidationError extends Error {
         this.name = "PrnsValidationError";
         this.code = code;
     }
-}
-export function balancedLimits() {
-    return {
-        pendingCommands: 256,
-        applicationEvents: 1_024,
-        retainedEventBytes: 8 * 1_024 * 1_024,
-        diagnostics: 1_024,
-    };
 }
 export function destinationHash(bytes) {
     return fixedBytes("destination hash", bytes, DESTINATION_HASH_LENGTH);
@@ -35,6 +19,9 @@ export function interfaceId(bytes) {
 }
 export function linkId(bytes) {
     return fixedBytes("link ID", bytes, LINK_ID_LENGTH);
+}
+export function packetHash(bytes) {
+    return fixedBytes("packet hash", bytes, PACKET_HASH_LENGTH);
 }
 export function requestId(bytes) {
     return fixedBytes("request ID", bytes, REQUEST_ID_LENGTH);

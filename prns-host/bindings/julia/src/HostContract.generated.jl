@@ -101,6 +101,9 @@ end
     CommandFailureKindInvalidBitrate = 12
     CommandFailureKindBindFailed = 13
     CommandFailureKindWriteFailed = 14
+    CommandFailureKindUnsupportedByBackend = 15
+    CommandFailureKindUnknownLink = 16
+    CommandFailureKindLinkNotActive = 17
 end
 
 @enum DeliveryEvidenceKind::UInt32 begin
@@ -387,6 +390,61 @@ end
 
 struct CommandOutcomeInterfaceDetached <: CommandOutcome
     interface::InterfaceId
+end
+
+abstract type CommandFailure end
+
+struct CommandFailureNodeStopped <: CommandFailure
+end
+
+struct CommandFailureBusy <: CommandFailure
+end
+
+struct CommandFailurePayloadTooLarge <: CommandFailure
+end
+
+struct CommandFailureUnknownDestination <: CommandFailure
+end
+
+struct CommandFailureNotSingleDestination <: CommandFailure
+end
+
+struct CommandFailureAnnounceAppDataTooLong <: CommandFailure
+end
+
+struct CommandFailureUnknownInterface <: CommandFailure
+end
+
+struct CommandFailureNoRouteToDestination <: CommandFailure
+end
+
+struct CommandFailureNotDirectlyReachable <: CommandFailure
+end
+
+struct CommandFailurePacketCulled <: CommandFailure
+end
+
+struct CommandFailureDeliveryTimedOut <: CommandFailure
+end
+
+struct CommandFailureInvalidBitrate <: CommandFailure
+end
+
+struct CommandFailureBindFailed <: CommandFailure
+    detail::String
+end
+
+struct CommandFailureWriteFailed <: CommandFailure
+    detail::String
+end
+
+struct CommandFailureUnsupportedByBackend <: CommandFailure
+end
+
+struct CommandFailureUnknownLink <: CommandFailure
+end
+
+struct CommandFailureLinkNotActive <: CommandFailure
 end
 
 abstract type ApplicationEvent end

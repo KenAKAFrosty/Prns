@@ -6,6 +6,7 @@ import {
   entropyBytes,
   identitySecretKey,
   interfaceId,
+  linkId,
   nowMillis,
   match_into,
 } from "../../prns-js/src/browser/index.js";
@@ -62,7 +63,39 @@ class MockRuntime implements PrnsRuntimeBinding {
   }
 
   announce(_options: RuntimeAnnounceOptions): bigint {
+    this.events.push({
+      type: "commandSettled",
+      id: 1n,
+      result: "succeeded",
+      kind: "Announced",
+    });
     return 1n;
+  }
+
+  sendSinglePacket(
+    _options: Parameters<PrnsRuntimeBinding["sendSinglePacket"]>[0],
+  ): bigint {
+    this.events.push({
+      type: "commandSettled",
+      id: 2n,
+      result: "succeeded",
+      kind: "PacketDelivered",
+      rttMillis: 7,
+      evidence: "Response",
+    });
+    return 2n;
+  }
+
+  closeLink(
+    _options: Parameters<PrnsRuntimeBinding["closeLink"]>[0],
+  ): bigint {
+    this.events.push({
+      type: "commandSettled",
+      id: 3n,
+      result: "failed",
+      kind: "UnknownLink",
+    });
+    return 3n;
   }
 
   ingest(_options: RuntimeIngestOptions): void {}
@@ -105,6 +138,28 @@ async function main(): Promise<void> {
   assert(runtime, "mock runtime exists");
 
   const destination = new Uint8Array(16).fill(4);
+  const packet = await prns.execute(
+    Tag("SendSinglePacket", {
+      destination: destinationHash(destination),
+      payload: new TextEncoder().encode("command payload"),
+    }),
+  );
+  assert(packet.tag === "Succeeded", "typed command succeeds");
+  assert(packet.data.tag === "PacketDelivered", "typed command outcome is preserved");
+  const unsupported = await prns.execute(
+    Tag("AttachTcpClient", {
+      target: "127.0.0.1:4242",
+      bitrate: Tag("Auto"),
+    }),
+  );
+  assert(unsupported.tag === "Failed", "unsupported command is data");
+  assert(
+    unsupported.data.tag === "UnsupportedByBackend",
+    "unsupported command failure is typed",
+  );
+  const closed = await prns.closeLink(linkId(new Uint8Array(16)));
+  assert(closed.tag === "Failed", "link rejection is data");
+  assert(closed.data.tag === "UnknownLink", "link rejection preserves its case");
   const sourceInterface = new Uint8Array(8).fill(5);
   const plaintext = new TextEncoder().encode("hello from a single packet");
   runtime.events.push({
@@ -136,7 +191,7 @@ async function main(): Promise<void> {
       hops: 2,
       sourceInterface,
     },
-    { type: "commandSettled", id: 7n, settlement: "Sent" },
+    { type: "commandSettled", id: 7n, result: "untracked" },
     { type: "routeExpired", destination },
   );
   const diagnostics = claimed(prns.claimDiagnostics());

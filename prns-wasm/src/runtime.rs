@@ -2,9 +2,9 @@ use core::convert::TryFrom;
 
 use js_sys::{Array, Object};
 use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, Directive, EngineCommand,
+    AnnounceAppData, AnnounceNow, AnnounceTarget, CloseLink, CommandId, Directive, EngineCommand,
     EngineReaction, EngineState, FanTarget, InstantMillis, IssuedCommand, Journaled, RatchetPolicy,
-    Respond, RespondPayload,
+    Respond, RespondPayload, SendSinglePacket, SendSinglePacketPayload,
 };
 use personal_rns::interfaces::bluetooth_auto as bluetooth_contract;
 use personal_rns::interfaces::{
@@ -22,9 +22,9 @@ use prns_host_cooperative::{CooperativeHost, Entropy, MonotonicMillis};
 use wasm_bindgen::prelude::*;
 
 use crate::input::{
-    array_to_strings, destination_hash_from_vec, interface_id_from_vec, optional_bytes,
-    optional_u32, parse_interface_kind, required_array, required_bytes, required_string,
-    required_u64, secret_key_from_vec,
+    array_to_strings, destination_hash_from_vec, interface_id_from_vec, link_id_from_vec,
+    optional_bytes, optional_u32, parse_interface_kind, required_array, required_bytes,
+    required_string, required_u64, secret_key_from_vec,
 };
 use crate::js_translation::{
     interface_kind_name, journaled_to_js, outbound_to_js, set_bytes, set_str, set_u32, set_u64,
@@ -242,13 +242,65 @@ impl PrnsRuntime {
             .begin_step(MonotonicMillis::new(now_ms), entropy)
             .map_err(|error| JsValue::from_str(&format!("host time moved backwards: {error:?}")))?;
         let destination = destination_hash_from_vec(destination)?;
+        let target = optional_bytes(&options, "interfaceId")?
+            .map(interface_id_from_vec)
+            .transpose()?
+            .map_or(AnnounceTarget::AllInterfaces, AnnounceTarget::Interface);
         let id = self.mint_command_id();
         let command = EngineCommand::AnnounceNow(AnnounceNow {
             destination,
-            target: AnnounceTarget::AllInterfaces,
+            target,
             app_data: AnnounceAppData::Registered,
         });
         self.ingest_command(id, command, now_ms, step.entropy.as_bytes().to_vec());
+        Ok(id.0)
+    }
+
+    #[wasm_bindgen(js_name = sendSinglePacket)]
+    pub fn send_single_packet(&mut self, options: JsValue) -> Result<u64, JsValue> {
+        let destination = destination_hash_from_vec(required_bytes(&options, "destination")?)?;
+        let payload = required_bytes(&options, "payload")?;
+        let payload = SendSinglePacketPayload::from_slice(&payload)
+            .map_err(|_| JsValue::from_str("payload exceeds the single packet limit"))?;
+        let now_ms = required_u64(&options, "nowMs")?;
+        let entropy = required_bytes(&options, "entropy")?;
+        let entropy = Entropy::try_new(entropy)
+            .map_err(|error| JsValue::from_str(&format!("host entropy rejected: {error:?}")))?;
+        let step = self
+            .host
+            .begin_step(MonotonicMillis::new(now_ms), entropy)
+            .map_err(|error| JsValue::from_str(&format!("host time moved backwards: {error:?}")))?;
+        let id = self.mint_command_id();
+        self.ingest_command(
+            id,
+            EngineCommand::SendSinglePacket(SendSinglePacket {
+                destination,
+                payload,
+            }),
+            now_ms,
+            step.entropy.as_bytes().to_vec(),
+        );
+        Ok(id.0)
+    }
+
+    #[wasm_bindgen(js_name = closeLink)]
+    pub fn close_link(&mut self, options: JsValue) -> Result<u64, JsValue> {
+        let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
+        let now_ms = required_u64(&options, "nowMs")?;
+        let entropy = required_bytes(&options, "entropy")?;
+        let entropy = Entropy::try_new(entropy)
+            .map_err(|error| JsValue::from_str(&format!("host entropy rejected: {error:?}")))?;
+        let step = self
+            .host
+            .begin_step(MonotonicMillis::new(now_ms), entropy)
+            .map_err(|error| JsValue::from_str(&format!("host time moved backwards: {error:?}")))?;
+        let id = self.mint_command_id();
+        self.ingest_command(
+            id,
+            EngineCommand::CloseLink(CloseLink { link_id }),
+            now_ms,
+            step.entropy.as_bytes().to_vec(),
+        );
         Ok(id.0)
     }
 

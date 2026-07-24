@@ -106,6 +106,8 @@ def validate(schema):
                     )
                 field_names.add(field["name"])
     for union_name, enum_name in (
+        ("CommandOutcome", "CommandOutcomeKind"),
+        ("CommandFailure", "CommandFailureKind"),
         ("ApplicationEvent", "ApplicationEventKind"),
         ("DiagnosticEvent", "DiagnosticEventKind"),
     ):

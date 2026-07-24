@@ -35,12 +35,12 @@ static async Task Run(PrnsHost host)
 {
     await using (host)
     {
-        await host.ClaimEvents().Match(
-            claimed => Consume(claimed.Stream),
-            already => Task.FromException(
-                new InvalidOperationException($"{already.Lane} already has an owner.")
-            )
-        );
+        var claim = host.ClaimEvents();
+        if (claim is StreamClaim<ApplicationEvent>.AlreadyClaimed already)
+        {
+            throw new InvalidOperationException($"{already.Lane} already has an owner.");
+        }
+        await Consume(((StreamClaim<ApplicationEvent>.Claimed)claim).Stream);
     }
 }
 
@@ -70,4 +70,4 @@ The managed package expects the target’s `prns_host` native library to be avai
 python3 validation/run.py run --suite host-dotnet-contract
 ```
 
-The first native release surface deliberately exposes the common lifecycle and owned streams before convenience operations. Helpers that can be expressed without weakening cancellation, pressure, or ownership belong in this adapter. Backend-specific operations belong behind generated capabilities or explicit sub-interfaces.
+`ExecuteAsync` accepts the generated `HostCommand` sum and resolves to `CommandSettlement.Succeeded(CommandOutcome)` or `CommandSettlement.Failed(CommandFailure)`. Convenience methods such as `SendSinglePacketAsync`, `AttachTcpClientAsync`, and `DetachInterfaceAsync` delegate to that same contract.

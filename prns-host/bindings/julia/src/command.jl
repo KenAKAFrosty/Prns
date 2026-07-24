@@ -5,8 +5,7 @@ struct CommandSucceeded <: CommandSettlement
 end
 
 struct CommandFailed <: CommandSettlement
-    kind::CommandFailureKind
-    detail::String
+    failure::CommandFailure
 end
 
 mutable struct Command
@@ -232,8 +231,10 @@ end
 
 function decode_settlement(value::NativeCommandResult)
     value.failure != 0 && return CommandFailed(
-        CommandFailureKind(value.failure),
-        copy_string(value.detail),
+        decode_command_failure(
+            CommandFailureKind(value.failure),
+            copy_string(value.detail),
+        ),
     )
     outcome = CommandOutcomeKind(value.outcome)
     if outcome == CommandOutcomeKindAnnounced
@@ -271,6 +272,40 @@ function decode_settlement(value::NativeCommandResult)
         )
     end
     throw(StatusFailure(:decode_command, StatusBackendFailed))
+end
+
+function decode_command_failure(kind::CommandFailureKind, detail::String)
+    kind == CommandFailureKindNodeStopped && return CommandFailureNodeStopped()
+    kind == CommandFailureKindBusy && return CommandFailureBusy()
+    kind == CommandFailureKindPayloadTooLarge &&
+        return CommandFailurePayloadTooLarge()
+    kind == CommandFailureKindUnknownDestination &&
+        return CommandFailureUnknownDestination()
+    kind == CommandFailureKindNotSingleDestination &&
+        return CommandFailureNotSingleDestination()
+    kind == CommandFailureKindAnnounceAppDataTooLong &&
+        return CommandFailureAnnounceAppDataTooLong()
+    kind == CommandFailureKindUnknownInterface &&
+        return CommandFailureUnknownInterface()
+    kind == CommandFailureKindNoRouteToDestination &&
+        return CommandFailureNoRouteToDestination()
+    kind == CommandFailureKindNotDirectlyReachable &&
+        return CommandFailureNotDirectlyReachable()
+    kind == CommandFailureKindPacketCulled && return CommandFailurePacketCulled()
+    kind == CommandFailureKindDeliveryTimedOut &&
+        return CommandFailureDeliveryTimedOut()
+    kind == CommandFailureKindInvalidBitrate &&
+        return CommandFailureInvalidBitrate()
+    kind == CommandFailureKindBindFailed &&
+        return CommandFailureBindFailed(detail)
+    kind == CommandFailureKindWriteFailed &&
+        return CommandFailureWriteFailed(detail)
+    kind == CommandFailureKindUnsupportedByBackend &&
+        return CommandFailureUnsupportedByBackend()
+    kind == CommandFailureKindUnknownLink && return CommandFailureUnknownLink()
+    kind == CommandFailureKindLinkNotActive &&
+        return CommandFailureLinkNotActive()
+    throw(StatusFailure(:decode_command_failure, StatusBackendFailed))
 end
 
 function Base.wait(

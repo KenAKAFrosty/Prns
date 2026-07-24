@@ -70,6 +70,17 @@ export class PrnsRuntime {
         return v1;
     }
     /**
+     * @param {any} options
+     * @returns {bigint}
+     */
+    closeLink(options) {
+        const ret = wasm.prnsruntime_closeLink(this.__wbg_ptr, options);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return BigInt.asUintN(64, ret[0]);
+    }
+    /**
      * @returns {Array<any>}
      */
     drainEvents() {
@@ -158,6 +169,17 @@ export class PrnsRuntime {
             throw takeFromExternrefTable0(ret[1]);
         }
         return ret[0] !== 0;
+    }
+    /**
+     * @param {any} options
+     * @returns {bigint}
+     */
+    sendSinglePacket(options) {
+        const ret = wasm.prnsruntime_sendSinglePacket(this.__wbg_ptr, options);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return BigInt.asUintN(64, ret[0]);
     }
     /**
      * @returns {any}

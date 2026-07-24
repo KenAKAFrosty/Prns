@@ -16,8 +16,7 @@ type CommandSucceeded struct {
 func (CommandSucceeded) commandSettlement() {}
 
 type CommandFailed struct {
-	Kind   CommandFailureKind
-	Detail string
+	Failure CommandFailure
 }
 
 func (CommandFailed) commandSettlement() {}
@@ -67,7 +66,11 @@ func decodeCommandSettlement(
 	result nativeCommandResult,
 ) (CommandSettlement, error) {
 	if result.failure != 0 {
-		return CommandFailed{Kind: result.failure, Detail: result.detail}, nil
+		failure, err := decodeCommandFailure(result.failure, result.detail)
+		if err != nil {
+			return nil, err
+		}
+		return CommandFailed{Failure: failure}, nil
 	}
 	var outcome CommandOutcome
 	switch result.outcome {
@@ -133,6 +136,50 @@ func decodeCommandSettlement(
 		}
 	}
 	return CommandSucceeded{Outcome: outcome}, nil
+}
+
+func decodeCommandFailure(kind CommandFailureKind, detail string) (CommandFailure, error) {
+	switch kind {
+	case CommandFailureKindNodeStopped:
+		return CommandFailureNodeStopped{}, nil
+	case CommandFailureKindBusy:
+		return CommandFailureBusy{}, nil
+	case CommandFailureKindPayloadTooLarge:
+		return CommandFailurePayloadTooLarge{}, nil
+	case CommandFailureKindUnknownDestination:
+		return CommandFailureUnknownDestination{}, nil
+	case CommandFailureKindNotSingleDestination:
+		return CommandFailureNotSingleDestination{}, nil
+	case CommandFailureKindAnnounceAppDataTooLong:
+		return CommandFailureAnnounceAppDataTooLong{}, nil
+	case CommandFailureKindUnknownInterface:
+		return CommandFailureUnknownInterface{}, nil
+	case CommandFailureKindNoRouteToDestination:
+		return CommandFailureNoRouteToDestination{}, nil
+	case CommandFailureKindNotDirectlyReachable:
+		return CommandFailureNotDirectlyReachable{}, nil
+	case CommandFailureKindPacketCulled:
+		return CommandFailurePacketCulled{}, nil
+	case CommandFailureKindDeliveryTimedOut:
+		return CommandFailureDeliveryTimedOut{}, nil
+	case CommandFailureKindInvalidBitrate:
+		return CommandFailureInvalidBitrate{}, nil
+	case CommandFailureKindBindFailed:
+		return CommandFailureBindFailed{Detail: detail}, nil
+	case CommandFailureKindWriteFailed:
+		return CommandFailureWriteFailed{Detail: detail}, nil
+	case CommandFailureKindUnsupportedByBackend:
+		return CommandFailureUnsupportedByBackend{}, nil
+	case CommandFailureKindUnknownLink:
+		return CommandFailureUnknownLink{}, nil
+	case CommandFailureKindLinkNotActive:
+		return CommandFailureLinkNotActive{}, nil
+	default:
+		return nil, StatusError{
+			Operation: "decode command failure",
+			Status:    StatusBackendFailed,
+		}
+	}
 }
 
 func (command *Command) Close() error {

@@ -231,39 +231,35 @@ async function sendAnnounce(): Promise<void> {
   assert(prns, "Prns is ready");
   assert(destination, "destination is registered");
   const command = await prns.announce(destination);
-  log(
-    command.tag === "Announced"
-      ? "announce settled"
-      : `${command.tag}: ${JSON.stringify(command.data)}`,
-  );
+  if (command.tag === "Failed") {
+    log(`announce failed: ${command.data.tag}`);
+    return;
+  }
+  log(`${command.data.tag} settled`);
 }
 
 async function consumeEvents(node: Prns): Promise<void> {
-  await match(node.claimEvents(), {
-    Claimed: async (events) => {
-      for await (const event of events) {
-        eventCount += 1;
-        log(`event ${eventCount}: ${describeEvent(event)}`);
-      }
-    },
-    AlreadyClaimed: async ({ lane }) => {
-      log(`${lane} already has a consumer`);
-    },
-  });
+  const claim = node.claimEvents();
+  if (claim.tag === "AlreadyClaimed") {
+    log(`${claim.data.lane} already has a consumer`);
+    return;
+  }
+  for await (const event of claim.data) {
+    eventCount += 1;
+    log(`event ${eventCount}: ${describeEvent(event)}`);
+  }
 }
 
 async function consumeDiagnostics(node: Prns): Promise<void> {
-  await match(node.claimDiagnostics(), {
-    Claimed: async (diagnostics) => {
-      for await (const event of diagnostics) {
-        eventCount += 1;
-        log(`diagnostic ${eventCount}: ${describeEvent(event)}`);
-      }
-    },
-    AlreadyClaimed: async ({ lane }) => {
-      log(`${lane} already has a consumer`);
-    },
-  });
+  const claim = node.claimDiagnostics();
+  if (claim.tag === "AlreadyClaimed") {
+    log(`${claim.data.lane} already has a consumer`);
+    return;
+  }
+  for await (const event of claim.data) {
+    eventCount += 1;
+    log(`diagnostic ${eventCount}: ${describeEvent(event)}`);
+  }
 }
 
 async function closeUsb(): Promise<void> {

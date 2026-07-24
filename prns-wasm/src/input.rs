@@ -1,6 +1,7 @@
 use js_sys::{Array, Reflect, Uint8Array};
 use personal_rns::identity::IDENTITY_SECRET_KEY_LEN;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, INTERFACE_ID_LEN};
+use personal_rns::routing::links::LinkId;
 use personal_rns::wire::{DestinationHash, TRUNCATED_HASH_BYTE_LEN};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -128,6 +129,15 @@ pub(crate) fn interface_id_from_vec(bytes: Vec<u8>) -> Result<InterfaceId, JsVal
     let mut id = [0u8; INTERFACE_ID_LEN];
     id.copy_from_slice(&bytes);
     Ok(InterfaceId::new(id))
+}
+
+pub(crate) fn link_id_from_vec(bytes: Vec<u8>) -> Result<LinkId, JsValue> {
+    if bytes.len() != TRUNCATED_HASH_BYTE_LEN {
+        return Err(JsValue::from_str("link id must be 16 bytes"));
+    }
+    let mut id = [0u8; TRUNCATED_HASH_BYTE_LEN];
+    id.copy_from_slice(&bytes);
+    Ok(LinkId::new(id))
 }
 
 pub(crate) fn parse_interface_kind(kind: &str) -> Result<InterfaceKind, JsValue> {

@@ -1,5 +1,9 @@
 use js_sys::{Object, Reflect, Uint8Array};
-use personal_rns::engine::{FanTarget, Journaled, LinkClosedReason, RouteRemovalCause};
+use personal_rns::engine::{
+    AnnounceNowFailure, AnnounceNowRejection, CloseLinkFailure, CloseLinkRejection,
+    DeliveryEvidence, DeliveryProof, FanTarget, Journaled, LinkClosedReason, RouteRemovalCause,
+    SendSinglePacketFailure, SendSinglePacketRejection, Settlement,
+};
 use personal_rns::interfaces::bluetooth_auto as bluetooth_contract;
 use personal_rns::interfaces::usb_auto;
 use personal_rns::interfaces::InterfaceKind;
@@ -38,7 +42,7 @@ pub(crate) fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
         Journaled::CommandSettled { id, settlement } => {
             set_str(&object, "type", "commandSettled");
             set_u64(&object, "id", id.0);
-            set_str(&object, "settlement", &format!("{settlement:?}"));
+            settlement_to_js(&object, settlement);
         }
         Journaled::LinkEstablished(link) => {
             set_str(&object, "type", "linkEstablished");
@@ -232,6 +236,103 @@ pub(crate) fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
         }
     }
     object.into()
+}
+
+fn settlement_to_js(object: &Object, settlement: Settlement) {
+    match settlement {
+        Settlement::AnnounceNow(Ok(())) => {
+            set_str(object, "result", "succeeded");
+            set_str(object, "kind", "Announced");
+        }
+        Settlement::AnnounceNow(Err(failure)) => match failure {
+            AnnounceNowFailure::Rejected(AnnounceNowRejection::UnknownDestination) => {
+                set_command_failure(object, "UnknownDestination", None);
+            }
+            AnnounceNowFailure::Rejected(AnnounceNowRejection::NotASingleDestination) => {
+                set_command_failure(object, "NotSingleDestination", None);
+            }
+            AnnounceNowFailure::Rejected(AnnounceNowRejection::AppDataTooLong) => {
+                set_command_failure(object, "AnnounceAppDataTooLong", None);
+            }
+            AnnounceNowFailure::Rejected(AnnounceNowRejection::UnknownInterface) => {
+                set_command_failure(object, "UnknownInterface", None);
+            }
+            AnnounceNowFailure::WriteFailed(error) => {
+                set_command_failure(object, "WriteFailed", Some(format!("{error:?}")));
+            }
+        },
+        Settlement::SendSinglePacket(Ok(delivered)) => {
+            set_str(object, "result", "succeeded");
+            set_str(object, "kind", "PacketDelivered");
+            set_u64(object, "rttMillis", delivered.rtt.millis());
+            match delivered.evidence {
+                DeliveryEvidence::Proof(DeliveryProof::Explicit(hash)) => {
+                    set_str(object, "evidence", "ExplicitProof");
+                    set_bytes(object, "packetHash", hash.as_bytes());
+                }
+                DeliveryEvidence::Proof(DeliveryProof::Implicit(hash)) => {
+                    set_str(object, "evidence", "ImplicitProof");
+                    set_bytes(object, "packetHash", hash.as_bytes());
+                }
+                DeliveryEvidence::Response => {
+                    set_str(object, "evidence", "Response");
+                }
+            }
+        }
+        Settlement::SendSinglePacket(Err(failure)) => match failure {
+            SendSinglePacketFailure::Rejected(SendSinglePacketRejection::NoRouteToDestination) => {
+                set_command_failure(object, "NoRouteToDestination", None);
+            }
+            SendSinglePacketFailure::Rejected(SendSinglePacketRejection::NotDirectlyReachable) => {
+                set_command_failure(object, "NotDirectlyReachable", None);
+            }
+            SendSinglePacketFailure::WriteFailed(error) => {
+                set_command_failure(object, "WriteFailed", Some(format!("{error:?}")));
+            }
+            SendSinglePacketFailure::Culled => {
+                set_command_failure(object, "PacketCulled", None);
+            }
+            SendSinglePacketFailure::Timeout => {
+                set_command_failure(object, "DeliveryTimedOut", None);
+            }
+        },
+        Settlement::CloseLink(Ok(())) => {
+            set_str(object, "result", "succeeded");
+            set_str(object, "kind", "LinkCloseQueued");
+        }
+        Settlement::CloseLink(Err(CloseLinkFailure::Rejected(CloseLinkRejection::NoSuchLink))) => {
+            set_command_failure(object, "UnknownLink", None);
+        }
+        Settlement::CloseLink(Err(CloseLinkFailure::Rejected(
+            CloseLinkRejection::LinkNotActive,
+        ))) => {
+            set_command_failure(object, "LinkNotActive", None);
+        }
+        Settlement::CloseLink(Err(CloseLinkFailure::WriteFailed)) => {
+            set_command_failure(object, "WriteFailed", Some("link write failed".to_string()));
+        }
+        Settlement::SendGroup(_)
+        | Settlement::RequestPath(_)
+        | Settlement::EstablishLink(_)
+        | Settlement::SendToLink(_)
+        | Settlement::Identify(_)
+        | Settlement::SendRequest(_)
+        | Settlement::Respond(_)
+        | Settlement::SendResource(_)
+        | Settlement::SetResourceStrategy(_)
+        | Settlement::SendToChannel(_)
+        | Settlement::AllowRequester(_) => {
+            set_str(object, "result", "untracked");
+        }
+    }
+}
+
+fn set_command_failure(object: &Object, kind: &str, detail: Option<String>) {
+    set_str(object, "result", "failed");
+    set_str(object, "kind", kind);
+    if let Some(detail) = detail {
+        set_str(object, "detail", &detail);
+    }
 }
 
 pub(crate) fn outbound_to_js(frame: &OutboundFrame) -> JsValue {

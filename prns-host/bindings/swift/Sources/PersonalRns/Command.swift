@@ -3,7 +3,7 @@ import Foundation
 
 public enum CommandSettlement: Sendable {
     case succeeded(CommandOutcome)
-    case failed(kind: CommandFailureKind, detail: String)
+    case failed(CommandFailure)
 }
 
 public final class Command: @unchecked Sendable {
@@ -163,7 +163,9 @@ public final class Command: @unchecked Sendable {
                     status: .backendFailed
                 )
             }
-            return .failed(kind: failure, detail: copyString(value.detail))
+            return .failed(
+                decodeCommandFailure(failure, detail: copyString(value.detail))
+            )
         }
         guard let outcome = CommandOutcomeKind(rawValue: value.outcome) else {
             throw StatusFailure(
@@ -251,5 +253,47 @@ private extension Bitrate {
                 return (BitrateKind.bitsPerSecond.rawValue, value)
             }
         }
+    }
+}
+
+private func decodeCommandFailure(
+    _ kind: CommandFailureKind,
+    detail: String
+) -> CommandFailure {
+    switch kind {
+    case .nodeStopped:
+        return .nodeStopped
+    case .busy:
+        return .busy
+    case .payloadTooLarge:
+        return .payloadTooLarge
+    case .unknownDestination:
+        return .unknownDestination
+    case .notSingleDestination:
+        return .notSingleDestination
+    case .announceAppDataTooLong:
+        return .announceAppDataTooLong
+    case .unknownInterface:
+        return .unknownInterface
+    case .noRouteToDestination:
+        return .noRouteToDestination
+    case .notDirectlyReachable:
+        return .notDirectlyReachable
+    case .packetCulled:
+        return .packetCulled
+    case .deliveryTimedOut:
+        return .deliveryTimedOut
+    case .invalidBitrate:
+        return .invalidBitrate
+    case .bindFailed:
+        return .bindFailed(detail: detail)
+    case .writeFailed:
+        return .writeFailed(detail: detail)
+    case .unsupportedByBackend:
+        return .unsupportedByBackend
+    case .unknownLink:
+        return .unknownLink
+    case .linkNotActive:
+        return .linkNotActive
     }
 }

@@ -2,11 +2,18 @@ import type {
   ApplicationEvent,
   BackendCapabilities,
   BackendStartFailed,
+  Bitrate,
   CapabilityName,
+  CommandFailure,
+  CommandOutcome,
+  CommandSettlement,
+  CommandSettlementFor,
   ContractMismatch,
+  DeliveryEvidenceKind,
   DestinationConfig,
   DestinationHash,
   DiagnosticEvent,
+  HostCommand,
   IdentityConfig,
   InterfaceId,
   LifecycleState,
@@ -48,6 +55,7 @@ export const {
   IDENTITY_HASH_LENGTH,
   INTERFACE_ID_LENGTH,
   LINK_ID_LENGTH,
+  PACKET_HASH_LENGTH,
   REQUEST_ID_LENGTH,
   REQUEST_PATH_HASH_LENGTH,
   RESOURCE_HASH_LENGTH,
@@ -58,6 +66,7 @@ export const {
   identityHash,
   interfaceId,
   linkId,
+  packetHash,
   requestId,
   requestPathHash,
   resourceHash,
@@ -67,17 +76,25 @@ export type {
   ApplicationEvent,
   BackendCapabilities,
   BackendStartFailed,
+  Bitrate,
   CapabilityName,
+  CommandFailure,
+  CommandOutcome,
+  CommandSettlement,
+  CommandSettlementFor,
   ContractMismatch,
+  DeliveryEvidenceKind,
   DestinationConfig,
   DestinationHash,
   DiagnosticEvent,
+  HostCommand,
   IdentityConfig,
   IdentityHash,
   IdentitySecret,
   InterfaceId,
   LifecycleState,
   LinkId,
+  PacketHash,
   PrnsCreateOptions,
   PrnsLimits,
   PrnsValidationCode,
@@ -121,7 +138,10 @@ type RawNode = {
   readonly destinationHashes: Buffer[];
   ready(): Promise<void>;
   stop(): Promise<void>;
-  announce(destination: Buffer): Promise<void>;
+  announce(
+    destination: Buffer,
+    options?: { interfaceId?: Buffer },
+  ): Promise<void>;
   sendSinglePacket(
     destination: Buffer,
     data: Buffer,
@@ -154,31 +174,29 @@ type NativeBinding = {
   startNode(options: RawNodeOptions, onEvent: (event: unknown) => void): RawNode;
 };
 
-export type Busy = Tagged<"Busy">;
-export type NodeStopped = Tagged<"NodeStopped">;
 export type OperationFailed = Tagged<
   "OperationFailed",
   { readonly operation: string; readonly detail: string; readonly code?: string }
 >;
-export type CommandFailure = Busy | NodeStopped | OperationFailed;
 export type StopOutcome =
   | Tagged<"Stopped">
   | Tagged<"AlreadyStopped">
   | OperationFailed;
-export type AnnounceOutcome = Tagged<"Announced"> | CommandFailure;
-export type SendSinglePacketOutcome =
-  | Tagged<
-      "Sent",
-      {
-        readonly rttMillis: number;
-        readonly evidence: string;
-        readonly packetHash?: Uint8Array;
-      }
-    >
-  | CommandFailure;
-export type AttachOutcome =
-  | Tagged<"Attached", NativeInterface>
-  | CommandFailure;
+type CommandCase<Name extends HostCommand["tag"]> = Extract<
+  HostCommand,
+  { readonly tag: Name }
+>;
+export type AnnounceOutcome = CommandSettlementFor<CommandCase<"Announce">>;
+export type SendSinglePacketOutcome = CommandSettlementFor<
+  CommandCase<"SendSinglePacket">
+>;
+export type CloseLinkOutcome = CommandSettlementFor<CommandCase<"CloseLink">>;
+export type AttachOutcome = CommandSettlementFor<
+  CommandCase<"AttachTcpServer" | "AttachTcpClient" | "AttachUdp">
+>;
+export type DetachInterfaceOutcome = CommandSettlementFor<
+  CommandCase<"DetachInterface">
+>;
 export type PrnsCreateOutcome =
   | Tagged<"Ready", Prns>
   | ContractMismatch
@@ -225,6 +243,7 @@ export class Prns {
   readonly #events: import("../async_lanes.js").BoundedAsyncLane<ApplicationEvent>;
   readonly #diagnostics: import("../async_lanes.js").BoundedAsyncLane<DiagnosticEvent>;
   readonly #raw: RawNode;
+  readonly #interfaces = new Map<string, NativeInterface>();
   #lifecycle: LifecycleState = casework.Tag("Starting");
   #pendingCommands = 0;
 
@@ -308,6 +327,7 @@ export class Prns {
       if (this.#lifecycle.tag !== "Failed") {
         this.#lifecycle = casework.Tag("Stopped", { reason: "Requested" });
       }
+      this.#interfaces.clear();
       this.#events.finish();
       this.#diagnostics.finish();
       return casework.Tag("Stopped");
@@ -318,54 +338,160 @@ export class Prns {
     }
   }
 
-  announce(destination: DestinationHash): Promise<AnnounceOutcome> {
-    return this.runCommand("announce", async () => {
-      await this.#raw.announce(Buffer.from(destination));
-      return casework.Tag("Announced");
-    });
+  execute<Command extends HostCommand>(
+    command: Command,
+  ): Promise<CommandSettlementFor<Command>> {
+    return this.#execute(command) as Promise<CommandSettlementFor<Command>>;
+  }
+
+  async #execute(command: HostCommand): Promise<CommandSettlement> {
+    if (isStopped(this.#lifecycle)) {
+      return commandFailed(casework.Tag("NodeStopped"));
+    }
+    if (this.#pendingCommands >= this.#limits.pendingCommands) {
+      return commandFailed(casework.Tag("Busy"));
+    }
+    this.#pendingCommands += 1;
+    try {
+      const outcome = await casework.match_into<Promise<CommandOutcome>>().from(
+        command,
+        {
+          Announce: async ({ destination, interface: interfaceId }) => {
+            const options =
+              interfaceId === undefined
+                ? undefined
+                : { interfaceId: Buffer.from(interfaceId) };
+            await this.#raw.announce(Buffer.from(destination), options);
+            return casework.Tag("Announced");
+          },
+          SendSinglePacket: async ({ destination, payload }) => {
+            const receipt = await this.#raw.sendSinglePacket(
+              Buffer.from(destination),
+              Buffer.from(bytes("payload", payload)),
+            );
+            const delivered = {
+              rttMillis: finiteNonNegative("rttMillis", receipt.rttMillis),
+              evidence: deliveryEvidence(receipt.evidence),
+            };
+            return casework.Tag(
+              "PacketDelivered",
+              receipt.packetHash === undefined
+                ? delivered
+                : {
+                    ...delivered,
+                    packetHash: contract.packetHash(receipt.packetHash),
+                  },
+            );
+          },
+          CloseLink: async ({ linkId }) => {
+            if (!this.#raw.closeLink(Buffer.from(linkId))) {
+              throw new CommandRejected(casework.Tag("NodeStopped"));
+            }
+            return casework.Tag("LinkCloseQueued");
+          },
+          AttachTcpServer: async ({ bind, bitrate }) => {
+            const attached = new NativeInterface(
+              await this.#raw.attachTcpServer(
+                optionalBitrate(
+                  { bind: nonEmpty("bind", bind) },
+                  bitrateBitsPerSecond(bitrate),
+                ),
+              ),
+            );
+            this.#interfaces.set(interfaceKey(attached.id), attached);
+            return casework.Tag("InterfaceAttached", {
+              interface: attached.id,
+            });
+          },
+          AttachTcpClient: async ({ target, bitrate }) => {
+            const attached = new NativeInterface(
+              await this.#raw.attachTcpClient(
+                optionalBitrate(
+                  { target: nonEmpty("target", target) },
+                  bitrateBitsPerSecond(bitrate),
+                ),
+              ),
+            );
+            this.#interfaces.set(interfaceKey(attached.id), attached);
+            return casework.Tag("InterfaceAttached", {
+              interface: attached.id,
+            });
+          },
+          AttachUdp: async ({ local, peer, bitrate }) => {
+            const attached = new NativeInterface(
+              await this.#raw.attachUdp(
+                optionalBitrate(
+                  {
+                    local: nonEmpty("local", local),
+                    peer: nonEmpty("peer", peer),
+                  },
+                  bitrateBitsPerSecond(bitrate),
+                ),
+              ),
+            );
+            this.#interfaces.set(interfaceKey(attached.id), attached);
+            return casework.Tag("InterfaceAttached", {
+              interface: attached.id,
+            });
+          },
+          DetachInterface: async ({ interface: interfaceId }) => {
+            const key = interfaceKey(interfaceId);
+            const attached = this.#interfaces.get(key);
+            if (attached === undefined) {
+              throw new CommandRejected(casework.Tag("UnknownInterface"));
+            }
+            attached.close();
+            this.#interfaces.delete(key);
+            return casework.Tag("InterfaceDetached", {
+              interface: interfaceId,
+            });
+          },
+        },
+      );
+      return casework.Tag("Succeeded", outcome);
+    } catch (error) {
+      return commandFailed(commandFailure(error));
+    } finally {
+      this.#pendingCommands -= 1;
+    }
+  }
+
+  announce(
+    destination: DestinationHash,
+    interfaceId?: InterfaceId,
+  ): Promise<AnnounceOutcome> {
+    return this.execute(
+      casework.Tag(
+        "Announce",
+        interfaceId === undefined
+          ? { destination }
+          : { destination, interface: interfaceId },
+      ),
+    );
   }
 
   sendSinglePacket(
     destination: DestinationHash,
-    data: Uint8Array,
+    payload: Uint8Array,
   ): Promise<SendSinglePacketOutcome> {
-    const payload = bytes("data", data);
-    return this.runCommand("sendSinglePacket", async () => {
-      const receipt = await this.#raw.sendSinglePacket(
-        Buffer.from(destination),
-        Buffer.from(payload),
-      );
-      const result: {
-        rttMillis: number;
-        evidence: string;
-        packetHash?: Uint8Array;
-      } = {
-        rttMillis: finiteNonNegative("rttMillis", receipt.rttMillis),
-        evidence: receipt.evidence,
-      };
-      if (receipt.packetHash) {
-        result.packetHash = Uint8Array.from(receipt.packetHash);
-      }
-      return casework.Tag("Sent", result);
-    });
+    return this.execute(
+      casework.Tag("SendSinglePacket", { destination, payload }),
+    );
   }
 
-  closeLink(link: LinkId): Tagged<"Closed"> | NodeStopped {
-    if (isStopped(this.#lifecycle)) {
-      return casework.Tag("NodeStopped");
-    }
-    return this.#raw.closeLink(Buffer.from(link))
-      ? casework.Tag("Closed")
-      : casework.Tag("NodeStopped");
+  closeLink(linkId: LinkId): Promise<CloseLinkOutcome> {
+    return this.execute(casework.Tag("CloseLink", { linkId }));
   }
 
   attachTcpServer(options: {
     readonly bind: string;
     readonly bitrateBps?: number;
   }): Promise<AttachOutcome> {
-    const raw = optionalBitrate({ bind: nonEmpty("bind", options.bind) }, options.bitrateBps);
-    return this.runCommand("attachTcpServer", async () =>
-      casework.Tag("Attached", new NativeInterface(await this.#raw.attachTcpServer(raw))),
+    return this.execute(
+      casework.Tag("AttachTcpServer", {
+        bind: options.bind,
+        bitrate: commandBitrate(options.bitrateBps),
+      }),
     );
   }
 
@@ -373,12 +499,11 @@ export class Prns {
     readonly target: string;
     readonly bitrateBps?: number;
   }): Promise<AttachOutcome> {
-    const raw = optionalBitrate(
-      { target: nonEmpty("target", options.target) },
-      options.bitrateBps,
-    );
-    return this.runCommand("attachTcpClient", async () =>
-      casework.Tag("Attached", new NativeInterface(await this.#raw.attachTcpClient(raw))),
+    return this.execute(
+      casework.Tag("AttachTcpClient", {
+        target: options.target,
+        bitrate: commandBitrate(options.bitrateBps),
+      }),
     );
   }
 
@@ -387,15 +512,18 @@ export class Prns {
     readonly peer: string;
     readonly bitrateBps?: number;
   }): Promise<AttachOutcome> {
-    const raw = optionalBitrate(
-      {
-        local: nonEmpty("local", options.local),
-        peer: nonEmpty("peer", options.peer),
-      },
-      options.bitrateBps,
+    return this.execute(
+      casework.Tag("AttachUdp", {
+        local: options.local,
+        peer: options.peer,
+        bitrate: commandBitrate(options.bitrateBps),
+      }),
     );
-    return this.runCommand("attachUdp", async () =>
-      casework.Tag("Attached", new NativeInterface(await this.#raw.attachUdp(raw))),
+  }
+
+  detachInterface(interfaceId: InterfaceId): Promise<DetachInterfaceOutcome> {
+    return this.execute(
+      casework.Tag("DetachInterface", { interface: interfaceId }),
     );
   }
 
@@ -441,26 +569,6 @@ export class Prns {
       this.#failBackend(failed.data.detail);
       await this.#raw.stop().catch(() => undefined);
       return failed;
-    }
-  }
-
-  async runCommand<Success>(
-    operation: string,
-    run: () => Promise<Success>,
-  ): Promise<Success | CommandFailure> {
-    if (isStopped(this.#lifecycle)) {
-      return casework.Tag("NodeStopped");
-    }
-    if (this.#pendingCommands >= this.#limits.pendingCommands) {
-      return casework.Tag("Busy");
-    }
-    this.#pendingCommands += 1;
-    try {
-      return await run();
-    } catch (error) {
-      return operationFailed(operation, error);
-    } finally {
-      this.#pendingCommands -= 1;
     }
   }
 
@@ -981,6 +1089,73 @@ function retainedEventBytes(event: ApplicationEvent): number {
 
 function isStopped(state: LifecycleState): boolean {
   return state.tag === "Stopped" || state.tag === "Failed" || state.tag === "Stopping";
+}
+
+class CommandRejected {
+  readonly failure: CommandFailure;
+
+  constructor(failure: CommandFailure) {
+    this.failure = failure;
+  }
+}
+
+function commandFailed(failure: CommandFailure): CommandSettlement {
+  return casework.Tag("Failed", failure);
+}
+
+function commandFailure(error: unknown): CommandFailure {
+  if (error instanceof CommandRejected) {
+    return error.failure;
+  }
+  const details = errorDetails(error);
+  if (details.code === "PRNS_NODE_STOPPED") {
+    return casework.Tag("NodeStopped");
+  }
+  if (details.code === "PRNS_BUSY") {
+    return casework.Tag("Busy");
+  }
+  if (details.code === "PRNS_PAYLOAD_TOO_LARGE") {
+    return casework.Tag("PayloadTooLarge");
+  }
+  if (details.code === "PRNS_ATTACH_FAILED") {
+    return casework.Tag("BindFailed", { detail: details.detail });
+  }
+  return casework.Tag("WriteFailed", { detail: details.detail });
+}
+
+function deliveryEvidence(value: string): DeliveryEvidenceKind {
+  if (value === "proofExplicit") {
+    return "ExplicitProof";
+  }
+  if (value === "proofImplicit") {
+    return "ImplicitProof";
+  }
+  if (value === "response") {
+    return "Response";
+  }
+  throw new contract.PrnsValidationError(
+    "InvalidEnum",
+    `native delivery evidence is unknown: ${value}`,
+  );
+}
+
+function commandBitrate(value: number | undefined): Bitrate {
+  return value === undefined
+    ? casework.Tag("Auto")
+    : casework.Tag("BitsPerSecond", {
+        value: positiveInteger("bitrateBps", value),
+      });
+}
+
+function bitrateBitsPerSecond(bitrate: Bitrate): number | undefined {
+  return casework.match(bitrate, {
+    Auto: () => undefined,
+    BitsPerSecond: ({ value }) => positiveInteger("bitrate", value),
+  });
+}
+
+function interfaceKey(interfaceId: InterfaceId): string {
+  return Array.from(interfaceId, (value) => value.toString(16).padStart(2, "0")).join("");
 }
 
 function operationFailed(operation: string, error: unknown): OperationFailed {

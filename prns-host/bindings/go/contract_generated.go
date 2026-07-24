@@ -131,6 +131,9 @@ const (
 	CommandFailureKindInvalidBitrate CommandFailureKind = 12
 	CommandFailureKindBindFailed CommandFailureKind = 13
 	CommandFailureKindWriteFailed CommandFailureKind = 14
+	CommandFailureKindUnsupportedByBackend CommandFailureKind = 15
+	CommandFailureKindUnknownLink CommandFailureKind = 16
+	CommandFailureKindLinkNotActive CommandFailureKind = 17
 )
 
 type DeliveryEvidenceKind uint32
@@ -419,6 +422,82 @@ type CommandOutcomeInterfaceDetached struct {
 }
 
 func (CommandOutcomeInterfaceDetached) commandOutcome() {}
+
+type CommandFailure interface {
+	commandFailure()
+}
+
+type CommandFailureNodeStopped struct{}
+
+func (CommandFailureNodeStopped) commandFailure() {}
+
+type CommandFailureBusy struct{}
+
+func (CommandFailureBusy) commandFailure() {}
+
+type CommandFailurePayloadTooLarge struct{}
+
+func (CommandFailurePayloadTooLarge) commandFailure() {}
+
+type CommandFailureUnknownDestination struct{}
+
+func (CommandFailureUnknownDestination) commandFailure() {}
+
+type CommandFailureNotSingleDestination struct{}
+
+func (CommandFailureNotSingleDestination) commandFailure() {}
+
+type CommandFailureAnnounceAppDataTooLong struct{}
+
+func (CommandFailureAnnounceAppDataTooLong) commandFailure() {}
+
+type CommandFailureUnknownInterface struct{}
+
+func (CommandFailureUnknownInterface) commandFailure() {}
+
+type CommandFailureNoRouteToDestination struct{}
+
+func (CommandFailureNoRouteToDestination) commandFailure() {}
+
+type CommandFailureNotDirectlyReachable struct{}
+
+func (CommandFailureNotDirectlyReachable) commandFailure() {}
+
+type CommandFailurePacketCulled struct{}
+
+func (CommandFailurePacketCulled) commandFailure() {}
+
+type CommandFailureDeliveryTimedOut struct{}
+
+func (CommandFailureDeliveryTimedOut) commandFailure() {}
+
+type CommandFailureInvalidBitrate struct{}
+
+func (CommandFailureInvalidBitrate) commandFailure() {}
+
+type CommandFailureBindFailed struct {
+	Detail string
+}
+
+func (CommandFailureBindFailed) commandFailure() {}
+
+type CommandFailureWriteFailed struct {
+	Detail string
+}
+
+func (CommandFailureWriteFailed) commandFailure() {}
+
+type CommandFailureUnsupportedByBackend struct{}
+
+func (CommandFailureUnsupportedByBackend) commandFailure() {}
+
+type CommandFailureUnknownLink struct{}
+
+func (CommandFailureUnknownLink) commandFailure() {}
+
+type CommandFailureLinkNotActive struct{}
+
+func (CommandFailureLinkNotActive) commandFailure() {}
 
 type ApplicationEvent interface {
 	applicationEvent()

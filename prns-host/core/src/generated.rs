@@ -255,6 +255,9 @@ pub enum AbiCommandFailureKind {
     InvalidBitrate = 12,
     BindFailed = 13,
     WriteFailed = 14,
+    UnsupportedByBackend = 15,
+    UnknownLink = 16,
+    LinkNotActive = 17,
 }
 
 impl TryFrom<u32> for AbiCommandFailureKind {
@@ -276,6 +279,9 @@ impl TryFrom<u32> for AbiCommandFailureKind {
             12 => Ok(Self::InvalidBitrate),
             13 => Ok(Self::BindFailed),
             14 => Ok(Self::WriteFailed),
+            15 => Ok(Self::UnsupportedByBackend),
+            16 => Ok(Self::UnknownLink),
+            17 => Ok(Self::LinkNotActive),
             _ => Err(()),
         }
     }

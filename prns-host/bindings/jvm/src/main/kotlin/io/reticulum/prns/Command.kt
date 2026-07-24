@@ -14,8 +14,7 @@ sealed interface CommandSettlement
 data class CommandSucceeded(val outcome: CommandOutcome) : CommandSettlement
 
 data class CommandFailed(
-    val failure: CommandFailureKind,
-    val detail: String,
+    val failure: CommandFailure,
 ) : CommandSettlement
 
 class Command internal constructor(pointer: Pointer) : AutoCloseable {
@@ -109,10 +108,10 @@ class Command internal constructor(pointer: Pointer) : AutoCloseable {
 
 private fun decodeCommandSettlement(result: NativeCommandResult): CommandSettlement {
     if (result.failure != 0) {
+        val kind = CommandFailureKind.fromRawValue(result.failure)
+            ?: throw StatusException("decodeCommandFailure", Status.BACKEND_FAILED)
         return CommandFailed(
-            failure = CommandFailureKind.fromRawValue(result.failure)
-                ?: throw StatusException("decodeCommandFailure", Status.BACKEND_FAILED),
-            detail = copyString(result.detail),
+            failure = decodeCommandFailure(kind, copyString(result.detail)),
         )
     }
     val value = copyBytes(result.value)
@@ -153,4 +152,27 @@ private fun decodeCommandSettlement(result: NativeCommandResult): CommandSettlem
         )
     }
     return CommandSucceeded(outcome)
+}
+
+private fun decodeCommandFailure(
+    kind: CommandFailureKind,
+    detail: String,
+): CommandFailure = when (kind) {
+    CommandFailureKind.NODE_STOPPED -> CommandFailureNodeStopped
+    CommandFailureKind.BUSY -> CommandFailureBusy
+    CommandFailureKind.PAYLOAD_TOO_LARGE -> CommandFailurePayloadTooLarge
+    CommandFailureKind.UNKNOWN_DESTINATION -> CommandFailureUnknownDestination
+    CommandFailureKind.NOT_SINGLE_DESTINATION -> CommandFailureNotSingleDestination
+    CommandFailureKind.ANNOUNCE_APP_DATA_TOO_LONG -> CommandFailureAnnounceAppDataTooLong
+    CommandFailureKind.UNKNOWN_INTERFACE -> CommandFailureUnknownInterface
+    CommandFailureKind.NO_ROUTE_TO_DESTINATION -> CommandFailureNoRouteToDestination
+    CommandFailureKind.NOT_DIRECTLY_REACHABLE -> CommandFailureNotDirectlyReachable
+    CommandFailureKind.PACKET_CULLED -> CommandFailurePacketCulled
+    CommandFailureKind.DELIVERY_TIMED_OUT -> CommandFailureDeliveryTimedOut
+    CommandFailureKind.INVALID_BITRATE -> CommandFailureInvalidBitrate
+    CommandFailureKind.BIND_FAILED -> CommandFailureBindFailed(detail)
+    CommandFailureKind.WRITE_FAILED -> CommandFailureWriteFailed(detail)
+    CommandFailureKind.UNSUPPORTED_BY_BACKEND -> CommandFailureUnsupportedByBackend
+    CommandFailureKind.UNKNOWN_LINK -> CommandFailureUnknownLink
+    CommandFailureKind.LINK_NOT_ACTIVE -> CommandFailureLinkNotActive
 }

@@ -66,7 +66,7 @@ public sealed record HostOptions(
 public abstract record CommandSettlement
 {
     public sealed record Succeeded(CommandOutcome Outcome) : CommandSettlement;
-    public sealed record Failed(CommandFailureKind Failure, string Detail) : CommandSettlement;
+    public sealed record Failed(CommandFailure Failure) : CommandSettlement;
 
     public TResult Match<TResult>(
         Func<Succeeded, TResult> succeeded,
@@ -588,10 +588,7 @@ public sealed class PrnsHost : IAsyncDisposable
         PrnsException.ThrowIfError(status);
         if (result.Failure != 0)
         {
-            return new CommandSettlement.Failed(
-                result.Failure,
-                NativeValue.CopyString(result.Detail)
-            );
+            return new CommandSettlement.Failed(DecodeCommandFailure(result));
         }
         CommandOutcome outcome = result.Outcome switch
         {
@@ -611,6 +608,37 @@ public sealed class PrnsHost : IAsyncDisposable
             _ => throw new InvalidOperationException("Unknown native command outcome."),
         };
         return new CommandSettlement.Succeeded(outcome);
+    }
+
+    private static CommandFailure DecodeCommandFailure(Native.CommandResult result)
+    {
+        var detail = NativeValue.CopyString(result.Detail);
+        return result.Failure switch
+        {
+            CommandFailureKind.NodeStopped => new CommandFailure.NodeStopped(),
+            CommandFailureKind.Busy => new CommandFailure.Busy(),
+            CommandFailureKind.PayloadTooLarge => new CommandFailure.PayloadTooLarge(),
+            CommandFailureKind.UnknownDestination => new CommandFailure.UnknownDestination(),
+            CommandFailureKind.NotSingleDestination =>
+                new CommandFailure.NotSingleDestination(),
+            CommandFailureKind.AnnounceAppDataTooLong =>
+                new CommandFailure.AnnounceAppDataTooLong(),
+            CommandFailureKind.UnknownInterface => new CommandFailure.UnknownInterface(),
+            CommandFailureKind.NoRouteToDestination =>
+                new CommandFailure.NoRouteToDestination(),
+            CommandFailureKind.NotDirectlyReachable =>
+                new CommandFailure.NotDirectlyReachable(),
+            CommandFailureKind.PacketCulled => new CommandFailure.PacketCulled(),
+            CommandFailureKind.DeliveryTimedOut => new CommandFailure.DeliveryTimedOut(),
+            CommandFailureKind.InvalidBitrate => new CommandFailure.InvalidBitrate(),
+            CommandFailureKind.BindFailed => new CommandFailure.BindFailed(detail),
+            CommandFailureKind.WriteFailed => new CommandFailure.WriteFailed(detail),
+            CommandFailureKind.UnsupportedByBackend =>
+                new CommandFailure.UnsupportedByBackend(),
+            CommandFailureKind.UnknownLink => new CommandFailure.UnknownLink(),
+            CommandFailureKind.LinkNotActive => new CommandFailure.LinkNotActive(),
+            _ => throw new InvalidOperationException("Unknown native command failure."),
+        };
     }
 
     private static PacketHash? DecodePacketHash(

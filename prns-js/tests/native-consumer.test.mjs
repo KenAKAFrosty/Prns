@@ -37,6 +37,21 @@ test("packaged native API starts, exposes lifecycle, and stops", async () => {
     tag: "AlreadyClaimed",
     data: { lane: "ApplicationEvents" },
   });
+  const attached = await created.data.execute(
+    esm.Tag("AttachTcpClient", {
+      target: "127.0.0.1:9",
+      bitrate: esm.Tag("Auto"),
+    }),
+  );
+  assert.equal(attached.tag, "Succeeded");
+  assert.equal(attached.data.tag, "InterfaceAttached");
+  const detached = await created.data.execute(
+    esm.Tag("DetachInterface", {
+      interface: attached.data.data.interface,
+    }),
+  );
+  assert.equal(detached.tag, "Succeeded");
+  assert.equal(detached.data.tag, "InterfaceDetached");
   assert.equal((await created.data.stop()).tag, "Stopped");
   assert.equal(created.data.lifecycle.tag, "Stopped");
 });

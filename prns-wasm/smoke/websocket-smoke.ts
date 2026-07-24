@@ -87,6 +87,18 @@ class MockRuntime implements PrnsRuntimeBinding {
     return 1n;
   }
 
+  sendSinglePacket(
+    _options: Parameters<PrnsRuntimeBinding["sendSinglePacket"]>[0],
+  ): bigint {
+    return 2n;
+  }
+
+  closeLink(
+    _options: Parameters<PrnsRuntimeBinding["closeLink"]>[0],
+  ): bigint {
+    return 3n;
+  }
+
   ingest(options: RuntimeIngestOptions): void {
     this.ingests.push(options);
   }

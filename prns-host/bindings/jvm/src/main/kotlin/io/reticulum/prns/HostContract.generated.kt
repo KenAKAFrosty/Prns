@@ -142,7 +142,10 @@ enum class CommandFailureKind(val rawValue: Int) {
     DELIVERY_TIMED_OUT(11),
     INVALID_BITRATE(12),
     BIND_FAILED(13),
-    WRITE_FAILED(14);
+    WRITE_FAILED(14),
+    UNSUPPORTED_BY_BACKEND(15),
+    UNKNOWN_LINK(16),
+    LINK_NOT_ACTIVE(17);
 
     companion object {
         fun fromRawValue(value: Int): CommandFailureKind? = entries.firstOrNull { it.rawValue == value }
@@ -505,6 +508,46 @@ data class CommandOutcomeInterfaceAttached(
 data class CommandOutcomeInterfaceDetached(
     val `interface`: InterfaceId
 ) : CommandOutcome
+
+sealed interface CommandFailure
+
+data object CommandFailureNodeStopped : CommandFailure
+
+data object CommandFailureBusy : CommandFailure
+
+data object CommandFailurePayloadTooLarge : CommandFailure
+
+data object CommandFailureUnknownDestination : CommandFailure
+
+data object CommandFailureNotSingleDestination : CommandFailure
+
+data object CommandFailureAnnounceAppDataTooLong : CommandFailure
+
+data object CommandFailureUnknownInterface : CommandFailure
+
+data object CommandFailureNoRouteToDestination : CommandFailure
+
+data object CommandFailureNotDirectlyReachable : CommandFailure
+
+data object CommandFailurePacketCulled : CommandFailure
+
+data object CommandFailureDeliveryTimedOut : CommandFailure
+
+data object CommandFailureInvalidBitrate : CommandFailure
+
+data class CommandFailureBindFailed(
+    val detail: String
+) : CommandFailure
+
+data class CommandFailureWriteFailed(
+    val detail: String
+) : CommandFailure
+
+data object CommandFailureUnsupportedByBackend : CommandFailure
+
+data object CommandFailureUnknownLink : CommandFailure
+
+data object CommandFailureLinkNotActive : CommandFailure
 
 sealed interface ApplicationEvent
 

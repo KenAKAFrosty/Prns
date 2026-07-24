@@ -125,7 +125,10 @@
         { "name": "DeliveryTimedOut", "value": 11 },
         { "name": "InvalidBitrate", "value": 12 },
         { "name": "BindFailed", "value": 13 },
-        { "name": "WriteFailed", "value": 14 }
+        { "name": "WriteFailed", "value": 14 },
+        { "name": "UnsupportedByBackend", "value": 15 },
+        { "name": "UnknownLink", "value": 16 },
+        { "name": "LinkNotActive", "value": 17 }
       ]
     },
     {
@@ -389,6 +392,40 @@
             { "name": "interface", "type": "InterfaceId" }
           ]
         }
+      ]
+    },
+    {
+      "name": "CommandFailure",
+      "cases": [
+        { "name": "NodeStopped", "value": 1, "fields": [] },
+        { "name": "Busy", "value": 2, "fields": [] },
+        { "name": "PayloadTooLarge", "value": 3, "fields": [] },
+        { "name": "UnknownDestination", "value": 4, "fields": [] },
+        { "name": "NotSingleDestination", "value": 5, "fields": [] },
+        { "name": "AnnounceAppDataTooLong", "value": 6, "fields": [] },
+        { "name": "UnknownInterface", "value": 7, "fields": [] },
+        { "name": "NoRouteToDestination", "value": 8, "fields": [] },
+        { "name": "NotDirectlyReachable", "value": 9, "fields": [] },
+        { "name": "PacketCulled", "value": 10, "fields": [] },
+        { "name": "DeliveryTimedOut", "value": 11, "fields": [] },
+        { "name": "InvalidBitrate", "value": 12, "fields": [] },
+        {
+          "name": "BindFailed",
+          "value": 13,
+          "fields": [
+            { "name": "detail", "type": "string" }
+          ]
+        },
+        {
+          "name": "WriteFailed",
+          "value": 14,
+          "fields": [
+            { "name": "detail", "type": "string" }
+          ]
+        },
+        { "name": "UnsupportedByBackend", "value": 15, "fields": [] },
+        { "name": "UnknownLink", "value": 16, "fields": [] },
+        { "name": "LinkNotActive", "value": 17, "fields": [] }
       ]
     },
     {

@@ -66,6 +66,7 @@ try {
   );
   assert.match(stdout, /<title>PASS<\/title>/);
   assert.match(stdout, /data-outcome="Ready"/);
+  assert.match(stdout, /data-command="Failed:UnknownLink"/);
 } finally {
   await new Promise((resolveClosed, rejectClosed) => {
     server.close((error) => {

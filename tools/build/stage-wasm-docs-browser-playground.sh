@@ -35,6 +35,7 @@ cp "$build_dir/prns-wasm/examples/browser-playground/view.js" "$public_dir/view.
 cp "$example_dir/sdk/index.js" "$public_dir/sdk/index.js"
 cp "$build_dir/prns-js/src/async_lanes.js" "$public_dir/sdk/async_lanes.js"
 cp "$build_dir/prns-js/src/casework.js" "$public_dir/sdk/casework.js"
+cp "$build_dir/prns-js/src/contract.generated.js" "$public_dir/sdk/contract.generated.js"
 cp "$build_dir/prns-js/src/contract.js" "$public_dir/sdk/contract.js"
 cp "$build_dir/prns-js/src/memory_resource.js" "$public_dir/sdk/memory_resource.js"
 cp "$build_dir/prns-js/src/browser/auto_wifi.js" "$public_dir/sdk/browser/auto_wifi.js"

@@ -57,6 +57,7 @@
       "Busy": 2,
       "DeliveryTimedOut": 11,
       "InvalidBitrate": 12,
+      "LinkNotActive": 17,
       "NoRouteToDestination": 8,
       "NodeStopped": 1,
       "NotDirectlyReachable": 9,
@@ -65,6 +66,8 @@
       "PayloadTooLarge": 3,
       "UnknownDestination": 4,
       "UnknownInterface": 7,
+      "UnknownLink": 16,
+      "UnsupportedByBackend": 15,
       "WriteFailed": 14
     },
     "CommandOutcomeKind": {
@@ -213,6 +216,25 @@
     "Bitrate": {
       "Auto": 1,
       "BitsPerSecond": 2
+    },
+    "CommandFailure": {
+      "AnnounceAppDataTooLong": 6,
+      "BindFailed": 13,
+      "Busy": 2,
+      "DeliveryTimedOut": 11,
+      "InvalidBitrate": 12,
+      "LinkNotActive": 17,
+      "NoRouteToDestination": 8,
+      "NodeStopped": 1,
+      "NotDirectlyReachable": 9,
+      "NotSingleDestination": 5,
+      "PacketCulled": 10,
+      "PayloadTooLarge": 3,
+      "UnknownDestination": 4,
+      "UnknownInterface": 7,
+      "UnknownLink": 16,
+      "UnsupportedByBackend": 15,
+      "WriteFailed": 14
     },
     "CommandOutcome": {
       "Announced": 1,

@@ -6,11 +6,20 @@
   </head>
   <body data-outcome="Pending">
     <script type="module">
-      import { Prns } from "/prns-js/dist/browser/index.js";
+      import { Prns, linkId } from "/prns-js/dist/browser/index.js";
 
       const outcome = await Prns.create({});
       document.body.dataset.outcome = outcome.tag;
-      document.title = outcome.tag === "Ready" ? "PASS" : "FAIL";
+      if (outcome.tag !== "Ready") {
+        document.title = "FAIL";
+      } else {
+        const closed = await outcome.data.closeLink(linkId(new Uint8Array(16)));
+        document.body.dataset.command = `${closed.tag}:${closed.data.tag}`;
+        document.title =
+          closed.tag === "Failed" && closed.data.tag === "UnknownLink"
+            ? "PASS"
+            : "FAIL";
+      }
     </script>
   </body>
 </html>

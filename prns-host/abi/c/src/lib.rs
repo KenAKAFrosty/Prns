@@ -1067,6 +1067,11 @@ fn cache_command_result(result: Result<CommandOutcome, CommandFailure>) -> Cache
                     cached.detail = detail;
                     AbiCommandFailureKind::WriteFailed as u32
                 }
+                CommandFailure::UnsupportedByBackend => {
+                    AbiCommandFailureKind::UnsupportedByBackend as u32
+                }
+                CommandFailure::UnknownLink => AbiCommandFailureKind::UnknownLink as u32,
+                CommandFailure::LinkNotActive => AbiCommandFailureKind::LinkNotActive as u32,
             };
         }
     }

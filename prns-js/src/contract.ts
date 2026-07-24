@@ -4,14 +4,18 @@ import {
   IDENTITY_SECRET_LENGTH,
   INTERFACE_ID_LENGTH,
   LINK_ID_LENGTH,
+  PACKET_HASH_LENGTH,
   REQUEST_ID_LENGTH,
   REQUEST_PATH_HASH_LENGTH,
   RESOURCE_HASH_LENGTH,
 } from "./contract.generated.js";
 import type {
   CapabilityName,
+  CommandFailure,
+  CommandOutcome,
   DestinationConfig,
   DestinationHash,
+  HostCommand,
   IdentityConfig,
   IdentityHash,
   IdentitySecret,
@@ -19,6 +23,7 @@ import type {
   InterfaceId,
   LinkId,
   PrnsLimits,
+  PacketHash,
   RequestId,
   RequestPathHash,
   ResourceHash,
@@ -30,6 +35,7 @@ export * from "./contract.generated.js";
 export type PrnsValidationCode =
   | "EmptyString"
   | "InvalidBytes"
+  | "InvalidEnum"
   | "InvalidLimit"
   | "InvalidNumber"
   | "MissingDestinationAspect";
@@ -103,6 +109,30 @@ export type BackendStartFailed = Tag<
   { readonly detail: string; readonly code?: string }
 >;
 
+export type CommandSettlement =
+  | Tag<"Succeeded", CommandOutcome>
+  | Tag<"Failed", CommandFailure>;
+
+export type CommandOutcomeFor<Command extends HostCommand> =
+  Command extends Tag<"Announce", unknown>
+    ? Extract<CommandOutcome, { readonly tag: "Announced" }>
+    : Command extends Tag<"SendSinglePacket", unknown>
+      ? Extract<CommandOutcome, { readonly tag: "PacketDelivered" }>
+      : Command extends Tag<"CloseLink", unknown>
+        ? Extract<CommandOutcome, { readonly tag: "LinkCloseQueued" }>
+        : Command extends
+              | Tag<"AttachTcpServer", unknown>
+              | Tag<"AttachTcpClient", unknown>
+              | Tag<"AttachUdp", unknown>
+          ? Extract<CommandOutcome, { readonly tag: "InterfaceAttached" }>
+          : Command extends Tag<"DetachInterface", unknown>
+            ? Extract<CommandOutcome, { readonly tag: "InterfaceDetached" }>
+            : never;
+
+export type CommandSettlementFor<Command extends HostCommand> =
+  | Tag<"Succeeded", CommandOutcomeFor<Command>>
+  | Tag<"Failed", CommandFailure>;
+
 export function destinationHash(bytes: Uint8Array): DestinationHash {
   return fixedBytes("destination hash", bytes, DESTINATION_HASH_LENGTH);
 }
@@ -117,6 +147,10 @@ export function interfaceId(bytes: Uint8Array): InterfaceId {
 
 export function linkId(bytes: Uint8Array): LinkId {
   return fixedBytes("link ID", bytes, LINK_ID_LENGTH);
+}
+
+export function packetHash(bytes: Uint8Array): PacketHash {
+  return fixedBytes("packet hash", bytes, PACKET_HASH_LENGTH);
 }
 
 export function requestId(bytes: Uint8Array): RequestId {

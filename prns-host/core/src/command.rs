@@ -79,4 +79,7 @@ pub enum CommandFailure {
     InvalidBitrate,
     BindFailed { detail: String },
     WriteFailed { detail: String },
+    UnsupportedByBackend,
+    UnknownLink,
+    LinkNotActive,
 }

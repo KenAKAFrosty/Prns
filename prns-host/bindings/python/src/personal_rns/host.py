@@ -222,8 +222,7 @@ class CommandSucceeded:
 
 @dataclass(frozen=True, slots=True)
 class CommandFailed:
-    failure: g.CommandFailureKind
-    detail: str
+    failure: g.CommandFailure
 
 
 CommandSettlement = CommandSucceeded | CommandFailed
@@ -326,6 +325,48 @@ def _marshal_destination(
     raise TypeError(f"unknown destination config {type(destination)!r}")
 
 
+def _decode_command_failure(
+    kind: g.CommandFailureKind,
+    detail: str,
+) -> g.CommandFailure:
+    match kind:
+        case g.CommandFailureKind.NODE_STOPPED:
+            return g.CommandFailureNodeStopped()
+        case g.CommandFailureKind.BUSY:
+            return g.CommandFailureBusy()
+        case g.CommandFailureKind.PAYLOAD_TOO_LARGE:
+            return g.CommandFailurePayloadTooLarge()
+        case g.CommandFailureKind.UNKNOWN_DESTINATION:
+            return g.CommandFailureUnknownDestination()
+        case g.CommandFailureKind.NOT_SINGLE_DESTINATION:
+            return g.CommandFailureNotSingleDestination()
+        case g.CommandFailureKind.ANNOUNCE_APP_DATA_TOO_LONG:
+            return g.CommandFailureAnnounceAppDataTooLong()
+        case g.CommandFailureKind.UNKNOWN_INTERFACE:
+            return g.CommandFailureUnknownInterface()
+        case g.CommandFailureKind.NO_ROUTE_TO_DESTINATION:
+            return g.CommandFailureNoRouteToDestination()
+        case g.CommandFailureKind.NOT_DIRECTLY_REACHABLE:
+            return g.CommandFailureNotDirectlyReachable()
+        case g.CommandFailureKind.PACKET_CULLED:
+            return g.CommandFailurePacketCulled()
+        case g.CommandFailureKind.DELIVERY_TIMED_OUT:
+            return g.CommandFailureDeliveryTimedOut()
+        case g.CommandFailureKind.INVALID_BITRATE:
+            return g.CommandFailureInvalidBitrate()
+        case g.CommandFailureKind.BIND_FAILED:
+            return g.CommandFailureBindFailed(detail)
+        case g.CommandFailureKind.WRITE_FAILED:
+            return g.CommandFailureWriteFailed(detail)
+        case g.CommandFailureKind.UNSUPPORTED_BY_BACKEND:
+            return g.CommandFailureUnsupportedByBackend()
+        case g.CommandFailureKind.UNKNOWN_LINK:
+            return g.CommandFailureUnknownLink()
+        case g.CommandFailureKind.LINK_NOT_ACTIVE:
+            return g.CommandFailureLinkNotActive()
+    raise RuntimeError(f"unknown command failure {kind}")
+
+
 class Command:
     def __init__(self, native: NativeLibrary, handle: ctypes.c_void_p):
         self._native = native
@@ -374,7 +415,12 @@ class Command:
         )
         detail = bytes_from_view(result.detail).decode()
         if result.failure:
-            return CommandFailed(g.CommandFailureKind(result.failure), detail)
+            return CommandFailed(
+                _decode_command_failure(
+                    g.CommandFailureKind(result.failure),
+                    detail,
+                )
+            )
         outcome = g.CommandOutcomeKind(result.outcome)
         value = bytes_from_view(result.value)
         if outcome is g.CommandOutcomeKind.ANNOUNCED:

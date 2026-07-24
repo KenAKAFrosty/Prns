@@ -26,6 +26,7 @@ import {
 } from "./lxmf.js";
 import {
   describeAutoWifiFailure,
+  describeCommandFailure,
   describeHostError,
   describeHostOperationFailure,
   describeStartupFailure,
@@ -178,28 +179,24 @@ class BrowserPlayground {
     globalThis.addEventListener("pagehide", () => {
       void this.close();
     });
-    match(this.#prns.claimEvents(), {
-      Claimed: (events) => {
-        void this.#consumeEvents(events);
-      },
-      AlreadyClaimed: ({ lane }) => {
-        this.#recordRuntimeFailure(
-          "Runtime application event stream unavailable",
-          `${lane} already has a consumer`,
-        );
-      },
-    });
-    match(this.#prns.claimDiagnostics(), {
-      Claimed: (diagnostics) => {
-        void this.#consumeDiagnostics(diagnostics);
-      },
-      AlreadyClaimed: ({ lane }) => {
-        this.#recordRuntimeFailure(
-          "Runtime diagnostic stream unavailable",
-          `${lane} already has a consumer`,
-        );
-      },
-    });
+    const events = this.#prns.claimEvents();
+    if (events.tag === "AlreadyClaimed") {
+      this.#recordRuntimeFailure(
+        "Runtime application event stream unavailable",
+        `${events.data.lane} already has a consumer`,
+      );
+      return;
+    }
+    void this.#consumeEvents(events.data);
+    const diagnostics = this.#prns.claimDiagnostics();
+    if (diagnostics.tag === "AlreadyClaimed") {
+      this.#recordRuntimeFailure(
+        "Runtime diagnostic stream unavailable",
+        `${diagnostics.data.lane} already has a consumer`,
+      );
+      return;
+    }
+    void this.#consumeDiagnostics(diagnostics.data);
     this.#pollTimer = globalThis.setInterval(() => {
       this.#poll();
     }, POLL_INTERVAL_MS);
@@ -394,62 +391,17 @@ class BrowserPlayground {
     destination: DestinationHash,
   ): Promise<void> {
     const outcome = await this.#prns.announce(destination);
-    match(outcome, {
+    if (outcome.tag === "Failed") {
+      this.#view.record(
+        "Failure",
+        `${label} announce failed`,
+        describeCommandFailure(outcome.data),
+      );
+      return;
+    }
+    match(outcome.data, {
       Announced: () => {
-        this.#view.record(
-          "Announce",
-          `${label} announce settled`,
-          null,
-        );
-      },
-      Busy: () => {
-        this.#view.record(
-          "Failure",
-          `${label} announce was not accepted`,
-          "The pending command limit is full",
-        );
-      },
-      NodeStopped: () => {
-        this.#view.record(
-          "Failure",
-          `${label} announce was not accepted`,
-          "The node is no longer running",
-        );
-      },
-      CommandFailed: ({ detail }) => {
-        this.#view.record(
-          "Failure",
-          `${label} announce failed`,
-          detail,
-        );
-      },
-      HostApiUnavailable: ({ api }) => {
-        this.#view.record(
-          "Failure",
-          `${label} announce was not accepted`,
-          `${api} is unavailable in this browser`,
-        );
-      },
-      EntropySourceFailed: ({ detail }) => {
-        this.#view.record(
-          "Failure",
-          `${label} announce was not accepted`,
-          detail,
-        );
-      },
-      InsufficientEntropy: ({ actual, minimum }) => {
-        this.#view.record(
-          "Failure",
-          `${label} announce was not accepted`,
-          `${actual} bytes received; ${minimum} required`,
-        );
-      },
-      RuntimeRejected: ({ operation, detail }) => {
-        this.#view.record(
-          "Failure",
-          `${label} announce was rejected`,
-          `${operation}: ${detail}`,
-        );
+        this.#view.record("Announce", `${label} announce settled`, null);
       },
     });
   }

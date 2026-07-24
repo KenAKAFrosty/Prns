@@ -1,6 +1,7 @@
 import { Tag, match_into } from "./sdk/index.js";
 import type {
   AutoWifiFailure,
+  CommandFailure,
   EntropyFailure,
   InterfaceCleanupFailure,
   InterfaceCloseOutcome,
@@ -103,6 +104,28 @@ export function describeAutoWifiFailure(outcome: AutoWifiFailure): string {
     SelectionIdentityUnavailable: ({ detail }) => detail,
     DiscoveryFailed: ({ detail }) => detail,
     RuntimeRejected: ({ operation, detail }) => `${operation}: ${detail}`,
+  });
+}
+
+export function describeCommandFailure(outcome: CommandFailure): string {
+  return match_into<string>().from(outcome, {
+    NodeStopped: () => "The node is no longer running",
+    Busy: () => "The pending command limit is full",
+    PayloadTooLarge: () => "The payload exceeds the packet limit",
+    UnknownDestination: () => "The destination is not registered",
+    NotSingleDestination: () => "The destination does not accept single packets",
+    AnnounceAppDataTooLong: () => "The announce application data is too long",
+    UnknownInterface: () => "The interface is not attached",
+    NoRouteToDestination: () => "No route to the destination is known",
+    NotDirectlyReachable: () => "The destination is not directly reachable",
+    PacketCulled: () => "The packet was culled before delivery",
+    DeliveryTimedOut: () => "Delivery timed out",
+    InvalidBitrate: () => "The requested bitrate is invalid",
+    BindFailed: ({ detail }) => `Bind failed: ${detail}`,
+    WriteFailed: ({ detail }) => `Write failed: ${detail}`,
+    UnsupportedByBackend: () => "The active backend does not support this command",
+    UnknownLink: () => "The link does not exist",
+    LinkNotActive: () => "The link is not active",
   });
 }
 

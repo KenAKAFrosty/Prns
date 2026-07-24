@@ -205,6 +205,35 @@ export type CommandOutcome =
       }
     >;
 
+export type CommandFailure =
+  | Tag<"NodeStopped">
+  | Tag<"Busy">
+  | Tag<"PayloadTooLarge">
+  | Tag<"UnknownDestination">
+  | Tag<"NotSingleDestination">
+  | Tag<"AnnounceAppDataTooLong">
+  | Tag<"UnknownInterface">
+  | Tag<"NoRouteToDestination">
+  | Tag<"NotDirectlyReachable">
+  | Tag<"PacketCulled">
+  | Tag<"DeliveryTimedOut">
+  | Tag<"InvalidBitrate">
+  | Tag<
+      "BindFailed",
+      {
+        readonly detail: string;
+      }
+    >
+  | Tag<
+      "WriteFailed",
+      {
+        readonly detail: string;
+      }
+    >
+  | Tag<"UnsupportedByBackend">
+  | Tag<"UnknownLink">
+  | Tag<"LinkNotActive">;
+
 export type ApplicationEvent =
   | Tag<
       "SingleDelivery",

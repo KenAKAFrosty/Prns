@@ -12,10 +12,9 @@ host = Host(ephemeral_endpoint(
 ))
 
 claim = claim_application_events(host)
-if claim isa StreamClaimed
-    @async for event in claim.stream
-        handle(event)
-    end
+claim isa StreamAlreadyClaimed && error("application events already have a consumer")
+@async for event in claim.stream
+    handle(event)
 end
 
 command = execute(

@@ -120,6 +120,9 @@ public enum CommandFailureKind : uint
     InvalidBitrate = 12,
     BindFailed = 13,
     WriteFailed = 14,
+    UnsupportedByBackend = 15,
+    UnknownLink = 16,
+    LinkNotActive = 17,
 }
 
 public enum DeliveryEvidenceKind : uint
@@ -730,6 +733,74 @@ public abstract record CommandOutcome
             LinkCloseQueued value => linkCloseQueued(value),
             InterfaceAttached value => interfaceAttached(value),
             InterfaceDetached value => interfaceDetached(value),
+            _ => throw new InvalidOperationException("Unknown contract case."),
+        };
+}
+
+public abstract record CommandFailure
+{
+    private protected CommandFailure() { }
+
+    public sealed record NodeStopped() : CommandFailure;
+    public sealed record Busy() : CommandFailure;
+    public sealed record PayloadTooLarge() : CommandFailure;
+    public sealed record UnknownDestination() : CommandFailure;
+    public sealed record NotSingleDestination() : CommandFailure;
+    public sealed record AnnounceAppDataTooLong() : CommandFailure;
+    public sealed record UnknownInterface() : CommandFailure;
+    public sealed record NoRouteToDestination() : CommandFailure;
+    public sealed record NotDirectlyReachable() : CommandFailure;
+    public sealed record PacketCulled() : CommandFailure;
+    public sealed record DeliveryTimedOut() : CommandFailure;
+    public sealed record InvalidBitrate() : CommandFailure;
+    public sealed record BindFailed(
+        string Detail
+    ) : CommandFailure;
+    public sealed record WriteFailed(
+        string Detail
+    ) : CommandFailure;
+    public sealed record UnsupportedByBackend() : CommandFailure;
+    public sealed record UnknownLink() : CommandFailure;
+    public sealed record LinkNotActive() : CommandFailure;
+
+    public TResult Match<TResult>(
+        Func<CommandFailure.NodeStopped, TResult> nodeStopped,
+        Func<CommandFailure.Busy, TResult> busy,
+        Func<CommandFailure.PayloadTooLarge, TResult> payloadTooLarge,
+        Func<CommandFailure.UnknownDestination, TResult> unknownDestination,
+        Func<CommandFailure.NotSingleDestination, TResult> notSingleDestination,
+        Func<CommandFailure.AnnounceAppDataTooLong, TResult> announceAppDataTooLong,
+        Func<CommandFailure.UnknownInterface, TResult> unknownInterface,
+        Func<CommandFailure.NoRouteToDestination, TResult> noRouteToDestination,
+        Func<CommandFailure.NotDirectlyReachable, TResult> notDirectlyReachable,
+        Func<CommandFailure.PacketCulled, TResult> packetCulled,
+        Func<CommandFailure.DeliveryTimedOut, TResult> deliveryTimedOut,
+        Func<CommandFailure.InvalidBitrate, TResult> invalidBitrate,
+        Func<CommandFailure.BindFailed, TResult> bindFailed,
+        Func<CommandFailure.WriteFailed, TResult> writeFailed,
+        Func<CommandFailure.UnsupportedByBackend, TResult> unsupportedByBackend,
+        Func<CommandFailure.UnknownLink, TResult> unknownLink,
+        Func<CommandFailure.LinkNotActive, TResult> linkNotActive
+    ) =>
+        this switch
+        {
+            NodeStopped value => nodeStopped(value),
+            Busy value => busy(value),
+            PayloadTooLarge value => payloadTooLarge(value),
+            UnknownDestination value => unknownDestination(value),
+            NotSingleDestination value => notSingleDestination(value),
+            AnnounceAppDataTooLong value => announceAppDataTooLong(value),
+            UnknownInterface value => unknownInterface(value),
+            NoRouteToDestination value => noRouteToDestination(value),
+            NotDirectlyReachable value => notDirectlyReachable(value),
+            PacketCulled value => packetCulled(value),
+            DeliveryTimedOut value => deliveryTimedOut(value),
+            InvalidBitrate value => invalidBitrate(value),
+            BindFailed value => bindFailed(value),
+            WriteFailed value => writeFailed(value),
+            UnsupportedByBackend value => unsupportedByBackend(value),
+            UnknownLink value => unknownLink(value),
+            LinkNotActive value => linkNotActive(value),
             _ => throw new InvalidOperationException("Unknown contract case."),
         };
 }

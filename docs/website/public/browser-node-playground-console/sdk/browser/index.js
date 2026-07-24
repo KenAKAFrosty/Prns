@@ -1,10 +1,10 @@
 import { Tag, from, match, match_into } from "../casework.js";
 import { BoundedAsyncLane } from "../async_lanes.js";
-import { DESTINATION_HASH_LENGTH, HOST_CONTRACT_ABI, INTERFACE_ID_LENGTH, PRODUCT_VERSION, RESOURCE_HASH_LENGTH, balancedLimits, destinationHash, identityHash, interfaceId, linkId, requestId, requestPathHash, resourceHash, } from "../contract.js";
+import { DESTINATION_HASH_LENGTH, HOST_CONTRACT_ABI, INTERFACE_ID_LENGTH, PRODUCT_VERSION, RESOURCE_HASH_LENGTH, balancedLimits, destinationHash, identityHash, interfaceId, linkId, packetHash, requestId, requestPathHash, resourceHash, } from "../contract.js";
 import { MemoryResourceStream } from "../memory_resource.js";
 import { AutoWifiInterface } from "./auto_wifi.js";
 export { Tag, from, match, match_into };
-export { DESTINATION_HASH_LENGTH, HOST_CONTRACT_ABI, INTERFACE_ID_LENGTH, PRODUCT_VERSION, RESOURCE_HASH_LENGTH, balancedLimits, destinationHash, identityHash, interfaceId, linkId, requestId, requestPathHash, resourceHash, };
+export { DESTINATION_HASH_LENGTH, HOST_CONTRACT_ABI, INTERFACE_ID_LENGTH, PRODUCT_VERSION, RESOURCE_HASH_LENGTH, balancedLimits, destinationHash, identityHash, interfaceId, linkId, packetHash, requestId, requestPathHash, resourceHash, };
 export { AutoWifiController, AutoWifiInterface, parseBrowserGatewayCatalog, validateBrowserGatewayUrl, } from "./auto_wifi.js";
 export const MIN_ENTROPY_BYTES = 128;
 export const BLE_IDENTITY_LENGTH = 16;
@@ -1223,7 +1223,7 @@ export class Prns {
     #limits;
     #events;
     #diagnostics;
-    #pendingAnnounces = new Map();
+    #pendingCommands = new Map();
     #lifecycle = Tag("Running");
     constructor(wasm, runtime, entropy, now, bleIdentityAvailability, limits) {
         this.#runtime = runtime;
@@ -1358,32 +1358,47 @@ export class Prns {
             return runtimeRejected("register-node-page", error);
         }
     }
-    announce(destination) {
+    execute(command) {
+        return this.#execute(command);
+    }
+    #execute(command) {
         if (this.#lifecycle.tag !== "Running") {
-            return Promise.resolve(Tag("NodeStopped"));
+            return Promise.resolve(commandFailed(Tag("NodeStopped")));
         }
-        if (this.#pendingAnnounces.size >= this.#limits.pendingCommands) {
-            return Promise.resolve(Tag("Busy"));
-        }
-        const entropy = this.#entropyBytes();
-        if (entropy.tag !== "Filled") {
-            return Promise.resolve(entropy);
-        }
-        let id;
-        try {
-            id = commandId(this.#runtime.announce({
+        return match_into().from(command, {
+            Announce: ({ destination, interface: interfaceId }) => this.#issueCommand("announce", (entropy) => this.#runtime.announce({
                 destination,
+                ...(interfaceId === undefined ? {} : { interfaceId }),
                 nowMs: this.#now(),
-                entropy: entropy.data,
-            }));
-        }
-        catch (error) {
-            return Promise.resolve(runtimeRejected("announce", error));
-        }
-        return new Promise((resolve) => {
-            this.#pendingAnnounces.set(id, resolve);
-            this.#pumpEvents();
+                entropy,
+            })),
+            SendSinglePacket: ({ destination, payload }) => this.#issueCommand("send-single-packet", (entropy) => this.#runtime.sendSinglePacket({
+                destination,
+                payload,
+                nowMs: this.#now(),
+                entropy,
+            })),
+            CloseLink: ({ linkId: value }) => this.#issueCommand("close-link", (entropy) => this.#runtime.closeLink({
+                linkId: value,
+                nowMs: this.#now(),
+                entropy,
+            })),
+            AttachTcpServer: async () => commandFailed(Tag("UnsupportedByBackend")),
+            AttachTcpClient: async () => commandFailed(Tag("UnsupportedByBackend")),
+            AttachUdp: async () => commandFailed(Tag("UnsupportedByBackend")),
+            DetachInterface: async () => commandFailed(Tag("UnsupportedByBackend")),
         });
+    }
+    announce(destination, interfaceId) {
+        return this.execute(Tag("Announce", interfaceId === undefined
+            ? { destination }
+            : { destination, interface: interfaceId }));
+    }
+    sendSinglePacket(destination, payload) {
+        return this.execute(Tag("SendSinglePacket", { destination, payload }));
+    }
+    closeLink(value) {
+        return this.execute(Tag("CloseLink", { linkId: value }));
     }
     get lifecycle() {
         return this.#lifecycle;
@@ -1407,6 +1422,31 @@ export class Prns {
     #entropyBytes() {
         return fillEntropy(this.#entropy, MIN_ENTROPY_BYTES);
     }
+    #issueCommand(operation, issue) {
+        if (this.#lifecycle.tag !== "Running") {
+            return Promise.resolve(commandFailed(Tag("NodeStopped")));
+        }
+        if (this.#pendingCommands.size >= this.#limits.pendingCommands) {
+            return Promise.resolve(commandFailed(Tag("Busy")));
+        }
+        const entropy = this.#entropyBytes();
+        if (entropy.tag !== "Filled") {
+            return Promise.resolve(commandFailed(Tag("WriteFailed", {
+                detail: entropyFailureDetail(entropy),
+            })));
+        }
+        let id;
+        try {
+            id = commandId(issue(entropy.data));
+        }
+        catch (error) {
+            return Promise.resolve(commandFailed(browserCommandFailure(operation, error)));
+        }
+        return new Promise((settle) => {
+            this.#pendingCommands.set(id, settle);
+            this.#pumpEvents();
+        });
+    }
     #pumpEvents() {
         if (this.#lifecycle.tag === "Failed" || this.#lifecycle.tag === "Stopped") {
             return;
@@ -1427,15 +1467,16 @@ export class Prns {
                 Diagnostic: (diagnostic) => {
                     this.#diagnostics.push(diagnostic);
                 },
-                CommandSettled: ({ commandId, debugSettlement }) => {
-                    const settle = this.#pendingAnnounces.get(commandId);
-                    if (!settle) {
+                CommandSettled: ({ commandId, settlement }) => {
+                    if (settlement === undefined) {
                         return;
                     }
-                    this.#pendingAnnounces.delete(commandId);
-                    settle(debugSettlement.includes("Fail")
-                        ? Tag("CommandFailed", { detail: debugSettlement })
-                        : Tag("Announced"));
+                    const settle = this.#pendingCommands.get(commandId);
+                    if (settle === undefined) {
+                        return;
+                    }
+                    this.#pendingCommands.delete(commandId);
+                    settle(settlement);
                 },
             });
         }
@@ -1461,10 +1502,10 @@ export class Prns {
         this.#settleFailedCommands(detail);
     }
     #settleFailedCommands(detail) {
-        for (const settle of this.#pendingAnnounces.values()) {
-            settle(Tag("CommandFailed", { detail }));
+        for (const settle of this.#pendingCommands.values()) {
+            settle(commandFailed(Tag("WriteFailed", { detail })));
         }
-        this.#pendingAnnounces.clear();
+        this.#pendingCommands.clear();
     }
 }
 class RuntimeHost {
@@ -1892,10 +1933,13 @@ function parseEvent(raw) {
             sourceInterface: interfaceId(bytesField(data, "sourceInterface")),
             cause: stringField(data, "cause"),
         })),
-        commandSettled: (data) => Tag("CommandSettled", {
-            commandId: commandId(bigintField(data, "id")),
-            debugSettlement: stringField(data, "settlement"),
-        }),
+        commandSettled: (data) => {
+            const commandIdValue = commandId(bigintField(data, "id"));
+            const settlement = parseCommandSettlement(data);
+            return Tag("CommandSettled", settlement === undefined
+                ? { commandId: commandIdValue }
+                : { commandId: commandIdValue, settlement });
+        },
         linkEstablished: (data) => Tag("Diagnostic", Tag("LinkEstablished", {
             linkId: linkId(bytesField(data, "linkId")),
             rttMillis: nonNegativeInteger(numberField(data, "rttMillis"), "rttMillis"),
@@ -2009,6 +2053,99 @@ function parseEvent(raw) {
             destination: destinationHash(bytesField(data, "destination")),
         })),
     });
+}
+function parseCommandSettlement(value) {
+    const result = stringField(value, "result");
+    if (result === "untracked") {
+        return undefined;
+    }
+    if (result === "failed") {
+        return commandFailed(parseCommandFailure(value));
+    }
+    if (result !== "succeeded") {
+        throw new PrnsValidationError("invalid-component", `unknown command settlement result ${result}`);
+    }
+    const kind = stringField(value, "kind");
+    if (kind === "Announced") {
+        return Tag("Succeeded", Tag("Announced"));
+    }
+    if (kind === "LinkCloseQueued") {
+        return Tag("Succeeded", Tag("LinkCloseQueued"));
+    }
+    if (kind === "PacketDelivered") {
+        const delivered = {
+            rttMillis: nonNegativeInteger(numberField(value, "rttMillis"), "rttMillis"),
+            evidence: parseDeliveryEvidence(stringField(value, "evidence")),
+        };
+        const hash = optionalBytesField(value, "packetHash");
+        return Tag("Succeeded", Tag("PacketDelivered", hash === undefined
+            ? delivered
+            : { ...delivered, packetHash: packetHash(hash) }));
+    }
+    throw new PrnsValidationError("invalid-component", `unknown command outcome ${kind}`);
+}
+function parseCommandFailure(value) {
+    const kind = stringField(value, "kind");
+    if (kind === "NodeStopped") {
+        return Tag("NodeStopped");
+    }
+    if (kind === "Busy") {
+        return Tag("Busy");
+    }
+    if (kind === "PayloadTooLarge") {
+        return Tag("PayloadTooLarge");
+    }
+    if (kind === "UnknownDestination") {
+        return Tag("UnknownDestination");
+    }
+    if (kind === "NotSingleDestination") {
+        return Tag("NotSingleDestination");
+    }
+    if (kind === "AnnounceAppDataTooLong") {
+        return Tag("AnnounceAppDataTooLong");
+    }
+    if (kind === "UnknownInterface") {
+        return Tag("UnknownInterface");
+    }
+    if (kind === "NoRouteToDestination") {
+        return Tag("NoRouteToDestination");
+    }
+    if (kind === "NotDirectlyReachable") {
+        return Tag("NotDirectlyReachable");
+    }
+    if (kind === "PacketCulled") {
+        return Tag("PacketCulled");
+    }
+    if (kind === "DeliveryTimedOut") {
+        return Tag("DeliveryTimedOut");
+    }
+    if (kind === "InvalidBitrate") {
+        return Tag("InvalidBitrate");
+    }
+    if (kind === "BindFailed") {
+        return Tag("BindFailed", { detail: stringField(value, "detail") });
+    }
+    if (kind === "WriteFailed") {
+        return Tag("WriteFailed", { detail: stringField(value, "detail") });
+    }
+    if (kind === "UnsupportedByBackend") {
+        return Tag("UnsupportedByBackend");
+    }
+    if (kind === "UnknownLink") {
+        return Tag("UnknownLink");
+    }
+    if (kind === "LinkNotActive") {
+        return Tag("LinkNotActive");
+    }
+    throw new PrnsValidationError("invalid-component", `unknown command failure ${kind}`);
+}
+function parseDeliveryEvidence(value) {
+    if (value === "ExplicitProof" ||
+        value === "ImplicitProof" ||
+        value === "Response") {
+        return value;
+    }
+    throw new PrnsValidationError("invalid-component", `unknown delivery evidence ${value}`);
 }
 function parseSnapshot(raw) {
     const object = record(raw, "PrnsSnapshot");
@@ -2595,6 +2732,23 @@ function runtimeRejected(operation, error) {
     return Tag("RuntimeRejected", {
         operation,
         detail: describeHostError(error),
+    });
+}
+function commandFailed(failure) {
+    return Tag("Failed", failure);
+}
+function browserCommandFailure(operation, error) {
+    const detail = describeHostError(error);
+    if (detail.includes("payload exceeds the single packet limit")) {
+        return Tag("PayloadTooLarge");
+    }
+    return Tag("WriteFailed", { detail: `${operation}: ${detail}` });
+}
+function entropyFailureDetail(failure) {
+    return match(failure, {
+        HostApiUnavailable: ({ api }) => `${api} is unavailable`,
+        EntropySourceFailed: ({ detail }) => detail,
+        InsufficientEntropy: ({ minimum, actual }) => `entropy source returned ${actual} bytes; ${minimum} required`,
     });
 }
 function fillEntropy(source, length) {

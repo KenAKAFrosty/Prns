@@ -66,26 +66,30 @@ await using (host)
         throw new InvalidOperationException("The real host identity hash is unavailable.");
     }
 
-    var events = host.ClaimEvents().Match(
-        claimed => claimed.Stream,
-        already =>
-            throw new InvalidOperationException($"First {already.Lane} claim was rejected.")
-    );
+    var firstClaim = host.ClaimEvents();
+    if (firstClaim is StreamClaim<ApplicationEvent>.AlreadyClaimed rejected)
+    {
+        throw new InvalidOperationException($"First {rejected.Lane} claim was rejected.");
+    }
+    var events = ((StreamClaim<ApplicationEvent>.Claimed)firstClaim).Stream;
     await using (events)
     {
-        host.ClaimEvents().Match(
-            _ => throw new InvalidOperationException("A second application consumer was admitted."),
-            already =>
-                already.Lane == AsyncLaneName.ApplicationEvents
-                    ? true
-                    : throw new InvalidOperationException("The wrong lane rejected a second claim.")
-        );
+        var secondClaim = host.ClaimEvents();
+        if (secondClaim is StreamClaim<ApplicationEvent>.Claimed)
+        {
+            throw new InvalidOperationException("A second application consumer was admitted.");
+        }
+        var alreadyClaimed = (StreamClaim<ApplicationEvent>.AlreadyClaimed)secondClaim;
+        if (alreadyClaimed.Lane != AsyncLaneName.ApplicationEvents)
+        {
+            throw new InvalidOperationException("The wrong lane rejected a second claim.");
+        }
     }
 
-    var reclaimed = host.ClaimEvents().Match(
-        claimed => claimed.Stream,
-        already =>
-            throw new InvalidOperationException($"{already.Lane} was not released for reclaim.")
-    );
-    await reclaimed.DisposeAsync();
+    var reclaim = host.ClaimEvents();
+    if (reclaim is StreamClaim<ApplicationEvent>.AlreadyClaimed unreleased)
+    {
+        throw new InvalidOperationException($"{unreleased.Lane} was not released for reclaim.");
+    }
+    await ((StreamClaim<ApplicationEvent>.Claimed)reclaim).Stream.DisposeAsync();
 }

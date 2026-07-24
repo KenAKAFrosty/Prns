@@ -22,10 +22,12 @@ import { Prns, match } from "personal-rns/browser";
 const created = await Prns.create({});
 match(created, {
   Ready: (node) => {
-    match(node.claimDiagnostics(), {
-      Claimed: (diagnostics) => consumeDiagnostics(diagnostics),
-      AlreadyClaimed: ({ lane }) => reportConsumerConflict(lane),
-    });
+    const claim = node.claimDiagnostics();
+    if (claim.tag === "AlreadyClaimed") {
+      reportConsumerConflict(claim.data.lane);
+      return;
+    }
+    consumeDiagnostics(claim.data);
   },
   WasmLoadFailed: handleWasmLoadFailure,
   ContractMismatch: handleContractMismatch,

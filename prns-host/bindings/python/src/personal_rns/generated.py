@@ -98,6 +98,9 @@ class CommandFailureKind(IntEnum):
     INVALID_BITRATE = 12
     BIND_FAILED = 13
     WRITE_FAILED = 14
+    UNSUPPORTED_BY_BACKEND = 15
+    UNKNOWN_LINK = 16
+    LINK_NOT_ACTIVE = 17
 
 class DeliveryEvidenceKind(IntEnum):
     EXPLICIT_PROOF = 1
@@ -395,6 +398,74 @@ class CommandOutcomeInterfaceDetached:
     interface: InterfaceId
 
 @dataclass(frozen=True, slots=True)
+class CommandFailureNodeStopped:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureBusy:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailurePayloadTooLarge:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureUnknownDestination:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureNotSingleDestination:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureAnnounceAppDataTooLong:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureUnknownInterface:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureNoRouteToDestination:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureNotDirectlyReachable:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailurePacketCulled:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureDeliveryTimedOut:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureInvalidBitrate:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureBindFailed:
+    detail: str
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureWriteFailed:
+    detail: str
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureUnsupportedByBackend:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureUnknownLink:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureLinkNotActive:
+    pass
+
+@dataclass(frozen=True, slots=True)
 class ApplicationEventSingleDelivery:
     destination: DestinationHash
     source_interface: InterfaceId
@@ -546,5 +617,6 @@ Bitrate: TypeAlias = BitrateAuto | BitrateBitsPerSecond
 DestinationConfig: TypeAlias = DestinationConfigPlain | DestinationConfigSingle
 HostCommand: TypeAlias = HostCommandAnnounce | HostCommandSendSinglePacket | HostCommandCloseLink | HostCommandAttachTcpServer | HostCommandAttachTcpClient | HostCommandAttachUdp | HostCommandDetachInterface
 CommandOutcome: TypeAlias = CommandOutcomeAnnounced | CommandOutcomePacketDelivered | CommandOutcomeLinkCloseQueued | CommandOutcomeInterfaceAttached | CommandOutcomeInterfaceDetached
+CommandFailure: TypeAlias = CommandFailureNodeStopped | CommandFailureBusy | CommandFailurePayloadTooLarge | CommandFailureUnknownDestination | CommandFailureNotSingleDestination | CommandFailureAnnounceAppDataTooLong | CommandFailureUnknownInterface | CommandFailureNoRouteToDestination | CommandFailureNotDirectlyReachable | CommandFailurePacketCulled | CommandFailureDeliveryTimedOut | CommandFailureInvalidBitrate | CommandFailureBindFailed | CommandFailureWriteFailed | CommandFailureUnsupportedByBackend | CommandFailureUnknownLink | CommandFailureLinkNotActive
 ApplicationEvent: TypeAlias = ApplicationEventSingleDelivery | ApplicationEventRequest | ApplicationEventResponse | ApplicationEventResponseSegment | ApplicationEventResourceAvailable | ApplicationEventResourceSegment | ApplicationEventResourceNeedsDecompression | ApplicationEventChannelMessage
 DiagnosticEvent: TypeAlias = DiagnosticEventAnnounceHeard | DiagnosticEventLinkEstablished | DiagnosticEventPeerIdentified | DiagnosticEventLinkClosed | DiagnosticEventLinkInterfaceMismatch | DiagnosticEventResourceAssembled | DiagnosticEventResourceFailed | DiagnosticEventResourceSendProgress | DiagnosticEventSelfRatchetRotated | DiagnosticEventAnnounceHeldDropped | DiagnosticEventDelivered | DiagnosticEventRouteExpired | DiagnosticEventRouteEvicted | DiagnosticEventRouteInterfaceGone | DiagnosticEventRouteDropped | DiagnosticEventBackendDiagnostic | DiagnosticEventDiagnosticsDropped
