@@ -1,5 +1,12 @@
 # Prns
 
+> [!IMPORTANT]
+> **YOU FOUND PRNS A DAY OR FEW EARLY.**
+>
+> We are completing final release validation, packaging, and documentation.
+> The repository is public for early review, but this is not the announced
+> release yet. Expect a little movement before the first public release.
+
 <p align="center">
   <a href="https://prns.dev" target="_blank">
   <img src="docs/website/public/assets/og.png" alt="Prns: a high-performance port of Reticulum (RNS). Runs on any device." width="800" />
