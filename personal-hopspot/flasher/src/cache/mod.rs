@@ -900,6 +900,7 @@ mod tests {
                     preparation_profile: board.preparation_profile.clone(),
                     parts,
                     provisioning: board.provisioning.clone(),
+                    source: None,
                 }
             })
             .collect();

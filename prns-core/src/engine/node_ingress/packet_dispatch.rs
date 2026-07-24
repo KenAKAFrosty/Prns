@@ -472,16 +472,31 @@ impl<S: StorageLayout> EngineState<S> {
                 id,
                 link_id,
                 correlation,
+                last_segment,
             } => {
-                settle(
-                    sink,
-                    id,
-                    crate::routing::links::resources::send::resource_settlement(
-                        correlation,
-                        Ok(()),
-                    ),
-                );
-                self.promote_staged_resource(&link_id, now, fill_entropy, sink);
+                if !last_segment
+                    && self
+                        .outgoing_assemblies
+                        .static_continuation(&link_id)
+                        .is_some()
+                {
+                    wake_schedule_changes.merge(self.continue_static_response_into(
+                        &link_id,
+                        now,
+                        fill_entropy,
+                        sink,
+                    ));
+                } else {
+                    settle(
+                        sink,
+                        id,
+                        crate::routing::links::resources::send::resource_settlement(
+                            correlation,
+                            Ok(()),
+                        ),
+                    );
+                    self.promote_staged_resource(&link_id, now, fill_entropy, sink);
+                }
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
             IngestPacketOutcome::PeerIdentified { link_id, identity } => {

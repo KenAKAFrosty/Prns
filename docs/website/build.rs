@@ -3,13 +3,11 @@ mod build_support;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
 
-use build_support::{
-    generate_board_catalog, generate_board_images, generate_source_archive, git_output,
-};
+use build_support::{generate_board_catalog, generate_board_images};
 
 const REPO_VERSION_PATH: &str = "../../VERSION";
-const WRITE_PUBLIC_ASSETS_ENV: &str = "PRNS_WRITE_PUBLIC_ASSETS";
 const EMBEDDED_SITE_ENV: &str = "PRNS_EMBEDDED_SITE";
 
 fn main() {
@@ -28,13 +26,8 @@ fn main() {
         matches!(channel.as_str(), "stable" | "preview"),
         "PRNS_BUILD_CHANNEL must be stable or preview"
     );
-    let write_public_assets = should_write_public_assets();
-
     generate_board_images();
     generate_board_catalog();
-    if write_public_assets {
-        generate_source_archive(&version, &commit);
-    }
 
     println!("cargo:rustc-env=PRNS_BUILD_VERSION={version}");
     println!("cargo:rustc-env=PRNS_GIT_COMMIT={commit}");
@@ -45,7 +38,6 @@ fn main() {
     println!("cargo:rerun-if-env-changed=PRNS_BUILD_COMMIT_SHORT");
     println!("cargo:rerun-if-env-changed=PRNS_BUILD_CHANNEL");
     println!("cargo:rerun-if-env-changed={EMBEDDED_SITE_ENV}");
-    println!("cargo:rerun-if-env-changed={WRITE_PUBLIC_ASSETS_ENV}");
 
     if let Some(head) = git_output(&["rev-parse", "--git-path", "HEAD"]) {
         println!("cargo:rerun-if-changed={head}");
@@ -57,14 +49,6 @@ fn main() {
             }
         }
     }
-}
-
-fn should_write_public_assets() -> bool {
-    env_flag(WRITE_PUBLIC_ASSETS_ENV)
-}
-
-fn env_flag(name: &str) -> bool {
-    env::var_os(name).is_some_and(|value| !value.is_empty() && value != "0")
 }
 
 fn build_version() -> String {
@@ -86,4 +70,13 @@ fn read_repo_version() -> Option<String> {
 
 fn short_commit(commit: &str) -> String {
     commit.chars().take(12).collect()
+}
+
+fn git_output(args: &[&str]) -> Option<String> {
+    let output = Command::new("git").args(args).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value = String::from_utf8(output.stdout).ok()?;
+    Some(value.trim().to_owned())
 }

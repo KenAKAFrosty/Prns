@@ -6,6 +6,7 @@ members = [
     "prns-runtime/core",
     "personal-hopspot/core",
     "docs/command",
+    "tools/repo/cargo-tools-command",
     "personal-hopspot/flasher",
 ]
 default-members = [

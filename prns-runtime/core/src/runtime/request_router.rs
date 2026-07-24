@@ -53,6 +53,14 @@ pub trait ResponseSink {
     fn put_static_bytes(&mut self, bytes: &'static [u8]) -> Result<(), ResponseCapacityExceeded> {
         self.put_bytes(bytes)
     }
+
+    fn put_static_file(
+        &mut self,
+        _name: &'static str,
+        _bytes: &'static [u8],
+    ) -> Result<(), ResponseCapacityExceeded> {
+        Err(ResponseCapacityExceeded)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -171,6 +179,20 @@ impl<S> RequestContext<'_, S> {
     pub fn respond_static_bytes(&mut self, bytes: &'static [u8]) -> Result<(), Decline> {
         self.sink
             .put_static_bytes(bytes)
+            .map_err(|_| Decline::ResponseTooLarge)
+    }
+
+    /// Respond with a Reticulum Resource whose metadata names the file for native clients.
+    ///
+    /// The bytes remain borrowed from static storage; resource segmentation copies only the
+    /// current transfer window into the outgoing resource buffer.
+    pub fn respond_static_file(
+        &mut self,
+        name: &'static str,
+        bytes: &'static [u8],
+    ) -> Result<(), Decline> {
+        self.sink
+            .put_static_file(name, bytes)
             .map_err(|_| Decline::ResponseTooLarge)
     }
 

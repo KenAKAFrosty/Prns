@@ -11,3 +11,7 @@ personal-hopspot-esp32 = { path = "../..", default-features = false, features = 
 embassy-executor = { version = "0.10", default-features = false }
 esp-hal = { version = "1.1", features = ["esp32s3", "unstable"] }
 esp-rtos = { version = "0.3.0", features = ["esp32s3", "embassy", "esp-radio"] }
+
+[features]
+default = []
+source-archive = ["personal-hopspot-esp32/source-archive"]

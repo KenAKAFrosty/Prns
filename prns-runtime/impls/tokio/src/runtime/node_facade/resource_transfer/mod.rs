@@ -80,7 +80,7 @@ pub enum ResourceReceiveError {
     NodeStopped,
 }
 
-const ENGINE_SEGMENT_LANES: usize = 2;
+pub(super) const ENGINE_SEGMENT_LANES: usize = 2;
 
 struct PendingSegment {
     settled: oneshot::Receiver<Settlement>,
@@ -94,6 +94,8 @@ pub(super) struct ResourceStreamOptions {
     pub(super) compression: SegmentCompression,
     pub(super) answers_request: Option<RequestId>,
     pub(super) progress: Option<mpsc::UnboundedSender<ResourceProgress>>,
+    pub(super) segment_size: u64,
+    pub(super) max_in_flight_segments: usize,
 }
 
 async fn settle_sent_segment(
@@ -129,6 +131,8 @@ impl PrnsNodeHandle {
                 compression: SegmentCompression::AUTO,
                 answers_request: None,
                 progress: None,
+                segment_size: MAX_EFFICIENT_SIZE as u64,
+                max_in_flight_segments: ENGINE_SEGMENT_LANES,
             },
         )
         .await
@@ -151,6 +155,8 @@ impl PrnsNodeHandle {
                 compression,
                 answers_request: None,
                 progress: None,
+                segment_size: MAX_EFFICIENT_SIZE as u64,
+                max_in_flight_segments: ENGINE_SEGMENT_LANES,
             },
         )
         .await
@@ -173,6 +179,8 @@ impl PrnsNodeHandle {
                 compression: SegmentCompression::AUTO,
                 answers_request: None,
                 progress: None,
+                segment_size: MAX_EFFICIENT_SIZE as u64,
+                max_in_flight_segments: ENGINE_SEGMENT_LANES,
             },
         )
         .await
@@ -196,6 +204,8 @@ impl PrnsNodeHandle {
                 compression,
                 answers_request: None,
                 progress: Some(progress),
+                segment_size: MAX_EFFICIENT_SIZE as u64,
+                max_in_flight_segments: ENGINE_SEGMENT_LANES,
             },
         )
         .await
@@ -223,8 +233,15 @@ impl PrnsNodeHandle {
             compression,
             answers_request,
             progress,
+            segment_size,
+            max_in_flight_segments,
         } = options;
-        let segment_size = MAX_EFFICIENT_SIZE as u64;
+        if segment_size == 0
+            || segment_size > MAX_EFFICIENT_SIZE as u64
+            || max_in_flight_segments == 0
+        {
+            return Err(ResourceSendError::UnrepresentableLength);
+        }
         let block_len = match packed_metadata.as_ref() {
             None => 0,
             Some(packed) => u64::try_from(packed.len())
@@ -240,7 +257,8 @@ impl PrnsNodeHandle {
         let rebalance_final_pair =
             total_segments > 1 && final_stream_len != 0 && final_stream_len < segment_size / 2;
         let mut remaining = total_len;
-        let mut in_flight: VecDeque<PendingSegment> = VecDeque::with_capacity(ENGINE_SEGMENT_LANES);
+        let mut in_flight: VecDeque<PendingSegment> =
+            VecDeque::with_capacity(max_in_flight_segments);
         let mut transferred = 0u64;
         let mut physical_transferred = 0u64;
         for segment_index in 1..=total_segments {
@@ -265,6 +283,23 @@ impl PrnsNodeHandle {
             };
             let this_segment = remaining.min(capacity);
             remaining -= this_segment;
+            if in_flight.len() == max_in_flight_segments {
+                if let Some(pending) = in_flight.pop_front() {
+                    settle_sent_segment(pending.settled, answers_request.is_some()).await?;
+                    transferred = transferred.saturating_add(pending.logical_len);
+                    physical_transferred =
+                        physical_transferred.saturating_add(pending.physical_len);
+                    if let Some(progress) = &progress {
+                        let _ = progress.send(ResourceProgress {
+                            transferred_bytes: transferred,
+                            total_bytes: stream_total_len,
+                            physical_transferred_bytes: physical_transferred,
+                            segment_index: pending.segment_index,
+                            total_segments,
+                        });
+                    }
+                }
+            }
             let mut chunk = std::vec![0u8; this_segment as usize];
             source
                 .read_exact(&mut chunk)
@@ -315,23 +350,6 @@ impl PrnsNodeHandle {
                     packed_len: packed.len() as u32,
                 },
             };
-            if in_flight.len() == ENGINE_SEGMENT_LANES {
-                if let Some(pending) = in_flight.pop_front() {
-                    settle_sent_segment(pending.settled, answers_request.is_some()).await?;
-                    transferred = transferred.saturating_add(pending.logical_len);
-                    physical_transferred =
-                        physical_transferred.saturating_add(pending.physical_len);
-                    if let Some(progress) = &progress {
-                        let _ = progress.send(ResourceProgress {
-                            transferred_bytes: transferred,
-                            total_bytes: stream_total_len,
-                            physical_transferred_bytes: physical_transferred,
-                            segment_index: pending.segment_index,
-                            total_segments,
-                        });
-                    }
-                }
-            }
             let physical_len = sealed_transfer_bytes(
                 compressed_candidate
                     .as_ref()

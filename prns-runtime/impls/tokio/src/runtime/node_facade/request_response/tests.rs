@@ -3,7 +3,7 @@ use tokio::sync::mpsc::{self, UnboundedReceiver};
 use crate::engine::RequestResponseTimeout;
 use crate::engine::Settlement;
 use crate::manifold::compression;
-use crate::manifold::driver::HostCommand;
+use crate::manifold::driver::{HostCommand, HostResourceMetadata};
 use crate::routing::links::request::{
     parse_response_plaintext, write_packed_binary_header, RequestId, MAX_PACKED_BINARY_HEADER_LEN,
     RESPONSE_WIRE_OVERHEAD,
@@ -16,6 +16,7 @@ use crate::units::RttMillis;
 
 use super::super::PrnsNodeHandle;
 use super::RESPONSE_PACKET_CEILING;
+use prns_core::rncp::parse_file_metadata;
 
 fn handle() -> (PrnsNodeHandle, UnboundedReceiver<HostCommand>) {
     let (commands, command_rx) = mpsc::unbounded_channel();
@@ -224,5 +225,67 @@ async fn respond_bytes_streaming_reads_a_bounded_source_into_a_response_resource
         .completion
         .send(Settlement::Respond(Ok(())))
         .unwrap();
+    assert_eq!(responding.await.unwrap().unwrap(), token.rtt);
+}
+
+#[tokio::test]
+async fn static_file_response_waits_for_each_proof_and_bounds_each_window() {
+    let (handle, mut command_rx) = handle();
+    let token = RespondToken {
+        link_id: LinkId::new([13; 16]),
+        request_id: RequestId([14; 16]),
+        rtt: RttMillis::new(36),
+    };
+    let bytes: &'static [u8] =
+        std::vec![0x42; super::STATIC_RESPONSE_SEGMENT_BYTES * 2 + 33_333].leak();
+    let responding = tokio::spawn(async move {
+        handle
+            .respond_static_file_settled(token, "source.zip", bytes)
+            .await
+    });
+
+    let mut expected_index = 1u64;
+    let mut total_segments = None;
+    loop {
+        let Some(HostCommand::SendResourceSegment(segment)) = command_rx.recv().await else {
+            panic!("expected a response resource segment");
+        };
+        assert_eq!(segment.request_id, Some(token.request_id));
+        assert_eq!(segment.segment_index, expected_index);
+        assert!(
+            segment.data.len() <= super::STATIC_RESPONSE_SEGMENT_BYTES,
+            "one live plaintext window remains bounded"
+        );
+        if expected_index == 1 {
+            let HostResourceMetadata::Packed(metadata) = &segment.metadata else {
+                panic!("first segment carries filename metadata");
+            };
+            assert_eq!(
+                parse_file_metadata(metadata.as_slice()).unwrap(),
+                b"source.zip"
+            );
+            total_segments = Some(segment.total_segments);
+            assert!(segment.total_segments > 2);
+        } else {
+            assert!(matches!(
+                segment.metadata,
+                HostResourceMetadata::SentInFirstSegment { .. }
+            ));
+            assert_eq!(Some(segment.total_segments), total_segments);
+        }
+        assert!(
+            command_rx.try_recv().is_err(),
+            "the next window is not queued before this proof"
+        );
+        segment
+            .completion
+            .send(Settlement::Respond(Ok(())))
+            .unwrap();
+        if Some(expected_index) == total_segments {
+            break;
+        }
+        expected_index += 1;
+    }
+
     assert_eq!(responding.await.unwrap().unwrap(), token.rtt);
 }

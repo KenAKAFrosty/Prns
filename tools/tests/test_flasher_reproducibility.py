@@ -10,6 +10,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+import zipfile
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -25,9 +26,14 @@ from flasher_build_metadata import (
 from flasher_candidate_output import resolve_output
 from flasher_reproducibility import validate_report
 from flasher_sparse_sizes import MERGED_BASELINES, SPARSE_BASELINES, build_report
+from source_snapshot import (
+    REQUIRED_SOURCE_FILES,
+    package_source_snapshot,
+    validate_archive_members,
+)
 
 
-VERSION = "0.2.6"
+VERSION = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
 COMMIT = "a" * 40
 
 
@@ -53,8 +59,9 @@ def manifest(
     heltec_size: int = 1_000_000,
     t_beam_size: int = 1_000_000,
     xiao_size: int = 900_000,
+    source_size: int | None = None,
 ) -> dict:
-    return {
+    value = {
         "release": {"version": VERSION, "commit": COMMIT},
         "targets": [
             {
@@ -79,6 +86,10 @@ def manifest(
             },
         ],
     }
+    if source_size is not None:
+        for target in value["targets"][:2]:
+            target["source"] = {"size": source_size}
+    return value
 
 
 def run_python(script: str, *arguments: Path) -> subprocess.CompletedProcess[str]:
@@ -157,6 +168,127 @@ def duplicate_member_archive(path: Path) -> None:
 
 
 class FlasherReproducibilityTests(unittest.TestCase):
+    def test_source_snapshot_is_deterministic_and_covers_both_sites(self) -> None:
+        commit = subprocess.run(
+            ("git", "rev-parse", "HEAD"),
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=True,
+        ).stdout.strip()
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            first, first_checksum = package_source_snapshot(
+                repository=ROOT,
+                commit=commit,
+                version=VERSION,
+                output=output / "first" / "source.zip",
+                metadata=output / "first" / "source.json",
+            )
+            second, second_checksum = package_source_snapshot(
+                repository=ROOT,
+                commit=commit,
+                version=VERSION,
+                output=output / "second" / "source.zip",
+                metadata=output / "second" / "source.json",
+            )
+            self.assertEqual(first.read_bytes(), second.read_bytes())
+            self.assertEqual(first_checksum.read_bytes(), second_checksum.read_bytes())
+            self.assertEqual(
+                (output / "first" / "source.json").read_bytes(),
+                (output / "second" / "source.json").read_bytes(),
+            )
+            with zipfile.ZipFile(first) as archive:
+                names = set(archive.namelist())
+            prefix = f"Prns-{VERSION}/"
+            for relative in REQUIRED_SOURCE_FILES:
+                self.assertIn(f"{prefix}{relative}", names)
+            self.assertIn(
+                f"{prefix}docs/website/src/components/footer.rs",
+                names,
+            )
+            self.assertIn(
+                f"{prefix}personal-hopspot/core/src/node_pages/index_head.mu",
+                names,
+            )
+
+    def test_source_snapshot_rejects_missing_nomadnet_page_source(self) -> None:
+        commit = subprocess.run(
+            ("git", "rev-parse", "HEAD"),
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=True,
+        ).stdout.strip()
+        with tempfile.TemporaryDirectory() as temporary:
+            archive, _ = package_source_snapshot(
+                repository=ROOT,
+                commit=commit,
+                version=VERSION,
+                output=Path(temporary) / "source.zip",
+            )
+            rewritten = io.BytesIO()
+            omitted = (
+                f"Prns-{VERSION}/"
+                "personal-hopspot/core/src/node_pages/index_tail.mu"
+            )
+            with (
+                zipfile.ZipFile(archive) as source,
+                zipfile.ZipFile(rewritten, mode="w") as destination,
+            ):
+                for member in source.infolist():
+                    if member.filename != omitted:
+                        destination.writestr(member, source.read(member))
+            with self.assertRaisesRegex(ValueError, "NomadNet sources"):
+                validate_archive_members(rewritten.getvalue(), version=VERSION)
+
+    def test_source_snapshot_refuses_to_follow_an_output_symlink(self) -> None:
+        commit = subprocess.run(
+            ("git", "rev-parse", "HEAD"),
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=True,
+        ).stdout.strip()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            protected = root / "protected.zip"
+            protected.write_bytes(b"keep me")
+            output = root / "source.zip"
+            output.symlink_to(protected)
+            with self.assertRaisesRegex(ValueError, "refusing to replace"):
+                package_source_snapshot(
+                    repository=ROOT,
+                    commit=commit,
+                    version=VERSION,
+                    output=output,
+                )
+            self.assertEqual(protected.read_bytes(), b"keep me")
+
+    def test_source_snapshot_is_not_a_website_build_side_effect(self) -> None:
+        build_rs = (ROOT / "docs" / "website" / "build.rs").read_text(encoding="utf-8")
+        candidate_build = (SCRIPTS / "build-flasher-candidate.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("generate_source_archive", build_rs)
+        self.assertNotIn("PRNS_WRITE_PUBLIC_ASSETS", build_rs)
+        self.assertIn("package-source-snapshot.py", candidate_build)
+        self.assertIn("public/source.zip", candidate_build)
+        self.assertLess(
+            candidate_build.index("package-source-snapshot.py"),
+            candidate_build.index("PRNS_EMBEDDED_SITE=1"),
+        )
+        self.assertLess(
+            candidate_build.index("package-source-snapshot.py"),
+            candidate_build.index(
+                'cargo run --locked -p hopspot-flash -- build "$board"'
+            ),
+        )
+        self.assertLess(
+            candidate_build.index("package-source-snapshot.py"),
+            candidate_build.index('cp -R "$hosted_dist/." "$candidate/website/"'),
+        )
+
     def test_build_metadata_is_source_derived_and_exact_pinned(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -212,6 +344,23 @@ class FlasherReproducibilityTests(unittest.TestCase):
                     xiao_size=MERGED_BASELINES["xiao-esp32-c6"],
                 )
             )
+
+    def test_sparse_report_excludes_one_embedded_archive_from_s3_code_gate(self) -> None:
+        source_size = 5_000_000
+        report = build_report(
+            manifest(
+                heltec_size=6_000_000,
+                t_beam_size=6_000_000,
+                source_size=source_size,
+            )
+        )
+        heltec = next(
+            target for target in report["targets"] if target["board_slug"] == "heltec-v4"
+        )
+        self.assertEqual(heltec["total_bytes"], 6_000_000)
+        self.assertEqual(heltec["embedded_source_bytes"], source_size)
+        self.assertEqual(heltec["code_payload_bytes"], 1_000_000)
+        self.assertEqual(heltec["gate"], "passed")
 
     def test_candidate_output_is_absolute_before_directory_changes(self) -> None:
         repository = Path("/workspace/prns")

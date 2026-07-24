@@ -49,6 +49,7 @@ cargo_manifests = [
     "prnsd/command/Cargo.toml",
     "prnsd/control/Cargo.toml",
     "prnsd/observability/runner/Cargo.toml",
+    "tools/repo/cargo-tools-command/Cargo.toml",
     "validation/fuzz/Cargo.toml",
     "validation/integration/Cargo.toml",
     "validation/oracles/Cargo.toml",

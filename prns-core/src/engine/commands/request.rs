@@ -55,6 +55,11 @@ pub type RespondData = HeaplessVec<u8, MAX_RESPOND_DATA_LEN>;
 pub enum RespondPayload {
     Packed(RespondData),
     StaticBytes(&'static [u8]),
+    #[cfg(any(feature = "large-static-responses", test))]
+    StaticFile {
+        name: &'static str,
+        bytes: &'static [u8],
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

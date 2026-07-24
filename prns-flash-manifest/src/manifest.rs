@@ -105,6 +105,24 @@ pub struct TargetManifest {
     pub parts: Vec<FlashPart>,
     /// Optional local provisioning slot.
     pub provisioning: Option<ProvisioningDescriptor>,
+    /// Native source archive served by this exact target. Its absence means the target does not
+    /// register source-download routes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<SourceArchiveIdentity>,
+}
+
+/// Identity of one commit-bound archive embedded in a source-capable target.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceArchiveIdentity {
+    /// Native NomadNet archive route.
+    pub route: String,
+    /// Native NomadNet checksum route.
+    pub checksum_route: String,
+    /// Exact embedded archive bytes.
+    pub size: u64,
+    /// SHA-256 of those exact bytes.
+    pub sha256: String,
 }
 
 /// One immutable firmware payload.
@@ -326,6 +344,7 @@ mod tests {
                     preparation_profile: board.preparation_profile.clone(),
                     parts,
                     provisioning: board.provisioning.clone(),
+                    source: None,
                 }
             })
             .collect();

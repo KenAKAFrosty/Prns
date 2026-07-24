@@ -19,7 +19,7 @@ Prns is high-performance Reticulum with one engine and one API, the same on embe
 
 >>`!Getting started`!
 
-With internet access, visit the docs site to learn more. A future update is planned to host full docs & source over Nomad Network as well.
+With internet access, visit the docs site to learn more.
 
 `B6eb`F222 https://prns.dev `f`b or `B6eb`F222 https://reticulum.rs `f`b
 

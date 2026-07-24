@@ -181,6 +181,21 @@ impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> PrnsNodeHandle<'a, 
         .is_some()
     }
 
+    #[cfg(feature = "large-static-responses")]
+    pub fn respond_static_file(
+        &self,
+        responder: RespondToken,
+        name: &'static str,
+        bytes: &'static [u8],
+    ) -> bool {
+        self.issue(EngineCommand::Respond(Respond {
+            link_id: responder.link_id,
+            request_id: responder.request_id,
+            payload: RespondPayload::StaticFile { name, bytes },
+        }))
+        .is_some()
+    }
+
     /// Sever an active link. Returns `false` if the command lane is full.
     pub fn close_link(&self, link_id: LinkId) -> bool {
         self.issue(EngineCommand::CloseLink(CloseLink { link_id }))

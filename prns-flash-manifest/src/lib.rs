@@ -19,7 +19,7 @@ pub use domain::{
 };
 pub use manifest::{
     ChannelDescriptor, FlashManifest, FlashPart, FlashPartKind, ManifestError, ReleaseChannel,
-    ReleaseInfo, SigningInfo, TargetManifest,
+    ReleaseInfo, SigningInfo, SourceArchiveIdentity, TargetManifest,
 };
 pub use provisioning::{
     provisioning_image, ProvisioningAction, ProvisioningError, WifiCredentials, CONFIG_MAGIC,

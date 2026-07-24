@@ -86,3 +86,7 @@ fi
 
 cd "$workspace"
 bash "$website/tools/verify-web-flasher-production-boundary.sh" "$hosted" "$embedded"
+if find "$embedded" \( -name 'source.zip' -o -name 'source.zip.sha256' \) -print -quit | rg -q .; then
+    echo "embedded SoftAP site unexpectedly contains hosted source artifacts" >&2
+    exit 1
+fi

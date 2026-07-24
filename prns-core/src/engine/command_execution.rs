@@ -475,6 +475,8 @@ impl<S: StorageLayout> EngineState<S> {
                 let data_len = match &respond.payload {
                     crate::engine::RespondPayload::Packed(data) => data.len(),
                     crate::engine::RespondPayload::StaticBytes(_) => 0,
+                    #[cfg(any(feature = "large-static-responses", test))]
+                    crate::engine::RespondPayload::StaticFile { .. } => 0,
                 };
                 let mut iv = [0u8; ENCRYPTION_IV_LEN];
                 fill_entropy(&mut iv);
