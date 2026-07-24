@@ -19,7 +19,7 @@ Prns is high-performance Reticulum with one engine and one API, the same on embe
 
 >>`!Getting started`!
 
-`[Open the offline Prns quickstart`:/page/quickstart.mu]
+`B6eb`F222`[ Open the offline Prns quickstart `:/page/quickstart.mu]`f`b
 
 Full guides: source clone or `B6eb`F222 https://prns.dev `f`b
 
@@ -42,7 +42,7 @@ The same engine runs on bare-metal microcontrollers, directly inside Android and
 >>
 `F6eb•`f `F6eb`!Ready-to-flash embedded nodes`!`f
 >>>
-The Personal Hopspot firmware ships today for a growing catalog of affordable boards: a complete node with on-device controls, a status screen, and flashing from your browser or the CLI.
+The Personal Hopspot firmware ships today for a growing catalog of affordable boards: a complete node with on-device controls & a status screen (if hardware supports it).
 
 >>
 `F6eb•`f `F6eb`!New interfaces for the same network`!`f
