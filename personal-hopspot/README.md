@@ -17,7 +17,7 @@ remote controls without compiling a display surface.
 
 Every hopspot serves small [micron](https://github.com/markqvist/NomadNet) pages about the project
 at `/page/index.mu` and `/page/quickstart.mu` on a standard `nomadnetwork.node` destination, so any
-NomadNet or MeshChat user who finds the node can open them like any other node page. The index
+NomadNet-capable client who finds the node can open them like any other node page. The index
 links to the self-contained quickstart, which covers a daemon, a Rust consumer, an actual embedded
 firmware build, tests, and benchmarks without requiring the public website. Pressing Announce on a
 hopspot announces this node destination alongside the usual `lxmf.delivery` one.

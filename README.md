@@ -11,9 +11,26 @@
 [![MSRV](https://img.shields.io/badge/MSRV-1.90-orange.svg)](#minimum-supported-rust-version)
 [![no_std](https://img.shields.io/badge/no__std-core-success.svg)](#embedded-and-no_std)
 
-Prns is a Rust implementation of Reticulum for applications, daemons, browsers,
-phones, and embedded devices. The repository contains the code, essential
-guides, tests, benchmarks, and a locally runnable documentation site.
+Prns is a Rust implementation of the Reticulum Network Stack (RNS) for
+applications, daemons, browsers, phones, and embedded devices.
+
+First-class SDKs and bindings cover:
+
+- Rust
+- TypeScript and JavaScript (browser, Node.js, and Bun)
+- Python
+- .NET and C#
+- Go
+- Swift
+- Kotlin, Java, and Android
+- Julia
+- C and C++
+
+The repository contains the code, essential guides, tests, benchmarks, and a
+locally runnable documentation site.
+
+To view the documentation website right away, visit
+[prns.dev](https://prns.dev) or [reticulum.rs](https://reticulum.rs).
 
 ## Prerequisites
 
@@ -25,7 +42,7 @@ your machine without installing anything:
 ```
 
 On Windows, use `tools\prns.cmd`. First-time dependency downloads may require
-network access, but the instructions and source material are all in the
+internet access, but the instructions and source material are all in this
 repository.
 
 ## What do you want to do?
@@ -33,7 +50,7 @@ repository.
 | Outcome | Start here |
 | --- | --- |
 | Learn the repository | [Getting started](docs/getting-started.md) |
-| Run and inspect a node | [Prnsd guide](prnsd/README.md) |
+| Run and inspect a node | [Prnsd (the daemon) guide](prnsd/README.md) |
 | Build a Rust application | [Personal RNS guide](personal-rns/README.md) |
 | Build an embedded node | [Embedded Prns guide](docs/embedded.md) |
 | Test a change | [Testing guide](docs/testing.md) |
