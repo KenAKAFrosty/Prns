@@ -109,6 +109,7 @@ pub enum MobileEngineFailure {
     StartupTimeout = 6,
     WorkerStopped = 7,
     ShutdownTimeout = 8,
+    PersistenceWrite = 9,
 }
 
 impl MobileEngineFailure {
@@ -129,6 +130,7 @@ impl MobileEngineFailure {
             Self::StartupTimeout => "startup_timeout",
             Self::WorkerStopped => "worker_stopped",
             Self::ShutdownTimeout => "shutdown_timeout",
+            Self::PersistenceWrite => "persistence_write",
         }
     }
 }
@@ -242,6 +244,10 @@ mod tests {
         assert_eq!(
             MobileEngineFailure::ShutdownTimeout.wire_name(),
             "shutdown_timeout"
+        );
+        assert_eq!(
+            MobileEngineFailure::PersistenceWrite.wire_name(),
+            "persistence_write"
         );
     }
 

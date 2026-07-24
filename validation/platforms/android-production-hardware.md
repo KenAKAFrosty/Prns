@@ -22,7 +22,10 @@ Its current evidence and laboratory boundary are recorded in
 The application must retain version `0.1.0`, build `1`, the shared
 `lxmf.delivery` and `nomadnetwork.node` destinations, and persistent node and
 Bluetooth identities across service restart, process recreation, application
-relaunch, and device restart.
+relaunch, and device restart. Its routing table, known destination identities,
+tunnels, monotonic timeline high-water, and local destination ratchets must
+also survive every graceful engine restart. State learned before the most
+recent 30-second persistence boundary must survive ungraceful process death.
 
 ## Build gate
 
@@ -143,6 +146,14 @@ must remain inactive, the Wi-Fi Direct lab interface must report that the
 experimental transport is disabled, and Wi-Fi Auto, local listeners,
 rendering, and input must remain usable.
 
+Run the bounded permission sequence:
+
+```bash
+ANDROID_SERIAL="${ANDROID_SERIAL}" bash validation/platforms/android-permission-recovery-smoke.sh
+```
+
+Expected output ends with `ANDROID_PERMISSION_RECOVERY_SMOKE_OK`.
+
 Grant only nearby Wi-Fi:
 
 ```bash
@@ -170,15 +181,13 @@ Run the automated foreground probe:
 
 ```bash
 ANDROID_SERIAL="${ANDROID_SERIAL}" bash validation/platforms/android-runtime-smoke.sh
+ANDROID_SERIAL="${ANDROID_SERIAL}" bash validation/platforms/android-sticky-recreation-smoke.sh
 ```
 
 Then exercise explicit service shutdown and restart:
 
 ```bash
-adb -s "${ANDROID_SERIAL}" shell am startservice -n org.personal.hopspot/.PrnsService -a org.personal.hopspot.action.STOP_PRNS
-adb -s "${ANDROID_SERIAL}" shell dumpsys activity services org.personal.hopspot
-adb -s "${ANDROID_SERIAL}" shell am start-foreground-service -n org.personal.hopspot/.PrnsService -a org.personal.hopspot.action.START_PRNS
-adb -s "${ANDROID_SERIAL}" shell dumpsys activity services org.personal.hopspot
+adb -s "${ANDROID_SERIAL}" shell am instrument -w org.personal.hopspot.test/org.personal.hopspot.PrnsRuntimeProbe
 ```
 
 Expected results:
@@ -187,8 +196,53 @@ Expected results:
 - explicit stop removes the notification and service only after native work
   has stopped;
 - restart returns to `running` within five seconds;
+- injected process death recreates the sticky foreground service within twenty
+  seconds under a new PID;
 - no prior listener remains bound during restart; and
 - the RPC key and both identities remain unchanged.
+
+The probe prints domain-separated SHA-256 fingerprints named
+`rpc_identity_sha256`, `node_identity_sha256`,
+`bluetooth_identity_sha256`, `delivery_destination_sha256`, and
+`node_page_destination_sha256`. Record those values after each lifecycle
+transition. A raw RPC key or Bluetooth identity is not release evidence and
+must not be copied into the evidence record.
+
+### Runtime-state durability
+
+The runtime writes sealed, checksummed state beneath the app-private files
+directory. Each region lands through a synced staging file and atomic rename.
+The service reports how many routing-table rows, known destination identities,
+tunnels, and ratcheted destinations restored; how many rows were refused or
+dropped; and how many state flushes landed in the current engine generation.
+
+The ordinary runtime probe must report:
+
+- `restored_ratchet_count` of at least one after its service restart;
+- `refused_restore_count=0`;
+- `successful_flush_count` of at least one; and
+- nonnegative route, destination-identity, tunnel, and dropped-row counts.
+
+Start a second known-good RNS node on a production transport and keep it
+announcing until Hopspot learns at least one route. Then run:
+
+```bash
+ANDROID_SERIAL="${ANDROID_SERIAL}" bash validation/platforms/android-routing-persistence-smoke.sh
+```
+
+The bounded probe waits for a nonempty route table, waits for a periodic flush
+strictly newer than the observation, kills only the Hopspot application
+process, waits for sticky service recreation under a new PID, and requires a
+nonzero restored-route count, known-destination count, and ratchet count with
+zero refused rows. The aggregate live-interface route count may remain zero
+until the departed transport interface reconnects and reclaims the restored
+row. Expected output ends with `ANDROID_ROUTING_PERSISTENCE_SMOKE_OK`.
+
+The gate fails if the engine reports running before its initial durable flush,
+if a periodic or shutdown flush fails, if the service reports stopped before
+the final flush completes, if any stored row is refused without an explained
+corruption-recovery exercise, or if the learned route is not accepted during
+the bounded crash/recreation restore.
 
 ### Process and device recreation
 
@@ -289,6 +343,7 @@ Required scenarios:
 | Explicit stop and restart | native worker joins, listeners release, and restart reaches running |
 | Process recreation | application relaunches without changing identity |
 | Device restart | application launch retains identity and destinations |
+| Runtime-state persistence | route, destination, tunnel, timeline, and ratchet snapshots restore without refused rows |
 | Wi-Fi Auto | LAN discovery and bidirectional payloads pass |
 | Wi-Fi Direct lab | remains disabled; the transport is outside the production gate |
 | USB host or AOA | every mode exposed by the device passes attach, traffic, detach, and reattach |
@@ -341,6 +396,7 @@ End timestamp:
 | Process recreation |  |  |
 | Device restart |  |  |
 | Identity and destinations |  |  |
+| Runtime-state persistence |  |  |
 | Wi-Fi Auto |  |  |
 | Wi-Fi Direct lab disabled |  |  |
 | USB host |  |  |
@@ -372,6 +428,7 @@ End timestamp:
 | Process recreation |  |  |
 | Device restart |  |  |
 | Identity and destinations |  |  |
+| Runtime-state persistence |  |  |
 | Render and input |  |  |
 | BLE Auto |  |  |
 | Wi-Fi Auto |  |  |
@@ -410,5 +467,7 @@ Android may be marked production-supported only when:
 - permission denial and later recovery leave the core engine running;
 - service stop, restart, sticky recreation, and native lifecycle agree;
 - identities and destinations remain stable;
+- routing, known-destination, tunnel, timeline, and ratchet state pass the
+  graceful and crash-recreation persistence proofs;
 - the direct-install APK is signed and its hash is recorded; and
 - no open failure or unexplained deviation remains.

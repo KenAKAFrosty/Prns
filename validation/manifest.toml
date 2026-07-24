@@ -389,8 +389,11 @@ toolchain = "stable"
 timeout_seconds = 2400
 command = ["bash", "validation/platforms/android-runtime-smoke.sh"]
 inputs = [
+    "validation/platforms/android-permission-recovery-smoke.sh",
+    "validation/platforms/android-routing-persistence-smoke.sh",
     "validation/platforms/android-runtime-smoke.sh",
     "validation/platforms/android-service-smoke.sh",
+    "validation/platforms/android-sticky-recreation-smoke.sh",
     "validation/platforms/android-production-hardware.md",
     "personal-hopspot/mobile/android/app/src/androidTest",
 ]

@@ -128,9 +128,90 @@ if [[ "${probe_status}" -ne 0 ]] || [[ "${probe_output}" != *"INSTRUMENTATION_RE
   echo "PrnsRuntimeProbe failed" >&2
   exit 1
 fi
+for fingerprint in \
+  rpc_identity_sha256 \
+  node_identity_sha256 \
+  bluetooth_identity_sha256 \
+  delivery_destination_sha256 \
+  node_page_destination_sha256
+do
+  value="$(printf '%s\n' "${probe_output}" | sed -n "s/^INSTRUMENTATION_RESULT: ${fingerprint}=//p")"
+  if [[ ! "${value}" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "PrnsRuntimeProbe returned malformed ${fingerprint}" >&2
+    exit 1
+  fi
+done
+for persistence_field in \
+  route_count_before_restart \
+  route_count_after_restart \
+  restored_route_count \
+  restored_destination_identity_count \
+  restored_tunnel_count \
+  restored_ratchet_count \
+  refused_restore_count \
+  dropped_restore_count \
+  successful_flush_count
+do
+  value="$(printf '%s\n' "${probe_output}" |
+    sed -n "s/^INSTRUMENTATION_RESULT: ${persistence_field}=//p")"
+  if [[ ! "${value}" =~ ^[0-9]+$ ]]; then
+    echo "PrnsRuntimeProbe returned malformed ${persistence_field}" >&2
+    exit 1
+  fi
+done
+restored_ratchets="$(printf '%s\n' "${probe_output}" |
+  sed -n 's/^INSTRUMENTATION_RESULT: restored_ratchet_count=//p')"
+refused_restores="$(printf '%s\n' "${probe_output}" |
+  sed -n 's/^INSTRUMENTATION_RESULT: refused_restore_count=//p')"
+successful_flushes="$(printf '%s\n' "${probe_output}" |
+  sed -n 's/^INSTRUMENTATION_RESULT: successful_flush_count=//p')"
+if (( restored_ratchets < 1 )); then
+  echo "PrnsRuntimeProbe did not restore the ratcheted Hopspot destination" >&2
+  exit 1
+fi
+if (( refused_restores != 0 )); then
+  echo "PrnsRuntimeProbe observed refused persisted runtime rows" >&2
+  exit 1
+fi
+if (( successful_flushes < 1 )); then
+  echo "PrnsRuntimeProbe observed no successful runtime-state flush" >&2
+  exit 1
+fi
+api="$(adb_cmd shell getprop ro.build.version.sdk | tr -d '\r')"
+ble_link_started="$(printf '%s\n' "${probe_output}" |
+  sed -n 's/^INSTRUMENTATION_RESULT: ble_link_started=//p')"
+wifi_aware_link_started="$(printf '%s\n' "${probe_output}" |
+  sed -n 's/^INSTRUMENTATION_RESULT: wifi_aware_link_started=//p')"
+wifi_direct_link_started="$(printf '%s\n' "${probe_output}" |
+  sed -n 's/^INSTRUMENTATION_RESULT: wifi_direct_link_started=//p')"
+wifi_direct_failure="$(printf '%s\n' "${probe_output}" |
+  sed -n 's/^INSTRUMENTATION_RESULT: wifi_direct_failure=//p')"
+if (( api >= 29 )) && [[ "${ble_link_started}" != "true" ]]; then
+  echo "PrnsRuntimeProbe did not observe the BLE platform link" >&2
+  exit 1
+fi
+if (( api < 29 )) && [[ "${ble_link_started}" != "false" ]]; then
+  echo "PrnsRuntimeProbe observed BLE below the Android BLE host floor" >&2
+  exit 1
+fi
+if (( api >= 26 )) && [[ "${wifi_aware_link_started}" != "true" ]]; then
+  echo "PrnsRuntimeProbe did not observe the Wi-Fi Aware platform link" >&2
+  exit 1
+fi
+if (( api < 26 )) && [[ "${wifi_aware_link_started}" != "false" ]]; then
+  echo "PrnsRuntimeProbe observed Wi-Fi Aware below its Android API floor" >&2
+  exit 1
+fi
+if [[ "${wifi_direct_link_started}" != "false" ]] ||
+  [[ "${wifi_direct_failure}" != "experimental Wi-Fi P2P is disabled in this build" ]]
+then
+  echo "PrnsRuntimeProbe did not observe the production Wi-Fi Direct boundary" >&2
+  exit 1
+fi
 
 services="$(adb_cmd shell dumpsys activity services org.personal.hopspot 2>/dev/null || true)"
-if [[ "${services}" != *"PrnsService"* ]]; then
+active_services="$(printf '%s\n' "${services}" | sed -n '/active services:/,$p')"
+if [[ "${active_services}" != *"PrnsService"* ]]; then
   echo "note: PrnsService is no longer listed after instrumentation teardown; in-probe dump asserted it while active"
 fi
 

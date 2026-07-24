@@ -1,3 +1,4 @@
+mod persistence;
 mod worker;
 
 use core::fmt::Write as _;
@@ -12,6 +13,8 @@ use personal_hopspot_core::{
 };
 use personal_rns::bluetooth_auto::BluetoothAutoStatus;
 use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand};
+use personal_rns::identity::IdentityHash;
+use personal_rns::interfaces::bluetooth_auto::BleIdentity;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus};
 use personal_rns::manifold::tokio::TokioInterfaceStatus;
 use personal_rns::runtime::{PrnsNodeHandle, RuntimeHealth};
@@ -26,6 +29,7 @@ use crate::bridge::AndroidUsbBridge;
 use crate::mdns::AndroidMdnsBridge;
 use crate::wifi_aware::AndroidWifiAwareBridge;
 use crate::wifi_direct::AndroidWifiDirectBridge;
+use persistence::{PersistenceHealth, PersistenceSnapshot};
 
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 8]);
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
@@ -56,6 +60,8 @@ impl EnginePorts {
 
 pub(super) struct EngineResources {
     pub(super) started_at: Instant,
+    pub(super) node_identity_hash: IdentityHash,
+    pub(super) ble_identity: BleIdentity,
     pub(super) usb_status: TokioInterfaceStatus,
     pub(super) wifi_status: AutoWifiStatus,
     pub(super) ble_status: BluetoothAutoStatus,
@@ -65,6 +71,15 @@ pub(super) struct EngineResources {
     pub(super) destination: DestinationHash,
     pub(super) node_page_destination: DestinationHash,
     pub(super) rpc_key: Vec<u8>,
+    pub(super) persistence: PersistenceHealth,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct EngineIdentitySnapshot {
+    pub(crate) node_identity_hash: IdentityHash,
+    pub(crate) ble_identity: BleIdentity,
+    pub(crate) delivery_destination: DestinationHash,
+    pub(crate) node_page_destination: DestinationHash,
 }
 
 #[derive(Clone)]
@@ -167,6 +182,7 @@ fn lock_manager() -> MutexGuard<'static, EngineManager> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EngineStartError {
     StorageConfiguration,
+    PersistenceWrite,
     WorkerSpawn,
     RuntimeBuild,
     LocalListenerBind,
@@ -180,6 +196,7 @@ impl EngineStartError {
     pub(crate) const fn failure(self) -> MobileEngineFailure {
         match self {
             Self::StorageConfiguration => MobileEngineFailure::StorageConfiguration,
+            Self::PersistenceWrite => MobileEngineFailure::PersistenceWrite,
             Self::WorkerSpawn => MobileEngineFailure::WorkerSpawn,
             Self::RuntimeBuild => MobileEngineFailure::RuntimeBuild,
             Self::LocalListenerBind => MobileEngineFailure::LocalListenerBind,
@@ -192,6 +209,7 @@ impl EngineStartError {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EngineStopError {
+    PersistenceWrite,
     ShutdownTimeout,
     WorkerStopped,
 }
@@ -200,6 +218,7 @@ impl EngineStopError {
     #[must_use]
     pub(crate) const fn failure(self) -> MobileEngineFailure {
         match self {
+            Self::PersistenceWrite => MobileEngineFailure::PersistenceWrite,
             Self::ShutdownTimeout => MobileEngineFailure::ShutdownTimeout,
             Self::WorkerStopped => MobileEngineFailure::WorkerStopped,
         }
@@ -386,7 +405,11 @@ fn finish_stopped_process(
         WorkerExit::Failed(failure) => {
             manager.state = MobileEngineState::Failed;
             manager.last_failure = failure;
-            Err(EngineStopError::WorkerStopped)
+            if failure == MobileEngineFailure::PersistenceWrite {
+                Err(EngineStopError::PersistenceWrite)
+            } else {
+                Err(EngineStopError::WorkerStopped)
+            }
         }
     }
 }
@@ -424,15 +447,68 @@ pub(crate) fn runtime_health() -> Option<RuntimeHealth> {
     ))
 }
 
+pub(crate) fn persistence_snapshot() -> Option<PersistenceSnapshot> {
+    let mut manager = lock_manager();
+    manager.reap_finished();
+    let resources = manager.process.as_ref()?.resources.as_ref()?;
+    Some(resources.persistence.snapshot())
+}
+
 pub(crate) fn rpc_key_hex() -> Option<String> {
     let mut manager = lock_manager();
     manager.reap_finished();
     let resources = manager.process.as_ref()?.resources.as_ref()?;
-    let mut out = String::with_capacity(64);
-    for byte in &resources.rpc_key {
+    Some(hex(&resources.rpc_key))
+}
+
+pub(crate) fn identity_snapshot() -> Option<EngineIdentitySnapshot> {
+    let mut manager = lock_manager();
+    manager.reap_finished();
+    let resources = manager.process.as_ref()?.resources.as_ref()?;
+    Some(EngineIdentitySnapshot {
+        node_identity_hash: resources.node_identity_hash,
+        ble_identity: resources.ble_identity,
+        delivery_destination: resources.destination,
+        node_page_destination: resources.node_page_destination,
+    })
+}
+
+pub(crate) fn node_identity_hash_hex() -> Option<String> {
+    identity_snapshot().map(|identity| hex(identity.node_identity_hash.as_bytes()))
+}
+
+pub(crate) fn ble_identity_hex() -> Option<String> {
+    identity_snapshot().map(|identity| hex(identity.ble_identity.as_bytes()))
+}
+
+pub(crate) fn delivery_destination_hex() -> Option<String> {
+    identity_snapshot().map(|identity| hex(identity.delivery_destination.as_bytes()))
+}
+
+pub(crate) fn node_page_destination_hex() -> Option<String> {
+    identity_snapshot().map(|identity| hex(identity.node_page_destination.as_bytes()))
+}
+
+pub(crate) fn wifi_aware_failure_reason() -> Option<&'static str> {
+    let mut manager = lock_manager();
+    manager.reap_finished();
+    let resources = manager.process.as_ref()?.resources.as_ref()?;
+    resources.wa_status.failure_reason()
+}
+
+pub(crate) fn wifi_direct_failure_reason() -> Option<&'static str> {
+    let mut manager = lock_manager();
+    manager.reap_finished();
+    let resources = manager.process.as_ref()?.resources.as_ref()?;
+    resources.wd_status.failure_reason()
+}
+
+fn hex(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
         let _ = write!(&mut out, "{byte:02x}");
     }
-    Some(out)
+    out
 }
 
 pub(crate) fn toggle_interface(id: InterfaceId) {
@@ -597,7 +673,7 @@ mod tests {
     }
 
     #[test]
-    fn engine_stops_and_restarts_with_the_same_identity() {
+    fn engine_stops_and_restarts_with_durable_identity_and_runtime_state() {
         let storage_dir =
             std::env::temp_dir().join(format!("personal-hopspot-android-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&storage_dir);
@@ -605,15 +681,42 @@ mod tests {
         start_with_ports(storage_dir.clone(), EnginePorts::EPHEMERAL).unwrap();
         assert_eq!(engine_state(), MobileEngineState::Running);
         let first_key = rpc_key_hex().unwrap();
+        let first_identity = identity_snapshot().unwrap();
+        assert_eq!(persistence_snapshot().unwrap().successful_flushes, 1);
         stop().unwrap();
         assert_eq!(engine_state(), MobileEngineState::Stopped);
+        for region in ["timebase", "routing_table", "tunnels", "known_destinations"] {
+            assert!(storage_dir.join("prns").join(region).is_file());
+        }
 
         start_with_ports(storage_dir.clone(), EnginePorts::EPHEMERAL).unwrap();
         assert_eq!(engine_state(), MobileEngineState::Running);
         assert_eq!(rpc_key_hex().unwrap(), first_key);
+        assert_eq!(identity_snapshot().unwrap(), first_identity);
+        let persistence = persistence_snapshot().unwrap();
+        assert_eq!(persistence.restore.refused, 0);
+        assert_eq!(persistence.restore.dropped, 0);
+        assert_eq!(persistence.restore.ratchets, 1);
+        assert_eq!(persistence.successful_flushes, 1);
         stop().unwrap();
         assert_eq!(engine_state(), MobileEngineState::Stopped);
 
+        std::fs::write(storage_dir.join("prns").join("routing_table"), b"damaged").unwrap();
+        start_with_ports(storage_dir.clone(), EnginePorts::EPHEMERAL).unwrap();
+        let persistence = persistence_snapshot().unwrap();
+        assert_eq!(persistence.restore.refused, 1);
+        assert_eq!(persistence.successful_flushes, 1);
+        stop().unwrap();
+        assert_eq!(engine_state(), MobileEngineState::Stopped);
+
+        std::fs::remove_dir_all(storage_dir.join("prns")).unwrap();
+        std::fs::write(storage_dir.join("prns"), b"not a directory").unwrap();
+        assert_eq!(
+            start_with_ports(storage_dir.clone(), EnginePorts::EPHEMERAL),
+            Err(EngineStartError::PersistenceWrite)
+        );
+        assert_eq!(last_failure(), MobileEngineFailure::PersistenceWrite);
+        assert_eq!(stop(), Err(EngineStopError::PersistenceWrite));
         std::fs::remove_dir_all(storage_dir).unwrap();
     }
 }

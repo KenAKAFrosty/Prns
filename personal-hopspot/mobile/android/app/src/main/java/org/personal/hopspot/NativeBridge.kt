@@ -68,7 +68,21 @@ object NativeBridge {
 
     external fun nativeRuntimeHealth(): LongArray?
 
+    external fun nativePersistenceHealth(): LongArray?
+
     external fun nativeRpcKeyHex(): String?
+
+    external fun nativeNodeIdentityHashHex(): String?
+
+    external fun nativeBleIdentityHex(): String?
+
+    external fun nativeDeliveryDestinationHex(): String?
+
+    external fun nativeNodePageDestinationHex(): String?
+
+    external fun nativeWifiAwareFailureReason(): String?
+
+    external fun nativeWifiDirectFailureReason(): String?
 
     external fun nativeRender(handle: Long, buffer: ByteBuffer)
 
@@ -223,6 +237,9 @@ object NativeBridge {
     fun runtimeHealth(): PrnsRuntimeHealth =
         PrnsRuntimeHealth.fromNative(nativeRuntimeHealth())
 
+    fun persistenceHealth(): PrnsPersistenceHealth? =
+        PrnsPersistenceHealth.fromNative(nativePersistenceHealth())
+
     fun engineState(): PrnsEngineState =
         PrnsEngineState.fromNative(nativeEngineState())
 
@@ -257,6 +274,38 @@ data class PrnsEngineFailure(
     val code: Int,
     val name: String,
 )
+
+data class PrnsPersistenceHealth(
+    val restoredRouteCount: Int,
+    val restoredDestinationIdentityCount: Int,
+    val restoredTunnelCount: Int,
+    val restoredRatchetCount: Int,
+    val refusedRestoreCount: Int,
+    val droppedRestoreCount: Int,
+    val successfulFlushCount: Long,
+) {
+    companion object {
+        private const val FIELD_COUNT = 7
+
+        fun fromNative(values: LongArray?): PrnsPersistenceHealth? {
+            if (values == null || values.size < FIELD_COUNT) {
+                return null
+            }
+            return PrnsPersistenceHealth(
+                restoredRouteCount = values[0].toNonNegativeInt(),
+                restoredDestinationIdentityCount = values[1].toNonNegativeInt(),
+                restoredTunnelCount = values[2].toNonNegativeInt(),
+                restoredRatchetCount = values[3].toNonNegativeInt(),
+                refusedRestoreCount = values[4].toNonNegativeInt(),
+                droppedRestoreCount = values[5].toNonNegativeInt(),
+                successfulFlushCount = values[6].coerceAtLeast(0),
+            )
+        }
+
+        private fun Long.toNonNegativeInt(): Int =
+            coerceIn(0, Int.MAX_VALUE.toLong()).toInt()
+    }
+}
 
 data class PrnsRuntimeHealth(
     val runtimeUptimeMs: Long,

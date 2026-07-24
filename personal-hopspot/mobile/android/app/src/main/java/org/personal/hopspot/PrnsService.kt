@@ -381,6 +381,7 @@ class PrnsService : Service() {
             return
         }
         val health = NativeBridge.runtimeHealth()
+        val persistence = NativeBridge.persistenceHealth()
         val engineState = NativeBridge.engineState()
         val engineFailure = NativeBridge.engineFailure()
         val reply = Message.obtain(null, MSG_STATUS).apply {
@@ -394,6 +395,58 @@ class PrnsService : Service() {
                 putInt(KEY_LOCAL_PORT, LOCAL_RNS_PORT)
                 putInt(KEY_RPC_PORT, RPC_PORT)
                 NativeBridge.nativeRpcKeyHex()?.let { putString(KEY_RPC_KEY_HEX, it) }
+                NativeBridge.nativeNodeIdentityHashHex()?.let {
+                    putString(KEY_NODE_IDENTITY_HASH_HEX, it)
+                }
+                NativeBridge.nativeBleIdentityHex()?.let {
+                    putString(KEY_BLE_IDENTITY_HEX, it)
+                }
+                NativeBridge.nativeDeliveryDestinationHex()?.let {
+                    putString(KEY_DELIVERY_DESTINATION_HEX, it)
+                }
+                NativeBridge.nativeNodePageDestinationHex()?.let {
+                    putString(KEY_NODE_PAGE_DESTINATION_HEX, it)
+                }
+                putBoolean(KEY_BLE_LINK_STARTED, bleLink != null)
+                putBoolean(KEY_WIFI_AWARE_LINK_STARTED, wifiAwareLink != null)
+                putBoolean(KEY_WIFI_DIRECT_LINK_STARTED, wifiDirectLink != null)
+                putString(
+                    KEY_WIFI_AWARE_FAILURE,
+                    NativeBridge.nativeWifiAwareFailureReason() ?: TRANSPORT_FAILURE_NONE,
+                )
+                putString(
+                    KEY_WIFI_DIRECT_FAILURE,
+                    NativeBridge.nativeWifiDirectFailureReason() ?: TRANSPORT_FAILURE_NONE,
+                )
+                putBoolean(KEY_PERSISTENCE_ACTIVE, persistence != null)
+                putInt(
+                    KEY_RESTORED_ROUTE_COUNT,
+                    persistence?.restoredRouteCount ?: 0,
+                )
+                putInt(
+                    KEY_RESTORED_DESTINATION_IDENTITY_COUNT,
+                    persistence?.restoredDestinationIdentityCount ?: 0,
+                )
+                putInt(
+                    KEY_RESTORED_TUNNEL_COUNT,
+                    persistence?.restoredTunnelCount ?: 0,
+                )
+                putInt(
+                    KEY_RESTORED_RATCHET_COUNT,
+                    persistence?.restoredRatchetCount ?: 0,
+                )
+                putInt(
+                    KEY_REFUSED_RESTORE_COUNT,
+                    persistence?.refusedRestoreCount ?: 0,
+                )
+                putInt(
+                    KEY_DROPPED_RESTORE_COUNT,
+                    persistence?.droppedRestoreCount ?: 0,
+                )
+                putLong(
+                    KEY_SUCCESSFUL_FLUSH_COUNT,
+                    persistence?.successfulFlushCount ?: 0,
+                )
                 putLong(KEY_SERVICE_UPTIME_MS, serviceUptimeMs())
                 putLong(KEY_RUNTIME_UPTIME_MS, health.runtimeUptimeMs)
                 putInt(KEY_CLIENT_COUNT, clientMessengers.size)
@@ -438,6 +491,24 @@ class PrnsService : Service() {
         const val KEY_LOCAL_PORT = "local_port"
         const val KEY_RPC_PORT = "rpc_port"
         const val KEY_RPC_KEY_HEX = "rpc_key_hex"
+        const val KEY_NODE_IDENTITY_HASH_HEX = "node_identity_hash_hex"
+        const val KEY_BLE_IDENTITY_HEX = "ble_identity_hex"
+        const val KEY_DELIVERY_DESTINATION_HEX = "delivery_destination_hex"
+        const val KEY_NODE_PAGE_DESTINATION_HEX = "node_page_destination_hex"
+        const val KEY_BLE_LINK_STARTED = "ble_link_started"
+        const val KEY_WIFI_AWARE_LINK_STARTED = "wifi_aware_link_started"
+        const val KEY_WIFI_DIRECT_LINK_STARTED = "wifi_direct_link_started"
+        const val KEY_WIFI_AWARE_FAILURE = "wifi_aware_failure"
+        const val KEY_WIFI_DIRECT_FAILURE = "wifi_direct_failure"
+        const val KEY_PERSISTENCE_ACTIVE = "persistence_active"
+        const val KEY_RESTORED_ROUTE_COUNT = "restored_route_count"
+        const val KEY_RESTORED_DESTINATION_IDENTITY_COUNT =
+            "restored_destination_identity_count"
+        const val KEY_RESTORED_TUNNEL_COUNT = "restored_tunnel_count"
+        const val KEY_RESTORED_RATCHET_COUNT = "restored_ratchet_count"
+        const val KEY_REFUSED_RESTORE_COUNT = "refused_restore_count"
+        const val KEY_DROPPED_RESTORE_COUNT = "dropped_restore_count"
+        const val KEY_SUCCESSFUL_FLUSH_COUNT = "successful_flush_count"
         const val KEY_SERVICE_UPTIME_MS = "service_uptime_ms"
         const val KEY_RUNTIME_UPTIME_MS = "runtime_uptime_ms"
         const val KEY_CLIENT_COUNT = "client_count"
@@ -455,6 +526,7 @@ class PrnsService : Service() {
         const val KEY_LAST_FAILURE = "last_failure"
         const val KEY_LAST_ERROR = "last_error"
         const val INSTANCE_ROLE_SERVER = "server"
+        const val TRANSPORT_FAILURE_NONE = "none"
 
         private const val TAG = "PrnsService"
         private const val NOTIFICATION_ID = 42

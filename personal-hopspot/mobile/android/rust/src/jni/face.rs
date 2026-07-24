@@ -6,7 +6,11 @@ use personal_hopspot_core::{
     MobileInputCode, COALESCE_MS, MOBILE_PANEL_HEIGHT, MOBILE_PANEL_WIDTH, MOBILE_RGBA_BYTES,
 };
 
-use crate::engine::{engine_state, last_failure, rpc_key_hex, runtime_health};
+use crate::engine::{
+    ble_identity_hex, delivery_destination_hex, engine_state, last_failure, node_identity_hash_hex,
+    node_page_destination_hex, persistence_snapshot, rpc_key_hex, runtime_health,
+    wifi_aware_failure_reason, wifi_direct_failure_reason,
+};
 use crate::face::HopspotFace;
 
 #[cfg(all(target_os = "android", target_arch = "arm"))]
@@ -21,6 +25,7 @@ pub extern "C" fn dl_iterate_phdr(
 }
 
 const HEALTH_FIELD_COUNT: i32 = 11;
+const PERSISTENCE_FIELD_COUNT: i32 = 7;
 
 #[cfg(target_os = "android")]
 fn init_logging() {
@@ -299,6 +304,32 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeRuntimeHealt
     array.into_raw()
 }
 
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativePersistenceHealth(
+    env: JNIEnv,
+    _class: JClass,
+) -> jlongArray {
+    let Some(snapshot) = persistence_snapshot() else {
+        return core::ptr::null_mut();
+    };
+    let values = [
+        jlong::from(snapshot.restore.routes),
+        jlong::from(snapshot.restore.destination_identities),
+        jlong::from(snapshot.restore.tunnels),
+        jlong::from(snapshot.restore.ratchets),
+        jlong::from(snapshot.restore.refused),
+        jlong::from(snapshot.restore.dropped),
+        health_long(snapshot.successful_flushes),
+    ];
+    let Ok(array) = env.new_long_array(PERSISTENCE_FIELD_COUNT) else {
+        return core::ptr::null_mut();
+    };
+    if env.set_long_array_region(&array, 0, &values).is_err() {
+        return core::ptr::null_mut();
+    }
+    array.into_raw()
+}
+
 fn health_long(value: u64) -> jlong {
     value.min(jlong::MAX as u64) as jlong
 }
@@ -310,6 +341,66 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeRpcKeyHex(
 ) -> jstring {
     rpc_key_hex()
         .and_then(|key| env.new_string(key).ok())
+        .map_or(core::ptr::null_mut(), JString::into_raw)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeNodeIdentityHashHex(
+    env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    node_identity_hash_hex()
+        .and_then(|identity| env.new_string(identity).ok())
+        .map_or(core::ptr::null_mut(), JString::into_raw)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleIdentityHex(
+    env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    ble_identity_hex()
+        .and_then(|identity| env.new_string(identity).ok())
+        .map_or(core::ptr::null_mut(), JString::into_raw)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeDeliveryDestinationHex(
+    env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    delivery_destination_hex()
+        .and_then(|destination| env.new_string(destination).ok())
+        .map_or(core::ptr::null_mut(), JString::into_raw)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeNodePageDestinationHex(
+    env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    node_page_destination_hex()
+        .and_then(|destination| env.new_string(destination).ok())
+        .map_or(core::ptr::null_mut(), JString::into_raw)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiAwareFailureReason(
+    env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    wifi_aware_failure_reason()
+        .and_then(|reason| env.new_string(reason).ok())
+        .map_or(core::ptr::null_mut(), JString::into_raw)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectFailureReason(
+    env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    wifi_direct_failure_reason()
+        .and_then(|reason| env.new_string(reason).ok())
         .map_or(core::ptr::null_mut(), JString::into_raw)
 }
 

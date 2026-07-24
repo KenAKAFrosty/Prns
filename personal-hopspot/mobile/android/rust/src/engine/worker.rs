@@ -12,7 +12,7 @@ use personal_rns::interfaces::bluetooth_auto::{
     AndroidHost, Endpoint, LinkCapabilities, BLE_HW_MTU,
 };
 use personal_rns::interfaces::wifi_direct::GoIntent;
-use personal_rns::runtime::{Manual, PrnsNode, PrnsNodeRecipe};
+use personal_rns::runtime::{Diagnostic, Manual, PrnsEvent, PrnsNode, PrnsNodeRecipe};
 use personal_rns::shared_instance::rns_rpc::{SharedInstanceCredentials, SharedInstanceRpcServer};
 use personal_rns::shared_instance::SharedInstanceServer;
 use personal_rns::storage::GrowableHeap;
@@ -23,6 +23,7 @@ use personal_rns::wifi_direct::WifiDirectAuto;
 use tokio::sync::oneshot;
 
 use super::{
+    persistence::{PersistenceRestore, PersistenceStorage, PersistenceWorker},
     EnginePorts, EngineResources, EngineStartError, PlatformLinks, WorkerExit, ANDROID_PORT,
     ANNOUNCE_APP_DATA, NODE_ANNOUNCE_APP_DATA, USB_INTERFACE_ID, WORKER_SHUTDOWN_TIMEOUT,
 };
@@ -64,7 +65,7 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
         storage_dir,
         platform,
         ready_tx,
-        mut shutdown_rx,
+        shutdown_rx,
         ports,
         ..
     } = input;
@@ -75,6 +76,7 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
     }
     let node_identity = node_bootstrap.into_identity();
     let credentials = SharedInstanceCredentials::from_identity_secret(node_identity.secret());
+    let node_identity_hash = credentials.transport_identity_hash();
     let rpc_key = credentials.rpc_key().as_bytes().to_vec();
     let transport_secret = node_identity.transport_secret();
 
@@ -94,16 +96,48 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
         .destination_hashes()
         .expect("the hopspot destination names are valid");
 
-    let node = PrnsNode::new(PrnsNodeRecipe {
+    let persistence_storage = PersistenceStorage::new(&storage_dir);
+    let timeline_origin = persistence_storage.timeline_origin();
+    let (rotated_tx, rotated_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: Some(transport_secret),
         pre_configured_destinations: destinations.into_preconfigured_destinations(),
         app_state: (),
         storage: GrowableHeap,
         routes: personal_hopspot_core::node_pages::NodePageRoutes,
         interfaces: Manual,
-        on_event: |_event, _state: &()| {},
-    });
+        on_event: move |event, _state: &()| {
+            if let PrnsEvent::Diagnostic(Diagnostic::SelfRatchetRotated { destination }) = event {
+                let _ = rotated_tx.send(destination);
+            }
+        },
+    })
+    .with_timeline_origin(timeline_origin);
+    let routes = node.seed_routes_from_store(persistence_storage.store());
+    let destination_identities =
+        node.seed_destination_identities_from_store(persistence_storage.store());
+    let tunnels = node.seed_tunnels_from_store(persistence_storage.store());
+    let ratchets = node.seed_self_ratchets_from_vault(persistence_storage.vault());
+    let restore = PersistenceRestore {
+        routes: routes.seeded_count,
+        destination_identities: destination_identities.seeded_count,
+        tunnels: tunnels.seeded_count,
+        ratchets: ratchets.seeded_count,
+        refused: routes
+            .refused_count
+            .saturating_add(destination_identities.refused_count)
+            .saturating_add(tunnels.refused_count)
+            .saturating_add(ratchets.refused_count),
+        dropped: routes
+            .dropped_count
+            .saturating_add(destination_identities.dropped_count)
+            .saturating_add(tunnels.dropped_count)
+            .saturating_add(ratchets.dropped_count),
+    };
     let handle = node.handle();
+    let persistence =
+        PersistenceWorker::new(handle.clone(), persistence_storage, rotated_rx, restore);
+    let persistence_health = persistence.health();
 
     let scan = {
         let bridge = platform.usb.clone();
@@ -173,6 +207,8 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
 
     let resources = EngineResources {
         started_at: Instant::now(),
+        node_identity_hash,
+        ble_identity,
         usb_status,
         wifi_status,
         ble_status,
@@ -182,19 +218,51 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
         destination: destination_hashes.delivery,
         node_page_destination: destination_hashes.node_page,
         rpc_key,
+        persistence: persistence_health,
     };
+    let mut node_run = Box::pin(node.run());
+    let initialized = {
+        let initialization = persistence.initialize();
+        tokio::pin!(initialization);
+        tokio::select! {
+            result = &mut node_run => {
+                match result {
+                    Ok(()) => {
+                        log::error!("hopspot engine stopped during persistence initialization")
+                    }
+                    Err(error) => {
+                        log::error!(
+                            "hopspot engine stopped during persistence initialization: {error}"
+                        )
+                    }
+                }
+                return fail_start(ready_tx, EngineStartError::WorkerStopped);
+            }
+            result = &mut initialization => result,
+        }
+    };
+    if initialized.is_err() {
+        return fail_start(ready_tx, EngineStartError::PersistenceWrite);
+    }
     if ready_tx.send(Ok(resources)).is_err() {
         return WorkerExit::Stopped;
     }
 
+    let persistence_run = persistence.run(shutdown_rx);
+    tokio::pin!(persistence_run);
     tokio::select! {
-        _ = &mut shutdown_rx => WorkerExit::Stopped,
-        result = node.run() => {
+        result = &mut node_run => {
             match result {
                 Ok(()) => log::error!("hopspot engine stopped"),
                 Err(error) => log::error!("hopspot engine stopped: {error}"),
             }
             WorkerExit::Failed(MobileEngineFailure::WorkerStopped)
+        }
+        result = &mut persistence_run => {
+            match result {
+                Ok(()) => WorkerExit::Stopped,
+                Err(()) => WorkerExit::Failed(MobileEngineFailure::PersistenceWrite),
+            }
         }
     }
 }
