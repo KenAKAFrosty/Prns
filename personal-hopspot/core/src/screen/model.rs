@@ -268,7 +268,12 @@ impl Card {
 }
 
 pub(crate) fn sort_cards_for_display<const N: usize>(cards: &mut HVec<Card, N>) {
-    cards.sort_unstable_by_key(|card| card_display_rank(card.kind));
+    cards.sort_unstable_by(|a, b| {
+        card_display_rank(a.kind)
+            .cmp(&card_display_rank(b.kind))
+            .then_with(|| a.label.as_str().cmp(b.label.as_str()))
+            .then_with(|| a.id.cmp(&b.id))
+    });
 }
 
 const fn card_display_rank(kind: CardKind) -> u8 {

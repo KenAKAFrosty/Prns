@@ -33,6 +33,36 @@ fn display_sort_pins_usb_last_and_prioritizes_radios() {
 }
 
 #[test]
+fn display_sort_gives_same_kind_cards_one_fixed_order() {
+    let build = |ids: &[(u8, &'static str)]| {
+        let mut cards: HVec<Card, 8> = HVec::new();
+        for &(byte, label) in ids {
+            let mut card = test_card(label);
+            card.kind = CardKind::Tcp;
+            card.id = InterfaceId::new([byte; 8]);
+            let _ = cards.push(card);
+        }
+        cards
+    };
+
+    let peers = [(0x30, "TCP 3030"), (0x10, "TCP 1010"), (0x20, "TCP 2020")];
+    let mut forward = build(&peers);
+    let mut reversed = build(&[peers[2], peers[1], peers[0]]);
+
+    sort_cards_for_display(&mut forward);
+    sort_cards_for_display(&mut reversed);
+
+    fn order(cards: &HVec<Card, 8>) -> HVec<&str, 8> {
+        cards.iter().map(|card| card.label.as_str()).collect()
+    }
+    assert_eq!(
+        order(&forward).as_slice(),
+        &["TCP 1010", "TCP 2020", "TCP 3030"]
+    );
+    assert_eq!(order(&forward), order(&reversed));
+}
+
+#[test]
 fn activity_tracker_stamps_age_when_a_card_changes() {
     let mut tracker = CardActivityTracker::<2>::new();
     let mut cards = [test_card("USB")];
