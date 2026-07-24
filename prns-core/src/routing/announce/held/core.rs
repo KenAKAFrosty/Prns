@@ -158,7 +158,7 @@ impl<S: HeldAnnounceTable, A: AnnounceAppData> HeldAnnounces<S, A> {
     ) -> Option<ReleasedLowestHops> {
         let record = self.store.take_lowest_hop_for(interface)?;
 
-        let app_data_len = match record.announce.maybe_app_data_handle {
+        let app_data_bytes = match record.announce.maybe_app_data_handle {
             None => 0,
             Some(handle) => {
                 let bytes = self.app_data.get(handle);
@@ -171,7 +171,7 @@ impl<S: HeldAnnounceTable, A: AnnounceAppData> HeldAnnounces<S, A> {
 
         Some(ReleasedLowestHops {
             held_announce: record,
-            app_data_len,
+            app_data_bytes,
         })
     }
 
@@ -233,7 +233,7 @@ impl<S: HeldAnnounceTable, A: AnnounceAppData> HeldAnnounces<S, A> {
 
 pub struct ReleasedLowestHops {
     pub held_announce: HeldAnnounce,
-    pub app_data_len: usize,
+    pub app_data_bytes: usize,
 }
 
 struct IntoHeldRecordInputs<'announce> {
@@ -342,7 +342,7 @@ mod tests {
         let mut scratch = [0u8; 64];
         let ReleasedLowestHops {
             held_announce: row,
-            app_data_len: len,
+            app_data_bytes: len,
         } = held.release_lowest_hop_for(iface(1), &mut scratch).unwrap();
         assert_eq!(row.hops, 2);
         assert_eq!(&scratch[..len], b"second");
@@ -359,7 +359,7 @@ mod tests {
         let mut scratch = [0u8; 64];
         let ReleasedLowestHops {
             held_announce: row,
-            app_data_len: len,
+            app_data_bytes: len,
         } = held.release_lowest_hop_for(iface(1), &mut scratch).unwrap();
         assert_eq!(row.destination, dest(0xB2));
         assert_eq!(row.hops, 2);
@@ -383,7 +383,7 @@ mod tests {
         let mut scratch = [0u8; 64];
         let ReleasedLowestHops {
             held_announce: row,
-            app_data_len: len,
+            app_data_bytes: len,
         } = held.release_lowest_hop_for(iface(2), &mut scratch).unwrap();
         assert_eq!(row.receiving_interface, iface(2));
         assert_eq!(&scratch[..len], b"two");
@@ -431,7 +431,7 @@ mod tests {
         let mut scratch = [0u8; 64];
         let ReleasedLowestHops {
             held_announce: row,
-            app_data_len: len,
+            app_data_bytes: len,
         } = held.release_lowest_hop_for(iface(2), &mut scratch).unwrap();
         assert_eq!(row.destination, dest(0xC3));
         assert_eq!(&scratch[..len], b"c");

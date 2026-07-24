@@ -105,7 +105,7 @@ pub enum ResourceInbound {
     Chunk(std::vec::Vec<u8>),
     Complete {
         original_hash: ResourceHash,
-        total_size: u64,
+        total_size_bytes: u64,
     },
     Failed,
 }
@@ -234,7 +234,7 @@ pub struct SendResourceSegmentHostCommand {
     pub request_id: Option<RequestId>,
     pub segment_index: u64,
     pub total_segments: u64,
-    pub total_data_size: u64,
+    pub total_data_bytes: u64,
     pub completion: oneshot::Sender<Settlement>,
 }
 

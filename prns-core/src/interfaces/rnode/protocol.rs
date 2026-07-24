@@ -63,12 +63,12 @@ pub const AIRTIME_LIMIT_CENTI_PERCENT_MAX: u16 = 10_000;
 
 const FRAME_SCRATCH: usize = kiss_framing::max_encoded_len(4);
 
-/// Frequency and bandwidth are whole Hz, TX power is dBm, coding rate is the `4/n` denominator, and airtime locks remain pre-scaled as RNS's wire `int(percent * 100)`.
+/// Frequency and bandwidth are whole hertz, transmit power is in dBm, coding rate is the `4/n` denominator, and airtime locks remain pre-scaled as RNS's wire `int(percent * 100)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RadioConfig {
     frequency_hz: u32,
     bandwidth_hz: u32,
-    txpower_dbm: u8,
+    tx_power_dbm: u8,
     spreading_factor: u8,
     coding_rate: u8,
     airtime_limit_short_centi_percent: Option<u16>,
@@ -79,7 +79,7 @@ pub struct RadioConfig {
 pub struct RadioConfigInput {
     pub frequency_hz: u64,
     pub bandwidth_hz: u32,
-    pub txpower_dbm: i16,
+    pub tx_power_dbm: i16,
     pub spreading_factor: u8,
     pub coding_rate: u8,
     pub airtime_limit_short_centi_percent: Option<u16>,
@@ -98,12 +98,12 @@ pub enum RadioConfigError {
 }
 
 impl RadioConfig {
-    /// Frequency arrives as `u64` so it is validated before narrowing; TX power arrives as `i16` so a negative value is rejected rather than wrapped.
+    /// Frequency arrives as `u64` so it is validated before narrowing; transmit power arrives as `i16` so a negative value is rejected rather than wrapped.
     pub fn new(input: RadioConfigInput) -> Result<Self, RadioConfigError> {
         let RadioConfigInput {
             frequency_hz,
             bandwidth_hz,
-            txpower_dbm,
+            tx_power_dbm,
             spreading_factor,
             coding_rate,
             airtime_limit_short_centi_percent,
@@ -115,8 +115,8 @@ impl RadioConfig {
         if !(BANDWIDTH_HZ_MIN..=BANDWIDTH_HZ_MAX).contains(&bandwidth_hz) {
             return Err(RadioConfigError::Bandwidth(bandwidth_hz));
         }
-        if !(TXPOWER_DBM_MIN..=TXPOWER_DBM_MAX).contains(&txpower_dbm) {
-            return Err(RadioConfigError::TxPower(txpower_dbm));
+        if !(TXPOWER_DBM_MIN..=TXPOWER_DBM_MAX).contains(&tx_power_dbm) {
+            return Err(RadioConfigError::TxPower(tx_power_dbm));
         }
         if !(SPREADING_FACTOR_MIN..=SPREADING_FACTOR_MAX).contains(&spreading_factor) {
             return Err(RadioConfigError::SpreadingFactor(spreading_factor));
@@ -137,7 +137,7 @@ impl RadioConfig {
         Ok(Self {
             frequency_hz: frequency_hz as u32,
             bandwidth_hz,
-            txpower_dbm: txpower_dbm as u8,
+            tx_power_dbm: tx_power_dbm as u8,
             spreading_factor,
             coding_rate,
             airtime_limit_short_centi_percent,
@@ -156,8 +156,8 @@ impl RadioConfig {
     }
 
     #[must_use]
-    pub const fn txpower_dbm(&self) -> u8 {
-        self.txpower_dbm
+    pub const fn tx_power_dbm(&self) -> u8 {
+        self.tx_power_dbm
     }
 
     #[must_use]
@@ -185,13 +185,13 @@ impl RadioConfig {
         nominal_bitrate_bps(self.spreading_factor, self.coding_rate, self.bandwidth_hz)
     }
 
-    /// Emits the exact RNS `initRadio` order: frequency, bandwidth, TX power, spreading factor, coding rate, optional airtime locks, then radio state on.
+    /// Emits the exact RNS `initRadio` order: frequency, bandwidth, transmit power, spreading factor, coding rate, optional airtime locks, then radio state on.
     #[must_use]
     pub fn init_command_bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
         push_command(&mut out, CMD_FREQUENCY, &self.frequency_hz.to_be_bytes());
         push_command(&mut out, CMD_BANDWIDTH, &self.bandwidth_hz.to_be_bytes());
-        push_command(&mut out, CMD_TXPOWER, &[self.txpower_dbm]);
+        push_command(&mut out, CMD_TXPOWER, &[self.tx_power_dbm]);
         push_command(&mut out, CMD_SF, &[self.spreading_factor]);
         push_command(&mut out, CMD_CR, &[self.coding_rate]);
         if let Some(short_centi) = self.airtime_limit_short_centi_percent {
@@ -360,7 +360,7 @@ impl DeviceReport {
             }
         }
         self.r_bandwidth == Some(config.bandwidth_hz)
-            && self.r_txpower == Some(config.txpower_dbm)
+            && self.r_txpower == Some(config.tx_power_dbm)
             && self.r_sf == Some(config.spreading_factor)
             && self.r_state == Some(RADIO_STATE_ON)
     }
@@ -417,7 +417,7 @@ mod tests {
         RadioConfigInput {
             frequency_hz: 868_000_000,
             bandwidth_hz: 125_000,
-            txpower_dbm: 7,
+            tx_power_dbm: 7,
             spreading_factor: 8,
             coding_rate: 5,
             airtime_limit_short_centi_percent: None,
@@ -445,7 +445,7 @@ mod tests {
         })
         .expect("valid config");
         assert_eq!(radio.frequency_hz(), 868_000_000);
-        assert_eq!(radio.txpower_dbm(), 7);
+        assert_eq!(radio.tx_power_dbm(), 7);
         assert_eq!(radio.airtime_limit_short_centi_percent(), Some(150));
     }
 
@@ -467,7 +467,7 @@ mod tests {
         );
         assert_eq!(
             RadioConfig::new(RadioConfigInput {
-                txpower_dbm: -1,
+                tx_power_dbm: -1,
                 ..sample_input()
             }),
             Err(RadioConfigError::TxPower(-1))

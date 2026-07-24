@@ -309,7 +309,7 @@ async fn receive_resource_streams_an_inbound_resource_into_the_sink() {
             .unwrap();
         sink.send(ResourceInbound::Complete {
             original_hash: original,
-            total_size: 11,
+            total_size_bytes: 11,
         })
         .unwrap();
         link_id
@@ -333,7 +333,7 @@ async fn receive_resource_streams_an_inbound_resource_into_the_sink() {
         receipt,
         ResourceReceipt {
             original_hash: original,
-            total_size: 11,
+            total_size_bytes: 11,
             metadata: None,
         },
     );
@@ -356,7 +356,7 @@ async fn receive_resource_carries_metadata_on_the_receipt() {
             .unwrap();
         sink.send(ResourceInbound::Complete {
             original_hash: original,
-            total_size: 7,
+            total_size_bytes: 7,
         })
         .unwrap();
     });
@@ -372,7 +372,7 @@ async fn receive_resource_carries_metadata_on_the_receipt() {
         receipt,
         ResourceReceipt {
             original_hash: original,
-            total_size: 7,
+            total_size_bytes: 7,
             metadata: Some(b"packed".to_vec()),
         },
     );

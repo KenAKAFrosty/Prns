@@ -347,18 +347,19 @@ fn apply_common_numbers(
     common: &mut InterfaceCommonPolicy,
 ) -> Result<(), SettingRepresentationError> {
     if let Some(value) = configured.new_time {
-        common.ingress_control.new_interface_ms =
+        common.ingress_control.new_interface_millis =
             seconds_to_millis(value, common_key::IC_NEW_TIME)?;
     }
     if let Some(value) = configured.burst_hold {
-        common.ingress_control.burst_hold_ms = seconds_to_millis(value, common_key::IC_BURST_HOLD)?;
+        common.ingress_control.burst_hold_millis =
+            seconds_to_millis(value, common_key::IC_BURST_HOLD)?;
     }
     if let Some(value) = configured.burst_penalty {
-        common.ingress_control.burst_penalty_ms =
+        common.ingress_control.burst_penalty_millis =
             seconds_to_millis(value, common_key::IC_BURST_PENALTY)?;
     }
     if let Some(value) = configured.held_release_interval {
-        common.ingress_control.held_release_interval_ms =
+        common.ingress_control.held_release_interval_millis =
             seconds_to_millis(value, common_key::IC_HELD_RELEASE_INTERVAL)?;
     }
     if let Some(value) = configured.burst_freq_new {

@@ -9,7 +9,7 @@ window. This crate adds the platform adapters Android needs:
 - a single-button input source: every tap is a `ShortPress`, every hold a
   `LongPress` (`rust/src/face.rs` + the `nativePostInput` entry point)
 - Android-hosted USB Auto (`app/src/main/java/org/personal/hopspot/UsbLink.kt`)
-- Wi-Fi Auto/mDNS and BLE Auto bridges into the shared Rust engine
+- Wi-Fi Auto/mDNS and Bluetooth LE Auto bridges into the shared Rust engine
 
 `rust/` is the JNI `cdylib`. The Kotlin app shell in `app/` hosts it with a
 plain Android `View` so the same APK can run on old Android devices as well as

@@ -22,6 +22,7 @@ import type {
   RuntimeAnnounceOptions,
   RuntimeIngestOptions,
   RuntimeRegisterInterfaceInput,
+  RuntimeRegisterNodePageOptions,
   RuntimeRegisterSingleDestinationOptions,
   RuntimeRemoveInterfaceInput,
   StableIdentityStore,
@@ -70,6 +71,10 @@ class MockRuntime implements PrnsRuntimeBinding {
     _options: RuntimeRegisterSingleDestinationOptions,
   ): DestinationHash {
     return destinationHash(new Uint8Array(16).fill(1));
+  }
+
+  registerNodePage(_options: RuntimeRegisterNodePageOptions): DestinationHash {
+    return destinationHash(new Uint8Array(16).fill(2));
   }
 
   announce(_options: RuntimeAnnounceOptions): bigint {

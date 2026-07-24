@@ -275,14 +275,14 @@ fn report_publication_event(
                 failure = ?failure,
             );
         }
-        TokioDiscoveryPublicationEvent::Announced { app_data_len, .. } => {
+        TokioDiscoveryPublicationEvent::Announced { app_data_bytes, .. } => {
             tracing::info!(
                 event = "interface_discovery_announced",
                 interface_origin = InterfaceOriginKind::Configured.as_str(),
                 interface = ?interface.as_bytes(),
                 interface_name = %source.interface_name,
                 interface_type = source.interface_type().rns_name(),
-                app_data_bytes = app_data_len,
+                app_data_bytes = app_data_bytes,
             );
         }
     }

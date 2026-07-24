@@ -46,7 +46,7 @@ use crate::wire::{DestinationType, PacketType, WireContext};
 pub struct OffloadedStagedSeal<'a> {
     pub link_id: LinkId,
     pub stream_nonce: [u8; RESOURCE_NONCE_LEN],
-    pub nonce_prefixed_len: usize,
+    pub nonce_prefixed_bytes: usize,
     pub sealed_bytes: &'a [u8],
     pub names: &'a [u8],
     pub outcome: Result<SealedStagedResource, BuildOutgoingResourceError>,
@@ -56,7 +56,7 @@ pub struct OffloadedStagedSeal<'a> {
 pub struct StagedSealJobView<'a> {
     pub key: &'a crate::routing::links::LinkKey,
     pub sdu: usize,
-    pub nonce_prefixed_len: usize,
+    pub nonce_prefixed_bytes: usize,
     /// The worker's whole input: the reserved IV span, the stream nonce, and the parked raw stream.
     pub plaintext: &'a [u8],
 }
@@ -159,7 +159,7 @@ impl<S: StorageLayout> EngineState<S> {
 
     /// Segment 1 of a split records its hash as the chain's `original_hash`; every later segment re-advertises it, so the host threads no hashes of its own.
     ///
-    /// `total_data_size` is the whole transfer's uncompressed DATA length. The engine adds the metadata block on top, and RNS 1.4.0 advertises the sum (the `d` field) on every segment, never the segment's own size.
+    /// `total_data_bytes` is the whole transfer's uncompressed DATA length. The engine adds the metadata block on top, and RNS 1.4.0 advertises the sum (the `d` field) on every segment, never the segment's own size.
     ///
     /// A continuation whose live segment failed on the wire before this command reached the engine settles `PredecessorFailed` without advertising. A pipelining host therefore cannot revive a dead transfer's tail.
     pub fn ingest_send_resource_segment_into<F>(
@@ -197,7 +197,7 @@ impl<S: StorageLayout> EngineState<S> {
         let ResourceSegment {
             index: segment_index,
             total_segments,
-            total_data_size,
+            total_data_bytes,
         } = segment;
         let data = body.data;
         let mut wake_schedule_changes = crate::engine::WakeSchedules::UNCHANGED;
@@ -211,9 +211,9 @@ impl<S: StorageLayout> EngineState<S> {
             settle(sink, SendResourceFailure::Sequencing);
             return wake_schedule_changes;
         }
-        let Some(uncompressed_data_len) = u64::try_from(body.metadata.block_len())
+        let Some(uncompressed_data_bytes) = u64::try_from(body.metadata.block_len())
             .ok()
-            .and_then(|metadata_len| total_data_size.checked_add(metadata_len))
+            .and_then(|metadata_len| total_data_bytes.checked_add(metadata_len))
         else {
             settle(
                 sink,
@@ -241,7 +241,7 @@ impl<S: StorageLayout> EngineState<S> {
             settle(sink, SendResourceFailure::PredecessorFailed);
             return wake_schedule_changes;
         }
-        let (key, mtu, fire_on, rtt_ms) = match self.links.active_view(&link_id) {
+        let (key, mtu, fire_on, rtt_millis) = match self.links.active_view(&link_id) {
             ActiveLinkLookup::Active(link) => (
                 link.key,
                 link.mtu,
@@ -345,7 +345,7 @@ impl<S: StorageLayout> EngineState<S> {
         };
         if let Some(index) = row_index {
             let state = self.outgoing_resources.state_mut(index);
-            state.uncompressed_data_len = uncompressed_data_len;
+            state.uncompressed_data_bytes = uncompressed_data_bytes;
             if let Some(original) = chain_original {
                 state.original_hash = original;
             }
@@ -377,7 +377,7 @@ impl<S: StorageLayout> EngineState<S> {
                     self.outgoing_resources.state_mut(index).retries_left =
                         MAX_ADVERTISEMENT_RETRIES;
                     self.outgoing_resources
-                        .set_timeout_at(index, Some(advertised_deadline(now, rtt_ms)));
+                        .set_timeout_at(index, Some(advertised_deadline(now, rtt_millis)));
                 }
                 if let ResourceCorrelation::Request {
                     response_timeout, ..
@@ -551,7 +551,7 @@ impl<S: StorageLayout> EngineState<S> {
         };
         let key = link.key;
         let mtu = link.mtu;
-        let rtt_ms = link.rtt.millis();
+        let rtt_millis = link.rtt.millis();
         {
             let state = self.outgoing_resources.state_mut(index);
             if state.status == OutgoingResourceStatus::Advertised {
@@ -560,7 +560,7 @@ impl<S: StorageLayout> EngineState<S> {
             }
         }
         self.outgoing_resources
-            .set_timeout_at(index, Some(transferring_deadline(now, rtt_ms)));
+            .set_timeout_at(index, Some(transferring_deadline(now, rtt_millis)));
 
         let scope_start = self.outgoing_resources.state(index).scope_start;
         let mut originated_outbound = false;
@@ -622,7 +622,7 @@ impl<S: StorageLayout> EngineState<S> {
                                 &mut plaintext,
                             )
                             .ok()?;
-                            let wire_len = write_link_packet(
+                            let wire_bytes = write_link_packet(
                                 link_id,
                                 key,
                                 mtu,
@@ -633,7 +633,7 @@ impl<S: StorageLayout> EngineState<S> {
                             )
                             .ok()?;
                             wrote = true;
-                            Some(wire_len)
+                            Some(wire_bytes)
                         };
                         sink(EngineReaction::Directive(Directive::EmitFrame {
                             target: fire_on,
@@ -668,7 +668,7 @@ impl<S: StorageLayout> EngineState<S> {
             state.status = OutgoingResourceStatus::AwaitingProof;
             state.retries_left = AWAITING_PROOF_RETRIES;
             self.outgoing_resources
-                .set_timeout_at(index, Some(awaiting_proof_deadline(now, rtt_ms)));
+                .set_timeout_at(index, Some(awaiting_proof_deadline(now, rtt_millis)));
         }
     }
 
@@ -708,7 +708,7 @@ impl<S: StorageLayout> EngineState<S> {
         if state.status != OutgoingResourceStatus::Staged {
             return;
         }
-        let nonce_prefixed_len = state.staged_plaintext_len;
+        let nonce_prefixed_bytes = state.staged_plaintext_bytes;
         let sdu = state.sdu;
         let ActiveLinkLookup::Active(link) = self.links.active_view(link_id) else {
             return;
@@ -725,7 +725,7 @@ impl<S: StorageLayout> EngineState<S> {
                 salt
             },
             sdu,
-            nonce_prefixed_len,
+            nonce_prefixed_bytes,
             self.outgoing_resources.seal_regions_mut(index),
         );
         match sealed {
@@ -737,11 +737,11 @@ impl<S: StorageLayout> EngineState<S> {
     fn record_staged_seal(&mut self, index: usize, sealed: &SealedStagedResource) {
         self.outgoing_resources.set_hash(index, sealed.hash);
         let state = self.outgoing_resources.state_mut(index);
-        state.sealed_transfer_len = sealed.sealed_transfer_len;
+        state.sealed_transfer_bytes = sealed.sealed_transfer_bytes;
         state.part_count = sealed.part_count;
         state.salt_nonce = sealed.salt_nonce;
         state.expected_proof = sealed.expected_proof;
-        state.staged_plaintext_len = 0;
+        state.staged_plaintext_bytes = 0;
         state.status = OutgoingResourceStatus::StagedSealed;
     }
 
@@ -781,7 +781,7 @@ impl<S: StorageLayout> EngineState<S> {
         Some(StagedSealJobView {
             key: link.key,
             sdu: state.sdu,
-            nonce_prefixed_len: state.staged_plaintext_len,
+            nonce_prefixed_bytes: state.staged_plaintext_bytes,
             plaintext: self.outgoing_resources.staged_plaintext(index),
         })
     }
@@ -805,7 +805,7 @@ impl<S: StorageLayout> EngineState<S> {
         let OffloadedStagedSeal {
             link_id,
             stream_nonce,
-            nonce_prefixed_len,
+            nonce_prefixed_bytes,
             sealed_bytes,
             names,
             outcome,
@@ -814,7 +814,7 @@ impl<S: StorageLayout> EngineState<S> {
             let state = self.outgoing_resources.state(index);
             self.outgoing_resources.link_at(index) == &link_id
                 && state.status == OutgoingResourceStatus::StagedSealing
-                && state.staged_plaintext_len == nonce_prefixed_len
+                && state.staged_plaintext_bytes == nonce_prefixed_bytes
                 && self.outgoing_resources.staged_plaintext(index)[16..16 + RESOURCE_NONCE_LEN]
                     == stream_nonce
         });
@@ -881,7 +881,7 @@ impl<S: StorageLayout> EngineState<S> {
         let key = link.key;
         let mtu = link.mtu;
         let fire_on = link.attached_interface;
-        let rtt_ms = link.rtt.millis();
+        let rtt_millis = link.rtt.millis();
         self.outgoing_resources.state_mut(index).status = OutgoingResourceStatus::Advertised;
         let mut adv_iv = [0u8; 16];
         fill_entropy(&mut adv_iv);
@@ -897,7 +897,7 @@ impl<S: StorageLayout> EngineState<S> {
                 self.links.note_outbound(link_id, now);
                 self.outgoing_resources.state_mut(index).retries_left = MAX_ADVERTISEMENT_RETRIES;
                 self.outgoing_resources
-                    .set_timeout_at(index, Some(advertised_deadline(now, rtt_ms)));
+                    .set_timeout_at(index, Some(advertised_deadline(now, rtt_millis)));
             }
             AdvertisementWriteOutcome::DidNotWrite => {
                 let state = self.outgoing_resources.state(index);
@@ -969,7 +969,7 @@ impl<S: StorageLayout> EngineState<S> {
                 let mut wrote = false;
                 {
                     let mut fill = |slot: &mut [u8]| -> Option<usize> {
-                        let wire_len = write_link_packet(
+                        let wire_bytes = write_link_packet(
                             link_id,
                             key,
                             mtu,
@@ -980,7 +980,7 @@ impl<S: StorageLayout> EngineState<S> {
                         )
                         .ok()?;
                         wrote = true;
-                        Some(wire_len)
+                        Some(wire_bytes)
                     };
                     sink(EngineReaction::Directive(Directive::EmitFrame {
                         target: fire_on,
@@ -1042,7 +1042,7 @@ impl<S: StorageLayout> EngineState<S> {
         let key = link.key;
         let mtu = link.mtu;
         let fire_on = link.attached_interface;
-        let rtt_ms = link.rtt.millis();
+        let rtt_millis = link.rtt.millis();
         match state.status {
             OutgoingResourceStatus::Staged
             | OutgoingResourceStatus::StagedSealing
@@ -1079,7 +1079,7 @@ impl<S: StorageLayout> EngineState<S> {
                 let state = self.outgoing_resources.state_mut(index);
                 state.retries_left -= 1;
                 self.outgoing_resources
-                    .set_timeout_at(index, Some(advertised_deadline(now, rtt_ms)));
+                    .set_timeout_at(index, Some(advertised_deadline(now, rtt_millis)));
             }
             OutgoingResourceStatus::Transferring => {
                 self.cancel_outgoing_resource(
@@ -1106,23 +1106,23 @@ impl<S: StorageLayout> EngineState<S> {
                 let state = self.outgoing_resources.state_mut(index);
                 state.retries_left -= 1;
                 self.outgoing_resources
-                    .set_timeout_at(index, Some(awaiting_proof_deadline(now, rtt_ms)));
+                    .set_timeout_at(index, Some(awaiting_proof_deadline(now, rtt_millis)));
             }
         }
     }
 }
 
-fn advertised_deadline(now: InstantMillis, rtt_ms: u64) -> InstantMillis {
+fn advertised_deadline(now: InstantMillis, rtt_millis: u64) -> InstantMillis {
     InstantMillis(
         now.0
-            .saturating_add(rtt_ms.saturating_mul(LINK_TRAFFIC_TIMEOUT_FACTOR))
+            .saturating_add(rtt_millis.saturating_mul(LINK_TRAFFIC_TIMEOUT_FACTOR))
             .saturating_add(PROCESSING_GRACE_MS),
     )
 }
 
 /// RNS 1.4.0's sender-side transferring wait: one fat deadline re-armed on each request, after which the receiver is gone.
-fn transferring_deadline(now: InstantMillis, rtt_ms: u64) -> InstantMillis {
-    let retry_rtts = rtt_ms
+fn transferring_deadline(now: InstantMillis, rtt_millis: u64) -> InstantMillis {
+    let retry_rtts = rtt_millis
         .saturating_mul(LINK_TRAFFIC_TIMEOUT_FACTOR)
         .saturating_mul(PART_REQUEST_MAX_RETRIES as u64);
     let max_extra_wait = PER_RETRY_DELAY_MS
@@ -1135,10 +1135,10 @@ fn transferring_deadline(now: InstantMillis, rtt_ms: u64) -> InstantMillis {
     )
 }
 
-fn awaiting_proof_deadline(now: InstantMillis, rtt_ms: u64) -> InstantMillis {
+fn awaiting_proof_deadline(now: InstantMillis, rtt_millis: u64) -> InstantMillis {
     InstantMillis(
         now.0
-            .saturating_add(rtt_ms.saturating_mul(PROOF_TIMEOUT_FACTOR))
+            .saturating_add(rtt_millis.saturating_mul(PROOF_TIMEOUT_FACTOR))
             .saturating_add(SENDER_GRACE_MS),
     )
 }
@@ -1174,8 +1174,8 @@ where
         let names = outgoing.names_flat(index);
         let first_segment = &names[..names.len().min(HASHMAP_MAX_LEN * MAP_HASH_LEN)];
         let advertisement = ResourceAdvertisement {
-            transfer_size: state.sealed_transfer_len as u64,
-            data_size: state.uncompressed_data_len,
+            transfer_bytes: state.sealed_transfer_bytes as u64,
+            data_bytes: state.uncompressed_data_bytes,
             part_count: state.part_count as u64,
             hash: *hash,
             salt_nonce: state.salt_nonce,
@@ -1195,7 +1195,7 @@ where
         };
         let mut plaintext = [0u8; LINK_MDU];
         let plaintext_len = advertisement.write(&mut plaintext).ok()?;
-        let wire_len = write_link_packet(
+        let wire_bytes = write_link_packet(
             link_id,
             lane.key,
             lane.mtu,
@@ -1206,7 +1206,7 @@ where
         )
         .ok()?;
         outcome = AdvertisementWriteOutcome::Wrote;
-        Some(wire_len)
+        Some(wire_bytes)
     };
     sink(EngineReaction::Directive(Directive::EmitFrame {
         target: lane.fire_on,
@@ -1463,10 +1463,10 @@ mod tests {
         let state = engine.outgoing_resources.state(index);
         assert_eq!(state.status, OutgoingResourceStatus::Advertised);
         assert_eq!(
-            advertisement.transfer_size,
-            state.sealed_transfer_len as u64
+            advertisement.transfer_bytes,
+            state.sealed_transfer_bytes as u64
         );
-        assert_eq!(advertisement.data_size, 1_360);
+        assert_eq!(advertisement.data_bytes, 1_360);
         assert_eq!(advertisement.part_count, 1);
         assert_eq!(advertisement.salt_nonce, state.salt_nonce);
         assert_eq!(advertisement.original_hash, advertisement.hash);
@@ -1489,17 +1489,17 @@ mod tests {
             ResourceSegment {
                 index: 0,
                 total_segments: 1,
-                total_data_size: 4,
+                total_data_bytes: 4,
             },
             ResourceSegment {
                 index: 1,
                 total_segments: 0,
-                total_data_size: 4,
+                total_data_bytes: 4,
             },
             ResourceSegment {
                 index: 2,
                 total_segments: 1,
-                total_data_size: 4,
+                total_data_bytes: 4,
             },
         ];
         for (offset, segment) in cases.into_iter().enumerate() {
@@ -1526,7 +1526,7 @@ mod tests {
             ResourceSegment {
                 index: 1,
                 total_segments: 1,
-                total_data_size: u64::MAX,
+                total_data_bytes: u64::MAX,
             },
             ResourceMetadata::Packed(&metadata),
         );
@@ -1697,7 +1697,7 @@ mod tests {
         assert!(!advertisement.flags.compressed);
         assert_eq!(advertisement.request_id, Some(request_id));
         assert_eq!(
-            advertisement.data_size,
+            advertisement.data_bytes,
             (RESPONSE_WIRE_OVERHEAD + packed_page.len()) as u64
         );
     }
@@ -1828,7 +1828,7 @@ mod tests {
         let plaintext_len =
             write_part_request_plaintext(hash, last_known, requested, &mut plaintext).unwrap();
         let mut frame = [0u8; BROADCAST_MTU];
-        let wire_len = write_link_packet(
+        let wire_bytes = write_link_packet(
             &link_id(),
             &link_key(),
             BROADCAST_MTU,
@@ -1838,7 +1838,7 @@ mod tests {
             &mut frame,
         )
         .unwrap();
-        frame[..wire_len].to_vec()
+        frame[..wire_bytes].to_vec()
     }
 
     fn advertised_resource<S: StorageLayout>(
@@ -2027,7 +2027,7 @@ mod tests {
         let mut plaintext = [0u8; 64];
         write_proof_plaintext(hash, proof, &mut plaintext).unwrap();
         let mut frame = [0u8; BROADCAST_MTU];
-        let wire_len = write_link_raw_packet(
+        let wire_bytes = write_link_raw_packet(
             &link_id(),
             PacketType::Proof,
             WireContext::ResourceProof,
@@ -2036,7 +2036,7 @@ mod tests {
             &mut frame,
         )
         .unwrap();
-        frame[..wire_len].to_vec()
+        frame[..wire_bytes].to_vec()
     }
 
     #[test]
@@ -2137,7 +2137,7 @@ mod tests {
         let segment = |index| ResourceSegment {
             index,
             total_segments: 2,
-            total_data_size: 3_000,
+            total_data_bytes: 3_000,
         };
         let first = send_segment(engine, 7, &first_data, segment(1));
         assert_eq!(first.frames.len(), 1);
@@ -2184,7 +2184,7 @@ mod tests {
         let state = engine.outgoing_resources.state(staged);
         assert_eq!(state.status, OutgoingResourceStatus::Staged);
         assert_eq!(
-            state.staged_plaintext_len,
+            state.staged_plaintext_bytes,
             RESOURCE_NONCE_LEN + 38 * 40,
             "the raw stream waits nonce-prefixed at its sealed offset",
         );
@@ -2241,10 +2241,10 @@ mod tests {
         let staged = engine.outgoing_resources.staged_index(&link_id()).unwrap();
         let state = *engine.outgoing_resources.state(staged);
         assert_eq!(state.status, OutgoingResourceStatus::StagedSealed);
-        assert_eq!(state.staged_plaintext_len, 0);
+        assert_eq!(state.staged_plaintext_bytes, 0);
         assert_eq!(
-            state.sealed_transfer_len,
-            crate::routing::links::resources::sealed_transfer_len(38 * 40),
+            state.sealed_transfer_bytes,
+            crate::routing::links::resources::sealed_transfer_bytes(38 * 40),
         );
         assert_eq!(state.part_count, 4);
         assert_ne!(
@@ -2338,7 +2338,7 @@ mod tests {
         let segment = |index| ResourceSegment {
             index,
             total_segments: 3,
-            total_data_size: 5_000,
+            total_data_bytes: 5_000,
         };
         let first = send_segment(&mut engine, 7, &data, segment(1));
         let live = advertised_hash(&first.frames[0].1);
@@ -2352,7 +2352,7 @@ mod tests {
 
         let (job_sdu, job_len, job_plaintext) = {
             let view = engine.staged_seal_job_view(&link_id()).unwrap();
-            (view.sdu, view.nonce_prefixed_len, view.plaintext.to_vec())
+            (view.sdu, view.nonce_prefixed_bytes, view.plaintext.to_vec())
         };
         engine.mark_staged_sealing(&link_id());
         assert_eq!(
@@ -2385,7 +2385,7 @@ mod tests {
         let stream_len = job_len - RESOURCE_NONCE_LEN;
         let mut transfer = job_plaintext;
         transfer.resize(
-            crate::routing::links::resources::sealed_transfer_len(stream_len),
+            crate::routing::links::resources::sealed_transfer_bytes(stream_len),
             0,
         );
         let mut worker_names = std::vec![0u8; transfer.len().div_ceil(job_sdu) * MAP_HASH_LEN];
@@ -2407,8 +2407,8 @@ mod tests {
             OffloadedStagedSeal {
                 link_id: link_id(),
                 stream_nonce: stale_nonce,
-                nonce_prefixed_len: job_len,
-                sealed_bytes: &transfer[..sealed_meta.sealed_transfer_len],
+                nonce_prefixed_bytes: job_len,
+                sealed_bytes: &transfer[..sealed_meta.sealed_transfer_bytes],
                 names: &worker_names[..sealed_meta.part_count * MAP_HASH_LEN],
                 outcome: Ok(sealed_meta),
             },
@@ -2426,8 +2426,8 @@ mod tests {
             OffloadedStagedSeal {
                 link_id: link_id(),
                 stream_nonce,
-                nonce_prefixed_len: job_len,
-                sealed_bytes: &transfer[..sealed_meta.sealed_transfer_len],
+                nonce_prefixed_bytes: job_len,
+                sealed_bytes: &transfer[..sealed_meta.sealed_transfer_bytes],
                 names: &worker_names[..sealed_meta.part_count * MAP_HASH_LEN],
                 outcome: Ok(sealed_meta),
             },
@@ -2487,7 +2487,7 @@ mod tests {
         let mut plaintext = [0u8; RESOURCE_HASH_LEN];
         write_cancel_plaintext(hash, &mut plaintext).unwrap();
         let mut frame = [0u8; BROADCAST_MTU];
-        let wire_len = write_link_packet(
+        let wire_bytes = write_link_packet(
             &link_id(),
             &link_key(),
             BROADCAST_MTU,
@@ -2497,7 +2497,7 @@ mod tests {
             &mut frame,
         )
         .unwrap();
-        frame[..wire_len].to_vec()
+        frame[..wire_bytes].to_vec()
     }
 
     #[test]
@@ -2511,7 +2511,7 @@ mod tests {
             ResourceSegment {
                 index: 1,
                 total_segments: 2,
-                total_data_size: 3_000,
+                total_data_bytes: 3_000,
             },
         );
         let live = advertised_hash(&first.frames[0].1);
@@ -2525,7 +2525,7 @@ mod tests {
             ResourceSegment {
                 index: 2,
                 total_segments: 2,
-                total_data_size: 3_000,
+                total_data_bytes: 3_000,
             },
         );
         assert!(

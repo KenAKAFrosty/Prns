@@ -211,7 +211,7 @@ mod tests {
             },
         )
         .unwrap();
-        transfer.truncate(built.sealed_transfer_len);
+        transfer.truncate(built.sealed_transfer_bytes);
         (transfer, built, sdu)
     }
 

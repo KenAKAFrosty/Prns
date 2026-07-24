@@ -32,7 +32,7 @@ pub(super) fn ap_config() -> AccessPointConfig {
         .with_max_connections(4)
 }
 
-/// The WiFi mode to request for a station config. APSTA keeps the Hopspot SoftAP alongside the
+/// The Wi-Fi mode to request for a station config. APSTA keeps the Hopspot SoftAP alongside the
 /// station and survives reconnects; a bare `Station` configuration would drop the AP.
 #[cfg(feature = "wifi-auto")]
 pub(super) fn station_wifi_mode(station: StationConfig, ap_enabled: bool) -> WifiConfig {
@@ -55,7 +55,7 @@ pub(super) fn build_ap_netif(
     ap_mac[5] = ap_mac[5].wrapping_add(1);
     let ap_link_local = wifi_auto_contract::link_local_from_mac(MacAddress::new(ap_mac));
     // The SoftAP is the gateway, not a DHCP client: a static IPv4 (192.168.4.1/24) lets it serve DHCP +
-    // host the TCP rendezvous, plus the static v6 link-local for WiFi-auto's UDP. (The IPv4 multicast
+    // host the TCP rendezvous, plus the static v6 link-local for Wi-Fi Auto's UDP. (The IPv4 multicast
     // path is moot anyway — the SoftAP can't pass multicast; see the rendezvous DHCP server below.)
     let mut ap_net_config = NetConfig::ipv4_static(StaticConfigV4 {
         address: Ipv4Cidr::new(Ipv4Address::new(192, 168, 4, 1), 24),
@@ -80,7 +80,7 @@ pub(super) fn build_ap_netif(
 
 /// A minimal DHCPv4 server for the SoftAP. A device joining "Hopspot" DISCOVERs/REQUESTs and we lease it
 /// 192.168.4.2 with the SoftAP (192.168.4.1) as its router + DNS. The lease is incidental; the *gateway*
-/// is the point: once the joiner's default route is the Heltec, its WiFi-auto client auto-dials the TCP
+/// is the point: once the joiner's default route is the Heltec, its Wi-Fi Auto client auto-dials the TCP
 /// rendezvous on the gateway (port 42699), sidestepping the SoftAP's broken multicast entirely. One
 /// static lease is enough to start; the wire format is hand-rolled (embassy-net ships only a client).
 #[cfg(feature = "wifi-auto")]

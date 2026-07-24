@@ -39,7 +39,7 @@ fn emit_message(message: &Message<'_>) {
             target: "prns.runtime",
             event = "request_received",
             bytes = data.len(),
-            rtt_ms = rtt.millis(),
+            rtt_millis = rtt.millis(),
             link_id = ?link_id.as_bytes(),
             request_id = ?request_id,
             path_hash = ?path_hash,
@@ -87,12 +87,12 @@ fn emit_message(message: &Message<'_>) {
             link_id,
             hash,
             stream,
-            uncompressed_data_len,
+            uncompressed_data_bytes,
         } => tracing::debug!(
             target: "prns.runtime",
             event = "resource_decompression_requested",
             compressed_bytes = stream.len(),
-            uncompressed_bytes = uncompressed_data_len,
+            uncompressed_bytes = uncompressed_data_bytes,
             link_id = ?link_id.as_bytes(),
             resource_hash = ?hash.as_bytes(),
         ),
@@ -172,7 +172,7 @@ fn emit_diagnostic(diagnostic: &Diagnostic) {
             tracing::info!(
                 target: "prns.runtime",
                 event = "link_established",
-                rtt_ms = established.rtt_ms,
+                rtt_millis = established.rtt_millis,
             );
             tracing::debug!(
                 target: "prns.runtime",
@@ -240,11 +240,11 @@ fn emit_diagnostic(diagnostic: &Diagnostic) {
         Diagnostic::ResourceAssembled {
             link_id,
             original_hash,
-            total_size,
+            total_size_bytes,
         } => tracing::debug!(
             target: "prns.runtime",
             event = "resource_assembled",
-            bytes = total_size,
+            bytes = total_size_bytes,
             link_id = ?link_id.as_bytes(),
             resource_hash = ?original_hash.as_bytes(),
         ),

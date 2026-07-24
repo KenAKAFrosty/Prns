@@ -441,7 +441,7 @@ pub(crate) fn announce() {
 
 pub(crate) fn classify(id: InterfaceId) -> Option<(CardKind, CardLabel)> {
     match id.kind() {
-        Some(InterfaceKind::AutoWifi) => Some((CardKind::Wifi, card_label("WiFi/LAN"))),
+        Some(InterfaceKind::AutoWifi) => Some((CardKind::Wifi, card_label("Wi-Fi/LAN"))),
         Some(InterfaceKind::UsbAutoDevice) => Some((CardKind::Usb, card_label("USB"))),
         Some(InterfaceKind::BluetoothAuto) => Some((CardKind::Ble, card_label("BLE"))),
         Some(InterfaceKind::TcpServerPeer | InterfaceKind::TcpClient | InterfaceKind::WifiPeer) => {

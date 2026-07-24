@@ -120,7 +120,7 @@ fn link_packet_header(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SendToLinkDispatch {
-    pub wire_len: usize,
+    pub wire_bytes: usize,
     pub fire_on: InterfaceId,
     pub culled: Option<CulledReceipt>,
 }
@@ -169,7 +169,7 @@ impl<S: StorageLayout> EngineState<S> {
         let fire_on = *attached_interface;
         let peer_signing = *peer_signing;
         let traffic_timeout_ms = link_traffic_timeout_ms(*rtt);
-        let wire_len = write_link_packet(
+        let wire_bytes = write_link_packet(
             &send.link_id,
             key,
             *mtu,
@@ -184,7 +184,7 @@ impl<S: StorageLayout> EngineState<S> {
             DestinationType::Link,
             &send.link_id.to_address(),
             WireContext::None,
-            &buf[HEADER_MIN_LEN..wire_len],
+            &buf[HEADER_MIN_LEN..wire_bytes],
         );
         let culled = self.receipts.track(OutstandingReceipt {
             packet_hash,
@@ -196,7 +196,7 @@ impl<S: StorageLayout> EngineState<S> {
         });
 
         Ok(SendToLinkDispatch {
-            wire_len,
+            wire_bytes,
             fire_on,
             culled,
         })

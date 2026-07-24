@@ -45,7 +45,7 @@ impl SendSinglePacketEntropy {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SendSinglePacketDispatch {
-    pub wire_len: usize,
+    pub wire_bytes: usize,
     pub fire_on: InterfaceId,
     pub culled: Option<CulledReceipt>,
 }
@@ -346,12 +346,12 @@ impl<S: StorageLayout> EngineState<S> {
         sealed_len: usize,
         tracked: TrackedSend,
     ) -> SendSinglePacketDispatch {
-        let wire_len = header_len + sealed_len;
+        let wire_bytes = header_len + sealed_len;
         let packet_hash = PacketHash::of_data_fields(
             DestinationType::Single,
             &header.address,
             WireContext::None,
-            &buf[header_len..wire_len],
+            &buf[header_len..wire_bytes],
         );
         let culled = self.receipts.track(OutstandingReceipt {
             packet_hash,
@@ -362,7 +362,7 @@ impl<S: StorageLayout> EngineState<S> {
             timeout_at: tracked.timeout_at,
         });
         SendSinglePacketDispatch {
-            wire_len,
+            wire_bytes,
             fire_on: tracked.fire_on,
             culled,
         }
@@ -502,7 +502,7 @@ mod tests {
                 &mut buf,
             )
             .dispatched();
-        (state, buf[..dispatch.wire_len].to_vec())
+        (state, buf[..dispatch.wire_bytes].to_vec())
     }
 
     #[test]
@@ -552,7 +552,7 @@ mod tests {
             )
             .dispatched();
         assert_eq!(
-            &buf[..dispatch.wire_len],
+            &buf[..dispatch.wire_bytes],
             &expected_wire[..],
             "the unit that came home seals byte-identical wire on the retry",
         );
@@ -612,7 +612,7 @@ mod tests {
             .dispatched();
 
         assert_eq!(
-            &buf[..dispatch.wire_len],
+            &buf[..dispatch.wire_bytes],
             bytes_from_hex(RNS_1_4_0_SEALED_TO_RATCHET).as_slice()
         );
         assert_eq!(dispatch.fire_on, arrival());
@@ -659,7 +659,7 @@ mod tests {
             bytes
         });
         let expected = sealed_single_packet(&fixture, peer_destination(), b"hello-by-key");
-        assert_eq!(&buf[..dispatch.wire_len], expected.as_slice());
+        assert_eq!(&buf[..dispatch.wire_bytes], expected.as_slice());
     }
 
     #[test]
@@ -723,8 +723,8 @@ mod tests {
         };
 
         assert_eq!(
-            &deferred_buf[..deferred.wire_len],
-            &inline_buf[..inline.wire_len],
+            &deferred_buf[..deferred.wire_bytes],
+            &inline_buf[..inline.wire_bytes],
             "the pooled scalar mults seal the exact same wire bytes as the inline encrypt",
         );
         assert_eq!(deferred.fire_on, inline.fire_on);
@@ -813,7 +813,7 @@ mod tests {
             .dispatched();
 
         assert_eq!(
-            &buf[..dispatch.wire_len],
+            &buf[..dispatch.wire_bytes],
             bytes_from_hex(RNS_1_4_0_SEALED_TO_RATCHET_VIA_TRANSPORT).as_slice(),
             "the sealed packet rides transport addressed at the announcing relay",
         );
@@ -840,7 +840,7 @@ mod tests {
             )
             .dispatched();
 
-        let (header, _) = WirePacketHeader::parse(&buf[..dispatch.wire_len])
+        let (header, _) = WirePacketHeader::parse(&buf[..dispatch.wire_bytes])
             .expect("the dispatched send is a parseable wire packet");
         assert_eq!(
             header.propagation,
@@ -887,7 +887,7 @@ mod tests {
             )
             .dispatched();
 
-        let mut wire = buf[..dispatch.wire_len].to_vec();
+        let mut wire = buf[..dispatch.wire_bytes].to_vec();
         assert_eq!(
             peer.ingest_packet_with(
                 plain_data_packet(&mut wire),

@@ -297,10 +297,10 @@ fn feed_inner<S: StorageLayout>(
                 }
                 EngineReaction::Journaled(Journaled::ResourceAssembled {
                     original_hash,
-                    total_size,
+                    total_size_bytes,
                     ..
                 }) => {
-                    capture.assembled.push((original_hash, total_size));
+                    capture.assembled.push((original_hash, total_size_bytes));
                 }
                 EngineReaction::Journaled(Journaled::LinkInterfaceMismatch {
                     attached_interface,
@@ -390,7 +390,7 @@ pub(crate) fn accept_everything<S: StorageLayout>(engine: &mut EngineState<S>) {
     set_strategy(
         engine,
         ResourceStrategy::Accept {
-            max_uncompressed_len: 1 << 20,
+            max_uncompressed_bytes: 1 << 20,
             accept_compressed: true,
         },
     );

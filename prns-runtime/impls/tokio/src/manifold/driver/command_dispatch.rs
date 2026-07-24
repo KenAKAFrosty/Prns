@@ -214,7 +214,7 @@ where
                         ResourceSegment {
                             index: send.segment_index,
                             total_segments: send.total_segments,
-                            total_data_size: send.total_data_size,
+                            total_data_bytes: send.total_data_bytes,
                         },
                         now,
                         &mut |entropy| host.fill_entropy(entropy),

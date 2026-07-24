@@ -93,7 +93,7 @@ impl<S: StorageLayout> EngineState<S> {
         };
         let mtu = *mtu;
         let fire_on = *attached_interface;
-        let rtt_ms = rtt.millis();
+        let rtt_millis = rtt.millis();
         let mut iv = [0u8; 16];
         fill_entropy(&mut iv);
         let mut request_wire_len = 0u64;
@@ -107,7 +107,7 @@ impl<S: StorageLayout> EngineState<S> {
                     &mut plaintext,
                 )
                 .ok()?;
-                let wire_len = write_link_packet(
+                let wire_bytes = write_link_packet(
                     link_id,
                     key,
                     mtu,
@@ -117,8 +117,8 @@ impl<S: StorageLayout> EngineState<S> {
                     slot,
                 )
                 .ok()?;
-                request_wire_len = wire_len as u64;
-                Some(wire_len)
+                request_wire_len = wire_bytes as u64;
+                Some(wire_bytes)
             };
             sink(EngineReaction::Directive(Directive::EmitFrame {
                 target: fire_on,
@@ -132,13 +132,13 @@ impl<S: StorageLayout> EngineState<S> {
         {
             let state = self.incoming_resources.state_mut(index);
             state.request_sent_at = Some(now);
-            state.request_sent_byte_len = request_wire_len;
+            state.request_sent_bytes = request_wire_len;
             state.received_byte_count_at_request = state.received_byte_count;
             state.awaiting_round_first_response = true;
         }
         let state = *self.incoming_resources.state(index);
         self.incoming_resources
-            .set_timeout_at(index, Some(part_round_deadline(&state, rtt_ms, now)));
+            .set_timeout_at(index, Some(part_round_deadline(&state, rtt_millis, now)));
         EmitResourcePullOutcome::Requested
     }
 
@@ -236,7 +236,7 @@ impl<S: StorageLayout> EngineState<S> {
             ResourceOpenLane::Inline => true,
             ResourceOpenLane::PoolWhenContended => !self.receiving_concurrently(),
         };
-        let contiguous_byte_len = ((height + 1) * state.sdu).min(state.sealed_transfer_len);
+        let contiguous_byte_len = ((height + 1) * state.sdu).min(state.sealed_transfer_bytes);
         let (transfer, slot) = self
             .incoming_resources
             .transfer_and_streamed_open_mut(index);
@@ -336,13 +336,13 @@ pub(super) fn expected_inflight_bits_per_second(
     state: &IncomingResourceState,
     link_rtt_ms: u64,
 ) -> u64 {
-    let eifr = if state.data_byte_rate > 0 {
-        state.data_byte_rate.saturating_mul(8)
+    let eifr = if state.data_bytes_per_second > 0 {
+        state.data_bytes_per_second.saturating_mul(8)
     } else if let Some(inherited) = state.inherited_eifr {
         inherited
     } else {
-        let rtt_ms = state.measured_rtt_ms.unwrap_or(link_rtt_ms).max(1);
-        ESTABLISHMENT_COST_ESTIMATE_BYTES.saturating_mul(8_000) / rtt_ms
+        let rtt_millis = state.measured_rtt_ms.unwrap_or(link_rtt_ms).max(1);
+        ESTABLISHMENT_COST_ESTIMATE_BYTES.saturating_mul(8_000) / rtt_millis
     };
     eifr.max(1)
 }
@@ -359,7 +359,7 @@ fn part_round_deadline(
     let retries_used = (PART_REQUEST_MAX_RETRIES.saturating_sub(state.retries_left)) as u64;
     let extra_wait_ms = retries_used.saturating_mul(PER_RETRY_DELAY_MS);
     let sdu_bits = (state.sdu as u64).saturating_mul(8);
-    let wait_ms = if state.request_response_byte_rate == 0 {
+    let wait_ms = if state.request_response_bytes_per_second == 0 {
         state
             .part_timeout_factor
             .saturating_mul(sdu_bits.saturating_mul(3_000) / eifr)
@@ -402,9 +402,9 @@ fn absorb_round_first_response(
         round_trip_ms,
         link_rtt_ms,
     ));
-    let round_cost = (part_len as u64).saturating_add(state.request_sent_byte_len);
+    let round_cost = (part_len as u64).saturating_add(state.request_sent_bytes);
     if let Some(rate) = round_cost.saturating_mul(1_000).checked_div(round_trip_ms) {
-        state.request_response_byte_rate = rate;
+        state.request_response_bytes_per_second = rate;
         note_fast_rate_round(state, rate);
     }
 }
@@ -432,7 +432,7 @@ fn absorb_completed_round(state: &mut IncomingResourceState, arrived_at: Instant
     let Some(rate) = transferred.saturating_mul(1_000).checked_div(elapsed_ms) else {
         return;
     };
-    state.data_byte_rate = rate;
+    state.data_bytes_per_second = rate;
     note_fast_rate_round(state, rate);
     if state.fast_rate_rounds == 0
         && rate < RATE_VERY_SLOW_BYTES_PER_SECOND
@@ -656,7 +656,7 @@ mod loop_tests {
             ResourceSegment {
                 index: 1,
                 total_segments: 2,
-                total_data_size: data_total,
+                total_data_bytes: data_total,
             },
             1_000,
         )
@@ -665,7 +665,7 @@ mod loop_tests {
             assert!(adv.flags.has_metadata, "the flag travels on segment one");
             assert!(adv.flags.split);
             assert_eq!(
-                adv.data_size,
+                adv.data_bytes,
                 data_total + block_len,
                 "d includes the block"
             );
@@ -701,7 +701,7 @@ mod loop_tests {
             ResourceSegment {
                 index: 2,
                 total_segments: 2,
-                total_data_size: data_total,
+                total_data_bytes: data_total,
             },
             2_000,
         )
@@ -712,7 +712,7 @@ mod loop_tests {
                 "the flag still travels on segment two",
             );
             assert_eq!(
-                adv.data_size,
+                adv.data_bytes,
                 data_total + block_len,
                 "and d still includes the block",
             );
@@ -770,7 +770,7 @@ mod loop_tests {
                 ResourceSegment {
                     index: segment_index,
                     total_segments: 2,
-                    total_data_size: (2 * data.len()) as u64,
+                    total_data_bytes: (2 * data.len()) as u64,
                 },
                 InstantMillis(1_000),
                 &mut |bytes: &mut [u8]| bytes.fill(0xA5),
@@ -858,7 +858,7 @@ mod loop_tests {
             ResourceSegment {
                 index: 1,
                 total_segments: 2,
-                total_data_size: total,
+                total_data_bytes: total,
             },
             2_000,
         );
@@ -894,7 +894,7 @@ mod loop_tests {
             ResourceSegment {
                 index: 2,
                 total_segments: 2,
-                total_data_size: total,
+                total_data_bytes: total,
             },
             4_000,
         );
@@ -943,7 +943,7 @@ mod loop_tests {
         data: &[u8],
         segment_index: u64,
         total_segments: u64,
-        total_data_size: u64,
+        total_data_bytes: u64,
         at: u64,
     ) -> std::vec::Vec<u8> {
         send_segment_carrying(
@@ -954,7 +954,7 @@ mod loop_tests {
             ResourceSegment {
                 index: segment_index,
                 total_segments,
-                total_data_size,
+                total_data_bytes,
             },
             at,
         )
@@ -1059,7 +1059,7 @@ mod loop_tests {
             assert_eq!(adv.total_segments, 3);
             assert_eq!(adv.original_hash, own);
             assert_eq!(
-                adv.data_size, total,
+                adv.data_bytes, total,
                 "RNS 1.4.0 parity: every segment advertises the original total, not its own size",
             );
         });
@@ -1079,7 +1079,7 @@ mod loop_tests {
             ResourceSegment {
                 index: 1,
                 total_segments: 3,
-                total_data_size: total,
+                total_data_bytes: total,
             },
             2_000,
         );
@@ -1111,7 +1111,7 @@ mod loop_tests {
             assert_eq!(adv.total_segments, 3);
             assert!(adv.flags.split);
             assert_eq!(
-                adv.data_size, total,
+                adv.data_bytes, total,
                 "and re-advertises the original total, not this segment's size",
             );
         });
@@ -1160,7 +1160,7 @@ mod loop_tests {
             ResourceSegment {
                 index: 2,
                 total_segments: 2,
-                total_data_size: (2 * four_part_payload().len()) as u64,
+                total_data_bytes: (2 * four_part_payload().len()) as u64,
             },
             1_500,
         );
@@ -1407,8 +1407,8 @@ mod loop_tests {
             ResourceAdvertisement, ResourceFlags,
         };
         let advertisement = ResourceAdvertisement {
-            transfer_size: (part_count * 464) as u64,
-            data_size: 2_700,
+            transfer_bytes: (part_count * 464) as u64,
+            data_bytes: 2_700,
             part_count: part_count as u64,
             hash: ResourceHash::new([0xAB; 32]),
             salt_nonce: SaltNonce::new([0x61; 4]),
@@ -1429,7 +1429,7 @@ mod loop_tests {
         let mut plaintext = [0u8; 431];
         let plaintext_len = advertisement.write(&mut plaintext).unwrap();
         let mut frame = [0u8; BROADCAST_MTU];
-        let wire_len = write_link_packet(
+        let wire_bytes = write_link_packet(
             &link_id(),
             &link_key(),
             BROADCAST_MTU,
@@ -1439,7 +1439,7 @@ mod loop_tests {
             &mut frame,
         )
         .unwrap();
-        frame[..wire_len].to_vec()
+        frame[..wire_bytes].to_vec()
     }
 
     fn ingest<S: StorageLayout>(
@@ -1475,7 +1475,7 @@ mod loop_tests {
         )
         .unwrap();
         let mut frame = [0u8; BROADCAST_MTU];
-        let wire_len = write_link_packet(
+        let wire_bytes = write_link_packet(
             &link_id(),
             &link_key(),
             BROADCAST_MTU,
@@ -1485,7 +1485,7 @@ mod loop_tests {
             &mut frame,
         )
         .unwrap();
-        frame[..wire_len].to_vec()
+        frame[..wire_bytes].to_vec()
     }
 
     fn six_names() -> std::vec::Vec<u8> {
@@ -1675,7 +1675,7 @@ mod loop_tests {
         let mut plaintext = [0u8; 431];
         let plaintext_len = lying.write(&mut plaintext).unwrap();
         let mut frame = [0u8; BROADCAST_MTU];
-        let wire_len = write_link_packet(
+        let wire_bytes = write_link_packet(
             &link_id(),
             &link_key(),
             BROADCAST_MTU,
@@ -1685,7 +1685,7 @@ mod loop_tests {
             &mut frame,
         )
         .unwrap();
-        feed(&mut receiver, &frame[..wire_len], 2_000);
+        feed(&mut receiver, &frame[..wire_bytes], 2_000);
 
         let mut request_plaintext = [0u8; 337];
         let request_len = write_part_request_plaintext(

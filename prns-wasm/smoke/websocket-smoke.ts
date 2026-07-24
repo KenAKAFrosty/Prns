@@ -26,6 +26,7 @@ import type {
   RuntimeAnnounceOptions,
   RuntimeIngestOptions,
   RuntimeRegisterInterfaceInput,
+  RuntimeRegisterNodePageOptions,
   RuntimeRemoveInterfaceInput,
   RuntimeRegisterSingleDestinationOptions,
   UsbAutoDecoderBinding,
@@ -76,6 +77,10 @@ class MockRuntime implements PrnsRuntimeBinding {
   ): DestinationHash {
     this.destinations.push(options);
     return destinationHash(new Uint8Array(16).fill(this.destinations.length));
+  }
+
+  registerNodePage(_options: RuntimeRegisterNodePageOptions): DestinationHash {
+    return destinationHash(new Uint8Array(16).fill(0xff));
   }
 
   announce(_options: RuntimeAnnounceOptions): bigint {

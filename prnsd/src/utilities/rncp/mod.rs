@@ -333,7 +333,7 @@ async fn fetch(args: RncpArgs) -> Result<(), RncpError> {
                 link,
                 ResourceOfferAdmission {
                     peer: ResourceAdmissionPeer::Any,
-                    max_uncompressed_len: u64::MAX,
+                    max_uncompressed_bytes: u64::MAX,
                     accept_compressed: true,
                 },
             );
@@ -359,7 +359,7 @@ async fn fetch(args: RncpArgs) -> Result<(), RncpError> {
                         offer = offers.recv() => {
                             if let Some(offer) = offer {
                                 if !args.silent {
-                                    print_offer_progress("Transferring file", offer.uncompressed_data_len, offer.sealed_transfer_len as u64, started, args.phy_rates);
+                                    print_offer_progress("Transferring file", offer.uncompressed_data_bytes, offer.sealed_transfer_bytes as u64, started, args.phy_rates);
                                 }
                             }
                         }
@@ -538,7 +538,7 @@ fn listener_event(event: PrnsEvent<'_>, state: &ListenerState) {
                 established.link_id,
                 ResourceOfferAdmission {
                     peer,
-                    max_uncompressed_len: u64::MAX,
+                    max_uncompressed_bytes: u64::MAX,
                     accept_compressed: true,
                 },
             );
@@ -654,7 +654,7 @@ fn activate_receiver(
         link_id,
         ResourceOfferAdmission {
             peer,
-            max_uncompressed_len: u64::MAX,
+            max_uncompressed_bytes: u64::MAX,
             accept_compressed: true,
         },
     );
@@ -699,7 +699,7 @@ async fn receive_on_link(
                     },
                     offer = offers.recv() => {
                         if let Some(offer) = offer {
-                            print_offer_progress("Receiving file", offer.uncompressed_data_len, offer.sealed_transfer_len as u64, started, phy_rates);
+                            print_offer_progress("Receiving file", offer.uncompressed_data_bytes, offer.sealed_transfer_bytes as u64, started, phy_rates);
                         }
                     }
                 }
@@ -806,24 +806,24 @@ fn print_progress(
     phy_rates: bool,
 ) {
     let elapsed = started.elapsed().as_secs_f64().max(0.001);
-    let percent = if progress.total == 0 {
+    let percent = if progress.total_bytes == 0 {
         100.0
     } else {
-        progress.transferred as f64 * 100.0 / progress.total as f64
+        progress.transferred_bytes as f64 * 100.0 / progress.total_bytes as f64
     };
     let physical = if phy_rates {
         format!(
             " ({}ps at physical layer)",
-            size_string(progress.physical_transferred as f64 / elapsed, true)
+            size_string(progress.physical_transferred_bytes as f64 / elapsed, true,)
         )
     } else {
         String::new()
     };
     print!(
         "\r\x1b[2K{label} {percent:.1}% - {} of {} - {}ps{physical}",
-        size_string(progress.transferred as f64, false),
-        size_string(progress.total as f64, false),
-        size_string(progress.transferred as f64 / elapsed, true),
+        size_string(progress.transferred_bytes as f64, false),
+        size_string(progress.total_bytes as f64, false),
+        size_string(progress.transferred_bytes as f64 / elapsed, true),
     );
     let _ = std::io::Write::flush(&mut std::io::stdout());
 }

@@ -1,7 +1,7 @@
 # Public-Release Dependency Audit
 
 This is the release policy and evidence map for the shipped Prns engine, daemon, desktop/mobile
-apps, firmware, WASM module, and npm package. The per-build evidence artifact records the exact Git
+apps, firmware, WebAssembly module, and npm package. The per-build evidence artifact records the exact Git
 commit and hashes of the checked baselines.
 
 ## Reproducible graph matrix
@@ -16,8 +16,8 @@ commit and hashes of the checked baselines.
 | nRF52840 | `personal-hopspot/embedded/nrf52840/Cargo.toml` | `thumbv7em-none-eabihf` |
 | ESP32-C6 | XIAO board manifest | `riscv32imac-unknown-none-elf` |
 | ESP32-S3 | Heltec V4 and T-Beam board manifests | `xtensa-esp32s3-none-elf` |
-| WASM/npm | `prns-wasm/Cargo.toml` / `package-lock.json` | `wasm32-unknown-unknown` |
-| Hosted website | `docs/website/Cargo.toml` / `package-lock.json` | Rust/WASM plus bundled browser JavaScript |
+| WebAssembly/npm | `prns-wasm/Cargo.toml` / `package-lock.json` | `wasm32-unknown-unknown` |
+| Hosted website | `docs/website/Cargo.toml` / `package-lock.json` | Rust/WebAssembly plus bundled browser JavaScript |
 | Standalone flasher | `personal-hopspot/flasher/Cargo.toml` | macOS arm64/x86_64, Linux arm64/x86_64, Windows x86_64 |
 
 `validation/security/deps-audit.sh` runs this matrix with `--locked`, excludes non-shipped development

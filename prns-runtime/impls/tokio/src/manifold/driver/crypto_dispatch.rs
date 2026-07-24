@@ -68,7 +68,7 @@ where
                     link_id,
                     key: view.key.cloned(),
                     sdu: view.sdu,
-                    nonce_prefixed_len: view.nonce_prefixed_len,
+                    nonce_prefixed_bytes: view.nonce_prefixed_bytes,
                     plaintext: view.plaintext.to_vec(),
                     seal_iv,
                     salts,
@@ -266,18 +266,18 @@ where
             CryptoResult::StagedSealed {
                 link_id,
                 stream_nonce,
-                nonce_prefixed_len,
+                nonce_prefixed_bytes,
                 transfer,
                 names,
                 outcome,
             } => {
-                let sealed_len = outcome.map_or(0, |sealed| sealed.sealed_transfer_len);
+                let sealed_len = outcome.map_or(0, |sealed| sealed.sealed_transfer_bytes);
                 let names_len = outcome.map_or(0, |sealed| sealed.part_count * MAP_HASH_LEN);
                 engine.apply_offloaded_staged_seal(
                     OffloadedStagedSeal {
                         link_id,
                         stream_nonce,
-                        nonce_prefixed_len,
+                        nonce_prefixed_bytes,
                         sealed_bytes: &transfer[..sealed_len],
                         names: &names[..names_len],
                         outcome,

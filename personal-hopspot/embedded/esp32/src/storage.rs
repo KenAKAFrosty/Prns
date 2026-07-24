@@ -95,7 +95,7 @@ mod riscv {
     use personal_rns::storage::{DisplayedStorageLimits, StorageCapacity, StorageLayout};
 
     /// The C6's storage profile, sized to internal SRAM. Distinct from the library's
-    /// `personal_rns::storage::Esp32C6`, whose `LINK_MTU = 8192` + reorder 8 needs ~256 KB of channel
+    /// `personal_rns::storage::Esp32C6`, whose `LINK_MTU = 8192` + reorder 8 needs ~256 KiB of channel
     /// buffers and overflows the chip it is named for. This board is a headless USB/ESP-NOW/BLE mesh
     /// bridge: keep one local app identity, bias the budget toward heard destinations, and leave links,
     /// resources, and channel windows modest.

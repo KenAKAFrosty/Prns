@@ -213,11 +213,11 @@ impl<S: StorageLayout> EngineState<S> {
                 if interfaces.is_egress_eligible(fire_on, Egress::Transport) {
                     let mut buf = [0u8; BROADCAST_MTU];
                     if let Ok(header_len) = header.write(&mut buf) {
-                        let wire_len = header_len + body.len;
-                        buf[header_len..wire_len].copy_from_slice(body.as_bytes());
+                        let wire_bytes = header_len + body.len;
+                        buf[header_len..wire_bytes].copy_from_slice(body.as_bytes());
                         sink(EngineReaction::Directive(Directive::Send {
                             target: fire_on,
-                            bytes: &buf[..wire_len],
+                            bytes: &buf[..wire_bytes],
                         }));
                     }
                 }
@@ -237,7 +237,7 @@ impl<S: StorageLayout> EngineState<S> {
                 if interfaces.is_egress_eligible(source, Egress::Transmit) {
                     let mut response = [0u8; BROADCAST_MTU];
                     if let PathResponseWriteOutcome::Written {
-                        wire_len,
+                        wire_bytes,
                         ratchet_rotation,
                     } = self.write_path_response_for_upstream(
                         &destination,
@@ -247,7 +247,7 @@ impl<S: StorageLayout> EngineState<S> {
                     ) {
                         sink(EngineReaction::Directive(Directive::Send {
                             target: source,
-                            bytes: &response[..wire_len],
+                            bytes: &response[..wire_bytes],
                         }));
                         if ratchet_rotation == RatchetRotation::Minted {
                             sink(EngineReaction::Journaled(Journaled::SelfRatchetRotated {
@@ -403,8 +403,8 @@ impl<S: StorageLayout> EngineState<S> {
                             _ => None,
                         }),
                     hash: accepted.hash,
-                    uncompressed_data_len: accepted.uncompressed_data_len,
-                    sealed_transfer_len: accepted.sealed_transfer_len,
+                    uncompressed_data_bytes: accepted.uncompressed_data_bytes,
+                    sealed_transfer_bytes: accepted.sealed_transfer_bytes,
                     part_count: accepted.part_count,
                     segment_index: accepted.segment_index,
                     total_segment_count: accepted.total_segment_count,
@@ -490,9 +490,15 @@ impl<S: StorageLayout> EngineState<S> {
                     identity,
                 }));
             }
-            IngestPacketOutcome::LinkActivated { link_id, rtt_ms } => {
+            IngestPacketOutcome::LinkActivated {
+                link_id,
+                rtt_millis,
+            } => {
                 sink(EngineReaction::Journaled(Journaled::LinkEstablished(
-                    LinkEstablished { link_id, rtt_ms },
+                    LinkEstablished {
+                        link_id,
+                        rtt_millis,
+                    },
                 )));
             }
             IngestPacketOutcome::OwesLinkProof(accepted) => {
@@ -562,7 +568,7 @@ impl<S: StorageLayout> EngineState<S> {
                     if interfaces.is_egress_eligible(target, Egress::Transmit) {
                         sink(EngineReaction::Directive(Directive::Send {
                             target,
-                            bytes: &buf[..dispatch.wire_len],
+                            bytes: &buf[..dispatch.wire_bytes],
                         }));
                     }
                     sink(EngineReaction::Journaled(Journaled::LinkClosed {

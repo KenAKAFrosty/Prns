@@ -312,7 +312,7 @@ pub fn validate_link_proof(
 pub struct LinkProofParsed {
     pub proof: LinkProof,
     pub signed_data: [u8; LINK_PROOF_SIGNED_DATA_LEN],
-    pub signed_len: usize,
+    pub signed_bytes: usize,
     pub signature: Ed25519Signature,
 }
 
@@ -327,14 +327,14 @@ pub struct LinkProofVerifyOwed {
     pub rtt: RttMillis,
     pub mtu: usize,
     pub signed_data: [u8; LINK_PROOF_SIGNED_DATA_LEN],
-    pub signed_len: usize,
+    pub signed_bytes: usize,
     pub signature: Ed25519Signature,
 }
 
 pub fn link_proof_signature_valid(owed: &LinkProofVerifyOwed) -> bool {
     ed25519_verify(
         &owed.responder_signing,
-        &owed.signed_data[..owed.signed_len],
+        &owed.signed_data[..owed.signed_bytes],
         &owed.signature,
     )
     .is_ok()
@@ -400,7 +400,7 @@ pub fn link_proof_parse(
             mode,
         },
         signed_data,
-        signed_len: o,
+        signed_bytes: o,
         signature: Ed25519Signature(signature),
     })
 }
@@ -413,7 +413,7 @@ pub fn link_proof_from(
     let parsed = link_proof_parse(link_id, payload, responder_signing)?;
     ed25519_verify(
         responder_signing,
-        &parsed.signed_data[..parsed.signed_len],
+        &parsed.signed_data[..parsed.signed_bytes],
         &parsed.signature,
     )
     .map_err(|_| LinkProofError::InvalidSignature)?;

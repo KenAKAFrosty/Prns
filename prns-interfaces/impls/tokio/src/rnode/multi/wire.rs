@@ -222,10 +222,10 @@ impl WireCycle {
         let Some(member) = self.member_mut(vport) else {
             return;
         };
-        let wire_len = multi::data_frame(vport, payload)
+        let wire_bytes = multi::data_frame(vport, payload)
             .map(|frame| frame.len())
             .unwrap_or(payload.len());
-        member.meters.record_rx(wire_len);
+        member.meters.record_rx(wire_bytes);
         let _ = member.inbound.send(InboundFrame {
             payload: payload.to_vec(),
             phy,

@@ -46,11 +46,11 @@ pub(super) async fn run_resource_endpoint(
             }
             PrnsEvent::Diagnostic(Diagnostic::ResourceAssembled {
                 link_id,
-                total_size,
+                total_size_bytes,
                 ..
             }) => Some(Event::ResourceIn {
                 link_id,
-                bytes: total_size as usize,
+                bytes: total_size_bytes as usize,
             }),
             PrnsEvent::Diagnostic(Diagnostic::ResourceFailed {
                 link_id,

@@ -74,7 +74,7 @@ pub enum CloseLinkRejection {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LinkEstablished {
     pub link_id: LinkId,
-    pub rtt_ms: u64,
+    pub rtt_millis: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -232,11 +232,11 @@ mod tests {
         assert_eq!(
             EstablishLink::from_settlement(Settlement::EstablishLink(Ok(LinkEstablished {
                 link_id: LinkId::new([0x22; 16]),
-                rtt_ms: 250,
+                rtt_millis: 250,
             }))),
             Some(Ok(LinkEstablished {
                 link_id: LinkId::new([0x22; 16]),
-                rtt_ms: 250,
+                rtt_millis: 250,
             })),
         );
         assert_eq!(

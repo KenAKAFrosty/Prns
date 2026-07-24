@@ -256,7 +256,7 @@ hardware feature:
 | CoreBluetooth central restoration |  |  | restoration launch and resumed central state |
 | CoreBluetooth peripheral restoration |  |  | restoration launch and resumed peripheral state |
 | BLE central traffic |  |  | bidirectional frames and byte counters |
-| BLE peripheral traffic |  |  | bidirectional frames and byte counters |
+| Bluetooth LE peripheral traffic |  |  | bidirectional frames and byte counters |
 | Bonjour discovery |  |  | peer discovery with address and port |
 | LAN traffic |  |  | bidirectional frames and byte counters |
 | usbmux USB Auto |  |  | physical cable, peer formation, bidirectional frames |
@@ -425,7 +425,7 @@ Result:
 | CoreBluetooth central restoration |  |  |
 | CoreBluetooth peripheral restoration |  |  |
 | BLE central traffic |  |  |
-| BLE peripheral traffic |  |  |
+| Bluetooth LE peripheral traffic |  |  |
 | Bonjour discovery |  |  |
 | LAN traffic |  |  |
 | usbmux USB Auto |  |  |

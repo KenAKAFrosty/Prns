@@ -22,7 +22,7 @@ heapless = { version = "0.8", default-features = false }
 jni = "0.21"
 log = "0.4"
 # The async runtime + the channels/IO traits the JNI-bridged USB stream rides; the manifold's
-# USB-auto host multiplexes it like any other stream. The WiFi-auto supervisor rides the same
+# USB-auto host multiplexes it like any other stream. The Wi-Fi auto-interface supervisor rides the same
 # runtime (prns-interfaces-tokio's `wifi-auto` pulls tokio/net + socket2 + if-addrs); the Kotlin side
 # holds the multicast lock so the supervisor's IPv6 link-local multicast crosses.
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "io-util", "net"] }

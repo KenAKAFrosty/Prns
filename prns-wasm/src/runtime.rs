@@ -68,9 +68,9 @@ impl PrnsRuntime {
         let secret = secret_key_from_vec(identity_secret_key)?;
         let ble_identity = ble_identity
             .map(|bytes| {
-                let identity: [u8; 16] = bytes
-                    .try_into()
-                    .map_err(|_| JsValue::from_str("BLE identity must be exactly 16 bytes"))?;
+                let identity: [u8; 16] = bytes.try_into().map_err(|_| {
+                    JsValue::from_str("Bluetooth LE identity must be exactly 16 bytes")
+                })?;
                 Ok::<_, JsValue>(bluetooth_contract::BleIdentity::new(identity))
             })
             .transpose()?;
@@ -145,7 +145,7 @@ impl PrnsRuntime {
         self.ble_identity
             .as_ref()
             .map(|identity| identity.as_bytes().to_vec())
-            .ok_or_else(|| JsValue::from_str("persisted BLE identity is unavailable"))
+            .ok_or_else(|| JsValue::from_str("persisted Bluetooth LE identity is unavailable"))
     }
 
     #[wasm_bindgen(js_name = registerSingleDestination)]

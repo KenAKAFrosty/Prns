@@ -452,7 +452,7 @@ async fn a_recipe_accept_destination_receives_a_resource() {
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         resource_strategy: ResourceStrategy::Accept {
-            max_uncompressed_len: 1024 * 1024,
+            max_uncompressed_bytes: 1024 * 1024,
             accept_compressed: true,
         },
         request_handlers: RequestHandlerRegistration::None,

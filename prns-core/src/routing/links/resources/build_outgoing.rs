@@ -23,7 +23,7 @@ pub const STAGED_STREAM_OFFSET: usize = 16 + RESOURCE_NONCE_LEN;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SealedStagedResource {
-    pub sealed_transfer_len: usize,
+    pub sealed_transfer_bytes: usize,
     pub part_count: usize,
     pub hash: ResourceHash,
     pub salt_nonce: SaltNonce,
@@ -37,25 +37,25 @@ pub fn seal_staged_resource(
     seal_iv: &[u8; 16],
     mut fresh_salt: impl FnMut() -> [u8; RESOURCE_NONCE_LEN],
     sdu: usize,
-    nonce_prefixed_len: usize,
+    nonce_prefixed_bytes: usize,
     regions: BuildRegions<'_>,
 ) -> Result<SealedStagedResource, BuildOutgoingResourceError> {
     let BuildRegions { transfer, hashmap } = regions;
     if sdu == 0 {
         return Err(BuildOutgoingResourceError::SduTooSmall);
     }
-    let stream_end = 16 + nonce_prefixed_len;
+    let stream_end = 16 + nonce_prefixed_bytes;
     let digest_prefix = Sha256PrefixState::absorb(&[&transfer[STAGED_STREAM_OFFSET..stream_end]]);
-    let sealed_transfer_len = key
-        .seal_in_place(seal_iv, transfer, nonce_prefixed_len)
+    let sealed_transfer_bytes = key
+        .seal_in_place(seal_iv, transfer, nonce_prefixed_bytes)
         .map_err(BuildOutgoingResourceError::Seal)?;
-    let part_count = sealed_transfer_len.div_ceil(sdu);
+    let part_count = sealed_transfer_bytes.div_ceil(sdu);
     let hashmap_len = part_count * MAP_HASH_LEN;
     if hashmap.len() < hashmap_len {
         return Err(BuildOutgoingResourceError::HashmapBufferTooShort);
     }
 
-    let sealed = &transfer[..sealed_transfer_len];
+    let sealed = &transfer[..sealed_transfer_bytes];
     for _ in 0..SALT_REROLL_CAP {
         let salt_nonce = SaltNonce::new(fresh_salt());
         if matches!(
@@ -66,7 +66,7 @@ pub fn seal_staged_resource(
         }
         let digests = digest_prefix.digests_with_suffix(salt_nonce.as_bytes());
         return Ok(SealedStagedResource {
-            sealed_transfer_len,
+            sealed_transfer_bytes,
             part_count,
             hash: ResourceHash::new(digests.with_suffix),
             salt_nonce,
@@ -91,14 +91,14 @@ pub enum BuildOutgoingResourceError {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BuiltResource {
-    pub sealed_transfer_len: usize,
+    pub sealed_transfer_bytes: usize,
     pub part_count: usize,
     pub hash: ResourceHash,
     pub salt_nonce: SaltNonce,
     pub expected_proof: ResourceProof,
     pub compression: ResourceCompression,
     pub has_metadata: bool,
-    pub uncompressed_data_len: u64,
+    pub uncompressed_data_bytes: u64,
 }
 
 /// The two slot regions a build writes: the sealed transfer stream and the flat map-hash names of its parts.
@@ -178,16 +178,16 @@ pub fn build_outgoing_resource_enveloped(
             (&uncompressed_chunks[..], ResourceCompression::Uncompressed)
         }
     };
-    let sealed_transfer_len = key
+    let sealed_transfer_bytes = key
         .seal_chunks(seal_iv, stream_chunks, transfer)
         .map_err(BuildOutgoingResourceError::Seal)?;
-    let part_count = sealed_transfer_len.div_ceil(sdu);
+    let part_count = sealed_transfer_bytes.div_ceil(sdu);
     let hashmap_len = part_count * MAP_HASH_LEN;
     if hashmap.len() < hashmap_len {
         return Err(BuildOutgoingResourceError::HashmapBufferTooShort);
     }
 
-    let sealed = &transfer[..sealed_transfer_len];
+    let sealed = &transfer[..sealed_transfer_bytes];
     let uncompressed_stream = [block_prefix, block_packed, envelope, plaintext];
     for _ in 0..SALT_REROLL_CAP {
         let salt_nonce = SaltNonce::new(fresh_nonce());
@@ -202,14 +202,14 @@ pub fn build_outgoing_resource_enveloped(
             continue;
         }
         return Ok(BuiltResource {
-            sealed_transfer_len,
+            sealed_transfer_bytes,
             part_count,
             hash: ResourceHash::new(digests.with_suffix),
             salt_nonce,
             expected_proof: ResourceProof::new(digests.with_first_digest),
             compression,
             has_metadata: metadata.travels(),
-            uncompressed_data_len: uncompressed_stream_len as u64,
+            uncompressed_data_bytes: uncompressed_stream_len as u64,
         });
     }
     Err(BuildOutgoingResourceError::SaltRerollsExhausted)
@@ -379,11 +379,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(built.compression, ResourceCompression::Bz2);
-        assert_eq!(built.sealed_transfer_len, 144);
+        assert_eq!(built.sealed_transfer_bytes, 144);
         assert_eq!(built.part_count, 1);
-        assert_eq!(built.uncompressed_data_len, 1_360);
+        assert_eq!(built.uncompressed_data_bytes, 1_360);
         assert_eq!(
-            &transfer[..built.sealed_transfer_len],
+            &transfer[..built.sealed_transfer_bytes],
             &bytes_from_hex(CASE1_TRANSFER)[..]
         );
         assert_eq!(built.hash.as_bytes(), &bytes_from_hex(CASE1_HASH)[..]);
@@ -418,12 +418,12 @@ mod tests {
         )
         .unwrap();
         assert_eq!(built.compression, ResourceCompression::Uncompressed);
-        assert_eq!(built.sealed_transfer_len, 1_568);
+        assert_eq!(built.sealed_transfer_bytes, 1_568);
         assert_eq!(built.part_count, 4);
-        assert_eq!(built.uncompressed_data_len, 1_500);
+        assert_eq!(built.uncompressed_data_bytes, 1_500);
         assert_eq!(&transfer[..32], &bytes_from_hex(CASE2_TRANSFER_HEAD)[..]);
         assert_eq!(
-            &transfer[built.sealed_transfer_len - 11..built.sealed_transfer_len],
+            &transfer[built.sealed_transfer_bytes - 11..built.sealed_transfer_bytes],
             &bytes_from_hex(CASE2_TRANSFER_TAIL)[..]
         );
         assert_eq!(built.hash.as_bytes(), &bytes_from_hex(CASE2_HASH)[..]);
@@ -478,7 +478,7 @@ mod tests {
         assert_eq!(without.compression, ResourceCompression::Uncompressed);
         assert_eq!(with.hash, without.hash);
         assert_eq!(with.expected_proof, without.expected_proof);
-        assert_ne!(with.sealed_transfer_len, without.sealed_transfer_len);
+        assert_ne!(with.sealed_transfer_bytes, without.sealed_transfer_bytes);
     }
 
     #[test]
@@ -647,11 +647,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(built.compression, ResourceCompression::Bz2);
-        assert_eq!(built.sealed_transfer_len, 192);
+        assert_eq!(built.sealed_transfer_bytes, 192);
         assert_eq!(built.part_count, 1);
-        assert_eq!(built.uncompressed_data_len, 1_384);
+        assert_eq!(built.uncompressed_data_bytes, 1_384);
         assert_eq!(
-            &transfer[..built.sealed_transfer_len],
+            &transfer[..built.sealed_transfer_bytes],
             &bytes_from_hex(META_CASE1_TRANSFER)[..]
         );
         assert_eq!(built.hash.as_bytes(), &bytes_from_hex(META_CASE1_HASH)[..]);
@@ -688,15 +688,15 @@ mod tests {
         )
         .unwrap();
         assert_eq!(built.compression, ResourceCompression::Uncompressed);
-        assert_eq!(built.sealed_transfer_len, 1_584);
+        assert_eq!(built.sealed_transfer_bytes, 1_584);
         assert_eq!(built.part_count, 4);
-        assert_eq!(built.uncompressed_data_len, 1_524);
+        assert_eq!(built.uncompressed_data_bytes, 1_524);
         assert_eq!(
             &transfer[..32],
             &bytes_from_hex(META_CASE2_TRANSFER_HEAD)[..]
         );
         assert_eq!(
-            &transfer[built.sealed_transfer_len - 28..built.sealed_transfer_len],
+            &transfer[built.sealed_transfer_bytes - 28..built.sealed_transfer_bytes],
             &bytes_from_hex(META_CASE2_TRANSFER_TAIL)[..]
         );
         assert_eq!(built.hash.as_bytes(), &bytes_from_hex(META_CASE2_HASH)[..]);

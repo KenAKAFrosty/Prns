@@ -46,7 +46,7 @@ impl<S: StorageLayout> EngineState<S> {
                 continue;
             };
             let held = released.held_announce;
-            let app_data_len = released.app_data_len;
+            let app_data_bytes = released.app_data_bytes;
             let announce = Announce {
                 destination: held.destination,
                 public_keys: held.announce.public_keys,
@@ -54,7 +54,7 @@ impl<S: StorageLayout> EngineState<S> {
                 announce_id: held.announce.announce_id,
                 ratchet: held.announce.ratchet,
                 signature: held.announce.signature,
-                app_data: &app_data[..app_data_len],
+                app_data: &app_data[..app_data_bytes],
             };
             let arrival = AnnounceArrival {
                 announce,

@@ -107,7 +107,7 @@ impl<C: InterfacePathRequestLimitTable> InterfacePathRequestLimits<C> {
             row.window_count = row.window_count.saturating_add(1);
         }
 
-        let threshold = if now.0.saturating_sub(row.created_at.0) < policy.new_interface_ms {
+        let threshold = if now.0.saturating_sub(row.created_at.0) < policy.new_interface_millis {
             policy.path_request_burst_frequency_new.get()
         } else {
             policy.path_request_burst_frequency.get()
@@ -120,7 +120,7 @@ impl<C: InterfacePathRequestLimitTable> InterfacePathRequestLimits<C> {
 
         match row.burst {
             BurstState::Bursting { since } => {
-                if !over_threshold && now.0 >= since.0.saturating_add(policy.burst_hold_ms) {
+                if !over_threshold && now.0 >= since.0.saturating_add(policy.burst_hold_millis) {
                     row.burst = BurstState::Calm;
                 }
                 true

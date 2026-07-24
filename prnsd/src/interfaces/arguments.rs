@@ -114,7 +114,7 @@ pub struct InterfaceOptions {
     pub mode: Option<String>,
     #[arg(long)]
     pub outgoing: Option<bool>,
-    #[arg(long)]
+    #[arg(long, value_name = "BPS")]
     pub bitrate: Option<u64>,
     #[arg(long)]
     pub announce_cap: Option<f64>,
@@ -150,9 +150,9 @@ pub struct InterfaceOptions {
     pub longitude: Option<f64>,
     #[arg(long)]
     pub height: Option<f64>,
-    #[arg(long)]
+    #[arg(long, value_name = "HERTZ")]
     pub discovery_frequency: Option<u64>,
-    #[arg(long)]
+    #[arg(long, value_name = "HERTZ")]
     pub discovery_bandwidth: Option<u32>,
     #[arg(long)]
     pub discovery_modulation: Option<String>,
@@ -226,13 +226,13 @@ pub struct InterfaceOptions {
     pub port: Option<String>,
     #[arg(
         long = "radio",
-        value_name = "NAME:VPORT:FREQUENCY:BANDWIDTH:TXPOWER:SPREADING_FACTOR:CODING_RATE",
+        value_name = "NAME:VPORT:FREQUENCY_HZ:BANDWIDTH_HZ:TX_POWER_DBM:SPREADING_FACTOR:CODING_RATE_DENOMINATOR",
         value_parser = parse_rnode_multi_radio
     )]
     pub rnode_multi_radios: Vec<RNodeMultiRadioDefinition>,
     #[arg(long)]
     pub prefer_ipv6: Option<bool>,
-    #[arg(long)]
+    #[arg(long, value_name = "BPS")]
     pub speed: Option<u32>,
     #[arg(long)]
     pub databits: Option<u8>,
@@ -258,15 +258,15 @@ pub struct InterfaceOptions {
     pub callsign: Option<String>,
     #[arg(long)]
     pub ssid: Option<u8>,
-    #[arg(long)]
+    #[arg(long, value_name = "HERTZ")]
     pub frequency: Option<u64>,
-    #[arg(long)]
+    #[arg(long, value_name = "HERTZ")]
     pub bandwidth: Option<u32>,
     #[arg(long)]
     pub spreading_factor: Option<u8>,
     #[arg(long)]
     pub coding_rate: Option<u8>,
-    #[arg(long)]
+    #[arg(long, value_name = "DBM")]
     pub txpower: Option<i16>,
     #[arg(long)]
     pub airtime_limit_short: Option<f64>,
@@ -274,17 +274,17 @@ pub struct InterfaceOptions {
     pub airtime_limit_long: Option<f64>,
     #[arg(long)]
     pub command: Option<String>,
-    #[arg(long)]
+    #[arg(long, value_name = "SECONDS")]
     pub respawn_delay: Option<f64>,
     #[arg(long, value_delimiter = ',')]
     pub peers: Option<Vec<String>>,
     #[arg(long)]
     pub connectable: Option<bool>,
-    #[arg(long)]
+    #[arg(long, value_name = "SECONDS")]
     pub connect_timeout: Option<u64>,
     #[arg(long)]
     pub max_reconnect_tries: Option<u32>,
-    #[arg(long)]
+    #[arg(long, value_name = "BYTES")]
     pub fixed_mtu: Option<u16>,
     #[arg(long)]
     pub remote: Option<String>,
@@ -307,8 +307,7 @@ fn parse_rnode_multi_radio(value: &str) -> Result<RNodeMultiRadioDefinition, Str
         fields.as_slice()
     else {
         return Err(
-            "expected NAME:VPORT:FREQUENCY:BANDWIDTH:TXPOWER:SPREADING_FACTOR:CODING_RATE"
-                .to_string(),
+            "expected NAME:VPORT:FREQUENCY_HZ:BANDWIDTH_HZ:TX_POWER_DBM:SPREADING_FACTOR:CODING_RATE_DENOMINATOR".to_string(),
         );
     };
     let name = InterfaceName::new(*name).map_err(|error| error.to_string())?;
@@ -317,19 +316,19 @@ fn parse_rnode_multi_radio(value: &str) -> Result<RNodeMultiRadioDefinition, Str
         .map_err(|_| "VPORT must be an unsigned 8-bit integer".to_string())?;
     let frequency = frequency
         .parse::<u64>()
-        .map_err(|_| "FREQUENCY must be an unsigned 64-bit integer".to_string())?;
+        .map_err(|_| "FREQUENCY_HZ must be an unsigned 64-bit integer".to_string())?;
     let bandwidth = bandwidth
         .parse::<u32>()
-        .map_err(|_| "BANDWIDTH must be an unsigned 32-bit integer".to_string())?;
+        .map_err(|_| "BANDWIDTH_HZ must be an unsigned 32-bit integer".to_string())?;
     let txpower = txpower
         .parse::<i16>()
-        .map_err(|_| "TXPOWER must be a signed 16-bit integer".to_string())?;
+        .map_err(|_| "TX_POWER_DBM must be a signed 16-bit integer".to_string())?;
     let spreading_factor = spreading_factor
         .parse::<u8>()
         .map_err(|_| "SPREADING_FACTOR must be an unsigned 8-bit integer".to_string())?;
     let coding_rate = coding_rate
         .parse::<u8>()
-        .map_err(|_| "CODING_RATE must be an unsigned 8-bit integer".to_string())?;
+        .map_err(|_| "CODING_RATE_DENOMINATOR must be an unsigned 8-bit integer".to_string())?;
     RNodeMultiRadioDefinition::new(
         name,
         vport,

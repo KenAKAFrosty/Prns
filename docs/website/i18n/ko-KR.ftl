@@ -28,7 +28,7 @@ interfaces-section-hot-note = Prns 인터페이스는 hot-swappable입니다. �
 
 interfaces-radio-label = 무선
 interfaces-radio-headline = 기기와 보드를 위한 근거리 링크
-interfaces-radio-body = BLE Auto-interface, ESP-NOW, LoRa가 가까운 기기, 보드 플릿, 장거리 링크를 하나의 Reticulum 메시로 연결합니다.
+interfaces-radio-body = Bluetooth LE Auto-interface, ESP-NOW, LoRa가 가까운 기기, 보드 플릿, 장거리 링크를 하나의 Reticulum 메시로 연결합니다.
 
 interfaces-lan-label = LAN
 interfaces-lan-headline = 자동 발견되는 로컬 링크 피어

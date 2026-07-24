@@ -161,13 +161,13 @@ pub(crate) fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
             link_id,
             hash,
             stream,
-            uncompressed_data_len,
+            uncompressed_data_bytes,
         } => {
             set_str(&object, "type", "resourceNeedsDecompression");
             set_str(&object, "linkId", &format!("{link_id:?}"));
             set_str(&object, "hash", &format!("{hash:?}"));
             set_bytes(&object, "stream", stream);
-            set_u64(&object, "uncompressedDataLen", uncompressed_data_len);
+            set_u64(&object, "uncompressedDataBytes", uncompressed_data_bytes);
         }
         Journaled::ResourceSegmentReceived {
             link_id,
@@ -190,12 +190,12 @@ pub(crate) fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
         Journaled::ResourceAssembled {
             link_id,
             original_hash,
-            total_size,
+            total_size_bytes,
         } => {
             set_str(&object, "type", "resourceAssembled");
             set_str(&object, "linkId", &format!("{link_id:?}"));
             set_str(&object, "originalHash", &format!("{original_hash:?}"));
-            set_u64(&object, "totalSize", total_size);
+            set_u64(&object, "totalSizeBytes", total_size_bytes);
         }
         Journaled::RouteRemoved { destination, cause } => {
             let kind = match cause {

@@ -19,7 +19,7 @@ pub enum ResourceAdmissionPeer {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResourceOfferAdmission {
     pub peer: ResourceAdmissionPeer,
-    pub max_uncompressed_len: u64,
+    pub max_uncompressed_bytes: u64,
     pub accept_compressed: bool,
 }
 
@@ -69,7 +69,7 @@ impl ResourceAdmissionRegistry {
         let Some(entry) = entries.get(&offer.link_id) else {
             return false;
         };
-        if offer.uncompressed_data_len > entry.rule.max_uncompressed_len {
+        if offer.uncompressed_data_bytes > entry.rule.max_uncompressed_bytes {
             return false;
         }
         if !entry.rule.accept_compressed && offer.compression == ResourceCompression::Bz2 {
@@ -118,8 +118,8 @@ mod tests {
             link_id: LINK,
             remote_identity: identity,
             hash: ResourceHash::new([0x33; 32]),
-            uncompressed_data_len: 1024,
-            sealed_transfer_len: 900,
+            uncompressed_data_bytes: 1024,
+            sealed_transfer_bytes: 900,
             part_count: 2,
             segment_index: 1,
             total_segment_count: 1,
@@ -135,7 +135,7 @@ mod tests {
             LINK,
             ResourceOfferAdmission {
                 peer: ResourceAdmissionPeer::Authenticated(PEER),
-                max_uncompressed_len: 2048,
+                max_uncompressed_bytes: 2048,
                 accept_compressed: true,
             },
         );

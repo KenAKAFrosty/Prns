@@ -45,7 +45,7 @@
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Hopspot uses Bluetooth to mesh with nearby Reticulum nodes.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Hopspot uses your local WiFi network to mesh with other Reticulum nodes.</string>
+	<string>Hopspot uses your local Wi-Fi network to mesh with other Reticulum nodes.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_reticulum._tcp</string>

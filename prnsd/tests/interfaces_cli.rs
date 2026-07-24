@@ -327,6 +327,22 @@ fn validate_is_canonical_and_check_remains_compatible() {
 }
 
 #[test]
+fn interface_help_names_quantity_units() {
+    let help = Command::new(env!("CARGO_BIN_EXE_prnsd"))
+        .args(["interfaces", "add", "--help"])
+        .output()
+        .unwrap_or_else(|error| panic!("{error}"));
+    let rendered = String::from_utf8_lossy(&help.stdout);
+
+    assert!(help.status.success());
+    assert!(rendered.contains("--frequency <HERTZ>"));
+    assert!(rendered.contains("--bandwidth <HERTZ>"));
+    assert!(rendered.contains("--txpower <DBM>"));
+    assert!(rendered.contains("CODING_RATE_DENOMINATOR"));
+    assert!(rendered.contains("--fixed-mtu <BYTES>"));
+}
+
+#[test]
 fn safe_repair_removes_persisted_rns_runtime_metadata() {
     let directory = TestDirectory::new("runtime-metadata");
     let source = "[interfaces]\n[[Default Interface]]\ntype = AutoInterface\ninterface_enabled = Yes\nname = Default Interface\nselected_interface_mode = 1\nconfigured_bitrate = None\n";

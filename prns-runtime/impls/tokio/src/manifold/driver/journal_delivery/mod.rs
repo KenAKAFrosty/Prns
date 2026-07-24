@@ -274,7 +274,7 @@ impl JournalDelivery {
                 let _ = sink.send(ResourceInbound::Chunk(data.to_vec()));
                 let _ = sink.send(ResourceInbound::Complete {
                     original_hash: *hash,
-                    total_size: data.len() as u64,
+                    total_size_bytes: data.len() as u64,
                 });
                 true
             }
@@ -286,12 +286,12 @@ impl JournalDelivery {
             }
             Journaled::ResourceAssembled {
                 original_hash,
-                total_size,
+                total_size_bytes,
                 ..
             } => {
                 let _ = sink.send(ResourceInbound::Complete {
                     original_hash: *original_hash,
-                    total_size: *total_size,
+                    total_size_bytes: *total_size_bytes,
                 });
                 true
             }

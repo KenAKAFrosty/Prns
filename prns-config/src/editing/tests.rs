@@ -338,9 +338,45 @@ fn auto_setting_catalog_exposes_runtime_relevant_values_and_effective_defaults()
         bitrate.effective_value(planned).as_deref(),
         Some("1000000000")
     );
-    assert_eq!(bitrate.format_value("1000000000"), "1,000,000,000 bps");
+    assert_eq!(bitrate.format_value("1000000000"), "1 Gbps");
     assert_eq!(outgoing.label(), "Outgoing traffic allowed");
     assert!(data_port.description().contains("packet traffic"));
+}
+
+#[test]
+fn technical_quantities_use_natural_units_without_changing_stored_values() {
+    let formatted = |kind: InterfaceKind, name: &str, value: &str| {
+        kind.setting_specs()
+            .into_iter()
+            .find(|spec| spec.key() == key(name))
+            .unwrap_or_else(|| panic!("missing {name} setting for {kind:?}"))
+            .format_value(value)
+    };
+
+    assert_eq!(
+        formatted(InterfaceKind::Rnode, "frequency", "915000000"),
+        "915 MHz"
+    );
+    assert_eq!(
+        formatted(InterfaceKind::Kiss, "discovery_frequency", "868100000"),
+        "868.1 MHz"
+    );
+    assert_eq!(
+        formatted(InterfaceKind::Rnode, "bandwidth", "125000"),
+        "125 kHz"
+    );
+    assert_eq!(
+        formatted(InterfaceKind::Auto, "bitrate", "500000000"),
+        "500 Mbps"
+    );
+    assert_eq!(
+        formatted(InterfaceKind::Serial, "speed", "9600"),
+        "9.6 kbps"
+    );
+    assert_eq!(
+        formatted(InterfaceKind::TcpClient, "fixed_mtu", "524288"),
+        "524,288 bytes"
+    );
 }
 
 #[test]

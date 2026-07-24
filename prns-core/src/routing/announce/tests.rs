@@ -62,7 +62,7 @@ fn to_wire_reproduces_the_real_payload_exactly() {
     let n = announce.to_wire(&mut buf).unwrap();
     assert_eq!(n, payload.len());
     assert_eq!(&buf[..n], payload);
-    assert_eq!(n, announce.wire_len());
+    assert_eq!(n, announce.wire_bytes());
 }
 
 #[test]

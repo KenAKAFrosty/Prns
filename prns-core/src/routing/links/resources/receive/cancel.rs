@@ -108,7 +108,7 @@ mod cancel_tests {
         let mut plaintext = [0u8; RESOURCE_HASH_LEN];
         write_cancel_plaintext(hash, &mut plaintext).unwrap();
         let mut frame = [0u8; BROADCAST_MTU];
-        let wire_len = write_link_packet(
+        let wire_bytes = write_link_packet(
             &link_id(),
             &link_key(),
             BROADCAST_MTU,
@@ -118,7 +118,7 @@ mod cancel_tests {
             &mut frame,
         )
         .unwrap();
-        frame[..wire_len].to_vec()
+        frame[..wire_bytes].to_vec()
     }
 
     #[test]

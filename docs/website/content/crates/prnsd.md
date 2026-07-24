@@ -4,7 +4,7 @@
 without writing any code.
 
 - Run a Reticulum router on your laptop, server, or Raspberry Pi.
-- Bridge interfaces — pair a LoRa radio over USB with a WiFi or
+- Bridge interfaces — pair a LoRa radio over USB with a Wi-Fi or
   Ethernet link, so your mesh reaches further than any one device.
 - Develop and test apps that talk to a real node over the local
   socket, the way Sideband and Nomadnet already do.

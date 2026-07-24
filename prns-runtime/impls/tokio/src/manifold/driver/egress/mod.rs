@@ -504,7 +504,7 @@ pub(super) fn enqueue_announce_for_wire(
     masked: &mut [u8],
     origin: AnnounceOrigin,
 ) {
-    let (outcome, wire_len) = match ifac_for(ifacs, target) {
+    let (outcome, wire_bytes) = match ifac_for(ifacs, target) {
         Some(entry) => {
             let Some(masked_len) = entry.context.mask_outbound(bytes, masked) else {
                 egress.record_announce(
@@ -524,7 +524,7 @@ pub(super) fn enqueue_announce_for_wire(
         EgressEnqueueOutcome::LaneFull => AnnounceEgressOutcome::LaneFull,
         EgressEnqueueOutcome::LaneMissing => AnnounceEgressOutcome::LaneMissing,
     };
-    egress.record_announce(target, wire_len, origin, outcome);
+    egress.record_announce(target, wire_bytes, origin, outcome);
 }
 
 /// A paced announce is broadcast-sized by construction, so its mask scratch fits on the stack — the wire-sized [`WireScratch`] is reserved for the frame paths.

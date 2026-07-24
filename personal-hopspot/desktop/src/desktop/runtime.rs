@@ -49,7 +49,7 @@ pub(super) fn classify(
     if id == USB_INTERFACE_ID {
         Some((CardKind::Usb, screen::card_label("USB")))
     } else if id == wifi_id {
-        Some((CardKind::Wifi, screen::card_label("WiFi/LAN")))
+        Some((CardKind::Wifi, screen::card_label("Wi-Fi/LAN")))
     } else if Some(id) == tcp_id {
         Some((
             CardKind::Tcp,
@@ -58,7 +58,7 @@ pub(super) fn classify(
     } else if id.kind() == Some(InterfaceKind::BluetoothAuto) {
         Some((CardKind::Ble, screen::card_label("BLE")))
     } else if id.kind() == Some(InterfaceKind::WifiDirect) {
-        Some((CardKind::Wifi, screen::card_label("WiFi-Dir")))
+        Some((CardKind::Wifi, screen::card_label("Wi-Fi Direct")))
     } else {
         let bytes = id.as_bytes();
         let (kind, tag) = match id.kind() {

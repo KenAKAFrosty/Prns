@@ -754,20 +754,20 @@ pub(super) fn file_results(
     );
     if is_transport {
         println!(
-            "SUMMARY wire-driver cpu={initiator_cpu:.2}s peak_rss={:.1}MiB",
+            "SUMMARY wire-driver cpu={initiator_cpu:.2} s peak_rss={:.1} MiB",
             initiator_rss as f64 / (1024.0 * 1024.0),
         );
     } else {
         println!(
-            "SUMMARY initiator cpu={initiator_cpu:.2}s peak_rss={:.1}MiB | \
-             responder cpu={responder_cpu:.2}s peak_rss={:.1}MiB",
+            "SUMMARY initiator cpu={initiator_cpu:.2} s peak_rss={:.1} MiB | \
+             responder cpu={responder_cpu:.2} s peak_rss={:.1} MiB",
             initiator_rss as f64 / (1024.0 * 1024.0),
             responder_rss as f64 / (1024.0 * 1024.0),
         );
     }
     if let Some(relay) = &relay {
         println!(
-            "SUMMARY relay cpu={:.2}s peak_rss={:.1}MiB",
+            "SUMMARY relay cpu={:.2} s peak_rss={:.1} MiB",
             relay.cpu_seconds,
             relay.peak_rss_bytes as f64 / (1024.0 * 1024.0),
         );

@@ -231,7 +231,7 @@ class UsbLink(private val context: Context) {
                 Log.w(
                     TAG,
                     "startup RX watchdog: tx=$txTotal rx=$rxTotal after " +
-                        "${now - sessionStartedMs}ms; reopening USB Auto",
+                        "${now - sessionStartedMs} ms; reopening USB Auto",
                 )
                 recoverAfterIoError()
             }

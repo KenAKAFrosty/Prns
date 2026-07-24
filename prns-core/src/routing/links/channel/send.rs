@@ -49,7 +49,7 @@ pub fn channel_retry_timeout_ms(rtt: RttMillis, tries: u8, in_flight_count: usiz
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SendToChannelDispatch {
-    pub wire_len: usize,
+    pub wire_bytes: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -144,7 +144,7 @@ impl<S: StorageLayout> EngineState<S> {
             0,
             in_flight_count,
         )));
-        let wire_len = write_link_packet(
+        let wire_bytes = write_link_packet(
             &send.link_id,
             key,
             *mtu,
@@ -159,7 +159,7 @@ impl<S: StorageLayout> EngineState<S> {
             DestinationType::Link,
             &send.link_id.to_address(),
             WireContext::Channel,
-            &buf[HEADER_MIN_LEN..wire_len],
+            &buf[HEADER_MIN_LEN..wire_bytes],
         );
         let outcome = self.channels.push_outstanding(
             index,
@@ -178,7 +178,7 @@ impl<S: StorageLayout> EngineState<S> {
             TxOutcome::Tracked => {
                 self.channels.set_next_tx_sequence(index, sequence.next());
                 self.stretch_channel_deadlines(index, rtt);
-                Ok(SendToChannelDispatch { wire_len })
+                Ok(SendToChannelDispatch { wire_bytes })
             }
             TxOutcome::Full => Err(SendToChannelWriteError::WindowFull),
         }
@@ -367,11 +367,11 @@ impl<S: StorageLayout> EngineState<S> {
             }
             _ => None,
         };
-        if let Some(wire_len) = resealed {
+        if let Some(wire_bytes) = resealed {
             if interfaces.is_egress_eligible(fire_on, Egress::Transmit) {
                 sink(EngineReaction::Directive(Directive::Send {
                     target: fire_on,
-                    bytes: &frame[..wire_len],
+                    bytes: &frame[..wire_bytes],
                 }));
             }
         }
@@ -443,7 +443,7 @@ impl<S: StorageLayout> EngineState<S> {
                 if interfaces.is_egress_eligible(target, Egress::Transmit) {
                     sink(EngineReaction::Directive(Directive::Send {
                         target,
-                        bytes: &buf[..dispatch.wire_len],
+                        bytes: &buf[..dispatch.wire_bytes],
                     }));
                 }
             }

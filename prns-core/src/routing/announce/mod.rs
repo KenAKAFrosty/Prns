@@ -289,12 +289,12 @@ impl<'a> Announce<'a> {
     pub fn signature_is_valid(&self) -> bool {
         // The scratch (16 + BROADCAST_MTU) always fits: the source payload is <= BROADCAST_MTU.
         let mut scratch = [0u8; TRUNCATED_HASH_BYTE_LEN + BROADCAST_MTU];
-        let Ok(signed_len) = self.write_signed_material(&mut scratch) else {
+        let Ok(signed_bytes) = self.write_signed_material(&mut scratch) else {
             return false;
         };
         ed25519_verify(
             self.public_keys.signing.as_ed25519(),
-            &scratch[..signed_len],
+            &scratch[..signed_bytes],
             &self.signature,
         )
         .is_ok()
@@ -323,14 +323,14 @@ impl<'a> Announce<'a> {
         };
 
         let mut scratch = [0u8; TRUNCATED_HASH_BYTE_LEN + BROADCAST_MTU];
-        let signed_len = announce
+        let signed_bytes = announce
             .write_signed_material(&mut scratch)
             .map_err(|BufferTooShort| AnnounceBuildError::AnnounceTooLarge)?;
-        announce.signature = signer.sign(&scratch[..signed_len]);
+        announce.signature = signer.sign(&scratch[..signed_bytes]);
         Ok(announce)
     }
 
-    pub fn wire_len(&self) -> usize {
+    pub fn wire_bytes(&self) -> usize {
         let ratchet_len = if self.ratchet.is_some() {
             RATCHET_BYTE_LEN
         } else {
@@ -370,7 +370,7 @@ impl<'a> Announce<'a> {
 
     /// Mirrors RNS `Destination.announce`'s `signed_data`.
     fn write_signed_material(&self, buf: &mut [u8]) -> Result<usize, BufferTooShort> {
-        let total = TRUNCATED_HASH_BYTE_LEN + self.wire_len() - SIGNATURE_BYTE_LEN;
+        let total = TRUNCATED_HASH_BYTE_LEN + self.wire_bytes() - SIGNATURE_BYTE_LEN;
         if buf.len() < total {
             return Err(BufferTooShort);
         }
@@ -388,7 +388,7 @@ impl<'a> Announce<'a> {
     }
 
     pub fn to_wire(&self, buf: &mut [u8]) -> Result<usize, BufferTooShort> {
-        let total = self.wire_len();
+        let total = self.wire_bytes();
         if buf.len() < total {
             return Err(BufferTooShort);
         }

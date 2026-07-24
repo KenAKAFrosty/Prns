@@ -309,13 +309,13 @@ impl<S: StorageLayout> EngineState<S> {
             let mut id = [0u8; TRUNCATED_HASH_BYTE_LEN];
             fill_entropy(&mut id);
             let mut request = [0u8; BROADCAST_MTU];
-            if let Ok(wire_len) =
+            if let Ok(wire_bytes) =
                 write_path_request_wire_packet(overdue.destination, transport_id, &id, &mut request)
             {
                 fan_frame(
                     interfaces,
                     path_request_fan_target,
-                    &request[..wire_len],
+                    &request[..wire_bytes],
                     sink,
                 );
                 self.recent_path_requests
@@ -342,7 +342,7 @@ impl<S: StorageLayout> EngineState<S> {
                     if interfaces.is_egress_eligible(target, Egress::Transmit) {
                         sink(EngineReaction::Directive(Directive::Send {
                             target,
-                            bytes: &buf[..dispatch.wire_len],
+                            bytes: &buf[..dispatch.wire_bytes],
                         }));
                     }
                 }

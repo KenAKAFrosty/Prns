@@ -1,6 +1,6 @@
 use core::fmt::Write as _;
 
-use embedded_graphics::mono_font::ascii::FONT_5X8;
+use embedded_graphics::mono_font::ascii::{FONT_4X6, FONT_5X8};
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
@@ -49,13 +49,13 @@ fn custom_row_value(row: CustomRow, profile: &RadioProfile) -> heapless::String<
             let _ = write!(value, "{}", spreading_factor as u8);
         }
         CustomRow::Bandwidth => {
-            let _ = write!(value, "{}k", bandwidth.hz() / 1000);
+            let _ = write!(value, "{} kHz", bandwidth.hz() / 1_000);
         }
         CustomRow::CodingRate => {
             let _ = write!(value, "4/{}", coding_rate.denominator());
         }
         CustomRow::TxPower => {
-            let _ = write!(value, "{}dB", profile.tx_power.dbm());
+            let _ = write!(value, "{} dBm", profile.tx_power.dbm());
         }
         CustomRow::FreqMhz | CustomRow::FreqKhz | CustomRow::Save | CustomRow::Back => {}
     }
@@ -92,7 +92,6 @@ fn lora_freq_mhz_text(hz: u32, place: Option<FreqPlace>) -> heapless::String<16>
 
 fn lora_freq_khz_text(hz: u32, place: Option<FreqPlace>) -> heapless::String<16> {
     let mut text = heapless::String::new();
-    let _ = text.push('.');
     push_freq_digit(
         &mut text,
         (hz / 100_000) % 10,
@@ -131,11 +130,11 @@ fn lora_custom_row_text(
     match row {
         CustomRow::FreqMhz => {
             let value = lora_freq_mhz_text(hz, active_place);
-            let _ = write!(text, "{label} {value}");
+            let _ = write!(text, "{value} {label}");
         }
         CustomRow::FreqKhz => {
             let value = lora_freq_khz_text(hz, active_place);
-            let _ = write!(text, "{label} {value}");
+            let _ = write!(text, "{value} {label}");
         }
         _ => {
             let value = custom_row_value(row, profile);
@@ -155,9 +154,14 @@ fn draw_lora_list_row<D: DrawTarget<Color = BinaryColor>>(
     text: &str,
     selected: bool,
 ) {
+    let character_count = text.chars().count() as i32;
+    let (font, character_width) = if lora_row_uses_compact_font(text) {
+        (&FONT_4X6, FONT_4X6_CHAR_W)
+    } else {
+        (&FONT_5X8, FONT_5X8_CHAR_W)
+    };
     let color = if selected {
-        let width =
-            (LORA_ROW_TEXT_X + text.chars().count() as i32 * FONT_5X8_CHAR_W + 1).max(0) as u32;
+        let width = (LORA_ROW_TEXT_X + character_count * character_width + 1).max(0) as u32;
         let _ = Rectangle::new(Point::new(0, y - 1), Size::new(width, LORA_ROW_BACKING_H))
             .into_styled(fill(BinaryColor::On))
             .draw(display);
@@ -171,9 +175,13 @@ fn draw_lora_list_row<D: DrawTarget<Color = BinaryColor>>(
     )
     .into_styled(fill(color))
     .draw(display);
-    let style = MonoTextStyle::new(&FONT_5X8, color);
+    let style = MonoTextStyle::new(font, color);
     let _ = Text::with_baseline(text, Point::new(LORA_ROW_TEXT_X, y), style, Baseline::Top)
         .draw(display);
+}
+
+fn lora_row_uses_compact_font(text: &str) -> bool {
+    LORA_ROW_TEXT_X + text.chars().count() as i32 * FONT_5X8_CHAR_W > WIDTH
 }
 
 fn region_choice_label(index: usize) -> &'static str {
@@ -245,11 +253,11 @@ fn lora_freq_row_text(
         }
         FreqRow::Mhz => {
             let value = lora_freq_mhz_text(hz, active_place);
-            let _ = write!(text, "MHz {value}");
+            let _ = write!(text, "{value} MHz");
         }
         FreqRow::Khz => {
             let value = lora_freq_khz_text(hz, active_place);
-            let _ = write!(text, "kHz {value}");
+            let _ = write!(text, "{value} kHz");
         }
         FreqRow::Save => {
             let _ = text.push_str("Save");
@@ -287,5 +295,68 @@ pub(in crate::screen::render) fn draw_lora_editor<D: DrawTarget<Color = BinaryCo
             draw_lora_frequency(display, cursor, edit, profile)
         }
         LoRaScreen::Custom { cursor, edit } => draw_lora_custom(display, cursor, edit, profile),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use personal_rns::interfaces::lora::DEFAULT_915_PROFILE;
+
+    #[test]
+    fn radio_values_use_their_natural_quantities_and_unit_order() {
+        assert_eq!(
+            custom_row_value(CustomRow::Bandwidth, &DEFAULT_915_PROFILE).as_str(),
+            "250 kHz"
+        );
+        assert_eq!(
+            custom_row_value(CustomRow::TxPower, &DEFAULT_915_PROFILE).as_str(),
+            "22 dBm"
+        );
+        assert_eq!(
+            lora_freq_row_text(
+                FreqRow::Mhz,
+                EditMode::Browsing,
+                false,
+                &DEFAULT_915_PROFILE,
+            )
+            .as_str(),
+            "915 MHz"
+        );
+        assert_eq!(
+            lora_freq_row_text(
+                FreqRow::Khz,
+                EditMode::Browsing,
+                false,
+                &DEFAULT_915_PROFILE,
+            )
+            .as_str(),
+            "000 kHz"
+        );
+    }
+
+    #[test]
+    fn fractional_frequency_digits_are_rendered_as_kilohertz() {
+        assert_eq!(lora_freq_khz_text(915_625_000, None).as_str(), "625");
+        assert_eq!(
+            lora_freq_khz_text(915_625_000, Some(FreqPlace::Tenths)).as_str(),
+            "[6]25"
+        );
+    }
+
+    #[test]
+    fn selected_unit_bearing_rows_fit_the_constrained_display() {
+        for row in [CustomRow::Bandwidth, CustomRow::TxPower] {
+            let text = lora_custom_row_text(row, EditMode::Field, true, &DEFAULT_915_PROFILE);
+            let character_width = if lora_row_uses_compact_font(&text) {
+                FONT_4X6_CHAR_W
+            } else {
+                FONT_5X8_CHAR_W
+            };
+            assert!(
+                LORA_ROW_TEXT_X + text.chars().count() as i32 * character_width <= WIDTH,
+                "{text:?} exceeds the display width"
+            );
+        }
     }
 }

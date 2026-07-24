@@ -179,10 +179,18 @@ fn render_advertisement_details(output: &mut String, details: &AdvertisementDeta
             spreading_factor,
             coding_rate,
         } => {
-            let _ = writeln!(output, "Frequency    : {frequency_hz} Hz");
-            let _ = writeln!(output, "Bandwidth    : {bandwidth_hz} Hz");
-            let _ = writeln!(output, "Sprd. Factor : {spreading_factor}");
-            let _ = writeln!(output, "Coding Rate  : {coding_rate}");
+            let _ = writeln!(
+                output,
+                "Frequency    : {}",
+                format_si_frequency(*frequency_hz)
+            );
+            let _ = writeln!(
+                output,
+                "Bandwidth    : {}",
+                format_si_frequency(u64::from(*bandwidth_hz))
+            );
+            let _ = writeln!(output, "Spreading SF : SF{spreading_factor}");
+            let _ = writeln!(output, "Coding Rate  : 4/{coding_rate}");
         }
         AdvertisementDetails::Weave {
             frequency_hz,
@@ -195,8 +203,16 @@ fn render_advertisement_details(output: &mut String, details: &AdvertisementDeta
             bandwidth_hz,
             modulation,
         } => {
-            let _ = writeln!(output, "Frequency    : {frequency_hz} Hz");
-            let _ = writeln!(output, "Bandwidth    : {bandwidth_hz} Hz");
+            let _ = writeln!(
+                output,
+                "Frequency    : {}",
+                format_si_frequency(*frequency_hz)
+            );
+            let _ = writeln!(
+                output,
+                "Bandwidth    : {}",
+                format_si_frequency(u64::from(*bandwidth_hz))
+            );
             let _ = writeln!(output, "Modulation   : {modulation}");
         }
     }
@@ -346,12 +362,35 @@ fn location_detailed(latitude: Option<f64>, longitude: Option<f64>, height: Opti
         (Some(latitude), Some(longitude)) => {
             let mut location = format!("{:.4}, {:.4}", round_four(latitude), round_four(longitude));
             if let Some(height) = height {
-                let _ = write!(location, ", {height}m h");
+                let _ = write!(location, " · altitude {height} m");
             }
             location
         }
         _ => String::from("Unknown"),
     }
+}
+
+fn format_si_frequency(hertz: u64) -> String {
+    if hertz >= 1_000_000 {
+        format_scaled_quantity(hertz, 1_000_000, "MHz")
+    } else if hertz >= 1_000 {
+        format_scaled_quantity(hertz, 1_000, "kHz")
+    } else {
+        format!("{hertz} Hz")
+    }
+}
+
+fn format_scaled_quantity(value: u64, scale: u64, unit: &str) -> String {
+    let whole = value / scale;
+    let remainder = value % scale;
+    if remainder == 0 {
+        return format!("{whole} {unit}");
+    }
+    let width = scale.ilog10() as usize;
+    let fractional = format!("{remainder:0width$}")
+        .trim_end_matches('0')
+        .to_string();
+    format!("{whole}.{fractional} {unit}")
 }
 
 fn round_four(value: f64) -> f64 {
@@ -405,4 +444,37 @@ fn unix_time_millis() -> InstantMillis {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{format_si_frequency, location_detailed, render_advertisement_details};
+    use personal_rns::interface_discovery::AdvertisementDetails;
+
+    #[test]
+    fn radio_details_use_practitioner_units_and_lora_notation() {
+        let mut output = String::new();
+        render_advertisement_details(
+            &mut output,
+            &AdvertisementDetails::RNode {
+                frequency_hz: 868_100_000,
+                bandwidth_hz: 125_000,
+                spreading_factor: 8,
+                coding_rate: 5,
+            },
+        );
+        assert!(output.contains("868.1 MHz"));
+        assert!(output.contains("125 kHz"));
+        assert!(output.contains("SF8"));
+        assert!(output.contains("4/5"));
+        assert_eq!(format_si_frequency(915), "915 Hz");
+    }
+
+    #[test]
+    fn location_height_is_presented_as_altitude_in_metres() {
+        assert_eq!(
+            location_detailed(Some(41.0), Some(-87.0), Some(180.0)),
+            "41.0000, -87.0000 · altitude 180 m"
+        );
+    }
 }

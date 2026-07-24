@@ -4,7 +4,7 @@ Browser and JavaScript-host bindings for Prns. The TypeScript layer is the
 consumer API; the runtime still lives in the shared Rust core.
 
 The browser-facing transport helpers live under `prns.interfaces`: WebUSB and
-Bluetooth talk to nearby devices, while `prns.interfaces.webSocket.connect(url)`
+Bluetooth LE talk to nearby devices, while `prns.interfaces.webSocket.connect(url)`
 opens a browser WebSocket client to a local or public Prns WebSocket endpoint.
 Each binary WebSocket message carries one Prns wire frame.
 
@@ -50,8 +50,11 @@ Build it and stage its static assets into the documentation site:
 ./tools/prns build wasm-docs stage
 ```
 
-The staged playground uses the size-optimized release WASM profile. `build:browser` remains the
+The staged playground uses the size-optimized release WebAssembly profile. `build:browser` remains the
 faster debug build for local smoke work.
+
+Raw runtime resource events name byte quantities explicitly, including
+`uncompressedDataBytes` and `totalSizeBytes`.
 
 Serve the documentation public directory from the repo root:
 

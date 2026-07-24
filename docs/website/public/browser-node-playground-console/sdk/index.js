@@ -106,7 +106,7 @@ export class BrowserLocalStorageBleIdentityStore {
             const bytes = decodeBase64(encoded);
             if (bytes.length !== expectedLength) {
                 return Tag("StoredStableIdentityInvalid", {
-                    detail: `stored BLE identity has ${bytes.length} bytes; expected ${expectedLength}`,
+                    detail: `stored Bluetooth LE identity has ${bytes.length} bytes; expected ${expectedLength}`,
                 });
             }
             return Tag("Loaded", bytes);
@@ -2395,7 +2395,7 @@ async function loadOrCreateBleIdentity(store) {
     catch (error) {
         return Tag("StableIdentityUnavailable", {
             interface: "bluetooth",
-            detail: `load BLE identity: ${describeHostError(error)}`,
+            detail: `load Bluetooth LE identity: ${describeHostError(error)}`,
         });
     }
     if (loaded.tag === "Loaded") {
@@ -2404,7 +2404,7 @@ async function loadOrCreateBleIdentity(store) {
             ? Tag("Available", validated.data)
             : Tag("StableIdentityUnavailable", {
                 interface: "bluetooth",
-                detail: `stored BLE identity has ${validated.data.actualLength} bytes; expected ${BLE_IDENTITY_LENGTH}`,
+                detail: `stored Bluetooth LE identity has ${validated.data.actualLength} bytes; expected ${BLE_IDENTITY_LENGTH}`,
             });
     }
     if (loaded.tag !== "Missing") {
@@ -2420,14 +2420,14 @@ async function loadOrCreateBleIdentity(store) {
     catch (error) {
         return Tag("StableIdentityUnavailable", {
             interface: "bluetooth",
-            detail: `generate BLE identity: ${describeHostError(error)}`,
+            detail: `generate Bluetooth LE identity: ${describeHostError(error)}`,
         });
     }
     const validated = bleIdentity(generatedBytes);
     if (validated.tag !== "ValidBleIdentity") {
         return Tag("StableIdentityUnavailable", {
             interface: "bluetooth",
-            detail: `generated BLE identity has ${validated.data.actualLength} bytes; expected ${BLE_IDENTITY_LENGTH}`,
+            detail: `generated Bluetooth LE identity has ${validated.data.actualLength} bytes; expected ${BLE_IDENTITY_LENGTH}`,
         });
     }
     const generated = validated.data;
@@ -2438,7 +2438,7 @@ async function loadOrCreateBleIdentity(store) {
     catch (error) {
         return Tag("StableIdentityUnavailable", {
             interface: "bluetooth",
-            detail: `save BLE identity: ${describeHostError(error)}`,
+            detail: `save Bluetooth LE identity: ${describeHostError(error)}`,
         });
     }
     if (saved.tag !== "Saved") {

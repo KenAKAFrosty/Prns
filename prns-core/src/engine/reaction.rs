@@ -131,7 +131,7 @@ pub enum Journaled<'a> {
         link_id: LinkId,
         hash: ResourceHash,
         stream: &'a [u8],
-        uncompressed_data_len: u64,
+        uncompressed_data_bytes: u64,
     },
 
     /// One segment of a split resource landed / progress toward [`Journaled::ResourceAssembled`].
@@ -148,7 +148,7 @@ pub enum Journaled<'a> {
     ResourceAssembled {
         link_id: LinkId,
         original_hash: ResourceHash,
-        total_size: u64,
+        total_size_bytes: u64,
     },
 
     RouteRemoved {

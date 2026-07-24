@@ -30,7 +30,7 @@ use crate::routing::links::resources::build_outgoing::{
 };
 use crate::routing::links::resources::streamed_open::StreamedOpen;
 use crate::routing::links::resources::{
-    sealed_transfer_len, ResourceHash, MAP_HASH_LEN, RESOURCE_NONCE_LEN,
+    sealed_transfer_bytes, ResourceHash, MAP_HASH_LEN, RESOURCE_NONCE_LEN,
 };
 use crate::routing::links::{LinkId, LinkKey};
 #[cfg(feature = "runtime-metrics")]
@@ -189,7 +189,7 @@ pub(super) struct StagedSealJob {
     pub(super) link_id: LinkId,
     pub(super) key: LinkKey,
     pub(super) sdu: usize,
-    pub(super) nonce_prefixed_len: usize,
+    pub(super) nonce_prefixed_bytes: usize,
     pub(super) plaintext: Vec<u8>,
     pub(super) seal_iv: [u8; 16],
     pub(super) salts: [[u8; RESOURCE_NONCE_LEN]; SALT_REROLL_CAP],
@@ -265,7 +265,7 @@ pub(super) enum CryptoResult {
     StagedSealed {
         link_id: LinkId,
         stream_nonce: [u8; RESOURCE_NONCE_LEN],
-        nonce_prefixed_len: usize,
+        nonce_prefixed_bytes: usize,
         transfer: Vec<u8>,
         names: Vec<u8>,
         outcome: Result<SealedStagedResource, BuildOutgoingResourceError>,
@@ -469,16 +469,16 @@ fn run_crypto_job(job: CryptoJob) -> CryptoResult {
                 link_id,
                 key,
                 sdu,
-                nonce_prefixed_len,
+                nonce_prefixed_bytes,
                 plaintext,
                 seal_iv,
                 salts,
             } = *job;
             let mut stream_nonce = [0u8; RESOURCE_NONCE_LEN];
             stream_nonce.copy_from_slice(&plaintext[16..16 + RESOURCE_NONCE_LEN]);
-            let stream_len = nonce_prefixed_len - RESOURCE_NONCE_LEN;
+            let stream_len = nonce_prefixed_bytes - RESOURCE_NONCE_LEN;
             let mut transfer = plaintext;
-            transfer.resize(sealed_transfer_len(stream_len), 0);
+            transfer.resize(sealed_transfer_bytes(stream_len), 0);
             let mut names = vec![0u8; transfer.len().div_ceil(sdu) * MAP_HASH_LEN];
             let mut fresh_salts = salts.into_iter();
             let outcome = seal_staged_resource(
@@ -486,7 +486,7 @@ fn run_crypto_job(job: CryptoJob) -> CryptoResult {
                 &seal_iv,
                 || fresh_salts.next().unwrap_or_default(),
                 sdu,
-                nonce_prefixed_len,
+                nonce_prefixed_bytes,
                 BuildRegions {
                     transfer: &mut transfer,
                     hashmap: &mut names,
@@ -495,7 +495,7 @@ fn run_crypto_job(job: CryptoJob) -> CryptoResult {
             CryptoResult::StagedSealed {
                 link_id,
                 stream_nonce,
-                nonce_prefixed_len,
+                nonce_prefixed_bytes,
                 transfer,
                 names,
                 outcome,

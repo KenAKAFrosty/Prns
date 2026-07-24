@@ -13,10 +13,16 @@ pub struct AutoBle {
     identity: BleIdentity,
 }
 
+/// Canonical name for the Bluetooth LE auto-interface constructor.
+pub type AutoBluetoothLe = AutoBle;
+
 pub struct ConfiguredAutoBle {
     identity: BleIdentity,
     policy: EffectiveInterfacePolicy,
 }
+
+/// Canonical name for a configured Bluetooth LE auto-interface.
+pub type ConfiguredAutoBluetoothLe = ConfiguredAutoBle;
 
 impl AutoBle {
     #[must_use]
@@ -50,7 +56,7 @@ impl AutoBle {
         })
     }
 
-    /// Produces a failed-but-supervised BLE attachment when native manager preparation itself
+    /// Produces a failed-but-supervised Bluetooth LE attachment when native manager preparation itself
     /// cannot be started. The core node and every other transport remain available.
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     pub fn unavailable(identity: BleIdentity) -> PreparedAutoBle {
@@ -70,6 +76,9 @@ pub struct AttachedBle {
     status: BluetoothAutoStatus,
 }
 
+/// Canonical name for an attached Bluetooth LE auto-interface.
+pub type AttachedBluetoothLe = AttachedBle;
+
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 pub struct PreparedAutoBle {
     identity: BleIdentity,
@@ -77,6 +86,10 @@ pub struct PreparedAutoBle {
     status: BluetoothAutoStatus,
     backend: Option<prns_ffi::bluetooth_auto::macos::PreparedMacosBleBackend>,
 }
+
+/// Canonical name for a prepared Apple-platform Bluetooth LE auto-interface.
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub type PreparedAutoBluetoothLe = PreparedAutoBle;
 
 impl AttachedBle {
     #[must_use]

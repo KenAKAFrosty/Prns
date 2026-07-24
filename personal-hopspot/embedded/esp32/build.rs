@@ -22,8 +22,9 @@ fn main() {
         // app/memory.x overrides esp-hal's bundled esp32s3 memory.x: the linker's `INCLUDE memory.x`
         // (from esp-hal's linkall.x) resolves it from the package root, ahead of esp-hal's copy. It
         // raises ORIGIN(dram2_seg) so the core-0 construction stack grows into the reclaimed heap
-        // region — needed for the full WiFi+LoRa+BLE coex firmware, harmless to the WiFi-only and
-        // BLE-only builds (no BT reserve / no WiFi controller leaves them DRAM to spare). Copied to
+        // region — needed for the full Wi-Fi + LoRa + Bluetooth LE coexistence firmware, harmless to
+        // Wi-Fi-only and Bluetooth LE-only builds (no Bluetooth reserve or Wi-Fi controller leaves
+        // them DRAM to spare). Copied to
         // OUT_DIR + put on the link search path as the explicit mechanism; rerun-if-changed relinks
         // when memory.x is edited.
         fs::copy("memory-esp32s3.x", out.join("memory.x")).unwrap();

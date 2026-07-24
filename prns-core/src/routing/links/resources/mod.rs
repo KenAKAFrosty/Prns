@@ -132,7 +132,7 @@ pub const fn resource_sdu(mtu: usize) -> usize {
 }
 
 /// IV ‖ PKCS#7-padded(stream nonce ‖ stream) ‖ MAC.
-pub const fn sealed_transfer_len(stream_len: usize) -> usize {
+pub const fn sealed_transfer_bytes(stream_len: usize) -> usize {
     let padded = ((stream_len + RESOURCE_NONCE_LEN) / 16 + 1) * 16;
     16 + padded + 32
 }
@@ -178,7 +178,7 @@ pub enum ResourceStrategy {
     #[default]
     AcceptNone,
     Accept {
-        max_uncompressed_len: u64,
+        max_uncompressed_bytes: u64,
         accept_compressed: bool,
     },
     /// RNS 1.4.0 `ACCEPT_APP`: the host's decider judges each unsolicited advertisement from its [`ResourceOffer`].
@@ -193,9 +193,9 @@ pub struct ResourceOffer {
     pub remote_identity: Option<crate::identity::IdentityHash>,
     pub hash: ResourceHash,
     /// The advertised `d`: on a split transfer this is the WHOLE transfer's uncompressed length, on every segment.
-    pub uncompressed_data_len: u64,
+    pub uncompressed_data_bytes: u64,
     /// This segment's sealed stream length on the wire.
-    pub sealed_transfer_len: usize,
+    pub sealed_transfer_bytes: usize,
     pub part_count: usize,
     pub segment_index: u64,
     pub total_segment_count: u64,
@@ -284,7 +284,7 @@ impl<'a> ResourceMetadata<'a> {
 pub struct ResourceSegment {
     pub index: u64,
     pub total_segments: u64,
-    pub total_data_size: u64,
+    pub total_data_bytes: u64,
 }
 
 impl ResourceSegment {
@@ -293,7 +293,7 @@ impl ResourceSegment {
         Self {
             index: 1,
             total_segments: 1,
-            total_data_size: data_len,
+            total_data_bytes: data_len,
         }
     }
 }

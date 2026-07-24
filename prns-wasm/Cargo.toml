@@ -6,7 +6,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/KenAKAFrosty/Prns"
 homepage = "https://reticulum.rs"
 rust-version = "1.90"
-description = "WASM and TypeScript-facing bindings for the Personal Reticulum engine"
+description = "WebAssembly and TypeScript-facing bindings for the Personal Reticulum engine"
 publish = false
 
 # Standalone workspace: the root workspace keeps the pure engine free of binding

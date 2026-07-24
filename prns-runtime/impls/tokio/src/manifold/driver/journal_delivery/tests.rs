@@ -94,13 +94,13 @@ fn route_resource_completes_and_retires_on_assembly() {
     let forwarded = delivery.route(Journaled::ResourceAssembled {
         link_id: RES_LINK,
         original_hash: ResourceHash::new([2; 32]),
-        total_size: 4096,
+        total_size_bytes: 4096,
     });
     assert!(forwarded.is_none());
     assert!(matches!(
         receiver.try_recv(),
         Ok(ResourceInbound::Complete {
-            total_size: 4096,
+            total_size_bytes: 4096,
             ..
         })
     ));
@@ -126,7 +126,10 @@ fn route_resource_delivers_a_single_segment_then_retires() {
     ));
     assert!(matches!(
         receiver.try_recv(),
-        Ok(ResourceInbound::Complete { total_size: 5, .. })
+        Ok(ResourceInbound::Complete {
+            total_size_bytes: 5,
+            ..
+        })
     ));
     assert!(
         delivery.resource_sinks.is_empty(),

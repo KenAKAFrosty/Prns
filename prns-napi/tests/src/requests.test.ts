@@ -37,7 +37,7 @@ test('link, request, respond, and unregistered-path refusal', async () => {
 
     const echoHash = requestPathHash('/echo');
     const result = await client.request(link.linkId, echoHash, Buffer.from('ping'), {
-      timeoutMs: 5000,
+      timeoutMillis: 5000,
     });
     assert.equal(Buffer.from(result.data).toString(), 'echo:ping');
     assert.ok(result.packed.length > result.data.length);
@@ -50,7 +50,7 @@ test('link, request, respond, and unregistered-path refusal', async () => {
     await assert.rejects(
       () =>
         client.request(link.linkId, requestPathHash('/missing'), Buffer.from('x'), {
-          timeoutMs: 2000,
+          timeoutMillis: 2000,
         }),
       (error: any) => error.code === 'PRNS_REQUEST_FAILED'
     );

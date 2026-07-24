@@ -55,7 +55,7 @@ fn print_report(transfers: usize, wall: Duration, total: &ResourceTransferProfil
         total.wire_bytes as f64 / transfers as f64 / 1024.0,
     );
     println!();
-    println!("stage                         total ms   per transfer us   share");
+    println!("stage                         total ms   per transfer µs   share");
     stage(
         "sender build+advertise",
         total.sender_offer,

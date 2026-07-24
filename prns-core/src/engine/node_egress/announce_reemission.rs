@@ -119,7 +119,7 @@ mod tests {
         let raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
         let (orig_header, orig_payload) = WirePacketHeader::parse(&raw).unwrap();
         let announce = Announce::from_wire(&orig_header, orig_payload).unwrap();
-        let exact_len = HEADER_MAX_LEN + announce.wire_len();
+        let exact_len = HEADER_MAX_LEN + announce.wire_bytes();
 
         let directive = ReemitAnnounce {
             announce,

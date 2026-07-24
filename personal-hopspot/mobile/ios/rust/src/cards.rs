@@ -71,7 +71,7 @@ pub fn dummy_cards() -> HVec<Card, MAX_CARDS> {
     ];
     snapshots_to_cards(&snapshots, |id| match id.as_bytes()[0] {
         1 => Some((CardKind::Usb, card_label("USB"))),
-        2 => Some((CardKind::Wifi, card_label("WiFi/LAN"))),
+        2 => Some((CardKind::Wifi, card_label("Wi-Fi/LAN"))),
         3 => Some((CardKind::EspNow, card_label("ESP-NOW"))),
         4 => Some((CardKind::Ble, card_label("BLE"))),
         5 => Some((CardKind::LoRa, card_label("LoRa"))),

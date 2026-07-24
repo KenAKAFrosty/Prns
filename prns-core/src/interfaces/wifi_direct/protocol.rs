@@ -1,4 +1,4 @@
-/// Distinct from WiFi Auto's rendezvous port so both listeners can coexist.
+/// Distinct from Wi-Fi Auto's rendezvous port so both listeners can coexist.
 pub const WIFI_DIRECT_RENDEZVOUS_PORT: u16 = 42_717;
 
 pub const WIFI_DIRECT_BEACON_PORT: u16 = 42_718;

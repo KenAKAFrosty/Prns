@@ -28,7 +28,7 @@ interfaces-section-hot-note = Prns 接口支持热插拔：无需重启节点即
 
 interfaces-radio-label = 无线
 interfaces-radio-headline = 面向设备和开发板的近距离链路
-interfaces-radio-body = BLE Auto-interface、ESP-NOW 和 LoRa 将附近设备、开发板集群和长距离链路带入同一个 Reticulum mesh。
+interfaces-radio-body = Bluetooth LE Auto-interface、ESP-NOW 和 LoRa 将附近设备、开发板集群和长距离链路带入同一个 Reticulum mesh。
 
 interfaces-lan-label = LAN
 interfaces-lan-headline = 自动发现的本地链路 peers

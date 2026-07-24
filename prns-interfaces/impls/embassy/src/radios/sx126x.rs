@@ -934,8 +934,11 @@ mod tests {
             has(&[0x8B, 0x08, 0x04, 0x01, 0x00]),
             "SetModulationParams SF8/BW125/CR45/LDRO0"
         );
-        assert!(has(&[0x95, 0x02, 0x02, 0x00, 0x01]), "SetPaConfig 14dBm");
-        assert!(has(&[0x8E, 0x16, 0x02]), "SetTxParams power22/ramp40us");
+        assert!(has(&[0x95, 0x02, 0x02, 0x00, 0x01]), "SetPaConfig 14 dBm");
+        assert!(
+            has(&[0x8E, 0x16, 0x02]),
+            "SetTxParams power 22 dBm/ramp 40 µs"
+        );
         assert!(
             has(&[0x86, 0x39, 0x30, 0x00, 0x00]),
             "SetRfFrequency 915 MHz"

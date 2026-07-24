@@ -319,12 +319,12 @@ fn parse_row(bytes: &[u8]) -> Option<(PersistedRouteRow<'_>, &[u8])> {
         _ => return None,
     };
     let (signature, rest) = rest.split_first_chunk::<SIGNATURE_BYTE_LEN>()?;
-    let (app_data_len, rest) = rest.split_first_chunk::<APP_DATA_LEN_PREFIX_LEN>()?;
-    let app_data_len = u16::from_le_bytes(*app_data_len) as usize;
-    if rest.len() < app_data_len {
+    let (app_data_bytes, rest) = rest.split_first_chunk::<APP_DATA_LEN_PREFIX_LEN>()?;
+    let app_data_bytes = u16::from_le_bytes(*app_data_bytes) as usize;
+    if rest.len() < app_data_bytes {
         return None;
     }
-    let (app_data, rest) = rest.split_at(app_data_len);
+    let (app_data, rest) = rest.split_at(app_data_bytes);
     let (&[ring_count], rest) = rest.split_first_chunk::<RING_COUNT_PREFIX_LEN>()?;
     let ring_bytes_len = ring_count as usize * ANNOUNCE_ID_WIRE_LEN;
     if rest.len() < ring_bytes_len {

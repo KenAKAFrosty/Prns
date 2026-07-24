@@ -83,7 +83,7 @@ fn render_shows_selected_global_row() {
 
 #[test]
 fn render_scrolls_local_docs_after_the_last_card() {
-    let cards = [test_card("USB"), test_card("BLE"), test_card("WiFi")];
+    let cards = [test_card("USB"), test_card("BLE"), test_card("Wi-Fi")];
     let mut state = test_ui_state();
     let local_docs = LocalDocsAccess {
         wifi_ssid: "Hopspot-EW53",
@@ -117,7 +117,7 @@ fn render_scrolls_local_docs_after_the_last_card() {
 
 #[test]
 fn render_shows_local_docs_access_details() {
-    let cards = [test_card("USB"), test_card("BLE"), test_card("WiFi")];
+    let cards = [test_card("USB"), test_card("BLE"), test_card("Wi-Fi")];
     let mut state = test_ui_state();
     let local_docs = LocalDocsAccess {
         wifi_ssid: "Hopspot-EW53",
@@ -297,7 +297,7 @@ fn render_shows_selected_interface_menu() {
 #[test]
 fn interface_menu_draws_detail_rows_below_actions() {
     let mut display = PanelDisplay::new();
-    let mut card = test_card("WiFi/LAN");
+    let mut card = test_card("Wi-Fi/LAN");
     card.kind = CardKind::Wifi;
     let mut details = InterfaceMenuDetails::empty();
     details.push_info("STA", "None");

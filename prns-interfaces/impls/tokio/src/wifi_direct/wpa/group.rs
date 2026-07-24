@@ -7,7 +7,7 @@ use prns_core::interfaces::wifi_direct::{DataPlanePlan, GroupRole, SegmentAddres
 const LINK_LOCAL_WAIT_ROUNDS: u32 = 50;
 const LINK_LOCAL_WAIT_STEP: Duration = Duration::from_millis(100);
 
-/// Android clients expect a WiFi Direct group owner at `192.168.49.1` after DHCP.
+/// Android clients expect a Wi-Fi Direct group owner at `192.168.49.1` after DHCP.
 const GO_ADDRESS: Ipv4Addr = Ipv4Addr::new(192, 168, 49, 1);
 const GO_ADDRESS_WAIT_ROUNDS: u32 = 60;
 const GO_ADDRESS_WAIT_STEP: Duration = Duration::from_millis(100);

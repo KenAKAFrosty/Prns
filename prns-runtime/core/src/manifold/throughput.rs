@@ -1,4 +1,4 @@
-//! The interface data-rate meter: the *active* transfer rate (while bytes are actually moving, how fast is the pipe?) averaged over the last few data events, not over wall-clock time. For example, a 15 KB burst that finishes in half a second moved at roughly 30 KB/s; no activity for another half-second still means 30 KB/s, not 15.
+//! The interface data-rate meter: the *active* transfer rate (while bytes are actually moving, how fast is the pipe?) averaged over the last few data events, not over wall-clock time. For example, a 15 kB burst that finishes in half a second moved at roughly 30 kB/s; no activity for another half-second still means 30 kB/s, not 15.
 
 use crate::engine::InstantMillis;
 use crate::interfaces::TransferRates;

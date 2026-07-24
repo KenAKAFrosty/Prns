@@ -31,6 +31,10 @@ pub use identity::{
     decode_persisted_ble_identity, encode_persisted_ble_identity, BleAddress, BleIdentity,
     PersistedBleIdentityError, BLE_IDENTITY_LEN, GROUP_ID, PERSISTED_BLE_IDENTITY_LEN,
 };
+/// Canonical name for a Bluetooth LE device address.
+pub type BluetoothLeAddress = BleAddress;
+/// Canonical name for a Bluetooth LE auto-interface identity.
+pub type BluetoothLeIdentity = BleIdentity;
 pub use policy::{
     defaults_for_bitrate, descriptor, role_for, ConnectionPolicy, PolicyAction, PolicyInput,
     BLE_BITRATE_GUESS_BPS, DIAL_FAILED_RETRY_TTL_MS, DIAL_PAUSE_MS, DIAL_RETRY_TTL_MS,

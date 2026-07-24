@@ -97,7 +97,7 @@ impl core::fmt::Display for RNodeBleTarget {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::FirstBondedRnode => formatter.write_str("the first bonded `RNode ` device"),
-            Self::Address(address) => write!(formatter, "BLE address {address}"),
+            Self::Address(address) => write!(formatter, "Bluetooth LE address {address}"),
             Self::Name(name) => write!(formatter, "BLE device named {:?}", name.as_str()),
         }
     }
@@ -259,7 +259,7 @@ mod tests {
     #[test]
     fn address_shaped_ble_targets_must_be_hexadecimal() {
         let error = RNodeTransportPlan::from_configured_port("ble://GG:BB:CC:DD:EE:FF".to_string())
-            .expect_err("malformed BLE address");
+            .expect_err("malformed Bluetooth LE address");
         assert_eq!(
             error,
             PlanErrorKind::InvalidSetting {

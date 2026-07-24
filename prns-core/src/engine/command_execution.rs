@@ -64,7 +64,7 @@ impl<S: StorageLayout> EngineState<S> {
                     &mut buf,
                 ) {
                     CommandedAnnounceWriteOutcome::Written {
-                        wire_len,
+                        wire_bytes,
                         ratchet_rotation,
                     } => {
                         #[cfg(feature = "runtime-metrics")]
@@ -73,7 +73,7 @@ impl<S: StorageLayout> EngineState<S> {
                             AnnounceTarget::AllInterfaces => FanTarget::All,
                             AnnounceTarget::Interface(interface) => FanTarget::Only(interface),
                         };
-                        fan_announce(interfaces, fanout, &buf[..wire_len], sink);
+                        fan_announce(interfaces, fanout, &buf[..wire_bytes], sink);
                         if ratchet_rotation == RatchetRotation::Minted {
                             sink(EngineReaction::Journaled(Journaled::SelfRatchetRotated {
                                 destination: announce.destination,
@@ -119,7 +119,7 @@ impl<S: StorageLayout> EngineState<S> {
                         fan_frame(
                             interfaces,
                             FanTarget::Only(dispatch.fire_on),
-                            &buf[..dispatch.wire_len],
+                            &buf[..dispatch.wire_bytes],
                             sink,
                         );
                         if let Some(culled) = dispatch.culled {
@@ -163,8 +163,8 @@ impl<S: StorageLayout> EngineState<S> {
 
                 let mut buf = [0u8; BROADCAST_MTU];
                 let settlement = match self.write_commanded_send_group(&send, entropy, &mut buf) {
-                    Ok(wire_len) => {
-                        fan_frame(interfaces, FanTarget::All, &buf[..wire_len], sink);
+                    Ok(wire_bytes) => {
+                        fan_frame(interfaces, FanTarget::All, &buf[..wire_bytes], sink);
                         Settlement::SendGroup(Ok(()))
                     }
                     Err(error) => Settlement::SendGroup(Err(SendGroupFailure::WriteFailed(error))),
@@ -181,8 +181,8 @@ impl<S: StorageLayout> EngineState<S> {
             CommandOutcome::OwesPathRequest { id, request } => {
                 let mut buf = [0u8; BROADCAST_MTU];
                 match self.write_commanded_path_request(id, &request, now, &mut buf) {
-                    PathRequestWriteOutcome::Written { wire_len, culled } => {
-                        fan_frame(interfaces, FanTarget::All, &buf[..wire_len], sink);
+                    PathRequestWriteOutcome::Written { wire_bytes, culled } => {
+                        fan_frame(interfaces, FanTarget::All, &buf[..wire_bytes], sink);
                         if let Some(culled) = culled {
                             settle(
                                 sink,
@@ -214,7 +214,7 @@ impl<S: StorageLayout> EngineState<S> {
                         fan_frame(
                             interfaces,
                             FanTarget::Only(dispatch.fire_on),
-                            &buf[..dispatch.wire_len],
+                            &buf[..dispatch.wire_bytes],
                             sink,
                         );
                     }
@@ -249,10 +249,10 @@ impl<S: StorageLayout> EngineState<S> {
                             .write_commanded_send_to_link(id, &send, now, &iv, slot)
                         {
                             Ok(dispatch) => {
-                                let wire_len = dispatch.wire_len;
+                                let wire_bytes = dispatch.wire_bytes;
                                 self.links.note_outbound(&send.link_id, now);
                                 wrote = Some(Ok(dispatch.culled));
-                                Some(wire_len)
+                                Some(wire_bytes)
                             }
                             Err(error) => {
                                 wrote = Some(Err(error));
@@ -328,7 +328,7 @@ impl<S: StorageLayout> EngineState<S> {
                             Ok(dispatch) => {
                                 self.links.note_outbound(&send.link_id, now);
                                 wrote = Some(Ok(()));
-                                Some(dispatch.wire_len)
+                                Some(dispatch.wire_bytes)
                             }
                             Err(error) => {
                                 wrote = Some(Err(error));
@@ -375,7 +375,7 @@ impl<S: StorageLayout> EngineState<S> {
                         fan_frame(
                             interfaces,
                             FanTarget::Only(dispatch.fire_on),
-                            &buf[..dispatch.wire_len],
+                            &buf[..dispatch.wire_bytes],
                             sink,
                         );
                         Settlement::Identify(Ok(()))
@@ -412,10 +412,10 @@ impl<S: StorageLayout> EngineState<S> {
                             .write_commanded_send_request(id, &request, now, &iv, slot)
                         {
                             Ok(dispatch) => {
-                                let wire_len = dispatch.wire_len;
+                                let wire_bytes = dispatch.wire_bytes;
                                 self.links.note_outbound(&request.link_id, now);
                                 wrote = Some(Ok(dispatch.culled));
-                                Some(wire_len)
+                                Some(wire_bytes)
                             }
                             Err(error) => {
                                 wrote = Some(Err(error));
@@ -488,10 +488,10 @@ impl<S: StorageLayout> EngineState<S> {
                             .write_commanded_respond(&respond, &iv, slot)
                         {
                             Ok(dispatch) => {
-                                let wire_len = dispatch.wire_len;
+                                let wire_bytes = dispatch.wire_bytes;
                                 self.links.note_outbound(&respond.link_id, now);
                                 wrote = Some(Ok(()));
-                                Some(wire_len)
+                                Some(wire_bytes)
                             }
                             Err(error) => {
                                 wrote = Some(Err(error));
@@ -549,7 +549,7 @@ impl<S: StorageLayout> EngineState<S> {
                             fan_frame(
                                 interfaces,
                                 FanTarget::Only(fire_on),
-                                &buf[..dispatch.wire_len],
+                                &buf[..dispatch.wire_bytes],
                                 sink,
                             );
                         }
@@ -615,7 +615,7 @@ impl<S: StorageLayout> EngineState<S> {
                 fan_frame(
                     interfaces,
                     FanTarget::Only(dispatch.fire_on),
-                    &buf[..dispatch.wire_len],
+                    &buf[..dispatch.wire_bytes],
                     sink,
                 );
                 if let Some(culled) = dispatch.culled {

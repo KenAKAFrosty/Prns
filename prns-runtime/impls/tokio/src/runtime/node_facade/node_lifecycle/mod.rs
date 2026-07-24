@@ -361,11 +361,11 @@ where
                     link_id,
                     hash,
                     stream,
-                    uncompressed_data_len,
+                    uncompressed_data_bytes,
                 } = &journaled
                 {
-                    let (link_id, hash, uncompressed_data_len) =
-                        (*link_id, *hash, *uncompressed_data_len);
+                    let (link_id, hash, uncompressed_data_bytes) =
+                        (*link_id, *hash, *uncompressed_data_bytes);
                     let stream = stream.to_vec();
                     let commands = inflate_commands.clone();
                     let admission = inflate_admission.clone().try_acquire_owned();
@@ -387,7 +387,7 @@ where
                         let plaintext = tokio::task::spawn_blocking(move || {
                             compression::decompress_bounded(
                                 &stream,
-                                resource_segment_decompression_bound(uncompressed_data_len),
+                                resource_segment_decompression_bound(uncompressed_data_bytes),
                             )
                             .unwrap_or_default()
                         })

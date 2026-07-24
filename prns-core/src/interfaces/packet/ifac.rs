@@ -151,13 +151,13 @@ impl IfacContext {
         if wire.len() <= ifac_end || wire[HEADER_FLAGS_INDEX] & IFAC_FLAG == 0 {
             return None;
         }
-        let wire_len = wire.len();
-        let clean_len = wire_len - size;
+        let wire_bytes = wire.len();
+        let clean_len = wire_bytes - size;
         let mut ifac = [0u8; IFAC_MAX_SIZE];
         ifac[..size].copy_from_slice(&wire[IFAC_START..ifac_end]);
         apply_rns_mask(&ifac[..size], &self.key[..], wire, IFAC_START..ifac_end);
         wire[HEADER_FLAGS_INDEX] &= !IFAC_FLAG;
-        wire.copy_within(ifac_end..wire_len, IFAC_START);
+        wire.copy_within(ifac_end..wire_bytes, IFAC_START);
 
         let expected = self.identity.sign(&wire[..clean_len]);
         ct_eq(&ifac[..size], &expected.0[SIGNATURE_BYTE_LEN - size..]).then_some(clean_len)
@@ -347,13 +347,13 @@ mod tests {
                 *byte = (index as u8).wrapping_mul(17).wrapping_add(3);
             }
             let mut wire = std::vec![0u8; clean_len + IfacSize::WIDE.bytes()];
-            let wire_len = context.mask_outbound(&clean, &mut wire).unwrap();
+            let wire_bytes = context.mask_outbound(&clean, &mut wire).unwrap();
             assert_eq!(
-                sha256(&wire[..wire_len]).as_slice(),
+                sha256(&wire[..wire_bytes]).as_slice(),
                 bytes_from_hex(expected_hash).as_slice(),
             );
             let opened_len = context
-                .unmask_inbound_in_place(&mut wire[..wire_len])
+                .unmask_inbound_in_place(&mut wire[..wire_bytes])
                 .unwrap();
             assert_eq!(&wire[..opened_len], clean.as_slice());
         }

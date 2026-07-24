@@ -48,8 +48,8 @@ fn main() -> ExitCode {
     }
 
     match mode {
-        Mode::Up => up(&compose, &compose_file, &log_dir),
-        Mode::Down => down(&compose, &compose_file, &log_dir),
+        Mode::Up => up(compose, &compose_file, &log_dir),
+        Mode::Down => down(compose, &compose_file, &log_dir),
     }
 }
 

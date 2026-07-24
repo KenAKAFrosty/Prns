@@ -29,7 +29,7 @@ pub enum SegmentFit {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AssemblyProgress {
     Assembling,
-    Complete { total_size: u64 },
+    Complete { total_size_bytes: u64 },
 }
 
 #[derive(Debug, Default)]
@@ -73,7 +73,7 @@ impl<C: IncomingAssemblyTable> IncomingAssemblies<C> {
             .set_progress(index, segments_received, received_total);
         if segments_received >= self.table.total_segments()[index] {
             Some(AssemblyProgress::Complete {
-                total_size: received_total,
+                total_size_bytes: received_total,
             })
         } else {
             Some(AssemblyProgress::Assembling)
@@ -180,7 +180,9 @@ mod tests {
         );
         assert_eq!(
             assemblies.advance(&link(1), 50),
-            Some(AssemblyProgress::Complete { total_size: 250 })
+            Some(AssemblyProgress::Complete {
+                total_size_bytes: 250
+            })
         );
     }
 

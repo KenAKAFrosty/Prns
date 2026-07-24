@@ -97,7 +97,7 @@ fn frame_announce_wire_packet(
     } else {
         HEADER_MIN_LEN
     };
-    let total_len = header_len + announce.wire_len();
+    let total_len = header_len + announce.wire_bytes();
     if buf.len() < total_len {
         return Err(WireError::BufferTooShort);
     }

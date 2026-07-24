@@ -76,7 +76,7 @@ pub fn write_link_close(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LinkCloseDispatch {
-    pub wire_len: usize,
+    pub wire_bytes: usize,
     pub fire_on: Option<InterfaceId>,
 }
 
@@ -121,7 +121,7 @@ impl<S: StorageLayout> EngineState<S> {
                 return Err(WriteLinkCloseError::NoSuchLink);
             }
         };
-        let wire_len =
+        let wire_bytes =
             write_link_close(link_id, key, iv, buf).map_err(|_| WriteLinkCloseError::Serialize)?;
         self.links.remove(link_id);
         self.channels.close(link_id);
@@ -130,7 +130,10 @@ impl<S: StorageLayout> EngineState<S> {
         if let Some(interface) = fire_on {
             self.mark_interface_dirty(interface);
         }
-        Ok(LinkCloseDispatch { wire_len, fire_on })
+        Ok(LinkCloseDispatch {
+            wire_bytes,
+            fire_on,
+        })
     }
 }
 
@@ -213,22 +216,22 @@ mod kani_proofs {
 
     #[kani::proof]
     fn keepalive_for_any_rtt_stays_inside_the_reference_clamp() {
-        let rtt_ms: u64 = kani::any();
-        let keepalive_ms = keepalive_ms_from(RttMillis::new(rtt_ms));
+        let rtt_millis: u64 = kani::any();
+        let keepalive_ms = keepalive_ms_from(RttMillis::new(rtt_millis));
         assert!(keepalive_ms >= 5_000);
         assert!(keepalive_ms <= 360_000);
     }
 
     #[kani::proof]
     fn stale_is_exactly_twice_any_clamped_keepalive() {
-        let rtt_ms: u64 = kani::any();
-        let keepalive_ms = keepalive_ms_from(RttMillis::new(rtt_ms));
+        let rtt_millis: u64 = kani::any();
+        let keepalive_ms = keepalive_ms_from(RttMillis::new(rtt_millis));
         assert_eq!(stale_ms_from(keepalive_ms), keepalive_ms * 2);
     }
 
     #[kani::proof]
     fn the_grace_never_dips_below_the_stale_grace_floor() {
-        let rtt_ms: u64 = kani::any();
-        assert!(timeout_grace_ms_from(RttMillis::new(rtt_ms)) >= STALE_GRACE_MS);
+        let rtt_millis: u64 = kani::any();
+        assert!(timeout_grace_ms_from(RttMillis::new(rtt_millis)) >= STALE_GRACE_MS);
     }
 }

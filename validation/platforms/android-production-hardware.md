@@ -291,7 +291,7 @@ each supported transport.
 | USB AOA | accessory negotiation, bidirectional payloads, detach, and reattach |
 | Shared instance | a same-signature client binds, obtains running status and RPC credentials, and exchanges traffic |
 
-Confirm that `WiFi Direct Lab` remains disconnected with the experimental
+Confirm that `Wi-Fi Direct` remains disconnected with the experimental
 disabled reason throughout the production run. Do not opt in to the transport
 for production evidence.
 
