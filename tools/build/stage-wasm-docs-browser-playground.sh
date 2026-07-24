@@ -7,6 +7,20 @@ example_dir="$wasm_dir/examples/browser-playground"
 build_dir="$wasm_dir/target/browser-playground"
 public_dir="$repo_root/docs/website/public/browser-node-playground-console"
 
+native_path() {
+    if command -v cygpath >/dev/null 2>&1; then
+        cygpath -w "$1"
+    else
+        printf '%s' "$1"
+    fi
+}
+
+home_native="$(native_path "$HOME")"
+cargo_native="$(native_path "${CARGO_HOME:-$HOME/.cargo}")"
+rustup_native="$(native_path "${RUSTUP_HOME:-$HOME/.rustup}")"
+repo_native="$(native_path "$repo_root")"
+export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--remap-path-prefix=$home_native=~ --remap-path-prefix=$cargo_native=/cargo --remap-path-prefix=$rustup_native=/rustc --remap-path-prefix=$repo_native=/prns"
+
 npm --prefix "$wasm_dir" run build:playground
 
 mkdir -p "$public_dir/sdk" "$public_dir/pkg"
