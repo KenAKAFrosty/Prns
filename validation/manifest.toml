@@ -690,6 +690,32 @@ inputs = ["validation/interop/cases/tcp-server-interop-smoke.sh", "validation/in
 artifacts = "validation-artifacts/results/interop-tcp-server"
 
 [[suite]]
+id = "interop-napi-tcp-server"
+domain = "interop"
+group = "essential"
+tiers = ["pr", "release"]
+platform = "linux"
+toolchain = "node"
+interpreter = "smoke"
+timeout_seconds = 420
+command = ["bash", "validation/interop/cases/napi-tcp-server-interop-smoke.sh"]
+inputs = ["validation/interop/cases/napi-tcp-server-interop-smoke.sh", "validation/interop/peers/rns_tcp_client_peer.py", "prns-napi/tests/interop/tcp_server_host.mjs"]
+artifacts = "validation-artifacts/results/interop-napi-tcp-server"
+
+[[suite]]
+id = "interop-napi-tcp-client"
+domain = "interop"
+group = "essential"
+tiers = ["pr", "release"]
+platform = "linux"
+toolchain = "node"
+interpreter = "smoke"
+timeout_seconds = 420
+command = ["bash", "validation/interop/cases/napi-tcp-client-interop-smoke.sh"]
+inputs = ["validation/interop/cases/napi-tcp-client-interop-smoke.sh", "validation/interop/peers/rns_tcp_server_peer.py", "prns-napi/tests/interop/tcp_client_probe.mjs"]
+artifacts = "validation-artifacts/results/interop-napi-tcp-client"
+
+[[suite]]
 id = "interop-rnid-local"
 domain = "interop"
 group = "utility"
