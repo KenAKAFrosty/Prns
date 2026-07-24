@@ -11,6 +11,7 @@ resolver = "2"
 
 [features]
 default = []
+source-archive = ["personal-hopspot-core/source-archive"]
 
 [[bin]]
 name = "personal-hopspot-desktop"

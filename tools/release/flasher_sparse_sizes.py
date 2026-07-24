@@ -40,21 +40,39 @@ def build_report(manifest: dict) -> dict:
                 raise ValueError(f"sparse-size report encountered an invalid part for {board}")
             sizes.append(size)
         total = sum(sizes)
+        source = target.get("source")
+        source_bytes = 0
+        if source is not None:
+            source_bytes = source.get("size") if isinstance(source, dict) else None
+            if (
+                not isinstance(source_bytes, int)
+                or isinstance(source_bytes, bool)
+                or source_bytes <= 0
+                or source_bytes > total
+            ):
+                raise ValueError(
+                    f"sparse-size report encountered invalid source bytes for {board}"
+                )
+        code_total = total - source_bytes
         record = {
             "board_slug": board,
             "transport": transport,
             "part_count": len(parts),
             "total_bytes": total,
+            "embedded_source_bytes": source_bytes,
+            "code_payload_bytes": code_total,
         }
         baseline = MERGED_BASELINES.get(board)
         if baseline is not None:
             record["merged_baseline_bytes"] = baseline
-            record["reduction_basis_points"] = (baseline - total) * 10_000 // baseline
+            record["reduction_basis_points"] = (
+                (baseline - code_total) * 10_000 // baseline
+            )
             if board in SPARSE_BASELINES:
                 maximum = baseline * (100 - REQUIRED_REDUCTION_PERCENT) // 100
-                if total > maximum:
+                if code_total > maximum:
                     raise ValueError(
-                        f"{board} sparse total {total} exceeds {maximum}; "
+                        f"{board} sparse code payload {code_total} exceeds {maximum}; "
                         f"the {REQUIRED_REDUCTION_PERCENT}% reduction gate failed"
                     )
                 record.update(
@@ -76,7 +94,7 @@ def build_report(manifest: dict) -> dict:
         raise ValueError(f"sparse-size report target set differs: {sorted(boards)}")
     esp_reports = [record for record in reports if record["board_slug"] in MERGED_BASELINES]
     merged_total = sum(record["merged_baseline_bytes"] for record in esp_reports)
-    sparse_total = sum(record["total_bytes"] for record in esp_reports)
+    sparse_total = sum(record["code_payload_bytes"] for record in esp_reports)
     maximum_sparse_total = (
         merged_total * (100 - REQUIRED_REDUCTION_PERCENT) // 100
     )
@@ -116,10 +134,15 @@ def render_summary(report: dict) -> list[str]:
             f"{target['board_slug']}: {target['total_bytes']} bytes "
             f"across {target['part_count']} part(s); {target['gate']}"
         )
+        if target["embedded_source_bytes"]:
+            line += (
+                f"; {target['code_payload_bytes']} code bytes plus "
+                f"{target['embedded_source_bytes']} embedded source bytes"
+            )
         if "merged_baseline_bytes" in target:
             line += (
                 f" versus {target['merged_baseline_bytes']} bytes merged "
-                f"({target['reduction_basis_points'] / 100:.2f}% reduction)"
+                f"({target['reduction_basis_points'] / 100:.2f}% code reduction)"
             )
         lines.append(line)
     return lines

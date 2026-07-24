@@ -14,6 +14,7 @@ use crate::routing::links::request::{
     packed_binary_len, response_envelope_prefix, write_packed_binary_header,
     write_response_plaintext, MAX_PACKED_BINARY_HEADER_LEN, RESPONSE_WIRE_OVERHEAD,
 };
+use crate::routing::links::resources::send::STATIC_RESPONSE_SEGMENT_BYTES;
 use crate::routing::links::resources::MAX_EFFICIENT_SIZE;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
@@ -21,8 +22,11 @@ use crate::units::RttMillis;
 
 use super::super::request_router::RespondToken;
 use super::super::SendError;
-use super::resource_transfer::{ResourceSendError, ResourceStreamOptions, SegmentCompression};
+use super::resource_transfer::{
+    ResourceSendError, ResourceStreamOptions, SegmentCompression, ENGINE_SEGMENT_LANES,
+};
 use super::PrnsNodeHandle;
+use prns_core::rncp::write_file_metadata;
 
 const RESPONSE_PACKET_CEILING: usize = LINK_MDU - RESPONSE_WIRE_OVERHEAD;
 
@@ -153,6 +157,8 @@ impl PrnsNodeHandle {
                             compression: SegmentCompression::AUTO,
                             answers_request: Some(request_id),
                             progress: None,
+                            segment_size: MAX_EFFICIENT_SIZE as u64,
+                            max_in_flight_segments: ENGINE_SEGMENT_LANES,
                         },
                     )
                     .await;
@@ -264,6 +270,60 @@ impl PrnsNodeHandle {
                 compression: SegmentCompression::AUTO,
                 answers_request: Some(responder.request_id),
                 progress: None,
+                segment_size: MAX_EFFICIENT_SIZE as u64,
+                max_in_flight_segments: ENGINE_SEGMENT_LANES,
+            },
+        )
+        .await
+        .map_err(|error| match error {
+            ResourceSendError::Source(error) => ResponseSendError::Source(error),
+            ResourceSendError::UnrepresentableLength => ResponseSendError::UnrepresentableLength,
+            ResourceSendError::Rejected(error) => {
+                ResponseSendError::Rejected(RespondFailure::Resource(error))
+            }
+            ResourceSendError::NodeStopped => ResponseSendError::NodeStopped,
+        })?;
+        Ok(responder.rtt)
+    }
+
+    /// Send a static response as a NomadNet-compatible named file without copying the complete
+    /// payload. Each segment is bounded to 256 KiB and the next segment is not read until the
+    /// current resource proof settles.
+    pub(crate) async fn respond_static_file_settled(
+        &self,
+        responder: RespondToken,
+        name: &'static str,
+        bytes: &'static [u8],
+    ) -> Result<RttMillis, ResponseSendError> {
+        let mut packed_metadata = [0u8; 6 + 2 + u8::MAX as usize];
+        let metadata_len = write_file_metadata(name.as_bytes(), &mut packed_metadata)
+            .map_err(|_| ResponseSendError::UnrepresentableLength)?;
+        let mut binary_header = [0u8; MAX_PACKED_BINARY_HEADER_LEN];
+        let binary_header_len = write_packed_binary_header(bytes.len(), &mut binary_header)
+            .map_err(|_| ResponseSendError::UnrepresentableLength)?;
+        let mut prefix = std::vec::Vec::with_capacity(RESPONSE_WIRE_OVERHEAD + binary_header_len);
+        prefix.extend_from_slice(&response_envelope_prefix(&responder.request_id));
+        prefix.extend_from_slice(&binary_header[..binary_header_len]);
+        let response_len = u64::try_from(prefix.len())
+            .ok()
+            .and_then(|prefix_len| {
+                u64::try_from(bytes.len())
+                    .ok()
+                    .and_then(|bytes_len| prefix_len.checked_add(bytes_len))
+            })
+            .ok_or(ResponseSendError::UnrepresentableLength)?;
+
+        self.send_resource_streaming(
+            responder.link_id,
+            response_len,
+            std::io::Cursor::new(prefix).chain(std::io::Cursor::new(bytes)),
+            ResourceStreamOptions {
+                packed_metadata: Some(packed_metadata[..metadata_len].into()),
+                compression: SegmentCompression::AUTO,
+                answers_request: Some(responder.request_id),
+                progress: None,
+                segment_size: STATIC_RESPONSE_SEGMENT_BYTES as u64,
+                max_in_flight_segments: 1,
             },
         )
         .await
@@ -309,6 +369,8 @@ impl PrnsNodeHandle {
                             compression: SegmentCompression::AUTO,
                             answers_request: Some(responder.request_id),
                             progress: None,
+                            segment_size: MAX_EFFICIENT_SIZE as u64,
+                            max_in_flight_segments: ENGINE_SEGMENT_LANES,
                         },
                     )
                     .await

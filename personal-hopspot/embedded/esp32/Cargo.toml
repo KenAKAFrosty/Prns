@@ -25,6 +25,11 @@ esp-now = ["esp-radio/esp-now", "esp-radio/coex", "esp-rtos/esp-radio", "persona
 lora = ["personal-rns/lora"]
 usb = ["personal-rns/usb"]
 tcp = ["wifi-auto", "personal-rns/tcp"]
+source-archive = [
+    "personal-hopspot-core/source-archive",
+    "personal-rns/large-static-responses",
+    "personal-rns/embassy-large-static-responses",
+]
 
 [dependencies]
 cfg-if = "1.0"

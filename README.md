@@ -6,12 +6,6 @@
   </a>
 </p>
 
-<!--
-Badges are deliberately limited to state that is real and verifiable today.
-No crates.io / docs.rs badges: every crate is `publish = false`, so those would 404.
-No coverage badge: CI does not upload coverage yet, so it would sit broken.
-The CI badge reads "no status" to anonymous viewers until the repo is public.
--->
 [![CI](https://github.com/KenAKAFrosty/Prns/actions/workflows/ci.yml/badge.svg)](https://github.com/KenAKAFrosty/Prns/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 [![MSRV](https://img.shields.io/badge/MSRV-1.90-orange.svg)](#minimum-supported-rust-version)
@@ -19,8 +13,19 @@ The CI badge reads "no status" to anonymous viewers until the repo is public.
 
 ## Getting started
 
-Visit [prns.dev](https://prns.dev) or [reticulum.rs](https://reticulum.rs), or run
-the docs site locally from source.
+Visit [prns.dev](https://prns.dev) or [reticulum.rs](https://reticulum.rs).
+
+The clone guides you on its own. With a stable Rust toolchain and Python 3.11
+or newer:
+
+- `cargo test` builds and tests the core workspace.
+- `./tools/prns list` discovers every supported build, device, release, and
+  repository operation; `./tools/prns explain TASK_ID` details one, and
+  `./tools/prns doctor` reports what your host is missing.
+- `python3 validation/run.py list` (`python` on Windows) discovers every test,
+  proof, and interoperability suite.
+- `git config core.hooksPath .githooks` enables the repository hooks, once per
+  clone.
 
 Building a Node.js, Electron, or Tauri application? The full node is on npm as
 [`personal-rns`](prns-napi/README.md) — the complete engine as a native addon,

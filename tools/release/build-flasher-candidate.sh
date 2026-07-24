@@ -85,7 +85,7 @@ python3 "$root/tools/release/validate-flasher-tester-roster.py" \
     --roster "$roster_source" \
     --version "$version"
 
-mkdir -p "$candidate" "$candidate/metadata" "$candidate/qualification"
+mkdir -p "$candidate" "$candidate/metadata" "$candidate/qualification" "$candidate/website"
 cp "$root/VERSION" "$candidate/VERSION"
 cp "$root/THIRD_PARTY_NOTICES.md" "$candidate/THIRD_PARTY_NOTICES.md"
 cp "$root/LICENSE-APACHE" "$candidate/LICENSE-APACHE"
@@ -114,12 +114,32 @@ python3 "$root/tools/release/write-flasher-build-metadata.py" \
     --output "$candidate/metadata/build.json" \
     --commit "$commit" \
     --source-date-epoch "$source_date_epoch"
+python3 "$root/tools/release/package-source-snapshot.py" \
+    --repository "$root" \
+    --commit "$commit" \
+    --version "$version" \
+    --output "$candidate/website/source.zip" \
+    --metadata "$candidate/metadata/source.json"
+export PRNS_SOURCE_ARCHIVE="$candidate/website/source.zip"
+export PRNS_SOURCE_VERSION="$version"
+export PRNS_SOURCE_COMMIT="$commit"
+export PRNS_SOURCE_SIZE
+PRNS_SOURCE_SIZE="$(wc -c < "$PRNS_SOURCE_ARCHIVE" | tr -d '[:space:]')"
+export PRNS_SOURCE_SHA256
+PRNS_SOURCE_SHA256="$(cut -d ' ' -f 1 "$candidate/website/source.zip.sha256")"
 
 cd "$root/docs/website"
-if [[ -e public/firmware || -e public/assets/flasher || -e public/flash-manifest.json ]]; then
-    echo "legacy generated hosted flasher assets remain under docs/website/public; clean them before a candidate build" >&2
-    exit 2
-fi
+for legacy_public_path in \
+    public/firmware \
+    public/assets/flasher \
+    public/flash-manifest.json \
+    public/source.zip \
+    public/source.zip.sha256; do
+    if [[ -e "$legacy_public_path" || -L "$legacy_public_path" ]]; then
+        echo "legacy generated hosted asset remains; clean it before a candidate build: $legacy_public_path" >&2
+        exit 2
+    fi
+done
 npm ci --ignore-scripts --no-audit --no-fund
 npm run test:flasher
 npm run build:css
@@ -171,13 +191,15 @@ rm -rf -- "$embedded_dist"
 PRNS_BUILD_VERSION="$version" \
 PRNS_BUILD_COMMIT="$commit" \
 PRNS_BUILD_CHANNEL="$channel" \
-PRNS_WRITE_PUBLIC_ASSETS=1 \
 dx build --platform web --debug-symbols false --release --locked
 
 hosted_dist="$root/docs/website/target/dx/reticulum-site/release/web/public"
 test -f "$hosted_dist/index.html"
 mkdir -p "$candidate/website/assets/flasher"
 cp -R "$hosted_dist/." "$candidate/website/"
+npm --prefix "$root/prns-wasm" ci --ignore-scripts --no-audit --no-fund
+bash "$root/tools/build/stage-wasm-docs-browser-playground.sh" \
+    "$candidate/website/browser-node-playground-console"
 cp "$root/docs/website/target/hosted-assets/prns-flash.js" \
     "$candidate/website/assets/flasher/prns-flash.js"
 cp "$root/THIRD_PARTY_NOTICES.md" "$candidate/website/THIRD_PARTY_NOTICES.md"

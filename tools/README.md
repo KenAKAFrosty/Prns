@@ -14,6 +14,33 @@ Start with:
 ./tools/prns verify
 ```
 
+`./tools/prns` is the canonical bootstrap and automation entrypoint. It can
+inspect the environment and identify a missing Cargo installation without
+requiring Cargo itself. After Cargo is installed, the repository-local
+`cargo tools` alias is an exact convenience doorway into the same task
+registry:
+
+```console
+cargo tools list
+cargo tools explain release.candidate.build
+cargo tools doctor release
+cargo tools verify
+```
+
+For example:
+
+```console
+cargo tools release firmware build -- heltec-v4 target/dev-flash
+cargo tools release source package -- --output target/source.zip
+cargo tools release candidate build -- target/candidate preview KEY_ID
+```
+
+The two forms accept the same task paths and arguments. `cargo tools` does not
+own any task definitions or setup logic; CI and bootstrap documentation can
+therefore continue to use `./tools/prns` without creating a second command
+system. Product and daemon commands remain separately named under
+`cargo prnsd`.
+
 The operator interface prints every task's purpose and side-effect class before
 execution. CI invokes the same named tasks and does not call implementation files
 directly. `tasks.toml` is the executable inventory; implementation modules not

@@ -170,6 +170,7 @@ pub enum IngestPacketOutcome<'p> {
         id: CommandId,
         link_id: LinkId,
         correlation: ResourceCorrelation,
+        last_segment: bool,
     },
     OwesResourcePull {
         link_id: LinkId,

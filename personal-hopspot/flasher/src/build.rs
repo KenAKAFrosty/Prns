@@ -7,8 +7,8 @@ use espflash::image_format::{idf::IdfBootloaderFormat, ImageFormat};
 use espflash::target::{Chip, XtalFrequency};
 use prns_flash_manifest::{
     sha256_hex, BoardBuild, BoardCatalog, BoardCatalogEntry, FlashManifest, FlashPart,
-    FlashPartKind, ReleaseChannel, ReleaseInfo, ReleaseVersion, SigningInfo, TargetManifest,
-    FLASH_MANIFEST_SCHEMA,
+    FlashPartKind, ReleaseChannel, ReleaseInfo, ReleaseVersion, SigningInfo, SourceArchiveIdentity,
+    TargetManifest, FLASH_MANIFEST_SCHEMA,
 };
 
 use crate::cli::ChannelArg;
@@ -19,6 +19,8 @@ use crate::toolchain::{capture_stdout, configure_esp_toolchain, run_status, rust
 
 const PARTITION_TABLE_OFFSET: u32 = 0x8000;
 const APPLICATION_OFFSET: u32 = 0x10000;
+const SOURCE_APPLICATION_HEADROOM: u64 = 1024 * 1024;
+const SOURCE_EMBED_OVERHEAD_ALLOWANCE: u64 = 64 * 1024;
 
 struct BuiltPart {
     descriptor: FlashPart,
@@ -54,8 +56,10 @@ pub(crate) fn assemble_manifest(
 ) -> Result<PathBuf, AppError> {
     let version = release_version(repo)?;
     let mut targets = Vec::with_capacity(catalog.boards.len());
+    let mut source_capabilities = Vec::with_capacity(catalog.boards.len());
     for board in &catalog.boards {
-        let record = board_output(out_root, &board.slug, &version).join("target.json");
+        let board_dir = board_output(out_root, &board.slug, &version);
+        let record = board_dir.join("target.json");
         let bytes = fs::read(&record).map_err(|error| {
             AppError::developer_artifact(format!(
                 "missing built target record {}: {error}",
@@ -69,16 +73,33 @@ pub(crate) fn assemble_manifest(
             ))
         })?;
         targets.push(target);
+        let capability_path = board_dir.join("source-capability.json");
+        let capability = fs::read(&capability_path)
+            .map_err(|error| {
+                AppError::developer_artifact(format!(
+                    "missing source capability record {}: {error}",
+                    capability_path.display()
+                ))
+            })
+            .and_then(|bytes| {
+                serde_json::from_slice::<serde_json::Value>(&bytes).map_err(|error| {
+                    AppError::developer_artifact(format!(
+                        "invalid source capability record {}: {error}",
+                        capability_path.display()
+                    ))
+                })
+            })?;
+        source_capabilities.push(capability);
     }
     let manifest = FlashManifest {
         schema: FLASH_MANIFEST_SCHEMA,
         release: ReleaseInfo {
-            version,
+            version: version.clone(),
             channel: match channel {
                 ChannelArg::Stable => ReleaseChannel::Stable,
                 ChannelArg::Preview => ReleaseChannel::Preview,
             },
-            commit,
+            commit: commit.clone(),
         },
         signing: SigningInfo { key_id },
         targets,
@@ -91,6 +112,25 @@ pub(crate) fn assemble_manifest(
         AppError::developer_manifest(format!("could not encode manifest: {error}"))
     })?;
     atomic_write(&path, &with_newline(json))?;
+    let capability_document = serde_json::to_vec_pretty(&serde_json::json!({
+        "schema": 1,
+        "version": version,
+        "commit": commit,
+        "targets": source_capabilities,
+    }))
+    .map_err(|error| {
+        AppError::developer_manifest(format!("could not encode source capabilities: {error}"))
+    })?;
+    let metadata_dir = out_root.join("metadata");
+    fs::create_dir_all(&metadata_dir).map_err(|error| {
+        AppError::developer_artifact(format!(
+            "could not create candidate metadata directory: {error}"
+        ))
+    })?;
+    atomic_write(
+        &metadata_dir.join("source-capabilities.json"),
+        &with_newline(capability_document),
+    )?;
     let notices = repo.join("THIRD_PARTY_NOTICES.md");
     fs::copy(&notices, out_root.join("THIRD_PARTY_NOTICES.md")).map_err(|error| {
         AppError::developer_artifact(format!("could not copy release notices: {error}"))
@@ -113,12 +153,103 @@ fn build_esp(
         &format!("Building {} developer firmware…", board.display_name),
     );
     let crate_dir = repo.join("personal-hopspot").join("embedded").join("esp32");
+    let partition_table = crate_dir.join(&build.partition_table);
+    let mut source = source_archive_identity(board, repo, version)?;
+    let base_parts = build_esp_parts(board, build, &crate_dir, &partition_table, version, false)?;
+    let mut capacity_downgrade = false;
+    let parts = if let Some(identity) = source.as_ref() {
+        let partition_bytes = factory_partition_bytes(&partition_table)?;
+        let base_application_bytes = application_part_bytes(&base_parts)?;
+        if !source_preflight_fits(base_application_bytes, identity.size, partition_bytes) {
+            eprintln!(
+                "SOURCE CAPABILITY DOWNGRADE: {} base application {} bytes plus source.zip {} bytes, {} bytes embedding allowance, and {} bytes reserve exceed its {}-byte application partition; keeping the compact build",
+                board.slug,
+                base_application_bytes,
+                identity.size,
+                SOURCE_EMBED_OVERHEAD_ALLOWANCE,
+                SOURCE_APPLICATION_HEADROOM,
+                partition_bytes
+            );
+            source = None;
+            capacity_downgrade = true;
+            base_parts
+        } else {
+            let source_parts =
+                build_esp_parts(board, build, &crate_dir, &partition_table, version, true)?;
+            let application_bytes = application_part_bytes(&source_parts)?;
+            if application_bytes.saturating_add(SOURCE_APPLICATION_HEADROOM) > partition_bytes {
+                eprintln!(
+                    "SOURCE CAPABILITY DOWNGRADE: {} source-enabled application is {} bytes and cannot retain the required {}-byte reserve in its {}-byte application partition; keeping the compact build",
+                    board.slug,
+                    application_bytes,
+                    SOURCE_APPLICATION_HEADROOM,
+                    partition_bytes
+                );
+                source = None;
+                capacity_downgrade = true;
+                base_parts
+            } else {
+                source_parts
+            }
+        }
+    } else {
+        base_parts
+    };
+    let output_dir = board_output(out_root, &board.slug, version);
+    fs::create_dir_all(&output_dir).map_err(|error| {
+        AppError::developer_artifact(format!(
+            "could not create {}: {error}",
+            output_dir.display()
+        ))
+    })?;
+    for part in &parts {
+        let filename = Path::new(&part.descriptor.path)
+            .file_name()
+            .ok_or_else(|| AppError::developer_artifact("firmware part path has no filename"))?;
+        atomic_write(&output_dir.join(filename), &part.bytes)?;
+    }
+    let target = target_record(
+        board,
+        parts.iter().map(|part| part.descriptor.clone()).collect(),
+        source,
+    );
+    write_target_record(&output_dir, &target)?;
+    write_source_capability_record(
+        &output_dir,
+        board,
+        target.source.as_ref(),
+        capacity_downgrade,
+    )?;
+    let source_bytes = target.source.as_ref().map_or(0, |source| source.size);
+    let (version, target) = validated_prepared_target(board, version, target)?;
+    report_sparse_size(board, &parts, source_bytes, reporter)?;
+    let prepared = PreparedTarget::bind(
+        version,
+        target,
+        parts.into_iter().map(|part| part.bytes).collect(),
+    )
+    .map_err(|error| AppError::developer_artifact(error.to_string()))?;
+    let target_record = output_dir.join("target.json");
+    Ok(BuildOutput {
+        prepared,
+        output_dir,
+        target_record,
+    })
+}
+
+fn build_esp_parts(
+    board: &BoardCatalogEntry,
+    build: &prns_flash_manifest::EspBuild,
+    crate_dir: &Path,
+    partition_table: &Path,
+    version: &str,
+    source_enabled: bool,
+) -> Result<Vec<BuiltPart>, AppError> {
     let elf = crate_dir
         .join("target")
         .join(&build.rust_target)
         .join("release")
         .join(&build.binary);
-    let partition_table = crate_dir.join(&build.partition_table);
     let mut cargo = Command::new("cargo");
     cargo
         .env_remove("RUSTUP_TOOLCHAIN")
@@ -132,7 +263,10 @@ fn build_esp(
         .arg("--target")
         .arg(&build.rust_target)
         .arg("-Zbuild-std=core,alloc")
-        .current_dir(&crate_dir);
+        .current_dir(crate_dir);
+    if source_enabled {
+        cargo.arg("--features").arg("source-archive");
+    }
     if build.rust_target.starts_with("xtensa-") {
         configure_esp_toolchain(&mut cargo)?;
     }
@@ -167,20 +301,13 @@ fn build_esp(
     let image = IdfBootloaderFormat::new(
         &elf_bytes,
         &flash_data,
-        Some(&partition_table),
+        Some(partition_table),
         None,
         Some(PARTITION_TABLE_OFFSET),
         Some("factory"),
     )
     .map_err(|error| {
         AppError::developer_build(format!("could not construct sparse ESP image: {error}"))
-    })?;
-    let output_dir = board_output(out_root, &board.slug, version);
-    fs::create_dir_all(&output_dir).map_err(|error| {
-        AppError::developer_artifact(format!(
-            "could not create {}: {error}",
-            output_dir.display()
-        ))
     })?;
     let mut parts = Vec::new();
     for segment in ImageFormat::from(image).flash_segments() {
@@ -197,8 +324,6 @@ fn build_esp(
             }
         };
         let bytes = segment.data.into_owned();
-        let path = output_dir.join(filename);
-        atomic_write(&path, &bytes)?;
         let descriptor = FlashPart {
             kind,
             path: release_part_path(&board.slug, version, filename),
@@ -209,25 +334,7 @@ fn build_esp(
         parts.push(BuiltPart { descriptor, bytes });
     }
     parts.sort_by_key(|part| part.descriptor.offset);
-    let target = target_record(
-        board,
-        parts.iter().map(|part| part.descriptor.clone()).collect(),
-    );
-    write_target_record(&output_dir, &target)?;
-    let (version, target) = validated_prepared_target(board, version, target)?;
-    report_sparse_size(board, &parts, reporter)?;
-    let prepared = PreparedTarget::bind(
-        version,
-        target,
-        parts.into_iter().map(|part| part.bytes).collect(),
-    )
-    .map_err(|error| AppError::developer_artifact(error.to_string()))?;
-    let target_record = output_dir.join("target.json");
-    Ok(BuildOutput {
-        prepared,
-        output_dir,
-        target_record,
-    })
+    Ok(parts)
 }
 
 fn build_uf2(
@@ -312,8 +419,9 @@ fn build_uf2(
         size: bytes.len() as u64,
         sha256: sha256_hex(&bytes),
     };
-    let target = target_record(board, vec![descriptor.clone()]);
+    let target = target_record(board, vec![descriptor.clone()], None);
     write_target_record(&output_dir, &target)?;
+    write_source_capability_record(&output_dir, board, None, false)?;
     let (version, target) = validated_prepared_target(board, version, target)?;
     reporter.phase(
         Phase::ArtifactReady,
@@ -330,7 +438,169 @@ fn build_uf2(
     })
 }
 
-fn target_record(board: &BoardCatalogEntry, parts: Vec<FlashPart>) -> TargetManifest {
+fn source_archive_identity(
+    board: &BoardCatalogEntry,
+    repo: &Path,
+    version: &str,
+) -> Result<Option<SourceArchiveIdentity>, AppError> {
+    if !board.source_archive_capable {
+        return Ok(None);
+    }
+    let Some(path) = std::env::var_os("PRNS_SOURCE_ARCHIVE") else {
+        return Ok(None);
+    };
+    let path = PathBuf::from(path);
+    if !path.is_absolute() {
+        return Err(AppError::developer_build(
+            "PRNS_SOURCE_ARCHIVE must be an absolute path",
+        ));
+    }
+    let bytes = fs::read(&path).map_err(|error| {
+        AppError::developer_artifact(format!(
+            "could not read PRNS_SOURCE_ARCHIVE {}: {error}",
+            path.display()
+        ))
+    })?;
+    let source_version = required_source_environment("PRNS_SOURCE_VERSION")?;
+    if source_version != version {
+        return Err(AppError::developer_build(format!(
+            "PRNS_SOURCE_VERSION {source_version:?} disagrees with repository VERSION {version:?}"
+        )));
+    }
+    let source_commit = required_source_environment("PRNS_SOURCE_COMMIT")?;
+    if source_commit.len() != 40
+        || !source_commit
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(AppError::developer_build(
+            "PRNS_SOURCE_COMMIT must be a lowercase full Git commit",
+        ));
+    }
+    let repository_commit = capture_stdout(
+        Command::new("git")
+            .arg("rev-parse")
+            .arg("HEAD")
+            .current_dir(repo),
+        "git rev-parse HEAD",
+    )?;
+    if repository_commit.trim() != source_commit {
+        return Err(AppError::developer_build(format!(
+            "PRNS_SOURCE_COMMIT {source_commit} disagrees with repository HEAD {}",
+            repository_commit.trim()
+        )));
+    }
+    let expected_size = required_source_environment("PRNS_SOURCE_SIZE")?
+        .parse::<u64>()
+        .map_err(|_| AppError::developer_build("PRNS_SOURCE_SIZE must be an integer"))?;
+    let expected_sha256 = required_source_environment("PRNS_SOURCE_SHA256")?;
+    if !is_sha256(&expected_sha256)
+        || u64::try_from(bytes.len()).ok() != Some(expected_size)
+        || sha256_hex(&bytes) != expected_sha256
+    {
+        return Err(AppError::developer_artifact(
+            "PRNS_SOURCE_ARCHIVE bytes disagree with canonical source metadata",
+        ));
+    }
+    Ok(Some(SourceArchiveIdentity {
+        route: "/file/source.zip".to_string(),
+        checksum_route: "/file/source.zip.sha256".to_string(),
+        size: expected_size,
+        sha256: expected_sha256,
+    }))
+}
+
+fn required_source_environment(name: &str) -> Result<String, AppError> {
+    std::env::var(name)
+        .map_err(|_| AppError::developer_build(format!("{name} is required for source serving")))
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn application_part_bytes(parts: &[BuiltPart]) -> Result<u64, AppError> {
+    parts
+        .iter()
+        .find(|part| part.descriptor.kind == FlashPartKind::Application)
+        .map(|part| part.descriptor.size)
+        .ok_or_else(|| AppError::developer_artifact("ESP image has no application part"))
+}
+
+fn source_preflight_fits(
+    base_application_bytes: u64,
+    source_archive_bytes: u64,
+    partition_bytes: u64,
+) -> bool {
+    base_application_bytes
+        .checked_add(source_archive_bytes)
+        .and_then(|bytes| bytes.checked_add(SOURCE_EMBED_OVERHEAD_ALLOWANCE))
+        .and_then(|bytes| bytes.checked_add(SOURCE_APPLICATION_HEADROOM))
+        .is_some_and(|required| required <= partition_bytes)
+}
+
+fn factory_partition_bytes(partition_table: &Path) -> Result<u64, AppError> {
+    let csv = fs::read_to_string(partition_table).map_err(|error| {
+        AppError::developer_artifact(format!(
+            "could not read partition table {}: {error}",
+            partition_table.display()
+        ))
+    })?;
+    for line in csv.lines() {
+        let fields = line.split(',').map(str::trim).collect::<Vec<_>>();
+        if fields.first().copied() == Some("factory") {
+            let size = fields.get(4).copied().unwrap_or_default();
+            return if let Some(hex) = size.strip_prefix("0x") {
+                u64::from_str_radix(hex, 16)
+            } else {
+                size.parse::<u64>()
+            }
+            .map_err(|_| AppError::developer_build("factory partition size is invalid"));
+        }
+    }
+    Err(AppError::developer_build(
+        "partition table has no factory application partition",
+    ))
+}
+
+fn write_source_capability_record(
+    output_dir: &Path,
+    board: &BoardCatalogEntry,
+    source: Option<&SourceArchiveIdentity>,
+    capacity_downgrade: bool,
+) -> Result<(), AppError> {
+    let status = if source.is_some() {
+        "serving"
+    } else if capacity_downgrade {
+        "capacity-downgrade"
+    } else {
+        "absent"
+    };
+    let json = serde_json::to_vec_pretty(&serde_json::json!({
+        "schema": 1,
+        "board_slug": board.slug,
+        "nominally_capable": board.source_archive_capable,
+        "status": status,
+        "source": source,
+        "reserve_bytes": source.map(|_| SOURCE_APPLICATION_HEADROOM),
+    }))
+    .map_err(|error| {
+        AppError::developer_manifest(format!("could not encode source capability: {error}"))
+    })?;
+    atomic_write(
+        &output_dir.join("source-capability.json"),
+        &with_newline(json),
+    )
+}
+
+fn target_record(
+    board: &BoardCatalogEntry,
+    parts: Vec<FlashPart>,
+    source: Option<SourceArchiveIdentity>,
+) -> TargetManifest {
     let esp = match &board.build {
         BoardBuild::Esp(build) => Some(build),
         BoardBuild::Uf2(_) => None,
@@ -350,6 +620,7 @@ fn target_record(board: &BoardCatalogEntry, parts: Vec<FlashPart>) -> TargetMani
         preparation_profile: board.preparation_profile.clone(),
         parts,
         provisioning: board.provisioning.clone(),
+        source,
     }
 }
 
@@ -435,16 +706,18 @@ fn prepare_embedded_site_bundle(
 fn report_sparse_size(
     board: &BoardCatalogEntry,
     parts: &[BuiltPart],
+    source_bytes: u64,
     reporter: Reporter,
 ) -> Result<(), AppError> {
     let total = parts
         .iter()
         .map(|part| part.bytes.len() as u64)
         .sum::<u64>();
+    let code_total = total.saturating_sub(source_bytes);
     if let Some((baseline, maximum)) = sparse_size_gate(&board.slug) {
-        if total > maximum {
+        if code_total > maximum {
             return Err(AppError::developer_artifact(format!(
-                "sparse artifact is {total} bytes versus the {baseline}-byte merged baseline and misses the 60% reduction gate (maximum {maximum})"
+                "sparse code payload is {code_total} bytes after excluding {source_bytes} embedded source bytes, versus the {baseline}-byte merged baseline, and misses the 60% reduction gate (maximum {maximum})"
             )));
         }
     }
@@ -452,7 +725,7 @@ fn report_sparse_size(
         Phase::ArtifactReady,
         Some(&board.slug),
         &format!(
-            "Sparse artifact ready: {total} bytes across {} parts",
+            "Sparse artifact ready: {total} bytes across {} parts ({source_bytes} embedded source bytes)",
             parts.len()
         ),
     );
@@ -552,5 +825,14 @@ mod tests {
             Some((7_639_296, 3_055_718))
         );
         assert_eq!(sparse_size_gate("xiao-esp32-c6"), None);
+    }
+
+    #[test]
+    fn source_preflight_includes_archive_overhead_and_required_reserve() {
+        let exact =
+            2_100_000 + 4_960_000 + SOURCE_EMBED_OVERHEAD_ALLOWANCE + SOURCE_APPLICATION_HEADROOM;
+        assert!(source_preflight_fits(2_100_000, 4_960_000, exact));
+        assert!(!source_preflight_fits(2_100_000, 4_960_000, exact - 1));
+        assert!(!source_preflight_fits(u64::MAX, 1, u64::MAX));
     }
 }

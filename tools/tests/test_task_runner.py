@@ -43,6 +43,19 @@ class TaskRegistryTests(unittest.TestCase):
         finally:
             orphan.unlink()
 
+    def test_python_cache_artifacts_are_not_tool_implementations(self) -> None:
+        cache = ROOT / "tools" / "release" / "__pycache__"
+        cache.mkdir(exist_ok=True)
+        artifact = cache / "task_runner_cache_test.cpython-999.pyc"
+        artifact.write_bytes(b"temporary interpreter cache")
+        try:
+            self.assertNotIn(
+                artifact.relative_to(ROOT).as_posix(),
+                runner.implementation_inventory(),
+            )
+        finally:
+            artifact.unlink()
+
     def test_scattered_component_script_is_rejected(self) -> None:
         directory = ROOT / ".task-runner-test-component" / "scripts"
         directory.mkdir(parents=True)
@@ -135,6 +148,32 @@ class TaskRegistryTests(unittest.TestCase):
         self.assertIn("Safety:", result.stdout)
         self.assertIn("Ownership:", result.stdout)
         self.assertIn("TOOLING_REGISTRY_OK", result.stdout)
+
+    def test_cargo_tools_is_a_thin_task_runner_alias(self) -> None:
+        cargo_config = tomllib.loads(
+            (ROOT / ".cargo" / "config.toml").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            cargo_config["alias"]["tools"],
+            "run --quiet -p prns-tools-command --",
+        )
+        result = subprocess.run(
+            ["cargo", "tools", "explain", "release.source.package"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertIn("Task: release.source.package", result.stdout)
+        self.assertIn("Effect: workspace-write", result.stdout)
+        passthrough = subprocess.run(
+            ["cargo", "tools", "release", "source", "package", "--", "--help"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertIn("--output OUTPUT", passthrough.stdout)
 
 
 if __name__ == "__main__":

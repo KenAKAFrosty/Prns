@@ -1,4 +1,6 @@
-use crate::{FlashPart, FlashPartKind, ReleaseChannel, TargetManifest, Transport};
+use crate::{
+    FlashPart, FlashPartKind, ReleaseChannel, SourceArchiveIdentity, TargetManifest, Transport,
+};
 
 use super::values::{
     AfterResetStrategy, BeforeResetStrategy, BoardId, ChipFamily, FlashFrequency, FlashMode,
@@ -51,6 +53,7 @@ pub(crate) struct TargetIdentity {
     pub(crate) silicon: String,
     pub(crate) interfaces: Vec<String>,
     pub(crate) preparation_profile: PreparationProfile,
+    pub(crate) source: Option<SourceArchiveIdentity>,
 }
 
 /// One validated sparse ESP firmware part. Its offset cannot be absent.
@@ -333,6 +336,11 @@ impl ReleaseTarget {
         }
     }
 
+    /// Commit-bound source archive served by this target, if present.
+    pub fn source(&self) -> Option<&SourceArchiveIdentity> {
+        self.identity().source.as_ref()
+    }
+
     /// Convert back to the stable schema-v2 wire DTO.
     pub fn to_wire(&self) -> TargetManifest {
         let identity = self.identity();
@@ -352,6 +360,7 @@ impl ReleaseTarget {
                 preparation_profile: identity.preparation_profile.as_str().to_string(),
                 parts: target.parts.iter().map(EspFlashPart::to_wire).collect(),
                 provisioning: target.provisioning.as_ref().map(ProvisioningSlot::to_wire),
+                source: identity.source.clone(),
             },
             Self::Uf2(target) => TargetManifest {
                 board_slug: identity.board_id.as_str().to_string(),
@@ -368,6 +377,7 @@ impl ReleaseTarget {
                 preparation_profile: identity.preparation_profile.as_str().to_string(),
                 parts: vec![target.part.to_wire()],
                 provisioning: None,
+                source: identity.source.clone(),
             },
         }
     }

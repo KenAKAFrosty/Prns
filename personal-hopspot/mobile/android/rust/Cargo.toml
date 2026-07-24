@@ -9,6 +9,10 @@ description = "Personal Hopspot Android face: a JNI + DrawTarget bridge that ren
 [workspace]
 resolver = "2"
 
+[features]
+default = []
+source-archive = ["personal-hopspot-core/source-archive"]
+
 [lib]
 name = "personal_hopspot_android"
 crate-type = ["cdylib", "lib"]

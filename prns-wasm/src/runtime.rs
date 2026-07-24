@@ -13,7 +13,7 @@ use personal_rns::interfaces::{
 };
 use personal_rns::routing::links::request::RequestId;
 use personal_rns::routing::links::LinkId;
-use personal_rns::routing::request_handlers::{RequestPathHash, RequestPolicy};
+use personal_rns::routing::request_handlers::RequestPathHash;
 use personal_rns::routing::upstream_app_destinations::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::routing::warmth::Departure;
 use personal_rns::storage::GrowableHeap;
@@ -31,6 +31,15 @@ use crate::js_translation::{
     set_usize, set_value,
 };
 use crate::parameters::bitrate_bps_u32;
+
+#[derive(Clone, Copy)]
+enum NodeResponse {
+    Index,
+    #[cfg(feature = "source-archive")]
+    SourceArchive,
+    #[cfg(feature = "source-archive")]
+    SourceChecksum,
+}
 
 #[derive(Clone)]
 pub(crate) struct OutboundFrame {
@@ -219,13 +228,13 @@ impl PrnsRuntime {
             .map_err(|error| {
                 JsValue::from_str(&format!("node page registration failed: {error:?}"))
             })?;
-        self.engine
-            .register_request_handler(
-                &destination,
-                personal_hopspot_core::node_pages::INDEX_PATH,
-                RequestPolicy::AllowAll,
-            )
-            .map_err(|error| JsValue::from_str(&format!("node page handler failed: {error:?}")))?;
+        for (path, policy) in <personal_hopspot_core::node_pages::NodePageRoutes as personal_rns::runtime::request_router::RouteSet<()>>::REGISTRATIONS {
+            self.engine
+                .register_request_handler(&destination, path, policy.engine_policy())
+                .map_err(|error| {
+                    JsValue::from_str(&format!("node page handler failed: {error:?}"))
+                })?;
+        }
         self.node_page = true;
         Ok(destination.as_bytes().to_vec())
     }
@@ -331,7 +340,13 @@ impl PrnsRuntime {
         let mut reactions = Vec::new();
         let node_page = self.node_page;
         let index_path = RequestPathHash::of(personal_hopspot_core::node_pages::INDEX_PATH);
-        let mut page_requests: Vec<(LinkId, RequestId)> = Vec::new();
+        #[cfg(feature = "source-archive")]
+        let source_path =
+            RequestPathHash::of(personal_hopspot_core::node_pages::SOURCE_ARCHIVE_PATH);
+        #[cfg(feature = "source-archive")]
+        let checksum_path =
+            RequestPathHash::of(personal_hopspot_core::node_pages::SOURCE_CHECKSUM_PATH);
+        let mut page_requests: Vec<(LinkId, RequestId, NodeResponse)> = Vec::new();
         self.engine.ingest_packet_into(
             packet,
             personal_rns::engine::IngestIo {
@@ -349,7 +364,23 @@ impl PrnsRuntime {
                     }) = &reaction
                     {
                         if node_page && *path_hash == index_path {
-                            page_requests.push((*link_id, *request_id));
+                            page_requests.push((*link_id, *request_id, NodeResponse::Index));
+                        }
+                        #[cfg(feature = "source-archive")]
+                        if node_page && *path_hash == source_path {
+                            page_requests.push((
+                                *link_id,
+                                *request_id,
+                                NodeResponse::SourceArchive,
+                            ));
+                        }
+                        #[cfg(feature = "source-archive")]
+                        if node_page && *path_hash == checksum_path {
+                            page_requests.push((
+                                *link_id,
+                                *request_id,
+                                NodeResponse::SourceChecksum,
+                            ));
                         }
                     }
                     reactions.push(capture_reaction(reaction));
@@ -357,7 +388,7 @@ impl PrnsRuntime {
             },
         );
         self.apply_captured(reactions);
-        for (link_id, request_id) in page_requests {
+        for (link_id, request_id, response) in page_requests {
             let id = self.mint_command_id();
             let mut respond_reactions = Vec::new();
             self.engine.ingest_command_into(
@@ -366,9 +397,21 @@ impl PrnsRuntime {
                     command: EngineCommand::Respond(Respond {
                         link_id,
                         request_id,
-                        payload: RespondPayload::StaticBytes(
-                            &personal_hopspot_core::node_pages::BROWSER_INDEX_PAGE,
-                        ),
+                        payload: match response {
+                            NodeResponse::Index => RespondPayload::StaticBytes(
+                                personal_hopspot_core::node_pages::BROWSER_INDEX_PAGE,
+                            ),
+                            #[cfg(feature = "source-archive")]
+                            NodeResponse::SourceArchive => RespondPayload::StaticFile {
+                                name: "source.zip",
+                                bytes: personal_hopspot_core::node_pages::SOURCE_ARCHIVE,
+                            },
+                            #[cfg(feature = "source-archive")]
+                            NodeResponse::SourceChecksum => RespondPayload::StaticFile {
+                                name: "source.zip.sha256",
+                                bytes: personal_hopspot_core::node_pages::SOURCE_CHECKSUM,
+                            },
+                        },
                     }),
                 },
                 personal_rns::interfaces::AttachedInterfaces::new(&interfaces_snapshot),

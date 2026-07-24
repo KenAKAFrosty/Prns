@@ -192,6 +192,16 @@ entrypoint = ["python3", "tools/release/compare-flasher-candidates.py"]
 requires = ["python3"]
 
 [[task]]
+id = "release.source.package"
+summary = "Package one exact Git commit as the hosted website source snapshot."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci", "release"]
+entrypoint = ["python3", "tools/release/package-source-snapshot.py"]
+requires = ["git", "python3"]
+
+[[task]]
 id = "release.acceptance.create"
 summary = "Create a release acceptance scaffold bound to the candidate manifest."
 domain = "release"
@@ -524,9 +534,21 @@ path = "tools/release/flasher_sparse_sizes.py"
 reason = "Shared sparse firmware size analysis implementation."
 
 [[internal]]
+path = "tools/release/source_snapshot.py"
+reason = "Shared deterministic source snapshot packaging and validation implementation."
+
+[[internal]]
 path = "tools/release/flasher_tester_roster.py"
 reason = "Shared tester roster schema and coverage implementation."
 
 [[internal]]
 path = "tools/release/flasher_website_history.py"
 reason = "Shared signed website history implementation."
+
+[[internal]]
+path = "tools/repo/cargo-tools-command/Cargo.toml"
+reason = "Cargo package metadata for the post-bootstrap cargo-tools forwarding adapter."
+
+[[internal]]
+path = "tools/repo/cargo-tools-command/src/main.rs"
+reason = "Thin Cargo adapter that forwards arguments to the canonical tools/prns task registry."

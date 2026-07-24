@@ -8,16 +8,21 @@ homepage.workspace = true
 rust-version.workspace = true
 publish = false
 description = "Shared Personal Hopspot status-screen renderer: one DrawTarget-generic draw path for the Heltec V4 OLED and the Linux debug window."
+build = "build.rs"
 
 [features]
 default = []
 host = ["personal-rns/tokio-host"]
+source-archive = ["personal-rns/large-static-responses"]
 
 [dependencies]
 personal-rns = { path = "../../personal-rns", default-features = false, features = ["flash"] }
 embedded-storage = "0.3"
 embedded-graphics = "0.8" # pinned to the same 0.8 the S3's ssd1306 stack uses.
 heapless = { version = "0.8", default-features = false }
+
+[build-dependencies]
+sha2 = { version = "0.11", default-features = false }
 
 [lints]
 workspace = true

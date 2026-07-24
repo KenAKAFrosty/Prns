@@ -5,7 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 wasm_dir="$repo_root/prns-wasm"
 example_dir="$wasm_dir/examples/browser-playground"
 build_dir="$wasm_dir/target/browser-playground"
-public_dir="$repo_root/docs/website/public/browser-node-playground-console"
+public_dir="${1:-$repo_root/docs/website/public/browser-node-playground-console}"
 
 native_path() {
     if command -v cygpath >/dev/null 2>&1; then
@@ -21,7 +21,18 @@ rustup_native="$(native_path "${RUSTUP_HOME:-$HOME/.rustup}")"
 repo_native="$(native_path "$repo_root")"
 export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--remap-path-prefix=$home_native=~ --remap-path-prefix=$cargo_native=/cargo --remap-path-prefix=$rustup_native=/rustc --remap-path-prefix=$repo_native=/prns"
 
-npm --prefix "$wasm_dir" run build:playground
+if [[ -n "${PRNS_SOURCE_ARCHIVE:-}" ]]; then
+    (
+        cd "$wasm_dir"
+        cargo build --locked --release --target wasm32-unknown-unknown --features source-archive
+        wasm-bindgen target/wasm32-unknown-unknown/release/prns_wasm.wasm \
+            --target web \
+            --out-dir target/browser-playground/pkg
+        npm run build:playground:ts
+    )
+else
+    npm --prefix "$wasm_dir" run build:playground
+fi
 
 mkdir -p "$public_dir/sdk/browser" "$public_dir/pkg"
 cp "$example_dir/index.html" "$public_dir/index.html"

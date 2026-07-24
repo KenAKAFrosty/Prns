@@ -108,6 +108,7 @@ fn convert_target(target: TargetManifest) -> Result<ReleaseTarget, ManifestError
         preparation_profile,
         parts,
         provisioning,
+        source,
     } = target;
     let identity = TargetIdentity {
         board_id: BoardId::parse(board_slug.clone())
@@ -121,6 +122,7 @@ fn convert_target(target: TargetManifest) -> Result<ReleaseTarget, ManifestError
                 field: error.to_string(),
             }
         })?,
+        source,
     };
     match transport {
         Transport::EspSerial => {

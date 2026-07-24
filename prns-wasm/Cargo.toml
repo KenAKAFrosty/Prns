@@ -13,6 +13,10 @@ publish = false
 # dependencies and target-specific feature unification.
 [workspace]
 
+[features]
+default = []
+source-archive = ["personal-hopspot-core/source-archive"]
+
 [lib]
 path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
