@@ -81,7 +81,7 @@ observability = [
     "dep:tracing-log",
     "dep:tracing-subscriber",
 ]
-tray = ["dep:ksni", "dep:tao", "dep:tray-icon"]
+tray = ["dep:ksni", "dep:tray-icon", "dep:winit"]
 otlp = [
     "observability",
     "personal-rns/runtime-metrics",
@@ -114,8 +114,8 @@ tracing-opentelemetry = { version = "0.33", optional = true, default-features = 
 ksni = { version = "0.3.6", optional = true, default-features = false, features = ["blocking", "tokio"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
-tao = { version = "0.34", optional = true, default-features = false }
-tray-icon = { version = "0.21.3", optional = true, default-features = false }
+tray-icon = { version = "0.24.1", optional = true, default-features = false }
+winit = { version = "0.30.12", optional = true, default-features = false }
 
 [profile.release]
 codegen-units = 1
