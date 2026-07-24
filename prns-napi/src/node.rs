@@ -9,12 +9,23 @@ use personal_rns::engine::{
     AllowRequester, AnnounceAppData, AnnounceNow, AnnounceTarget, DeliveryEvidence, DeliveryProof,
     EstablishLinkFailure, RatchetPolicy, RequestResponseTimeout,
 };
+use personal_rns::engine::{DropRouteOutcome, RouteSnapshot};
+use personal_rns::identity::IdentityHash;
 use personal_rns::interfaces::shared_instance as shared_instance_contract;
-use personal_rns::interfaces::BitrateBps;
+use personal_rns::interfaces::{BitrateBps, ConnectionState, InterfaceSnapshot, Membership};
 use personal_rns::manifold::reconnect::ReconnectPolicy;
+use personal_rns::node_introspection::{DestinationIdentityQuery, NodeIntrospection};
 use personal_rns::routing::request_handlers::RequestPolicy;
+use personal_rns::routing::{
+    BlackholeExpiry, BlackholeIdentityOutcome, BlackholedIdentity, NextHop,
+    UnblackholeIdentityOutcome,
+};
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::request_router::RespondToken;
+use personal_rns::runtime::{
+    DestinationIdentityRetentionControl, IdentityBlackholeControl, IdentityBlackholeSource,
+    RoutingControl, RoutingControlError,
+};
 use personal_rns::runtime::{RequestPathError, SegmentCompression};
 use personal_rns::shared_instance::{SharedInstanceClient, SharedInstanceServer};
 use personal_rns::tcp::{TcpClientInterface, TcpServer};
@@ -179,6 +190,76 @@ pub struct ResourceFileReceipt {
     pub metadata: Option<Buffer>,
     pub original_hash: Buffer,
     pub total_size: f64,
+}
+
+#[napi(object)]
+pub struct InterfaceInfo {
+    pub id: Buffer,
+    pub kind: Option<String>,
+    pub connection: String,
+    pub failure_reason: Option<String>,
+    pub rx_bytes: f64,
+    pub tx_bytes: f64,
+    pub rx_bps: Option<f64>,
+    pub tx_bps: Option<f64>,
+    pub destinations: u32,
+    pub links: u32,
+    pub transported_links: u32,
+    pub supervisor_id: Option<Buffer>,
+}
+
+#[napi(object)]
+pub struct InterfaceInventoryInfo {
+    pub name: Option<String>,
+    pub origin: String,
+    pub interface: InterfaceInfo,
+}
+
+#[napi(object)]
+pub struct RouteInfo {
+    pub destination: Buffer,
+    pub hops: u32,
+    pub via: Option<Buffer>,
+    pub interface_id: Buffer,
+    pub learned_at: f64,
+    pub last_relayed_at: f64,
+    pub expires_at: f64,
+}
+
+#[napi(object)]
+pub struct AnnounceRateInfo {
+    pub destination: Buffer,
+    pub last_allowed_announce_at: f64,
+    pub blocked_until: f64,
+    pub rate_violations: u32,
+    pub observed_at: Vec<f64>,
+}
+
+#[napi(object)]
+pub struct DestinationIdentityInfo {
+    pub destination: Buffer,
+    pub identity: Buffer,
+    pub public_key: Buffer,
+}
+
+#[napi(object)]
+pub struct DestinationIdentityQuerySpec {
+    pub destination: Option<Buffer>,
+    pub identity: Option<Buffer>,
+}
+
+#[napi(object)]
+pub struct BlackholedIdentityInfo {
+    pub identity: Buffer,
+    pub source: Buffer,
+    pub reason: Option<String>,
+    pub indefinite: bool,
+}
+
+#[napi(object)]
+pub struct RetainIdentityResult {
+    pub newly_retained_destination_count: u32,
+    pub already_retained_destination_count: u32,
 }
 
 fn resolve_identity(spec: &IdentitySpec) -> CodeResult<Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>> {
@@ -724,6 +805,153 @@ impl PrnsNode {
                 .await,
         ))
     }
+
+    #[napi]
+    pub fn interfaces(&self) -> Result<Vec<InterfaceInfo>, ErrorCode> {
+        let handle = self.manager.handle()?;
+        Ok(handle.interfaces().iter().map(interface_info).collect())
+    }
+
+    #[napi]
+    pub fn interface_inventory(&self) -> Result<Vec<InterfaceInventoryInfo>, ErrorCode> {
+        let handle = self.manager.handle()?;
+        Ok(handle
+            .interface_inventory()
+            .into_iter()
+            .map(|entry| InterfaceInventoryInfo {
+                name: entry.name,
+                origin: entry.origin.as_str().to_string(),
+                interface: interface_info(&entry.snapshot),
+            })
+            .collect())
+    }
+
+    #[napi(ts_return_type = "Promise<number>")]
+    pub async fn link_count(&self) -> Result<Fallible<u32>> {
+        Ok(Fallible(match self.manager.handle() {
+            Ok(handle) => Ok(NodeIntrospection::link_count(&handle).await),
+            Err(error) => Err(error),
+        }))
+    }
+
+    #[napi(ts_return_type = "Promise<RouteInfo[]>")]
+    pub async fn routes(&self) -> Result<Fallible<Vec<RouteInfo>>> {
+        Ok(Fallible(match self.manager.handle() {
+            Ok(handle) => Ok(NodeIntrospection::routes(&handle)
+                .await
+                .iter()
+                .map(route_info)
+                .collect()),
+            Err(error) => Err(error),
+        }))
+    }
+
+    #[napi(ts_return_type = "Promise<RouteInfo | null>")]
+    pub async fn route(&self, destination: Buffer) -> Result<Fallible<Option<RouteInfo>>> {
+        Ok(Fallible(self.route_inner(destination).await))
+    }
+
+    #[napi(ts_return_type = "Promise<AnnounceRateInfo[]>")]
+    pub async fn announce_rates(&self) -> Result<Fallible<Vec<AnnounceRateInfo>>> {
+        Ok(Fallible(match self.manager.handle() {
+            Ok(handle) => Ok(NodeIntrospection::announce_rates(&handle)
+                .await
+                .into_iter()
+                .map(|rate| AnnounceRateInfo {
+                    destination: marshal::to_buffer(rate.destination.as_bytes()),
+                    last_allowed_announce_at: rate.last_allowed_announce_at.0 as f64,
+                    blocked_until: rate.blocked_until.0 as f64,
+                    rate_violations: u32::from(rate.rate_violations),
+                    observed_at: rate.observed_at.iter().map(|at| at.0 as f64).collect(),
+                })
+                .collect()),
+            Err(error) => Err(error),
+        }))
+    }
+
+    #[napi(ts_return_type = "Promise<Buffer | null>")]
+    pub async fn destination_identity_hash(
+        &self,
+        destination: Buffer,
+    ) -> Result<Fallible<Option<Buffer>>> {
+        Ok(Fallible(
+            self.destination_identity_hash_inner(destination).await,
+        ))
+    }
+
+    #[napi(ts_return_type = "Promise<DestinationIdentityInfo | null>")]
+    pub async fn destination_identity(
+        &self,
+        query: DestinationIdentityQuerySpec,
+    ) -> Result<Fallible<Option<DestinationIdentityInfo>>> {
+        Ok(Fallible(self.destination_identity_inner(query).await))
+    }
+
+    #[napi(ts_return_type = "Promise<boolean>")]
+    pub async fn drop_route(&self, destination: Buffer) -> Result<Fallible<bool>> {
+        Ok(Fallible(self.drop_route_inner(destination).await))
+    }
+
+    #[napi(ts_return_type = "Promise<number>")]
+    pub async fn drop_routes_via(&self, transport_id: Buffer) -> Result<Fallible<f64>> {
+        Ok(Fallible(self.drop_routes_via_inner(transport_id).await))
+    }
+
+    #[napi(ts_return_type = "Promise<number>")]
+    pub async fn clear_announce_queues(&self) -> Result<Fallible<f64>> {
+        Ok(Fallible(self.clear_announce_queues_inner().await))
+    }
+
+    #[napi(ts_return_type = "Promise<string>")]
+    pub async fn blackhole_identity(
+        &self,
+        identity: Buffer,
+        reason: Option<String>,
+    ) -> Result<Fallible<String>> {
+        Ok(Fallible(
+            self.blackhole_identity_inner(identity, reason).await,
+        ))
+    }
+
+    #[napi(ts_return_type = "Promise<string>")]
+    pub async fn unblackhole_identity(&self, identity: Buffer) -> Result<Fallible<String>> {
+        Ok(Fallible(self.unblackhole_identity_inner(identity).await))
+    }
+
+    #[napi(ts_return_type = "Promise<BlackholedIdentityInfo[]>")]
+    pub async fn blackholed_identities(&self) -> Result<Fallible<Vec<BlackholedIdentityInfo>>> {
+        Ok(Fallible(self.blackholed_identities_inner().await))
+    }
+
+    #[napi(ts_return_type = "Promise<boolean>")]
+    pub async fn is_blackholed(&self, identity: Buffer) -> Result<Fallible<bool>> {
+        Ok(Fallible(self.is_blackholed_inner(identity).await))
+    }
+
+    #[napi(ts_return_type = "Promise<string>")]
+    pub async fn mark_destination_used(&self, destination: Buffer) -> Result<Fallible<String>> {
+        Ok(Fallible(
+            self.mark_destination_used_inner(destination).await,
+        ))
+    }
+
+    #[napi(ts_return_type = "Promise<string>")]
+    pub async fn retain_destination(&self, destination: Buffer) -> Result<Fallible<String>> {
+        Ok(Fallible(self.retain_destination_inner(destination).await))
+    }
+
+    #[napi(ts_return_type = "Promise<string>")]
+    pub async fn release_destination(&self, destination: Buffer) -> Result<Fallible<String>> {
+        Ok(Fallible(self.release_destination_inner(destination).await))
+    }
+
+    #[napi(ts_return_type = "Promise<RetainIdentityResult>")]
+    pub async fn retain_identity(
+        &self,
+        identity: Buffer,
+    ) -> Result<Fallible<RetainIdentityResult>> {
+        Ok(Fallible(self.retain_identity_inner(identity).await))
+    }
 }
 
 impl PrnsNode {
@@ -1196,6 +1424,187 @@ impl PrnsNode {
             .map_err(|error| send_error(ErrorCode::ResourceStrategyFailed, error))
     }
 
+    async fn route_inner(&self, destination: Buffer) -> CodeResult<Option<RouteInfo>> {
+        let destination = marshal::destination_hash(&destination)?;
+        let handle = self.manager.handle()?;
+        Ok(NodeIntrospection::route(&handle, destination)
+            .await
+            .as_ref()
+            .map(route_info))
+    }
+
+    async fn destination_identity_hash_inner(
+        &self,
+        destination: Buffer,
+    ) -> CodeResult<Option<Buffer>> {
+        let destination = marshal::destination_hash(&destination)?;
+        let handle = self.manager.handle()?;
+        Ok(handle
+            .destination_identity_hash(destination)
+            .await
+            .map(|identity| marshal::to_buffer(identity.as_bytes())))
+    }
+
+    async fn destination_identity_inner(
+        &self,
+        query: DestinationIdentityQuerySpec,
+    ) -> CodeResult<Option<DestinationIdentityInfo>> {
+        let query = match (&query.destination, &query.identity) {
+            (Some(destination), None) => {
+                DestinationIdentityQuery::Destination(marshal::destination_hash(destination)?)
+            }
+            (None, Some(identity)) => {
+                DestinationIdentityQuery::Identity(marshal::identity_hash(identity)?)
+            }
+            _ => {
+                return Err(code_err(
+                    ErrorCode::InvalidArgument,
+                    "query requires exactly one of destination or identity",
+                ))
+            }
+        };
+        let handle = self.manager.handle()?;
+        Ok(handle
+            .destination_identity(query)
+            .await
+            .map(|snapshot| DestinationIdentityInfo {
+                destination: marshal::to_buffer(snapshot.destination.as_bytes()),
+                identity: marshal::to_buffer(snapshot.identity.as_bytes()),
+                public_key: marshal::to_buffer(snapshot.public.as_bytes()),
+            }))
+    }
+
+    async fn drop_route_inner(&self, destination: Buffer) -> CodeResult<bool> {
+        let destination = marshal::destination_hash(&destination)?;
+        let handle = self.manager.handle()?;
+        RoutingControl::drop_route(&handle, destination)
+            .await
+            .map(|outcome| matches!(outcome, DropRouteOutcome::Dropped))
+            .map_err(routing_error)
+    }
+
+    async fn drop_routes_via_inner(&self, transport_id: Buffer) -> CodeResult<f64> {
+        let transport = marshal::transport_id(&transport_id)?;
+        let handle = self.manager.handle()?;
+        RoutingControl::drop_routes_via(&handle, transport)
+            .await
+            .map(|outcome| f64::from(outcome.dropped_routes))
+            .map_err(routing_error)
+    }
+
+    async fn clear_announce_queues_inner(&self) -> CodeResult<f64> {
+        let handle = self.manager.handle()?;
+        RoutingControl::clear_announce_queues(&handle)
+            .await
+            .map(|outcome| f64::from(outcome.dropped_announces))
+            .map_err(routing_error)
+    }
+
+    async fn blackhole_identity_inner(
+        &self,
+        identity: Buffer,
+        reason: Option<String>,
+    ) -> CodeResult<String> {
+        let identity = marshal::identity_hash(&identity)?;
+        let handle = self.manager.handle()?;
+        let entry = BlackholedIdentity {
+            identity,
+            source: IdentityHash::new([0u8; 16]),
+            expiry: BlackholeExpiry::Indefinite,
+            reason: reason.as_deref(),
+        };
+        IdentityBlackholeControl::blackhole_identity(&handle, entry)
+            .await
+            .map(|outcome| {
+                match outcome {
+                    BlackholeIdentityOutcome::Added => "added",
+                    BlackholeIdentityOutcome::AlreadyPresent => "alreadyPresent",
+                }
+                .to_string()
+            })
+            .map_err(|error| code_err(ErrorCode::BlackholeFailed, format!("{error:?}")))
+    }
+
+    async fn unblackhole_identity_inner(&self, identity: Buffer) -> CodeResult<String> {
+        let identity = marshal::identity_hash(&identity)?;
+        let handle = self.manager.handle()?;
+        IdentityBlackholeControl::unblackhole_identity(&handle, identity)
+            .await
+            .map(|outcome| {
+                match outcome {
+                    UnblackholeIdentityOutcome::Removed => "removed",
+                    UnblackholeIdentityOutcome::NotFound => "notFound",
+                }
+                .to_string()
+            })
+            .map_err(|error| code_err(ErrorCode::BlackholeFailed, format!("{error:?}")))
+    }
+
+    async fn blackholed_identities_inner(&self) -> CodeResult<Vec<BlackholedIdentityInfo>> {
+        let handle = self.manager.handle()?;
+        IdentityBlackholeSource::blackholed_identities(&handle)
+            .await
+            .map(|entries| {
+                entries
+                    .into_iter()
+                    .map(|entry| BlackholedIdentityInfo {
+                        identity: marshal::to_buffer(entry.identity.as_bytes()),
+                        source: marshal::to_buffer(entry.source.as_bytes()),
+                        reason: entry.reason,
+                        indefinite: matches!(entry.expiry, BlackholeExpiry::Indefinite),
+                    })
+                    .collect()
+            })
+            .map_err(|error| code_err(ErrorCode::BlackholeFailed, format!("{error:?}")))
+    }
+
+    async fn is_blackholed_inner(&self, identity: Buffer) -> CodeResult<bool> {
+        let identity = marshal::identity_hash(&identity)?;
+        let handle = self.manager.handle()?;
+        IdentityBlackholeSource::is_blackholed(&handle, identity)
+            .await
+            .map_err(|error| code_err(ErrorCode::BlackholeFailed, format!("{error:?}")))
+    }
+
+    async fn mark_destination_used_inner(&self, destination: Buffer) -> CodeResult<String> {
+        let destination = marshal::destination_hash(&destination)?;
+        let handle = self.manager.handle()?;
+        DestinationIdentityRetentionControl::mark_destination_used(&handle, destination)
+            .await
+            .map(|outcome| format!("{outcome:?}"))
+            .map_err(|error| code_err(ErrorCode::RetentionFailed, format!("{error:?}")))
+    }
+
+    async fn retain_destination_inner(&self, destination: Buffer) -> CodeResult<String> {
+        let destination = marshal::destination_hash(&destination)?;
+        let handle = self.manager.handle()?;
+        DestinationIdentityRetentionControl::retain_destination(&handle, destination)
+            .await
+            .map(|outcome| format!("{outcome:?}"))
+            .map_err(|error| code_err(ErrorCode::RetentionFailed, format!("{error:?}")))
+    }
+
+    async fn release_destination_inner(&self, destination: Buffer) -> CodeResult<String> {
+        let destination = marshal::destination_hash(&destination)?;
+        let handle = self.manager.handle()?;
+        DestinationIdentityRetentionControl::release_destination(&handle, destination)
+            .await
+            .map(|outcome| format!("{outcome:?}"))
+            .map_err(|error| code_err(ErrorCode::RetentionFailed, format!("{error:?}")))
+    }
+
+    async fn retain_identity_inner(&self, identity: Buffer) -> CodeResult<RetainIdentityResult> {
+        let identity = marshal::identity_hash(&identity)?;
+        let handle = self.manager.handle()?;
+        DestinationIdentityRetentionControl::retain_identity(&handle, identity)
+            .await
+            .map(|outcome| RetainIdentityResult {
+                newly_retained_destination_count: outcome.newly_retained_destination_count,
+                already_retained_destination_count: outcome.already_retained_destination_count,
+            })
+            .map_err(|error| code_err(ErrorCode::RetentionFailed, format!("{error:?}")))
+    }
+
     async fn attach_config_inner(&self, config_text: String) -> CodeResult<ConfigAttachResult> {
         let report = personal_rns::config::parse_and_plan(&config_text)
             .map_err(|errors| code_err(ErrorCode::ConfigInvalid, format!("{errors:?}")))?;
@@ -1242,6 +1651,63 @@ impl PrnsNode {
                 .collect(),
             warnings,
         })
+    }
+}
+
+fn connection_name(connection: ConnectionState) -> &'static str {
+    match connection {
+        ConnectionState::Initializing => "initializing",
+        ConnectionState::Connected => "connected",
+        ConnectionState::Degraded => "degraded",
+        ConnectionState::Reconnecting => "reconnecting",
+        ConnectionState::Failed => "failed",
+        ConnectionState::Disconnected => "disconnected",
+        ConnectionState::Disabled => "disabled",
+        ConnectionState::Unknown => "unknown",
+    }
+}
+
+fn interface_info(snapshot: &InterfaceSnapshot) -> InterfaceInfo {
+    InterfaceInfo {
+        id: marshal::to_buffer(snapshot.id.as_bytes()),
+        kind: snapshot.id.kind().map(|kind| format!("{kind:?}")),
+        connection: connection_name(snapshot.connection).to_string(),
+        failure_reason: snapshot.failure_reason.map(str::to_string),
+        rx_bytes: snapshot.rx_bytes as f64,
+        tx_bytes: snapshot.tx_bytes as f64,
+        rx_bps: snapshot.transfer_rates.map(|rates| f64::from(rates.rx_bps)),
+        tx_bps: snapshot.transfer_rates.map(|rates| f64::from(rates.tx_bps)),
+        destinations: snapshot.destinations,
+        links: snapshot.links,
+        transported_links: snapshot.transported_links,
+        supervisor_id: match snapshot.membership {
+            Membership::Independent => None,
+            Membership::FleetMember { supervisor_id } => {
+                Some(marshal::to_buffer(supervisor_id.as_bytes()))
+            }
+        },
+    }
+}
+
+fn route_info(route: &RouteSnapshot) -> RouteInfo {
+    RouteInfo {
+        destination: marshal::to_buffer(route.destination.as_bytes()),
+        hops: u32::from(route.hops),
+        via: match route.via {
+            NextHop::Direct => None,
+            NextHop::Via(transport) => Some(marshal::to_buffer(transport.as_bytes())),
+        },
+        interface_id: marshal::to_buffer(route.interface.as_bytes()),
+        learned_at: route.learned_at.0 as f64,
+        last_relayed_at: route.last_relayed_at.0 as f64,
+        expires_at: route.expires_at.0 as f64,
+    }
+}
+
+fn routing_error(error: RoutingControlError) -> crate::errors::CodeError {
+    match error {
+        RoutingControlError::NodeStopped => code_err(ErrorCode::NodeStopped, "node stopped"),
+        other => code_err(ErrorCode::RoutingControlFailed, format!("{other:?}")),
     }
 }
 

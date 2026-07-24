@@ -33,10 +33,44 @@ export declare class PrnsNode {
   receiveResourceFile(linkId: Buffer, path: string): Promise<ResourceFileReceipt>
   setResourceStrategy(destination: Buffer, strategy: ResourceStrategySpec): Promise<boolean>
   setLinkResourceStrategy(linkId: Buffer, strategy: ResourceStrategySpec): Promise<void>
+  interfaces(): Array<InterfaceInfo>
+  interfaceInventory(): Array<InterfaceInventoryInfo>
+  linkCount(): Promise<number>
+  routes(): Promise<RouteInfo[]>
+  route(destination: Buffer): Promise<RouteInfo | null>
+  announceRates(): Promise<AnnounceRateInfo[]>
+  destinationIdentityHash(destination: Buffer): Promise<Buffer | null>
+  destinationIdentity(query: DestinationIdentityQuerySpec): Promise<DestinationIdentityInfo | null>
+  dropRoute(destination: Buffer): Promise<boolean>
+  dropRoutesVia(transportId: Buffer): Promise<number>
+  clearAnnounceQueues(): Promise<number>
+  blackholeIdentity(identity: Buffer, reason?: string | undefined | null): Promise<string>
+  unblackholeIdentity(identity: Buffer): Promise<string>
+  blackholedIdentities(): Promise<BlackholedIdentityInfo[]>
+  isBlackholed(identity: Buffer): Promise<boolean>
+  markDestinationUsed(destination: Buffer): Promise<string>
+  retainDestination(destination: Buffer): Promise<string>
+  releaseDestination(destination: Buffer): Promise<string>
+  retainIdentity(identity: Buffer): Promise<RetainIdentityResult>
 }
 
 export interface AnnounceOptions {
   interfaceId?: Buffer
+}
+
+export interface AnnounceRateInfo {
+  destination: Buffer
+  lastAllowedAnnounceAt: number
+  blockedUntil: number
+  rateViolations: number
+  observedAt: Array<number>
+}
+
+export interface BlackholedIdentityInfo {
+  identity: Buffer
+  source: Buffer
+  reason?: string
+  indefinite: boolean
 }
 
 export interface ConfigAttachment {
@@ -53,6 +87,17 @@ export interface ConfigAttachResult {
 export interface ConfigFailure {
   name: string
   error: string
+}
+
+export interface DestinationIdentityInfo {
+  destination: Buffer
+  identity: Buffer
+  publicKey: Buffer
+}
+
+export interface DestinationIdentityQuerySpec {
+  destination?: Buffer
+  identity?: Buffer
 }
 
 export interface DestinationSpec {
@@ -73,6 +118,27 @@ export declare function generateIdentitySecret(): Buffer
 export interface IdentitySpec {
   secret?: Buffer
   path?: string
+}
+
+export interface InterfaceInfo {
+  id: Buffer
+  kind?: string
+  connection: string
+  failureReason?: string
+  rxBytes: number
+  txBytes: number
+  rxBps?: number
+  txBps?: number
+  destinations: number
+  links: number
+  transportedLinks: number
+  supervisorId?: Buffer
+}
+
+export interface InterfaceInventoryInfo {
+  name?: string
+  origin: string
+  interface: InterfaceInfo
 }
 
 export interface LinkInfo {
@@ -136,6 +202,21 @@ export interface RespondTokenSpec {
   linkId: Buffer
   requestId: Buffer
   rttMillis: number
+}
+
+export interface RetainIdentityResult {
+  newlyRetainedDestinationCount: number
+  alreadyRetainedDestinationCount: number
+}
+
+export interface RouteInfo {
+  destination: Buffer
+  hops: number
+  via?: Buffer
+  interfaceId: Buffer
+  learnedAt: number
+  lastRelayedAt: number
+  expiresAt: number
 }
 
 export interface SendResourceOptions {

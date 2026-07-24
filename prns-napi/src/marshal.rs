@@ -4,7 +4,7 @@ use personal_rns::interfaces::InterfaceId;
 use personal_rns::routing::links::request::RequestId;
 use personal_rns::routing::links::LinkId;
 use personal_rns::routing::request_handlers::RequestPathHash;
-use personal_rns::wire::DestinationHash;
+use personal_rns::wire::{DestinationHash, TransportId};
 use personal_rns::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 
 use crate::errors::{code_err, CodeResult, ErrorCode};
@@ -40,6 +40,10 @@ pub fn request_id(buffer: &[u8]) -> CodeResult<RequestId> {
 
 pub fn request_path_hash(buffer: &[u8]) -> CodeResult<RequestPathHash> {
     Ok(RequestPathHash::new(fixed(buffer, "request path hash")?))
+}
+
+pub fn transport_id(buffer: &[u8]) -> CodeResult<TransportId> {
+    Ok(TransportId::new(fixed(buffer, "transport id")?))
 }
 
 pub fn identity_secret(buffer: &[u8]) -> CodeResult<Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>> {

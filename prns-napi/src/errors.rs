@@ -27,6 +27,9 @@ pub enum ErrorCode {
     ResourceSendFailed,
     ResourceReceiveFailed,
     ResourceStrategyFailed,
+    RoutingControlFailed,
+    BlackholeFailed,
+    RetentionFailed,
     Internal,
 }
 
@@ -56,6 +59,9 @@ impl AsRef<str> for ErrorCode {
             Self::ResourceSendFailed => "PRNS_RESOURCE_SEND_FAILED",
             Self::ResourceReceiveFailed => "PRNS_RESOURCE_RECEIVE_FAILED",
             Self::ResourceStrategyFailed => "PRNS_RESOURCE_STRATEGY_FAILED",
+            Self::RoutingControlFailed => "PRNS_ROUTING_CONTROL_FAILED",
+            Self::BlackholeFailed => "PRNS_BLACKHOLE_FAILED",
+            Self::RetentionFailed => "PRNS_RETENTION_FAILED",
             Self::Internal => "PRNS_INTERNAL",
         }
     }
