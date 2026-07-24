@@ -403,7 +403,9 @@ pub(super) async fn run(
                 .as_ref()
                 .map(|process| process.state_dir().to_path_buf()),
             ready_status,
-        ) {
+        )
+        .await
+        {
             Ok((tray, tray_shutdown, publisher)) => {
                 tracing::info!(event = "tray_started");
                 status_publisher = Some(publisher);

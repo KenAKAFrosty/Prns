@@ -57,8 +57,8 @@ mod platform {
     use std::path::PathBuf;
     use std::sync::OnceLock;
 
-    use ksni::blocking::TrayMethods;
     use ksni::menu::StandardItem;
+    use ksni::TrayMethods;
 
     use crate::daemon::{DaemonStatus, DaemonStatusPublisher};
     use crate::shutdown::{self, ShutdownRequest, ShutdownSignal};
@@ -67,7 +67,7 @@ mod platform {
     use super::{icon, status_label};
 
     pub(crate) struct RunningTray {
-        handle: ksni::blocking::Handle<LinuxTray>,
+        handle: ksni::Handle<LinuxTray>,
     }
 
     struct LinuxTray {
@@ -205,7 +205,7 @@ mod platform {
         }
     }
 
-    pub(crate) fn start(
+    pub(crate) async fn start(
         config_dir: PathBuf,
         managed_state_dir: Option<PathBuf>,
         status: DaemonStatus,
@@ -219,17 +219,21 @@ mod platform {
             shutdown,
         }
         .spawn()
+        .await
         .map_err(|error| format!("StatusNotifier tray start failed: {error}"))?;
         let update_handle = handle.clone();
         let publisher = DaemonStatusPublisher::new(move |status| {
-            let _ = update_handle.update(|tray| tray.status = status);
+            let handle = update_handle.clone();
+            tokio::spawn(async move {
+                let _ = handle.update(|tray| tray.status = status).await;
+            });
         });
         Ok((RunningTray { handle }, signal, publisher))
     }
 
     impl Drop for RunningTray {
         fn drop(&mut self) {
-            self.handle.shutdown().wait();
+            drop(self.handle.shutdown());
         }
     }
 }

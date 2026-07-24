@@ -111,7 +111,7 @@ opentelemetry_sdk = { version = "0.32", optional = true, default-features = fals
 tracing-opentelemetry = { version = "0.33", optional = true, default-features = false }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-ksni = { version = "0.3.6", optional = true, default-features = false, features = ["blocking", "tokio"] }
+ksni = { version = "0.3.6", optional = true, default-features = false, features = ["tokio"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
 tray-icon = { version = "0.24.1", optional = true, default-features = false }
