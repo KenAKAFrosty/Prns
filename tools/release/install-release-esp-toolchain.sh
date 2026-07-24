@@ -74,7 +74,7 @@ printf 'export PATH="%s:$PATH"\n' "$(dirname "$gcc_bin")" >> "$ESPUP_EXPORT_FILE
 source "$ESPUP_EXPORT_FILE"
 export PATH="$destination:$PATH"
 
-if ! rustc +esp -vV | rg -q '^release: 1\.95\.0'; then
+if ! rustc +esp -vV | grep -qE '^release: 1\.95\.0'; then
     echo "installed ESP Rust compiler does not match ${esp_rust_version}" >&2
     exit 4
 fi

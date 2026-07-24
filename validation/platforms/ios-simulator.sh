@@ -86,9 +86,9 @@ test "$(plutil -extract CFBundleShortVersionString raw "$compiled_info")" = "0.1
 test "$(plutil -extract CFBundleVersion raw "$compiled_info")" = "1"
 test -n "$(plutil -extract NSBluetoothAlwaysUsageDescription raw "$compiled_info")"
 test -n "$(plutil -extract NSLocalNetworkUsageDescription raw "$compiled_info")"
-plutil -extract NSBonjourServices json -o - "$compiled_info" | rg -q '_reticulum\._tcp'
-plutil -extract UIBackgroundModes json -o - "$compiled_info" | rg -q 'bluetooth-central'
-plutil -extract UIBackgroundModes json -o - "$compiled_info" | rg -q 'bluetooth-peripheral'
+plutil -extract NSBonjourServices json -o - "$compiled_info" | grep -qF '_reticulum._tcp'
+plutil -extract UIBackgroundModes json -o - "$compiled_info" | grep -qF 'bluetooth-central'
+plutil -extract UIBackgroundModes json -o - "$compiled_info" | grep -qF 'bluetooth-peripheral'
 
 # Simulator processes share the host network namespace. Stop an earlier validation
 # instance on every booted simulator so its production listener cannot mask this run.
@@ -120,7 +120,7 @@ fi
 
 sleep 5
 xcrun simctl spawn "$simulator_id" launchctl print user/501 >"$artifact_dir/launchctl.txt"
-launchctl_line="$(rg 'UIKitApplication:com\.personal\.hopspot' "$artifact_dir/launchctl.txt")"
+launchctl_line="$(grep -F 'UIKitApplication:com.personal.hopspot' "$artifact_dir/launchctl.txt")"
 launchctl_pid="$(printf '%s\n' "$launchctl_line" | awk 'NR == 1 {print $1}')"
 if [[ "$launchctl_pid" != "$launch_pid" ]]; then
   echo "launchctl reported PID $launchctl_pid instead of $launch_pid" >&2
@@ -133,8 +133,8 @@ xcrun simctl spawn "$simulator_id" log show \
   --predicate 'subsystem == "com.personal.hopspot"' \
   >"$artifact_dir/lifecycle.log" \
   2>"$artifact_dir/lifecycle-stderr.log" || true
-rg -q 'HOPSPOT_IOS_START result=0' "$artifact_dir/lifecycle.log"
-rg -q 'HOPSPOT_IOS_STATE state=2 failure=0' "$artifact_dir/lifecycle.log"
+grep -qF 'HOPSPOT_IOS_START result=0' "$artifact_dir/lifecycle.log"
+grep -qF 'HOPSPOT_IOS_STATE state=2 failure=0' "$artifact_dir/lifecycle.log"
 
 xcrun simctl io "$simulator_id" screenshot "$artifact_dir/screenshot.png"
 test -s "$artifact_dir/screenshot.png"
@@ -142,7 +142,7 @@ test -s "$artifact_dir/screenshot.png"
 record_crashes "$artifact_dir/crashes-after.txt"
 if comm -13 "$artifact_dir/crashes-before.txt" "$artifact_dir/crashes-after.txt" |
   tee "$artifact_dir/new-crashes.txt" |
-  rg -q .; then
+  grep -q .; then
   echo "PersonalHopspot produced a new simulator crash report" >&2
   exit 1
 fi

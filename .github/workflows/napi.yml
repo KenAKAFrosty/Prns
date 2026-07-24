@@ -175,7 +175,7 @@ jobs:
       - uses: taiki-e/install-action@7572810d7dd469b651bb7793945692cf78da5dd7
         if: ${{ contains(matrix.settings.target, 'musl') }}
         with:
-          tool: cargo-zigbuild
+          tool: cargo-zigbuild@0.23.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24
@@ -185,10 +185,16 @@ jobs:
         working-directory: prns-napi
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/prns-napi/target/${{ matrix.settings.target }}-${{ matrix.settings.toolchain }}
+          CFLAGS: ${{ contains(matrix.settings.target, 'linux-gnu') && '-std=gnu17' || '' }}
       - name: enforce the GNU compatibility floor
         if: ${{ contains(matrix.settings.target, 'linux-gnu') }}
         run: |
-          highest="$(objdump -T prns-napi/*.node | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -1)"
+          symbols="$(objdump -T prns-napi/*.node)"
+          if grep -q '__isoc23_' <<< "$symbols"; then
+            grep '__isoc23_' <<< "$symbols"
+            exit 1
+          fi
+          highest="$(grep -o 'GLIBC_[0-9.]*' <<< "$symbols" | sort -Vu | tail -1)"
           test -n "$highest"
           test "$(printf '%s\n' "$highest" GLIBC_2.17 | sort -V | tail -1)" = GLIBC_2.17
       - run: node -e "console.log(process.arch, require('node:fs').readdirSync('.').filter((f) => f.endsWith('.node')))"

@@ -113,71 +113,71 @@ if [[ -z "${lab_manifest}" ]]; then
 fi
 lab_service="$(sed -n '/<service/,/<\/service>/p' "${lab_manifest}")"
 
-rg -q 'PrnsService' "${manifest}" || {
+grep -qF 'PrnsService' "${manifest}" || {
   echo "merged manifest is missing PrnsService" >&2
   exit 1
 }
-rg -q 'org.personal.hopspot.permission.PRNS_CLIENT' "${manifest}" || {
+grep -qF 'org.personal.hopspot.permission.PRNS_CLIENT' "${manifest}" || {
   echo "merged manifest is missing the signature PRNS client permission" >&2
   exit 1
 }
-rg -q 'org.personal.hopspot.action.BIND_PRNS_CLIENT' "${manifest}" || {
+grep -qF 'org.personal.hopspot.action.BIND_PRNS_CLIENT' "${manifest}" || {
   echo "merged manifest is missing the shared-instance bind action" >&2
   exit 1
 }
-rg -q 'connectedDevice' "${manifest}" || {
+grep -qF 'connectedDevice' "${manifest}" || {
   echo "merged manifest is missing the connectedDevice foreground-service type" >&2
   exit 1
 }
-rg -q 'android.permission.NEARBY_WIFI_DEVICES' "${manifest}" || {
+grep -qF 'android.permission.NEARBY_WIFI_DEVICES' "${manifest}" || {
   echo "merged manifest is missing the API 33 nearby Wi-Fi permission" >&2
   exit 1
 }
-rg -q 'android.permission.ACCESS_FINE_LOCATION' "${manifest}" || {
+grep -qF 'android.permission.ACCESS_FINE_LOCATION' "${manifest}" || {
   echo "merged manifest is missing the through-API-32 location permission" >&2
   exit 1
 }
-rg -q 'android:maxSdkVersion="32"' "${manifest}" || {
+grep -qF 'android:maxSdkVersion="32"' "${manifest}" || {
   echo "merged manifest does not retain location through API 32" >&2
   exit 1
 }
-rg -q 'android:allowBackup="false"' "${manifest}" || {
+grep -qF 'android:allowBackup="false"' "${manifest}" || {
   echo "merged manifest permits application backup" >&2
   exit 1
 }
-rg -q 'android:fullBackupContent="false"' "${manifest}" || {
+grep -qF 'android:fullBackupContent="false"' "${manifest}" || {
   echo "merged manifest does not disable full backup" >&2
   exit 1
 }
-rg -q 'android:dataExtractionRules="@xml/data_extraction_rules"' "${manifest}" || {
+grep -qF 'android:dataExtractionRules="@xml/data_extraction_rules"' "${manifest}" || {
   echo "merged manifest is missing the Android 12 data-extraction exclusion" >&2
   exit 1
 }
-rg -q 'android:icon="@mipmap/ic_launcher"' "${manifest}" || {
+grep -qF 'android:icon="@mipmap/ic_launcher"' "${manifest}" || {
   echo "merged manifest is missing the Prns launcher icon" >&2
   exit 1
 }
-rg -q 'android:versionCode="1"' "${manifest}" || {
+grep -qF 'android:versionCode="1"' "${manifest}" || {
   echo "merged manifest version code is not 1" >&2
   exit 1
 }
-rg -q 'android:versionName="0.1.0"' "${manifest}" || {
+grep -qF 'android:versionName="0.1.0"' "${manifest}" || {
   echo "merged manifest version name is not 0.1.0" >&2
   exit 1
 }
-rg -q 'sourceCompatibility = JavaVersion.VERSION_1_8' "${android_dir}/app/build.gradle.kts" || {
+grep -qF 'sourceCompatibility = JavaVersion.VERSION_1_8' "${android_dir}/app/build.gradle.kts" || {
   echo "Android source compatibility is not Java 8" >&2
   exit 1
 }
-rg -q 'jvmTarget = "1.8"' "${android_dir}/app/build.gradle.kts" || {
+grep -qF 'jvmTarget = "1.8"' "${android_dir}/app/build.gradle.kts" || {
   echo "Android Kotlin bytecode target is not Java 8" >&2
   exit 1
 }
-rg -q 'package="org.personal.hopspot.wifidirectlab"' "${lab_manifest}" || {
+grep -qF 'package="org.personal.hopspot.wifidirectlab"' "${lab_manifest}" || {
   echo "Wi-Fi Direct lab does not use its isolated application ID" >&2
   exit 1
 }
-if rg -q 'org.personal.hopspot.permission.PRNS_CLIENT' "${lab_manifest}"; then
+if grep -qF 'org.personal.hopspot.permission.PRNS_CLIENT' "${lab_manifest}"; then
   echo "Wi-Fi Direct lab retains the production signature permission" >&2
   exit 1
 fi
@@ -189,11 +189,11 @@ fi
   echo "Wi-Fi Direct lab service lost its foreground-service type" >&2
   exit 1
 }
-rg -q 'android:label="Personal Hopspot Wi-Fi Direct Lab"' "${lab_manifest}" || {
+grep -qF 'android:label="Personal Hopspot Wi-Fi Direct Lab"' "${lab_manifest}" || {
   echo "Wi-Fi Direct lab is not visibly distinguished from the normal app" >&2
   exit 1
 }
-rg -q 'public static final boolean EXPERIMENTAL_WIFI_DIRECT = true;' \
+grep -qF 'public static final boolean EXPERIMENTAL_WIFI_DIRECT = true;' \
   "${android_dir}/app/build/generated/source/buildConfig/wifiDirectLab/org/personal/hopspot/BuildConfig.java" || {
   echo "Wi-Fi Direct lab does not enable the experimental transport" >&2
   exit 1

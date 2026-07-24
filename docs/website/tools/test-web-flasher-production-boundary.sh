@@ -79,14 +79,14 @@ if cargo check --locked --features 'embedded-site browser-test-fixture' >"$inval
     echo "embedded-site unexpectedly compiled with browser-test-fixture" >&2
     exit 1
 fi
-if ! rg -q 'browser-test-fixture is forbidden in embedded production builds' "$invalid_features_log"; then
+if ! grep -qF 'browser-test-fixture is forbidden in embedded production builds' "$invalid_features_log"; then
     echo "the invalid production feature combination failed for an unexpected reason" >&2
     exit 1
 fi
 
 cd "$workspace"
 bash "$website/tools/verify-web-flasher-production-boundary.sh" "$hosted" "$embedded"
-if find "$embedded" \( -name 'source.zip' -o -name 'source.zip.sha256' \) -print -quit | rg -q .; then
+if find "$embedded" \( -name 'source.zip' -o -name 'source.zip.sha256' \) -print -quit | grep -q .; then
     echo "embedded SoftAP site unexpectedly contains hosted source artifacts" >&2
     exit 1
 fi

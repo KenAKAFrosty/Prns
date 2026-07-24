@@ -124,6 +124,7 @@ pub(crate) enum TrayActionError {
         program: &'static str,
         source: io::Error,
     },
+    #[cfg(target_os = "macos")]
     LaunchExit {
         program: &'static str,
         status: std::process::ExitStatus,
@@ -162,6 +163,7 @@ impl fmt::Display for TrayActionError {
             Self::Launch { program, source } => {
                 write!(formatter, "could not launch {program}: {source}")
             }
+            #[cfg(target_os = "macos")]
             Self::LaunchExit { program, status } => {
                 write!(formatter, "{program} exited with {status}")
             }

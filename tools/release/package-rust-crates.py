@@ -87,6 +87,8 @@ def consumer_manifest(crates, version):
         'edition = "2021"\n'
         "publish = false\n"
         "\n"
+        "[workspace]\n"
+        "\n"
         "[dependencies]\n"
         + "\n".join(dependencies)
         + "\n"

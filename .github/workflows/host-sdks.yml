@@ -231,10 +231,33 @@ jobs:
         with:
           workspaces: prns-host/abi/c
           key: host-sdk-${{ matrix.settings.target }}
-      - name: install musl compiler
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29
         if: contains(matrix.settings.target, 'musl')
-        run: sudo apt-get update && sudo apt-get install --yes musl-tools
-      - run: cargo build --manifest-path prns-host/abi/c/Cargo.toml --locked --release --target ${{ matrix.settings.target }}
+        with:
+          version: 0.14.1
+      - uses: taiki-e/install-action@7572810d7dd469b651bb7793945692cf78da5dd7
+        if: contains(matrix.settings.target, 'musl')
+        with:
+          tool: cargo-zigbuild@0.23.0
+      - shell: bash
+        run: |
+          if [[ "${{ matrix.settings.target }}" == *-musl ]]; then
+            export RUSTFLAGS="$RUSTFLAGS -C target-feature=-crt-static"
+            cargo zigbuild --manifest-path prns-host/abi/c/Cargo.toml --locked --release --target ${{ matrix.settings.target }}
+          else
+            cargo build --manifest-path prns-host/abi/c/Cargo.toml --locked --release --target ${{ matrix.settings.target }}
+          fi
+      - name: verify musl dynamic linkage
+        if: contains(matrix.settings.target, 'musl')
+        shell: bash
+        run: |
+          library="prns-host/abi/c/target/${{ matrix.settings.target }}/release/${{ matrix.settings.library }}"
+          dependencies="$(readelf -d "$library")"
+          printf '%s\n' "$dependencies"
+          grep -Fq 'Shared library: [libc.so]' <<< "$dependencies"
+          if grep -Eq 'libc\.so\.6|ld-linux' <<< "$dependencies"; then
+            exit 1
+          fi
       - run: >-
           python tools/prns run release.host-sdk.native.package --
           --target ${{ matrix.settings.target }}

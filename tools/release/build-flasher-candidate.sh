@@ -56,7 +56,7 @@ for release_input in \
         exit 2
     fi
 done
-if rg -q 'PRNS_RELEASE_KEY_NOT_CONFIGURED' "$root/release/keys/minisign.pub"; then
+if grep -qF 'PRNS_RELEASE_KEY_NOT_CONFIGURED' "$root/release/keys/minisign.pub"; then
     echo "pin the maintainer-controlled Minisign public key before building a candidate" >&2
     exit 4
 fi
@@ -167,11 +167,11 @@ test -f "$embedded_dist/index.html"
 rm -rf -- "$boundary_root"
 mkdir -p "$boundary_root/embedded"
 cp -R "$embedded_dist/." "$boundary_root/embedded/"
-if rg -l -i 'esptool-js|esp-web-install-button|unpkg|prns-flash\.js' "$embedded_dist"; then
+if grep -R -a -l -i -E 'esptool-js|esp-web-install-button|unpkg|prns-flash\.js' "$embedded_dist"; then
     echo "embedded SoftAP site unexpectedly contains hosted flashing JavaScript" >&2
     exit 1
 fi
-if find "$embedded_dist" \( -path '*/firmware/*' -o -path '*/assets/flasher/*' \) -print -quit | rg -q .; then
+if find "$embedded_dist" \( -path '*/firmware/*' -o -path '*/assets/flasher/*' \) -print -quit | grep -q .; then
     echo "embedded SoftAP site unexpectedly contains hosted firmware or flasher assets" >&2
     exit 1
 fi
@@ -216,7 +216,7 @@ cp -R "$root/target/doc/." "$candidate/website/api/"
 cp "$root/release/website/api-index.html" "$candidate/website/api/index.html"
 
 python3 "$root/validation/security/npm-production-audit.py"
-if rg -i 'esp-web-install-button|unpkg\.com|esp-web-tools|playwright|axe-core' \
+if grep -i -E 'esp-web-install-button|unpkg\.com|esp-web-tools|playwright|axe-core' \
     "$root/docs/website/target/hosted-assets/prns-flash.js"; then
     echo "production bundle contains a forbidden legacy/CDN/test-only dependency" >&2
     exit 1
