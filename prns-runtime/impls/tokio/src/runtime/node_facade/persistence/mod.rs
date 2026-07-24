@@ -1,3 +1,10 @@
+mod host;
+
+pub use host::{
+    FlushFailurePolicy, NodePersistence, PersistenceEvent, PersistenceFlushStatus,
+    PersistenceRestoreReport, PersistenceTrigger, PersistenceWorker,
+};
+
 use tokio::sync::oneshot;
 
 use crate::crypto::ratchets::SeedSelfRatchetsOutcome;
@@ -335,7 +342,7 @@ pub fn boot_timeline_origin(store: &impl PersistedStore) -> InstantMillis {
     InstantMillis(wall_now.max(high_water))
 }
 
-pub(super) fn wall_clock_timeline_origin() -> InstantMillis {
+pub fn wall_clock_timeline_origin() -> InstantMillis {
     let millis = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))

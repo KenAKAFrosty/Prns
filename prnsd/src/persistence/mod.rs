@@ -1,9 +1,7 @@
 use core::time::Duration;
 use std::path::{Path, PathBuf};
 
-use personal_rns::identity::vault::FileVault;
-use personal_rns::persistence::FileStore;
-use personal_rns::runtime::PrnsNodeHandle;
+use personal_rns::runtime::{NodePersistence, PrnsNodeHandle};
 use personal_rns::wire::DestinationHash;
 use prnsd_control::ManagedProcess;
 
@@ -25,12 +23,16 @@ pub(crate) fn store_dir(storage_dir: &Path) -> PathBuf {
 }
 
 pub(crate) fn prepare_worker(
+    persistence: NodePersistence,
     handle: PrnsNodeHandle,
-    store: FileStore,
-    vault: FileVault,
     rotated: tokio::sync::mpsc::UnboundedReceiver<DestinationHash>,
 ) -> PersistenceWorker {
-    PersistenceWorker::new(handle, store, vault, rotated, PERSIST_INTERVAL)
+    PersistenceWorker::new(
+        persistence
+            .worker(handle)
+            .with_flush_interval(PERSIST_INTERVAL)
+            .with_ratchet_rotations(rotated),
+    )
 }
 
 pub(crate) async fn run_until_shutdown(

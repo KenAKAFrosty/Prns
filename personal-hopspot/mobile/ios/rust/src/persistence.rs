@@ -1,118 +1,59 @@
 use core::time::Duration;
-use std::fs;
-use std::io::Write;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
 
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
-
-use personal_rns::identity::vault::FileVault;
-use personal_rns::node_introspection::NodeIntrospection;
-use personal_rns::persistence::FileStore;
 use personal_rns::runtime::request_router::RouteSet;
 use personal_rns::runtime::{
-    boot_timeline_origin, DestinationIdentitySeedReport, FlushError, FlushMark, FlushReport,
-    PrepareFlushError, PrnsEvent, PrnsNode, PrnsNodeHandle, RatchetSeedReport, RegionFlush,
-    RouteSeedReport, TunnelSeedReport,
+    NodePersistence, PersistenceEvent, PersistenceFlushStatus, PersistenceRestoreReport, PrnsEvent,
+    PrnsNode, PrnsNodeHandle, RegionFlush,
 };
 use personal_rns::storage::StorageLayout;
 use personal_rns::units::InstantMillis;
 use personal_rns::wire::DestinationHash;
 
 const STORE_DIRECTORY: &str = "prns";
-const WRITE_PROBE: &str = ".write-probe";
 const CHANGE_DEBOUNCE: Duration = Duration::from_millis(250);
 const PERIODIC_FLUSH_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
-pub(crate) enum RouteTableChange {
-    AcceptedAnnounce,
-    RemovedRoute,
-}
-
-pub(crate) struct RestoreReport {
-    pub(crate) routes: RouteSeedReport,
-    pub(crate) destination_identities: DestinationIdentitySeedReport,
-    pub(crate) tunnels: TunnelSeedReport,
-    pub(crate) ratchets: RatchetSeedReport,
-}
-
 pub(crate) struct PreparedPersistence {
-    store: FileStore,
-    vault: FileVault,
+    persistence: NodePersistence,
 }
 
 impl PreparedPersistence {
     pub(crate) fn open(storage_directory: &Path) -> Result<Self, std::io::Error> {
-        let store_directory = storage_directory.join(STORE_DIRECTORY);
-        fs::create_dir_all(&store_directory)?;
-        if !fs::metadata(&store_directory)?.is_dir() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::NotADirectory,
-                "the persistence store path is not a directory",
-            ));
-        }
-        #[cfg(unix)]
-        fs::set_permissions(&store_directory, fs::Permissions::from_mode(0o700))?;
-        verify_writable(&store_directory)?;
         Ok(Self {
-            store: FileStore::new(&store_directory),
-            vault: FileVault::new(store_directory),
+            persistence: NodePersistence::open(storage_directory.join(STORE_DIRECTORY))?,
         })
     }
 
     pub(crate) fn timeline_origin(&self) -> InstantMillis {
-        boot_timeline_origin(&self.store)
+        self.persistence.timeline_origin()
     }
 
-    pub(crate) fn restore<St, R, F, S>(&self, node: &mut PrnsNode<St, R, F, S>) -> RestoreReport
+    pub(crate) fn restore<St, R, F, S>(
+        &self,
+        node: &mut PrnsNode<St, R, F, S>,
+    ) -> PersistenceRestoreReport
     where
         R: RouteSet<St>,
         F: FnMut(PrnsEvent<'_>, &St),
         S: StorageLayout,
     {
-        RestoreReport {
-            routes: node.seed_routes_from_store(&self.store),
-            destination_identities: node.seed_destination_identities_from_store(&self.store),
-            tunnels: node.seed_tunnels_from_store(&self.store),
-            ratchets: node.seed_self_ratchets_from_vault(&self.vault),
-        }
+        self.persistence.restore(node)
     }
 
     pub(crate) fn start(
         self,
         handle: PrnsNodeHandle,
-        changes: tokio::sync::mpsc::UnboundedReceiver<RouteTableChange>,
+        changes: tokio::sync::mpsc::UnboundedReceiver<()>,
         rotated: tokio::sync::mpsc::UnboundedReceiver<DestinationHash>,
     ) -> PersistenceTask {
-        PersistenceTask::start(handle, self.store, self.vault, changes, rotated)
+        PersistenceTask::start(self.persistence, handle, changes, rotated)
     }
-}
-
-fn verify_writable(store_directory: &Path) -> Result<(), std::io::Error> {
-    let probe = store_directory.join(WRITE_PROBE);
-    let tested = (|| {
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&probe)?;
-        file.write_all(b"hopspot")?;
-        file.sync_all()
-    })();
-    let removed = fs::remove_file(&probe);
-    tested.and(removed)
-}
-
-struct PersistenceStorage {
-    store: FileStore,
-    vault: FileVault,
-    mark: FlushMark,
 }
 
 pub(crate) struct PersistenceTask {
     shutdown: Option<tokio::sync::oneshot::Sender<()>>,
-    join: Option<tokio::task::JoinHandle<FlushOutcome>>,
+    join: Option<tokio::task::JoinHandle<PersistenceFlushStatus>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,19 +66,23 @@ pub(crate) enum PersistenceShutdown {
 
 impl PersistenceTask {
     fn start(
+        persistence: NodePersistence,
         handle: PrnsNodeHandle,
-        store: FileStore,
-        vault: FileVault,
-        changes: tokio::sync::mpsc::UnboundedReceiver<RouteTableChange>,
+        changes: tokio::sync::mpsc::UnboundedReceiver<()>,
         rotated: tokio::sync::mpsc::UnboundedReceiver<DestinationHash>,
     ) -> Self {
-        let storage = Arc::new(Mutex::new(PersistenceStorage {
-            store,
-            vault,
-            mark: FlushMark::default(),
-        }));
         let (shutdown, requested) = tokio::sync::oneshot::channel();
-        let join = tokio::spawn(run(handle, storage, changes, rotated, requested));
+        let worker = persistence
+            .worker(handle)
+            .with_flush_interval(PERIODIC_FLUSH_INTERVAL)
+            .with_route_changes(changes, CHANGE_DEBOUNCE)
+            .with_ratchet_rotations(rotated);
+        let join = tokio::spawn(worker.run(
+            async move {
+                let _ = requested.await;
+            },
+            observe,
+        ));
         Self {
             shutdown: Some(shutdown),
             join: Some(join),
@@ -152,10 +97,9 @@ impl PersistenceTask {
             return PersistenceShutdown::AlreadyStopped;
         };
         match tokio::time::timeout(timeout, &mut join).await {
-            Ok(Ok(FlushOutcome::Landed)) => PersistenceShutdown::Flushed,
-            Ok(Ok(FlushOutcome::Failed | FlushOutcome::NodeStopped)) | Ok(Err(_)) => {
-                PersistenceShutdown::Failed
-            }
+            Ok(Ok(PersistenceFlushStatus::Landed)) => PersistenceShutdown::Flushed,
+            Ok(Ok(PersistenceFlushStatus::Failed | PersistenceFlushStatus::NodeStopped))
+            | Ok(Err(_)) => PersistenceShutdown::Failed,
             Err(_) => {
                 join.abort();
                 let _ = join.await;
@@ -173,203 +117,37 @@ impl PersistenceTask {
     }
 }
 
-async fn run(
-    handle: PrnsNodeHandle,
-    storage: Arc<Mutex<PersistenceStorage>>,
-    mut changes: tokio::sync::mpsc::UnboundedReceiver<RouteTableChange>,
-    mut rotated: tokio::sync::mpsc::UnboundedReceiver<DestinationHash>,
-    mut shutdown: tokio::sync::oneshot::Receiver<()>,
-) -> FlushOutcome {
-    let mut periodic = tokio::time::interval(PERIODIC_FLUSH_INTERVAL);
-    periodic.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    periodic.tick().await;
-    let mut changes_open = true;
-    let mut rotations_open = true;
-    loop {
-        tokio::select! {
-            biased;
-            _ = &mut shutdown => {
-                let state = flush(&handle, &storage, FlushReason::Shutdown).await;
-                let ratchets = flush_ratchets(&handle, &storage).await;
-                return combined(state, ratchets);
-            }
-            destination = rotated.recv(), if rotations_open => {
-                match destination {
-                    Some(destination) => {
-                        let _ = flush_ratchet(&handle, &storage, destination).await;
-                    }
-                    None => rotations_open = false,
-                }
-            }
-            change = changes.recv(), if changes_open => {
-                match change {
-                    Some(RouteTableChange::AcceptedAnnounce | RouteTableChange::RemovedRoute) => {
-                        tokio::time::sleep(CHANGE_DEBOUNCE).await;
-                        while changes.try_recv().is_ok() {}
-                        let _ = flush(&handle, &storage, FlushReason::RouteTableChanged).await;
-                    }
-                    None => changes_open = false,
-                }
-            }
-            _ = periodic.tick() => {
-                let _ = flush(&handle, &storage, FlushReason::Periodic).await;
-            }
-        }
-    }
-}
-
-const fn combined(state: FlushOutcome, ratchets: FlushOutcome) -> FlushOutcome {
-    match (state, ratchets) {
-        (FlushOutcome::Landed, FlushOutcome::Landed) => FlushOutcome::Landed,
-        (FlushOutcome::NodeStopped, _) | (_, FlushOutcome::NodeStopped) => {
-            FlushOutcome::NodeStopped
-        }
-        _ => FlushOutcome::Failed,
-    }
-}
-
-async fn flush_ratchet(
-    handle: &PrnsNodeHandle,
-    storage: &Arc<Mutex<PersistenceStorage>>,
-    destination: DestinationHash,
-) -> FlushOutcome {
-    let snapshot = match handle.snapshot_self_ratchet(destination).await {
-        Ok(Some(snapshot)) => snapshot,
-        Ok(None) => return FlushOutcome::Landed,
-        Err(PrepareFlushError::NodeStopped) => return FlushOutcome::NodeStopped,
-    };
-    store_into_vault(storage, move |vault| snapshot.store_into(vault)).await
-}
-
-async fn flush_ratchets(
-    handle: &PrnsNodeHandle,
-    storage: &Arc<Mutex<PersistenceStorage>>,
-) -> FlushOutcome {
-    let Some(snapshot) = handle.snapshot_self_ratchets().await else {
-        return FlushOutcome::NodeStopped;
-    };
-    store_into_vault(storage, move |vault| {
-        snapshot.store_into(vault).map(|_| ())
-    })
-    .await
-}
-
-async fn store_into_vault<E: core::fmt::Display + Send + 'static>(
-    storage: &Arc<Mutex<PersistenceStorage>>,
-    store: impl FnOnce(&mut FileVault) -> Result<(), E> + Send + 'static,
-) -> FlushOutcome {
-    let storage = Arc::clone(storage);
-    let committed = tokio::task::spawn_blocking(move || {
-        let mut storage = match storage.lock() {
-            Ok(storage) => storage,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        store(&mut storage.vault)
-    })
-    .await;
-    match committed {
-        Ok(Ok(())) => FlushOutcome::Landed,
-        Ok(Err(error)) => {
-            crate::engine::diagnostic(
-                "persistence",
-                format_args!("state=failed reason=ratchet error={error}"),
-            );
-            FlushOutcome::Failed
-        }
-        Err(error) => {
-            crate::engine::diagnostic(
-                "persistence",
-                format_args!("state=failed reason=ratchet worker_error={error}"),
-            );
-            FlushOutcome::Failed
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-enum FlushReason {
-    RouteTableChanged,
-    Periodic,
-    Shutdown,
-}
-
-impl FlushReason {
-    const fn name(self) -> &'static str {
-        match self {
-            Self::RouteTableChanged => "route_change",
-            Self::Periodic => "periodic",
-            Self::Shutdown => "shutdown",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FlushOutcome {
-    Landed,
-    NodeStopped,
-    Failed,
-}
-
-async fn flush(
-    handle: &PrnsNodeHandle,
-    storage: &Arc<Mutex<PersistenceStorage>>,
-    reason: FlushReason,
-) -> FlushOutcome {
-    let routes = handle.routes().await.len();
-    let prepared = match handle.prepare_flush().await {
-        Ok(prepared) => prepared,
-        Err(PrepareFlushError::NodeStopped) => return FlushOutcome::NodeStopped,
-    };
-    let storage = Arc::clone(storage);
-    let committed = tokio::task::spawn_blocking(move || {
-        let mut storage = match storage.lock() {
-            Ok(storage) => storage,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        let PersistenceStorage { store, mark, .. } = &mut *storage;
-        prepared.commit_to_store(store, mark)
-    })
-    .await;
-    match committed {
-        Ok(Ok(report)) => {
-            log_flush(reason, routes, report);
-            FlushOutcome::Landed
-        }
-        Ok(Err(FlushError::Store(error))) => {
+fn observe(event: PersistenceEvent<'_>) {
+    match event {
+        PersistenceEvent::Flushed { trigger, report } => {
             crate::engine::diagnostic(
                 "persistence",
                 format_args!(
-                    "state=failed reason={} routes={routes} error={error}",
-                    reason.name()
+                    "state=flushed reason={} routing={} tunnels={} destinations={}",
+                    trigger.name(),
+                    region_name(report.routing_table),
+                    region_name(report.tunnels),
+                    region_name(report.destination_identities)
                 ),
             );
-            FlushOutcome::Failed
         }
-        Ok(Err(FlushError::NodeStopped)) => FlushOutcome::NodeStopped,
-        Err(error) => {
+        PersistenceEvent::FlushFailed { trigger, error } => {
+            crate::engine::diagnostic(
+                "persistence",
+                format_args!("state=failed reason={} error={error}", trigger.name()),
+            );
+        }
+        PersistenceEvent::RatchetFlushFailed { trigger, error } => {
             crate::engine::diagnostic(
                 "persistence",
                 format_args!(
-                    "state=failed reason={} routes={routes} worker_error={error}",
-                    reason.name()
+                    "state=failed reason=ratchet trigger={} error={error}",
+                    trigger.name()
                 ),
             );
-            FlushOutcome::Failed
         }
+        PersistenceEvent::RatchetsFlushed { .. } => {}
     }
-}
-
-fn log_flush(reason: FlushReason, routes: usize, report: FlushReport) {
-    crate::engine::diagnostic(
-        "persistence",
-        format_args!(
-            "state=flushed reason={} routes={routes} routing={} tunnels={} destinations={}",
-            reason.name(),
-            region_name(report.routing_table),
-            region_name(report.tunnels),
-            region_name(report.destination_identities)
-        ),
-    );
 }
 
 const fn region_name(region: RegionFlush) -> &'static str {
@@ -388,26 +166,42 @@ mod tests {
     use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
     use personal_rns::interfaces::{BitrateBps, InterfaceId};
     use personal_rns::manifold::reconnect::ReconnectPolicy;
-    use personal_rns::persistence::{read_routing_table_snapshot, PersistedStore, SnapshotRegion};
+    use personal_rns::persistence::{
+        read_routing_table_snapshot, FileStore, PersistedStore, SnapshotRegion,
+    };
     use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
     use personal_rns::runtime::{
-        Manual, PreConfiguredDestination, PrnsNodeRecipe, RequestHandlerRegistration,
+        Diagnostic, Manual, PreConfiguredDestination, PrnsNodeRecipe, RequestHandlerRegistration,
     };
     use personal_rns::storage::GrowableHeap;
     use personal_rns::tcp::{TcpClientInterface, TcpServer};
+    use std::fs;
+
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
     const TEST_BITRATE: BitrateBps = BitrateBps::guess(1_000_000);
+    const WRITE_PROBE: &str = ".write-probe";
 
     #[test]
     fn preparation_creates_a_private_writable_store_without_leaving_the_probe() {
         let root = tempfile::tempdir().unwrap();
         let prepared = PreparedPersistence::open(root.path()).unwrap();
 
-        assert_eq!(prepared.store.dir(), root.path().join(STORE_DIRECTORY));
-        assert!(prepared.store.dir().is_dir());
-        assert!(!prepared.store.dir().join(WRITE_PROBE).exists());
+        assert_eq!(
+            prepared.persistence.store().dir(),
+            root.path().join(STORE_DIRECTORY)
+        );
+        assert!(prepared.persistence.store().dir().is_dir());
+        assert!(!prepared
+            .persistence
+            .store()
+            .dir()
+            .join(WRITE_PROBE)
+            .exists());
         #[cfg(unix)]
         assert_eq!(
-            fs::metadata(prepared.store.dir())
+            fs::metadata(prepared.persistence.store().dir())
                 .unwrap()
                 .permissions()
                 .mode()
@@ -445,6 +239,7 @@ mod tests {
         assert_eq!(restored.routes.dropped_count, 0);
         assert_eq!(restored.destination_identities.seeded_count, 0);
         assert_eq!(restored.tunnels.seeded_count, 0);
+        assert_eq!(restored.ratchets.seeded_count, 0);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -487,13 +282,10 @@ mod tests {
                 handle.attach(client);
             },
             on_event: move |event, _state| {
-                if let PrnsEvent::Diagnostic(personal_rns::runtime::Diagnostic::AnnounceHeard {
-                    destination,
-                    ..
-                }) = event
+                if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event
                 {
                     let _ = heard_tx.send(destination);
-                    let _ = change_tx.send(RouteTableChange::AcceptedAnnounce);
+                    let _ = change_tx.send(());
                 }
             },
         })

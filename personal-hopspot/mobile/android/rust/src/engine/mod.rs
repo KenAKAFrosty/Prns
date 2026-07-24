@@ -713,10 +713,10 @@ mod tests {
         std::fs::write(storage_dir.join("prns"), b"not a directory").unwrap();
         assert_eq!(
             start_with_ports(storage_dir.clone(), EnginePorts::EPHEMERAL),
-            Err(EngineStartError::PersistenceWrite)
+            Err(EngineStartError::StorageConfiguration)
         );
-        assert_eq!(last_failure(), MobileEngineFailure::PersistenceWrite);
-        assert_eq!(stop(), Err(EngineStopError::PersistenceWrite));
+        assert_eq!(last_failure(), MobileEngineFailure::StorageConfiguration);
+        assert_eq!(stop(), Err(EngineStopError::WorkerStopped));
         std::fs::remove_dir_all(storage_dir).unwrap();
     }
 }

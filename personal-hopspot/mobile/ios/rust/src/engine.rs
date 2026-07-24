@@ -29,7 +29,7 @@ use personal_rns::wifi_auto::{AutoWifi, AutoWifiStatus};
 use personal_rns::wire::DestinationHash;
 use tokio::net::TcpListener;
 
-use crate::persistence::{PersistenceShutdown, PreparedPersistence, RouteTableChange};
+use crate::persistence::{PersistenceShutdown, PreparedPersistence};
 
 const ANNOUNCE_APP_DATA: &[u8] = b"personal-hopspot";
 const NODE_ANNOUNCE_APP_DATA: &[u8] = b"personal-hopspot";
@@ -584,8 +584,7 @@ async fn run_engine(
         ),
     );
 
-    let (persistence_change_tx, persistence_changes) =
-        tokio::sync::mpsc::unbounded_channel::<RouteTableChange>();
+    let (persistence_change_tx, persistence_changes) = tokio::sync::mpsc::unbounded_channel::<()>();
     let (rotated_tx, rotated_rx) = tokio::sync::mpsc::unbounded_channel::<DestinationHash>();
     let timeline_origin = prepared_persistence.timeline_origin();
     let mut node = PrnsNode::new(PrnsNodeRecipe {
@@ -610,7 +609,7 @@ async fn run_engine(
                         abbreviated_hex(source_interface.as_bytes())
                     ),
                 );
-                let _ = persistence_change_tx.send(RouteTableChange::AcceptedAnnounce);
+                let _ = persistence_change_tx.send(());
             }
             PrnsEvent::Diagnostic(Diagnostic::RouteRemoved { destination, cause }) => {
                 diagnostic(
@@ -620,7 +619,7 @@ async fn run_engine(
                         full_hex(destination.as_bytes())
                     ),
                 );
-                let _ = persistence_change_tx.send(RouteTableChange::RemovedRoute);
+                let _ = persistence_change_tx.send(());
             }
             PrnsEvent::Diagnostic(Diagnostic::SelfRatchetRotated { destination }) => {
                 let _ = rotated_tx.send(destination);
@@ -638,14 +637,8 @@ async fn run_engine(
             restored.destination_identities.seeded_count,
             restored.tunnels.seeded_count,
             restored.ratchets.seeded_count,
-            restored.routes.refused_count
-                + restored.destination_identities.refused_count
-                + restored.tunnels.refused_count
-                + restored.ratchets.refused_count,
-            restored.routes.dropped_count
-                + restored.destination_identities.dropped_count
-                + restored.tunnels.dropped_count
-                + restored.ratchets.dropped_count
+            restored.refused_total(),
+            restored.dropped_total()
         ),
     );
     let handle = node.handle();

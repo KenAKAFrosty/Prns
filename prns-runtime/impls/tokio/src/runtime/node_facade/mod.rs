@@ -40,7 +40,9 @@ pub use node_lifecycle::{
     SharedInstanceIdentityError,
 };
 pub use persistence::{
-    boot_timeline_origin, DestinationIdentitySeedReport, FlushError, FlushMark, FlushReport,
+    boot_timeline_origin, wall_clock_timeline_origin, DestinationIdentitySeedReport, FlushError,
+    FlushFailurePolicy, FlushMark, FlushReport, NodePersistence, PersistenceEvent,
+    PersistenceFlushStatus, PersistenceRestoreReport, PersistenceTrigger, PersistenceWorker,
     PrepareFlushError, PreparedFlush, RatchetSeedReport, RegionFlush, RouteSeedProgress,
     RouteSeedReport, TunnelSeedReport,
 };

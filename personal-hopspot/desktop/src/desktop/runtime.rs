@@ -183,8 +183,13 @@ fn run_node(ready_tx: Sender<(WindowHandles, persistence::ShutdownFlush)>) {
         let destination = destination_hashes.delivery;
         let node_page_destination = destination_hashes.node_page;
 
-        let persistence_storage = persistence::PersistenceStorage::new(&storage_dir);
-        let timeline_origin = persistence_storage.timeline_origin();
+        let persistence_store = match persistence::open(&storage_dir) {
+            Ok(persistence_store) => Some(persistence_store),
+            Err(error) => {
+                tracing::error!(event = "persistence_unavailable", %error);
+                None
+            }
+        };
         let (rotated_tx, rotated_rx) = tokio::sync::mpsc::unbounded_channel();
         let mut node = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: Some(transport_secret),
@@ -199,21 +204,27 @@ fn run_node(ready_tx: Sender<(WindowHandles, persistence::ShutdownFlush)>) {
                     let _ = rotated_tx.send(destination);
                 }
             },
-        })
-        .with_timeline_origin(timeline_origin);
-        let restored = persistence_storage.restore(&mut node);
-        tracing::info!(
-            event = "persistence_restored",
-            routes = restored.routes,
-            destinations = restored.destination_identities,
-            tunnels = restored.tunnels,
-            ratchets = restored.ratchets,
-            refused = restored.refused,
-            dropped = restored.dropped,
-        );
+        });
+        if let Some(persistence_store) = &persistence_store {
+            node = node.with_timeline_origin(persistence_store.timeline_origin());
+            let restored = persistence_store.restore(&mut node);
+            tracing::info!(
+                event = "persistence_restored",
+                routes = restored.routes.seeded_count,
+                destinations = restored.destination_identities.seeded_count,
+                tunnels = restored.tunnels.seeded_count,
+                ratchets = restored.ratchets.seeded_count,
+                refused = restored.refused_total(),
+                dropped = restored.dropped_total(),
+            );
+        }
         let handle = node.handle();
-        let shutdown_flush =
-            persistence::spawn_worker(handle.clone(), persistence_storage, rotated_rx);
+        let shutdown_flush = match persistence_store {
+            Some(persistence_store) => {
+                persistence::spawn_worker(persistence_store, handle.clone(), rotated_rx)
+            }
+            None => persistence::ShutdownFlush::disabled(),
+        };
 
         let rescan = Arc::new(Notify::new());
         let usb = UsbAutoHost::new(

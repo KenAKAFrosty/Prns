@@ -23,7 +23,7 @@ use personal_rns::wifi_direct::WifiDirectAuto;
 use tokio::sync::oneshot;
 
 use super::{
-    persistence::{PersistenceRestore, PersistenceStorage, PersistenceWorker},
+    persistence::{self, PersistenceRestore, PersistenceWorker},
     EnginePorts, EngineResources, EngineStartError, PlatformLinks, WorkerExit, ANDROID_PORT,
     ANNOUNCE_APP_DATA, NODE_ANNOUNCE_APP_DATA, USB_INTERFACE_ID, WORKER_SHUTDOWN_TIMEOUT,
 };
@@ -96,8 +96,14 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
         .destination_hashes()
         .expect("the hopspot destination names are valid");
 
-    let persistence_storage = PersistenceStorage::new(&storage_dir);
-    let timeline_origin = persistence_storage.timeline_origin();
+    let persistence_store = match persistence::open(&storage_dir) {
+        Ok(persistence_store) => persistence_store,
+        Err(error) => {
+            log::error!("hopspot persistence storage unavailable: {error}");
+            return fail_start(ready_tx, EngineStartError::StorageConfiguration);
+        }
+    };
+    let timeline_origin = persistence_store.timeline_origin();
     let (rotated_tx, rotated_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: Some(transport_secret),
@@ -113,30 +119,11 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
         },
     })
     .with_timeline_origin(timeline_origin);
-    let routes = node.seed_routes_from_store(persistence_storage.store());
-    let destination_identities =
-        node.seed_destination_identities_from_store(persistence_storage.store());
-    let tunnels = node.seed_tunnels_from_store(persistence_storage.store());
-    let ratchets = node.seed_self_ratchets_from_vault(persistence_storage.vault());
-    let restore = PersistenceRestore {
-        routes: routes.seeded_count,
-        destination_identities: destination_identities.seeded_count,
-        tunnels: tunnels.seeded_count,
-        ratchets: ratchets.seeded_count,
-        refused: routes
-            .refused_count
-            .saturating_add(destination_identities.refused_count)
-            .saturating_add(tunnels.refused_count)
-            .saturating_add(ratchets.refused_count),
-        dropped: routes
-            .dropped_count
-            .saturating_add(destination_identities.dropped_count)
-            .saturating_add(tunnels.dropped_count)
-            .saturating_add(ratchets.dropped_count),
-    };
+    let restored = persistence_store.restore(&mut node);
+    let restore = PersistenceRestore::from_report(&restored);
     let handle = node.handle();
     let persistence =
-        PersistenceWorker::new(handle.clone(), persistence_storage, rotated_rx, restore);
+        PersistenceWorker::new(handle.clone(), persistence_store, rotated_rx, restore);
     let persistence_health = persistence.health();
 
     let scan = {

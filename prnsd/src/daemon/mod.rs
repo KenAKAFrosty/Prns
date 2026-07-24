@@ -24,13 +24,11 @@ use personal_rns::engine::{
     EngineProtocolPolicy, LinkMtuDiscovery, LocalHopCountOverride, ProofForm,
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
-use personal_rns::identity::vault::FileVault;
 use personal_rns::identity::IdentitySigner;
-use personal_rns::persistence::FileStore;
 use personal_rns::routes;
 use personal_rns::runtime::{
-    boot_timeline_origin, CryptoPoolConfig, Diagnostic, Manual, PoolWorkers, PrnsEvent, PrnsNode,
-    PrnsNodeRecipe,
+    wall_clock_timeline_origin, CryptoPoolConfig, Diagnostic, Manual, NodePersistence, PoolWorkers,
+    PrnsEvent, PrnsNode, PrnsNodeRecipe,
 };
 use personal_rns::shared_instance::{RnsBlackholeFiles, SharedInstanceCredentials};
 use personal_rns::storage::GrowableHeap;
@@ -160,8 +158,17 @@ pub(super) async fn run(
     };
 
     let persist_dir = persistence::store_dir(&storage_dir);
-    let store = FileStore::new(&persist_dir);
-    let timeline_origin = boot_timeline_origin(&store);
+    let node_persistence = match NodePersistence::open(&persist_dir) {
+        Ok(node_persistence) => Some(node_persistence),
+        Err(error) => {
+            tracing::error!(event = "persistence_unavailable", %error);
+            None
+        }
+    };
+    let timeline_origin = node_persistence
+        .as_ref()
+        .map(NodePersistence::timeline_origin)
+        .unwrap_or_else(wall_clock_timeline_origin);
     let (rotated_tx, rotated_rx) = tokio::sync::mpsc::unbounded_channel();
     let prepared_discovery = interface_discovery::PreparedDiscovery::from_plan(
         &plan,
@@ -272,25 +279,25 @@ pub(super) async fn run(
 
     let mut persistence = None;
     if interface_ownership.routing_tables().is_some() {
-        let vault = FileVault::new(&persist_dir);
-        persistence::restore(
-            &mut prns,
-            persistence::RestoreInputs {
-                store: &store,
-                vault: &vault,
-                blackhole_files: &blackhole_files,
-                blackhole_exchange: &plan.blackhole_exchange,
-                local_identity: visible_identity_hash,
-                timeline_origin,
-                progress: observability.state_restore_progress(),
-            },
-        );
-        persistence = Some(persistence::prepare_worker(
-            prns_handle.clone(),
-            store,
-            vault,
-            rotated_rx,
-        ));
+        if let Some(node_persistence) = node_persistence {
+            persistence::restore(
+                &mut prns,
+                persistence::RestoreInputs {
+                    store: node_persistence.store(),
+                    vault: node_persistence.vault(),
+                    blackhole_files: &blackhole_files,
+                    blackhole_exchange: &plan.blackhole_exchange,
+                    local_identity: visible_identity_hash,
+                    timeline_origin,
+                    progress: observability.state_restore_progress(),
+                },
+            );
+            persistence = Some(persistence::prepare_worker(
+                node_persistence,
+                prns_handle.clone(),
+                rotated_rx,
+            ));
+        }
     }
 
     let (prns, mut background_tasks) = background::start(background::BackgroundInputs {

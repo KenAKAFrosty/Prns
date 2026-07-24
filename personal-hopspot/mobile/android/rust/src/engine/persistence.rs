@@ -1,48 +1,20 @@
 use core::time::Duration;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use personal_rns::identity::vault::FileVault;
-use personal_rns::persistence::FileStore;
 use personal_rns::runtime::{
-    boot_timeline_origin, FlushError, FlushMark, PrepareFlushError, PrnsNodeHandle,
-    SelfRatchetSnapshot, SelfRatchetsSnapshot,
+    FlushFailurePolicy, NodePersistence, PersistenceEvent, PersistenceFlushStatus,
+    PersistenceRestoreReport, PrnsNodeHandle,
 };
-use personal_rns::units::InstantMillis;
 use personal_rns::wire::DestinationHash;
 use tokio::sync::{mpsc, oneshot};
 
 const PERSISTENCE_DIRECTORY: &str = "prns";
 const PERSISTENCE_INTERVAL: Duration = Duration::from_secs(30);
 
-pub(super) struct PersistenceStorage {
-    store: FileStore,
-    vault: FileVault,
-    mark: FlushMark,
-}
-
-impl PersistenceStorage {
-    pub(super) fn new(storage_dir: &Path) -> Self {
-        let path = storage_dir.join(PERSISTENCE_DIRECTORY);
-        Self {
-            store: FileStore::new(&path),
-            vault: FileVault::new(path),
-            mark: FlushMark::default(),
-        }
-    }
-
-    pub(super) fn timeline_origin(&self) -> InstantMillis {
-        boot_timeline_origin(&self.store)
-    }
-
-    pub(super) fn store(&self) -> &FileStore {
-        &self.store
-    }
-
-    pub(super) fn vault(&self) -> &FileVault {
-        &self.vault
-    }
+pub(super) fn open(storage_dir: &Path) -> Result<NodePersistence, std::io::Error> {
+    NodePersistence::open(storage_dir.join(PERSISTENCE_DIRECTORY))
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -53,6 +25,19 @@ pub(crate) struct PersistenceRestore {
     pub(crate) ratchets: u32,
     pub(crate) refused: u32,
     pub(crate) dropped: u32,
+}
+
+impl PersistenceRestore {
+    pub(super) fn from_report(report: &PersistenceRestoreReport) -> Self {
+        Self {
+            routes: report.routes.seeded_count,
+            destination_identities: report.destination_identities.seeded_count,
+            tunnels: report.tunnels.seeded_count,
+            ratchets: report.ratchets.seeded_count,
+            refused: report.refused_total(),
+            dropped: report.dropped_total(),
+        }
+    }
 }
 
 struct PersistenceHealthInner {
@@ -96,30 +81,23 @@ pub(crate) struct PersistenceSnapshot {
 }
 
 pub(super) struct PersistenceWorker {
-    handle: PrnsNodeHandle,
-    storage: Arc<Mutex<PersistenceStorage>>,
-    rotated: mpsc::UnboundedReceiver<DestinationHash>,
+    worker: personal_rns::runtime::PersistenceWorker,
     health: PersistenceHealth,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FlushOutcome {
-    Landed,
-    NodeStopped,
-    Failed,
 }
 
 impl PersistenceWorker {
     pub(super) fn new(
         handle: PrnsNodeHandle,
-        storage: PersistenceStorage,
+        persistence: NodePersistence,
         rotated: mpsc::UnboundedReceiver<DestinationHash>,
         restore: PersistenceRestore,
     ) -> Self {
         Self {
-            handle,
-            storage: Arc::new(Mutex::new(storage)),
-            rotated,
+            worker: persistence
+                .worker(handle)
+                .with_flush_interval(PERSISTENCE_INTERVAL)
+                .with_ratchet_rotations(rotated)
+                .with_flush_failure_policy(FlushFailurePolicy::Exit),
             health: PersistenceHealth::new(restore),
         }
     }
@@ -129,142 +107,41 @@ impl PersistenceWorker {
     }
 
     pub(super) async fn initialize(&self) -> Result<(), ()> {
-        if self.flush_state().await != FlushOutcome::Landed {
-            return Err(());
-        }
-        if self.flush_ratchets().await != FlushOutcome::Landed {
-            return Err(());
-        }
-        Ok(())
-    }
-
-    pub(super) async fn run(mut self, mut shutdown: oneshot::Receiver<()>) -> Result<(), ()> {
-        let mut ticker = tokio::time::interval(PERSISTENCE_INTERVAL);
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        ticker.tick().await;
-        let mut rotations_open = true;
-        loop {
-            tokio::select! {
-                biased;
-                _ = &mut shutdown => return self.flush_shutdown().await,
-                destination = self.rotated.recv(), if rotations_open => {
-                    match destination {
-                        Some(destination) => {
-                            if self.flush_ratchet(destination).await != FlushOutcome::Landed {
-                                return Err(());
-                            }
-                        }
-                        None => rotations_open = false,
-                    }
-                }
-                _ = ticker.tick() => {
-                    match self.flush_state().await {
-                        FlushOutcome::Landed => {}
-                        FlushOutcome::NodeStopped | FlushOutcome::Failed => return Err(()),
-                    }
-                }
-            }
+        let health = self.health.clone();
+        let mut observer = move |event: PersistenceEvent<'_>| observe(&health, event);
+        match self.worker.flush_now(&mut observer).await {
+            PersistenceFlushStatus::Landed => Ok(()),
+            PersistenceFlushStatus::NodeStopped | PersistenceFlushStatus::Failed => Err(()),
         }
     }
 
-    async fn flush_state(&self) -> FlushOutcome {
-        let prepared = match self.handle.prepare_flush().await {
-            Ok(prepared) => prepared,
-            Err(PrepareFlushError::NodeStopped) => return FlushOutcome::NodeStopped,
-        };
-        let storage = Arc::clone(&self.storage);
-        let committed = tokio::task::spawn_blocking(move || {
-            let mut storage = storage
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let PersistenceStorage { store, mark, .. } = &mut *storage;
-            prepared.commit_to_store(store, mark)
-        })
-        .await;
-        match committed {
-            Ok(Ok(_)) => {
-                self.health.record_flush();
-                FlushOutcome::Landed
-            }
-            Ok(Err(FlushError::Store(error))) => {
-                log::error!("Android runtime persistence failed: {error}");
-                FlushOutcome::Failed
-            }
-            Ok(Err(FlushError::NodeStopped)) => FlushOutcome::NodeStopped,
-            Err(error) => {
-                log::error!("Android runtime persistence worker failed: {error}");
-                FlushOutcome::Failed
-            }
+    pub(super) async fn run(self, shutdown: oneshot::Receiver<()>) -> Result<(), ()> {
+        let health = self.health;
+        let status = self
+            .worker
+            .run(
+                async move {
+                    let _ = shutdown.await;
+                },
+                move |event| observe(&health, event),
+            )
+            .await;
+        match status {
+            PersistenceFlushStatus::Landed => Ok(()),
+            PersistenceFlushStatus::NodeStopped | PersistenceFlushStatus::Failed => Err(()),
         }
     }
+}
 
-    async fn flush_ratchet(&self, destination: DestinationHash) -> FlushOutcome {
-        let snapshot = match self.handle.snapshot_self_ratchet(destination).await {
-            Ok(Some(snapshot)) => snapshot,
-            Ok(None) => return FlushOutcome::Landed,
-            Err(PrepareFlushError::NodeStopped) => return FlushOutcome::NodeStopped,
-        };
-        self.store_ratchet(snapshot).await
-    }
-
-    async fn store_ratchet(&self, snapshot: SelfRatchetSnapshot) -> FlushOutcome {
-        let storage = Arc::clone(&self.storage);
-        let committed = tokio::task::spawn_blocking(move || {
-            let mut storage = storage
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            snapshot.store_into(&mut storage.vault)
-        })
-        .await;
-        match committed {
-            Ok(Ok(())) => FlushOutcome::Landed,
-            Ok(Err(error)) => {
-                log::error!("Android ratchet persistence failed: {error}");
-                FlushOutcome::Failed
-            }
-            Err(error) => {
-                log::error!("Android ratchet persistence worker failed: {error}");
-                FlushOutcome::Failed
-            }
+fn observe(health: &PersistenceHealth, event: PersistenceEvent<'_>) {
+    match event {
+        PersistenceEvent::Flushed { .. } => health.record_flush(),
+        PersistenceEvent::FlushFailed { error, .. } => {
+            log::error!("Android runtime persistence failed: {error}");
         }
-    }
-
-    async fn flush_ratchets(&self) -> FlushOutcome {
-        let Some(snapshot) = self.handle.snapshot_self_ratchets().await else {
-            return FlushOutcome::NodeStopped;
-        };
-        self.store_ratchets(snapshot).await
-    }
-
-    async fn store_ratchets(&self, snapshot: SelfRatchetsSnapshot) -> FlushOutcome {
-        let storage = Arc::clone(&self.storage);
-        let committed = tokio::task::spawn_blocking(move || {
-            let mut storage = storage
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            snapshot.store_into(&mut storage.vault)
-        })
-        .await;
-        match committed {
-            Ok(Ok(_)) => FlushOutcome::Landed,
-            Ok(Err(error)) => {
-                log::error!("Android ratchet persistence failed: {error}");
-                FlushOutcome::Failed
-            }
-            Err(error) => {
-                log::error!("Android ratchet persistence worker failed: {error}");
-                FlushOutcome::Failed
-            }
+        PersistenceEvent::RatchetFlushFailed { error, .. } => {
+            log::error!("Android ratchet persistence failed: {error}");
         }
-    }
-
-    async fn flush_shutdown(&self) -> Result<(), ()> {
-        if self.flush_state().await != FlushOutcome::Landed {
-            return Err(());
-        }
-        if self.flush_ratchets().await != FlushOutcome::Landed {
-            return Err(());
-        }
-        Ok(())
+        PersistenceEvent::RatchetsFlushed { .. } => {}
     }
 }
