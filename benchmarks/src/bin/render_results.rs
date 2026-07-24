@@ -1359,16 +1359,14 @@ mod tests {
         assert!(output.contains("assets/at-a-glance-test-host-dark.svg"));
         assert_eq!(assets.len(), 2);
         for (path, svg) in &assets {
-            assert!(path.ends_with(
-                Path::new("assets").join(format!(
-                    "at-a-glance-test-host-{}.svg",
-                    if svg.contains(LIGHT_CHART.bar) {
-                        "light"
-                    } else {
-                        "dark"
-                    }
-                ))
-            ));
+            assert!(path.ends_with(Path::new("assets").join(format!(
+                "at-a-glance-test-host-{}.svg",
+                if svg.contains(LIGHT_CHART.bar) {
+                    "light"
+                } else {
+                    "dark"
+                }
+            ))));
             assert!(svg.starts_with("<svg xmlns"));
             assert!(svg.contains(">4.00×<"));
             assert!(svg.contains("Single-packet throughput"));
