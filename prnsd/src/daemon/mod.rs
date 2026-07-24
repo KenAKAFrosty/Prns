@@ -12,8 +12,9 @@ pub(crate) use configured_interfaces::{
 pub(crate) use configuration::DEFAULT_CONFIG;
 
 use std::future;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::shutdown::ShutdownSignal;
@@ -25,6 +26,8 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::IdentitySigner;
+use personal_rns::interfaces::ConnectionState;
+use personal_rns::node_introspection::logical_interface_inventory;
 use personal_rns::routes;
 use personal_rns::runtime::{
     wall_clock_timeline_origin, CryptoPoolConfig, Diagnostic, Manual, NodePersistence, PoolWorkers,
@@ -36,12 +39,58 @@ use personal_rns::wifi_auto::AutoWifiDevicePolicy;
 use personal_rns::PlanRuntimeContext;
 use prnsd_control::{config_digest, ManagedProcess, ReloadRequest, ReloadResult, ServiceError};
 
+const TRAY_STATUS_INTERVAL: Duration = Duration::from_secs(2);
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct DaemonStatus {
+    pub(crate) interface_count: u32,
+    pub(crate) retrying: u32,
+    pub(crate) impaired: u32,
+    pub(crate) unavailable: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DaemonReady {
+    pub(crate) config_dir: PathBuf,
+    pub(crate) managed_state_dir: Option<PathBuf>,
+    pub(crate) status: DaemonStatus,
+}
+
+#[derive(Clone)]
+pub(crate) struct DaemonStatusPublisher {
+    publish: Arc<dyn Fn(DaemonStatus) + Send + Sync>,
+}
+
+impl DaemonStatusPublisher {
+    #[cfg(feature = "tray")]
+    pub(crate) fn new(publish: impl Fn(DaemonStatus) + Send + Sync + 'static) -> Self {
+        Self {
+            publish: Arc::new(publish),
+        }
+    }
+
+    fn publish(&self, status: DaemonStatus) {
+        (self.publish)(status);
+    }
+}
+
+pub(crate) struct DaemonPresentation {
+    pub(crate) ready: tokio::sync::oneshot::Sender<DaemonReady>,
+    pub(crate) status: DaemonStatusPublisher,
+}
+
 pub(super) async fn run(
     cli: cli::DaemonArgs,
     managed: Option<ManagedProcess>,
     shutdown: Option<ShutdownSignal>,
-    ready: Option<tokio::sync::oneshot::Sender<()>>,
+    presentation: Option<DaemonPresentation>,
 ) {
+    let (ready, status_publisher) = match presentation {
+        Some(presentation) => (Some(presentation.ready), Some(presentation.status)),
+        None => (None, None),
+    };
+    #[cfg(all(feature = "tray", target_os = "linux"))]
+    let mut status_publisher = status_publisher;
     let started = std::time::Instant::now();
     let configuration::LoadedConfiguration {
         directory: config_dir,
@@ -335,16 +384,30 @@ pub(super) async fn run(
             process::exit(1);
         }
     }
+    let ready_status = daemon_status(&prns_handle);
     if let Some(ready) = ready {
-        let _ = ready.send(());
+        let _ = ready.send(DaemonReady {
+            config_dir: config_dir.clone(),
+            managed_state_dir: managed
+                .as_ref()
+                .map(|process| process.state_dir().to_path_buf()),
+            status: ready_status,
+        });
     }
     #[cfg(all(feature = "tray", target_os = "linux"))]
     let (_tray, shutdown) = match shutdown {
         Some(shutdown) => (None, Some(shutdown)),
-        None => match crate::tray::start() {
-            Ok((tray, shutdown)) => {
+        None => match crate::tray::start(
+            config_dir.clone(),
+            managed
+                .as_ref()
+                .map(|process| process.state_dir().to_path_buf()),
+            ready_status,
+        ) {
+            Ok((tray, tray_shutdown, publisher)) => {
                 tracing::info!(event = "tray_started");
-                (Some(tray), Some(shutdown))
+                status_publisher = Some(publisher);
+                (Some(tray), Some(tray_shutdown))
             }
             Err(error) => {
                 tracing::warn!(event = "tray_unavailable", error = %error);
@@ -352,6 +415,8 @@ pub(super) async fn run(
             }
         },
     };
+    let tray_status_task = status_publisher
+        .map(|publisher| tokio::spawn(publish_daemon_status(prns_handle.clone(), publisher)));
     let mut interface_failure = None;
     let mut node_failure = false;
     let mut active_plan = plan.clone();
@@ -413,6 +478,10 @@ pub(super) async fn run(
     }
     drop(persistence_run);
     drop(node_run);
+    if let Some(task) = tray_status_task {
+        task.abort();
+        let _ = task.await;
+    }
     background_tasks.shutdown().await;
     observability.shutdown().await;
     if let Some(managed) = managed {
@@ -420,6 +489,49 @@ pub(super) async fn run(
     }
     if interface_failure.is_some() || node_failure {
         process::exit(1);
+    }
+}
+
+fn daemon_status(handle: &personal_rns::runtime::PrnsNodeHandle) -> DaemonStatus {
+    let inventory = logical_interface_inventory(handle.interface_inventory());
+    daemon_status_from_connections(
+        inventory
+            .into_iter()
+            .map(|interface| interface.snapshot.connection),
+    )
+}
+
+fn daemon_status_from_connections(
+    connections: impl IntoIterator<Item = ConnectionState>,
+) -> DaemonStatus {
+    let mut status = DaemonStatus::default();
+    for connection in connections {
+        status.interface_count = status.interface_count.saturating_add(1);
+        match connection {
+            ConnectionState::Initializing | ConnectionState::Reconnecting => {
+                status.retrying = status.retrying.saturating_add(1);
+            }
+            ConnectionState::Degraded => {
+                status.impaired = status.impaired.saturating_add(1);
+            }
+            ConnectionState::Failed | ConnectionState::Disconnected => {
+                status.unavailable = status.unavailable.saturating_add(1);
+            }
+            ConnectionState::Connected | ConnectionState::Disabled | ConnectionState::Unknown => {}
+        }
+    }
+    status
+}
+
+async fn publish_daemon_status(
+    handle: personal_rns::runtime::PrnsNodeHandle,
+    publisher: DaemonStatusPublisher,
+) {
+    let mut interval = tokio::time::interval(TRAY_STATUS_INTERVAL);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        interval.tick().await;
+        publisher.publish(daemon_status(&handle));
     }
 }
 
@@ -495,4 +607,33 @@ async fn apply_reload(
     let applied =
         matches!(result, ReloadResult::Applied | ReloadResult::Unchanged).then_some(replacement);
     (result, applied)
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::*;
+
+    #[test]
+    fn tray_health_folds_logical_connection_states_without_penalizing_disabled_slots() {
+        let status = daemon_status_from_connections([
+            ConnectionState::Connected,
+            ConnectionState::Initializing,
+            ConnectionState::Reconnecting,
+            ConnectionState::Degraded,
+            ConnectionState::Failed,
+            ConnectionState::Disconnected,
+            ConnectionState::Disabled,
+            ConnectionState::Unknown,
+        ]);
+
+        assert_eq!(
+            status,
+            DaemonStatus {
+                interface_count: 8,
+                retrying: 2,
+                impaired: 1,
+                unavailable: 2,
+            }
+        );
+    }
 }

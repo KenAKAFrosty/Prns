@@ -142,6 +142,11 @@ impl ManagedProcess {
         )
     }
 
+    #[must_use]
+    pub fn state_dir(&self) -> &Path {
+        &self.paths.state_dir
+    }
+
     pub fn stop_requested(&self) -> Result<bool, ServiceError> {
         read_generation(&self.paths.stop, "could not read prnsd stop request")
             .map(|generation| generation == Some(self.generation))

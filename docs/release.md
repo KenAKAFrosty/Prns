@@ -58,11 +58,14 @@ the daemon. Set `PRNSD_STATE_DIR` to create an isolated session for testing or
 advanced multi-instance use.
 
 Release builds include the default `tray` feature. Once the daemon is ready,
-the Prns mark appears in the macOS, Windows, or Linux system tray with a
-`Stop prnsd` action. That action uses the normal graceful shutdown path,
-including the final persistence flush. A missing desktop session or Linux
-StatusNotifier watcher only disables the tray and records `tray_unavailable`;
-it does not prevent `prnsd` from running.
+the Prns mark appears in the macOS, Windows, or Linux system tray. Its menu
+shows live interface health, opens an attached Prns terminal, runs network
+status or the guided interface editor, reveals the effective configuration
+folder, and stops the daemon through the normal graceful shutdown path,
+including the final persistence flush. Direct `prnsd run` sessions are labeled
+as foreground sessions and do not offer managed-log attachment. A missing
+desktop session or Linux StatusNotifier watcher only disables the tray and
+records `tray_unavailable`; it does not prevent `prnsd` from running.
 
 Native service packages and other deliberately headless builds can omit the UI
 dependencies:

@@ -96,10 +96,24 @@ RUST_LOG=debug,prns.runtime=info cargo prnsd restart
 The built executable accepts the same lifecycle commands without Cargo. `prnsd run` is the explicit foreground mode for terminals and future native service managers. The portable managed session survives terminal exit, but does not start at login or boot and does not restart after a crash.
 
 The default `tray` feature publishes the Prns mark after daemon readiness on macOS, Windows, and
-Linux. Its `Stop prnsd` menu action enters the same graceful persistence and background-task
-shutdown path as `prnsd stop`. Tray setup is best-effort: headless sessions continue normally and
-emit `tray_unavailable` when the platform tray service is absent. Service-oriented builds can omit
-it with `--no-default-features --features tokio-host,observability`.
+Linux. Its concise status menu reports the live logical-interface state and provides these
+platform-owned actions:
+
+- **Open Prns Terminal** opens an attached managed log session. Ctrl-C detaches without stopping
+  the daemon. Foreground `prnsd run` sessions identify themselves and leave this action disabled
+  because they do not own a managed log.
+- **Show Network Status** opens `prnsd status` against the effective configuration.
+- **Manage Interfaces…** opens the guided `prnsd interfaces` editor against that same configuration.
+- **Open Configuration Folder** reveals the effective directory, including an explicit `--config`
+  override.
+- **Stop prnsd** enters the same graceful persistence and background-task shutdown path as
+  `prnsd stop`.
+
+Terminal actions target the exact running executable and carry an isolated `PRNSD_STATE_DIR`
+through to the child session; they do not depend on the user's shell `PATH`. Tray setup remains
+best-effort: headless sessions continue normally and emit `tray_unavailable` when the platform tray
+service is absent. Service-oriented builds can omit it with
+`--no-default-features --features tokio-host,observability`.
 
 OTLP metrics and traces are a non-default build feature. Export starts only when an endpoint is configured for that signal and `OTEL_SDK_DISABLED` is not `true`.
 

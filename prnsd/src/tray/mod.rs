@@ -1,21 +1,78 @@
+mod actions;
 mod icon;
+
+use crate::daemon::DaemonStatus;
+
+fn status_label(status: DaemonStatus, managed: bool, stopping: bool) -> String {
+    if stopping {
+        return "Stopping prnsd…".into();
+    }
+    let prefix = if managed {
+        if status.unavailable != 0 || status.retrying != 0 || status.impaired != 0 {
+            "Degraded"
+        } else {
+            "Running"
+        }
+    } else {
+        "Foreground session"
+    };
+    if status.unavailable != 0 {
+        return format!(
+            "{prefix} · {} {} unavailable",
+            status.unavailable,
+            interface_noun(status.unavailable),
+        );
+    }
+    if status.retrying != 0 {
+        return format!(
+            "{prefix} · {} {} retrying",
+            status.retrying,
+            interface_noun(status.retrying),
+        );
+    }
+    if status.impaired != 0 {
+        return format!(
+            "{prefix} · {} {} impaired",
+            status.impaired,
+            interface_noun(status.impaired),
+        );
+    }
+    format!(
+        "{prefix} · {} {}",
+        status.interface_count,
+        interface_noun(status.interface_count),
+    )
+}
+
+const fn interface_noun(count: u32) -> &'static str {
+    if count == 1 {
+        "interface"
+    } else {
+        "interfaces"
+    }
+}
 
 #[cfg(target_os = "linux")]
 mod platform {
+    use std::path::PathBuf;
     use std::sync::OnceLock;
 
     use ksni::blocking::TrayMethods;
     use ksni::menu::StandardItem;
 
+    use crate::daemon::{DaemonStatus, DaemonStatusPublisher};
     use crate::shutdown::{self, ShutdownRequest, ShutdownSignal};
 
-    use super::icon;
+    use super::actions::{TrayAction, TrayActionContext};
+    use super::{icon, status_label};
 
     pub(crate) struct RunningTray {
-        _handle: ksni::blocking::Handle<LinuxTray>,
+        handle: ksni::blocking::Handle<LinuxTray>,
     }
 
     struct LinuxTray {
+        actions: TrayActionContext,
+        status: DaemonStatus,
         shutdown: ShutdownRequest,
     }
 
@@ -43,12 +100,11 @@ mod platform {
                 icon_name: String::new(),
                 icon_pixmap: self.icon_pixmap(),
                 title: "Personal RNS Daemon".into(),
-                description: if self.shutdown.was_requested() {
-                    "Stopping prnsd…"
-                } else {
-                    "prnsd is running"
-                }
-                .into(),
+                description: status_label(
+                    self.status,
+                    self.actions.can_attach_terminal(),
+                    self.shutdown.was_requested(),
+                ),
             }
         }
 
@@ -57,6 +113,51 @@ mod platform {
                 StandardItem {
                     label: format!("Personal RNS Daemon · v{}", env!("CARGO_PKG_VERSION")),
                     enabled: false,
+                    ..Default::default()
+                }
+                .into(),
+                StandardItem {
+                    label: status_label(
+                        self.status,
+                        self.actions.can_attach_terminal(),
+                        self.shutdown.was_requested(),
+                    ),
+                    enabled: false,
+                    ..Default::default()
+                }
+                .into(),
+                ksni::MenuItem::Separator,
+                StandardItem {
+                    label: "Open Prns Terminal".into(),
+                    enabled: self.actions.can_attach_terminal(),
+                    activate: Box::new(|tray: &mut LinuxTray| {
+                        tray.perform(TrayAction::OpenTerminal);
+                    }),
+                    ..Default::default()
+                }
+                .into(),
+                StandardItem {
+                    label: "Show Network Status".into(),
+                    activate: Box::new(|tray: &mut LinuxTray| {
+                        tray.perform(TrayAction::ShowStatus);
+                    }),
+                    ..Default::default()
+                }
+                .into(),
+                StandardItem {
+                    label: "Manage Interfaces…".into(),
+                    activate: Box::new(|tray: &mut LinuxTray| {
+                        tray.perform(TrayAction::ManageInterfaces);
+                    }),
+                    ..Default::default()
+                }
+                .into(),
+                ksni::MenuItem::Separator,
+                StandardItem {
+                    label: "Open Configuration Folder".into(),
+                    activate: Box::new(|tray: &mut LinuxTray| {
+                        tray.perform(TrayAction::OpenConfigDirectory);
+                    }),
                     ..Default::default()
                 }
                 .into(),
@@ -79,6 +180,18 @@ mod platform {
         }
     }
 
+    impl LinuxTray {
+        fn perform(&self, action: TrayAction) {
+            if let Err(error) = self.actions.perform(action) {
+                tracing::warn!(
+                    event = "tray_action_failed",
+                    action = action.event_name(),
+                    error = %error,
+                );
+            }
+        }
+    }
+
     fn status_notifier_icon(size: u32) -> ksni::Icon {
         let icon::TrayIcon { rgba, size } = icon::render(size);
         let mut argb = Vec::with_capacity(rgba.len());
@@ -92,12 +205,32 @@ mod platform {
         }
     }
 
-    pub(crate) fn start() -> Result<(RunningTray, ShutdownSignal), String> {
+    pub(crate) fn start(
+        config_dir: PathBuf,
+        managed_state_dir: Option<PathBuf>,
+        status: DaemonStatus,
+    ) -> Result<(RunningTray, ShutdownSignal, DaemonStatusPublisher), String> {
+        let actions = TrayActionContext::discover(config_dir, managed_state_dir)
+            .map_err(|error| format!("tray actions unavailable: {error}"))?;
         let (shutdown, signal) = shutdown::channel();
-        let handle = LinuxTray { shutdown }
-            .spawn()
-            .map_err(|error| format!("StatusNotifier tray start failed: {error}"))?;
-        Ok((RunningTray { _handle: handle }, signal))
+        let handle = LinuxTray {
+            actions,
+            status,
+            shutdown,
+        }
+        .spawn()
+        .map_err(|error| format!("StatusNotifier tray start failed: {error}"))?;
+        let update_handle = handle.clone();
+        let publisher = DaemonStatusPublisher::new(move |status| {
+            let _ = update_handle.update(|tray| tray.status = status);
+        });
+        Ok((RunningTray { handle }, signal, publisher))
+    }
+
+    impl Drop for RunningTray {
+        fn drop(&mut self) {
+            self.handle.shutdown().wait();
+        }
     }
 }
 
@@ -114,32 +247,71 @@ mod platform {
     use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
     use winit::window::WindowId;
 
+    use crate::daemon::{DaemonPresentation, DaemonReady, DaemonStatus, DaemonStatusPublisher};
     use crate::shutdown::{self, ShutdownRequest};
     use crate::{cli, daemon};
 
-    use super::icon;
+    use super::actions::{TrayAction, TrayActionContext};
+    use super::{icon, status_label};
 
     enum TrayEvent {
-        DaemonReady(tokio::sync::oneshot::Sender<Result<(), String>>),
+        DaemonReady {
+            ready: DaemonReady,
+            started: tokio::sync::oneshot::Sender<Result<(), String>>,
+        },
+        StatusChanged(DaemonStatus),
+        MenuSelected(MenuEvent),
         StopRequested,
     }
 
     struct DesktopTray {
+        actions: TrayActionContext,
         icon: TrayIcon,
+        status_item: MenuItem,
+        open_terminal_item: MenuItem,
+        show_status_item: MenuItem,
+        manage_interfaces_item: MenuItem,
+        open_config_item: MenuItem,
         stop_item: MenuItem,
     }
 
     impl DesktopTray {
-        fn new() -> Result<Self, String> {
+        fn new(ready: DaemonReady) -> Result<Self, String> {
+            let actions = TrayActionContext::discover(ready.config_dir, ready.managed_state_dir)
+                .map_err(|error| format!("tray actions unavailable: {error}"))?;
+            let managed = actions.can_attach_terminal();
             let heading = MenuItem::new(
                 format!("Personal RNS Daemon · v{}", env!("CARGO_PKG_VERSION")),
                 false,
                 None,
             );
+            let status_item =
+                MenuItem::new(status_label(ready.status, managed, false), false, None);
+            let open_terminal_item =
+                MenuItem::with_id("prnsd-open-terminal", "Open Prns Terminal", managed, None);
+            let show_status_item =
+                MenuItem::with_id("prnsd-show-status", "Show Network Status", true, None);
+            let manage_interfaces_item =
+                MenuItem::with_id("prnsd-manage-interfaces", "Manage Interfaces…", true, None);
+            let open_config_item =
+                MenuItem::with_id("prnsd-open-config", "Open Configuration Folder", true, None);
             let stop_item = MenuItem::with_id("prnsd-stop", "Stop prnsd", true, None);
-            let separator = PredefinedMenuItem::separator();
-            let menu = Menu::with_items(&[&heading, &separator, &stop_item])
-                .map_err(|error| format!("tray menu build failed: {error}"))?;
+            let status_separator = PredefinedMenuItem::separator();
+            let tools_separator = PredefinedMenuItem::separator();
+            let stop_separator = PredefinedMenuItem::separator();
+            let menu = Menu::with_items(&[
+                &heading,
+                &status_item,
+                &status_separator,
+                &open_terminal_item,
+                &show_status_item,
+                &manage_interfaces_item,
+                &tools_separator,
+                &open_config_item,
+                &stop_separator,
+                &stop_item,
+            ])
+            .map_err(|error| format!("tray menu build failed: {error}"))?;
             let rendered = icon::render(64);
             let tray_icon = Icon::from_rgba(rendered.rgba, rendered.size, rendered.size)
                 .map_err(|error| format!("tray icon pixels invalid: {error}"))?;
@@ -150,10 +322,53 @@ mod platform {
                 .with_menu_on_left_click(true)
                 .build()
                 .map_err(|error| format!("tray icon build failed: {error}"))?;
-            Ok(Self { icon, stop_item })
+            Ok(Self {
+                actions,
+                icon,
+                status_item,
+                open_terminal_item,
+                show_status_item,
+                manage_interfaces_item,
+                open_config_item,
+                stop_item,
+            })
+        }
+
+        fn action_for(&self, event: &MenuEvent) -> Option<TrayAction> {
+            let id = event.id();
+            if id == self.open_terminal_item.id() {
+                Some(TrayAction::OpenTerminal)
+            } else if id == self.show_status_item.id() {
+                Some(TrayAction::ShowStatus)
+            } else if id == self.manage_interfaces_item.id() {
+                Some(TrayAction::ManageInterfaces)
+            } else if id == self.open_config_item.id() {
+                Some(TrayAction::OpenConfigDirectory)
+            } else {
+                None
+            }
+        }
+
+        fn update_status(&self, status: DaemonStatus) {
+            let label = status_label(status, self.actions.can_attach_terminal(), false);
+            self.status_item.set_text(&label);
+            let _ = self
+                .icon
+                .set_tooltip(Some(format!("Personal RNS Daemon · {label}")));
+        }
+
+        fn perform(&self, action: TrayAction) {
+            if let Err(error) = self.actions.perform(action) {
+                tracing::warn!(
+                    event = "tray_action_failed",
+                    action = action.event_name(),
+                    error = %error,
+                );
+            }
         }
 
         fn show_stopping(&self) {
+            self.status_item.set_text("Stopping prnsd…");
             self.stop_item.set_text("Stopping prnsd…");
             self.stop_item.set_enabled(false);
             let _ = self
@@ -181,15 +396,12 @@ mod platform {
 
         fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: TrayEvent) {
             match event {
-                TrayEvent::DaemonReady(started) => {
-                    let outcome = match DesktopTray::new() {
+                TrayEvent::DaemonReady { ready, started } => {
+                    let outcome = match DesktopTray::new(ready) {
                         Ok(created) => {
-                            let stop_id = created.stop_item.id().clone();
                             let proxy = self.menu_proxy.clone();
                             MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
-                                if event.id() == &stop_id {
-                                    let _ = proxy.send_event(TrayEvent::StopRequested);
-                                }
+                                let _ = proxy.send_event(TrayEvent::MenuSelected(event));
                             }));
                             self.tray = Some(created);
                             Ok(())
@@ -197,6 +409,28 @@ mod platform {
                         Err(error) => Err(error),
                     };
                     let _ = started.send(outcome);
+                }
+                TrayEvent::StatusChanged(status) => {
+                    if let Some(tray) = self.tray.as_ref() {
+                        tray.update_status(status);
+                    }
+                }
+                TrayEvent::MenuSelected(event)
+                    if self
+                        .tray
+                        .as_ref()
+                        .is_some_and(|tray| event.id() == tray.stop_item.id()) =>
+                {
+                    let _ = self.menu_proxy.send_event(TrayEvent::StopRequested);
+                }
+                TrayEvent::MenuSelected(event) => {
+                    if let Some((tray, action)) = self
+                        .tray
+                        .as_ref()
+                        .and_then(|tray| tray.action_for(&event).map(|action| (tray, action)))
+                    {
+                        tray.perform(action);
+                    }
                 }
                 TrayEvent::StopRequested
                     if self.shutdown.as_mut().is_some_and(ShutdownRequest::request) =>
@@ -240,11 +474,18 @@ mod platform {
                 {
                     Ok(runtime) => {
                         let (ready, ready_signal) = tokio::sync::oneshot::channel();
+                        let status_proxy = ready_proxy.clone();
+                        let presentation = DaemonPresentation {
+                            ready,
+                            status: DaemonStatusPublisher::new(move |status| {
+                                let _ = status_proxy.send_event(TrayEvent::StatusChanged(status));
+                            }),
+                        };
                         runtime.spawn(async move {
-                            if ready_signal.await.is_ok() {
+                            if let Ok(ready) = ready_signal.await {
                                 let (started, started_signal) = tokio::sync::oneshot::channel();
                                 if ready_proxy
-                                    .send_event(TrayEvent::DaemonReady(started))
+                                    .send_event(TrayEvent::DaemonReady { ready, started })
                                     .is_err()
                                 {
                                     tracing::warn!(
@@ -277,7 +518,12 @@ mod platform {
                                 }
                             }
                         });
-                        runtime.block_on(daemon::run(args, managed, Some(signal), Some(ready)));
+                        runtime.block_on(daemon::run(
+                            args,
+                            managed,
+                            Some(signal),
+                            Some(presentation),
+                        ));
                         0
                     }
                     Err(error) => {
@@ -318,3 +564,79 @@ mod platform {
 }
 
 pub(crate) use platform::*;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_labels_are_live_specific_and_grammatical() {
+        assert_eq!(
+            status_label(
+                DaemonStatus {
+                    interface_count: 4,
+                    retrying: 0,
+                    impaired: 0,
+                    unavailable: 0,
+                },
+                true,
+                false,
+            ),
+            "Running · 4 interfaces"
+        );
+        assert_eq!(
+            status_label(
+                DaemonStatus {
+                    interface_count: 4,
+                    retrying: 1,
+                    impaired: 0,
+                    unavailable: 0,
+                },
+                true,
+                false,
+            ),
+            "Degraded · 1 interface retrying"
+        );
+        assert_eq!(
+            status_label(
+                DaemonStatus {
+                    interface_count: 4,
+                    retrying: 0,
+                    impaired: 0,
+                    unavailable: 2,
+                },
+                true,
+                false,
+            ),
+            "Degraded · 2 interfaces unavailable"
+        );
+        assert_eq!(
+            status_label(
+                DaemonStatus {
+                    interface_count: 4,
+                    retrying: 0,
+                    impaired: 2,
+                    unavailable: 0,
+                },
+                true,
+                false,
+            ),
+            "Degraded · 2 interfaces impaired"
+        );
+    }
+
+    #[test]
+    fn foreground_and_stopping_states_do_not_claim_managed_attachment() {
+        let status = DaemonStatus {
+            interface_count: 1,
+            retrying: 0,
+            impaired: 0,
+            unavailable: 0,
+        };
+        assert_eq!(
+            status_label(status, false, false),
+            "Foreground session · 1 interface"
+        );
+        assert_eq!(status_label(status, true, true), "Stopping prnsd…");
+    }
+}

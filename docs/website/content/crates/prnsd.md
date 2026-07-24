@@ -17,6 +17,9 @@ crate](./personal-rns) directly.
 
 - A self-managing daemon binary you can start, reattach to, inspect, and stop
   with one command surface.
+- A concise system-tray menu with live interface health and one-click access
+  to the attached terminal, network status, guided interface editor, and
+  effective configuration folder.
 - Operator-ready human or JSON events, plus bounded OTLP metrics and
   traces for any compatible backend.
 - A library crate (`StdHost`) you can depend on directly if you're
