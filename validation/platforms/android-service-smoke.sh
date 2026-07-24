@@ -7,6 +7,7 @@ repo_root="$(cd "$(dirname "$0")/../.." && pwd)"
 android_dir="${repo_root}/personal-hopspot/mobile/android"
 rust_dir="${android_dir}/rust"
 apk="${android_dir}/app/build/outputs/apk/debug/app-debug.apk"
+lab_apk="${android_dir}/app/build/outputs/apk/wifiDirectLab/app-wifiDirectLab.apk"
 release_apk="${android_dir}/app/build/outputs/apk/release/app-release-unsigned.apk"
 test_apk="${android_dir}/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
 export GRADLE_USER_HOME="${GRADLE_USER_HOME:-${TMPDIR:-/tmp}/prns-gradle-home}"
@@ -55,6 +56,7 @@ echo "[android] dependency, lint, test, and APK gates"
     :app:lint \
     :app:test \
     :app:assembleDebug \
+    :app:assembleWifiDirectLab \
     :app:assembleDebugAndroidTest \
     :app:assembleRelease
 )
@@ -65,6 +67,10 @@ if [[ ! -f "${apk}" ]]; then
 fi
 if [[ ! -f "${release_apk}" ]]; then
   echo "missing unsigned release APK at ${release_apk}" >&2
+  exit 1
+fi
+if [[ ! -f "${lab_apk}" ]]; then
+  echo "missing isolated Wi-Fi Direct lab APK at ${lab_apk}" >&2
   exit 1
 fi
 if [[ ! -f "${test_apk}" ]]; then
@@ -88,6 +94,24 @@ if [[ -z "${manifest}" ]]; then
   echo "could not find the merged AndroidManifest.xml" >&2
   exit 1
 fi
+
+lab_manifest=""
+for candidate in \
+  "${android_dir}/app/build/intermediates/merged_manifests/wifiDirectLab/processWifiDirectLabManifest/AndroidManifest.xml" \
+  "${android_dir}/app/build/intermediates/merged_manifest/wifiDirectLab/processWifiDirectLabMainManifest/AndroidManifest.xml" \
+  "${android_dir}/app/build/intermediates/packaged_manifests/wifiDirectLab/processWifiDirectLabManifestForPackage/AndroidManifest.xml"
+do
+  if [[ -f "${candidate}" ]]; then
+    lab_manifest="${candidate}"
+    break
+  fi
+done
+
+if [[ -z "${lab_manifest}" ]]; then
+  echo "could not find the merged Wi-Fi Direct lab AndroidManifest.xml" >&2
+  exit 1
+fi
+lab_service="$(sed -n '/<service/,/<\/service>/p' "${lab_manifest}")"
 
 rg -q 'PrnsService' "${manifest}" || {
   echo "merged manifest is missing PrnsService" >&2
@@ -147,6 +171,31 @@ rg -q 'sourceCompatibility = JavaVersion.VERSION_1_8' "${android_dir}/app/build.
 }
 rg -q 'jvmTarget = "1.8"' "${android_dir}/app/build.gradle.kts" || {
   echo "Android Kotlin bytecode target is not Java 8" >&2
+  exit 1
+}
+rg -q 'package="org.personal.hopspot.wifidirectlab"' "${lab_manifest}" || {
+  echo "Wi-Fi Direct lab does not use its isolated application ID" >&2
+  exit 1
+}
+if rg -q 'org.personal.hopspot.permission.PRNS_CLIENT' "${lab_manifest}"; then
+  echo "Wi-Fi Direct lab retains the production signature permission" >&2
+  exit 1
+fi
+[[ "${lab_service}" == *'android:exported="false"'* ]] || {
+  echo "Wi-Fi Direct lab service is exported" >&2
+  exit 1
+}
+[[ "${lab_service}" == *'android:foregroundServiceType="connectedDevice"'* ]] || {
+  echo "Wi-Fi Direct lab service lost its foreground-service type" >&2
+  exit 1
+}
+rg -q 'android:label="Personal Hopspot Wi-Fi Direct Lab"' "${lab_manifest}" || {
+  echo "Wi-Fi Direct lab is not visibly distinguished from the normal app" >&2
+  exit 1
+}
+rg -q 'public static final boolean EXPERIMENTAL_WIFI_DIRECT = true;' \
+  "${android_dir}/app/build/generated/source/buildConfig/wifiDirectLab/org/personal/hopspot/BuildConfig.java" || {
+  echo "Wi-Fi Direct lab does not enable the experimental transport" >&2
   exit 1
 }
 

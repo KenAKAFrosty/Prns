@@ -82,6 +82,13 @@ android {
     }
 
     buildTypes {
+        create("wifiDirectLab") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".wifidirectlab"
+            versionNameSuffix = "-wifi-direct-lab"
+            buildConfigField("boolean", "EXPERIMENTAL_WIFI_DIRECT", "true")
+            matchingFallbacks += listOf("debug")
+        }
         release {
             isMinifyEnabled = false
             if (releaseSigningReady) {

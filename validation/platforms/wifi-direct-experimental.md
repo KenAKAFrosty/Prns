@@ -14,11 +14,33 @@ Android operators can opt in only at build time:
 
 ```bash
 cd personal-hopspot/mobile/android
-./gradlew -PprnsExperimentalWifiDirect=true :app:assembleDebug
+./gradlew :app:assembleWifiDirectLab
 ```
 
-`assembleProduction` rejects that property. The standard Android validation
-also asserts that it is false.
+The lab APK uses the application ID
+`org.personal.hopspot.wifidirectlab`, isolated storage, and a non-exported
+service. It can coexist with an independently signed production or development
+installation without replacing that installation or its identity.
+
+Install, launch, and remove only the isolated lab package:
+
+```bash
+adb -s "${ANDROID_SERIAL}" install -r \
+  app/build/outputs/apk/wifiDirectLab/app-wifiDirectLab.apk
+adb -s "${ANDROID_SERIAL}" shell am start -W -n \
+  org.personal.hopspot.wifidirectlab/org.personal.hopspot.MainActivity
+adb -s "${ANDROID_SERIAL}" shell am force-stop \
+  org.personal.hopspot.wifidirectlab
+adb -s "${ANDROID_SERIAL}" uninstall org.personal.hopspot.wifidirectlab
+```
+
+Uninstalling the lab removes only its isolated identity and storage. It does
+not alter an installed `org.personal.hopspot` app or that app's persistent
+state.
+
+`assembleProduction` rejects the legacy
+`-PprnsExperimentalWifiDirect=true` opt-in. The standard Android validation
+also asserts that the property is false.
 
 ## Established behavior
 
@@ -46,7 +68,39 @@ bash validation/platforms/wifi-direct-hwsim-smoke.sh
 Success ends with `WIFI_DIRECT_HWSIM_OK`. This proof requires `sudo`, loads
 `mac80211_hwsim`, and must leave the real radio untouched.
 
-## Hardware finding
+## Hardware findings
+
+### Android to Android
+
+The 2026-07-23 two-device investigation used two modern Android phones. It
+established:
+
+1. Both phones discovered the typed Prns service and started group formation.
+2. Android displayed a system Device connection approval dialog on the
+   receiving phone.
+3. Without approval, the bounded formation deadline expired and reported
+   failure without hanging the service.
+4. After approval, a fresh automatic retry still did not reach a created group
+   or exchange a payload within one minute.
+5. While group formation was active, Wi-Fi Aware attach attempts failed on
+   both phones.
+6. Removing the lab package and restarting the default app restored an
+   automatic Wi-Fi Aware data path and the LAN connection on both phones.
+
+[`WifiP2pManager`](https://developer.android.com/reference/android/net/wifi/p2p/WifiP2pManager)
+can defer an incoming Wi-Fi Direct decision to the Wi-Fi service, which
+displays a user dialog. Programmatic external approval requires
+`MANAGE_WIFI_NETWORK_SELECTION`; the
+[Android platform manifest](https://android.googlesource.com/platform/frameworks/base/+/master/core/res/AndroidManifest.xml)
+reserves that permission for trusted platform or OEM apps and explicitly
+excludes third-party applications. A normal independently distributed Prns app
+cannot safely suppress this system approval boundary.
+
+[Wi-Fi Aware](https://developer.android.com/develop/connectivity/wifi/wifi-aware)
+does not use that per-peer Wi-Fi Direct approval flow. It remains a production
+transport behind the standard Nearby devices runtime permission.
+
+### Android to Linux
 
 The 2026-07-23 Android-to-Linux investigation used a modern Android device and
 Linux `wpa_supplicant` 2.10 through its system D-Bus API. It established:
