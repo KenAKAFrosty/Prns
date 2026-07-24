@@ -119,6 +119,46 @@ impl InterfaceKind {
     }
 
     #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Loopback => "loopback",
+            Self::TcpClient => "tcp-client",
+            Self::TcpServer => "tcp-server",
+            Self::Udp => "udp",
+            Self::Serial => "serial",
+            Self::UsbAutoHost => "usb-auto-host",
+            Self::UsbAutoDevice => "usb-auto-device",
+            Self::AutoWifi => "auto-wifi",
+            Self::WifiPeer => "wifi-peer",
+            Self::LocalServer => "local-server",
+            Self::LocalClient => "local-client",
+            Self::TcpServerPeer => "tcp-server-peer",
+            Self::BluetoothAuto => "bluetooth-auto",
+            Self::BluetoothPeer => "bluetooth-peer",
+            Self::LoRa => "lora",
+            Self::Kiss => "kiss",
+            Self::Ax25Kiss => "ax25-kiss",
+            Self::Pipe => "pipe",
+            Self::Rnode => "rnode",
+            Self::BackboneServer => "backbone-server",
+            Self::BackboneServerPeer => "backbone-server-peer",
+            Self::BackboneClient => "backbone-client",
+            Self::EspNow => "esp-now",
+            Self::WebSocketClient => "websocket-client",
+            Self::WebSocketServer => "websocket-server",
+            Self::WebSocketServerPeer => "websocket-server-peer",
+            Self::WifiDirect => "wifi-direct",
+            Self::WifiDirectPeer => "wifi-direct-peer",
+            Self::WifiAware => "wifi-aware",
+            Self::WifiAwarePeer => "wifi-aware-peer",
+            Self::I2p => "i2p",
+            Self::I2pPeer => "i2p-peer",
+            Self::Weave => "weave",
+            Self::WeavePeer => "weave-peer",
+        }
+    }
+
+    #[must_use]
     pub const fn member_kind(self) -> Option<Self> {
         match self {
             Self::AutoWifi => Some(Self::WifiPeer),
