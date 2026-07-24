@@ -19,7 +19,9 @@ The CI badge reads "no status" to anonymous viewers until the repo is public.
 [![no_std](https://img.shields.io/badge/no__std-core-success.svg)](#embedded-and-no_std)
 
 ## Getting Started
-Visit the docs website at either https://prns.dev or https://reticulum.rs, or run the docs site locally from source. 
+Visit the docs website at either https://prns.dev or https://reticulum.rs, or run the docs site locally from source.
+
+Building a Node.js, Electron, or Tauri application? The full node is on npm as [`personal-rns`](prns-napi/README.md) — the complete engine as a native addon, no daemon required.
 
 
 ## Minimum supported Rust version
