@@ -31,15 +31,19 @@ use personal_rns::shared_instance::{SharedInstanceClient, SharedInstanceServer};
 use personal_rns::tcp::{TcpClientInterface, TcpServer};
 use personal_rns::udp::UdpInterface;
 use personal_rns::units::{DurationMillis, RttMillis};
+use personal_rns::wifi_auto::AutoWifi;
 use personal_rns::ResourceStrategy;
 use personal_rns::{attach_plan_with_context, PlanOutcome, PlanRuntimeContext};
 use personal_rns::{
-    load_or_create_identity_secret, try_generate_identity_secret, AttachedInterface,
-    AttachedSupervisor, PacketReceiptDelivered, Zeroizing, IDENTITY_SECRET_KEY_LEN,
+    load_or_create_ble_identity, load_or_create_identity_secret, try_generate_identity_secret,
+    AttachedInterface, AttachedSupervisor, AutoBle, AutoUsb, PacketReceiptDelivered, Zeroizing,
+    IDENTITY_SECRET_KEY_LEN,
 };
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use crate::errors::{code_err, send_error, CodeResult, ErrorCode, Fallible};
-use crate::events::bridge::EventSink;
+use crate::events::bridge::{EventSink, DEFAULT_EVENT_QUEUE_LIMIT};
 use crate::events::owned::OwnedEvent;
 use crate::events::translate;
 use crate::marshal;
@@ -83,6 +87,18 @@ pub struct NodeOptions {
     pub identity: Option<IdentitySpec>,
     pub transport: Option<bool>,
     pub destinations: Option<Vec<DestinationSpec>>,
+    pub event_queue_limit: Option<u32>,
+}
+
+#[napi(object)]
+pub struct AutoBleOptions {
+    pub identity_path: Option<String>,
+    pub identity_secret: Option<Buffer>,
+}
+
+#[napi(object)]
+pub struct AutoUsbOptions {
+    pub baud: Option<u32>,
 }
 
 #[napi(object)]
@@ -507,6 +523,14 @@ pub struct InterfaceHandle {
 }
 
 impl InterfaceHandle {
+    fn from_ble(id: personal_rns::interfaces::InterfaceId) -> Self {
+        Self {
+            id_bytes: *id.as_bytes(),
+            kind_name: id.kind().map(|kind| format!("{kind:?}")),
+            attachment: Mutex::new(None),
+        }
+    }
+
     fn from_interface(attached: AttachedInterface) -> Self {
         let id = attached.id();
         Self {
@@ -570,15 +594,28 @@ pub fn start_node(
     options: NodeOptions,
     #[napi(ts_arg_type = "(event: Record<string, any>) => void")] on_event: Function<(), ()>,
 ) -> Result<PrnsNode, ErrorCode> {
+    let limit = match options.event_queue_limit {
+        None => DEFAULT_EVENT_QUEUE_LIMIT,
+        Some(0) => {
+            return Err(code_err(
+                ErrorCode::InvalidArgument,
+                "eventQueueLimit must be at least 1",
+            ))
+        }
+        Some(limit) => limit as usize,
+    };
     let config = parse_options(options)?;
     let hashes = crate::runtime::destination_hashes(&config)?;
+    let queued = Arc::new(AtomicUsize::new(0));
+    let dequeue = queued.clone();
     let tsfn = on_event
         .build_threadsafe_function::<OwnedEvent>()
-        .build_callback(|ctx: ThreadsafeCallContext<OwnedEvent>| {
+        .build_callback(move |ctx: ThreadsafeCallContext<OwnedEvent>| {
+            dequeue.fetch_sub(1, Ordering::Relaxed);
             translate::event_to_object(&ctx.env, ctx.value)
         })
         .map_err(|error| code_err(ErrorCode::Internal, format!("{error}")))?;
-    let manager = NodeManager::start(config, EventSink::new(tsfn))?;
+    let manager = NodeManager::start(config, EventSink::new(tsfn, queued, limit))?;
     Ok(PrnsNode {
         manager: Arc::new(manager),
         hashes,
@@ -740,6 +777,52 @@ impl PrnsNode {
     #[napi(ts_return_type = "Promise<ConfigAttachResult>")]
     pub async fn attach_config(&self, config_text: String) -> Result<Fallible<ConfigAttachResult>> {
         Ok(Fallible(self.attach_config_inner(config_text).await))
+    }
+
+    #[napi]
+    pub fn attach_auto_wifi(&self) -> Result<InterfaceHandle, ErrorCode> {
+        let handle = self.manager.handle()?;
+        let attached = handle.supervise(AutoWifi::new());
+        Ok(InterfaceHandle::from_supervisor(attached))
+    }
+
+    #[napi]
+    pub fn attach_auto_usb(
+        &self,
+        options: Option<AutoUsbOptions>,
+    ) -> Result<InterfaceHandle, ErrorCode> {
+        let handle = self.manager.handle()?;
+        let mut auto = AutoUsb::default();
+        if let Some(baud) = options.and_then(|opts| opts.baud) {
+            auto = auto.with_baud(baud);
+        }
+        let attached = handle.attach(auto);
+        Ok(InterfaceHandle::from_interface(attached))
+    }
+
+    #[napi]
+    pub fn attach_auto_ble(&self, options: AutoBleOptions) -> Result<InterfaceHandle, ErrorCode> {
+        let identity = match (&options.identity_path, &options.identity_secret) {
+            (Some(path), None) => {
+                load_or_create_ble_identity(Path::new(path)).map_err(|error| {
+                    code_err(
+                        ErrorCode::InvalidIdentityFile,
+                        format!("ble identity file at {path}: {error:?}"),
+                    )
+                })?
+            }
+            (None, Some(secret)) => marshal::ble_identity(secret)?,
+            _ => {
+                return Err(code_err(
+                    ErrorCode::InvalidArgument,
+                    "autoBle requires exactly one of identityPath or identitySecret",
+                ))
+            }
+        };
+        let handle = self.manager.handle()?;
+        let attached = handle.attach(AutoBle::new(identity));
+        let id = attached.id();
+        Ok(InterfaceHandle::from_ble(id))
     }
 
     #[napi(ts_return_type = "Promise<void>")]

@@ -108,9 +108,29 @@ pub enum OwnedEvent {
         kind: &'static str,
         detail: String,
     },
+    EventOverflow {
+        dropped_diagnostics: u64,
+    },
     NodeStopped {
         cause: String,
     },
+}
+
+impl OwnedEvent {
+    pub fn droppable(&self) -> bool {
+        !matches!(
+            self,
+            Self::SingleDelivery { .. }
+                | Self::Request { .. }
+                | Self::Response { .. }
+                | Self::ResponseSegment { .. }
+                | Self::Resource { .. }
+                | Self::ResourceSegment { .. }
+                | Self::ChannelMessage { .. }
+                | Self::EventOverflow { .. }
+                | Self::NodeStopped { .. }
+        )
+    }
 }
 
 impl OwnedEvent {

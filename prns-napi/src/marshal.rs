@@ -1,5 +1,6 @@
 use napi::bindgen_prelude::Buffer;
 use personal_rns::identity::IdentityHash;
+use personal_rns::interfaces::bluetooth_auto::BleIdentity;
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::routing::links::request::RequestId;
 use personal_rns::routing::links::LinkId;
@@ -44,6 +45,10 @@ pub fn request_path_hash(buffer: &[u8]) -> CodeResult<RequestPathHash> {
 
 pub fn transport_id(buffer: &[u8]) -> CodeResult<TransportId> {
     Ok(TransportId::new(fixed(buffer, "transport id")?))
+}
+
+pub fn ble_identity(buffer: &[u8]) -> CodeResult<BleIdentity> {
+    Ok(BleIdentity::new(fixed(buffer, "ble identity")?))
 }
 
 pub fn identity_secret(buffer: &[u8]) -> CodeResult<Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>> {

@@ -27,6 +27,9 @@ export declare class PrnsNode {
   attachSharedInstanceServer(options?: SharedInstanceOptions | undefined | null): Promise<InterfaceHandle>
   attachSharedInstanceClient(options?: SharedInstanceOptions | undefined | null): Promise<InterfaceHandle>
   attachConfig(configText: string): Promise<ConfigAttachResult>
+  attachAutoWifi(): InterfaceHandle
+  attachAutoUsb(options?: AutoUsbOptions | undefined | null): InterfaceHandle
+  attachAutoBle(options: AutoBleOptions): InterfaceHandle
   sendResource(linkId: Buffer, data: Buffer, options?: SendResourceOptions | undefined | null): Promise<void>
   sendResourceFile(linkId: Buffer, path: string, options?: SendResourceOptions | undefined | null): Promise<void>
   receiveResource(linkId: Buffer): Promise<ResourceData>
@@ -64,6 +67,15 @@ export interface AnnounceRateInfo {
   blockedUntil: number
   rateViolations: number
   observedAt: Array<number>
+}
+
+export interface AutoBleOptions {
+  identityPath?: string
+  identitySecret?: Buffer
+}
+
+export interface AutoUsbOptions {
+  baud?: number
 }
 
 export interface BlackholedIdentityInfo {
@@ -150,6 +162,7 @@ export interface NodeOptions {
   identity?: IdentitySpec
   transport?: boolean
   destinations?: Array<DestinationSpec>
+  eventQueueLimit?: number
 }
 
 export interface PacketReceipt {
