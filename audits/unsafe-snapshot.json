@@ -461,7 +461,8 @@
         "esp32-s3-heltec": [],
         "esp32-s3-tbeam": [],
         "ios": [],
-        "nrf52840": []
+        "nrf52840": [],
+        "wasm": []
       },
       "name": "autocfg",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -485,7 +486,8 @@
         "esp32-s3-heltec": [],
         "esp32-s3-tbeam": [],
         "ios": [],
-        "nrf52840": []
+        "nrf52840": [],
+        "wasm": []
       },
       "name": "az",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -925,6 +927,7 @@
       "graphs": {
         "daemon-macos": [
           "alloc",
+          "default",
           "std"
         ]
       },
@@ -1391,6 +1394,9 @@
         ],
         "nrf52840": [
           "default"
+        ],
+        "wasm": [
+          "default"
         ]
       },
       "name": "bzip2",
@@ -1524,6 +1530,7 @@
       "graphs": {
         "daemon-linux": [],
         "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": []
       },
       "name": "cfg_aliases",
@@ -1800,6 +1807,7 @@
     {
       "graphs": {
         "daemon-linux": [
+          "default",
           "std"
         ],
         "desktop-linux": [
@@ -1905,10 +1913,6 @@
     },
     {
       "graphs": {
-        "daemon-macos": [
-          "default",
-          "link"
-        ],
         "desktop-macos": [
           "default",
           "link"
@@ -1924,6 +1928,24 @@
         "tokens": 204
       },
       "version": "0.10.1"
+    },
+    {
+      "graphs": {
+        "daemon-macos": [
+          "default",
+          "link"
+        ]
+      },
+      "name": "core-foundation",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 167,
+        "externs": 0,
+        "functions": 18,
+        "impls": 18,
+        "tokens": 207
+      },
+      "version": "0.9.4"
     },
     {
       "graphs": {
@@ -1956,13 +1978,13 @@
       "name": "core-graphics",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "unsafe": {
-        "blocks": 212,
-        "externs": 17,
-        "functions": 6,
+        "blocks": 202,
+        "externs": 16,
+        "functions": 5,
         "impls": 0,
-        "tokens": 245
+        "tokens": 233
       },
-      "version": "0.25.0"
+      "version": "0.23.2"
     },
     {
       "graphs": {
@@ -1979,7 +2001,7 @@
         "impls": 0,
         "tokens": 9
       },
-      "version": "0.2.0"
+      "version": "0.1.3"
     },
     {
       "graphs": {
@@ -2127,6 +2149,10 @@
           "std"
         ],
         "nrf52840": [
+          "default",
+          "std"
+        ],
+        "wasm": [
           "default",
           "std"
         ]
@@ -2465,6 +2491,30 @@
         "tokens": 0
       },
       "version": "0.4.2"
+    },
+    {
+      "graphs": {
+        "daemon-macos": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
+          "alloc",
+          "default",
+          "std"
+        ]
+      },
+      "name": "cursor-icon",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "1.2.0"
     },
     {
       "graphs": {
@@ -3240,6 +3290,21 @@
         "tokens": 0
       },
       "version": "0.11.3"
+    },
+    {
+      "graphs": {
+        "daemon-macos": []
+      },
+      "name": "dispatch",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 46,
+        "externs": 0,
+        "functions": 0,
+        "impls": 7,
+        "tokens": 53
+      },
+      "version": "0.2.0"
     },
     {
       "graphs": {
@@ -4209,6 +4274,9 @@
         ],
         "nrf52840": [
           "default"
+        ],
+        "wasm": [
+          "default"
         ]
       },
       "name": "embedded-graphics",
@@ -4252,6 +4320,9 @@
           "default"
         ],
         "nrf52840": [
+          "default"
+        ],
+        "wasm": [
           "default"
         ]
       },
@@ -4570,7 +4641,8 @@
         "esp32-s3-heltec": [],
         "esp32-s3-tbeam": [],
         "ios": [],
-        "nrf52840": []
+        "nrf52840": [],
+        "wasm": []
       },
       "name": "embedded-storage",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -4789,6 +4861,9 @@
           "std"
         ],
         "engine": [
+          "std"
+        ],
+        "ios": [
           "std"
         ]
       },
@@ -5656,6 +5731,11 @@
           "alloc",
           "default",
           "std"
+        ],
+        "ios": [
+          "alloc",
+          "default",
+          "std"
         ]
       },
       "name": "fastrand",
@@ -5820,6 +5900,11 @@
           "ratio"
         ],
         "nrf52840": [
+          "default",
+          "num-traits",
+          "ratio"
+        ],
+        "wasm": [
           "default",
           "num-traits",
           "ratio"
@@ -6314,27 +6399,21 @@
           "std"
         ],
         "daemon-linux": [
-          "default",
           "std"
         ],
         "daemon-macos": [
-          "default",
           "std"
         ],
         "daemon-windows": [
-          "default",
           "std"
         ],
         "desktop-linux": [
-          "default",
           "std"
         ],
         "desktop-macos": [
-          "default",
           "std"
         ],
         "desktop-windows": [
-          "default",
           "std"
         ],
         "engine": [
@@ -7029,15 +7108,22 @@
     {
       "graphs": {
         "android": [],
-        "daemon-linux": [],
-        "daemon-macos": [],
-        "daemon-windows": [],
+        "daemon-linux": [
+          "std"
+        ],
+        "daemon-macos": [
+          "std"
+        ],
+        "daemon-windows": [
+          "std"
+        ],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-tbeam": [],
+        "ios": [],
         "nrf52840": []
       },
       "name": "getrandom",
@@ -7355,7 +7441,9 @@
     },
     {
       "graphs": {
-        "esp32-s3-heltec": []
+        "esp32-s3-heltec": [
+          "default"
+        ]
       },
       "name": "hopspot-heltec-v4",
       "source": "personal-hopspot/embedded/esp32/boards/heltec-v4",
@@ -7370,7 +7458,9 @@
     },
     {
       "graphs": {
-        "esp32-s3-tbeam": []
+        "esp32-s3-tbeam": [
+          "default"
+        ]
       },
       "name": "hopspot-t-beam-supreme",
       "source": "personal-hopspot/embedded/esp32/boards/t-beam-supreme",
@@ -8227,7 +8317,6 @@
     {
       "graphs": {
         "daemon-linux": [
-          "blocking",
           "tokio"
         ],
         "desktop-linux": [
@@ -8303,6 +8392,9 @@
         ],
         "nrf52840": [
           "rust-allocator"
+        ],
+        "wasm": [
+          "rust-allocator"
         ]
       },
       "name": "libbz2-rs-sys",
@@ -8329,11 +8421,6 @@
           "std"
         ],
         "daemon-macos": [
-          "default",
-          "extra_traits",
-          "std"
-        ],
-        "daemon-windows": [
           "default",
           "extra_traits",
           "std"
@@ -9078,7 +9165,8 @@
         "esp32-s3-heltec": [],
         "esp32-s3-tbeam": [],
         "ios": [],
-        "nrf52840": []
+        "nrf52840": [],
+        "wasm": []
       },
       "name": "micromath",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -9288,29 +9376,21 @@
     },
     {
       "graphs": {
-        "daemon-macos": [
-          "gtk"
-        ],
-        "daemon-windows": [
-          "gtk"
-        ],
-        "desktop-macos": [
-          "gtk"
-        ],
-        "desktop-windows": [
-          "gtk"
-        ]
+        "daemon-macos": [],
+        "daemon-windows": [],
+        "desktop-macos": [],
+        "desktop-windows": []
       },
       "name": "muda",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "unsafe": {
-        "blocks": 139,
+        "blocks": 141,
         "externs": 5,
-        "functions": 41,
+        "functions": 42,
         "impls": 3,
-        "tokens": 191
+        "tokens": 194
       },
-      "version": "0.17.2"
+      "version": "0.19.3"
     },
     {
       "graphs": {
@@ -9866,7 +9946,8 @@
         "nrf52840": [
           "default",
           "std"
-        ]
+        ],
+        "wasm": []
       },
       "name": "num-traits",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -9971,6 +10052,7 @@
         "daemon-macos": [
           "alloc",
           "default",
+          "relax-sign-encoding",
           "std"
         ]
       },
@@ -10017,14 +10099,19 @@
     {
       "graphs": {
         "daemon-macos": [
+          "NSAppearance",
           "NSApplication",
+          "NSBitmapImageRep",
           "NSButton",
-          "NSCell",
           "NSColor",
           "NSControl",
+          "NSCursor",
+          "NSDragging",
           "NSEvent",
           "NSGraphics",
+          "NSGraphicsContext",
           "NSImage",
+          "NSImageRep",
           "NSMenu",
           "NSMenuItem",
           "NSOpenGLView",
@@ -10032,11 +10119,46 @@
           "NSResponder",
           "NSRunningApplication",
           "NSScreen",
+          "NSTextInputClient",
+          "NSTextInputContext",
+          "NSView",
+          "NSWindow",
+          "NSWindowScripting",
+          "NSWindowTabGroup",
+          "alloc",
+          "bitflags",
+          "default",
+          "std"
+        ]
+      },
+      "name": "objc2-app-kit",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 9,
+        "externs": 2,
+        "functions": 9550,
+        "impls": 3264,
+        "tokens": 13000
+      },
+      "version": "0.2.2"
+    },
+    {
+      "graphs": {
+        "daemon-macos": [
+          "NSApplication",
+          "NSButton",
+          "NSCell",
+          "NSControl",
+          "NSEvent",
+          "NSImage",
+          "NSMenu",
+          "NSMenuItem",
+          "NSResponder",
+          "NSRunningApplication",
           "NSStatusBar",
           "NSStatusBarButton",
           "NSStatusItem",
           "NSTrackingArea",
-          "NSUserActivity",
           "NSView",
           "NSWindow",
           "alloc",
@@ -10199,6 +10321,25 @@
         "tokens": 569
       },
       "version": "0.3.2"
+    },
+    {
+      "graphs": {
+        "daemon-macos": [
+          "alloc",
+          "bitflags",
+          "std"
+        ]
+      },
+      "name": "objc2-core-data",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 804,
+        "impls": 356,
+        "tokens": 1163
+      },
+      "version": "0.2.2"
     },
     {
       "graphs": {
@@ -10408,6 +10549,27 @@
     {
       "graphs": {
         "daemon-macos": [
+          "CIColor",
+          "CIContext",
+          "CIImage",
+          "alloc",
+          "std"
+        ]
+      },
+      "name": "objc2-core-image",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 489,
+        "impls": 187,
+        "tokens": 683
+      },
+      "version": "0.2.2"
+    },
+    {
+      "graphs": {
+        "daemon-macos": [
           "CWChannel",
           "CWConfiguration",
           "CWInterface",
@@ -10485,17 +10647,49 @@
       "graphs": {
         "daemon-macos": [
           "NSArray",
+          "NSAttributedString",
+          "NSBundle",
+          "NSCoder",
           "NSData",
+          "NSDate",
           "NSDictionary",
+          "NSDistributedNotificationCenter",
           "NSEnumerator",
           "NSError",
+          "NSException",
+          "NSExtensionContext",
+          "NSExtensionRequestHandling",
+          "NSFileWrapper",
+          "NSFormatter",
+          "NSGeometry",
+          "NSItemProvider",
+          "NSKeyValueObserving",
+          "NSLocale",
+          "NSNotification",
+          "NSNull",
+          "NSObjCRuntime",
           "NSObject",
+          "NSOperation",
+          "NSPathUtilities",
+          "NSProcessInfo",
+          "NSRange",
+          "NSRunLoop",
+          "NSScriptCommand",
+          "NSScriptStandardSuiteCommands",
+          "NSSet",
           "NSString",
+          "NSThread",
+          "NSURL",
           "NSUUID",
+          "NSUndoManager",
+          "NSUserActivity",
           "NSValue",
+          "NSZone",
           "alloc",
           "bitflags",
           "block2",
+          "default",
+          "dispatch",
           "std"
         ]
       },
@@ -11096,6 +11290,51 @@
     {
       "graphs": {
         "daemon-macos": [
+          "MTLCommandQueue",
+          "MTLDevice",
+          "MTLResource",
+          "MTLTexture",
+          "alloc",
+          "bitflags",
+          "std"
+        ]
+      },
+      "name": "objc2-metal",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 24,
+        "externs": 0,
+        "functions": 1140,
+        "impls": 782,
+        "tokens": 2002
+      },
+      "version": "0.2.2"
+    },
+    {
+      "graphs": {
+        "daemon-macos": [
+          "CADisplayLink",
+          "CALayer",
+          "CATransform3D",
+          "alloc",
+          "bitflags",
+          "std"
+        ]
+      },
+      "name": "objc2-quartz-core",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 12,
+        "externs": 0,
+        "functions": 468,
+        "impls": 240,
+        "tokens": 728
+      },
+      "version": "0.2.2"
+    },
+    {
+      "graphs": {
+        "daemon-macos": [
           "SecBase",
           "objc2"
         ],
@@ -11249,6 +11488,12 @@
           "race",
           "std"
         ],
+        "ios": [
+          "alloc",
+          "default",
+          "race",
+          "std"
+        ],
         "wasm": []
       },
       "name": "once_cell",
@@ -11377,23 +11622,6 @@
     },
     {
       "graphs": {
-        "daemon-windows": [
-          "default"
-        ]
-      },
-      "name": "parking_lot",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "unsafe": {
-        "blocks": 40,
-        "externs": 0,
-        "functions": 27,
-        "impls": 19,
-        "tokens": 86
-      },
-      "version": "0.12.5"
-    },
-    {
-      "graphs": {
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": []
@@ -11473,7 +11701,9 @@
     },
     {
       "graphs": {
-        "android": []
+        "android": [
+          "default"
+        ]
       },
       "name": "personal-hopspot-android",
       "source": "personal-hopspot/mobile/android/rust",
@@ -11509,7 +11739,8 @@
         "ios": [
           "host"
         ],
-        "nrf52840": []
+        "nrf52840": [],
+        "wasm": []
       },
       "name": "personal-hopspot-core",
       "source": "personal-hopspot/core",
@@ -11588,16 +11819,18 @@
     },
     {
       "graphs": {
-        "ios": []
+        "ios": [
+          "default"
+        ]
       },
       "name": "personal-hopspot-ios",
       "source": "personal-hopspot/mobile/ios/rust",
       "unsafe": {
-        "blocks": 5,
-        "externs": 4,
+        "blocks": 10,
+        "externs": 5,
         "functions": 0,
         "impls": 0,
-        "tokens": 9
+        "tokens": 15
       },
       "version": "0.1.0"
     },
@@ -11821,7 +12054,8 @@
           "usb"
         ],
         "wasm": [
-          "alloc"
+          "alloc",
+          "flash"
         ]
       },
       "name": "personal-rns",
@@ -11942,21 +12176,6 @@
     {
       "graphs": {
         "daemon-macos": [],
-        "desktop-macos": []
-      },
-      "name": "png",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "unsafe": {
-        "blocks": 0,
-        "externs": 0,
-        "functions": 0,
-        "impls": 0,
-        "tokens": 0
-      },
-      "version": "0.17.16"
-    },
-    {
-      "graphs": {
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": []
@@ -12314,7 +12533,9 @@
           "tokio-host"
         ],
         "wasm": [
-          "alloc"
+          "alloc",
+          "flash",
+          "std"
         ]
       },
       "name": "prns-core",
@@ -12352,13 +12573,43 @@
       "name": "prns-ffi",
       "source": "prns-ffi",
       "unsafe": {
-        "blocks": 100,
+        "blocks": 105,
         "externs": 3,
         "functions": 0,
         "impls": 22,
-        "tokens": 156
+        "tokens": 163
       },
-      "version": "0.1.0"
+      "version": "0.2.8"
+    },
+    {
+      "graphs": {
+        "wasm": []
+      },
+      "name": "prns-host",
+      "source": "prns-host/core",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.2.8"
+    },
+    {
+      "graphs": {
+        "wasm": []
+      },
+      "name": "prns-host-cooperative",
+      "source": "prns-host/impls/cooperative",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.2.8"
     },
     {
       "graphs": {
@@ -12621,6 +12872,7 @@
       "graphs": {
         "android": [
           "alloc",
+          "resource-bzip2",
           "rns-management",
           "std"
         ],
@@ -12628,6 +12880,7 @@
           "alloc",
           "interface-discovery",
           "interface-discovery-archive",
+          "resource-bzip2",
           "rns-management",
           "rnx",
           "std"
@@ -12636,6 +12889,7 @@
           "alloc",
           "interface-discovery",
           "interface-discovery-archive",
+          "resource-bzip2",
           "rns-management",
           "rnx",
           "std"
@@ -12644,22 +12898,26 @@
           "alloc",
           "interface-discovery",
           "interface-discovery-archive",
+          "resource-bzip2",
           "rns-management",
           "rnx",
           "std"
         ],
         "desktop-linux": [
           "alloc",
+          "resource-bzip2",
           "rns-management",
           "std"
         ],
         "desktop-macos": [
           "alloc",
+          "resource-bzip2",
           "rns-management",
           "std"
         ],
         "desktop-windows": [
           "alloc",
+          "resource-bzip2",
           "rns-management",
           "std"
         ],
@@ -12671,28 +12929,35 @@
         "esp32-c6": [
           "alloc",
           "external-alloc",
+          "resource-bzip2",
           "std"
         ],
         "esp32-s3-heltec": [
           "alloc",
           "external-alloc",
+          "resource-bzip2",
           "std"
         ],
         "esp32-s3-tbeam": [
           "alloc",
           "external-alloc",
+          "resource-bzip2",
           "std"
         ],
         "ios": [
           "alloc",
+          "resource-bzip2",
           "std"
         ],
         "nrf52840": [
           "alloc",
+          "resource-bzip2",
           "std"
         ],
         "wasm": [
-          "alloc"
+          "alloc",
+          "resource-bzip2",
+          "std"
         ]
       },
       "name": "prns-runtime",
@@ -12824,7 +13089,9 @@
     },
     {
       "graphs": {
-        "wasm": []
+        "wasm": [
+          "default"
+        ]
       },
       "name": "prns-wasm",
       "source": "prns-wasm",
@@ -12835,7 +13102,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.1.0"
+      "version": "0.2.8"
     },
     {
       "graphs": {
@@ -13820,7 +14087,8 @@
         "esp32-s3-heltec": [],
         "esp32-s3-tbeam": [],
         "ios": [],
-        "nrf52840": []
+        "nrf52840": [],
+        "wasm": []
       },
       "name": "roaring",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -13907,18 +14175,24 @@
         "daemon-linux": [
           "alloc",
           "default",
+          "event",
           "fs",
           "net",
+          "pipe",
           "process",
-          "std"
+          "std",
+          "time"
         ],
         "daemon-macos": [
           "alloc",
           "default",
+          "event",
           "fs",
           "net",
+          "pipe",
           "process",
-          "std"
+          "std",
+          "time"
         ],
         "desktop-linux": [
           "alloc",
@@ -13932,6 +14206,12 @@
           "time"
         ],
         "engine": [
+          "alloc",
+          "default",
+          "fs",
+          "std"
+        ],
+        "ios": [
           "alloc",
           "default",
           "fs",
@@ -14887,12 +15167,15 @@
           "std"
         ],
         "daemon-linux": [
+          "default",
           "std"
         ],
         "daemon-macos": [
+          "default",
           "std"
         ],
         "daemon-windows": [
+          "default",
           "std"
         ],
         "desktop-linux": [
@@ -14963,19 +15246,13 @@
     {
       "graphs": {
         "daemon-linux": [
-          "const_generics",
-          "const_new",
-          "union"
+          "const_generics"
         ],
         "daemon-macos": [
-          "const_generics",
-          "const_new",
-          "union"
+          "const_generics"
         ],
         "daemon-windows": [
-          "const_generics",
-          "const_new",
-          "union"
+          "const_generics"
         ]
       },
       "name": "smallvec",
@@ -14988,6 +15265,28 @@
         "tokens": 72
       },
       "version": "1.15.2"
+    },
+    {
+      "graphs": {
+        "daemon-macos": [
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
+          "default",
+          "std"
+        ]
+      },
+      "name": "smol_str",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 12,
+        "externs": 0,
+        "functions": 1,
+        "impls": 0,
+        "tokens": 13
+      },
+      "version": "0.2.2"
     },
     {
       "graphs": {
@@ -15919,22 +16218,6 @@
     },
     {
       "graphs": {
-        "daemon-macos": [],
-        "daemon-windows": []
-      },
-      "name": "tao",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "unsafe": {
-        "blocks": 511,
-        "externs": 34,
-        "functions": 122,
-        "impls": 72,
-        "tokens": 739
-      },
-      "version": "0.34.8"
-    },
-    {
-      "graphs": {
         "daemon-linux": [
           "default",
           "getrandom"
@@ -15948,6 +16231,10 @@
           "getrandom"
         ],
         "engine": [
+          "default",
+          "getrandom"
+        ],
+        "ios": [
           "default",
           "getrandom"
         ]
@@ -16387,6 +16674,14 @@
           "tracing",
           "windows-sys"
         ],
+        "engine": [
+          "macros",
+          "rt",
+          "rt-multi-thread",
+          "sync",
+          "time",
+          "tokio-macros"
+        ],
         "esp32-c6": [
           "bytes",
           "default",
@@ -16484,6 +16779,7 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
+        "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-tbeam": [],
@@ -17020,13 +17316,13 @@
       "name": "tray-icon",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "unsafe": {
-        "blocks": 45,
+        "blocks": 48,
         "externs": 2,
         "functions": 6,
         "impls": 1,
-        "tokens": 65
+        "tokens": 68
       },
-      "version": "0.21.3"
+      "version": "0.24.1"
     },
     {
       "graphs": {
@@ -17967,58 +18263,6 @@
     {
       "graphs": {
         "daemon-windows": [
-          "Win32",
-          "Win32_Devices",
-          "Win32_Devices_HumanInterfaceDevice",
-          "Win32_Foundation",
-          "Win32_Globalization",
-          "Win32_Graphics",
-          "Win32_Graphics_Dwm",
-          "Win32_Graphics_Gdi",
-          "Win32_System",
-          "Win32_System_Com",
-          "Win32_System_Com_StructuredStorage",
-          "Win32_System_DataExchange",
-          "Win32_System_Diagnostics",
-          "Win32_System_Diagnostics_Debug",
-          "Win32_System_LibraryLoader",
-          "Win32_System_Memory",
-          "Win32_System_Ole",
-          "Win32_System_Registry",
-          "Win32_System_SystemInformation",
-          "Win32_System_SystemServices",
-          "Win32_System_Threading",
-          "Win32_System_WindowsProgramming",
-          "Win32_UI",
-          "Win32_UI_Accessibility",
-          "Win32_UI_Controls",
-          "Win32_UI_HiDpi",
-          "Win32_UI_Input",
-          "Win32_UI_Input_Ime",
-          "Win32_UI_Input_KeyboardAndMouse",
-          "Win32_UI_Input_Pointer",
-          "Win32_UI_Input_Touch",
-          "Win32_UI_Shell",
-          "Win32_UI_TextServices",
-          "Win32_UI_WindowsAndMessaging",
-          "default",
-          "std"
-        ]
-      },
-      "name": "windows",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "unsafe": {
-        "blocks": 146988,
-        "externs": 108928,
-        "functions": 60541,
-        "impls": 10023,
-        "tokens": 326480
-      },
-      "version": "0.61.3"
-    },
-    {
-      "graphs": {
-        "daemon-windows": [
           "Devices",
           "Devices_Bluetooth",
           "Devices_Bluetooth_Advertisement",
@@ -18042,21 +18286,6 @@
         "tokens": 326383
       },
       "version": "0.62.2"
-    },
-    {
-      "graphs": {
-        "daemon-windows": []
-      },
-      "name": "windows-collections",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "unsafe": {
-        "blocks": 72,
-        "externs": 68,
-        "functions": 0,
-        "impls": 7,
-        "tokens": 147
-      },
-      "version": "0.2.0"
     },
     {
       "graphs": {
@@ -18100,24 +18329,6 @@
     {
       "graphs": {
         "daemon-windows": [
-          "default",
-          "std"
-        ]
-      },
-      "name": "windows-core",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "unsafe": {
-        "blocks": 108,
-        "externs": 43,
-        "functions": 54,
-        "impls": 14,
-        "tokens": 220
-      },
-      "version": "0.61.2"
-    },
-    {
-      "graphs": {
-        "daemon-windows": [
           "std"
         ]
       },
@@ -18131,21 +18342,6 @@
         "tokens": 224
       },
       "version": "0.62.2"
-    },
-    {
-      "graphs": {
-        "daemon-windows": []
-      },
-      "name": "windows-future",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "unsafe": {
-        "blocks": 106,
-        "externs": 72,
-        "functions": 1,
-        "impls": 20,
-        "tokens": 199
-      },
-      "version": "0.2.1"
     },
     {
       "graphs": {
@@ -18229,21 +18425,6 @@
     },
     {
       "graphs": {
-        "daemon-windows": []
-      },
-      "name": "windows-link",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "unsafe": {
-        "blocks": 0,
-        "externs": 0,
-        "functions": 0,
-        "impls": 0,
-        "tokens": 0
-      },
-      "version": "0.1.3"
-    },
-    {
-      "graphs": {
         "daemon-windows": [],
         "desktop-windows": []
       },
@@ -18257,21 +18438,6 @@
         "tokens": 0
       },
       "version": "0.2.1"
-    },
-    {
-      "graphs": {
-        "daemon-windows": []
-      },
-      "name": "windows-numerics",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "unsafe": {
-        "blocks": 3,
-        "externs": 0,
-        "functions": 0,
-        "impls": 0,
-        "tokens": 3
-      },
-      "version": "0.2.0"
     },
     {
       "graphs": {
@@ -18327,23 +18493,6 @@
         "impls": 2,
         "tokens": 27
       },
-      "version": "0.3.4"
-    },
-    {
-      "graphs": {
-        "daemon-windows": [
-          "std"
-        ]
-      },
-      "name": "windows-result",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "unsafe": {
-        "blocks": 15,
-        "externs": 10,
-        "functions": 0,
-        "impls": 2,
-        "tokens": 27
-      },
       "version": "0.4.1"
     },
     {
@@ -18378,29 +18527,60 @@
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "unsafe": {
         "blocks": 48,
-        "externs": 0,
-        "functions": 21,
-        "impls": 2,
-        "tokens": 71
-      },
-      "version": "0.4.2"
-    },
-    {
-      "graphs": {
-        "daemon-windows": [
-          "std"
-        ]
-      },
-      "name": "windows-strings",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "unsafe": {
-        "blocks": 48,
         "externs": 2,
         "functions": 21,
         "impls": 2,
         "tokens": 73
       },
       "version": "0.5.1"
+    },
+    {
+      "graphs": {
+        "daemon-windows": [
+          "Win32",
+          "Win32_Devices",
+          "Win32_Devices_HumanInterfaceDevice",
+          "Win32_Foundation",
+          "Win32_Globalization",
+          "Win32_Graphics",
+          "Win32_Graphics_Dwm",
+          "Win32_Graphics_Gdi",
+          "Win32_Media",
+          "Win32_Security",
+          "Win32_System",
+          "Win32_System_Com",
+          "Win32_System_Com_StructuredStorage",
+          "Win32_System_LibraryLoader",
+          "Win32_System_Ole",
+          "Win32_System_SystemInformation",
+          "Win32_System_SystemServices",
+          "Win32_System_Threading",
+          "Win32_System_WindowsProgramming",
+          "Win32_UI",
+          "Win32_UI_Accessibility",
+          "Win32_UI_Controls",
+          "Win32_UI_HiDpi",
+          "Win32_UI_Input",
+          "Win32_UI_Input_Ime",
+          "Win32_UI_Input_KeyboardAndMouse",
+          "Win32_UI_Input_Pointer",
+          "Win32_UI_Input_Touch",
+          "Win32_UI_Shell",
+          "Win32_UI_TextServices",
+          "Win32_UI_WindowsAndMessaging",
+          "default"
+        ]
+      },
+      "name": "windows-sys",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 3411,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 3411
+      },
+      "version": "0.52.0"
     },
     {
       "graphs": {
@@ -18421,26 +18601,15 @@
         "desktop-windows": [
           "Win32",
           "Win32_Foundation",
-          "Win32_Globalization",
           "Win32_NetworkManagement",
           "Win32_NetworkManagement_IpHelper",
           "Win32_NetworkManagement_Ndis",
           "Win32_Networking",
           "Win32_Networking_WinSock",
-          "Win32_Security",
-          "Win32_Storage",
-          "Win32_Storage_FileSystem",
           "Win32_System",
-          "Win32_System_Com",
-          "Win32_System_Console",
-          "Win32_System_Diagnostics",
-          "Win32_System_Diagnostics_Debug",
           "Win32_System_IO",
           "Win32_System_Memory",
-          "Win32_System_SystemInformation",
           "Win32_System_Threading",
-          "Win32_UI",
-          "Win32_UI_Shell",
           "default"
         ]
       },
@@ -18458,72 +18627,6 @@
     {
       "graphs": {
         "daemon-windows": [
-          "Win32",
-          "Win32_Foundation",
-          "Win32_Globalization",
-          "Win32_Graphics",
-          "Win32_Graphics_Gdi",
-          "Win32_System",
-          "Win32_System_LibraryLoader",
-          "Win32_System_SystemServices",
-          "Win32_UI",
-          "Win32_UI_Accessibility",
-          "Win32_UI_Controls",
-          "Win32_UI_HiDpi",
-          "Win32_UI_Input",
-          "Win32_UI_Input_KeyboardAndMouse",
-          "Win32_UI_Shell",
-          "Win32_UI_WindowsAndMessaging",
-          "default"
-        ],
-        "desktop-windows": [
-          "Win32",
-          "Win32_Devices",
-          "Win32_Devices_DeviceAndDriverInstallation",
-          "Win32_Devices_Properties",
-          "Win32_Devices_Usb",
-          "Win32_Foundation",
-          "Win32_Globalization",
-          "Win32_Graphics",
-          "Win32_Graphics_Gdi",
-          "Win32_Networking",
-          "Win32_Networking_WinSock",
-          "Win32_Security",
-          "Win32_Storage",
-          "Win32_Storage_FileSystem",
-          "Win32_System",
-          "Win32_System_Com",
-          "Win32_System_IO",
-          "Win32_System_LibraryLoader",
-          "Win32_System_Registry",
-          "Win32_System_SystemServices",
-          "Win32_System_Threading",
-          "Win32_System_WindowsProgramming",
-          "Win32_UI",
-          "Win32_UI_Accessibility",
-          "Win32_UI_Controls",
-          "Win32_UI_HiDpi",
-          "Win32_UI_Input",
-          "Win32_UI_Input_KeyboardAndMouse",
-          "Win32_UI_Shell",
-          "Win32_UI_WindowsAndMessaging",
-          "default"
-        ]
-      },
-      "name": "windows-sys",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "unsafe": {
-        "blocks": 8925,
-        "externs": 3605,
-        "functions": 0,
-        "impls": 0,
-        "tokens": 12530
-      },
-      "version": "0.60.2"
-    },
-    {
-      "graphs": {
-        "daemon-windows": [
           "Wdk",
           "Wdk_Foundation",
           "Wdk_Storage",
@@ -18535,6 +18638,8 @@
           "Win32_Devices_Communication",
           "Win32_Foundation",
           "Win32_Globalization",
+          "Win32_Graphics",
+          "Win32_Graphics_Gdi",
           "Win32_NetworkManagement",
           "Win32_NetworkManagement_IpHelper",
           "Win32_NetworkManagement_Ndis",
@@ -18550,6 +18655,7 @@
           "Win32_System_Diagnostics",
           "Win32_System_Diagnostics_Debug",
           "Win32_System_IO",
+          "Win32_System_LibraryLoader",
           "Win32_System_Memory",
           "Win32_System_Pipes",
           "Win32_System_Registry",
@@ -18558,7 +18664,13 @@
           "Win32_System_Threading",
           "Win32_System_WindowsProgramming",
           "Win32_UI",
+          "Win32_UI_Accessibility",
+          "Win32_UI_Controls",
+          "Win32_UI_HiDpi",
+          "Win32_UI_Input",
+          "Win32_UI_Input_KeyboardAndMouse",
           "Win32_UI_Shell",
+          "Win32_UI_WindowsAndMessaging",
           "default"
         ],
         "desktop-windows": [
@@ -18571,7 +18683,13 @@
           "Win32",
           "Win32_Devices",
           "Win32_Devices_Communication",
+          "Win32_Devices_DeviceAndDriverInstallation",
+          "Win32_Devices_Properties",
+          "Win32_Devices_Usb",
           "Win32_Foundation",
+          "Win32_Globalization",
+          "Win32_Graphics",
+          "Win32_Graphics_Gdi",
           "Win32_NetworkManagement",
           "Win32_NetworkManagement_IpHelper",
           "Win32_NetworkManagement_Ndis",
@@ -18582,13 +18700,27 @@
           "Win32_Storage",
           "Win32_Storage_FileSystem",
           "Win32_System",
+          "Win32_System_Com",
+          "Win32_System_Console",
+          "Win32_System_Diagnostics",
+          "Win32_System_Diagnostics_Debug",
           "Win32_System_IO",
+          "Win32_System_LibraryLoader",
           "Win32_System_Memory",
           "Win32_System_Pipes",
           "Win32_System_Registry",
+          "Win32_System_SystemInformation",
           "Win32_System_SystemServices",
           "Win32_System_Threading",
           "Win32_System_WindowsProgramming",
+          "Win32_UI",
+          "Win32_UI_Accessibility",
+          "Win32_UI_Controls",
+          "Win32_UI_HiDpi",
+          "Win32_UI_Input",
+          "Win32_UI_Input_KeyboardAndMouse",
+          "Win32_UI_Shell",
+          "Win32_UI_WindowsAndMessaging",
           "default"
         ]
       },
@@ -18621,37 +18753,6 @@
     },
     {
       "graphs": {
-        "daemon-windows": [],
-        "desktop-windows": []
-      },
-      "name": "windows-targets",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "unsafe": {
-        "blocks": 0,
-        "externs": 0,
-        "functions": 0,
-        "impls": 0,
-        "tokens": 0
-      },
-      "version": "0.53.5"
-    },
-    {
-      "graphs": {
-        "daemon-windows": []
-      },
-      "name": "windows-threading",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "unsafe": {
-        "blocks": 12,
-        "externs": 3,
-        "functions": 1,
-        "impls": 2,
-        "tokens": 18
-      },
-      "version": "0.1.0"
-    },
-    {
-      "graphs": {
         "daemon-windows": []
       },
       "name": "windows-threading",
@@ -18664,21 +18765,6 @@
         "tokens": 19
       },
       "version": "0.2.1"
-    },
-    {
-      "graphs": {
-        "daemon-windows": []
-      },
-      "name": "windows-version",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "unsafe": {
-        "blocks": 5,
-        "externs": 0,
-        "functions": 0,
-        "impls": 0,
-        "tokens": 5
-      },
-      "version": "0.1.7"
     },
     {
       "graphs": {
@@ -18698,19 +18784,19 @@
     },
     {
       "graphs": {
-        "daemon-windows": [],
-        "desktop-windows": []
+        "daemon-macos": [],
+        "daemon-windows": []
       },
-      "name": "windows_x86_64_msvc",
+      "name": "winit",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "unsafe": {
-        "blocks": 0,
-        "externs": 0,
-        "functions": 0,
-        "impls": 0,
-        "tokens": 0
+        "blocks": 732,
+        "externs": 56,
+        "functions": 65,
+        "impls": 70,
+        "tokens": 923
       },
-      "version": "0.53.1"
+      "version": "0.30.13"
     },
     {
       "graphs": {

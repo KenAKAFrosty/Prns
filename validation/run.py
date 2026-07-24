@@ -399,13 +399,15 @@ def validate_manifest(manifest: dict, check_tools: bool = False) -> list[str]:
 
     errors.extend(validate_triage())
     try:
-        requirements = (ROOT / "benchmarks/reference/requirements.txt").read_text().strip()
+        requirements = (
+            ROOT / "benchmarks/reference/requirements.txt"
+        ).read_text().splitlines()
         lock = (ROOT / "benchmarks/reference/requirements.lock").read_text().splitlines()
     except OSError as error:
         errors.append(f"cannot read benchmark reference pins: {error}")
     else:
-        if requirements != "-r requirements.lock":
-            errors.append("benchmarks/reference/requirements.txt must load requirements.lock")
+        if requirements != lock:
+            errors.append("benchmarks/reference/requirements.txt must project requirements.lock")
         if "rns==1.4.0" not in lock:
             errors.append("benchmarks/reference/requirements.lock must pin rns==1.4.0")
 

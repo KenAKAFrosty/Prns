@@ -437,7 +437,7 @@ async fn the_hopspot_node_page_serves_over_tcp() {
         );
         assert_eq!(
             &page[header_len..],
-            &node_pages::HOPSPOT_INDEX_PAGE[..],
+            node_pages::HOPSPOT_INDEX_PAGE,
             "the bin payload is the page byte-for-byte",
         );
     };

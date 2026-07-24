@@ -1,7 +1,7 @@
 use sha2::{Digest, Sha256};
 use std::env;
-use std::fmt::Write as _;
 use std::fs;
+use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -13,7 +13,7 @@ const SOURCE_ENV: &[&str] = &[
     "PRNS_SOURCE_SHA256",
 ];
 
-fn main() {
+fn main() -> io::Result<()> {
     println!("cargo:rerun-if-changed=src/node_pages/index_head.mu");
     println!("cargo:rerun-if-changed=src/node_pages/index_tail.mu");
     println!("cargo:rerun-if-changed=src/node_pages/quickstart.mu");
@@ -24,58 +24,58 @@ fn main() {
         println!("cargo:rerun-if-env-changed={name}");
     }
 
-    let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("manifest directory"));
+    let manifest = path_environment("CARGO_MANIFEST_DIR")?;
     let repo = manifest.join("../..");
     let source_enabled = env::var_os("CARGO_FEATURE_SOURCE_ARCHIVE").is_some();
-    let fallback_version = fs::read_to_string(repo.join("VERSION"))
-        .unwrap_or_else(|_| env::var("CARGO_PKG_VERSION").expect("package version"))
-        .trim()
-        .to_owned();
+    let fallback_version = match fs::read_to_string(repo.join("VERSION")) {
+        Ok(version) => version,
+        Err(_) => environment("CARGO_PKG_VERSION")?,
+    }
+    .trim()
+    .to_owned();
     let fallback_commit = git_commit(&repo).unwrap_or_else(|| "development".to_owned());
 
     let (version, commit, source) = if source_enabled {
-        let archive = required_path("PRNS_SOURCE_ARCHIVE");
+        let archive = required_path("PRNS_SOURCE_ARCHIVE")?;
         println!("cargo:rerun-if-changed={}", archive.display());
-        let bytes = fs::read(&archive).expect("read PRNS_SOURCE_ARCHIVE");
-        let version = required("PRNS_SOURCE_VERSION");
-        let commit = required("PRNS_SOURCE_COMMIT");
-        assert_eq!(
-            version, fallback_version,
-            "PRNS_SOURCE_VERSION must match the repository VERSION"
-        );
-        assert!(
+        let bytes = fs::read(&archive)?;
+        let version = required("PRNS_SOURCE_VERSION")?;
+        let commit = required("PRNS_SOURCE_COMMIT")?;
+        ensure(
+            version == fallback_version,
+            "PRNS_SOURCE_VERSION must match the repository VERSION",
+        )?;
+        ensure(
             commit.len() == 40
                 && commit
                     .bytes()
                     .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
-            "PRNS_SOURCE_COMMIT must be a lowercase full Git commit"
-        );
-        assert_eq!(
-            git_commit(&repo).as_deref(),
-            Some(commit.as_str()),
-            "PRNS_SOURCE_COMMIT must match repository HEAD"
-        );
-        let expected_size: usize = required("PRNS_SOURCE_SIZE")
-            .parse()
-            .expect("PRNS_SOURCE_SIZE must be an integer");
-        assert_eq!(
-            bytes.len(),
-            expected_size,
-            "PRNS_SOURCE_ARCHIVE size does not match canonical metadata"
-        );
+            "PRNS_SOURCE_COMMIT must be a lowercase full Git commit",
+        )?;
+        ensure(
+            git_commit(&repo).as_deref() == Some(commit.as_str()),
+            "PRNS_SOURCE_COMMIT must match repository HEAD",
+        )?;
+        let expected_size: usize = required("PRNS_SOURCE_SIZE")?.parse().map_err(|error| {
+            invalid_input(format!("PRNS_SOURCE_SIZE must be an integer: {error}"))
+        })?;
+        ensure(
+            bytes.len() == expected_size,
+            "PRNS_SOURCE_ARCHIVE size does not match canonical metadata",
+        )?;
         let digest = hex_digest(&bytes);
-        let expected_digest = required("PRNS_SOURCE_SHA256");
-        assert!(
+        let expected_digest = required("PRNS_SOURCE_SHA256")?;
+        ensure(
             expected_digest.len() == 64
                 && expected_digest
                     .bytes()
                     .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
-            "PRNS_SOURCE_SHA256 must be a lowercase SHA-256 digest"
-        );
-        assert_eq!(
-            digest, expected_digest,
-            "PRNS_SOURCE_ARCHIVE SHA-256 does not match canonical metadata"
-        );
+            "PRNS_SOURCE_SHA256 must be a lowercase SHA-256 digest",
+        )?;
+        ensure(
+            digest == expected_digest,
+            "PRNS_SOURCE_ARCHIVE SHA-256 does not match canonical metadata",
+        )?;
         (version, commit, Some((archive, bytes.len(), digest)))
     } else {
         (
@@ -85,22 +85,12 @@ fn main() {
         )
     };
 
-    let head =
-        fs::read_to_string(manifest.join("src/node_pages/index_head.mu")).expect("read index head");
-    let tail =
-        fs::read_to_string(manifest.join("src/node_pages/index_tail.mu")).expect("read index tail");
-    let short_commit = &commit[..commit.len().min(12)];
+    let head = fs::read_to_string(manifest.join("src/node_pages/index_head.mu"))?;
+    let tail = fs::read_to_string(manifest.join("src/node_pages/index_tail.mu"))?;
+    let short_commit = commit.chars().take(12).collect::<String>();
     let no_source = format!(
         "\nSource {version} {short_commit}: compact build; source.zip not carried or served.\n"
     );
-    let with_source = source.as_ref().map(|(_, size, digest)| {
-        format!(
-            "\n>>`!Release source`!\n\nVersion: {version}\n\nCommit: {short_commit}\n\n\
-             Archive: {size} bytes\n\nSHA-256: {digest}\n\n\
-             `[Download source.zip`:/file/source.zip]\n\n\
-             `[Download checksum`:/file/source.zip.sha256]\n\n"
-        )
-    });
     let hopspot_no_source = page(
         &head,
         "`F999This node is a Personal Hopspot, one small piece of that future.`f\n",
@@ -113,99 +103,111 @@ fn main() {
         &no_source,
         &tail,
     );
-    let hopspot_with_source = with_source.as_ref().map(|status| {
-        page(
-            &head,
-            "`F999This node is a Personal Hopspot, one small piece of that future.`f\n",
-            status,
-            &tail,
-        )
-    });
-    let browser_with_source = with_source.as_ref().map(|status| {
-        page(
-            &head,
-            "`F999This node lives in a browser tab, one small piece of that future.`f\n",
-            status,
-            &tail,
-        )
-    });
 
-    let out = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR"));
-    fs::write(out.join("hopspot_index_no_source.mu"), hopspot_no_source)
-        .expect("write no-source hopspot page");
-    fs::write(out.join("browser_index_no_source.mu"), browser_no_source)
-        .expect("write no-source browser page");
+    let out = path_environment("OUT_DIR")?;
+    fs::write(out.join("hopspot_index_no_source.mu"), hopspot_no_source)?;
+    fs::write(out.join("browser_index_no_source.mu"), browser_no_source)?;
 
     let mut generated = String::new();
-    writeln!(generated, "pub const BUILD_VERSION: &str = {version:?};").unwrap();
-    writeln!(generated, "pub const BUILD_COMMIT: &str = {commit:?};").unwrap();
-    writeln!(
-        generated,
+    generated.push_str(&format!("pub const BUILD_VERSION: &str = {version:?};\n"));
+    generated.push_str(&format!("pub const BUILD_COMMIT: &str = {commit:?};\n"));
+    generated.push_str(
         "pub const HOPSPOT_INDEX_PAGE_NO_SOURCE: &[u8] = \
-         include_bytes!(concat!(env!(\"OUT_DIR\"), \"/hopspot_index_no_source.mu\"));"
-    )
-    .unwrap();
-    writeln!(
-        generated,
+         include_bytes!(concat!(env!(\"OUT_DIR\"), \"/hopspot_index_no_source.mu\"));\n",
+    );
+    generated.push_str(
         "pub const BROWSER_INDEX_PAGE_NO_SOURCE: &[u8] = \
-         include_bytes!(concat!(env!(\"OUT_DIR\"), \"/browser_index_no_source.mu\"));"
-    )
-    .unwrap();
+         include_bytes!(concat!(env!(\"OUT_DIR\"), \"/browser_index_no_source.mu\"));\n",
+    );
     if let Some((archive, size, digest)) = source {
+        let status = format!(
+            "\n>>`!Release source`!\n\nVersion: {version}\n\nCommit: {short_commit}\n\n\
+             Archive: {size} bytes\n\nSHA-256: {digest}\n\n\
+             `[Download source.zip`:/file/source.zip]\n\n\
+             `[Download checksum`:/file/source.zip.sha256]\n\n"
+        );
         let checksum = format!("{digest}  source.zip\n");
-        fs::write(out.join("source.zip.sha256"), checksum).expect("write source checksum");
+        fs::write(out.join("source.zip.sha256"), checksum)?;
         fs::write(
             out.join("hopspot_index_with_source.mu"),
-            hopspot_with_source.expect("source page"),
-        )
-        .expect("write source hopspot page");
+            page(
+                &head,
+                "`F999This node is a Personal Hopspot, one small piece of that future.`f\n",
+                &status,
+                &tail,
+            ),
+        )?;
         fs::write(
             out.join("browser_index_with_source.mu"),
-            browser_with_source.expect("source page"),
-        )
-        .expect("write source browser page");
-        writeln!(generated, "pub const SOURCE_ARCHIVE_SIZE: usize = {size};").unwrap();
-        writeln!(
-            generated,
-            "pub const SOURCE_ARCHIVE_SHA256: &str = {digest:?};"
-        )
-        .unwrap();
-        writeln!(
-            generated,
-            "pub static SOURCE_ARCHIVE: &[u8] = include_bytes!({:?});",
+            page(
+                &head,
+                "`F999This node lives in a browser tab, one small piece of that future.`f\n",
+                &status,
+                &tail,
+            ),
+        )?;
+        generated.push_str(&format!("pub const SOURCE_ARCHIVE_SIZE: usize = {size};\n"));
+        generated.push_str(&format!(
+            "pub const SOURCE_ARCHIVE_SHA256: &str = {digest:?};\n"
+        ));
+        generated.push_str(&format!(
+            "pub static SOURCE_ARCHIVE: &[u8] = include_bytes!({:?});\n",
             archive.to_string_lossy()
-        )
-        .unwrap();
-        writeln!(
-            generated,
+        ));
+        generated.push_str(
             "pub static SOURCE_CHECKSUM: &[u8] = \
-             include_bytes!(concat!(env!(\"OUT_DIR\"), \"/source.zip.sha256\"));"
-        )
-        .unwrap();
-        writeln!(
-            generated,
+             include_bytes!(concat!(env!(\"OUT_DIR\"), \"/source.zip.sha256\"));\n",
+        );
+        generated.push_str(
             "pub const HOPSPOT_INDEX_PAGE_WITH_SOURCE: &[u8] = \
-             include_bytes!(concat!(env!(\"OUT_DIR\"), \"/hopspot_index_with_source.mu\"));"
-        )
-        .unwrap();
-        writeln!(
-            generated,
+             include_bytes!(concat!(env!(\"OUT_DIR\"), \"/hopspot_index_with_source.mu\"));\n",
+        );
+        generated.push_str(
             "pub const BROWSER_INDEX_PAGE_WITH_SOURCE: &[u8] = \
-             include_bytes!(concat!(env!(\"OUT_DIR\"), \"/browser_index_with_source.mu\"));"
-        )
-        .unwrap();
+             include_bytes!(concat!(env!(\"OUT_DIR\"), \"/browser_index_with_source.mu\"));\n",
+        );
     }
-    fs::write(out.join("node_pages_generated.rs"), generated).expect("write generated node pages");
+    fs::write(out.join("node_pages_generated.rs"), generated)?;
+    Ok(())
 }
 
-fn required(name: &str) -> String {
-    env::var(name).unwrap_or_else(|_| panic!("{name} is required with feature source-archive"))
+fn environment(name: &str) -> io::Result<String> {
+    env::var(name).map_err(|error| invalid_input(format!("{name} is unavailable: {error}")))
 }
 
-fn required_path(name: &str) -> PathBuf {
-    let path = PathBuf::from(required(name));
-    assert!(path.is_absolute(), "{name} must be an absolute path");
-    path
+fn path_environment(name: &str) -> io::Result<PathBuf> {
+    env::var_os(name)
+        .map(PathBuf::from)
+        .ok_or_else(|| invalid_input(format!("{name} is unavailable")))
+}
+
+fn required(name: &str) -> io::Result<String> {
+    env::var(name).map_err(|error| {
+        invalid_input(format!(
+            "{name} is required with feature source-archive: {error}"
+        ))
+    })
+}
+
+fn required_path(name: &str) -> io::Result<PathBuf> {
+    let path = PathBuf::from(required(name)?);
+    ensure(
+        path.is_absolute(),
+        format!("{name} must be an absolute path"),
+    )?;
+    Ok(path)
+}
+
+fn ensure(condition: bool, message: impl Into<String>) -> io::Result<()> {
+    if condition {
+        Ok(())
+    } else {
+        Err(invalid_input(message))
+    }
+}
+
+fn invalid_input(message: impl Into<String>) -> io::Error {
+    io::Error::new(ErrorKind::InvalidInput, message.into())
 }
 
 fn git_commit(repo: &Path) -> Option<String> {
@@ -221,10 +223,12 @@ fn git_commit(repo: &Path) -> Option<String> {
 }
 
 fn hex_digest(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
     let digest = Sha256::digest(bytes);
     let mut out = String::with_capacity(64);
     for byte in digest {
-        write!(out, "{byte:02x}").unwrap();
+        out.push(char::from(HEX[usize::from(byte >> 4)]));
+        out.push(char::from(HEX[usize::from(byte & 0x0f)]));
     }
     out
 }

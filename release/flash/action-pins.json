@@ -74,6 +74,10 @@
       "resolved_ref": "v2.7.0",
       "sha": "4c0cb0fce8556fdb04a90347310e5db8b1f98fb9"
     },
+    "mlugg/setup-zig": {
+      "resolved_ref": "v2.2.1",
+      "sha": "d1434d08867e3ee9daa34448df10607b98908d29"
+    },
     "oven-sh/setup-bun": {
       "resolved_ref": "v2",
       "sha": "0c5077e51419868618aeaa5fe8019c62421857d6"
@@ -83,8 +87,12 @@
       "sha": "ba38be9e461d3875417946c167d0b5f3d385a247"
     },
     "swift-actions/setup-swift": {
-      "resolved_ref": "v2.4.0",
-      "sha": "7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a"
+      "resolved_ref": "v3.0.0-beta.1",
+      "sha": "364295d9c23900ce04d4e5cc708387921b4e50f9"
+    },
+    "taiki-e/install-action": {
+      "resolved_ref": "v2.85.0",
+      "sha": "7572810d7dd469b651bb7793945692cf78da5dd7"
     }
   }
 }

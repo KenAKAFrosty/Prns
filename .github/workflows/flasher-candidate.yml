@@ -94,7 +94,7 @@ jobs:
               gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
                 --jq '.[] | .assets[]?.name'
             )"
-            if rg -q \
+            if grep -Eq \
               '^(release-record-v.+\.json|prns-flasher-candidate-v.+-signed\.tar\.gz)$' \
               <<< "$published_assets"; then
               echo "bootstrap is forbidden after any signed schema-v2 custody asset exists" >&2
@@ -265,8 +265,8 @@ jobs:
       - name: Prove exact compiler and source epoch
         shell: bash
         run: |
-          rustc --version | rg '^rustc 1\.96\.0 '
-          cargo --version | rg '^cargo 1\.96\.0 '
+          rustc --version | grep -E '^rustc 1\.96\.0 '
+          cargo --version | grep -E '^cargo 1\.96\.0 '
           echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$GITHUB_SHA")" >> "$GITHUB_ENV"
       - name: Build standalone CLI from locked dependencies
         run: cargo build --release --locked -p hopspot-flash --target ${{ matrix.platform.target }}
@@ -336,19 +336,19 @@ jobs:
         run: cargo binstall --no-confirm --force dioxus-cli@0.7.5
       - name: Prove exact release tools and source epoch
         run: |
-          rustc --version | rg '^rustc 1\.96\.0 '
-          cargo --version | rg '^cargo 1\.96\.0 '
+          rustc --version | grep -E '^rustc 1\.96\.0 '
+          cargo --version | grep -E '^cargo 1\.96\.0 '
           test "$(node --version)" = "v24.18.0"
-          cargo-binstall --version | rg '(^| )1\.21\.0($| )'
-          dx --version | rg '(^| )0\.7\.5($| )'
-          espup --version | rg '(^| )0\.17\.1($| )'
-          rustc +esp -vV | rg '^release: 1\.95\.0'
+          cargo-binstall --version | grep -E '(^| )1\.21\.0($| )'
+          dx --version | grep -E '(^| )0\.7\.5($| )'
+          espup --version | grep -E '(^| )0\.17\.1($| )'
+          rustc +esp -vV | grep -E '^release: 1\.95\.0'
           test "$(xtensa-esp-elf-gcc --version | head -n 1)" = \
             'xtensa-esp-elf-gcc (crosstool-NG esp-15.2.0_20250920) 15.2.0'
           host_triple="$(rustc -vV | sed -n 's/^host: //p')"
           llvm_objcopy="$(rustc --print sysroot)/lib/rustlib/$host_triple/bin/llvm-objcopy"
           test -x "$llvm_objcopy"
-          "$llvm_objcopy" --version | rg -i 'llvm'
+          "$llvm_objcopy" --version | grep -Ei 'llvm'
           test "$(cd personal-hopspot/embedded/nrf52840 && env -u RUSTUP_TOOLCHAIN rustc --version | awk '{print $2}')" = "1.96.0"
           echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$GITHUB_SHA")" >> "$GITHUB_ENV"
       - name: Build unsigned core candidate
@@ -392,7 +392,7 @@ jobs:
           cache-dependency-path: docs/website/package-lock.json
       - name: Prove exact audit compiler and runtime
         run: |
-          rustc --version | rg '^rustc 1\.96\.0 '
+          rustc --version | grep -E '^rustc 1\.96\.0 '
           test "$(node --version)" = "v24.18.0"
       - name: Install exact audit tools
         run: |

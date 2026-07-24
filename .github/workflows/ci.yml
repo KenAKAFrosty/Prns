@@ -201,10 +201,10 @@ jobs:
         run: cargo binstall --no-confirm --force dioxus-cli@0.7.5
       - name: Shared manifest and standalone CLI
         run: |
-          rustc --version | rg '^rustc 1\.96\.0 '
+          rustc --version | grep -E '^rustc 1\.96\.0 '
           test "$(node --version)" = "v24.18.0"
-          cargo-binstall --version | rg '(^| )1\.21\.0($| )'
-          dx --version | rg '(^| )0\.7\.5($| )'
+          cargo-binstall --version | grep -E '(^| )1\.21\.0($| )'
+          dx --version | grep -E '(^| )0\.7\.5($| )'
           cargo test --locked -p prns-flash-manifest -p hopspot-flash
       - name: Shared manifest and standalone CLI lint
         run: cargo clippy --locked -p prns-flash-manifest -p hopspot-flash --all-targets -- -D warnings
@@ -227,14 +227,14 @@ jobs:
         working-directory: docs/website
         run: |
           npm ls --depth=0 @playwright/test@1.61.1 @axe-core/playwright@4.12.1
-          ./node_modules/.bin/playwright --version | rg '^Version 1\.61\.1$'
+          ./node_modules/.bin/playwright --version | grep -E '^Version 1\.61\.1$'
           ./node_modules/.bin/playwright install --with-deps chromium
           npm run test:browser
           npm run test:production-boundary
       - name: Production engine and lock audit
         run: |
           python3 validation/security/npm-production-audit.py
-          if rg -i 'esp-web-install-button|unpkg\.com|esp-web-tools|playwright|axe-core' docs/website/target/hosted-assets/prns-flash.js; then exit 1; fi
+          if grep -Ei 'esp-web-install-button|unpkg\.com|esp-web-tools|playwright|axe-core' docs/website/target/hosted-assets/prns-flash.js; then exit 1; fi
           git diff --exit-code -- docs/website/public/assets/tailwind.css
 
   release-workflow-contracts:
@@ -270,7 +270,7 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
       - name: Prove and check the advertised MSRV
         run: |
-          rustc --version | rg '^rustc 1\.90\.0 '
+          rustc --version | grep -E '^rustc 1\.90\.0 '
           cargo check --workspace --locked
       # The root-excluded workspaces declare the same 1.90 floor; hold them to it too.
       - run: cargo check --locked

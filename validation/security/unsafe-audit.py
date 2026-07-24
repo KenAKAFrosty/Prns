@@ -15,8 +15,17 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import tomllib
 from typing import Iterator
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    try:
+        import tomli as tomllib
+    except ModuleNotFoundError:
+        raise SystemExit(
+            "unsafe audit failed: Python 3.11+ (or the tomli package) is required"
+        )
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -260,16 +269,16 @@ def build_snapshot() -> dict:
             manifest_path = Path(package["manifest_path"]).resolve()
             assert_first_party_policy(package, manifest_path)
             key = f'{package["name"]}@{package["version"]}|{package.get("source") or manifest_path.parent}'
-            record = packages.setdefault(
-                key,
-                {
+            record = packages.get(key)
+            if record is None:
+                record = {
                     "name": package["name"],
                     "version": package["version"],
                     "source": display_source(package, manifest_path),
                     "graphs": {},
                     "unsafe": unsafe_counts(manifest_path.parent),
-                },
-            )
+                }
+                packages[key] = record
             record["graphs"][graph] = sorted(node.get("features", []))
     ordered = sorted(
         packages.values(), key=lambda item: (item["name"], item["version"], item["source"])
