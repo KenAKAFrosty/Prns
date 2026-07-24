@@ -11,7 +11,7 @@
 
 High-performance Reticulum, built to run on any device.
 `a
--∿Fana
+-∿
 
 >>`!What is Prns?`!
 
