@@ -12,11 +12,22 @@ import sys
 
 
 REFERENCE_DIR = Path(__file__).resolve().parent
+REPO_ROOT = REFERENCE_DIR.parent.parent
 PROOF_DIR = REFERENCE_DIR / ".object-cache"
 if os.name == "nt":
     OBJECT_CACHE = Path.home() / ".prns-oc"
 else:
     OBJECT_CACHE = PROOF_DIR / "pyximport"
+
+
+def portable_path(path: Path) -> str:
+    resolved = path.resolve()
+    if resolved.is_relative_to(REPO_ROOT):
+        return "<repo>/" + resolved.relative_to(REPO_ROOT).as_posix()
+    home = Path.home().resolve()
+    if resolved.is_relative_to(home):
+        return "~/" + resolved.relative_to(home).as_posix()
+    return resolved.name
 
 
 def first_line(command: list[str]) -> str:
@@ -48,7 +59,7 @@ def load_compiled_rns():
 
     native_modules = sorted(
         {
-            str(Path(module.__file__).resolve())
+            portable_path(Path(module.__file__))
             for name, module in sys.modules.items()
             if (name == "RNS" or name.startswith("RNS."))
             and getattr(module, "__file__", "")
@@ -71,7 +82,7 @@ def load_compiled_rns():
         "python": sys.version.split()[0],
         "cython": Cython.__version__,
         "compiler": first_line([os.environ.get("CC", "cc"), "--version"]),
-        "object_cache": str(OBJECT_CACHE),
+        "object_cache": portable_path(OBJECT_CACHE),
     }
     PROOF_DIR.mkdir(parents=True, exist_ok=True)
     (PROOF_DIR / "proof.json").write_text(
