@@ -107,10 +107,12 @@ mod platform {
     use std::time::Duration;
 
     use prnsd_control::ManagedProcess;
-    use tao::event::Event;
-    use tao::event_loop::{ControlFlow, EventLoopBuilder};
     use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
     use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
+    use winit::application::ApplicationHandler;
+    use winit::event::WindowEvent;
+    use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+    use winit::window::WindowId;
 
     use crate::shutdown::{self, ShutdownRequest};
     use crate::{cli, daemon};
@@ -160,24 +162,73 @@ mod platform {
         }
     }
 
-    pub(crate) fn run(args: cli::DaemonArgs, managed: Option<ManagedProcess>) -> ! {
-        #[cfg(target_os = "macos")]
-        let event_loop = {
-            use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS};
+    struct TrayApplication {
+        menu_proxy: winit::event_loop::EventLoopProxy<TrayEvent>,
+        shutdown: Option<ShutdownRequest>,
+        tray: Option<DesktopTray>,
+    }
 
-            let mut event_loop = EventLoopBuilder::<TrayEvent>::with_user_event().build();
-            event_loop.set_activation_policy(ActivationPolicy::Accessory);
-            event_loop.set_dock_visibility(false);
-            event_loop
-        };
-        #[cfg(target_os = "windows")]
-        let event_loop = EventLoopBuilder::<TrayEvent>::with_user_event().build();
+    impl ApplicationHandler<TrayEvent> for TrayApplication {
+        fn resumed(&mut self, _event_loop: &ActiveEventLoop) {}
+
+        fn window_event(
+            &mut self,
+            _event_loop: &ActiveEventLoop,
+            _window_id: WindowId,
+            _event: WindowEvent,
+        ) {
+        }
+
+        fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: TrayEvent) {
+            match event {
+                TrayEvent::DaemonReady(started) => {
+                    let outcome = match DesktopTray::new() {
+                        Ok(created) => {
+                            let stop_id = created.stop_item.id().clone();
+                            let proxy = self.menu_proxy.clone();
+                            MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
+                                if event.id() == &stop_id {
+                                    let _ = proxy.send_event(TrayEvent::StopRequested);
+                                }
+                            }));
+                            self.tray = Some(created);
+                            Ok(())
+                        }
+                        Err(error) => Err(error),
+                    };
+                    let _ = started.send(outcome);
+                }
+                TrayEvent::StopRequested
+                    if self.shutdown.as_mut().is_some_and(ShutdownRequest::request) =>
+                {
+                    if let Some(tray) = self.tray.as_ref() {
+                        tray.show_stopping();
+                    }
+                }
+                TrayEvent::StopRequested => {}
+            }
+        }
+    }
+
+    pub(crate) fn run(args: cli::DaemonArgs, managed: Option<ManagedProcess>) -> ! {
+        let mut event_loop_builder = EventLoop::<TrayEvent>::with_user_event();
+        #[cfg(target_os = "macos")]
+        {
+            use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
+
+            event_loop_builder
+                .with_activation_policy(ActivationPolicy::Accessory)
+                .with_default_menu(false);
+        }
+        let event_loop = event_loop_builder.build().unwrap_or_else(|error| {
+            eprintln!("prnsd: desktop event loop initialization failed: {error}");
+            std::process::exit(1);
+        });
+        event_loop.set_control_flow(ControlFlow::Wait);
 
         let menu_proxy = event_loop.create_proxy();
         let daemon_proxy = event_loop.create_proxy();
         let (shutdown, signal) = shutdown::channel();
-        let mut shutdown = Some(shutdown);
-        let mut tray = None;
 
         let ready_proxy = daemon_proxy.clone();
         let spawned = std::thread::Builder::new()
@@ -247,36 +298,15 @@ mod platform {
             std::process::exit(1);
         }
 
-        event_loop.run(move |event, _, control_flow| {
-            *control_flow = ControlFlow::Wait;
-            match event {
-                Event::UserEvent(TrayEvent::DaemonReady(started)) => {
-                    let outcome = match DesktopTray::new() {
-                        Ok(created) => {
-                            let stop_id = created.stop_item.id().clone();
-                            let proxy = menu_proxy.clone();
-                            MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
-                                if event.id() == &stop_id {
-                                    let _ = proxy.send_event(TrayEvent::StopRequested);
-                                }
-                            }));
-                            tray = Some(created);
-                            Ok(())
-                        }
-                        Err(error) => Err(error),
-                    };
-                    let _ = started.send(outcome);
-                }
-                Event::UserEvent(TrayEvent::StopRequested)
-                    if shutdown.as_mut().is_some_and(ShutdownRequest::request) =>
-                {
-                    if let Some(tray) = tray.as_ref() {
-                        tray.show_stopping();
-                    }
-                }
-                _ => {}
-            }
-        })
+        let mut application = TrayApplication {
+            menu_proxy,
+            shutdown: Some(shutdown),
+            tray: None,
+        };
+        if let Err(error) = event_loop.run_app(&mut application) {
+            eprintln!("prnsd: desktop event loop failed: {error}");
+        }
+        std::process::exit(1)
     }
 
     pub(crate) fn managed_process() -> Result<Option<ManagedProcess>, ExitCode> {

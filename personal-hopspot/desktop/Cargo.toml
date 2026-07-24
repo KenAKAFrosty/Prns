@@ -32,7 +32,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["a
 nusb = { version = "0.2.4", features = ["tokio"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
-tray-icon = { version = "0.21.3", default-features = false }
+tray-icon = { version = "0.24.1", default-features = false }
 
 # Linux hot-plug: udev fires a uevent the instant a serial device is plugged, so the host rescans
 # immediately instead of waiting on its fallback timer. tokio-udev exposes the monitor as an async
