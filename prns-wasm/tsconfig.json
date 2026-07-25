@@ -21,6 +21,7 @@
   "include": [
     "../prns-js/src/casework.ts",
     "../prns-js/src/browser/**/*.ts",
+    "examples/browser-playground/presentation.ts",
     "smoke/**/*.ts"
   ],
   "exclude": ["smoke/dist", "smoke/pkg"]

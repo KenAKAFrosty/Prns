@@ -271,7 +271,7 @@ function fail(message: string): never {
 
 async function validatePresentations(): Promise<void> {
   const presentationUrl = new URL(
-    "../../../../../docs/website/public/browser-node-playground-console/presentation.js",
+    "../examples/browser-playground/presentation.js",
     import.meta.url,
   );
   const presentation: {

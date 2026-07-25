@@ -160,6 +160,7 @@ async fn a_capped_link_holds_a_rebroadcast_burst_then_drains_it_over_time() {
 
     let egress = Egress::new(std::vec![(source, source_out_tx), (peer, peer_out_tx)]);
     let (_command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
+    let (heard_tx, mut heard_rx) = mpsc::unbounded_channel::<()>();
 
     tokio::spawn(run(
         engine,
@@ -172,7 +173,11 @@ async fn a_capped_link_holds_a_rebroadcast_burst_then_drains_it_over_time() {
             commands: command_rx,
             egress,
         },
-        |_journaled: Journaled<'_>| {},
+        move |journaled: Journaled<'_>| {
+            if let Journaled::AnnounceHeard { .. } = journaled {
+                let _ = heard_tx.send(());
+            }
+        },
     ));
     tokio::spawn(source_iface.run(source_seam));
     tokio::spawn(peer_iface.run(peer_seam));
@@ -183,6 +188,15 @@ async fn a_capped_link_holds_a_rebroadcast_burst_then_drains_it_over_time() {
     source_wire_in_tx
         .send(bytes_from_hex(RNS_1_4_0_RATCHETED_ANNOUNCE))
         .expect("the source interface holds its wire");
+
+    heard_rx
+        .recv()
+        .await
+        .expect("the first announce reaches the manifold");
+    heard_rx
+        .recv()
+        .await
+        .expect("the second announce reaches the manifold");
 
     let first = tokio::time::timeout(Duration::from_secs(5), peer_wire_out_rx.recv())
         .await

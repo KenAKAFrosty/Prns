@@ -4,6 +4,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 target="x86_64-unknown-linux-gnu"
 requested="${1:-all}"
+nightly="$(python3 "$root/validation/run.py" toolchain nightly)"
 
 if (($# > 1)); then
     echo "usage: validation/hardening/sanitizers.sh [address|leak|thread|all]" >&2
@@ -28,10 +29,10 @@ case "$requested" in
         ;;
 esac
 
-if ! rustup run nightly rustc --version >/dev/null 2>&1; then
-    rustup toolchain install nightly --profile minimal
+if ! rustup run "$nightly" rustc --version >/dev/null 2>&1; then
+    rustup toolchain install "$nightly" --profile minimal
 fi
-rustup component add --toolchain nightly rust-src llvm-tools-preview
+rustup component add --toolchain "$nightly" rust-src llvm-tools-preview
 
 run_suite() {
     local sanitizer="$1"
@@ -46,7 +47,7 @@ run_suite() {
         CARGO_TARGET_DIR="$root/target/hardening/$sanitizer" \
         RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-Zsanitizer=$sanitizer -Copt-level=2 -Cdebuginfo=1" \
         "$options_name=$options_value" \
-        cargo +nightly test \
+        cargo "+$nightly" test \
             --quiet \
             --locked \
             -Zbuild-std \

@@ -33,7 +33,6 @@ heapless = { version = "0.8", default-features = false }
 tokio = { version = "1", optional = true, default-features = false, features = ["rt", "macros", "sync", "time", "io-util"] }
 socket2 = { version = "0.6", optional = true, features = ["all"] }
 if-addrs = { version = "0.13", optional = true }
-netdev = { version = "0.45", optional = true }
 getrandom = { version = "0.2", optional = true }
 tokio-tungstenite = { version = "0.28", optional = true, default-features = false, features = ["connect", "handshake"] }
 futures-util = { version = "0.3", optional = true, default-features = false, features = ["alloc", "sink"] }
@@ -50,6 +49,9 @@ mdns-sd = { version = "0.20.2", optional = true }
 [target.'cfg(target_os = "linux")'.dependencies]
 bluer = { version = "0.17", optional = true, features = ["l2cap", "bluetoothd"] }
 zbus = { version = "4", optional = true, default-features = false, features = ["tokio"] }
+
+[target.'cfg(not(target_os = "ios"))'.dependencies]
+netdev = { version = "0.45", optional = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "windows"))'.dependencies]
 prns-ffi = { version = "=0.3.0", path = "../../../prns-ffi", optional = true, default-features = false }
