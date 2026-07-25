@@ -110,7 +110,8 @@ final class EngineController: ObservableObject {
     private func beginRefresh() {
         refresh()
         let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
+            guard let controller = self else { return }
+            Task { @MainActor in controller.refresh() }
         }
         RunLoop.main.add(timer, forMode: .common)
         refreshTimer = timer
