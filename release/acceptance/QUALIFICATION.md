@@ -93,9 +93,21 @@ CLI qualification. Use the masked guided entry or `--wifi-password-stdin` for Co
 a password on the command line. T-Echo stays on the signed UF2 mount/copy route. Do not claim
 device-side UF2 verification.
 
-Run `hopspot-flash doctor BOARD` as part of each native installation smoke. On ESP boards it opens a
+Run `hopspot-flash doctor BOARD` as part of each physical CLI assignment. On ESP boards it opens a
 non-writing identity session; on T-Echo it validates the UF2 mount. Heltec versus T-Beam remains a
 same-chip limitation and must be confirmed by the tester.
+
+The five native installation rows are separate archive checks. Each one runs on its target OS and
+architecture, installs the exact public archive, and confirms that `hopspot-flash --version` reports
+the candidate version. Matching hosted runners may cover target architectures without local
+hardware. These rows never substitute for the physical CLI assignments.
+
+After the prerelease is public, dispatch `flasher-installation-qualification.yml` from the exact
+candidate commit on the protected default branch with the version, source commit, and independently
+recorded signed-candidate SHA-256. Its five target-matched jobs re-fetch the public assets, verify
+the signed checksums and attestations, run the checked installer, and upload one roster-bound JSON
+evidence object per target. The assigned tester reviews those objects before their exact bytes are
+hashed into the qualification evidence store.
 
 ## 4. Capture evidence without secrets
 
@@ -105,7 +117,7 @@ computes the SHA-256 of its exact reviewed bytes. Store that object in a flat `E
 directory under its lowercase SHA-256 filename. The acceptance reference is exactly
 `artifact://qualification/THAT_SHA256`; URLs and externally asserted hashes do not count. The
 tester then fills only scenarios actually observed, names the tester assigned to that exact
-OS/architecture in `CANDIDATE/qualification/tester-roster.json`, and records a full UTC
+coverage row in `CANDIDATE/qualification/tester-roster.json`, and records a full UTC
 `completed_at` value.
 
 If a flash is interrupted mid-part, record the failure, disconnect cleanly, follow the displayed
@@ -120,6 +132,7 @@ python3 CANDIDATE/qualification/create-flasher-acceptance.py \
   --manifest CANDIDATE/flash-manifest.json \
   --manifest-signature CANDIDATE/flash-manifest.json.minisig \
   --signed-bundle prns-flasher-candidate-vVERSION-signed.tar.gz \
+  --tester-roster CANDIDATE/qualification/tester-roster.json \
   --prerelease-published-at "$PUBLISHED_AT" \
   --output acceptance.json
 ```

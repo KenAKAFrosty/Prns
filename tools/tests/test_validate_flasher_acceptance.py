@@ -72,14 +72,6 @@ def evidence(root: Path, label: str) -> dict:
     }
 
 
-def architecture(board: str, os_name: str) -> str:
-    if os_name == "macos":
-        return "x86_64" if board == "t-beam-supreme" else "aarch64"
-    if os_name == "linux":
-        return "aarch64" if board == "xiao-esp32-c6" else "x86_64"
-    return "x86_64"
-
-
 def complete_acceptance(
     manifest_document: dict,
     manifest_path: Path,
@@ -95,47 +87,50 @@ def complete_acceptance(
         if target["transport"] == "esp-serial"
     )
     runs = []
-    for board, target in targets.items():
-        for surface in sorted(VALIDATOR.SURFACES):
-            scenarios = {
+    for roster_assignment in roster["physical_assignments"]:
+        board = roster_assignment["board"]
+        surface = roster_assignment["surface"]
+        target = targets[board]
+        os_name = roster_assignment["os"]
+        run = {
+            "board": board,
+            "surface": surface,
+            "os": os_name,
+            "architecture": roster_assignment["architecture"],
+            "os_version": f"{os_name}-fixture-1",
+            "hardware_identity": f"lab-{board}-01",
+            "hardware_model": MODELS[board],
+            "hardware_revision": "not-marked",
+            "client": {
+                "name": "prns-web-flasher" if surface == "web" else "hopspot-flash",
+                "version": VERSION,
+            },
+            "scenarios": {
                 name: "pass"
-                for name in VALIDATOR.applicable_scenarios(target, surface, chip_counts)
+                for name in VALIDATOR.applicable_scenarios(
+                    target, surface, chip_counts
+                )
+            },
+            "result": "pass",
+            "tester": roster_assignment["tester"],
+            "completed_at": COMPLETED_AT,
+            "evidence": evidence(evidence_root, f"evidence://{board}/{surface}"),
+        }
+        if surface == "web":
+            run["browser"] = {
+                **roster_assignment["browser"],
+                "version": "126.0.1",
             }
-            for os_name in ("macos", "windows", "linux"):
-                run = {
-                    "board": board,
-                    "surface": surface,
-                    "os": os_name,
-                    "architecture": architecture(board, os_name),
-                    "os_version": f"{os_name}-fixture-1",
-                    "hardware_identity": f"lab-{board}-01",
-                    "hardware_model": MODELS[board],
-                    "hardware_revision": "not-marked",
-                    "client": {
-                        "name": "prns-web-flasher" if surface == "web" else "hopspot-flash",
-                        "version": VERSION,
-                    },
-                    "scenarios": dict(scenarios),
-                    "result": "pass",
-                    "tester": tester_for(roster, os_name, architecture(board, os_name)),
-                    "completed_at": COMPLETED_AT,
-                    "evidence": evidence(evidence_root, f"evidence://{board}/{surface}/{os_name}"),
-                }
-                if surface == "web":
-                    run["browser"] = {
-                        "name": "edge" if os_name == "windows" else "chrome",
-                        "channel": "stable",
-                        "version": "126.0.1",
-                    }
-                runs.append(run)
+        runs.append(run)
 
-    fallback_architecture = {"macos": "aarch64", "linux": "x86_64", "windows": "x86_64"}
     browser_fallbacks = []
-    for browser, os_name in sorted(VALIDATOR.REQUIRED_FALLBACKS):
+    for roster_assignment in roster["fallback_assignments"]:
+        browser = roster_assignment["browser"]["name"]
+        os_name = roster_assignment["os"]
         browser_fallbacks.append(
             {
                 "os": os_name,
-                "architecture": fallback_architecture[os_name],
+                "architecture": roster_assignment["architecture"],
                 "os_version": f"{os_name}-fixture-1",
                 "client": {"name": "prns-web-flasher", "version": VERSION},
                 "browser": {
@@ -147,14 +142,17 @@ def complete_acceptance(
                     name: "pass" for name in VALIDATOR.FALLBACK_SCENARIOS
                 },
                 "result": "pass",
-                "tester": tester_for(roster, os_name, fallback_architecture[os_name]),
+                "tester": roster_assignment["tester"],
                 "completed_at": COMPLETED_AT,
                 "evidence": evidence(evidence_root, f"evidence://fallback/{browser}/{os_name}"),
             }
         )
 
     installation_smoke = []
-    for target, (os_name, target_architecture) in VALIDATOR.CLI_TARGETS.items():
+    for roster_assignment in roster["installation_assignments"]:
+        target = roster_assignment["target"]
+        os_name = roster_assignment["os"]
+        target_architecture = roster_assignment["architecture"]
         installation_smoke.append(
             {
                 "target": target,
@@ -162,16 +160,16 @@ def complete_acceptance(
                 "architecture": target_architecture,
                 "os_version": f"{os_name}-fixture-1",
                 "cli_version": VERSION,
-                "scenarios": {"install": "pass", "doctor": "pass"},
+                "scenarios": {"install": "pass", "version": "pass"},
                 "result": "pass",
-                "tester": tester_for(roster, os_name, target_architecture),
+                "tester": roster_assignment["tester"],
                 "completed_at": COMPLETED_AT,
                 "evidence": evidence(evidence_root, f"evidence://install/{target}"),
             }
         )
 
     return {
-        "schema": 2,
+        "schema": 3,
         "candidate": {
             "version": VERSION,
             "channel": "stable",
@@ -189,42 +187,66 @@ def complete_acceptance(
 
 
 def complete_roster() -> dict:
-    assignments = []
-    for index, (target, (os_name, target_architecture)) in enumerate(
-        VALIDATOR.CLI_TARGETS.items()
-    ):
-        assignments.append(
-            {
-                "os": os_name,
-                "architecture": target_architecture,
-                "cli_target": target,
-                "web_browser": {
-                    "name": "edge" if os_name == "windows" else "chrome",
-                    "channel": "stable",
-                },
-                "tester": f"github:fixture-{index}",
-                "boards": list(VALIDATOR.SHIPPING_BOARDS),
-                "cables_ready": True,
-                "device_permissions_ready": True,
-                "recovery_instructions_reviewed": True,
+    hosts = {
+        ("heltec-v4", "cli"): ("linux", "x86_64"),
+        ("heltec-v4", "web"): ("linux", "x86_64"),
+        ("t-beam-supreme", "cli"): ("macos", "aarch64"),
+        ("t-beam-supreme", "web"): ("macos", "aarch64"),
+        ("xiao-esp32-c6", "cli"): ("windows", "x86_64"),
+        ("xiao-esp32-c6", "web"): ("windows", "x86_64"),
+        ("t-echo", "cli"): ("linux", "aarch64"),
+        ("t-echo", "web"): ("macos", "x86_64"),
+    }
+    physical_assignments = []
+    for (board, surface), (os_name, target_architecture) in hosts.items():
+        assignment = {
+            "board": board,
+            "surface": surface,
+            "os": os_name,
+            "architecture": target_architecture,
+            "tester": "github:solo-fixture",
+            "cables_ready": True,
+            "device_permissions_ready": True,
+            "recovery_instructions_reviewed": True,
+        }
+        if surface == "web":
+            assignment["browser"] = {
+                "name": "edge" if os_name == "windows" else "chrome",
+                "channel": "stable",
             }
-        )
+        physical_assignments.append(assignment)
     return {
-        "schema": 1,
+        "schema": 2,
         "release": {"version": VERSION},
         "release_owner": "github:release-owner",
         "confirmed_on": "2026-07-20",
-        "assignments": assignments,
+        "physical_assignments": physical_assignments,
+        "fallback_assignments": [
+            {
+                "browser": {"name": browser, "channel": "stable"},
+                "os": os_name,
+                "architecture": target_architecture,
+                "tester": "github:solo-fixture",
+                "browser_ready": True,
+            }
+            for browser, os_name, target_architecture in (
+                ("firefox", "linux", "x86_64"),
+                ("firefox", "macos", "x86_64"),
+                ("firefox", "windows", "x86_64"),
+                ("safari", "macos", "aarch64"),
+            )
+        ],
+        "installation_assignments": [
+            {
+                "target": target,
+                "os": os_name,
+                "architecture": target_architecture,
+                "tester": "github:solo-fixture",
+                "archive_ready": True,
+            }
+            for target, (os_name, target_architecture) in VALIDATOR.CLI_TARGETS.items()
+        ],
     }
-
-
-def tester_for(roster: dict, os_name: str, target_architecture: str) -> str:
-    return next(
-        assignment["tester"]
-        for assignment in roster["assignments"]
-        if (assignment["os"], assignment["architecture"])
-        == (os_name, target_architecture)
-    )
 
 
 class AcceptanceValidatorTests(unittest.TestCase):
@@ -299,7 +321,7 @@ class AcceptanceValidatorTests(unittest.TestCase):
             run["scenarios"].pop("failed-sync")
             run["scenarios"].pop("reboot-detection")
         errors = self.validate()
-        self.assertTrue(any("t-echo/cli is missing scenarios" in error for error in errors))
+        self.assertTrue(any("is missing applicable scenarios" in error for error in errors))
         self.assertTrue(any("failed-sync" in error and "reboot-detection" in error for error in errors))
 
     def test_esp_web_requires_device_md5_mismatch(self) -> None:
@@ -307,7 +329,7 @@ class AcceptanceValidatorTests(unittest.TestCase):
             run["scenarios"].pop("device-md5-mismatch")
         self.assertTrue(
             any(
-                "heltec-v4/web is missing scenarios: ['device-md5-mismatch']" in error
+                "is missing applicable scenarios: ['device-md5-mismatch']" in error
                 for error in self.validate()
             )
         )
@@ -316,8 +338,7 @@ class AcceptanceValidatorTests(unittest.TestCase):
         for run in self.runs("t-beam-supreme", "cli"):
             run["scenarios"].pop("same-chip-board-confirmation")
         errors = self.validate()
-        self.assertTrue(any("t-beam-supreme/cli is missing scenarios" in error for error in errors))
-        self.assertFalse(any("xiao-esp32-c6" in error for error in errors))
+        self.assertTrue(any("same-chip-board-confirmation" in error for error in errors))
 
     def test_non_provisioning_board_cannot_claim_configuration(self) -> None:
         self.runs("xiao-esp32-c6", "cli")[0]["scenarios"]["configure"] = "pass"
@@ -353,9 +374,8 @@ class AcceptanceValidatorTests(unittest.TestCase):
         run["scenarios"].pop("post-flash-boot")
         errors = self.validate()
         self.assertTrue(
-            any("must independently prove baseline scenarios: ['post-flash-boot']" in error for error in errors)
+            any("is missing applicable scenarios: ['post-flash-boot']" in error for error in errors)
         )
-        self.assertFalse(any("heltec-v4/web is missing scenarios" in error for error in errors))
 
     def test_browser_must_be_stable_channel(self) -> None:
         self.runs("heltec-v4", "web")[0]["browser"]["channel"] = "beta"
@@ -448,9 +468,14 @@ class AcceptanceValidatorTests(unittest.TestCase):
         }
         self.assertTrue(any("CLI run must not claim browser evidence" in error for error in self.validate()))
 
-    def test_installation_smoke_requires_install_and_doctor(self) -> None:
-        self.acceptance["installation_smoke"][0]["scenarios"].pop("doctor")
-        self.assertTrue(any("must prove both install and doctor" in error for error in self.validate()))
+    def test_installation_smoke_requires_install_and_exact_version(self) -> None:
+        self.acceptance["installation_smoke"][0]["scenarios"].pop("version")
+        self.assertTrue(
+            any(
+                "must prove both install and exact version" in error
+                for error in self.validate()
+            )
+        )
 
     def test_browser_fallback_requires_every_truthful_fallback_scenario(self) -> None:
         self.acceptance["browser_fallbacks"][0]["scenarios"].pop("no-broken-connect-action")

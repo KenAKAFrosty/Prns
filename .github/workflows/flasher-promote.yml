@@ -11,13 +11,21 @@ on:
         description: Lowercase SHA-256 of the signed release-record asset
         required: true
         type: string
+      rollback_baseline_kind:
+        description: Exact recovery baseline kind
+        required: true
+        default: StableRelease
+        type: choice
+        options: [ComingSoon, StableRelease]
       rollback_baseline_version:
         description: Immutable signed stable version retained for rollback
-        required: true
+        required: false
+        default: ""
         type: string
       rollback_baseline_release_record_sha256:
         description: Lowercase SHA-256 of the baseline's signed release record
-        required: true
+        required: false
+        default: ""
         type: string
       rollback_dry_run_id:
         description: Successful <=15-minute rollback dry-run workflow ID
@@ -34,6 +42,7 @@ permissions:
 env:
   RELEASE_VERSION: ${{ inputs.version }}
   EXPECTED_RELEASE_RECORD_SHA256: ${{ inputs.release_record_sha256 }}
+  ROLLBACK_BASELINE_KIND: ${{ inputs.rollback_baseline_kind }}
   ROLLBACK_BASELINE_VERSION: ${{ inputs.rollback_baseline_version }}
   ROLLBACK_BASELINE_RELEASE_RECORD_SHA256: ${{ inputs.rollback_baseline_release_record_sha256 }}
   ROLLBACK_DRY_RUN_ID: ${{ inputs.rollback_dry_run_id }}
@@ -173,7 +182,6 @@ jobs:
             --release-json target/public-review/release.json \
             --version "$RELEASE_VERSION" \
             --source-commit "$source_commit" \
-            --minimum-hours 24 \
             --allow-promoted
           signed_bundle="target/release/prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz"
           evidence_name="$(jq -r '.public_review.evidence.name' "$record")"
@@ -206,7 +214,6 @@ jobs:
             --repository "$GITHUB_REPOSITORY" \
             --version "$RELEASE_VERSION" \
             --source-commit "$source_commit" \
-            --minimum-hours 24 \
             --allow-promoted
       - name: Verify the complete prerelease asset inventory before deployment
         run: |
@@ -221,12 +228,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
         run: |
+          [[ "$ROLLBACK_DRY_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$ROLLBACK_DRY_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          current_manifest_sha256="$(sha256sum \
+            target/signed-candidate/flash-manifest.json | awk '{print $1}')"
+          echo "current_manifest_sha256=$current_manifest_sha256" >> "$GITHUB_OUTPUT"
+          if [[ "$ROLLBACK_BASELINE_KIND" == StableRelease ]]; then
           [[ "$ROLLBACK_BASELINE_VERSION" =~ ^[0-9A-Za-z][0-9A-Za-z.+-]*$ ]]
           test "${ROLLBACK_BASELINE_VERSION,,}" != next
           test "$ROLLBACK_BASELINE_VERSION" != "$RELEASE_VERSION"
           [[ "$ROLLBACK_BASELINE_RELEASE_RECORD_SHA256" =~ ^[0-9a-f]{64}$ ]]
-          [[ "$ROLLBACK_DRY_RUN_ID" =~ ^[1-9][0-9]*$ ]]
-          [[ "$ROLLBACK_DRY_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
 
           assets="target/rollback-baseline-assets"
           candidate="target/rollback-baseline-candidate"
@@ -320,12 +331,30 @@ jobs:
             "$(jq -r '.target.manifest_sha256' target/rollback-baseline-stage.json)"
           echo "baseline_manifest_sha256=$(jq -r '.target.manifest_sha256' \
             target/rollback-baseline-stage.json)" >> "$GITHUB_OUTPUT"
-          echo "current_manifest_sha256=$(sha256sum \
-            target/signed-candidate/flash-manifest.json | awk '{print $1}')" \
-            >> "$GITHUB_OUTPUT"
           echo "baseline_asset_inventory_sha256=$(sha256sum \
             target/rollback-baseline-assets-verified.json | awk '{print $1}')" \
             >> "$GITHUB_OUTPUT"
+          elif [[ "$ROLLBACK_BASELINE_KIND" == ComingSoon ]]; then
+            test -z "$ROLLBACK_BASELINE_VERSION"
+            test -z "$ROLLBACK_BASELINE_RELEASE_RECORD_SHA256"
+            history=target/signed-candidate/metadata/release-history.json
+            test "$(jq -r '.mode' "$history")" = bootstrap
+            test "$(jq -r '.head' "$history")" = null
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+              --jq '[.[] | select(.draft == false and .prerelease == false)] | length' \
+              > target/stable-release-count
+            test "$(awk '{sum += $1} END {print sum + 0}' target/stable-release-count)" = 0
+            ./tools/prns release rollback -- stage-coming-soon \
+              --repository . \
+              --withdrawn-version "$RELEASE_VERSION" \
+              --withdrawn-manifest-sha256 "$current_manifest_sha256" \
+              --output target/rollback-baseline-website \
+              --identity-output target/rollback-baseline-stage.json
+            echo "baseline_manifest_sha256=" >> "$GITHUB_OUTPUT"
+            echo "baseline_asset_inventory_sha256=" >> "$GITHUB_OUTPUT"
+          else
+            exit 2
+          fi
       - name: Download the exact successful rollback dry-run record
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
@@ -354,6 +383,13 @@ jobs:
           current_manifest_sha256="$(
             sha256sum target/signed-candidate/flash-manifest.json | awk '{print $1}'
           )"
+          target_arguments=(--target-kind "$ROLLBACK_BASELINE_KIND")
+          if [[ "$ROLLBACK_BASELINE_KIND" == StableRelease ]]; then
+            target_arguments+=(
+              --target-version "$ROLLBACK_BASELINE_VERSION"
+              --target-release-record-sha256 "$ROLLBACK_BASELINE_RELEASE_RECORD_SHA256"
+            )
+          fi
           ./tools/prns release rollback -- validate-record \
             --record target/rollback-dry-run/rollback-dry-run.json \
             --run-json target/rollback-dry-run-workflow.json \
@@ -363,8 +399,7 @@ jobs:
             --default-branch "$DEFAULT_BRANCH" \
             --expected-run-id "$ROLLBACK_DRY_RUN_ID" \
             --expected-run-attempt "$ROLLBACK_DRY_RUN_ATTEMPT" \
-            --target-version "$ROLLBACK_BASELINE_VERSION" \
-            --target-release-record-sha256 "$ROLLBACK_BASELINE_RELEASE_RECORD_SHA256" \
+            "${target_arguments[@]}" \
             --expected-live-version "$RELEASE_VERSION" \
             --expected-live-manifest-sha256 "$current_manifest_sha256" \
             --required-workflow-sha "$GITHUB_SHA" \
@@ -379,19 +414,32 @@ jobs:
           curl --fail --location --retry 5 --retry-all-errors \
             --output target/live-promotion-cas/stable.json \
             https://reticulum.rs/releases/channels/stable.json
-          curl --fail --location --retry 5 --retry-all-errors \
-            --output target/live-promotion-cas/stable.json.minisig \
-            https://reticulum.rs/releases/channels/stable.json.minisig
-          "$PRNS_MINISIGN_BIN" -Vm target/live-promotion-cas/stable.json \
-            -x target/live-promotion-cas/stable.json.minisig \
-            -p release/keys/minisign.pub
-          ./tools/prns release rollback -- live-state \
-            --descriptor target/live-promotion-cas/stable.json \
-            --mode deploy \
-            --target-version "$RELEASE_VERSION" \
-            --target-manifest-sha256 "$CURRENT_MANIFEST_SHA256" \
-            --expected-live-version "$ROLLBACK_BASELINE_VERSION" \
-            --expected-live-manifest-sha256 "$BASELINE_MANIFEST_SHA256"
+          baseline_arguments=(--baseline-kind "$ROLLBACK_BASELINE_KIND")
+          if [[ "$ROLLBACK_BASELINE_KIND" == StableRelease ]]; then
+            baseline_arguments+=(
+              --baseline-version "$ROLLBACK_BASELINE_VERSION"
+              --baseline-manifest-sha256 "$BASELINE_MANIFEST_SHA256"
+            )
+          else
+            baseline_arguments+=(
+              --coming-soon-index docs/website/coming-soon/index.html
+            )
+          fi
+          if [[ "$ROLLBACK_BASELINE_KIND" == StableRelease ]] \
+            || ! cmp target/live-promotion-cas/stable.json \
+              docs/website/coming-soon/index.html; then
+            curl --fail --location --retry 5 --retry-all-errors \
+              --output target/live-promotion-cas/stable.json.minisig \
+              https://reticulum.rs/releases/channels/stable.json.minisig
+            "$PRNS_MINISIGN_BIN" -Vm target/live-promotion-cas/stable.json \
+              -x target/live-promotion-cas/stable.json.minisig \
+              -p release/keys/minisign.pub
+          fi
+          ./tools/prns release rollback -- promotion-state \
+            --response target/live-promotion-cas/stable.json \
+            "${baseline_arguments[@]}" \
+            --candidate-version "$RELEASE_VERSION" \
+            --candidate-manifest-sha256 "$CURRENT_MANIFEST_SHA256"
       - name: Bind Pages artifacts to this exact verification attempt
         id: pages-artifacts
         run: |
@@ -461,19 +509,32 @@ jobs:
           curl --fail --location --retry 5 --retry-all-errors \
             --output target/live-final-promotion-cas/stable.json \
             https://reticulum.rs/releases/channels/stable.json
-          curl --fail --location --retry 5 --retry-all-errors \
-            --output target/live-final-promotion-cas/stable.json.minisig \
-            https://reticulum.rs/releases/channels/stable.json.minisig
-          "$PRNS_MINISIGN_BIN" -Vm target/live-final-promotion-cas/stable.json \
-            -x target/live-final-promotion-cas/stable.json.minisig \
-            -p release/keys/minisign.pub
-          ./tools/prns release rollback -- live-state \
-            --descriptor target/live-final-promotion-cas/stable.json \
-            --mode deploy \
-            --target-version "$RELEASE_VERSION" \
-            --target-manifest-sha256 "$CURRENT_MANIFEST_SHA256" \
-            --expected-live-version "$ROLLBACK_BASELINE_VERSION" \
-            --expected-live-manifest-sha256 "$BASELINE_MANIFEST_SHA256"
+          baseline_arguments=(--baseline-kind "$ROLLBACK_BASELINE_KIND")
+          if [[ "$ROLLBACK_BASELINE_KIND" == StableRelease ]]; then
+            baseline_arguments+=(
+              --baseline-version "$ROLLBACK_BASELINE_VERSION"
+              --baseline-manifest-sha256 "$BASELINE_MANIFEST_SHA256"
+            )
+          else
+            baseline_arguments+=(
+              --coming-soon-index docs/website/coming-soon/index.html
+            )
+          fi
+          if [[ "$ROLLBACK_BASELINE_KIND" == StableRelease ]] \
+            || ! cmp target/live-final-promotion-cas/stable.json \
+              docs/website/coming-soon/index.html; then
+            curl --fail --location --retry 5 --retry-all-errors \
+              --output target/live-final-promotion-cas/stable.json.minisig \
+              https://reticulum.rs/releases/channels/stable.json.minisig
+            "$PRNS_MINISIGN_BIN" -Vm target/live-final-promotion-cas/stable.json \
+              -x target/live-final-promotion-cas/stable.json.minisig \
+              -p release/keys/minisign.pub
+          fi
+          ./tools/prns release rollback -- promotion-state \
+            --response target/live-final-promotion-cas/stable.json \
+            "${baseline_arguments[@]}" \
+            --candidate-version "$RELEASE_VERSION" \
+            --candidate-manifest-sha256 "$CURRENT_MANIFEST_SHA256"
       - name: Deploy exact signed website bundle with the stable descriptor last
         id: deployment
         uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e
@@ -715,17 +776,31 @@ jobs:
           curl --fail --location --retry 5 --retry-all-errors \
             --output target/recovery-live-cas/stable.json \
             https://reticulum.rs/releases/channels/stable.json
-          curl --fail --location --retry 5 --retry-all-errors \
-            --output target/recovery-live-cas/stable.json.minisig \
-            https://reticulum.rs/releases/channels/stable.json.minisig
-          "$PRNS_MINISIGN_BIN" -Vm target/recovery-live-cas/stable.json \
-            -x target/recovery-live-cas/stable.json.minisig \
-            -p release/keys/minisign.pub
+          target_arguments=(--target-kind "$ROLLBACK_BASELINE_KIND")
+          if [[ "$ROLLBACK_BASELINE_KIND" == StableRelease ]]; then
+            target_arguments+=(
+              --target-version "$ROLLBACK_BASELINE_VERSION"
+              --target-manifest-sha256 "$BASELINE_MANIFEST_SHA256"
+            )
+          else
+            target_arguments+=(
+              --coming-soon-index docs/website/coming-soon/index.html
+            )
+          fi
+          if [[ "$ROLLBACK_BASELINE_KIND" == StableRelease ]] \
+            || ! cmp target/recovery-live-cas/stable.json \
+              docs/website/coming-soon/index.html; then
+            curl --fail --location --retry 5 --retry-all-errors \
+              --output target/recovery-live-cas/stable.json.minisig \
+              https://reticulum.rs/releases/channels/stable.json.minisig
+            "$PRNS_MINISIGN_BIN" -Vm target/recovery-live-cas/stable.json \
+              -x target/recovery-live-cas/stable.json.minisig \
+              -p release/keys/minisign.pub
+          fi
           ./tools/prns release rollback -- live-state \
             --descriptor target/recovery-live-cas/stable.json \
             --mode deploy \
-            --target-version "$ROLLBACK_BASELINE_VERSION" \
-            --target-manifest-sha256 "$BASELINE_MANIFEST_SHA256" \
+            "${target_arguments[@]}" \
             --expected-live-version "$RELEASE_VERSION" \
             --expected-live-manifest-sha256 "$CURRENT_MANIFEST_SHA256"
       - name: Redeploy the exact verified baseline Pages artifact
@@ -746,16 +821,26 @@ jobs:
             curl --fail --location --retry 5 --retry-all-errors \
               --output target/restored-baseline/stable.json \
               "$site_root/releases/channels/stable.json"
-            curl --fail --location --retry 5 --retry-all-errors \
-              --output target/restored-baseline/stable.json.minisig \
-              "$site_root/releases/channels/stable.json.minisig"
-            if "$PRNS_MINISIGN_BIN" -Vm target/restored-baseline/stable.json \
-              -x target/restored-baseline/stable.json.minisig \
-              -p release/keys/minisign.pub \
-              && ./tools/prns release rollback -- cas \
-                --descriptor target/restored-baseline/stable.json \
-                --version "$ROLLBACK_BASELINE_VERSION" \
-                --manifest-sha256 "$BASELINE_MANIFEST_SHA256" \
+            baseline_matches=false
+            if [[ "$ROLLBACK_BASELINE_KIND" == StableRelease ]]; then
+              curl --fail --location --retry 5 --retry-all-errors \
+                --output target/restored-baseline/stable.json.minisig \
+                "$site_root/releases/channels/stable.json.minisig"
+              if "$PRNS_MINISIGN_BIN" -Vm target/restored-baseline/stable.json \
+                -x target/restored-baseline/stable.json.minisig \
+                -p release/keys/minisign.pub \
+                && ./tools/prns release rollback -- cas \
+                  --descriptor target/restored-baseline/stable.json \
+                  --version "$ROLLBACK_BASELINE_VERSION" \
+                  --manifest-sha256 "$BASELINE_MANIFEST_SHA256"; then
+                baseline_matches=true
+              fi
+            elif ./tools/prns release rollback -- cas-coming-soon \
+              --response target/restored-baseline/stable.json \
+              --canonical-index docs/website/coming-soon/index.html; then
+              baseline_matches=true
+            fi
+            if [[ "$baseline_matches" == true ]] \
               && ./tools/prns release rollback -- verify-live-website \
                 --stage-identity target/promotion-baseline-stage/rollback-baseline-stage.json \
                 --site-url "$site_root"; then
@@ -771,27 +856,35 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p target/recovery-release-state
-          for version in "$RELEASE_VERSION" "$ROLLBACK_BASELINE_VERSION"; do
+          versions=("$RELEASE_VERSION")
+          if [[ "$ROLLBACK_BASELINE_KIND" == StableRelease ]]; then
+            versions+=("$ROLLBACK_BASELINE_VERSION")
+          fi
+          for version in "${versions[@]}"; do
             gh release view "v${version}" --json assets \
               --jq '[.assets[] | {name, size, digest}] | sort_by(.name)' \
               > "target/recovery-release-state/${version}-before.json"
           done
           test "$(sha256sum "target/recovery-release-state/${RELEASE_VERSION}-before.json" | awk '{print $1}')" = \
             "$EXPECTED_CURRENT_ASSET_INVENTORY_SHA256"
-          test "$(sha256sum "target/recovery-release-state/${ROLLBACK_BASELINE_VERSION}-before.json" | awk '{print $1}')" = \
-            "$EXPECTED_BASELINE_ASSET_INVENTORY_SHA256"
-          gh release edit "v${ROLLBACK_BASELINE_VERSION}" --latest=true
+          if [[ "$ROLLBACK_BASELINE_KIND" == StableRelease ]]; then
+            test "$(sha256sum "target/recovery-release-state/${ROLLBACK_BASELINE_VERSION}-before.json" | awk '{print $1}')" = \
+              "$EXPECTED_BASELINE_ASSET_INVENTORY_SHA256"
+            gh release edit "v${ROLLBACK_BASELINE_VERSION}" --latest=true
+          fi
           gh release edit "v${RELEASE_VERSION}" --prerelease=true --latest=false
           test "$(gh release view "v${RELEASE_VERSION}" \
             --json isPrerelease --jq '.isPrerelease')" = true
-          test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" \
-            --jq '.tag_name')" = "v${ROLLBACK_BASELINE_VERSION}"
-          for version in "$RELEASE_VERSION" "$ROLLBACK_BASELINE_VERSION"; do
+          if [[ "$ROLLBACK_BASELINE_KIND" == StableRelease ]]; then
+            test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" \
+              --jq '.tag_name')" = "v${ROLLBACK_BASELINE_VERSION}"
+          fi
+          for version in "${versions[@]}"; do
             gh release view "v${version}" --json assets \
               --jq '[.assets[] | {name, size, digest}] | sort_by(.name)' \
               > "target/recovery-release-state/${version}-after.json"
             cmp "target/recovery-release-state/${version}-before.json" \
               "target/recovery-release-state/${version}-after.json"
           done
-          echo "Promotion failed after baseline verification; restored v${ROLLBACK_BASELINE_VERSION}." \
+          echo "Promotion failed after baseline verification; restored ${ROLLBACK_BASELINE_KIND}." \
             >> "$GITHUB_STEP_SUMMARY"

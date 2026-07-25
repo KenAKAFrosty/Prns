@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Require an immutable prerelease and a complete public review interval before promotion."""
+"""Require an immutable public candidate before protected promotion."""
 
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sys
@@ -41,10 +41,6 @@ def validate(arguments: argparse.Namespace, now: datetime | None = None) -> None
     current = now or datetime.now(timezone.utc)
     if published > current:
         raise ValueError("prerelease publication time is in the future")
-    if current - published < timedelta(hours=arguments.minimum_hours):
-        raise ValueError(
-            f"public review interval is shorter than {arguments.minimum_hours} hours"
-        )
 
 
 def main() -> int:
@@ -52,17 +48,14 @@ def main() -> int:
     parser.add_argument("--release-json", type=Path, required=True)
     parser.add_argument("--version", required=True)
     parser.add_argument("--source-commit", required=True)
-    parser.add_argument("--minimum-hours", type=int, default=24)
     parser.add_argument("--allow-promoted", action="store_true")
     arguments = parser.parse_args()
     try:
-        if arguments.minimum_hours < 1:
-            raise ValueError("minimum public review hours must be positive")
         validate(arguments)
     except (OSError, ValueError, json.JSONDecodeError) as error:
         print(f"prerelease validation failed: {error}", file=sys.stderr)
         return 1
-    print(f"verified {arguments.minimum_hours}-hour public release review gate")
+    print("verified immutable public release candidate")
     return 0
 
 

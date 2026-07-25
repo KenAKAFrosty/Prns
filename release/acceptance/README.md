@@ -2,8 +2,9 @@
 
 The acceptance record is evidence for one exact signed candidate, not a checklist or a place to
 record intentions. Generate it only after the public prerelease exists. The generator binds the
-manifest, manifest signature, and signed-candidate archive by SHA-256 and produces all 24 physical
-rows, four unsupported-browser rows, and five native installer rows as `not-run`:
+manifest, manifest signature, signed-candidate archive, and signed roster by exact identity and
+produces eight physical rows, four unsupported-browser rows, and five native installer rows as
+`not-run`:
 
 ```sh
 PUBLISHED_AT="$(gh release view vVERSION --json publishedAt --jq .publishedAt)"
@@ -11,6 +12,7 @@ python3 qualification/create-flasher-acceptance.py \
   --manifest CANDIDATE/flash-manifest.json \
   --manifest-signature CANDIDATE/flash-manifest.json.minisig \
   --signed-bundle prns-flasher-candidate-vVERSION-signed.tar.gz \
+  --tester-roster CANDIDATE/qualification/tester-roster.json \
   --prerelease-published-at "$PUBLISHED_AT" \
   --output acceptance.json
 ```
@@ -21,8 +23,10 @@ results, and any candidate identity that differs from those three exact files.
 
 ## Physical runs
 
-`runs` contains exactly one result for every shipping board, surface (`web` or `cli`), and host OS
-(`macos`, `windows`, or `linux`): 24 rows. Each row records:
+`runs` contains exactly one result for every shipping board and surface (`web` or `cli`): eight
+rows. The signed roster assigns each row to one supported host, with Linux, macOS, and Windows
+collectively represented on both surfaces. One person may hold multiple or all assignments; an
+assignment is a coverage obligation, not a distinct-person requirement. Each row records:
 
 - the exact OS version and architecture;
 - the signed-manifest display name, observed PCB revision, and a tester-assigned nonsecret label;
@@ -30,8 +34,8 @@ results, and any candidate identity that differs from those three exact files.
   channel;
 - named scenario results, the exact signed-roster tester identity, a full UTC `completed_at`
   timestamp no earlier than the prerelease `publishedAt`, and immutable redacted evidence;
-- its own passing `fresh-install` and `post-flash-boot` observations. Aggregate coverage from
-  another OS cannot substitute for these two baseline checks.
+- its own passing fresh install, update, correct-board, post-flash-boot, and every applicable
+  transport, provisioning, and recovery observation.
 
 Use `hardware_revision: "not-marked"` only when the board exposes no revision. Never put a USB
 serial number in `hardware_identity`. Every evidence object has this fail-closed form:
@@ -75,7 +79,7 @@ must not claim browser-side mount detection, filesystem sync, or device-side ver
 route proves zero/one/multiple mounts, copy/flush/sync failures, mount disappearance, bounded reboot
 detection and timeout, and post-flash boot.
 
-The authoritative scenario sets and deterministic distribution live in
+The authoritative scenario sets and roster-derived rows live in
 `qualification/flasher_acceptance_contract.py`, used by both generator and validator.
 
 ## Browser fallbacks
@@ -88,8 +92,10 @@ Fallback checks are separate from successful Web Serial flashing.
 ## Native installation smoke
 
 `installation_smoke` contains exactly one result for each published CLI target triple. The host OS
-and architecture must agree with the target, its CLI version must equal the candidate version, and
-both `install` and `doctor` must pass.
+and architecture must agree with the target. Each row proves the exact public archive installs and
+that `hopspot-flash --version` reports the exact candidate version, so both `install` and `version`
+must pass. These rows may run on matching hosted runners and do not require a board. They do not
+replace the board-backed CLI assignments.
 
 Validate the completed record with the same exact inputs:
 

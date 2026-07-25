@@ -1,7 +1,15 @@
 # Getting Started
 
-This guide gets a fresh clone to five useful outcomes: run a node, inspect it,
-run a Rust consumer, test a change, and measure performance.
+This guide is a progressive path through the repository: understand what Prns
+owns, obtain one real result, inspect the smallest consumer, then choose the
+capability that matches your application.
+
+## Understand Prns
+
+Prns is one Reticulum engine with bounded APIs for firmware, browsers, native
+applications, and daemons. Interfaces and host adapters depend inward on that
+engine, while compatibility, performance, and release claims are backed by
+checked-in tests and reproducible evidence.
 
 ## Check the host
 
@@ -15,12 +23,7 @@ The doctor reports missing commands and important version mismatches. It prints
 platform-specific setup guidance but never installs or changes host software.
 Use `tools\prns.cmd` instead of `./tools/prns` on Windows.
 
-## Run and inspect a node
-
-Follow the [Prnsd guide](../prnsd/README.md) for an isolated configuration,
-managed start, interface inspection, log attachment, and clean stop.
-
-## Run a Rust consumer
+## Obtain one result
 
 ```console
 ./tools/prns doctor rust
@@ -31,7 +34,16 @@ The example creates two real nodes with fresh identities. Node A listens on an
 OS-selected localhost TCP port, Node B connects, and Node B exits only after it
 observes Node A's Reticulum announce through its TCP client. See the
 [Personal RNS guide](../personal-rns/README.md) for the complete invocation and
-the API anatomy.
+the API anatomy. It does not activate discovery radios or require an existing
+Reticulum network.
+
+## Inspect the example
+
+Read
+[`personal-rns/examples/node_basics.rs`](../personal-rns/examples/node_basics.rs).
+It is intentionally small enough to show the complete ownership shape: node
+recipes own state and events, handles issue commands and attach interfaces, and
+the process exits through a bounded success condition.
 
 The default does not activate discovery hardware. To additionally attach Node
 B's Wi-Fi, USB, and Bluetooth auto interfaces:
@@ -43,6 +55,21 @@ cargo tools guide rust -- --with-auto
 That opt-in may multicast, advertise or request Bluetooth permission, and open
 compatible USB devices. Missing adapters or peers do not make the example fail;
 the localhost TCP path remains the executable contract.
+
+## Choose a capability
+
+| Goal | Continue here |
+| --- | --- |
+| Run and inspect a managed node | [Prnsd guide](../prnsd/README.md) |
+| Send requests, resources, or change interfaces | [Example catalog](examples.md) |
+| Own a node inside a long-lived application | [Application integration](application-integration.md) |
+| Build a Rust consumer | [Personal RNS guide](../personal-rns/README.md) |
+| Build a browser or TypeScript consumer | [JavaScript package guide](https://github.com/KenAKAFrosty/Prns/blob/main/prns-js/README.md) |
+| Build against a native SDK | [Native binding guides](https://github.com/KenAKAFrosty/Prns/blob/main/prns-host/bindings/README.md) |
+| Build a board-backed node | [Embedded guide](embedded.md) |
+| Develop or physically qualify Hopspot | [Personal Hopspot guide](../personal-hopspot/README.md) |
+| Validate a change | [Testing guide](testing.md) |
+| Measure performance | [Benchmark guide](../benchmarks/README.md) |
 
 ## Build an embedded node
 

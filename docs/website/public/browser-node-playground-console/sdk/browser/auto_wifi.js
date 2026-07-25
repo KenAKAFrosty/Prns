@@ -1,4 +1,5 @@
 import { Tag, match_into } from "../casework.js";
+import { RecoverySchedule, } from "./auto_wifi/recovery.js";
 const RENDEZVOUS_PORT = 42_721;
 const RENDEZVOUS_PATH = "/prns";
 const CATALOG_PATH = "/.well-known/prns-transport";
@@ -15,7 +16,6 @@ const CONNECT_TIMEOUT_MS = 10_000;
 const FETCH_TIMEOUT_MS = 10_000;
 const REFRESH_INTERVAL_MS = 15_000;
 const CATALOG_EXPIRY_MS = 60_000;
-const DISCONNECTED_COOLDOWN_MS = 5_000;
 const OUTBOUND_POLL_MS = 25;
 const BUFFER_POLL_MS = 4;
 const MIN_BUFFER_LIMIT = 1024 * 1024;
@@ -59,22 +59,22 @@ export class AutoWifiController {
     #host;
     #known = new Map();
     #sessions = new Map();
-    #blockedUntil = new Map();
+    #recoveries = new RecoverySchedule();
     #seed;
     #status = Tag("Starting");
     #refreshing = false;
+    #refreshPending = false;
     #closed = false;
     #attempt = 0;
-    #reconnectAttempt = 0;
     #refreshTimer;
-    #reconnectTimer;
+    #recoveryTimer;
     constructor(host) {
         this.#host = host;
         this.#seed = loadSelectionSeed();
         this.#refreshTimer = globalThis.setInterval(() => {
-            void this.#refresh();
+            this.#requestRefresh();
         }, REFRESH_INTERVAL_MS);
-        void this.#refresh();
+        this.#requestRefresh();
     }
     get status() {
         return this.#status;
@@ -90,22 +90,34 @@ export class AutoWifiController {
         if (this.#refreshTimer !== undefined) {
             globalThis.clearInterval(this.#refreshTimer);
         }
-        if (this.#reconnectTimer !== undefined) {
-            globalThis.clearTimeout(this.#reconnectTimer);
+        if (this.#recoveryTimer !== undefined) {
+            globalThis.clearTimeout(this.#recoveryTimer);
         }
         const sessions = [...this.#sessions.values()];
         this.#sessions.clear();
         this.#known.clear();
-        this.#blockedUntil.clear();
+        this.#recoveries.clear();
         const outcomes = await Promise.all(sessions.map((session) => session.close()));
         this.#status = Tag("Closed");
         return (outcomes.find((outcome) => outcome.tag === "RuntimeRejected") ?? Tag("Closed"));
     }
+    #requestRefresh() {
+        if (this.#closed) {
+            return;
+        }
+        if (this.#refreshing) {
+            this.#refreshPending = true;
+            return;
+        }
+        void this.#refresh();
+    }
     async #refresh() {
-        if (this.#closed || this.#refreshing) {
+        if (this.#closed) {
             return;
         }
         this.#refreshing = true;
+        const dueRecoveries = this.#recoveries.due(Date.now());
+        const dueRecoveryIds = new Set(dueRecoveries.map((recovery) => recovery.key));
         this.#attempt += 1;
         if (this.#sessions.size === 0) {
             this.#status = Tag("Discovering", { attempt: this.#attempt });
@@ -122,9 +134,9 @@ export class AutoWifiController {
                 return;
             }
             const frameCap = this.#host.autoWifiFrameCap();
-            const directPromise = Promise.all(DIRECT_URLS.map((url) => this.#hasUrl(url)
-                ? Promise.resolve(Tag("SkippedActive"))
-                : probeGateway(url, frameCap)));
+            const directPromise = Promise.all(DIRECT_URLS.map((url) => this.#mayProbeUrl(url, dueRecoveryIds)
+                ? probeGateway(url, frameCap)
+                : Promise.resolve(Tag("Skipped"))));
             const catalogPromise = Promise.all(CATALOG_PROBES.map((probe) => fetchCatalog(probe)));
             const [direct, catalogs] = await Promise.all([
                 directPromise,
@@ -136,11 +148,6 @@ export class AutoWifiController {
             }
             const failures = [];
             const now = Date.now();
-            for (const [id, blockedUntil] of this.#blockedUntil) {
-                if (blockedUntil <= now) {
-                    this.#blockedUntil.delete(id);
-                }
-            }
             for (const outcome of catalogs) {
                 if (outcome.tag === "Failed") {
                     failures.push(outcome.data);
@@ -155,13 +162,14 @@ export class AutoWifiController {
                 }
             }
             for (const [id, gateway] of this.#known) {
-                if (now - gateway.lastSeen > CATALOG_EXPIRY_MS) {
+                if (now - gateway.lastSeen > CATALOG_EXPIRY_MS &&
+                    !this.#recoveries.has(id)) {
                     this.#known.delete(id);
                 }
             }
             const probes = new Map();
             for (const outcome of direct) {
-                if (outcome.tag === "SkippedActive") {
+                if (outcome.tag === "Skipped") {
                     continue;
                 }
                 if (outcome.tag === "Failed") {
@@ -187,13 +195,14 @@ export class AutoWifiController {
                 });
             }
             for (const [id, gateway] of this.#known) {
-                if (!candidates.has(id) && !this.#blockedUntil.has(id)) {
+                if (!candidates.has(id) &&
+                    this.#mayAttemptGateway(id, dueRecoveryIds)) {
                     candidates.set(id, { ...gateway });
                 }
             }
             for (const [id, probe] of probes) {
                 const existing = candidates.get(id);
-                if (this.#blockedUntil.has(id)) {
+                if (!this.#mayAttemptGateway(id, dueRecoveryIds)) {
                     probe.pending.close();
                     continue;
                 }
@@ -275,7 +284,6 @@ export class AutoWifiController {
                 }
             }
             if (this.#sessions.size > 0) {
-                this.#reconnectAttempt = 0;
                 this.#publishActive();
             }
             else {
@@ -286,7 +294,15 @@ export class AutoWifiController {
             this.#setUnavailable(Tag("DiscoveryFailed", { detail: describeError(error) }));
         }
         finally {
+            this.#retryUnrecovered(dueRecoveries);
             this.#refreshing = false;
+            if (this.#refreshPending) {
+                this.#refreshPending = false;
+                this.#requestRefresh();
+            }
+            else {
+                this.#scheduleRecovery();
+            }
         }
     }
     #attach(probe) {
@@ -307,10 +323,17 @@ export class AutoWifiController {
             closeSocket(claimed.data.socket);
             return registered;
         }
+        this.#retireReplacedGateways(probe);
+        this.#known.set(probe.id, {
+            id: probe.id,
+            url: probe.url,
+            localhost: probe.localhost,
+            lastSeen: Date.now(),
+        });
+        this.#recoveries.complete(probe.id);
         let session;
         session = new AutoWifiGatewaySession(this.#host, claimed.data.socket, claimed.data.frames, registered.data, probe.id, probe.url, probe.localhost, (outcome) => this.#sessionClosed(probe.id, session, outcome));
         this.#sessions.set(probe.id, session);
-        this.#blockedUntil.delete(probe.id);
         session.start();
         return Tag("Attached");
     }
@@ -322,7 +345,14 @@ export class AutoWifiController {
         if (this.#closed) {
             return;
         }
-        this.#blockedUntil.set(id, Date.now() + DISCONNECTED_COOLDOWN_MS);
+        const now = Date.now();
+        this.#known.set(id, {
+            id,
+            url: session.url,
+            localhost: session.localhost,
+            lastSeen: now,
+        });
+        this.#recoveries.begin(id, now);
         if (this.#sessions.size > 0) {
             this.#publishActive();
         }
@@ -332,15 +362,8 @@ export class AutoWifiController {
         else {
             this.#status = Tag("Discovering", { attempt: this.#attempt + 1 });
         }
-        this.#reconnectAttempt = Math.min(this.#reconnectAttempt + 1, 5);
-        const delay = Math.min(30_000, 1000 * 2 ** (this.#reconnectAttempt - 1));
-        if (this.#reconnectTimer !== undefined) {
-            globalThis.clearTimeout(this.#reconnectTimer);
-        }
-        this.#reconnectTimer = globalThis.setTimeout(() => {
-            this.#reconnectTimer = undefined;
-            void this.#refresh();
-        }, delay);
+        this.#scheduleRecovery();
+        this.#requestRefresh();
     }
     #publishActive() {
         const gateways = [...this.#sessions.values()]
@@ -358,8 +381,48 @@ export class AutoWifiController {
             this.#status = Tag("Unavailable", failure);
         }
     }
-    #hasUrl(url) {
-        return [...this.#sessions.values()].some((session) => session.url === url);
+    #mayProbeUrl(url, dueRecoveryIds) {
+        if ([...this.#sessions.values()].some((session) => session.url === url)) {
+            return false;
+        }
+        return ![...this.#known.values()].some((gateway) => gateway.url === url &&
+            !this.#mayAttemptGateway(gateway.id, dueRecoveryIds));
+    }
+    #mayAttemptGateway(id, dueRecoveryIds) {
+        return !this.#recoveries.has(id) || dueRecoveryIds.has(id);
+    }
+    #retireReplacedGateways(probe) {
+        for (const [id, gateway] of this.#known) {
+            if (id !== probe.id && gateway.url === probe.url) {
+                this.#known.delete(id);
+                this.#recoveries.complete(id);
+            }
+        }
+    }
+    #retryUnrecovered(dueRecoveries) {
+        const now = Date.now();
+        for (const recovery of dueRecoveries) {
+            if (!this.#sessions.has(recovery.key)) {
+                this.#recoveries.retry(recovery, now);
+            }
+        }
+    }
+    #scheduleRecovery() {
+        if (this.#recoveryTimer !== undefined) {
+            globalThis.clearTimeout(this.#recoveryTimer);
+            this.#recoveryTimer = undefined;
+        }
+        if (this.#closed) {
+            return;
+        }
+        const dueAt = this.#recoveries.nextDueAt();
+        if (dueAt === undefined) {
+            return;
+        }
+        this.#recoveryTimer = globalThis.setTimeout(() => {
+            this.#recoveryTimer = undefined;
+            this.#requestRefresh();
+        }, Math.max(0, dueAt - Date.now()));
     }
 }
 class PendingGatewaySocket {

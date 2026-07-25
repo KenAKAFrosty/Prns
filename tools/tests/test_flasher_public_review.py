@@ -31,7 +31,7 @@ class FlasherPublicReviewTests(unittest.TestCase):
         self.version = "0.2.6"
         self.commit = "a" * 40
         self.published = datetime(2026, 7, 20, 12, tzinfo=timezone.utc)
-        self.started = self.published + timedelta(hours=24)
+        self.started = self.published + timedelta(minutes=1)
         self.completed = self.started + timedelta(minutes=1)
         self.release = {
             "isDraft": False,
@@ -54,7 +54,7 @@ class FlasherPublicReviewTests(unittest.TestCase):
             "id": 88,
             "run_id": 77,
             "run_attempt": 2,
-            "name": "Complete protected 24-hour public review",
+            "name": "Approve protected public release",
             "head_sha": self.commit,
             "started_at": self.started.isoformat().replace("+00:00", "Z"),
             "completed_at": None,
@@ -75,7 +75,7 @@ class FlasherPublicReviewTests(unittest.TestCase):
             repository=self.repository,
             version=self.version,
             source_commit=self.commit,
-            completed_at=self.completed.isoformat().replace("+00:00", "Z"),
+            approved_at=self.completed.isoformat().replace("+00:00", "Z"),
         )
 
     def test_successful_exact_signing_job_is_bound(self) -> None:
@@ -104,11 +104,11 @@ class FlasherPublicReviewTests(unittest.TestCase):
             source_commit=self.commit,
         )
 
-    def test_review_cannot_start_before_publication_plus_24_hours(self) -> None:
-        self.job["started_at"] = (
-            self.published + timedelta(hours=23, minutes=59)
-        ).isoformat().replace("+00:00", "Z")
-        with self.assertRaisesRegex(ValueError, "shorter than 24 hours"):
+    def test_review_cannot_start_before_publication(self) -> None:
+        self.job["started_at"] = (self.published - timedelta(seconds=1)).isoformat().replace(
+            "+00:00", "Z"
+        )
+        with self.assertRaisesRegex(ValueError, "predates prerelease publication"):
             self.build()
 
     def test_wrong_workflow_or_prerelease_state_is_rejected(self) -> None:

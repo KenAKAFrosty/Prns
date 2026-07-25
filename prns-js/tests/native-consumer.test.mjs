@@ -19,7 +19,7 @@ const commonjs = require("personal-rns");
 
 test("root export selects one native API for ESM and CommonJS", () => {
   assert.equal(esm.HOST_CONTRACT_ABI, 1);
-  assert.equal(esm.PRODUCT_VERSION, "0.2.8");
+  assert.equal(esm.PRODUCT_VERSION, "0.3.0");
   assert.equal(commonjs.HOST_CONTRACT_ABI, esm.HOST_CONTRACT_ABI);
   assert.equal(commonjs.Prns, esm.Prns);
 });

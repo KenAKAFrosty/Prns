@@ -18,8 +18,20 @@
 [![MSRV](https://img.shields.io/badge/MSRV-1.90-orange.svg)](#minimum-supported-rust-version)
 [![no_std](https://img.shields.io/badge/no__std-core-success.svg)](#embedded-and-no_std)
 
-Prns is a Rust implementation of the Reticulum Network Stack (RNS) for
-applications, daemons, browsers, phones, and embedded devices.
+Prns exists so one Reticulum engine and one application contract can run across
+microcontrollers, browsers, mobile and desktop applications, daemons, and
+servers. The engine stays native to each home: fixed-capacity firmware does not
+pay for a heap, browser code cooperates with the event loop, and hosted
+applications use native threads and operating-system interfaces.
+
+The same design makes performance and correctness visible rather than
+aspirational:
+
+- native execution and bounded storage conserve CPU time, memory, and battery;
+- interfaces can be attached, supervised, replaced, and removed while a node
+  keeps running;
+- compatibility claims come from measured Reticulum interoperability suites;
+- release, benchmark, and verification evidence is public and reproducible.
 
 First-class SDKs and bindings cover:
 
@@ -33,8 +45,10 @@ First-class SDKs and bindings cover:
 - Julia
 - C and C++
 
-The repository contains the code, essential guides, tests, benchmarks, and a
-locally runnable documentation site.
+The repository contains the engine, every SDK, essential guides, tests,
+benchmarks, release custody tools, and a locally runnable documentation site.
+Packages are not assumed to exist in a registry until the corresponding guide
+explicitly says they have been published.
 
 To view the documentation website right away, visit
 [prns.dev](https://prns.dev) or [reticulum.rs](https://reticulum.rs).
@@ -57,9 +71,13 @@ repository.
 | Outcome | Start here |
 | --- | --- |
 | Learn the repository | [Getting started](docs/getting-started.md) |
+| Browse runnable and checked examples | [Example catalog](docs/examples.md) |
+| Integrate Prns into an application | [Application integration](docs/application-integration.md) |
 | Run and inspect a node | [Prnsd (the daemon) guide](prnsd/README.md) |
 | Build a Rust application | [Personal RNS guide](personal-rns/README.md) |
 | Build an embedded node | [Embedded Prns guide](docs/embedded.md) |
+| Develop or qualify a Hopspot board | [Personal Hopspot guide](personal-hopspot/README.md) |
+| Understand the signed Hopspot flasher release-candidate route | [Hopspot release process](https://github.com/KenAKAFrosty/Prns/blob/main/release/flash/README.md) |
 | Test a change | [Testing guide](docs/testing.md) |
 | Measure performance | [Benchmark guide](benchmarks/README.md) |
 | Build the local website | [Website README](docs/website/README.md) |
@@ -67,8 +85,8 @@ repository.
 
 ## First commands
 
-Run the safe two-node Rust contract. It creates fresh identities, binds only to
-localhost, observes a real Reticulum announce, and exits:
+Run the Rust quickstart. It creates fresh identities, binds only to localhost,
+observes a real Reticulum announce, and exits:
 
 ```console
 cargo tools guide rust
@@ -94,11 +112,12 @@ git config core.hooksPath .githooks
 
 ## Embedded and `no_std`
 
-`prns-core` supports `no_std` builds from an alloc-free, fixed-capacity profile
-through `no_std + alloc`. The Embassy runtime and interface implementations
-carry the same engine onto ESP32 and nRF52840 firmware targets. Follow the
-[board-backed embedded guide](docs/embedded.md) to build a real XIAO ESP32-C6
-node and trace the shared node recipe into its hardware obligations.
+`prns-core` has two distinct embedded profiles: fixed-capacity,
+allocator-free `no_std`, and growable `no_std + alloc`. The Embassy runtime and
+interface implementations carry the same engine onto ESP32 and nRF52840
+firmware targets. Follow the [board-backed embedded guide](docs/embedded.md) to
+build a real XIAO ESP32-C6 node and trace the shared node recipe into its
+hardware obligations.
 
 ## Minimum supported Rust version
 

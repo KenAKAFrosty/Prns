@@ -316,39 +316,71 @@ class CandidateFixture:
         }
         for name, source in qualification_sources.items():
             shutil.copy2(source, qualification / name)
-        assignments = []
-        hosts = (
-            ("aarch64-apple-darwin", "macos", "aarch64", "chrome"),
-            ("x86_64-apple-darwin", "macos", "x86_64", "chrome"),
-            ("x86_64-unknown-linux-gnu", "linux", "x86_64", "chrome"),
-            ("aarch64-unknown-linux-gnu", "linux", "aarch64", "chrome"),
-            ("x86_64-pc-windows-msvc", "windows", "x86_64", "edge"),
-        )
-        for index, (target, os_name, architecture, browser) in enumerate(hosts, start=1):
-            assignments.append(
-                {
-                    "os": os_name,
-                    "architecture": architecture,
-                    "cli_target": target,
-                    "web_browser": {"name": browser, "channel": "stable"},
-                    "tester": f"github:fixture{index}",
-                    "boards": [
-                        "heltec-v4",
-                        "t-beam-supreme",
-                        "xiao-esp32-c6",
-                        "t-echo",
-                    ],
-                    "cables_ready": True,
-                    "device_permissions_ready": True,
-                    "recovery_instructions_reviewed": True,
+        physical_hosts = {
+            ("heltec-v4", "cli"): ("linux", "x86_64"),
+            ("heltec-v4", "web"): ("linux", "x86_64"),
+            ("t-beam-supreme", "cli"): ("macos", "aarch64"),
+            ("t-beam-supreme", "web"): ("macos", "aarch64"),
+            ("xiao-esp32-c6", "cli"): ("windows", "x86_64"),
+            ("xiao-esp32-c6", "web"): ("windows", "x86_64"),
+            ("t-echo", "cli"): ("linux", "aarch64"),
+            ("t-echo", "web"): ("macos", "x86_64"),
+        }
+        physical_assignments = []
+        for (board, surface), (os_name, architecture) in physical_hosts.items():
+            assignment = {
+                "board": board,
+                "surface": surface,
+                "os": os_name,
+                "architecture": architecture,
+                "tester": "github:fixture",
+                "cables_ready": True,
+                "device_permissions_ready": True,
+                "recovery_instructions_reviewed": True,
+            }
+            if surface == "web":
+                assignment["browser"] = {
+                    "name": "edge" if os_name == "windows" else "chrome",
+                    "channel": "stable",
                 }
-            )
+            physical_assignments.append(assignment)
         roster = {
-            "schema": 1,
+            "schema": 2,
             "release": {"version": VERSION},
             "release_owner": "github:fixture-owner",
             "confirmed_on": "2025-01-01",
-            "assignments": assignments,
+            "physical_assignments": physical_assignments,
+            "fallback_assignments": [
+                {
+                    "browser": {"name": browser, "channel": "stable"},
+                    "os": os_name,
+                    "architecture": architecture,
+                    "tester": "github:fixture",
+                    "browser_ready": True,
+                }
+                for browser, os_name, architecture in (
+                    ("firefox", "linux", "x86_64"),
+                    ("firefox", "macos", "x86_64"),
+                    ("firefox", "windows", "x86_64"),
+                    ("safari", "macos", "aarch64"),
+                )
+            ],
+            "installation_assignments": [
+                {
+                    "target": target,
+                    "os": os_name,
+                    "architecture": architecture,
+                    "tester": "github:fixture",
+                    "archive_ready": True,
+                }
+                for target, (os_name, architecture) in {
+                    "aarch64-apple-darwin": ("macos", "aarch64"),
+                    "x86_64-apple-darwin": ("macos", "x86_64"),
+                    "x86_64-unknown-linux-gnu": ("linux", "x86_64"),
+                    "aarch64-unknown-linux-gnu": ("linux", "aarch64"),
+                    "x86_64-pc-windows-msvc": ("windows", "x86_64"),
+                }.items()
+            ],
         }
         self.tester_roster = root.parent / "tester-roster.json"
         write_json(self.tester_roster, roster)
@@ -706,7 +738,7 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         write_json(
             acceptance,
             {
-                "schema": 2,
+                "schema": 3,
                 "candidate": {
                     "version": VERSION,
                     "channel": "stable",
@@ -750,7 +782,7 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         write_json(
             self.public_review_evidence,
             {
-                "schema": 1,
+                "schema": 2,
                 "repository": REPOSITORY,
                 "workflow_path": ".github/workflows/flasher-sign.yml",
                 "workflow_sha": SOURCE_COMMIT,
@@ -762,7 +794,7 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
                 "signed_candidate_sha256": sha256(signed_bundle),
                 "manifest_sha256": sha256(self.fixture.manifest_path),
                 "prerelease_published_at": "2026-07-20T12:00:00Z",
-                "gate_completed_at": "2026-07-21T12:01:00Z",
+                "approved_at": "2026-07-20T12:02:00Z",
             },
         )
         return (
@@ -970,24 +1002,23 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
                 "isPrerelease": True,
                 "tagName": f"v{VERSION}",
                 "targetCommitish": SOURCE_COMMIT,
-                "publishedAt": (now - timedelta(hours=24)).isoformat(),
+                "publishedAt": (now - timedelta(minutes=1)).isoformat(),
             },
         )
         arguments = argparse.Namespace(
             release_json=release_json,
             version=VERSION,
             source_commit=SOURCE_COMMIT,
-            minimum_hours=24,
             allow_promoted=False,
         )
         module.validate(arguments, now=now)
         release = json.loads(release_json.read_text())
-        release["publishedAt"] = (now - timedelta(hours=23, minutes=59)).isoformat()
+        release["publishedAt"] = (now + timedelta(seconds=1)).isoformat()
         write_json(release_json, release)
-        with self.assertRaisesRegex(ValueError, "shorter than 24 hours"):
+        with self.assertRaisesRegex(ValueError, "future"):
             module.validate(arguments, now=now)
 
-        release["publishedAt"] = (now - timedelta(hours=24)).isoformat()
+        release["publishedAt"] = (now - timedelta(minutes=1)).isoformat()
         release["isPrerelease"] = False
         write_json(release_json, release)
         with self.assertRaisesRegex(ValueError, "unless exact promotion is resuming"):
@@ -1053,7 +1084,7 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
             assets
             / f"public-review-v{VERSION}-run-{workflow_run_id}-attempt-2.json",
             {
-                "schema": 1,
+                "schema": 2,
                 "repository": REPOSITORY,
                 "workflow_path": ".github/workflows/flasher-sign.yml",
                 "workflow_sha": SOURCE_COMMIT,
@@ -1065,7 +1096,7 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
                 "signed_candidate_sha256": sha256(signed_bundle),
                 "manifest_sha256": sha256(self.fixture.manifest_path),
                 "prerelease_published_at": "2026-07-20T12:00:00Z",
-                "gate_completed_at": "2026-07-21T12:01:00Z",
+                "approved_at": "2026-07-20T12:02:00Z",
             },
         )
         arguments = (
@@ -1128,7 +1159,7 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         self.assertIn("candidate_run_id:", signing)
         self.assertIn("unsigned_bundle_sha256:", signing)
         self.assertIn("environment: release-signing", signing)
-        self.assertIn("name: Complete protected 24-hour public review", signing)
+        self.assertIn("name: Approve protected public release", signing)
         self.assertIn("environment: public-release", signing)
         self.assertIn("./tools/prns release public-review -- create", signing)
         self.assertIn(
@@ -1170,7 +1201,7 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         self.assertIn("release_record_sha256:", promotion)
         self.assertIn("./tools/prns release verify --", promotion)
         self.assertIn("--candidate-run", promotion)
-        self.assertIn("--minimum-hours 24", promotion)
+        self.assertNotIn("--minimum-hours", promotion)
         self.assertIn("--allow-promoted", promotion)
         self.assertIn("./tools/prns release public-review -- verify", promotion)
         self.assertIn(".public_review.evidence.name", promotion)

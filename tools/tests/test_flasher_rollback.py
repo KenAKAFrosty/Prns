@@ -17,11 +17,16 @@ SCRIPTS = ROOT / "tools" / "release"
 sys.path.insert(0, str(SCRIPTS))
 
 from flasher_rollback import (
+    COMING_SOON,
+    STABLE_RELEASE,
     create_dry_run_record,
     stage,
+    stage_coming_soon,
+    validate_coming_soon,
     validate_descriptor,
     validate_dry_run_record,
     validate_live_state,
+    validate_promotion_state,
     verify_live_website,
 )
 from flasher_website_history import (
@@ -232,7 +237,8 @@ class FlasherRollbackTests(unittest.TestCase):
             )
             self.assertEqual(identity["target"]["manifest_sha256"], sha256(manifest))
             self.assertEqual((staged / "index.html").read_text(), f"site {VERSION}\n")
-            self.assertEqual(identity["schema"], 2)
+            self.assertEqual(identity["schema"], 3)
+            self.assertEqual(identity["target"]["kind"], STABLE_RELEASE)
             self.assertIn("files", identity["website"])
 
             class QuietHandler(SimpleHTTPRequestHandler):
@@ -273,6 +279,7 @@ class FlasherRollbackTests(unittest.TestCase):
                 validate_live_state(
                     live_descriptor,
                     mode="dry-run",
+                    target_kind=STABLE_RELEASE,
                     target_version=VERSION,
                     target_manifest_sha256=sha256(manifest),
                     expected_live_version=NEXT_VERSION,
@@ -284,6 +291,7 @@ class FlasherRollbackTests(unittest.TestCase):
                 validate_live_state(
                     live_descriptor,
                     mode="deploy",
+                    target_kind=STABLE_RELEASE,
                     target_version=VERSION,
                     target_manifest_sha256=sha256(manifest),
                     expected_live_version=NEXT_VERSION,
@@ -296,6 +304,7 @@ class FlasherRollbackTests(unittest.TestCase):
                 validate_live_state(
                     live_descriptor,
                     mode="dry-run",
+                    target_kind=STABLE_RELEASE,
                     target_version=VERSION,
                     target_manifest_sha256=sha256(manifest),
                     expected_live_version=NEXT_VERSION,
@@ -307,6 +316,7 @@ class FlasherRollbackTests(unittest.TestCase):
                 validate_live_state(
                     live_descriptor,
                     mode="deploy",
+                    target_kind=STABLE_RELEASE,
                     target_version=VERSION,
                     target_manifest_sha256=sha256(manifest),
                     expected_live_version=NEXT_VERSION,
@@ -378,6 +388,7 @@ class FlasherRollbackTests(unittest.TestCase):
                 default_branch="main",
                 expected_run_id=77,
                 expected_run_attempt=1,
+                target_kind=STABLE_RELEASE,
                 target_version=VERSION,
                 target_release_record_sha256=record_hash,
                 expected_live_version=NEXT_VERSION,
@@ -396,6 +407,7 @@ class FlasherRollbackTests(unittest.TestCase):
                     default_branch="main",
                     expected_run_id=77,
                     expected_run_attempt=2,
+                    target_kind=STABLE_RELEASE,
                     target_version=VERSION,
                     target_release_record_sha256=record_hash,
                     expected_live_version=NEXT_VERSION,
@@ -412,6 +424,7 @@ class FlasherRollbackTests(unittest.TestCase):
                     default_branch="main",
                     expected_run_id=77,
                     expected_run_attempt=1,
+                    target_kind=STABLE_RELEASE,
                     target_version=VERSION,
                     target_release_record_sha256=record_hash,
                     expected_live_version=NEXT_VERSION,
@@ -436,6 +449,7 @@ class FlasherRollbackTests(unittest.TestCase):
                     default_branch="main",
                     expected_run_id=77,
                     expected_run_attempt=1,
+                    target_kind=STABLE_RELEASE,
                     target_version=VERSION,
                     target_release_record_sha256=record_hash,
                     expected_live_version=NEXT_VERSION,
@@ -443,6 +457,161 @@ class FlasherRollbackTests(unittest.TestCase):
                     required_workflow_sha=WORKFLOW_SHA,
                     required_observed_live_state="target_baseline",
                 )
+
+    def test_coming_soon_target_is_exact_and_binds_withdrawn_release(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary)
+            repository = workspace / "repository"
+            for relative in (
+                "docs/website/coming-soon/index.html",
+                "docs/website/public/CNAME",
+                "docs/website/public/assets/favicon.svg",
+                "docs/website/public/assets/prns-mark.svg",
+                "docs/website/public/assets/og.png",
+            ):
+                path = repository / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(f"{relative}\n", encoding="utf-8")
+            staged = workspace / "coming-soon"
+            identity_path = workspace / "coming-soon-stage.json"
+            manifest_sha256 = "f" * 64
+            identity = stage_coming_soon(
+                repository=repository,
+                withdrawn_version=NEXT_VERSION,
+                withdrawn_manifest_sha256=manifest_sha256,
+                output=staged,
+                identity_output=identity_path,
+            )
+            self.assertEqual(
+                identity["target"],
+                {
+                    "kind": COMING_SOON,
+                    "withdrawn_version": NEXT_VERSION,
+                    "withdrawn_manifest_sha256": manifest_sha256,
+                },
+            )
+            self.assertEqual(
+                (staged / "404.html").read_bytes(),
+                (staged / "index.html").read_bytes(),
+            )
+            live = workspace / "stable-response"
+            live.write_bytes((staged / "index.html").read_bytes())
+            validate_coming_soon(
+                live,
+                repository / "docs/website/coming-soon/index.html",
+            )
+            self.assertEqual(
+                validate_live_state(
+                    live,
+                    mode="dry-run",
+                    target_kind=COMING_SOON,
+                    target_version=None,
+                    target_manifest_sha256=None,
+                    expected_live_version=NEXT_VERSION,
+                    expected_live_manifest_sha256=manifest_sha256,
+                    coming_soon_index=(
+                        repository / "docs/website/coming-soon/index.html"
+                    ),
+                ),
+                "target_baseline",
+            )
+            self.assertEqual(
+                validate_promotion_state(
+                    live,
+                    baseline_kind=COMING_SOON,
+                    baseline_version=None,
+                    baseline_manifest_sha256=None,
+                    candidate_version=NEXT_VERSION,
+                    candidate_manifest_sha256=manifest_sha256,
+                    coming_soon_index=(
+                        repository / "docs/website/coming-soon/index.html"
+                    ),
+                ),
+                "baseline",
+            )
+            write_json(live, descriptor(NEXT_VERSION, manifest_sha256))
+            self.assertEqual(
+                validate_promotion_state(
+                    live,
+                    baseline_kind=COMING_SOON,
+                    baseline_version=None,
+                    baseline_manifest_sha256=None,
+                    candidate_version=NEXT_VERSION,
+                    candidate_manifest_sha256=manifest_sha256,
+                    coming_soon_index=(
+                        repository / "docs/website/coming-soon/index.html"
+                    ),
+                ),
+                "candidate_idempotent_resume",
+            )
+            started = datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc)
+            completed = started + timedelta(seconds=30)
+            record_path = workspace / "coming-soon-dry-run.json"
+            create_dry_run_record(
+                stage_identity=identity_path,
+                expected_live_version=NEXT_VERSION,
+                expected_live_manifest_sha256=manifest_sha256,
+                repository=REPOSITORY,
+                workflow_run_id=77,
+                workflow_run_attempt=1,
+                workflow_job_id=88,
+                workflow_sha=WORKFLOW_SHA,
+                observed_live_state="target_baseline",
+                started_epoch=int(started.timestamp()),
+                output=record_path,
+                now=completed,
+            )
+            run_json = workspace / "coming-soon-run.json"
+            job_json = workspace / "coming-soon-job.json"
+            write_json(
+                run_json,
+                {
+                    "id": 77,
+                    "repository": {"full_name": REPOSITORY},
+                    "head_repository": {"full_name": REPOSITORY},
+                    "path": ".github/workflows/flasher-rollback.yml",
+                    "event": "workflow_dispatch",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "head_branch": "main",
+                    "head_sha": WORKFLOW_SHA,
+                    "run_attempt": 1,
+                    "run_started_at": started.isoformat(),
+                    "updated_at": (started + timedelta(seconds=60)).isoformat(),
+                },
+            )
+            write_json(
+                job_json,
+                {
+                    "id": 88,
+                    "run_id": 77,
+                    "name": "Verify and stage complete prior website",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "head_sha": WORKFLOW_SHA,
+                    "run_attempt": 1,
+                    "started_at": started.isoformat(),
+                    "completed_at": (started + timedelta(seconds=60)).isoformat(),
+                },
+            )
+            validated = validate_dry_run_record(
+                record_path=record_path,
+                run_json=run_json,
+                job_json=job_json,
+                stage_identity=identity_path,
+                repository=REPOSITORY,
+                default_branch="main",
+                expected_run_id=77,
+                expected_run_attempt=1,
+                target_kind=COMING_SOON,
+                target_version=None,
+                target_release_record_sha256=None,
+                expected_live_version=NEXT_VERSION,
+                expected_live_manifest_sha256=manifest_sha256,
+                required_workflow_sha=WORKFLOW_SHA,
+                required_observed_live_state="target_baseline",
+            )
+            self.assertEqual(validated["target"]["kind"], COMING_SOON)
 
     def test_rollback_staging_rejects_website_symlinks(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -505,6 +674,11 @@ class FlasherRollbackTests(unittest.TestCase):
         self.assertIn("verify-live-website", rollback)
         self.assertIn("target/rollback-stage/rollback-stage.json", rollback)
         self.assertIn("cmp target/assets-before-latest.json", rollback)
+        self.assertIn("target_kind:", rollback)
+        self.assertIn("stage-coming-soon", rollback)
+        self.assertIn("cas-coming-soon", rollback)
+        self.assertIn("--prerelease=true --latest=false", rollback)
+        self.assertIn("withdrawn-manifest-sha256", rollback)
         self.assertNotIn("PRNS_MINISIGN_SECRET_KEY_B64", rollback)
         self.assertNotIn("secrets.", rollback)
 
@@ -512,6 +686,7 @@ class FlasherRollbackTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("rollback_baseline_version", promotion)
+        self.assertIn("rollback_baseline_kind", promotion)
         self.assertIn("rollback_baseline_release_record_sha256", promotion)
         self.assertIn("rollback_dry_run_id", promotion)
         self.assertIn("rollback_dry_run_attempt", promotion)
@@ -525,6 +700,8 @@ class FlasherRollbackTests(unittest.TestCase):
         self.assertIn("--public-review-evidence", promotion)
         self.assertIn("--public-review-run", promotion)
         self.assertIn("Recheck live promotion CAS immediately before Pages deployment", promotion)
+        self.assertIn("stage-coming-soon", promotion)
+        self.assertIn("--baseline-kind", promotion)
 
         historical = (ROOT / "tools/release/verify-historical-flasher-release.py").read_text(
             encoding="utf-8"

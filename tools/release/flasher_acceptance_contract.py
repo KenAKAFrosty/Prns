@@ -16,7 +16,6 @@ SHIPPING_BOARDS = (
     "t-echo",
 )
 SURFACES = ("cli", "web")
-HOST_OSES = ("linux", "macos", "windows")
 OS_ARCHITECTURES = {
     ("macos", "aarch64"),
     ("macos", "x86_64"),
@@ -151,18 +150,13 @@ def evidence_placeholder() -> dict:
     }
 
 
-def matrix_architecture(board_index: int, surface_index: int, os_name: str) -> str:
-    if os_name == "windows":
-        return "x86_64"
-    return "aarch64" if (board_index + surface_index) % 2 == 0 else "x86_64"
-
-
 def scaffold(
     manifest: dict,
     manifest_path: Path,
     manifest_signature_path: Path,
     signed_bundle_path: Path,
     prerelease_published_at: str,
+    tester_roster: object,
 ) -> dict:
     parse_utc_timestamp(prerelease_published_at, "prerelease publishedAt")
     release = manifest.get("release")
@@ -217,60 +211,56 @@ def scaffold(
     )
 
     runs = []
-    for board_index, board in enumerate(SHIPPING_BOARDS):
+    physical_assignments = getattr(tester_roster, "physical", {})
+    fallback_assignments = getattr(tester_roster, "fallbacks", {})
+    installation_assignments = getattr(tester_roster, "installations", {})
+    for board in SHIPPING_BOARDS:
         target = targets[board]
-        for surface_index, surface in enumerate(SURFACES):
+        for surface in SURFACES:
+            assignment = physical_assignments.get((board, surface))
+            if assignment is None:
+                raise ValueError(f"tester roster is missing {board}/{surface}")
             required = applicable_scenarios(target, surface, chip_counts)
-            distributed = sorted(required - PER_RUN_BASELINE_SCENARIOS)
-            by_os = {os_name: set(PER_RUN_BASELINE_SCENARIOS) for os_name in HOST_OSES}
-            for index, scenario in enumerate(distributed):
-                by_os[HOST_OSES[index % len(HOST_OSES)]].add(scenario)
-            for os_name in HOST_OSES:
-                run = {
-                    "board": board,
-                    "surface": surface,
-                    "os": os_name,
-                    "architecture": matrix_architecture(
-                        board_index, surface_index, os_name
-                    ),
-                    "os_version": NOT_RUN,
-                    "hardware_identity": NOT_RUN,
-                    "hardware_model": target.get("display_name", NOT_RUN),
-                    "hardware_revision": NOT_RUN,
-                    "client": {
-                        "name": "prns-web-flasher"
-                        if surface == "web"
-                        else "hopspot-flash",
-                        "version": version,
-                    },
-                    "scenarios": {
-                        scenario: "not-run" for scenario in sorted(by_os[os_name])
-                    },
-                    "result": "not-run",
-                    "tester": NOT_RUN,
-                    "completed_at": NOT_RUN,
-                    "evidence": evidence_placeholder(),
+            run = {
+                "board": board,
+                "surface": surface,
+                "os": assignment.os_name,
+                "architecture": assignment.architecture,
+                "os_version": NOT_RUN,
+                "hardware_identity": NOT_RUN,
+                "hardware_model": target.get("display_name", NOT_RUN),
+                "hardware_revision": NOT_RUN,
+                "client": {
+                    "name": "prns-web-flasher"
+                    if surface == "web"
+                    else "hopspot-flash",
+                    "version": version,
+                },
+                "scenarios": {
+                    scenario: "not-run" for scenario in sorted(required)
+                },
+                "result": "not-run",
+                "tester": assignment.tester,
+                "completed_at": NOT_RUN,
+                "evidence": evidence_placeholder(),
+            }
+            if surface == "web":
+                run["browser"] = {
+                    "name": assignment.browser_name,
+                    "channel": "stable",
+                    "version": NOT_RUN,
                 }
-                if surface == "web":
-                    run["browser"] = {
-                        "name": "edge" if os_name == "windows" else "chrome",
-                        "channel": "stable",
-                        "version": NOT_RUN,
-                    }
-                runs.append(run)
+            runs.append(run)
 
-    fallback_architectures = {
-        ("firefox", "linux"): "x86_64",
-        ("firefox", "macos"): "x86_64",
-        ("firefox", "windows"): "x86_64",
-        ("safari", "macos"): "aarch64",
-    }
     browser_fallbacks = []
     for browser, os_name in sorted(REQUIRED_FALLBACKS):
+        assignment = fallback_assignments.get((browser, os_name))
+        if assignment is None:
+            raise ValueError(f"tester roster is missing {browser}/{os_name}")
         browser_fallbacks.append(
             {
                 "os": os_name,
-                "architecture": fallback_architectures[(browser, os_name)],
+                "architecture": assignment.architecture,
                 "os_version": NOT_RUN,
                 "client": {
                     "name": "prns-web-flasher",
@@ -285,7 +275,7 @@ def scaffold(
                     scenario: "not-run" for scenario in sorted(FALLBACK_SCENARIOS)
                 },
                 "result": "not-run",
-                "tester": NOT_RUN,
+                "tester": assignment.tester,
                 "completed_at": NOT_RUN,
                 "evidence": evidence_placeholder(),
             }
@@ -293,6 +283,9 @@ def scaffold(
 
     installation_smoke = []
     for target, (os_name, architecture) in CLI_TARGETS.items():
+        assignment = installation_assignments.get(target)
+        if assignment is None:
+            raise ValueError(f"tester roster is missing {target}")
         installation_smoke.append(
             {
                 "target": target,
@@ -300,16 +293,16 @@ def scaffold(
                 "architecture": architecture,
                 "os_version": NOT_RUN,
                 "cli_version": version,
-                "scenarios": {"doctor": "not-run", "install": "not-run"},
+                "scenarios": {"install": "not-run", "version": "not-run"},
                 "result": "not-run",
-                "tester": NOT_RUN,
+                "tester": assignment.tester,
                 "completed_at": NOT_RUN,
                 "evidence": evidence_placeholder(),
             }
         )
 
     return {
-        "schema": 2,
+        "schema": 3,
         "candidate": {
             "version": version,
             "channel": channel,

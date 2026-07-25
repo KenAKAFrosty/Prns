@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Require a real five-architecture tester roster before candidate signing."""
+"""Require exact physical, fallback, and installer assignments before signing."""
 
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ def main() -> int:
         for error in errors:
             print(f"tester roster validation failed: {error}", file=sys.stderr)
         return 1
-    print("tester roster covers all five published host architectures")
+    print("tester roster covers eight physical, four fallback, and five installer assignments")
     return 0
 
 

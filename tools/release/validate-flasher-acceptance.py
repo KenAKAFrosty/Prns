@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import argparse
-from collections import Counter, defaultdict
+from collections import Counter
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -20,7 +20,6 @@ from flasher_acceptance_contract import (  # noqa: E402
     CLI_TARGETS,
     FALLBACK_SCENARIOS,
     OS_ARCHITECTURES,
-    PER_RUN_BASELINE_SCENARIOS,
     REQUIRED_FALLBACKS,
     SHIPPING_BOARDS,
     SURFACES,
@@ -28,7 +27,13 @@ from flasher_acceptance_contract import (  # noqa: E402
     parse_utc_timestamp,
     sha256,
 )
-from flasher_tester_roster import TesterAssignment, validate_roster  # noqa: E402
+from flasher_tester_roster import (  # noqa: E402
+    FallbackAssignment,
+    InstallationAssignment,
+    PhysicalAssignment,
+    TesterRoster,
+    validate_roster,
+)
 
 TOP_LEVEL_FIELDS = {"schema", "candidate", "runs", "browser_fallbacks", "installation_smoke"}
 CANDIDATE_FIELDS = {
@@ -259,16 +264,14 @@ def validate_evidence(
         errors.append(f"{label} evidence redaction checks are not complete: {failed}")
 
 
-def validate_tester(
+def validate_assignment(
     record: dict,
-    host: tuple[str, str],
-    assignments: dict[tuple[str, str], TesterAssignment],
+    assignment: PhysicalAssignment | FallbackAssignment | InstallationAssignment | None,
     label: str,
     errors: list[str],
 ) -> None:
-    assignment = assignments.get(host)
     if assignment is None:
-        errors.append(f"{label} host has no assignment in the exact signed tester roster")
+        errors.append(f"{label} has no assignment in the exact signed tester roster")
         return
     if record.get("tester") != assignment.tester:
         errors.append(f"{label} tester differs from the exact signed tester roster assignment")
@@ -420,21 +423,18 @@ def validate_runs(
     acceptance: dict,
     targets: dict[str, dict],
     version: str,
-    assignments: dict[tuple[str, str], TesterAssignment],
+    roster: TesterRoster,
     evidence_store: EvidenceStore,
     prerelease_published_at: datetime,
     now: datetime,
     errors: list[str],
 ) -> None:
     required_matrix = {
-        (board, surface, os_name)
+        (board, surface)
         for board in SHIPPING_BOARDS
         for surface in SURFACES
-        for os_name in {"macos", "windows", "linux"}
     }
-    seen_matrix: set[tuple[str, str, str]] = set()
-    physical_architectures: set[tuple[str, str]] = set()
-    coverage: dict[tuple[str, str], set[str]] = defaultdict(set)
+    seen_matrix: set[tuple[str, str]] = set()
     chip_counts = Counter(
         target.get("expected_chip")
         for target in targets.values()
@@ -457,18 +457,22 @@ def validate_runs(
         if not all(isinstance(value, str) for value in (board, surface, os_name, architecture)):
             errors.append(f"{label} board, surface, OS, and architecture must be strings")
             continue
-        key = (board, surface, os_name)
+        key = (board, surface)
         if key not in required_matrix:
-            errors.append(f"{label} has an unknown board/surface/OS tuple")
+            errors.append(f"{label} has an unknown board/surface tuple")
             continue
         if key in seen_matrix:
             errors.append(f"duplicate matrix result for {key}")
         seen_matrix.add(key)
+        assignment = roster.physical.get(key)
         if (os_name, architecture) not in OS_ARCHITECTURES:
             errors.append(f"{label} has an unsupported OS/architecture pair")
-        else:
-            physical_architectures.add((os_name, architecture))
-            validate_tester(run, (os_name, architecture), assignments, label, errors)
+        if assignment is not None and (
+            os_name,
+            architecture,
+        ) != (assignment.os_name, assignment.architecture):
+            errors.append(f"{label} host differs from the exact signed tester roster assignment")
+        validate_assignment(run, assignment, label, errors)
         if run.get("result") != "pass":
             errors.append(f"{label} is not a passing acceptance run")
         require_text(
@@ -491,7 +495,11 @@ def validate_runs(
         expected_client = "prns-web-flasher" if surface == "web" else "hopspot-flash"
         validate_client(run.get("client"), expected_client, version, label, errors)
         if surface == "web":
-            expected_browser = "edge" if os_name == "windows" else "chrome"
+            expected_browser = (
+                assignment.browser_name
+                if assignment is not None and assignment.browser_name is not None
+                else "unsupported-browser"
+            )
             validate_browser(run.get("browser"), expected_browser, label, errors)
         elif "browser" in run:
             errors.append(f"{label} CLI run must not claim browser evidence")
@@ -499,31 +507,19 @@ def validate_runs(
         if not allowed:
             errors.append(f"{label} target has an unsupported transport")
         observed = validate_scenarios(run.get("scenarios"), allowed, label, errors)
-        missing_baseline = sorted(PER_RUN_BASELINE_SCENARIOS - observed)
-        if missing_baseline:
-            errors.append(
-                f"{label} must independently prove baseline scenarios: {missing_baseline}"
-            )
-        coverage[(str(board), str(surface))].update(observed)
+        missing = sorted(allowed - observed)
+        if missing:
+            errors.append(f"{label} is missing applicable scenarios: {missing}")
 
     missing_matrix = sorted(required_matrix - seen_matrix)
     if missing_matrix:
-        errors.append(f"missing board/surface/OS runs: {missing_matrix}")
-    missing_architectures = sorted(OS_ARCHITECTURES - physical_architectures)
-    if missing_architectures:
-        errors.append(f"missing representative physical architectures: {missing_architectures}")
-    for board, target in targets.items():
-        for surface in sorted(SURFACES):
-            required = applicable_scenarios(target, surface, chip_counts)
-            missing = sorted(required - coverage[(board, surface)])
-            if missing:
-                errors.append(f"{board}/{surface} is missing scenarios: {missing}")
+        errors.append(f"missing board/surface runs: {missing_matrix}")
 
 
 def validate_fallbacks(
     acceptance: dict,
     version: str,
-    assignments: dict[tuple[str, str], TesterAssignment],
+    roster: TesterRoster,
     evidence_store: EvidenceStore,
     prerelease_published_at: datetime,
     now: datetime,
@@ -545,16 +541,21 @@ def validate_fallbacks(
         if not isinstance(os_name, str) or not isinstance(architecture, str):
             errors.append(f"{label} OS and architecture must be strings")
             continue
+        browser = entry.get("browser")
+        raw_browser_name = browser.get("name") if isinstance(browser, dict) else None
+        assignment = roster.fallbacks.get((str(raw_browser_name), str(os_name)))
         if (os_name, architecture) not in OS_ARCHITECTURES:
             errors.append(f"{label} has an unsupported OS/architecture pair")
-        else:
-            validate_tester(entry, (os_name, architecture), assignments, label, errors)
+        if assignment is not None and (
+            os_name,
+            architecture,
+        ) != (assignment.os_name, assignment.architecture):
+            errors.append(f"{label} host differs from the exact signed tester roster assignment")
+        validate_assignment(entry, assignment, label, errors)
         require_text(entry, {"os_version", "tester"}, label, errors)
         validate_completed_at(entry, label, prerelease_published_at, now, errors)
         validate_evidence(entry.get("evidence"), label, evidence_store, errors)
         validate_client(entry.get("client"), "prns-web-flasher", version, label, errors)
-        browser = entry.get("browser")
-        raw_browser_name = browser.get("name") if isinstance(browser, dict) else None
         browser_name = raw_browser_name if isinstance(raw_browser_name, str) else None
         key = (browser_name, os_name)
         expected_name = browser_name if key in REQUIRED_FALLBACKS else "unsupported-browser"
@@ -580,7 +581,7 @@ def validate_fallbacks(
 def validate_installation_smokes(
     acceptance: dict,
     version: str,
-    assignments: dict[tuple[str, str], TesterAssignment],
+    roster: TesterRoster,
     evidence_store: EvidenceStore,
     prerelease_published_at: datetime,
     now: datetime,
@@ -607,24 +608,29 @@ def validate_installation_smokes(
         expected_host = CLI_TARGETS[target]
         if (entry.get("os"), entry.get("architecture")) != expected_host:
             errors.append(f"{label} host does not match target {target}")
-        else:
-            validate_tester(entry, expected_host, assignments, label, errors)
+        assignment = roster.installations.get(target)
+        if assignment is not None and (
+            entry.get("os"),
+            entry.get("architecture"),
+        ) != (assignment.os_name, assignment.architecture):
+            errors.append(f"{label} host differs from the exact signed tester roster assignment")
+        validate_assignment(entry, assignment, label, errors)
         if entry.get("cli_version") != version:
             errors.append(f"{label} CLI version differs from the exact candidate")
         if entry.get("result") != "pass":
-            errors.append(f"{label} is not a passing installation/doctor smoke")
+            errors.append(f"{label} is not a passing installation/version smoke")
         require_text(entry, {"os_version", "tester"}, label, errors)
         validate_completed_at(entry, label, prerelease_published_at, now, errors)
         validate_evidence(entry.get("evidence"), label, evidence_store, errors)
-        validate_scenarios(entry.get("scenarios"), {"install", "doctor"}, label, errors)
+        validate_scenarios(entry.get("scenarios"), {"install", "version"}, label, errors)
         if isinstance(entry.get("scenarios"), dict) and set(entry["scenarios"]) != {
             "install",
-            "doctor",
+            "version",
         }:
-            errors.append(f"{label} must prove both install and doctor")
+            errors.append(f"{label} must prove both install and exact version")
     missing = sorted(set(CLI_TARGETS) - seen)
     if missing:
-        errors.append(f"missing native installation/doctor smokes: {missing}")
+        errors.append(f"missing native installation/version smokes: {missing}")
 
 
 def validate(arguments: argparse.Namespace, now: datetime | None = None) -> list[str]:
@@ -648,12 +654,12 @@ def validate(arguments: argparse.Namespace, now: datetime | None = None) -> list
     current = current.astimezone(timezone.utc)
     version_value = manifest.get("release")
     version = version_value.get("version") if isinstance(version_value, dict) else ""
-    assignments, roster_errors = validate_roster(roster, str(version))
+    tester_roster, roster_errors = validate_roster(roster, str(version))
     errors.extend(f"signed tester roster: {error}" for error in roster_errors)
     evidence_store = EvidenceStore(arguments.evidence_root)
     reject_unknown_fields(acceptance, TOP_LEVEL_FIELDS, "acceptance", errors)
-    if acceptance.get("schema") != 2:
-        errors.append("acceptance schema must be 2")
+    if acceptance.get("schema") != 3:
+        errors.append("acceptance schema must be 3")
     version, targets = validate_candidate_identity(
         acceptance,
         manifest,
@@ -667,7 +673,7 @@ def validate(arguments: argparse.Namespace, now: datetime | None = None) -> list
         acceptance,
         targets,
         version,
-        assignments,
+        tester_roster,
         evidence_store,
         published_at,
         current,
@@ -676,7 +682,7 @@ def validate(arguments: argparse.Namespace, now: datetime | None = None) -> list
     validate_fallbacks(
         acceptance,
         version,
-        assignments,
+        tester_roster,
         evidence_store,
         published_at,
         current,
@@ -685,7 +691,7 @@ def validate(arguments: argparse.Namespace, now: datetime | None = None) -> list
     validate_installation_smokes(
         acceptance,
         version,
-        assignments,
+        tester_roster,
         evidence_store,
         published_at,
         current,

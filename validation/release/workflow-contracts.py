@@ -204,7 +204,7 @@ def validate() -> list[str]:
         "subject-checksums: target/release/attestation-subjects.sha256",
         'test "$GITHUB_WORKFLOW_SHA" = "$source_commit"',
         "--workflow-sha \"$GITHUB_WORKFLOW_SHA\"",
-        "name: Complete protected 24-hour public review",
+        "name: Approve protected public release",
         "environment: public-release",
         "./tools/prns release public-review -- create",
         "Publish immutable attempt-specific public-review evidence",
@@ -238,6 +238,38 @@ def validate() -> list[str]:
                 f"flasher-finalize-evidence.yml is missing gate {finalization_gate!r}"
             )
 
+    installation = (
+        ROOT / ".github" / "workflows" / "flasher-installation-qualification.yml"
+    ).read_text(encoding="utf-8")
+    for installation_gate in (
+        "Require exact protected default-branch source",
+        "Verify signatures, attestations, archives, and signed roster",
+        "macos-15",
+        "macos-15-intel",
+        "ubuntu-24.04",
+        "ubuntu-24.04-arm",
+        "windows-2025",
+        "test \"$GITHUB_SHA\" = \"$SOURCE_COMMIT\"",
+        "gh attestation verify",
+        "./tools/prns release tester-roster validate --",
+        'for installer in install.sh install.ps1; do',
+        "./tools/prns release installation-evidence write --",
+        'test "$version_output" = "hopspot-flash $RELEASE_VERSION"',
+        "installed CLI reported a different version",
+        "runner architecture differs from the target archive",
+        "flasher-installation-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}",
+    ):
+        if installation_gate not in installation:
+            errors.append(
+                "flasher-installation-qualification.yml is missing gate "
+                f"{installation_gate!r}"
+            )
+    if "doctor" in installation:
+        errors.append(
+            "flasher-installation-qualification.yml must not substitute hosted "
+            "doctor checks for physical CLI qualification"
+        )
+
     promotion = (ROOT / ".github" / "workflows" / "flasher-promote.yml").read_text(
         encoding="utf-8"
     )
@@ -250,11 +282,15 @@ def validate() -> list[str]:
         "./tools/prns release assets verify --",
         "permissions:\n      contents: read",
         "rollback_baseline_version",
+        "rollback_baseline_kind",
         "rollback_baseline_release_record_sha256",
         "rollback_dry_run_id",
         "rollback_dry_run_attempt",
         "Block promotion without a matching <=15-minute rollback dry-run",
         "./tools/prns release rollback -- validate-record",
+        "./tools/prns release rollback -- stage-coming-soon",
+        "./tools/prns release rollback -- promotion-state",
+        "--baseline-kind",
         "--required-observed-live-state target_baseline",
         "Recheck live promotion CAS immediately before Pages deployment",
         "targetCommitish",
@@ -288,7 +324,7 @@ def validate() -> list[str]:
         if promotion_gate not in promotion:
             errors.append(f"flasher-promote.yml is missing gate {promotion_gate!r}")
     if "environment: public-release" in promotion:
-        errors.append("flasher-promote.yml must not start a second protected 24-hour wait")
+        errors.append("flasher-promote.yml must not start a second protected approval")
     asset_gate = "Verify the complete prerelease asset inventory before deployment"
     deploy_gate = "actions/deploy-pages@"
     live_verification_gate = (
@@ -362,6 +398,10 @@ def validate() -> list[str]:
         "environment: release-rollback",
         "timeout-minutes: 15",
         "./tools/prns release rollback -- live-state",
+        "target_kind:",
+        "./tools/prns release rollback -- stage-coming-soon",
+        "./tools/prns release rollback -- cas-coming-soon",
+        "--prerelease=true --latest=false",
         '--mode "$ROLLBACK_MODE"',
         "--mode deploy",
         "./tools/prns release rollback -- validate-record",

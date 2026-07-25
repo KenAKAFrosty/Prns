@@ -217,7 +217,7 @@ jobs:
             "Source commit: ${SOURCE_COMMIT}" \
             "Signed candidate SHA-256: ${SIGNED_BUNDLE_SHA256}" \
             "Manifest SHA-256: ${manifest_sha256}" \
-            'This same signing run now enters its protected, secret-free 24-hour public-review job; authorize that environment only after these assets are visibly public.')"
+            'This same signing run now enters its protected, secret-free public-review job; approve that environment only after these assets are visibly public and reviewed.')"
           assets=(
             "$SIGNED_BUNDLE"
             "target/release/prns-flasher-candidate-run-v${version}.json"
@@ -320,7 +320,7 @@ jobs:
           echo "published_at=$published_at" >> "$GITHUB_OUTPUT"
 
   public-review:
-    name: Complete protected 24-hour public review
+    name: Approve protected public release
     needs: sign
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -363,7 +363,7 @@ jobs:
             "$EXPECTED_BUNDLE_SHA256"
           test "$(sha256sum target/public-review/flash-manifest.json | awk '{print $1}')" = \
             "$EXPECTED_MANIFEST_SHA256"
-      - name: Bind the completed protected wait to this exact signing attempt
+      - name: Bind protected approval to this exact signing attempt
         id: review
         env:
           GH_TOKEN: ${{ github.token }}
@@ -373,10 +373,10 @@ jobs:
             > target/public-review/run.json
           gh api --paginate \
             "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}/jobs?per_page=100" \
-            --jq '.jobs[] | select(.name == "Complete protected 24-hour public review")' \
+            --jq '.jobs[] | select(.name == "Approve protected public release")' \
             > target/public-review/job.json
           test "$(jq -s 'length' target/public-review/job.json)" -eq 1
-          completed_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          approved_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
           evidence_name="public-review-v${RELEASE_VERSION}-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}.json"
           ./tools/prns release public-review -- create \
             --release-json target/public-review/release.json \
@@ -387,8 +387,7 @@ jobs:
             --repository "$GITHUB_REPOSITORY" \
             --version "$RELEASE_VERSION" \
             --source-commit "$SOURCE_COMMIT" \
-            --minimum-hours 24 \
-            --completed-at "$completed_at" \
+            --approved-at "$approved_at" \
             --output "target/public-review/${evidence_name}"
           echo "evidence=target/public-review/${evidence_name}" >> "$GITHUB_OUTPUT"
       - name: Publish immutable attempt-specific public-review evidence
