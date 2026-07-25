@@ -2720,7 +2720,7 @@ License: MIT License
 
 Used by: `quick-xml 0.41.0`
 
-Release graphs: Node addon macOS, daemon macOS, desktop macOS, iOS
+Release graphs: Node addon macOS, daemon macOS, desktop macOS
 
 ```text
 The MIT License (MIT)
@@ -2974,7 +2974,7 @@ License: MIT License
 
 Used by: `deranged 0.5.8`
 
-Release graphs: Node addon macOS, daemon Linux, daemon Windows, daemon macOS, desktop macOS, iOS
+Release graphs: Node addon macOS, daemon Linux, daemon Windows, daemon macOS, desktop macOS
 
 ```text
 Copyright (c) 2024 Jacob Pratt et al.
@@ -4147,7 +4147,7 @@ License: MIT License
 
 Used by: `equivalent 1.0.2`
 
-Release graphs: ESP32-C6, ESP32-S3 Heltec, ESP32-S3 T-Beam, Node addon macOS, daemon Linux, daemon macOS, desktop Linux, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS
+Release graphs: ESP32-C6, ESP32-S3 Heltec, ESP32-S3 T-Beam, Node addon macOS, daemon Linux, daemon macOS, desktop Linux, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64
 
 ```text
 Copyright (c) 2016--2023
@@ -4441,7 +4441,7 @@ License: MIT License
 
 Used by: `num-conv 0.2.2`
 
-Release graphs: Node addon macOS, daemon Linux, daemon Windows, daemon macOS, desktop macOS, iOS
+Release graphs: Node addon macOS, daemon Linux, daemon Windows, daemon macOS, desktop macOS
 
 ```text
 Copyright (c) Jacob Pratt
@@ -4499,7 +4499,7 @@ License: MIT License
 
 Used by: `indexmap 2.14.0`
 
-Release graphs: ESP32-C6, ESP32-S3 Heltec, ESP32-S3 T-Beam, Node addon macOS, daemon Linux, daemon macOS, desktop Linux, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS
+Release graphs: ESP32-C6, ESP32-S3 Heltec, ESP32-S3 T-Beam, Node addon macOS, daemon Linux, daemon macOS, desktop Linux, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64
 
 ```text
 Copyright (c) 2016--2017
@@ -4785,7 +4785,7 @@ License: MIT License
 
 Used by: `plist 1.10.0`
 
-Release graphs: Node addon macOS, daemon macOS, desktop macOS, iOS
+Release graphs: Node addon macOS, daemon macOS, desktop macOS
 
 ```text
 Copyright (c) 2015 Edward Barnard
@@ -5139,7 +5139,7 @@ License: MIT License
 
 Used by: `base64 0.13.1`, `base64 0.22.1`
 
-Release graphs: ESP32-C6, ESP32-S3 Heltec, ESP32-S3 T-Beam, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS
+Release graphs: ESP32-C6, ESP32-S3 Heltec, ESP32-S3 T-Beam, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64
 
 ```text
 The MIT License (MIT)
@@ -5235,7 +5235,7 @@ License: MIT License
 
 Used by: `powerfmt 0.2.0`
 
-Release graphs: Node addon macOS, daemon Linux, daemon Windows, daemon macOS, desktop macOS, iOS
+Release graphs: Node addon macOS, daemon Linux, daemon Windows, daemon macOS, desktop macOS
 
 ```text
 Copyright (c) 2023 Jacob Pratt et al.
@@ -5619,7 +5619,7 @@ License: MIT License
 
 Used by: `mac-addr 0.3.0`
 
-Release graphs: Android, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, iOS
+Release graphs: Android, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS
 
 ```text
 MIT License
@@ -5831,7 +5831,7 @@ License: MIT License
 
 Used by: `time 0.3.51`, `time 0.3.53`, `time 0.3.54`, `time-core 0.1.9`
 
-Release graphs: Node addon macOS, daemon Linux, daemon Windows, daemon macOS, desktop macOS, iOS
+Release graphs: Node addon macOS, daemon Linux, daemon Windows, daemon macOS, desktop macOS
 
 ```text
 Copyright (c) Jacob Pratt et al.
@@ -6292,7 +6292,7 @@ License: MIT License
 
 Used by: `netdev 0.45.0`
 
-Release graphs: Android, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, iOS
+Release graphs: Android, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS
 
 ```text
 MIT License
@@ -7422,7 +7422,7 @@ License: MIT License
 
 Used by: `hashbrown 0.13.2`, `hashbrown 0.14.5`, `hashbrown 0.17.1`
 
-Release graphs: ESP32-C6, ESP32-S3 Heltec, ESP32-S3 T-Beam, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840
+Release graphs: ESP32-C6, ESP32-S3 Heltec, ESP32-S3 T-Beam, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, nRF52840
 
 ```text
 Copyright (c) 2016 Amanieu d'Antras
@@ -8359,7 +8359,7 @@ License: MIT License
 
 Used by: `ipnet 2.12.0`
 
-Release graphs: Android, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, iOS
+Release graphs: Android, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS
 
 ```text
 Copyright 2017 Juniper Networks, Inc.
