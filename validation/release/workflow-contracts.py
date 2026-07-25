@@ -256,6 +256,7 @@ def validate() -> list[str]:
         "./tools/prns release installation-evidence write --",
         'test "$version_output" = "hopspot-flash $RELEASE_VERSION"',
         "installed CLI reported a different version",
+        "runner architecture differs from the target archive",
         "flasher-installation-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}",
     ):
         if installation_gate not in installation:

@@ -185,6 +185,14 @@ class InstallationEvidenceTests(unittest.TestCase):
         ):
             WRITER.create(self.arguments, now=self.now)
 
+    def test_rejects_non_repository_identity(self) -> None:
+        self.arguments.repository = "repository-without-owner"
+        with self.assertRaisesRegex(
+            ValueError,
+            "owner/name identity",
+        ):
+            WRITER.create(self.arguments, now=self.now)
+
 
 if __name__ == "__main__":
     unittest.main()

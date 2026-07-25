@@ -319,6 +319,10 @@ jobs:
           if ($env:GITHUB_SHA -cne $env:SOURCE_COMMIT) {
               throw 'workflow SHA differs from the candidate source commit'
           }
+          $RuntimeArchitecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+          if ($RuntimeArchitecture.ToString() -cne 'X64') {
+              throw 'runner architecture differs from the target archive'
+          }
           & target/installation/install.ps1
           $Binary = Join-Path $env:HOPSPOT_FLASH_INSTALL_DIR 'hopspot-flash.exe'
           $VersionOutput = ((& $Binary --version) -join "`n").Trim()

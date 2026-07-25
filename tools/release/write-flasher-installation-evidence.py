@@ -22,6 +22,7 @@ TARGET_EXTENSIONS = {
 }
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+REPOSITORY_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
 
 def timestamp(value: str, label: str) -> datetime:
@@ -95,10 +96,8 @@ def create(arguments: argparse.Namespace, now: datetime | None = None) -> dict:
         arguments.workflow_run_attempt,
         "workflow run attempt",
     )
-    if not arguments.repository or any(
-        character.isspace() for character in arguments.repository
-    ):
-        raise ValueError("repository must be a nonempty owner/name identity")
+    if not REPOSITORY_PATTERN.fullmatch(arguments.repository):
+        raise ValueError("repository must be an owner/name identity")
     if not arguments.workflow_job or any(
         ord(character) < 0x20 for character in arguments.workflow_job
     ):
