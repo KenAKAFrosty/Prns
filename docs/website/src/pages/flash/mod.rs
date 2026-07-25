@@ -9,7 +9,9 @@ mod view;
 use dioxus::prelude::*;
 use dioxus_i18n::t;
 
-use crate::platforms::{board_target_by_slug, ROADMAP_BOARD_TARGETS, SHIPPING_BOARD_TARGETS};
+use crate::platforms::{
+    board_target_by_slug, Tier, SHIPPING_BOARD_TARGETS, UPCOMING_BOARD_TARGETS,
+};
 use crate::routes::Route;
 
 use view::{BoardTargetCard, GuidedFlasher, UnavailablePanel};
@@ -77,10 +79,21 @@ fn FlashExperience(selected_slug: Option<String>) -> Element {
                     }
                 }
             }
+            section { class: "mt-10",
+                h3 { class: "text-xl font-semibold tracking-tight text-paper", "Active bring-up" }
+                p { class: "mt-2 max-w-3xl text-sm leading-relaxed text-soft",
+                    "These boards are actively being brought online. They are visible here for progress tracking, but are not public flash targets yet."
+                }
+                div { class: "mt-5 grid gap-4 md:grid-cols-2",
+                    for board in UPCOMING_BOARD_TARGETS.iter().filter(|board| board.tier == Tier::BringUp) {
+                        BoardTargetCard { key: "{board.slug}", board, selected: false }
+                    }
+                }
+            }
             details { class: "mt-6 rounded-card border border-line/50 bg-layer/30 p-4",
-                summary { class: "cursor-pointer font-semibold text-soft", "Coming later" }
+                summary { class: "cursor-pointer font-semibold text-soft", "Roadmap" }
                 div { class: "mt-4 grid gap-4 md:grid-cols-2",
-                    for board in ROADMAP_BOARD_TARGETS.iter() {
+                    for board in UPCOMING_BOARD_TARGETS.iter().filter(|board| board.tier == Tier::Roadmap) {
                         BoardTargetCard { key: "{board.slug}", board, selected: false }
                     }
                 }

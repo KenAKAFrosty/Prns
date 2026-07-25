@@ -49,8 +49,8 @@ standards-license-label = Licence
 standards-license-headline = MIT / Apache 2.0
 standards-license-body = Double licence permissive. Pas de copyleft ni de restrictions commerciales.
 standards-safety-label = Sécurité
-standards-safety-headline = #![forbid(unsafe_code)]
-standards-safety-body = Le moteur personal-rns ne contient aucun unsafe, garanti par le compilateur. Le unsafe des dépendances est vérifié contre l'UB sous Miri et audité avec cargo-geiger.
+standards-safety-headline = Imposé, puis audité
+standards-safety-body = Dans le moteur, les panics, les unwraps et le unsafe injustifié ne compilent jamais. Ce qui ne peut pas être interdit est audité : le unsafe des dépendances avec cargo-geiger, le comportement indéfini sous Miri, les avis de sécurité avec cargo-deny.
 standards-correctness-label = Correction
 standards-correctness-headline = Diff-testé contre RNS
 standards-correctness-body = Chaque changement est vérifié contre la référence, puis passe par des tests de propriétés, de fuzzing et de mutation, avec des preuves Kani là où elles comptent.
@@ -103,12 +103,7 @@ landing-platforms-label = Runs on
 landing-platforms-cta = See all →
 platforms-title = Where Prns runs
 platforms-lead = One engine, many homes. This quick view separates runtime platform support from specific Hopspot board support.
-platforms-legend-runtime = Runtime platform
-platforms-legend-bringup = Active bring-up
-platforms-legend-roadmap = Roadmap
-platforms-runtime-title = Runtime support quick view
-platforms-runtime-lead = Microcontrollers list silicon and radio families here; exact boards, flashing readiness, and interfaces live in the board catalog.
-platforms-board-support-link = Specific board support →
+platforms-board-support-link = View board support & bring-up →
 
 # Flash a Hopspot page
 flash-back = Platforms

@@ -6,12 +6,15 @@ pub fn PlatformChip(
     icon: Option<String>,
     badge: Option<String>,
     muted: bool,
+    #[props(default)] supported: bool,
     decorative: bool,
 ) -> Element {
-    let class = if muted {
-        "platform-chip platform-chip--muted"
-    } else {
-        "platform-chip"
+    let class = match badge.as_deref() {
+        Some("bring-up") => "platform-chip platform-chip--muted platform-chip--bringup",
+        Some("roadmap") => "platform-chip platform-chip--muted platform-chip--roadmap",
+        _ if supported => "platform-chip platform-chip--supported",
+        _ if muted => "platform-chip platform-chip--muted",
+        _ => "platform-chip",
     };
     rsx! {
         span {
