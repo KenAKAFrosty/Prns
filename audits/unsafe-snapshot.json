@@ -574,11 +574,6 @@
           "alloc",
           "default",
           "std"
-        ],
-        "ios": [
-          "alloc",
-          "default",
-          "std"
         ]
       },
       "name": "base64",
@@ -3095,9 +3090,6 @@
         ],
         "desktop-macos": [
           "default"
-        ],
-        "ios": [
-          "default"
         ]
       },
       "name": "deranged",
@@ -4824,8 +4816,7 @@
         "desktop-macos": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
-        "esp32-s3-tbeam": [],
-        "ios": []
+        "esp32-s3-tbeam": []
       },
       "name": "equivalent",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -7230,8 +7221,7 @@
         "desktop-macos": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
-        "esp32-s3-tbeam": [],
-        "ios": []
+        "esp32-s3-tbeam": []
       },
       "name": "hashbrown",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -7902,10 +7892,6 @@
         "esp32-s3-tbeam": [
           "default",
           "std"
-        ],
-        "ios": [
-          "default",
-          "std"
         ]
       },
       "name": "indexmap",
@@ -8063,10 +8049,6 @@
           "std"
         ],
         "esp32-s3-tbeam": [
-          "default",
-          "std"
-        ],
-        "ios": [
           "default",
           "std"
         ]
@@ -8803,10 +8785,6 @@
         "esp32-s3-tbeam": [
           "default",
           "std"
-        ],
-        "ios": [
-          "default",
-          "std"
         ]
       },
       "name": "mac-addr",
@@ -9528,12 +9506,6 @@
           "apple-system-configuration-extra",
           "default",
           "gateway"
-        ],
-        "ios": [
-          "android-extra",
-          "apple-system-configuration-extra",
-          "default",
-          "gateway"
         ]
       },
       "name": "netdev",
@@ -9811,8 +9783,7 @@
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
-        "desktop-macos": [],
-        "ios": []
+        "desktop-macos": []
       },
       "name": "num-conv",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -11391,14 +11362,6 @@
           "SCPreferences",
           "SCSchemaDefinitions",
           "bitflags"
-        ],
-        "ios": [
-          "SCDynamicStore",
-          "SCDynamicStoreKey",
-          "SCNetworkConfiguration",
-          "SCPreferences",
-          "SCSchemaDefinitions",
-          "bitflags"
         ]
       },
       "name": "objc2-system-configuration",
@@ -12158,10 +12121,6 @@
         "desktop-macos": [
           "default",
           "serde"
-        ],
-        "ios": [
-          "default",
-          "serde"
         ]
       },
       "name": "plist",
@@ -12341,8 +12300,7 @@
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
-        "desktop-macos": [],
-        "ios": []
+        "desktop-macos": []
       },
       "name": "powerfmt",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -13387,9 +13345,6 @@
           "default"
         ],
         "desktop-macos": [
-          "default"
-        ],
-        "ios": [
           "default"
         ]
       },
@@ -14597,12 +14552,6 @@
           "serde_derive",
           "std"
         ],
-        "ios": [
-          "default",
-          "derive",
-          "serde_derive",
-          "std"
-        ],
         "nrf52840": [
           "default",
           "derive",
@@ -14715,11 +14664,6 @@
           "result",
           "std"
         ],
-        "ios": [
-          "alloc",
-          "result",
-          "std"
-        ],
         "nrf52840": [
           "result",
           "std"
@@ -14766,9 +14710,6 @@
           "default"
         ],
         "esp32-s3-tbeam": [
-          "default"
-        ],
-        "ios": [
           "default"
         ],
         "nrf52840": [
@@ -16406,13 +16347,6 @@
           "local-offset",
           "parsing",
           "std"
-        ],
-        "ios": [
-          "alloc",
-          "default",
-          "formatting",
-          "parsing",
-          "std"
         ]
       },
       "name": "time",
@@ -16452,8 +16386,7 @@
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
-        "desktop-macos": [],
-        "ios": []
+        "desktop-macos": []
       },
       "name": "time-core",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -16477,10 +16410,6 @@
           "parsing"
         ],
         "daemon-windows": [
-          "formatting",
-          "parsing"
-        ],
-        "ios": [
           "formatting",
           "parsing"
         ]

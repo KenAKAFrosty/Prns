@@ -984,13 +984,10 @@ impl Supervisor {
                 ),
             );
         }
-        match gateways {
-            Ok(routes) => {
-                for nic in &fresh {
-                    self.refresh_gateway(nic.index, gateway_for(&routes, nic.index));
-                }
+        if let Ok(routes) = gateways {
+            for nic in &fresh {
+                self.refresh_gateway(nic.index, gateway_for(&routes, nic.index));
             }
-            Err(GatewayInventoryUnavailable) => {}
         }
         self.reap_orphaned_members();
         *nics = fresh;
