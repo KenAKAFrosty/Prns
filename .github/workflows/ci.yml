@@ -198,7 +198,7 @@ jobs:
         with:
           version: "1.21.0"
       - name: Install exact Dioxus CLI
-        run: cargo binstall --no-confirm --force dioxus-cli@0.7.5
+        run: cargo binstall --locked --no-confirm --force dioxus-cli@0.7.5
       - name: Shared manifest and standalone CLI
         run: |
           rustc --version | grep -E '^rustc 1\.96\.0 '

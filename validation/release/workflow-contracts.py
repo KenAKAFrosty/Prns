@@ -119,7 +119,7 @@ def validate() -> list[str]:
         "esp-15.2.0_20250920",
         'node-version: "24.18.0"',
         'version: "1.21.0"',
-        "dioxus-cli@0.7.5",
+        "cargo binstall --locked --no-confirm --force dioxus-cli@0.7.5",
         "link-arg=/Brepro",
         "./tools/prns release candidate compare --",
         "default: retain",
@@ -148,6 +148,17 @@ def validate() -> list[str]:
             errors.append(f"flasher-candidate.yml contains mutable production input {mutable!r}")
 
     ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    readiness = (
+        ROOT / ".github" / "workflows" / "release-readiness.yml"
+    ).read_text(encoding="utf-8")
+    locked_dioxus = "cargo binstall --locked --no-confirm --force dioxus-cli@0.7.5"
+    for name, workflow in (
+        ("ci.yml", ci),
+        ("flasher-candidate.yml", candidate),
+        ("release-readiness.yml", readiness),
+    ):
+        if locked_dioxus not in workflow:
+            errors.append(f"{name} does not install the exact Dioxus CLI from its lockfile")
     if "RUSTUP_TOOLCHAIN: 1.90.0" not in ci or "toolchain: 1.90.0" not in ci:
         errors.append("ci.yml does not explicitly force and install the Rust 1.90.0 MSRV")
     if 'node-version: "24.18.0"' not in ci:
