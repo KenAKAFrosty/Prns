@@ -16,7 +16,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$REPO_ROOT/validation/interop/lib/cargo-artifacts.sh"
-EXAMPLE="$(cargo_debug_example "$REPO_ROOT/prns-interfaces/impls/tokio/Cargo.toml" wifi_direct_linux)"
+EXAMPLE="$(cargo_debug_example "$REPO_ROOT/validation/integration/Cargo.toml" wifi_direct_linux)"
 WPA_BIN="$(command -v wpa_supplicant || echo /usr/sbin/wpa_supplicant)"
 HOSTAPD_BIN="$(command -v hostapd || echo /usr/sbin/hostapd)"
 
@@ -51,7 +51,7 @@ sudo -v
 if [ ! -x "$EXAMPLE" ]; then
     echo "example binary not found at $EXAMPLE" >&2
     echo "build it first as your user (not root):" >&2
-    echo "  (cd $REPO_ROOT/prns-interfaces/impls/tokio && cargo build --locked --example wifi_direct_linux --features \"wifi-direct log\")" >&2
+    echo "  cargo build --locked --manifest-path $REPO_ROOT/validation/integration/Cargo.toml --example wifi_direct_linux" >&2
     exit 1
 fi
 

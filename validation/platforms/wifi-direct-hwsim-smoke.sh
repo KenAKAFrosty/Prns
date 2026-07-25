@@ -7,7 +7,7 @@ echo "requires sudo; loads mac80211_hwsim; the real radio and its connection sta
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$REPO_ROOT/validation/interop/lib/cargo-artifacts.sh"
-EXAMPLE="$(cargo_debug_example "$REPO_ROOT/prns-interfaces/impls/tokio/Cargo.toml" wifi_direct_linux)"
+EXAMPLE="$(cargo_debug_example "$REPO_ROOT/validation/integration/Cargo.toml" wifi_direct_linux)"
 NS_A=prns-wd-a
 NS_B=prns-wd-b
 BUS_A=/tmp/$NS_A.bus
@@ -31,8 +31,8 @@ trap cleanup EXIT
 
 sudo -v
 
-cd "$REPO_ROOT/prns-interfaces/impls/tokio"
-cargo build --locked --example wifi_direct_linux --features "wifi-direct log"
+cd "$REPO_ROOT"
+cargo build --locked --manifest-path validation/integration/Cargo.toml --example wifi_direct_linux
 
 sudo modprobe -r mac80211_hwsim 2>/dev/null || true
 sudo modprobe mac80211_hwsim radios=2

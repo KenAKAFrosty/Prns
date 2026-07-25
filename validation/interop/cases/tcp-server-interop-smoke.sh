@@ -16,7 +16,7 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 source "$ROOT/validation/interop/lib/cargo-artifacts.sh"
-HOST="$(cargo_debug_example "$ROOT/prns-interfaces/impls/tokio/Cargo.toml" tcp_server_host)"
+HOST="$(cargo_debug_example "$ROOT/validation/integration/Cargo.toml" tcp_server_host)"
 VENV_PY="${SMOKE_PYTHON:-$ROOT/benchmarks/reference/.venv/bin/python}"
 CLIENT="$ROOT/validation/interop/peers/rns_tcp_client_peer.py"
 HOST_LOG="$(mktemp)"
@@ -43,7 +43,7 @@ PY
 echo "our TcpServer port=$PORT"
 
 echo "building the tcp_server_host example..."
-( cd "$ROOT/prns-interfaces/impls/tokio" && cargo build --quiet --example tcp_server_host --features tcp ) \
+cargo build --quiet --manifest-path "$ROOT/validation/integration/Cargo.toml" --example tcp_server_host \
     || { echo "FAIL: tcp_server_host build"; exit 1; }
 
 # 1) Our node: a TcpServer hosting a ProveAll destination it announces.

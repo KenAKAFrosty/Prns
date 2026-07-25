@@ -13,7 +13,7 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 source "$ROOT/validation/interop/lib/cargo-artifacts.sh"
-DAEMON="$(cargo_debug_example "$ROOT/prns-interfaces/impls/tokio/Cargo.toml" local_shared_instance)"
+DAEMON="$(cargo_debug_example "$ROOT/validation/integration/Cargo.toml" local_shared_instance)"
 VENV_PY="${SMOKE_PYTHON:-$ROOT/benchmarks/reference/.venv/bin/python}"
 CLIENT="$ROOT/validation/interop/peers/rns_shared_instance_client.py"
 DAEMON_LOG="$(mktemp)"
@@ -41,7 +41,7 @@ CONTROL_PORT="${PORTS##* }"
     || { echo "FAIL: could not allocate shared-instance ports"; exit 1; }
 
 echo "building the daemon example..."
-( cd "$ROOT/prns-interfaces/impls/tokio" && cargo build --quiet --example local_shared_instance --features shared-instance ) \
+cargo build --quiet --manifest-path "$ROOT/validation/integration/Cargo.toml" --example local_shared_instance \
     || { echo "FAIL: daemon build"; exit 1; }
 
 PRNS_LOCAL_PORT="$PORT" \

@@ -9,7 +9,7 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 source "$ROOT/validation/interop/lib/cargo-artifacts.sh"
-DAEMON="$(cargo_debug_example "$ROOT/prns-interfaces/impls/tokio/Cargo.toml" local_shared_rpc_instance)"
+DAEMON="$(cargo_debug_example "$ROOT/validation/integration/Cargo.toml" local_shared_rpc_instance)"
 VENV_PY="${RPC_SMOKE_PYTHON:-$ROOT/validation/.venv/rns-rpc-1.4.0/bin/python}"
 EXPECTED_RNS_VERSION="${RPC_SMOKE_EXPECTED_RNS_VERSION:-1.4.0}"
 CLIENT="$ROOT/validation/interop/peers/rns_shared_rpc_client.py"
@@ -56,7 +56,7 @@ fi
 }
 
 echo "building the shared-instance RPC daemon example..."
-( cd "$ROOT/prns-interfaces/impls/tokio" && cargo build --quiet --example local_shared_rpc_instance --features shared-instance ) \
+cargo build --quiet --manifest-path "$ROOT/validation/integration/Cargo.toml" --example local_shared_rpc_instance \
     || { echo "FAIL: daemon build"; exit 1; }
 
 PRNS_LOCAL_PORT="$LOCAL_PORT" \

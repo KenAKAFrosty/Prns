@@ -16,7 +16,7 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 source "$ROOT/validation/interop/lib/cargo-artifacts.sh"
-DAEMON="$(cargo_debug_example "$ROOT/prns-interfaces/impls/tokio/Cargo.toml" local_transit_daemon)"
+DAEMON="$(cargo_debug_example "$ROOT/validation/integration/Cargo.toml" local_transit_daemon)"
 VENV_PY="${SMOKE_PYTHON:-$ROOT/benchmarks/reference/.venv/bin/python}"
 PEER="$ROOT/validation/interop/peers/rns_transit_peer.py"
 CLIENT="$ROOT/validation/interop/peers/rns_transit_client.py"
@@ -49,7 +49,7 @@ EOF
 echo "peer tcp=$PEER_TCP_PORT  bridge local=$LOCAL_PORT"
 
 echo "building the bridge daemon example..."
-( cd "$ROOT/prns-interfaces/impls/tokio" && cargo build --quiet --example local_transit_daemon --features "shared-instance tcp" ) \
+cargo build --quiet --manifest-path "$ROOT/validation/integration/Cargo.toml" --example local_transit_daemon \
     || { echo "FAIL: daemon build"; exit 1; }
 
 # 1) The remote RNS peer (TCP server). Wait until its destination is up.

@@ -167,7 +167,7 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           workspaces: prns-napi -> target/${{ matrix.settings.target }}-${{ matrix.settings.toolchain }}
-          key: ${{ matrix.settings.target }}-${{ matrix.settings.toolchain }}
+          key: ${{ matrix.settings.target }}-${{ matrix.settings.toolchain }}-${{ hashFiles('prns-napi/tools/glibc-compat.h', 'prns-napi/tools/napi-build.mjs') }}
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29
         if: ${{ contains(matrix.settings.target, 'musl') }}
         with:
@@ -185,7 +185,6 @@ jobs:
         working-directory: prns-napi
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/prns-napi/target/${{ matrix.settings.target }}-${{ matrix.settings.toolchain }}
-          CFLAGS: ${{ contains(matrix.settings.target, 'linux-gnu') && '-std=gnu17' || '' }}
       - name: enforce the GNU compatibility floor
         if: ${{ contains(matrix.settings.target, 'linux-gnu') }}
         run: |
