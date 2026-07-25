@@ -69,20 +69,34 @@ end
 function next_event(stream::OwnedEventStream)
     lock(stream.wait_guard) do
         output = Ref{Ptr{Cvoid}}(C_NULL)
-        status = Status(
-            ccall(
-                native_symbol(:prns_event_stream_next),
-                UInt32,
-                (Ptr{Cvoid}, UInt32, Ref{Ptr{Cvoid}}),
-                stream_pointer(stream),
-                NEVER_TIMEOUT,
-                output,
-            ),
-        )
-        status == StatusStopped && throw(EOFError())
-        status == StatusOk || throw(StatusFailure(:next_event, status))
-        output[]
+        while true
+            status = next_event_status(stream, EVENT_WAIT_SLICE_MILLIS, output)
+            if status == StatusTimedOut
+                yield()
+                continue
+            end
+            status == StatusStopped && throw(EOFError())
+            status == StatusOk || throw(StatusFailure(:next_event, status))
+            return output[]
+        end
     end
+end
+
+function next_event_status(
+    stream::OwnedEventStream,
+    timeout_milliseconds::UInt32,
+    output::Ref{Ptr{Cvoid}},
+)
+    Status(
+        ccall(
+            native_symbol(:prns_event_stream_next),
+            UInt32,
+            (Ptr{Cvoid}, UInt32, Ref{Ptr{Cvoid}}),
+            stream_pointer(stream),
+            timeout_milliseconds,
+            output,
+        ),
+    )
 end
 
 function interrupt_wait!(stream::OwnedEventStream)

@@ -1,4 +1,5 @@
 const NEVER_TIMEOUT = typemax(UInt32)
+const EVENT_WAIT_SLICE_MILLIS = UInt32(50)
 const NATIVE_LIBRARY = Ref{Ptr{Cvoid}}(C_NULL)
 
 struct NativeByteView

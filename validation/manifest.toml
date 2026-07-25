@@ -5,6 +5,9 @@ cargo_fuzz = "0.13.1"
 cargo_mutants = "27.1.0"
 kani = "0.67.0"
 
+[toolchains]
+nightly = "nightly-2025-11-21"
+
 [interpreters.smoke]
 environment = "SMOKE_PYTHON"
 venv = "validation/.venv/rns-1.4.0"
@@ -411,7 +414,7 @@ tiers = ["release", "scheduled"]
 platform = "any"
 toolchain = "nightly"
 timeout_seconds = 1200
-command = ["cargo", "+nightly", "fuzz", "check", "--fuzz-dir", "."]
+command = ["cargo", "+__NIGHTLY_TOOLCHAIN__", "fuzz", "check", "--fuzz-dir", "."]
 working_directory = "validation/fuzz"
 inputs = ["validation/fuzz/Cargo.toml", "validation/fuzz/fuzz_targets"]
 artifacts = "validation-artifacts/results/fuzz-build"
@@ -528,7 +531,13 @@ platform = "linux"
 toolchain = "esp"
 timeout_seconds = 7200
 command = ["bash", "validation/platforms/shipping-firmware.sh"]
-inputs = ["validation/platforms/shipping-firmware.sh", "tools/release/build-flash-artifact.sh", "tools/release/install-release-esp-toolchain.sh"]
+inputs = [
+  "validation/platforms/shipping-firmware.sh",
+  "tools/release/build-flash-artifact.sh",
+  "tools/release/install-release-esp-toolchain.sh",
+  "tools/release/release-esp-toolchain-identity.sh",
+  "tools/release/verify-release-esp-toolchain.sh",
+]
 artifacts = "validation-artifacts/results/shipping-firmware"
 
 [[suite]]
@@ -674,9 +683,11 @@ timeout_seconds = 1200
 command = ["npm", "--prefix", "prns-wasm", "run", "check:events"]
 inputs = [
   "prns-wasm/package.json",
+  "prns-wasm/tsconfig.json",
+  "prns-wasm/scripts/stage-event-smoke.mjs",
   "prns-wasm/smoke/event-smoke.ts",
   "prns-wasm/smoke/mock_runtime.ts",
-  "tools/build/stage-wasm-docs-browser-playground.sh",
+  "prns-wasm/examples/browser-playground/presentation.ts",
 ]
 artifacts = "validation-artifacts/results/wasm-events"
 

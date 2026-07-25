@@ -116,7 +116,7 @@ def validate() -> list[str]:
     required_candidate_fragments = (
         "RUSTUP_TOOLCHAIN: 1.96.0",
         "components: llvm-tools-preview",
-        "esp-15.2.0_20250920",
+        "./tools/prns release toolchain esp verify",
         'node-version: "24.18.0"',
         'version: "1.21.0"',
         "cargo binstall --locked --no-confirm --force dioxus-cli@0.7.5",
@@ -164,6 +164,66 @@ def validate() -> list[str]:
             errors.append(
                 f"release-readiness.yml does not install required package {native_package!r}"
             )
+    android_targets = "rustup target add aarch64-linux-android armv7-linux-androideabi"
+    if android_targets not in readiness:
+        errors.append("release-readiness.yml does not install both Android Rust targets")
+    for windows_python_gate in (
+        "VALIDATION_PYTHON: ${{ runner.os == 'Windows' && 'python' || 'python3' }}",
+        '"$VALIDATION_PYTHON" validation/run.py run',
+    ):
+        if windows_python_gate not in readiness:
+            errors.append(
+                "release-readiness.yml is missing Windows validation Python gate "
+                f"{windows_python_gate!r}"
+            )
+
+    manifest = (ROOT / "validation" / "manifest.toml").read_text(encoding="utf-8")
+    if 'nightly = "nightly-2025-11-21"' not in manifest:
+        errors.append("validation/manifest.toml does not own the exact nightly pin")
+    for workflow_name in (
+        "hardening.yml",
+        "deep-validation.yml",
+        "release-readiness.yml",
+    ):
+        workflow = (ROOT / ".github" / "workflows" / workflow_name).read_text(
+            encoding="utf-8"
+        )
+        if "toolchain: nightly" in workflow or "toolchain install nightly" in workflow:
+            errors.append(f"{workflow_name} installs a floating nightly")
+        if "validation/run.py toolchain nightly" not in workflow:
+            errors.append(f"{workflow_name} does not resolve the manifest-owned nightly")
+
+    wasm_package = json.loads(
+        (ROOT / "prns-wasm" / "package.json").read_text(encoding="utf-8")
+    )
+    wasm_scripts = wasm_package.get("scripts", {})
+    if "stage:docs" in str(wasm_scripts.get("check:events", "")):
+        errors.append("prns-wasm check:events must not stage tracked documentation assets")
+    if "stage-event-smoke.mjs" not in str(wasm_scripts.get("build:smoke", "")):
+        errors.append("prns-wasm build:smoke does not stage its ignored presentation dependency")
+
+    esp_identity = (
+        ROOT / "tools" / "release" / "release-esp-toolchain-identity.sh"
+    ).read_text(encoding="utf-8")
+    esp_installer = (
+        ROOT / "tools" / "release" / "install-release-esp-toolchain.sh"
+    ).read_text(encoding="utf-8")
+    esp_verifier = (
+        ROOT / "tools" / "release" / "verify-release-esp-toolchain.sh"
+    ).read_text(encoding="utf-8")
+    for identity_gate in (
+        'ESP_RUSTC_BANNER="rustc 1.95.0-nightly (95e5bda86 2026-04-15) (1.95.0.0)"',
+        'ESP_RUSTC_RELEASE="1.95.0-nightly"',
+        'ESP_RUSTC_COMMIT_HASH="95e5bda868c960c607597bc03ed9e8f0ad26226d"',
+        'ESP_RUSTC_COMMIT_DATE="2026-04-15"',
+    ):
+        if identity_gate not in esp_identity:
+            errors.append(f"ESP toolchain identity is missing exact gate {identity_gate!r}")
+    if "verify-release-esp-toolchain.sh" not in esp_installer:
+        errors.append("ESP toolchain installer does not reuse the exact identity proof")
+    for field in ("banner", "release", "commit_hash", "commit_date"):
+        if field not in esp_verifier:
+            errors.append(f"ESP toolchain verifier does not check {field}")
     if "RUSTUP_TOOLCHAIN: 1.90.0" not in ci or "toolchain: 1.90.0" not in ci:
         errors.append("ci.yml does not explicitly force and install the Rust 1.90.0 MSRV")
     if 'node-version: "24.18.0"' not in ci:

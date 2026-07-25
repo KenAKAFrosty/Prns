@@ -18,6 +18,9 @@ use super::super::PrnsNodeHandle;
 use super::RESPONSE_PACKET_CEILING;
 use prns_core::rncp::parse_file_metadata;
 
+static MULTI_SEGMENT_STATIC_RESPONSE: [u8; super::STATIC_RESPONSE_SEGMENT_BYTES * 2 + 33_333] =
+    [0x42; super::STATIC_RESPONSE_SEGMENT_BYTES * 2 + 33_333];
+
 fn handle() -> (PrnsNodeHandle, UnboundedReceiver<HostCommand>) {
     let (commands, command_rx) = mpsc::unbounded_channel();
     (PrnsNodeHandle::over(commands), command_rx)
@@ -236,8 +239,7 @@ async fn static_file_response_waits_for_each_proof_and_bounds_each_window() {
         request_id: RequestId([14; 16]),
         rtt: RttMillis::new(36),
     };
-    let bytes: &'static [u8] =
-        std::vec![0x42; super::STATIC_RESPONSE_SEGMENT_BYTES * 2 + 33_333].leak();
+    let bytes: &'static [u8] = &MULTI_SEGMENT_STATIC_RESPONSE;
     let responding = tokio::spawn(async move {
         handle
             .respond_static_file_settled(token, "source.zip", bytes)

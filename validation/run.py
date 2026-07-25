@@ -50,6 +50,7 @@ VALID_TOOLCHAINS = {
     "jvm",
     "esp",
 }
+NIGHTLY_TOOLCHAIN_ARGUMENT = "+__NIGHTLY_TOOLCHAIN__"
 
 
 class ValidationError(RuntimeError):
@@ -68,6 +69,15 @@ def load_manifest(path: Path = MANIFEST_PATH) -> dict:
     if manifest.get("schema") != 1:
         raise ValidationError("validation manifest schema must be 1")
     return manifest
+
+
+def named_toolchain(manifest: dict, name: str) -> str:
+    value = manifest.get("toolchains", {}).get(name)
+    if name == "nightly" and isinstance(value, str) and re.fullmatch(
+        r"nightly-\d{4}-\d{2}-\d{2}", value
+    ):
+        return value
+    raise ValidationError(f"validation toolchain {name!r} is missing or not exact-pinned")
 
 
 def native_platform() -> str:
@@ -145,6 +155,7 @@ def virtual_suites(manifest: dict) -> list[dict]:
         )
     for target in manifest.get("fuzz_target", []):
         name = target["name"]
+        nightly = named_toolchain(manifest, "nightly")
         suites.append(
             {
                 "id": f"fuzz-{name}",
@@ -156,7 +167,7 @@ def virtual_suites(manifest: dict) -> list[dict]:
                 "timeout_seconds": target.get("timeout_seconds", 600),
                 "command": [
                     "cargo",
-                    "+nightly",
+                    f"+{nightly}",
                     "fuzz",
                     "run",
                     "--fuzz-dir",
@@ -175,6 +186,16 @@ def virtual_suites(manifest: dict) -> list[dict]:
                 "working_directory": "validation/fuzz",
             }
         )
+    if any(
+        NIGHTLY_TOOLCHAIN_ARGUMENT in suite.get("command", [])
+        for suite in suites
+    ):
+        nightly = named_toolchain(manifest, "nightly")
+        for suite in suites:
+            suite["command"] = [
+                f"+{nightly}" if part == NIGHTLY_TOOLCHAIN_ARGUMENT else part
+                for part in suite.get("command", [])
+            ]
     return suites
 
 
@@ -288,6 +309,10 @@ def validate_triage(path: Path = TRIAGE_PATH) -> list[str]:
 
 def validate_manifest(manifest: dict, check_tools: bool = False) -> list[str]:
     errors: list[str] = []
+    try:
+        named_toolchain(manifest, "nightly")
+    except ValidationError as error:
+        errors.append(str(error))
     try:
         suites = suite_map(manifest)
     except ValidationError as error:
@@ -484,8 +509,9 @@ def verification_report(manifest: dict, check_tools: bool) -> list[str]:
 def validate_tool_versions(manifest: dict) -> list[str]:
     errors = []
     tools = manifest.get("tools", {})
+    nightly = named_toolchain(manifest, "nightly")
     commands = {
-        "cargo_fuzz": ["cargo", "+nightly", "fuzz", "--version"],
+        "cargo_fuzz": ["cargo", f"+{nightly}", "fuzz", "--version"],
         "cargo_mutants": ["cargo", "mutants", "--version"],
         "kani": ["cargo", "kani", "--version"],
     }
@@ -628,21 +654,24 @@ def command_version(command: list[str]) -> str:
     return (result.stdout or result.stderr).strip().splitlines()[0]
 
 
-def tool_versions(suite: dict) -> dict[str, str]:
+def tool_versions(manifest: dict, suite: dict) -> dict[str, str]:
     versions = {
         "python": sys.version.splitlines()[0],
         "cargo": command_version(["cargo", "--version"]),
         "rustc": command_version(["rustc", "--version"]),
     }
     domain = suite["domain"]
+    nightly = named_toolchain(manifest, "nightly")
     if domain == "fuzz":
-        versions["cargo-fuzz"] = command_version(["cargo", "+nightly", "fuzz", "--version"])
+        versions["cargo-fuzz"] = command_version(
+            ["cargo", f"+{nightly}", "fuzz", "--version"]
+        )
     elif domain == "kani":
         versions["kani"] = command_version(["cargo", "kani", "--version"])
     elif domain == "mutation":
         versions["cargo-mutants"] = command_version(["cargo", "mutants", "--version"])
     if suite.get("toolchain") == "nightly":
-        versions["rustc-nightly"] = command_version(["rustc", "+nightly", "--version"])
+        versions["rustc-nightly"] = command_version(["rustc", f"+{nightly}", "--version"])
     if suite.get("toolchain") == "node" or suite.get("group") == "web":
         versions["node"] = command_version(["node", "--version"])
         versions["npm"] = command_version(["npm", "--version"])
@@ -697,7 +726,7 @@ def run_suite(manifest: dict, suite: dict, expected_sha: str | None, fuzz_second
         specification = manifest["interpreters"][interpreter]
         resolved_interpreter = resolve_interpreter(manifest, interpreter)
         environment[specification["environment"]] = resolved_interpreter
-    versions = tool_versions(suite)
+    versions = tool_versions(manifest, suite)
     if resolved_interpreter:
         versions["oracle-python"] = command_version([resolved_interpreter, "--version"])
         versions["stock-rns"] = f"RNS {specification['version']}"
@@ -1101,6 +1130,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--platform", choices=["current", *sorted(VALID_PLATFORMS)])
     run.add_argument("--expected-sha")
     run.add_argument("--fuzz-seconds", type=int, default=int(os.environ.get("PRNS_FUZZ_SECONDS", "30")))
+    toolchain = subcommands.add_parser("toolchain")
+    toolchain.add_argument("name", choices=["nightly"])
     subcommands.add_parser("prepare-oracles")
     mutation = subcommands.add_parser("mutation-check")
     mutation.add_argument("--results", type=Path, required=True)
@@ -1193,6 +1224,8 @@ def main() -> int:
             ]
             passed = all(results)
             return 0 if passed else 1
+        elif arguments.command == "toolchain":
+            print(named_toolchain(manifest, arguments.name))
         elif arguments.command == "prepare-oracles":
             prepare_oracles(manifest)
         elif arguments.command == "mutation-check":
