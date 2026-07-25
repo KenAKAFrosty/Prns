@@ -341,10 +341,7 @@ jobs:
           test "$(node --version)" = "v24.18.0"
           cargo-binstall -V | grep -E '(^| )1\.21\.0($| )'
           dx --version | grep -E '(^| )0\.7\.5($| )'
-          espup --version | grep -E '(^| )0\.17\.1($| )'
-          rustc +esp -vV | grep -E '^release: 1\.95\.0'
-          test "$(xtensa-esp-elf-gcc --version | head -n 1)" = \
-            'xtensa-esp-elf-gcc (crosstool-NG esp-15.2.0_20250920) 15.2.0'
+          ./tools/prns release toolchain esp verify
           host_triple="$(rustc -vV | sed -n 's/^host: //p')"
           llvm_objcopy="$(rustc --print sysroot)/lib/rustlib/$host_triple/bin/llvm-objcopy"
           test -x "$llvm_objcopy"

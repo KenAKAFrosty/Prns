@@ -1398,6 +1398,8 @@ const AWAITING_PROOF_RETRIES: u8 = 3;
 
 #[cfg(test)]
 mod tests {
+    use std::sync::LazyLock;
+
     use super::*;
     use crate::crypto::{x25519_diffie_hellman, X25519PublicKey, X25519SecretKey};
     use crate::crypto::{BufferTooShort, Ed25519PublicKey, Ed25519SecretKey};
@@ -1603,8 +1605,16 @@ mod tests {
         capture
     }
 
+    static CASE1_PLAINTEXT: LazyLock<std::vec::Vec<u8>> =
+        LazyLock::new(|| b"reticulum resources ride the link ".repeat(40));
+    static MULTI_SEGMENT_STATIC_RESPONSE: [u8; STATIC_RESPONSE_SEGMENT_BYTES * 2 + 31_337] =
+        [0x42; STATIC_RESPONSE_SEGMENT_BYTES * 2 + 31_337];
+    static REJECTED_STATIC_RESPONSE: [u8; STATIC_RESPONSE_SEGMENT_BYTES * 2 + 1] =
+        [0x42; STATIC_RESPONSE_SEGMENT_BYTES * 2 + 1];
+    static OVERSIZED_FIXED_LAYOUT_STATIC_RESPONSE: [u8; 12_000] = [0x42; 12_000];
+
     fn case1_plaintext() -> std::vec::Vec<u8> {
-        b"reticulum resources ride the link ".repeat(40)
+        CASE1_PLAINTEXT.clone()
     }
 
     const CASE1_BZ2: &str = "425a6839314159265359cf3017f4000207918040000e6f9e002000902980000a54a7a869ea794d3227c13a1382644e09a09a1342684f213f04c09b1382704ec2684d89e04c8ab61302604d09d09d89fc5dc914e142433cc05fd0";
@@ -1788,7 +1798,7 @@ mod tests {
             MAX_PACKED_BINARY_HEADER_LEN, RESPONSE_WIRE_OVERHEAD,
         };
 
-        let page: &'static [u8] = case1_plaintext().leak();
+        let page: &'static [u8] = CASE1_PLAINTEXT.as_slice();
         let request_id = RequestId([0x5A; 16]);
 
         let mut packed_page = std::vec![0u8; packed_binary_len(page.len()).unwrap()];
@@ -1911,7 +1921,7 @@ mod tests {
             other => panic!("expected the packet rung, got {other:?}"),
         }
 
-        let big: &'static [u8] = case1_plaintext().leak();
+        let big: &'static [u8] = CASE1_PLAINTEXT.as_slice();
         assert!(matches!(
             engine.ingest_respond(
                 CommandId(2),
@@ -1952,8 +1962,7 @@ mod tests {
         use crate::engine::{Respond, RespondPayload};
         use crate::routing::links::request::RequestId;
 
-        let bytes: &'static [u8] =
-            std::vec![0x42; STATIC_RESPONSE_SEGMENT_BYTES * 2 + 31_337].leak();
+        let bytes: &'static [u8] = &MULTI_SEGMENT_STATIC_RESPONSE;
         let request_id = RequestId([0xA7; 16]);
         let mut engine = heap_sender_with_active_link();
         let mut first = SendCapture {
@@ -2076,7 +2085,7 @@ mod tests {
         use crate::engine::{Respond, RespondPayload};
         use crate::routing::links::request::RequestId;
 
-        let bytes: &'static [u8] = std::vec![0x42; STATIC_RESPONSE_SEGMENT_BYTES * 2 + 1].leak();
+        let bytes: &'static [u8] = &REJECTED_STATIC_RESPONSE;
         let mut engine = heap_sender_with_active_link();
         let mut first = SendCapture {
             frames: std::vec::Vec::new(),
@@ -2130,7 +2139,7 @@ mod tests {
         use crate::engine::{Respond, RespondPayload};
         use crate::routing::links::request::RequestId;
 
-        let bytes: &'static [u8] = std::vec![0x42; 12_000].leak();
+        let bytes: &'static [u8] = &OVERSIZED_FIXED_LAYOUT_STATIC_RESPONSE;
         let mut engine = sender_with_active_link();
         let mut capture = SendCapture {
             frames: std::vec::Vec::new(),

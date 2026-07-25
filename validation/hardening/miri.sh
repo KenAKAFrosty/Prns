@@ -3,12 +3,13 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$root"
+nightly="$(python3 validation/run.py toolchain nightly)"
 
-if ! rustup run nightly rustc --version >/dev/null 2>&1; then
-    rustup toolchain install nightly --profile minimal
+if ! rustup run "$nightly" rustc --version >/dev/null 2>&1; then
+    rustup toolchain install "$nightly" --profile minimal
 fi
-rustup component add --toolchain nightly miri rust-src
-cargo +nightly miri setup
+rustup component add --toolchain "$nightly" miri rust-src
+cargo "+$nightly" miri setup
 
 export PROPTEST_CASES="${PROPTEST_CASES:-32}"
 export PROPTEST_DISABLE_FAILURE_PERSISTENCE="${PROPTEST_DISABLE_FAILURE_PERSISTENCE:-1}"
@@ -23,7 +24,7 @@ run_miri() {
         flags="$flags -Zmiri-tree-borrows"
     fi
     echo "[miri:$model] ${*:-all prns-core tests}"
-    MIRIFLAGS="$flags" cargo +nightly miri test --locked -p prns-core -- "$@" --test-threads=1
+    MIRIFLAGS="$flags" cargo "+$nightly" miri test --locked -p prns-core -- "$@" --test-threads=1
 }
 
 mode="${1:---quick}"

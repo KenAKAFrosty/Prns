@@ -164,6 +164,20 @@ expires = "yesterday"
             arguments = parser.parse_args([command, "--platform", "current"])
             self.assertEqual(arguments.platform, "current")
 
+    def test_nightly_toolchain_is_exact_and_resolves_every_suite_command(self) -> None:
+        nightly = runner.named_toolchain(self.manifest, "nightly")
+        self.assertEqual(nightly, "nightly-2025-11-21")
+        parser = runner.build_parser()
+        arguments = parser.parse_args(["toolchain", "nightly"])
+        self.assertEqual(arguments.name, "nightly")
+        commands = [
+            part
+            for suite in runner.virtual_suites(self.manifest)
+            for part in suite["command"]
+        ]
+        self.assertNotIn(runner.NIGHTLY_TOOLCHAIN_ARGUMENT, commands)
+        self.assertIn(f"+{nightly}", commands)
+
     def test_verification_report_explains_its_guarantees(self) -> None:
         report = "\n".join(runner.verification_report(self.manifest, check_tools=False))
         for guarantee in (

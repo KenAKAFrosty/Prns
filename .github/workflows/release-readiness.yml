@@ -79,7 +79,9 @@ jobs:
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
       - name: Prepare nightly validation toolchain
         if: matrix.toolchain == 'nightly' || matrix.toolchain == 'kani'
-        run: rustup toolchain install nightly --profile minimal
+        run: |
+          nightly="$(python3 validation/run.py toolchain nightly)"
+          rustup toolchain install "$nightly" --profile minimal
       - name: Prepare embedded targets
         if: matrix.group == 'embedded'
         run: rustup target add riscv32imac-unknown-none-elf thumbv7em-none-eabihf
@@ -115,6 +117,7 @@ jobs:
         if: matrix.group == 'android'
         run: |
           sdkmanager "platforms;android-34" "build-tools;34.0.0" "ndk;27.2.12479018"
+          rustup target add aarch64-linux-android armv7-linux-androideabi
           cargo install cargo-ndk --locked --version 4.1.2
       - uses: cargo-bins/cargo-binstall@57726869e28f4038a847ec56e5fdd9142fded110
         if: matrix.group == 'web'
@@ -150,7 +153,8 @@ jobs:
       - name: Run exact-SHA suite
         env:
           PRNS_ANDROID_DEVICE: ${{ matrix.platform == 'android-device' && '1' || '0' }}
-        run: python3 validation/run.py run --suite "${{ matrix.id }}" --expected-sha "${{ needs.inventory.outputs.commit }}" --fuzz-seconds "${{ inputs.fuzz_seconds }}"
+          VALIDATION_PYTHON: ${{ runner.os == 'Windows' && 'python' || 'python3' }}
+        run: '"$VALIDATION_PYTHON" validation/run.py run --suite "${{ matrix.id }}" --expected-sha "${{ needs.inventory.outputs.commit }}" --fuzz-seconds "${{ inputs.fuzz_seconds }}"'
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

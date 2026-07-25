@@ -436,6 +436,16 @@ entrypoint = ["bash", "tools/release/install-release-esp-toolchain.sh"]
 requires = ["bash", "curl", "python3", "rustup"]
 
 [[task]]
+id = "release.toolchain.esp.verify"
+summary = "Verify the exact installed ESP compiler and release tools."
+domain = "release"
+effect = "read-only"
+platforms = ["linux"]
+audience = ["ci", "release"]
+entrypoint = ["bash", "tools/release/verify-release-esp-toolchain.sh"]
+requires = ["bash", "espup", "rustc", "xtensa-esp-elf-gcc"]
+
+[[task]]
 id = "release.toolchain.minisign.install"
 summary = "Install the pinned Minisign binary into an isolated destination."
 domain = "release"
@@ -688,6 +698,10 @@ reason = "Shared release evidence hashing and subject inventory implementation."
 [[internal]]
 path = "tools/release/flasher_reproducibility.py"
 reason = "Shared deterministic candidate comparison implementation."
+
+[[internal]]
+path = "tools/release/release-esp-toolchain-identity.sh"
+reason = "Shared exact ESP compiler identity used by installation and verification."
 
 [[internal]]
 path = "tools/release/flasher_rollback.py"

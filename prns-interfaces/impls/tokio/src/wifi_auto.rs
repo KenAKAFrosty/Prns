@@ -742,6 +742,10 @@ struct GatewayDial {
     status: TokioInterfaceStatus,
 }
 
+struct GatewayInventoryUnavailable;
+
+type GatewayInventory = Result<HashMap<u32, IpAddr>, GatewayInventoryUnavailable>;
+
 impl Supervisor {
     fn ingest_beacon(&mut self, src: SocketAddr, bytes: &[u8], now_ms: u64) {
         let SocketAddr::V6(v6) = src else { return };
@@ -891,9 +895,11 @@ impl Supervisor {
     }
 
     fn dial_initial_gateways(&mut self, nics: &[Nic]) {
-        let ifaces = netdev::get_interfaces();
+        let Ok(routes) = platform_gateway_inventory() else {
+            return;
+        };
         for nic in nics {
-            self.refresh_gateway(nic.index, gateway_for(&ifaces, nic.index));
+            self.refresh_gateway(nic.index, gateway_for(&routes, nic.index));
         }
     }
 
@@ -938,9 +944,9 @@ impl Supervisor {
             return;
         };
         let fresh = link_local_nics(&self.settings.devices);
-        let ifaces = netdev::get_interfaces();
+        let gateways = platform_gateway_inventory();
         self.prefixes = local_prefixes(&self.settings.devices);
-        self.apply_reconcile(discovery, nics, fresh, |index| gateway_for(&ifaces, index));
+        self.apply_reconcile(discovery, nics, fresh, gateways);
     }
 
     fn apply_reconcile(
@@ -948,7 +954,7 @@ impl Supervisor {
         discovery: &UdpSocket,
         nics: &mut std::vec::Vec<Nic>,
         fresh: std::vec::Vec<Nic>,
-        gateway_of: impl Fn(u32) -> Option<IpAddr>,
+        gateways: GatewayInventory,
     ) {
         let plan = plan_reconcile(nics, &fresh);
         let discovery_group = self.settings.discovery_group();
@@ -978,8 +984,13 @@ impl Supervisor {
                 ),
             );
         }
-        for nic in &fresh {
-            self.refresh_gateway(nic.index, gateway_of(nic.index));
+        match gateways {
+            Ok(routes) => {
+                for nic in &fresh {
+                    self.refresh_gateway(nic.index, gateway_for(&routes, nic.index));
+                }
+            }
+            Err(GatewayInventoryUnavailable) => {}
         }
         self.reap_orphaned_members();
         *nics = fresh;
@@ -1096,11 +1107,21 @@ fn same_subnet(peer: IpAddr, addr: IpAddr, netmask: IpAddr) -> bool {
     }
 }
 
-fn gateway_for(ifaces: &[netdev::Interface], index: u32) -> Option<IpAddr> {
-    ifaces
+fn gateway_for(routes: &HashMap<u32, IpAddr>, index: u32) -> Option<IpAddr> {
+    routes.get(&index).copied()
+}
+
+#[cfg(not(target_os = "ios"))]
+fn platform_gateway_inventory() -> GatewayInventory {
+    Ok(netdev::get_interfaces()
         .iter()
-        .find(|iface| iface.index == index)
-        .and_then(gateway_addr)
+        .filter_map(|interface| gateway_addr(interface).map(|address| (interface.index, address)))
+        .collect())
+}
+
+#[cfg(target_os = "ios")]
+fn platform_gateway_inventory() -> GatewayInventory {
+    Err(GatewayInventoryUnavailable)
 }
 
 /// A node that cannot claim the local rendezvous port joins its current holder over loopback.
@@ -1142,6 +1163,7 @@ async fn next_mdns(sightings: Option<&mut UnboundedReceiver<SocketAddr>>) -> Opt
 }
 
 /// Prefer an IPv4 default gateway, then IPv6; a hosted AP with no default route is skipped.
+#[cfg(not(target_os = "ios"))]
 fn gateway_addr(iface: &netdev::Interface) -> Option<IpAddr> {
     let gateway = iface.gateway.as_ref()?;
     gateway
@@ -1514,6 +1536,10 @@ mod tests {
         (sup, guard)
     }
 
+    fn gateway_inventory<const N: usize>(routes: [(u32, IpAddr); N]) -> GatewayInventory {
+        Ok(routes.into_iter().collect())
+    }
+
     #[tokio::test]
     async fn a_peer_inherits_the_auto_wifi_effective_policy() {
         let socket = Arc::new(UdpSocket::bind("[::1]:0").await.unwrap());
@@ -1582,15 +1608,11 @@ mod tests {
             .expect("bind discovery socket");
         let mut nics = std::vec::Vec::new();
 
-        let gw_a = |index: u32| match index {
-            1 => Some(IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 1))),
-            _ => None,
-        };
         sup.apply_reconcile(
             &discovery,
             &mut nics,
             std::vec![nic(1, 0x10), nic(2, 0x20)],
-            gw_a,
+            gateway_inventory([(1, IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 1)))]),
         );
         assert_eq!(sup.brains.len(), 2, "both NICs got a brain");
         assert!(sup.brains.contains_key(&1) && sup.brains.contains_key(&2));
@@ -1601,16 +1623,14 @@ mod tests {
         );
         assert_eq!(sup.gateways.len(), 1, "the gateway-less NIC dialed nothing");
 
-        let gw_b = |index: u32| match index {
-            1 => Some(IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 1))),
-            3 => Some(IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 3))),
-            _ => None,
-        };
         sup.apply_reconcile(
             &discovery,
             &mut nics,
             std::vec![nic(1, 0x10), nic(3, 0x30)],
-            gw_b,
+            gateway_inventory([
+                (1, IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 1))),
+                (3, IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 3))),
+            ]),
         );
         assert!(
             !sup.brains.contains_key(&2),
@@ -1631,7 +1651,12 @@ mod tests {
             "the vanished NIC's gateway dial was torn down",
         );
 
-        sup.apply_reconcile(&discovery, &mut nics, std::vec![], |_| None);
+        sup.apply_reconcile(
+            &discovery,
+            &mut nics,
+            std::vec![],
+            Err(GatewayInventoryUnavailable),
+        );
         assert!(
             sup.brains.is_empty(),
             "the brains drained when the link left"

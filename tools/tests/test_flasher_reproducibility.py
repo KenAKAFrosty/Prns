@@ -392,13 +392,26 @@ class FlasherReproducibilityTests(unittest.TestCase):
         installer = (SCRIPTS / "install-release-esp-toolchain.sh").read_text(
             encoding="utf-8"
         )
-        self.assertIn('crosstool_version="15.2.0_20250920"', installer)
+        identity = (SCRIPTS / "release-esp-toolchain-identity.sh").read_text(
+            encoding="utf-8"
+        )
+        verifier = (SCRIPTS / "verify-release-esp-toolchain.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('ESP_CROSSTOOL_VERSION="15.2.0_20250920"', identity)
         self.assertIn(
             'gcc_sha256="e3d77ad14544814527bbe7a2d0f79ec4592a4e23392c51c7388c0e686b6a6977"',
             installer,
         )
         self.assertIn("--crosstool-toolchain-version", installer)
-        self.assertIn("xtensa-esp-elf-gcc (crosstool-NG esp-", installer)
+        self.assertIn(
+            'ESP_RUSTC_COMMIT_HASH="95e5bda868c960c607597bc03ed9e8f0ad26226d"',
+            identity,
+        )
+        self.assertIn('ESP_RUSTC_COMMIT_DATE="2026-04-15"', identity)
+        self.assertIn("verify-release-esp-toolchain.sh", installer)
+        self.assertIn("commit_hash", verifier)
+        self.assertIn("commit_date", verifier)
         self.assertNotIn("xtensa-esp32s3-elf-gcc", installer)
 
     def test_two_independent_archives_must_match_byte_for_byte(self) -> None:
