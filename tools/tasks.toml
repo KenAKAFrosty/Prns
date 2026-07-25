@@ -536,6 +536,16 @@ entrypoint = ["python3", "tools/release/validate-flasher-acceptance.py"]
 requires = ["python3"]
 
 [[task]]
+id = "release.installation-evidence.write"
+summary = "Write one roster-bound native CLI installation evidence object."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["ci", "operator", "release"]
+entrypoint = ["python3", "tools/release/write-flasher-installation-evidence.py"]
+requires = ["python3"]
+
+[[task]]
 id = "release.candidate-run.validate"
 summary = "Validate the workflow identity and custody metadata for a candidate build run."
 domain = "release"

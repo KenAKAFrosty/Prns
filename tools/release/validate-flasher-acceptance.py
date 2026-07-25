@@ -618,19 +618,19 @@ def validate_installation_smokes(
         if entry.get("cli_version") != version:
             errors.append(f"{label} CLI version differs from the exact candidate")
         if entry.get("result") != "pass":
-            errors.append(f"{label} is not a passing installation/doctor smoke")
+            errors.append(f"{label} is not a passing installation/version smoke")
         require_text(entry, {"os_version", "tester"}, label, errors)
         validate_completed_at(entry, label, prerelease_published_at, now, errors)
         validate_evidence(entry.get("evidence"), label, evidence_store, errors)
-        validate_scenarios(entry.get("scenarios"), {"install", "doctor"}, label, errors)
+        validate_scenarios(entry.get("scenarios"), {"install", "version"}, label, errors)
         if isinstance(entry.get("scenarios"), dict) and set(entry["scenarios"]) != {
             "install",
-            "doctor",
+            "version",
         }:
-            errors.append(f"{label} must prove both install and doctor")
+            errors.append(f"{label} must prove both install and exact version")
     missing = sorted(set(CLI_TARGETS) - seen)
     if missing:
-        errors.append(f"missing native installation/doctor smokes: {missing}")
+        errors.append(f"missing native installation/version smokes: {missing}")
 
 
 def validate(arguments: argparse.Namespace, now: datetime | None = None) -> list[str]:

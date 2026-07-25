@@ -238,6 +238,37 @@ def validate() -> list[str]:
                 f"flasher-finalize-evidence.yml is missing gate {finalization_gate!r}"
             )
 
+    installation = (
+        ROOT / ".github" / "workflows" / "flasher-installation-qualification.yml"
+    ).read_text(encoding="utf-8")
+    for installation_gate in (
+        "Require exact protected default-branch source",
+        "Verify signatures, attestations, archives, and signed roster",
+        "macos-15",
+        "macos-15-intel",
+        "ubuntu-24.04",
+        "ubuntu-24.04-arm",
+        "windows-2025",
+        "test \"$GITHUB_SHA\" = \"$SOURCE_COMMIT\"",
+        "gh attestation verify",
+        "./tools/prns release tester-roster validate --",
+        'for installer in install.sh install.ps1; do',
+        "./tools/prns release installation-evidence write --",
+        'test "$version_output" = "hopspot-flash $RELEASE_VERSION"',
+        "installed CLI reported a different version",
+        "flasher-installation-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}",
+    ):
+        if installation_gate not in installation:
+            errors.append(
+                "flasher-installation-qualification.yml is missing gate "
+                f"{installation_gate!r}"
+            )
+    if "doctor" in installation:
+        errors.append(
+            "flasher-installation-qualification.yml must not substitute hosted "
+            "doctor checks for physical CLI qualification"
+        )
+
     promotion = (ROOT / ".github" / "workflows" / "flasher-promote.yml").read_text(
         encoding="utf-8"
     )

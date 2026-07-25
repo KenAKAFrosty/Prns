@@ -93,9 +93,21 @@ CLI qualification. Use the masked guided entry or `--wifi-password-stdin` for Co
 a password on the command line. T-Echo stays on the signed UF2 mount/copy route. Do not claim
 device-side UF2 verification.
 
-Run `hopspot-flash doctor BOARD` as part of each native installation smoke. On ESP boards it opens a
+Run `hopspot-flash doctor BOARD` as part of each physical CLI assignment. On ESP boards it opens a
 non-writing identity session; on T-Echo it validates the UF2 mount. Heltec versus T-Beam remains a
 same-chip limitation and must be confirmed by the tester.
+
+The five native installation rows are separate archive checks. Each one runs on its target OS and
+architecture, installs the exact public archive, and confirms that `hopspot-flash --version` reports
+the candidate version. Matching hosted runners may cover target architectures without local
+hardware. These rows never substitute for the physical CLI assignments.
+
+After the prerelease is public, dispatch `flasher-installation-qualification.yml` from the exact
+candidate commit on the protected default branch with the version, source commit, and independently
+recorded signed-candidate SHA-256. Its five target-matched jobs re-fetch the public assets, verify
+the signed checksums and attestations, run the checked installer, and upload one roster-bound JSON
+evidence object per target. The assigned tester reviews those objects before their exact bytes are
+hashed into the qualification evidence store.
 
 ## 4. Capture evidence without secrets
 

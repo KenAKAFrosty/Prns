@@ -92,8 +92,10 @@ Fallback checks are separate from successful Web Serial flashing.
 ## Native installation smoke
 
 `installation_smoke` contains exactly one result for each published CLI target triple. The host OS
-and architecture must agree with the target, its CLI version must equal the candidate version, and
-both `install` and `doctor` must pass.
+and architecture must agree with the target. Each row proves the exact public archive installs and
+that `hopspot-flash --version` reports the exact candidate version, so both `install` and `version`
+must pass. These rows may run on matching hosted runners and do not require a board. They do not
+replace the board-backed CLI assignments.
 
 Validate the completed record with the same exact inputs:
 

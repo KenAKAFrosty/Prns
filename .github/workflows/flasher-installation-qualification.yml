@@ -1,0 +1,376 @@
+name: qualify published CLI installations
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact public prerelease version
+        required: true
+        type: string
+      source_commit:
+        description: Full candidate source commit on the protected default branch
+        required: true
+        type: string
+      signed_candidate_sha256:
+        description: Lowercase SHA-256 of the exact signed candidate archive
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  attestations: read
+  contents: read
+
+concurrency:
+  group: flasher-installation-qualification-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  inventory:
+    name: Verify exact public installation assets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      published_at: ${{ steps.release.outputs.published_at }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require exact protected default-branch source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          SIGNED_CANDIDATE_SHA256: ${{ inputs.signed_candidate_sha256 }}
+        run: |
+          default_branch="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.default_branch')"
+          test "$GITHUB_REF" = "refs/heads/${default_branch}"
+          test "$GITHUB_SHA" = "$SOURCE_COMMIT"
+          test "$(cat VERSION)" = "$RELEASE_VERSION"
+          [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$SIGNED_CANDIDATE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+      - name: Install exact Minisign verifier
+        run: ./tools/prns release toolchain minisign install -- "${RUNNER_TEMP}/prns-release-bin"
+      - name: Download exact public release assets
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          tag="v${RELEASE_VERSION}"
+          mkdir -p target/public-installation-assets
+          gh release view "$tag" \
+            --json isDraft,isPrerelease,publishedAt,tagName,targetCommitish,url \
+            > target/public-installation-release.json
+          test "$(jq -r '.isDraft' target/public-installation-release.json)" = false
+          test "$(jq -r '.isPrerelease' target/public-installation-release.json)" = true
+          test "$(jq -r '.tagName' target/public-installation-release.json)" = "$tag"
+          test "$(jq -r '.targetCommitish' target/public-installation-release.json)" = \
+            "$SOURCE_COMMIT"
+          published_at="$(jq -r '.publishedAt' target/public-installation-release.json)"
+          test "$published_at" != null
+          test "$(date -d "$published_at" +%s)" -le "$(date -u +%s)"
+          echo "published_at=$published_at" >> "$GITHUB_OUTPUT"
+          assets=(
+            "prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz"
+            "SHA256SUMS.txt"
+            "SHA256SUMS.txt.minisig"
+            "minisign.pub"
+            "install.sh"
+            "install.ps1"
+          )
+          for target in \
+            aarch64-apple-darwin \
+            x86_64-apple-darwin \
+            x86_64-unknown-linux-gnu \
+            aarch64-unknown-linux-gnu; do
+            assets+=("hopspot-flash-${RELEASE_VERSION}-${target}.tar.gz")
+          done
+          assets+=("hopspot-flash-${RELEASE_VERSION}-x86_64-pc-windows-msvc.zip")
+          for asset in "${assets[@]}"; do
+            gh release download "$tag" \
+              --dir target/public-installation-assets \
+              --pattern "$asset"
+          done
+      - name: Verify signatures, attestations, archives, and signed roster
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
+          RELEASE_VERSION: ${{ inputs.version }}
+          SIGNED_CANDIDATE_SHA256: ${{ inputs.signed_candidate_sha256 }}
+        run: |
+          assets=target/public-installation-assets
+          bundle="$assets/prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz"
+          test "$(sha256sum "$bundle" | awk '{print $1}')" = \
+            "$SIGNED_CANDIDATE_SHA256"
+          cmp "$assets/minisign.pub" release/keys/minisign.pub
+          "$PRNS_MINISIGN_BIN" -Vm "$assets/SHA256SUMS.txt" \
+            -x "$assets/SHA256SUMS.txt.minisig" \
+            -p release/keys/minisign.pub
+          ./tools/prns release candidate extract -- "$bundle" target/public-installation-candidate
+          test "$(jq -r '.release.version' \
+            target/public-installation-candidate/flash-manifest.json)" = "$RELEASE_VERSION"
+          test "$(jq -r '.release.commit' \
+            target/public-installation-candidate/flash-manifest.json)" = "$GITHUB_SHA"
+          ./tools/prns release tester-roster validate -- \
+            --roster target/public-installation-candidate/qualification/tester-roster.json \
+            --version "$RELEASE_VERSION"
+          for installer in install.sh install.ps1; do
+            expected="$(awk -v wanted="cli/$installer" \
+              '$2 == wanted {print $1}' "$assets/SHA256SUMS.txt")"
+            [[ "$expected" =~ ^[0-9a-f]{64}$ ]]
+            test "$(sha256sum "$assets/$installer" | awk '{print $1}')" = "$expected"
+            cmp "$assets/$installer" \
+              "target/public-installation-candidate/cli/$installer"
+          done
+          gh attestation verify "$bundle" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow \
+              "$GITHUB_REPOSITORY/.github/workflows/flasher-sign.yml" \
+            --deny-self-hosted-runners
+          for target in \
+            aarch64-apple-darwin \
+            x86_64-apple-darwin \
+            x86_64-unknown-linux-gnu \
+            aarch64-unknown-linux-gnu; do
+            archive="hopspot-flash-${RELEASE_VERSION}-${target}.tar.gz"
+            expected="$(awk -v wanted="cli/$archive" \
+              '$2 == wanted {print $1}' "$assets/SHA256SUMS.txt")"
+            [[ "$expected" =~ ^[0-9a-f]{64}$ ]]
+            test "$(sha256sum "$assets/$archive" | awk '{print $1}')" = "$expected"
+            cmp "$assets/$archive" \
+              "target/public-installation-candidate/cli/$archive"
+            gh attestation verify "$assets/$archive" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow \
+                "$GITHUB_REPOSITORY/.github/workflows/flasher-sign.yml" \
+              --deny-self-hosted-runners
+          done
+          target=x86_64-pc-windows-msvc
+          archive="hopspot-flash-${RELEASE_VERSION}-${target}.zip"
+          expected="$(awk -v wanted="cli/$archive" \
+            '$2 == wanted {print $1}' "$assets/SHA256SUMS.txt")"
+          [[ "$expected" =~ ^[0-9a-f]{64}$ ]]
+          test "$(sha256sum "$assets/$archive" | awk '{print $1}')" = "$expected"
+          cmp "$assets/$archive" \
+            "target/public-installation-candidate/cli/$archive"
+          gh attestation verify "$assets/$archive" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow \
+              "$GITHUB_REPOSITORY/.github/workflows/flasher-sign.yml" \
+            --deny-self-hosted-runners
+      - name: Package verified installation inputs
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          SIGNED_CANDIDATE_SHA256: ${{ inputs.signed_candidate_sha256 }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          mkdir -p target/verified-installation-inputs
+          cp target/public-installation-assets/SHA256SUMS.txt \
+            target/verified-installation-inputs/
+          cp target/public-installation-assets/install.sh \
+            target/verified-installation-inputs/
+          cp target/public-installation-assets/install.ps1 \
+            target/verified-installation-inputs/
+          cp target/public-installation-candidate/qualification/tester-roster.json \
+            target/verified-installation-inputs/
+          jq -n \
+            --arg version "$RELEASE_VERSION" \
+            --arg source_commit "$SOURCE_COMMIT" \
+            --arg signed_candidate_sha256 "$SIGNED_CANDIDATE_SHA256" \
+            --arg published_at "${{ steps.release.outputs.published_at }}" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --argjson run_id "$GITHUB_RUN_ID" \
+            --argjson run_attempt "$GITHUB_RUN_ATTEMPT" \
+            '{
+              schema: 1,
+              version: $version,
+              source_commit: $source_commit,
+              signed_candidate_sha256: $signed_candidate_sha256,
+              published_at: $published_at,
+              repository: $repository,
+              workflow_run_id: $run_id,
+              workflow_run_attempt: $run_attempt
+            }' > target/verified-installation-inputs/inventory.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: flasher-installation-inputs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/verified-installation-inputs
+          retention-days: 30
+          if-no-files-found: error
+
+  install:
+    name: Install ${{ matrix.target }}
+    needs: inventory
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            os: macos
+            architecture: aarch64
+            extension: .tar.gz
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            os: macos
+            architecture: x86_64
+            extension: .tar.gz
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            os: linux
+            architecture: x86_64
+            extension: .tar.gz
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            os: linux
+            architecture: aarch64
+            extension: .tar.gz
+          - runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            os: windows
+            architecture: x86_64
+            extension: .zip
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.source_commit }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: flasher-installation-inputs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/installation
+      - name: Install and verify exact Unix archive
+        if: matrix.os != 'windows'
+        shell: bash
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
+          EXTENSION: ${{ matrix.extension }}
+          HOPSPOT_FLASH_INSTALL_DIR: ${{ runner.temp }}/prns-install-bin
+          PUBLISHED_AT: ${{ needs.inventory.outputs.published_at }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          SIGNED_CANDIDATE_SHA256: ${{ inputs.signed_candidate_sha256 }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          TARGET: ${{ matrix.target }}
+          TARGET_OS: ${{ matrix.os }}
+        run: |
+          test "$GITHUB_SHA" = "$SOURCE_COMMIT"
+          case "$(uname -s)-$(uname -m)" in
+            Darwin-arm64) actual_target=aarch64-apple-darwin ;;
+            Darwin-x86_64) actual_target=x86_64-apple-darwin ;;
+            Linux-x86_64) actual_target=x86_64-unknown-linux-gnu ;;
+            Linux-aarch64|Linux-arm64) actual_target=aarch64-unknown-linux-gnu ;;
+            *) exit 2 ;;
+          esac
+          test "$actual_target" = "$TARGET"
+          sh target/installation/install.sh
+          version_output="$("$HOPSPOT_FLASH_INSTALL_DIR/hopspot-flash" --version)"
+          test "$version_output" = "hopspot-flash $RELEASE_VERSION"
+          archive="hopspot-flash-${RELEASE_VERSION}-${TARGET}${EXTENSION}"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "target/installation/$archive" \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/v${RELEASE_VERSION}/$archive"
+          expected="$(awk -v wanted="cli/$archive" \
+            '$2 == wanted {print $1}' target/installation/SHA256SUMS.txt)"
+          [[ "$expected" =~ ^[0-9a-f]{64}$ ]]
+          test "$(shasum -a 256 "target/installation/$archive" | awk '{print $1}')" = \
+            "$expected"
+          if [[ "$TARGET_OS" == macos ]]; then
+            os_version="macOS $(sw_vers -productVersion)"
+          else
+            os_version="$(. /etc/os-release; printf '%s' "$PRETTY_NAME")"
+          fi
+          completed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          ./tools/prns release installation-evidence write -- \
+            --roster target/installation/tester-roster.json \
+            --version "$RELEASE_VERSION" \
+            --target "$TARGET" \
+            --source-commit "$SOURCE_COMMIT" \
+            --signed-candidate-sha256 "$SIGNED_CANDIDATE_SHA256" \
+            --published-at "$PUBLISHED_AT" \
+            --archive "target/installation/$archive" \
+            --expected-archive-sha256 "$expected" \
+            --version-output "$version_output" \
+            --os-version "$os_version" \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --workflow-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --workflow-job "install ($TARGET)" \
+            --workflow-sha "$GITHUB_SHA" \
+            --completed-at "$completed_at" \
+            --output "target/installation-evidence/$TARGET.json"
+      - name: Install and verify exact Windows archive
+        if: matrix.os == 'windows'
+        shell: pwsh
+        env:
+          EXTENSION: ${{ matrix.extension }}
+          HOPSPOT_FLASH_INSTALL_DIR: ${{ runner.temp }}\prns-install-bin
+          PUBLISHED_AT: ${{ needs.inventory.outputs.published_at }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          SIGNED_CANDIDATE_SHA256: ${{ inputs.signed_candidate_sha256 }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          if ($env:GITHUB_SHA -cne $env:SOURCE_COMMIT) {
+              throw 'workflow SHA differs from the candidate source commit'
+          }
+          & target/installation/install.ps1
+          $Binary = Join-Path $env:HOPSPOT_FLASH_INSTALL_DIR 'hopspot-flash.exe'
+          $VersionOutput = ((& $Binary --version) -join "`n").Trim()
+          if ($LASTEXITCODE -ne 0) {
+              throw 'installed CLI version command failed'
+          }
+          if ($VersionOutput -cne "hopspot-flash $env:RELEASE_VERSION") {
+              throw 'installed CLI reported a different version'
+          }
+          $Archive = "hopspot-flash-$env:RELEASE_VERSION-$env:TARGET$env:EXTENSION"
+          $ArchivePath = Join-Path 'target/installation' $Archive
+          $Url = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/v$env:RELEASE_VERSION/$Archive"
+          Invoke-WebRequest -Uri $Url -OutFile $ArchivePath
+          $Suffix = "  cli/$Archive"
+          $ChecksumRows = @(
+              Get-Content target/installation/SHA256SUMS.txt |
+                  Where-Object { $_.EndsWith($Suffix) }
+          )
+          if ($ChecksumRows.Count -ne 1) {
+              throw 'signed checksum document lacks one exact target archive'
+          }
+          $Expected = ($ChecksumRows[0] -split '\s+', 2)[0]
+          $Actual = (Get-FileHash -Algorithm SHA256 $ArchivePath).Hash.ToLowerInvariant()
+          if ($Actual -cne $Expected) {
+              throw 'public archive differs from the signed checksum'
+          }
+          $CompletedAt = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+          $OsVersion = [System.Runtime.InteropServices.RuntimeInformation]::OSDescription
+          ./tools/prns release installation-evidence write -- `
+            --roster target/installation/tester-roster.json `
+            --version $env:RELEASE_VERSION `
+            --target $env:TARGET `
+            --source-commit $env:SOURCE_COMMIT `
+            --signed-candidate-sha256 $env:SIGNED_CANDIDATE_SHA256 `
+            --published-at $env:PUBLISHED_AT `
+            --archive $ArchivePath `
+            --expected-archive-sha256 $Expected `
+            --version-output $VersionOutput `
+            --os-version $OsVersion `
+            --repository $env:GITHUB_REPOSITORY `
+            --workflow-run-id $env:GITHUB_RUN_ID `
+            --workflow-run-attempt $env:GITHUB_RUN_ATTEMPT `
+            --workflow-job "install ($env:TARGET)" `
+            --workflow-sha $env:GITHUB_SHA `
+            --completed-at $CompletedAt `
+            --output "target/installation-evidence/$env:TARGET.json"
+          if ($LASTEXITCODE -ne 0) {
+              throw 'installation evidence creation failed'
+          }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: flasher-installation-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/installation-evidence/${{ matrix.target }}.json
+          retention-days: 30
+          if-no-files-found: error

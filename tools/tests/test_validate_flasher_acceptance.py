@@ -160,7 +160,7 @@ def complete_acceptance(
                 "architecture": target_architecture,
                 "os_version": f"{os_name}-fixture-1",
                 "cli_version": VERSION,
-                "scenarios": {"install": "pass", "doctor": "pass"},
+                "scenarios": {"install": "pass", "version": "pass"},
                 "result": "pass",
                 "tester": roster_assignment["tester"],
                 "completed_at": COMPLETED_AT,
@@ -468,9 +468,14 @@ class AcceptanceValidatorTests(unittest.TestCase):
         }
         self.assertTrue(any("CLI run must not claim browser evidence" in error for error in self.validate()))
 
-    def test_installation_smoke_requires_install_and_doctor(self) -> None:
-        self.acceptance["installation_smoke"][0]["scenarios"].pop("doctor")
-        self.assertTrue(any("must prove both install and doctor" in error for error in self.validate()))
+    def test_installation_smoke_requires_install_and_exact_version(self) -> None:
+        self.acceptance["installation_smoke"][0]["scenarios"].pop("version")
+        self.assertTrue(
+            any(
+                "must prove both install and exact version" in error
+                for error in self.validate()
+            )
+        )
 
     def test_browser_fallback_requires_every_truthful_fallback_scenario(self) -> None:
         self.acceptance["browser_fallbacks"][0]["scenarios"].pop("no-broken-connect-action")

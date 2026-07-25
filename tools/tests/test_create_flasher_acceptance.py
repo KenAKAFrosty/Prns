@@ -166,6 +166,15 @@ class AcceptanceScaffoldTests(unittest.TestCase):
         self.assertEqual(len(record["runs"]), 8)
         self.assertEqual(len(record["browser_fallbacks"]), 4)
         self.assertEqual(len(record["installation_smoke"]), 5)
+        self.assertTrue(
+            all(
+                smoke["scenarios"] == {
+                    "install": "not-run",
+                    "version": "not-run",
+                }
+                for smoke in record["installation_smoke"]
+            )
+        )
         encoded = json.dumps(record)
         self.assertNotIn('"pass"', encoded)
         self.assertIn('"not-run"', encoded)

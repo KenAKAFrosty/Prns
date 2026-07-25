@@ -159,7 +159,7 @@ recorded evidence-archive SHA-256. The workflow:
   protected job;
 - extracts the evidence archive safely and recomputes every referenced object's SHA-256;
 - validates eight full transport-aware physical rows, four browser fallbacks, and all five
-  installer/doctor smokes;
+  installer/exact-version smokes;
 - signs `acceptance-vVERSION.json`;
 - creates and signs `release-record-vVERSION.json`.
 

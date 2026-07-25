@@ -293,7 +293,7 @@ def scaffold(
                 "architecture": architecture,
                 "os_version": NOT_RUN,
                 "cli_version": version,
-                "scenarios": {"doctor": "not-run", "install": "not-run"},
+                "scenarios": {"install": "not-run", "version": "not-run"},
                 "result": "not-run",
                 "tester": assignment.tester,
                 "completed_at": NOT_RUN,
