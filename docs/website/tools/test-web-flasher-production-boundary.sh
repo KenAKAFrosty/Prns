@@ -16,6 +16,15 @@ hosted_public_paths=(
     "public/source.zip.sha256"
 )
 
+require_line() {
+    local file="$1"
+    local line="$2"
+    if ! grep -qxF "$line" "$file"; then
+        echo "$file must contain: $line" >&2
+        exit 1
+    fi
+}
+
 restore_hosted_public_paths() {
     local relative original saved generated
     set +e
@@ -54,6 +63,12 @@ esac
 
 mkdir -p "$test_root"
 cd "$website"
+require_line "$website/tailwind.css" '@import "tailwindcss" source(none);'
+require_line "$website/tailwind.css" '@source "./src";'
+require_line "$website/tailwind.css" '@source "./index.html";'
+require_line "$website/web-flasher/browser/playwright.config.mjs" 'const browserOutput = path.join(websiteRoot, "target/browser-tests");'
+require_line "$website/web-flasher/browser/playwright.config.mjs" '      outputFolder: path.join(browserOutput, "report"),'
+require_line "$website/web-flasher/browser/playwright.config.mjs" '  outputDir: path.join(browserOutput, "results"),'
 npm run build:css
 npm run build:flasher
 

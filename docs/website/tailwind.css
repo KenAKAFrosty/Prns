@@ -1,4 +1,6 @@
-@import "tailwindcss";
+@import "tailwindcss" source(none);
+@source "./src";
+@source "./index.html";
 
 @theme {
     /* Inverted-ink palette: deep substrate, cool accent. Matches the

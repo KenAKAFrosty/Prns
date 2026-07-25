@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = resolve(packageRoot, "..");
+const browserTimeoutMs = process.env.CI ? 60_000 : 20_000;
 const chromium = [
   process.env.CHROMIUM_PATH,
   "/snap/bin/chromium",
@@ -79,13 +80,26 @@ try {
     ],
     { stdio: "ignore" },
   );
+  const browserExited = new Promise((_, rejectExit) => {
+    browser.once("error", rejectExit);
+    browser.once("exit", (code, signal) => {
+      rejectExit(
+        new Error(
+          `Chromium exited before reporting a result: code=${code} signal=${signal}`,
+        ),
+      );
+    });
+  });
   let browserTimeout;
   const result = await Promise.race([
     browserResult,
+    browserExited,
     new Promise((_, rejectTimeout) => {
       browserTimeout = setTimeout(
-        () => rejectTimeout(new Error("browser smoke timed out")),
-        20_000,
+        () => rejectTimeout(
+          new Error(`browser smoke timed out after ${browserTimeoutMs}ms`),
+        ),
+        browserTimeoutMs,
       );
     }),
   ]);

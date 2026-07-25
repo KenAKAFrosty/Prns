@@ -44,14 +44,16 @@
         return { compressed, detail };
       }
 
-      const packagedCompression = await compressionWorkerOutcome(
-        "/prns-js/dist/browser/resource_compression_worker.js",
-        "/prns-js/wasm/prns_wasm.js",
-      );
-      const docsCompression = await compressionWorkerOutcome(
-        "/docs/website/public/browser-node-playground-console/sdk/browser/resource_compression_worker.js",
-        "/docs/website/public/browser-node-playground-console/pkg/prns_wasm.js",
-      );
+      const [packagedCompression, docsCompression] = await Promise.all([
+        compressionWorkerOutcome(
+          "/prns-js/dist/browser/resource_compression_worker.js",
+          "/prns-js/wasm/prns_wasm.js",
+        ),
+        compressionWorkerOutcome(
+          "/docs/website/public/browser-node-playground-console/sdk/browser/resource_compression_worker.js",
+          "/docs/website/public/browser-node-playground-console/pkg/prns_wasm.js",
+        ),
+      ]);
       const compression =
         packagedCompression.compressed && docsCompression.compressed;
       const compressionDetail =

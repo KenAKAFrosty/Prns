@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use personal_rns::config::parse_and_plan;
 use personal_rns::identity::IdentityHash;
@@ -20,11 +21,13 @@ struct TestDirectory(PathBuf);
 
 impl TestDirectory {
     fn new() -> Self {
+        static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |duration| duration.as_nanos());
+        let sequence = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
         Self(std::env::temp_dir().join(format!(
-            "prnsd-discovery-archive-{}-{nanos}",
+            "prnsd-discovery-archive-{}-{nanos}-{sequence}",
             std::process::id()
         )))
     }
