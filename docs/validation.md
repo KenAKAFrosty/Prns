@@ -54,10 +54,10 @@ opaque success token. Counts come from the live manifest and native source
 discovery, so the output also gives an operator a quick orientation:
 
 ```text
-[verify] Suite policy: 81 total suites (34 pull-request, 78 release, 79 scheduled); IDs, tiers, platforms, toolchains, commands, timeouts, and artifact paths are valid.
-[verify] Cargo ownership: 34 manifests are registered, valid, and repository-owned; 21 unique workspace roots own formatting.
+[verify] Suite policy: 96 total suites (49 pull-request, 92 release, 93 scheduled); IDs, tiers, platforms, toolchains, commands, timeouts, and artifact paths are valid.
+[verify] Cargo ownership: 39 manifests are registered, valid, and repository-owned; 22 unique workspace roots own formatting.
 [verify] Native discovery: 18 Kani proofs and 8 fuzz targets exactly match their source owners.
-[verify] Asset ownership: 57 oracle/interop/smoke assets are registered; 1 documented exemption is current; nothing is orphaned.
+[verify] Asset ownership: 69 oracle/interop/smoke assets are registered; 1 documented exemption is current; nothing is orphaned.
 VALIDATION_REGISTRY_OK
 ```
 
@@ -98,6 +98,9 @@ required results are bound to the exact candidate commit.
 The `scheduled` tier is allowed to spend longer on fuzzing, diagnostics,
 coverage, unsafe inventory, and hardware/network simulations. Scheduled evidence
 is useful for maintenance but cannot substitute for exact-SHA release evidence.
+The physical Android runtime suite remains registered here and requires its
+device-qualified runner, but it is separate from hosted release readiness unless
+an Android application release explicitly places it in scope.
 
 ## Stock-RNS environments
 

@@ -72,4 +72,4 @@ exclude_re = [
 ]
 
 # The lane includes local shared-instance RPC files, so the test invocation must compile the same host feature surface the runtime/oracle uses.
-additional_cargo_test_args = ["-p", "personal-rns", "--features", "local tcp"]
+additional_cargo_test_args = ["-p", "personal-rns", "--features", "tokio-host shared-instance tcp"]

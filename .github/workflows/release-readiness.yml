@@ -83,9 +83,15 @@ jobs:
       - name: Prepare embedded targets
         if: matrix.group == 'embedded'
         run: rustup target add riscv32imac-unknown-none-elf thumbv7em-none-eabihf
-      - name: Prepare Linux desktop link dependency
-        if: matrix.group == 'linux-host'
-        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
+      - name: Prepare Linux native development packages
+        if: runner.os == 'Linux' && matrix.platform != 'android-device'
+        run: |
+          packages=(libdbus-1-dev pkg-config)
+          if [[ "${{ matrix.group }}" == linux-host ]]; then
+            packages+=(libsdl2-dev)
+          fi
+          sudo apt-get update
+          sudo apt-get install -y "${packages[@]}"
       - name: Prepare macOS desktop link dependency
         if: matrix.group == 'apple'
         run: brew install sdl2

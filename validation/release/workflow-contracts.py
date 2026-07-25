@@ -159,6 +159,11 @@ def validate() -> list[str]:
     ):
         if locked_dioxus not in workflow:
             errors.append(f"{name} does not install the exact Dioxus CLI from its lockfile")
+    for native_package in ("libdbus-1-dev", "pkg-config"):
+        if native_package not in readiness:
+            errors.append(
+                f"release-readiness.yml does not install required package {native_package!r}"
+            )
     if "RUSTUP_TOOLCHAIN: 1.90.0" not in ci or "toolchain: 1.90.0" not in ci:
         errors.append("ci.yml does not explicitly force and install the Rust 1.90.0 MSRV")
     if 'node-version: "24.18.0"' not in ci:

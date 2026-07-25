@@ -133,6 +133,18 @@ expires = "yesterday"
         identifiers = [entry["id"] for entry in json.loads(first)["include"]]
         self.assertEqual(identifiers, sorted(identifiers))
 
+    def test_physical_android_is_separate_from_hosted_release_readiness(self) -> None:
+        release = runner.selected_suites(self.manifest, [], None, "release")
+        scheduled = runner.selected_suites(self.manifest, [], None, "scheduled")
+        release_ids = {suite["id"] for suite in release}
+        scheduled_ids = {suite["id"] for suite in scheduled}
+        self.assertNotIn("android-runtime-device", release_ids)
+        self.assertIn("android-runtime-device", scheduled_ids)
+        self.assertNotIn(
+            ["self-hosted", "linux", "android", "prns-release"],
+            [entry["runner"] for entry in runner.ci_matrix(release)["include"]],
+        )
+
     def test_platform_selection_is_explicit_and_host_aware(self) -> None:
         portable = runner.selected_suites(self.manifest, [], None, None, "any")
         self.assertTrue(portable)

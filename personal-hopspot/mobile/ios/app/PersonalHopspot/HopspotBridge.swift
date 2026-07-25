@@ -87,21 +87,24 @@ final class HopspotBridge: ObservableObject {
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                Task { @MainActor in self?.recordTelemetry(updateRenderer: true) }
+                guard let bridge = self else { return }
+                Task { @MainActor in bridge.recordTelemetry(updateRenderer: true) }
             },
             center.addObserver(
                 forName: UIDevice.batteryStateDidChangeNotification,
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                Task { @MainActor in self?.recordTelemetry(updateRenderer: true) }
+                guard let bridge = self else { return }
+                Task { @MainActor in bridge.recordTelemetry(updateRenderer: true) }
             },
             center.addObserver(
                 forName: ProcessInfo.thermalStateDidChangeNotification,
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                Task { @MainActor in self?.recordTelemetry(updateRenderer: false) }
+                guard let bridge = self else { return }
+                Task { @MainActor in bridge.recordTelemetry(updateRenderer: false) }
             },
         ]
         recordTelemetry(updateRenderer: true)
