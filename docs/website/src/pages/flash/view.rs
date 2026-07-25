@@ -6,7 +6,7 @@ use std::sync::{
 use dioxus::prelude::*;
 
 use crate::components::PlatformChip;
-use crate::platforms::{BoardFlashTarget, BoardTarget, PreparationProfile};
+use crate::platforms::{BoardFlashTarget, BoardTarget, PreparationProfile, Tier};
 use crate::routes::Route;
 use crate::site_mode::embedded_docs_mode;
 
@@ -499,7 +499,13 @@ pub(super) fn BoardTargetCard(board: &'static BoardTarget, selected: bool) -> El
                     }
                 }
             } else {
-                p { class: "flash-interfaces-pending mt-4", "Coming later" }
+                p { class: "flash-interfaces-pending mt-4",
+                    match board.tier {
+                        Tier::BringUp => "Bring-up in progress",
+                        Tier::Roadmap => "Planned",
+                        Tier::Shipping | Tier::Flashable => "Coming later",
+                    }
+                }
             }
         }
     }

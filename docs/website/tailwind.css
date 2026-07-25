@@ -323,6 +323,29 @@ html, body {
     border-color: rgb(108 116 128 / 0.4);
     color: var(--color-mid);
 }
+.platform-chip--bringup {
+    border-color: rgb(96 165 250 / 0.55);
+    background: rgb(96 165 250 / 0.05);
+    box-shadow: 0 0 0 1px rgb(96 165 250 / 0.08) inset;
+    color: var(--color-soft);
+}
+.platform-chip--supported {
+    border-color: rgb(110 231 183 / 0.55);
+    background: rgb(110 231 183 / 0.05);
+    box-shadow: 0 0 0 1px rgb(110 231 183 / 0.08) inset;
+    color: var(--color-paper);
+}
+.platform-board-link {
+    color: var(--color-accent);
+    text-decoration-line: underline;
+    text-decoration-color: rgb(110 231 183 / 0.45);
+    text-underline-offset: 0.25rem;
+    transition: color 0.15s, text-decoration-color 0.15s;
+}
+.platform-board-link:hover {
+    color: var(--color-paper);
+    text-decoration-color: var(--color-accent);
+}
 .platform-chip__badge {
     margin-left: 0.45rem;
     font-size: 0.6rem;
@@ -330,6 +353,10 @@ html, body {
     text-transform: uppercase;
     color: var(--color-mid);
     opacity: 0.85;
+}
+.platform-chip--bringup .platform-chip__badge {
+    color: rgb(147 197 253);
+    opacity: 0.95;
 }
 .flash-board-card .platform-chip {
     color: var(--color-paper);

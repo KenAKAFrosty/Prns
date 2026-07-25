@@ -35,6 +35,7 @@ pub enum Group {
     Desktop,
     Mobile,
     Microcontroller,
+    SingleBoardComputer,
     Web,
     Server,
     Language,
@@ -47,6 +48,7 @@ impl Group {
             Group::Desktop => "Desktop",
             Group::Mobile => "Mobile",
             Group::Microcontroller => "Microcontrollers",
+            Group::SingleBoardComputer => "Single-board computers",
             Group::Web => "Web & browsers",
             Group::Server => "Servers & edge",
             Group::Language => "Languages & bindings",
@@ -153,6 +155,7 @@ impl BoardTarget {
 pub const GROUPS: &[Group] = &[
     Group::Desktop,
     Group::Mobile,
+    Group::SingleBoardComputer,
     Group::Microcontroller,
     Group::Web,
     Group::Server,
@@ -160,12 +163,62 @@ pub const GROUPS: &[Group] = &[
     Group::GameEngine,
 ];
 
-pub const ROADMAP_BOARD_TARGETS: &[BoardTarget] = &[
+pub const UPCOMING_BOARD_TARGETS: &[BoardTarget] = &[
+    BoardTarget {
+        name: "muzi.works Base Duo",
+        slug: "muzi-works-base-duo",
+        silicon: "nRF52840 + LR1121",
+        tier: Tier::BringUp,
+        interfaces: &[],
+        icon: Some("nordicsemiconductor"),
+        preparation_profile: None,
+        flash_target: None,
+    },
+    BoardTarget {
+        name: "Heltec Mesh Node T096",
+        slug: "heltec-mesh-node-t096",
+        silicon: "nRF52840 + SX1262",
+        tier: Tier::BringUp,
+        interfaces: &[],
+        icon: Some("nordicsemiconductor"),
+        preparation_profile: None,
+        flash_target: None,
+    },
+    BoardTarget {
+        name: "Heltec Wireless Stick Lite V3",
+        slug: "heltec-wireless-stick-lite-v3",
+        silicon: "ESP32-S3 + SX1262",
+        tier: Tier::BringUp,
+        interfaces: &[],
+        icon: Some("espressif"),
+        preparation_profile: None,
+        flash_target: None,
+    },
+    BoardTarget {
+        name: "Raspberry Pi Zero 2 W",
+        slug: "raspberry-pi-zero-2-w",
+        silicon: "RP3A0, quad-core Arm Cortex-A53",
+        tier: Tier::BringUp,
+        interfaces: &[],
+        icon: Some("raspberrypi"),
+        preparation_profile: None,
+        flash_target: None,
+    },
+    BoardTarget {
+        name: "SenseCAP Card Tracker T1000-E",
+        slug: "seeed-card-tracker-t1000-e",
+        silicon: "nRF52840 + LR1110",
+        tier: Tier::BringUp,
+        interfaces: &[],
+        icon: Some("nordicsemiconductor"),
+        preparation_profile: None,
+        flash_target: None,
+    },
     BoardTarget {
         name: "Heltec V3/V3.1",
         slug: "heltec-v3",
         silicon: "ESP32-S3 + SX1262",
-        tier: Tier::BringUp,
+        tier: Tier::Roadmap,
         interfaces: &[],
         icon: Some("espressif"),
         preparation_profile: None,
@@ -175,26 +228,6 @@ pub const ROADMAP_BOARD_TARGETS: &[BoardTarget] = &[
         name: "RAK WisBlock Starter Kit",
         slug: "rak-wisblock-starter-kit",
         silicon: "RAK19007 + RAK4631, nRF52840 + SX1262",
-        tier: Tier::Roadmap,
-        interfaces: &[],
-        icon: Some("nordicsemiconductor"),
-        preparation_profile: None,
-        flash_target: None,
-    },
-    BoardTarget {
-        name: "muzi works Base Duo",
-        slug: "muzi-works-base-duo",
-        silicon: "nRF52840 + LR1121",
-        tier: Tier::Roadmap,
-        interfaces: &[],
-        icon: Some("nordicsemiconductor"),
-        preparation_profile: None,
-        flash_target: None,
-    },
-    BoardTarget {
-        name: "Seeed Card Tracker T1000-E",
-        slug: "seeed-card-tracker-t1000-e",
-        silicon: "nRF52840 + LR1110",
         tier: Tier::Roadmap,
         interfaces: &[],
         icon: Some("nordicsemiconductor"),
@@ -256,7 +289,7 @@ pub const ROADMAP_BOARD_TARGETS: &[BoardTarget] = &[
 pub fn board_target_by_slug(slug: &str) -> Option<&'static BoardTarget> {
     SHIPPING_BOARD_TARGETS
         .iter()
-        .chain(ROADMAP_BOARD_TARGETS.iter())
+        .chain(UPCOMING_BOARD_TARGETS.iter())
         .find(|board| board.slug == slug)
 }
 
@@ -322,6 +355,12 @@ pub const PLATFORMS: &[Platform] = &[
         icon: Some("semtech"),
     },
     Platform {
+        name: "Raspberry Pi RP3A0",
+        group: Group::SingleBoardComputer,
+        tier: Tier::BringUp,
+        icon: Some("raspberrypi"),
+    },
+    Platform {
         name: "RP2040",
         group: Group::Microcontroller,
         tier: Tier::Roadmap,
@@ -378,13 +417,13 @@ pub const PLATFORMS: &[Platform] = &[
     Platform {
         name: "Deno",
         group: Group::Server,
-        tier: Tier::BringUp,
+        tier: Tier::Roadmap,
         icon: Some("deno"),
     },
     Platform {
         name: "Cloudflare Workers",
         group: Group::Server,
-        tier: Tier::BringUp,
+        tier: Tier::Roadmap,
         icon: Some("cloudflareworkers"),
     },
     Platform {
@@ -402,7 +441,7 @@ pub const PLATFORMS: &[Platform] = &[
     Platform {
         name: "TypeScript",
         group: Group::Language,
-        tier: Tier::BringUp,
+        tier: Tier::Shipping,
         icon: Some("typescript"),
     },
     Platform {
@@ -420,38 +459,50 @@ pub const PLATFORMS: &[Platform] = &[
     Platform {
         name: "Python",
         group: Group::Language,
-        tier: Tier::Roadmap,
+        tier: Tier::BringUp,
         icon: Some("python"),
+    },
+    Platform {
+        name: "Go",
+        group: Group::Language,
+        tier: Tier::BringUp,
+        icon: Some("go"),
+    },
+    Platform {
+        name: "Julia",
+        group: Group::Language,
+        tier: Tier::BringUp,
+        icon: Some("julia"),
+    },
+    Platform {
+        name: "Java",
+        group: Group::Language,
+        tier: Tier::BringUp,
+        icon: Some("openjdk"),
+    },
+    Platform {
+        name: ".NET",
+        group: Group::Language,
+        tier: Tier::BringUp,
+        icon: Some("dotnet"),
+    },
+    Platform {
+        name: "C",
+        group: Group::Language,
+        tier: Tier::BringUp,
+        icon: Some("c"),
+    },
+    Platform {
+        name: "C++",
+        group: Group::Language,
+        tier: Tier::BringUp,
+        icon: Some("cplusplus"),
     },
     Platform {
         name: "Ruby",
         group: Group::Language,
         tier: Tier::Roadmap,
         icon: Some("ruby"),
-    },
-    Platform {
-        name: "Java",
-        group: Group::Language,
-        tier: Tier::Roadmap,
-        icon: Some("openjdk"),
-    },
-    Platform {
-        name: ".NET",
-        group: Group::Language,
-        tier: Tier::Roadmap,
-        icon: Some("dotnet"),
-    },
-    Platform {
-        name: "C",
-        group: Group::Language,
-        tier: Tier::Roadmap,
-        icon: Some("c"),
-    },
-    Platform {
-        name: "C++",
-        group: Group::Language,
-        tier: Tier::Roadmap,
-        icon: Some("cplusplus"),
     },
     Platform {
         name: "Zig",
@@ -521,22 +572,6 @@ pub const LANDING_PLATFORM_CHIPS: &[LandingPlatformChip] = &[
         icon: Some("semtech"),
     },
     LandingPlatformChip {
-        name: "Heltec V4",
-        icon: Some("espressif"),
-    },
-    LandingPlatformChip {
-        name: "T-Beam Supreme",
-        icon: Some("espressif"),
-    },
-    LandingPlatformChip {
-        name: "T-Echo",
-        icon: Some("nordicsemiconductor"),
-    },
-    LandingPlatformChip {
-        name: "XIAO ESP32-C6",
-        icon: Some("espressif"),
-    },
-    LandingPlatformChip {
         name: "Rust",
         icon: Some("rust"),
     },
@@ -576,23 +611,138 @@ pub const LANDING_PLATFORM_CHIPS: &[LandingPlatformChip] = &[
         name: "Bun",
         icon: Some("bun"),
     },
-    LandingPlatformChip {
-        name: "Deno",
-        icon: Some("deno"),
-    },
-    LandingPlatformChip {
-        name: "Cloudflare Workers",
-        icon: Some("cloudflareworkers"),
-    },
-    LandingPlatformChip {
-        name: "Fastly",
-        icon: Some("fastly"),
-    },
 ];
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_active_board_work_is_presented_as_bring_up() {
+        let bring_up = UPCOMING_BOARD_TARGETS
+            .iter()
+            .filter(|board| board.tier == Tier::BringUp)
+            .map(|board| board.name)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            bring_up,
+            vec![
+                "muzi.works Base Duo",
+                "Heltec Mesh Node T096",
+                "Heltec Wireless Stick Lite V3",
+                "Raspberry Pi Zero 2 W",
+                "SenseCAP Card Tracker T1000-E",
+            ]
+        );
+        assert!(
+            UPCOMING_BOARD_TARGETS
+                .iter()
+                .filter(|board| !bring_up.contains(&board.name))
+                .all(|board| board.tier == Tier::Roadmap),
+            "every other non-shipping board should remain on the roadmap"
+        );
+    }
+
+    #[test]
+    fn implemented_sdk_tiers_match_release_readiness() {
+        let expected = [
+            ("Rust", Tier::Shipping),
+            ("TypeScript", Tier::Shipping),
+            ("Kotlin", Tier::BringUp),
+            ("Swift", Tier::BringUp),
+            ("Python", Tier::BringUp),
+            ("Go", Tier::BringUp),
+            ("Java", Tier::BringUp),
+            (".NET", Tier::BringUp),
+            ("Julia", Tier::BringUp),
+            ("C", Tier::BringUp),
+            ("C++", Tier::BringUp),
+            ("Ruby", Tier::Roadmap),
+            ("Zig", Tier::Roadmap),
+        ];
+
+        assert_eq!(
+            PLATFORMS
+                .iter()
+                .filter(|platform| platform.group == Group::Language)
+                .count(),
+            expected.len(),
+            "every language and binding should have an explicit expected tier"
+        );
+        for (name, tier) in expected {
+            let platform = PLATFORMS
+                .iter()
+                .find(|platform| platform.name == name)
+                .unwrap_or_else(|| panic!("{name} should be present in the platform catalog"));
+            assert!(
+                platform.tier == tier,
+                "{name} should have the expected release tier"
+            );
+        }
+    }
+
+    #[test]
+    fn homepage_platform_marquee_does_not_name_specific_boards() {
+        let board_names = ["Heltec V4", "T-Beam Supreme", "T-Echo", "XIAO ESP32-C6"];
+
+        assert!(
+            LANDING_PLATFORM_CHIPS
+                .iter()
+                .all(|platform| !board_names.contains(&platform.name)),
+            "the Runs on marquee should name platform families, not boards"
+        );
+    }
+
+    #[test]
+    fn homepage_platform_marquee_does_not_present_roadmap_work_as_available() {
+        assert!(
+            LANDING_PLATFORM_CHIPS.iter().all(|chip| {
+                PLATFORMS
+                    .iter()
+                    .find(|platform| platform.name == chip.name)
+                    .is_none_or(|platform| platform.tier != Tier::Roadmap)
+            }),
+            "the unbadged Runs on marquee should omit roadmap platforms"
+        );
+    }
+
+    #[test]
+    fn deferred_server_platforms_remain_on_the_roadmap() {
+        for name in ["Deno", "Cloudflare Workers", "Fastly"] {
+            let platform = PLATFORMS
+                .iter()
+                .find(|platform| platform.name == name)
+                .unwrap_or_else(|| panic!("{name} should be present in the platform catalog"));
+            assert!(platform.tier == Tier::Roadmap, "{name} should be roadmap");
+        }
+    }
+
+    #[test]
+    fn raspberry_pi_zero_2_w_platform_is_presented_as_bring_up() {
+        let platform = PLATFORMS
+            .iter()
+            .find(|platform| platform.name == "Raspberry Pi RP3A0")
+            .expect("the Zero 2 W platform should be present in the platform catalog");
+
+        assert!(platform.group == Group::SingleBoardComputer);
+        assert!(platform.tier == Tier::BringUp);
+        assert!(platform.icon == Some("raspberrypi"));
+    }
+
+    #[test]
+    fn single_board_computers_are_listed_before_microcontrollers() {
+        let single_board_computers = GROUPS
+            .iter()
+            .position(|group| *group == Group::SingleBoardComputer)
+            .expect("single-board computers should be listed");
+        let microcontrollers = GROUPS
+            .iter()
+            .position(|group| *group == Group::Microcontroller)
+            .expect("microcontrollers should be listed");
+
+        assert!(single_board_computers < microcontrollers);
+    }
 
     #[test]
     fn riscv_is_presented_as_a_shipping_platform() {
