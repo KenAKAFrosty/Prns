@@ -1,6 +1,6 @@
 {
   "name": "personal-rns",
-  "version": "0.2.8",
+  "version": "0.3.0",
   "description": "Correct, robust, fast Personal Reticulum bindings for native JavaScript and browsers.",
   "license": "MIT OR Apache-2.0",
   "homepage": "https://prns.dev",
@@ -70,7 +70,7 @@
     "build:native": "npm run build:code && node scripts/stage.mjs native",
     "build:browser": "npm run build:code && node scripts/stage.mjs browser",
     "build": "npm run build:code && node scripts/stage.mjs",
-    "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.casework-cjs.json --noEmit",
+    "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.casework-cjs.json --noEmit && tsc -p tsconfig.examples.json",
     "test": "npm run build:code && node --test tests/async-lanes.test.mjs tests/browser-auto-wifi-reconnect.test.mjs tests/browser-contract.test.mjs tests/browser-resource-send.test.mjs tests/casework.test.mjs",
     "test:browser": "npm run build:browser && node tests/browser-smoke.mjs",
     "test:browser:full": "npm --prefix ../prns-wasm run build:wasm && npm run test:browser",
@@ -84,14 +84,14 @@
     "typescript": "5.9.2"
   },
   "optionalDependencies": {
-    "personal-rns-darwin-arm64": "0.2.8",
-    "personal-rns-darwin-x64": "0.2.8",
-    "personal-rns-linux-arm64-gnu": "0.2.8",
-    "personal-rns-linux-arm64-musl": "0.2.8",
-    "personal-rns-linux-x64-gnu": "0.2.8",
-    "personal-rns-linux-x64-musl": "0.2.8",
-    "personal-rns-win32-arm64-msvc": "0.2.8",
-    "personal-rns-win32-x64-msvc": "0.2.8"
+    "personal-rns-darwin-arm64": "0.3.0",
+    "personal-rns-darwin-x64": "0.3.0",
+    "personal-rns-linux-arm64-gnu": "0.3.0",
+    "personal-rns-linux-arm64-musl": "0.3.0",
+    "personal-rns-linux-x64-gnu": "0.3.0",
+    "personal-rns-linux-x64-musl": "0.3.0",
+    "personal-rns-win32-arm64-msvc": "0.3.0",
+    "personal-rns-win32-x64-msvc": "0.3.0"
   },
   "publishConfig": {
     "access": "public"

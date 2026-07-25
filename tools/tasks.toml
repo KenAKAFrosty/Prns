@@ -56,7 +56,7 @@ requires = ["bash", "cargo"]
 
 [[task]]
 id = "guide.rust"
-summary = "Run the bounded two-node Rust API contract over an isolated localhost TCP connection."
+summary = "Rust quickstart: run the bounded two-node API contract over an isolated localhost TCP connection."
 domain = "guide"
 effect = "workspace-write"
 platforms = ["any"]

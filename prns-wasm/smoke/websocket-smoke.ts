@@ -491,7 +491,7 @@ function wasmModule(): PrnsWasmModule {
     UsbAutoDecoder: MockUsbAutoDecoder,
     BluetoothReassembler: MockBluetoothReassembler,
     hostContractAbi: () => 1,
-    productVersion: () => "0.2.8",
+    productVersion: () => "0.3.0",
     identitySecretKeyLength: () => IDENTITY_LENGTH,
     bluetoothServiceUuid: () => "00000000-0000-4000-8000-000000000001",
     bluetoothControlUuid: () => "00000000-0000-4000-8000-000000000002",

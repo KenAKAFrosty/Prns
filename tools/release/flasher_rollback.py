@@ -23,6 +23,17 @@ from flasher_website_history import (
 
 WORKFLOW_PATH = ".github/workflows/flasher-rollback.yml"
 STAGE_JOB_NAME = "Verify and stage complete prior website"
+STABLE_RELEASE = "StableRelease"
+COMING_SOON = "ComingSoon"
+TARGET_KINDS = {STABLE_RELEASE, COMING_SOON}
+COMING_SOON_FILES = {
+    "index.html": "docs/website/coming-soon/index.html",
+    "404.html": "docs/website/coming-soon/index.html",
+    "CNAME": "docs/website/public/CNAME",
+    "assets/favicon.svg": "docs/website/public/assets/favicon.svg",
+    "assets/prns-mark.svg": "docs/website/public/assets/prns-mark.svg",
+    "assets/og.png": "docs/website/public/assets/og.png",
+}
 
 
 def load_object(path: Path, label: str) -> dict:
@@ -60,20 +71,40 @@ def validate_descriptor(path: Path, version: str, manifest_sha256: str) -> dict:
     return descriptor
 
 
+def validate_coming_soon(path: Path, canonical_index: Path) -> None:
+    if (
+        path.is_symlink()
+        or canonical_index.is_symlink()
+        or not path.is_file()
+        or not canonical_index.is_file()
+        or path.read_bytes() != canonical_index.read_bytes()
+    ):
+        raise ValueError("live site differs from the canonical coming-soon bytes")
+
+
 def validate_live_state(
     path: Path,
     *,
     mode: str,
-    target_version: str,
-    target_manifest_sha256: str,
+    target_kind: str,
+    target_version: str | None,
+    target_manifest_sha256: str | None,
     expected_live_version: str,
     expected_live_manifest_sha256: str,
+    coming_soon_index: Path | None = None,
 ) -> str:
     """Validate the distinct pre-promotion dry-run and deployment CAS states."""
 
     if mode == "dry-run":
         try:
-            validate_descriptor(path, target_version, target_manifest_sha256)
+            if target_kind == STABLE_RELEASE:
+                if target_version is None or target_manifest_sha256 is None:
+                    raise ValueError("stable release target identity is incomplete")
+                validate_descriptor(path, target_version, target_manifest_sha256)
+            elif target_kind == COMING_SOON and coming_soon_index is not None:
+                validate_coming_soon(path, coming_soon_index)
+            else:
+                raise ValueError("rollback target kind is unsupported")
             return "target_baseline"
         except ValueError:
             try:
@@ -95,13 +126,45 @@ def validate_live_state(
         return "expected_live"
     except ValueError:
         try:
-            validate_descriptor(path, target_version, target_manifest_sha256)
+            if target_kind == STABLE_RELEASE:
+                if target_version is None or target_manifest_sha256 is None:
+                    raise ValueError("stable release target identity is incomplete")
+                validate_descriptor(path, target_version, target_manifest_sha256)
+            elif target_kind == COMING_SOON and coming_soon_index is not None:
+                validate_coming_soon(path, coming_soon_index)
+            else:
+                raise ValueError("rollback target kind is unsupported")
             return "target_idempotent_resume"
         except ValueError as target_error:
             raise ValueError(
                 "live stable channel is neither the expected release nor the exact "
                 "idempotent rollback target"
             ) from target_error
+
+
+def validate_promotion_state(
+    path: Path,
+    *,
+    baseline_kind: str,
+    baseline_version: str | None,
+    baseline_manifest_sha256: str | None,
+    candidate_version: str,
+    candidate_manifest_sha256: str,
+    coming_soon_index: Path | None = None,
+) -> str:
+    try:
+        validate_descriptor(path, candidate_version, candidate_manifest_sha256)
+        return "candidate_idempotent_resume"
+    except ValueError:
+        if baseline_kind == STABLE_RELEASE:
+            if baseline_version is None or baseline_manifest_sha256 is None:
+                raise ValueError("stable release promotion baseline is incomplete")
+            validate_descriptor(path, baseline_version, baseline_manifest_sha256)
+        elif baseline_kind == COMING_SOON and coming_soon_index is not None:
+            validate_coming_soon(path, coming_soon_index)
+        else:
+            raise ValueError("promotion baseline kind is unsupported")
+        return "baseline"
 
 
 def require_empty_directory(path: Path, label: str) -> None:
@@ -157,8 +220,43 @@ def validate_website_identity(value: object) -> dict:
 def validate_stage_identity(value: object) -> dict:
     if not isinstance(value, dict) or set(value) != {"schema", "target", "website"}:
         raise ValueError("rollback stage identity has an unsupported shape")
-    if value.get("schema") != 2:
+    if value.get("schema") != 3:
         raise ValueError("rollback stage identity has an unsupported schema")
+    target = value.get("target")
+    if not isinstance(target, dict):
+        raise ValueError("rollback target identity is malformed")
+    kind = target.get("kind")
+    if kind == STABLE_RELEASE:
+        expected_target_fields = {
+            "kind",
+            "version",
+            "source_commit",
+            "manifest_sha256",
+            "release_record_sha256",
+        }
+        if set(target) != expected_target_fields:
+            raise ValueError("stable rollback target identity is malformed")
+        canonical_version(target.get("version"))
+        require_commit(target.get("source_commit"), "rollback target source commit")
+        require_sha256(target.get("manifest_sha256"), "rollback target manifest SHA-256")
+        require_sha256(
+            target.get("release_record_sha256"),
+            "rollback target release-record SHA-256",
+        )
+    elif kind == COMING_SOON:
+        if set(target) != {
+            "kind",
+            "withdrawn_version",
+            "withdrawn_manifest_sha256",
+        }:
+            raise ValueError("coming-soon rollback target identity is malformed")
+        canonical_version(target.get("withdrawn_version"))
+        require_sha256(
+            target.get("withdrawn_manifest_sha256"),
+            "withdrawn manifest SHA-256",
+        )
+    else:
+        raise ValueError("rollback target kind is unsupported")
     validate_website_identity(value.get("website"))
     return value
 
@@ -275,12 +373,53 @@ def stage(
     )
     files = tree_files(output)
     identity = {
-        "schema": 2,
+        "schema": 3,
         "target": {
+            "kind": STABLE_RELEASE,
             "version": version,
             "source_commit": source_commit,
             "manifest_sha256": manifest_hash,
             "release_record_sha256": expected_record_hash,
+        },
+        "website": {**tree_identity(files), "files": files},
+    }
+    identity_output.parent.mkdir(parents=True, exist_ok=True)
+    identity_output.write_text(
+        json.dumps(identity, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    return identity
+
+
+def stage_coming_soon(
+    *,
+    repository: Path,
+    withdrawn_version: str,
+    withdrawn_manifest_sha256: str,
+    output: Path,
+    identity_output: Path,
+) -> dict:
+    withdrawn_version = canonical_version(withdrawn_version)
+    withdrawn_manifest_sha256 = require_sha256(
+        withdrawn_manifest_sha256,
+        "withdrawn manifest SHA-256",
+    )
+    require_empty_directory(output, "rollback staging output")
+    for destination, source in COMING_SOON_FILES.items():
+        source_path = repository / source
+        if source_path.is_symlink() or not source_path.is_file():
+            raise ValueError(f"canonical coming-soon source is unavailable: {source}")
+        destination_path = output.joinpath(*PurePosixPath(destination).parts)
+        destination_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_path, destination_path)
+    files = tree_files(output)
+    identity = {
+        "schema": 3,
+        "target": {
+            "kind": COMING_SOON,
+            "withdrawn_version": withdrawn_version,
+            "withdrawn_manifest_sha256": withdrawn_manifest_sha256,
         },
         "website": {**tree_identity(files), "files": files},
     }
@@ -322,7 +461,7 @@ def create_dry_run_record(
     if started_epoch <= 0 or elapsed < 0 or elapsed > 900:
         raise ValueError("rollback dry-run staging exceeded the 15-minute recovery target")
     record = {
-        "schema": 2,
+        "schema": 3,
         "result": "passed",
         "deployment_cas": "deferred_to_deploy",
         "repository": repository,
@@ -363,8 +502,9 @@ def validate_dry_run_record(
     default_branch: str,
     expected_run_id: int,
     expected_run_attempt: int,
-    target_version: str,
-    target_release_record_sha256: str,
+    target_kind: str,
+    target_version: str | None,
+    target_release_record_sha256: str | None,
     expected_live_version: str,
     expected_live_manifest_sha256: str,
     required_workflow_sha: str,
@@ -395,24 +535,20 @@ def validate_dry_run_record(
     }
     if (
         set(record) != expected_fields
-        or record.get("schema") != 2
+        or record.get("schema") != 3
         or record.get("result") != "passed"
         or record.get("deployment_cas") != "deferred_to_deploy"
     ):
         raise ValueError("rollback dry-run record has an unsupported shape or result")
-    target_version = canonical_version(target_version)
     expected_live_version = canonical_version(expected_live_version)
-    target_hash = require_sha256(
-        target_release_record_sha256, "target release-record SHA-256"
-    )
     live_hash = require_sha256(
         expected_live_manifest_sha256, "expected live manifest SHA-256"
     )
     required_workflow_sha = require_commit(
         required_workflow_sha, "required rollback workflow SHA"
     )
-    if target_version == expected_live_version:
-        raise ValueError("rollback target must differ from the expected live release")
+    if target_kind not in TARGET_KINDS:
+        raise ValueError("rollback target kind is unsupported")
     if record.get("repository") != repository or record.get("workflow_path") != WORKFLOW_PATH:
         raise ValueError("rollback dry-run record has the wrong workflow custody")
     if record.get("workflow_run_id") != expected_run_id:
@@ -437,8 +573,29 @@ def validate_dry_run_record(
     if record.get("target") != identity.get("target") or record.get("staged_website") != identity.get("website"):
         raise ValueError("rollback dry-run record differs from the newly staged website")
     target = record.get("target")
-    if not isinstance(target, dict) or target.get("version") != target_version or target.get("release_record_sha256") != target_hash:
-        raise ValueError("rollback dry-run record has the wrong target identity")
+    if not isinstance(target, dict) or target.get("kind") != target_kind:
+        raise ValueError("rollback dry-run record has the wrong target kind")
+    if target_kind == STABLE_RELEASE:
+        if target_version is None or target_release_record_sha256 is None:
+            raise ValueError("stable release target identity is incomplete")
+        target_version = canonical_version(target_version)
+        target_hash = require_sha256(
+            target_release_record_sha256, "target release-record SHA-256"
+        )
+        if target_version == expected_live_version:
+            raise ValueError("rollback target must differ from the expected live release")
+        if (
+            target.get("version") != target_version
+            or target.get("release_record_sha256") != target_hash
+        ):
+            raise ValueError("rollback dry-run record has the wrong target identity")
+    elif (
+        target_version is not None
+        or target_release_record_sha256 is not None
+        or target.get("withdrawn_version") != expected_live_version
+        or target.get("withdrawn_manifest_sha256") != live_hash
+    ):
+        raise ValueError("coming-soon dry-run does not bind the exact withdrawn release")
     if record.get("expected_live") != {
         "version": expected_live_version,
         "manifest_sha256": live_hash,

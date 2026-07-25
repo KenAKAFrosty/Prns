@@ -26,7 +26,6 @@ def add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--repository", required=True)
     parser.add_argument("--version", required=True)
     parser.add_argument("--source-commit", required=True)
-    parser.add_argument("--minimum-hours", type=int, default=24)
 
 
 def main() -> int:
@@ -34,7 +33,7 @@ def main() -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
     create = subparsers.add_parser("create")
     add_common(create)
-    create.add_argument("--completed-at", required=True)
+    create.add_argument("--approved-at", required=True)
     create.add_argument("--output", type=Path, required=True)
     verify = subparsers.add_parser("verify")
     add_common(verify)
@@ -72,10 +71,9 @@ def main() -> int:
             "repository": arguments.repository,
             "version": arguments.version,
             "source_commit": arguments.source_commit,
-            "minimum_hours": arguments.minimum_hours,
         }
         if arguments.command == "create":
-            evidence = build_evidence(completed_at=arguments.completed_at, **common)
+            evidence = build_evidence(approved_at=arguments.approved_at, **common)
             write_evidence(arguments.output, evidence)
             print(arguments.output)
         else:

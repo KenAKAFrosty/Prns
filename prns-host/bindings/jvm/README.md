@@ -66,7 +66,7 @@ exclude the desktop JNA runtime selected by the Maven POM, and place the Persona
 RNS libraries from the Android release artifact in the normal ABI directories:
 
 ```kotlin
-implementation("io.reticulum:personal-rns:0.2.8") {
+implementation("io.reticulum:personal-rns:0.3.0") {
     exclude(group = "net.java.dev.jna", module = "jna")
 }
 implementation("net.java.dev.jna:jna:5.19.1@aar")

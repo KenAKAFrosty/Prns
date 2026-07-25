@@ -238,8 +238,7 @@ jobs:
               --manifest target/candidate/flash-manifest.json \
               --repository "$GITHUB_REPOSITORY" \
               --version "$RELEASE_VERSION" \
-              --source-commit "$source_commit" \
-              --minimum-hours 24; then
+              --source-commit "$source_commit"; then
               selected_evidence="$evidence"
               break
             fi

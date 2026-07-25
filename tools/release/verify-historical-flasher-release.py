@@ -203,8 +203,6 @@ def main() -> int:
                     arguments.version,
                     "--source-commit",
                     source_commit,
-                    "--minimum-hours",
-                    "24",
                     "--allow-promoted",
                 ],
                 cwd=snapshot,

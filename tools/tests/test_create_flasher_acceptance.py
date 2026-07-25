@@ -30,6 +30,69 @@ CONTRACT = load_script("flasher_acceptance_contract.py", "flasher_acceptance_con
 PUBLISHED_AT = "2026-07-20T12:00:00Z"
 
 
+def complete_roster() -> dict:
+    hosts = {
+        ("heltec-v4", "cli"): ("linux", "x86_64"),
+        ("heltec-v4", "web"): ("linux", "x86_64"),
+        ("t-beam-supreme", "cli"): ("macos", "aarch64"),
+        ("t-beam-supreme", "web"): ("macos", "aarch64"),
+        ("xiao-esp32-c6", "cli"): ("windows", "x86_64"),
+        ("xiao-esp32-c6", "web"): ("windows", "x86_64"),
+        ("t-echo", "cli"): ("linux", "aarch64"),
+        ("t-echo", "web"): ("macos", "x86_64"),
+    }
+    physical_assignments = []
+    for (board, surface), (os_name, architecture) in hosts.items():
+        assignment = {
+            "board": board,
+            "surface": surface,
+            "os": os_name,
+            "architecture": architecture,
+            "tester": "github:solo-tester",
+            "cables_ready": True,
+            "device_permissions_ready": True,
+            "recovery_instructions_reviewed": True,
+        }
+        if surface == "web":
+            assignment["browser"] = {
+                "name": "edge" if os_name == "windows" else "chrome",
+                "channel": "stable",
+            }
+        physical_assignments.append(assignment)
+    return {
+        "schema": 2,
+        "release": {"version": "0.2.6"},
+        "release_owner": "github:release-owner",
+        "confirmed_on": "2026-07-20",
+        "physical_assignments": physical_assignments,
+        "fallback_assignments": [
+            {
+                "browser": {"name": browser, "channel": "stable"},
+                "os": os_name,
+                "architecture": architecture,
+                "tester": "github:solo-tester",
+                "browser_ready": True,
+            }
+            for browser, os_name, architecture in (
+                ("firefox", "linux", "x86_64"),
+                ("firefox", "macos", "x86_64"),
+                ("firefox", "windows", "x86_64"),
+                ("safari", "macos", "aarch64"),
+            )
+        ],
+        "installation_assignments": [
+            {
+                "target": target,
+                "os": os_name,
+                "architecture": architecture,
+                "tester": "github:solo-tester",
+                "archive_ready": True,
+            }
+            for target, (os_name, architecture) in CONTRACT.CLI_TARGETS.items()
+        ],
+    }
+
+
 def manifest() -> dict:
     boards = (
         ("heltec-v4", "Heltec LoRa 32 V4", "esp-serial", "esp32s3", True),
@@ -71,32 +134,9 @@ class AcceptanceScaffoldTests(unittest.TestCase):
         )
         self.signature_path.write_text("fixture minisign\n", encoding="utf-8")
         self.signed_bundle_path.write_bytes(b"exact signed candidate fixture\n")
-        roster = {
-            "schema": 1,
-            "release": {"version": "0.2.6"},
-            "release_owner": "github:release-owner",
-            "confirmed_on": "2026-07-20",
-            "assignments": [
-                {
-                    "os": os_name,
-                    "architecture": architecture,
-                    "cli_target": target,
-                    "web_browser": {
-                        "name": "edge" if os_name == "windows" else "chrome",
-                        "channel": "stable",
-                    },
-                    "tester": f"github:tester-{index}",
-                    "boards": list(CONTRACT.SHIPPING_BOARDS),
-                    "cables_ready": True,
-                    "device_permissions_ready": True,
-                    "recovery_instructions_reviewed": True,
-                }
-                for index, (target, (os_name, architecture)) in enumerate(
-                    CONTRACT.CLI_TARGETS.items()
-                )
-            ],
-        }
-        self.roster_path.write_text(json.dumps(roster) + "\n", encoding="utf-8")
+        self.roster_path.write_text(
+            json.dumps(complete_roster()) + "\n", encoding="utf-8"
+        )
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -107,6 +147,7 @@ class AcceptanceScaffoldTests(unittest.TestCase):
                 manifest=self.manifest_path,
                 manifest_signature=self.signature_path,
                 signed_bundle=self.signed_bundle_path,
+                tester_roster=self.roster_path,
                 prerelease_published_at=PUBLISHED_AT,
                 output=self.output_path,
             )
@@ -121,14 +162,15 @@ class AcceptanceScaffoldTests(unittest.TestCase):
             hashlib.sha256(self.signed_bundle_path.read_bytes()).hexdigest(),
         )
         self.assertEqual(candidate["prerelease_published_at"], PUBLISHED_AT)
-        self.assertEqual(len(record["runs"]), 24)
+        self.assertEqual(record["schema"], 3)
+        self.assertEqual(len(record["runs"]), 8)
         self.assertEqual(len(record["browser_fallbacks"]), 4)
         self.assertEqual(len(record["installation_smoke"]), 5)
         encoded = json.dumps(record)
         self.assertNotIn('"pass"', encoded)
         self.assertIn('"not-run"', encoded)
 
-    def test_scaffold_distributes_complete_transport_aware_coverage(self) -> None:
+    def test_scaffold_assigns_complete_transport_aware_coverage(self) -> None:
         record = self.create()
         targets = {
             target["board_slug"]: target for target in self.manifest_document["targets"]
@@ -145,14 +187,9 @@ class AcceptanceScaffoldTests(unittest.TestCase):
                     for run in record["runs"]
                     if run["board"] == board and run["surface"] == surface
                 ]
-                self.assertEqual(len(rows), 3)
-                for row in rows:
-                    self.assertTrue(
-                        CONTRACT.PER_RUN_BASELINE_SCENARIOS <= set(row["scenarios"])
-                    )
-                covered = set().union(*(set(row["scenarios"]) for row in rows))
+                self.assertEqual(len(rows), 1)
                 self.assertEqual(
-                    covered,
+                    set(rows[0]["scenarios"]),
                     CONTRACT.applicable_scenarios(target, surface, chip_counts),
                 )
 
@@ -200,6 +237,7 @@ class AcceptanceScaffoldTests(unittest.TestCase):
                     manifest=self.manifest_path,
                     manifest_signature=self.signature_path,
                     signed_bundle=self.signed_bundle_path,
+                    tester_roster=self.roster_path,
                     prerelease_published_at="2026-07-20",
                     output=self.output_path,
                 )

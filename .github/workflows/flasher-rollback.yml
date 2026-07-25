@@ -9,13 +9,21 @@ on:
         default: dry-run
         type: choice
         options: [dry-run, deploy]
+      target_kind:
+        description: Recovery target kind
+        required: true
+        default: StableRelease
+        type: choice
+        options: [ComingSoon, StableRelease]
       target_version:
         description: Immutable prior signed stable version to restore
-        required: true
+        required: false
+        default: ""
         type: string
       target_release_record_sha256:
         description: Lowercase SHA-256 of the target version's signed release record
-        required: true
+        required: false
+        default: ""
         type: string
       expected_live_version:
         description: Version deploy must replace; prospective candidate during pre-promotion dry-run
@@ -41,6 +49,7 @@ permissions:
 
 env:
   ROLLBACK_MODE: ${{ inputs.mode }}
+  TARGET_KIND: ${{ inputs.target_kind }}
   TARGET_VERSION: ${{ inputs.target_version }}
   TARGET_RELEASE_RECORD_SHA256: ${{ inputs.target_release_record_sha256 }}
   EXPECTED_LIVE_VERSION: ${{ inputs.expected_live_version }}
@@ -80,13 +89,20 @@ jobs:
           default_branch="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.default_branch')"
           test "$GITHUB_REF" = "refs/heads/${default_branch}"
           echo "default_branch=$default_branch" >> "$GITHUB_OUTPUT"
-          [[ "$TARGET_VERSION" =~ ^[0-9A-Za-z][0-9A-Za-z.+-]*$ ]]
           [[ "$EXPECTED_LIVE_VERSION" =~ ^[0-9A-Za-z][0-9A-Za-z.+-]*$ ]]
-          test "${TARGET_VERSION,,}" != next
           test "${EXPECTED_LIVE_VERSION,,}" != next
-          test "$TARGET_VERSION" != "$EXPECTED_LIVE_VERSION"
-          [[ "$TARGET_RELEASE_RECORD_SHA256" =~ ^[0-9a-f]{64}$ ]]
           [[ "$EXPECTED_LIVE_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          if [[ "$TARGET_KIND" == StableRelease ]]; then
+            [[ "$TARGET_VERSION" =~ ^[0-9A-Za-z][0-9A-Za-z.+-]*$ ]]
+            test "${TARGET_VERSION,,}" != next
+            test "$TARGET_VERSION" != "$EXPECTED_LIVE_VERSION"
+            [[ "$TARGET_RELEASE_RECORD_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          elif [[ "$TARGET_KIND" == ComingSoon ]]; then
+            test -z "$TARGET_VERSION"
+            test -z "$TARGET_RELEASE_RECORD_SHA256"
+          else
+            exit 2
+          fi
           case "$ROLLBACK_MODE" in
             dry-run) test -z "$DRY_RUN_ID" && test -z "$DRY_RUN_ATTEMPT" ;;
             deploy)
@@ -103,6 +119,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
         run: |
+          if [[ "$TARGET_KIND" == StableRelease ]]; then
           assets="target/rollback-assets"
           candidate="target/rollback-candidate"
           mkdir -p "$assets"
@@ -184,6 +201,103 @@ jobs:
             > target/rollback-asset-inventory.json
           echo "asset_inventory_sha256=$(sha256sum target/rollback-asset-inventory.json | awk '{print $1}')" \
             >> "$GITHUB_OUTPUT"
+          else
+            assets="target/withdrawn-assets"
+            candidate="target/withdrawn-candidate"
+            mkdir -p "$assets"
+            gh release download "v${EXPECTED_LIVE_VERSION}" --dir "$assets"
+            record="$assets/release-record-v${EXPECTED_LIVE_VERSION}.json"
+            gh release view "v${EXPECTED_LIVE_VERSION}" \
+              --json isDraft,isPrerelease,publishedAt,tagName,targetCommitish \
+              > target/withdrawn-release.json
+            test "$(jq -r '.isDraft' target/withdrawn-release.json)" = false
+            test "$(jq -r '.tagName' target/withdrawn-release.json)" = \
+              "v${EXPECTED_LIVE_VERSION}"
+            if [[ "$ROLLBACK_MODE" == deploy ]]; then
+              test "$(jq -r '.isPrerelease' target/withdrawn-release.json)" = false
+            fi
+            bundle="$assets/prns-flasher-candidate-v${EXPECTED_LIVE_VERSION}-signed.tar.gz"
+            ./tools/prns release candidate extract -- "$bundle" "$candidate"
+            test "$(sha256sum "$candidate/flash-manifest.json" | awk '{print $1}')" = \
+              "$EXPECTED_LIVE_MANIFEST_SHA256"
+            history="$candidate/metadata/release-history.json"
+            test "$(jq -r '.mode' "$history")" = bootstrap
+            test "$(jq -r '.head' "$history")" = null
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+              --jq "[.[] | select(.draft == false and .prerelease == false and .tag_name != \"v${EXPECTED_LIVE_VERSION}\")] | length" \
+              > target/other-stable-release-count
+            test "$(awk '{sum += $1} END {print sum + 0}' \
+              target/other-stable-release-count)" = 0
+
+            acceptance_commit="$(jq -r '.acceptance.source_commit' "$record")"
+            review_name="$(jq -r '.public_review.evidence.name' "$record")"
+            review_evidence="$assets/$review_name"
+            review_run_id="$(jq -r '.public_review.workflow_run_id' "$record")"
+            review_attempt="$(jq -r '.public_review.workflow_run_attempt' "$record")"
+            review_job_id="$(jq -r '.public_review.workflow_job_id' "$record")"
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${review_run_id}/attempts/${review_attempt}" \
+              > target/withdrawn-review-run.json
+            gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${review_run_id}/attempts/${review_attempt}/jobs?per_page=100" \
+              --jq ".jobs[] | select(.id == ${review_job_id})" \
+              > target/withdrawn-review-job-pages.json
+            test "$(jq -s 'length' target/withdrawn-review-job-pages.json)" -eq 1
+            jq -s '.[0]' target/withdrawn-review-job-pages.json \
+              > target/withdrawn-review-job.json
+            ./tools/prns release historical verify -- \
+              --candidate "$candidate" \
+              --candidate-run "$assets/prns-flasher-candidate-run-v${EXPECTED_LIVE_VERSION}.json" \
+              --signed-bundle "$bundle" \
+              --acceptance "$assets/acceptance-v${EXPECTED_LIVE_VERSION}.json" \
+              --acceptance-source-commit "$acceptance_commit" \
+              --release-record "$record" \
+              --attestation-bundle "$assets/prns-flasher-attestation-v${EXPECTED_LIVE_VERSION}.json" \
+              --attestation-metadata "$assets/prns-flasher-attestation-v${EXPECTED_LIVE_VERSION}.metadata.json" \
+              --public-review-evidence "$review_evidence" \
+              --public-review-release target/withdrawn-release.json \
+              --public-review-run target/withdrawn-review-run.json \
+              --public-review-job target/withdrawn-review-job.json \
+              --assets "$assets" \
+              --repository "$GITHUB_REPOSITORY" \
+              --version "$EXPECTED_LIVE_VERSION"
+            gh release view "v${EXPECTED_LIVE_VERSION}" --json assets \
+              --jq '[.assets[] | {name, size, digest}] | sort_by(.name)' \
+              > target/rollback-asset-inventory.json
+            ./tools/prns release assets verify -- \
+              --candidate "$candidate" \
+              --assets "$assets" \
+              --remote-inventory target/rollback-asset-inventory.json \
+              --version "$EXPECTED_LIVE_VERSION"
+            attestation="$assets/prns-flasher-attestation-v${EXPECTED_LIVE_VERSION}.json"
+            signer="$GITHUB_REPOSITORY/.github/workflows/flasher-sign.yml"
+            gh attestation verify "$bundle" --repo "$GITHUB_REPOSITORY" \
+              --bundle "$attestation" --signer-workflow "$signer" \
+              --deny-self-hosted-runners
+            for archive in "$candidate"/cli/hopspot-flash-*; do
+              gh attestation verify "$archive" --repo "$GITHUB_REPOSITORY" \
+                --bundle "$attestation" --signer-workflow "$signer" \
+                --deny-self-hosted-runners
+            done
+            while IFS= read -r relative; do
+              gh attestation verify "$candidate/$relative" --repo "$GITHUB_REPOSITORY" \
+                --bundle "$attestation" --signer-workflow "$signer" \
+                --deny-self-hosted-runners
+            done < <(
+              jq -r '[.targets[].parts[].path] | unique[]' \
+                "$candidate/flash-manifest.json"
+            )
+            ./tools/prns release rollback -- stage-coming-soon \
+              --repository . \
+              --withdrawn-version "$EXPECTED_LIVE_VERSION" \
+              --withdrawn-manifest-sha256 "$EXPECTED_LIVE_MANIFEST_SHA256" \
+              --output target/rollback-website \
+              --identity-output target/rollback-stage.json
+            echo "manifest_sha256=" >> "$GITHUB_OUTPUT"
+            echo "asset_inventory_sha256=$(sha256sum \
+              target/rollback-asset-inventory.json | awk '{print $1}')" \
+              >> "$GITHUB_OUTPUT"
+          fi
       - name: Verify baseline state for dry-run or compare-and-swap state for deploy
         id: live
         env:
@@ -194,16 +308,30 @@ jobs:
           curl --fail --location --retry 5 --retry-all-errors \
             --output target/live-before/stable.json \
             https://reticulum.rs/releases/channels/stable.json
-          curl --fail --location --retry 5 --retry-all-errors \
-            --output target/live-before/stable.json.minisig \
-            https://reticulum.rs/releases/channels/stable.json.minisig
-          "$PRNS_MINISIGN_BIN" -Vm target/live-before/stable.json \
-            -x target/live-before/stable.json.minisig -p release/keys/minisign.pub
+          target_arguments=(--target-kind "$TARGET_KIND")
+          if [[ "$TARGET_KIND" == StableRelease ]]; then
+            target_arguments+=(
+              --target-version "$TARGET_VERSION"
+              --target-manifest-sha256 "$TARGET_MANIFEST_SHA256"
+            )
+          else
+            target_arguments+=(
+              --coming-soon-index docs/website/coming-soon/index.html
+            )
+          fi
+          if [[ "$TARGET_KIND" == StableRelease ]] \
+            || ! cmp target/live-before/stable.json \
+              docs/website/coming-soon/index.html; then
+            curl --fail --location --retry 5 --retry-all-errors \
+              --output target/live-before/stable.json.minisig \
+              https://reticulum.rs/releases/channels/stable.json.minisig
+            "$PRNS_MINISIGN_BIN" -Vm target/live-before/stable.json \
+              -x target/live-before/stable.json.minisig -p release/keys/minisign.pub
+          fi
           live_state="$(./tools/prns release rollback -- live-state \
               --descriptor target/live-before/stable.json \
               --mode "$ROLLBACK_MODE" \
-              --target-version "$TARGET_VERSION" \
-              --target-manifest-sha256 "$TARGET_MANIFEST_SHA256" \
+              "${target_arguments[@]}" \
               --expected-live-version "$EXPECTED_LIVE_VERSION" \
               --expected-live-manifest-sha256 "$EXPECTED_LIVE_MANIFEST_SHA256")"
           echo "$live_state"
@@ -234,6 +362,13 @@ jobs:
             > target/dry-run-job-pages.json
           test "$(jq -s 'length' target/dry-run-job-pages.json)" -eq 1
           jq -s '.[0]' target/dry-run-job-pages.json > target/dry-run-job.json
+          target_arguments=(--target-kind "$TARGET_KIND")
+          if [[ "$TARGET_KIND" == StableRelease ]]; then
+            target_arguments+=(
+              --target-version "$TARGET_VERSION"
+              --target-release-record-sha256 "$TARGET_RELEASE_RECORD_SHA256"
+            )
+          fi
           ./tools/prns release rollback -- validate-record \
             --record target/dry-run/rollback-dry-run.json \
             --run-json target/dry-run-workflow.json \
@@ -243,8 +378,7 @@ jobs:
             --default-branch "$DEFAULT_BRANCH" \
             --expected-run-id "$DRY_RUN_ID" \
             --expected-run-attempt "$DRY_RUN_ATTEMPT" \
-            --target-version "$TARGET_VERSION" \
-            --target-release-record-sha256 "$TARGET_RELEASE_RECORD_SHA256" \
+            "${target_arguments[@]}" \
             --expected-live-version "$EXPECTED_LIVE_VERSION" \
             --expected-live-manifest-sha256 "$EXPECTED_LIVE_MANIFEST_SHA256" \
             --required-workflow-sha "$GITHUB_SHA"
@@ -305,7 +439,7 @@ jobs:
       group: prns-public-pages
       cancel-in-progress: false
     permissions:
-      actions: read
+      actions: write
       contents: write
       pages: write
       id-token: write
@@ -332,7 +466,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "v${TARGET_VERSION}" --json assets \
+          release_state_version="$TARGET_VERSION"
+          if [[ "$TARGET_KIND" == ComingSoon ]]; then
+            release_state_version="$EXPECTED_LIVE_VERSION"
+          fi
+          gh release view "v${release_state_version}" --json assets \
             --jq '[.assets[] | {name, size, digest}] | sort_by(.name)' \
             > target/assets-before-rollback-deployment.json
           test "$(sha256sum target/assets-before-rollback-deployment.json | awk '{print $1}')" = \
@@ -346,16 +484,30 @@ jobs:
           curl --fail --location --retry 5 --retry-all-errors \
             --output target/live-final-cas/stable.json \
             https://reticulum.rs/releases/channels/stable.json
-          curl --fail --location --retry 5 --retry-all-errors \
-            --output target/live-final-cas/stable.json.minisig \
-            https://reticulum.rs/releases/channels/stable.json.minisig
-          "$PRNS_MINISIGN_BIN" -Vm target/live-final-cas/stable.json \
-            -x target/live-final-cas/stable.json.minisig -p release/keys/minisign.pub
+          target_arguments=(--target-kind "$TARGET_KIND")
+          if [[ "$TARGET_KIND" == StableRelease ]]; then
+            target_arguments+=(
+              --target-version "$TARGET_VERSION"
+              --target-manifest-sha256 "$TARGET_MANIFEST_SHA256"
+            )
+          else
+            target_arguments+=(
+              --coming-soon-index docs/website/coming-soon/index.html
+            )
+          fi
+          if [[ "$TARGET_KIND" == StableRelease ]] \
+            || ! cmp target/live-final-cas/stable.json \
+              docs/website/coming-soon/index.html; then
+            curl --fail --location --retry 5 --retry-all-errors \
+              --output target/live-final-cas/stable.json.minisig \
+              https://reticulum.rs/releases/channels/stable.json.minisig
+            "$PRNS_MINISIGN_BIN" -Vm target/live-final-cas/stable.json \
+              -x target/live-final-cas/stable.json.minisig -p release/keys/minisign.pub
+          fi
           ./tools/prns release rollback -- live-state \
             --descriptor target/live-final-cas/stable.json \
             --mode deploy \
-            --target-version "$TARGET_VERSION" \
-            --target-manifest-sha256 "$TARGET_MANIFEST_SHA256" \
+            "${target_arguments[@]}" \
             --expected-live-version "$EXPECTED_LIVE_VERSION" \
             --expected-live-manifest-sha256 "$EXPECTED_LIVE_MANIFEST_SHA256"
       - name: Deploy the staged complete prior website
@@ -371,26 +523,32 @@ jobs:
           curl --fail --location --retry 5 --retry-all-errors \
             --output target/live-restored/stable.json \
             "$site/releases/channels/stable.json"
-          curl --fail --location --retry 5 --retry-all-errors \
-            --output target/live-restored/stable.json.minisig \
-            "$site/releases/channels/stable.json.minisig"
-          "$PRNS_MINISIGN_BIN" -Vm target/live-restored/stable.json \
-            -x target/live-restored/stable.json.minisig -p release/keys/minisign.pub
-          ./tools/prns release rollback -- cas \
-            --descriptor target/live-restored/stable.json \
-            --version "$TARGET_VERSION" \
-            --manifest-sha256 "$TARGET_MANIFEST_SHA256"
-          curl --fail --location --retry 5 --retry-all-errors \
-            --output target/live-restored/flash-manifest.json \
-            "$site/releases/${TARGET_VERSION}/flash-manifest.json"
-          curl --fail --location --retry 5 --retry-all-errors \
-            --output target/live-restored/flash-manifest.json.minisig \
-            "$site/releases/${TARGET_VERSION}/flash-manifest.json.minisig"
-          "$PRNS_MINISIGN_BIN" -Vm target/live-restored/flash-manifest.json \
-            -x target/live-restored/flash-manifest.json.minisig \
-            -p release/keys/minisign.pub
-          test "$(sha256sum target/live-restored/flash-manifest.json | awk '{print $1}')" = \
-            "$TARGET_MANIFEST_SHA256"
+          if [[ "$TARGET_KIND" == StableRelease ]]; then
+            curl --fail --location --retry 5 --retry-all-errors \
+              --output target/live-restored/stable.json.minisig \
+              "$site/releases/channels/stable.json.minisig"
+            "$PRNS_MINISIGN_BIN" -Vm target/live-restored/stable.json \
+              -x target/live-restored/stable.json.minisig -p release/keys/minisign.pub
+            ./tools/prns release rollback -- cas \
+              --descriptor target/live-restored/stable.json \
+              --version "$TARGET_VERSION" \
+              --manifest-sha256 "$TARGET_MANIFEST_SHA256"
+            curl --fail --location --retry 5 --retry-all-errors \
+              --output target/live-restored/flash-manifest.json \
+              "$site/releases/${TARGET_VERSION}/flash-manifest.json"
+            curl --fail --location --retry 5 --retry-all-errors \
+              --output target/live-restored/flash-manifest.json.minisig \
+              "$site/releases/${TARGET_VERSION}/flash-manifest.json.minisig"
+            "$PRNS_MINISIGN_BIN" -Vm target/live-restored/flash-manifest.json \
+              -x target/live-restored/flash-manifest.json.minisig \
+              -p release/keys/minisign.pub
+            test "$(sha256sum target/live-restored/flash-manifest.json | awk '{print $1}')" = \
+              "$TARGET_MANIFEST_SHA256"
+          else
+            ./tools/prns release rollback -- cas-coming-soon \
+              --response target/live-restored/stable.json \
+              --canonical-index docs/website/coming-soon/index.html
+          fi
           for attempt in {1..12}; do
             if ./tools/prns release rollback -- verify-live-website \
               --stage-identity target/rollback-stage/rollback-stage.json \
@@ -400,17 +558,29 @@ jobs:
             test "$attempt" -lt 12
             sleep 5
           done
-      - name: Mark the prior release latest without modifying any asset
+      - name: Finalize release metadata without modifying any asset
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "v${TARGET_VERSION}" --json assets \
+          release_state_version="$TARGET_VERSION"
+          if [[ "$TARGET_KIND" == ComingSoon ]]; then
+            release_state_version="$EXPECTED_LIVE_VERSION"
+          fi
+          gh release view "v${release_state_version}" --json assets \
             --jq '[.assets[] | {name, size, digest}] | sort_by(.name)' \
             > target/assets-before-latest.json
           test "$(sha256sum target/assets-before-latest.json | awk '{print $1}')" = \
             "$EXPECTED_ASSET_INVENTORY_SHA256"
-          gh release edit "v${TARGET_VERSION}" --latest=true
-          gh release view "v${TARGET_VERSION}" --json assets \
+          if [[ "$TARGET_KIND" == StableRelease ]]; then
+            gh release edit "v${TARGET_VERSION}" --latest=true
+          else
+            gh release edit "v${EXPECTED_LIVE_VERSION}" \
+              --prerelease=true --latest=false
+            test "$(gh release view "v${EXPECTED_LIVE_VERSION}" \
+              --json isPrerelease --jq '.isPrerelease')" = true
+            gh variable set PRNS_PUBLIC_SITE_PROMOTED --body false
+          fi
+          gh release view "v${release_state_version}" --json assets \
             --jq '[.assets[] | {name, size, digest}] | sort_by(.name)' \
             > target/assets-after-latest.json
           cmp target/assets-before-latest.json target/assets-after-latest.json

@@ -113,7 +113,7 @@ def public_review_identity(
     prerelease_published_at: str,
 ) -> dict:
     evidence = load_object(path, "public-review evidence")
-    if set(evidence) != EVIDENCE_FIELDS or evidence.get("schema") != 1:
+    if set(evidence) != EVIDENCE_FIELDS or evidence.get("schema") != 2:
         raise ValueError("public-review evidence has an unsupported shape")
     run_id = require_positive(
         evidence.get("workflow_run_id"), "public-review workflow run ID"
@@ -151,7 +151,7 @@ def public_review_identity(
     parse_utc_timestamp(
         evidence.get("prerelease_published_at"), "public-review prerelease publishedAt"
     )
-    parse_utc_timestamp(evidence.get("gate_completed_at"), "public-review completion")
+    parse_utc_timestamp(evidence.get("approved_at"), "public-review approval")
     return {
         "evidence": file_identity(path),
         "workflow_path": PUBLIC_REVIEW_WORKFLOW_PATH,
@@ -159,7 +159,7 @@ def public_review_identity(
         "workflow_run_id": run_id,
         "workflow_run_attempt": run_attempt,
         "workflow_job_id": job_id,
-        "gate_completed_at": evidence["gate_completed_at"],
+        "approved_at": evidence["approved_at"],
     }
 
 

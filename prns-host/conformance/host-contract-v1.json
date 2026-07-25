@@ -4,12 +4,12 @@
     {
       "outcome": "Compatible",
       "requiredAbi": 1,
-      "requiredProductVersion": "0.2.8"
+      "requiredProductVersion": "0.3.0"
     },
     {
       "outcome": "ContractMismatch",
       "requiredAbi": 2,
-      "requiredProductVersion": "0.2.8"
+      "requiredProductVersion": "0.3.0"
     },
     {
       "outcome": "ContractMismatch",
@@ -240,7 +240,7 @@
     "pendingCommands": 256,
     "retainedEventBytes": 8388608
   },
-  "productVersion": "0.2.8",
+  "productVersion": "0.3.0",
   "schemaVersion": 1,
   "unions": {
     "ApplicationEvent": {

@@ -1817,7 +1817,7 @@ dependencies = [
 
 [[package]]
 name = "hopspot-flash"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
  "clap",
  "ctrlc",
@@ -2791,7 +2791,7 @@ dependencies = [
 
 [[package]]
 name = "personal-rns"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
  "cfg-if",
  "prns-core",
@@ -2918,7 +2918,7 @@ dependencies = [
 
 [[package]]
 name = "prns-config"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
  "home",
  "prns-core",
@@ -2928,7 +2928,7 @@ dependencies = [
 
 [[package]]
 name = "prns-core"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
  "aes",
  "allocator-api2",
@@ -2958,7 +2958,7 @@ dependencies = [
 
 [[package]]
 name = "prns-ffi"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
  "cfg-if",
  "dispatch2",
@@ -2986,14 +2986,14 @@ dependencies = [
 
 [[package]]
 name = "prns-host"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
  "prns-runtime",
 ]
 
 [[package]]
 name = "prns-interfaces-embassy"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
  "embassy-futures",
  "embassy-net",
@@ -3014,7 +3014,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-tokio"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
  "bluer",
  "btleplug",
@@ -3045,7 +3045,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
  "bzip2",
  "cfg-if",
@@ -3058,7 +3058,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime-embassy"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
  "embassy-futures",
  "embassy-sync 0.8.0",
@@ -3073,7 +3073,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime-tokio"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
  "futures-util",
  "getrandom 0.2.17",

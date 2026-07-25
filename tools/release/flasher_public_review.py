@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
 
 
 WORKFLOW_PATH = ".github/workflows/flasher-sign.yml"
-JOB_NAME = "Complete protected 24-hour public review"
+JOB_NAME = "Approve protected public release"
 EVIDENCE_FIELDS = {
     "schema",
     "repository",
@@ -23,7 +23,7 @@ EVIDENCE_FIELDS = {
     "signed_candidate_sha256",
     "manifest_sha256",
     "prerelease_published_at",
-    "gate_completed_at",
+    "approved_at",
 }
 
 
@@ -169,14 +169,11 @@ def build_evidence(
     repository: str,
     version: str,
     source_commit: str,
-    completed_at: str,
-    minimum_hours: int = 24,
+    approved_at: str,
     allow_promoted: bool = False,
 ) -> dict:
     validate_version(version)
     require_commit(source_commit, "public-review source commit")
-    if minimum_hours <= 0:
-        raise ValueError("public-review minimum hours must be positive")
     run_id = require_positive(run.get("id"), "public-review workflow run ID")
     run_attempt = require_positive(
         run.get("run_attempt"), "public-review workflow run attempt"
@@ -205,16 +202,13 @@ def build_evidence(
         source_commit=source_commit,
         allow_promoted=allow_promoted,
     )
-    completion = parse_time(completed_at, "public-review gate completion")
-    minimum_completion = published_at + timedelta(hours=minimum_hours)
-    if started_at < minimum_completion or completion < minimum_completion:
-        raise ValueError(
-            f"protected public-review interval is shorter than {minimum_hours} hours"
-        )
-    if completion < started_at:
-        raise ValueError("public-review gate completion predates its protected job")
+    approval = parse_time(approved_at, "public-review approval")
+    if started_at < published_at or approval < published_at:
+        raise ValueError("protected public-review approval predates prerelease publication")
+    if approval < started_at:
+        raise ValueError("public-review approval predates its protected job")
     return {
-        "schema": 1,
+        "schema": 2,
         "repository": repository,
         "workflow_path": WORKFLOW_PATH,
         "workflow_sha": workflow_sha,
@@ -226,7 +220,7 @@ def build_evidence(
         "signed_candidate_sha256": sha256(signed_bundle),
         "manifest_sha256": sha256(manifest),
         "prerelease_published_at": canonical_time(published_at),
-        "gate_completed_at": canonical_time(completion),
+        "approved_at": canonical_time(approval),
     }
 
 
@@ -241,10 +235,9 @@ def validate_evidence(
     repository: str,
     version: str,
     source_commit: str,
-    minimum_hours: int = 24,
     allow_promoted: bool = False,
 ) -> None:
-    if set(evidence) != EVIDENCE_FIELDS or evidence.get("schema") != 1:
+    if set(evidence) != EVIDENCE_FIELDS or evidence.get("schema") != 2:
         raise ValueError("public-review evidence has an unsupported shape")
     run_id = require_positive(
         evidence.get("workflow_run_id"), "public-review workflow run ID"
@@ -281,8 +274,7 @@ def validate_evidence(
         repository=repository,
         version=version,
         source_commit=source_commit,
-        completed_at=str(evidence.get("gate_completed_at")),
-        minimum_hours=minimum_hours,
+        approved_at=str(evidence.get("approved_at")),
         allow_promoted=allow_promoted,
     )
     if evidence != expected:
@@ -292,11 +284,11 @@ def validate_evidence(
     if job.get("status") != "completed" or job.get("conclusion") != "success":
         raise ValueError("protected public-review job did not complete successfully")
     completed_at = parse_time(job.get("completed_at"), "public-review job completed_at")
-    evidence_completion = parse_time(
-        evidence.get("gate_completed_at"), "public-review gate completion"
+    evidence_approval = parse_time(
+        evidence.get("approved_at"), "public-review approval"
     )
-    if evidence_completion > completed_at:
-        raise ValueError("public-review evidence completion lies outside its successful job")
+    if evidence_approval > completed_at:
+        raise ValueError("public-review approval lies outside its successful job")
 
 
 def discover_evidence(
@@ -329,7 +321,7 @@ def discover_evidence(
         if not path.is_file() or path.is_symlink():
             raise ValueError("public-review evidence directory contains a non-file entry")
         evidence = load_object(path, "public-review evidence")
-        if set(evidence) != EVIDENCE_FIELDS or evidence.get("schema") != 1:
+        if set(evidence) != EVIDENCE_FIELDS or evidence.get("schema") != 2:
             raise ValueError("public-review evidence has an unsupported shape")
         run_attempt = require_positive(
             evidence.get("workflow_run_attempt"),
@@ -360,7 +352,7 @@ def discover_evidence(
                 "public-review evidence asset differs from the signed release identity"
             )
         parse_time(evidence.get("prerelease_published_at"), "prerelease publishedAt")
-        parse_time(evidence.get("gate_completed_at"), "public-review gate completion")
+        parse_time(evidence.get("approved_at"), "public-review approval")
         if run_attempt in attempts:
             raise ValueError("public-review evidence repeats a workflow run attempt")
         attempts.add(run_attempt)

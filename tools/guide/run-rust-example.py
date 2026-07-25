@@ -25,7 +25,13 @@ def main() -> int:
         "--",
         *sys.argv[1:],
     ]
-    return subprocess.run(command, cwd=ROOT, check=False).returncode
+    result = subprocess.run(command, cwd=ROOT, check=False)
+    if result.returncode == 0:
+        print(
+            "Rust quickstart succeeded. Next, inspect "
+            "personal-rns/examples/node_basics.rs; it is intentionally small."
+        )
+    return result.returncode
 
 
 if __name__ == "__main__":

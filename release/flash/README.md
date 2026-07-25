@@ -29,12 +29,13 @@ The release is intentionally split into three immutable layers:
    ID/attempt as versioned evidence, and attests canonical name/SHA-256 pairs for the archive, five
    CLI archives, and every manifest-referenced firmware payload through GitHub/Sigstore before
    publishing an immutable public prerelease. A second, secret-free job then enters the protected
-   `public-release` environment. After its 1,440-minute gate it re-fetches the still-public exact
-   bundle and manifest and publishes immutable, attempt-specific review evidence on the GitHub
-   prerelease. That persistent asset binds the signing run, exact rerun attempt, protected job,
-   source revision, candidate hashes, and review interval. The prerelease is therefore visible
-   before the review clock can begin, and promotion does not start a second wait.
-3. After physical qualification, the protected evidence workflow validates schema-2 acceptance,
+   `public-release` environment with no wait timer. A maintainer approves only after the assets are
+   visibly public. The job then re-fetches and hashes the exact bundle and manifest and publishes
+   immutable, attempt-specific review evidence on the GitHub prerelease. That persistent schema-2
+   asset binds the signing run, exact rerun attempt, protected job, source revision, publication
+   timestamp, candidate hashes, and approval timestamp. Every qualification observation must occur
+   after publication.
+3. After physical qualification, the protected evidence workflow validates schema-3 acceptance,
    signs it, generates a release record binding every custody layer, signs that record, and adds the
    deterministic qualification-evidence archive plus four signed evidence documents to the
    prerelease. It also revalidates one exact successful public-review run attempt and binds that
@@ -66,12 +67,13 @@ Before signing any candidate:
 - replace the public-key custody marker and retain the encrypted offline recovery copy;
 - protect the default branch and create the `release-signing` environment described in
   `release/keys/README.md`;
-- create `public-release` with manual approval and a 1,440-minute wait timer;
+- create `public-release` with manual approval and no wait timer;
 - create `release-rollback` with manual release-owner approval and no signing secrets or wait
   timer; rollback jobs only receive the repository public key and read-only release inputs;
 - confirm Actions attestations are available for the repository and `gh attestation verify` works;
-- assign trusted testers for macOS arm64/x86_64, Linux arm64/x86_64, and Windows x86_64;
-- commit and validate `release/acceptance/rosters/VERSION.json` with all five real assignments;
+- assign the eight physical, four fallback, and five archive-installation coverage slots to real
+  testers across their required hosts; one person may hold multiple or all slots;
+- commit and validate `release/acceptance/rosters/VERSION.json` with those real assignments;
 - review the exact default-branch workflow revisions. Do not dispatch a signing workflow from a
   feature branch.
 - require the stable **Release critical** CI check in default-branch protection. It includes the
@@ -105,12 +107,11 @@ absent; they do not create or weaken those settings.
    from forks, feature branches, failed runs, other workflows, mismatched commits, mutable hashes,
    or the unconfigured key marker. It never invokes a firmware, CLI, or website build.
 4. Confirm the resulting `vVERSION` GitHub Release is a non-draft prerelease targeting the manifest
-   source commit. The same signing run now waits in its secret-free **Complete protected 24-hour
-   public review** job. Authorize the `public-release` environment only after the prerelease and its
+   source commit. The same signing run now waits in its secret-free **Approve protected public
+   release** job. Authorize the `public-release` environment only after the prerelease and its
    direct qualification/audit assets are visible. Record its publication time, signed candidate
    SHA-256, manifest SHA-256, candidate workflow-run evidence, attestation URL, and signing workflow
-   run. That review job independently refuses to emit evidence until the prerelease has actually
-   been public for 24 hours. Successful attempts publish distinct
+   run. Successful attempts publish distinct
    `public-review-vVERSION-run-RUN_ID-attempt-ATTEMPT.json` assets and never replace earlier
    evidence. Finalization examines those persistent identities in attempt order and accepts only one
    whose exact attempt-specific workflow and protected-job APIs report success. Promotion and
@@ -123,13 +124,11 @@ an existing public release or unrelated tag. If anything affecting release bytes
 wrong, correct it, advance the candidate/version as required, and start a new candidate. Never
 overwrite a candidate that testers may already have used.
 
-A bootstrap candidate establishes deterministic first-release inputs, but it is not promotable.
-Promotion requires its candidate history to name an exact prior signed stable baseline and requires
-a successful rollback dry-run against that baseline. Before the first public promotion, create,
-publish, and deploy a signed baseline through an approved custody procedure, then rebuild the
-release candidate in `retain` mode. If no such baseline is approved, first promotion is a go/no-go
-blocker; changing that rule requires an explicit product-policy decision, not a workflow
-workaround.
+A bootstrap-history candidate may use `ComingSoon` as its promotion baseline only when no other
+stable release exists and the live site exactly matches the repository's canonical coming-soon
+bytes. A retained-history candidate uses `StableRelease`, whose exact version, signed release-record
+hash, and retained-history head must agree. Both variants require a fresh successful recovery
+dry-run before promotion.
 
 ## Qualify and finalize evidence
 
@@ -145,7 +144,7 @@ and any automatic 1 MiB partition-reserve downgrade are recorded in
 results follow `release/acceptance/README.md`. No unsigned or locally rebuilt artifact counts.
 
 Commit the completed record at `release/acceptance/records/VERSION.json` through normal review.
-Every tester must match the exact OS/architecture assignment in the signed candidate roster, and
+Every result must match its exact assignment in the signed candidate roster, and
 every `completed_at` must be a full UTC timestamp no earlier than the exact prerelease
 `publishedAt`. Redact the reviewed evidence objects, store each under its SHA-256 name, package
 them with the candidate's deterministic qualification-evidence packager, and upload the resulting
@@ -159,8 +158,8 @@ recorded evidence-archive SHA-256. The workflow:
 - revalidates one durable public-review evidence asset against its exact workflow run attempt and
   protected job;
 - extracts the evidence archive safely and recomputes every referenced object's SHA-256;
-- validates the transport-aware 24-row matrix, browser fallbacks, and all five installer/doctor
-  smokes;
+- validates eight full transport-aware physical rows, four browser fallbacks, and all five
+  installer/doctor smokes;
 - signs `acceptance-vVERSION.json`;
 - creates and signs `release-record-vVERSION.json`.
 
@@ -174,7 +173,7 @@ qualification-evidence archive name/size/SHA-256, Sigstore bundle hash,
 attestation ID/URL/workflow identity, every attested subject hash, and a path/size/SHA-256 identity
 for every sparse firmware payload in the signed manifest. It also binds the exact immutable
 public-review evidence asset and its workflow run, rerun attempt, protected job, source revision,
-and completion instant.
+and approval instant.
 
 ## Prove rollback readiness
 
@@ -182,16 +181,22 @@ Every signed stable release keeps its complete candidate bundle and complete web
 GitHub Release assets. A retained candidate additionally carries all prior immutable hosted release
 directories, so a new site never drops old manifest or firmware URLs.
 
-Before promotion, dispatch **verify or deploy an exact flasher rollback** in `dry-run` mode with:
+Before promotion, dispatch **verify or deploy an exact flasher rollback** in `dry-run` mode. For a
+`StableRelease` baseline supply:
 
+- `target_kind=StableRelease`;
 - the prior signed stable baseline version and exact release-record SHA-256;
 - the release being promoted as `expected_live_version` and its signed manifest SHA-256 as
   `expected_live_manifest_sha256`;
 - empty `dry_run_id` and `dry_run_attempt` values.
 
-The dry-run downloads and independently verifies every baseline custody asset and attestation,
-requires the signed live descriptor to identify that exact baseline, stages the complete prior
-website, records its exact tree identity, and must complete successfully within 15 minutes. It
+For the first promotion supply `target_kind=ComingSoon`, leave the signed-target fields empty, and
+supply the candidate as the expected-live identity. The workflow requires bootstrap history, no
+other stable release, and canonical live coming-soon bytes.
+
+The dry-run independently verifies the relevant custody assets and attestations, requires the live
+site to identify that exact baseline, stages the complete recovery website, records its exact tree
+identity, and must complete successfully within 15 minutes. It
 deliberately records that the compare-and-swap away from the future release is deferred: the new
 release is not live yet. Preserve the successful workflow run ID and exact attempt; promotion
 redownloads the baseline, reconstructs the same staged tree, and validates the attempt-specific
@@ -199,14 +204,14 @@ artifact, run, protected job, and dry-run record rather than trusting operator-s
 
 ## Promote
 
-After the signing run's protected public-review job has completed successfully, the prerelease has
-been public for at least 24 hours, and every stop-ship report is resolved,
+After the signing run's protected public-review job has completed successfully and every stop-ship
+report is resolved,
 calculate the signed release record's SHA-256 and dispatch **promote signed flasher release** with
-the version, that hash, the rollback baseline version, its exact release-record SHA-256, and the
+the version, that hash, the matching baseline kind and conditional signed-baseline fields, and the
 successful rollback dry-run run ID and exact attempt. The protected workflow independently
 re-verifies Minisign, all
 candidate hashes, physical acceptance, release-record equality, GitHub attestations, stable
-channel, source commit, public release state, public-review interval, complete rollback baseline,
+channel, source commit, public release state, protected public-review approval, complete rollback baseline,
 the immutable review artifact plus its exact successful signing workflow/job revision,
 retained-history head, and the successful 15-minute dry-run before deploying the exact website
 bundle. Before deployment it downloads the complete prerelease asset set and verifies every
@@ -219,8 +224,9 @@ artifacts plus the baseline's complete website identity. If deployment, live ver
 release mutation, post-promotion smoke, or the final public-site marker fails, an `always()` recovery
 job acquires the same Pages custody group, compare-and-swaps only the failed candidate (or an
 idempotently restored baseline), redeploys the exact baseline artifact, verifies every live file,
-rechecks both releases against their previously verified asset inventories, restores the baseline
-as latest, and only then demotes the failed candidate to a prerelease. A concurrently promoted third
+rechecks the applicable releases against their previously verified asset inventories, restores a
+signed baseline as latest or the canonical coming-soon site, and only then demotes the failed
+candidate to a prerelease. A concurrently promoted third
 identity blocks that recovery instead of being overwritten. A rerun consumes the original
 verification attempt's artifact names, so retrying failed jobs cannot silently select different
 bytes or collide with an earlier artifact.
@@ -250,6 +256,16 @@ mixed across versions. The rollback workflow never receives or uses the Minisign
 The coming-soon site shares the same serialized Pages custody group and permanently refuses to
 deploy when the live channel is a valid signed stable descriptor, so a queued prelaunch run cannot
 overwrite a promoted or rolled-back site.
+
+The first stable release has one additional compare-and-swap withdrawal route. Run the same
+workflow with `target_kind=ComingSoon`, the exact first stable version and manifest as the
+expected-live identity, and empty signed-target fields. Dry-run may observe either the canonical
+coming-soon baseline before first promotion or that exact stable release during recovery testing.
+Deploy accepts only that exact stable release or an idempotently restored coming-soon site, deploys
+the canonical coming-soon artifact, verifies every live byte, demotes the release without changing
+its assets, and clears the full-site marker. The same candidate can be promoted again only after a
+new successful dry-run. Bootstrap history and the absence of any later stable release are required;
+ordinary signed-release rollback remains the path once a later stable baseline exists.
 
 ## Public verification
 

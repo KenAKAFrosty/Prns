@@ -105,7 +105,7 @@ computes the SHA-256 of its exact reviewed bytes. Store that object in a flat `E
 directory under its lowercase SHA-256 filename. The acceptance reference is exactly
 `artifact://qualification/THAT_SHA256`; URLs and externally asserted hashes do not count. The
 tester then fills only scenarios actually observed, names the tester assigned to that exact
-OS/architecture in `CANDIDATE/qualification/tester-roster.json`, and records a full UTC
+coverage row in `CANDIDATE/qualification/tester-roster.json`, and records a full UTC
 `completed_at` value.
 
 If a flash is interrupted mid-part, record the failure, disconnect cleanly, follow the displayed
@@ -120,6 +120,7 @@ python3 CANDIDATE/qualification/create-flasher-acceptance.py \
   --manifest CANDIDATE/flash-manifest.json \
   --manifest-signature CANDIDATE/flash-manifest.json.minisig \
   --signed-bundle prns-flasher-candidate-vVERSION-signed.tar.gz \
+  --tester-roster CANDIDATE/qualification/tester-roster.json \
   --prerelease-published-at "$PUBLISHED_AT" \
   --output acceptance.json
 ```

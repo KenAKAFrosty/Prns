@@ -15,6 +15,7 @@ if str(SCRIPT_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIRECTORY))
 
 from flasher_acceptance_contract import scaffold  # noqa: E402
+from flasher_tester_roster import validate_roster  # noqa: E402
 
 
 def create(arguments: argparse.Namespace) -> None:
@@ -22,6 +23,7 @@ def create(arguments: argparse.Namespace) -> None:
         ("manifest", arguments.manifest),
         ("manifest signature", arguments.manifest_signature),
         ("signed candidate bundle", arguments.signed_bundle),
+        ("tester roster", arguments.tester_roster),
     ):
         if not path.is_file():
             raise ValueError(f"{label} is not a file: {path}")
@@ -29,12 +31,21 @@ def create(arguments: argparse.Namespace) -> None:
     manifest = json.loads(arguments.manifest.read_text(encoding="utf-8"))
     if not isinstance(manifest, dict):
         raise ValueError("manifest must be a JSON object")
+    roster = json.loads(arguments.tester_roster.read_text(encoding="utf-8"))
+    release = manifest.get("release")
+    version = release.get("version") if isinstance(release, dict) else ""
+    tester_roster, roster_errors = validate_roster(roster, str(version))
+    if roster_errors:
+        raise ValueError(
+            "tester roster is invalid: " + "; ".join(roster_errors)
+        )
     record = scaffold(
         manifest,
         arguments.manifest,
         arguments.manifest_signature,
         arguments.signed_bundle,
         arguments.prerelease_published_at,
+        tester_roster,
     )
 
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
@@ -78,6 +89,7 @@ def main() -> int:
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--manifest-signature", type=Path, required=True)
     parser.add_argument("--signed-bundle", type=Path, required=True)
+    parser.add_argument("--tester-roster", type=Path, required=True)
     parser.add_argument("--prerelease-published-at", required=True)
     parser.add_argument("--output", type=Path, required=True)
     arguments = parser.parse_args()

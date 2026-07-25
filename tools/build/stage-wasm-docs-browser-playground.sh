@@ -34,7 +34,7 @@ else
     npm --prefix "$wasm_dir" run build:playground
 fi
 
-mkdir -p "$public_dir/sdk/browser" "$public_dir/pkg"
+mkdir -p "$public_dir/sdk/browser/auto_wifi" "$public_dir/pkg"
 cp "$example_dir/index.html" "$public_dir/index.html"
 cp "$example_dir/styles.css" "$public_dir/styles.css"
 cp "$build_dir/prns-wasm/examples/browser-playground/lxmf.js" "$public_dir/lxmf.js"
@@ -50,6 +50,7 @@ cp "$build_dir/prns-js/src/contract.generated.js" "$public_dir/sdk/contract.gene
 cp "$build_dir/prns-js/src/contract.js" "$public_dir/sdk/contract.js"
 cp "$build_dir/prns-js/src/memory_resource.js" "$public_dir/sdk/memory_resource.js"
 cp "$build_dir/prns-js/src/browser/auto_wifi.js" "$public_dir/sdk/browser/auto_wifi.js"
+cp "$build_dir/prns-js/src/browser/auto_wifi/recovery.js" "$public_dir/sdk/browser/auto_wifi/recovery.js"
 cp "$build_dir/prns-js/src/browser/index.js" "$public_dir/sdk/browser/index.js"
 cp "$build_dir/prns-js/src/browser/resource_compression_worker.js" "$public_dir/sdk/browser/resource_compression_worker.js"
 cp "$build_dir/prns-js/src/browser/resource_compressor.js" "$public_dir/sdk/browser/resource_compressor.js"
