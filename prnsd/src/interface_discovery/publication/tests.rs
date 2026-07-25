@@ -290,8 +290,15 @@ async fn executable_reachable_on_is_re_evaluated_for_each_advertisement() {
         .expect("the first execution succeeds"),
         "first.example"
     );
-    fs::write(&executable, "#!/bin/sh\nprintf 'second.example\\n'\n")
-        .expect("the fixture executable can change");
+    let replacement = directory.0.join("reachable-on-next");
+    fs::write(&replacement, "#!/bin/sh\nprintf 'second.example\\n'\n")
+        .expect("the replacement executable is writable");
+    let mut permissions = fs::metadata(&replacement)
+        .expect("the replacement executable has metadata")
+        .permissions();
+    permissions.set_mode(0o700);
+    fs::set_permissions(&replacement, permissions).expect("the replacement can be made executable");
+    fs::rename(&replacement, &executable).expect("the fixture executable can change");
     assert_eq!(
         resolve_reachable_on(
             executable.to_str().expect("the fixture path is UTF-8"),
