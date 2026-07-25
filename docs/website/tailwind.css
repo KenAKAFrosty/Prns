@@ -358,9 +358,14 @@ html, body {
     color: rgb(147 197 253);
     opacity: 0.95;
 }
+.flash-board-card {
+    min-width: 0;
+}
 .flash-board-card .platform-chip {
+    max-width: 100%;
     color: var(--color-paper);
     background: rgb(17 21 28 / 0.86);
+    white-space: normal;
 }
 .flash-board-card .platform-chip--muted {
     color: var(--color-paper);
