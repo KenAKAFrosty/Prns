@@ -31,6 +31,7 @@ jobs:
       oracles: ${{ steps.matrix.outputs.oracles }}
       interop: ${{ steps.matrix.outputs.interop }}
       hardening: ${{ steps.matrix.outputs.hardening }}
+      mutation: ${{ steps.matrix.outputs.mutation }}
       tier: ${{ steps.matrix.outputs.tier }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -45,6 +46,7 @@ jobs:
           echo "oracles=$(python3 validation/run.py matrix --domain oracles --tier "$VALIDATION_TIER")" >> "$GITHUB_OUTPUT"
           echo "interop=$(python3 validation/run.py matrix --domain interop --tier "$VALIDATION_TIER")" >> "$GITHUB_OUTPUT"
           echo "hardening=$(python3 validation/run.py matrix --domain hardening --tier "$VALIDATION_TIER")" >> "$GITHUB_OUTPUT"
+          echo "mutation=$(python3 validation/run.py matrix --domain mutation --tier "$VALIDATION_TIER")" >> "$GITHUB_OUTPUT"
 
   kani:
     needs: inventory
@@ -175,25 +177,53 @@ jobs:
     needs: inventory
     runs-on: ubuntu-24.04
     timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.inventory.outputs.mutation) }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
-          shared-key: deep-mutation
+          shared-key: deep-${{ matrix.id }}
       - run: cargo install cargo-mutants --version 27.1.0 --locked
-      - run: python3 validation/run.py run --suite mutation-analysis --expected-sha "$GITHUB_SHA"
+      - run: python3 validation/run.py run --suite "${{ matrix.id }}" --expected-sha "$GITHUB_SHA"
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: deep-mutation-analysis-${{ github.run_id }}
-          path: validation-artifacts/**
+          name: deep-${{ matrix.id }}-${{ github.run_id }}
+          path: |
+            validation-artifacts/results/${{ matrix.id }}/**
+            validation-artifacts/mutation/${{ matrix.id }}/**
+          retention-days: 7
+
+  mutation-aggregate:
+    if: always()
+    needs: [inventory, mutation]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: deep-mutation-analysis-shard-*-${{ github.run_id }}
+          path: validation-artifacts
+          merge-multiple: true
+      - run: python3 validation/run.py aggregate --domain mutation --tier "${{ needs.inventory.outputs.tier }}" --expected-sha "$GITHUB_SHA"
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: deep-mutation-union-${{ github.run_id }}
+          path: |
+            validation-artifacts/mutation/union/**
+            validation-artifacts/release-manifest.json
           retention-days: 7
 
   deep-validation:
     name: Deep validation
     if: always()
-    needs: [kani, fuzz, oracles, interop, hardening, mutation]
+    needs: [kani, fuzz, oracles, interop, hardening, mutation-aggregate]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     env:
@@ -202,7 +232,7 @@ jobs:
       ORACLES_RESULT: ${{ needs.oracles.result }}
       INTEROP_RESULT: ${{ needs.interop.result }}
       HARDENING_RESULT: ${{ needs.hardening.result }}
-      MUTATION_RESULT: ${{ needs.mutation.result }}
+      MUTATION_RESULT: ${{ needs.mutation-aggregate.result }}
     steps:
       - run: |
           for result in "$KANI_RESULT" "$FUZZ_RESULT" "$ORACLES_RESULT" "$INTEROP_RESULT" "$HARDENING_RESULT" "$MUTATION_RESULT"; do

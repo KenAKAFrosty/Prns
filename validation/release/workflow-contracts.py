@@ -159,6 +159,27 @@ def validate() -> list[str]:
     ):
         if locked_dioxus not in workflow:
             errors.append(f"{name} does not install the exact Dioxus CLI from its lockfile")
+    qualify = dict(workflow_jobs(readiness)).get("qualify", "")
+    esp_dioxus_condition = "if: matrix.group == 'web' || matrix.group == 'esp'"
+    cargo_binstall_step = re.search(
+        r"uses: cargo-bins/cargo-binstall@[0-9a-f]{40}\n"
+        rf"        {re.escape(esp_dioxus_condition)}\n"
+        r'        with:\n          version: "1\.21\.0"',
+        qualify,
+    )
+    dioxus_step = re.search(
+        r"name: Prepare exact web and ESP tool\n"
+        rf"        {re.escape(esp_dioxus_condition)}\n"
+        rf"        run: {re.escape(locked_dioxus)}",
+        qualify,
+    )
+    if cargo_binstall_step is None or dioxus_step is None:
+        errors.append(
+            "release-readiness.yml does not provision exact cargo-binstall and Dioxus "
+            "tools for both web and ESP suites"
+        )
+    if "validation-artifacts/mutation/union/**" not in readiness:
+        errors.append("release-readiness.yml does not retain the merged mutation evidence")
     for native_package in ("libdbus-1-dev", "pkg-config"):
         if native_package not in readiness:
             errors.append(
@@ -250,6 +271,20 @@ def validate() -> list[str]:
     ):
         if resource_gate not in deep:
             errors.append(f"deep-validation.yml is missing resource gate {resource_gate!r}")
+    for mutation_gate in (
+        "mutation: ${{ steps.matrix.outputs.mutation }}",
+        'mutation=$(python3 validation/run.py matrix --domain mutation --tier "$VALIDATION_TIER")',
+        "matrix: ${{ fromJSON(needs.inventory.outputs.mutation) }}",
+        "name: deep-${{ matrix.id }}-${{ github.run_id }}",
+        "validation-artifacts/mutation/${{ matrix.id }}/**",
+        "pattern: deep-mutation-analysis-shard-*-${{ github.run_id }}",
+        'aggregate --domain mutation --tier "${{ needs.inventory.outputs.tier }}" --expected-sha "$GITHUB_SHA"',
+        "MUTATION_RESULT: ${{ needs.mutation-aggregate.result }}",
+    ):
+        if mutation_gate not in deep:
+            errors.append(
+                f"deep-validation.yml is missing mutation shard gate {mutation_gate!r}"
+            )
 
     hardening = (ROOT / ".github" / "workflows" / "hardening.yml").read_text(
         encoding="utf-8"

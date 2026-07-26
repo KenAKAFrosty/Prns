@@ -51,6 +51,13 @@ VALID_TOOLCHAINS = {
     "esp",
 }
 NIGHTLY_TOOLCHAIN_ARGUMENT = "+__NIGHTLY_TOOLCHAIN__"
+RUNNER_PYTHON_ARGUMENT = "__RUNNER_PYTHON__"
+PYTHON_ARGUMENT_PATTERN = re.compile(r"__[A-Z0-9_]*PYTHON[A-Z0-9_]*__")
+MUTATION_SHARDING = "round-robin"
+MUTATION_TIME_PATTERN = re.compile(
+    r"^(?P<prefix>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})"
+    r"(?:\.(?P<fraction>\d+))?(?P<zone>Z|[+-]\d{2}:\d{2})$"
+)
 
 
 class ValidationError(RuntimeError):
@@ -135,8 +142,38 @@ def discover_fuzz_targets(manifest_path: Path) -> dict[str, str]:
     return {entry["name"]: entry["path"] for entry in fuzz.get("bin", [])}
 
 
+def expanded_suite(suite: dict) -> list[dict]:
+    total = suite.get("shards")
+    if isinstance(total, bool) or not isinstance(total, int) or not 2 <= total <= 16:
+        return [dict(suite)]
+    expanded = []
+    for index in range(total):
+        shard = dict(suite)
+        shard.pop("shards")
+        shard["id"] = f"{suite['id']}-shard-{index}-of-{total}"
+        shard["artifacts"] = f"{suite['artifacts']}-shard-{index}-of-{total}"
+        shard["command"] = [
+            *suite["command"],
+            "--shard",
+            f"{index}/{total}",
+            "--sharding",
+            MUTATION_SHARDING,
+        ]
+        shard["shard"] = {
+            "suite": suite["id"],
+            "index": index,
+            "total": total,
+        }
+        expanded.append(shard)
+    return expanded
+
+
 def virtual_suites(manifest: dict) -> list[dict]:
-    suites = [dict(suite) for suite in manifest.get("suite", [])]
+    suites = [
+        expanded
+        for suite in manifest.get("suite", [])
+        for expanded in expanded_suite(suite)
+    ]
     for proof in manifest.get("kani", []):
         name = proof["name"]
         suites.append(
@@ -279,8 +316,9 @@ def validate_cargo_workspaces(manifests: set[str]) -> list[str]:
     return errors
 
 
-def validate_triage(path: Path = TRIAGE_PATH) -> list[str]:
+def validate_triage(path: Path | None = None) -> list[str]:
     errors: list[str] = []
+    path = path or TRIAGE_PATH
     triage = load_toml(path)
     if triage.get("schema") != 1:
         errors.append("mutation triage schema must be 1")
@@ -309,6 +347,20 @@ def validate_triage(path: Path = TRIAGE_PATH) -> list[str]:
 
 def validate_manifest(manifest: dict, check_tools: bool = False) -> list[str]:
     errors: list[str] = []
+    for suite in manifest.get("suite", []):
+        if "shards" not in suite:
+            continue
+        location = f"suite {suite.get('id')}"
+        shards = suite["shards"]
+        if isinstance(shards, bool) or not isinstance(shards, int) or not 2 <= shards <= 16:
+            errors.append(f"{location} shards must be an integer from 2 through 16")
+        if suite.get("domain") != "mutation":
+            errors.append(f"{location} may shard only the mutation domain")
+        command = suite.get("command")
+        if isinstance(command, list) and any(
+            part in {"--shard", "--sharding"} for part in command
+        ):
+            errors.append(f"{location} command must derive shard arguments from shards")
     try:
         named_toolchain(manifest, "nightly")
     except ValidationError as error:
@@ -333,6 +385,19 @@ def validate_manifest(manifest: dict, check_tools: bool = False) -> list[str]:
             isinstance(part, str) and part for part in command
         ):
             errors.append(f"{location} needs a non-empty string command array")
+        else:
+            python_arguments = [
+                (index, part)
+                for index, part in enumerate(command)
+                if PYTHON_ARGUMENT_PATTERN.search(part)
+            ]
+            for index, argument in python_arguments:
+                if argument != RUNNER_PYTHON_ARGUMENT:
+                    errors.append(f"{location} has unresolved Python argument {argument}")
+                elif index != 0:
+                    errors.append(
+                        f"{location} may use {RUNNER_PYTHON_ARGUMENT} only as command element zero"
+                    )
         timeout = suite.get("timeout_seconds")
         if not isinstance(timeout, int) or timeout <= 0:
             errors.append(f"{location} timeout_seconds must be positive")
@@ -436,7 +501,11 @@ def validate_manifest(manifest: dict, check_tools: bool = False) -> list[str]:
         if "rns==1.4.0" not in lock:
             errors.append("benchmarks/reference/requirements.lock must pin rns==1.4.0")
 
-    required_commands = {suite["command"][0] for suite in suites.values() if suite.get("command")}
+    required_commands = {
+        sys.executable if suite["command"][0] == RUNNER_PYTHON_ARGUMENT else suite["command"][0]
+        for suite in suites.values()
+        if suite.get("command")
+    }
     for command in sorted(required_commands):
         if "/" not in command and shutil.which(command) is None:
             errors.append(f"required command is unavailable: {command}")
@@ -632,7 +701,8 @@ def command_for(suite: dict, fuzz_seconds: int, artifact: Path) -> list[str]:
         if seed_corpus.is_dir():
             shutil.copytree(seed_corpus, corpus, dirs_exist_ok=True)
     return [
-        part.replace("__FUZZ_SECONDS__", str(fuzz_seconds))
+        part.replace(RUNNER_PYTHON_ARGUMENT, sys.executable)
+        .replace("__FUZZ_SECONDS__", str(fuzz_seconds))
         .replace("__FUZZ_ARTIFACT_PREFIX__", f"{prefix.as_posix()}/")
         .replace("__FUZZ_CORPUS__", corpus.as_posix())
         for part in suite["command"]
@@ -720,7 +790,9 @@ def run_suite(manifest: dict, suite: dict, expected_sha: str | None, fuzz_second
     environment = os.environ.copy()
     environment["PRNS_VALIDATION_SUITE"] = suite["id"]
     if suite["domain"] == "mutation":
-        environment["PRNS_MUTANTS_OUTPUT_ROOT"] = str(artifact_root / "mutation")
+        mutation_output = artifact_root / "mutation" / suite["id"]
+        mutation_output.parent.mkdir(parents=True, exist_ok=True)
+        environment["PRNS_MUTANTS_OUTPUT_ROOT"] = str(mutation_output)
     resolved_interpreter = None
     if interpreter := suite.get("interpreter"):
         specification = manifest["interpreters"][interpreter]
@@ -787,6 +859,8 @@ def run_suite(manifest: dict, suite: dict, expected_sha: str | None, fuzz_second
         "timed_out": timed_out,
         "spawn_error": spawn_error,
     }
+    if shard := suite.get("shard"):
+        result["shard"] = shard
     (artifact / "result.json").write_text(
         json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -822,10 +896,97 @@ def mutation_fingerprint(mutant: dict) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def unresolved_mutants(results: Path) -> dict[str, dict]:
-    payload = json.loads(results.read_text(encoding="utf-8"))
+def mutation_results_errors(payload: object, expected_version: str) -> list[str]:
+    if not isinstance(payload, dict):
+        return ["mutation outcomes must be a JSON object"]
+    errors = []
+    outcomes = payload.get("outcomes")
+    if not isinstance(outcomes, list):
+        return ["mutation outcomes must contain an outcomes array"]
+    baselines = [
+        outcome
+        for outcome in outcomes
+        if isinstance(outcome, dict) and outcome.get("scenario") == "Baseline"
+    ]
+    if len(baselines) != 1 or baselines[0].get("summary") != "Success":
+        errors.append("mutation baseline did not complete successfully")
+    mutants = [
+        outcome
+        for outcome in outcomes
+        if isinstance(outcome, dict)
+        and isinstance(outcome.get("scenario"), dict)
+        and isinstance(outcome["scenario"].get("Mutant"), dict)
+    ]
+    total = payload.get("total_mutants")
+    if isinstance(total, bool) or not isinstance(total, int) or total < 0:
+        errors.append("mutation total_mutants must be a non-negative integer")
+    elif len(mutants) != total:
+        errors.append(f"mutation outcomes contain {len(mutants)} of {total} mutants")
+    summaries = {
+        "missed": "MissedMutant",
+        "caught": "CaughtMutant",
+        "timeout": "Timeout",
+        "unviable": "Unviable",
+    }
+    recognized = set(summaries.values())
+    unknown = sorted(
+        {
+            str(outcome.get("summary"))
+            for outcome in mutants
+            if outcome.get("summary") not in recognized
+        }
+    )
+    if unknown:
+        errors.append(f"mutation outcomes contain unknown summaries: {unknown!r}")
+    for field, summary in summaries.items():
+        reported = payload.get(field)
+        actual = sum(outcome.get("summary") == summary for outcome in mutants)
+        if isinstance(reported, bool) or not isinstance(reported, int) or reported != actual:
+            errors.append(f"mutation {field} count is {reported!r}, expected {actual}")
+    parsed_times = {}
+    for field in ("start_time", "end_time"):
+        value = payload.get(field)
+        if not isinstance(value, str) or not value:
+            errors.append(
+                "mutation run is incomplete"
+                if field == "end_time"
+                else "mutation start_time is missing"
+            )
+            continue
+        try:
+            matched = MUTATION_TIME_PATTERN.fullmatch(value)
+            if matched is None:
+                raise ValueError
+            fraction = matched.group("fraction")
+            normalized = matched.group("prefix")
+            if fraction:
+                normalized += f".{fraction[:6].ljust(6, '0')}"
+            zone = matched.group("zone")
+            normalized += "+00:00" if zone == "Z" else zone
+            parsed = dt.datetime.fromisoformat(normalized)
+            parsed_times[field] = parsed
+        except ValueError:
+            errors.append(f"mutation {field} is not timezone-aware ISO-8601")
+    if set(parsed_times) == {"start_time", "end_time"} and (
+        parsed_times["end_time"] < parsed_times["start_time"]
+    ):
+        errors.append("mutation end_time precedes start_time")
+    success = payload.get("success")
+    if isinstance(success, bool) or not isinstance(success, int) or success < 0:
+        errors.append("mutation success count must be a non-negative integer")
+    if payload.get("cargo_mutants_version") != expected_version:
+        errors.append(
+            "mutation cargo-mutants version is "
+            f"{payload.get('cargo_mutants_version')!r}, expected {expected_version!r}"
+        )
+    return errors
+
+
+def unresolved_mutants_from(payload: dict) -> dict[str, dict]:
     unresolved = {}
     for outcome in payload.get("outcomes", []):
+        if not isinstance(outcome, dict):
+            continue
         if outcome.get("summary") not in {"MissedMutant", "Timeout"}:
             continue
         scenario = outcome.get("scenario", {})
@@ -835,21 +996,19 @@ def unresolved_mutants(results: Path) -> dict[str, dict]:
     return unresolved
 
 
-def check_mutation_triage(results: Path) -> list[str]:
-    errors = validate_triage()
-    if errors:
-        return errors
+def unresolved_mutants(results: Path) -> dict[str, dict]:
+    return unresolved_mutants_from(json.loads(results.read_text(encoding="utf-8")))
+
+
+def check_mutation_triage(results: Path, expected_version: str) -> list[str]:
+    triage_errors = validate_triage()
     payload = json.loads(results.read_text(encoding="utf-8"))
-    baselines = [
-        outcome
-        for outcome in payload.get("outcomes", [])
-        if outcome.get("scenario") == "Baseline"
-    ]
-    if len(baselines) != 1 or baselines[0].get("summary") != "Success":
-        errors.append("mutation baseline did not complete successfully")
+    errors = [*triage_errors, *mutation_results_errors(payload, expected_version)]
+    if triage_errors:
+        return errors
     triage = load_toml(TRIAGE_PATH)
     accepted = {entry["fingerprint"]: entry for entry in triage.get("accepted", [])}
-    unresolved = unresolved_mutants(results)
+    unresolved = unresolved_mutants_from(payload)
     for fingerprint, mutant in sorted(unresolved.items()):
         if fingerprint not in accepted:
             errors.append(f"untriaged mutant {fingerprint}: {mutant.get('name')}")
@@ -857,6 +1016,44 @@ def check_mutation_triage(results: Path) -> list[str]:
     if stale:
         errors.append(f"stale mutation triage entries: {sorted(stale)!r}")
     return errors
+
+
+def merged_mutation_results(
+    payloads: list[dict], shards: list[dict], expected_version: str
+) -> dict:
+    baselines = [
+        outcome
+        for payload in payloads
+        for outcome in payload["outcomes"]
+        if outcome.get("scenario") == "Baseline"
+    ]
+    mutants = [
+        outcome
+        for payload in payloads
+        for outcome in payload["outcomes"]
+        if isinstance(outcome.get("scenario"), dict)
+        and isinstance(outcome["scenario"].get("Mutant"), dict)
+    ]
+    summaries = {
+        "missed": "MissedMutant",
+        "caught": "CaughtMutant",
+        "timeout": "Timeout",
+        "unviable": "Unviable",
+    }
+    return {
+        "schema": EVIDENCE_SCHEMA,
+        "shards": shards,
+        "outcomes": [baselines[0], *mutants],
+        "total_mutants": len(mutants),
+        **{
+            field: sum(outcome.get("summary") == summary for outcome in mutants)
+            for field, summary in summaries.items()
+        },
+        "success": sum(int(payload.get("success", 0)) for payload in payloads),
+        "start_time": min(payload["start_time"] for payload in payloads),
+        "end_time": max(payload["end_time"] for payload in payloads),
+        "cargo_mutants_version": expected_version,
+    }
 
 
 def cleanup_paths(manifest: dict) -> list[Path]:
@@ -958,7 +1155,7 @@ def evidence_errors(result: object) -> list[str]:
     }
     errors = []
     missing = sorted(required - set(result))
-    unexpected = sorted(set(result) - required)
+    unexpected = sorted(set(result) - required - {"shard"})
     if missing:
         errors.append(f"missing fields: {missing!r}")
     if unexpected:
@@ -1016,11 +1213,115 @@ def evidence_errors(result: object) -> list[str]:
         errors.append("timed_out must be a boolean")
     if result.get("spawn_error") is not None and not isinstance(result.get("spawn_error"), str):
         errors.append("spawn_error must be a string or null")
+    if "shard" in result:
+        shard = result["shard"]
+        if (
+            not isinstance(shard, dict)
+            or set(shard) != {"suite", "index", "total"}
+            or not isinstance(shard.get("suite"), str)
+            or not shard.get("suite")
+            or isinstance(shard.get("index"), bool)
+            or not isinstance(shard.get("index"), int)
+            or isinstance(shard.get("total"), bool)
+            or not isinstance(shard.get("total"), int)
+            or not 0 <= shard.get("index", -1) < shard.get("total", 0)
+        ):
+            errors.append("shard must identify one valid suite index and total")
     if result.get("status") == "passed" and (
         exit_code != 0 or result.get("timed_out") is not False or result.get("spawn_error") is not None
     ):
         errors.append("passed evidence has a non-success process state")
     return errors
+
+
+def aggregate_mutation_results(
+    manifest: dict,
+    artifact_root: Path,
+    suites: list[dict],
+    results: dict[str, dict],
+) -> tuple[Path | None, list[str]]:
+    if not suites:
+        return None, []
+    errors = []
+    expected_version = manifest["tools"]["cargo_mutants"]
+    expected_identities = {
+        (
+            suite["shard"]["suite"],
+            suite["shard"]["index"],
+            suite["shard"]["total"],
+        )
+        for suite in suites
+    }
+    observed_identities = set()
+    payloads = []
+    shard_records = []
+    for suite in suites:
+        identifier = suite["id"]
+        result = results.get(identifier)
+        if result is None:
+            continue
+        shard = result.get("shard")
+        if (
+            isinstance(shard, dict)
+            and isinstance(shard.get("suite"), str)
+            and isinstance(shard.get("index"), int)
+            and not isinstance(shard.get("index"), bool)
+            and isinstance(shard.get("total"), int)
+            and not isinstance(shard.get("total"), bool)
+        ):
+            identity = (shard.get("suite"), shard.get("index"), shard.get("total"))
+            if identity in observed_identities:
+                errors.append(f"duplicate mutation shard identity {identity!r}")
+            observed_identities.add(identity)
+        if shard != suite["shard"]:
+            errors.append(
+                f"{identifier} mutation shard identity is {shard!r}, "
+                f"expected {suite['shard']!r}"
+            )
+        if result.get("command") != suite["command"]:
+            errors.append(
+                f"{identifier} mutation shard command is {result.get('command')!r}, "
+                f"expected {suite['command']!r}"
+            )
+        path = (
+            artifact_root
+            / "mutation"
+            / identifier
+            / "mutants.out"
+            / "outcomes.json"
+        )
+        if not path.is_file():
+            errors.append(f"missing mutation outcomes for {identifier}")
+            continue
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        errors.extend(
+            f"{identifier}: {error}"
+            for error in mutation_results_errors(payload, expected_version)
+        )
+        payloads.append(payload)
+        shard_records.append({"validation_suite": identifier, **suite["shard"]})
+    missing_identities = expected_identities - observed_identities
+    unexpected_identities = observed_identities - expected_identities
+    if missing_identities:
+        errors.append(
+            f"missing mutation shard identities: {sorted(missing_identities, key=repr)!r}"
+        )
+    if unexpected_identities:
+        errors.append(
+            "unexpected mutation shard identities: "
+            f"{sorted(unexpected_identities, key=repr)!r}"
+        )
+    if errors or len(payloads) != len(suites):
+        return None, errors
+    union = merged_mutation_results(payloads, shard_records, expected_version)
+    output = artifact_root / "mutation" / "union" / "outcomes.json"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(
+        json.dumps(union, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    errors.extend(check_mutation_triage(output, expected_version))
+    return output, errors
 
 
 def aggregate(manifest: dict, expected_sha: str, tier: str, domain: str | None) -> Path:
@@ -1061,6 +1362,13 @@ def aggregate(manifest: dict, expected_sha: str, tier: str, domain: str | None) 
             errors.append(f"{suite['id']} was not executed from a clean tracked worktree")
         if not isinstance(result.get("tool_versions"), dict) or not result["tool_versions"]:
             errors.append(f"{suite['id']} is missing tool-version evidence")
+    mutation_union, mutation_errors = aggregate_mutation_results(
+        manifest,
+        artifact_root,
+        [suite for suite in required if suite["domain"] == "mutation"],
+        results,
+    )
+    errors.extend(mutation_errors)
     if errors:
         raise ValidationError("\n".join(errors))
     output = artifact_root / "release-manifest.json"
@@ -1073,6 +1381,11 @@ def aggregate(manifest: dict, expected_sha: str, tier: str, domain: str | None) 
                 "tier": tier,
                 "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
                 "results": results,
+                **(
+                    {"mutation_union": mutation_union.relative_to(artifact_root).as_posix()}
+                    if mutation_union
+                    else {}
+                ),
             },
             indent=2,
             sort_keys=True,
@@ -1135,6 +1448,8 @@ def build_parser() -> argparse.ArgumentParser:
     subcommands.add_parser("prepare-oracles")
     mutation = subcommands.add_parser("mutation-check")
     mutation.add_argument("--results", type=Path, required=True)
+    mutation_shard = subcommands.add_parser("mutation-shard-check")
+    mutation_shard.add_argument("--results", type=Path, required=True)
     aggregate_command = subcommands.add_parser("aggregate")
     aggregate_command.add_argument("--expected-sha", required=True)
     aggregate_command.add_argument("--tier", choices=sorted(VALID_TIERS), default="release")
@@ -1228,8 +1543,19 @@ def main() -> int:
             print(named_toolchain(manifest, arguments.name))
         elif arguments.command == "prepare-oracles":
             prepare_oracles(manifest)
+        elif arguments.command == "mutation-shard-check":
+            payload = json.loads(arguments.results.read_text(encoding="utf-8"))
+            errors = mutation_results_errors(payload, manifest["tools"]["cargo_mutants"])
+            if errors:
+                raise ValidationError("\n".join(errors))
+            print(
+                f"MUTATION_SHARD_OK mutants={payload['total_mutants']} "
+                f"missed={payload['missed']} timeout={payload['timeout']}"
+            )
         elif arguments.command == "mutation-check":
-            errors = check_mutation_triage(arguments.results)
+            errors = check_mutation_triage(
+                arguments.results, manifest["tools"]["cargo_mutants"]
+            )
             if errors:
                 raise ValidationError("\n".join(errors))
             unresolved = unresolved_mutants(arguments.results)

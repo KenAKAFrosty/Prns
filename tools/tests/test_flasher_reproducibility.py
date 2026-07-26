@@ -573,6 +573,19 @@ class FlasherReproducibilityTests(unittest.TestCase):
         windows_end = candidate_workflow.index("runs-on:", windows_start)
         self.assertIn("link-arg=/Brepro", candidate_workflow[windows_start:windows_end])
 
+    def test_shipping_firmware_reuses_one_embedded_site_build(self) -> None:
+        shipping = (
+            ROOT / "validation" / "platforms" / "shipping-firmware.sh"
+        ).read_text(encoding="utf-8")
+        first = shipping.index("release firmware build -- heltec-v4")
+        ready = shipping.index("PRNS_EMBEDDED_SITE_READY=1")
+        remaining = shipping.index(
+            "for board in t-beam-supreme xiao-esp32-c6 t-echo"
+        )
+        self.assertLess(first, remaining)
+        self.assertLess(remaining, ready)
+        self.assertEqual(shipping.count("PRNS_EMBEDDED_SITE_READY=1"), 1)
+
     def test_npm_release_graph_keeps_browser_tools_test_only(self) -> None:
         result = run_repository_python(
             ROOT / "validation" / "security" / "npm-production-audit.py"

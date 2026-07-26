@@ -426,6 +426,7 @@ tiers = ["release", "scheduled"]
 platform = "linux"
 toolchain = "stable"
 timeout_seconds = 14400
+shards = 4
 command = ["bash", "validation/mutation/run.sh"]
 inputs = ["validation/mutation/run.sh", "validation/mutation/config.toml", "validation/mutation/triage.toml"]
 artifacts = "validation-artifacts/results/mutation-analysis"
@@ -572,8 +573,8 @@ tiers = ["pr", "release", "scheduled"]
 platform = "windows"
 toolchain = "stable"
 timeout_seconds = 3600
-command = ["bash", "validation/platforms/windows.sh"]
-inputs = ["validation/platforms/windows.sh"]
+command = ["__RUNNER_PYTHON__", "validation/platforms/windows.py"]
+inputs = ["validation/platforms/windows.py"]
 artifacts = "validation-artifacts/results/windows-desktop"
 
 [[suite]]

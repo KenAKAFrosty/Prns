@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# Run the configured cargo-mutants lane, then enforce the checked-in survivor
-# triage. cargo-mutants' normal "missed" exit is acceptable only when every
-# survivor is current, reviewed, and unexpired in triage.toml.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -19,9 +16,6 @@ set -e
 
 case "$status" in
     0|2|3)
-        # 2 (missed) and 3 (timeout) are reviewable only through the exact
-        # fingerprint triage below. All other nonzero statuses mean the run
-        # itself was invalid or incomplete.
         ;;
     *)
         echo "[mutation-triage] cargo-mutants failed with non-reviewable status ${status}" >&2
@@ -62,4 +56,4 @@ if [[ ! -f "$results" ]]; then
     exit 1
 fi
 
-python3 validation/run.py mutation-check --results "$results"
+python3 validation/run.py mutation-shard-check --results "$results"
