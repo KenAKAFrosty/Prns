@@ -135,7 +135,7 @@ impl<S: StorageLayout> EngineState<S> {
 mod tests {
     use super::*;
     use crate::engine::test_support::*;
-    use crate::engine::{IssuedCommand, RatchetPolicy};
+    use crate::engine::{EngineReaction, InstantMillis, IssuedCommand, Journaled, RatchetPolicy};
 
     const TEST_COMMAND_ID: CommandId = CommandId(7);
 
@@ -167,6 +167,38 @@ mod tests {
             },
         );
         assert_eq!(state.ingested_command_count(), 1);
+    }
+
+    #[test]
+    fn a_ratcheted_announce_journals_its_rotation_before_settlement() {
+        let mut state = personal_node_announcer_with(RatchetPolicy::Ratcheted);
+        let destination = personal_node_destination();
+        let mut journal = std::vec::Vec::new();
+
+        let _ = state.ingest_command_into(
+            announce_now(destination),
+            AttachedInterfaces::new(&[]),
+            InstantMillis(1_000),
+            &mut test_fill_entropy,
+            &mut |reaction| match reaction {
+                EngineReaction::Journaled(Journaled::SelfRatchetRotated { destination }) => {
+                    journal.push((destination, None));
+                }
+                EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                    assert_eq!(id, TEST_COMMAND_ID);
+                    journal.push((destination, Some(settlement)));
+                }
+                _ => {}
+            },
+        );
+
+        assert_eq!(
+            journal,
+            std::vec![
+                (destination, None),
+                (destination, Some(Settlement::AnnounceNow(Ok(())))),
+            ],
+        );
     }
 
     #[test]

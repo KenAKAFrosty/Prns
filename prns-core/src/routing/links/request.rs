@@ -25,7 +25,7 @@ use crate::units::RttMillis;
 use crate::wire::DestinationHash;
 use crate::wire::{
     ContextFlag, DestinationType, IfacFlag, PacketType, PropagationType, WireContext,
-    WirePacketHeader, TRUNCATED_HASH_BYTE_LEN,
+    WirePacketHeader, BROADCAST_MTU, TRUNCATED_HASH_BYTE_LEN,
 };
 
 /// RNS 1.4.0 `Resource.RESPONSE_MAX_GRACE_TIME` (10 s) × 1.125, the flat term in a request's default timeout: `rtt × traffic_timeout_factor + 11.25 s`.
@@ -38,15 +38,7 @@ pub const REQUEST_WIRE_OVERHEAD: usize = 1 + 9 + 2 + TRUNCATED_HASH_BYTE_LEN;
 pub const RESPONSE_WIRE_OVERHEAD: usize = 1 + 2 + TRUNCATED_HASH_BYTE_LEN;
 
 /// Both verbs' data caps derive from the single-packet link MDU, so the two sides land on the same figure by construction.
-pub const WRAPPED_PLAINTEXT_CAP: usize = {
-    let request = REQUEST_WIRE_OVERHEAD + MAX_SEND_REQUEST_DATA_LEN;
-    let response = RESPONSE_WIRE_OVERHEAD + MAX_RESPOND_DATA_LEN;
-    if request > response {
-        request
-    } else {
-        response
-    }
-};
+pub const WRAPPED_PLAINTEXT_CAP: usize = link_mdu(BROADCAST_MTU);
 
 const FIXARRAY_3: u8 = 0x93;
 const FIXARRAY_2: u8 = 0x92;
@@ -544,6 +536,14 @@ mod tests {
 
     #[test]
     fn the_response_envelope_prefix_matches_the_packed_response_head() {
+        assert_eq!(
+            WRAPPED_PLAINTEXT_CAP,
+            REQUEST_WIRE_OVERHEAD + MAX_SEND_REQUEST_DATA_LEN,
+        );
+        assert_eq!(
+            WRAPPED_PLAINTEXT_CAP,
+            RESPONSE_WIRE_OVERHEAD + MAX_RESPOND_DATA_LEN,
+        );
         let id = RequestId([0x5A; 16]);
         let mut buf = [0u8; 64];
         let total = write_response_plaintext(&id, &[0xA3, b'a', b'b', b'c'], &mut buf).unwrap();
@@ -748,6 +748,35 @@ mod tests {
     }
 
     #[test]
+    fn the_default_request_response_timeout_owns_the_receipt_deadline() {
+        use crate::engine::SendRequestData;
+
+        assert_eq!(request_response_timeout_ms(RttMillis::new(100)), 12_850);
+        let link_id = LinkId::new([0x42; 16]);
+        let mut engine = engine_with_an_active_link_at(link_id, 300);
+        let request = SendRequest {
+            link_id,
+            path_hash: RequestPathHash::of("/default-timeout"),
+            data: SendRequestData::from_slice(b"work").unwrap(),
+            response_timeout: RequestResponseTimeout::LinkDefault,
+        };
+        let mut buf = [0u8; 600];
+        engine
+            .write_commanded_send_request(
+                CommandId(2),
+                &request,
+                InstantMillis(2_000),
+                &[0u8; 16],
+                &mut buf,
+            )
+            .unwrap();
+        assert_eq!(
+            engine.receipts.earliest_timeout_at(),
+            Some(InstantMillis(14_850)),
+        );
+    }
+
+    #[test]
     fn an_explicit_request_response_timeout_owns_the_receipt_deadline() {
         use crate::engine::SendRequestData;
         use crate::units::DurationMillis;
@@ -839,6 +868,21 @@ mod tests {
             !engine.response_fits_packet(&LinkId::new([0x99; 16]), b"anything"),
             "a response over a link that is not active never claims the packet rung",
         );
+    }
+
+    #[test]
+    fn request_fits_packet_requires_both_the_mdu_and_the_request_cap() {
+        let link_id = LinkId::new([0x43; 16]);
+        let engine = engine_with_an_active_link_at(link_id, 300);
+        let largest_packet = link_mdu(300) - REQUEST_WIRE_OVERHEAD;
+        assert!(engine.request_fits_packet(&link_id, &std::vec![0xBB; largest_packet]));
+        assert!(!engine.request_fits_packet(&link_id, &std::vec![0xBB; largest_packet + 1],));
+
+        let wide_link = LinkId::new([0x44; 16]);
+        let wide_engine = engine_with_an_active_link_at(wide_link, BROADCAST_MTU * 2);
+        assert!(!wide_engine
+            .request_fits_packet(&wide_link, &std::vec![0xBB; MAX_SEND_REQUEST_DATA_LEN + 1],));
+        assert!(!engine.request_fits_packet(&LinkId::new([0x99; 16]), b"anything"));
     }
 
     #[test]

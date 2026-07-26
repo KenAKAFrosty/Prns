@@ -192,4 +192,27 @@ mod tests {
             ],
         );
     }
+
+    #[test]
+    fn frames_emit_once_for_a_supervised_interface_fleet() {
+        let first = InterfaceId::new([InterfaceKind::BluetoothPeer as u8, 0x41, 0, 0, 0, 0, 0, 0]);
+        let second = InterfaceId::new([InterfaceKind::BluetoothPeer as u8, 0x42, 0, 0, 0, 0, 0, 0]);
+        let interfaces = [routable_descriptor(first), routable_descriptor(second)];
+        let mut fleets = std::vec::Vec::new();
+
+        fan_frame(
+            AttachedInterfaces::new(&interfaces),
+            FanTarget::All,
+            &[0xAB],
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::SendToFleet { supervisor, .. }) =
+                    reaction
+                {
+                    fleets.push(supervisor);
+                }
+            },
+        );
+
+        assert_eq!(fleets, std::vec![InterfaceKind::BluetoothAuto]);
+    }
 }

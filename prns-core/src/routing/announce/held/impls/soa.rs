@@ -170,13 +170,14 @@ impl<C: SoaColumns> HeldAnnounceTable for SoaHeldAnnounceTable<C> {
             return;
         };
         let iface_idx = idx as u16;
-        let mut i = 0;
-        while i < self.columns.len() {
+        for i in (0..self.columns.len()).rev() {
             if self.columns.probe()[i].iface_idx == iface_idx {
-                on_removed(self.columns.cold()[i].entry.maybe_app_data_handle);
+                let handle = self.columns.cold()[i].entry.maybe_app_data_handle;
+                let before = self.columns.len();
                 self.columns.swap_remove(i);
-            } else {
-                i += 1;
+                if self.columns.len() < before {
+                    on_removed(handle);
+                }
             }
         }
         self.columns.dir_mut()[idx] = None;

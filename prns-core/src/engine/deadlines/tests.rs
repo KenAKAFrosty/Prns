@@ -36,6 +36,8 @@ fn a_fresh_drive_is_deterministic_and_emits_nothing() {
 fn accepted_announces_schedule_a_rebroadcast_and_tick_emits_them() {
     let mut raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
     let mut state = transporting_node();
+    state.protocol.local_hop_count_override =
+        crate::engine::LocalHopCountOverride::override_with(5).unwrap();
     let interfaces = [routable_descriptor(InterfaceId::new([0xFE; 8]))];
 
     let arrival = InstantMillis(1_000);
@@ -271,6 +273,43 @@ fn a_bluetooth_peer_announce_rebroadcasts_to_usb_device_transport() {
 }
 
 #[test]
+fn a_scheduled_announce_emits_once_for_a_supervised_interface_fleet() {
+    let first = InterfaceId::new([InterfaceKind::BluetoothPeer as u8, 0x41, 0, 0, 0, 0, 0, 0]);
+    let second = InterfaceId::new([InterfaceKind::BluetoothPeer as u8, 0x42, 0, 0, 0, 0, 0, 0]);
+    let interfaces = [routable_descriptor(first), routable_descriptor(second)];
+    let mut raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
+    let mut state = transporting_node();
+    let arrival = InstantMillis(1_000);
+    let _ = state.ingest_packet_with(
+        InboundPacket {
+            arrived_at: arrival,
+            source_interface: InterfaceId::new([InterfaceKind::Loopback as u8; 8]),
+            bytes: &mut raw,
+        },
+        &mut |_| {},
+        AttachedInterfaces::new(&transporting_interfaces()),
+        &mut |_| {},
+        None,
+    );
+
+    let mut fleets = std::vec::Vec::new();
+    let _ = state.fire_due_scheduled_announces(
+        InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
+        AttachedInterfaces::new(&interfaces),
+        &mut |reaction| {
+            if let EngineReaction::Directive(Directive::SendAnnounceToFleet {
+                supervisor, ..
+            }) = reaction
+            {
+                fleets.push(supervisor);
+            }
+        },
+    );
+
+    assert_eq!(fleets, std::vec![InterfaceKind::BluetoothAuto]);
+}
+
+#[test]
 fn our_own_repeat_echoed_back_is_deduplicated() {
     use crate::engine::{AnnounceIngest, IngestPacketOutcome};
 
@@ -353,6 +392,44 @@ fn an_interface_that_cannot_transport_never_joins_a_rebroadcast_fan() {
         rebroadcast_fan_for(&mut state, AttachedInterfaces::new(&interfaces)),
         std::vec![]
     );
+}
+
+#[test]
+fn a_local_client_announce_can_leave_on_a_transmit_only_interface() {
+    use crate::interfaces::{EgressCapability, TransportCapability};
+
+    let source = InterfaceId::from_channel_tag(InterfaceKind::LocalClient, b"sideband");
+    let egress = InterfaceId::new([0xFE; 8]);
+    let mut transmit_only = routable_descriptor(egress);
+    transmit_only.capabilities.egress = EgressCapability::Enabled(TransportCapability::NoTransport);
+    let interfaces = [routable_descriptor(source), transmit_only];
+    let mut state = transporting_node();
+    let mut raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
+    let arrival = InstantMillis(1_000);
+    let _ = state.ingest_packet_with(
+        InboundPacket {
+            arrived_at: arrival,
+            source_interface: source,
+            bytes: &mut raw,
+        },
+        &mut |_| {},
+        AttachedInterfaces::new(&interfaces),
+        &mut |_| {},
+        None,
+    );
+
+    let mut targets = std::vec::Vec::new();
+    let _ = state.fire_due_scheduled_announces(
+        InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
+        AttachedInterfaces::new(&interfaces),
+        &mut |reaction| {
+            if let EngineReaction::Directive(Directive::SendAnnounce { target, .. }) = reaction {
+                targets.push(target);
+            }
+        },
+    );
+
+    assert_eq!(targets, std::vec![egress]);
 }
 
 fn moded(mode: InterfaceMode, descriptor: InterfaceDescriptor) -> InterfaceDescriptor {
@@ -444,9 +521,16 @@ fn a_scheduled_local_client_announce_uses_the_hop_count_override_at_external_egr
         InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
         AttachedInterfaces::new(&interfaces),
         &mut |reaction| {
-            if let EngineReaction::Directive(Directive::SendAnnounce { target, bytes, .. }) =
-                reaction
+            if let EngineReaction::Directive(Directive::SendAnnounce {
+                target,
+                bytes,
+                #[cfg(feature = "runtime-metrics")]
+                origin,
+                ..
+            }) = reaction
             {
+                #[cfg(feature = "runtime-metrics")]
+                assert_eq!(origin, crate::engine::AnnounceOrigin::SharedClient);
                 emitted.push((target, WirePacketHeader::parse(bytes).unwrap().0.hops));
             }
         },
@@ -937,6 +1021,130 @@ fn a_dropped_route_marks_its_interface_so_the_destination_count_recomputes() {
         "dropping the route re-marks the interface, so the stale count never lingers silently",
     );
     assert_eq!(engine.interface_counts(source).destinations, 0);
+}
+
+#[test]
+fn route_culling_drops_reverse_and_transported_rows_with_a_missing_interface() {
+    use crate::routing::links::transported::TransportedLink;
+    use crate::routing::links::LinkId;
+    use crate::routing::reverse_routes::ReverseRouteEntry;
+
+    let attached = InterfaceId::new([0xA1; 8]);
+    let other = InterfaceId::new([0xC3; 8]);
+    let missing = InterfaceId::new([0xB2; 8]);
+    let interfaces = [routable_descriptor(attached), routable_descriptor(other)];
+    let proof_destination = DestinationHash::new([0xD4; 16]);
+    let mut engine = EngineState::<TestStorageLayout>::default();
+    engine.reverse_routes.remember(
+        ReverseRouteEntry {
+            proof_destination,
+            received_interface: attached,
+            outbound_interface: missing,
+            expires_at: InstantMillis(30_000),
+        },
+        InstantMillis(1_000),
+    );
+    engine
+        .transported_links
+        .track(TransportedLink {
+            link_id: LinkId::new([0x5C; 16]),
+            destination: DestinationHash::new([0xDD; 16]),
+            next_hop: None,
+            next_hop_interface: attached,
+            received_interface: missing,
+            taken_hops: 1,
+            remaining_hops: 1,
+            validated_by_proof: false,
+            last_active: InstantMillis(1_000),
+            proof_timeout: InstantMillis(30_000),
+        })
+        .unwrap();
+
+    let _ = engine.cull_expired_routes(
+        InstantMillis(2_000),
+        AttachedInterfaces::new(&interfaces),
+        &mut |_| {},
+    );
+
+    assert_eq!(
+        engine
+            .reverse_routes
+            .take(&proof_destination, InstantMillis(2_000)),
+        None,
+    );
+    assert!(engine.transported_links.is_empty());
+}
+
+fn overdue_transport_recovery_emissions(
+    additional_route_hops: u8,
+    taken_hops: u8,
+) -> std::vec::Vec<InterfaceId> {
+    use crate::routing::links::transported::TransportedLink;
+    use crate::routing::links::LinkId;
+
+    let received = InterfaceId::new([0xA1; 8]);
+    let away = InterfaceId::new([0xB2; 8]);
+    let interfaces = [routable_descriptor(received), routable_descriptor(away)];
+    let mut engine = EngineState::<TestStorageLayout>::default();
+    let mut raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
+    raw[1] += additional_route_hops;
+    let _ = engine.ingest_packet_with(
+        InboundPacket {
+            arrived_at: InstantMillis(1_000),
+            source_interface: received,
+            bytes: &mut raw,
+        },
+        &mut |_| {},
+        AttachedInterfaces::new(&interfaces),
+        &mut |_| {},
+        None,
+    );
+    let destination = DestinationHash::new(
+        bytes_from_hex("16f8a6d3f7d7c5b6f106d293804d7314")
+            .try_into()
+            .unwrap(),
+    );
+    engine
+        .transported_links
+        .track(TransportedLink {
+            link_id: LinkId::new([0x5C; 16]),
+            destination,
+            next_hop: None,
+            next_hop_interface: away,
+            received_interface: received,
+            taken_hops,
+            remaining_hops: 1,
+            validated_by_proof: false,
+            last_active: InstantMillis(1_000),
+            proof_timeout: InstantMillis(7_000),
+        })
+        .unwrap();
+
+    let mut sent = std::vec::Vec::new();
+    let _ = engine.fire_due_link_deadlines(
+        InstantMillis(7_000),
+        AttachedInterfaces::new(&interfaces),
+        &mut |bytes: &mut [u8]| bytes.fill(0x5A),
+        &mut |reaction| {
+            if let EngineReaction::Directive(Directive::Send { target, .. }) = reaction {
+                sent.push(target);
+            }
+        },
+    );
+    sent
+}
+
+#[test]
+fn overdue_transport_recovery_requires_a_neighbor_route_or_initiator() {
+    assert_eq!(
+        overdue_transport_recovery_emissions(2, 1),
+        std::vec![InterfaceId::new([0xB2; 8])],
+    );
+    assert!(overdue_transport_recovery_emissions(2, 2).is_empty());
+    assert_eq!(
+        overdue_transport_recovery_emissions(0, 2),
+        std::vec![InterfaceId::new([0xB2; 8])],
+    );
 }
 
 #[test]

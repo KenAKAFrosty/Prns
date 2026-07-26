@@ -80,15 +80,12 @@ impl RnsNumber {
             Self::Float(seconds) if *seconds == 0.0 || seconds.is_nan() => {
                 BlackholeExpiry::Indefinite
             }
-            Self::Float(seconds) if *seconds < 0.0 => BlackholeExpiry::At(InstantMillis(0)),
+            Self::Float(seconds) if seconds.is_sign_negative() => {
+                BlackholeExpiry::At(InstantMillis(0))
+            }
             Self::Float(seconds) => {
                 let millis = *seconds * 1_000.0;
-                let deadline = if !millis.is_finite() || millis >= u64::MAX as f64 {
-                    u64::MAX
-                } else {
-                    millis as u64
-                };
-                BlackholeExpiry::At(InstantMillis(deadline))
+                BlackholeExpiry::At(InstantMillis(millis as u64))
             }
         }
     }
@@ -1246,6 +1243,105 @@ mod tests {
         bytes
     }
 
+    #[test]
+    fn pickle_encoder_preserves_its_container_and_binary_field_bytes() {
+        let mut encoder = PickleRequestEncoder::new();
+        encoder
+            .binary_field(argument::DESTINATION_HASH, &[0x42; 16])
+            .unwrap();
+        let encoded = encoder.finish();
+
+        let mut expected = vec![0x80, 0x03, b'}', b'(', b'X'];
+        expected.extend_from_slice(&(argument::DESTINATION_HASH.len() as u32).to_le_bytes());
+        expected.extend_from_slice(argument::DESTINATION_HASH.as_bytes());
+        expected.extend_from_slice(&[b'C', 16]);
+        expected.extend_from_slice(&[0x42; 16]);
+        expected.extend_from_slice(b"u.");
+        assert_eq!(encoded, expected);
+    }
+
+    #[test]
+    fn pickle_encoder_preserves_signed_and_unsigned_long_boundaries() {
+        let mut encoder = PickleRequestEncoder::new();
+        encoder.signed(-129);
+        encoder.signed(-128);
+        encoder.signed(-1);
+        encoder.unsigned(0);
+        encoder.unsigned(127);
+        encoder.unsigned(128);
+        encoder.unsigned(u64::MAX);
+        encoder.nil();
+        encoder.float(123.5);
+        let float = 123.5f64.to_be_bytes();
+        let mut expected = vec![
+            0x80, 0x03, b'}', b'(', 0x8A, 2, 0x7F, 0xFF, 0x8A, 1, 0x80, 0x8A, 1, 0xFF, 0x8A, 1,
+            0x00, 0x8A, 1, 0x7F, 0x8A, 2, 0x80, 0x00, 0x8A, 9, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+            0xFF, 0xFF, 0x00, b'N', b'G',
+        ];
+        expected.extend_from_slice(&float);
+        expected.extend_from_slice(b"u.");
+        assert_eq!(encoder.finish(), expected,);
+    }
+
+    #[test]
+    fn pickle_encoder_switches_binary_width_at_256_bytes() {
+        let mut encoder = PickleRequestEncoder::new();
+        encoder.binary(&vec![0xAA; 255]).unwrap();
+        encoder.binary(&vec![0xBB; 256]).unwrap();
+        let encoded = encoder.finish();
+        assert_eq!(&encoded[..6], &[0x80, 0x03, b'}', b'(', b'C', 0xFF]);
+        assert_eq!(&encoded[6..261], &[0xAA; 255]);
+        assert_eq!(&encoded[261..266], &[b'B', 0x00, 0x01, 0x00, 0x00]);
+        assert_eq!(&encoded[266..522], &[0xBB; 256]);
+        assert_eq!(&encoded[522..], b"u.");
+    }
+
+    #[test]
+    fn pickle_request_encoding_preserves_verb_and_destination() {
+        let destination_hash = DestinationHash::new([0x42; 16]);
+        for (request, verb) in [
+            (
+                RnsRpcRequest::NextHop { destination_hash },
+                super::super::RpcVerb::GetNextHop,
+            ),
+            (
+                RnsRpcRequest::DropPath { destination_hash },
+                super::super::RpcVerb::DropPath,
+            ),
+        ] {
+            let encoded = request.encode_pickle().unwrap();
+            let decoded = super::super::RpcRequest::decode(&encoded).unwrap();
+            assert_eq!(decoded.dialect(), super::super::RpcDialect::Pickle);
+            assert_eq!(decoded.verb(), verb);
+            assert_eq!(decoded.legacy_destination_hash(), Some(destination_hash));
+        }
+
+        let encoded = RnsRpcRequest::PathTable { max_hops: None }
+            .encode_pickle()
+            .unwrap();
+        assert!(encoded.contains(&b'N'));
+
+        let encoded = RnsRpcRequest::PathTable {
+            max_hops: Some(RnsInteger::from_i64(-1)),
+        }
+        .encode_pickle()
+        .unwrap();
+        assert!(encoded.windows(3).any(|window| window == [0x8A, 1, 0xFF]));
+
+        let encoded = RnsRpcRequest::BlackholeIdentity {
+            identity_hash: IdentityHash::new([0x55; 16]),
+            until: Some(RnsNumber::Float(123.5)),
+            reason: None,
+        }
+        .encode_pickle()
+        .unwrap();
+        let mut packed_float = vec![b'G'];
+        packed_float.extend_from_slice(&123.5f64.to_be_bytes());
+        assert!(encoded
+            .windows(packed_float.len())
+            .any(|window| window == packed_float));
+    }
+
     fn binary<const N: usize>(byte: u8) -> Value {
         Value::Binary(vec![byte; N])
     }
@@ -1461,6 +1557,39 @@ mod tests {
     }
 
     #[test]
+    fn map_lengths_decode_fixmap_map16_and_map32_headers() {
+        assert_eq!(
+            map_length(Marker::FixMap(15), &mut Bytes::new(&[])).unwrap(),
+            Some(15),
+        );
+        assert_eq!(
+            map_length(Marker::Map16, &mut Bytes::new(&[0x01, 0x00])).unwrap(),
+            Some(256),
+        );
+        assert_eq!(
+            map_length(Marker::Map32, &mut Bytes::new(&[0x00, 0x01, 0x00, 0x00]),).unwrap(),
+            Some(65_536),
+        );
+        assert_eq!(
+            map_length(Marker::Null, &mut Bytes::new(&[])).unwrap(),
+            None,
+        );
+    }
+
+    #[test]
+    fn unsupported_payload_consumption_advances_and_refuses_truncation() {
+        let mut reader = Bytes::new(&[0xCA, 0x01, 0x02, 0x03, 0x04, 0xC0]);
+        assert!(decode_value(&mut reader, 0).is_ok());
+        assert_eq!(reader.remaining_slice(), &[0xC0]);
+
+        let mut reader = Bytes::new(&[0xCA, 0x01, 0x02, 0x03]);
+        assert!(matches!(
+            decode_value(&mut reader, 0),
+            Err(DecodeError::MessagePack),
+        ));
+    }
+
+    #[test]
     fn decodes_every_rns_1_4_0_operation() {
         let cases = [
             request(vec![("get", Value::from("interface_stats"))]),
@@ -1566,6 +1695,54 @@ mod tests {
     }
 
     #[test]
+    fn message_pack_numeric_arguments_round_trip_without_the_oracle_lane() {
+        let identity_hash = IdentityHash::new([0x55; 16]);
+        let cases = [
+            RnsRpcRequest::PathTable {
+                max_hops: Some(RnsInteger::from_i64(-1)),
+            },
+            RnsRpcRequest::PathTable {
+                max_hops: Some(RnsInteger::from_u64(u64::MAX)),
+            },
+            RnsRpcRequest::BlackholeIdentity {
+                identity_hash,
+                until: Some(RnsNumber::Integer(RnsInteger::from_u64(u64::MAX))),
+                reason: None,
+            },
+            RnsRpcRequest::BlackholeIdentity {
+                identity_hash,
+                until: Some(RnsNumber::Float(123.5)),
+                reason: None,
+            },
+            RnsRpcRequest::BlackholeIdentity {
+                identity_hash,
+                until: None,
+                reason: None,
+            },
+        ];
+        for request in cases {
+            let encoded = request.encode_message_pack().unwrap();
+            assert_eq!(decode(&encoded), Ok(request));
+        }
+    }
+
+    #[test]
+    fn signed_integer_views_cover_negative_positive_and_overflow_boundaries() {
+        assert_eq!(RnsInteger::from_i64(-1).signed_value(), Some(-1));
+        assert_eq!(RnsInteger::from_i64(0).nonnegative_value(), Some(0));
+        assert_eq!(RnsInteger::from_u64(0).signed_value(), Some(0));
+        assert_eq!(
+            RnsInteger::from_u64(i64::MAX as u64).signed_value(),
+            Some(i64::MAX),
+        );
+        assert_eq!(
+            RnsInteger::from_u64(i64::MAX as u64 + 1).signed_value(),
+            None,
+        );
+        assert_eq!(RnsInteger::from_u64(u64::MAX).signed_value(), None);
+    }
+
+    #[test]
     fn blackhole_deadlines_preserve_rns_138_truthiness_and_epoch_seconds() {
         assert_eq!(
             RnsNumber::Integer(RnsInteger::from_i64(-1)).blackhole_expiry(),
@@ -1578,6 +1755,10 @@ mod tests {
         assert_eq!(
             RnsNumber::Float(f64::NAN).blackhole_expiry(),
             BlackholeExpiry::Indefinite
+        );
+        assert_eq!(
+            RnsNumber::Float(f64::NEG_INFINITY).blackhole_expiry(),
+            BlackholeExpiry::At(InstantMillis(0)),
         );
         assert_eq!(
             RnsNumber::Float(f64::INFINITY).blackhole_expiry(),
@@ -1692,9 +1873,52 @@ mod tests {
 
     #[test]
     fn nesting_beyond_the_protocol_limit_is_rejected() {
+        let encoded = |value: &Value| {
+            let mut bytes = Vec::new();
+            rmpv::encode::write_value(&mut bytes, value).unwrap();
+            bytes
+        };
+        for maps in [false, true] {
+            let nested = |levels: usize| {
+                let mut value = Value::Boolean(true);
+                for _ in 0..levels {
+                    value = if maps {
+                        Value::Map(vec![(Value::Nil, value)])
+                    } else {
+                        Value::Array(vec![value])
+                    };
+                }
+                value
+            };
+            let accepted = encoded(&nested(REQUEST_MAX_DEPTH));
+            let mut reader = Bytes::new(&accepted);
+            assert!(decode_value(&mut reader, 0).is_ok());
+            assert!(reader.remaining_slice().is_empty());
+
+            let rejected = encoded(&nested(REQUEST_MAX_DEPTH + 1));
+            let mut reader = Bytes::new(&rejected);
+            assert!(matches!(
+                decode_value(&mut reader, 0),
+                Err(DecodeError::MessagePack),
+            ));
+        }
+
         let mut nested = Value::Nil;
         for _ in 0..=REQUEST_MAX_DEPTH {
             nested = Value::Array(vec![nested]);
+        }
+        assert_eq!(
+            decode(&request(vec![
+                ("blackhole_identity", binary::<16>(5)),
+                ("until", Value::Nil),
+                ("reason", nested),
+            ])),
+            Err(DecodeError::MessagePack)
+        );
+
+        let mut nested = Value::Nil;
+        for _ in 0..=REQUEST_MAX_DEPTH {
+            nested = Value::Map(vec![(Value::Nil, nested)]);
         }
         assert_eq!(
             decode(&request(vec![

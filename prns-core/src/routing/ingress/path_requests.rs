@@ -252,7 +252,7 @@ impl<S: StorageLayout> EngineState<S> {
 mod tests {
     use super::*;
     use crate::engine::test_support::*;
-    use crate::engine::{Directive, EngineReaction, IngestIo};
+    use crate::engine::{Directive, EngineReaction, IngestIo, Journaled};
     use crate::interfaces::{InboundPacket, InterfaceDescriptor};
     use crate::routing::ingress::testkit::iface;
     use crate::routing::ingress::AnnounceIngest;
@@ -310,6 +310,59 @@ mod tests {
             ),
             IngestPacketOutcome::AnswerPathRequest { destination: local },
         );
+    }
+
+    #[test]
+    fn path_response_journals_only_a_newly_minted_ratchet() {
+        let mut state = ratcheted_personal_node_announcer();
+        let local = personal_node_destination();
+        let source = iface(0xA1);
+        let interfaces = [routable_descriptor(source)];
+        let mut rotation_count = 0;
+        let mut send_count = 0;
+
+        for (now, id) in [
+            (InstantMillis(2_000), [0x55; 16]),
+            (
+                InstantMillis(
+                    1_000 + crate::crypto::ratchets::MIN_RATCHET_ROTATION_INTERVAL_MS + 1,
+                ),
+                [0x66; 16],
+            ),
+        ] {
+            let mut buf = [0u8; BROADCAST_MTU];
+            let n = write_path_request_wire_packet(local, None, &id, &mut buf).unwrap();
+            state.ingest_packet_into(
+                InboundPacket {
+                    arrived_at: now,
+                    source_interface: source,
+                    bytes: &mut buf[..n],
+                },
+                IngestIo {
+                    interfaces: AttachedInterfaces::new(&interfaces),
+                    now,
+                    fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0x77),
+                    should_prove: &mut |_| false,
+                    should_accept_resource: &mut |_| false,
+                    sink: &mut |reaction| match reaction {
+                        EngineReaction::Directive(Directive::Send { target, .. }) => {
+                            assert_eq!(target, source);
+                            send_count += 1;
+                        }
+                        EngineReaction::Journaled(Journaled::SelfRatchetRotated {
+                            destination,
+                        }) => {
+                            assert_eq!(destination, local);
+                            rotation_count += 1;
+                        }
+                        _ => {}
+                    },
+                },
+            );
+        }
+
+        assert_eq!(send_count, 2);
+        assert_eq!(rotation_count, 1);
     }
 
     #[test]
@@ -632,7 +685,7 @@ mod tests {
         {
             let mut leaf = shared_instance_leaf();
             let mut wire = stranger_path_request(tag);
-            let mut sent = None;
+            let mut sent = std::vec::Vec::new();
             leaf.ingest_packet_into(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
@@ -649,15 +702,16 @@ mod tests {
                         if let EngineReaction::Directive(Directive::Send { target, bytes }) =
                             reaction
                         {
-                            sent = Some((target, bytes.to_vec()));
+                            sent.push((target, bytes.to_vec()));
                         }
                     },
                 },
             );
 
-            let (target, wire) = sent.expect("the request crosses the local boundary");
-            assert_eq!(target, expected_target);
-            let (_, payload) = WirePacketHeader::parse(&wire).unwrap();
+            assert_eq!(sent.len(), 1, "the request crosses the boundary once");
+            let (target, wire) = &sent[0];
+            assert_eq!(*target, expected_target);
+            let (_, payload) = WirePacketHeader::parse(wire).unwrap();
             let request = PathRequest::parse(payload).unwrap();
             assert_eq!(request.destination, destination);
             assert_eq!(request.requester_transport_id, None);

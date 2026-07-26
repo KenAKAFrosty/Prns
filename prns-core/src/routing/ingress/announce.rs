@@ -455,10 +455,19 @@ mod tests {
         let mut leaf = shared_instance_leaf();
         let transport_id = leaf.transport_id().unwrap();
         let network = iface(0xA1);
+        let other_network = iface(0xB2);
         let app = InterfaceId::from_channel_tag(InterfaceKind::LocalClient, b"sideband");
-        let interfaces = [routable_descriptor(network), routable_descriptor(app)];
+        let muted_app = InterfaceId::from_channel_tag(InterfaceKind::LocalClient, b"muted");
+        let mut muted_descriptor = routable_descriptor(muted_app);
+        muted_descriptor.capabilities.egress = crate::interfaces::EgressCapability::Disabled;
+        let interfaces = [
+            routable_descriptor(network),
+            routable_descriptor(other_network),
+            routable_descriptor(app),
+            muted_descriptor,
+        ];
         let mut raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
-        let mut sent = None;
+        let mut sent = std::vec::Vec::new();
 
         leaf.ingest_packet_into(
             InboundPacket {
@@ -476,18 +485,23 @@ mod tests {
                     if let EngineReaction::Directive(Directive::SendAnnounce {
                         target,
                         bytes,
+                        #[cfg(feature = "runtime-metrics")]
+                        origin,
                         ..
                     }) = reaction
                     {
-                        sent = Some((target, bytes.to_vec()));
+                        #[cfg(feature = "runtime-metrics")]
+                        assert_eq!(origin, crate::engine::AnnounceOrigin::Relay);
+                        sent.push((target, bytes.to_vec()));
                     }
                 },
             },
         );
 
-        let (target, wire) = sent.expect("the local client receives the announce");
-        assert_eq!(target, app);
-        let (header, _) = WirePacketHeader::parse(&wire).unwrap();
+        assert_eq!(sent.len(), 1);
+        let (target, wire) = &sent[0];
+        assert_eq!(*target, app);
+        let (header, _) = WirePacketHeader::parse(wire).unwrap();
         assert_eq!(header.transport_id, Some(transport_id));
         assert!(!leaf.network_transport_enabled());
         assert_eq!(leaf.scheduled_announce_count(), 0);
@@ -1149,7 +1163,7 @@ mod tests {
 
     #[test]
     fn a_flood_of_unknown_announces_is_held_then_drip_released_lowest_hop_first() {
-        use crate::engine::{EngineReaction, Journaled};
+        use crate::engine::{EngineReaction, Journaled, WakeSchedule};
 
         let source = InterfaceId::new([0xEE; 8]);
         let interfaces = transporting_interfaces();
@@ -1191,6 +1205,27 @@ mod tests {
         );
 
         let mut released_hops = std::vec::Vec::new();
+        let exact_due = match relay.held_announce_release_wake() {
+            WakeSchedule::At(due) => due,
+            other => panic!("a held announce has an exact release deadline, got {other:?}"),
+        };
+        let held_before_due = relay.held_announces.len();
+        relay.fire_due_held_announces(
+            exact_due,
+            AttachedInterfaces::new(&interfaces),
+            &mut |bytes: &mut [u8]| bytes.fill(0xE6),
+            &mut |reaction| {
+                if let EngineReaction::Journaled(Journaled::AnnounceHeard { observation, .. }) =
+                    reaction
+                {
+                    released_hops.push(observation.hops.0);
+                }
+            },
+        );
+        assert!(
+            relay.held_announces.len() < held_before_due,
+            "the release runs at its scheduled deadline",
+        );
         for step in 0..(held as u64 + 4) {
             if relay.held_announces.is_empty() {
                 break;
