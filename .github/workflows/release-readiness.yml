@@ -83,7 +83,7 @@ jobs:
           nightly="$(python3 validation/run.py toolchain nightly)"
           rustup toolchain install "$nightly" --profile minimal
       - name: Prepare embedded targets
-        if: matrix.group == 'embedded'
+        if: matrix.group == 'embedded' || matrix.group == 'esp'
         run: rustup target add riscv32imac-unknown-none-elf thumbv7em-none-eabihf
       - name: Prepare Linux native development packages
         if: runner.os == 'Linux' && matrix.platform != 'android-device'

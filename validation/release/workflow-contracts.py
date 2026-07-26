@@ -178,6 +178,17 @@ def validate() -> list[str]:
             "release-readiness.yml does not provision exact cargo-binstall and Dioxus "
             "tools for both web and ESP suites"
         )
+    embedded_target_step = re.search(
+        r"name: Prepare embedded targets\n"
+        r"        if: matrix\.group == 'embedded' \|\| matrix\.group == 'esp'\n"
+        r"        run: rustup target add riscv32imac-unknown-none-elf "
+        r"thumbv7em-none-eabihf",
+        qualify,
+    )
+    if embedded_target_step is None:
+        errors.append(
+            "release-readiness.yml does not provision embedded Rust targets for ESP suites"
+        )
     if "validation-artifacts/mutation/union/**" not in readiness:
         errors.append("release-readiness.yml does not retain the merged mutation evidence")
     for native_package in ("libdbus-1-dev", "pkg-config"):
