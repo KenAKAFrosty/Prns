@@ -80,9 +80,6 @@ impl RnsNumber {
             Self::Float(seconds) if *seconds == 0.0 || seconds.is_nan() => {
                 BlackholeExpiry::Indefinite
             }
-            Self::Float(seconds) if seconds.is_sign_negative() => {
-                BlackholeExpiry::At(InstantMillis(0))
-            }
             Self::Float(seconds) => {
                 let millis = *seconds * 1_000.0;
                 BlackholeExpiry::At(InstantMillis(millis as u64))
@@ -441,7 +438,7 @@ impl PickleRequestEncoder {
     }
 
     fn signed(&mut self, value: i64) {
-        self.long(value.to_le_bytes(), value < 0);
+        self.long(value.to_le_bytes(), true);
     }
 
     fn unsigned(&mut self, value: u64) {
@@ -450,13 +447,12 @@ impl PickleRequestEncoder {
 
     fn long(&mut self, raw: [u8; 8], negative: bool) {
         let extension = if negative { 0xff } else { 0x00 };
-        let mut length = raw.len();
-        while length > 1
-            && raw[length - 1] == extension
-            && (raw[length - 2] & 0x80 != 0) == negative
-        {
-            length -= 1;
-        }
+        let length = (2..=raw.len())
+            .rev()
+            .find(|&length| {
+                raw[length - 1] != extension || (raw[length - 2] & 0x80 != 0) != negative
+            })
+            .unwrap_or(1);
         let length_position = self.bytes.len() + 1;
         self.bytes.extend_from_slice(&[0x8a, length as u8]);
         self.bytes.extend_from_slice(&raw[..length]);
@@ -1587,6 +1583,16 @@ mod tests {
             decode_value(&mut reader, 0),
             Err(DecodeError::MessagePack),
         ));
+
+        let mut reader = Bytes::new(&[0x01, 0x02, 0xC0]);
+        assert!(consume_value_payload(Marker::FixExt1, &mut reader, 0).is_ok());
+        assert_eq!(reader.remaining_slice(), &[0xC0]);
+
+        let mut reader = Bytes::new(&[0x01]);
+        assert_eq!(
+            consume_value_payload(Marker::FixExt1, &mut reader, 0),
+            Err(DecodeError::MessagePack),
+        );
     }
 
     #[test]
@@ -1902,6 +1908,17 @@ mod tests {
                 Err(DecodeError::MessagePack),
             ));
         }
+
+        let mut nested_key = Value::Nil;
+        for _ in 0..REQUEST_MAX_DEPTH {
+            nested_key = Value::Array(vec![nested_key]);
+        }
+        let keyed_map = encoded(&Value::Map(vec![(nested_key, Value::Nil)]));
+        let mut reader = Bytes::new(&keyed_map);
+        assert!(matches!(
+            decode_value(&mut reader, 0),
+            Err(DecodeError::MessagePack)
+        ));
 
         let mut nested = Value::Nil;
         for _ in 0..=REQUEST_MAX_DEPTH {

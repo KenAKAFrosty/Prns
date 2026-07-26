@@ -291,7 +291,7 @@ mod tests {
 
     #[test]
     fn legacy_destination_hash_searches_only_after_the_argument_key() {
-        let mut request = b"padding-padding-padding\x43\x10AAAAAAAAAAAAAAAA".to_vec();
+        let mut request = b"padding-padding-padding\x43\x10AAAAAAAA".to_vec();
         request.extend_from_slice(argument::DESTINATION_HASH.as_bytes());
         request.extend_from_slice(b"\x43\x10BBBBBBBBBBBBBBBB");
         assert_eq!(

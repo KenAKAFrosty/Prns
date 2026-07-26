@@ -365,6 +365,19 @@ mod tests {
     }
 
     #[test]
+    fn decoder_reset_discards_partial_payload_and_escape_state() {
+        let mut decoder: RnsSerialDecoder<8> = RnsSerialDecoder::new();
+        assert_eq!(decoder.feed(FLAG).unwrap(), None);
+        assert_eq!(decoder.feed(0xAA).unwrap(), None);
+        assert_eq!(decoder.feed(ESC).unwrap(), None);
+        decoder.reset();
+
+        assert_eq!(decoder.feed(FLAG).unwrap(), None);
+        assert_eq!(decoder.feed(0xBB).unwrap(), None);
+        assert_eq!(decoder.feed(FLAG).unwrap(), Some(&[0xBB][..]));
+    }
+
+    #[test]
     fn decoder_preserves_noncanonical_escaped_bytes_like_rns() {
         let noncanonical_escaped_byte = 0x61;
         let bytes = [FLAG, ESC, noncanonical_escaped_byte, FLAG];

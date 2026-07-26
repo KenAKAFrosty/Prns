@@ -135,6 +135,22 @@ mod tests {
             "an unconditional flood reaches the lone member"
         );
         assert!(
+            fleet_fan_target_reaches_any_member(
+                AttachedInterfaces::new(&lone),
+                InterfaceKind::BluetoothAuto,
+                FanTarget::Only(source)
+            ),
+            "a directed target reaches its matching fleet member"
+        );
+        assert!(
+            !fleet_fan_target_reaches_any_member(
+                AttachedInterfaces::new(&lone),
+                InterfaceKind::BluetoothAuto,
+                FanTarget::Only(other)
+            ),
+            "a directed target reaches nobody when that member is absent"
+        );
+        assert!(
             !fleet_fan_target_reaches_any_member(
                 AttachedInterfaces::new(&[routable_descriptor(InterfaceId::new([0xFE; 8]))]),
                 InterfaceKind::BluetoothAuto,

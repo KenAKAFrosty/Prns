@@ -248,6 +248,13 @@ mod tests {
     }
 
     #[test]
+    fn constant_time_equality_does_not_cancel_repeated_differences() {
+        assert!(ct_eq(&[0x10, 0x20], &[0x10, 0x20]));
+        assert!(!ct_eq(&[0x10, 0x10], &[0x20, 0x20]));
+        assert!(!ct_eq(&[0x10], &[0x10, 0x20]));
+    }
+
+    #[test]
     fn masking_reproduces_the_reference_wire() {
         let clean = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
         let mut out = [0u8; TEST_MASK_LEN];

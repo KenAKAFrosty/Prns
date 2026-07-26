@@ -321,15 +321,17 @@ mod tests {
         let mut rotation_count = 0;
         let mut send_count = 0;
 
-        for (now, id) in [
-            (InstantMillis(2_000), [0x55; 16]),
+        for (now, id, expected_rotation) in [
+            (InstantMillis(2_000), [0x55; 16], false),
             (
                 InstantMillis(
                     1_000 + crate::crypto::ratchets::MIN_RATCHET_ROTATION_INTERVAL_MS + 1,
                 ),
                 [0x66; 16],
+                true,
             ),
         ] {
+            let rotations_before = rotation_count;
             let mut buf = [0u8; BROADCAST_MTU];
             let n = write_path_request_wire_packet(local, None, &id, &mut buf).unwrap();
             state.ingest_packet_into(
@@ -358,6 +360,10 @@ mod tests {
                         _ => {}
                     },
                 },
+            );
+            assert_eq!(
+                rotation_count - rotations_before,
+                usize::from(expected_rotation),
             );
         }
 

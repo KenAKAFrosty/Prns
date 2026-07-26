@@ -277,11 +277,8 @@ impl<const MAX_PENDING: usize> FixedScheduledAnnounceQueue<MAX_PENDING> {
         let mut removed = 0;
         for i in (0..self.due_at.len()).rev() {
             if self.due_at[i] <= now {
-                let before = self.due_at.len();
                 self.swap_remove_row(i);
-                if self.due_at.len() < before {
-                    removed += 1;
-                }
+                removed += 1;
             }
         }
         self.refresh_earliest();
@@ -371,22 +368,16 @@ impl<const MAX_PENDING: usize> ScheduledAnnounceQueue for FixedScheduledAnnounce
         for i in (0..self.due_at.len()).rev() {
             if self.due_at[i].0 <= now.0 {
                 if self.directed_to[i].is_some() && self.held_contains(self.destination[i]) {
-                    let before = self.due_at.len();
                     self.swap_remove_row(i);
-                    if self.due_at.len() < before {
-                        completed += 1;
-                        continue;
-                    }
+                    completed += 1;
+                    continue;
                 }
                 let count = self.our_emission_count[i].saturating_add(1);
                 self.our_emission_count[i] = count;
                 if count >= max_our_emission_count {
-                    let before = self.due_at.len();
                     self.swap_remove_row(i);
-                    if self.due_at.len() < before {
-                        completed += 1;
-                        continue;
-                    }
+                    completed += 1;
+                    continue;
                 }
                 self.due_at[i] = InstantMillis(now.0.saturating_add(interval_ms));
             }
@@ -623,7 +614,10 @@ mod tests {
         pending.schedule(dest(2), InstantMillis(100), iface(0xAA), 1);
         pending.schedule(dest(3), InstantMillis(101), iface(0xAA), 1);
 
-        assert_eq!(pending.drain_due(InstantMillis(100)), 2);
+        assert_eq!(
+            ScheduledAnnounceQueue::drain_due(&mut pending, InstantMillis(100)),
+            2,
+        );
         assert_eq!(pending.scheduled_count(), 1);
         assert_eq!(
             pending.iter().next().map(|entry| entry.destination),
@@ -638,10 +632,15 @@ mod tests {
         pending.schedule(dest(2), InstantMillis(100), iface(0xAA), 1);
         pending.schedule(dest(3), InstantMillis(100), iface(0xAA), 1);
 
-        let mut drained = std::vec::Vec::new();
-        while let Some(entry) = pending.take_due(InstantMillis(100)) {
-            drained.push(entry.destination);
-        }
+        let mut drained = (0..3)
+            .map(|_| {
+                pending
+                    .take_due(InstantMillis(100))
+                    .expect("each scheduled entry is due")
+                    .destination
+            })
+            .collect::<std::vec::Vec<_>>();
+        assert_eq!(pending.take_due(InstantMillis(100)), None);
         drained.sort_by_key(|d| *d.as_bytes());
         assert_eq!(drained, std::vec![dest(1), dest(2), dest(3)]);
         assert_eq!(pending.scheduled_count(), 0);
