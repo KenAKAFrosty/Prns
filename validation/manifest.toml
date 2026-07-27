@@ -422,7 +422,7 @@ artifacts = "validation-artifacts/results/fuzz-build"
 [[suite]]
 id = "mutation-analysis"
 domain = "mutation"
-tiers = ["release", "scheduled"]
+tiers = ["scheduled"]
 platform = "linux"
 toolchain = "stable"
 timeout_seconds = 14400

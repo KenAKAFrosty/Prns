@@ -142,9 +142,6 @@ jobs:
         run: |
           cargo install kani-verifier --version 0.67.0 --locked
           cargo kani setup
-      - name: Prepare pinned cargo-mutants
-        if: matrix.domain == 'mutation'
-        run: cargo install cargo-mutants --version 27.1.0 --locked
       - name: Prepare dependency audit tools
         if: matrix.id == 'dependency-audit'
         run: |
@@ -188,4 +185,3 @@ jobs:
           retention-days: 30
           path: |
             validation-artifacts/release-manifest.json
-            validation-artifacts/mutation/union/**

@@ -15,7 +15,14 @@ ACTION_PATTERN = re.compile(r"^\s*(?:-\s*)?uses:\s*([^\s#]+)", re.MULTILINE)
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 JOB_PATTERN = re.compile(r"(?m)^  ([A-Za-z0-9_-]+):\n")
 AUTOMATIC_WORKFLOWS = frozenset(
-    {"ci.yml", "deep-validation.yml", "hardening.yml", "host-sdks.yml", "napi.yml"}
+    {
+        "ci.yml",
+        "deep-validation.yml",
+        "hardening.yml",
+        "host-sdks.yml",
+        "mutation-audit.yml",
+        "napi.yml",
+    }
 )
 
 
@@ -189,8 +196,21 @@ def validate() -> list[str]:
         errors.append(
             "release-readiness.yml does not provision embedded Rust targets for ESP suites"
         )
-    if "validation-artifacts/mutation/union/**" not in readiness:
-        errors.append("release-readiness.yml does not retain the merged mutation evidence")
+    for mutation_fragment in (
+        "matrix.domain == 'mutation'",
+        "cargo-mutants",
+        "validation-artifacts/mutation/union/**",
+    ):
+        if mutation_fragment in readiness:
+            errors.append(
+                "release-readiness.yml must not place mutation analysis on the release "
+                f"critical path: {mutation_fragment!r}"
+            )
+        if mutation_fragment in ci:
+            errors.append(
+                "ci.yml must leave mutation analysis to mutation-audit.yml: "
+                f"{mutation_fragment!r}"
+            )
     for native_package in ("libdbus-1-dev", "pkg-config"):
         if native_package not in readiness:
             errors.append(
@@ -282,19 +302,48 @@ def validate() -> list[str]:
     ):
         if resource_gate not in deep:
             errors.append(f"deep-validation.yml is missing resource gate {resource_gate!r}")
+    for mutation_fragment in (
+        "matrix --domain mutation",
+        "mutation-aggregate",
+        "MUTATION_RESULT",
+    ):
+        if mutation_fragment in deep:
+            errors.append(
+                "deep-validation.yml must leave mutation analysis to mutation-audit.yml: "
+                f"{mutation_fragment!r}"
+            )
+
+    mutation_audit = (
+        ROOT / ".github" / "workflows" / "mutation-audit.yml"
+    ).read_text(encoding="utf-8")
+    for resource_gate in (
+        "workflow_dispatch:",
+        'cron: "47 10 2 * *"',
+        "group: mutation-audit",
+        "cancel-in-progress: false",
+    ):
+        if resource_gate not in mutation_audit:
+            errors.append(
+                f"mutation-audit.yml is missing resource gate {resource_gate!r}"
+            )
+    for forbidden_trigger in ("\n  pull_request:", "\n  push:"):
+        if forbidden_trigger in mutation_audit:
+            errors.append(
+                "mutation-audit.yml must remain manual or scheduled: "
+                f"{forbidden_trigger.strip()!r}"
+            )
     for mutation_gate in (
         "mutation: ${{ steps.matrix.outputs.mutation }}",
-        'mutation=$(python3 validation/run.py matrix --domain mutation --tier "$VALIDATION_TIER")',
+        "mutation=$(python3 validation/run.py matrix --domain mutation --tier scheduled)",
         "matrix: ${{ fromJSON(needs.inventory.outputs.mutation) }}",
-        "name: deep-${{ matrix.id }}-${{ github.run_id }}",
+        "name: mutation-audit-${{ matrix.id }}-${{ github.run_id }}",
         "validation-artifacts/mutation/${{ matrix.id }}/**",
-        "pattern: deep-mutation-analysis-shard-*-${{ github.run_id }}",
-        'aggregate --domain mutation --tier "${{ needs.inventory.outputs.tier }}" --expected-sha "$GITHUB_SHA"',
-        "MUTATION_RESULT: ${{ needs.mutation-aggregate.result }}",
+        "pattern: mutation-audit-mutation-analysis-shard-*-${{ github.run_id }}",
+        'aggregate --domain mutation --tier scheduled --expected-sha "$GITHUB_SHA"',
     ):
-        if mutation_gate not in deep:
+        if mutation_gate not in mutation_audit:
             errors.append(
-                f"deep-validation.yml is missing mutation shard gate {mutation_gate!r}"
+                f"mutation-audit.yml is missing mutation evidence gate {mutation_gate!r}"
             )
 
     hardening = (ROOT / ".github" / "workflows" / "hardening.yml").read_text(
