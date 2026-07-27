@@ -27,6 +27,14 @@ struct BuiltPart {
     bytes: Vec<u8>,
 }
 
+fn embedded_cargo_command() -> Command {
+    let mut command = Command::new("cargo");
+    command
+        .env_remove("RUSTUP_TOOLCHAIN")
+        .env_remove("RUSTFLAGS");
+    command
+}
+
 pub(crate) struct BuildOutput {
     pub(crate) prepared: PreparedTarget,
     pub(crate) output_dir: PathBuf,
@@ -250,9 +258,8 @@ fn build_esp_parts(
         .join(&build.rust_target)
         .join("release")
         .join(&build.binary);
-    let mut cargo = Command::new("cargo");
+    let mut cargo = embedded_cargo_command();
     cargo
-        .env_remove("RUSTUP_TOOLCHAIN")
         .arg("build")
         .arg("--release")
         .arg("--locked")
@@ -354,9 +361,8 @@ fn build_uf2(
         .join("personal-hopspot")
         .join("embedded")
         .join("nrf52840");
-    let mut cargo = Command::new("cargo");
+    let mut cargo = embedded_cargo_command();
     cargo
-        .env_remove("RUSTUP_TOOLCHAIN")
         .arg("build")
         .arg("--release")
         .arg("--locked")
@@ -794,6 +800,21 @@ pub(crate) fn default_artifact_root(repo: &Path) -> PathBuf {
 mod tests {
     use super::*;
     use prns_flash_manifest::Transport;
+    use std::collections::BTreeMap;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn embedded_cargo_removes_inherited_host_configuration() {
+        let command = embedded_cargo_command();
+        let environments = command.get_envs().collect::<BTreeMap<_, _>>();
+        assert_eq!(
+            environments,
+            BTreeMap::from([
+                (OsStr::new("RUSTFLAGS"), None),
+                (OsStr::new("RUSTUP_TOOLCHAIN"), None),
+            ])
+        );
+    }
 
     #[test]
     fn release_paths_are_versioned() {
