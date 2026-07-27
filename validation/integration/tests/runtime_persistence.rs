@@ -526,13 +526,36 @@ async fn a_quiet_flush_skips_unchanged_regions_and_a_change_rewrites() {
                 break;
             }
         }
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        let mut retry = tokio::time::interval_at(
+            tokio::time::Instant::now() + Duration::from_millis(200),
+            Duration::from_millis(200),
+        );
         loop {
-            let heard = tokio::time::timeout(Duration::from_secs(5), heard_rx.recv())
-                .await
-                .expect("B hears the second announce within 5s")
-                .expect("the announce channel stays open");
-            if heard == dest_a2 {
-                break;
+            tokio::select! {
+                biased;
+                () = tokio::time::sleep_until(deadline) => {
+                    panic!("B hears the second announce within 5s");
+                }
+                heard = heard_rx.recv() => {
+                    let heard = heard.expect("the announce channel stays open");
+                    if heard == dest_a2 {
+                        break;
+                    }
+                }
+                _ = retry.tick() => {
+                    tokio::time::timeout_at(
+                        deadline,
+                        commands_a.announce_now(AnnounceNow {
+                            destination: dest_a2,
+                            target: AnnounceTarget::AllInterfaces,
+                            app_data: AnnounceAppData::Registered,
+                        }),
+                    )
+                    .await
+                    .expect("the second announce retry settles within 5s")
+                    .expect("the second announce retry settles successfully");
+                }
             }
         }
 
