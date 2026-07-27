@@ -43,10 +43,6 @@ examine_globs = [
 
 # These bit-pack fields occupy disjoint positions; replacing OR with XOR in `WirePacketHeader::write` is equivalent for all constructible headers. The link signalling pack and unpack are the same shape: the MTU mask owns bits 0-20, the mode owns bits 21-23, and the three decode shifts never overlap.
 #
-# The fixed in-place queues intentionally use manual shrinking loops. These mutants remove loop progress or length reduction and are covered as hangs by the tests, but excluding them keeps the mutation lane focused on actionable assertion failures.
-#
-# WRAPPED_PLAINTEXT_CAP sizes a scratch buffer that is always sliced to the bytes actually written, so over-sizing it (+ -> *) is harmless; and it picks the larger of two caps that are equal by construction (28 + 403 == 19 + 412 == 431), so every comparison operator selects the same value. Both kinds are equivalent and pinned by line/column because the const carries no function name to anchor on.
-#
 # `no_interfaces` is already the canonical empty `Vec<InterfaceVitals>` source; replacing its body with `vec![]` is byte-for-byte the same observable behavior.
 #
 # Msgpack fixstr uses the high three opcode bits and a five-bit length; for every constructible fixstr length, `0xa0 | len` and `0xa0 ^ len` are equivalent. Msgpack fixarray/fixmap are the same shape: high opcode bits plus a four-bit element count, with no overlapping bits for constructible fixed sequences.
@@ -62,14 +58,14 @@ exclude_re = [
     'replace bind_abstract_rpc -> Option<UnixListener> with Some\(Default::default\(\)\)',
     'replace \| with \^ in encode_str',
     'replace \| with \^ in encode_seq_len',
-    'replace \+= with \*= in FixedScheduledAnnounceQueue<MAX_PENDING>::drain_due',
-    'replace FixedHeldAnnounceColumns<MAX_HELD>::swap_remove with \(\)',
-    'replace - with / in FixedHeldAnnounceColumns<MAX_HELD>::swap_remove',
-    'links/request\.rs:41:\d+: replace \+ with \*',
-    'links/request\.rs:42:\d+: replace \+ with \*',
-    'links/request\.rs:50:\d+: replace \+ with \*',
-    'links/request\.rs:43:\d+: replace > with',
 ]
 
 # The lane includes local shared-instance RPC files, so the test invocation must compile the same host feature surface the runtime/oracle uses.
-additional_cargo_test_args = ["-p", "personal-rns", "--features", "tokio-host shared-instance tcp"]
+additional_cargo_test_args = [
+    "-p",
+    "personal-rns",
+    "-p",
+    "prns-core",
+    "--features",
+    "tokio-host shared-instance tcp runtime-metrics",
+]

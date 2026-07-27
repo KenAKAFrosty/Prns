@@ -4,7 +4,7 @@ use crate::crypto::{
 };
 use crate::engine::test_support::{transporting_interfaces, TestStorageLayout};
 use crate::engine::{CommandId, Directive, EngineReaction, EngineState, IngestIo, Journaled};
-use crate::interfaces::{AttachedInterfaces, InboundPacket, InterfaceId};
+use crate::interfaces::{AttachedInterfaces, EgressCapability, InboundPacket, InterfaceId};
 use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
 use crate::routing::links::channel::{write_envelope, ChannelSequence, MessageType};
 use crate::routing::links::data::write_link_packet;
@@ -180,6 +180,48 @@ fn an_in_order_channel_message_is_journaled_and_unconditionally_acked() {
         &link_id,
         &signer,
     );
+}
+
+#[test]
+fn a_channel_message_on_a_receive_only_interface_is_not_acked() {
+    let (mut state, link_id, key, _signer) = active_initiator();
+    let frame = channel_frame(
+        &key,
+        &link_id,
+        MessageType(7),
+        ChannelSequence(0),
+        b"receive only",
+    );
+    let mut descriptor = transporting_interfaces()[0];
+    descriptor.capabilities.egress = EgressCapability::Disabled;
+    let mut raw = frame;
+    let mut messages = Vec::new();
+    let mut ack_count = 0;
+
+    state.ingest_packet_into(
+        InboundPacket {
+            arrived_at: InstantMillis(2_000),
+            source_interface: InterfaceId::new(LANE),
+            bytes: &mut raw,
+        },
+        IngestIo {
+            interfaces: AttachedInterfaces::new(&[descriptor]),
+            now: InstantMillis(2_000),
+            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+            should_prove: &mut |_| false,
+            should_accept_resource: &mut |_| false,
+            sink: &mut |reaction| match reaction {
+                EngineReaction::Journaled(Journaled::ChannelMessageReceived { data, .. }) => {
+                    messages.push(data.to_vec());
+                }
+                EngineReaction::Directive(Directive::Send { .. }) => ack_count += 1,
+                _ => {}
+            },
+        },
+    );
+
+    assert_eq!(messages, std::vec![b"receive only".to_vec()]);
+    assert_eq!(ack_count, 0);
 }
 
 #[test]

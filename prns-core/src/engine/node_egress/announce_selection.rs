@@ -90,7 +90,7 @@ pub(in crate::engine) fn fleet_fan_target_reaches_any_member(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::test_support::routable_descriptor;
+    use crate::engine::test_support::{repeating_descriptor, routable_descriptor};
 
     const MODES: [InterfaceMode; 7] = [
         InterfaceMode::Full,
@@ -135,12 +135,72 @@ mod tests {
             "an unconditional flood reaches the lone member"
         );
         assert!(
+            fleet_fan_target_reaches_any_member(
+                AttachedInterfaces::new(&lone),
+                InterfaceKind::BluetoothAuto,
+                FanTarget::Only(source)
+            ),
+            "a directed target reaches its matching fleet member"
+        );
+        assert!(
+            !fleet_fan_target_reaches_any_member(
+                AttachedInterfaces::new(&lone),
+                InterfaceKind::BluetoothAuto,
+                FanTarget::Only(other)
+            ),
+            "a directed target reaches nobody when that member is absent"
+        );
+        assert!(
             !fleet_fan_target_reaches_any_member(
                 AttachedInterfaces::new(&[routable_descriptor(InterfaceId::new([0xFE; 8]))]),
                 InterfaceKind::BluetoothAuto,
                 FanTarget::All
             ),
             "a flood selects nobody when no member of the fleet's kind is attached"
+        );
+    }
+
+    #[test]
+    fn fleet_announce_targets_distinguish_directed_nonmember_and_repeating_sources() {
+        let member = InterfaceId::new([InterfaceKind::BluetoothPeer as u8, 0x42, 0, 0, 0, 0, 0, 0]);
+        let target = InterfaceId::new([InterfaceKind::BluetoothPeer as u8, 0x77, 0, 0, 0, 0, 0, 0]);
+        let nonmember = InterfaceId::new([InterfaceKind::Loopback as u8, 0x19, 0, 0, 0, 0, 0, 0]);
+
+        assert_eq!(
+            fleet_announce_fan_target(
+                AttachedInterfaces::new(&[routable_descriptor(member)]),
+                InterfaceKind::BluetoothAuto,
+                member,
+                Some(target),
+            ),
+            FanTarget::Only(target),
+        );
+        assert_eq!(
+            fleet_announce_fan_target(
+                AttachedInterfaces::new(&[routable_descriptor(nonmember)]),
+                InterfaceKind::BluetoothAuto,
+                nonmember,
+                None,
+            ),
+            FanTarget::All,
+        );
+        assert_eq!(
+            fleet_announce_fan_target(
+                AttachedInterfaces::new(&[routable_descriptor(member)]),
+                InterfaceKind::BluetoothAuto,
+                member,
+                None,
+            ),
+            FanTarget::AllExcept(member),
+        );
+        assert_eq!(
+            fleet_announce_fan_target(
+                AttachedInterfaces::new(&[repeating_descriptor(member)]),
+                InterfaceKind::BluetoothAuto,
+                member,
+                None,
+            ),
+            FanTarget::All,
         );
     }
 

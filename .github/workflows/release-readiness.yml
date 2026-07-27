@@ -83,7 +83,7 @@ jobs:
           nightly="$(python3 validation/run.py toolchain nightly)"
           rustup toolchain install "$nightly" --profile minimal
       - name: Prepare embedded targets
-        if: matrix.group == 'embedded'
+        if: matrix.group == 'embedded' || matrix.group == 'esp'
         run: rustup target add riscv32imac-unknown-none-elf thumbv7em-none-eabihf
       - name: Prepare Linux native development packages
         if: runner.os == 'Linux' && matrix.platform != 'android-device'
@@ -120,11 +120,11 @@ jobs:
           rustup target add aarch64-linux-android armv7-linux-androideabi
           cargo install cargo-ndk --locked --version 4.1.2
       - uses: cargo-bins/cargo-binstall@57726869e28f4038a847ec56e5fdd9142fded110
-        if: matrix.group == 'web'
+        if: matrix.group == 'web' || matrix.group == 'esp'
         with:
           version: "1.21.0"
-      - name: Prepare exact web tool
-        if: matrix.group == 'web'
+      - name: Prepare exact web and ESP tool
+        if: matrix.group == 'web' || matrix.group == 'esp'
         run: cargo binstall --locked --no-confirm --force dioxus-cli@0.7.5
       - name: Prepare exact ESP release toolchain
         if: matrix.group == 'esp'
@@ -186,4 +186,6 @@ jobs:
           name: release-readiness-manifest-${{ needs.inventory.outputs.commit }}
           if-no-files-found: error
           retention-days: 30
-          path: validation-artifacts/release-manifest.json
+          path: |
+            validation-artifacts/release-manifest.json
+            validation-artifacts/mutation/union/**

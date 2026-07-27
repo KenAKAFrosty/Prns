@@ -886,6 +886,8 @@ mod tests {
         use crate::routing::links::resources::ResourceOffer;
 
         let mut receiver = engine_with_active_link();
+        let remote_identity = crate::identity::IdentityHash::new([0xA7; 16]);
+        receiver.links.note_identified(&link_id(), remote_identity);
         set_strategy(&mut receiver, ResourceStrategy::AcceptIf);
         let payload = four_part_payload();
         let mut offers = std::vec::Vec::new();
@@ -915,7 +917,7 @@ mod tests {
             offers,
             [ResourceOffer {
                 link_id: link_id(),
-                remote_identity: None,
+                remote_identity: Some(remote_identity),
                 hash: judged_hash,
                 uncompressed_data_bytes: payload.len() as u64,
                 sealed_transfer_bytes: judged_sealed_len,

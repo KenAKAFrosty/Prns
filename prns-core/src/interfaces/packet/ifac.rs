@@ -121,14 +121,14 @@ impl IfacContext {
     pub fn mask_outbound(&self, clean: &[u8], out: &mut [u8]) -> Option<usize> {
         let size = self.size.bytes();
         let total = clean.len().checked_add(size)?;
-        if clean.len() < IFAC_START || out.len() < total {
+        if clean.len() <= IFAC_START || out.len() < total {
             return None;
         }
         let signature = self.identity.sign(clean);
         let ifac = &signature.0[SIGNATURE_BYTE_LEN - size..];
         let ifac_end = IFAC_START + size;
 
-        out[HEADER_FLAGS_INDEX] = clean[HEADER_FLAGS_INDEX] | IFAC_FLAG;
+        out[HEADER_FLAGS_INDEX] = clean[HEADER_FLAGS_INDEX];
         out[HEADER_HOPS_INDEX] = clean[HEADER_HOPS_INDEX];
         out[IFAC_START..ifac_end].copy_from_slice(ifac);
         out[ifac_end..total].copy_from_slice(&clean[IFAC_START..]);
@@ -248,6 +248,13 @@ mod tests {
     }
 
     #[test]
+    fn constant_time_equality_does_not_cancel_repeated_differences() {
+        assert!(ct_eq(&[0x10, 0x20], &[0x10, 0x20]));
+        assert!(!ct_eq(&[0x10, 0x10], &[0x20, 0x20]));
+        assert!(!ct_eq(&[0x10], &[0x10, 0x20]));
+    }
+
+    #[test]
     fn masking_reproduces_the_reference_wire() {
         let clean = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
         let mut out = [0u8; TEST_MASK_LEN];
@@ -258,7 +265,7 @@ mod tests {
     #[test]
     fn unmasking_recovers_and_verifies_the_reference_wire() {
         let wire = bytes_from_hex(REFERENCE_MASKED);
-        let mut out = [0u8; TEST_MASK_LEN];
+        let mut out = std::vec![0u8; wire.len()];
         let clean_len = testnet().unmask_inbound(&wire, &mut out).unwrap();
         assert_eq!(out[..clean_len], bytes_from_hex(RNS_1_4_0_ANNOUNCE)[..]);
     }
@@ -291,6 +298,16 @@ mod tests {
     fn unflagged_or_truncated_wire_is_refused() {
         let ctx = testnet();
         let mut out = [0u8; TEST_MASK_LEN];
+        assert!(ctx
+            .mask_outbound(&[0u8; IFAC_START - 1], &mut out)
+            .is_none());
+        assert!(ctx.mask_outbound(&[0u8; IFAC_START], &mut out).is_none());
+        let clean = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
+        let mut short = std::vec![0u8; clean.len() + IfacSize::NARROW.bytes() - 1];
+        assert!(ctx.mask_outbound(&clean, &mut short).is_none());
+        let masked = bytes_from_hex(REFERENCE_MASKED);
+        let mut short = std::vec![0u8; masked.len() - 1];
+        assert!(ctx.unmask_inbound(&masked, &mut short).is_none());
 
         let mut unflagged = bytes_from_hex(REFERENCE_MASKED);
         unflagged[0] &= 0x7f;

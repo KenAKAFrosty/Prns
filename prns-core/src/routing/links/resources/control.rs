@@ -247,6 +247,13 @@ mod tests {
     fn a_full_window_request_fits_the_base_link_mdu() {
         assert_eq!(PART_REQUEST_PLAINTEXT_CAP, 337);
         const { assert!(PART_REQUEST_PLAINTEXT_CAP <= LINK_MDU) };
+        let requested = [0xA5; WINDOW_MAX * MAP_HASH_LEN];
+        let mark = [0x5A; MAP_HASH_LEN];
+        let mut buf = [0u8; PART_REQUEST_PLAINTEXT_CAP];
+        assert_eq!(
+            write_part_request_plaintext(&h(), Some(&mark), &requested, &mut buf),
+            Ok(PART_REQUEST_PLAINTEXT_CAP),
+        );
     }
 
     #[test]

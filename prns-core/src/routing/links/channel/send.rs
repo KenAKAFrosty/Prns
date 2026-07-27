@@ -478,6 +478,7 @@ mod tests {
     use crate::identity::{in_memory::InMemoryNodeIdentity, IdentitySigner};
     use crate::interfaces::{InboundPacket, InterfaceId};
     use crate::routing::links::channel::MessageType;
+    use crate::routing::links::data::link_data_frame_ceiling;
     use crate::routing::links::table::{InitiatedLink, RespondingLink};
     use crate::routing::links::table::{LinkActivation, LinkPhase};
     use crate::routing::links::{LinkId, LinkKey};
@@ -591,7 +592,13 @@ mod tests {
             InstantMillis(now),
             &mut |slot: &mut [u8]| slot.fill(0xAB),
             &mut |reaction| match reaction {
-                EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
+                EngineReaction::Directive(Directive::EmitFrame {
+                    size_hint, fill, ..
+                }) => {
+                    assert_eq!(
+                        size_hint,
+                        link_data_frame_ceiling(CHANNEL_ENVELOPE_HEADER_LEN + bytes.len()),
+                    );
                     frame = filled_frame(fill)
                 }
                 EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {

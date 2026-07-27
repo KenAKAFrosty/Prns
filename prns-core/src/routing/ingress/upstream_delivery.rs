@@ -223,8 +223,11 @@ impl<S: StorageLayout> EngineState<S> {
 mod tests {
     use super::*;
     use crate::crypto::ratchets::RatchetId;
+    use crate::crypto::x25519_diffie_hellman;
     use crate::engine::test_support::*;
-    use crate::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, RatchetPolicy};
+    use crate::engine::{
+        AnnounceAppData, AnnounceNow, AnnounceTarget, EngineReaction, Journaled, RatchetPolicy,
+    };
     use crate::identity::in_memory::InMemoryNodeIdentity;
     use crate::identity::{IdentitySigner, OpenedBy};
     use crate::interfaces::{AttachedInterfaces, InboundPacket};
@@ -267,6 +270,67 @@ mod tests {
                 }),
                 proof: ProofObligation::None,
             },
+        );
+    }
+
+    #[test]
+    fn deferred_identity_decrypt_resumes_the_delivery() {
+        let mut state = personal_node_announcer();
+        let destination = personal_node_destination();
+        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
+        let mut raw = sealed_single_packet(&identity, destination, b"hello-deferred");
+        let mut deferred = DeferredCrypto::default();
+
+        assert_eq!(
+            state.ingest_packet_with(
+                plain_data_packet(&mut raw),
+                &mut |_| {},
+                AttachedInterfaces::new(&transporting_interfaces()),
+                &mut |_| {},
+                Some(&mut deferred),
+            ),
+            IngestPacketOutcome::OwesDecrypt,
+        );
+
+        let DeferredCrypto::Decrypt(owed) = deferred else {
+            panic!("the identity-keyed single is captured for the pool");
+        };
+        let shared = x25519_diffie_hellman(&owed.encryption_secret, &owed.ephemeral_public);
+        let mut delivery = None;
+        let mut deferred_sign = None;
+        let interfaces = transporting_interfaces();
+        state.resume_decrypt(
+            owed,
+            shared,
+            AttachedInterfaces::new(&interfaces),
+            &mut |_| false,
+            &mut deferred_sign,
+            &mut |reaction| {
+                if let EngineReaction::Journaled(Journaled::Delivered(Delivery::Single(single))) =
+                    reaction
+                {
+                    delivery = Some((
+                        single.destination,
+                        single.context,
+                        single.plaintext.to_vec(),
+                        single.opened_by,
+                        single.arrived_at,
+                        single.source_interface,
+                    ));
+                }
+            },
+        );
+
+        assert_eq!(
+            delivery,
+            Some((
+                destination,
+                WireContext::None,
+                b"hello-deferred".to_vec(),
+                OpenedBy::IdentityKey,
+                InstantMillis(1_000),
+                InterfaceId::new([0x07; 8]),
+            )),
         );
     }
 
@@ -319,16 +383,51 @@ mod tests {
             !owed.ratchet_secrets.is_empty(),
             "the obligation carries the destination's retained ratchets"
         );
-        let opened = crate::identity::decrypt_token_in_place_with_ratchets(
-            &owed.ratchet_secrets,
-            &owed.encryption_secret,
-            &owed.identity,
-            owed.identity_key_fallback,
-            &mut owed.token,
-        )
-        .expect("a retained ratchet opens the single");
-        assert_eq!(opened.plaintext, b"ratchet-parity");
-        assert_eq!(opened.opened_by, OpenedBy::Ratchet(announced_ratchet_id()));
+        let (opened_by, plaintext) = {
+            let opened = crate::identity::decrypt_token_in_place_with_ratchets(
+                &owed.ratchet_secrets,
+                &owed.encryption_secret,
+                &owed.identity,
+                owed.identity_key_fallback,
+                &mut owed.token,
+            )
+            .expect("a retained ratchet opens the single");
+            assert_eq!(opened.plaintext, b"ratchet-parity");
+            assert_eq!(opened.opened_by, OpenedBy::Ratchet(announced_ratchet_id()));
+            (opened.opened_by, opened.plaintext.to_vec())
+        };
+        let mut delivery = None;
+        let mut deferred_sign = None;
+        let interfaces = transporting_interfaces();
+        state.resume_ratchet_decrypt(
+            owed,
+            crate::identity::OpenedToken {
+                opened_by,
+                plaintext: &plaintext,
+            },
+            AttachedInterfaces::new(&interfaces),
+            &mut |_| false,
+            &mut deferred_sign,
+            &mut |reaction| {
+                if let EngineReaction::Journaled(Journaled::Delivered(Delivery::Single(single))) =
+                    reaction
+                {
+                    delivery = Some((
+                        single.destination,
+                        single.plaintext.to_vec(),
+                        single.opened_by,
+                    ));
+                }
+            },
+        );
+        assert_eq!(
+            delivery,
+            Some((
+                personal_node_destination(),
+                b"ratchet-parity".to_vec(),
+                OpenedBy::Ratchet(announced_ratchet_id()),
+            )),
+        );
     }
 
     #[test]

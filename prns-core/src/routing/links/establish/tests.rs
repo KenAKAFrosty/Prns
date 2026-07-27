@@ -2,9 +2,10 @@ use super::*;
 use crate::engine::test_support::*;
 use crate::engine::IngestIo;
 use crate::engine::{
-    AnnounceAppData, AnnounceIngest, AnnounceNow, AnnounceTarget, Directive, EngineCommand,
-    EngineReaction, EngineState, IgnoreReason, IngestPacketOutcome, IssuedCommand, Journaled,
-    LinkEstablished, PacketReceiptDelivered, SendToLinkFailure, Settlement, WakeSchedule,
+    AnnounceAppData, AnnounceIngest, AnnounceNow, AnnounceTarget, DeferredCrypto, Directive,
+    EngineCommand, EngineReaction, EngineState, IgnoreReason, IngestPacketOutcome, IssuedCommand,
+    Journaled, LinkEstablished, PacketReceiptDelivered, SendToLinkFailure, Settlement,
+    WakeSchedule,
 };
 use crate::engine::{EstablishLinkFailure, WakeSchedules};
 use crate::interfaces::{InboundPacket, InterfaceDescriptor};
@@ -612,6 +613,133 @@ fn the_two_ends_agree_on_the_session_key_through_the_proof() {
         delta.link_deadlines,
         WakeSchedule::At(InstantMillis(368_000)),
     );
+}
+
+#[test]
+fn deferred_link_proof_sign_and_verify_resume_the_handshake() {
+    let mut initiator = neighbor_with_a_route();
+    let mut request = [0u8; BROADCAST_MTU];
+    let dispatch = initiator
+        .write_commanded_link_request(
+            CommandId(7),
+            &establish(),
+            InstantMillis(1_000),
+            vector_establish_entropy(),
+            AttachedInterfaces::new(&arrival_interfaces()),
+            &mut request,
+        )
+        .dispatched();
+
+    let mut responder = personal_node_announcer();
+    let mut raw_request = request[..dispatch.wire_bytes].to_vec();
+    let mut deferred_sign = None;
+    let mut deferred = DeferredCrypto::default();
+    responder.ingest_packet_into_deferring(
+        InboundPacket {
+            arrived_at: InstantMillis(1_100),
+            source_interface: arrival(),
+            bytes: &mut raw_request,
+        },
+        IngestIo {
+            interfaces: AttachedInterfaces::new(&arrival_interfaces()),
+            now: InstantMillis(1_100),
+            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0x99),
+            should_prove: &mut |_| false,
+            should_accept_resource: &mut |_| false,
+            sink: &mut |_| {},
+        },
+        &mut deferred_sign,
+        Some(&mut deferred),
+    );
+    let DeferredCrypto::LinkProofSign(owed) = deferred else {
+        panic!("the responder captures the proof signature for the pool");
+    };
+    let responder_encryption = x25519_public_key(&owed.ephemeral_secret);
+    let shared = x25519_diffie_hellman(&owed.ephemeral_secret, &owed.request.initiator_encryption);
+    let signed_data = crate::routing::links::handshake::link_proof_signed_data(
+        &owed.request.link_id,
+        &responder_encryption,
+        owed.responder_signing.as_ed25519(),
+        owed.mtu,
+        owed.request.mode,
+    );
+    let signature = crate::crypto::ed25519_sign(&owed.signing_secret, &signed_data);
+    let mut proofs = std::vec::Vec::new();
+    let sign_wake = responder.resume_link_proof_sign(
+        owed,
+        responder_encryption,
+        shared,
+        signature,
+        AttachedInterfaces::new(&arrival_interfaces()),
+        &mut |reaction| {
+            if let EngineReaction::Directive(Directive::Send { target, bytes }) = reaction {
+                proofs.push((target, bytes.to_vec()));
+            }
+        },
+    );
+    assert_eq!(proofs.len(), 1);
+    assert_eq!(proofs[0].0, arrival());
+    assert!(matches!(sign_wake.link_deadlines, WakeSchedule::At(_)));
+
+    let mut raw_proof = proofs[0].1.clone();
+    let mut deferred_sign = None;
+    let mut deferred = DeferredCrypto::default();
+    initiator.ingest_packet_into_deferring(
+        InboundPacket {
+            arrived_at: InstantMillis(1_250),
+            source_interface: arrival(),
+            bytes: &mut raw_proof,
+        },
+        IngestIo {
+            interfaces: AttachedInterfaces::new(&arrival_interfaces()),
+            now: InstantMillis(1_250),
+            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+            should_prove: &mut |_| false,
+            should_accept_resource: &mut |_| false,
+            sink: &mut |_| {},
+        },
+        &mut deferred_sign,
+        Some(&mut deferred),
+    );
+    let DeferredCrypto::LinkProofVerify(mut owed) = deferred else {
+        panic!("the initiator captures proof verification for the pool");
+    };
+    assert!(crate::routing::links::handshake::link_proof_signature_valid(&owed));
+    owed.signed_data[0] ^= 0x01;
+    assert!(!crate::routing::links::handshake::link_proof_signature_valid(&owed));
+    owed.signed_data[0] ^= 0x01;
+    let shared = x25519_diffie_hellman(&owed.initiator_secret, &owed.responder_encryption);
+    let mut rtts = std::vec::Vec::new();
+    let mut settlements = std::vec::Vec::new();
+    let verify_wake = initiator.resume_link_proof(
+        owed,
+        shared,
+        AttachedInterfaces::new(&arrival_interfaces()),
+        InstantMillis(1_250),
+        &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+        &mut |reaction| match reaction {
+            EngineReaction::Directive(Directive::Send { target, bytes }) => {
+                rtts.push((target, bytes.to_vec()));
+            }
+            EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                settlements.push((id, settlement));
+            }
+            _ => {}
+        },
+    );
+    assert_eq!(rtts.len(), 1);
+    assert_eq!(rtts[0].0, arrival());
+    assert_eq!(
+        settlements,
+        std::vec![(
+            CommandId(7),
+            Settlement::EstablishLink(Ok(LinkEstablished {
+                link_id: dispatch.link_id,
+                rtt_millis: 250,
+            })),
+        )],
+    );
+    assert!(matches!(verify_wake.link_deadlines, WakeSchedule::At(_)));
 }
 
 fn reactions_of(
@@ -1289,8 +1417,13 @@ fn an_unproven_link_send_times_out_at_the_traffic_deadline() {
             settled.push((id, settlement));
         }
     };
-    let _ = initiator.settle_timed_out_receipts(InstantMillis(4_499), &mut collect);
-    let _ = initiator.settle_timed_out_receipts(InstantMillis(4_500), &mut collect);
+    let pending = initiator.settle_timed_out_receipts(InstantMillis(4_499), &mut collect);
+    assert_eq!(
+        pending.receipt_timeouts,
+        WakeSchedule::At(InstantMillis(4_500)),
+    );
+    let expired = initiator.settle_timed_out_receipts(InstantMillis(4_500), &mut collect);
+    assert_eq!(expired.receipt_timeouts, WakeSchedule::Idle);
     assert_eq!(
         settled,
         std::vec![(
@@ -1944,7 +2077,10 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
         Identify, PacketReceiptDelivered, Respond, RespondData, SendRequest, SendRequestData,
         SendRequestFailure,
     };
-    use crate::routing::links::request::RequestId;
+    use crate::routing::links::data::link_data_frame_ceiling;
+    use crate::routing::links::request::{
+        response_data_wire_len, RequestId, REQUEST_WIRE_OVERHEAD, RESPONSE_WIRE_OVERHEAD,
+    };
     use crate::routing::request_handlers::{RequestPathHash, RequestPolicy};
 
     let mut initiator = neighbor_with_a_route();
@@ -1985,6 +2121,7 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
                    iv_fill: u8| {
         let mut sent = std::vec::Vec::new();
         let mut settled = std::vec::Vec::new();
+        let mut size_hints = std::vec::Vec::new();
         let _ = engine.ingest_command_into(
             IssuedCommand {
                 id: CommandId(id),
@@ -1997,7 +2134,10 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
                 EngineReaction::Directive(Directive::Send { bytes, .. }) => {
                     sent.push(bytes.to_vec());
                 }
-                EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
+                EngineReaction::Directive(Directive::EmitFrame {
+                    size_hint, fill, ..
+                }) => {
+                    size_hints.push(size_hint);
                     if let Some(bytes) = filled_frame(fill) {
                         sent.push(bytes);
                     }
@@ -2008,7 +2148,7 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
                 _ => {}
             },
         );
-        (sent, settled)
+        (sent, settled, size_hints)
     };
     let ask = SendRequest {
         link_id,
@@ -2017,7 +2157,8 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
         response_timeout: Default::default(),
     };
 
-    let (sent, settled) = command(
+    let expected_request_hint = link_data_frame_ceiling(REQUEST_WIRE_OVERHEAD + ask.data.len());
+    let (sent, settled, size_hints) = command(
         &mut initiator,
         20,
         EngineCommand::SendRequest(ask.clone()),
@@ -2025,6 +2166,7 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
         0xD1,
     );
     assert_eq!(sent.len(), 1);
+    assert_eq!(size_hints, std::vec![expected_request_hint]);
     assert!(settled.is_empty(), "the request awaits its response");
     let mut heard = std::vec::Vec::new();
     let mut raw = sent[0].clone();
@@ -2053,7 +2195,7 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
     );
     assert!(heard.is_empty(), "a stranger's request is silently refused");
 
-    let (identify_frames, _) = command(
+    let (identify_frames, _, size_hints) = command(
         &mut initiator,
         21,
         EngineCommand::Identify(Identify {
@@ -2063,6 +2205,7 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
         2_200,
         0xE1,
     );
+    assert!(size_hints.is_empty());
     let mut raw = identify_frames[0].clone();
     let _ = responder.ingest_packet_into(
         InboundPacket {
@@ -2093,13 +2236,14 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
         Some(asker),
         "identify stored the identity"
     );
-    let (sent, _) = command(
+    let (sent, _, size_hints) = command(
         &mut initiator,
         22,
         EngineCommand::SendRequest(ask),
         2_400,
         0xF1,
     );
+    assert_eq!(size_hints, std::vec![expected_request_hint]);
     let mut received: std::vec::Vec<(RequestId, std::vec::Vec<u8>)> = std::vec::Vec::new();
     let mut raw = sent[0].clone();
     let _ = responder.ingest_packet_into(
@@ -2140,7 +2284,8 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
     assert_eq!(received[0].1, &[0xC4, 0x03, b'a', b's', b'k']);
     let request_id = received[0].0;
 
-    let (responses, settled) = command(
+    let response_data_len = 4;
+    let (responses, settled, size_hints) = command(
         &mut responder,
         23,
         EngineCommand::Respond(Respond {
@@ -2152,6 +2297,12 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
         }),
         2_600,
         0xA9,
+    );
+    assert_eq!(
+        size_hints,
+        std::vec![link_data_frame_ceiling(
+            RESPONSE_WIRE_OVERHEAD + response_data_wire_len(response_data_len),
+        )],
     );
     assert_eq!(
         settled,

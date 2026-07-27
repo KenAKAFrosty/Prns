@@ -233,6 +233,8 @@ mod tests {
 
     #[test]
     fn verbs_name_operations_while_preserving_stock_wire_names() {
+        assert_eq!(RpcDialect::Pickle.as_str(), "pickle");
+        assert_eq!(RpcDialect::Msgpack.as_str(), "msgpack");
         let cases = [
             (RpcVerb::GetInterfaceStats, "interface_stats"),
             (RpcVerb::GetPathTable, "path_table"),
@@ -262,6 +264,18 @@ mod tests {
     }
 
     #[test]
+    fn legacy_drop_classification_requires_selector_and_operation() {
+        assert_eq!(
+            classify_pickle_rpc_verb(selector::DROP.as_bytes()),
+            RpcVerb::Unknown,
+        );
+        assert_eq!(
+            classify_pickle_rpc_verb(drop_operation::ANNOUNCE_QUEUES.as_bytes()),
+            RpcVerb::Unknown,
+        );
+    }
+
+    #[test]
     fn legacy_pickle_classification_extracts_the_typed_route_argument() {
         let destination = [0x42; 16];
         let request = b"\x80\x04\x95\x3c\x00\x00\x00\x00\x00\x00\x00}\x94(\x8c\x03get\x94\x8c\x08next_hop\x94\x8c\x10destination_hash\x94C\x10BBBBBBBBBBBBBBBB\x94u.";
@@ -273,6 +287,24 @@ mod tests {
             decoded.legacy_destination_hash(),
             Some(DestinationHash::new(destination))
         );
+    }
+
+    #[test]
+    fn legacy_destination_hash_searches_only_after_the_argument_key() {
+        let mut request = b"padding-padding-padding\x43\x10AAAAAAAA".to_vec();
+        request.extend_from_slice(argument::DESTINATION_HASH.as_bytes());
+        request.extend_from_slice(b"\x43\x10BBBBBBBBBBBBBBBB");
+        assert_eq!(
+            RpcRequest::Pickle(&request).legacy_destination_hash(),
+            Some(DestinationHash::new([b'B'; 16])),
+        );
+    }
+
+    #[test]
+    fn text_pickle_detection_requires_both_its_opening_and_stop_opcode() {
+        assert_eq!(dialect_of(b"(dp0\n."), RpcDialect::Pickle);
+        assert_eq!(dialect_of(b"(dp0\n"), RpcDialect::Msgpack);
+        assert_eq!(dialect_of(b"\x81."), RpcDialect::Msgpack);
     }
 
     #[test]

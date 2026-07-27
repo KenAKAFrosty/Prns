@@ -167,16 +167,17 @@ impl<const MAX_PENDING: usize> FixedScheduledAnnounceQueue<MAX_PENDING> {
     }
 
     fn restore_orphaned_held(&mut self) {
-        let mut j = 0;
-        while j < self.held.len() {
-            let destination = self.held[j].destination;
+        let mut still_held = Vec::new();
+        while let Some(flood) = self.held.pop() {
+            let destination = flood.destination;
             if self.active_directed_index(destination).is_none() {
-                let flood = self.held.swap_remove(j);
                 let _ = self.push_row(flood);
             } else {
-                j += 1;
+                let _ = still_held.push(flood);
             }
         }
+        still_held.as_mut_slice().reverse();
+        self.held = still_held;
     }
 
     pub fn schedule(
@@ -274,13 +275,10 @@ impl<const MAX_PENDING: usize> FixedScheduledAnnounceQueue<MAX_PENDING> {
 
     pub fn drain_due(&mut self, now: InstantMillis) -> usize {
         let mut removed = 0;
-        let mut i = 0;
-        while i < self.due_at.len() {
+        for i in (0..self.due_at.len()).rev() {
             if self.due_at[i] <= now {
                 self.swap_remove_row(i);
                 removed += 1;
-            } else {
-                i += 1;
             }
         }
         self.refresh_earliest();
@@ -367,8 +365,7 @@ impl<const MAX_PENDING: usize> ScheduledAnnounceQueue for FixedScheduledAnnounce
         max_our_emission_count: u8,
     ) -> usize {
         let mut completed = 0;
-        let mut i = 0;
-        while i < self.due_at.len() {
+        for i in (0..self.due_at.len()).rev() {
             if self.due_at[i].0 <= now.0 {
                 if self.directed_to[i].is_some() && self.held_contains(self.destination[i]) {
                     self.swap_remove_row(i);
@@ -384,7 +381,6 @@ impl<const MAX_PENDING: usize> ScheduledAnnounceQueue for FixedScheduledAnnounce
                 }
                 self.due_at[i] = InstantMillis(now.0.saturating_add(interval_ms));
             }
-            i += 1;
         }
         self.restore_orphaned_held();
         self.refresh_earliest();
@@ -505,6 +501,40 @@ mod tests {
     }
 
     #[test]
+    fn directed_scheduling_reports_insertions_and_flood_replacements() {
+        let mut pending = FixedScheduledAnnounceQueue::<4>::new();
+        assert_eq!(
+            pending.schedule_directed(dest(1), InstantMillis(100), iface(0xB1), 1),
+            ScheduleOutcome::Inserted,
+        );
+        assert_eq!(
+            pending.schedule(dest(2), InstantMillis(200), iface(0xA2), 2),
+            ScheduleOutcome::Inserted,
+        );
+        assert_eq!(
+            pending.schedule_directed(dest(2), InstantMillis(250), iface(0xB2), 2),
+            ScheduleOutcome::Updated,
+        );
+    }
+
+    #[test]
+    fn shared_client_directed_scheduling_reports_insertions_and_flood_replacements() {
+        let mut pending = FixedScheduledAnnounceQueue::<4>::new();
+        assert_eq!(
+            pending.schedule_directed_shared_client(dest(1), InstantMillis(100), iface(0xB1), 1,),
+            ScheduleOutcome::Inserted,
+        );
+        assert_eq!(
+            pending.schedule_shared_client(dest(2), InstantMillis(200), iface(0xA2), 2),
+            ScheduleOutcome::Inserted,
+        );
+        assert_eq!(
+            pending.schedule_directed_shared_client(dest(2), InstantMillis(250), iface(0xB2), 2,),
+            ScheduleOutcome::Updated,
+        );
+    }
+
+    #[test]
     fn nothing_is_due_before_its_time_then_it_drains_once() {
         let mut pending = FixedScheduledAnnounceQueue::<4>::new();
         pending.schedule(dest(1), InstantMillis(100), iface(0xAA), 1);
@@ -584,7 +614,10 @@ mod tests {
         pending.schedule(dest(2), InstantMillis(100), iface(0xAA), 1);
         pending.schedule(dest(3), InstantMillis(101), iface(0xAA), 1);
 
-        assert_eq!(pending.drain_due(InstantMillis(100)), 2);
+        assert_eq!(
+            ScheduledAnnounceQueue::drain_due(&mut pending, InstantMillis(100)),
+            2,
+        );
         assert_eq!(pending.scheduled_count(), 1);
         assert_eq!(
             pending.iter().next().map(|entry| entry.destination),
@@ -599,10 +632,15 @@ mod tests {
         pending.schedule(dest(2), InstantMillis(100), iface(0xAA), 1);
         pending.schedule(dest(3), InstantMillis(100), iface(0xAA), 1);
 
-        let mut drained = std::vec::Vec::new();
-        while let Some(entry) = pending.take_due(InstantMillis(100)) {
-            drained.push(entry.destination);
-        }
+        let mut drained = (0..3)
+            .map(|_| {
+                pending
+                    .take_due(InstantMillis(100))
+                    .expect("each scheduled entry is due")
+                    .destination
+            })
+            .collect::<std::vec::Vec<_>>();
+        assert_eq!(pending.take_due(InstantMillis(100)), None);
         drained.sort_by_key(|d| *d.as_bytes());
         assert_eq!(drained, std::vec![dest(1), dest(2), dest(3)]);
         assert_eq!(pending.scheduled_count(), 0);
@@ -747,6 +785,32 @@ mod tests {
         );
         assert_eq!(restored.source_interface, iface(0xAA));
         assert_eq!(restored.due_at, InstantMillis(100));
+    }
+
+    #[test]
+    fn restoring_orphaned_floods_keeps_other_directed_floods_parked() {
+        let mut pending = FixedScheduledAnnounceQueue::<4>::new();
+        pending.schedule(dest(1), InstantMillis(100), iface(0xA1), 1);
+        pending.schedule(dest(2), InstantMillis(200), iface(0xA2), 2);
+        pending.schedule_directed(dest(1), InstantMillis(100), iface(0xB1), 1);
+        pending.schedule_directed(dest(2), InstantMillis(200), iface(0xB2), 2);
+        assert_eq!(pending.held_count(), 2);
+
+        assert_eq!(
+            pending.advance_due_retransmits(InstantMillis(100), 50, 3),
+            1,
+        );
+        assert_eq!(pending.held_count(), 1);
+        let restored = pending
+            .iter()
+            .find(|entry| entry.destination == dest(1))
+            .unwrap();
+        assert_eq!(restored.directed_to, None);
+        let directed = pending
+            .iter()
+            .find(|entry| entry.destination == dest(2))
+            .unwrap();
+        assert_eq!(directed.directed_to, Some(iface(0xB2)));
     }
 
     #[test]

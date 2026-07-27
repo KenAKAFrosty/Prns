@@ -1,7 +1,7 @@
 use core::time::Duration;
 
 use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
+    AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy, Settlement,
 };
 use personal_rns::identity::vault::FileVault;
 use personal_rns::identity::{MarkDestinationUsedOutcome, Zeroizing, IDENTITY_SECRET_KEY_LEN};
@@ -420,13 +420,18 @@ async fn a_quiet_flush_skips_unchanged_regions_and_a_change_rewrites() {
         .await
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
+    let (settled_tx, mut settled_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_a = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xA1)), single(secret(0xA3))],
         app_state: (),
         storage: GrowableHeap,
         routes: routes![],
-        on_event: |_event, _state| {},
+        on_event: move |event, _state| {
+            if let PrnsEvent::Diagnostic(Diagnostic::CommandSettled { id, settlement }) = event {
+                let _ = settled_tx.send((id, settlement));
+            }
+        },
         interfaces: Manual,
     });
     let commands_a = node_a.handle();
@@ -504,11 +509,23 @@ async fn a_quiet_flush_skips_unchanged_regions_and_a_change_rewrites() {
         assert_eq!(quiet.destination_identities, RegionFlush::UnchangedSkipped);
         assert!(quiet.high_water >= first.high_water);
 
-        commands_a.issue(EngineCommand::AnnounceNow(AnnounceNow {
-            destination: dest_a2,
-            target: AnnounceTarget::AllInterfaces,
-            app_data: AnnounceAppData::Registered,
-        }));
+        let second_announce = commands_a
+            .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                destination: dest_a2,
+                target: AnnounceTarget::AllInterfaces,
+                app_data: AnnounceAppData::Registered,
+            }))
+            .expect("node A accepts the second announce");
+        loop {
+            let (id, settlement) = settled_rx
+                .recv()
+                .await
+                .expect("node A's settlement channel stays open");
+            if id == second_announce {
+                assert_eq!(settlement, Settlement::AnnounceNow(Ok(())));
+                break;
+            }
+        }
         loop {
             let heard = tokio::time::timeout(Duration::from_secs(5), heard_rx.recv())
                 .await

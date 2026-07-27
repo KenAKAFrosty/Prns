@@ -130,10 +130,11 @@ impl<S: StorageLayout> EngineState<S> {
 mod tests {
     use super::*;
     use crate::engine::test_support::*;
+    use crate::engine::{Directive, EngineReaction, IngestIo};
     use crate::interfaces::InboundPacket;
     use crate::routing::ingress::testkit::iface;
     use crate::routing::ingress::{IgnoreReason, IngestPacketOutcome};
-    use crate::wire::{TransportId, WireContext, BROADCAST_MTU};
+    use crate::wire::{TransportId, WireContext, BROADCAST_MTU, HEADER_MAX_LEN};
 
     #[test]
     fn a_final_hop_forward_strips_the_transport_header_back_to_the_direct_wire() {
@@ -152,29 +153,45 @@ mod tests {
         );
 
         let mut in_transport = bytes_from_hex(RNS_1_4_0_SEALED_TO_RATCHET_VIA_TRANSPORT);
-        let out = relay.ingest_packet_with(
+        let payload_len = WirePacketHeader::parse(&in_transport).unwrap().1.len();
+        let mut forwarded = None;
+        let mut size_hint = None;
+        let interfaces = [routable_descriptor(InterfaceId::new([0xB2; 8]))];
+        let _ = relay.ingest_packet_into(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0xA1; 8]),
                 bytes: &mut in_transport,
             },
-            &mut |_| {},
-            AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
+            IngestIo {
+                interfaces: AttachedInterfaces::new(&interfaces),
+                now: InstantMillis(1_000),
+                fill_entropy: &mut |_| {},
+                should_prove: &mut |_| false,
+                should_accept_resource:
+                    &mut |_: &crate::routing::links::resources::ResourceOffer| false,
+                sink: &mut |reaction| {
+                    if let EngineReaction::Directive(Directive::EmitFrame {
+                        target,
+                        size_hint: hint,
+                        fill,
+                    }) = reaction
+                    {
+                        assert_eq!(target, InterfaceId::new([0xB2; 8]));
+                        size_hint = Some(hint);
+                        forwarded = filled_frame(fill);
+                    }
+                },
+            },
         );
 
-        let IngestPacketOutcome::Forward(forward) = out else {
-            panic!("a transport-addressed packet with a one-hop route forwards, got {out:?}");
-        };
-        assert_eq!(forward.fire_on, InterfaceId::new([0xB2; 8]));
-        let mut wire = [0u8; BROADCAST_MTU];
-        let n = forward.to_wire(&mut wire).unwrap();
+        assert_eq!(size_hint, Some(HEADER_MAX_LEN + payload_len));
+        let wire = forwarded.expect("a transport-addressed packet with a one-hop route forwards");
         let mut expected = bytes_from_hex(RNS_1_4_0_SEALED_TO_RATCHET);
         expected[1] = 1;
         assert_eq!(
-            &wire[..n],
-            expected.as_slice(),
+            wire,
+            expected,
             "the final hop strips transport framing: the destination hears the direct wire, one hop further",
         );
 
