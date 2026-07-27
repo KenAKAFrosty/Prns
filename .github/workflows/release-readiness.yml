@@ -53,6 +53,8 @@ jobs:
     name: ${{ matrix.id }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 260
+    env:
+      RUSTUP_TOOLCHAIN: 1.96.0
     strategy:
       fail-fast: false
       max-parallel: 20
