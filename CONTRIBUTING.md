@@ -93,6 +93,12 @@ corroborated evidence.
   practical.
 - Avoid mutating process-global environment in tests when dependencies can be
   passed explicitly.
+- Treat mutation testing as diagnostic evidence that requires human triage, not
+  as a score or a reason by itself to rewrite production code. Prefer a stronger
+  behavioral test when a mutant exposes a real gap.
+- Require an independent correctness or design rationale for every production
+  change prompted by mutation analysis. Performance-shaped code also requires
+  comparative measurement against the exact prior implementation.
 - Follow the repository's [verification ladder](docs/testing.md); report the
   exact commands and host coverage instead of implying unrun platforms passed.
 

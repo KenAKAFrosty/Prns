@@ -101,6 +101,11 @@ energy, profiling, and interpretation rules.
 
 ## Contribution expectations
 
+When a change touches the configured mutation surface, run a focused mutation
+audit over the changed owner before submission and report the command, findings,
+and human triage. Mutation findings do not replace the normal correctness,
+performance, and platform evidence for the change.
+
 Before handing off a change:
 
 1. Format the languages you touched.

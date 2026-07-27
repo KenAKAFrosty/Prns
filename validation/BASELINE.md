@@ -18,5 +18,6 @@ Post-sync product checks did not expose a Hopspot identity-custody regression:
 the Hopspot core suite, root workspace, configuration suite, daemon workspaces,
 release contracts, deterministic oracle suite, Kani matrix, and bounded fuzz
 matrix all passed locally. Linux live interop, Android hardware, sanitizer/Miri,
-fresh mutation triage, and hosted exact-SHA qualification remain evidence that
-must come from their registered qualified runners.
+and hosted exact-SHA qualification remain evidence that must come from their
+registered qualified runners. Fresh mutation triage remains separate scheduled
+audit evidence.

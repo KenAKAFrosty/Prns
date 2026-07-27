@@ -1,0 +1,80 @@
+name: Mutation audit
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "47 10 2 * *"
+
+concurrency:
+  group: mutation-audit
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings --cfg aes_armv8"
+
+jobs:
+  inventory:
+    name: Mutation audit inventory
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      mutation: ${{ steps.matrix.outputs.mutation }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - id: matrix
+        run: |
+          python3 validation/run.py verify
+          echo "mutation=$(python3 validation/run.py matrix --domain mutation --tier scheduled)" >> "$GITHUB_OUTPUT"
+
+  mutation:
+    name: Mutation audit ${{ matrix.id }}
+    needs: inventory
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.inventory.outputs.mutation) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: mutation-audit-${{ matrix.id }}
+      - run: cargo install cargo-mutants --version 27.1.0 --locked
+      - run: python3 validation/run.py run --suite "${{ matrix.id }}" --expected-sha "$GITHUB_SHA"
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: mutation-audit-${{ matrix.id }}-${{ github.run_id }}
+          path: |
+            validation-artifacts/results/${{ matrix.id }}/**
+            validation-artifacts/mutation/${{ matrix.id }}/**
+          retention-days: 7
+
+  aggregate:
+    name: Mutation audit report
+    if: always()
+    needs: [inventory, mutation]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: mutation-audit-mutation-analysis-shard-*-${{ github.run_id }}
+          path: validation-artifacts
+          merge-multiple: true
+      - run: python3 validation/run.py aggregate --domain mutation --tier scheduled --expected-sha "$GITHUB_SHA"
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: mutation-audit-union-${{ github.run_id }}
+          path: |
+            validation-artifacts/mutation/union/**
+            validation-artifacts/release-manifest.json
+          retention-days: 7
