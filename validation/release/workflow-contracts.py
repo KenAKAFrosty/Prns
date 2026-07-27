@@ -200,6 +200,15 @@ def validate() -> list[str]:
             "release-readiness.yml does not provision exact cargo-binstall and Dioxus "
             "tools for both web and ESP suites"
         )
+    qualify_toolchain = re.search(
+        r"(?m)^    env:\n      RUSTUP_TOOLCHAIN: 1\.96\.0$",
+        qualify,
+    )
+    if qualify_toolchain is None:
+        errors.append(
+            "release-readiness.yml does not force the exact Rust toolchain for "
+            "qualification suites"
+        )
     embedded_target_step = re.search(
         r"name: Prepare embedded targets\n"
         r"        if: matrix\.group == 'embedded' \|\| matrix\.group == 'esp'\n"
