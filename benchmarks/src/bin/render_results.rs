@@ -55,11 +55,19 @@ fn main() {
         }
         std::process::exit(1);
     }
-    for (path, body) in &files {
+    write_files(&files);
+    eprintln!("wrote {} result files", files.len());
+}
+
+fn write_files(files: &[(PathBuf, String)]) {
+    for (path, body) in files {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .unwrap_or_else(|error| panic!("create {}: {error}", parent.display()));
+        }
         std::fs::write(path, body)
             .unwrap_or_else(|error| panic!("write {}: {error}", path.display()));
     }
-    eprintln!("wrote {} result files", files.len());
 }
 
 fn bench_dir() -> PathBuf {
@@ -1402,6 +1410,19 @@ mod tests {
         let output = render_host("test-host", &rows, &load_implementations(), &mut assets);
         assert!(!output.contains("<picture>"));
         assert!(assets.is_empty());
+    }
+
+    #[test]
+    fn chart_assets_write_into_a_fresh_run_directory() {
+        let root = std::env::temp_dir().join(format!("render-fresh-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let target = root.join("assets").join("at-a-glance-test-host-light.svg");
+        write_files(&[(target.clone(), "<svg xmlns/>".into())]);
+        assert_eq!(
+            std::fs::read_to_string(&target).expect("read rendered asset"),
+            "<svg xmlns/>"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
