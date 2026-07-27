@@ -24,6 +24,8 @@ AUTOMATIC_WORKFLOWS = frozenset(
         "napi.yml",
     }
 )
+STANDARD_MATRIX_PARALLELISM_LIMIT = 4
+MATRIX_PARALLELISM_LIMITS = {"release-readiness.yml": 20}
 
 
 def workflow_jobs(text: str) -> tuple[tuple[str, str], ...]:
@@ -47,6 +49,9 @@ def validate_resource_bounds(workflow: Path, text: str) -> list[str]:
     errors: list[str] = []
     relative = workflow.relative_to(ROOT)
     artifact_limit = 7 if workflow.name in AUTOMATIC_WORKFLOWS else 30
+    parallelism_limit = MATRIX_PARALLELISM_LIMITS.get(
+        workflow.name, STANDARD_MATRIX_PARALLELISM_LIMIT
+    )
     for job_name, block in workflow_jobs(text):
         if re.search(r"(?m)^    runs-on:", block):
             timeout = re.search(r"(?m)^    timeout-minutes:\s*(\d+)\s*$", block)
@@ -64,8 +69,18 @@ def validate_resource_bounds(workflow: Path, text: str) -> list[str]:
             )
             if parallel is None:
                 errors.append(f"{relative}: {job_name} has an unbounded matrix")
-            elif not 1 <= int(parallel.group(1)) <= 4:
-                errors.append(f"{relative}: {job_name} exceeds four parallel matrix jobs")
+            elif not 1 <= int(parallel.group(1)) <= parallelism_limit:
+                errors.append(
+                    f"{relative}: {job_name} exceeds {parallelism_limit} parallel matrix jobs"
+                )
+            elif (
+                workflow.name in MATRIX_PARALLELISM_LIMITS
+                and int(parallel.group(1)) != parallelism_limit
+            ):
+                errors.append(
+                    f"{relative}: {job_name} must use all {parallelism_limit} "
+                    "parallel matrix jobs"
+                )
 
         steps = re.split(r"(?m)(?=^      - )", block)
         for step in steps:
@@ -188,7 +203,8 @@ def validate() -> list[str]:
     embedded_target_step = re.search(
         r"name: Prepare embedded targets\n"
         r"        if: matrix\.group == 'embedded' \|\| matrix\.group == 'esp'\n"
-        r"        run: rustup target add riscv32imac-unknown-none-elf "
+        r"        run: rustup target add --toolchain 1\.96\.0 "
+        r"riscv32imac-unknown-none-elf "
         r"thumbv7em-none-eabihf",
         qualify,
     )
