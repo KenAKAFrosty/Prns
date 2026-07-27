@@ -167,17 +167,16 @@ impl<const MAX_PENDING: usize> FixedScheduledAnnounceQueue<MAX_PENDING> {
     }
 
     fn restore_orphaned_held(&mut self) {
-        let mut still_held = Vec::new();
-        while let Some(flood) = self.held.pop() {
-            let destination = flood.destination;
+        let mut j = 0;
+        while j < self.held.len() {
+            let destination = self.held[j].destination;
             if self.active_directed_index(destination).is_none() {
+                let flood = self.held.swap_remove(j);
                 let _ = self.push_row(flood);
             } else {
-                let _ = still_held.push(flood);
+                j += 1;
             }
         }
-        still_held.as_mut_slice().reverse();
-        self.held = still_held;
     }
 
     pub fn schedule(
@@ -275,10 +274,13 @@ impl<const MAX_PENDING: usize> FixedScheduledAnnounceQueue<MAX_PENDING> {
 
     pub fn drain_due(&mut self, now: InstantMillis) -> usize {
         let mut removed = 0;
-        for i in (0..self.due_at.len()).rev() {
+        let mut i = 0;
+        while i < self.due_at.len() {
             if self.due_at[i] <= now {
                 self.swap_remove_row(i);
                 removed += 1;
+            } else {
+                i += 1;
             }
         }
         self.refresh_earliest();
@@ -365,7 +367,8 @@ impl<const MAX_PENDING: usize> ScheduledAnnounceQueue for FixedScheduledAnnounce
         max_our_emission_count: u8,
     ) -> usize {
         let mut completed = 0;
-        for i in (0..self.due_at.len()).rev() {
+        let mut i = 0;
+        while i < self.due_at.len() {
             if self.due_at[i].0 <= now.0 {
                 if self.directed_to[i].is_some() && self.held_contains(self.destination[i]) {
                     self.swap_remove_row(i);
@@ -381,6 +384,7 @@ impl<const MAX_PENDING: usize> ScheduledAnnounceQueue for FixedScheduledAnnounce
                 }
                 self.due_at[i] = InstantMillis(now.0.saturating_add(interval_ms));
             }
+            i += 1;
         }
         self.restore_orphaned_held();
         self.refresh_earliest();
