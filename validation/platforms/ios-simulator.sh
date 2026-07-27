@@ -118,27 +118,64 @@ if ! [[ "$launch_pid" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 
-sleep 5
-xcrun simctl spawn "$simulator_id" launchctl print user/501 >"$artifact_dir/launchctl.txt"
-launchctl_line="$(grep -F 'UIKitApplication:com.personal.hopspot' "$artifact_dir/launchctl.txt")"
-launchctl_pid="$(printf '%s\n' "$launchctl_line" | awk 'NR == 1 {print $1}')"
-if [[ "$launchctl_pid" != "$launch_pid" ]]; then
-  echo "launchctl reported PID $launchctl_pid instead of $launch_pid" >&2
-  exit 1
-fi
+lifecycle_deadline_seconds=30
+lifecycle_poll_seconds=2
+lifecycle_log_window=1m
+lifecycle_start_marker='HOPSPOT_IOS_START result=0'
+lifecycle_running_marker='HOPSPOT_IOS_STATE state=2 failure=0'
+lifecycle_process_marker="PersonalHopspot[$launch_pid:"
+lifecycle_deadline=$((SECONDS + lifecycle_deadline_seconds))
+lifecycle_ready=false
+lifecycle_failure=
+launch_pid_observed=false
+launchctl_pid=
 
-xcrun simctl spawn "$simulator_id" log show \
-  --style compact \
-  --last 30s \
-  --predicate 'subsystem == "com.personal.hopspot"' \
-  >"$artifact_dir/lifecycle.log" \
-  2>"$artifact_dir/lifecycle-stderr.log" || true
-grep -qF 'HOPSPOT_IOS_START result=0' "$artifact_dir/lifecycle.log"
-grep -qF 'HOPSPOT_IOS_STATE state=2 failure=0' "$artifact_dir/lifecycle.log"
+lifecycle_log_has() {
+  local marker="$1"
+  grep -F "$lifecycle_process_marker" "$artifact_dir/lifecycle.log" |
+    grep -qF "$marker"
+}
 
-xcrun simctl io "$simulator_id" screenshot "$artifact_dir/screenshot.png"
-test -s "$artifact_dir/screenshot.png"
+while ((SECONDS < lifecycle_deadline)); do
+  xcrun simctl spawn "$simulator_id" launchctl print user/501 \
+    >"$artifact_dir/launchctl.txt" || true
+  launchctl_line="$(
+    grep -F 'UIKitApplication:com.personal.hopspot' \
+      "$artifact_dir/launchctl.txt" || true
+  )"
+  launchctl_pid="$(printf '%s\n' "$launchctl_line" | awk 'NR == 1 {print $1}')"
 
+  xcrun simctl spawn "$simulator_id" log show \
+    --style compact \
+    --last "$lifecycle_log_window" \
+    --predicate 'subsystem == "com.personal.hopspot"' \
+    >"$artifact_dir/lifecycle.log" \
+    2>"$artifact_dir/lifecycle-stderr.log" || true
+
+  if [[ -n "$launchctl_pid" && "$launchctl_pid" != "$launch_pid" ]]; then
+    lifecycle_failure="launchctl reported PID $launchctl_pid instead of $launch_pid"
+    break
+  fi
+  if [[ "$launch_pid_observed" == true && -z "$launchctl_pid" ]]; then
+    lifecycle_failure="launchctl lost launched PID $launch_pid"
+    break
+  fi
+  if [[ "$launchctl_pid" == "$launch_pid" ]]; then
+    launch_pid_observed=true
+  fi
+
+  if ((SECONDS < lifecycle_deadline)) &&
+    [[ "$launch_pid_observed" == true ]] &&
+    lifecycle_log_has "$lifecycle_start_marker" &&
+    lifecycle_log_has "$lifecycle_running_marker"; then
+    lifecycle_ready=true
+    break
+  fi
+
+  sleep "$lifecycle_poll_seconds"
+done
+
+xcrun simctl io "$simulator_id" screenshot "$artifact_dir/screenshot.png" || true
 record_crashes "$artifact_dir/crashes-after.txt"
 if comm -13 "$artifact_dir/crashes-before.txt" "$artifact_dir/crashes-after.txt" |
   tee "$artifact_dir/new-crashes.txt" |
@@ -146,6 +183,15 @@ if comm -13 "$artifact_dir/crashes-before.txt" "$artifact_dir/crashes-after.txt"
   echo "PersonalHopspot produced a new simulator crash report" >&2
   exit 1
 fi
+if [[ -n "$lifecycle_failure" ]]; then
+  echo "$lifecycle_failure" >&2
+  exit 1
+fi
+if [[ "$lifecycle_ready" != true ]]; then
+  echo "iOS lifecycle proof did not settle within ${lifecycle_deadline_seconds}s" >&2
+  exit 1
+fi
+test -s "$artifact_dir/screenshot.png"
 
 {
   echo "simulator_id=$simulator_id"
