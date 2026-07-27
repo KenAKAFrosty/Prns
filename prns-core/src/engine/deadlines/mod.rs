@@ -65,8 +65,11 @@ impl<S: StorageLayout> EngineState<S> {
         interfaces: AttachedInterfaces<'_>,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
-        self.tunnels.expire(now);
-        self.departed_interfaces.evict_expired(now);
+        let tunnels_changed = self.tunnels.expire(now) != 0;
+        let departures_changed = self.departed_interfaces.evict_expired(now) != 0;
+        if tunnels_changed || departures_changed {
+            self.routing_table.invalidate_route_expiries();
+        }
         let warmth = WarmestOf(&self.tunnels, &self.departed_interfaces);
         let dirty = &mut self.dirty_interfaces;
         let scheduled_announces = &mut self.scheduled_announces;
@@ -118,8 +121,9 @@ impl<S: StorageLayout> EngineState<S> {
                 };
                 let source = entry.source_interface;
                 let directed_to = entry.directed_to;
-                let crosses_local_boundary =
-                    directed_to.is_none() && source.kind() == Some(InterfaceKind::LocalClient);
+                let crosses_local_boundary = source.kind() == Some(InterfaceKind::LocalClient)
+                    && directed_to
+                        .is_none_or(|target| target.kind() != Some(InterfaceKind::LocalClient));
                 let emit_hops = self
                     .protocol
                     .local_hop_count_override

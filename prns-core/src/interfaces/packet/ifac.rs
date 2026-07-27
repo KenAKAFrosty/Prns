@@ -128,7 +128,7 @@ impl IfacContext {
         let ifac = &signature.0[SIGNATURE_BYTE_LEN - size..];
         let ifac_end = IFAC_START + size;
 
-        out[HEADER_FLAGS_INDEX] = clean[HEADER_FLAGS_INDEX];
+        out[HEADER_FLAGS_INDEX] = clean[HEADER_FLAGS_INDEX] | IFAC_FLAG;
         out[HEADER_HOPS_INDEX] = clean[HEADER_HOPS_INDEX];
         out[IFAC_START..ifac_end].copy_from_slice(ifac);
         out[ifac_end..total].copy_from_slice(&clean[IFAC_START..]);

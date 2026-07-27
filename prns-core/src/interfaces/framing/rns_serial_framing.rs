@@ -14,23 +14,60 @@ pub const fn max_encoded_len(payload_len: usize) -> usize {
     2 + 2 * payload_len
 }
 
+#[cfg(target_pointer_width = "64")]
 fn find_special(haystack: &[u8]) -> Option<usize> {
-    haystack
+    const ONES: u128 = 0x0101_0101_0101_0101_0101_0101_0101_0101;
+    const HIGHS: u128 = 0x8080_8080_8080_8080_8080_8080_8080_8080;
+    const FLAG_REP: u128 = (FLAG as u128) * ONES;
+    const ESC_REP: u128 = (ESC as u128) * ONES;
+
+    let (chunks, _) = haystack.as_chunks::<16>();
+    for (chunk_index, chunk) in chunks.iter().enumerate() {
+        let word = u128::from_le_bytes(*chunk);
+        let f = word ^ FLAG_REP;
+        let e = word ^ ESC_REP;
+        let marks = ((f.wrapping_sub(ONES) & !f) | (e.wrapping_sub(ONES) & !e)) & HIGHS;
+        if marks != 0 {
+            return Some(chunk_index * 16 + (marks.trailing_zeros() / 8) as usize);
+        }
+    }
+    let scanned = chunks.len() * 16;
+    haystack[scanned..]
         .iter()
         .position(|&byte| byte == FLAG || byte == ESC)
+        .map(|offset| scanned + offset)
+}
+
+#[cfg(not(target_pointer_width = "64"))]
+fn find_special(haystack: &[u8]) -> Option<usize> {
+    const ONES: u64 = 0x0101_0101_0101_0101;
+    const HIGHS: u64 = 0x8080_8080_8080_8080;
+    const FLAG_REP: u64 = (FLAG as u64) * ONES;
+    const ESC_REP: u64 = (ESC as u64) * ONES;
+
+    let (chunks, _) = haystack.as_chunks::<8>();
+    for (chunk_index, chunk) in chunks.iter().enumerate() {
+        let word = u64::from_le_bytes(*chunk);
+        let f = word ^ FLAG_REP;
+        let e = word ^ ESC_REP;
+        let marks = ((f.wrapping_sub(ONES) & !f) | (e.wrapping_sub(ONES) & !e)) & HIGHS;
+        if marks != 0 {
+            return Some(chunk_index * 8 + (marks.trailing_zeros() / 8) as usize);
+        }
+    }
+    let scanned = chunks.len() * 8;
+    haystack[scanned..]
+        .iter()
+        .position(|&byte| byte == FLAG || byte == ESC)
+        .map(|offset| scanned + offset)
 }
 
 pub fn encode(input: &[u8], output: &mut [u8]) -> Result<usize, EncodeError> {
-    let required = input.len()
-        + 2
-        + input
-            .iter()
-            .filter(|&&byte| byte == FLAG || byte == ESC)
-            .count();
-    if output.len() < required {
+    let mut written = 0usize;
+
+    if output.is_empty() {
         return Err(EncodeError::OutputTooSmall);
     }
-    let mut written = 0usize;
     output[written] = FLAG;
     written += 1;
 
@@ -38,21 +75,27 @@ pub fn encode(input: &[u8], output: &mut [u8]) -> Result<usize, EncodeError> {
     loop {
         let split = find_special(rest);
         let run = &rest[..split.unwrap_or(rest.len())];
+        if written + run.len() > output.len() {
+            return Err(EncodeError::OutputTooSmall);
+        }
         output[written..written + run.len()].copy_from_slice(run);
         written += run.len();
 
         let Some(pos) = split else {
             break;
         };
+        if written + 2 > output.len() {
+            return Err(EncodeError::OutputTooSmall);
+        }
         output[written] = ESC;
         output[written + 1] = rest[pos] ^ ESC_MASK;
         written += 2;
-        let Some((_, tail)) = rest[pos..].split_first() else {
-            break;
-        };
-        rest = tail;
+        rest = &rest[pos + 1..];
     }
 
+    if written >= output.len() {
+        return Err(EncodeError::OutputTooSmall);
+    }
     output[written] = FLAG;
     written += 1;
 
@@ -97,8 +140,28 @@ impl RnsSerialScanner {
         offset: &mut usize,
         sink: &mut dyn FrameSink,
     ) -> Result<Option<usize>, DecodeError> {
-        let remaining = input.get(*offset..).unwrap_or_default();
-        for &byte in remaining {
+        while *offset < input.len() {
+            if self.in_frame && !self.saw_escape {
+                let run_end =
+                    find_special(&input[*offset..]).map_or(input.len(), |at| *offset + at);
+                let run_len = run_end - *offset;
+                if run_len != 0 {
+                    let free = sink.free_capacity();
+                    if run_len <= free {
+                        let run = &input[*offset..run_end];
+                        let _ = sink.extend_from_slice(run);
+                        *offset = run_end;
+                        continue;
+                    }
+
+                    *offset += free + 1;
+                    sink.clear();
+                    self.reset();
+                    return Err(DecodeError::FrameTooBig);
+                }
+            }
+
+            let byte = input[*offset];
             *offset += 1;
             if self.feed_one_into(byte, sink)? {
                 return Ok(Some(sink.frame_len()));
@@ -187,15 +250,11 @@ impl<const FRAME_CAP: usize> RnsSerialDecoder<FRAME_CAP> {
 
     pub fn feed_slice(&mut self, input: &[u8], mut on_frame: impl FnMut(&[u8])) {
         let mut offset = 0;
-        while input.get(offset).is_some() {
-            let previous = offset;
+        while offset < input.len() {
             match self.feed_slice_next(input, &mut offset) {
                 Ok(Some(frame)) => on_frame(frame),
                 Ok(None) => break,
                 Err(DecodeError::FrameTooBig) => {}
-            }
-            if offset == previous {
-                break;
             }
         }
     }
@@ -218,9 +277,43 @@ impl<const FRAME_CAP: usize> RnsSerialDecoder<FRAME_CAP> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::interfaces::framing::FrameSinkError;
     use proptest::prelude::*;
 
     const TEST_FRAME_CAP: usize = 1024;
+
+    #[derive(Default)]
+    struct RecordingSink {
+        bytes: std::vec::Vec<u8>,
+        push_calls: usize,
+        extend_calls: usize,
+    }
+
+    impl FrameSink for RecordingSink {
+        fn clear(&mut self) {
+            self.bytes.clear();
+        }
+
+        fn frame_len(&self) -> usize {
+            self.bytes.len()
+        }
+
+        fn free_capacity(&self) -> usize {
+            usize::MAX - self.bytes.len()
+        }
+
+        fn push(&mut self, byte: u8) -> Result<(), FrameSinkError> {
+            self.push_calls += 1;
+            self.bytes.push(byte);
+            Ok(())
+        }
+
+        fn extend_from_slice(&mut self, run: &[u8]) -> Result<(), FrameSinkError> {
+            self.extend_calls += 1;
+            self.bytes.extend_from_slice(run);
+            Ok(())
+        }
+    }
 
     fn decode_all(bytes: &[u8]) -> std::vec::Vec<std::vec::Vec<u8>> {
         let mut decoder: RnsSerialDecoder<TEST_FRAME_CAP> = RnsSerialDecoder::new();
@@ -272,9 +365,9 @@ mod tests {
         assert_eq!(find_special(&[0x01, 0x02, 0x03]), None);
         assert_eq!(find_special(&[0x01, FLAG, 0x03]), Some(1));
         assert_eq!(find_special(&[0x01, 0x02, ESC]), Some(2));
-        let mut in_second_word = [0x00u8; 20];
-        in_second_word[13] = FLAG;
-        assert_eq!(find_special(&in_second_word), Some(13));
+        let mut in_second_word = [0x00u8; 40];
+        in_second_word[21] = FLAG;
+        assert_eq!(find_special(&in_second_word), Some(21));
         let mut only_in_remainder = [0x11u8; 19];
         only_in_remainder[17] = ESC;
         assert_eq!(find_special(&only_in_remainder), Some(17));
@@ -317,11 +410,13 @@ mod tests {
             Err(EncodeError::OutputTooSmall)
         );
 
-        let mut escaped_tiny = [0u8; 3];
-        assert_eq!(
-            encode(&[FLAG], &mut escaped_tiny),
-            Err(EncodeError::OutputTooSmall),
-        );
+        for output_len in 0..max_encoded_len(1) {
+            let mut escaped_tiny = std::vec![0u8; output_len];
+            assert_eq!(
+                encode(&[FLAG], &mut escaped_tiny),
+                Err(EncodeError::OutputTooSmall),
+            );
+        }
     }
 
     #[test]
@@ -348,6 +443,33 @@ mod tests {
         let bytes = [FLAG, 0x01, 0x02, 0x03, FLAG];
         let frames = decode_all(&bytes);
         assert_eq!(frames, std::vec![std::vec![0x01, 0x02, 0x03]]);
+    }
+
+    #[test]
+    fn slice_scanner_bulk_copies_plain_runs() {
+        let payload = [0x35; 64];
+        let mut stream = [0u8; 66];
+        stream[0] = FLAG;
+        stream[1..65].copy_from_slice(&payload);
+        stream[65] = FLAG;
+
+        let mut scanner = RnsSerialScanner::new();
+        let mut sink = RecordingSink::default();
+        let mut offset = 0;
+        let frame_len = scanner
+            .next_frame_into(&stream, &mut offset, &mut sink)
+            .unwrap();
+
+        assert_eq!(
+            (
+                frame_len,
+                offset,
+                sink.bytes.as_slice(),
+                sink.push_calls,
+                sink.extend_calls,
+            ),
+            (Some(64), stream.len(), payload.as_slice(), 0, 1),
+        );
     }
 
     #[test]

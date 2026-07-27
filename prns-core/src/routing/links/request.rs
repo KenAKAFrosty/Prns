@@ -21,12 +21,12 @@ use crate::routing::links::{LinkId, LinkKey};
 use crate::routing::request_handlers::RequestPathHash;
 use crate::storage::StorageLayout;
 use crate::units::RttMillis;
-#[cfg(test)]
-use crate::wire::DestinationHash;
 use crate::wire::{
     ContextFlag, DestinationType, IfacFlag, PacketType, PropagationType, WireContext,
-    WirePacketHeader, BROADCAST_MTU, TRUNCATED_HASH_BYTE_LEN,
+    WirePacketHeader, TRUNCATED_HASH_BYTE_LEN,
 };
+#[cfg(test)]
+use crate::wire::{DestinationHash, BROADCAST_MTU};
 
 /// RNS 1.4.0 `Resource.RESPONSE_MAX_GRACE_TIME` (10 s) × 1.125, the flat term in a request's default timeout: `rtt × traffic_timeout_factor + 11.25 s`.
 pub const REQUEST_RESPONSE_GRACE_MS: u64 = 11_250;
@@ -38,7 +38,15 @@ pub const REQUEST_WIRE_OVERHEAD: usize = 1 + 9 + 2 + TRUNCATED_HASH_BYTE_LEN;
 pub const RESPONSE_WIRE_OVERHEAD: usize = 1 + 2 + TRUNCATED_HASH_BYTE_LEN;
 
 /// Both verbs' data caps derive from the single-packet link MDU, so the two sides land on the same figure by construction.
-pub const WRAPPED_PLAINTEXT_CAP: usize = link_mdu(BROADCAST_MTU);
+pub const WRAPPED_PLAINTEXT_CAP: usize = {
+    let request = REQUEST_WIRE_OVERHEAD + MAX_SEND_REQUEST_DATA_LEN;
+    let response = RESPONSE_WIRE_OVERHEAD + MAX_RESPOND_DATA_LEN;
+    if request > response {
+        request
+    } else {
+        response
+    }
+};
 
 const FIXARRAY_3: u8 = 0x93;
 const FIXARRAY_2: u8 = 0x92;
