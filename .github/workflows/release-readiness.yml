@@ -55,7 +55,7 @@ jobs:
     timeout-minutes: 260
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 20
       matrix: ${{ fromJSON(needs.inventory.outputs.matrix) }}
     defaults:
       run:
@@ -84,7 +84,7 @@ jobs:
           rustup toolchain install "$nightly" --profile minimal
       - name: Prepare embedded targets
         if: matrix.group == 'embedded' || matrix.group == 'esp'
-        run: rustup target add riscv32imac-unknown-none-elf thumbv7em-none-eabihf
+        run: rustup target add --toolchain 1.96.0 riscv32imac-unknown-none-elf thumbv7em-none-eabihf
       - name: Prepare Linux native development packages
         if: runner.os == 'Linux' && matrix.platform != 'android-device'
         run: |
