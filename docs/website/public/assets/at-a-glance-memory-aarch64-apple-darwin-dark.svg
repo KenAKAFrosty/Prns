@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="638" viewBox="0 0 880 638" role="img" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif">
+  <text x="386.5" y="17" font-size="12" fill="#c3c2b7">RNS 1.4.0 (compiled) peak RSS as a multiple of Prns · higher means Prns uses less memory</text>
+  <line x1="413.2" y1="34.0" x2="413.2" y2="616.0" stroke="#383835" stroke-width="1"/>
+  <text x="413.2" y="632.0" font-size="11" fill="#898781" text-anchor="middle" font-variant-numeric="tabular-nums">1×</text>
+  <line x1="519.9" y1="34.0" x2="519.9" y2="616.0" stroke="#2c2c2a" stroke-width="1"/>
+  <text x="519.9" y="632.0" font-size="11" fill="#898781" text-anchor="middle" font-variant-numeric="tabular-nums">5×</text>
+  <line x1="653.3" y1="34.0" x2="653.3" y2="616.0" stroke="#2c2c2a" stroke-width="1"/>
+  <text x="653.3" y="632.0" font-size="11" fill="#898781" text-anchor="middle" font-variant-numeric="tabular-nums">10×</text>
+  <line x1="786.7" y1="34.0" x2="786.7" y2="616.0" stroke="#2c2c2a" stroke-width="1"/>
+  <text x="786.7" y="632.0" font-size="11" fill="#898781" text-anchor="middle" font-variant-numeric="tabular-nums">15×</text>
+  <line x1="386.5" y1="34.0" x2="386.5" y2="616.0" stroke="#383835" stroke-width="1"/>
+  <text x="376.5" y="55.5" font-size="13" fill="#c3c2b7" text-anchor="end">Single-packet throughput · initiator</text>
+  <path d="M386.5,41.0 L712.7,41.0 Q716.7,41.0 716.7,45.0 L716.7,57.0 Q716.7,61.0 712.7,61.0 L386.5,61.0 Z" fill="#3987e5"/>
+  <text x="724.7" y="55.5" font-size="12.5" font-weight="600" fill="#ffffff">12.38×</text>
+  <text x="376.5" y="89.5" font-size="13" fill="#c3c2b7" text-anchor="end">Single-packet throughput · responder</text>
+  <path d="M386.5,75.0 L495.9,75.0 Q499.9,75.0 499.9,79.0 L499.9,91.0 Q499.9,95.0 495.9,95.0 L386.5,95.0 Z" fill="#3987e5"/>
+  <text x="507.9" y="89.5" font-size="12.5" font-weight="600" fill="#ffffff">4.25×</text>
+  <text x="376.5" y="123.5" font-size="13" fill="#c3c2b7" text-anchor="end">Link-message throughput · initiator</text>
+  <path d="M386.5,109.0 L630.9,109.0 Q634.9,109.0 634.9,113.0 L634.9,125.0 Q634.9,129.0 630.9,129.0 L386.5,129.0 Z" fill="#3987e5"/>
+  <text x="642.9" y="123.5" font-size="12.5" font-weight="600" fill="#ffffff">9.31×</text>
+  <text x="376.5" y="157.5" font-size="13" fill="#c3c2b7" text-anchor="end">Link-message throughput · responder</text>
+  <path d="M386.5,143.0 L510.7,143.0 Q514.7,143.0 514.7,147.0 L514.7,159.0 Q514.7,163.0 510.7,163.0 L386.5,163.0 Z" fill="#3987e5"/>
+  <text x="522.7" y="157.5" font-size="12.5" font-weight="600" fill="#ffffff">4.80×</text>
+  <text x="376.5" y="191.5" font-size="13" fill="#c3c2b7" text-anchor="end">Request/response · initiator</text>
+  <path d="M386.5,177.0 L814.0,177.0 Q818.0,177.0 818.0,181.0 L818.0,193.0 Q818.0,197.0 814.0,197.0 L386.5,197.0 Z" fill="#3987e5"/>
+  <text x="826.0" y="191.5" font-size="12.5" font-weight="600" fill="#ffffff">16.17×</text>
+  <text x="376.5" y="225.5" font-size="13" fill="#c3c2b7" text-anchor="end">Request/response · responder</text>
+  <path d="M386.5,211.0 L584.1,211.0 Q588.1,211.0 588.1,215.0 L588.1,227.0 Q588.1,231.0 584.1,231.0 L386.5,231.0 Z" fill="#3987e5"/>
+  <text x="596.1" y="225.5" font-size="12.5" font-weight="600" fill="#ffffff">7.56×</text>
+  <text x="376.5" y="259.5" font-size="13" fill="#c3c2b7" text-anchor="end">Maximum resource segment · initiator</text>
+  <path d="M386.5,245.0 L683.4,245.0 Q687.4,245.0 687.4,249.0 L687.4,261.0 Q687.4,265.0 683.4,265.0 L386.5,265.0 Z" fill="#3987e5"/>
+  <text x="695.4" y="259.5" font-size="12.5" font-weight="600" fill="#ffffff">11.28×</text>
+  <text x="376.5" y="293.5" font-size="13" fill="#c3c2b7" text-anchor="end">Maximum resource segment · responder</text>
+  <path d="M386.5,279.0 L574.3,279.0 Q578.3,279.0 578.3,283.0 L578.3,295.0 Q578.3,299.0 574.3,299.0 L386.5,299.0 Z" fill="#3987e5"/>
+  <text x="586.3" y="293.5" font-size="12.5" font-weight="600" fill="#ffffff">7.19×</text>
+  <text x="376.5" y="327.5" font-size="13" fill="#c3c2b7" text-anchor="end">Maximum resource segment · 1 Gbps policy · initiator</text>
+  <path d="M386.5,313.0 L526.4,313.0 Q530.4,313.0 530.4,317.0 L530.4,329.0 Q530.4,333.0 526.4,333.0 L386.5,333.0 Z" fill="#3987e5"/>
+  <text x="538.4" y="327.5" font-size="12.5" font-weight="600" fill="#ffffff">5.39×</text>
+  <text x="376.5" y="361.5" font-size="13" fill="#c3c2b7" text-anchor="end">Maximum resource segment · 1 Gbps policy · responder</text>
+  <path d="M386.5,347.0 L489.2,347.0 Q493.2,347.0 493.2,351.0 L493.2,363.0 Q493.2,367.0 489.2,367.0 L386.5,367.0 Z" fill="#3987e5"/>
+  <text x="501.2" y="361.5" font-size="12.5" font-weight="600" fill="#ffffff">4.00×</text>
+  <text x="376.5" y="395.5" font-size="13" fill="#c3c2b7" text-anchor="end">64 MiB resource stream · initiator</text>
+  <path d="M386.5,381.0 L604.0,381.0 Q608.0,381.0 608.0,385.0 L608.0,397.0 Q608.0,401.0 604.0,401.0 L386.5,401.0 Z" fill="#3987e5"/>
+  <text x="616.0" y="395.5" font-size="12.5" font-weight="600" fill="#ffffff">8.30×</text>
+  <text x="376.5" y="429.5" font-size="13" fill="#c3c2b7" text-anchor="end">64 MiB resource stream · responder</text>
+  <path d="M386.5,415.0 L645.9,415.0 Q649.9,415.0 649.9,419.0 L649.9,431.0 Q649.9,435.0 645.9,435.0 L386.5,435.0 Z" fill="#3987e5"/>
+  <text x="657.9" y="429.5" font-size="12.5" font-weight="600" fill="#ffffff">9.87×</text>
+  <text x="376.5" y="463.5" font-size="13" fill="#c3c2b7" text-anchor="end">64 MiB resource stream · 1 Gbps policy · initiator</text>
+  <path d="M386.5,449.0 L446.0,449.0 Q450.0,449.0 450.0,453.0 L450.0,465.0 Q450.0,469.0 446.0,469.0 L386.5,469.0 Z" fill="#3987e5"/>
+  <text x="458.0" y="463.5" font-size="12.5" font-weight="600" fill="#ffffff">2.38×</text>
+  <text x="376.5" y="497.5" font-size="13" fill="#c3c2b7" text-anchor="end">64 MiB resource stream · 1 Gbps policy · responder</text>
+  <path d="M386.5,483.0 L481.9,483.0 Q485.9,483.0 485.9,487.0 L485.9,499.0 Q485.9,503.0 481.9,503.0 L386.5,503.0 Z" fill="#3987e5"/>
+  <text x="493.9" y="497.5" font-size="12.5" font-weight="600" fill="#ffffff">3.72×</text>
+  <text x="376.5" y="531.5" font-size="13" fill="#c3c2b7" text-anchor="end">Raw transport throughput · relay</text>
+  <path d="M386.5,517.0 L557.3,517.0 Q561.3,517.0 561.3,521.0 L561.3,533.0 Q561.3,537.0 557.3,537.0 L386.5,537.0 Z" fill="#3987e5"/>
+  <text x="569.3" y="531.5" font-size="12.5" font-weight="600" fill="#ffffff">6.55×</text>
+  <text x="376.5" y="565.5" font-size="13" fill="#c3c2b7" text-anchor="end">Transported resource throughput · relay</text>
+  <path d="M386.5,551.0 L430.5,551.0 Q434.5,551.0 434.5,555.0 L434.5,567.0 Q434.5,571.0 430.5,571.0 L386.5,571.0 Z" fill="#3987e5"/>
+  <text x="442.5" y="565.5" font-size="12.5" font-weight="600" fill="#ffffff">1.80×</text>
+  <text x="376.5" y="599.5" font-size="13" fill="#c3c2b7" text-anchor="end">Transported resource throughput · 1 Gbps policy · relay</text>
+  <path d="M386.5,585.0 L392.8,585.0 Q396.8,585.0 396.8,589.0 L396.8,601.0 Q396.8,605.0 392.8,605.0 L386.5,605.0 Z" fill="#3987e5"/>
+  <text x="404.8" y="599.5" font-size="12.5" font-weight="600" fill="#ffffff">0.39×</text>
+  <line x1="386.5" y1="616.0" x2="818.0" y2="616.0" stroke="#383835" stroke-width="1"/>
+</svg>

@@ -17,6 +17,14 @@ Release binaries run over loopback for 30 seconds per sample, three samples per 
   <img alt="Bar chart of Prns median throughput as a multiple of RNS 1.4.0 (compiled) for each published scenario" src="assets/at-a-glance-x86_64-pc-windows-msvc-light.svg">
 </picture>
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/at-a-glance-memory-x86_64-pc-windows-msvc-dark.svg">
+  <img alt="Bar chart of RNS 1.4.0 (compiled) peak memory as a multiple of Prns for each role and scenario" src="assets/at-a-glance-memory-x86_64-pc-windows-msvc-light.svg">
+</picture>
+
+<details>
+<summary>Chart data as a table</summary>
+
 | Scenario | Prns | Reference | Prns / reference |
 |---|---:|---:|---:|
 | Single-packet throughput | 25.5k/s | 3.4k/s | 7.60× |
@@ -31,6 +39,8 @@ Release binaries run over loopback for 30 seconds per sample, three samples per 
 | Transported resource throughput · 1 Gbps policy | 470.13 MB/s | 94.84 MB/s | 4.96× |
 
 A dash means no current three-sample release evidence is published for that scenario.
+
+</details>
 
 ## Detailed results
 
@@ -75,7 +85,7 @@ Four concurrent small requests with asynchronous 1–4 KiB resource responses ov
 
 **Cell context**
 
-1. **Prns → RNS 1.4.0 (compiled)** — RNS sends a resource advertisement before registering that resource internally. Prns can return the first pull so quickly that RNS drops it. Prns then waits for its 250 ms retry deadline. The published 251.69 ms p99 is the fingerprint of this race.
+1. **Prns → RNS 1.4.0 (compiled)** — RNS sends a resource advertisement before registering that resource internally. Prns can return the first pull so quickly that RNS drops it. Prns then waits for its 250 ms retry deadline. A p99 pinned just above 250 ms is the fingerprint of this race.
 
 ### Resources
 

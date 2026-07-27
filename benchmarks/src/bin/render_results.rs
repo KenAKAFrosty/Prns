@@ -155,7 +155,8 @@ fn render_host(
         implementations,
         qualification_complete(&aggregates),
     );
-    render_headline(&mut out, host, &glance, implementations, assets);
+    let memory = memory_glance_rows(&aggregates, implementations);
+    render_headline(&mut out, host, &glance, &memory, implementations, assets);
 
     let mut grouped: BTreeMap<String, Vec<(Manifest, Vec<&Aggregate>)>> = BTreeMap::new();
     let mut by_scenario: BTreeMap<String, Vec<&Aggregate>> = BTreeMap::new();
@@ -425,6 +426,58 @@ fn glance_rows(
     rows
 }
 
+fn memory_glance_rows(
+    aggregates: &[Aggregate],
+    implementations: &[ImplementationDescriptor],
+) -> Vec<(String, f64)> {
+    let mut rows = Vec::new();
+    for scenario_manifest in load_catalog().expect("validated benchmark catalog") {
+        let scenario = scenario_manifest.name.as_str();
+        let manifest = Manifest::load(scenario);
+        let ours = comparison_subject(
+            aggregates,
+            scenario,
+            "personal-rns",
+            scenario_manifest.topology,
+        );
+        let reference = implementations
+            .iter()
+            .filter(|implementation| implementation.role == ImplementationRole::Reference)
+            .find_map(|implementation| {
+                comparison_subject(
+                    aggregates,
+                    scenario,
+                    &implementation.slug,
+                    scenario_manifest.topology,
+                )
+            });
+        let (Some(ours), Some(reference)) = (ours, reference) else {
+            continue;
+        };
+        let roles: &[(&str, &str)] = match scenario_manifest.topology {
+            ScenarioTopology::Direct => &[
+                ("initiator_peak_rss_bytes", "initiator"),
+                ("responder_peak_rss_bytes", "responder"),
+            ],
+            ScenarioTopology::Relay => &[("relay_peak_rss_bytes", "relay")],
+        };
+        for (metric, role) in roles {
+            if let (Some(ours_rss), Some(reference_rss)) = (
+                ours.maximum(Axis::Memory, metric),
+                reference.maximum(Axis::Memory, metric),
+            ) {
+                if ours_rss > 0.0 {
+                    rows.push((
+                        format!("{} · {role}", manifest.title),
+                        reference_rss / ours_rss,
+                    ));
+                }
+            }
+        }
+    }
+    rows
+}
+
 fn reference_label(implementations: &[ImplementationDescriptor]) -> String {
     implementations
         .iter()
@@ -437,14 +490,21 @@ fn render_headline(
     out: &mut String,
     host: &str,
     glance: &[GlanceRow],
+    memory: &[(String, f64)],
     implementations: &[ImplementationDescriptor],
     assets: &mut Vec<(PathBuf, String)>,
 ) {
     out.push_str("\n## At a glance\n");
     let reference = reference_label(implementations);
     if glance.iter().any(|row| row.ratio.is_some()) {
-        let light = glance_chart_svg(glance, &reference, &LIGHT_CHART);
-        let dark = glance_chart_svg(glance, &reference, &DARK_CHART);
+        let rows: Vec<(String, f64)> = glance
+            .iter()
+            .filter_map(|row| row.ratio.map(|ratio| (row.title.clone(), ratio)))
+            .collect();
+        let caption =
+            format!("Median throughput as a multiple of {reference} · higher is better");
+        let light = ratio_chart_svg(&rows, &caption, &LIGHT_CHART);
+        let dark = ratio_chart_svg(&rows, &caption, &DARK_CHART);
         assets.push((
             bench_dir().join(format!("assets/at-a-glance-{host}-light.svg")),
             light,
@@ -458,7 +518,27 @@ fn render_headline(
             "\n<picture>\n  <source media=\"(prefers-color-scheme: dark)\" srcset=\"assets/at-a-glance-{host}-dark.svg\">\n  <img alt=\"Bar chart of Prns median throughput as a multiple of {reference} for each published scenario\" src=\"assets/at-a-glance-{host}-light.svg\">\n</picture>\n"
         );
     }
-    out.push_str("\n| Scenario | Prns | Reference | Prns / reference |\n|---|---:|---:|---:|\n");
+    if !memory.is_empty() {
+        let caption =
+            format!("{reference} peak RSS as a multiple of Prns · higher means Prns uses less memory");
+        let light = ratio_chart_svg(memory, &caption, &LIGHT_CHART);
+        let dark = ratio_chart_svg(memory, &caption, &DARK_CHART);
+        assets.push((
+            bench_dir().join(format!("assets/at-a-glance-memory-{host}-light.svg")),
+            light,
+        ));
+        assets.push((
+            bench_dir().join(format!("assets/at-a-glance-memory-{host}-dark.svg")),
+            dark,
+        ));
+        let _ = write!(
+            out,
+            "\n<picture>\n  <source media=\"(prefers-color-scheme: dark)\" srcset=\"assets/at-a-glance-memory-{host}-dark.svg\">\n  <img alt=\"Bar chart of {reference} peak memory as a multiple of Prns for each role and scenario\" src=\"assets/at-a-glance-memory-{host}-light.svg\">\n</picture>\n"
+        );
+    }
+    out.push_str(
+        "\n<details>\n<summary>Chart data as a table</summary>\n\n| Scenario | Prns | Reference | Prns / reference |\n|---|---:|---:|---:|\n",
+    );
     for row in glance {
         let ratio = row
             .ratio
@@ -473,15 +553,11 @@ fn render_headline(
         );
     }
     out.push_str(
-        "\nA dash means no current three-sample release evidence is published for that scenario.\n",
+        "\nA dash means no current three-sample release evidence is published for that scenario.\n\n</details>\n",
     );
 }
 
-fn glance_chart_svg(glance: &[GlanceRow], reference: &str, theme: &ChartTheme) -> String {
-    let rows: Vec<(&str, f64)> = glance
-        .iter()
-        .filter_map(|row| row.ratio.map(|ratio| (row.title.as_str(), ratio)))
-        .collect();
+fn ratio_chart_svg(rows: &[(String, f64)], caption: &str, theme: &ChartTheme) -> String {
     let max_ratio = rows.iter().map(|(_, ratio)| *ratio).fold(1.0, f64::max);
 
     let width = 880.0;
@@ -506,9 +582,9 @@ fn glance_chart_svg(glance: &[GlanceRow], reference: &str, theme: &ChartTheme) -
     );
     let _ = writeln!(
         svg,
-        "  <text x=\"{gutter:.1}\" y=\"17\" font-size=\"12\" fill=\"{}\">Median throughput as a multiple of {} · higher is better</text>",
+        "  <text x=\"{gutter:.1}\" y=\"17\" font-size=\"12\" fill=\"{}\">{}</text>",
         theme.secondary,
-        escape_text(reference),
+        escape_text(caption),
     );
 
     let step = tick_step(max_ratio);
@@ -1383,6 +1459,8 @@ mod tests {
         assert!(output.contains("<picture>"));
         assert!(output.contains("assets/at-a-glance-test-host-light.svg"));
         assert!(output.contains("assets/at-a-glance-test-host-dark.svg"));
+        assert!(output.contains("<details>\n<summary>Chart data as a table</summary>"));
+        assert!(output.contains("\n</details>\n"));
         assert_eq!(assets.len(), 2);
         for (path, svg) in &assets {
             assert!(path.ends_with(Path::new("assets").join(format!(
@@ -1401,6 +1479,46 @@ mod tests {
         }
         assert!(assets[0].1.contains(LIGHT_CHART.bar));
         assert!(assets[1].1.contains(DARK_CHART.bar));
+    }
+
+    #[test]
+    fn the_memory_chart_ships_per_role_ratios() {
+        let mut rows = Vec::new();
+        for (implementation, initiator_rss, responder_rss) in [
+            ("personal-rns", 10_485_760.0, 20_971_520.0),
+            ("rns-1.4.0-compiled", 104_857_600.0, 52_428_800.0),
+        ] {
+            for sample in 0..3 {
+                for (metric, value) in [
+                    ("initiator_peak_rss_bytes", initiator_rss),
+                    ("responder_peak_rss_bytes", responder_rss),
+                ] {
+                    let mut result = row(sample, Axis::Memory, metric, Some(value));
+                    result.subject = Subject::Direct {
+                        initiator: implementation.into(),
+                        responder: implementation.into(),
+                        relay: None,
+                    };
+                    rows.push(result);
+                }
+            }
+        }
+        let mut assets = Vec::new();
+        let output = render_host("test-host", &rows, &load_implementations(), &mut assets);
+        assert!(output.contains("assets/at-a-glance-memory-test-host-light.svg"));
+        assert!(output.contains("assets/at-a-glance-memory-test-host-dark.svg"));
+        assert_eq!(assets.len(), 2);
+        for (path, svg) in &assets {
+            assert!(path
+                .to_string_lossy()
+                .contains("at-a-glance-memory-test-host-"));
+            assert!(svg.contains("peak RSS as a multiple of Prns"));
+            assert!(svg.contains(">10.00×<"));
+            assert!(svg.contains(">2.50×<"));
+            assert!(svg.contains("Single-packet throughput · initiator"));
+            assert!(svg.contains("Single-packet throughput · responder"));
+            assert!(!svg.contains("NaN"));
+        }
     }
 
     #[test]
