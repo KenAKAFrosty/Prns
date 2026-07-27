@@ -501,8 +501,7 @@ fn render_headline(
             .iter()
             .filter_map(|row| row.ratio.map(|ratio| (row.title.clone(), ratio)))
             .collect();
-        let caption =
-            format!("Median throughput as a multiple of {reference} · higher is better");
+        let caption = format!("Median throughput as a multiple of {reference} · higher is better");
         let light = ratio_chart_svg(&rows, &caption, &LIGHT_CHART);
         let dark = ratio_chart_svg(&rows, &caption, &DARK_CHART);
         assets.push((
@@ -519,8 +518,9 @@ fn render_headline(
         );
     }
     if !memory.is_empty() {
-        let caption =
-            format!("{reference} peak RSS as a multiple of Prns · higher means Prns uses less memory");
+        let caption = format!(
+            "{reference} peak RSS as a multiple of Prns · higher means Prns uses less memory"
+        );
         let light = ratio_chart_svg(memory, &caption, &LIGHT_CHART);
         let dark = ratio_chart_svg(memory, &caption, &DARK_CHART);
         assets.push((
