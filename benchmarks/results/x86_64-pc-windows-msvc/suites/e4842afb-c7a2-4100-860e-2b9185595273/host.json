@@ -1,0 +1,10 @@
+{
+  "host": "x86_64-pc-windows-msvc",
+  "device_id": "880d54f9-0cda-485a-a8c2-2affa677d51c",
+  "cpu_model": "AMD Ryzen 5 5600X 6-Core Processor",
+  "physical_cores": 6,
+  "logical_cores": 12,
+  "total_memory_bytes": 34282975232,
+  "os_version": "Windows 11 Home",
+  "kernel_version": "26200"
+}
