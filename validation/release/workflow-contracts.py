@@ -143,7 +143,11 @@ def validate() -> list[str]:
         'version: "1.21.0"',
         "cargo binstall --locked --no-confirm --force dioxus-cli@0.7.5",
         "link-arg=/Brepro",
+        "./tools/prns release candidate finalize --",
+        "./tools/prns release candidate package --",
         "./tools/prns release candidate compare --",
+        "./tools/prns release candidate extract --",
+        "./tools/prns release candidate validate-unsigned --",
         "default: retain",
         "bootstrap is forbidden after any signed schema-v2 custody asset exists",
         "./tools/prns release website-history -- probe-stable",
@@ -173,6 +177,30 @@ def validate() -> list[str]:
     readiness = (
         ROOT / ".github" / "workflows" / "release-readiness.yml"
     ).read_text(encoding="utf-8")
+    for preflight_fragment in (
+        "astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86",
+        'python3 validation/run.py run --suite release-contracts --expected-sha "$GITHUB_SHA"',
+    ):
+        if preflight_fragment not in ci:
+            errors.append(
+                f"ci.yml is missing release critical-path preflight {preflight_fragment!r}"
+            )
+    release_contracts = (
+        ROOT / "validation" / "release" / "contracts.sh"
+    ).read_text(encoding="utf-8")
+    for preflight_fragment in (
+        "uvx --from ruff==0.15.22 ruff check",
+        "--select F821",
+        "tools/release",
+        "tools/tests",
+        "validation/release",
+        "-m unittest discover",
+    ):
+        if preflight_fragment not in release_contracts:
+            errors.append(
+                "release contracts are missing critical-path preflight "
+                f"{preflight_fragment!r}"
+            )
     locked_dioxus = "cargo binstall --locked --no-confirm --force dioxus-cli@0.7.5"
     for name, workflow in (
         ("ci.yml", ci),
