@@ -67,7 +67,7 @@ def resolved_tools(output=command_output) -> dict[str, str]:
         "node": output("node", "--version"),
         "npm": output("npm", "--version"),
         "dioxus": output("dx", "--version"),
-        "cargo_binstall": output("cargo-binstall", "--version"),
+        "cargo_binstall": output("cargo-binstall", "-V"),
         "espup": output("espup", "--version"),
         "esp_rustc": output("rustc", "+esp", "--version"),
         "xtensa_gcc": output("xtensa-esp-elf-gcc", "--version"),

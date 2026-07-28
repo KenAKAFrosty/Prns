@@ -10,6 +10,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 import zipfile
 
 
@@ -21,6 +22,7 @@ from flasher_build_metadata import (
     EXPECTED_TOOLS,
     EXPECTED_WEB_PACKAGES,
     build_metadata,
+    resolved_tools,
     validate_metadata,
 )
 from flasher_candidate_output import resolve_output
@@ -322,6 +324,36 @@ class FlasherReproducibilityTests(unittest.TestCase):
             value["tools"]["node"] = "v24.18.1"
             with self.assertRaisesRegex(ValueError, "exact pins"):
                 validate_metadata(value, commit=COMMIT)
+
+    def test_build_metadata_uses_each_tools_version_report_flag(self) -> None:
+        commands: list[tuple[str, ...]] = []
+
+        def output(*command: str) -> str:
+            commands.append(command)
+            return command[0]
+
+        with patch(
+            "flasher_build_metadata.resolved_llvm_objcopy",
+            return_value="llvm-objcopy version 20.1.8",
+        ):
+            resolved_tools(output=output)
+
+        self.assertEqual(
+            commands,
+            [
+                ("rustc", "--version"),
+                ("cargo", "--version"),
+                ("node", "--version"),
+                ("npm", "--version"),
+                ("dx", "--version"),
+                ("cargo-binstall", "-V"),
+                ("espup", "--version"),
+                ("rustc", "+esp", "--version"),
+                ("xtensa-esp-elf-gcc", "--version"),
+                ("python3", "--version"),
+                ("git", "--version"),
+            ],
+        )
 
     def test_sparse_report_covers_all_boards_and_enforces_sixty_percent(self) -> None:
         report = build_report(manifest())
