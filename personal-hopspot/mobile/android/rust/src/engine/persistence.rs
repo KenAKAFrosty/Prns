@@ -19,7 +19,7 @@ pub(super) fn open(storage_dir: &Path) -> Result<NodePersistence, std::io::Error
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct PersistenceRestore {
-    pub(crate) request_endpoints: u32,
+    pub(crate) routes: u32,
     pub(crate) destination_identities: u32,
     pub(crate) tunnels: u32,
     pub(crate) ratchets: u32,
@@ -30,7 +30,7 @@ pub(crate) struct PersistenceRestore {
 impl PersistenceRestore {
     pub(super) fn from_report(report: &PersistenceRestoreReport) -> Self {
         Self {
-            request_endpoints: report.routes.seeded_count,
+            routes: report.routes.seeded_count,
             destination_identities: report.destination_identities.seeded_count,
             tunnels: report.tunnels.seeded_count,
             ratchets: report.ratchets.seeded_count,
