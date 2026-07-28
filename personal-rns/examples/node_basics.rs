@@ -133,6 +133,6 @@ fn example_preconfigured_destination() -> PreConfiguredDestination<'static> {
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
-        request_endpoints: RequestEndpointRegistration::None,
+        request_endpoints: ServeMyRequestEndpoints::No,
     }
 }

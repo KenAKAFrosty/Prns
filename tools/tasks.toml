@@ -75,6 +75,56 @@ entrypoint = ["python3", "tools/guide/run-rust-example.py", "auto_discovery", "t
 requires = ["cargo", "python3"]
 
 [[task]]
+id = "guide.rust-bounded-request"
+summary = "Rust follow-up: a registered request endpoint answers a peer's echo request over a link."
+domain = "guide"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci"]
+entrypoint = ["python3", "tools/guide/run-rust-example.py", "bounded_request", "tokio-host,tcp"]
+requires = ["cargo", "python3"]
+
+[[task]]
+id = "guide.rust-resource-transfer"
+summary = "Rust follow-up: a bounded 64 KiB resource transfer settles with verified delivery."
+domain = "guide"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci"]
+entrypoint = ["python3", "tools/guide/run-rust-example.py", "resource_transfer", "tokio-host,tcp"]
+requires = ["cargo", "python3"]
+
+[[task]]
+id = "guide.rust-dynamic-interface"
+summary = "Rust follow-up: a running node attaches a TCP interface, observes it, and tears it down."
+domain = "guide"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci"]
+entrypoint = ["python3", "tools/guide/run-rust-example.py", "dynamic_interface", "tokio-host,tcp"]
+requires = ["cargo", "python3"]
+
+[[task]]
+id = "guide.rust-app-state"
+summary = "Rust follow-up: a request endpoint serves and updates the node's typed app state across two requests."
+domain = "guide"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci"]
+entrypoint = ["python3", "tools/guide/run-rust-example.py", "app_state", "tokio-host,tcp"]
+requires = ["cargo", "python3"]
+
+[[task]]
+id = "guide.rust-transport-node"
+summary = "Rust follow-up: a transport node relays an announce between two nodes that share no link."
+domain = "guide"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci"]
+entrypoint = ["python3", "tools/guide/run-rust-example.py", "transport_node", "tokio-host,tcp"]
+requires = ["cargo", "python3"]
+
+[[task]]
 id = "build.napi"
 summary = "Build the Node.js native addon and its generated TypeScript definitions."
 domain = "build"

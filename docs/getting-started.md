@@ -80,4 +80,4 @@ You've now seen a node born, announced, and heard. Where next depends on what yo
 - **Putting it on hardware?** [Flash a Hopspot](https://prns.dev/flash) in minutes, or work through the [embedded guide](embedded.md) to build board firmware from source.
 
 
-Working on Prns itself? See [CONTRIBUTING.md](../CONTRIBUTING.md)
+Want to help make Prns itself even better? See [CONTRIBUTING.md](../CONTRIBUTING.md)

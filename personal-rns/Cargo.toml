@@ -37,6 +37,14 @@ required-features = ["tokio-host", "tcp"]
 name = "dynamic_interface"
 required-features = ["tokio-host", "tcp"]
 
+[[example]]
+name = "app_state"
+required-features = ["tokio-host", "tcp"]
+
+[[example]]
+name = "transport_node"
+required-features = ["tokio-host", "tcp"]
+
 [features]
 default = ["std", "std-sync-host"]
 alloc = ["prns-core/alloc", "prns-runtime/alloc"]

@@ -1,72 +1,83 @@
 use core::time::Duration;
+use std::cell::Cell;
 
 use personal_rns::prelude::*;
 
-/// You can actually provide whatever string you'd like. But it's common convention to use URL/filesystem-style syntax like this.
-const EXAMPLE_ENDPOINT_ID: &str = "/example/echo";
+const STATUS_ENDPOINT_ID: &str = "/example/status";
 const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(10);
 
-struct Echo;
-impl RequestEndpoint for Echo {
-    const ENDPOINT_ID: &'static str = EXAMPLE_ENDPOINT_ID;
+struct StatusBoard {
+    greeting: &'static str,
+    hits: Cell<u32>,
+}
+
+struct Status;
+impl RequestEndpoint<StatusBoard> for Status {
+    const ENDPOINT_ID: &'static str = STATUS_ENDPOINT_ID;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
-    async fn handle(mut context: RequestContext<'_, ()>) -> Result<(), Decline> {
-        let data_from_request = context.data;
-        context.respond_packed(data_from_request)
+    async fn handle(mut context: RequestContext<'_, StatusBoard>) -> Result<(), Decline> {
+        let hits = context.state.hits.get() + 1;
+        context.state.hits.set(hits);
+        let reply = format!("{}, visitor {hits}", context.state.greeting);
+        context.respond_packed(reply.as_bytes())
+    }
+}
+
+struct AnnounceRelay {
+    heard: tokio::sync::mpsc::UnboundedSender<DestinationHash>,
+}
+
+fn forward_announces(event: PrnsEvent<'_>, relay: &AnnounceRelay) {
+    if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
+        let _ignored = relay.heard.send(destination);
     }
 }
 
 #[tokio::main]
 async fn main() {
     let responder_destination = responder_destination();
-
     let responder_hash = responder_destination
         .destination_hash()
         .expect("Our example destination has valid app name and aspects");
-
-    let tcp_server = TcpServer::bind("127.0.0.1:0")
+    let server = TcpServer::bind("127.0.0.1:0")
         .await
         .expect("A local TCP server should bind");
-
-    let server_address = tcp_server
+    let server_address = server
         .local_addr()
         .expect("TCP server address should be valid")
         .to_string();
-
     let responder = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [responder_destination],
-        app_state: (),
+        app_state: StatusBoard {
+            greeting: "hello",
+            hits: Cell::new(0),
+        },
         storage: GrowableHeap,
-        request_endpoints: request_endpoints![Echo],
+        request_endpoints: request_endpoints![Status],
         on_event: |_event, _state| {},
         interfaces: ManuallyAttached,
     });
     let responder_handle = responder.handle();
-    let _server = responder_handle.supervise(tcp_server);
+    let _server = responder_handle.supervise(server);
 
-    let (announce_heard_sender, mut announce_heard_listener) =
-        tokio::sync::mpsc::unbounded_channel();
-
-    let tcp_client = TcpClientInterface::new(server_address);
+    let (heard_sender, mut heard_listener) = tokio::sync::mpsc::unbounded_channel();
+    let client = TcpClientInterface::new(server_address);
     let requester = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [requester_destination()],
-        app_state: (),
+        app_state: AnnounceRelay {
+            heard: heard_sender,
+        },
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
-        on_event: move |event, _state| {
-            if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
-                let _ignored = announce_heard_sender.send(destination);
-            }
-        },
+        on_event: forward_announces,
         interfaces: move |node: &PrnsNodeHandle| {
-            node.attach(tcp_client);
+            node.attach(client);
         },
     });
     let requester_handle = requester.handle();
-
     let announcer = responder_handle.clone();
     let _announce_task = tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_millis(200));
@@ -87,7 +98,7 @@ async fn main() {
 
     let exchange = async {
         loop {
-            let destination = announce_heard_listener
+            let destination = heard_listener
                 .recv()
                 .await
                 .expect("The announce stream should stay open");
@@ -99,24 +110,21 @@ async fn main() {
             .establish_link(responder_hash)
             .await
             .expect("The link to the responder should establish");
-
-        let original_message = b"bounded";
-
-        let (response, rtt) = requester_handle
-            .request(
-                link_id,
-                RequestEndpointId::of(EXAMPLE_ENDPOINT_ID),
-                original_message,
-            )
-            .await
-            .expect("The echo request should settle");
-
-        assert_eq!(
-            response.as_slice(),
-            original_message,
-            "The echo response should match what was sent"
+        for expected in ["hello, visitor 1", "hello, visitor 2"] {
+            let (response, rtt) = requester_handle
+                .request(link_id, RequestEndpointId::of(STATUS_ENDPOINT_ID), b"")
+                .await
+                .expect("The status request should settle");
+            assert_eq!(
+                response.as_slice(),
+                expected.as_bytes(),
+                "The endpoint should serve its state's greeting and hit count"
+            );
+            println!("Response in {rtt:?}: {expected}");
+        }
+        println!(
+            "Success: the endpoint served and updated the node's own state across two requests"
         );
-        println!("Received {} bytes in {rtt:?}", response.len());
     };
 
     tokio::select! {
@@ -136,30 +144,28 @@ async fn main() {
 
 fn responder_destination() -> PreConfiguredDestination<'static> {
     PreConfiguredDestination::Single {
-        request_endpoints: ServeMyRequestEndpoints::Yes,
-
         resource_strategy: ResourceStrategy::AcceptNone,
         app_name: "prns-example",
-        aspects: &["bounded-request", "responder"],
+        aspects: &["app-state", "responder"],
         identity: try_generate_identity_secret().expect("OS entropy should be available"),
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
+        request_endpoints: ServeMyRequestEndpoints::Yes,
     }
 }
 
 fn requester_destination() -> PreConfiguredDestination<'static> {
     PreConfiguredDestination::Single {
-        request_endpoints: ServeMyRequestEndpoints::No,
-
         resource_strategy: ResourceStrategy::AcceptNone,
         app_name: "prns-example",
-        aspects: &["bounded-request", "requester"],
+        aspects: &["app-state", "requester"],
         identity: try_generate_identity_secret().expect("OS entropy should be available"),
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
+        request_endpoints: ServeMyRequestEndpoints::No,
     }
 }
