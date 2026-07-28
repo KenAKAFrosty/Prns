@@ -234,15 +234,20 @@ fn validate_slug(board: &BoardCatalogEntry) -> Result<(), CatalogError> {
 fn validate_transport(board: &BoardCatalogEntry) -> Result<(), CatalogError> {
     match (&board.transport, &board.build) {
         (Transport::EspSerial, BoardBuild::Esp(build)) => {
+            let expected_flash_size_label = match board.flash_size {
+                Some(4_194_304) => "4mb",
+                Some(8_388_608) => "8mb",
+                Some(16_777_216) => "16mb",
+                _ => {
+                    return Err(invalid(
+                        board,
+                        "ESP chip/build/flash/reset parameters are unsupported or disagree",
+                    ));
+                }
+            };
             if board.expected_chip.as_deref() != Some(build.chip.as_str())
                 || ChipFamily::parse(&build.chip).is_err()
-                || !matches!(board.flash_size, Some(4_194_304 | 8_388_608))
-                || build.flash_size_label
-                    != if board.flash_size == Some(8_388_608) {
-                        "8mb"
-                    } else {
-                        "4mb"
-                    }
+                || build.flash_size_label != expected_flash_size_label
                 || build.flash_mode != "dio"
                 || build.flash_frequency != "40m"
                 || BeforeResetStrategy::parse(&build.before_reset).is_err()
@@ -351,6 +356,47 @@ mod tests {
             .map(|board| board.slug.as_str())
             .collect::<Vec<_>>();
         assert_eq!(capable, ["heltec-v4", "t-beam-supreme"]);
+        Ok(())
+    }
+
+    #[test]
+    fn embedded_catalog_has_exact_physical_flash_contracts() -> Result<(), CatalogError> {
+        let catalog = board_catalog()?;
+        let contracts = catalog
+            .boards
+            .iter()
+            .map(|board| {
+                let build = match &board.build {
+                    BoardBuild::Esp(build) => Some((
+                        build.partition_table.as_str(),
+                        build.flash_size_label.as_str(),
+                    )),
+                    BoardBuild::Uf2(_) => None,
+                };
+                (board.slug.as_str(), board.flash_size, build)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            contracts,
+            [
+                (
+                    "heltec-v4",
+                    Some(16_777_216),
+                    Some(("partitions-hopspot-16mb.csv", "16mb"))
+                ),
+                (
+                    "t-beam-supreme",
+                    Some(8_388_608),
+                    Some(("partitions-hopspot-8mb.csv", "8mb"))
+                ),
+                (
+                    "xiao-esp32-c6",
+                    Some(4_194_304),
+                    Some(("partitions-hopspot-4mb.csv", "4mb"))
+                ),
+                ("t-echo", None, None),
+            ]
+        );
         Ok(())
     }
 

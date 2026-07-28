@@ -288,6 +288,7 @@ fn build_esp_parts(
     let flash_size = match board.flash_size {
         Some(4_194_304) => FlashSize::_4Mb,
         Some(8_388_608) => FlashSize::_8Mb,
+        Some(16_777_216) => FlashSize::_16Mb,
         other => {
             return Err(AppError::developer_build(format!(
                 "unsupported catalog flash size {other:?}"

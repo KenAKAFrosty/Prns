@@ -689,17 +689,17 @@ mod doctor_tests {
     }
 
     #[test]
-    fn same_chip_ambiguity_is_derived_from_the_board_catalog() {
+    fn catalog_capacities_distinguish_shipping_esp_identities() {
         let catalog = board_catalog().expect("catalog");
         assert!(
             ambiguous_esp_identity_peer(&catalog, catalog.board("heltec-v4").expect("Heltec"))
-                .is_some()
+                .is_none()
         );
         assert!(ambiguous_esp_identity_peer(
             &catalog,
             catalog.board("t-beam-supreme").expect("T-Beam")
         )
-        .is_some());
+        .is_none());
         assert!(ambiguous_esp_identity_peer(
             &catalog,
             catalog.board("xiao-esp32-c6").expect("XIAO")

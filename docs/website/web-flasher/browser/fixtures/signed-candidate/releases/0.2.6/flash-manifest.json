@@ -6,7 +6,7 @@
     "commit": "acd32a00552708dac3e8f7df9a86fa188172ca60"
   },
   "signing": {
-    "key_id": "8220BAB0D5E8D8E8"
+    "key_id": "6B62D3410E007120"
   },
   "targets": [
     {
@@ -16,7 +16,7 @@
       "interfaces": ["Wi-Fi Auto", "TCP Client", "BLE Auto", "LoRa", "ESP-NOW", "USB Auto"],
       "transport": "esp-serial",
       "expected_chip": "esp32s3",
-      "flash_size": 8388608,
+      "flash_size": 16777216,
       "flash_mode": "dio",
       "flash_frequency": "40m",
       "before_reset": "usb-reset",
