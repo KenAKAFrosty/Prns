@@ -115,7 +115,7 @@ class TaskRegistryTests(unittest.TestCase):
             any("implementation must live in its domain directory" in error for error in errors)
         )
 
-    def test_wasm_bindgen_setup_matches_lockfile_and_release_workflow(self) -> None:
+    def test_wasm_bindgen_setup_matches_lockfile_and_release_workflows(self) -> None:
         task = runner.task_map(self.manifest)["build.wasm-docs.stage"]
         lock = tomllib.loads((ROOT / "prns-wasm" / "Cargo.lock").read_text(encoding="utf-8"))
         version = next(
@@ -125,10 +125,19 @@ class TaskRegistryTests(unittest.TestCase):
         )
         setup = task["setup"]
         self.assertIn(f"--version {version} --locked", setup)
-        workflow = (ROOT / ".github" / "workflows" / "release-readiness.yml").read_text(
-            encoding="utf-8"
+        for workflow_name in ("release-readiness.yml", "flasher-candidate.yml"):
+            workflow = (
+                ROOT / ".github" / "workflows" / workflow_name
+            ).read_text(encoding="utf-8")
+            self.assertIn(setup, workflow)
+        candidate = (
+            ROOT / ".github" / "workflows" / "flasher-candidate.yml"
+        ).read_text(encoding="utf-8")
+        version_pattern = re.escape(version)
+        self.assertIn(
+            f"wasm-bindgen --version | grep -E '^wasm-bindgen {version_pattern}$'",
+            candidate,
         )
-        self.assertIn(setup, workflow)
 
     def test_retired_script_callers_are_rejected(self) -> None:
         self.assertIsNotNone(runner.LEGACY_CALL_PATTERN.search("run: bash scripts/legacy.sh"))
