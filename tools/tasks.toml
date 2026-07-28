@@ -684,6 +684,10 @@ path = "tools/release/flasher_build_metadata.py"
 reason = "Shared reproducible build metadata implementation."
 
 [[internal]]
+path = "tools/release/flasher_browser_test_trust.py"
+reason = "Shared production browser-test trust boundary implementation."
+
+[[internal]]
 path = "tools/release/flasher_candidate_output.py"
 reason = "Internal output-path safety helper invoked by candidate construction."
 
