@@ -233,7 +233,7 @@ async fn prepare_connection(
     let Ok(route) = http::route(accepted.stream, accepted.local, &catalog).await else {
         return None;
     };
-    let http::RequestRoute::Upgrade(stream) = route else {
+    let http::RequestEndpoint::Upgrade(stream) = route else {
         return None;
     };
     let Ok(socket) = transport::accept(stream, id).await else {
@@ -369,7 +369,7 @@ mod tests {
             let route = http::route(stream, network::loopback(contract::PORT), &catalog)
                 .await
                 .unwrap();
-            let http::RequestRoute::Upgrade(stream) = route else {
+            let http::RequestEndpoint::Upgrade(stream) = route else {
                 panic!("WebSocket route expected")
             };
             transport::accept(stream, id).await.unwrap()
@@ -429,7 +429,7 @@ mod tests {
             let route = http::route(stream, network::loopback(contract::PORT), &catalog)
                 .await
                 .unwrap();
-            let http::RequestRoute::Upgrade(stream) = route else {
+            let http::RequestEndpoint::Upgrade(stream) = route else {
                 return false;
             };
             transport::accept(stream, id).await.is_ok()
@@ -462,7 +462,7 @@ mod tests {
                 http::route(stream, network::loopback(contract::PORT), &catalog,)
                     .await
                     .unwrap(),
-                http::RequestRoute::Handled
+                http::RequestEndpoint::Handled
             ));
         });
 
@@ -507,7 +507,7 @@ mod tests {
             pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
             app_state: (),
             storage: GrowableHeap,
-            routes: prns_runtime::routes![],
+            routes: prns_runtime::request_endpoints![],
             interfaces: Manual,
             on_event: |_event, _state: &()| {},
         });
@@ -516,7 +516,7 @@ mod tests {
             pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
             app_state: (),
             storage: GrowableHeap,
-            routes: prns_runtime::routes![],
+            routes: prns_runtime::request_endpoints![],
             interfaces: Manual,
             on_event: |_event, _state: &()| {},
         });
@@ -525,7 +525,7 @@ mod tests {
             pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
             app_state: (),
             storage: GrowableHeap,
-            routes: prns_runtime::routes![],
+            routes: prns_runtime::request_endpoints![],
             interfaces: Manual,
             on_event: |_event, _state: &()| {},
         });

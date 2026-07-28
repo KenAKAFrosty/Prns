@@ -1,8 +1,8 @@
 #![allow(clippy::expect_used)]
 
 use personal_rns::identity::IDENTITY_SECRET_KEY_LEN;
-use personal_rns::routes;
-use personal_rns::runtime::{Manual, PrnsNode, PrnsNodeRecipe};
+use personal_rns::request_endpoints;
+use personal_rns::runtime::{ManuallyAttached, PrnsNode, PrnsNodeRecipe};
 use personal_rns::storage::GrowableHeap;
 use prns_interfaces_tokio::shared_instance::rns_rpc::{
     SharedInstanceCredentials, SharedInstanceRpcServer,
@@ -45,8 +45,8 @@ async fn main() {
         pre_configured_destinations: [] as [personal_rns::runtime::PreConfiguredDestination; 0],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
-        interfaces: Manual,
+        request_endpoints: request_endpoints![],
+        interfaces: ManuallyAttached,
         on_event: |_event, _state: &()| {},
     });
 

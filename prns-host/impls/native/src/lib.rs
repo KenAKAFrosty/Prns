@@ -23,7 +23,7 @@ use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::links::channel::MessageType;
 use personal_rns::routing::request_handlers::RequestPolicy as EngineRequestPolicy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
-use personal_rns::runtime::request_router::RespondToken;
+use personal_rns::runtime::request_endpoints::RespondToken;
 use personal_rns::runtime::{
     Diagnostic, Message, PrnsEvent, RequestPathError, ResourceSendError, SegmentCompression,
 };
@@ -32,8 +32,8 @@ use personal_rns::tcp::{TcpClientInterface, TcpServer};
 use personal_rns::udp::UdpInterface;
 use personal_rns::units::{DurationMillis, RttMillis};
 use personal_rns::{
-    load_or_create_identity_secret, routes, try_generate_identity_secret, AttachedInterface,
-    AttachedSupervisor, Manual, PreConfiguredDestination, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
+    load_or_create_identity_secret, request_endpoints, try_generate_identity_secret, AttachedInterface,
+    AttachedSupervisor, ManuallyAttached, PreConfiguredDestination, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
     RatchetPolicy, ResourceStrategy as EngineResourceStrategy, SendError, Zeroizing,
     IDENTITY_SECRET_KEY_LEN,
 };
@@ -393,7 +393,7 @@ fn build_destinations<'a>(
                 link_requests: LinkRequestPolicy::AcceptAll,
                 ratchet: RatchetPolicy::NoRatchets,
                 resource_strategy: EngineResourceStrategy::AcceptNone,
-                request_handlers: personal_rns::runtime::RequestHandlerRegistration::None,
+                request_endpoints: personal_rns::runtime::RequestEndpointRegistration::None,
             },
         })
         .collect()
@@ -474,8 +474,8 @@ async fn run(
         pre_configured_destinations: destinations,
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
-        interfaces: Manual,
+        request_endpoints: request_endpoints![],
+        interfaces: ManuallyAttached,
         on_event: move |event, _state: &()| {
             if !publish_event(event_sink.as_ref(), event) {
                 event_backpressure.notify_waiters();

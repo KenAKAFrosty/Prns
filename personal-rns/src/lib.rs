@@ -4,7 +4,8 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 
 pub use prns_runtime::{
-    crypto, engine, identity, interfaces, persistence, rncp, routes, routing, storage, units, wire,
+    crypto, engine, identity, interfaces, persistence, request_endpoints, rncp, routing, storage,
+    units, wire,
 };
 
 #[cfg(feature = "rnx")]
@@ -79,8 +80,8 @@ pub use prns_runtime::interfaces::InterfaceStatus;
 pub use prns_runtime::routing::links::resources::ResourceStrategy;
 pub use prns_runtime::routing::ProofStrategy;
 pub use prns_runtime::runtime::{
-    Diagnostic, Manual, Message, PreConfiguredDestination, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe,
-    RuntimeHealth, SendError,
+    Diagnostic, ManuallyAttached, Message, PreConfiguredDestination, PrnsEvent, PrnsNodeApi,
+    PrnsNodeRecipe, RuntimeHealth, SendError,
 };
 pub use prns_runtime::wire::{DestinationHash, TransportId};
 

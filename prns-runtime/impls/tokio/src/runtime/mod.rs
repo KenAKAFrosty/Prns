@@ -37,7 +37,7 @@ pub use node_facade::{
     NonRoutingIdentityError, PersistenceEvent, PersistenceFlushStatus, PersistenceRestoreReport,
     PersistenceTrigger, PersistenceWorker, PrepareFlushError, PreparedFlush,
     PreparedResourceReceiver, PrnsNode, PrnsNodeHandle, RatchetSeedReport, RegionFlush,
-    RegisterRequestRouteError, RequestPathError, ResourceAdmissionPeer, ResourceOfferAdmission,
+    RegisterRequestEndpointError, RequestPathError, ResourceAdmissionPeer, ResourceOfferAdmission,
     ResourceOfferMonitor, ResourceProgress, ResourceReceipt, ResourceReceiveError,
     ResourceSendError, ResponseSendError, RouteSeedProgress, RouteSeedReport, SegmentCompression,
     SharedInstanceIdentityError, StreamId, TunnelSeedReport, AUTO_COMPRESS_MAX_LEN,

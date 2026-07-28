@@ -7,13 +7,13 @@ use personal_rns::engine::{
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::BitrateBps;
 use personal_rns::manifold::reconnect::ReconnectPolicy;
-use personal_rns::routes;
+use personal_rns::request_endpoints;
 use personal_rns::routing::request_handlers::RequestPathHash;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
-use personal_rns::runtime::request_router::{Decline, RequestContext, RequestRoute, RoutePolicy};
+use personal_rns::runtime::request_endpoints::{Decline, RequestContext, RequestEndpoint, RequestEndpointPolicy};
 use personal_rns::runtime::{
-    Diagnostic, Manual, Message, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle,
-    PrnsNodeRecipe, RequestHandlerRegistration,
+    Diagnostic, ManuallyAttached, Message, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle,
+    PrnsNodeRecipe, RequestEndpointRegistration,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::{TcpClientInterface, TcpServer};
@@ -29,9 +29,9 @@ fn secret(byte: u8) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
 struct Responder;
 
 struct Echo;
-impl RequestRoute<Responder> for Echo {
+impl RequestEndpoint<Responder> for Echo {
     const PATH: &'static str = QUERY_PATH;
-    const POLICY: RoutePolicy = RoutePolicy::AllowAll;
+    const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
     async fn handle(mut cx: RequestContext<'_, Responder>) -> Result<(), Decline> {
         let asked = cx.data;
         let _ = cx.write_packed(asked);
@@ -40,9 +40,9 @@ impl RequestRoute<Responder> for Echo {
 }
 
 struct Fat;
-impl RequestRoute<Responder> for Fat {
+impl RequestEndpoint<Responder> for Fat {
     const PATH: &'static str = "/test/fat";
-    const POLICY: RoutePolicy = RoutePolicy::AllowAll;
+    const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
     async fn handle(mut cx: RequestContext<'_, Responder>) -> Result<(), Decline> {
         cx.respond_packed(&fat_body())
     }
@@ -59,7 +59,7 @@ enum Heard {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_request_router_answers_a_live_request_over_tcp() {
+async fn a_request_endpoints_answers_a_live_request_over_tcp() {
     let responder_dest = PreConfiguredDestination::Single {
         resource_strategy: personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
         app_name: "bench",
@@ -69,7 +69,7 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
-        request_handlers: RequestHandlerRegistration::NodeRouteSet,
+        request_endpoints: RequestEndpointRegistration::NodeRequestEndpointSet,
     };
     let dest_a = responder_dest
         .destination_hash()
@@ -84,9 +84,9 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
         pre_configured_destinations: [responder_dest],
         app_state: Responder,
         storage: GrowableHeap,
-        routes: routes![Echo],
+        request_endpoints: request_endpoints![Echo],
         on_event: |_event, _state| {},
-        interfaces: Manual,
+        interfaces: ManuallyAttached,
     });
 
     let announcer = node_a.handle();
@@ -122,11 +122,11 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
             proof: ProofStrategy::ProveAll,
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
-            request_handlers: RequestHandlerRegistration::None,
+            request_endpoints: RequestEndpointRegistration::None,
         }],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         on_event: move |event, _state| {
             let mapped = match event {
                 PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) => {
@@ -214,7 +214,7 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
-        request_handlers: RequestHandlerRegistration::NodeRouteSet,
+        request_endpoints: RequestEndpointRegistration::NodeRequestEndpointSet,
     };
     let dest_a = responder_dest
         .destination_hash()
@@ -229,9 +229,9 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
         pre_configured_destinations: [responder_dest],
         app_state: Responder,
         storage: GrowableHeap,
-        routes: routes![Echo],
+        request_endpoints: request_endpoints![Echo],
         on_event: |_event, _state| {},
-        interfaces: Manual,
+        interfaces: ManuallyAttached,
     });
 
     let announcer = node_a.handle();
@@ -267,11 +267,11 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
             proof: ProofStrategy::ProveAll,
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
-            request_handlers: RequestHandlerRegistration::None,
+            request_endpoints: RequestEndpointRegistration::None,
         }],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
                 let _ = heard_tx.send(destination);
@@ -340,7 +340,7 @@ async fn the_hopspot_node_page_serves_over_tcp() {
         proof: ProofStrategy::ProveNone,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
-        request_handlers: RequestHandlerRegistration::NodeRouteSet,
+        request_endpoints: RequestEndpointRegistration::NodeRequestEndpointSet,
     };
     let dest_a = responder_dest
         .destination_hash()
@@ -355,9 +355,9 @@ async fn the_hopspot_node_page_serves_over_tcp() {
         pre_configured_destinations: [responder_dest],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![node_pages::NodeIndexPage],
+        request_endpoints: request_endpoints![node_pages::NodeIndexPage],
         on_event: |_event, _state| {},
-        interfaces: Manual,
+        interfaces: ManuallyAttached,
     });
 
     let announcer = node_a.handle();
@@ -393,11 +393,11 @@ async fn the_hopspot_node_page_serves_over_tcp() {
             proof: ProofStrategy::ProveAll,
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
-            request_handlers: RequestHandlerRegistration::None,
+            request_endpoints: RequestEndpointRegistration::None,
         }],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
                 let _ = heard_tx.send(destination);
@@ -466,7 +466,7 @@ async fn serve_the_hopspot_page_for_a_stock_client() {
         proof: ProofStrategy::ProveNone,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
-        request_handlers: RequestHandlerRegistration::NodeRouteSet,
+        request_endpoints: RequestEndpointRegistration::NodeRequestEndpointSet,
     };
     let dest_a = responder_dest
         .destination_hash()
@@ -480,9 +480,9 @@ async fn serve_the_hopspot_page_for_a_stock_client() {
         pre_configured_destinations: [responder_dest],
         app_state: (),
         storage: GrowableHeap,
-        routes: node_pages::NodePageRoutes,
+        request_endpoints: node_pages::NodePageRoutes,
         on_event: |_event, _state| {},
-        interfaces: Manual,
+        interfaces: ManuallyAttached,
     });
 
     let announcer = node_a.handle();
@@ -524,7 +524,7 @@ async fn a_split_response_answers_a_small_request_over_tcp() {
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
-        request_handlers: RequestHandlerRegistration::NodeRouteSet,
+        request_endpoints: RequestEndpointRegistration::NodeRequestEndpointSet,
     };
     let dest_a = responder_dest
         .destination_hash()
@@ -539,9 +539,9 @@ async fn a_split_response_answers_a_small_request_over_tcp() {
         pre_configured_destinations: [responder_dest],
         app_state: Responder,
         storage: GrowableHeap,
-        routes: routes![Fat],
+        request_endpoints: request_endpoints![Fat],
         on_event: |_event, _state| {},
-        interfaces: Manual,
+        interfaces: ManuallyAttached,
     });
 
     let announcer = node_a.handle();
@@ -577,11 +577,11 @@ async fn a_split_response_answers_a_small_request_over_tcp() {
             proof: ProofStrategy::ProveAll,
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
-            request_handlers: RequestHandlerRegistration::None,
+            request_endpoints: RequestEndpointRegistration::None,
         }],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
                 let _ = heard_tx.send(destination);

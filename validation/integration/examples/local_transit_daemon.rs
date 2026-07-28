@@ -5,8 +5,8 @@ use std::string::String;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::BitrateBps;
 use personal_rns::interfaces::{IfacContext, IfacSize};
-use personal_rns::routes;
-use personal_rns::runtime::{Diagnostic, Manual, PrnsEvent, PrnsNode, PrnsNodeRecipe};
+use personal_rns::request_endpoints;
+use personal_rns::runtime::{Diagnostic, ManuallyAttached, PrnsEvent, PrnsNode, PrnsNodeRecipe};
 use personal_rns::storage::GrowableHeap;
 use prns_interfaces_tokio::reconnect::ReconnectPolicy;
 use prns_interfaces_tokio::shared_instance::rns_rpc::{
@@ -80,8 +80,8 @@ async fn main() {
         pre_configured_destinations: [] as [personal_rns::runtime::PreConfiguredDestination; 0],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
-        interfaces: Manual,
+        request_endpoints: request_endpoints![],
+        interfaces: ManuallyAttached,
         on_event: |event, _state: &()| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
                 destination,

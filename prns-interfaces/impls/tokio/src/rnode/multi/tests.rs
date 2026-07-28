@@ -486,7 +486,7 @@ async fn a_serial_drop_removes_and_recreates_every_logical_radio_together() {
         pre_configured_destinations: std::iter::empty::<PreConfiguredDestination<'static>>(),
         app_state: (),
         storage: GrowableHeap,
-        routes: prns_runtime::routes![],
+        routes: prns_runtime::request_endpoints![],
         interfaces: Manual,
         on_event: |_event, _state: &()| {},
     });

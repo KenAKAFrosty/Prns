@@ -4,11 +4,11 @@ use std::string::String;
 
 use personal_rns::engine::RatchetPolicy;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::routes;
+use personal_rns::request_endpoints;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
-    Diagnostic, Manual, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeRecipe,
-    RequestHandlerRegistration,
+    Diagnostic, ManuallyAttached, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeRecipe,
+    RequestEndpointRegistration,
 };
 use personal_rns::storage::GrowableHeap;
 use prns_core::interfaces::shared_instance::DEFAULT_LOCAL_PORT;
@@ -40,12 +40,12 @@ async fn main() {
             proof: ProofStrategy::ProveAll,
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
-            request_handlers: RequestHandlerRegistration::None,
+            request_endpoints: RequestEndpointRegistration::None,
         }],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
-        interfaces: Manual,
+        request_endpoints: request_endpoints![],
+        interfaces: ManuallyAttached,
         on_event: |event, _state: &()| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
                 destination,

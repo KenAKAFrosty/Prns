@@ -79,8 +79,8 @@ fn a_recipe_node_hears_an_ifac_announce_a_supervisor_stands_a_peer_up_for() {
         }],
         app_state: (),
         storage: GrowableHeap,
-        routes: crate::routes![],
-        interfaces: crate::runtime::Manual,
+        request_endpoints: crate::request_endpoints![],
+        interfaces: crate::runtime::ManuallyAttached,
         on_event: move |event: PrnsEvent<'_>, _state: &()| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { .. }) = event {
                 *heard_sink.borrow_mut() += 1;

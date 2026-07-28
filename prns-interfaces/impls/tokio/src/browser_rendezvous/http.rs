@@ -11,7 +11,7 @@ use super::catalog::Catalog;
 const MAX_REQUEST_HEAD_LEN: usize = 8 * 1024;
 const REQUEST_POLL_INTERVAL: Duration = Duration::from_millis(2);
 
-pub(super) enum RequestRoute {
+pub(super) enum RequestEndpoint {
     Upgrade(TcpStream),
     Handled,
 }
@@ -20,20 +20,20 @@ pub(super) async fn route(
     mut stream: TcpStream,
     local: SocketAddr,
     catalog: &Catalog,
-) -> std::io::Result<RequestRoute> {
+) -> std::io::Result<RequestEndpoint> {
     let head = peek_head(&stream).await?;
     let Some((method, target)) = request_line(&head) else {
         consume_head(&mut stream, head.len()).await?;
         write_response(&mut stream, "400 Bad Request", &[], b"").await?;
-        return Ok(RequestRoute::Handled);
+        return Ok(RequestEndpoint::Handled);
     };
     if method == "GET" && target == contract::PATH {
-        return Ok(RequestRoute::Upgrade(stream));
+        return Ok(RequestEndpoint::Upgrade(stream));
     }
     consume_head(&mut stream, head.len()).await?;
     if target != contract::CATALOG_PATH {
         write_response(&mut stream, "404 Not Found", &[], b"").await?;
-        return Ok(RequestRoute::Handled);
+        return Ok(RequestEndpoint::Handled);
     }
     match method {
         "GET" => {
@@ -81,7 +81,7 @@ pub(super) async fn route(
             .await?;
         }
     }
-    Ok(RequestRoute::Handled)
+    Ok(RequestEndpoint::Handled)
 }
 
 async fn peek_head(stream: &TcpStream) -> std::io::Result<Vec<u8>> {

@@ -7,14 +7,16 @@ use personal_rns::engine::{
 };
 use personal_rns::interfaces::BitrateBps;
 use personal_rns::manifold::reconnect::ReconnectPolicy;
-use personal_rns::routes;
+use personal_rns::request_endpoints;
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::request_handlers::RequestPathHash;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
-use personal_rns::runtime::request_router::{Decline, RequestContext, RequestRoute, RoutePolicy};
+use personal_rns::runtime::request_endpoints::{
+    Decline, RequestContext, RequestEndpoint, RequestEndpointPolicy,
+};
 use personal_rns::runtime::{
-    Diagnostic, Manual, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle,
-    PrnsNodeRecipe, RequestHandlerRegistration,
+    Diagnostic, ManuallyAttached, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle,
+    PrnsNodeRecipe, RequestEndpointRegistration,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::{TcpClientInterface, TcpServer};
@@ -28,9 +30,9 @@ struct Responder;
 
 struct Echo;
 
-impl RequestRoute<Responder> for Echo {
+impl RequestEndpoint<Responder> for Echo {
     const PATH: &'static str = QUERY_PATH;
-    const POLICY: RoutePolicy = RoutePolicy::AllowAll;
+    const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
     async fn handle(mut context: RequestContext<'_, Responder>) -> Result<(), Decline> {
         let requested = context.data;
@@ -40,7 +42,7 @@ impl RequestRoute<Responder> for Echo {
 }
 
 fn destination(
-    request_handlers: RequestHandlerRegistration,
+    request_endpoints: RequestEndpointRegistration,
 ) -> Result<PreConfiguredDestination<'static>, Box<dyn Error>> {
     Ok(PreConfiguredDestination::Single {
         resource_strategy: ResourceStrategy::AcceptNone,
@@ -51,13 +53,13 @@ fn destination(
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
-        request_handlers,
+        request_endpoints,
     })
 }
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let responder_destination = destination(RequestHandlerRegistration::NodeRouteSet)?;
+    let responder_destination = destination(RequestEndpointRegistration::NodeRequestEndpointSet)?;
     let responder_hash = responder_destination
         .destination_hash()
         .map_err(|error| io::Error::other(format!("invalid destination name: {error:?}")))?;
@@ -68,9 +70,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         pre_configured_destinations: [responder_destination],
         app_state: Responder,
         storage: GrowableHeap,
-        routes: routes![Echo],
+        request_endpoints: request_endpoints![Echo],
         on_event: |_event, _state| {},
-        interfaces: Manual,
+        interfaces: ManuallyAttached,
     });
     let responder_handle = responder.handle();
     let _server = responder_handle.supervise(server);
@@ -79,10 +81,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let client = TcpClientInterface::new(server_address, BITRATE, ReconnectPolicy::STANDARD);
     let requester = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        pre_configured_destinations: [destination(RequestHandlerRegistration::None)?],
+        pre_configured_destinations: [destination(RequestEndpointRegistration::None)?],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
                 let _ignored = announce_tx.send(destination);

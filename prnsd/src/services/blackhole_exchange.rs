@@ -13,13 +13,13 @@ use personal_rns::routing::announce::{derive_single_destination_hash, ExpandName
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::request_handlers::RequestPathHash;
 use personal_rns::routing::{BlackholeIdentityOutcome, LinkRequestPolicy, ProofStrategy};
-use personal_rns::runtime::request_router::{
-    Decline, RequestContext, RequestRoute, RoutePolicy, RouteSet,
+use personal_rns::runtime::request_endpoints::{
+    Decline, RequestContext, RequestEndpoint, RequestEndpointPolicy, RequestEndpointSet,
 };
 use personal_rns::runtime::{
     ConfigurePreconfiguredDestinationError, IdentityBlackholeControl,
     IdentityBlackholeControlError, IdentityBlackholeSource, PreConfiguredDestination, PrnsEvent,
-    PrnsNode, PrnsNodeHandle, RegisterRequestRouteError, RequestHandlerRegistration, SendError,
+    PrnsNode, PrnsNodeHandle, RegisterRequestEndpointError, RequestEndpointRegistration, SendError,
 };
 use personal_rns::shared_instance::{RnsBlackholeFileError, RnsBlackholeFiles};
 use personal_rns::storage::StorageLayout;
@@ -36,7 +36,7 @@ pub struct ListRoute;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActivationError {
     Destination(ConfigurePreconfiguredDestinationError),
-    Route(RegisterRequestRouteError),
+    Route(RegisterRequestEndpointError),
 }
 
 #[derive(Debug)]
@@ -69,9 +69,9 @@ impl fmt::Display for BlackholeUpdateError {
     }
 }
 
-impl RequestRoute<DaemonRequestState> for ListRoute {
+impl RequestEndpoint<DaemonRequestState> for ListRoute {
     const PATH: &'static str = LIST_PATH;
-    const POLICY: RoutePolicy = RoutePolicy::AllowAll;
+    const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
     async fn handle(mut context: RequestContext<'_, DaemonRequestState>) -> Result<(), Decline> {
         let entries = context
@@ -92,7 +92,7 @@ pub fn activate<R, F, S>(
     identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
 ) -> Result<DestinationHash, ActivationError>
 where
-    R: RouteSet<DaemonRequestState>,
+    R: RequestEndpointSet<DaemonRequestState>,
     F: FnMut(PrnsEvent<'_>, &DaemonRequestState),
     S: StorageLayout,
 {
@@ -106,7 +106,7 @@ where
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
             resource_strategy: ResourceStrategy::AcceptNone,
-            request_handlers: RequestHandlerRegistration::None,
+            request_endpoints: RequestEndpointRegistration::None,
         })
         .map_err(ActivationError::Destination)?;
     node.register_request_route::<ListRoute>(&destination)

@@ -19,7 +19,11 @@ path = "src/lib.rs"
 
 [[example]]
 name = "node_basics"
-required-features = ["tokio-host", "tcp", "wifi-auto", "usb", "bluetooth-auto"]
+required-features = ["tokio-host", "tcp"]
+
+[[example]]
+name = "auto_discovery"
+required-features = ["tokio-host", "wifi-auto"]
 
 [[example]]
 name = "bounded_request"

@@ -13,9 +13,9 @@ use crate::storage::StorageLayout;
 use crate::storage::TablePushError;
 use crate::wire::DestinationHash;
 
-use super::super::request_router::RouteSet;
+use super::super::request_endpoints::RequestEndpointSet;
 use super::super::PrnsEvent;
-use super::recipe::{PreConfiguredDestination, PrnsNodeRecipe, RequestHandlerRegistration};
+use super::recipe::{PreConfiguredDestination, PrnsNodeRecipe, RequestEndpointRegistration};
 
 pub struct AssembledNode<St, R, F, S>
 where
@@ -24,7 +24,7 @@ where
     pub engine: EngineState<S>,
     pub state: St,
     pub on_event: F,
-    pub routes: PhantomData<R>,
+    pub request_endpoints: PhantomData<R>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,7 +51,7 @@ pub fn configure_preconfigured_destination<'a, St, R, S>(
     destination: PreConfiguredDestination<'a>,
 ) -> Result<DestinationHash, ConfigurePreconfiguredDestinationError>
 where
-    R: RouteSet<St>,
+    R: RequestEndpointSet<St>,
     S: StorageLayout,
 {
     match destination {
@@ -67,7 +67,7 @@ where
             link_requests,
             ratchet,
             resource_strategy,
-            request_handlers,
+            request_endpoints,
         } => configure_single_destination::<St, R, S>(
             engine,
             SingleDestinationConfiguration {
@@ -80,7 +80,7 @@ where
                 ratchet,
                 resource_strategy,
             },
-            request_handlers,
+            request_endpoints,
         ),
     }
 }
@@ -88,10 +88,10 @@ where
 fn configure_single_destination<St, R, S>(
     engine: &mut EngineState<S>,
     configuration: SingleDestinationConfiguration<'_>,
-    request_handlers: RequestHandlerRegistration,
+    request_endpoints: RequestEndpointRegistration,
 ) -> Result<DestinationHash, ConfigurePreconfiguredDestinationError>
 where
-    R: RouteSet<St>,
+    R: RequestEndpointSet<St>,
     S: StorageLayout,
 {
     let SingleDestinationConfiguration {
@@ -119,7 +119,10 @@ where
         )
         .map_err(ConfigurePreconfiguredDestinationError::Register)?;
     engine.set_default_resource_strategy(&destination, resource_strategy);
-    if matches!(request_handlers, RequestHandlerRegistration::NodeRouteSet) {
+    if matches!(
+        request_endpoints,
+        RequestEndpointRegistration::NodeRequestEndpointSet
+    ) {
         register_request_routes_for::<St, R, S>(engine, destination)?;
     }
     Ok(destination)
@@ -130,7 +133,7 @@ fn register_request_routes_for<St, R, S>(
     destination: DestinationHash,
 ) -> Result<(), ConfigurePreconfiguredDestinationError>
 where
-    R: RouteSet<St>,
+    R: RequestEndpointSet<St>,
     S: StorageLayout,
 {
     for (path, policy) in R::REGISTRATIONS {
@@ -152,7 +155,7 @@ pub fn assemble_node<'a, D, St, R, F, I, S>(
 ) -> (AssembledNode<St, R, F, S>, I)
 where
     D: IntoIterator<Item = PreConfiguredDestination<'a>>,
-    R: RouteSet<St>,
+    R: RequestEndpointSet<St>,
     F: FnMut(PrnsEvent<'_>, &St),
     S: StorageLayout,
 {
@@ -161,7 +164,7 @@ where
         pre_configured_destinations,
         app_state,
         storage: _,
-        routes: _,
+        request_endpoints: _,
         interfaces,
         on_event,
     } = recipe;
@@ -170,7 +173,7 @@ where
         engine: EngineState::<S>::default(),
         state: app_state,
         on_event,
-        routes: PhantomData,
+        request_endpoints: PhantomData,
     };
     configure_assembled_node(&mut node, pre_configured_destinations, transport_identity);
     (node, interfaces)
@@ -187,7 +190,7 @@ pub fn assemble_node_in_place<'a, 'slot, D, St, R, F, I, S>(
 ) -> (&'slot mut AssembledNode<St, R, F, S>, I)
 where
     D: IntoIterator<Item = PreConfiguredDestination<'a>>,
-    R: RouteSet<St>,
+    R: RequestEndpointSet<St>,
     F: FnMut(PrnsEvent<'_>, &St),
     S: StorageLayout,
 {
@@ -196,7 +199,7 @@ where
         pre_configured_destinations,
         app_state,
         storage: _,
-        routes: _,
+        request_endpoints: _,
         interfaces,
         on_event,
     } = recipe;
@@ -207,7 +210,7 @@ where
         EngineState::init_in_place(engine);
         core::ptr::addr_of_mut!((*node).state).write(app_state);
         core::ptr::addr_of_mut!((*node).on_event).write(on_event);
-        core::ptr::addr_of_mut!((*node).routes).write(PhantomData);
+        core::ptr::addr_of_mut!((*node).request_endpoints).write(PhantomData);
     }
     let node = unsafe { slot.assume_init_mut() };
     configure_assembled_node(node, pre_configured_destinations, transport_identity);
@@ -221,7 +224,7 @@ fn configure_assembled_node<'a, D, St, R, F, S>(
     transport_identity: Option<Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>>,
 ) where
     D: IntoIterator<Item = PreConfiguredDestination<'a>>,
-    R: RouteSet<St>,
+    R: RequestEndpointSet<St>,
     F: FnMut(PrnsEvent<'_>, &St),
     S: StorageLayout,
 {
@@ -246,17 +249,17 @@ mod tests {
     use super::*;
     use crate::identity::IdentityHash;
     use crate::routing::request_handlers::RequestPathHash;
-    use crate::runtime::request_router::{Decline, RequestContext, RoutePolicy};
-    use crate::runtime::Manual;
+    use crate::runtime::request_endpoints::{Decline, RequestContext, RequestEndpointPolicy};
+    use crate::runtime::ManuallyAttached;
     use crate::storage::TestFixedStorage;
 
     type Storage = TestFixedStorage<4, 4, 128, 4, 4, 4, 2, 2, 2, 2, 2, 2>;
 
     struct Routes;
 
-    impl RouteSet<()> for Routes {
-        const REGISTRATIONS: &'static [(&'static str, RoutePolicy)] =
-            &[("/test", RoutePolicy::AllowList(&[]))];
+    impl RequestEndpointSet<()> for Routes {
+        const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)] =
+            &[("/test", RequestEndpointPolicy::AllowList(&[]))];
 
         async fn dispatch(
             _cx: RequestContext<'_, ()>,
@@ -267,7 +270,7 @@ mod tests {
     }
 
     fn configured_engine(
-        request_handlers: RequestHandlerRegistration,
+        request_endpoints: RequestEndpointRegistration,
     ) -> (EngineState<Storage>, DestinationHash) {
         let mut engine = EngineState::<Storage>::default();
         let destination = configure_preconfigured_destination::<(), Routes, Storage>(
@@ -281,7 +284,7 @@ mod tests {
                 link_requests: LinkRequestPolicy::AcceptAll,
                 ratchet: RatchetPolicy::NoRatchets,
                 resource_strategy: ResourceStrategy::AcceptNone,
-                request_handlers,
+                request_endpoints,
             },
         )
         .expect("the test destination fits fixed storage");
@@ -290,7 +293,8 @@ mod tests {
 
     #[test]
     fn node_route_set_attaches_routes_to_the_destination() {
-        let (mut engine, destination) = configured_engine(RequestHandlerRegistration::NodeRouteSet);
+        let (mut engine, destination) =
+            configured_engine(RequestEndpointRegistration::NodeRequestEndpointSet);
 
         assert_eq!(
             engine.allow_requester(&destination, "/test", IdentityHash::new([0x22; 16])),
@@ -300,7 +304,7 @@ mod tests {
 
     #[test]
     fn none_leaves_routes_unattached_from_the_destination() {
-        let (mut engine, destination) = configured_engine(RequestHandlerRegistration::None);
+        let (mut engine, destination) = configured_engine(RequestEndpointRegistration::None);
 
         assert_eq!(
             engine.allow_requester(&destination, "/test", IdentityHash::new([0x22; 16])),
@@ -312,7 +316,7 @@ mod tests {
     fn in_place_assembly_initializes_and_configures_the_node() {
         let mut slot = MaybeUninit::uninit();
         let storage: Storage = TestFixedStorage;
-        let (node, Manual) = assemble_node_in_place(
+        let (node, ManuallyAttached) = assemble_node_in_place(
             &mut slot,
             PrnsNodeRecipe {
                 transport_identity: Some(Zeroizing::new([0x33; IDENTITY_SECRET_KEY_LEN])),
@@ -322,8 +326,8 @@ mod tests {
                 }],
                 app_state: (),
                 storage,
-                routes: Routes,
-                interfaces: Manual,
+                request_endpoints: Routes,
+                interfaces: ManuallyAttached,
                 on_event: |_, _| {},
             },
         );

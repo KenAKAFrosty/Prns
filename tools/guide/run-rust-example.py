@@ -21,7 +21,7 @@ def main() -> int:
         "--example",
         "node_basics",
         "--features",
-        "tokio-host,tcp,wifi-auto,usb,bluetooth-auto",
+        "tokio-host,tcp",
         "--",
         *sys.argv[1:],
     ]

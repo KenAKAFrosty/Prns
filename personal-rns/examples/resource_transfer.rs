@@ -7,12 +7,12 @@ use personal_rns::engine::{
 };
 use personal_rns::interfaces::BitrateBps;
 use personal_rns::manifold::reconnect::ReconnectPolicy;
-use personal_rns::routes;
+use personal_rns::request_endpoints;
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
-    Diagnostic, Manual, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle,
-    PrnsNodeRecipe, RequestHandlerRegistration,
+    Diagnostic, ManuallyAttached, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle,
+    PrnsNodeRecipe, RequestEndpointRegistration,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::{TcpClientInterface, TcpServer};
@@ -34,7 +34,7 @@ fn destination(
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
-        request_handlers: RequestHandlerRegistration::None,
+        request_endpoints: RequestEndpointRegistration::None,
     })
 }
 
@@ -54,9 +54,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         pre_configured_destinations: [receiver_destination],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         on_event: |_event, _state| {},
-        interfaces: Manual,
+        interfaces: ManuallyAttached,
     });
     let receiver_handle = receiver.handle();
     let _server = receiver_handle.supervise(server);
@@ -68,7 +68,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         pre_configured_destinations: [destination(ResourceStrategy::AcceptNone)?],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
                 let _ignored = announce_tx.send(destination);

@@ -160,7 +160,9 @@ fn bootstrap_action(active: bool, capacity: AutoConnectCapacity) -> BootstrapAct
 #[cfg(test)]
 mod tests {
     use personal_rns::from_plan::{PlanAttachments, PlanRuntimeContext};
-    use personal_rns::runtime::{Manual, PreConfiguredDestination, PrnsNode, PrnsNodeRecipe};
+    use personal_rns::runtime::{
+        ManuallyAttached, PreConfiguredDestination, PrnsNode, PrnsNodeRecipe,
+    };
     use personal_rns::storage::GrowableHeap;
 
     use super::{
@@ -247,8 +249,8 @@ mod tests {
             pre_configured_destinations: std::iter::empty::<PreConfiguredDestination<'static>>(),
             app_state: (),
             storage: GrowableHeap,
-            routes: personal_rns::routes![],
-            interfaces: Manual,
+            request_endpoints: personal_rns::request_endpoints![],
+            interfaces: ManuallyAttached,
             on_event: |_event, _state: &()| {},
         });
         let handle = node.handle();

@@ -181,7 +181,7 @@ async fn an_eligible_discovery_stands_up_a_real_backbone_client() {
         pre_configured_destinations: std::iter::empty::<PreConfiguredDestination<'static>>(),
         app_state: (),
         storage: GrowableHeap,
-        routes: prns_runtime::routes![],
+        routes: prns_runtime::request_endpoints![],
         interfaces: Manual,
         on_event: |_event, _state: &()| {},
     })

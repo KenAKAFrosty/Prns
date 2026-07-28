@@ -1,8 +1,8 @@
 use personal_rns::routing::links::request::{packed_binary_len, RESPONSE_WIRE_OVERHEAD};
 use personal_rns::routing::links::resources::sealed_transfer_bytes;
 use personal_rns::routing::request_handlers::RequestPathHash;
-use personal_rns::runtime::request_router::{
-    Decline, RequestContext, RequestRoute, RoutePolicy, RouteSet,
+use personal_rns::runtime::request_endpoints::{
+    Decline, RequestContext, RequestEndpoint, RequestEndpointPolicy, RequestEndpointSet,
 };
 
 include!(concat!(env!("OUT_DIR"), "/node_pages_generated.rs"));
@@ -58,9 +58,9 @@ pub const INDEX_RESPONSE_TRANSFER_BYTES: usize = PAGE_RESPONSE_TRANSFER_BYTES;
 
 pub struct NoSourceNodeIndexPage;
 
-impl<S> RequestRoute<S> for NoSourceNodeIndexPage {
+impl<S> RequestEndpoint<S> for NoSourceNodeIndexPage {
     const PATH: &'static str = INDEX_PATH;
-    const POLICY: RoutePolicy = RoutePolicy::AllowAll;
+    const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
     async fn handle(mut context: RequestContext<'_, S>) -> Result<(), Decline> {
         context.respond_static_bytes(HOPSPOT_INDEX_PAGE_NO_SOURCE)
@@ -69,9 +69,9 @@ impl<S> RequestRoute<S> for NoSourceNodeIndexPage {
 
 pub struct NodeQuickstartPage;
 
-impl<S> RequestRoute<S> for NodeQuickstartPage {
+impl<S> RequestEndpoint<S> for NodeQuickstartPage {
     const PATH: &'static str = QUICKSTART_PATH;
-    const POLICY: RoutePolicy = RoutePolicy::AllowAll;
+    const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
     async fn handle(mut context: RequestContext<'_, S>) -> Result<(), Decline> {
         context.respond_static_bytes(QUICKSTART_PAGE)
@@ -82,9 +82,9 @@ impl<S> RequestRoute<S> for NodeQuickstartPage {
 pub struct SourceNodeIndexPage;
 
 #[cfg(feature = "source-archive")]
-impl<S> RequestRoute<S> for SourceNodeIndexPage {
+impl<S> RequestEndpoint<S> for SourceNodeIndexPage {
     const PATH: &'static str = INDEX_PATH;
-    const POLICY: RoutePolicy = RoutePolicy::AllowAll;
+    const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
     async fn handle(mut context: RequestContext<'_, S>) -> Result<(), Decline> {
         context.respond_static_bytes(HOPSPOT_INDEX_PAGE_WITH_SOURCE)
@@ -95,9 +95,9 @@ impl<S> RequestRoute<S> for SourceNodeIndexPage {
 pub struct SourceArchiveFile;
 
 #[cfg(feature = "source-archive")]
-impl<S> RequestRoute<S> for SourceArchiveFile {
+impl<S> RequestEndpoint<S> for SourceArchiveFile {
     const PATH: &'static str = SOURCE_ARCHIVE_PATH;
-    const POLICY: RoutePolicy = RoutePolicy::AllowAll;
+    const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
     async fn handle(mut context: RequestContext<'_, S>) -> Result<(), Decline> {
         context.respond_static_file("source.zip", SOURCE_ARCHIVE)
@@ -108,9 +108,9 @@ impl<S> RequestRoute<S> for SourceArchiveFile {
 pub struct SourceChecksumFile;
 
 #[cfg(feature = "source-archive")]
-impl<S> RequestRoute<S> for SourceChecksumFile {
+impl<S> RequestEndpoint<S> for SourceChecksumFile {
     const PATH: &'static str = SOURCE_CHECKSUM_PATH;
-    const POLICY: RoutePolicy = RoutePolicy::AllowAll;
+    const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
     async fn handle(mut context: RequestContext<'_, S>) -> Result<(), Decline> {
         context.respond_static_file("source.zip.sha256", SOURCE_CHECKSUM)
@@ -119,10 +119,10 @@ impl<S> RequestRoute<S> for SourceChecksumFile {
 
 pub struct NoSourceNodePageRoutes;
 
-impl<S> RouteSet<S> for NoSourceNodePageRoutes {
-    const REGISTRATIONS: &'static [(&'static str, RoutePolicy)] = &[
-        (INDEX_PATH, RoutePolicy::AllowAll),
-        (QUICKSTART_PATH, RoutePolicy::AllowAll),
+impl<S> RequestEndpointSet<S> for NoSourceNodePageRoutes {
+    const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)] = &[
+        (INDEX_PATH, RequestEndpointPolicy::AllowAll),
+        (QUICKSTART_PATH, RequestEndpointPolicy::AllowAll),
     ];
 
     async fn dispatch(
@@ -143,12 +143,12 @@ impl<S> RouteSet<S> for NoSourceNodePageRoutes {
 pub struct SourceNodePageRoutes;
 
 #[cfg(feature = "source-archive")]
-impl<S> RouteSet<S> for SourceNodePageRoutes {
-    const REGISTRATIONS: &'static [(&'static str, RoutePolicy)] = &[
-        (INDEX_PATH, RoutePolicy::AllowAll),
-        (QUICKSTART_PATH, RoutePolicy::AllowAll),
-        (SOURCE_ARCHIVE_PATH, RoutePolicy::AllowAll),
-        (SOURCE_CHECKSUM_PATH, RoutePolicy::AllowAll),
+impl<S> RequestEndpointSet<S> for SourceNodePageRoutes {
+    const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)] = &[
+        (INDEX_PATH, RequestEndpointPolicy::AllowAll),
+        (QUICKSTART_PATH, RequestEndpointPolicy::AllowAll),
+        (SOURCE_ARCHIVE_PATH, RequestEndpointPolicy::AllowAll),
+        (SOURCE_CHECKSUM_PATH, RequestEndpointPolicy::AllowAll),
     ];
 
     async fn dispatch(
@@ -171,9 +171,9 @@ impl<S> RouteSet<S> for SourceNodePageRoutes {
 
 pub struct NodeIndexPage;
 
-impl<S> RequestRoute<S> for NodeIndexPage {
+impl<S> RequestEndpoint<S> for NodeIndexPage {
     const PATH: &'static str = INDEX_PATH;
-    const POLICY: RoutePolicy = RoutePolicy::AllowAll;
+    const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
     async fn handle(context: RequestContext<'_, S>) -> Result<(), Decline> {
         #[cfg(feature = "source-archive")]
@@ -191,13 +191,13 @@ impl<S> RequestRoute<S> for NodeIndexPage {
 /// while delegating to the source-serving or constrained type selected by the build fact.
 pub struct NodePageRoutes;
 
-impl<S> RouteSet<S> for NodePageRoutes {
+impl<S> RequestEndpointSet<S> for NodePageRoutes {
     #[cfg(feature = "source-archive")]
-    const REGISTRATIONS: &'static [(&'static str, RoutePolicy)] =
-        <SourceNodePageRoutes as RouteSet<S>>::REGISTRATIONS;
+    const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)] =
+        <SourceNodePageRoutes as RequestEndpointSet<S>>::REGISTRATIONS;
     #[cfg(not(feature = "source-archive"))]
-    const REGISTRATIONS: &'static [(&'static str, RoutePolicy)] =
-        <NoSourceNodePageRoutes as RouteSet<S>>::REGISTRATIONS;
+    const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)] =
+        <NoSourceNodePageRoutes as RequestEndpointSet<S>>::REGISTRATIONS;
 
     async fn dispatch(
         context: RequestContext<'_, S>,
@@ -250,7 +250,7 @@ mod tests {
     #[test]
     fn route_registration_and_page_language_share_one_capability() {
         let page = core::str::from_utf8(HOPSPOT_INDEX_PAGE).unwrap();
-        let routes = <NodePageRoutes as RouteSet<()>>::REGISTRATIONS;
+        let routes = <NodePageRoutes as RequestEndpointSet<()>>::REGISTRATIONS;
         assert!(routes.iter().any(|(path, _)| *path == INDEX_PATH));
         assert!(routes.iter().any(|(path, _)| *path == QUICKSTART_PATH));
         assert!(page.contains("Open the offline Prns quickstart"));

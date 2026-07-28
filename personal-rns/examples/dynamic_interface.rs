@@ -4,11 +4,12 @@ use std::io;
 
 use personal_rns::engine::RatchetPolicy;
 use personal_rns::interfaces::BitrateBps;
-use personal_rns::routes;
+use personal_rns::request_endpoints;
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
-    Manual, PreConfiguredDestination, PrnsNode, PrnsNodeRecipe, RequestHandlerRegistration,
+    ManuallyAttached, PreConfiguredDestination, PrnsNode, PrnsNodeRecipe,
+    RequestEndpointRegistration,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::TcpServer;
@@ -27,7 +28,7 @@ fn destination() -> Result<PreConfiguredDestination<'static>, Box<dyn Error>> {
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
-        request_handlers: RequestHandlerRegistration::None,
+        request_endpoints: RequestEndpointRegistration::None,
     })
 }
 
@@ -38,9 +39,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         pre_configured_destinations: [destination()?],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         on_event: |_event, _state| {},
-        interfaces: Manual,
+        interfaces: ManuallyAttached,
     });
     let handle = node.handle();
     let server = TcpServer::bind("127.0.0.1:0", BITRATE).await?;

@@ -1,11 +1,11 @@
 pub use prns_runtime::runtime::{
-    assemble_node, configure_preconfigured_destination, request_router, AssembledNode,
+    assemble_node, configure_preconfigured_destination, request_endpoints, AssembledNode,
     BlackholeSeedReport, ClearAnnounceQueuesOutcome, ConfigurePreconfiguredDestinationError,
     DestinationIdentityRetentionControl, DestinationIdentityRetentionControlError, Diagnostic,
     DropRouteOutcome, DropRoutesViaOutcome, IdentityBlackholeControl,
-    IdentityBlackholeControlError, IdentityBlackholeSource, IdentityBlackholeSourceError, Manual,
-    Message, PreConfiguredDestination, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe,
-    RequestHandlerRegistration, RoutingControl, RoutingControlError, RuntimeHealth, SendError,
+    IdentityBlackholeControlError, IdentityBlackholeSource, IdentityBlackholeSourceError,
+    ManuallyAttached, Message, PreConfiguredDestination, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe,
+    RequestEndpointRegistration, RoutingControl, RoutingControlError, RuntimeHealth, SendError,
 };
 
 #[cfg(feature = "alloc")]
@@ -43,7 +43,7 @@ pub use prns_runtime_tokio::runtime::{
     NodePersistence, NodeRunError, NonRoutingIdentityError, OsEntropyError, PersistenceEvent,
     PersistenceFlushStatus, PersistenceRestoreReport, PersistenceTrigger, PersistenceWorker,
     PoolWorkers, PrepareFlushError, PreparedFlush, PreparedResourceReceiver, PrnsNode,
-    PrnsNodeHandle, RatchetSeedReport, RegionFlush, RegisterRequestRouteError, RequestPathError,
+    PrnsNodeHandle, RatchetSeedReport, RegionFlush, RegisterRequestEndpointError, RequestPathError,
     ResourceAdmissionPeer, ResourceOfferAdmission, ResourceOfferMonitor, ResourceProgress,
     ResourceReceipt, ResourceReceiveError, ResourceSendError, ResponseSendError, RouteSeedProgress,
     RouteSeedReport, SegmentCompression, SharedInstanceIdentityError, StreamId, Subscription,

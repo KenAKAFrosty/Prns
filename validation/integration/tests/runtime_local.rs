@@ -7,11 +7,11 @@ use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::BitrateBps;
 use personal_rns::interfaces::InterfaceKind;
 use personal_rns::manifold::reconnect::ReconnectPolicy;
-use personal_rns::routes;
+use personal_rns::request_endpoints;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
-    Diagnostic, Manual, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle,
-    PrnsNodeRecipe, RequestHandlerRegistration,
+    Diagnostic, ManuallyAttached, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle,
+    PrnsNodeRecipe, RequestEndpointRegistration,
 };
 use personal_rns::shared_instance::SharedInstanceServer;
 use personal_rns::storage::GrowableHeap;
@@ -33,7 +33,7 @@ fn single(identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> PreConfiguredDe
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
-        request_handlers: RequestHandlerRegistration::None,
+        request_endpoints: RequestEndpointRegistration::None,
     }
 }
 
@@ -56,8 +56,8 @@ async fn an_app_dials_the_shared_instance_and_is_heard_at_a_discounted_hop() {
         pre_configured_destinations: [single(secret(0xD1))],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
-        interfaces: Manual,
+        request_endpoints: request_endpoints![],
+        interfaces: ManuallyAttached,
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
                 destination,
@@ -77,8 +77,8 @@ async fn an_app_dials_the_shared_instance_and_is_heard_at_a_discounted_hop() {
         pre_configured_destinations: [app_single],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
-        interfaces: Manual,
+        request_endpoints: request_endpoints![],
+        interfaces: ManuallyAttached,
         on_event: |_event, _state| {},
     });
     let app_commands = app.handle();
@@ -149,8 +149,8 @@ async fn a_leaf_shared_instance_carries_announces_across_its_local_boundary() {
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
-        interfaces: Manual,
+        request_endpoints: request_endpoints![],
+        interfaces: ManuallyAttached,
         on_event: |_event, _state| {},
     })
     .with_shared_instance_identity(secret(0xD1))
@@ -170,7 +170,7 @@ async fn a_leaf_shared_instance_carries_announces_across_its_local_boundary() {
         pre_configured_destinations: [network_single],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         interfaces: |node: &PrnsNodeHandle| {
             node.attach(network_client);
         },
@@ -197,7 +197,7 @@ async fn a_leaf_shared_instance_carries_announces_across_its_local_boundary() {
         pre_configured_destinations: [local_single],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         interfaces: |node: &PrnsNodeHandle| {
             node.attach(local_client);
         },

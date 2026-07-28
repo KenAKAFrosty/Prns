@@ -10,7 +10,7 @@ use crate::identity::{
 use crate::routing::links::LinkId;
 use crate::wire::{DestinationHash, TransportId};
 
-use super::request_router::RespondToken;
+use super::request_endpoints::RespondToken;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClearAnnounceQueuesOutcome {

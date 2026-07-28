@@ -4,12 +4,12 @@ use personal_rns::engine::RatchetPolicy;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::BitrateBps;
 use personal_rns::manifold::reconnect::ReconnectPolicy;
-use personal_rns::routes;
+use personal_rns::request_endpoints;
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::tunnel::{parse_synthesize_payload, SYNTHESIZE_PAYLOAD_LEN};
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
-    PreConfiguredDestination, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe, RequestHandlerRegistration,
+    PreConfiguredDestination, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe, RequestEndpointRegistration,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::TcpClientInterface;
@@ -75,11 +75,11 @@ async fn a_recipe_node_synthesizes_a_tunnel_when_its_transport_is_a_held_identit
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
             resource_strategy: ResourceStrategy::AcceptNone,
-            request_handlers: RequestHandlerRegistration::None,
+            request_endpoints: RequestEndpointRegistration::None,
         }],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         on_event: |_event, _state| {},
         interfaces: |node: &PrnsNodeHandle| {
             node.attach(client);

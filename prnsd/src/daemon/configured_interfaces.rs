@@ -418,7 +418,9 @@ mod tests {
     };
     use personal_rns::config::parse_and_plan;
     use personal_rns::interfaces::InterfaceId;
-    use personal_rns::runtime::{Manual, PreConfiguredDestination, PrnsNode, PrnsNodeRecipe};
+    use personal_rns::runtime::{
+        ManuallyAttached, PreConfiguredDestination, PrnsNode, PrnsNodeRecipe,
+    };
     use personal_rns::storage::GrowableHeap;
 
     use crate::interface_discovery::MonitoredInterfaces;
@@ -431,8 +433,8 @@ mod tests {
                 ),
                 app_state: (),
                 storage: GrowableHeap,
-                routes: personal_rns::routes![],
-                interfaces: Manual,
+                request_endpoints: personal_rns::request_endpoints![],
+                interfaces: ManuallyAttached,
                 on_event: |_event, _state: &()| {},
             })
         };

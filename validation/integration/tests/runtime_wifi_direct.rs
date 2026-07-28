@@ -12,12 +12,12 @@ use personal_rns::interfaces::wifi_direct::{
     DiscoveryMode, WifiDirectBackend, WifiDirectEvent, WifiDirectGroup,
 };
 use personal_rns::interfaces::MacAddress;
-use personal_rns::routes;
+use personal_rns::request_endpoints;
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
-    Diagnostic, Manual, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeRecipe,
-    RequestHandlerRegistration,
+    Diagnostic, ManuallyAttached, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeRecipe,
+    RequestEndpointRegistration,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wifi_direct::WifiDirectAuto;
@@ -37,7 +37,7 @@ fn single(identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> PreConfiguredDe
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
-        request_handlers: RequestHandlerRegistration::None,
+        request_endpoints: RequestEndpointRegistration::None,
     }
 }
 
@@ -163,9 +163,9 @@ async fn a_wifi_direct_group_forms_and_carries_an_announce_between_two_nodes() {
         pre_configured_destinations: [single_a],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         on_event: |_event, _state| {},
-        interfaces: Manual,
+        interfaces: ManuallyAttached,
     });
     let commands_a = node_a.handle();
     let _sup_a = commands_a.supervise(WifiDirectAuto::new(backend_a, GoIntent::PREFER_CLIENT));
@@ -176,13 +176,13 @@ async fn a_wifi_direct_group_forms_and_carries_an_announce_between_two_nodes() {
         pre_configured_destinations: [single(secret(0xF2))],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
                 let _ = heard_tx.send(destination);
             }
         },
-        interfaces: Manual,
+        interfaces: ManuallyAttached,
     });
     let commands_b = node_b.handle();
     let _sup_b = commands_b.supervise(WifiDirectAuto::new(backend_b, GoIntent::PREFER_OWNER));

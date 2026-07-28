@@ -7,11 +7,14 @@ use crate::routing::announce::AnnounceObservation;
 use crate::routing::links::resources::ResourceStrategy;
 use crate::routing::request_handlers::RequestHandlerError;
 use crate::runtime::{
-    Manual, PreConfiguredDestination, PrnsNodeHandle, PrnsNodeRecipe, RequestHandlerRegistration,
+    ManuallyAttached, PreConfiguredDestination, PrnsNodeHandle, PrnsNodeRecipe,
+    RequestEndpointRegistration,
 };
 use crate::wire::DestinationHash;
 
-use super::super::super::request_router::{Decline, RequestContext, RequestRoute, RoutePolicy};
+use super::super::super::request_endpoints::{
+    Decline, RequestContext, RequestEndpoint, RequestEndpointPolicy,
+};
 use super::{
     notify_accepted_announce, run_node_tasks, AcceptedAnnounceObserver, NodeRunError, PrnsNode,
 };
@@ -34,7 +37,7 @@ async fn node_task_panics_report_their_boundary() {
             std::future::pending(),
         )
         .await,
-        Err(NodeRunError::RequestRouterPanicked)
+        Err(NodeRunError::RequestEndpointrPanicked)
     );
     assert_eq!(
         run_node_tasks(std::future::pending(), std::future::pending(), async {
@@ -101,8 +104,8 @@ fn new_with_handle_builds_state_from_the_nodes_handle() {
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: handle,
         storage: crate::storage::GrowableHeap,
-        routes: crate::routes![],
-        interfaces: Manual,
+        routes: crate::request_endpoints![],
+        interfaces: ManuallyAttached,
         on_event: |_event, _state: &PrnsNodeHandle| {},
     });
 
@@ -112,9 +115,9 @@ fn new_with_handle_builds_state_from_the_nodes_handle() {
 #[test]
 fn a_runtime_destination_registers_only_its_selected_route_types() {
     struct First;
-    impl RequestRoute<()> for First {
+    impl RequestEndpoint<()> for First {
         const PATH: &'static str = "/first";
-        const POLICY: RoutePolicy = RoutePolicy::AllowList(&[]);
+        const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowList(&[]);
 
         async fn handle(_context: RequestContext<'_, ()>) -> Result<(), Decline> {
             Ok(())
@@ -122,9 +125,9 @@ fn a_runtime_destination_registers_only_its_selected_route_types() {
     }
 
     struct Second;
-    impl RequestRoute<()> for Second {
+    impl RequestEndpoint<()> for Second {
         const PATH: &'static str = "/second";
-        const POLICY: RoutePolicy = RoutePolicy::AllowList(&[]);
+        const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowList(&[]);
 
         async fn handle(_context: RequestContext<'_, ()>) -> Result<(), Decline> {
             Ok(())
@@ -136,8 +139,8 @@ fn a_runtime_destination_registers_only_its_selected_route_types() {
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: (),
         storage: crate::storage::GrowableHeap,
-        routes: crate::routes![First, Second],
-        interfaces: Manual,
+        routes: crate::request_endpoints![First, Second],
+        interfaces: ManuallyAttached,
         on_event: |_event, _state: &()| {},
     });
     let destination = prns
@@ -150,7 +153,7 @@ fn a_runtime_destination_registers_only_its_selected_route_types() {
             link_requests: crate::routing::LinkRequestPolicy::AcceptAll,
             ratchet: crate::engine::RatchetPolicy::NoRatchets,
             resource_strategy: ResourceStrategy::AcceptNone,
-            request_handlers: RequestHandlerRegistration::None,
+            request_endpoints: RequestEndpointRegistration::None,
         })
         .unwrap();
     prns.register_request_route::<First>(&destination).unwrap();

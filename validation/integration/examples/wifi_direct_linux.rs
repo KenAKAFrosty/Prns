@@ -6,12 +6,12 @@ mod linux_only {
         AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
     };
     use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-    use personal_rns::routes;
+    use personal_rns::request_endpoints;
     use personal_rns::routing::links::resources::ResourceStrategy;
     use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
     use personal_rns::runtime::{
-        Diagnostic, Manual, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeRecipe,
-        RequestHandlerRegistration,
+        Diagnostic, ManuallyAttached, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeRecipe,
+        RequestEndpointRegistration,
     };
     use personal_rns::storage::GrowableHeap;
     use prns_core::interfaces::wifi_direct::GoIntent;
@@ -43,7 +43,7 @@ mod linux_only {
             proof: ProofStrategy::ProveAll,
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
-            request_handlers: RequestHandlerRegistration::None,
+            request_endpoints: RequestEndpointRegistration::None,
         }
     }
 
@@ -131,9 +131,9 @@ mod linux_only {
             pre_configured_destinations: [single_a],
             app_state: (),
             storage: GrowableHeap,
-            routes: routes![],
+            request_endpoints: request_endpoints![],
             on_event: |_event, _state| {},
-            interfaces: Manual,
+            interfaces: ManuallyAttached,
         });
         let commands = node.handle();
         let auto = WifiDirectAuto::new(backend, GoIntent::PREFER_OWNER);
@@ -173,14 +173,14 @@ mod linux_only {
             pre_configured_destinations: [single(secret(LISTENER_SECRET))],
             app_state: (),
             storage: GrowableHeap,
-            routes: routes![],
+            request_endpoints: request_endpoints![],
             on_event: move |event, _state| {
                 if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event
                 {
                     let _ = heard_tx.send(destination);
                 }
             },
-            interfaces: Manual,
+            interfaces: ManuallyAttached,
         });
         let commands = node.handle();
         let auto = WifiDirectAuto::new(backend, GoIntent::PREFER_CLIENT);

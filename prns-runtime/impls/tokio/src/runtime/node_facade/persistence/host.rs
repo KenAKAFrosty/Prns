@@ -14,8 +14,8 @@ use crate::manifold::driver::SelfRatchetSnapshot;
 
 use super::{
     boot_timeline_origin, DestinationIdentitySeedReport, FlushError, FlushMark, FlushReport,
-    PrepareFlushError, PrnsEvent, PrnsNode, PrnsNodeHandle, RatchetSeedReport, RouteSeedReport,
-    RouteSet, TunnelSeedReport,
+    PrepareFlushError, PrnsEvent, PrnsNode, PrnsNodeHandle, RatchetSeedReport, RequestEndpointSet,
+    RouteSeedReport, TunnelSeedReport,
 };
 
 const WRITE_PROBE: &str = ".write-probe";
@@ -87,7 +87,7 @@ impl NodePersistence {
 
     pub fn restore<St, R, F, S>(&self, node: &mut PrnsNode<St, R, F, S>) -> PersistenceRestoreReport
     where
-        R: RouteSet<St>,
+        R: RequestEndpointSet<St>,
         F: FnMut(PrnsEvent<'_>, &St),
         S: StorageLayout,
     {

@@ -7,12 +7,12 @@ use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::BitrateBps;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceStatus};
 use personal_rns::manifold::reconnect::ReconnectPolicy;
-use personal_rns::routes;
+use personal_rns::request_endpoints;
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
-    Diagnostic, Fleet, InterfaceSupervisor, Manual, PreConfiguredDestination, PrnsEvent, PrnsNode,
-    PrnsNodeHandle, PrnsNodeRecipe, RequestHandlerRegistration,
+    Diagnostic, Fleet, InterfaceSupervisor, ManuallyAttached, PreConfiguredDestination, PrnsEvent, PrnsNode,
+    PrnsNodeHandle, PrnsNodeRecipe, RequestEndpointRegistration,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::{TcpClientInterface, TcpServer};
@@ -56,7 +56,7 @@ fn single(identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> PreConfiguredDe
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
-        request_handlers: RequestHandlerRegistration::None,
+        request_endpoints: RequestEndpointRegistration::None,
     }
 }
 
@@ -76,9 +76,9 @@ async fn two_nodes_stand_up_and_one_hears_the_others_announce() {
         pre_configured_destinations: [single_a],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         on_event: |_event, _state| {},
-        interfaces: Manual,
+        interfaces: ManuallyAttached,
     });
     let commands_a = node_a.handle();
     let _server_sup = commands_a.supervise(server);
@@ -90,7 +90,7 @@ async fn two_nodes_stand_up_and_one_hears_the_others_announce() {
         pre_configured_destinations: [single(secret(0xB2))],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
                 let _ = heard_tx.send(destination);
@@ -148,8 +148,8 @@ async fn an_interface_added_through_the_handle_carries_traffic_until_torn_down()
         pre_configured_destinations: [single_a],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
-        interfaces: Manual,
+        request_endpoints: request_endpoints![],
+        interfaces: ManuallyAttached,
         on_event: |_event, _state| {},
     });
     let commands_a = node_a.handle();
@@ -161,8 +161,8 @@ async fn an_interface_added_through_the_handle_carries_traffic_until_torn_down()
         pre_configured_destinations: [single(secret(0xD2))],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
-        interfaces: Manual,
+        request_endpoints: request_endpoints![],
+        interfaces: ManuallyAttached,
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
                 let _ = heard_tx.send(destination);
@@ -251,8 +251,8 @@ async fn a_supervisor_spawns_a_member_and_tearing_the_supervisor_down_cascades_t
         pre_configured_destinations: [single_a],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
-        interfaces: Manual,
+        request_endpoints: request_endpoints![],
+        interfaces: ManuallyAttached,
         on_event: |_event, _state| {},
     });
     let commands_a = node_a.handle();
@@ -264,8 +264,8 @@ async fn a_supervisor_spawns_a_member_and_tearing_the_supervisor_down_cascades_t
         pre_configured_destinations: [single(secret(0xF2))],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
-        interfaces: Manual,
+        request_endpoints: request_endpoints![],
+        interfaces: ManuallyAttached,
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
                 let _ = heard_tx.send(destination);
@@ -339,8 +339,8 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
         pre_configured_destinations: [single(secret(0x55))],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
-        interfaces: Manual,
+        request_endpoints: request_endpoints![],
+        interfaces: ManuallyAttached,
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
                 destination,
@@ -362,7 +362,7 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
         pre_configured_destinations: [single_a],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         interfaces: |node: &PrnsNodeHandle| {
             node.attach(client_a);
         },
@@ -377,7 +377,7 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
         pre_configured_destinations: [single_b],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         interfaces: |node: &PrnsNodeHandle| {
             node.attach(client_b);
         },
@@ -482,7 +482,7 @@ async fn a_recipe_accept_destination_receives_a_resource() {
             max_uncompressed_bytes: 1024 * 1024,
             accept_compressed: true,
         },
-        request_handlers: RequestHandlerRegistration::None,
+        request_endpoints: RequestEndpointRegistration::None,
     };
     let dest_a = single_a.destination_hash().expect("valid destination");
 
@@ -495,8 +495,8 @@ async fn a_recipe_accept_destination_receives_a_resource() {
         pre_configured_destinations: [single_a],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
-        interfaces: Manual,
+        request_endpoints: request_endpoints![],
+        interfaces: ManuallyAttached,
         on_event: |_event, _state| {},
     });
     let commands_a = node_a.handle();
@@ -509,7 +509,7 @@ async fn a_recipe_accept_destination_receives_a_resource() {
         pre_configured_destinations: [single(secret(0xF2))],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         interfaces: |node: &PrnsNodeHandle| {
             node.attach(client);
         },

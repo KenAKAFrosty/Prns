@@ -8,7 +8,7 @@ use personal_rns::from_plan::{PlanAttachments, PlanRuntimeContext};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::manifold::tokio::TokioHost;
-use personal_rns::runtime::request_router::RouteSet;
+use personal_rns::runtime::request_endpoints::RequestEndpointSet;
 use personal_rns::runtime::{PrnsEvent, PrnsNode, PrnsNodeHandle};
 use personal_rns::shared_instance::RnsBlackholeFiles;
 use personal_rns::storage::StorageLayout;
@@ -270,7 +270,7 @@ pub(super) fn start<R, F, S>(
     inputs: BackgroundInputs<'_, R, F, S>,
 ) -> (PrnsNode<DaemonRequestState, R, F, S>, BackgroundTasks)
 where
-    R: RouteSet<DaemonRequestState>,
+    R: RequestEndpointSet<DaemonRequestState>,
     F: FnMut(PrnsEvent<'_>, &DaemonRequestState),
     S: StorageLayout,
 {

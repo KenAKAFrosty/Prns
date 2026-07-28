@@ -261,7 +261,7 @@ impl PrnsRuntime {
             .map_err(|error| {
                 JsValue::from_str(&format!("node page registration failed: {error:?}"))
             })?;
-        for (path, policy) in <personal_hopspot_core::node_pages::NodePageRoutes as personal_rns::runtime::request_router::RouteSet<()>>::REGISTRATIONS {
+        for (path, policy) in <personal_hopspot_core::node_pages::NodePageRoutes as personal_rns::runtime::request_endpoints::RequestEndpointSet<()>>::REGISTRATIONS {
             self.engine
                 .register_request_handler(&destination, path, policy.engine_policy())
                 .map_err(|error| {

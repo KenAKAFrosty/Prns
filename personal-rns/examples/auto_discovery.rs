@@ -1,0 +1,169 @@
+//! Two nodes with no addresses anywhere in the code find each other over Wi-Fi auto-discovery. See `docs/getting-started.md` for context.
+
+use core::time::Duration;
+use std::error::Error;
+use std::io;
+
+use personal_rns::prelude::*;
+
+const DELIVERY_TIMEOUT: Duration = Duration::from_secs(10);
+const LISTEN_WINDOW: Duration = Duration::from_secs(60);
+
+#[tokio::main(flavor = "multi_thread")]
+async fn main() -> Result<(), Box<dyn Error>> {
+    let destination_a = example_preconfigured_destination()?;
+    let destination_a_hash = destination_a.destination_hash().map_err(|error| {
+        io::Error::other(format!("invalid example destination name: {error:?}"))
+    })?;
+
+    let destination_b = example_preconfigured_destination()?;
+
+    println!("Node A and Node B: Wi-Fi auto-discovery only; this program contains no addresses");
+
+    let node_a = PrnsNode::new(PrnsNodeRecipe {
+        transport_identity: Some(try_generate_identity_secret()?),
+        pre_configured_destinations: [destination_a],
+        app_state: (),
+        storage: GrowableHeap,
+        request_endpoints: request_endpoints![],
+        on_event: |_event, _state| {},
+        interfaces: |node: &PrnsNodeHandle| {
+            node.attach(AutoWifi::default());
+        },
+    });
+    let node_a_handle = node_a.handle();
+
+    let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
+    let node_b = PrnsNode::new(PrnsNodeRecipe {
+        transport_identity: Some(try_generate_identity_secret()?),
+        pre_configured_destinations: [destination_b],
+        app_state: (),
+        storage: GrowableHeap,
+        request_endpoints: request_endpoints![],
+        on_event: move |event, _state| {
+            if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
+                destination,
+                source_interface,
+                ..
+            }) = event
+            {
+                let _ignored = heard_tx.send((destination, source_interface));
+            }
+        },
+        interfaces: |node: &PrnsNodeHandle| {
+            node.attach(AutoWifi::default());
+        },
+    });
+    let node_b_handle = node_b.handle();
+
+    let announcer = node_a_handle.clone();
+    let _announce_task = tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_millis(200));
+        loop {
+            ticker.tick().await;
+            if announcer
+                .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                    destination: destination_a_hash,
+                    target: AnnounceTarget::AllInterfaces,
+                    app_data: AnnounceAppData::Registered,
+                }))
+                .is_none()
+            {
+                return;
+            }
+        }
+    });
+
+    let mut run_a = std::pin::pin!(node_a.run());
+    let mut run_b = std::pin::pin!(node_b.run());
+    let mut announced_destinations = Vec::new();
+    let deadline = tokio::time::Instant::now() + DELIVERY_TIMEOUT;
+    let observed = loop {
+        let heard = tokio::select! {
+            heard = tokio::time::timeout_at(deadline, heard_rx.recv()) => {
+                heard
+                    .map_err(|_| io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "Node B did not observe Node A's announce within 10 seconds",
+                    ))?
+                    .ok_or_else(|| io::Error::other("Node B's event stream closed before delivery"))?
+            }
+            result = &mut run_a => {
+                result?;
+                return Err(io::Error::other("Node A stopped before delivery").into());
+            }
+            result = &mut run_b => {
+                result?;
+                return Err(io::Error::other("Node B stopped before delivery").into());
+            }
+        };
+        if heard.0 == destination_a_hash {
+            break heard;
+        }
+        if !announced_destinations.contains(&heard.0) {
+            println!(
+                "Heard an announce for {:?} via {:?}",
+                heard.0,
+                heard.1.kind()
+            );
+            announced_destinations.push(heard.0);
+        }
+    };
+
+    println!(
+        "Success: Node B found Node A with no wiring; the announce arrived on {:?} ({:?}).",
+        observed.1,
+        observed.1.kind()
+    );
+    println!("Node B interface inventory:");
+    for interface in node_b_handle.interfaces() {
+        println!(
+            "  {:?} connection={:?} rx={} tx={}",
+            interface.id, interface.connection, interface.rx_bytes, interface.tx_bytes
+        );
+    }
+
+    announced_destinations.push(destination_a_hash);
+    println!(
+        "Listening {} more seconds for announces from other machines on this network; run this same command there.",
+        LISTEN_WINDOW.as_secs()
+    );
+    let window_end = tokio::time::Instant::now() + LISTEN_WINDOW;
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep_until(window_end) => break,
+            heard = heard_rx.recv() => {
+                let Some((destination, source_interface)) = heard else { break };
+                if !announced_destinations.contains(&destination) {
+                    println!("Heard an announce for {destination:?} via {:?}", source_interface.kind());
+                    announced_destinations.push(destination);
+                }
+            }
+            result = &mut run_a => {
+                result?;
+                return Err(io::Error::other("Node A stopped during the listen window").into());
+            }
+            result = &mut run_b => {
+                result?;
+                return Err(io::Error::other("Node B stopped during the listen window").into());
+            }
+        }
+    }
+    println!("Listen window closed.");
+    Ok(())
+}
+
+fn example_preconfigured_destination() -> Result<PreConfiguredDestination<'static>, Box<dyn Error>>
+{
+    Ok(PreConfiguredDestination::Single {
+        resource_strategy: ResourceStrategy::AcceptNone,
+        app_name: "prns-guide",
+        aspects: &["announce"],
+        identity: try_generate_identity_secret()?,
+        announce_app_data: b"hello from node A",
+        proof: ProofStrategy::ProveAll,
+        link_requests: LinkRequestPolicy::AcceptAll,
+        ratchet: RatchetPolicy::NoRatchets,
+        request_endpoints: RequestEndpointRegistration::None,
+    })
+}

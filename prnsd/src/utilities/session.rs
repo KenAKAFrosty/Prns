@@ -9,13 +9,13 @@ use personal_rns::identity::vault::IdentitySecretKey;
 use personal_rns::node_introspection::{
     DestinationIdentityQuery, DestinationIdentitySnapshot, NodeIntrospection,
 };
-use personal_rns::routes;
+use personal_rns::request_endpoints;
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
-    ConfigurePreconfiguredDestinationError, Manual, NodeRunError, NonRoutingIdentityError,
-    PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
-    RequestHandlerRegistration, RequestPathError, SendError,
+    ConfigurePreconfiguredDestinationError, ManuallyAttached, NodeRunError,
+    NonRoutingIdentityError, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle,
+    PrnsNodeRecipe, RequestEndpointRegistration, RequestPathError, SendError,
 };
 use personal_rns::shared_instance::{
     connect_existing_shared_instance, ExistingSharedInstanceUnavailable, SharedInstanceRpcClient,
@@ -160,7 +160,7 @@ impl UtilityBusSession {
                 link_requests: LinkRequestPolicy::AcceptNone,
                 ratchet: RatchetPolicy::NoRatchets,
                 resource_strategy: ResourceStrategy::AcceptNone,
-                request_handlers: RequestHandlerRegistration::None,
+                request_endpoints: RequestEndpointRegistration::None,
             })
             .map_err(UtilityNodeSessionError::DestinationConfiguration)?;
         let session = Self::attach(configuration, node).await?;
@@ -229,8 +229,8 @@ fn utility_node() -> UtilityNode {
         pre_configured_destinations: std::iter::empty(),
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
-        interfaces: Manual,
+        request_endpoints: request_endpoints![],
+        interfaces: ManuallyAttached,
         on_event: ignore_event,
     })
 }

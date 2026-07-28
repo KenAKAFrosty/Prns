@@ -21,7 +21,7 @@ use crate::manifold::driver::{
 use crate::manifold::interface_seam::{frame_cap_for, Interface};
 use crate::node_introspection::{InterfaceIfacSnapshot, InterfaceInventoryEntry};
 
-use super::super::Manual;
+use super::super::ManuallyAttached;
 use super::PrnsNodeHandle;
 
 /// How many frames a host lane holds in flight. RNS resource transfer bursts a whole window of parts at once (`Resource.WINDOW_MAX_FAST` is 75, plus its flexibility), so a lane carrying a transfer must be deeper than that window or it sheds parts and the transfer stalls; the old byte-budget collapsed a fat-MTU lane to a handful of slots, exactly that failure. Growable slots (`HeapFrameSlot`) cost only the frames actually in flight, so the depth is generous.
@@ -346,7 +346,7 @@ pub trait AttachIntent {
     fn attach(self, handle: &PrnsNodeHandle);
 }
 
-impl AttachIntent for Manual {
+impl AttachIntent for ManuallyAttached {
     fn attach(self, _handle: &PrnsNodeHandle) {}
 }
 

@@ -32,7 +32,7 @@ use prns_runtime::runtime::{
     ConfigurePreconfiguredDestinationError,
 };
 
-use super::super::request_router::{RequestRoute, RespondToken, RouteSet};
+use super::super::request_endpoints::{RequestEndpoint, RequestEndpointSet, RespondToken};
 use super::super::request_runner::{run_router, RunnerRequest, REQUEST_QUEUE_DEPTH};
 use super::super::{
     InterfaceStore, Message, PreConfiguredDestination, PrnsEvent, PrnsNodeRecipe, SendError,
@@ -85,7 +85,7 @@ pub enum NonRoutingIdentityError {
 pub type SharedInstanceIdentityError = NonRoutingIdentityError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RegisterRequestRouteError {
+pub enum RegisterRequestEndpointError {
     Registration(TablePushError),
     Seed(RequestHandlerError),
 }
@@ -93,7 +93,7 @@ pub enum RegisterRequestRouteError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeRunError {
     ManifoldPanicked,
-    RequestRouterPanicked,
+    RequestEndpointrPanicked,
     InterfaceDriverPanicked,
 }
 
@@ -101,7 +101,7 @@ impl fmt::Display for NodeRunError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ManifoldPanicked => formatter.write_str("the node manifold panicked"),
-            Self::RequestRouterPanicked => formatter.write_str("the request router panicked"),
+            Self::RequestEndpointrPanicked => formatter.write_str("the request router panicked"),
             Self::InterfaceDriverPanicked => formatter.write_str("the interface driver panicked"),
         }
     }
@@ -111,26 +111,26 @@ impl std::error::Error for NodeRunError {}
 
 async fn run_node_tasks(
     manifold: impl Future<Output = ()>,
-    request_router: impl Future<Output = ()>,
+    request_endpoints: impl Future<Output = ()>,
     interface_driver: impl Future<Output = ()>,
 ) -> Result<(), NodeRunError> {
     let manifold = AssertUnwindSafe(manifold).catch_unwind();
-    let request_router = AssertUnwindSafe(request_router).catch_unwind();
+    let request_endpoints = AssertUnwindSafe(request_endpoints).catch_unwind();
     let interface_driver = AssertUnwindSafe(interface_driver).catch_unwind();
-    tokio::pin!(manifold, request_router, interface_driver);
+    tokio::pin!(manifold, request_endpoints, interface_driver);
     tokio::select! {
         result = &mut manifold => result.map_err(|_| NodeRunError::ManifoldPanicked),
-        result = &mut request_router => result.map_err(|_| NodeRunError::RequestRouterPanicked),
+        result = &mut request_endpoints => result.map_err(|_| NodeRunError::RequestEndpointrPanicked),
         result = &mut interface_driver => result.map_err(|_| NodeRunError::InterfaceDriverPanicked),
     }
 }
 
 impl<St, R, F, S: StorageLayout> PrnsNode<St, R, F, S>
 where
-    R: RouteSet<St>,
+    R: RequestEndpointSet<St>,
     F: FnMut(PrnsEvent<'_>, &St),
 {
-    /// Stand a node up from `recipe` on the storage layout it names: assemble the engine (transport role, destinations, the routes' request handlers), then let the recipe's `interfaces` intent attach the node's edges through its own handle. Only [`run`](Self::run) awaits.
+    /// Stand a node up from `recipe` on the storage layout it names: assemble the engine (transport role, destinations, the request endpoints), then let the recipe's `interfaces` intent attach the node's edges through its own handle. Only [`run`](Self::run) awaits.
     pub fn new<'a, D, I>(recipe: PrnsNodeRecipe<D, St, R, F, I, S>) -> Self
     where
         D: IntoIterator<Item = PreConfiguredDestination<'a>>,
@@ -224,19 +224,19 @@ where
     pub fn register_request_route<Route>(
         &mut self,
         destination: &DestinationHash,
-    ) -> Result<(), RegisterRequestRouteError>
+    ) -> Result<(), RegisterRequestEndpointError>
     where
-        Route: RequestRoute<St>,
+        Route: RequestEndpoint<St>,
     {
         self.node
             .engine
             .register_request_handler(destination, Route::PATH, Route::POLICY.engine_policy())
-            .map_err(RegisterRequestRouteError::Registration)?;
+            .map_err(RegisterRequestEndpointError::Registration)?;
         for identity in Route::POLICY.seed_list() {
             self.node
                 .engine
                 .allow_requester(destination, Route::PATH, *identity)
-                .map_err(RegisterRequestRouteError::Seed)?;
+                .map_err(RegisterRequestEndpointError::Seed)?;
         }
         Ok(())
     }
@@ -329,7 +329,7 @@ where
             engine,
             state,
             mut on_event,
-            routes: _,
+            request_endpoints: _,
         } = node;
         let egress = Egress::new(std::vec::Vec::new());
         let store = handle.store.clone();

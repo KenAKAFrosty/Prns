@@ -29,7 +29,7 @@ use crate::routing::links::channel::MessageType;
 use crate::routing::links::LinkId;
 use crate::wire::DestinationHash;
 
-use super::request_router::RespondToken;
+use super::request_endpoints::RespondToken;
 use super::{InterfaceStore, SendError};
 pub use byte_stream::{ByteStreamReader, ByteStreamWriter, StreamId};
 pub use interface_lifecycle::{
@@ -38,7 +38,7 @@ pub use interface_lifecycle::{
 };
 use interface_lifecycle::{DriverMsg, RegisteredInterface};
 pub use node_lifecycle::{
-    NodeRunError, NonRoutingIdentityError, PrnsNode, RegisterRequestRouteError,
+    NodeRunError, NonRoutingIdentityError, PrnsNode, RegisterRequestEndpointError,
     SharedInstanceIdentityError,
 };
 pub use persistence::{

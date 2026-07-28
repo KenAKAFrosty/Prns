@@ -11,8 +11,9 @@ use crate::units::RttMillis;
 use crate::wire::DestinationHash;
 
 use super::node_facade::PrnsNodeHandle;
-use super::request_router::{
-    dispatch_request, Decline, InboundRequest, ResponseCapacityExceeded, ResponseSink, RouteSet,
+use super::request_endpoints::{
+    dispatch_request, Decline, InboundRequest, RequestEndpointSet, ResponseCapacityExceeded,
+    ResponseSink,
 };
 
 #[allow(clippy::large_enum_variant)]
@@ -125,7 +126,7 @@ pub(super) async fn run_router<
     requests: Receiver<'_, M, RunnerRequest<REQUEST_BYTES>, REQUESTS>,
     commands: PrnsNodeHandle<'_, M, COMMANDS, COMPLETIONS>,
 ) where
-    R: RouteSet<St>,
+    R: RequestEndpointSet<St>,
     M: RawMutex,
 {
     loop {
@@ -150,7 +151,7 @@ async fn dispatch<
     commands: PrnsNodeHandle<'_, M, COMMANDS, COMPLETIONS>,
     request: RunnerRequest<REQUEST_BYTES>,
 ) where
-    R: RouteSet<St>,
+    R: RequestEndpointSet<St>,
     M: RawMutex,
 {
     let inbound = InboundRequest::new(
@@ -188,7 +189,9 @@ async fn dispatch<
 mod tests {
     use super::*;
     use crate::engine::EngineCommand;
-    use crate::runtime::request_router::{RequestContext, RequestRoute, RoutePolicy};
+    use crate::runtime::request_endpoints::{
+        RequestContext, RequestEndpoint, RequestEndpointPolicy,
+    };
     use embassy_futures::block_on;
     use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
     use embassy_sync::channel::Channel;
@@ -196,9 +199,9 @@ mod tests {
     struct DestinationEcho;
     struct DestinationRoutes;
 
-    impl RequestRoute<()> for DestinationEcho {
+    impl RequestEndpoint<()> for DestinationEcho {
         const PATH: &'static str = "/destination";
-        const POLICY: RoutePolicy = RoutePolicy::AllowAll;
+        const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
         async fn handle(mut context: RequestContext<'_, ()>) -> Result<(), Decline> {
             let destination = context.destination;
@@ -206,8 +209,8 @@ mod tests {
         }
     }
 
-    impl RouteSet<()> for DestinationRoutes {
-        const REGISTRATIONS: &'static [(&'static str, RoutePolicy)] =
+    impl RequestEndpointSet<()> for DestinationRoutes {
+        const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)] =
             &[(DestinationEcho::PATH, DestinationEcho::POLICY)];
 
         async fn dispatch(
@@ -238,17 +241,17 @@ mod tests {
         assert_eq!(bytes.as_ptr(), PAGE.as_ptr());
     }
 
-    impl RequestRoute<()> for StaticPage {
+    impl RequestEndpoint<()> for StaticPage {
         const PATH: &'static str = "/page";
-        const POLICY: RoutePolicy = RoutePolicy::AllowAll;
+        const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
         async fn handle(mut context: RequestContext<'_, ()>) -> Result<(), Decline> {
             context.respond_static_bytes(&PAGE)
         }
     }
 
-    impl RouteSet<()> for StaticRoutes {
-        const REGISTRATIONS: &'static [(&'static str, RoutePolicy)] =
+    impl RequestEndpointSet<()> for StaticRoutes {
+        const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)] =
             &[(StaticPage::PATH, StaticPage::POLICY)];
 
         async fn dispatch(

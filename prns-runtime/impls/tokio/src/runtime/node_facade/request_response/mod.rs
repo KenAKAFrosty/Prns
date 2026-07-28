@@ -20,7 +20,7 @@ use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::units::RttMillis;
 
-use super::super::request_router::RespondToken;
+use super::super::request_endpoints::RespondToken;
 use super::super::SendError;
 use super::resource_transfer::{
     ResourceSendError, ResourceStreamOptions, SegmentCompression, ENGINE_SEGMENT_LANES,

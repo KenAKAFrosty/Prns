@@ -1,6 +1,6 @@
 use personal_rns::config::DaemonPlan;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::runtime::request_router::RouteSet;
+use personal_rns::runtime::request_endpoints::RequestEndpointSet;
 use personal_rns::runtime::{PrnsEvent, PrnsNode, PrnsNodeHandle};
 use personal_rns::storage::StorageLayout;
 use personal_rns::wire::DestinationHash;
@@ -34,7 +34,7 @@ pub(crate) fn activate<R, F, S>(
     identity: &Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
 ) -> Result<ManagementDestinations, HostedServiceActivationFailed>
 where
-    R: RouteSet<DaemonRequestState>,
+    R: RequestEndpointSet<DaemonRequestState>,
     F: FnMut(PrnsEvent<'_>, &DaemonRequestState),
     S: StorageLayout,
 {

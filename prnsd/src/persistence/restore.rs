@@ -2,7 +2,7 @@ use personal_rns::config::BlackholeExchangePlan;
 use personal_rns::identity::vault::FileVault;
 use personal_rns::identity::IdentityHash;
 use personal_rns::persistence::FileStore;
-use personal_rns::runtime::request_router::RouteSet;
+use personal_rns::runtime::request_endpoints::RequestEndpointSet;
 use personal_rns::runtime::{PrnsEvent, PrnsNode};
 use personal_rns::shared_instance::RnsBlackholeFiles;
 use personal_rns::storage::StorageLayout;
@@ -25,7 +25,7 @@ pub(crate) fn restore<R, F, S>(
     node: &mut PrnsNode<DaemonRequestState, R, F, S>,
     mut inputs: RestoreInputs<'_>,
 ) where
-    R: RouteSet<DaemonRequestState>,
+    R: RequestEndpointSet<DaemonRequestState>,
     F: FnMut(PrnsEvent<'_>, &DaemonRequestState),
     S: StorageLayout,
 {

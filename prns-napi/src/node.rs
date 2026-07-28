@@ -31,7 +31,7 @@ use personal_rns::routing::{
     UnblackholeIdentityOutcome,
 };
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
-use personal_rns::runtime::request_router::RespondToken;
+use personal_rns::runtime::request_endpoints::RespondToken;
 use personal_rns::runtime::{
     DestinationIdentityRetentionControl, IdentityBlackholeControl, IdentityBlackholeSource,
     RoutingControl, RoutingControlError,

@@ -4,7 +4,7 @@ use crate::engine::InstantMillis;
 use crate::identity::Zeroizing;
 use crate::manifold::driver::{HostCommand, SelfRatchetSnapshot};
 use crate::routing::{BlackholeExpiry, BlackholedIdentity};
-use crate::runtime::{Manual, PreConfiguredDestination, PrnsNodeRecipe};
+use crate::runtime::{ManuallyAttached, PreConfiguredDestination, PrnsNodeRecipe};
 use crate::wire::DestinationHash;
 
 use super::super::{PrnsNode, PrnsNodeHandle};
@@ -65,8 +65,8 @@ fn boot_blackholes_seed_against_the_resumed_timeline() {
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: (),
         storage: crate::storage::GrowableHeap,
-        routes: crate::routes![],
-        interfaces: Manual,
+        routes: crate::request_endpoints![],
+        interfaces: ManuallyAttached,
         on_event: |_event, _state: &()| {},
     })
     .with_timeline_origin(InstantMillis(1_000));

@@ -23,12 +23,12 @@ use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::links::LinkId;
 use personal_rns::routing::request_handlers::{RequestHandlerError, RequestPathHash};
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
-use personal_rns::runtime::request_router::{
-    Decline, RequestContext, RequestRoute, RoutePolicy, RouteSet,
+use personal_rns::runtime::request_endpoints::{
+    Decline, RequestContext, RequestEndpoint, RequestEndpointPolicy, RequestEndpointSet,
 };
 use personal_rns::runtime::{
     load_or_create_identity_secret, IdentitySecretFileError, NodeRunError,
-    PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle, RequestHandlerRegistration,
+    PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle, RequestEndpointRegistration,
     ResourceAdmissionPeer, ResourceOfferAdmission, ResourceReceiveError, ResourceSendError,
     SegmentCompression, SendError,
 };
@@ -76,18 +76,18 @@ struct LinkState {
 struct AuthenticatedFetch;
 struct PublicFetch;
 
-impl RequestRoute<ListenerState> for AuthenticatedFetch {
+impl RequestEndpoint<ListenerState> for AuthenticatedFetch {
     const PATH: &'static str = FETCH_PATH;
-    const POLICY: RoutePolicy = RoutePolicy::AllowList(&[]);
+    const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowList(&[]);
 
     async fn handle(context: RequestContext<'_, ListenerState>) -> Result<(), Decline> {
         handle_fetch(context).await
     }
 }
 
-impl RequestRoute<ListenerState> for PublicFetch {
+impl RequestEndpoint<ListenerState> for PublicFetch {
     const PATH: &'static str = FETCH_PATH;
-    const POLICY: RoutePolicy = RoutePolicy::AllowAll;
+    const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
     async fn handle(context: RequestContext<'_, ListenerState>) -> Result<(), Decline> {
         handle_fetch(context).await
@@ -427,7 +427,7 @@ async fn listen(mut args: RncpArgs) -> Result<(), RncpError> {
                 destination,
                 save,
                 fetch,
-                || personal_rns::routes![PublicFetch],
+                || personal_rns::request_endpoints![PublicFetch],
             )
             .await
         } else {
@@ -438,7 +438,7 @@ async fn listen(mut args: RncpArgs) -> Result<(), RncpError> {
                 destination,
                 save,
                 fetch,
-                || personal_rns::routes![AuthenticatedFetch],
+                || personal_rns::request_endpoints![AuthenticatedFetch],
             )
             .await
         }
@@ -450,7 +450,7 @@ async fn listen(mut args: RncpArgs) -> Result<(), RncpError> {
             destination,
             save,
             fetch,
-            || personal_rns::routes![],
+            || personal_rns::request_endpoints![],
         )
         .await
     }
@@ -465,10 +465,10 @@ async fn listen_with_routes<R, F>(
     destination: DestinationHash,
     save: PathBuf,
     fetch: Arc<FetchPlan>,
-    make_routes: F,
+    make_request_endpoints: F,
 ) -> Result<(), RncpError>
 where
-    R: RouteSet<ListenerState>,
+    R: RequestEndpointSet<ListenerState>,
     F: FnOnce() -> R,
 {
     let (events, receiver) = mpsc::unbounded_channel();
@@ -485,7 +485,7 @@ where
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
             resource_strategy: ResourceStrategy::AcceptIf,
-            request_handlers: RequestHandlerRegistration::NodeRouteSet,
+            request_endpoints: RequestEndpointRegistration::NodeRequestEndpointSet,
         }],
         app_state: ListenerState {
             handle,
@@ -495,8 +495,8 @@ where
             no_auth: listener_no_auth,
         },
         storage: GrowableHeap,
-        routes: make_routes(),
-        interfaces: personal_rns::runtime::Manual,
+        request_endpoints: make_request_endpoints(),
+        interfaces: personal_rns::runtime::ManuallyAttached,
         on_event: listener_event,
     });
     if args.allow_fetch && !args.no_auth {

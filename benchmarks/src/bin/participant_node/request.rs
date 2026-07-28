@@ -6,11 +6,11 @@ pub(super) struct RequestServer {
     pub(super) scratch: Arc<Vec<u8>>,
 }
 
-pub(super) struct BenchSizedRequestRoute;
+pub(super) struct BenchSizedRequestEndpoint;
 
-impl RequestRoute<RequestServer> for BenchSizedRequestRoute {
+impl RequestEndpoint<RequestServer> for BenchSizedRequestEndpoint {
     const PATH: &'static str = REQUEST_PATH;
-    const POLICY: RoutePolicy = RoutePolicy::AllowAll;
+    const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
     async fn handle(mut cx: RequestContext<'_, RequestServer>) -> Result<(), Decline> {
         let request = msgpack_bin_payload(cx.data);
         let wanted = request
@@ -50,10 +50,10 @@ pub(super) async fn run_request_endpoint(
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         resource_strategy: ResourceStrategy::AcceptNone,
-        request_handlers: if role == "responder" {
-            RequestHandlerRegistration::NodeRouteSet
+        request_endpoints: if role == "responder" {
+            RequestEndpointRegistration::NodeRequestEndpointSet
         } else {
-            RequestHandlerRegistration::None
+            RequestEndpointRegistration::None
         },
     };
     let destination = single
@@ -85,7 +85,7 @@ pub(super) async fn run_request_endpoint(
         let (node, bound) = build_responder_node(
             single,
             app_state,
-            routes![BenchSizedRequestRoute],
+            request_endpoints![BenchSizedRequestEndpoint],
             on_event,
             manifest,
             addr,

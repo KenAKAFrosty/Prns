@@ -14,10 +14,10 @@ use crate::manifold::grant::ManifoldLaneReader;
 use crate::manifold::Host;
 use crate::storage::StorageLayout;
 
-use super::super::request_router::RouteSet;
+use super::super::request_endpoints::RequestEndpointSet;
 use super::super::request_runner::{run_router, RunnerRequest};
 use super::super::{
-    EmbassyInterfaceStore, InterfaceInspectionStore, Manual, NoInterfaceInspectionStore,
+    EmbassyInterfaceStore, InterfaceInspectionStore, ManuallyAttached, NoInterfaceInspectionStore,
     PreConfiguredDestination, PrnsEvent, PrnsNodeRecipe,
 };
 use super::command_handle::PrnsNodeHandle;
@@ -125,14 +125,14 @@ impl<
         MAX_SEND_REQUEST_DATA_LEN,
     >
 where
-    R: RouteSet<St>,
+    R: RequestEndpointSet<St>,
     F: FnMut(PrnsEvent<'_>, &St),
     S: StorageLayout,
     H: Host,
     M: RawMutex + 'static,
 {
     pub fn new<'d, D>(
-        recipe: PrnsNodeRecipe<D, St, R, F, Manual, S>,
+        recipe: PrnsNodeRecipe<D, St, R, F, ManuallyAttached, S>,
         wiring: ManifoldWiring<M, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
         host: H,
     ) -> Self
@@ -176,7 +176,7 @@ impl<
         ROUTED_REQUEST_BYTES,
     >
 where
-    R: RouteSet<St>,
+    R: RequestEndpointSet<St>,
     F: FnMut(PrnsEvent<'_>, &St),
     S: StorageLayout,
     H: Host,
@@ -190,7 +190,7 @@ where
     )]
     pub fn init_static<'d, D>(
         cell: &'static StaticCell<Self>,
-        recipe: PrnsNodeRecipe<D, St, R, F, Manual, S>,
+        recipe: PrnsNodeRecipe<D, St, R, F, ManuallyAttached, S>,
         wiring: ManifoldWiring<M, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
         host: H,
     ) -> &'static mut Self
@@ -218,7 +218,7 @@ where
         unsafe {
             let assembled = &mut *core::ptr::addr_of_mut!((*node).node)
                 .cast::<MaybeUninit<AssembledNode<St, R, F, S>>>();
-            let (_, Manual) = assemble_node_in_place(assembled, recipe);
+            let (_, ManuallyAttached) = assemble_node_in_place(assembled, recipe);
             core::ptr::addr_of_mut!((*node).inbound).write(inbound);
             core::ptr::addr_of_mut!((*node).egress).write(egress);
             core::ptr::addr_of_mut!((*node).notify).write(notify);
@@ -239,7 +239,7 @@ where
     }
 
     pub fn new_with_request_capacity<'d, D>(
-        recipe: PrnsNodeRecipe<D, St, R, F, Manual, S>,
+        recipe: PrnsNodeRecipe<D, St, R, F, ManuallyAttached, S>,
         wiring: ManifoldWiring<M, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
         host: H,
         _capacity: RequestRoutingCapacity<ROUTED_REQUESTS, ROUTED_REQUEST_BYTES>,
@@ -251,7 +251,7 @@ where
     }
 
     fn build<'d, D>(
-        recipe: PrnsNodeRecipe<D, St, R, F, Manual, S>,
+        recipe: PrnsNodeRecipe<D, St, R, F, ManuallyAttached, S>,
         wiring: ManifoldWiring<M, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
         host: H,
     ) -> Self
@@ -264,7 +264,7 @@ where
                 "PrnsNode INTERFACE_CAPACITY must cover every manifold lane"
             );
         }
-        let (node, Manual) = assemble_node(recipe);
+        let (node, ManuallyAttached) = assemble_node(recipe);
         let mut descriptors = HeaplessVec::new();
         for descriptor in wiring.initial {
             if descriptors.push(descriptor).is_err() {
@@ -337,7 +337,7 @@ where
             mut engine,
             state,
             mut on_event,
-            routes: _,
+            request_endpoints: _,
         } = node;
         let request_channel =
             Channel::<M, RunnerRequest<ROUTED_REQUEST_BYTES>, ROUTED_REQUESTS>::new();
@@ -422,7 +422,7 @@ where
             engine,
             state,
             on_event,
-            routes: _,
+            request_endpoints: _,
         } = node;
         let request_channel =
             Channel::<M, RunnerRequest<ROUTED_REQUEST_BYTES>, ROUTED_REQUESTS>::new();

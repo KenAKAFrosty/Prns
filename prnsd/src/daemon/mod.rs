@@ -28,10 +28,10 @@ use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::IdentitySigner;
 use personal_rns::interfaces::ConnectionState;
 use personal_rns::node_introspection::logical_interface_inventory;
-use personal_rns::routes;
+use personal_rns::request_endpoints;
 use personal_rns::runtime::{
-    wall_clock_timeline_origin, CryptoPoolConfig, Diagnostic, Manual, NodePersistence, PoolWorkers,
-    PrnsEvent, PrnsNode, PrnsNodeRecipe,
+    wall_clock_timeline_origin, CryptoPoolConfig, Diagnostic, ManuallyAttached, NodePersistence,
+    PoolWorkers, PrnsEvent, PrnsNode, PrnsNodeRecipe,
 };
 use personal_rns::shared_instance::{RnsBlackholeFiles, SharedInstanceCredentials};
 use personal_rns::storage::GrowableHeap;
@@ -240,12 +240,12 @@ pub(super) async fn run(
         pre_configured_destinations: std::iter::empty(),
         app_state: services::DaemonRequestState::new(handle, remote_management_transport, started),
         storage: GrowableHeap,
-        routes: routes![
+        request_endpoints: request_endpoints![
             services::StatusRoute,
             services::PathRoute,
             services::ListRoute
         ],
-        interfaces: Manual,
+        interfaces: ManuallyAttached,
         on_event: move |event, _state: &services::DaemonRequestState| {
             if let PrnsEvent::Diagnostic(Diagnostic::SelfRatchetRotated { destination }) = event {
                 let _ = rotated_tx.send(destination);
