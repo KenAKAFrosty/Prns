@@ -27,9 +27,9 @@
 
 ## Packet
 
-The unit everything else is made of. A packet carries a destination hash, a small typed header, and an encrypted payload; the baseline MTU is 500 bytes, so one packet fits even the slowest mediums whole. Announces, link handshakes, requests, proofs: all of it moves as packets.
+The unit everything else is made of. A packet is a small typed header (flags, hop count, the destination hash, a context byte) followed by the payload; the baseline MTU is 500 bytes, small enough that even a slow LoRa radio carries a whole packet in a couple of air frames. Announces, link handshakes, requests, proofs: all of it moves as packets.
 
-Notably, there is no source address field. Reticulum doesn't need one to route, and that's where its "initiator anonymity" comes from. The network can't even stamp packets with one, because the wire format has nowhere to put it.
+Notably, there is no source address field. Reticulum doesn't need one to route, and that's where its "initiator anonymity" comes from. A packet never names its originator.
 
 ## Path/Route (and hops)
 

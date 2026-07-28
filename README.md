@@ -7,7 +7,7 @@
 
 <p align="center">
   <a href="https://prns.dev" target="_blank">
-  <img src="docs/website/public/assets/og.png" alt="Prns: a high-performance port of Reticulum (RNS). Runs on any device." width="800" />
+  <img src="docs/website/public/assets/og.png" alt="Prns: high-performance Reticulum (RNS), built to run on any device." width="800" />
   </a>
 </p>
 
@@ -18,7 +18,7 @@
 
 ## What *is* Prns?
 
-Prns is a ground-up implementation of Reticulum, written in Rust. It's highly focused on performance, compatibility, and developer experience. 
+Prns is a ground-up implementation of Reticulum, written in Rust. It's highly focused on performance, energy efficiency, compatibility, and developer experience. 
 
 Prns is built on a unified core engine that is `no_std` (no `alloc` required either), so it runs on nearly anything, whether that's a $5 microcontroller, a web browser, a native smartphone app, a personal laptop, or a backbone cloud server.
 
@@ -141,7 +141,7 @@ Make sure to read the first portion of this README. Once you have, all that's le
 
    (If you want to keep reading first, [there's a second helping of concepts here](docs/more-concepts.md#packet).)
 
-2) [Follow the Getting Started guide](docs/getting-started.md) and experience one real result at a time.
+2) [Follow the Getting Started guide](docs/getting-started.md#getting-started) and experience one real result at a time.
 3) [Browse the example catalog](docs/examples.md) for the next step up.
 
 ## Coming from RNS

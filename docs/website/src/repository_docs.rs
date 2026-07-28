@@ -28,6 +28,15 @@ pub const GUIDE_DOCUMENTS: &[RepositoryDocument] = &[
         source: include_str!("../../getting-started.md"),
     },
     RepositoryDocument {
+        slug: "more-concepts",
+        title: "More Key Concepts",
+        summary:
+            "Learn the working vocabulary, from packets and routes to channels, daemons, and LXMF.",
+        section: GuideSection::Start,
+        source_path: "docs/more-concepts.md",
+        source: include_str!("../../more-concepts.md"),
+    },
+    RepositoryDocument {
         slug: "testing",
         title: "Testing Changes",
         summary: "Choose the right verification rung and report useful evidence.",
@@ -156,6 +165,7 @@ const ROUTE_MAPPINGS: &[(&str, &str)] = &[
     ("personal-rns/README.md", "/crates/personal-rns"),
     ("personal-hopspot/README.md", "/guides/personal-hopspot"),
     ("docs/getting-started.md", "/guides/getting-started"),
+    ("docs/more-concepts.md", "/guides/more-concepts"),
     ("docs/testing.md", "/guides/testing"),
     ("docs/examples.md", "/guides/examples"),
     (
@@ -385,7 +395,7 @@ mod tests {
     }
 
     #[test]
-    fn mounted_onboarding_uses_clone_valid_commands() {
+    fn mounted_onboarding_offers_the_quickstart_and_the_crate() {
         let sources = GUIDE_DOCUMENTS
             .iter()
             .map(|document| document.source)
@@ -400,7 +410,6 @@ mod tests {
             .any(|source| source.contains("cargo tools guide rust")));
         assert!(sources
             .iter()
-            .all(|source| !source.contains("cargo add prnsd")
-                && !source.contains("cargo add personal-rns")));
+            .any(|source| source.contains("cargo add personal-rns")));
     }
 }

@@ -18,7 +18,7 @@ documents an available release.
 | Example | Label | Result |
 | --- | --- | --- |
 | [`node_basics.rs`](../personal-rns/examples/node_basics.rs) | Runnable | Two localhost nodes exchange a real announce; `cargo tools guide rust` is the Rust quickstart. |
-| [`bounded_request.rs`](../personal-rns/examples/bounded_request.rs) | Runnable | A registered route answers a link request before a ten-second deadline. |
+| [`bounded_request.rs`](../personal-rns/examples/bounded_request.rs) | Runnable | A registered request endpoint answers a link request before a ten-second deadline. |
 | [`resource_transfer.rs`](../personal-rns/examples/resource_transfer.rs) | Runnable | A bounded 64 KiB resource transfer settles successfully against an accepting localhost peer. |
 | [`dynamic_interface.rs`](../personal-rns/examples/dynamic_interface.rs) | Runnable | A running node attaches a TCP supervisor, observes it, tears it down, and observes its removal. |
 
