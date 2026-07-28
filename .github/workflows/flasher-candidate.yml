@@ -334,6 +334,8 @@ jobs:
           version: "1.21.0"
       - name: Install exact Dioxus CLI
         run: cargo binstall --locked --no-confirm --force dioxus-cli@0.7.5
+      - name: Install exact WASM binding CLI
+        run: cargo install wasm-bindgen-cli --version 0.2.126 --locked
       - name: Prove exact release tools and source epoch
         run: |
           rustc --version | grep -E '^rustc 1\.96\.0 '
@@ -341,6 +343,7 @@ jobs:
           test "$(node --version)" = "v24.18.0"
           cargo-binstall -V | grep -E '(^| )1\.21\.0($| )'
           dx --version | grep -E '(^| )0\.7\.5($| )'
+          wasm-bindgen --version | grep -E '^wasm-bindgen 0\.2\.126$'
           ./tools/prns release toolchain esp verify
           host_triple="$(rustc -vV | sed -n 's/^host: //p')"
           llvm_objcopy="$(rustc --print sysroot)/lib/rustlib/$host_triple/bin/llvm-objcopy"
