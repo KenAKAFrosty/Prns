@@ -13,8 +13,8 @@ async fn main() {
     use personal_rns::routing::links::resources::ResourceStrategy;
     use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
     use personal_rns::runtime::{
-        Diagnostic, ManuallyAttached, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeRecipe,
-        RequestEndpointRegistration,
+        Diagnostic, ManuallyAttached, PreConfiguredDestination, PrnsEvent, PrnsNode,
+        PrnsNodeRecipe, RequestEndpointRegistration,
     };
     use personal_rns::storage::GrowableHeap;
     use prns_ffi::bluetooth_auto::macos::MacosBleBackend;

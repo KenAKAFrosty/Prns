@@ -1752,7 +1752,11 @@ impl PrnsNode {
         options: TcpClientOptions,
     ) -> CodeResult<InterfaceHandle> {
         let bitrate = parse_bitrate(options.bitrate_bps)?;
-        let client = TcpClientInterface::new_with_bitrate(options.target, bitrate, ReconnectPolicy::STANDARD);
+        let client = TcpClientInterface::new_with_bitrate(
+            options.target,
+            bitrate,
+            ReconnectPolicy::STANDARD,
+        );
         let handle = self.manager.handle()?;
         let attached = handle.add_interface(client);
         Ok(InterfaceHandle::from_interface(attached))

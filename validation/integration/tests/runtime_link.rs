@@ -8,7 +8,9 @@ use personal_rns::interfaces::udp::UDP_BITRATE_ESTIMATE;
 use personal_rns::request_endpoints;
 use personal_rns::routing::request_handlers::RequestPathHash;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
-use personal_rns::runtime::request_endpoints::{Decline, RequestContext, RequestEndpoint, RequestEndpointPolicy};
+use personal_rns::runtime::request_endpoints::{
+    Decline, RequestContext, RequestEndpoint, RequestEndpointPolicy,
+};
 use personal_rns::runtime::{
     Diagnostic, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
     RequestEndpointRegistration,

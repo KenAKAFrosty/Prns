@@ -164,7 +164,8 @@ async fn a_leaf_shared_instance_carries_announces_across_its_local_boundary() {
         .destination_hash()
         .expect("the network destination is valid");
     let (network_heard_tx, mut network_heard_rx) = tokio::sync::mpsc::unbounded_channel();
-    let network_client = TcpClientInterface::new_with_bitrate(network_addr, BITRATE, ReconnectPolicy::STANDARD);
+    let network_client =
+        TcpClientInterface::new_with_bitrate(network_addr, BITRATE, ReconnectPolicy::STANDARD);
     let network_node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [network_single],

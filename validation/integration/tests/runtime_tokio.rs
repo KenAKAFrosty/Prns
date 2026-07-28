@@ -11,8 +11,8 @@ use personal_rns::request_endpoints;
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
-    Diagnostic, Fleet, InterfaceSupervisor, ManuallyAttached, PreConfiguredDestination, PrnsEvent, PrnsNode,
-    PrnsNodeHandle, PrnsNodeRecipe, RequestEndpointRegistration,
+    Diagnostic, Fleet, InterfaceSupervisor, ManuallyAttached, PreConfiguredDestination, PrnsEvent,
+    PrnsNode, PrnsNodeHandle, PrnsNodeRecipe, RequestEndpointRegistration,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::{TcpClientInterface, TcpServer};
@@ -355,7 +355,8 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
     let commands_s = node_s.handle();
     let _server_sup = commands_s.supervise(server);
 
-    let client_a = TcpClientInterface::new_with_bitrate(addr.clone(), BITRATE, ReconnectPolicy::STANDARD);
+    let client_a =
+        TcpClientInterface::new_with_bitrate(addr.clone(), BITRATE, ReconnectPolicy::STANDARD);
     let client_a_status = client_a.status();
     let node_a = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,

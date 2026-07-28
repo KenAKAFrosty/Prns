@@ -11,9 +11,9 @@ use personal_rns::persistence::{read_tunnels_snapshot, FileStore, PersistedStore
 use personal_rns::request_endpoints;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
-    boot_timeline_origin, DestinationIdentityRetentionControl, Diagnostic, FlushMark, ManuallyAttached,
-    PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe, RegionFlush,
-    RequestEndpointRegistration, RouteSeedProgress,
+    boot_timeline_origin, DestinationIdentityRetentionControl, Diagnostic, FlushMark,
+    ManuallyAttached, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle,
+    PrnsNodeRecipe, RegionFlush, RequestEndpointRegistration, RouteSeedProgress,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::{TcpClientInterface, TcpServer};

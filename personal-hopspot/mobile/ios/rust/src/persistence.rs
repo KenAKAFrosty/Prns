@@ -171,7 +171,8 @@ mod tests {
     };
     use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
     use personal_rns::runtime::{
-        Diagnostic, ManuallyAttached, PreConfiguredDestination, PrnsNodeRecipe, RequestEndpointRegistration,
+        Diagnostic, ManuallyAttached, PreConfiguredDestination, PrnsNodeRecipe,
+        RequestEndpointRegistration,
     };
     use personal_rns::storage::GrowableHeap;
     use personal_rns::tcp::{TcpClientInterface, TcpServer};
@@ -249,7 +250,9 @@ mod tests {
         let announced = test_destination(0xA1);
         let destination = announced.destination_hash().unwrap();
 
-        let server = TcpServer::bind_with_bitrate("127.0.0.1:0", TEST_BITRATE).await.unwrap();
+        let server = TcpServer::bind_with_bitrate("127.0.0.1:0", TEST_BITRATE)
+            .await
+            .unwrap();
         let server_address = server.local_addr().unwrap().to_string();
         let node_a = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: None,
@@ -343,7 +346,9 @@ mod tests {
         announcer.abort();
 
         let restarted = PreparedPersistence::open(root.path()).unwrap();
-        let restarted_server = TcpServer::bind_with_bitrate("127.0.0.1:0", TEST_BITRATE).await.unwrap();
+        let restarted_server = TcpServer::bind_with_bitrate("127.0.0.1:0", TEST_BITRATE)
+            .await
+            .unwrap();
         let restarted_address = restarted_server.local_addr().unwrap().to_string();
         let mut restarted_node = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: Some(Zeroizing::new([0xB3; IDENTITY_SECRET_KEY_LEN])),
