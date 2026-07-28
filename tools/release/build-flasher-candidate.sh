@@ -210,7 +210,10 @@ bash "$root/docs/website/tools/verify-web-flasher-production-boundary.sh" \
     "$candidate/website" \
     "$boundary_root/embedded"
 cd "$root"
-cargo doc --locked --no-deps --workspace
+cargo doc --locked --no-deps --workspace --jobs 1
+python3 "$root/tools/release/flasher_rustdoc.py" \
+    "$root/target/doc" \
+    --current-crate docs
 mkdir -p "$candidate/website/api"
 cp -R "$root/target/doc/." "$candidate/website/api/"
 cp "$root/release/website/api-index.html" "$candidate/website/api/index.html"

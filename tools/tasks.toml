@@ -704,6 +704,10 @@ path = "tools/release/flasher_reproducibility.py"
 reason = "Shared deterministic candidate comparison implementation."
 
 [[internal]]
+path = "tools/release/flasher_rustdoc.py"
+reason = "Shared deterministic Rustdoc normalization implementation."
+
+[[internal]]
 path = "tools/release/release-esp-toolchain-identity.sh"
 reason = "Shared exact ESP compiler identity used by installation and verification."
 
