@@ -82,7 +82,7 @@ async fn an_app_dials_the_shared_instance_and_is_heard_at_a_discounted_hop() {
         on_event: |_event, _state| {},
     });
     let app_commands = app.handle();
-    let _attached = app_commands.add_interface(TcpClientInterface::new(
+    let _attached = app_commands.add_interface(TcpClientInterface::new_with_bitrate(
         std::format!("127.0.0.1:{port}"),
         BITRATE,
         ReconnectPolicy::STANDARD,
@@ -136,7 +136,7 @@ async fn a_leaf_shared_instance_carries_announces_across_its_local_boundary() {
         .local_addr()
         .expect("the local port is known")
         .port();
-    let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+    let server = TcpServer::bind_with_bitrate("127.0.0.1:0", BITRATE)
         .await
         .expect("the network server binds");
     let network_addr = server
@@ -164,7 +164,7 @@ async fn a_leaf_shared_instance_carries_announces_across_its_local_boundary() {
         .destination_hash()
         .expect("the network destination is valid");
     let (network_heard_tx, mut network_heard_rx) = tokio::sync::mpsc::unbounded_channel();
-    let network_client = TcpClientInterface::new(network_addr, BITRATE, ReconnectPolicy::STANDARD);
+    let network_client = TcpClientInterface::new_with_bitrate(network_addr, BITRATE, ReconnectPolicy::STANDARD);
     let network_node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [network_single],
@@ -187,7 +187,7 @@ async fn a_leaf_shared_instance_carries_announces_across_its_local_boundary() {
         .destination_hash()
         .expect("the local destination is valid");
     let (local_heard_tx, mut local_heard_rx) = tokio::sync::mpsc::unbounded_channel();
-    let local_client = TcpClientInterface::new(
+    let local_client = TcpClientInterface::new_with_bitrate(
         std::format!("127.0.0.1:{local_port}"),
         BITRATE,
         ReconnectPolicy::STANDARD,

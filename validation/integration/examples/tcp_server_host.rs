@@ -27,7 +27,7 @@ async fn main() {
         .and_then(|p| p.parse().ok())
         .unwrap_or(4242);
     let bind = std::format!("0.0.0.0:{port}");
-    let server = TcpServer::bind(bind.as_str(), BITRATE)
+    let server = TcpServer::bind_with_bitrate(bind.as_str(), BITRATE)
         .await
         .expect("the TCP server binds");
     std::println!("tcp-server-host: listening on {bind}");

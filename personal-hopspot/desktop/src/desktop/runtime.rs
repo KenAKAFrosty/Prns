@@ -278,7 +278,7 @@ fn run_node(ready_tx: Sender<(WindowHandles, persistence::ShutdownFlush)>) {
 
         let (tcp_status, tcp_id, tcp_target) = match std::env::var("HOPSPOT_TCP_TARGET") {
             Ok(target) if !target.is_empty() => {
-                let tcp = TcpClientInterface::new(
+                let tcp = TcpClientInterface::new_with_bitrate(
                     target.clone(),
                     tcp::TCP_BITRATE_ESTIMATE,
                     ReconnectPolicy::STANDARD,

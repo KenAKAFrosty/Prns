@@ -75,7 +75,7 @@ async fn a_request_endpoints_answers_a_live_request_over_tcp() {
         .destination_hash()
         .expect("the test destination name is valid");
 
-    let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+    let server = TcpServer::bind_with_bitrate("127.0.0.1:0", BITRATE)
         .await
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
@@ -108,7 +108,7 @@ async fn a_request_endpoints_answers_a_live_request_over_tcp() {
         }
     });
 
-    let client = TcpClientInterface::new(addr, BITRATE, ReconnectPolicy::STANDARD);
+    let client = TcpClientInterface::new_with_bitrate(addr, BITRATE, ReconnectPolicy::STANDARD);
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
@@ -220,7 +220,7 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
         .destination_hash()
         .expect("the test destination name is valid");
 
-    let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+    let server = TcpServer::bind_with_bitrate("127.0.0.1:0", BITRATE)
         .await
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
@@ -253,7 +253,7 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
         }
     });
 
-    let client = TcpClientInterface::new(addr, BITRATE, ReconnectPolicy::STANDARD);
+    let client = TcpClientInterface::new_with_bitrate(addr, BITRATE, ReconnectPolicy::STANDARD);
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
@@ -346,7 +346,7 @@ async fn the_hopspot_node_page_serves_over_tcp() {
         .destination_hash()
         .expect("the nomadnetwork.node name is valid");
 
-    let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+    let server = TcpServer::bind_with_bitrate("127.0.0.1:0", BITRATE)
         .await
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
@@ -379,7 +379,7 @@ async fn the_hopspot_node_page_serves_over_tcp() {
         }
     });
 
-    let client = TcpClientInterface::new(addr, BITRATE, ReconnectPolicy::STANDARD);
+    let client = TcpClientInterface::new_with_bitrate(addr, BITRATE, ReconnectPolicy::STANDARD);
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
@@ -472,7 +472,7 @@ async fn serve_the_hopspot_page_for_a_stock_client() {
         .destination_hash()
         .expect("the nomadnetwork.node name is valid");
 
-    let server = TcpServer::bind("127.0.0.1:47325", BITRATE)
+    let server = TcpServer::bind_with_bitrate("127.0.0.1:47325", BITRATE)
         .await
         .expect("server binds");
     let node_a = PrnsNode::new(PrnsNodeRecipe {
@@ -530,7 +530,7 @@ async fn a_split_response_answers_a_small_request_over_tcp() {
         .destination_hash()
         .expect("the test destination name is valid");
 
-    let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+    let server = TcpServer::bind_with_bitrate("127.0.0.1:0", BITRATE)
         .await
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
@@ -563,7 +563,7 @@ async fn a_split_response_answers_a_small_request_over_tcp() {
         }
     });
 
-    let client = TcpClientInterface::new(addr, BITRATE, ReconnectPolicy::STANDARD);
+    let client = TcpClientInterface::new_with_bitrate(addr, BITRATE, ReconnectPolicy::STANDARD);
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,

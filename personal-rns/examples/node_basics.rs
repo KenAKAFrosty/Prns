@@ -4,7 +4,6 @@ use core::time::Duration;
 
 use personal_rns::prelude::*;
 
-const BITRATE: BitrateBps = BitrateBps::guess(1_000_000);
 const DELIVERY_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[tokio::main(flavor = "multi_thread")]
@@ -17,7 +16,7 @@ async fn main() {
 
     let destination_b = example_preconfigured_destination();
 
-    let tcp_server_interface = TcpServer::bind("127.0.0.1:0", BITRATE)
+    let tcp_server_interface = TcpServer::bind("127.0.0.1:0")
         .await
         .expect("A local TCP server should bind");
 
@@ -40,7 +39,7 @@ async fn main() {
     let node_a_handle = node_a.handle();
     let _server = node_a_handle.supervise(tcp_server_interface);
 
-    let client = TcpClientInterface::new(server_address, BITRATE, ReconnectPolicy::STANDARD);
+    let client = TcpClientInterface::new(server_address);
     let (heard_announce_sender, mut heard_announce_listener) =
         tokio::sync::mpsc::unbounded_channel();
 

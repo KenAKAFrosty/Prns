@@ -44,7 +44,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         interfaces: ManuallyAttached,
     });
     let handle = node.handle();
-    let server = TcpServer::bind("127.0.0.1:0", BITRATE).await?;
+    let server = TcpServer::bind_with_bitrate("127.0.0.1:0", BITRATE).await?;
     let attachment = handle.supervise(server);
     let interface_id = attachment.id();
 

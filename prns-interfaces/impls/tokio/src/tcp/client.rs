@@ -27,7 +27,16 @@ pub struct TcpClientInterface {
 
 impl TcpClientInterface {
     #[must_use]
-    pub fn new(target: String, bitrate: BitrateBps, reconnect_policy: ReconnectPolicy) -> Self {
+    pub fn new(target: String) -> Self {
+        Self::new_with_bitrate(target, tcp::TCP_BITRATE_ESTIMATE, ReconnectPolicy::STANDARD)
+    }
+
+    #[must_use]
+    pub fn new_with_bitrate(
+        target: String,
+        bitrate: BitrateBps,
+        reconnect_policy: ReconnectPolicy,
+    ) -> Self {
         let id = InterfaceId::from_channel_tag(InterfaceKind::TcpClient, target.as_bytes());
         Self::with_id_policy_and_framing(
             id,

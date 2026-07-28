@@ -617,7 +617,7 @@ async fn execute_command(
             }
         }
         HostCommand::AttachTcpServer { bind, bitrate } => {
-            let server = TcpServer::bind(bind.as_str(), engine_bitrate(*bitrate)?)
+            let server = TcpServer::bind_with_bitrate(bind.as_str(), engine_bitrate(*bitrate)?)
                 .await
                 .map_err(|error| CommandFailure::BindFailed {
                     detail: error.to_string(),
@@ -628,7 +628,7 @@ async fn execute_command(
             Ok(CommandOutcome::InterfaceAttached { interface })
         }
         HostCommand::AttachTcpClient { target, bitrate } => {
-            let client = TcpClientInterface::new(
+            let client = TcpClientInterface::new_with_bitrate(
                 target.clone(),
                 engine_bitrate(*bitrate)?,
                 ReconnectPolicy::STANDARD,

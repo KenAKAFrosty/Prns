@@ -47,7 +47,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let receiver_hash = receiver_destination
         .destination_hash()
         .map_err(|error| io::Error::other(format!("invalid destination name: {error:?}")))?;
-    let server = TcpServer::bind("127.0.0.1:0", BITRATE).await?;
+    let server = TcpServer::bind_with_bitrate("127.0.0.1:0", BITRATE).await?;
     let server_address = server.local_addr()?.to_string();
     let receiver = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
@@ -62,7 +62,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let _server = receiver_handle.supervise(server);
 
     let (announce_tx, mut announce_rx) = tokio::sync::mpsc::unbounded_channel();
-    let client = TcpClientInterface::new(server_address, BITRATE, ReconnectPolicy::STANDARD);
+    let client =
+        TcpClientInterface::new_with_bitrate(server_address, BITRATE, ReconnectPolicy::STANDARD);
     let sender = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [destination(ResourceStrategy::AcceptNone)?],

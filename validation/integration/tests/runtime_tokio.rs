@@ -35,7 +35,7 @@ impl InterfaceSupervisor for DialOnce {
     }
 
     async fn run(self, fleet: Fleet) {
-        let _member = fleet.add(TcpClientInterface::new(
+        let _member = fleet.add(TcpClientInterface::new_with_bitrate(
             self.addr,
             BITRATE,
             ReconnectPolicy::STANDARD,
@@ -67,7 +67,7 @@ async fn two_nodes_stand_up_and_one_hears_the_others_announce() {
         .destination_hash()
         .expect("the test destination name is valid");
 
-    let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+    let server = TcpServer::bind_with_bitrate("127.0.0.1:0", BITRATE)
         .await
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
@@ -83,7 +83,7 @@ async fn two_nodes_stand_up_and_one_hears_the_others_announce() {
     let commands_a = node_a.handle();
     let _server_sup = commands_a.supervise(server);
 
-    let client = TcpClientInterface::new(addr, BITRATE, ReconnectPolicy::STANDARD);
+    let client = TcpClientInterface::new_with_bitrate(addr, BITRATE, ReconnectPolicy::STANDARD);
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
@@ -139,7 +139,7 @@ async fn an_interface_added_through_the_handle_carries_traffic_until_torn_down()
         .destination_hash()
         .expect("the test destination name is valid");
 
-    let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+    let server = TcpServer::bind_with_bitrate("127.0.0.1:0", BITRATE)
         .await
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
@@ -171,7 +171,7 @@ async fn an_interface_added_through_the_handle_carries_traffic_until_torn_down()
     });
     let commands_b = node_b.handle();
 
-    let attached = commands_b.add_interface(TcpClientInterface::new(
+    let attached = commands_b.add_interface(TcpClientInterface::new_with_bitrate(
         addr,
         BITRATE,
         ReconnectPolicy::STANDARD,
@@ -242,7 +242,7 @@ async fn a_supervisor_spawns_a_member_and_tearing_the_supervisor_down_cascades_t
         .destination_hash()
         .expect("the test destination name is valid");
 
-    let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+    let server = TcpServer::bind_with_bitrate("127.0.0.1:0", BITRATE)
         .await
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
@@ -328,7 +328,7 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
         .destination_hash()
         .expect("the test destination name is valid");
 
-    let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+    let server = TcpServer::bind_with_bitrate("127.0.0.1:0", BITRATE)
         .await
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
@@ -355,7 +355,7 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
     let commands_s = node_s.handle();
     let _server_sup = commands_s.supervise(server);
 
-    let client_a = TcpClientInterface::new(addr.clone(), BITRATE, ReconnectPolicy::STANDARD);
+    let client_a = TcpClientInterface::new_with_bitrate(addr.clone(), BITRATE, ReconnectPolicy::STANDARD);
     let client_a_status = client_a.status();
     let node_a = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
@@ -370,7 +370,7 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
     });
     let commands_a = node_a.handle();
 
-    let client_b = TcpClientInterface::new(addr, BITRATE, ReconnectPolicy::STANDARD);
+    let client_b = TcpClientInterface::new_with_bitrate(addr, BITRATE, ReconnectPolicy::STANDARD);
     let client_b_status = client_b.status();
     let node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
@@ -486,7 +486,7 @@ async fn a_recipe_accept_destination_receives_a_resource() {
     };
     let dest_a = single_a.destination_hash().expect("valid destination");
 
-    let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+    let server = TcpServer::bind_with_bitrate("127.0.0.1:0", BITRATE)
         .await
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
@@ -503,7 +503,7 @@ async fn a_recipe_accept_destination_receives_a_resource() {
     let _server_sup = commands_a.supervise(server);
 
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
-    let client = TcpClientInterface::new(addr, BITRATE, ReconnectPolicy::STANDARD);
+    let client = TcpClientInterface::new_with_bitrate(addr, BITRATE, ReconnectPolicy::STANDARD);
     let node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xF2))],

@@ -63,7 +63,7 @@ async fn a_recipe_node_synthesizes_a_tunnel_when_its_transport_is_a_held_identit
 
     let secret = Zeroizing::new([0xC3u8; IDENTITY_SECRET_KEY_LEN]);
 
-    let client = TcpClientInterface::new(addr, BITRATE, ReconnectPolicy::STANDARD);
+    let client = TcpClientInterface::new_with_bitrate(addr, BITRATE, ReconnectPolicy::STANDARD);
     let node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: Some(secret.clone()),
         pre_configured_destinations: [PreConfiguredDestination::Single {

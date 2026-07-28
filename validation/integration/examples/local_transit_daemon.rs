@@ -100,7 +100,7 @@ async fn main() {
     });
     let handle = node.handle();
     handle.supervise(SharedInstanceServer::with_port(local_port));
-    let tcp = TcpClientInterface::new(peer_addr.clone(), BITRATE, ReconnectPolicy::STANDARD);
+    let tcp = TcpClientInterface::new_with_bitrate(peer_addr.clone(), BITRATE, ReconnectPolicy::STANDARD);
     let _peer = match ifac {
         Some(ifac) => handle.add_interface_with_ifac_name(tcp, ifac, ifac_network_name),
         None => handle.add_interface(tcp),

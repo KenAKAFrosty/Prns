@@ -69,7 +69,7 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
         .expect("the test destination name is valid");
 
     let flushed_high_water = {
-        let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+        let server = TcpServer::bind_with_bitrate("127.0.0.1:0", BITRATE)
             .await
             .expect("server binds");
         let addr = server.local_addr().expect("bound addr").to_string();
@@ -144,7 +144,7 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
         }
     };
 
-    let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+    let server = TcpServer::bind_with_bitrate("127.0.0.1:0", BITRATE)
         .await
         .expect("server rebinds");
     let addr = server.local_addr().expect("bound addr").to_string();
@@ -245,7 +245,7 @@ async fn a_reconnecting_peer_reclaims_a_rebooted_relays_routes_through_its_tunne
         .expect("the test destination name is valid");
 
     {
-        let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+        let server = TcpServer::bind_with_bitrate("127.0.0.1:0", BITRATE)
             .await
             .expect("server binds");
         let addr = server.local_addr().expect("bound addr").to_string();
@@ -341,7 +341,7 @@ async fn a_reconnecting_peer_reclaims_a_rebooted_relays_routes_through_its_tunne
         }
     }
 
-    let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+    let server = TcpServer::bind_with_bitrate("127.0.0.1:0", BITRATE)
         .await
         .expect("server rebinds");
     let addr = server.local_addr().expect("bound addr").to_string();
@@ -416,7 +416,7 @@ async fn a_quiet_flush_skips_unchanged_regions_and_a_change_rewrites() {
         .destination_hash()
         .expect("the test destination name is valid");
 
-    let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+    let server = TcpServer::bind_with_bitrate("127.0.0.1:0", BITRATE)
         .await
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
@@ -437,7 +437,7 @@ async fn a_quiet_flush_skips_unchanged_regions_and_a_change_rewrites() {
     let commands_a = node_a.handle();
     let _server_sup = commands_a.supervise(server);
 
-    let client = TcpClientInterface::new(addr, BITRATE, ReconnectPolicy::STANDARD);
+    let client = TcpClientInterface::new_with_bitrate(addr, BITRATE, ReconnectPolicy::STANDARD);
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
@@ -612,7 +612,7 @@ async fn a_rebooted_destination_decrypts_singles_sealed_to_its_pre_reboot_ratche
         .expect("the test destination name is valid");
 
     {
-        let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+        let server = TcpServer::bind_with_bitrate("127.0.0.1:0", BITRATE)
             .await
             .expect("server binds");
         let addr = server.local_addr().expect("bound addr").to_string();
@@ -696,7 +696,7 @@ async fn a_rebooted_destination_decrypts_singles_sealed_to_its_pre_reboot_ratche
         }
     }
 
-    let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+    let server = TcpServer::bind_with_bitrate("127.0.0.1:0", BITRATE)
         .await
         .expect("server rebinds");
     let addr = server.local_addr().expect("bound addr").to_string();
