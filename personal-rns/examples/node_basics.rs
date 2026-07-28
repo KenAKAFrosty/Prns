@@ -1,7 +1,6 @@
 //! A complete, bounded two-node Reticulum exchange over an isolated localhost TCP link. See `docs/getting-started.md` for context.
 
 use core::time::Duration;
-
 use personal_rns::prelude::*;
 
 const DELIVERY_TIMEOUT: Duration = Duration::from_secs(10);

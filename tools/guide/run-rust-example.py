@@ -19,17 +19,16 @@ def main() -> int:
         "-p",
         "personal-rns",
         "--example",
-        "node_basics",
+        sys.argv[1],
         "--features",
-        "tokio-host,tcp",
+        sys.argv[2],
         "--",
-        *sys.argv[1:],
+        *sys.argv[3:],
     ]
     result = subprocess.run(command, cwd=ROOT, check=False)
     if result.returncode == 0:
         print(
-            "Rust quickstart succeeded. Next, inspect "
-            "personal-rns/examples/node_basics.rs; it is intentionally small."
+            f"Guide example succeeded. Next, inspect personal-rns/examples/{sys.argv[1]}.rs; it is intentionally small."
         )
     return result.returncode
 

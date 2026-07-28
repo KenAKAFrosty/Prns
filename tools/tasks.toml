@@ -55,13 +55,23 @@ entrypoint = ["bash", "tools/build/android.sh"]
 requires = ["bash", "cargo"]
 
 [[task]]
-id = "guide.rust"
+id = "guide.rust-basics"
 summary = "Rust quickstart: run the bounded two-node API contract over an isolated localhost TCP connection."
 domain = "guide"
 effect = "workspace-write"
 platforms = ["any"]
 audience = ["developer", "ci"]
-entrypoint = ["python3", "tools/guide/run-rust-example.py"]
+entrypoint = ["python3", "tools/guide/run-rust-example.py", "node_basics", "tokio-host,tcp"]
+requires = ["cargo", "python3"]
+
+[[task]]
+id = "guide.rust-auto-discovery"
+summary = "Rust follow-up: two nodes with no addresses in code find each other over Wi-Fi auto-discovery."
+domain = "guide"
+effect = "network-listen"
+platforms = ["any"]
+audience = ["developer"]
+entrypoint = ["python3", "tools/guide/run-rust-example.py", "auto_discovery", "tokio-host,wifi-auto"]
 requires = ["cargo", "python3"]
 
 [[task]]
