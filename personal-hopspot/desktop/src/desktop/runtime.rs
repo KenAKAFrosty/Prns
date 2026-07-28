@@ -196,8 +196,8 @@ fn run_node(ready_tx: Sender<(WindowHandles, persistence::ShutdownFlush)>) {
             pre_configured_destinations: destinations.into_preconfigured_destinations(),
             app_state: (),
             storage: GrowableHeap,
-            routes: screen::node_pages::NodePageRoutes,
-            interfaces: Manual,
+            request_endpoints: screen::node_pages::NodePageRoutes,
+            interfaces: ManuallyAttached,
             on_event: move |event, _state: &()| {
                 if let PrnsEvent::Diagnostic(Diagnostic::SelfRatchetRotated { destination }) = event
                 {
