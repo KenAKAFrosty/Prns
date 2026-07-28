@@ -5,15 +5,16 @@ from __future__ import annotations
 import hashlib
 import io
 import json
-from pathlib import Path, PurePosixPath
+import os
 import stat
 import subprocess
 import tempfile
 import zipfile
-
+from pathlib import Path, PurePosixPath
 
 MAX_ARCHIVE_FILES = 100_000
 MAX_UNCOMPRESSED_BYTES = 2 * 1024 * 1024 * 1024
+ARCHIVE_TIMEZONE = "UTC"
 REQUIRED_SOURCE_FILES = (
     "Cargo.lock",
     "Cargo.toml",
@@ -73,6 +74,8 @@ def resolve_commit(repository: Path, commit: str) -> str:
 
 def git_archive(repository: Path, *, commit: str, version: str) -> bytes:
     resolved = resolve_commit(repository, commit)
+    environment = os.environ.copy()
+    environment["TZ"] = ARCHIVE_TIMEZONE
     result = subprocess.run(
         (
             "git",
@@ -85,6 +88,7 @@ def git_archive(repository: Path, *, commit: str, version: str) -> bytes:
         ),
         capture_output=True,
         check=False,
+        env=environment,
     )
     if result.returncode != 0:
         detail = result.stderr.decode("utf-8", errors="replace").strip()
