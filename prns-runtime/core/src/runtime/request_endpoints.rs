@@ -201,17 +201,22 @@ impl<S> RequestContext<'_, S> {
         Ok(self)
     }
 
-    /// The token to answer this request later. You can keep it, return `Err(Decline::Ignore)` now, and
-    /// answer from another task through the platform command handle.
+    /// The token to answer this request later. You can keep it, return `Err(Decline::Ignore)` now, and answer from another task through the platform command handle.
+    ///
+    /// In this context, "keeping it" usually means capturing it somewhere in your AppState
     #[must_use]
     pub fn respond_token(&self) -> RespondToken {
         self.respond_token
     }
 }
 
+/// What a requester names to reach a [`RequestEndpoint`]: the stable hash of its `ENDPOINT_ID` string.
+pub type RequestEndpointId = RequestPathHash;
+
 #[allow(async_fn_in_trait)]
-pub trait RequestEndpoint<AppState> {
-    const PATH: &'static str;
+pub trait RequestEndpoint<AppState = ()> {
+    /// You can use whatever string value you like (it's hashed and truncated so the wire length will be stable), but it's common convention to use URL/filesystem-like syntax, e.g., "/example/thing"
+    const ENDPOINT_ID: &'static str;
     const POLICY: RequestEndpointPolicy;
     async fn handle(context: RequestContext<'_, AppState>) -> Result<(), Decline>;
 }
@@ -278,7 +283,7 @@ macro_rules! request_endpoints {
         {
             const REGISTRATIONS: &'static [(&'static str, $crate::runtime::request_endpoints::RequestEndpointPolicy)] = &[
                 $((
-                    <$endpoint as $crate::runtime::request_endpoints::RequestEndpoint<S>>::PATH,
+                    <$endpoint as $crate::runtime::request_endpoints::RequestEndpoint<S>>::ENDPOINT_ID,
                     <$endpoint as $crate::runtime::request_endpoints::RequestEndpoint<S>>::POLICY,
                 ),)+
             ];
@@ -290,7 +295,7 @@ macro_rules! request_endpoints {
                 $(
                     if path_hash
                         == $crate::routing::request_handlers::RequestPathHash::of(
-                            <$endpoint as $crate::runtime::request_endpoints::RequestEndpoint<S>>::PATH,
+                            <$endpoint as $crate::runtime::request_endpoints::RequestEndpoint<S>>::ENDPOINT_ID,
                         )
                     {
                         return <$endpoint as $crate::runtime::request_endpoints::RequestEndpoint<S>>::handle(cx).await;
@@ -313,7 +318,7 @@ mod tests {
 
     struct Health;
     impl RequestEndpoint<App> for Health {
-        const PATH: &'static str = "/health";
+        const ENDPOINT_ID: &'static str = "/health";
         const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
         async fn handle(mut cx: RequestContext<'_, App>) -> Result<(), Decline> {
             cx.respond_packed(b"ok")
@@ -322,7 +327,7 @@ mod tests {
 
     struct Greet;
     impl RequestEndpoint<App> for Greet {
-        const PATH: &'static str = "/greet";
+        const ENDPOINT_ID: &'static str = "/greet";
         const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
         async fn handle(mut cx: RequestContext<'_, App>) -> Result<(), Decline> {
             let greeting = cx.state.greeting;
@@ -334,7 +339,7 @@ mod tests {
 
     struct Admin;
     impl RequestEndpoint<App> for Admin {
-        const PATH: &'static str = "/admin";
+        const ENDPOINT_ID: &'static str = "/admin";
         const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowList(&[ADMIN]);
         async fn handle(_cx: RequestContext<'_, App>) -> Result<(), Decline> {
             Err(Decline::CloseLink)
@@ -343,7 +348,7 @@ mod tests {
 
     struct Ack;
     impl RequestEndpoint<App> for Ack {
-        const PATH: &'static str = "/ack";
+        const ENDPOINT_ID: &'static str = "/ack";
         const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
         async fn handle(mut cx: RequestContext<'_, App>) -> Result<(), Decline> {
             cx.respond_packed(&[])

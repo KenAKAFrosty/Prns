@@ -14,7 +14,7 @@ async fn main() {
     use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
     use personal_rns::runtime::{
         Diagnostic, ManuallyAttached, PreConfiguredDestination, PrnsEvent, PrnsNode,
-        PrnsNodeRecipe, RequestEndpointRegistration,
+        PrnsNodeRecipe, ServeMyRequestEndpoints,
     };
     use personal_rns::storage::GrowableHeap;
     use prns_ffi::bluetooth_auto::macos::MacosBleBackend;
@@ -49,7 +49,7 @@ async fn main() {
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
-        request_endpoints: RequestEndpointRegistration::None,
+        request_endpoints: ServeMyRequestEndpoints::No,
     };
 
     let node = PrnsNode::new(PrnsNodeRecipe {

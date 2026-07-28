@@ -59,7 +59,7 @@ pub const INDEX_RESPONSE_TRANSFER_BYTES: usize = PAGE_RESPONSE_TRANSFER_BYTES;
 pub struct NoSourceNodeIndexPage;
 
 impl<S> RequestEndpoint<S> for NoSourceNodeIndexPage {
-    const PATH: &'static str = INDEX_PATH;
+    const ENDPOINT_ID: &'static str = INDEX_PATH;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
     async fn handle(mut context: RequestContext<'_, S>) -> Result<(), Decline> {
@@ -70,7 +70,7 @@ impl<S> RequestEndpoint<S> for NoSourceNodeIndexPage {
 pub struct NodeQuickstartPage;
 
 impl<S> RequestEndpoint<S> for NodeQuickstartPage {
-    const PATH: &'static str = QUICKSTART_PATH;
+    const ENDPOINT_ID: &'static str = QUICKSTART_PATH;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
     async fn handle(mut context: RequestContext<'_, S>) -> Result<(), Decline> {
@@ -83,7 +83,7 @@ pub struct SourceNodeIndexPage;
 
 #[cfg(feature = "source-archive")]
 impl<S> RequestEndpoint<S> for SourceNodeIndexPage {
-    const PATH: &'static str = INDEX_PATH;
+    const ENDPOINT_ID: &'static str = INDEX_PATH;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
     async fn handle(mut context: RequestContext<'_, S>) -> Result<(), Decline> {
@@ -96,7 +96,7 @@ pub struct SourceArchiveFile;
 
 #[cfg(feature = "source-archive")]
 impl<S> RequestEndpoint<S> for SourceArchiveFile {
-    const PATH: &'static str = SOURCE_ARCHIVE_PATH;
+    const ENDPOINT_ID: &'static str = SOURCE_ARCHIVE_PATH;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
     async fn handle(mut context: RequestContext<'_, S>) -> Result<(), Decline> {
@@ -109,7 +109,7 @@ pub struct SourceChecksumFile;
 
 #[cfg(feature = "source-archive")]
 impl<S> RequestEndpoint<S> for SourceChecksumFile {
-    const PATH: &'static str = SOURCE_CHECKSUM_PATH;
+    const ENDPOINT_ID: &'static str = SOURCE_CHECKSUM_PATH;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
     async fn handle(mut context: RequestContext<'_, S>) -> Result<(), Decline> {
@@ -172,7 +172,7 @@ impl<S> RequestEndpointSet<S> for SourceNodePageRoutes {
 pub struct NodeIndexPage;
 
 impl<S> RequestEndpoint<S> for NodeIndexPage {
-    const PATH: &'static str = INDEX_PATH;
+    const ENDPOINT_ID: &'static str = INDEX_PATH;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
     async fn handle(context: RequestContext<'_, S>) -> Result<(), Decline> {

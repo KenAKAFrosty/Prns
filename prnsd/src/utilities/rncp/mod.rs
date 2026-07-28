@@ -28,9 +28,9 @@ use personal_rns::runtime::request_endpoints::{
 };
 use personal_rns::runtime::{
     load_or_create_identity_secret, IdentitySecretFileError, NodeRunError,
-    PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle, RequestEndpointRegistration,
-    ResourceAdmissionPeer, ResourceOfferAdmission, ResourceReceiveError, ResourceSendError,
-    SegmentCompression, SendError,
+    PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle, ResourceAdmissionPeer,
+    ResourceOfferAdmission, ResourceReceiveError, ResourceSendError, SegmentCompression, SendError,
+    ServeMyRequestEndpoints,
 };
 use personal_rns::shared_instance::{
     connect_existing_shared_instance, ExistingSharedInstanceUnavailable,
@@ -77,7 +77,7 @@ struct AuthenticatedFetch;
 struct PublicFetch;
 
 impl RequestEndpoint<ListenerState> for AuthenticatedFetch {
-    const PATH: &'static str = FETCH_PATH;
+    const ENDPOINT_ID: &'static str = FETCH_PATH;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowList(&[]);
 
     async fn handle(context: RequestContext<'_, ListenerState>) -> Result<(), Decline> {
@@ -86,7 +86,7 @@ impl RequestEndpoint<ListenerState> for AuthenticatedFetch {
 }
 
 impl RequestEndpoint<ListenerState> for PublicFetch {
-    const PATH: &'static str = FETCH_PATH;
+    const ENDPOINT_ID: &'static str = FETCH_PATH;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
     async fn handle(context: RequestContext<'_, ListenerState>) -> Result<(), Decline> {
@@ -485,7 +485,7 @@ where
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
             resource_strategy: ResourceStrategy::AcceptIf,
-            request_endpoints: RequestEndpointRegistration::NodeRequestEndpointSet,
+            request_endpoints: ServeMyRequestEndpoints::Yes,
         }],
         app_state: ListenerState {
             handle,

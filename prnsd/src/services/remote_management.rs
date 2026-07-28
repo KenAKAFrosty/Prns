@@ -13,7 +13,7 @@ use personal_rns::runtime::request_endpoints::{
 };
 use personal_rns::runtime::{
     ConfigurePreconfiguredDestinationError, PreConfiguredDestination, PrnsEvent, PrnsNode,
-    RegisterRequestEndpointError, RequestEndpointRegistration,
+    RegisterRequestEndpointError, ServeMyRequestEndpoints,
 };
 use personal_rns::storage::StorageLayout;
 use personal_rns::wire::DestinationHash;
@@ -26,7 +26,7 @@ pub const PATH_PATH: &str = "/path";
 pub struct StatusRoute;
 
 impl RequestEndpoint<DaemonRequestState> for StatusRoute {
-    const PATH: &'static str = STATUS_PATH;
+    const ENDPOINT_ID: &'static str = STATUS_PATH;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowList(&[]);
 
     async fn handle(mut context: RequestContext<'_, DaemonRequestState>) -> Result<(), Decline> {
@@ -50,7 +50,7 @@ impl RequestEndpoint<DaemonRequestState> for StatusRoute {
 pub struct PathRoute;
 
 impl RequestEndpoint<DaemonRequestState> for PathRoute {
-    const PATH: &'static str = PATH_PATH;
+    const ENDPOINT_ID: &'static str = PATH_PATH;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowList(&[]);
 
     async fn handle(mut context: RequestContext<'_, DaemonRequestState>) -> Result<(), Decline> {
@@ -102,7 +102,7 @@ where
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
             resource_strategy: ResourceStrategy::AcceptNone,
-            request_endpoints: RequestEndpointRegistration::None,
+            request_endpoints: ServeMyRequestEndpoints::No,
         })
         .map_err(ActivationError::Destination)?;
     node.register_request_route::<StatusRoute>(&destination)

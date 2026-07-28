@@ -230,12 +230,16 @@ where
     {
         self.node
             .engine
-            .register_request_handler(destination, Route::PATH, Route::POLICY.engine_policy())
+            .register_request_handler(
+                destination,
+                Route::ENDPOINT_ID,
+                Route::POLICY.engine_policy(),
+            )
             .map_err(RegisterRequestEndpointError::Registration)?;
         for identity in Route::POLICY.seed_list() {
             self.node
                 .engine
-                .allow_requester(destination, Route::PATH, *identity)
+                .allow_requester(destination, Route::ENDPOINT_ID, *identity)
                 .map_err(RegisterRequestEndpointError::Seed)?;
         }
         Ok(())

@@ -8,7 +8,7 @@ use personal_rns::engine::RatchetPolicy;
 use personal_rns::routing::request_handlers::RequestPolicy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
-    ManuallyAttached, PreConfiguredDestination, PrnsNodeRecipe, RequestEndpointRegistration,
+    ManuallyAttached, PreConfiguredDestination, PrnsNodeRecipe, ServeMyRequestEndpoints,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::{
@@ -69,7 +69,7 @@ fn build_destinations<'a>(
                 link_requests: single.link_requests,
                 ratchet: single.ratchet,
                 resource_strategy: single.resource_strategy,
-                request_endpoints: RequestEndpointRegistration::None,
+                request_endpoints: ServeMyRequestEndpoints::No,
             },
         })
         .collect()

@@ -8,7 +8,7 @@ use personal_rns::request_endpoints;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
     Diagnostic, ManuallyAttached, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeRecipe,
-    RequestEndpointRegistration,
+    ServeMyRequestEndpoints,
 };
 use personal_rns::storage::GrowableHeap;
 use prns_core::interfaces::shared_instance::DEFAULT_LOCAL_PORT;
@@ -40,7 +40,7 @@ async fn main() {
             proof: ProofStrategy::ProveAll,
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
-            request_endpoints: RequestEndpointRegistration::None,
+            request_endpoints: ServeMyRequestEndpoints::No,
         }],
         app_state: (),
         storage: GrowableHeap,

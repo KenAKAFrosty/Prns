@@ -24,7 +24,7 @@ pub(super) async fn run_resource_endpoint(
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         resource_strategy,
-        request_endpoints: RequestEndpointRegistration::None,
+        request_endpoints: ServeMyRequestEndpoints::No,
     };
     let destination = single
         .destination_hash()

@@ -5,7 +5,7 @@ use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::request_endpoints::RequestEndpointSet;
 use personal_rns::runtime::{
     ConfigurePreconfiguredDestinationError, PreConfiguredDestination, PrnsEvent, PrnsNode,
-    RequestEndpointRegistration,
+    ServeMyRequestEndpoints,
 };
 use personal_rns::storage::StorageLayout;
 use personal_rns::wire::DestinationHash;
@@ -28,6 +28,6 @@ where
         link_requests: LinkRequestPolicy::AcceptNone,
         ratchet: RatchetPolicy::NoRatchets,
         resource_strategy: ResourceStrategy::AcceptNone,
-        request_endpoints: RequestEndpointRegistration::None,
+        request_endpoints: ServeMyRequestEndpoints::No,
     })
 }

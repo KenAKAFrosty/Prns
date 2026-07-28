@@ -200,7 +200,7 @@ mod tests {
     struct DestinationRoutes;
 
     impl RequestEndpoint<()> for DestinationEcho {
-        const PATH: &'static str = "/destination";
+        const ENDPOINT_ID: &'static str = "/destination";
         const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
         async fn handle(mut context: RequestContext<'_, ()>) -> Result<(), Decline> {
@@ -211,13 +211,13 @@ mod tests {
 
     impl RequestEndpointSet<()> for DestinationRoutes {
         const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)] =
-            &[(DestinationEcho::PATH, DestinationEcho::POLICY)];
+            &[(DestinationEcho::ENDPOINT_ID, DestinationEcho::POLICY)];
 
         async fn dispatch(
             context: RequestContext<'_, ()>,
             path_hash: RequestPathHash,
         ) -> Result<(), Decline> {
-            if path_hash == RequestPathHash::of(DestinationEcho::PATH) {
+            if path_hash == RequestPathHash::of(DestinationEcho::ENDPOINT_ID) {
                 DestinationEcho::handle(context).await
             } else {
                 Err(Decline::Ignore)
@@ -242,7 +242,7 @@ mod tests {
     }
 
     impl RequestEndpoint<()> for StaticPage {
-        const PATH: &'static str = "/page";
+        const ENDPOINT_ID: &'static str = "/page";
         const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
         async fn handle(mut context: RequestContext<'_, ()>) -> Result<(), Decline> {
@@ -252,13 +252,13 @@ mod tests {
 
     impl RequestEndpointSet<()> for StaticRoutes {
         const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)] =
-            &[(StaticPage::PATH, StaticPage::POLICY)];
+            &[(StaticPage::ENDPOINT_ID, StaticPage::POLICY)];
 
         async fn dispatch(
             context: RequestContext<'_, ()>,
             path_hash: RequestPathHash,
         ) -> Result<(), Decline> {
-            if path_hash == RequestPathHash::of(StaticPage::PATH) {
+            if path_hash == RequestPathHash::of(StaticPage::ENDPOINT_ID) {
                 StaticPage::handle(context).await
             } else {
                 Err(Decline::Ignore)

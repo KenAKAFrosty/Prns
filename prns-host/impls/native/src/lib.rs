@@ -393,7 +393,7 @@ fn build_destinations<'a>(
                 link_requests: LinkRequestPolicy::AcceptAll,
                 ratchet: RatchetPolicy::NoRatchets,
                 resource_strategy: EngineResourceStrategy::AcceptNone,
-                request_endpoints: personal_rns::runtime::RequestEndpointRegistration::None,
+                request_endpoints: personal_rns::runtime::ServeMyRequestEndpoints::No,
             },
         })
         .collect()

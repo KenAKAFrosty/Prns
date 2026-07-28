@@ -13,7 +13,7 @@ use personal_rns::runtime::request_endpoints::{
 };
 use personal_rns::runtime::{
     Diagnostic, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
-    RequestEndpointRegistration,
+    ServeMyRequestEndpoints,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::udp::UdpInterface;
@@ -28,7 +28,7 @@ struct Responder;
 
 struct Echo;
 impl RequestEndpoint<Responder> for Echo {
-    const PATH: &'static str = QUERY_PATH;
+    const ENDPOINT_ID: &'static str = QUERY_PATH;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
     async fn handle(mut cx: RequestContext<'_, Responder>) -> Result<(), Decline> {
         let asked = cx.data;
@@ -58,7 +58,7 @@ async fn a_link_establishes_and_carries_data_across_two_nodes_over_udp() {
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
-        request_endpoints: RequestEndpointRegistration::NodeRequestEndpointSet,
+        request_endpoints: ServeMyRequestEndpoints::Yes,
     };
     let dest_a = responder_dest
         .destination_hash()
@@ -115,7 +115,7 @@ async fn a_link_establishes_and_carries_data_across_two_nodes_over_udp() {
             proof: ProofStrategy::ProveAll,
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
-            request_endpoints: RequestEndpointRegistration::None,
+            request_endpoints: ServeMyRequestEndpoints::No,
         }],
         app_state: (),
         storage: GrowableHeap,

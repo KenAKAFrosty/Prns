@@ -238,7 +238,7 @@ impl<State, Endpoint> RequestEndpoint<State> for Endpoint
 where
     Endpoint: RnxCommandHandler<State>,
 {
-    const PATH: &'static str = prns_core::rnx::COMMAND_PATH;
+    const ENDPOINT_ID: &'static str = prns_core::rnx::COMMAND_PATH;
     const POLICY: RequestEndpointPolicy = Endpoint::AUTHORIZATION.route_policy();
 
     async fn handle(mut context: RequestContext<'_, State>) -> Result<(), Decline> {

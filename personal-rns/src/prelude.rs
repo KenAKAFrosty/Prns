@@ -9,7 +9,11 @@ pub use crate::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget};
 pub use crate::interfaces::{BitrateBps, InterfaceKind};
 pub use crate::manifold::reconnect::ReconnectPolicy;
 pub use crate::routing::LinkRequestPolicy;
-pub use crate::runtime::RequestEndpointRegistration;
+pub use crate::runtime::request_endpoints::{
+    Decline, RequestContext, RequestEndpoint, RequestEndpointId, RequestEndpointPolicy,
+    RespondToken,
+};
+pub use crate::runtime::ServeMyRequestEndpoints;
 
 #[cfg(feature = "alloc")]
 pub use crate::GrowableHeap;

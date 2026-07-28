@@ -15,7 +15,7 @@ use crate::wire::DestinationHash;
 
 use super::super::request_endpoints::RequestEndpointSet;
 use super::super::PrnsEvent;
-use super::recipe::{PreConfiguredDestination, PrnsNodeRecipe, RequestEndpointRegistration};
+use super::recipe::{PreConfiguredDestination, PrnsNodeRecipe, ServeMyRequestEndpoints};
 
 pub struct AssembledNode<St, R, F, S>
 where
@@ -33,6 +33,7 @@ pub enum ConfigurePreconfiguredDestinationError {
     Register(RegisterDestinationError),
     RegisterRequestHandler(TablePushError),
     SeedRequester(RequestHandlerError),
+    ServesEmptyEndpointSet,
 }
 
 struct SingleDestinationConfiguration<'a> {
@@ -88,7 +89,7 @@ where
 fn configure_single_destination<St, R, S>(
     engine: &mut EngineState<S>,
     configuration: SingleDestinationConfiguration<'_>,
-    request_endpoints: RequestEndpointRegistration,
+    request_endpoints: ServeMyRequestEndpoints,
 ) -> Result<DestinationHash, ConfigurePreconfiguredDestinationError>
 where
     R: RequestEndpointSet<St>,
@@ -119,10 +120,7 @@ where
         )
         .map_err(ConfigurePreconfiguredDestinationError::Register)?;
     engine.set_default_resource_strategy(&destination, resource_strategy);
-    if matches!(
-        request_endpoints,
-        RequestEndpointRegistration::NodeRequestEndpointSet
-    ) {
+    if matches!(request_endpoints, ServeMyRequestEndpoints::Yes) {
         register_request_routes_for::<St, R, S>(engine, destination)?;
     }
     Ok(destination)
@@ -228,10 +226,22 @@ fn configure_assembled_node<'a, D, St, R, F, S>(
     F: FnMut(PrnsEvent<'_>, &St),
     S: StorageLayout,
 {
+    let mut any_destination_serves = false;
     for destination in pre_configured_destinations {
+        any_destination_serves |= matches!(
+            destination,
+            PreConfiguredDestination::Single {
+                request_endpoints: ServeMyRequestEndpoints::Yes,
+                ..
+            }
+        );
         configure_preconfigured_destination::<St, R, S>(&mut node.engine, destination)
             .expect("recipe destination is valid and fits the store");
     }
+    assert!(
+        R::REGISTRATIONS.is_empty() || any_destination_serves,
+        "the recipe declares request endpoints but no destination serves them; set request_endpoints: ServeMyRequestEndpoints::Yes on a destination"
+    );
 
     if let Some(secret) = transport_identity {
         let identity = node
@@ -270,7 +280,7 @@ mod tests {
     }
 
     fn configured_engine(
-        request_endpoints: RequestEndpointRegistration,
+        request_endpoints: ServeMyRequestEndpoints,
     ) -> (EngineState<Storage>, DestinationHash) {
         let mut engine = EngineState::<Storage>::default();
         let destination = configure_preconfigured_destination::<(), Routes, Storage>(
@@ -293,8 +303,7 @@ mod tests {
 
     #[test]
     fn node_route_set_attaches_routes_to_the_destination() {
-        let (mut engine, destination) =
-            configured_engine(RequestEndpointRegistration::NodeRequestEndpointSet);
+        let (mut engine, destination) = configured_engine(ServeMyRequestEndpoints::Yes);
 
         assert_eq!(
             engine.allow_requester(&destination, "/test", IdentityHash::new([0x22; 16])),
@@ -304,7 +313,7 @@ mod tests {
 
     #[test]
     fn none_leaves_routes_unattached_from_the_destination() {
-        let (mut engine, destination) = configured_engine(RequestEndpointRegistration::None);
+        let (mut engine, destination) = configured_engine(ServeMyRequestEndpoints::No);
 
         assert_eq!(
             engine.allow_requester(&destination, "/test", IdentityHash::new([0x22; 16])),
@@ -326,7 +335,7 @@ mod tests {
                 }],
                 app_state: (),
                 storage,
-                request_endpoints: Routes,
+                request_endpoints: (),
                 interfaces: ManuallyAttached,
                 on_event: |_, _| {},
             },
@@ -335,5 +344,27 @@ mod tests {
         assert!(node.engine.network_transport_enabled());
         assert_eq!(node.engine.held_identity_hashes().len(), 1);
         assert_eq!(node.engine.upstream_app_destinations().count(), 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "no destination serves them")]
+    fn declared_endpoints_with_no_serving_destination_fail_loudly() {
+        let mut slot = MaybeUninit::uninit();
+        let storage: Storage = TestFixedStorage;
+        let (_node, ManuallyAttached) = assemble_node_in_place(
+            &mut slot,
+            PrnsNodeRecipe {
+                transport_identity: None,
+                pre_configured_destinations: [PreConfiguredDestination::Plain {
+                    app_name: "test",
+                    aspects: &["plain"],
+                }],
+                app_state: (),
+                storage,
+                request_endpoints: Routes,
+                interfaces: ManuallyAttached,
+                on_event: |_, _| {},
+            },
+        );
     }
 }

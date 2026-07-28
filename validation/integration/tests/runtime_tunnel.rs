@@ -9,7 +9,7 @@ use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::tunnel::{parse_synthesize_payload, SYNTHESIZE_PAYLOAD_LEN};
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
-    PreConfiguredDestination, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe, RequestEndpointRegistration,
+    PreConfiguredDestination, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe, ServeMyRequestEndpoints,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::TcpClientInterface;
@@ -75,7 +75,7 @@ async fn a_recipe_node_synthesizes_a_tunnel_when_its_transport_is_a_held_identit
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
             resource_strategy: ResourceStrategy::AcceptNone,
-            request_endpoints: RequestEndpointRegistration::None,
+            request_endpoints: ServeMyRequestEndpoints::No,
         }],
         app_state: (),
         storage: GrowableHeap,

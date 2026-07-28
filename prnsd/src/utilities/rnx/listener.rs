@@ -17,7 +17,7 @@ use personal_rns::runtime::rnx::{
 };
 use personal_rns::runtime::{
     Diagnostic, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle, ProcessCommands,
-    RequestEndpointRegistration, ResourceAdmissionPeer, ResourceOfferAdmission,
+    ResourceAdmissionPeer, ResourceOfferAdmission, ServeMyRequestEndpoints,
 };
 use personal_rns::shared_instance::connect_existing_shared_instance;
 use personal_rns::storage::GrowableHeap;
@@ -142,7 +142,7 @@ where
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
             resource_strategy: ResourceStrategy::AcceptIf,
-            request_endpoints: RequestEndpointRegistration::NodeRequestEndpointSet,
+            request_endpoints: ServeMyRequestEndpoints::Yes,
         }],
         app_state: ListenerState {
             handle,

@@ -11,7 +11,7 @@ use personal_rns::request_endpoints;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
     Diagnostic, ManuallyAttached, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle,
-    PrnsNodeRecipe, RequestEndpointRegistration,
+    PrnsNodeRecipe, ServeMyRequestEndpoints,
 };
 use personal_rns::shared_instance::SharedInstanceServer;
 use personal_rns::storage::GrowableHeap;
@@ -33,7 +33,7 @@ fn single(identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> PreConfiguredDe
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
-        request_endpoints: RequestEndpointRegistration::None,
+        request_endpoints: ServeMyRequestEndpoints::No,
     }
 }
 

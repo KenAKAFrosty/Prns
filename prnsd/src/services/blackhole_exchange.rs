@@ -19,7 +19,7 @@ use personal_rns::runtime::request_endpoints::{
 use personal_rns::runtime::{
     ConfigurePreconfiguredDestinationError, IdentityBlackholeControl,
     IdentityBlackholeControlError, IdentityBlackholeSource, PreConfiguredDestination, PrnsEvent,
-    PrnsNode, PrnsNodeHandle, RegisterRequestEndpointError, RequestEndpointRegistration, SendError,
+    PrnsNode, PrnsNodeHandle, RegisterRequestEndpointError, SendError, ServeMyRequestEndpoints,
 };
 use personal_rns::shared_instance::{RnsBlackholeFileError, RnsBlackholeFiles};
 use personal_rns::storage::StorageLayout;
@@ -70,7 +70,7 @@ impl fmt::Display for BlackholeUpdateError {
 }
 
 impl RequestEndpoint<DaemonRequestState> for ListRoute {
-    const PATH: &'static str = LIST_PATH;
+    const ENDPOINT_ID: &'static str = LIST_PATH;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
     async fn handle(mut context: RequestContext<'_, DaemonRequestState>) -> Result<(), Decline> {
@@ -106,7 +106,7 @@ where
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
             resource_strategy: ResourceStrategy::AcceptNone,
-            request_endpoints: RequestEndpointRegistration::None,
+            request_endpoints: ServeMyRequestEndpoints::No,
         })
         .map_err(ActivationError::Destination)?;
     node.register_request_route::<ListRoute>(&destination)

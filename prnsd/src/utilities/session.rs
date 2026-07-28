@@ -15,7 +15,7 @@ use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
     ConfigurePreconfiguredDestinationError, ManuallyAttached, NodeRunError,
     NonRoutingIdentityError, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle,
-    PrnsNodeRecipe, RequestEndpointRegistration, RequestPathError, SendError,
+    PrnsNodeRecipe, RequestPathError, SendError, ServeMyRequestEndpoints,
 };
 use personal_rns::shared_instance::{
     connect_existing_shared_instance, ExistingSharedInstanceUnavailable, SharedInstanceRpcClient,
@@ -160,7 +160,7 @@ impl UtilityBusSession {
                 link_requests: LinkRequestPolicy::AcceptNone,
                 ratchet: RatchetPolicy::NoRatchets,
                 resource_strategy: ResourceStrategy::AcceptNone,
-                request_endpoints: RequestEndpointRegistration::None,
+                request_endpoints: ServeMyRequestEndpoints::No,
             })
             .map_err(UtilityNodeSessionError::DestinationConfiguration)?;
         let session = Self::attach(configuration, node).await?;

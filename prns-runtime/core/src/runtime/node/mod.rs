@@ -6,5 +6,5 @@ pub use assembly::{
     ConfigurePreconfiguredDestinationError,
 };
 pub use recipe::{
-    ManuallyAttached, PreConfiguredDestination, PrnsNodeRecipe, RequestEndpointRegistration,
+    ManuallyAttached, PreConfiguredDestination, PrnsNodeRecipe, ServeMyRequestEndpoints,
 };

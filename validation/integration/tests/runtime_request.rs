@@ -15,7 +15,7 @@ use personal_rns::runtime::request_endpoints::{
 };
 use personal_rns::runtime::{
     Diagnostic, ManuallyAttached, Message, PreConfiguredDestination, PrnsEvent, PrnsNode,
-    PrnsNodeHandle, PrnsNodeRecipe, RequestEndpointRegistration,
+    PrnsNodeHandle, PrnsNodeRecipe, ServeMyRequestEndpoints,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::{TcpClientInterface, TcpServer};
@@ -32,7 +32,7 @@ struct Responder;
 
 struct Echo;
 impl RequestEndpoint<Responder> for Echo {
-    const PATH: &'static str = QUERY_PATH;
+    const ENDPOINT_ID: &'static str = QUERY_PATH;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
     async fn handle(mut cx: RequestContext<'_, Responder>) -> Result<(), Decline> {
         let asked = cx.data;
@@ -43,7 +43,7 @@ impl RequestEndpoint<Responder> for Echo {
 
 struct Fat;
 impl RequestEndpoint<Responder> for Fat {
-    const PATH: &'static str = "/test/fat";
+    const ENDPOINT_ID: &'static str = "/test/fat";
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
     async fn handle(mut cx: RequestContext<'_, Responder>) -> Result<(), Decline> {
         cx.respond_packed(&fat_body())
@@ -71,7 +71,7 @@ async fn a_request_endpoints_answers_a_live_request_over_tcp() {
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
-        request_endpoints: RequestEndpointRegistration::NodeRequestEndpointSet,
+        request_endpoints: ServeMyRequestEndpoints::Yes,
     };
     let dest_a = responder_dest
         .destination_hash()
@@ -124,7 +124,7 @@ async fn a_request_endpoints_answers_a_live_request_over_tcp() {
             proof: ProofStrategy::ProveAll,
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
-            request_endpoints: RequestEndpointRegistration::None,
+            request_endpoints: ServeMyRequestEndpoints::No,
         }],
         app_state: (),
         storage: GrowableHeap,
@@ -216,7 +216,7 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
-        request_endpoints: RequestEndpointRegistration::NodeRequestEndpointSet,
+        request_endpoints: ServeMyRequestEndpoints::Yes,
     };
     let dest_a = responder_dest
         .destination_hash()
@@ -269,7 +269,7 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
             proof: ProofStrategy::ProveAll,
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
-            request_endpoints: RequestEndpointRegistration::None,
+            request_endpoints: ServeMyRequestEndpoints::No,
         }],
         app_state: (),
         storage: GrowableHeap,
@@ -342,7 +342,7 @@ async fn the_hopspot_node_page_serves_over_tcp() {
         proof: ProofStrategy::ProveNone,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
-        request_endpoints: RequestEndpointRegistration::NodeRequestEndpointSet,
+        request_endpoints: ServeMyRequestEndpoints::Yes,
     };
     let dest_a = responder_dest
         .destination_hash()
@@ -395,7 +395,7 @@ async fn the_hopspot_node_page_serves_over_tcp() {
             proof: ProofStrategy::ProveAll,
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
-            request_endpoints: RequestEndpointRegistration::None,
+            request_endpoints: ServeMyRequestEndpoints::No,
         }],
         app_state: (),
         storage: GrowableHeap,
@@ -468,7 +468,7 @@ async fn serve_the_hopspot_page_for_a_stock_client() {
         proof: ProofStrategy::ProveNone,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
-        request_endpoints: RequestEndpointRegistration::NodeRequestEndpointSet,
+        request_endpoints: ServeMyRequestEndpoints::Yes,
     };
     let dest_a = responder_dest
         .destination_hash()
@@ -526,7 +526,7 @@ async fn a_split_response_answers_a_small_request_over_tcp() {
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
-        request_endpoints: RequestEndpointRegistration::NodeRequestEndpointSet,
+        request_endpoints: ServeMyRequestEndpoints::Yes,
     };
     let dest_a = responder_dest
         .destination_hash()
@@ -579,7 +579,7 @@ async fn a_split_response_answers_a_small_request_over_tcp() {
             proof: ProofStrategy::ProveAll,
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
-            request_endpoints: RequestEndpointRegistration::None,
+            request_endpoints: ServeMyRequestEndpoints::No,
         }],
         app_state: (),
         storage: GrowableHeap,

@@ -13,7 +13,7 @@ use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
     boot_timeline_origin, DestinationIdentityRetentionControl, Diagnostic, FlushMark,
     ManuallyAttached, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle,
-    PrnsNodeRecipe, RegionFlush, RequestEndpointRegistration, RouteSeedProgress,
+    PrnsNodeRecipe, RegionFlush, ServeMyRequestEndpoints, RouteSeedProgress,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::{TcpClientInterface, TcpServer};
@@ -34,7 +34,7 @@ fn single(identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> PreConfiguredDe
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
-        request_endpoints: RequestEndpointRegistration::None,
+        request_endpoints: ServeMyRequestEndpoints::No,
     }
 }
 
@@ -595,7 +595,7 @@ fn ratcheted(
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::Ratcheted,
-        request_endpoints: RequestEndpointRegistration::None,
+        request_endpoints: ServeMyRequestEndpoints::No,
     }
 }
 

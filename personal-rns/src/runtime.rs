@@ -5,7 +5,7 @@ pub use prns_runtime::runtime::{
     DropRouteOutcome, DropRoutesViaOutcome, IdentityBlackholeControl,
     IdentityBlackholeControlError, IdentityBlackholeSource, IdentityBlackholeSourceError,
     ManuallyAttached, Message, PreConfiguredDestination, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe,
-    RequestEndpointRegistration, RoutingControl, RoutingControlError, RuntimeHealth, SendError,
+    RoutingControl, RoutingControlError, RuntimeHealth, SendError, ServeMyRequestEndpoints,
 };
 
 #[cfg(feature = "alloc")]

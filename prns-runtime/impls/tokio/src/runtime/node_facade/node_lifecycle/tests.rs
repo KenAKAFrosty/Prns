@@ -8,7 +8,7 @@ use crate::routing::links::resources::ResourceStrategy;
 use crate::routing::request_handlers::RequestHandlerError;
 use crate::runtime::{
     ManuallyAttached, PreConfiguredDestination, PrnsNodeHandle, PrnsNodeRecipe,
-    RequestEndpointRegistration,
+    ServeMyRequestEndpoints,
 };
 use crate::wire::DestinationHash;
 
@@ -116,7 +116,7 @@ fn new_with_handle_builds_state_from_the_nodes_handle() {
 fn a_runtime_destination_registers_only_its_selected_route_types() {
     struct First;
     impl RequestEndpoint<()> for First {
-        const PATH: &'static str = "/first";
+        const ENDPOINT_ID: &'static str = "/first";
         const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowList(&[]);
 
         async fn handle(_context: RequestContext<'_, ()>) -> Result<(), Decline> {
@@ -126,7 +126,7 @@ fn a_runtime_destination_registers_only_its_selected_route_types() {
 
     struct Second;
     impl RequestEndpoint<()> for Second {
-        const PATH: &'static str = "/second";
+        const ENDPOINT_ID: &'static str = "/second";
         const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowList(&[]);
 
         async fn handle(_context: RequestContext<'_, ()>) -> Result<(), Decline> {
@@ -153,18 +153,18 @@ fn a_runtime_destination_registers_only_its_selected_route_types() {
             link_requests: crate::routing::LinkRequestPolicy::AcceptAll,
             ratchet: crate::engine::RatchetPolicy::NoRatchets,
             resource_strategy: ResourceStrategy::AcceptNone,
-            request_endpoints: RequestEndpointRegistration::None,
+            request_endpoints: ServeMyRequestEndpoints::No,
         })
         .unwrap();
     prns.register_request_route::<First>(&destination).unwrap();
     let identity = crate::identity::IdentityHash::new([0x31; 16]);
 
     assert_eq!(
-        prns.allow_requester(&destination, First::PATH, identity),
+        prns.allow_requester(&destination, First::ENDPOINT_ID, identity),
         Ok(())
     );
     assert_eq!(
-        prns.allow_requester(&destination, Second::PATH, identity),
+        prns.allow_requester(&destination, Second::ENDPOINT_ID, identity),
         Err(RequestHandlerError::NoSuchHandler)
     );
 }

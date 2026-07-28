@@ -5,7 +5,7 @@ use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::routing::announce::{derive_single_destination_hash, ExpandNameError};
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
-use personal_rns::runtime::{PreConfiguredDestination, RequestEndpointRegistration};
+use personal_rns::runtime::{PreConfiguredDestination, ServeMyRequestEndpoints};
 use personal_rns::wire::DestinationHash;
 
 use crate::node_pages;
@@ -68,7 +68,7 @@ impl<'a> HopspotDestinationSet<'a> {
                 link_requests: LinkRequestPolicy::AcceptAll,
                 ratchet: RatchetPolicy::Ratcheted,
                 resource_strategy: ResourceStrategy::AcceptNone,
-                request_endpoints: RequestEndpointRegistration::None,
+                request_endpoints: ServeMyRequestEndpoints::No,
             },
             PreConfiguredDestination::Single {
                 app_name: node_pages::NODE_APP_NAME,
@@ -79,7 +79,7 @@ impl<'a> HopspotDestinationSet<'a> {
                 link_requests: LinkRequestPolicy::AcceptAll,
                 ratchet: RatchetPolicy::NoRatchets,
                 resource_strategy: ResourceStrategy::AcceptNone,
-                request_endpoints: RequestEndpointRegistration::NodeRequestEndpointSet,
+                request_endpoints: ServeMyRequestEndpoints::Yes,
             },
         ]
     }
@@ -133,7 +133,7 @@ mod tests {
                 link_requests: LinkRequestPolicy::AcceptAll,
                 ratchet: RatchetPolicy::Ratcheted,
                 resource_strategy: ResourceStrategy::AcceptNone,
-                request_endpoints: RequestEndpointRegistration::None,
+                request_endpoints: ServeMyRequestEndpoints::No,
                 ..
             }
         ));
@@ -147,7 +147,7 @@ mod tests {
                 link_requests: LinkRequestPolicy::AcceptAll,
                 ratchet: RatchetPolicy::NoRatchets,
                 resource_strategy: ResourceStrategy::AcceptNone,
-                request_endpoints: RequestEndpointRegistration::NodeRequestEndpointSet,
+                request_endpoints: ServeMyRequestEndpoints::Yes,
                 ..
             }
         ));

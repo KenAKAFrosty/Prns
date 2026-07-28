@@ -9,7 +9,7 @@ pub(super) struct RequestServer {
 pub(super) struct BenchSizedRequestEndpoint;
 
 impl RequestEndpoint<RequestServer> for BenchSizedRequestEndpoint {
-    const PATH: &'static str = REQUEST_PATH;
+    const ENDPOINT_ID: &'static str = REQUEST_PATH;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
     async fn handle(mut cx: RequestContext<'_, RequestServer>) -> Result<(), Decline> {
         let request = msgpack_bin_payload(cx.data);
@@ -51,9 +51,9 @@ pub(super) async fn run_request_endpoint(
         ratchet: RatchetPolicy::NoRatchets,
         resource_strategy: ResourceStrategy::AcceptNone,
         request_endpoints: if role == "responder" {
-            RequestEndpointRegistration::NodeRequestEndpointSet
+            ServeMyRequestEndpoints::Yes
         } else {
-            RequestEndpointRegistration::None
+            ServeMyRequestEndpoints::No
         },
     };
     let destination = single
