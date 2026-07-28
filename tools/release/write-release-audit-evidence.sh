@@ -11,6 +11,7 @@ fi
 notice_hash="$(shasum -a 256 "$root/THIRD_PARTY_NOTICES.md" | awk '{print $1}')"
 unsafe_hash="$(shasum -a 256 "$root/audits/unsafe-snapshot.json" | awk '{print $1}')"
 
+mkdir -p "$(dirname "$output")"
 {
     echo "# Release dependency audit evidence"
     echo

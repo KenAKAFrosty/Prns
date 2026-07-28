@@ -11,6 +11,7 @@ import subprocess
 import sys
 
 from flasher_build_metadata import validate_metadata
+from flasher_browser_test_trust import find_browser_test_trust_leaks
 from flasher_reproducibility import validate_report as validate_reproducibility_report
 from flasher_sparse_sizes import build_report as build_sparse_size_report
 from flasher_website_history import allowed_historical_signatures, validate_candidate_history
@@ -62,9 +63,6 @@ FORBIDDEN_PRODUCTION_REFERENCES = (
     b"playwright",
     b"axe-core",
 )
-BROWSER_FIXTURE_MARKER = b"PRNS_BROWSER_TEST_FIXTURE_TRUST_ROOT_V1"
-
-
 def digest(path: Path) -> str:
     value = hashlib.sha256()
     with path.open("rb") as stream:
@@ -180,34 +178,17 @@ def verify_production_website(root: Path) -> None:
         / "signed-candidate"
         / "minisign.pub"
     )
-    fixture_key_payload = None
-    if fixture_key_path.is_file():
-        lines = fixture_key_path.read_bytes().splitlines()
-        fixture_key_payload = lines[1] if len(lines) > 1 else None
     source_archive_path = root / "website" / "source.zip"
-    source_archive = (
-        source_archive_path.read_bytes() if source_archive_path.is_file() else None
+    leaks = find_browser_test_trust_leaks(
+        (root / "website",),
+        fixture_key_path,
+        source_archive_path,
     )
-    for path in (root / "website").rglob("*"):
-        if not path.is_file():
-            continue
-        relative = path.relative_to(root / "website").as_posix()
-        if relative in {"source.zip", "source.zip.sha256"}:
-            # The exact commit-bound source archive legitimately contains browser
-            # test fixtures. verify_source_snapshot validates it separately.
-            continue
-        value = path.read_bytes()
-        if source_archive:
-            # Source-capable WASM and firmware contain this already-verified repository
-            # archive as inert data. Keep scanning every byte around that exact blob.
-            value = value.replace(source_archive, b"")
-        if BROWSER_FIXTURE_MARKER in value or (
-            fixture_key_payload and fixture_key_payload in value
-        ):
-            raise ValueError(
-                f"hosted website contains browser-test trust material: "
-                f"{path.relative_to(root).as_posix()}"
-            )
+    if leaks:
+        raise ValueError(
+            f"hosted website contains browser-test trust material: "
+            f"{leaks[0].path.relative_to(root).as_posix()}"
+        )
 
 
 def verify_sums(root: Path) -> None:

@@ -139,6 +139,8 @@ class CandidateFixture:
         source_archive = (root / "website" / "source.zip").read_bytes()
         browser_wasm.write_bytes(
             b"fixture source-enabled wasm "
+            + source_archive
+            + b" "
             + source_metadata["sha256"].encode()
             + b" "
             + SOURCE_COMMIT[:12].encode()
@@ -514,6 +516,39 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         result = self.validate_unsigned()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("checksum is malformed or stale", result.stderr)
+
+    def test_raw_browser_fixture_trust_is_rejected_outside_the_source_archive(self) -> None:
+        browser_wasm = (
+            self.fixture.root
+            / "website"
+            / "browser-node-playground-console"
+            / "pkg"
+            / "prns_wasm_bg.wasm"
+        )
+        original = browser_wasm.read_bytes()
+        fixture_key = (
+            ROOT
+            / "docs"
+            / "website"
+            / "web-flasher"
+            / "browser"
+            / "fixtures"
+            / "signed-candidate"
+            / "minisign.pub"
+        ).read_bytes().splitlines()[1]
+        for trust_material in (
+            b"PRNS_BROWSER_TEST_FIXTURE_TRUST_ROOT_V1",
+            fixture_key,
+        ):
+            with self.subTest(trust_material=trust_material):
+                browser_wasm.write_bytes(original + b" " + trust_material)
+                result = self.validate_unsigned()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(
+                    "hosted website contains browser-test trust material",
+                    result.stderr,
+                )
+        browser_wasm.write_bytes(original)
 
     def test_fake_signer_injection_signs_documents_and_hosted_copies(self) -> None:
         result = self.sign_candidate()

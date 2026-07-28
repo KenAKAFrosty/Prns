@@ -5,8 +5,7 @@ website="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 workspace="$(cd "$website/../.." && pwd)"
 hosted="${1:-}"
 embedded="${2:-}"
-marker='PRNS_BROWSER_TEST_FIXTURE_TRUST_ROOT_V1'
-fixture_key="$(sed -n '2p' "$website/web-flasher/browser/fixtures/signed-candidate/minisign.pub")"
+fixture_key="$website/web-flasher/browser/fixtures/signed-candidate/minisign.pub"
 
 if [[ -z "$hosted" || -z "$embedded" ]]; then
     echo "usage: tools/verify-web-flasher-production-boundary.sh HOSTED_DIST EMBEDDED_DIST" >&2
@@ -19,14 +18,17 @@ for directory in "$hosted" "$embedded"; do
     fi
 done
 
-if grep -R -a -l -F -- "$marker" "$hosted" "$embedded"; then
-    echo "a production output contains the browser-test fixture marker" >&2
-    exit 1
+trust_scan=(
+    python3
+    "$workspace/tools/release/flasher_browser_test_trust.py"
+    --fixture-key
+    "$fixture_key"
+)
+if [[ -f "$hosted/source.zip" ]]; then
+    trust_scan+=(--allow-exact-blob "$hosted/source.zip")
 fi
-if grep -R -a -l -F -- "$fixture_key" "$hosted" "$embedded"; then
-    echo "a production output contains the browser-test Minisign public key" >&2
-    exit 1
-fi
+trust_scan+=("$hosted" "$embedded")
+"${trust_scan[@]}"
 if grep -n '^default[[:space:]]*=.*browser-test-fixture' "$website/Cargo.toml"; then
     echo "browser-test-fixture cannot be a default website feature" >&2
     exit 1

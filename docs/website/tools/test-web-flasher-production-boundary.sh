@@ -105,3 +105,39 @@ if find "$embedded" \( -name 'source.zip' -o -name 'source.zip.sha256' \) -print
     echo "embedded SoftAP site unexpectedly contains hosted source artifacts" >&2
     exit 1
 fi
+
+trust_test="$test_root/archive-aware-trust"
+trust_hosted="$trust_test/hosted"
+trust_embedded="$trust_test/embedded"
+trust_failure="$trust_test/failure.log"
+rm -rf -- "$trust_test"
+mkdir -p "$trust_hosted" "$trust_embedded"
+printf '%s\n' '<html></html>' > "$trust_hosted/index.html"
+printf '%s\n' '<html></html>' > "$trust_embedded/index.html"
+printf '%s\n' 'PRNS_BROWSER_TEST_FIXTURE_TRUST_ROOT_V1' > "$trust_hosted/source.zip"
+sed -n '2p' \
+    "$website/web-flasher/browser/fixtures/signed-candidate/minisign.pub" \
+    >> "$trust_hosted/source.zip"
+cp "$trust_hosted/source.zip" "$trust_embedded/source-capable.wasm"
+bash "$website/tools/verify-web-flasher-production-boundary.sh" \
+    "$trust_hosted" "$trust_embedded"
+
+printf '%s\n' 'PRNS_BROWSER_TEST_FIXTURE_TRUST_ROOT_V1' \
+    > "$trust_embedded/raw-marker.wasm"
+if bash "$website/tools/verify-web-flasher-production-boundary.sh" \
+    "$trust_hosted" "$trust_embedded" > "$trust_failure" 2>&1; then
+    echo "production boundary accepted a raw browser-test fixture marker" >&2
+    exit 1
+fi
+grep -qF 'a production output contains the browser-test fixture marker' "$trust_failure"
+rm "$trust_embedded/raw-marker.wasm"
+
+sed -n '2p' \
+    "$website/web-flasher/browser/fixtures/signed-candidate/minisign.pub" \
+    > "$trust_embedded/raw-key.wasm"
+if bash "$website/tools/verify-web-flasher-production-boundary.sh" \
+    "$trust_hosted" "$trust_embedded" > "$trust_failure" 2>&1; then
+    echo "production boundary accepted a raw browser-test Minisign public key" >&2
+    exit 1
+fi
+grep -qF 'a production output contains the browser-test Minisign public key' "$trust_failure"
