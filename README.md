@@ -18,7 +18,9 @@
 
 ## What *is* Prns?
 
-Prns is a ground-up implementation of Reticulum, written in Rust. It's built on a unified core engine that is `no_std` (no `alloc` required either), so it runs on nearly anything, whether that's a $5 microcontroller, a web browser, a native smartphone app, a personal laptop, or a backbone cloud server.
+Prns is a ground-up implementation of Reticulum, written in Rust. It's highly focused on performance, compatibility, and developer experience. 
+
+Prns is built on a unified core engine that is `no_std` (no `alloc` required either), so it runs on nearly anything, whether that's a $5 microcontroller, a web browser, a native smartphone app, a personal laptop, or a backbone cloud server.
 
 It has first-class SDKs and bindings for:
 
@@ -55,7 +57,7 @@ The problem is apps, and tools for people who build them, have always treated th
 Reticulum knocks down the walls between them. It treats each of those mediums as what they are: just another pipe to exchange data over.
 
 ### A packet on your phone could
-  1) Leave on Bluetooth
+  1) Leave your phone via Bluetooth
   2) Travel through a nearby laptop's Bluetooth
   3) Relay back out on that laptop's local WiFi connection
   4) Travel through a desktop computer on that same local WiFi hotspot
@@ -117,18 +119,24 @@ Make sure to read the first portion of this README. Once you have, all that's le
 
    - **Destination**: The thing you send to or receive on; an address deterministically computed from the combination of:
       - An Identity
-      - An app's name 
-      - An optional classifier string
+      - An app's self-chosen name for destinations
+      - An optional list of an app's self-chosen classifier strings called "aspects"
     
       It's sort of like a URL nobody can sell, squat, or revoke (though it doesn't look like the URLs you're used to).
 
-   - **Announce**: A small broadcast packet that says "this destination exists", proven by signing the packet with the identity the destination is derived from. Every node that passes it along remembers which way it came from, and that's largely how the mesh learns its paths.
+   - **Announce**: A small broadcast packet that says "this destination exists", proven by signing the packet with the Identity the destination is derived from. Every node that passes it along remembers which way it came from, and that's largely how the mesh learns its routes.
+
+      Announcing is under your app's control. A destination only announces when told to, and you can attach a small piece of app data when announcing (a display name, a version, whatever's useful). 
+      
+      Apps can also *listen* for announces from the kinds of destinations they care about.
+      
+      Announces serve as both a key part of routing and a built-in discovery mechanism that needs no lobby server or registry.
 
    - **Interface**: One attachment to one medium, e.g., a TCP connection, the Bluetooth radio, a connected USB device. A single node can carry several at once, and most do.
 
    - **Transport node**: A node that forwards traffic between its interfaces on behalf of others. In the "[A packet on your phone could..](#a-packet-on-your-phone-could)" example above, the laptop, desktop, and embedded device were all doing exactly this.
 
-   - **Link**: A lightweight end-to-end encrypted session between two destinations. It's what your app will usually talk over, and is required for any payloads that won't fit in a single packet.
+   - **Link**: A lightweight end-to-end encrypted session between two destinations. It's what your app will often talk over, and is required for any payloads that won't fit in a single packet.
 
 
    (If you want to keep reading first, [there's a second helping of concepts here](docs/more-concepts.md#packet).)

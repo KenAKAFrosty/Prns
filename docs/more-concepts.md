@@ -6,18 +6,24 @@
 
 - **Destination**: The thing you send to or receive on; an address deterministically computed from the combination of:
   - An Identity
-  - An app's name
-  - An optional classifier string
+  - An app's self-chosen name for destinations
+  - An optional list of an app's self-chosen classifier strings called "aspects"
 
   It's sort of like a URL nobody can sell, squat, or revoke (though it doesn't look like the URLs you're used to).
 
-- **Announce**: A small broadcast packet that says "this destination exists", proven by signing the packet with the identity the destination is derived from. Every node that passes it along remembers which way it came from, and that's largely how the mesh learns its paths.
+- **Announce**: A small broadcast packet that says "this destination exists", proven by signing the packet with the Identity the destination is derived from. Every node that passes it along remembers which way it came from, and that's largely how the mesh learns its routes.
+
+  Announcing is under your app's control. A destination only announces when told to, and you can attach a small piece of app data when announcing (a display name, a version, whatever's useful).
+
+  Apps can also *listen* for announces from the kinds of destinations they care about.
+
+  Announces serve as both a key part of routing and a built-in discovery mechanism that needs no lobby server or registry.
 
 - **Interface**: One attachment to one medium, e.g., a TCP connection, the Bluetooth radio, a connected USB device. A single node can carry several at once, and most do.
 
 - **Transport node**: A node that forwards traffic between its interfaces on behalf of others. In the [packet chain example](../README.md#a-packet-on-your-phone-could) from the README, the laptop, desktop, and embedded device were all doing exactly this.
 
-- **Link**: A lightweight end-to-end encrypted session between two destinations. It's what your app will usually talk over, and is required for any payloads that won't fit in a single packet.
+- **Link**: A lightweight end-to-end encrypted session between two destinations. It's what your app will often talk over, and is required for any payloads that won't fit in a single packet.
 
 ## Packet
 
@@ -25,21 +31,24 @@ The unit everything else is made of. A packet carries a destination hash, a smal
 
 Notably, there is no source address field. Reticulum doesn't need one to route, and that's where its "initiator anonymity" comes from. The network can't even stamp packets with one, because the wire format has nowhere to put it.
 
-## Path Request
-Sometimes, an app may already know of a destination before hearing an announce for it itself (known from a previous session, exchanged out of band, etc.).
-
 ## Path/Route (and hops)
 
-A path (or route) is how the mesh reaches a destination that isn't a direct neighbor: which interface to send out of, and how many transport nodes stand along the way (each one is a hop). Transport nodes learn routes from the announces they relay, and keep them in a routing table. That allows transport nodes to route traffic and answer path requests.
+A path (or route) is how the mesh reaches a destination that isn't a direct neighbor; which interface to send out of, and how many transport nodes stand along the way (each one is a hop). Transport nodes learn routes from the announces they relay, and keep them in a routing table. That allows transport nodes to route traffic and answer path requests.
 
-Applications never manage any of this. You address the destination, and the mesh does the walking. (Though, the API does allow you to introspect things like the routing table, if your app *does* want to know)
+Applications don't have to manage any of this. You address the destination, and the mesh does the walking. (Though, the API does allow you to introspect things like the routing table, if your app *does* want to know)
 
 One naming note: where RNS says *path*, Prns's own code and configuration generally say *route*. Same concept; when you see "route", read "path", and vice-versa.
+
+## Path Request
+
+Sometimes, an app may already know of a destination before hearing an announce for it (known from a previous session, exchanged out of band, etc.).
+
+A path request asks the nearby network directly: "does anyone know a way to this destination?" Transport nodes that do indeed know will respond, and traffic can flow without waiting for the next announce.
 
 ---
 
 
-> Everything below this point rides on the Link primitive. These are higher-level abstractions that Reticulum defines and Prns provides, so you don't have to build them yourself. You are not limited to, nor required to use, these APIs.
+> Everything below this point rides on the Link primitive. These are higher-level abstractions that Reticulum defines and Prns also provides, so you don't have to build them yourself. You are not limited to, nor required to use, the following APIs.
 
 ## Request and Response
 
@@ -49,7 +58,7 @@ If you've built against HTTP endpoints, this will feel familiar, minus the serve
 
 ## Resource
 
-Bulk transfer over a Link. The sender splits the data into parts sized for the link, compresses them when that actually helps, and hashes everything. The receiver acknowledges, reassembles, and verifies before your application ever sees the data. Settlement is explicit. The transfer either proves delivery or reports why it couldn't.
+Bulk transfer over a Link. The sender splits the data into parts sized for the Link, compresses them when that actually helps, and hashes everything. The receiver acknowledges, reassembles, and verifies before your application ever sees the data. Settlement is explicit. The transfer either proves delivery or reports why it couldn't.
 
 Again, you as an app developer probably won't ever have to touch those internals. You'll only need to understand that when transferring large data over a Link, the Resource is an out-of-the-box API you have the option of using.
 
