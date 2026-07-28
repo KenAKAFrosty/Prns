@@ -3,9 +3,7 @@
 > [!IMPORTANT]
 > **YOU FOUND PRNS A DAY OR FEW EARLY.**
 >
-> We are completing final release validation, packaging, and documentation.
-> The repository is public for early review, but this is not the announced
-> release yet. Expect a little movement before the first public release.
+> We are completing final release validation, packaging, and documentation. The repository is public for early review, but this is not the announced release yet. Expect a little movement before the first public release.
 
 <p align="center">
   <a href="https://prns.dev" target="_blank">
@@ -16,24 +14,13 @@
 [![CI](https://github.com/KenAKAFrosty/Prns/actions/workflows/ci.yml/badge.svg)](https://github.com/KenAKAFrosty/Prns/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 [![MSRV](https://img.shields.io/badge/MSRV-1.90-orange.svg)](#minimum-supported-rust-version)
-[![no_std](https://img.shields.io/badge/no__std-core-success.svg)](#embedded-and-no_std)
+![no_std](https://img.shields.io/badge/no__std-core-success.svg)
 
-Prns exists so one Reticulum engine and one application contract can run across
-microcontrollers, browsers, mobile and desktop applications, daemons, and
-servers. The engine stays native to each home: fixed-capacity firmware does not
-pay for a heap, browser code cooperates with the event loop, and hosted
-applications use native threads and operating-system interfaces.
+## What *is* Prns?
 
-The same design makes performance and correctness visible rather than
-aspirational:
+Prns is a ground-up implementation of Reticulum, written in Rust. It's built on a unified core engine that is `no_std` (no `alloc` required either), so it runs on nearly anything, whether that's a $5 microcontroller, a web browser, a native smartphone app, a personal laptop, or a backbone cloud server.
 
-- native execution and bounded storage conserve CPU time, memory, and battery;
-- interfaces can be attached, supervised, replaced, and removed while a node
-  keeps running;
-- compatibility claims come from measured Reticulum interoperability suites;
-- release, benchmark, and verification evidence is public and reproducible.
-
-First-class SDKs and bindings cover:
+It has first-class SDKs and bindings for:
 
 - Rust
 - TypeScript and JavaScript (browser, Node.js, and Bun)
@@ -45,89 +32,129 @@ First-class SDKs and bindings cover:
 - Julia
 - C and C++
 
-The repository contains the engine, every SDK, essential guides, tests,
-benchmarks, release custody tools, and a locally runnable documentation site.
-Packages are not assumed to exist in a registry until the corresponding guide
-explicitly says they have been published.
+If you're already familiar with Reticulum, you can [jump to here](#coming-from-rns). 
 
-To view the documentation website right away, visit
-[prns.dev](https://prns.dev) or [reticulum.rs](https://reticulum.rs).
+If you came here to put Reticulum on an embedded device, [flash a Hopspot here](https://prns.dev/flash).
 
-## Prerequisites
+## Wait, what's *Reticulum*?
 
-The common paths need Git, Rust 1.90 or newer, and Python 3.11 or newer. Check
-your machine without installing anything:
+Reticulum is a powerful networking stack in which an address is based on a cryptographic identity. Addresses aren't assigned by a provider, nor are they tied to a location, and they're reachable only through end-to-end encryption. 
 
-```console
-./tools/prns doctor getting-started
-```
+It runs over anything that moves bytes, from LoRa radios and serial lines to TCP across the ordinary internet. Nodes automatically mesh across whatever links they happen to have.
 
-On Windows, use `tools\prns.cmd`. First-time dependency downloads may require
-internet access, but the instructions and source material are all in this
-repository.
+## Okay, but what's the benefit?
 
-## What do you want to do?
+Reticulum gives you highly resilient networks that **you own** outright. 
 
-| Outcome | Start here |
-| --- | --- |
-| Learn the repository | [Getting started](docs/getting-started.md) |
-| Browse runnable and checked examples | [Example catalog](docs/examples.md) |
-| Integrate Prns into an application | [Application integration](docs/application-integration.md) |
-| Run and inspect a node | [Prnsd (the daemon) guide](prnsd/README.md) |
-| Build a Rust application | [Personal RNS guide](personal-rns/README.md) |
-| Build an embedded node | [Embedded Prns guide](docs/embedded.md) |
-| Develop or qualify a Hopspot board | [Personal Hopspot guide](personal-hopspot/README.md) |
-| Understand the signed Hopspot flasher release-candidate route | [Hopspot release process](https://github.com/KenAKAFrosty/Prns/blob/main/release/flash/README.md) |
-| Test a change | [Testing guide](docs/testing.md) |
-| Measure performance | [Benchmark guide](benchmarks/README.md) |
-| Build the local website | [Website README](docs/website/README.md) |
-| Discover repository operations | [Repository tools](tools/README.md) |
+Two cheap LoRa radios kilometers apart can form an encrypted link with no carrier or service provider required between them. Add a handful more and you have a mesh network that covers a small town. There is no server or internet connection needed.
 
-## First commands
+But it's not limited to niche hardware. The phone in your pocket is already enough. If you take two phones right out of the box, technically they can already communicate over Bluetooth across a room or two; over a local Wi-Fi hotspot across a building; and over TCP across the world. 
 
-Run the Rust quickstart. It creates fresh identities, binds only to localhost,
-observes a real Reticulum announce, and exits:
+The problem is apps, and tools for people who build them, have always treated these like separate lanes. 
 
-```console
-cargo tools guide rust
-```
+Reticulum knocks down the walls between them. It treats each of those mediums as what they are: just another pipe to exchange data over.
 
-Run the normal core test path:
+### A packet on your phone could
+  1) Leave on Bluetooth
+  2) Travel through a nearby laptop's Bluetooth
+  3) Relay back out on that laptop's local WiFi connection
+  4) Travel through a desktop computer on that same local WiFi hotspot
+  5) Get relayed back out over USB to a LoRa radio device attached to the desktop
+  6) Travel through the attached device then relay back out over LoRa radio
+  7) Get received by a LoRa radio in an embedded device on a rooftop miles away
+  8) Relay back out over that embedded device's Bluetooth
+  9) Land at the target address on the other phone, on its Bluetooth
 
-```console
-cargo test --locked
-```
 
-Serve the documentation site locally:
+With a fully end-to-end encrypted link the entire time. 
+Not a single other device along that chain can see the contents of the traffic (not even a source address; this is also called "initiator anonymity").
 
-```console
-cargo run -p docs
-```
+All of this happens without any extra work from the app developer. An app simply "dials" an address, and the mesh finds the best way to get it there.
 
-Enable the repository hooks once per clone:
+The ability to digitally communicate becomes something people & devices *have*, not a service they're *temporarily granted access to*.
 
-```console
-git config core.hooksPath .githooks
-```
 
-## Embedded and `no_std`
 
-`prns-core` has two distinct embedded profiles: fixed-capacity,
-allocator-free `no_std`, and growable `no_std + alloc`. The Embassy runtime and
-interface implementations carry the same engine onto ESP32 and nRF52840
-firmware targets. Follow the [board-backed embedded guide](docs/embedded.md) to
-build a real XIAO ESP32-C6 node and trace the shared node recipe into its
-hardware obligations.
+## What can I do with it?
+
+What opens up to you is software that brings its own network. 
+
+Five people on a hike together *should* be able to play a game with each other on their mobile phones, even if some or all of them are out of cell service. 
+
+Then they each part ways and head home, and they *should* be able to keep playing over the stable internet that's now returned.  
+
+And most importantly: that game's developer *shouldn't* have to manage any of that. 
+
+Reticulum finally makes that possible.
+
+Connection to the network becomes a gradient instead of a switch. There's no "offline/online" binary split. Every medium, from packet radio to fiber, just adds reach, reliability, and capability.
+
+Some obvious examples (you can probably come up with even better):
+- Make an app to sync notes between your laptop and your phone directly, whether or not the Wi-Fi network they share has internet behind it.
+- Ship a game where two people can play against each other anywhere they meet, internet or not.
+- Scatter a field of sensors that report over LoRa to one solar-powered board, and read them from town across the mesh. And with no proprietary code locking you in to some vendor.
+
+A separate backend server is simply not needed; two installs of your app already *are* the network infrastructure. 
+
+And if you *want* to add your own internet-reachable TCP server to act as a stable relay for your users? Trivial! But never *necessary*.
+
+No obligation for a backend means no day-one cloud bill that grows with user activity, and no end-of-service announcement looming over your future.  
+
+
+## Where to begin?
+
+Prns joins an ecosystem that's been running for years on [`RNS`](https://github.com/markqvist/Reticulum) (Reticulum's reference implementation in Python). RNS goes where Python goes, Prns carries the same protocol the rest of the way. 
+
+If you've already been using RNS, you can skip to [Coming from RNS](#coming-from-rns).
+
+
+## New to Reticulum
+
+Make sure to read the first portion of this README. Once you have, all that's left is vocabulary, and a little practice.
+
+1) Six key terms is all it takes to get you going.
+   - **Identity**: A pair of cryptographic keys your device generates for itself, and their ability to sign payloads. Everything else is built on top of it.
+
+   - **Destination**: The thing you send to or receive on; an address deterministically computed from the combination of:
+      - An Identity
+      - An app's name 
+      - An optional classifier string
+    
+      It's sort of like a URL nobody can sell, squat, or revoke (though it doesn't look like the URLs you're used to).
+
+   - **Announce**: A small broadcast packet that says "this destination exists", proven by signing the packet with the identity the destination is derived from. Every node that passes it along remembers which way it came from, and that's largely how the mesh learns its paths.
+
+   - **Interface**: One attachment to one medium, e.g., a TCP connection, the Bluetooth radio, a connected USB device. A single node can carry several at once, and most do.
+
+   - **Transport node**: A node that forwards traffic between its interfaces on behalf of others. In the "[A packet on your phone could..](#a-packet-on-your-phone-could)" example above, the laptop, desktop, and embedded device were all doing exactly this.
+
+   - **Link**: A lightweight end-to-end encrypted session between two destinations. It's what your app will usually talk over, and is required for any payloads that won't fit in a single packet.
+
+
+   (If you want to keep reading first, [there's a second helping of concepts here](docs/more-concepts.md#packet).)
+
+2) [Follow the Getting Started guide](docs/getting-started.md) and experience one real result at a time.
+3) [Browse the example catalog](docs/examples.md) for the next step up.
+
+## Coming from RNS
+
+Your network and apps don't change, just your daemon does. The Prns daemon, `prnsd`, takes the role `rnsd` holds today.
+
+- [Start prnsd](prnsd/README.md) for a high-performance shared instance on your machine, which works with Sideband, NomadNet, MeshChat, etc.
+- [Flash a Hopspot](https://prns.dev/flash) to get self-contained Reticulum running on your embedded devices.
+- [Run a high-performance backbone node](link-here-docker-containers-railway-templates) to get the most "bang for your buck" on your cloud compute.
+- [Measure both implementations side by side](benchmarks/README.md) with the benchmark suite.
+- [Verify the interoperability yourself](docs/validation.md), against real RNS nodes on your own machine.
+
+
 
 ## Minimum supported Rust version
 
-The workspace's declared and CI-tested MSRV is Rust **1.90**. Development builds
-use the stable channel configured in [rust-toolchain.toml](rust-toolchain.toml).
+The workspace's declared and CI-tested MSRV is Rust **1.90**. Development builds use the stable channel configured in [rust-toolchain.toml](rust-toolchain.toml).
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) and the
-[testing guide](docs/testing.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md) and the [testing guide](docs/testing.md).
 
 ## Security
 
@@ -142,6 +169,4 @@ Licensed under either of
 
 at your option.
 
-Unless you explicitly state otherwise, any contribution intentionally submitted
-for inclusion in this project by you, as defined in the Apache-2.0 license,
-shall be dual licensed as above, without any additional terms or conditions.
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in this project by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
