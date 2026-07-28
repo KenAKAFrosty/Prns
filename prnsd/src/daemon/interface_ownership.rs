@@ -81,13 +81,13 @@ pub(super) async fn establish(
             let runtime_transport = match transport {
                 ConfigSharedInstanceTransport::Tcp => RuntimeSharedInstanceTransport::Tcp,
                 ConfigSharedInstanceTransport::Unix => {
-                    #[cfg(target_os = "linux")]
+                    #[cfg(any(target_os = "linux", target_os = "android"))]
                     {
                         RuntimeSharedInstanceTransport::AbstractUnix {
                             socket_path: name.clone(),
                         }
                     }
-                    #[cfg(not(target_os = "linux"))]
+                    #[cfg(not(any(target_os = "linux", target_os = "android")))]
                     {
                         tracing::warn!(
                             event = "shared_instance_unix_fallback",

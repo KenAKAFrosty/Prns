@@ -34,7 +34,7 @@ pub enum SharedInstanceRpcEndpoint {
     Tcp {
         control_port: u16,
     },
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     AbstractUnix {
         socket_path: String,
     },
@@ -45,7 +45,7 @@ impl SharedInstanceRpcEndpoint {
         Self::Tcp { control_port }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn abstract_unix(socket_path: impl Into<String>) -> Self {
         Self::AbstractUnix {
             socket_path: socket_path.into(),
@@ -57,7 +57,7 @@ impl fmt::Display for SharedInstanceRpcEndpoint {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Tcp { control_port } => write!(formatter, "127.0.0.1:{control_port}"),
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             Self::AbstractUnix { socket_path } => write!(formatter, "\\0rns/{socket_path}/rpc"),
         }
     }
@@ -532,7 +532,7 @@ impl SharedInstanceRpcClient {
                 self.exchange_stream_with_dialect(&mut stream, request, dialect)
                     .await
             }
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             SharedInstanceRpcEndpoint::AbstractUnix { socket_path } => {
                 let mut stream = connect_abstract_rpc(socket_path)
                     .map_err(|error| self.io_error(SharedInstanceRpcClientPhase::Connect, error))?;
@@ -696,8 +696,11 @@ fn packet_hash_argument(packet_hash: PacketHash) -> PacketHashArgument {
     PacketHashArgument::new(packet_hash.as_bytes().to_vec())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn connect_abstract_rpc(socket_path: &str) -> std::io::Result<tokio::net::UnixStream> {
+    #[cfg(target_os = "android")]
+    use std::os::android::net::SocketAddrExt;
+    #[cfg(target_os = "linux")]
     use std::os::linux::net::SocketAddrExt;
     let name = std::format!("rns/{socket_path}/rpc");
     let address = std::os::unix::net::SocketAddr::from_abstract_name(name.as_bytes())?;

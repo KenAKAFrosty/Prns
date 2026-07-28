@@ -137,11 +137,11 @@ fn rpc_endpoint(
     match transport {
         ConfigSharedInstanceTransport::Tcp => SharedInstanceRpcEndpoint::tcp(control_port),
         ConfigSharedInstanceTransport::Unix => {
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 SharedInstanceRpcEndpoint::abstract_unix(name)
             }
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(not(any(target_os = "linux", target_os = "android")))]
             {
                 let _ = name;
                 SharedInstanceRpcEndpoint::tcp(control_port)
@@ -157,13 +157,13 @@ fn runtime_transport(
     match transport {
         ConfigSharedInstanceTransport::Tcp => RuntimeSharedInstanceTransport::Tcp,
         ConfigSharedInstanceTransport::Unix => {
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 RuntimeSharedInstanceTransport::AbstractUnix {
                     socket_path: name.to_owned(),
                 }
             }
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(not(any(target_os = "linux", target_os = "android")))]
             {
                 let _ = name;
                 RuntimeSharedInstanceTransport::Tcp

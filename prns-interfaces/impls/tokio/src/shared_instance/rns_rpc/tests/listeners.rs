@@ -107,7 +107,7 @@ async fn tcp_run_accepts_a_modern_client_connection() {
     server_task.abort();
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 #[tokio::test]
 async fn abstract_unix_constructor_and_binder_are_wired() {
     let server = SharedInstanceRpcServer::abstract_unix(

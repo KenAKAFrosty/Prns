@@ -602,7 +602,7 @@ impl InterfaceSupervisor for AutoWifi {
         } else {
             None
         };
-        let mut loopback = bounce_to_local_core(&rendezvous, &sup.fleet, sup.policy);
+        let mut loopback = bounce_to_local_core(&settings, &rendezvous, &sup.fleet, sup.policy);
 
         loop {
             if !sup.status.is_enabled() {
@@ -1123,11 +1123,12 @@ fn platform_gateway_inventory() -> GatewayInventory {
 
 /// A node that cannot claim the local rendezvous port joins its current holder over loopback.
 fn bounce_to_local_core(
+    settings: &AutoWifiSettings,
     rendezvous: &Option<TcpListener>,
     fleet: &Fleet,
     policy: EffectiveInterfacePolicy,
 ) -> Option<AttachedInterface> {
-    if rendezvous.is_some() {
+    if !settings.prns_rendezvous_enabled() || rendezvous.is_some() {
         return None;
     }
     let target = std::format!("127.0.0.1:{}", contract::TCP_RENDEZVOUS_PORT);
@@ -1692,6 +1693,29 @@ mod tests {
             1,
             "we never dial our own advertised rendezvous",
         );
+    }
+
+    #[tokio::test]
+    async fn custom_group_nodes_never_dial_the_stock_loopback_rendezvous() {
+        let (sup, _guard) = test_supervisor();
+        let custom = AutoWifiSettings::new(
+            b"field-mesh".to_vec(),
+            contract::DiscoveryScope::Site,
+            contract::MulticastAddressType::Permanent,
+            30_000,
+            40_000,
+            AutoWifiDevicePolicy::default(),
+        )
+        .expect("ports are valid");
+        assert!(
+            bounce_to_local_core(&custom, &None, &sup.fleet, sup.policy).is_none(),
+            "a node that opted out of the stock rendezvous has no holder to join",
+        );
+
+        let stock =
+            bounce_to_local_core(&AutoWifiSettings::default(), &None, &sup.fleet, sup.policy)
+                .expect("a stock node that lost the port joins its holder over loopback");
+        stock.teardown();
     }
 
     #[test]

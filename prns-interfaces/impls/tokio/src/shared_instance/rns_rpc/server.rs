@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use tokio::net::UnixListener;
 
 use prns_core::interfaces::rns_management::RnsTransportStatus;
@@ -53,19 +53,19 @@ pub(super) struct RpcService<Q, B> {
 
 pub(super) enum RpcBind {
     Tcp(String),
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     Abstract(String),
 }
 
 enum RpcListener {
     Tcp(TcpListener),
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     AbstractUnix(UnixListener),
 }
 
 enum RpcListenerKind {
     Tcp,
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     AbstractUnix,
 }
 
@@ -74,7 +74,7 @@ impl RpcListenerKind {
     const fn as_str(&self) -> &'static str {
         match self {
             Self::Tcp => "tcp",
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             Self::AbstractUnix => "abstract_unix",
         }
     }
@@ -83,7 +83,7 @@ impl RpcListenerKind {
 #[derive(Debug, PartialEq, Eq)]
 pub enum SharedInstanceRpcBindError {
     Tcp(std::io::ErrorKind),
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     AbstractUnix(std::io::ErrorKind),
 }
 
@@ -121,7 +121,7 @@ where
     }
 
     /// Answer on the abstract AF_UNIX socket `\0rns/{socket_path}/rpc` that a default-config RNS client uses on Linux. Linux only.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[must_use]
     pub fn abstract_unix(
         credentials: SharedInstanceCredentials,
@@ -177,7 +177,7 @@ where
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[must_use]
     pub fn abstract_unix_with_blackholes(
         credentials: SharedInstanceCredentials,
@@ -247,7 +247,7 @@ where
                     .await
                     .map_err(|error| SharedInstanceRpcBindError::Tcp(error.kind()))?,
             ),
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             RpcBind::Abstract(socket_path) => RpcListener::AbstractUnix(
                 bind_abstract_rpc(&socket_path)
                     .map_err(|error| SharedInstanceRpcBindError::AbstractUnix(error.kind()))?,
@@ -288,7 +288,7 @@ where
                     Err(error) => recover_from_accept_error(error, RpcListenerKind::Tcp).await,
                 }
             },
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             RpcListener::AbstractUnix(listener) => loop {
                 match listener.accept().await {
                     Ok((stream, _)) => self.service.serve(stream),
@@ -336,8 +336,11 @@ async fn recover_from_accept_error(error: std::io::Error, listener: RpcListenerK
 }
 
 /// Bind `\0rns/{socket_path}/rpc` in the Linux abstract namespace (leading null implied), mirroring how the data bus binds `\0rns/{socket_path}`.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub(super) fn bind_abstract_rpc(socket_path: &str) -> std::io::Result<UnixListener> {
+    #[cfg(target_os = "android")]
+    use std::os::android::net::SocketAddrExt;
+    #[cfg(target_os = "linux")]
     use std::os::linux::net::SocketAddrExt;
     let name = std::format!("rns/{socket_path}/rpc");
     let addr = std::os::unix::net::SocketAddr::from_abstract_name(name.as_bytes())?;
