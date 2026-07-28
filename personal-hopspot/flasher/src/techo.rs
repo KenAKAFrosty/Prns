@@ -1,5 +1,5 @@
 use std::env;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -132,7 +132,7 @@ fn select_mount(
 
 #[cfg(unix)]
 fn sync_mount_directory(mount: &Path) -> Result<(), AppError> {
-    File::open(mount)
+    std::fs::File::open(mount)
         .and_then(|directory| directory.sync_all())
         .map_err(|error| {
             AppError::uf2_delivery(format!("TECHOBOOT directory sync failed: {error}"))

@@ -20,6 +20,17 @@ COMMANDS = (
     (
         "cargo",
         "clippy",
+        "--package",
+        "hopspot-flash",
+        "--all-targets",
+        "--locked",
+        "--",
+        "-D",
+        "warnings",
+    ),
+    (
+        "cargo",
+        "clippy",
         "--manifest-path",
         "personal-hopspot/desktop/Cargo.toml",
         "--all-targets",
