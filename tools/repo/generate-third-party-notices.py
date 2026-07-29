@@ -6,7 +6,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -102,8 +104,19 @@ def normalized_notice_text(value: str) -> str:
     return "\n".join(line.rstrip() for line in normalized.split("\n")).strip()
 
 
-def about_version() -> str:
-    process = subprocess.run(["cargo", "about", "--version"], text=True, capture_output=True)
+def about_binary() -> str:
+    """Resolve the pinned tool before isolating Cargo's mutable package cache."""
+    binary = shutil.which("cargo-about")
+    if binary is None:
+        raise RuntimeError(
+            "cargo-about 0.9.1 is required: "
+            "cargo install cargo-about --version 0.9.1 --locked --features cli"
+        )
+    return binary
+
+
+def about_version(binary: str) -> str:
+    process = subprocess.run([binary, "--version"], text=True, capture_output=True)
     version = process.stdout.strip()
     if process.returncode or version != "cargo-about 0.9.1":
         raise RuntimeError(
@@ -113,7 +126,13 @@ def about_version() -> str:
     return version
 
 
-def fetch_manifest(manifest: str) -> None:
+def isolated_cargo_environment(cargo_home: Path) -> dict[str, str]:
+    environment = os.environ.copy()
+    environment["CARGO_HOME"] = str(cargo_home)
+    return environment
+
+
+def fetch_manifest(manifest: str, cargo_home: Path) -> None:
     command = [
         "cargo",
         "fetch",
@@ -121,18 +140,29 @@ def fetch_manifest(manifest: str) -> None:
         "--manifest-path",
         str(ROOT / manifest),
     ]
-    process = subprocess.run(command, cwd=ROOT, text=True, capture_output=True)
+    process = subprocess.run(
+        command,
+        cwd=ROOT,
+        env=isolated_cargo_environment(cargo_home),
+        text=True,
+        capture_output=True,
+    )
     if process.returncode:
         sys.stderr.write(process.stdout)
         sys.stderr.write(process.stderr)
         raise RuntimeError(f"cargo fetch failed for {manifest}")
 
 
-def generate_graph(manifest: str, target: str, directory: Path) -> dict:
+def generate_graph(
+    manifest: str,
+    target: str,
+    directory: Path,
+    cargo_home: Path,
+    binary: str,
+) -> dict:
     output = directory / f"about-{len(list(directory.iterdir()))}.json"
     command = [
-        "cargo",
-        "about",
+        binary,
         "generate",
         "--locked",
         "--offline",
@@ -148,7 +178,13 @@ def generate_graph(manifest: str, target: str, directory: Path) -> dict:
         "--output-file",
         str(output),
     ]
-    process = subprocess.run(command, cwd=ROOT, text=True, capture_output=True)
+    process = subprocess.run(
+        command,
+        cwd=ROOT,
+        env=isolated_cargo_environment(cargo_home),
+        text=True,
+        capture_output=True,
+    )
     if process.returncode:
         sys.stderr.write(process.stdout)
         sys.stderr.write(process.stderr)
@@ -157,16 +193,21 @@ def generate_graph(manifest: str, target: str, directory: Path) -> dict:
 
 
 def notice_bundle() -> str:
-    version = about_version()
+    binary = about_binary()
+    version = about_version(binary)
     notices: dict[tuple[str, str], dict] = {}
     with tempfile.TemporaryDirectory(prefix="prns-about-") as temp:
-        directory = Path(temp)
+        temporary = Path(temp)
+        cargo_home = temporary / "cargo-home"
+        cargo_home.mkdir()
+        directory = temporary / "output"
+        directory.mkdir()
         fetched_manifests: set[str] = set()
         for graph, manifest, target in GRAPHS:
             if manifest not in fetched_manifests:
-                fetch_manifest(manifest)
+                fetch_manifest(manifest, cargo_home)
                 fetched_manifests.add(manifest)
-            data = generate_graph(manifest, target, directory)
+            data = generate_graph(manifest, target, directory, cargo_home, binary)
             for license_info in data["licenses"]:
                 text = normalized_notice_text(license_info["text"])
                 key = (license_info["id"], text)
@@ -215,8 +256,8 @@ def notice_bundle() -> str:
         "",
         "This checked bundle covers the shipped Rust, JavaScript, and Android release graphs.",
         f"It was generated with `{version}` by `./tools/prns repo notices generate`.",
-        "Each locked Rust manifest closure is fetched before cargo-about reads its target-filtered "
-        "packaged license material offline.",
+        "Each locked Rust manifest closure is fetched into a fresh isolated Cargo home before "
+        "cargo-about reads its target-filtered packaged license material offline.",
         "Entries are deduplicated by SPDX identifier and exact notice text.",
         "",
         "## Release graphs",
