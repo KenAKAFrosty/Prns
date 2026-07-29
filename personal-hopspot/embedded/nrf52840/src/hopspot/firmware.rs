@@ -42,8 +42,11 @@ use super::display::{build_cards, build_snapshots, frame_hash, EinkScreen};
 use super::input;
 use super::node::*;
 
-const FULL_REFRESH_INTERVAL: u32 = 20;
-const STATS_POLL: Duration = Duration::from_millis(1000);
+const PARTIAL_REFRESH_LIMIT: u32 = 64;
+const FULL_REFRESH_MAX_AGE_MS: u64 = 30 * 60 * 1_000;
+const TELEMETRY_MIN_INTERVAL_MS: u64 = 5_000;
+const STATS_POLL: Duration = Duration::from_secs(1);
+const EINK_ANIMATION_MS: u64 = 0;
 const NOTICE_MS: u64 = 900;
 
 #[embassy_executor::task]
@@ -279,9 +282,13 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
             ui_state.show_notice(notice);
         }
         let mut working_lora_profile = DEFAULT_915_PROFILE;
-        let mut since_full = 0u32;
-        let mut displayed_hash = 0u64;
-        let mut have_displayed = false;
+        let mut refresh_policy = hopspot::EinkRefreshPolicy::new(
+            PARTIAL_REFRESH_LIMIT,
+            FULL_REFRESH_MAX_AGE_MS,
+            TELEMETRY_MIN_INTERVAL_MS,
+        );
+        let mut refresh_urgency = hopspot::EinkRefreshUrgency::Immediate;
+        let mut displayed_hash = None;
         let mut activity = hopspot::CardActivityTracker::<{ MEMBERS + 4 }>::new();
         let mut notice_until_ms =
             identity_startup_notice.map(|_| embassy_time::Instant::now().as_millis() + 5_000);
@@ -305,6 +312,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
             if notice_until_ms.is_some_and(|until| now_ms >= until) {
                 ui_state.clear_notice();
                 notice_until_ms = None;
+                refresh_urgency = hopspot::EinkRefreshUrgency::Immediate;
             }
 
             let _ = panel.clear(EpdColor::White);
@@ -319,20 +327,30 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                     battery,
                     state: &ui_state,
                     interface_menu_details: &interface_menu_details,
-                    animation_ms: now_ms,
+                    animation_ms: EINK_ANIMATION_MS,
                 },
             );
             let hash = frame_hash(panel.buffer());
-            if !have_displayed || hash != displayed_hash {
-                if !have_displayed || since_full >= FULL_REFRESH_INTERVAL {
-                    let _ = epd.full_update(panel.buffer());
-                    since_full = 0;
-                } else {
-                    let _ = epd.partial_update(panel.buffer());
+            if displayed_hash != Some(hash) {
+                match refresh_policy.for_changed_frame(now_ms, &refresh_urgency) {
+                    hopspot::EinkRefresh::Deferred => {}
+                    hopspot::EinkRefresh::Full => {
+                        if epd.full_update(panel.buffer()).is_ok() {
+                            refresh_policy.full_refresh_succeeded(now_ms);
+                            displayed_hash = Some(hash);
+                        } else {
+                            refresh_policy.refresh_failed();
+                        }
+                    }
+                    hopspot::EinkRefresh::Partial => {
+                        if epd.partial_update(panel.buffer()).is_ok() {
+                            refresh_policy.partial_refresh_succeeded(now_ms);
+                            displayed_hash = Some(hash);
+                        } else {
+                            refresh_policy.refresh_failed();
+                        }
+                    }
                 }
-                since_full += 1;
-                displayed_hash = hash;
-                have_displayed = true;
             }
 
             match select3(
@@ -343,6 +361,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
             .await
             {
                 Either3::First(event) => {
+                    refresh_urgency = hopspot::EinkRefreshUrgency::Immediate;
                     let action = ui_state.handle_input(event, content);
                     match action {
                         hopspot::UiAction::Sleep => {
@@ -427,8 +446,12 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                         hopspot::UiAction::None => {}
                     }
                 }
-                Either3::Second(()) => {}
-                Either3::Third(()) => {}
+                Either3::Second(()) => {
+                    refresh_urgency = hopspot::EinkRefreshUrgency::Immediate;
+                }
+                Either3::Third(()) => {
+                    refresh_urgency = hopspot::EinkRefreshUrgency::Telemetry;
+                }
             }
         }
     };

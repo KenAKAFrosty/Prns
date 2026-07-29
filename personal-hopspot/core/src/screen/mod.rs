@@ -1,10 +1,12 @@
 //! The "Personal Hopspot" status screen: portrait 64x128, drawn against any `embedded_graphics` `DrawTarget<Color = BinaryColor>`, so the same pixels land on the S3's SSD1306 OLED and on the desktop simulator window.
 
+mod eink;
 mod limits;
 mod model;
 mod render;
 mod state;
 
+pub use eink::{EinkRefresh, EinkRefreshPolicy, EinkRefreshUrgency};
 pub use model::{
     card_label, tcp_card_label, Card, CardActivityTracker, CardKind, CardLabel,
     InterfaceMenuDetails, Liveness, LocalDocsAccess, ScreenContent, WifiNetworkStatus,

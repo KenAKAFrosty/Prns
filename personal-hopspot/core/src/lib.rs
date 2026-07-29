@@ -33,9 +33,9 @@ pub use mobile::{
 };
 pub use screen::{
     card_label, render, splash, tcp_card_label, AccessPointState, Card, CardActivityTracker,
-    CardKind, CardLabel, DisplayPowerControl, InputEvent, InterfaceMenuDetails, Liveness,
-    LocalDocsAccess, RenderFrame, ScreenContent, SplashContent, UiAction, UiConfiguration,
-    UiNotice, UiState, WifiNetworkStatus,
+    CardKind, CardLabel, DisplayPowerControl, EinkRefresh, EinkRefreshPolicy, EinkRefreshUrgency,
+    InputEvent, InterfaceMenuDetails, Liveness, LocalDocsAccess, RenderFrame, ScreenContent,
+    SplashContent, UiAction, UiConfiguration, UiNotice, UiState, WifiNetworkStatus,
 };
 
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceSnapshot, Membership};
