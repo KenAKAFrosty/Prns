@@ -77,6 +77,14 @@ pub const GUIDE_DOCUMENTS: &[RepositoryDocument] = &[
         source: include_str!("../../../personal-hopspot/README.md"),
     },
     RepositoryDocument {
+        slug: "deploy-prnsd",
+        title: "Deploy Prnsd",
+        summary: "Run the production container, operate hosted pages, and deploy through Railway.",
+        section: GuideSection::Operate,
+        source_path: "docs/deploy-prnsd.md",
+        source: include_str!("../../deploy-prnsd.md"),
+    },
+    RepositoryDocument {
         slug: "benchmarks",
         title: "Benchmarking Prns",
         summary: "Run smoke or full measurements and interpret qualified results.",
@@ -164,6 +172,7 @@ const ROUTE_MAPPINGS: &[(&str, &str)] = &[
     ("prnsd/README.md", "/crates/prnsd"),
     ("personal-rns/README.md", "/crates/personal-rns"),
     ("personal-hopspot/README.md", "/guides/personal-hopspot"),
+    ("docs/deploy-prnsd.md", "/guides/deploy-prnsd"),
     ("docs/getting-started.md", "/guides/getting-started"),
     ("docs/more-concepts.md", "/guides/more-concepts"),
     ("docs/testing.md", "/guides/testing"),

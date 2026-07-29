@@ -221,7 +221,7 @@ pub trait RequestEndpoint<AppState = ()> {
     async fn handle(context: RequestContext<'_, AppState>) -> Result<(), Decline>;
 }
 
-/// A compile-time set of endpoints, produced by [`request_endpoints!`](crate::endpoints); you probably want
+/// A compile-time set of endpoints, produced by [`request_endpoints!`](crate::request_endpoints); you probably want
 /// that macro rather than this trait directly.
 #[allow(async_fn_in_trait)]
 pub trait RequestEndpointSet<S> {
@@ -230,7 +230,7 @@ pub trait RequestEndpointSet<S> {
         -> Result<(), Decline>;
 }
 
-/// The empty route set — what [`request_endpoints!`](crate::endpoints) with no arms hands back, and what a node
+/// The empty route set — what [`request_endpoints!`](crate::request_endpoints) with no arms hands back, and what a node
 /// that serves no requests carries. It registers nothing and declines every request as `Ignore`.
 impl<S> RequestEndpointSet<S> for () {
     const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)] = &[];
@@ -242,7 +242,7 @@ impl<S> RequestEndpointSet<S> for () {
     }
 }
 
-/// The value [`request_endpoints!`](crate::endpoints) hands back when given no endpoints — the empty [`RequestEndpointSet`].
+/// The value [`request_endpoints!`](crate::request_endpoints) hands back when given no endpoints — the empty [`RequestEndpointSet`].
 /// A named constructor so the macro needn't expand to a bare `()`, which `clippy::unused_unit`
 /// flags at every call site.
 pub const fn no_request_endpoints() {}
