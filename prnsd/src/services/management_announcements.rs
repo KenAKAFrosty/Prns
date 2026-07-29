@@ -8,19 +8,23 @@ use personal_rns::wire::DestinationHash;
 use crate::node_pages;
 
 const INITIAL_DELAY: Duration = Duration::from_secs(15);
-const INTERVAL: Duration = Duration::from_secs(2 * 60 * 60);
 
-pub struct ManagementAnnounceTask(tokio::task::JoinHandle<()>);
+pub struct ManagementAnnounceTask(Vec<tokio::task::JoinHandle<()>>);
 
 pub(crate) struct AnnouncedDestination {
     pub(crate) hash: DestinationHash,
     pub(crate) available_when: Option<PathBuf>,
+    pub(crate) interval: Duration,
 }
 
 impl ManagementAnnounceTask {
     pub async fn shutdown(self) {
-        self.0.abort();
-        let _ = self.0.await;
+        for task in &self.0 {
+            task.abort();
+        }
+        for task in self.0 {
+            let _ = task.await;
+        }
     }
 }
 
@@ -31,30 +35,35 @@ pub fn spawn(
     if destinations.is_empty() {
         return None;
     }
-    Some(ManagementAnnounceTask(tokio::spawn(async move {
-        let start = tokio::time::Instant::now() + INITIAL_DELAY;
-        let mut interval = tokio::time::interval_at(start, INTERVAL);
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        loop {
-            interval.tick().await;
-            for destination in &destinations {
-                if destination
-                    .available_when
-                    .as_deref()
-                    .is_some_and(|path| !node_pages::is_available(path))
-                {
-                    continue;
+    let tasks = destinations
+        .into_iter()
+        .map(|destination| {
+            let handle = handle.clone();
+            tokio::spawn(async move {
+                let start = tokio::time::Instant::now() + INITIAL_DELAY;
+                let mut interval = tokio::time::interval_at(start, destination.interval);
+                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                loop {
+                    interval.tick().await;
+                    if destination
+                        .available_when
+                        .as_deref()
+                        .is_some_and(|path| !node_pages::is_available(path))
+                    {
+                        continue;
+                    }
+                    if let Err(error) = handle.announce_now(announce_for(destination.hash)).await {
+                        tracing::warn!(
+                            event = "management_announce_failed",
+                            destination = ?destination.hash.as_bytes(),
+                            error = ?error,
+                        );
+                    }
                 }
-                if let Err(error) = handle.announce_now(announce_for(destination.hash)).await {
-                    tracing::warn!(
-                        event = "management_announce_failed",
-                        destination = ?destination.hash.as_bytes(),
-                        error = ?error,
-                    );
-                }
-            }
-        }
-    })))
+            })
+        })
+        .collect();
+    Some(ManagementAnnounceTask(tasks))
 }
 
 fn announce_for(destination: DestinationHash) -> AnnounceNow {

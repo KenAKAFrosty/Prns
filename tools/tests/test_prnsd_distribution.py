@@ -199,6 +199,32 @@ class PrnsdDistributionTests(unittest.TestCase):
                     )
                 )
 
+    def test_railway_contract_exposes_write_once_announcement_controls(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "railway-template-contract-v0.3.1.json"
+            distribution.write_railway_contract(
+                types.SimpleNamespace(
+                    source_commit="c" * 40,
+                    image_digest=f"sha256:{'d' * 64}",
+                    output=output,
+                )
+            )
+            contract = json.loads(output.read_text(encoding="utf-8"))
+            self.assertTrue(contract["bootstrap"]["write_once"])
+            controls = contract["bootstrap"]["operator_environment"]
+            self.assertEqual(
+                controls["PRNSD_BACKBONE_DISCOVERABLE"],
+                {"allowed": ["Yes", "No"], "default": "Yes"},
+            )
+            self.assertEqual(
+                controls["PRNSD_NODE_PAGE_ANNOUNCE"],
+                {"allowed": ["Yes", "No"], "default": "Yes"},
+            )
+            self.assertEqual(
+                controls["PRNSD_NODE_PAGE_ANNOUNCE_INTERVAL"],
+                {"default": "360", "unit": "minutes"},
+            )
+
     def test_suite_record_binds_every_inventoried_asset(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

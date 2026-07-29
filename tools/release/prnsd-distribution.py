@@ -301,6 +301,23 @@ def write_railway_contract(arguments: argparse.Namespace) -> None:
     if SHA256_PATTERN.fullmatch(arguments.image_digest) is None:
         raise ValueError("Railway image digest must be one OCI SHA-256 digest")
     value = {
+        "bootstrap": {
+            "operator_environment": {
+                "PRNSD_BACKBONE_DISCOVERABLE": {
+                    "allowed": ["Yes", "No"],
+                    "default": "Yes",
+                },
+                "PRNSD_NODE_PAGE_ANNOUNCE": {
+                    "allowed": ["Yes", "No"],
+                    "default": "Yes",
+                },
+                "PRNSD_NODE_PAGE_ANNOUNCE_INTERVAL": {
+                    "default": "360",
+                    "unit": "minutes",
+                },
+            },
+            "write_once": True,
+        },
         "healthcheck": {
             "http_path": None,
             "readiness_command": "prnsd status --config /var/lib/prnsd --json",

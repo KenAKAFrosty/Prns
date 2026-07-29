@@ -19,6 +19,8 @@ pub(crate) mod global {
     pub const ENABLE_REMOTE_MANAGEMENT: &str = "enable_remote_management";
     pub const REMOTE_MANAGEMENT_ALLOWED: &str = "remote_management_allowed";
     pub const RESPOND_TO_PROBES: &str = "respond_to_probes";
+    pub const ANNOUNCE_NODE_PAGE: &str = "announce_node_page";
+    pub const NODE_PAGE_ANNOUNCE_INTERVAL: &str = "node_page_announce_interval";
     pub const FORCE_SHARED_INSTANCE_BITRATE: &str = "force_shared_instance_bitrate";
     pub const PANIC_ON_INTERFACE_ERROR: &str = "panic_on_interface_error";
     pub const USE_IMPLICIT_PROOF: &str = "use_implicit_proof";

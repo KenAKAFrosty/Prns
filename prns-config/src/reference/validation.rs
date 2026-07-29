@@ -1716,7 +1716,8 @@ fn accepted_for_key(key: &str, kind: ValueKind) -> String {
         ValueKind::RnodeMultiVport
         | ValueKind::RnodeMultiFrequency
         | ValueKind::RnodeMultiTxPower
-        | ValueKind::BlackholeUpdateInterval => return kind.accepted().to_string(),
+        | ValueKind::BlackholeUpdateInterval
+        | ValueKind::NodePageAnnounceInterval => return kind.accepted().to_string(),
         _ => {}
     }
     match key {
@@ -1805,7 +1806,8 @@ pub(super) fn example_for_key(key: &str, kind: ValueKind) -> &'static str {
         ValueKind::RnodeMultiVport
         | ValueKind::RnodeMultiFrequency
         | ValueKind::RnodeMultiTxPower
-        | ValueKind::BlackholeUpdateInterval => return kind.example(),
+        | ValueKind::BlackholeUpdateInterval
+        | ValueKind::NodePageAnnounceInterval => return kind.example(),
         _ => {}
     }
     match key {
@@ -2041,6 +2043,13 @@ fn normalized_value(value: &Value, kind: ValueKind) -> Result<String, ()> {
             if !minutes.is_finite()
                 || std::time::Duration::try_from_secs_f64(minutes.max(2.0) * 60.0).is_err()
             {
+                return Err(());
+            }
+            minutes.to_string()
+        }
+        ValueKind::NodePageAnnounceInterval => {
+            let minutes = parse_integer::<u64>(text)?;
+            if minutes == 0 || minutes.checked_mul(60).is_none() {
                 return Err(());
             }
             minutes.to_string()

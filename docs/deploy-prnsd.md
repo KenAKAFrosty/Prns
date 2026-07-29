@@ -95,6 +95,10 @@ that directory is published at `/page/<filename>`. File contents are read from
 disk for each request, so edits and deletions take effect without a restart.
 Deleting `index.mu` also stops the node-page announcement and is never a daemon
 error. Bootstrap does not recreate a deleted page once `config` exists.
+The node-page announcement is enabled by default and repeats every 360 minutes,
+the conventional six-hour NomadNet cadence. Operators can set
+`announce_node_page = No` or change `node_page_announce_interval` under
+`[reticulum]`; serving remains available when announcement is disabled.
 
 New filenames are indexed when the daemon starts; restart after adding or
 renaming a file. Hidden files, non-`.mu` files, directories, symlinks, and files
@@ -107,6 +111,10 @@ The bootstrap environment is fail-closed:
 
 - `PRNSD_BACKBONE_LISTEN_PORT` changes the internal listener port; its default
   is `4242`.
+- `PRNSD_BACKBONE_DISCOVERABLE=No` suppresses Backbone discovery publication
+  even when a complete public endpoint is present. `Yes` requires a complete
+  endpoint. When omitted, publication is automatic only when that endpoint is
+  complete.
 - A complete `PRNSD_REACHABLE_HOST` and `PRNSD_REACHABLE_PORT` pair publishes
   the external discovery endpoint.
 - Otherwise, a complete `RAILWAY_TCP_PROXY_DOMAIN` and
@@ -115,6 +123,10 @@ The bootstrap environment is fail-closed:
 - Partial pairs, zero or invalid ports, malformed hosts, and conflicting
   partial input stop startup.
 - Discovery stays disabled when there is no complete published endpoint.
+- `PRNSD_NODE_PAGE_ANNOUNCE=No` disables the seeded page's announcement while
+  continuing to serve it by destination hash.
+- `PRNSD_NODE_PAGE_ANNOUNCE_INTERVAL` selects a positive whole number of
+  minutes and defaults to `360`.
 
 The published port may differ from the listener port. The generated
 `reachable_port` is advertised to peers while `listen_port` remains the local
@@ -124,6 +136,25 @@ Backbone or TCP server stanza.
 To change bootstrap inputs after creation, edit or replace the configuration
 deliberately; restarting with different environment variables does not mutate
 operator state or reseed pages.
+
+For a running managed daemon, Backbone publication is an ordinary interface
+setting and can be changed over SSH without a restart:
+
+```sh
+prnsd interfaces edit "Cloud Backbone" \
+  --config /var/lib/prnsd \
+  --discoverable false \
+  --apply
+```
+
+The page-announcement controls are daemon-wide settings. Change them under
+`[reticulum]` and restart the daemon deliberately:
+
+```ini
+[reticulum]
+  announce_node_page = No
+  node_page_announce_interval = 360
+```
 
 ## Backup and restore
 
@@ -206,6 +237,9 @@ that must be published:
 Railway supplies `RAILWAY_TCP_PROXY_DOMAIN` and
 `RAILWAY_TCP_PROXY_PORT`. The one-time bootstrap therefore advertises the
 public proxy port while continuing to listen on `4242` inside the service.
+Expose `PRNSD_BACKBONE_DISCOVERABLE`, `PRNSD_NODE_PAGE_ANNOUNCE`, and
+`PRNSD_NODE_PAGE_ANNOUNCE_INTERVAL` as template variables so the initial
+operator-owned configuration is deployment-controllable.
 
 Before stable promotion, the protected qualification workflow requires a
 private deployment of the precise template revision, a successful public

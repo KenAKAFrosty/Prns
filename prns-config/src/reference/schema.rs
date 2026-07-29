@@ -29,6 +29,7 @@ pub(super) enum ValueKind {
     RnodeMultiFrequency,
     RnodeMultiTxPower,
     BlackholeUpdateInterval,
+    NodePageAnnounceInterval,
 }
 
 impl ValueKind {
@@ -68,6 +69,9 @@ impl ValueKind {
             ValueKind::BlackholeUpdateInterval => {
                 "a finite number of minutes representable by the host; values below 2 use 2 minutes"
             }
+            ValueKind::NodePageAnnounceInterval => {
+                "an integer from 1 through 307445734561825860 minutes"
+            }
         }
     }
 
@@ -95,6 +99,7 @@ impl ValueKind {
             ValueKind::RnodeMultiFrequency => "868000000",
             ValueKind::RnodeMultiTxPower => "7",
             ValueKind::BlackholeUpdateInterval => "60.0",
+            ValueKind::NodePageAnnounceInterval => "360",
         }
     }
 }
@@ -165,6 +170,11 @@ pub(super) const GLOBAL_RULES: &[(&str, KeyRule)] = &[
         Applied(ValueKind::IdentityHashes),
     ),
     (global_key::RESPOND_TO_PROBES, Applied(ValueKind::Bool)),
+    (global_key::ANNOUNCE_NODE_PAGE, Applied(ValueKind::Bool)),
+    (
+        global_key::NODE_PAGE_ANNOUNCE_INTERVAL,
+        Applied(ValueKind::NodePageAnnounceInterval),
+    ),
     (
         global_key::FORCE_SHARED_INSTANCE_BITRATE,
         Applied(ValueKind::Bitrate),

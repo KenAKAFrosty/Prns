@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use personal_rns::config::DaemonPlan;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::runtime::request_endpoints::RequestEndpointSet;
@@ -11,6 +13,8 @@ mod probe_responder;
 mod remote_management;
 mod request_routes;
 mod request_state;
+
+const MANAGEMENT_ANNOUNCE_INTERVAL: Duration = Duration::from_secs(2 * 60 * 60);
 
 pub(crate) use blackhole_exchange::{
     spawn_updater as spawn_blackhole_updater, BlackholeUpdateTask, ListRoute,
@@ -48,6 +52,7 @@ where
                 destinations.push(AnnouncedDestination {
                     hash: destination,
                     available_when: None,
+                    interval: MANAGEMENT_ANNOUNCE_INTERVAL,
                 });
                 tracing::info!(
                     event = "remote_management_enabled",
@@ -70,6 +75,7 @@ where
                 destinations.push(AnnouncedDestination {
                     hash: destination,
                     available_when: None,
+                    interval: MANAGEMENT_ANNOUNCE_INTERVAL,
                 });
                 tracing::info!(
                     event = "probe_responder_enabled",
@@ -91,6 +97,7 @@ where
                 destinations.push(AnnouncedDestination {
                     hash: destination,
                     available_when: None,
+                    interval: MANAGEMENT_ANNOUNCE_INTERVAL,
                 });
                 tracing::info!(
                     event = "blackhole_publisher_enabled",
@@ -113,10 +120,18 @@ where
                 destination = ?destination.hash.as_bytes(),
                 index = %destination.index_path.display(),
             );
-            destinations.push(AnnouncedDestination {
-                hash: destination.hash,
-                available_when: Some(destination.index_path),
-            });
+            if plan.node_page_announcements.is_enabled() {
+                destinations.push(AnnouncedDestination {
+                    hash: destination.hash,
+                    available_when: Some(destination.index_path),
+                    interval: plan.node_page_announcements.interval().duration(),
+                });
+            } else {
+                tracing::info!(
+                    event = "node_page_announcements_disabled",
+                    destination = ?destination.hash.as_bytes(),
+                );
+            }
         }
         Ok(None) => {}
         Err(error) => {

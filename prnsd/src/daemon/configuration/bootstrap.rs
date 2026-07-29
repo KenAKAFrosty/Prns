@@ -9,13 +9,17 @@ use personal_rns::config::{discover, DiscoveryError};
 
 const CONFIG_FILE_NAME: &str = "config";
 const DEFAULT_BACKBONE_PORT: u16 = 4242;
+const DEFAULT_NODE_PAGE_ANNOUNCE_INTERVAL_MINUTES: u64 = 6 * 60;
 static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 const LISTEN_PORT: &str = "PRNSD_BACKBONE_LISTEN_PORT";
+const BACKBONE_DISCOVERABLE: &str = "PRNSD_BACKBONE_DISCOVERABLE";
 const REACHABLE_HOST: &str = "PRNSD_REACHABLE_HOST";
 const REACHABLE_PORT: &str = "PRNSD_REACHABLE_PORT";
 const RAILWAY_HOST: &str = "RAILWAY_TCP_PROXY_DOMAIN";
 const RAILWAY_PORT: &str = "RAILWAY_TCP_PROXY_PORT";
+const NODE_PAGE_ANNOUNCE: &str = "PRNSD_NODE_PAGE_ANNOUNCE";
+const NODE_PAGE_ANNOUNCE_INTERVAL: &str = "PRNSD_NODE_PAGE_ANNOUNCE_INTERVAL";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PublishedEndpoint {
@@ -26,7 +30,10 @@ struct PublishedEndpoint {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ServerBootstrapEnvironment {
     listen_port: u16,
+    backbone_discoverable: bool,
     published: Option<PublishedEndpoint>,
+    node_page_announce: bool,
+    node_page_announce_interval_minutes: u64,
 }
 
 impl ServerBootstrapEnvironment {
@@ -54,9 +61,29 @@ impl ServerBootstrapEnvironment {
             lookup(RAILWAY_PORT),
         )?;
         let published = explicit.or(railway);
+        let backbone_discoverable = match lookup(BACKBONE_DISCOVERABLE) {
+            Some(value) => parse_bool(BACKBONE_DISCOVERABLE, value)?,
+            None => published.is_some(),
+        };
+        if backbone_discoverable && published.is_none() {
+            return Err(ServerBootstrapError::PublishedEndpointRequired {
+                control: BACKBONE_DISCOVERABLE,
+            });
+        }
+        let node_page_announce = match lookup(NODE_PAGE_ANNOUNCE) {
+            Some(value) => parse_bool(NODE_PAGE_ANNOUNCE, value)?,
+            None => true,
+        };
+        let node_page_announce_interval_minutes = match lookup(NODE_PAGE_ANNOUNCE_INTERVAL) {
+            Some(value) => parse_positive_minutes(NODE_PAGE_ANNOUNCE_INTERVAL, value)?,
+            None => DEFAULT_NODE_PAGE_ANNOUNCE_INTERVAL_MINUTES,
+        };
         Ok(Self {
             listen_port,
+            backbone_discoverable,
             published,
+            node_page_announce,
+            node_page_announce_interval_minutes,
         })
     }
 
@@ -65,6 +92,8 @@ impl ServerBootstrapEnvironment {
             "[reticulum]\n\
              enable_transport = Yes\n\
              share_instance = Yes\n\
+             announce_node_page = {}\n\
+             node_page_announce_interval = {}\n\
              \n\
              [interfaces]\n\
              [[Cloud Backbone]]\n\
@@ -72,10 +101,12 @@ impl ServerBootstrapEnvironment {
              interface_enabled = Yes\n\
              listen_ip = 0.0.0.0\n\
              listen_port = {}\n",
-            self.listen_port
+            if self.node_page_announce { "Yes" } else { "No" },
+            self.node_page_announce_interval_minutes,
+            self.listen_port,
         );
-        match &self.published {
-            Some(endpoint) => {
+        match (self.backbone_discoverable, &self.published) {
+            (true, Some(endpoint)) => {
                 config.push_str(&format!(
                     "discoverable = Yes\n\
                      reachable_on = {}\n\
@@ -83,7 +114,8 @@ impl ServerBootstrapEnvironment {
                     endpoint.host, endpoint.port
                 ));
             }
-            None => config.push_str("discoverable = No\n"),
+            (false, _) => config.push_str("discoverable = No\n"),
+            (true, None) => unreachable!("validated bootstrap discovery endpoint"),
         }
         config
     }
@@ -312,6 +344,35 @@ fn parse_port(name: &'static str, value: OsString) -> Result<u16, ServerBootstra
     Ok(port)
 }
 
+fn parse_bool(name: &'static str, value: OsString) -> Result<bool, ServerBootstrapError> {
+    let value = value
+        .into_string()
+        .map_err(|_| ServerBootstrapError::NonUtf8 { name })?;
+    match value.trim().to_ascii_lowercase().as_str() {
+        "true" | "yes" | "on" | "1" => Ok(true),
+        "false" | "no" | "off" | "0" => Ok(false),
+        _ => Err(ServerBootstrapError::InvalidBoolean { name, value }),
+    }
+}
+
+fn parse_positive_minutes(
+    name: &'static str,
+    value: OsString,
+) -> Result<u64, ServerBootstrapError> {
+    let value = value
+        .into_string()
+        .map_err(|_| ServerBootstrapError::NonUtf8 { name })?;
+    let minutes = value
+        .parse::<u64>()
+        .ok()
+        .filter(|minutes| *minutes != 0 && minutes.checked_mul(60).is_some())
+        .ok_or_else(|| ServerBootstrapError::InvalidMinutes {
+            name,
+            value: value.clone(),
+        })?;
+    Ok(minutes)
+}
+
 #[derive(Debug)]
 pub(super) enum ServerBootstrapError {
     Discover(DiscoveryError),
@@ -329,6 +390,17 @@ pub(super) enum ServerBootstrapError {
     InvalidPort {
         name: &'static str,
         value: String,
+    },
+    InvalidBoolean {
+        name: &'static str,
+        value: String,
+    },
+    InvalidMinutes {
+        name: &'static str,
+        value: String,
+    },
+    PublishedEndpointRequired {
+        control: &'static str,
     },
     ConfigFile(ConfigFileError),
     ConfigEdit(ConfigEditError),
@@ -360,6 +432,18 @@ impl core::fmt::Display for ServerBootstrapError {
                     "{name} must be a port from 1 through 65535, got {value:?}"
                 )
             }
+            Self::InvalidBoolean { name, value } => write!(
+                formatter,
+                "{name} must be Yes or No (true, false, on, off, 1, and 0 are also accepted), got {value:?}"
+            ),
+            Self::InvalidMinutes { name, value } => write!(
+                formatter,
+                "{name} must be a positive whole number of minutes representable by the host, got {value:?}"
+            ),
+            Self::PublishedEndpointRequired { control } => write!(
+                formatter,
+                "{control}=Yes requires a complete PRNSD_REACHABLE_HOST/PRNSD_REACHABLE_PORT or RAILWAY_TCP_PROXY_DOMAIN/RAILWAY_TCP_PROXY_PORT pair"
+            ),
             Self::ConfigFile(error) => error.fmt(formatter),
             Self::ConfigEdit(error) => error.fmt(formatter),
             Self::PageStorage {
@@ -387,6 +471,9 @@ impl std::error::Error for ServerBootstrapError {
             | Self::IncompleteEndpoint { .. }
             | Self::InvalidHost { .. }
             | Self::InvalidPort { .. }
+            | Self::InvalidBoolean { .. }
+            | Self::InvalidMinutes { .. }
+            | Self::PublishedEndpointRequired { .. }
             | Self::InvalidPageTarget { .. } => None,
         }
     }
@@ -421,6 +508,12 @@ mod tests {
         .expect("environment is valid");
 
         assert_eq!(environment.listen_port, DEFAULT_BACKBONE_PORT);
+        assert!(environment.backbone_discoverable);
+        assert!(environment.node_page_announce);
+        assert_eq!(
+            environment.node_page_announce_interval_minutes,
+            DEFAULT_NODE_PAGE_ANNOUNCE_INTERVAL_MINUTES
+        );
         assert_eq!(
             environment.published,
             Some(PublishedEndpoint {
@@ -467,6 +560,54 @@ mod tests {
             environment(&[(LISTEN_PORT, "0")]),
             Err(ServerBootstrapError::InvalidPort { .. })
         ));
+        assert!(matches!(
+            environment(&[(BACKBONE_DISCOVERABLE, "Yes")]),
+            Err(ServerBootstrapError::PublishedEndpointRequired {
+                control: BACKBONE_DISCOVERABLE,
+            })
+        ));
+        assert!(matches!(
+            environment(&[(BACKBONE_DISCOVERABLE, "sometimes")]),
+            Err(ServerBootstrapError::InvalidBoolean {
+                name: BACKBONE_DISCOVERABLE,
+                ..
+            })
+        ));
+        assert!(matches!(
+            environment(&[(NODE_PAGE_ANNOUNCE_INTERVAL, "0")]),
+            Err(ServerBootstrapError::InvalidMinutes {
+                name: NODE_PAGE_ANNOUNCE_INTERVAL,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn deployment_controls_can_suppress_backbone_and_page_announcements() {
+        let environment = environment(&[
+            (BACKBONE_DISCOVERABLE, "No"),
+            (REACHABLE_HOST, "backbone.example"),
+            (REACHABLE_PORT, "443"),
+            (NODE_PAGE_ANNOUNCE, "off"),
+            (NODE_PAGE_ANNOUNCE_INTERVAL, "720"),
+        ])
+        .expect("environment is valid");
+        assert!(!environment.backbone_discoverable);
+        assert!(!environment.node_page_announce);
+        assert_eq!(environment.node_page_announce_interval_minutes, 720);
+
+        let plan = parse_and_plan(&environment.render())
+            .expect("rendered configuration plans")
+            .value;
+        assert!(matches!(
+            plan.interfaces[0].discovery,
+            personal_rns::config::InterfaceDiscoveryPlan::Disabled
+        ));
+        assert!(!plan.node_page_announcements.is_enabled());
+        assert_eq!(
+            plan.node_page_announcements.interval().duration(),
+            std::time::Duration::from_secs(12 * 60 * 60)
+        );
     }
 
     #[test]
@@ -493,6 +634,11 @@ mod tests {
                 port: 18443,
             }
         );
+        assert!(plan.node_page_announcements.is_enabled());
+        assert_eq!(
+            plan.node_page_announcements.interval().duration(),
+            std::time::Duration::from_secs(6 * 60 * 60)
+        );
     }
 
     #[test]
@@ -503,7 +649,10 @@ mod tests {
             &path,
             &ServerBootstrapEnvironment {
                 listen_port: 4242,
+                backbone_discoverable: false,
                 published: None,
+                node_page_announce: true,
+                node_page_announce_interval_minutes: DEFAULT_NODE_PAGE_ANNOUNCE_INTERVAL_MINUTES,
             }
             .render(),
         )
@@ -572,7 +721,10 @@ mod tests {
             &config,
             &ServerBootstrapEnvironment {
                 listen_port: DEFAULT_BACKBONE_PORT,
+                backbone_discoverable: false,
                 published: None,
+                node_page_announce: true,
+                node_page_announce_interval_minutes: DEFAULT_NODE_PAGE_ANNOUNCE_INTERVAL_MINUTES,
             }
             .render(),
         )
