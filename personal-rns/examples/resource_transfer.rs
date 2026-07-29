@@ -1,4 +1,6 @@
 use core::time::Duration;
+use std::error::Error;
+use std::io;
 
 use personal_rns::prelude::*;
 
@@ -6,21 +8,16 @@ const PAYLOAD_BYTES: usize = 64 * 1024;
 const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn Error>> {
     let receiver_destination = example_destination(ResourceStrategy::Accept {
         max_uncompressed_bytes: PAYLOAD_BYTES as u64,
         accept_compressed: true,
-    });
-    let receiver_hash = receiver_destination
-        .destination_hash()
-        .expect("Our example destination has valid app name and aspects");
-    let tcp_server = TcpServer::bind("127.0.0.1:0")
-        .await
-        .expect("A local TCP server should bind");
-    let server_address = tcp_server
-        .local_addr()
-        .expect("TCP server address should be valid")
-        .to_string();
+    })?;
+    let receiver_hash = receiver_destination.destination_hash().map_err(|error| {
+        io::Error::other(format!("invalid example destination name: {error:?}"))
+    })?;
+    let tcp_server = TcpServer::bind("127.0.0.1:0").await?;
+    let server_address = tcp_server.local_addr()?.to_string();
     let receiver = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [receiver_destination],
@@ -40,7 +37,7 @@ async fn main() {
     let client = TcpClientInterface::new(server_address);
     let sender = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        pre_configured_destinations: [example_destination(ResourceStrategy::AcceptNone)],
+        pre_configured_destinations: [example_destination(ResourceStrategy::AcceptNone)?],
         app_state: (),
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
@@ -79,7 +76,7 @@ async fn main() {
             let destination = announce_heard_listener
                 .recv()
                 .await
-                .expect("The announce stream should stay open");
+                .ok_or_else(|| io::Error::other("The announce stream closed before delivery"))?;
             if destination == receiver_hash {
                 break;
             }
@@ -87,40 +84,54 @@ async fn main() {
         let link_id = sender_handle
             .establish_link(receiver_hash)
             .await
-            .expect("The link to the receiver should establish");
+            .map_err(|error| {
+                io::Error::other(format!(
+                    "the link to the receiver did not establish: {error:?}"
+                ))
+            })?;
         let payload = vec![0x5a; PAYLOAD_BYTES];
         sender_handle
             .send_resource(link_id, payload.len() as u64, payload.as_slice())
             .await
-            .expect("The resource transfer should settle");
+            .map_err(|error| {
+                io::Error::other(format!("the resource transfer did not settle: {error:?}"))
+            })?;
         println!("Transferred {PAYLOAD_BYTES} bytes to the accepting peer");
+        Ok::<(), Box<dyn Error>>(())
     };
 
     tokio::select! {
         result = tokio::time::timeout(EXCHANGE_TIMEOUT, exchange) => {
-            result.expect("The transfer should complete within 10 seconds");
+            result
+                .map_err(|_| io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "The transfer did not complete within 10 seconds",
+                ))??;
         }
         result = receiver.run() => {
-            result.expect("The receiver should run cleanly");
-            panic!("The receiver stopped before the transfer");
+            result?;
+            return Err(io::Error::other("The receiver stopped before the transfer").into());
         }
         result = sender.run() => {
-            result.expect("The sender should run cleanly");
-            panic!("The sender stopped before the transfer");
+            result?;
+            return Err(io::Error::other("The sender stopped before the transfer").into());
         }
     }
+    Ok(())
 }
 
-fn example_destination(resource_strategy: ResourceStrategy) -> PreConfiguredDestination<'static> {
-    PreConfiguredDestination::Single {
+fn example_destination(
+    resource_strategy: ResourceStrategy,
+) -> Result<PreConfiguredDestination<'static>, Box<dyn Error>> {
+    Ok(PreConfiguredDestination::Single {
         resource_strategy,
         app_name: "prns-example",
         aspects: &["resource-transfer"],
-        identity: try_generate_identity_secret().expect("OS entropy should be available"),
+        identity: try_generate_identity_secret()?,
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         request_endpoints: ServeMyRequestEndpoints::No,
-    }
+    })
 }

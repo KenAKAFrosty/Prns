@@ -1,14 +1,16 @@
 use core::time::Duration;
+use std::error::Error;
+use std::io;
 
 use personal_rns::prelude::*;
 
 const CHANGE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn Error>> {
     let node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        pre_configured_destinations: [example_destination()],
+        pre_configured_destinations: [example_destination()?],
         app_state: (),
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
@@ -17,9 +19,7 @@ async fn main() {
         persistence: NoPersistence,
     });
     let handle = node.handle();
-    let server = TcpServer::bind("127.0.0.1:0")
-        .await
-        .expect("A local TCP server should bind");
+    let server = TcpServer::bind("127.0.0.1:0").await?;
     let attached_interface = handle.supervise(server);
     let interface_id = attached_interface.id();
 
@@ -51,25 +51,29 @@ async fn main() {
 
     tokio::select! {
         result = tokio::time::timeout(CHANGE_TIMEOUT, changes) => {
-            result.expect("The interface change should complete within 5 seconds");
+            result.map_err(|_| io::Error::new(
+                io::ErrorKind::TimedOut,
+                "The interface change did not complete within 5 seconds",
+            ))?;
         }
         result = node.run() => {
-            result.expect("The node should run cleanly");
-            panic!("The node stopped before interface teardown");
+            result?;
+            return Err(io::Error::other("The node stopped before interface teardown").into());
         }
     }
+    Ok(())
 }
 
-fn example_destination() -> PreConfiguredDestination<'static> {
-    PreConfiguredDestination::Single {
+fn example_destination() -> Result<PreConfiguredDestination<'static>, Box<dyn Error>> {
+    Ok(PreConfiguredDestination::Single {
         resource_strategy: ResourceStrategy::AcceptNone,
         app_name: "prns-example",
         aspects: &["dynamic-interface"],
-        identity: try_generate_identity_secret().expect("OS entropy should be available"),
+        identity: try_generate_identity_secret()?,
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         request_endpoints: ServeMyRequestEndpoints::No,
-    }
+    })
 }

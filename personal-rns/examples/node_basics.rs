@@ -1,28 +1,26 @@
 //! A complete, bounded two-node Reticulum exchange over an isolated localhost TCP link. See `docs/getting-started.md` for context.
 
 use core::time::Duration;
+use std::error::Error;
+use std::io;
+
 use personal_rns::prelude::*;
 
 const DELIVERY_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[tokio::main(flavor = "multi_thread")]
-async fn main() {
-    let destination_a = example_preconfigured_destination();
+async fn main() -> Result<(), Box<dyn Error>> {
+    let destination_a = example_preconfigured_destination()?;
 
-    let destination_a_hash = destination_a
-        .destination_hash()
-        .expect("Our example destination has valid app name and aspects");
+    let destination_a_hash = destination_a.destination_hash().map_err(|error| {
+        io::Error::other(format!("invalid example destination name: {error:?}"))
+    })?;
 
-    let destination_b = example_preconfigured_destination();
+    let destination_b = example_preconfigured_destination()?;
 
-    let tcp_server_interface = TcpServer::bind("127.0.0.1:0")
-        .await
-        .expect("A local TCP server should bind");
+    let tcp_server_interface = TcpServer::bind("127.0.0.1:0").await?;
 
-    let server_address = tcp_server_interface
-        .local_addr()
-        .expect("TCP server address should be valid")
-        .to_string();
+    let server_address = tcp_server_interface.local_addr()?.to_string();
 
     println!("Node A: TCP server listening on {server_address}");
 
@@ -88,16 +86,19 @@ async fn main() {
     let observed = tokio::select! {
         heard_result = tokio::time::timeout(DELIVERY_TIMEOUT, heard_announce_listener.recv()) => {
             heard_result
-                .expect("Node B should observe Node A's announce over TCP within 10 seconds")
-                .expect("Node B's event stream should stay open until delivery")
+                .map_err(|_| io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "Node B did not observe Node A's announce over TCP within 10 seconds",
+                ))?
+                .ok_or_else(|| io::Error::other("Node B's event stream closed before delivery"))?
         }
         result = node_a.run() => {
-            result.expect("Node A should run cleanly");
-            panic!("Node A stopped before delivery");
+            result?;
+            return Err(io::Error::other("Node A stopped before delivery").into());
         }
         result = node_b.run() => {
-            result.expect("Node B should run cleanly");
-            panic!("Node B stopped before delivery");
+            result?;
+            return Err(io::Error::other("Node B stopped before delivery").into());
         }
     };
 
@@ -123,18 +124,20 @@ async fn main() {
             interface.id, interface.connection, interface.rx_bytes, interface.tx_bytes
         );
     }
+    Ok(())
 }
 
-fn example_preconfigured_destination() -> PreConfiguredDestination<'static> {
-    PreConfiguredDestination::Single {
+fn example_preconfigured_destination() -> Result<PreConfiguredDestination<'static>, Box<dyn Error>>
+{
+    Ok(PreConfiguredDestination::Single {
         resource_strategy: ResourceStrategy::AcceptNone,
         app_name: "prns-guide",
         aspects: &["examples", "node_basics"],
-        identity: try_generate_identity_secret().expect("Should successfully create an identity"),
+        identity: try_generate_identity_secret()?,
         announce_app_data: b"hello from node A",
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         request_endpoints: ServeMyRequestEndpoints::No,
-    }
+    })
 }

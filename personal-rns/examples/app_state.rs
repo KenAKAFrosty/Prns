@@ -1,5 +1,7 @@
 use core::time::Duration;
 use std::cell::Cell;
+use std::error::Error;
+use std::io;
 
 use personal_rns::prelude::*;
 
@@ -35,18 +37,13 @@ fn forward_announces(event: PrnsEvent<'_>, relay: &AnnounceRelay) {
 }
 
 #[tokio::main]
-async fn main() {
-    let responder_destination = responder_destination();
-    let responder_hash = responder_destination
-        .destination_hash()
-        .expect("Our example destination has valid app name and aspects");
-    let server = TcpServer::bind("127.0.0.1:0")
-        .await
-        .expect("A local TCP server should bind");
-    let server_address = server
-        .local_addr()
-        .expect("TCP server address should be valid")
-        .to_string();
+async fn main() -> Result<(), Box<dyn Error>> {
+    let responder_destination = responder_destination()?;
+    let responder_hash = responder_destination.destination_hash().map_err(|error| {
+        io::Error::other(format!("invalid example destination name: {error:?}"))
+    })?;
+    let server = TcpServer::bind("127.0.0.1:0").await?;
+    let server_address = server.local_addr()?.to_string();
     let responder = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [responder_destination],
@@ -67,7 +64,7 @@ async fn main() {
     let client = TcpClientInterface::new(server_address);
     let requester = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        pre_configured_destinations: [requester_destination()],
+        pre_configured_destinations: [requester_destination()?],
         app_state: AnnounceRelay {
             heard: heard_sender,
         },
@@ -103,7 +100,7 @@ async fn main() {
             let destination = heard_listener
                 .recv()
                 .await
-                .expect("The announce stream should stay open");
+                .ok_or_else(|| io::Error::other("The announce stream closed before delivery"))?;
             if destination == responder_hash {
                 break;
             }
@@ -111,12 +108,18 @@ async fn main() {
         let link_id = requester_handle
             .establish_link(responder_hash)
             .await
-            .expect("The link to the responder should establish");
+            .map_err(|error| {
+                io::Error::other(format!(
+                    "the link to the responder did not establish: {error:?}"
+                ))
+            })?;
         for expected in ["hello, visitor 1", "hello, visitor 2"] {
             let (response, rtt) = requester_handle
                 .request(link_id, RequestEndpointId::of(STATUS_ENDPOINT_ID), b"")
                 .await
-                .expect("The status request should settle");
+                .map_err(|error| {
+                    io::Error::other(format!("the status request did not settle: {error:?}"))
+                })?;
             assert_eq!(
                 response.as_slice(),
                 expected.as_bytes(),
@@ -127,47 +130,53 @@ async fn main() {
         println!(
             "Success: the endpoint served and updated the node's own state across two requests"
         );
+        Ok::<(), Box<dyn Error>>(())
     };
 
     tokio::select! {
         result = tokio::time::timeout(EXCHANGE_TIMEOUT, exchange) => {
-            result.expect("The exchange should complete within 10 seconds");
+            result
+                .map_err(|_| io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "The exchange did not complete within 10 seconds",
+                ))??;
         }
         result = responder.run() => {
-            result.expect("The responder should run cleanly");
-            panic!("The responder stopped before the exchange");
+            result?;
+            return Err(io::Error::other("The responder stopped before the exchange").into());
         }
         result = requester.run() => {
-            result.expect("The requester should run cleanly");
-            panic!("The requester stopped before the exchange");
+            result?;
+            return Err(io::Error::other("The requester stopped before the exchange").into());
         }
     }
+    Ok(())
 }
 
-fn responder_destination() -> PreConfiguredDestination<'static> {
-    PreConfiguredDestination::Single {
+fn responder_destination() -> Result<PreConfiguredDestination<'static>, Box<dyn Error>> {
+    Ok(PreConfiguredDestination::Single {
         resource_strategy: ResourceStrategy::AcceptNone,
         app_name: "prns-example",
         aspects: &["example", "app-state"],
-        identity: try_generate_identity_secret().expect("OS entropy should be available"),
+        identity: try_generate_identity_secret()?,
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         request_endpoints: ServeMyRequestEndpoints::Yes,
-    }
+    })
 }
 
-fn requester_destination() -> PreConfiguredDestination<'static> {
-    PreConfiguredDestination::Single {
+fn requester_destination() -> Result<PreConfiguredDestination<'static>, Box<dyn Error>> {
+    Ok(PreConfiguredDestination::Single {
         resource_strategy: ResourceStrategy::AcceptNone,
         app_name: "prns-example",
         aspects: &["example", "app-state"],
-        identity: try_generate_identity_secret().expect("OS entropy should be available"),
+        identity: try_generate_identity_secret()?,
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         request_endpoints: ServeMyRequestEndpoints::No,
-    }
+    })
 }

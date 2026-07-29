@@ -1,28 +1,23 @@
 use core::time::Duration;
+use std::error::Error;
+use std::io;
 
 use personal_rns::prelude::*;
 
 const DELIVERY_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[tokio::main]
-async fn main() {
-    let announcing_destination = example_destination();
-    let announced_hash = announcing_destination
-        .destination_hash()
-        .expect("Our example destination has valid app name and aspects");
+async fn main() -> Result<(), Box<dyn Error>> {
+    let announcing_destination = example_destination()?;
+    let announced_hash = announcing_destination.destination_hash().map_err(|error| {
+        io::Error::other(format!("invalid example destination name: {error:?}"))
+    })?;
 
-    let server = TcpServer::bind("127.0.0.1:0")
-        .await
-        .expect("A local TCP server should bind");
-    let relay_address = server
-        .local_addr()
-        .expect("TCP server address should be valid")
-        .to_string();
+    let server = TcpServer::bind("127.0.0.1:0").await?;
+    let relay_address = server.local_addr()?.to_string();
     let relay = PrnsNode::new(PrnsNodeRecipe {
-        transport_identity: Some(
-            try_generate_identity_secret().expect("OS entropy should be available"),
-        ),
-        pre_configured_destinations: [example_destination()],
+        transport_identity: Some(try_generate_identity_secret()?),
+        pre_configured_destinations: [example_destination()?],
         app_state: (),
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
@@ -53,7 +48,7 @@ async fn main() {
     let listener_client = TcpClientInterface::new(relay_address);
     let listening_node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        pre_configured_destinations: [example_destination()],
+        pre_configured_destinations: [example_destination()?],
         app_state: (),
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
@@ -95,20 +90,23 @@ async fn main() {
         let heard = tokio::select! {
             heard = tokio::time::timeout_at(deadline, heard_listener.recv()) => {
                 heard
-                    .expect("The relayed announce should arrive within 10 seconds")
-                    .expect("The listener's event stream should stay open")
+                    .map_err(|_| io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "The relayed announce did not arrive within 10 seconds",
+                    ))?
+                    .ok_or_else(|| io::Error::other("The listener's event stream closed before delivery"))?
             }
             result = &mut run_relay => {
-                result.expect("The relay should run cleanly");
-                panic!("The relay stopped before delivery");
+                result?;
+                return Err(io::Error::other("The relay stopped before delivery").into());
             }
             result = &mut run_announcer => {
-                result.expect("The announcing node should run cleanly");
-                panic!("The announcing node stopped before delivery");
+                result?;
+                return Err(io::Error::other("The announcing node stopped before delivery").into());
             }
             result = &mut run_listener => {
-                result.expect("The listening node should run cleanly");
-                panic!("The listening node stopped before delivery");
+                result?;
+                return Err(io::Error::other("The listening node stopped before delivery").into());
             }
         };
         if heard == announced_hash {
@@ -116,18 +114,19 @@ async fn main() {
         }
     }
     println!("Success: the announce crossed two links; only the transport node connected them");
+    Ok(())
 }
 
-fn example_destination() -> PreConfiguredDestination<'static> {
-    PreConfiguredDestination::Single {
+fn example_destination() -> Result<PreConfiguredDestination<'static>, Box<dyn Error>> {
+    Ok(PreConfiguredDestination::Single {
         resource_strategy: ResourceStrategy::AcceptNone,
         app_name: "prns-example",
         aspects: &["transport-node"],
-        identity: try_generate_identity_secret().expect("OS entropy should be available"),
+        identity: try_generate_identity_secret()?,
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         request_endpoints: ServeMyRequestEndpoints::No,
-    }
+    })
 }
