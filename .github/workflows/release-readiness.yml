@@ -53,9 +53,11 @@ jobs:
     name: ${{ matrix.id }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 260
+    env:
+      RUSTUP_TOOLCHAIN: 1.96.0
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 20
       matrix: ${{ fromJSON(needs.inventory.outputs.matrix) }}
     defaults:
       run:
@@ -84,7 +86,7 @@ jobs:
           rustup toolchain install "$nightly" --profile minimal
       - name: Prepare embedded targets
         if: matrix.group == 'embedded' || matrix.group == 'esp'
-        run: rustup target add riscv32imac-unknown-none-elf thumbv7em-none-eabihf
+        run: rustup target add --toolchain 1.96.0 riscv32imac-unknown-none-elf thumbv7em-none-eabihf
       - name: Prepare Linux native development packages
         if: runner.os == 'Linux' && matrix.platform != 'android-device'
         run: |
@@ -142,9 +144,6 @@ jobs:
         run: |
           cargo install kani-verifier --version 0.67.0 --locked
           cargo kani setup
-      - name: Prepare pinned cargo-mutants
-        if: matrix.domain == 'mutation'
-        run: cargo install cargo-mutants --version 27.1.0 --locked
       - name: Prepare dependency audit tools
         if: matrix.id == 'dependency-audit'
         run: |
@@ -188,4 +187,3 @@ jobs:
           retention-days: 30
           path: |
             validation-artifacts/release-manifest.json
-            validation-artifacts/mutation/union/**

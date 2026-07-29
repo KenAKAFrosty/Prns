@@ -63,6 +63,16 @@ def run_script(script: str, *arguments: object, environment: dict[str, str] | No
     )
 
 
+def run_task(*arguments: object) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [str(ROOT / "tools" / "prns"), *(str(argument) for argument in arguments)],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
 def write_json(path: Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -139,6 +149,8 @@ class CandidateFixture:
         source_archive = (root / "website" / "source.zip").read_bytes()
         browser_wasm.write_bytes(
             b"fixture source-enabled wasm "
+            + source_archive
+            + b" "
             + source_metadata["sha256"].encode()
             + b" "
             + SOURCE_COMMIT[:12].encode()
@@ -469,6 +481,107 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
             environment=self.environment,
         )
 
+    def test_unsigned_candidate_preflight_executes_every_downstream_stage(self) -> None:
+        reproduction = CandidateFixture(self.workspace / "reproduction")
+
+        for fixture in (self.fixture, reproduction):
+            (fixture.root / "SHA256SUMS.txt").unlink()
+            (fixture.root / "channels" / "stable.json").unlink()
+            shutil.rmtree(fixture.root / "website" / "releases" / VERSION)
+            (
+                fixture.root
+                / "website"
+                / "releases"
+                / "channels"
+                / "stable.json"
+            ).unlink()
+            (fixture.root / "metadata" / "sparse-sizes.json").unlink()
+            (fixture.root / "metadata" / "reproducibility.json").unlink()
+
+            finalized = run_task(
+                "release",
+                "candidate",
+                "finalize",
+                "--",
+                fixture.root,
+                "--channel",
+                "stable",
+                "--commit",
+                SOURCE_COMMIT,
+                "--key-id",
+                KEY_ID,
+            )
+            self.assertEqual(finalized.returncode, 0, finalized.stderr)
+            self.assertEqual(
+                json.loads(
+                    (
+                        fixture.root / "metadata" / "sparse-sizes.json"
+                    ).read_text(encoding="utf-8")
+                ),
+                build_sparse_size_report(fixture.manifest),
+            )
+
+        primary_archive = self.workspace / "primary.tar.gz"
+        reproduction_archive = self.workspace / "reproduction.tar.gz"
+        for fixture, archive in (
+            (self.fixture, primary_archive),
+            (reproduction, reproduction_archive),
+        ):
+            packaged = run_task(
+                "release",
+                "candidate",
+                "package",
+                "--",
+                fixture.root,
+                archive,
+            )
+            self.assertEqual(packaged.returncode, 0, packaged.stderr)
+
+        unsigned_archive = self.workspace / "unsigned.tar.gz"
+        report = self.workspace / "reproducibility.json"
+        compared = run_task(
+            "release",
+            "candidate",
+            "compare",
+            "--",
+            "--primary",
+            primary_archive,
+            "--reproduction",
+            reproduction_archive,
+            "--output",
+            unsigned_archive,
+            "--report",
+            report,
+        )
+        self.assertEqual(compared.returncode, 0, compared.stderr)
+
+        verified = self.workspace / "verified"
+        extracted = run_task(
+            "release",
+            "candidate",
+            "extract",
+            "--",
+            unsigned_archive,
+            verified,
+        )
+        self.assertEqual(extracted.returncode, 0, extracted.stderr)
+        validated = run_task(
+            "release",
+            "candidate",
+            "validate-unsigned",
+            "--",
+            verified,
+            "--expected-commit",
+            SOURCE_COMMIT,
+            "--repository-version",
+            self.fixture.repository_version,
+            "--pinned-key",
+            self.fixture.key,
+            "--tester-roster",
+            self.fixture.tester_roster,
+        )
+        self.assertEqual(validated.returncode, 0, validated.stderr)
+
     def test_unsigned_candidate_is_fully_bound_before_signing(self) -> None:
         result = self.validate_unsigned()
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -514,6 +627,39 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         result = self.validate_unsigned()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("checksum is malformed or stale", result.stderr)
+
+    def test_raw_browser_fixture_trust_is_rejected_outside_the_source_archive(self) -> None:
+        browser_wasm = (
+            self.fixture.root
+            / "website"
+            / "browser-node-playground-console"
+            / "pkg"
+            / "prns_wasm_bg.wasm"
+        )
+        original = browser_wasm.read_bytes()
+        fixture_key = (
+            ROOT
+            / "docs"
+            / "website"
+            / "web-flasher"
+            / "browser"
+            / "fixtures"
+            / "signed-candidate"
+            / "minisign.pub"
+        ).read_bytes().splitlines()[1]
+        for trust_material in (
+            b"PRNS_BROWSER_TEST_FIXTURE_TRUST_ROOT_V1",
+            fixture_key,
+        ):
+            with self.subTest(trust_material=trust_material):
+                browser_wasm.write_bytes(original + b" " + trust_material)
+                result = self.validate_unsigned()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(
+                    "hosted website contains browser-test trust material",
+                    result.stderr,
+                )
+        browser_wasm.write_bytes(original)
 
     def test_fake_signer_injection_signs_documents_and_hosted_copies(self) -> None:
         result = self.sign_candidate()

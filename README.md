@@ -150,7 +150,7 @@ Your network and apps don't change, just your daemon does. The Prns daemon, `prn
 
 - [Start prnsd](prnsd/README.md) for a high-performance shared instance on your machine, which works with Sideband, NomadNet, MeshChat, etc.
 - [Flash a Hopspot](https://prns.dev/flash) to get self-contained Reticulum running on your embedded devices.
-- [Run a high-performance backbone node](link-here-docker-containers-railway-templates) to get the most "bang for your buck" on your cloud compute.
+- [Run a high-performance backbone node](docs/prnsd-config.md#minimal-router) to get the most "bang for your buck" on your cloud compute.
 - [Measure both implementations side by side](benchmarks/README.md) with the benchmark suite.
 - [Verify the interoperability yourself](docs/validation.md), against real RNS nodes on your own machine.
 

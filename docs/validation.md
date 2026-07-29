@@ -54,7 +54,7 @@ opaque success token. Counts come from the live manifest and native source
 discovery, so the output also gives an operator a quick orientation:
 
 ```text
-[verify] Suite policy: 96 total suites (49 pull-request, 92 release, 93 scheduled); IDs, tiers, platforms, toolchains, commands, timeouts, and artifact paths are valid.
+[verify] Suite policy: 99 total suites (49 pull-request, 91 release, 96 scheduled); IDs, tiers, platforms, toolchains, commands, timeouts, and artifact paths are valid.
 [verify] Cargo ownership: 39 manifests are registered, valid, and repository-owned; 22 unique workspace roots own formatting.
 [verify] Native discovery: 18 Kani proofs and 8 fuzz targets exactly match their source owners.
 [verify] Asset ownership: 69 oracle/interop/smoke assets are registered; 1 documented exemption is current; nothing is orphaned.
@@ -91,16 +91,16 @@ integrity, normal tests and lints, release contracts, product build lanes,
 deterministic stock-RNS comparisons, and essential interop.
 
 The `release` tier adds every proof, every bounded fuzz target, full oracle and
-utility interop coverage, sanitizers, Miri, mutation analysis, and the remaining
-shipping-platform evidence. A release result is acceptable only when all
-required results are bound to the exact candidate commit.
+utility interop coverage, sanitizers, Miri, and the remaining shipping-platform
+evidence. A release result is acceptable only when all required results are
+bound to the exact candidate commit.
 
 The `scheduled` tier is allowed to spend longer on fuzzing, diagnostics,
-coverage, unsafe inventory, and hardware/network simulations. Scheduled evidence
-is useful for maintenance but cannot substitute for exact-SHA release evidence.
-The physical Android runtime suite remains registered here and requires its
-device-qualified runner, but it is separate from hosted release readiness unless
-an Android application release explicitly places it in scope.
+coverage, mutation analysis, unsafe inventory, and hardware/network simulations.
+Scheduled evidence is useful for maintenance but cannot substitute for exact-SHA
+release evidence. The physical Android runtime suite remains registered here and
+requires its device-qualified runner, but it is separate from hosted release
+readiness unless an Android application release explicitly places it in scope.
 
 ## Stock-RNS environments
 
@@ -167,9 +167,16 @@ runner emits cargo-mutants results, fingerprints each missed or timed-out mutant
 from stable semantic fields, and compares them with
 `validation/mutation/triage.toml`.
 
+Mutation analysis is a scheduled or manually dispatched audit, not a
+pull-request or release gate. Its findings require human classification. A
+useful mutant normally results in a stronger behavioral test. Mutation output
+alone is not a reason to rewrite production code; any production change needs
+an independent correctness or design rationale, and performance-shaped code
+requires comparative measurement before acceptance.
+
 Every accepted survivor must have a lowercase SHA-256 fingerprint, a concrete
 reason, a reviewer, and an expiry date. New, changed, timed-out, stale, or expired
-entries fail the lane. An accepted cargo-mutants nonzero exit is therefore never
+entries fail the audit. An accepted cargo-mutants nonzero exit is therefore never
 an unreviewed blanket waiver: the checked-in triage must exactly match the
 current unresolved set and the baseline must have succeeded.
 
@@ -180,7 +187,13 @@ fail-closed aggregate. Every shipping lane is a dependency of that aggregate;
 GitHub's `skipped` result is not green.
 
 `.github/workflows/deep-validation.yml` runs Kani, fuzzing, full oracle/interop,
-mutation, sanitizer, and Miri jobs independently with `fail-fast: false`.
+sanitizer, and Miri jobs independently with `fail-fast: false`.
+
+`.github/workflows/mutation-audit.yml` runs the sharded mutation audit monthly
+or by explicit dispatch. Its findings remain outside ordinary CI and exact-SHA
+release qualification, and the workflow must not be configured as a required
+status check. A red audit means its evidence needs operator triage; it does not
+mean the product build or candidate failed.
 
 `.github/workflows/release-readiness.yml` is manually dispatched with a full
 commit SHA. It checks out that exact object, records evidence in each platform

@@ -402,8 +402,8 @@ tiers = ["pr", "release", "scheduled"]
 platform = "any"
 toolchain = "python"
 timeout_seconds = 600
-command = ["python3", "-m", "unittest", "discover", "-s", "tools/tests", "-p", "test_*.py", "-v"]
-inputs = ["tools/tests", "tools/release", "validation/release/workflow-contracts.py"]
+command = ["bash", "validation/release/contracts.sh"]
+inputs = ["tools/tests", "tools/release", "validation/release/contracts.sh", "validation/release/workflow-contracts.py"]
 artifacts = "validation-artifacts/results/release-contracts"
 
 [[suite]]
@@ -422,7 +422,7 @@ artifacts = "validation-artifacts/results/fuzz-build"
 [[suite]]
 id = "mutation-analysis"
 domain = "mutation"
-tiers = ["release", "scheduled"]
+tiers = ["scheduled"]
 platform = "linux"
 toolchain = "stable"
 timeout_seconds = 14400

@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import importlib.util
 import io
-from pathlib import Path
+import json
+import os
 import subprocess
 import sys
 import tarfile
 import tempfile
 import unittest
 import zipfile
-
+from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / "tools" / "release"
@@ -21,17 +22,18 @@ from flasher_build_metadata import (
     EXPECTED_TOOLS,
     EXPECTED_WEB_PACKAGES,
     build_metadata,
+    resolved_tools,
     validate_metadata,
 )
 from flasher_candidate_output import resolve_output
 from flasher_reproducibility import validate_report
+from flasher_rustdoc import normalize_generic_pages
 from flasher_sparse_sizes import MERGED_BASELINES, SPARSE_BASELINES, build_report
 from source_snapshot import (
     REQUIRED_SOURCE_FILES,
     package_source_snapshot,
     validate_archive_members,
 )
-
 
 VERSION = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
 COMMIT = "a" * 40
@@ -212,6 +214,51 @@ class FlasherReproducibilityTests(unittest.TestCase):
                 names,
             )
 
+    def test_source_snapshot_is_timezone_independent(self) -> None:
+        commit = subprocess.run(
+            ("git", "rev-parse", "HEAD"),
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=True,
+        ).stdout.strip()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            outputs = []
+            for name, timezone in (("utc", "UTC0"), ("est", "EST5")):
+                output = root / name
+                environment = os.environ.copy()
+                environment["TZ"] = timezone
+                subprocess.run(
+                    (
+                        sys.executable,
+                        str(SCRIPTS / "package-source-snapshot.py"),
+                        "--repository",
+                        str(ROOT),
+                        "--commit",
+                        commit,
+                        "--version",
+                        VERSION,
+                        "--output",
+                        str(output / "source.zip"),
+                        "--metadata",
+                        str(output / "source.json"),
+                    ),
+                    cwd=ROOT,
+                    env=environment,
+                    text=True,
+                    capture_output=True,
+                    check=True,
+                )
+                outputs.append(
+                    (
+                        (output / "source.zip").read_bytes(),
+                        (output / "source.zip.sha256").read_bytes(),
+                        (output / "source.json").read_bytes(),
+                    )
+                )
+            self.assertEqual(outputs[0], outputs[1])
+
     def test_source_snapshot_rejects_missing_nomadnet_page_source(self) -> None:
         commit = subprocess.run(
             ("git", "rev-parse", "HEAD"),
@@ -289,6 +336,59 @@ class FlasherReproducibilityTests(unittest.TestCase):
             candidate_build.index('cp -R "$hosted_dist/." "$candidate/website/"'),
         )
 
+    def test_candidate_rustdoc_is_serial_and_normalized_before_staging(self) -> None:
+        candidate_build = (SCRIPTS / "build-flasher-candidate.sh").read_text(
+            encoding="utf-8"
+        )
+        documentation = "cargo doc --locked --no-deps --workspace --jobs 1"
+        normalization = 'flasher_rustdoc.py" \\\n    "$root/target/doc"'
+        staging = 'cp -R "$root/target/doc/." "$candidate/website/api/"'
+        self.assertIn(documentation, candidate_build)
+        self.assertIn(normalization, candidate_build)
+        self.assertLess(
+            candidate_build.index(documentation),
+            candidate_build.index(normalization),
+        )
+        self.assertLess(
+            candidate_build.index(normalization),
+            candidate_build.index(staging),
+        )
+
+    def test_rustdoc_generic_page_normalization_is_atomic(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            (output / "docs").mkdir()
+            (output / "docs" / "index.html").write_text("docs", encoding="utf-8")
+            help_page = output / "help.html"
+            settings_page = output / "settings.html"
+            help_page.write_text(
+                '<meta data-current-crate="first"><main>help</main>',
+                encoding="utf-8",
+            )
+            settings_page.write_text(
+                '<meta data-current-crate="second"><main>settings</main>',
+                encoding="utf-8",
+            )
+
+            normalize_generic_pages(output, "docs")
+
+            self.assertEqual(
+                {
+                    "help": help_page.read_text(encoding="utf-8"),
+                    "settings": settings_page.read_text(encoding="utf-8"),
+                },
+                {
+                    "help": '<meta data-current-crate="docs"><main>help</main>',
+                    "settings": '<meta data-current-crate="docs"><main>settings</main>',
+                },
+            )
+
+            original_help = help_page.read_bytes()
+            settings_page.write_text("<main>settings</main>", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "0 current-crate fields"):
+                normalize_generic_pages(output, "docs")
+            self.assertEqual(help_page.read_bytes(), original_help)
+
     def test_build_metadata_is_source_derived_and_exact_pinned(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -322,6 +422,36 @@ class FlasherReproducibilityTests(unittest.TestCase):
             value["tools"]["node"] = "v24.18.1"
             with self.assertRaisesRegex(ValueError, "exact pins"):
                 validate_metadata(value, commit=COMMIT)
+
+    def test_build_metadata_uses_each_tools_version_report_flag(self) -> None:
+        commands: list[tuple[str, ...]] = []
+
+        def output(*command: str) -> str:
+            commands.append(command)
+            return command[0]
+
+        with patch(
+            "flasher_build_metadata.resolved_llvm_objcopy",
+            return_value="llvm-objcopy version 20.1.8",
+        ):
+            resolved_tools(output=output)
+
+        self.assertEqual(
+            commands,
+            [
+                ("rustc", "--version"),
+                ("cargo", "--version"),
+                ("node", "--version"),
+                ("npm", "--version"),
+                ("dx", "--version"),
+                ("cargo-binstall", "-V"),
+                ("espup", "--version"),
+                ("rustc", "+esp", "--version"),
+                ("xtensa-esp-elf-gcc", "--version"),
+                ("python3", "--version"),
+                ("git", "--version"),
+            ],
+        )
 
     def test_sparse_report_covers_all_boards_and_enforces_sixty_percent(self) -> None:
         report = build_report(manifest())

@@ -234,7 +234,13 @@ def main() -> int:
             raise ValueError("--key-id is required")
         require_unsigned(candidate)
         version = read_version(candidate)
-        validate_manifest(candidate, version, arguments.channel, arguments.commit, arguments.key_id)
+        manifest = validate_manifest(
+            candidate,
+            version,
+            arguments.channel,
+            arguments.commit,
+            arguments.key_id,
+        )
         archives = require_cli_archives(candidate, version)
         render_installers(candidate, version, archives)
 

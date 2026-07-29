@@ -18,8 +18,19 @@ use personal_rns::runtime::{
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::{TcpClientInterface, TcpServer};
+use personal_rns::wire::DestinationHash;
+use tokio::sync::mpsc::UnboundedReceiver;
 
 const BITRATE: BitrateBps = BitrateBps::guess(1_000_000);
+const ANNOUNCE_DELIVERY_DEADLINE: Duration = Duration::from_secs(5);
+const ANNOUNCE_RETRY_INTERVAL: Duration = Duration::from_millis(200);
+
+#[derive(Debug)]
+enum AnnounceDeliveryFailure {
+    Deadline,
+    ChannelClosed,
+    UnsuccessfulSettlement,
+}
 
 fn secret(byte: u8) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
     Zeroizing::new([byte; IDENTITY_SECRET_KEY_LEN])
@@ -37,6 +48,47 @@ fn single(identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> PreConfiguredDe
         ratchet: RatchetPolicy::NoRatchets,
         request_endpoints: ServeMyRequestEndpoints::No,
     }
+}
+
+async fn hear_announced_destination(
+    commands: &PrnsNodeHandle,
+    heard_rx: &mut UnboundedReceiver<DestinationHash>,
+    announce: &AnnounceNow,
+) -> Result<(), AnnounceDeliveryFailure> {
+    let deadline = tokio::time::Instant::now() + ANNOUNCE_DELIVERY_DEADLINE;
+    let mut retry_at = tokio::time::Instant::now() + ANNOUNCE_RETRY_INTERVAL;
+    loop {
+        tokio::select! {
+            biased;
+            () = tokio::time::sleep_until(deadline) => {
+                return Err(AnnounceDeliveryFailure::Deadline);
+            }
+            heard = heard_rx.recv() => {
+                let Some(heard) = heard else {
+                    return Err(AnnounceDeliveryFailure::ChannelClosed);
+                };
+                if heard == announce.destination {
+                    break;
+                }
+            }
+            () = tokio::time::sleep_until(retry_at) => {
+                match tokio::time::timeout_at(
+                    deadline,
+                    commands.announce_now(announce.clone()),
+                )
+                .await
+                {
+                    Ok(Ok(())) => {}
+                    Ok(Err(_)) => {
+                        return Err(AnnounceDeliveryFailure::UnsuccessfulSettlement);
+                    }
+                    Err(_) => return Err(AnnounceDeliveryFailure::Deadline),
+                }
+                retry_at = tokio::time::Instant::now() + ANNOUNCE_RETRY_INTERVAL;
+            }
+        }
+    }
+    Ok(())
 }
 
 struct StoreDir {
@@ -467,36 +519,19 @@ async fn a_quiet_flush_skips_unchanged_regions_and_a_change_rewrites() {
     });
     let commands_b = node_b.handle();
 
-    let announce_first = commands_a.clone();
-    let announcer = tokio::spawn(async move {
-        let mut ticker = tokio::time::interval(Duration::from_millis(200));
-        loop {
-            ticker.tick().await;
-            if announce_first
-                .issue(EngineCommand::AnnounceNow(AnnounceNow {
-                    destination: dest_a1,
-                    target: AnnounceTarget::AllInterfaces,
-                    app_data: AnnounceAppData::Registered,
-                }))
-                .is_none()
-            {
-                break;
-            }
-        }
-    });
-
     let choreography = async {
-        loop {
-            let heard = tokio::time::timeout(Duration::from_secs(5), heard_rx.recv())
-                .await
-                .expect("B hears the first announce within 5s")
-                .expect("the announce channel stays open");
-            if heard == dest_a1 {
-                break;
-            }
-        }
-        announcer.abort();
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        let first_announce = AnnounceNow {
+            destination: dest_a1,
+            target: AnnounceTarget::AllInterfaces,
+            app_data: AnnounceAppData::Registered,
+        };
+        commands_a
+            .announce_now(first_announce.clone())
+            .await
+            .expect("the first announce settles successfully");
+        hear_announced_destination(&commands_a, &mut heard_rx, &first_announce)
+            .await
+            .expect("B hears the first announce within 5s");
 
         let mut mark = FlushMark::default();
         let first = commands_b
@@ -520,55 +555,27 @@ async fn a_quiet_flush_skips_unchanged_regions_and_a_change_rewrites() {
         assert_eq!(quiet.destination_identities, RegionFlush::UnchangedSkipped);
         assert!(quiet.high_water >= first.high_water);
 
-        let second_announce = commands_a
-            .issue(EngineCommand::AnnounceNow(AnnounceNow {
-                destination: dest_a2,
-                target: AnnounceTarget::AllInterfaces,
-                app_data: AnnounceAppData::Registered,
-            }))
+        let second_announce = AnnounceNow {
+            destination: dest_a2,
+            target: AnnounceTarget::AllInterfaces,
+            app_data: AnnounceAppData::Registered,
+        };
+        let second_announce_id = commands_a
+            .issue(EngineCommand::AnnounceNow(second_announce.clone()))
             .expect("node A accepts the second announce");
         loop {
             let (id, settlement) = settled_rx
                 .recv()
                 .await
                 .expect("node A's settlement channel stays open");
-            if id == second_announce {
+            if id == second_announce_id {
                 assert_eq!(settlement, Settlement::AnnounceNow(Ok(())));
                 break;
             }
         }
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-        let mut retry = tokio::time::interval_at(
-            tokio::time::Instant::now() + Duration::from_millis(200),
-            Duration::from_millis(200),
-        );
-        loop {
-            tokio::select! {
-                biased;
-                () = tokio::time::sleep_until(deadline) => {
-                    panic!("B hears the second announce within 5s");
-                }
-                heard = heard_rx.recv() => {
-                    let heard = heard.expect("the announce channel stays open");
-                    if heard == dest_a2 {
-                        break;
-                    }
-                }
-                _ = retry.tick() => {
-                    tokio::time::timeout_at(
-                        deadline,
-                        commands_a.announce_now(AnnounceNow {
-                            destination: dest_a2,
-                            target: AnnounceTarget::AllInterfaces,
-                            app_data: AnnounceAppData::Registered,
-                        }),
-                    )
-                    .await
-                    .expect("the second announce retry settles within 5s")
-                    .expect("the second announce retry settles successfully");
-                }
-            }
-        }
+        hear_announced_destination(&commands_a, &mut heard_rx, &second_announce)
+            .await
+            .expect("B hears the second announce within 5s");
 
         let changed = commands_b
             .flush_changed_to_store(&mut store, &mut mark)

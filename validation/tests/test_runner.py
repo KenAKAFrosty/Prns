@@ -168,7 +168,15 @@ class RegistryTests(unittest.TestCase):
         self.assertTrue(any("must derive shard arguments" in error for error in errors))
 
     def test_mutation_shards_are_round_robin_and_artifact_unique(self) -> None:
-        suites = runner.selected_suites(self.manifest, [], "mutation", "release")
+        self.assertEqual(
+            runner.selected_suites(self.manifest, [], "mutation", "release"),
+            [],
+        )
+        self.assertEqual(
+            runner.selected_suites(self.manifest, [], "mutation", "pr"),
+            [],
+        )
+        suites = runner.selected_suites(self.manifest, [], "mutation", "scheduled")
         self.assertEqual(len(suites), 4)
         self.assertEqual(len({suite["id"] for suite in suites}), 4)
         self.assertEqual(len({suite["artifacts"] for suite in suites}), 4)

@@ -80,9 +80,15 @@ impl RnsNumber {
             Self::Float(seconds) if *seconds == 0.0 || seconds.is_nan() => {
                 BlackholeExpiry::Indefinite
             }
+            Self::Float(seconds) if *seconds < 0.0 => BlackholeExpiry::At(InstantMillis(0)),
             Self::Float(seconds) => {
                 let millis = *seconds * 1_000.0;
-                BlackholeExpiry::At(InstantMillis(millis as u64))
+                let deadline = if !millis.is_finite() || millis >= u64::MAX as f64 {
+                    u64::MAX
+                } else {
+                    millis as u64
+                };
+                BlackholeExpiry::At(InstantMillis(deadline))
             }
         }
     }
@@ -438,7 +444,7 @@ impl PickleRequestEncoder {
     }
 
     fn signed(&mut self, value: i64) {
-        self.long(value.to_le_bytes(), true);
+        self.long(value.to_le_bytes(), value < 0);
     }
 
     fn unsigned(&mut self, value: u64) {
@@ -447,12 +453,13 @@ impl PickleRequestEncoder {
 
     fn long(&mut self, raw: [u8; 8], negative: bool) {
         let extension = if negative { 0xff } else { 0x00 };
-        let length = (2..=raw.len())
-            .rev()
-            .find(|&length| {
-                raw[length - 1] != extension || (raw[length - 2] & 0x80 != 0) != negative
-            })
-            .unwrap_or(1);
+        let mut length = raw.len();
+        while length > 1
+            && raw[length - 1] == extension
+            && (raw[length - 2] & 0x80 != 0) == negative
+        {
+            length -= 1;
+        }
         let length_position = self.bytes.len() + 1;
         self.bytes.extend_from_slice(&[0x8a, length as u8]);
         self.bytes.extend_from_slice(&raw[..length]);

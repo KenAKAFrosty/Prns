@@ -754,6 +754,10 @@ path = "tools/release/flasher_build_metadata.py"
 reason = "Shared reproducible build metadata implementation."
 
 [[internal]]
+path = "tools/release/flasher_browser_test_trust.py"
+reason = "Shared production browser-test trust boundary implementation."
+
+[[internal]]
 path = "tools/release/flasher_candidate_output.py"
 reason = "Internal output-path safety helper invoked by candidate construction."
 
@@ -768,6 +772,10 @@ reason = "Shared release evidence hashing and subject inventory implementation."
 [[internal]]
 path = "tools/release/flasher_reproducibility.py"
 reason = "Shared deterministic candidate comparison implementation."
+
+[[internal]]
+path = "tools/release/flasher_rustdoc.py"
+reason = "Shared deterministic Rustdoc normalization implementation."
 
 [[internal]]
 path = "tools/release/release-esp-toolchain-identity.sh"

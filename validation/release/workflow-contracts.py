@@ -15,8 +15,17 @@ ACTION_PATTERN = re.compile(r"^\s*(?:-\s*)?uses:\s*([^\s#]+)", re.MULTILINE)
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 JOB_PATTERN = re.compile(r"(?m)^  ([A-Za-z0-9_-]+):\n")
 AUTOMATIC_WORKFLOWS = frozenset(
-    {"ci.yml", "deep-validation.yml", "hardening.yml", "host-sdks.yml", "napi.yml"}
+    {
+        "ci.yml",
+        "deep-validation.yml",
+        "hardening.yml",
+        "host-sdks.yml",
+        "mutation-audit.yml",
+        "napi.yml",
+    }
 )
+STANDARD_MATRIX_PARALLELISM_LIMIT = 4
+MATRIX_PARALLELISM_LIMITS = {"release-readiness.yml": 20}
 
 
 def workflow_jobs(text: str) -> tuple[tuple[str, str], ...]:
@@ -40,6 +49,9 @@ def validate_resource_bounds(workflow: Path, text: str) -> list[str]:
     errors: list[str] = []
     relative = workflow.relative_to(ROOT)
     artifact_limit = 7 if workflow.name in AUTOMATIC_WORKFLOWS else 30
+    parallelism_limit = MATRIX_PARALLELISM_LIMITS.get(
+        workflow.name, STANDARD_MATRIX_PARALLELISM_LIMIT
+    )
     for job_name, block in workflow_jobs(text):
         if re.search(r"(?m)^    runs-on:", block):
             timeout = re.search(r"(?m)^    timeout-minutes:\s*(\d+)\s*$", block)
@@ -57,8 +69,18 @@ def validate_resource_bounds(workflow: Path, text: str) -> list[str]:
             )
             if parallel is None:
                 errors.append(f"{relative}: {job_name} has an unbounded matrix")
-            elif not 1 <= int(parallel.group(1)) <= 4:
-                errors.append(f"{relative}: {job_name} exceeds four parallel matrix jobs")
+            elif not 1 <= int(parallel.group(1)) <= parallelism_limit:
+                errors.append(
+                    f"{relative}: {job_name} exceeds {parallelism_limit} parallel matrix jobs"
+                )
+            elif (
+                workflow.name in MATRIX_PARALLELISM_LIMITS
+                and int(parallel.group(1)) != parallelism_limit
+            ):
+                errors.append(
+                    f"{relative}: {job_name} must use all {parallelism_limit} "
+                    "parallel matrix jobs"
+                )
 
         steps = re.split(r"(?m)(?=^      - )", block)
         for step in steps:
@@ -121,7 +143,11 @@ def validate() -> list[str]:
         'version: "1.21.0"',
         "cargo binstall --locked --no-confirm --force dioxus-cli@0.7.5",
         "link-arg=/Brepro",
+        "./tools/prns release candidate finalize --",
+        "./tools/prns release candidate package --",
         "./tools/prns release candidate compare --",
+        "./tools/prns release candidate extract --",
+        "./tools/prns release candidate validate-unsigned --",
         "default: retain",
         "bootstrap is forbidden after any signed schema-v2 custody asset exists",
         "./tools/prns release website-history -- probe-stable",
@@ -151,6 +177,30 @@ def validate() -> list[str]:
     readiness = (
         ROOT / ".github" / "workflows" / "release-readiness.yml"
     ).read_text(encoding="utf-8")
+    for preflight_fragment in (
+        "astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86",
+        'python3 validation/run.py run --suite release-contracts --expected-sha "$GITHUB_SHA"',
+    ):
+        if preflight_fragment not in ci:
+            errors.append(
+                f"ci.yml is missing release critical-path preflight {preflight_fragment!r}"
+            )
+    release_contracts = (
+        ROOT / "validation" / "release" / "contracts.sh"
+    ).read_text(encoding="utf-8")
+    for preflight_fragment in (
+        "uvx --from ruff==0.15.22 ruff check",
+        "--select F821",
+        "tools/release",
+        "tools/tests",
+        "validation/release",
+        "-m unittest discover",
+    ):
+        if preflight_fragment not in release_contracts:
+            errors.append(
+                "release contracts are missing critical-path preflight "
+                f"{preflight_fragment!r}"
+            )
     locked_dioxus = "cargo binstall --locked --no-confirm --force dioxus-cli@0.7.5"
     for name, workflow in (
         ("ci.yml", ci),
@@ -178,10 +228,20 @@ def validate() -> list[str]:
             "release-readiness.yml does not provision exact cargo-binstall and Dioxus "
             "tools for both web and ESP suites"
         )
+    qualify_toolchain = re.search(
+        r"(?m)^    env:\n      RUSTUP_TOOLCHAIN: 1\.96\.0$",
+        qualify,
+    )
+    if qualify_toolchain is None:
+        errors.append(
+            "release-readiness.yml does not force the exact Rust toolchain for "
+            "qualification suites"
+        )
     embedded_target_step = re.search(
         r"name: Prepare embedded targets\n"
         r"        if: matrix\.group == 'embedded' \|\| matrix\.group == 'esp'\n"
-        r"        run: rustup target add riscv32imac-unknown-none-elf "
+        r"        run: rustup target add --toolchain 1\.96\.0 "
+        r"riscv32imac-unknown-none-elf "
         r"thumbv7em-none-eabihf",
         qualify,
     )
@@ -189,8 +249,21 @@ def validate() -> list[str]:
         errors.append(
             "release-readiness.yml does not provision embedded Rust targets for ESP suites"
         )
-    if "validation-artifacts/mutation/union/**" not in readiness:
-        errors.append("release-readiness.yml does not retain the merged mutation evidence")
+    for mutation_fragment in (
+        "matrix.domain == 'mutation'",
+        "cargo-mutants",
+        "validation-artifacts/mutation/union/**",
+    ):
+        if mutation_fragment in readiness:
+            errors.append(
+                "release-readiness.yml must not place mutation analysis on the release "
+                f"critical path: {mutation_fragment!r}"
+            )
+        if mutation_fragment in ci:
+            errors.append(
+                "ci.yml must leave mutation analysis to mutation-audit.yml: "
+                f"{mutation_fragment!r}"
+            )
     for native_package in ("libdbus-1-dev", "pkg-config"):
         if native_package not in readiness:
             errors.append(
@@ -282,19 +355,48 @@ def validate() -> list[str]:
     ):
         if resource_gate not in deep:
             errors.append(f"deep-validation.yml is missing resource gate {resource_gate!r}")
+    for mutation_fragment in (
+        "matrix --domain mutation",
+        "mutation-aggregate",
+        "MUTATION_RESULT",
+    ):
+        if mutation_fragment in deep:
+            errors.append(
+                "deep-validation.yml must leave mutation analysis to mutation-audit.yml: "
+                f"{mutation_fragment!r}"
+            )
+
+    mutation_audit = (
+        ROOT / ".github" / "workflows" / "mutation-audit.yml"
+    ).read_text(encoding="utf-8")
+    for resource_gate in (
+        "workflow_dispatch:",
+        'cron: "47 10 2 * *"',
+        "group: mutation-audit",
+        "cancel-in-progress: false",
+    ):
+        if resource_gate not in mutation_audit:
+            errors.append(
+                f"mutation-audit.yml is missing resource gate {resource_gate!r}"
+            )
+    for forbidden_trigger in ("\n  pull_request:", "\n  push:"):
+        if forbidden_trigger in mutation_audit:
+            errors.append(
+                "mutation-audit.yml must remain manual or scheduled: "
+                f"{forbidden_trigger.strip()!r}"
+            )
     for mutation_gate in (
         "mutation: ${{ steps.matrix.outputs.mutation }}",
-        'mutation=$(python3 validation/run.py matrix --domain mutation --tier "$VALIDATION_TIER")',
+        "mutation=$(python3 validation/run.py matrix --domain mutation --tier scheduled)",
         "matrix: ${{ fromJSON(needs.inventory.outputs.mutation) }}",
-        "name: deep-${{ matrix.id }}-${{ github.run_id }}",
+        "name: mutation-audit-${{ matrix.id }}-${{ github.run_id }}",
         "validation-artifacts/mutation/${{ matrix.id }}/**",
-        "pattern: deep-mutation-analysis-shard-*-${{ github.run_id }}",
-        'aggregate --domain mutation --tier "${{ needs.inventory.outputs.tier }}" --expected-sha "$GITHUB_SHA"',
-        "MUTATION_RESULT: ${{ needs.mutation-aggregate.result }}",
+        "pattern: mutation-audit-mutation-analysis-shard-*-${{ github.run_id }}",
+        'aggregate --domain mutation --tier scheduled --expected-sha "$GITHUB_SHA"',
     ):
-        if mutation_gate not in deep:
+        if mutation_gate not in mutation_audit:
             errors.append(
-                f"deep-validation.yml is missing mutation shard gate {mutation_gate!r}"
+                f"mutation-audit.yml is missing mutation evidence gate {mutation_gate!r}"
             )
 
     hardening = (ROOT / ".github" / "workflows" / "hardening.yml").read_text(
