@@ -532,52 +532,83 @@ fn doctor(
     if json {
         println!("{}", json_line(&output)?);
     } else {
-        if let Some(board) = board_slug {
-            println!("board: {board}");
+        print!("{}", human_doctor_output(&output, board, requested_port));
+    }
+    Ok(())
+}
+
+fn human_doctor_output(
+    output: &DoctorOutput<'_>,
+    board: Option<&BoardCatalogEntry>,
+    requested_port: Option<&str>,
+) -> String {
+    let mut rendered = String::new();
+    if let Some(board) = output.board {
+        rendered.push_str(&format!("board: {board}\n"));
+    }
+    if board.is_none_or(|board| board.transport == Transport::EspSerial) {
+        rendered.push_str("serial ports:\n");
+        let ports = human_serial_ports(&output.serial_ports, requested_port);
+        if ports.is_empty() {
+            rendered.push_str("  none\n");
         }
-        println!("serial ports:");
-        if output.serial_ports.is_empty() {
-            println!("  none");
-        }
-        for port in &output.serial_ports {
+        for port in ports {
             let requested = if Some(port.name.as_str()) == requested_port {
                 " (requested)"
             } else {
                 ""
             };
-            println!("  {} [{}]{}", port.name, port.kind, requested);
-        }
-        println!("TECHOBOOT mounts:");
-        if output.techo_mounts.is_empty() {
-            println!("  none");
-        }
-        for mount in &output.techo_mounts {
-            println!("  {mount}");
-        }
-        match &output.check {
-            Some(DoctorCheck::EspSerial {
-                port,
-                detected_chip,
-                flash_size,
-                note,
-                ..
-            }) => {
-                println!("non-writing ESP preflight: passed");
-                println!("  port: {port}");
-                println!("  detected chip: {detected_chip}");
-                println!("  detected flash: {flash_size} bytes");
-                if let Some(note) = note {
-                    println!("  board confirmation: {note}");
-                }
-            }
-            Some(DoctorCheck::Uf2MassStorage { mount }) => {
-                println!("non-writing UF2 preflight: passed");
-                println!("  identifiable TECHOBOOT mount: {mount}");
-            }
-            None => {}
+            rendered.push_str(&format!("  {} [{}]{requested}\n", port.name, port.kind));
         }
     }
-    Ok(())
+    if board.is_none_or(|board| board.transport == Transport::Uf2MassStorage) {
+        rendered.push_str("TECHOBOOT mounts:\n");
+        if output.techo_mounts.is_empty() {
+            rendered.push_str("  none\n");
+        }
+        for mount in &output.techo_mounts {
+            rendered.push_str(&format!("  {mount}\n"));
+        }
+    }
+    match &output.check {
+        Some(DoctorCheck::EspSerial {
+            port,
+            detected_chip,
+            flash_size,
+            note,
+            ..
+        }) => {
+            rendered.push_str("non-writing ESP preflight: passed\n");
+            rendered.push_str(&format!("  port: {port}\n"));
+            rendered.push_str(&format!("  detected chip: {detected_chip}\n"));
+            rendered.push_str(&format!("  detected flash: {flash_size} bytes\n"));
+            if let Some(note) = note {
+                rendered.push_str(&format!("  board confirmation: {note}\n"));
+            }
+        }
+        Some(DoctorCheck::Uf2MassStorage { mount }) => {
+            rendered.push_str("non-writing UF2 preflight: passed\n");
+            rendered.push_str(&format!("  identifiable TECHOBOOT mount: {mount}\n"));
+        }
+        None => {}
+    }
+    rendered
+}
+
+fn human_serial_ports<'a>(
+    ports: &'a [PortDiagnostic],
+    requested_port: Option<&str>,
+) -> Vec<&'a PortDiagnostic> {
+    let has_usb = ports.iter().any(|port| port.kind == "usb");
+    ports
+        .iter()
+        .filter(|port| {
+            !has_usb
+                || port.kind != "unknown"
+                || !port.name.starts_with("/dev/ttyS")
+                || Some(port.name.as_str()) == requested_port
+        })
+        .collect()
 }
 
 fn ambiguous_esp_identity_peer<'a>(
@@ -705,5 +736,67 @@ mod doctor_tests {
             catalog.board("xiao-esp32-c6").expect("XIAO")
         )
         .is_none());
+    }
+
+    #[test]
+    fn esp_human_doctor_output_prioritizes_usb_and_omits_techo_mounts() {
+        let catalog = board_catalog().expect("catalog");
+        let board = catalog.board("t-beam-supreme").expect("T-Beam");
+        let output = DoctorOutput {
+            schema: 1,
+            event: "doctor",
+            phase: "complete",
+            board: Some("t-beam-supreme"),
+            requested_port: None,
+            serial_ports: vec![
+                PortDiagnostic {
+                    name: "/dev/ttyS0".to_string(),
+                    kind: "unknown",
+                },
+                PortDiagnostic {
+                    name: "/dev/ttyACM0".to_string(),
+                    kind: "usb",
+                },
+            ],
+            techo_mounts: vec!["/media/operator/TECHOBOOT".to_string()],
+            check: Some(DoctorCheck::EspSerial {
+                port: "/dev/ttyACM0".to_string(),
+                detected_chip: "esp32s3".to_string(),
+                flash_size: 8 * 1024 * 1024,
+                same_chip_board_ambiguity: false,
+                note: None,
+            }),
+        };
+
+        assert_eq!(
+            human_doctor_output(&output, Some(board), None),
+            "board: t-beam-supreme\nserial ports:\n  /dev/ttyACM0 [usb]\nnon-writing ESP preflight: passed\n  port: /dev/ttyACM0\n  detected chip: esp32s3\n  detected flash: 8388608 bytes\n"
+        );
+    }
+
+    #[test]
+    fn t_echo_human_doctor_output_only_reports_uf2_mounts() {
+        let catalog = board_catalog().expect("catalog");
+        let board = catalog.board("t-echo").expect("T-Echo");
+        let output = DoctorOutput {
+            schema: 1,
+            event: "doctor",
+            phase: "complete",
+            board: Some("t-echo"),
+            requested_port: None,
+            serial_ports: vec![PortDiagnostic {
+                name: "/dev/ttyACM0".to_string(),
+                kind: "usb",
+            }],
+            techo_mounts: vec!["/media/operator/TECHOBOOT".to_string()],
+            check: Some(DoctorCheck::Uf2MassStorage {
+                mount: "/media/operator/TECHOBOOT".to_string(),
+            }),
+        };
+
+        assert_eq!(
+            human_doctor_output(&output, Some(board), None),
+            "board: t-echo\nTECHOBOOT mounts:\n  /media/operator/TECHOBOOT\nnon-writing UF2 preflight: passed\n  identifiable TECHOBOOT mount: /media/operator/TECHOBOOT\n"
+        );
     }
 }
