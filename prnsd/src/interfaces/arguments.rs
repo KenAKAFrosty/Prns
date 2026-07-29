@@ -142,6 +142,8 @@ pub struct InterfaceOptions {
     pub discovery_encrypt: Option<bool>,
     #[arg(long)]
     pub reachable_on: Option<String>,
+    #[arg(long, value_name = "PORT")]
+    pub reachable_port: Option<u16>,
     #[arg(long)]
     pub publish_ifac: Option<bool>,
     #[arg(long)]

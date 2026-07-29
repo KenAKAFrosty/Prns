@@ -146,7 +146,13 @@ Make sure to read the first portion of this README. Once you have, all that's le
 
 ## Coming from RNS
 
-Your network and apps don't change, just your daemon does. The Prns daemon, `prnsd`, takes the role `rnsd` holds today.
+Your network and apps don't change, just your daemon does.
+
+The Prns daemon, `prnsd`, takes the role `rnsd` holds today. It handles your current config and identity, and your apps carry over unchanged.
+
+Among what you gain: brand-new interfaces, a built-in operator CLI, observability out of the box, and increased throughput you can measure yourself. [Here's the full before-and-after](docs/coming-from-rns.md).
+
+#### Looking for something specific?
 
 - [Start prnsd](prnsd/README.md) for a high-performance shared instance on your machine, which works with Sideband, NomadNet, MeshChat, etc.
 - [Flash a Hopspot](https://prns.dev/flash) to get self-contained Reticulum running on your embedded devices.

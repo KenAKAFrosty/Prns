@@ -15,6 +15,7 @@ pub(super) enum ValueKind {
     U64,
     U32,
     U16,
+    NonZeroU16,
     U8,
     I16,
     I64,
@@ -47,6 +48,7 @@ impl ValueKind {
             ValueKind::U64 => "a non-negative integer",
             ValueKind::U32 => "an integer from 0 through 4294967295",
             ValueKind::U16 => "an integer from 0 through 65535",
+            ValueKind::NonZeroU16 => "an integer from 1 through 65535",
             ValueKind::U8 => "an integer from 0 through 255",
             ValueKind::I16 => "an integer from -32768 through 32767",
             ValueKind::I64 => "a signed 64-bit integer",
@@ -80,6 +82,7 @@ impl ValueKind {
             ValueKind::LinkMtu => "131072",
             ValueKind::U64 | ValueKind::U32 => "1000000",
             ValueKind::U16 => "4242",
+            ValueKind::NonZeroU16 => "4242",
             ValueKind::U8 => "8",
             ValueKind::I16 | ValueKind::I64 => "0",
             ValueKind::F64 => "1.0",
@@ -270,6 +273,8 @@ fn common_interface_key_rule(key: &str) -> Option<KeyRule> {
         interface_key::DISCOVERY_ENCRYPT | interface_key::PUBLISH_IFAC => {
             Some(discovery_detail_key_rule(ValueKind::Bool))
         }
+
+        interface_key::REACHABLE_PORT => Some(discovery_detail_key_rule(ValueKind::NonZeroU16)),
 
         interface_key::LATITUDE | interface_key::LONGITUDE | interface_key::HEIGHT => {
             Some(discovery_detail_key_rule(ValueKind::F64))

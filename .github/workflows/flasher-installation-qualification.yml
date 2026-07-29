@@ -110,6 +110,10 @@ jobs:
             -x "$assets/SHA256SUMS.txt.minisig" \
             -p release/keys/minisign.pub
           ./tools/prns release candidate extract -- "$bundle" target/public-installation-candidate
+          flasher_checksums=target/public-installation-candidate/SHA256SUMS.txt
+          "$PRNS_MINISIGN_BIN" -Vm "$flasher_checksums" \
+            -x "$flasher_checksums.minisig" \
+            -p release/keys/minisign.pub
           test "$(jq -r '.release.version' \
             target/public-installation-candidate/flash-manifest.json)" = "$RELEASE_VERSION"
           test "$(jq -r '.release.commit' \
@@ -119,7 +123,7 @@ jobs:
             --version "$RELEASE_VERSION"
           for installer in install.sh install.ps1; do
             expected="$(awk -v wanted="cli/$installer" \
-              '$2 == wanted {print $1}' "$assets/SHA256SUMS.txt")"
+              '$2 == wanted {print $1}' "$flasher_checksums")"
             [[ "$expected" =~ ^[0-9a-f]{64}$ ]]
             test "$(sha256sum "$assets/$installer" | awk '{print $1}')" = "$expected"
             cmp "$assets/$installer" \
@@ -137,7 +141,7 @@ jobs:
             aarch64-unknown-linux-gnu; do
             archive="hopspot-flash-${RELEASE_VERSION}-${target}.tar.gz"
             expected="$(awk -v wanted="cli/$archive" \
-              '$2 == wanted {print $1}' "$assets/SHA256SUMS.txt")"
+              '$2 == wanted {print $1}' "$flasher_checksums")"
             [[ "$expected" =~ ^[0-9a-f]{64}$ ]]
             test "$(sha256sum "$assets/$archive" | awk '{print $1}')" = "$expected"
             cmp "$assets/$archive" \
@@ -151,7 +155,7 @@ jobs:
           target=x86_64-pc-windows-msvc
           archive="hopspot-flash-${RELEASE_VERSION}-${target}.zip"
           expected="$(awk -v wanted="cli/$archive" \
-            '$2 == wanted {print $1}' "$assets/SHA256SUMS.txt")"
+            '$2 == wanted {print $1}' "$flasher_checksums")"
           [[ "$expected" =~ ^[0-9a-f]{64}$ ]]
           test "$(sha256sum "$assets/$archive" | awk '{print $1}')" = "$expected"
           cmp "$assets/$archive" \
@@ -168,7 +172,7 @@ jobs:
           SOURCE_COMMIT: ${{ inputs.source_commit }}
         run: |
           mkdir -p target/verified-installation-inputs
-          cp target/public-installation-assets/SHA256SUMS.txt \
+          cp target/public-installation-candidate/SHA256SUMS.txt \
             target/verified-installation-inputs/
           cp target/public-installation-assets/install.sh \
             target/verified-installation-inputs/

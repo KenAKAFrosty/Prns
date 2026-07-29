@@ -38,9 +38,9 @@ Entries are deduplicated by SPDX identifier and exact notice text.
 - `pako 2.2.0` — `MIT AND Zlib`
 - `tslib 2.8.1` — `0BSD`
 
-## Node addon vendored native code
+## Vendored native code
 
-- `libdbus 1.14.4` — `AFL-2.1` alternative selected from its `AFL-2.1 OR GPL-2.0-or-later` dual license; built from the source vendored by `libdbus-sys` and statically linked into the Linux `personal-rns` Node addon.
+- `libdbus 1.14.4` — `AFL-2.1` alternative selected from its `AFL-2.1 OR GPL-2.0-or-later` dual license; built from the source vendored by `libdbus-sys` and statically linked into the Linux `personal-rns` Node addon and full `prnsd` native release.
 
 ## Android Maven runtime
 

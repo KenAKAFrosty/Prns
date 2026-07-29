@@ -341,7 +341,7 @@ pub trait Attachable {
     ) -> Self::Attached;
 }
 
-/// The recipe's `interfaces` answer: [`Manual`] says the app attaches through the handle itself, a closure over the handle is the inline shopping list, prefabs compose the common cases.
+/// The recipe's `interfaces` answer: [`ManuallyAttached`] says the app attaches through the handle itself, a closure over the handle is the inline shopping list, prefabs compose the common cases.
 pub trait AttachIntent {
     fn attach(self, handle: &PrnsNodeHandle);
 }

@@ -150,11 +150,14 @@ fn plan_discovery_advertisement(
             },
         ) => Ok(DiscoveryAdvertisementPlan::Backbone {
             reachable_on: reachable_on()?,
-            port: port.or(*listen_port).ok_or(
-                DiscoveryPublicationProblem::MissingRequiredSetting {
+            port: interface
+                .discovery
+                .reachable_port
+                .or(*port)
+                .or(*listen_port)
+                .ok_or(DiscoveryPublicationProblem::MissingRequiredSetting {
                     key: interface_key::LISTEN_PORT,
-                },
-            )?,
+                })?,
         }),
         (
             PlannedMedium::TcpServer { .. },
@@ -163,11 +166,14 @@ fn plan_discovery_advertisement(
             },
         ) => Ok(DiscoveryAdvertisementPlan::TcpServer {
             reachable_on: reachable_on()?,
-            port: port.or(*listen_port).ok_or(
-                DiscoveryPublicationProblem::MissingRequiredSetting {
+            port: interface
+                .discovery
+                .reachable_port
+                .or(*port)
+                .or(*listen_port)
+                .ok_or(DiscoveryPublicationProblem::MissingRequiredSetting {
                     key: interface_key::LISTEN_PORT,
-                },
-            )?,
+                })?,
         }),
         (
             PlannedMedium::Rnode {

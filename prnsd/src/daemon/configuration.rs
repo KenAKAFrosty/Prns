@@ -3,6 +3,10 @@ use std::process;
 
 use personal_rns::config::{discover, parse_and_plan_named, ConfigDiagnostic, DaemonPlan};
 
+use crate::cli::BootstrapProfile;
+
+mod bootstrap;
+
 pub(crate) const DEFAULT_CONFIG: &str = "[reticulum]\n\
     enable_transport = Yes\n\
     share_instance = Yes\n\
@@ -24,7 +28,28 @@ pub(super) struct LoadedConfiguration {
     pub(super) warnings: Vec<ConfigDiagnostic>,
 }
 
-pub(super) fn load_or_exit(config_dir: Option<&Path>) -> LoadedConfiguration {
+pub(super) fn load_or_exit(
+    config_dir: Option<&Path>,
+    bootstrap_profile: Option<BootstrapProfile>,
+) -> LoadedConfiguration {
+    if let Some(BootstrapProfile::Server) = bootstrap_profile {
+        match bootstrap::create_server_config_if_missing(config_dir) {
+            Ok(Some(receipt)) => {
+                eprintln!(
+                    "prnsd: created cloud server configuration {}",
+                    receipt.config_path.display()
+                );
+                if let Some(path) = receipt.seeded_page {
+                    eprintln!("prnsd: seeded operator node page {}", path.display());
+                }
+            }
+            Ok(None) => {}
+            Err(error) => {
+                eprintln!("prnsd: server configuration bootstrap failed: {error}");
+                process::exit(1);
+            }
+        }
+    }
     let discovered = match discover(config_dir) {
         Ok(config) => config,
         Err(error) => {

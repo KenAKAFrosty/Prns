@@ -9,7 +9,7 @@ use tokio::task::JoinHandle;
 use prns_core::interfaces::browser_rendezvous as contract;
 use prns_core::interfaces::browser_rendezvous::BrowserRendezvousId;
 
-use crate::wifi_auto::AutoWifiDevicePolicy;
+use crate::network_device::AutoWifiDevicePolicy;
 
 use super::catalog::BrowserGatewayEndpoint;
 use super::network;

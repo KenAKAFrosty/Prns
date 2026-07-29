@@ -11,6 +11,7 @@ uvx --from ruff==0.15.22 ruff check \
     tools/tests \
     validation/release
 "$validation_python" validation/release/workflow-contracts.py
+"$validation_python" validation/release/prnsd-feature-contracts.py
 PYTHONDONTWRITEBYTECODE=1 "$validation_python" -m unittest discover \
     -s tools/tests \
     -p 'test_*.py' \

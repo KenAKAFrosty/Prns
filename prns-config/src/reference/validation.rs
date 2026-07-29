@@ -628,6 +628,7 @@ fn validate_interface(
                 interface_key::LISTEN_PORT,
                 interface_key::LISTEN_ON,
                 interface_key::DEVICE,
+                interface_key::REACHABLE_PORT,
             ][..]
         } else {
             &[
@@ -643,6 +644,19 @@ fn validate_interface(
             &[section_key::INTERFACES, name],
             section,
             inapplicable,
+            locations,
+            warnings,
+            SettingWarningKind::InapplicableInterfaceRole,
+        );
+    }
+
+    if !matches!(type_name, "BackboneInterface" | "TCPServerInterface") {
+        warn_non_effective_settings(
+            source,
+            &interface_path,
+            &[section_key::INTERFACES, name],
+            section,
+            &[interface_key::REACHABLE_PORT],
             locations,
             warnings,
             SettingWarningKind::InapplicableInterfaceRole,
@@ -1976,6 +1990,13 @@ fn normalized_value(value: &Value, kind: ValueKind) -> Result<String, ()> {
         ValueKind::U64 => parse_integer::<u64>(text)?.to_string(),
         ValueKind::U32 => parse_integer::<u32>(text)?.to_string(),
         ValueKind::U16 => parse_integer::<u16>(text)?.to_string(),
+        ValueKind::NonZeroU16 => {
+            let value = parse_integer::<u16>(text)?;
+            if value == 0 {
+                return Err(());
+            }
+            value.to_string()
+        }
         ValueKind::U8 => parse_integer::<u8>(text)?.to_string(),
         ValueKind::I16 => parse_integer::<i16>(text)?.to_string(),
         ValueKind::I64 => parse_integer::<i64>(text)?.to_string(),

@@ -286,6 +286,7 @@ fn parse_types_every_stock_discovery_setting() {
              discovery_name = Public Spine\n\
              discovery_encrypt = Yes\n\
              reachable_on = spine.example.com\n\
+             reachable_port = 18443\n\
              publish_ifac = Yes\n\
              latitude = 41.88\n\
              longitude = -87.63\n\
@@ -325,6 +326,7 @@ fn parse_types_every_stock_discovery_setting() {
         spine.discovery.reachable_on.as_deref(),
         Some("spine.example.com"),
     );
+    assert_eq!(spine.discovery.reachable_port, Some(18443));
     assert_eq!(spine.discovery.publish_ifac, Some(true));
     assert_eq!(spine.discovery.latitude, Some(41.88));
     assert_eq!(spine.discovery.longitude, Some(-87.63));
@@ -421,6 +423,12 @@ fn malformed_discovery_trust_and_cost_values_are_rejected_in_context() {
     assert!(matches!(
         parse(
             "[interfaces]\n[[Spine]]\ntype = BackboneInterface\nenabled = Yes\ndiscoverable = Yes\ndiscovery_stamp_value = -1\n",
+        ),
+        Err(ref errors) if has_code(errors, ConfigDiagnosticCode::InvalidValue),
+    ));
+    assert!(matches!(
+        parse(
+            "[interfaces]\n[[Spine]]\ntype = BackboneInterface\nenabled = Yes\ndiscoverable = Yes\nreachable_port = 0\n",
         ),
         Err(ref errors) if has_code(errors, ConfigDiagnosticCode::InvalidValue),
     ));

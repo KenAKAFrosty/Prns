@@ -121,6 +121,18 @@ cargo build --manifest-path prnsd/Cargo.toml --release --no-default-features \
   --features tokio-host,observability
 ```
 
+The official container uses the narrower `tokio-cloud-host` profile, mandatory
+persistence, and a digest-pinned multi-architecture image. Native archives,
+container operation, Railway publication, backups, rollback, SBOMs, signatures,
+and provenance verification are documented in
+[`docs/deploy-prnsd.md`](deploy-prnsd.md).
+
+The unified suite retains the flasher's established physical-acceptance
+boundary. The protected suite public review, signed physical acceptance and
+flasher release record, and protected deployment qualification remain
+independent gates; stable promotion verifies all of them before moving the
+GitHub Release or GHCR tags.
+
 The default state directories are:
 
 - Linux: `${XDG_STATE_HOME:-~/.local/state}/prnsd`

@@ -58,6 +58,10 @@
       "resolved_ref": "v3",
       "sha": "9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407"
     },
+    "anchore/sbom-action": {
+      "resolved_ref": "v0",
+      "sha": "e22c389904149dbc22b58101806040fa8d37a610"
+    },
     "astral-sh/setup-uv": {
       "resolved_ref": "v5",
       "sha": "d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86"
@@ -69,6 +73,14 @@
     "dtolnay/rust-toolchain": {
       "resolved_ref": "stable@2026-07-21",
       "sha": "4cda84d5c5c54efe2404f9d843567869ab1699d4"
+    },
+    "docker/login-action": {
+      "resolved_ref": "v3",
+      "sha": "c94ce9fb468520275223c153574b00df6fe4bcc9"
+    },
+    "docker/setup-buildx-action": {
+      "resolved_ref": "v3",
+      "sha": "8d2750c68a42422c14e847fe6c8ac0403b4cbd6f"
     },
     "julia-actions/setup-julia": {
       "resolved_ref": "v2.7.0",

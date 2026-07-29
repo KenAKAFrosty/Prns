@@ -18,8 +18,8 @@ use prns_core::interfaces::browser_rendezvous::BrowserRendezvousId;
 use prns_core::interfaces::{EffectiveInterfacePolicy, InterfaceKind, ReportsStatus};
 use prns_runtime::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
 
+pub use crate::network_device::AutoWifiDevicePolicy;
 use crate::websocket::WebSocketServerConnection;
-use crate::wifi_auto::AutoWifiDevicePolicy;
 
 pub use catalog::{
     decode_browser_gateway_catalog, BrowserGatewayCatalogDecodeError, BrowserGatewayEndpoint,
@@ -349,7 +349,9 @@ const fn role_byte(role: BrowserRendezvousRole) -> u8 {
 mod tests {
     use futures_util::{SinkExt, StreamExt};
     use prns_core::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-    use prns_runtime::runtime::{Manual, PreConfiguredDestination, PrnsNode, PrnsNodeRecipe};
+    use prns_runtime::runtime::{
+        ManuallyAttached, NoPersistence, PreConfiguredDestination, PrnsNode, PrnsNodeRecipe,
+    };
     use prns_runtime::storage::GrowableHeap;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -507,8 +509,9 @@ mod tests {
             pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
             app_state: (),
             storage: GrowableHeap,
-            routes: prns_runtime::request_endpoints![],
-            interfaces: Manual,
+            request_endpoints: prns_runtime::request_endpoints![],
+            interfaces: ManuallyAttached,
+            persistence: NoPersistence,
             on_event: |_event, _state: &()| {},
         });
         let node_b = PrnsNode::new(PrnsNodeRecipe {
@@ -516,8 +519,9 @@ mod tests {
             pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
             app_state: (),
             storage: GrowableHeap,
-            routes: prns_runtime::request_endpoints![],
-            interfaces: Manual,
+            request_endpoints: prns_runtime::request_endpoints![],
+            interfaces: ManuallyAttached,
+            persistence: NoPersistence,
             on_event: |_event, _state: &()| {},
         });
         let node_c = PrnsNode::new(PrnsNodeRecipe {
@@ -525,8 +529,9 @@ mod tests {
             pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
             app_state: (),
             storage: GrowableHeap,
-            routes: prns_runtime::request_endpoints![],
-            interfaces: Manual,
+            request_endpoints: prns_runtime::request_endpoints![],
+            interfaces: ManuallyAttached,
+            persistence: NoPersistence,
             on_event: |_event, _state: &()| {},
         });
         let ids = [

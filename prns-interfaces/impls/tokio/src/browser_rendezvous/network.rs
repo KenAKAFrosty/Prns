@@ -7,7 +7,7 @@ use tokio::task::JoinHandle;
 
 use prns_core::interfaces::browser_rendezvous as contract;
 
-use crate::wifi_auto::AutoWifiDevicePolicy;
+use crate::network_device::AutoWifiDevicePolicy;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct EligibleAddress {

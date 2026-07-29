@@ -437,7 +437,7 @@ mod tests {
             outbound: out_rx,
         };
 
-        let interface = TcpClientInterface::new(
+        let interface = TcpClientInterface::new_with_bitrate(
             addr.to_string(),
             tcp::TCP_BITRATE_ESTIMATE,
             ReconnectPolicy::STANDARD,

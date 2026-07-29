@@ -1,21 +1,12 @@
 use std::path::{Path, PathBuf};
 
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::runtime::{
-    generate_identity_secret, load_or_create_identity_secret, IdentitySecretFileError,
-};
+use personal_rns::runtime::{load_or_create_identity_secret, IdentitySecretFileError};
 
-#[must_use]
-pub fn load_or_seed_transport_identity(
+pub fn load_or_create_transport_identity(
     storage_dir: &Path,
-) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
-    match load_or_create_identity_secret(&storage_dir.join("transport_identity")) {
-        Ok(key) => key,
-        Err(error) => {
-            tracing::error!(event = "identity_ephemeral", error = %error);
-            generate_identity_secret()
-        }
-    }
+) -> Result<Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>, IdentitySecretFileError> {
+    load_or_create_identity_secret(&storage_dir.join("transport_identity"))
 }
 
 pub fn load_or_seed_network_identity(
@@ -110,5 +101,13 @@ mod tests {
             expand_user_path(Path::new("~/network_identity"), None),
             Err(NetworkIdentityError::HomeUnavailable { .. })
         ));
+    }
+
+    #[test]
+    fn a_transport_identity_error_is_never_replaced_with_an_ephemeral_identity() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::create_dir(directory.path().join("transport_identity")).unwrap();
+
+        assert!(load_or_create_transport_identity(directory.path()).is_err());
     }
 }

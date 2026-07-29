@@ -1,13 +1,21 @@
+use std::path::PathBuf;
 use std::time::Duration;
 
 use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget};
 use personal_rns::runtime::PrnsNodeHandle;
 use personal_rns::wire::DestinationHash;
 
+use crate::node_pages;
+
 const INITIAL_DELAY: Duration = Duration::from_secs(15);
 const INTERVAL: Duration = Duration::from_secs(2 * 60 * 60);
 
 pub struct ManagementAnnounceTask(tokio::task::JoinHandle<()>);
+
+pub(crate) struct AnnouncedDestination {
+    pub(crate) hash: DestinationHash,
+    pub(crate) available_when: Option<PathBuf>,
+}
 
 impl ManagementAnnounceTask {
     pub async fn shutdown(self) {
@@ -18,7 +26,7 @@ impl ManagementAnnounceTask {
 
 pub fn spawn(
     handle: PrnsNodeHandle,
-    destinations: Vec<DestinationHash>,
+    destinations: Vec<AnnouncedDestination>,
 ) -> Option<ManagementAnnounceTask> {
     if destinations.is_empty() {
         return None;
@@ -30,10 +38,17 @@ pub fn spawn(
         loop {
             interval.tick().await;
             for destination in &destinations {
-                if let Err(error) = handle.announce_now(announce_for(*destination)).await {
+                if destination
+                    .available_when
+                    .as_deref()
+                    .is_some_and(|path| !node_pages::is_available(path))
+                {
+                    continue;
+                }
+                if let Err(error) = handle.announce_now(announce_for(destination.hash)).await {
                     tracing::warn!(
                         event = "management_announce_failed",
-                        destination = ?destination.as_bytes(),
+                        destination = ?destination.hash.as_bytes(),
                         error = ?error,
                     );
                 }
@@ -66,5 +81,16 @@ mod tests {
                 app_data: AnnounceAppData::Registered,
             }
         );
+    }
+
+    #[test]
+    fn missing_file_disables_conditional_announcement() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("index.mu");
+        assert!(!node_pages::is_available(&path));
+        std::fs::write(&path, b"page").expect("page");
+        assert!(node_pages::is_available(&path));
+        std::fs::remove_file(&path).expect("delete page");
+        assert!(!node_pages::is_available(&path));
     }
 }

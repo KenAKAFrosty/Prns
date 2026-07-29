@@ -6,6 +6,7 @@ mod i2p;
 mod interface_discovery;
 mod interfaces;
 mod managed_service;
+mod node_pages;
 mod observability;
 mod persistence;
 mod services;
@@ -91,8 +92,13 @@ async fn run_command(command: cli::Command) -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
-            daemon::run(args, managed, None, None).await;
-            ExitCode::SUCCESS
+            match daemon::run(args, managed, None, None).await {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("prnsd: {error}");
+                    ExitCode::FAILURE
+                }
+            }
         }
         cli::Command::I2p(args) => i2p::run(args).await,
         cli::Command::Interfaces(args) => interfaces::run(*args),

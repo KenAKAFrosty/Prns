@@ -19,6 +19,18 @@ pub enum LogFormat {
     Json,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub enum PersistencePolicy {
+    #[default]
+    BestEffort,
+    Required,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum BootstrapProfile {
+    Server,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Args)]
 pub struct DaemonArgs {
     #[arg(long, value_enum, default_value_t)]
@@ -26,6 +38,12 @@ pub struct DaemonArgs {
 
     #[arg(long, value_name = "DIR")]
     pub config: Option<PathBuf>,
+
+    #[arg(long, value_enum, default_value_t)]
+    pub persistence_policy: PersistencePolicy,
+
+    #[arg(long, value_enum)]
+    pub bootstrap: Option<BootstrapProfile>,
 }
 
 impl DaemonArgs {
@@ -39,11 +57,24 @@ impl DaemonArgs {
             args.push(OsString::from("--config"));
             args.push(config.as_os_str().to_owned());
         }
+        if self.persistence_policy == PersistencePolicy::Required {
+            args.push(OsString::from("--persistence-policy"));
+            args.push(OsString::from("required"));
+        }
+        if let Some(bootstrap) = self.bootstrap {
+            args.push(OsString::from("--bootstrap"));
+            args.push(OsString::from(match bootstrap {
+                BootstrapProfile::Server => "server",
+            }));
+        }
         args
     }
 
     pub fn has_explicit_options(&self) -> bool {
-        self.log_format != LogFormat::Human || self.config.is_some()
+        self.log_format != LogFormat::Human
+            || self.config.is_some()
+            || self.persistence_policy != PersistencePolicy::BestEffort
+            || self.bootstrap.is_some()
     }
 }
 
@@ -255,6 +286,8 @@ mod tests {
                 daemon: DaemonArgs {
                     log_format: LogFormat::Json,
                     config: Some(PathBuf::from("/node")),
+                    persistence_policy: PersistencePolicy::BestEffort,
+                    bootstrap: None,
                 },
             })
         );
@@ -267,6 +300,8 @@ mod tests {
             Command::Run(DaemonArgs {
                 log_format: LogFormat::Human,
                 config: Some(PathBuf::from("/node")),
+                persistence_policy: PersistencePolicy::BestEffort,
+                bootstrap: None,
             })
         );
     }
@@ -684,13 +719,25 @@ mod tests {
         let args = DaemonArgs {
             log_format: LogFormat::Json,
             config: Some(PathBuf::from("/node")),
+            persistence_policy: PersistencePolicy::Required,
+            bootstrap: Some(BootstrapProfile::Server),
         };
         assert_eq!(
             args.command_line(),
-            vec!["run", "--log-format", "json", "--config", "/node"]
-                .into_iter()
-                .map(OsString::from)
-                .collect::<Vec<_>>()
+            vec![
+                "run",
+                "--log-format",
+                "json",
+                "--config",
+                "/node",
+                "--persistence-policy",
+                "required",
+                "--bootstrap",
+                "server",
+            ]
+            .into_iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>()
         );
     }
 

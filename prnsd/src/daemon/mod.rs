@@ -20,8 +20,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::shutdown::ShutdownSignal;
-use crate::{cli, interface_discovery, observability, persistence, services, splash};
-use personal_rns::browser_rendezvous::BrowserRendezvous;
+use crate::{cli, interface_discovery, node_pages, observability, persistence, services, splash};
+use personal_rns::browser_rendezvous::{AutoWifiDevicePolicy, BrowserRendezvous};
 use personal_rns::config::{SharedInstance, TransportIdentityPolicy};
 use personal_rns::engine::{
     EngineProtocolPolicy, LinkMtuDiscovery, LocalHopCountOverride, ProofForm,
@@ -30,14 +30,12 @@ use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::IdentitySigner;
 use personal_rns::interfaces::ConnectionState;
 use personal_rns::node_introspection::logical_interface_inventory;
-use personal_rns::request_endpoints;
 use personal_rns::runtime::{
     wall_clock_timeline_origin, CryptoPoolConfig, Diagnostic, ManuallyAttached, NodePersistence,
-    PoolWorkers, PrnsEvent, PrnsNode, PrnsNodeRecipe,
+    NodeRunError, PersistenceFlushStatus, PoolWorkers, PrnsEvent, PrnsNode, PrnsNodeRecipe,
 };
 use personal_rns::shared_instance::{RnsBlackholeFiles, SharedInstanceCredentials};
 use personal_rns::storage::GrowableHeap;
-use personal_rns::wifi_auto::AutoWifiDevicePolicy;
 use personal_rns::PlanRuntimeContext;
 use prnsd_control::{config_digest, ManagedProcess, ReloadRequest, ReloadResult, ServiceError};
 
@@ -81,12 +79,63 @@ pub(crate) struct DaemonPresentation {
     pub(crate) status: DaemonStatusPublisher,
 }
 
+#[derive(Debug)]
+pub(crate) enum DaemonRunError {
+    TransportIdentityUnavailable(personal_rns::runtime::IdentitySecretFileError),
+    PersistenceUnavailable(std::io::Error),
+    PersistenceFlushFailed,
+    PersistenceWorkerStopped,
+    NodeStopped,
+    NodePanicked(NodeRunError),
+    InterfaceFailed,
+}
+
+impl core::fmt::Display for DaemonRunError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::TransportIdentityUnavailable(error) => {
+                write!(
+                    formatter,
+                    "required transport identity is unavailable: {error}"
+                )
+            }
+            Self::PersistenceUnavailable(error) => {
+                write!(formatter, "required persistence is unavailable: {error}")
+            }
+            Self::PersistenceFlushFailed => {
+                formatter.write_str("required persistence failed to flush")
+            }
+            Self::PersistenceWorkerStopped => {
+                formatter.write_str("persistence worker stopped before node shutdown")
+            }
+            Self::NodeStopped => formatter.write_str("node stopped unexpectedly"),
+            Self::NodePanicked(error) => write!(formatter, "node callback panicked: {error:?}"),
+            Self::InterfaceFailed => formatter.write_str("an interface failed fatally"),
+        }
+    }
+}
+
+impl std::error::Error for DaemonRunError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::TransportIdentityUnavailable(error) => Some(error),
+            Self::PersistenceUnavailable(error) => Some(error),
+            Self::PersistenceFlushFailed
+            | Self::PersistenceWorkerStopped
+            | Self::NodeStopped
+            | Self::NodePanicked(_)
+            | Self::InterfaceFailed => None,
+        }
+    }
+}
+
 pub(super) async fn run(
     cli: cli::DaemonArgs,
     managed: Option<ManagedProcess>,
     shutdown: Option<ShutdownSignal>,
     presentation: Option<DaemonPresentation>,
-) {
+) -> Result<(), DaemonRunError> {
+    let operating_system_shutdown = persistence::capture_operating_system_shutdown();
     let (ready, status_publisher) = match presentation {
         Some(presentation) => (Some(presentation.ready), Some(presentation.status)),
         None => (None, None),
@@ -99,7 +148,7 @@ pub(super) async fn run(
         path: config_path,
         plan,
         warnings: config_warnings,
-    } = configuration::load_or_exit(cli.config.as_deref());
+    } = configuration::load_or_exit(cli.config.as_deref(), cli.bootstrap);
     let observability = match observability::init(cli.log_format, plan.logging) {
         Ok(observability) => observability,
         Err(error) => {
@@ -132,6 +181,17 @@ pub(super) async fn run(
             diagnostic = %diagnostic,
         );
     }
+    let node_pages = match node_pages::NodePageCatalog::discover(&config_dir) {
+        Ok(catalog) => catalog,
+        Err(error) => {
+            tracing::warn!(
+                event = "node_pages_unavailable",
+                root = %node_pages::page_root(&config_dir).display(),
+                error = %error,
+            );
+            node_pages::NodePageCatalog::empty(node_pages::page_root(&config_dir))
+        }
+    };
     let network_identity =
         match identity::load_or_seed_network_identity(plan.network_identity_path.as_deref()) {
             Ok(identity) => identity,
@@ -143,7 +203,20 @@ pub(super) async fn run(
         };
 
     let storage_dir = config_dir.join("storage");
-    let persistent_secret = identity::load_or_seed_transport_identity(&storage_dir);
+    let persistent_secret = match identity::load_or_create_transport_identity(&storage_dir) {
+        Ok(secret) => secret,
+        Err(error) => match cli.persistence_policy {
+            cli::PersistencePolicy::BestEffort => {
+                tracing::error!(event = "identity_ephemeral", error = %error);
+                personal_rns::runtime::generate_identity_secret()
+            }
+            cli::PersistencePolicy::Required => {
+                tracing::error!(event = "transport_identity_unavailable", error = %error);
+                observability.shutdown().await;
+                return Err(DaemonRunError::TransportIdentityUnavailable(error));
+            }
+        },
+    };
     let ble_identity =
         match personal_rns::runtime::load_or_create_ble_identity(&storage_dir.join("ble_identity"))
         {
@@ -212,7 +285,13 @@ pub(super) async fn run(
         Ok(node_persistence) => Some(node_persistence),
         Err(error) => {
             tracing::error!(event = "persistence_unavailable", %error);
-            None
+            match cli.persistence_policy {
+                cli::PersistencePolicy::BestEffort => None,
+                cli::PersistencePolicy::Required => {
+                    observability.shutdown().await;
+                    return Err(DaemonRunError::PersistenceUnavailable(error));
+                }
+            }
         }
     };
     let timeline_origin = node_persistence
@@ -236,16 +315,18 @@ pub(super) async fn run(
             transport: visible_identity_hash,
             network: network_identity_hash,
         });
+    let request_node_pages = node_pages.clone();
     let mut prns = PrnsNode::new_with_handle(move |handle| PrnsNodeRecipe {
         transport_identity: transport_secret,
         pre_configured_destinations: std::iter::empty(),
-        app_state: services::DaemonRequestState::new(handle, remote_management_transport, started),
+        app_state: services::DaemonRequestState::new(
+            handle,
+            remote_management_transport,
+            started,
+            request_node_pages,
+        ),
         storage: GrowableHeap,
-        request_endpoints: request_endpoints![
-            services::StatusRoute,
-            services::PathRoute,
-            services::ListRoute
-        ],
+        request_endpoints: services::DaemonRequestRoutes,
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
         on_event: move |event, _state: &services::DaemonRequestState| {
@@ -309,7 +390,7 @@ pub(super) async fn run(
     let startup = interface_ownership.startup();
 
     let management_destinations = match interface_ownership.routing_tables() {
-        Some(_) => match services::activate(&mut prns, &plan, &visible_secret) {
+        Some(_) => match services::activate(&mut prns, &plan, &visible_secret, &node_pages) {
             Ok(destinations) => destinations,
             Err(_) => {
                 observability.shutdown().await;
@@ -347,6 +428,7 @@ pub(super) async fn run(
                 node_persistence,
                 prns_handle.clone(),
                 rotated_rx,
+                cli.persistence_policy,
             ));
         }
     }
@@ -422,7 +504,7 @@ pub(super) async fn run(
     let tray_status_task = status_publisher
         .map(|publisher| tokio::spawn(publish_daemon_status(prns_handle.clone(), publisher)));
     let mut interface_failure = None;
-    let mut node_failure = false;
+    let mut terminal_error = None;
     let mut active_plan = plan.clone();
     let active_config_path = config_path.unwrap_or_else(|| config_dir.join("config"));
     let mut node_run = Box::pin(prns.run());
@@ -430,18 +512,38 @@ pub(super) async fn run(
         persistence,
         managed.as_ref(),
         shutdown,
+        operating_system_shutdown,
     ));
     loop {
         tokio::select! {
             result = &mut node_run => {
-                node_failure = true;
                 match result {
-                    Ok(()) => tracing::error!(event = "node_stopped"),
-                    Err(error) => tracing::error!(event = "node_panic_shutdown", error = ?error),
+                    Ok(()) => {
+                        tracing::error!(event = "node_stopped");
+                        terminal_error = Some(DaemonRunError::NodeStopped);
+                    }
+                    Err(error) => {
+                        tracing::error!(event = "node_panic_shutdown", error = ?error);
+                        terminal_error = Some(DaemonRunError::NodePanicked(error));
+                    }
                 }
                 break;
             }
-            () = &mut persistence_run => break,
+            status = &mut persistence_run => {
+                terminal_error = match status {
+                    PersistenceFlushStatus::Landed => None,
+                    PersistenceFlushStatus::NodeStopped => {
+                        Some(DaemonRunError::PersistenceWorkerStopped)
+                    }
+                    PersistenceFlushStatus::Failed
+                        if cli.persistence_policy == cli::PersistencePolicy::Required =>
+                    {
+                        Some(DaemonRunError::PersistenceFlushFailed)
+                    }
+                    PersistenceFlushStatus::Failed => None,
+                };
+                break;
+            },
             failed = interface_failure::wait(
                 &prns_handle,
                 background_tasks.interface_failure_watch(),
@@ -491,8 +593,12 @@ pub(super) async fn run(
     if let Some(managed) = managed {
         managed.hold_runtime_lock_until_process_exit();
     }
-    if interface_failure.is_some() || node_failure {
-        process::exit(1);
+    if interface_failure.is_some() {
+        return Err(DaemonRunError::InterfaceFailed);
+    }
+    match terminal_error {
+        Some(error) => Err(error),
+        None => Ok(()),
     }
 }
 

@@ -90,6 +90,9 @@ pub mod ax25_kiss;
 #[cfg(feature = "backbone")]
 pub mod backbone;
 
+#[cfg(feature = "network-device-selection")]
+mod network_device;
+
 #[cfg(feature = "wifi-auto")]
 pub mod wifi_auto;
 

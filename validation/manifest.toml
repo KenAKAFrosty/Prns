@@ -403,7 +403,7 @@ platform = "any"
 toolchain = "python"
 timeout_seconds = 600
 command = ["bash", "validation/release/contracts.sh"]
-inputs = ["tools/tests", "tools/release", "validation/release/contracts.sh", "validation/release/workflow-contracts.py"]
+inputs = ["tools/tests", "tools/release", "prnsd/Cargo.toml", "validation/release/contracts.sh", "validation/release/prnsd-feature-contracts.py", "validation/release/workflow-contracts.py"]
 artifacts = "validation-artifacts/results/release-contracts"
 
 [[suite]]

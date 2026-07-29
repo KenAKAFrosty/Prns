@@ -1,0 +1,13 @@
+.git
+.github
+.agents
+.codex
+.DS_Store
+**/.DS_Store
+**/node_modules
+**/target
+**/.venv
+scratchpad
+validation-artifacts
+target
+*.log

@@ -527,13 +527,18 @@ mod platform {
                                 }
                             }
                         });
-                        runtime.block_on(daemon::run(
+                        match runtime.block_on(daemon::run(
                             args,
                             managed,
                             Some(signal),
                             Some(presentation),
-                        ));
-                        0
+                        )) {
+                            Ok(()) => 0,
+                            Err(error) => {
+                                eprintln!("prnsd: {error}");
+                                1
+                            }
+                        }
                     }
                     Err(error) => {
                         eprintln!("prnsd: async runtime initialization failed: {error}");

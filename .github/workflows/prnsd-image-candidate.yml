@@ -1,0 +1,146 @@
+name: build reproducible prnsd image candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Protected main commit to build
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prnsd-image-candidate-${{ inputs.commit_sha }}
+  cancel-in-progress: false
+
+jobs:
+  platform:
+    name: ${{ matrix.pass }} ${{ matrix.image.platform }}
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        pass: [primary, reproduction]
+        image:
+          - os: ubuntu-24.04
+            platform: linux/amd64
+            slug: linux-amd64
+          - os: ubuntu-24.04-arm
+            platform: linux/arm64
+            slug: linux-arm64
+    runs-on: ${{ matrix.image.os }}
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.commit_sha }}
+      - name: Require the exact protected release source
+        env:
+          EXPECTED_COMMIT: ${{ inputs.commit_sha }}
+          REF_PROTECTED: ${{ github.ref_protected }}
+        run: |
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$REF_PROTECTED" = "true"
+          test "$GITHUB_SHA" = "$EXPECTED_COMMIT"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+          test "$(cat VERSION)" = "0.3.1"
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+        with:
+          version: v0.35.0
+          driver-opts: |
+            image=moby/buildkit:v0.31.2@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec
+      - name: Build one native-platform OCI layout
+        run: |
+          mkdir -p target/image
+          source_epoch="$(git show -s --format=%ct HEAD)"
+          build_date="$(git show -s --format=%cI HEAD)"
+          docker buildx build \
+            --platform "${{ matrix.image.platform }}" \
+            --provenance=false \
+            --sbom=false \
+            --build-arg "VERSION=$(cat VERSION)" \
+            --build-arg "VCS_REF=$GITHUB_SHA" \
+            --build-arg "SOURCE_DATE_EPOCH=$source_epoch" \
+            --build-arg "BUILD_DATE=$build_date" \
+            --output "type=oci,dest=target/image/prnsd-${{ matrix.image.slug }}-${{ matrix.pass }}.oci.tar,rewrite-timestamp=true" \
+            .
+      - name: Verify the layout owns only the native platform
+        run: |
+          ./tools/prns release prnsd distribution -- oci-digest \
+            --layout "target/image/prnsd-${{ matrix.image.slug }}-${{ matrix.pass }}.oci.tar" \
+            --platform "${{ matrix.image.platform }}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: prnsd-image-${{ matrix.image.slug }}-${{ matrix.pass }}-${{ github.run_id }}
+          path: target/image
+          retention-days: 30
+          if-no-files-found: error
+
+  candidate:
+    name: Compare and index image candidate
+    needs: platform
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.commit_sha }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: prnsd-image-*-${{ github.run_id }}
+          path: target/downloads
+      - name: Compare platform manifest digests
+        run: |
+          mkdir -p target/candidate
+          for architecture in amd64 arm64
+          do
+            slug="linux-${architecture}"
+            ./tools/prns release prnsd distribution -- oci-compare \
+              --primary "target/downloads/prnsd-image-${slug}-primary-${GITHUB_RUN_ID}/prnsd-${slug}-primary.oci.tar" \
+              --reproduction "target/downloads/prnsd-image-${slug}-reproduction-${GITHUB_RUN_ID}/prnsd-${slug}-reproduction.oci.tar" \
+              --platform "linux/${architecture}"
+            cp \
+              "target/downloads/prnsd-image-${slug}-primary-${GITHUB_RUN_ID}/prnsd-${slug}-primary.oci.tar" \
+              "target/candidate/prnsd-${slug}.oci.tar"
+          done
+      - name: Generate amd64 image SPDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
+        with:
+          image: oci-archive:target/candidate/prnsd-linux-amd64.oci.tar
+          format: spdx-json
+          output-file: target/candidate/prnsd-linux-amd64.spdx.json
+          artifact-name: prnsd-linux-amd64.spdx.json
+          syft-version: v1.50.0
+          dependency-snapshot: false
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Generate ARM64 image SPDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
+        with:
+          image: oci-archive:target/candidate/prnsd-linux-arm64.oci.tar
+          format: spdx-json
+          output-file: target/candidate/prnsd-linux-arm64.spdx.json
+          artifact-name: prnsd-linux-arm64.spdx.json
+          syft-version: v1.50.0
+          dependency-snapshot: false
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Bind the exact image candidate to this workflow run
+        run: |
+          ./tools/prns release prnsd distribution -- image-candidate-index \
+            --assets target/candidate \
+            --source-commit "$GITHUB_SHA" \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --workflow-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --output "target/candidate/prnsd-image-candidate-${GITHUB_SHA}.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: prnsd-unsigned-image-${{ github.sha }}-${{ github.run_id }}
+          path: target/candidate
+          retention-days: 30
+          if-no-files-found: error

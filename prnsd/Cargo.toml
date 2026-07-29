@@ -39,28 +39,32 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(mutants)'] }
 [[bin]]
 name = "prnsd"
 path = "src/main.rs"
-required-features = ["tokio-host", "observability"]
+required-features = ["tokio-cloud-host", "observability"]
 
 [features]
 default = ["tokio-host", "observability", "tray"]
 alloc = ["personal-rns/alloc"]
 std = ["alloc", "personal-rns/std"]
 tokio-host = [
-    "std",
-    "personal-rns/tokio-host",
-    "personal-rns/tcp",
-    "personal-rns/udp",
+    "tokio-cloud-host",
     "personal-rns/serial",
     "personal-rns/kiss",
     "personal-rns/ax25",
     "personal-rns/rnode",
-    "personal-rns/pipe",
-    "personal-rns/backbone",
-    "personal-rns/i2p",
     "personal-rns/weave",
     "personal-rns/wifi-auto",
     "personal-rns/usb",
     "personal-rns/bluetooth-auto",
+    "dep:dbus",
+]
+tokio-cloud-host = [
+    "std",
+    "personal-rns/tokio-host",
+    "personal-rns/tcp",
+    "personal-rns/udp",
+    "personal-rns/pipe",
+    "personal-rns/backbone",
+    "personal-rns/i2p",
     "personal-rns/websocket",
     "personal-rns/browser-rendezvous",
     "personal-rns/shared-instance",
@@ -111,11 +115,15 @@ opentelemetry_sdk = { version = "0.32", optional = true, default-features = fals
 tracing-opentelemetry = { version = "0.33", optional = true, default-features = false }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+dbus = { version = "0.9", optional = true, features = ["vendored"] }
 ksni = { version = "0.3.6", optional = true, default-features = false, features = ["tokio"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
 tray-icon = { version = "0.24.1", optional = true, default-features = false }
 winit = { version = "0.30.12", optional = true, default-features = false }
+
+[dev-dependencies]
+tempfile = "3"
 
 [profile.release]
 codegen-units = 1

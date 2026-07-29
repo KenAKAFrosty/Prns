@@ -104,6 +104,32 @@ class FlasherPublicReviewTests(unittest.TestCase):
             source_commit=self.commit,
         )
 
+    def test_unified_suite_review_is_a_registered_public_gate(self) -> None:
+        self.run["path"] = ".github/workflows/suite-sign.yml"
+        evidence = self.build()
+        self.assertEqual(
+            evidence["workflow_path"], ".github/workflows/suite-sign.yml"
+        )
+        self.run.update(status="completed", conclusion="success")
+        self.job.update(
+            status="completed",
+            conclusion="success",
+            completed_at=(self.completed + timedelta(seconds=5))
+            .isoformat()
+            .replace("+00:00", "Z"),
+        )
+        validate_evidence(
+            evidence,
+            release=self.release,
+            run=self.run,
+            job=self.job,
+            signed_bundle=self.bundle,
+            manifest=self.manifest,
+            repository=self.repository,
+            version=self.version,
+            source_commit=self.commit,
+        )
+
     def test_review_cannot_start_before_publication(self) -> None:
         self.job["started_at"] = (self.published - timedelta(seconds=1)).isoformat().replace(
             "+00:00", "Z"

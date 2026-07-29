@@ -1,0 +1,202 @@
+name: build reproducible prnsd candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Protected main commit to build
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prnsd-candidate-${{ inputs.commit_sha }}
+  cancel-in-progress: false
+
+jobs:
+  native:
+    name: ${{ matrix.pass }} ${{ matrix.platform.target }}
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        pass: [primary, reproduction]
+        platform:
+          - os: macos-14
+            target: aarch64-apple-darwin
+            binary: prnsd/target/aarch64-apple-darwin/release/prnsd
+            rustflags: -D warnings --cfg aes_armv8
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            binary: prnsd/target/x86_64-apple-darwin/release/prnsd
+            rustflags: -D warnings
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            binary: prnsd/target/x86_64-unknown-linux-gnu/release/prnsd
+            rustflags: -D warnings
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            binary: prnsd/target/aarch64-unknown-linux-gnu/release/prnsd
+            rustflags: -D warnings --cfg aes_armv8
+          - os: windows-2025
+            target: x86_64-pc-windows-msvc
+            binary: prnsd/target/x86_64-pc-windows-msvc/release/prnsd.exe
+            rustflags: -D warnings -C link-arg=/Brepro
+    runs-on: ${{ matrix.platform.os }}
+    timeout-minutes: 180
+    env:
+      RUSTFLAGS: ${{ matrix.platform.rustflags }}
+      RUSTUP_TOOLCHAIN: 1.96.0
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.commit_sha }}
+      - name: Require the exact protected release source
+        shell: bash
+        env:
+          EXPECTED_COMMIT: ${{ inputs.commit_sha }}
+          REF_PROTECTED: ${{ github.ref_protected }}
+        run: |
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$REF_PROTECTED" = "true"
+          test "$GITHUB_SHA" = "$EXPECTED_COMMIT"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+          test "$(cat VERSION)" = "0.3.1"
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.96.0
+          targets: ${{ matrix.platform.target }}
+          components: llvm-tools-preview
+      - name: Build the complete native daemon
+        shell: bash
+        run: |
+          test "$(rustc --version | cut -d ' ' -f 2)" = "1.96.0"
+          cargo build \
+            --manifest-path prnsd/Cargo.toml \
+            --locked \
+            --release \
+            --target "${{ matrix.platform.target }}" \
+            --no-default-features \
+            --features tokio-host,observability,tray
+      - name: Record native linkage
+        shell: bash
+        run: |
+          mkdir -p "target/prnsd-release/${{ matrix.pass }}"
+          evidence="target/prnsd-release/${{ matrix.pass }}/${{ matrix.platform.target }}-linkage.txt"
+          case "$RUNNER_OS" in
+            Linux)
+              {
+                file "${{ matrix.platform.binary }}"
+                ldd "${{ matrix.platform.binary }}"
+                readelf -d "${{ matrix.platform.binary }}"
+                readelf --version-info "${{ matrix.platform.binary }}"
+              } > "$evidence"
+              ;;
+            macOS)
+              {
+                file "${{ matrix.platform.binary }}"
+                otool -L "${{ matrix.platform.binary }}"
+              } > "$evidence"
+              ;;
+            Windows)
+              {
+                file "${{ matrix.platform.binary }}"
+                "$(rustup which llvm-readobj)" --coff-imports "${{ matrix.platform.binary }}"
+              } > "$evidence"
+              ;;
+            *)
+              exit 1
+              ;;
+          esac
+      - name: Package deterministic native archive
+        shell: bash
+        run: |
+          source_epoch="$(git show -s --format=%ct HEAD)"
+          archive="prnsd-0.3.1-${{ matrix.platform.target }}"
+          if [[ "${{ matrix.platform.target }}" == *windows-msvc ]]; then
+            archive="${archive}.zip"
+          else
+            archive="${archive}.tar.gz"
+          fi
+          ./tools/prns release prnsd distribution -- archive \
+            --binary "${{ matrix.platform.binary }}" \
+            --target "${{ matrix.platform.target }}" \
+            --source-commit "$GITHUB_SHA" \
+            --source-date-epoch "$source_epoch" \
+            --rustc "$(rustc --version)" \
+            --output "target/prnsd-release/${{ matrix.pass }}/${archive}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: prnsd-native-${{ matrix.platform.target }}-${{ matrix.pass }}-${{ github.run_id }}
+          path: target/prnsd-release/${{ matrix.pass }}
+          retention-days: 30
+          if-no-files-found: error
+
+  candidate:
+    name: Compare and index native candidate
+    needs: native
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.commit_sha }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: prnsd-native-*-${{ github.run_id }}
+          path: target/downloads
+      - name: Compare every reproduction and stage primary evidence
+        run: |
+          mkdir -p target/candidate
+          for target in \
+            aarch64-apple-darwin \
+            x86_64-apple-darwin \
+            aarch64-unknown-linux-gnu \
+            x86_64-unknown-linux-gnu \
+            x86_64-pc-windows-msvc
+          do
+            extension=.tar.gz
+            if [[ "$target" == *windows-msvc ]]; then
+              extension=.zip
+            fi
+            name="prnsd-0.3.1-${target}${extension}"
+            primary="target/downloads/prnsd-native-${target}-primary-${GITHUB_RUN_ID}/${name}"
+            reproduction="target/downloads/prnsd-native-${target}-reproduction-${GITHUB_RUN_ID}/${name}"
+            ./tools/prns release prnsd distribution -- compare \
+              --primary "$primary" \
+              --reproduction "$reproduction"
+            cp "$primary" target/candidate/
+            cp \
+              "target/downloads/prnsd-native-${target}-primary-${GITHUB_RUN_ID}/${target}-linkage.txt" \
+              target/candidate/
+          done
+      - name: Generate exact source SPDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
+        with:
+          path: .
+          format: spdx-json
+          output-file: target/candidate/prnsd-0.3.1-source.spdx.json
+          artifact-name: prnsd-0.3.1-source.spdx.json
+          syft-version: v1.50.0
+          dependency-snapshot: false
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Bind the exact candidate to this workflow run
+        run: |
+          ./tools/prns release prnsd distribution -- candidate-index \
+            --assets target/candidate \
+            --source-commit "$GITHUB_SHA" \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --workflow-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --output "target/candidate/prnsd-candidate-${GITHUB_SHA}.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: prnsd-unsigned-candidate-${{ github.sha }}-${{ github.run_id }}
+          path: target/candidate
+          retention-days: 30
+          if-no-files-found: error

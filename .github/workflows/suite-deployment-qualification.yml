@@ -1,0 +1,114 @@
+name: qualify exact suite deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_commit:
+        description: Full protected main source commit
+        required: true
+        type: string
+      image_digest:
+        description: Exact promoted-candidate OCI manifest digest
+        required: true
+        type: string
+      railway_template_revision:
+        description: Immutable Railway template revision exercised
+        required: true
+        type: string
+      rollback_revision:
+        description: Exact template revision restored during rollback exercise
+        required: true
+        type: string
+      public_host:
+        description: Published Backbone host exercised from outside Railway
+        required: true
+        type: string
+      public_port:
+        description: Published Backbone TCP proxy port
+        required: true
+        type: string
+      identity_before:
+        description: Transport identity hash before restart
+        required: true
+        type: string
+      identity_after:
+        description: Transport identity hash after persistence restart
+        required: true
+        type: string
+      persistence_restored:
+        description: Confirm persisted routing state restored after restart
+        required: true
+        default: false
+        type: boolean
+      rollback_completed:
+        description: Confirm rollback and return to this exact digest succeeded
+        required: true
+        default: false
+        type: boolean
+      single_replica:
+        description: Confirm the deployment used exactly one replica
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: suite-deployment-qualification-${{ inputs.image_digest }}
+  cancel-in-progress: false
+
+jobs:
+  qualify:
+    name: Approve exact Railway and public Backbone exercise
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: release-qualification
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.source_commit }}
+      - name: Require exact protected release source and operator confirmations
+        env:
+          REF_PROTECTED: ${{ github.ref_protected }}
+        run: |
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$REF_PROTECTED" = "true"
+          test "$GITHUB_SHA" = "${{ inputs.source_commit }}"
+          test "${{ inputs.persistence_restored }}" = "true"
+          test "${{ inputs.rollback_completed }}" = "true"
+          test "${{ inputs.single_replica }}" = "true"
+          [[ "${{ inputs.image_digest }}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "${{ inputs.public_port }}" =~ ^[1-9][0-9]{0,4}$ ]]
+          test "${{ inputs.public_port }}" -le 65535
+      - name: Verify anonymous OCI access and live public Backbone
+        run: |
+          docker logout ghcr.io >/dev/null 2>&1 || true
+          docker manifest inspect \
+            "ghcr.io/kenakafrosty/prnsd@${{ inputs.image_digest }}" \
+            > "${RUNNER_TEMP}/manifest.json"
+          nc -vz -w 15 "${{ inputs.public_host }}" "${{ inputs.public_port }}"
+      - name: Write protected qualification evidence
+        run: |
+          observed_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          mkdir -p target/qualification
+          ./tools/prns release prnsd distribution -- deployment-evidence \
+            --source-commit "$GITHUB_SHA" \
+            --image-digest "${{ inputs.image_digest }}" \
+            --repository "$GITHUB_REPOSITORY" \
+            --template-revision "${{ inputs.railway_template_revision }}" \
+            --rollback-revision "${{ inputs.rollback_revision }}" \
+            --public-endpoint "${{ inputs.public_host }}:${{ inputs.public_port }}" \
+            --identity-before "${{ inputs.identity_before }}" \
+            --identity-after "${{ inputs.identity_after }}" \
+            --observed-at "$observed_at" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --workflow-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --output "target/qualification/deployment-qualification-v$(cat VERSION).json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: suite-deployment-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/qualification
+          retention-days: 30
+          if-no-files-found: error

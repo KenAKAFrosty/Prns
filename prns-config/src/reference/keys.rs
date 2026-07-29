@@ -84,6 +84,7 @@ pub(crate) mod interface {
     pub const DISCOVERY_NAME: &str = "discovery_name";
     pub const DISCOVERY_ENCRYPT: &str = "discovery_encrypt";
     pub const REACHABLE_ON: &str = "reachable_on";
+    pub const REACHABLE_PORT: &str = "reachable_port";
     pub const PUBLISH_IFAC: &str = "publish_ifac";
     pub const LATITUDE: &str = "latitude";
     pub const LONGITUDE: &str = "longitude";
@@ -183,6 +184,7 @@ pub(crate) mod interface {
         DISCOVERY_NAME,
         DISCOVERY_ENCRYPT,
         REACHABLE_ON,
+        REACHABLE_PORT,
         PUBLISH_IFAC,
         LATITUDE,
         LONGITUDE,

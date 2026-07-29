@@ -98,15 +98,12 @@ jobs:
           test "$(sha256sum "$evidence" | awk '{print $1}')" = \
             "$QUALIFICATION_EVIDENCE_SHA256"
           assets="$(gh release view "v${RELEASE_VERSION}" --json assets --jq '.assets[].name')"
-          signing_run_id="$(jq -r '.workflow_run_id' \
-            "target/release/prns-flasher-attestation-v${RELEASE_VERSION}.metadata.json")"
-          [[ "$signing_run_id" =~ ^[1-9][0-9]*$ ]]
-          review_prefix="public-review-v${RELEASE_VERSION}-run-${signing_run_id}-attempt-"
+          review_prefix="public-review-v${RELEASE_VERSION}-run-"
           mapfile -t review_assets < <(
             while IFS= read -r name; do
               suffix="${name#"$review_prefix"}"
               if [[ "$name" == "$review_prefix"* \
-                && "$suffix" =~ ^[1-9][0-9]*\.json$ ]]; then
+                && "$suffix" =~ ^[1-9][0-9]*-attempt-[1-9][0-9]*\.json$ ]]; then
                 printf '%s\n' "$name"
               fi
             done <<< "$assets"
@@ -119,8 +116,8 @@ jobs:
           for name in \
             "acceptance-v${RELEASE_VERSION}.json" \
             "acceptance-v${RELEASE_VERSION}.json.minisig" \
-            "release-record-v${RELEASE_VERSION}.json" \
-            "release-record-v${RELEASE_VERSION}.json.minisig"; do
+            "flasher-release-record-v${RELEASE_VERSION}.json" \
+            "flasher-release-record-v${RELEASE_VERSION}.json.minisig"; do
             if grep -Fxq "$name" <<< "$assets"; then
               gh release download "v${RELEASE_VERSION}" \
                 --pattern "$name" --dir target/release
@@ -196,8 +193,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           source_commit="$(jq -r '.release.commit' target/candidate/flash-manifest.json)"
-          signing_run_id="$(jq -r '.workflow_run_id' \
-            "target/release/prns-flasher-attestation-v${RELEASE_VERSION}.metadata.json")"
           signed_bundle="target/release/prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz"
           mapfile -t evidence_files < <(
             ./tools/prns release public-review -- discover \
@@ -205,21 +200,22 @@ jobs:
               --repository "$GITHUB_REPOSITORY" \
               --version "$RELEASE_VERSION" \
               --source-commit "$source_commit" \
-              --workflow-run-id "$signing_run_id" \
               --signed-candidate-sha256 "$(sha256sum "$signed_bundle" | awk '{print $1}')" \
               --manifest-sha256 "$(sha256sum target/candidate/flash-manifest.json | awk '{print $1}')"
           )
           selected_evidence=""
           for evidence in "${evidence_files[@]}"; do
+            review_run_id="$(jq -r '.workflow_run_id' "$evidence")"
             run_attempt="$(jq -r '.workflow_run_attempt' "$evidence")"
             review_job_id="$(jq -r '.workflow_job_id' "$evidence")"
+            [[ "$review_run_id" =~ ^[1-9][0-9]*$ ]] || continue
             if ! gh api \
-              "repos/${GITHUB_REPOSITORY}/actions/runs/${signing_run_id}/attempts/${run_attempt}" \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${review_run_id}/attempts/${run_attempt}" \
               > target/release/public-review-run.json; then
               continue
             fi
             if ! gh api --paginate \
-              "repos/${GITHUB_REPOSITORY}/actions/runs/${signing_run_id}/attempts/${run_attempt}/jobs?per_page=100" \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${review_run_id}/attempts/${run_attempt}/jobs?per_page=100" \
               --jq ".jobs[] | select(.id == ${review_job_id})" \
               > target/release/public-review-job-pages.json; then
               continue
@@ -263,7 +259,7 @@ jobs:
           else
             ./tools/prns release document sign -- "$acceptance" "$secret_key"
           fi
-          record="target/release/release-record-v${RELEASE_VERSION}.json"
+          record="target/release/flasher-release-record-v${RELEASE_VERSION}.json"
           published_at="$(jq -r '.publishedAt' target/release/prerelease.json)"
           record_arguments=(
             --candidate target/candidate
@@ -304,7 +300,7 @@ jobs:
             --qualification-evidence "target/release/qualification-evidence-v${RELEASE_VERSION}.tar.gz" \
             --public-review-evidence "${{ steps.public_review.outputs.evidence }}" \
             --prerelease-published-at "$(jq -r '.publishedAt' target/release/prerelease.json)" \
-            --release-record "target/release/release-record-v${RELEASE_VERSION}.json" \
+            --release-record "target/release/flasher-release-record-v${RELEASE_VERSION}.json" \
             --attestation-bundle "target/release/prns-flasher-attestation-v${RELEASE_VERSION}.json" \
             --attestation-metadata "target/release/prns-flasher-attestation-v${RELEASE_VERSION}.metadata.json" \
             --repository "$GITHUB_REPOSITORY"
@@ -317,8 +313,8 @@ jobs:
             "target/release/acceptance-v${version}.json"
             "target/release/acceptance-v${version}.json.minisig"
             "target/release/qualification-evidence-v${version}.tar.gz"
-            "target/release/release-record-v${version}.json"
-            "target/release/release-record-v${version}.json.minisig"
+            "target/release/flasher-release-record-v${version}.json"
+            "target/release/flasher-release-record-v${version}.json.minisig"
           )
           mkdir -p "${RUNNER_TEMP}/published-evidence"
           for local_asset in "${evidence[@]}"; do

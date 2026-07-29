@@ -89,3 +89,8 @@ The first command produces the locked release-profile daemon artifact. The
 second prints the daemon's direct options without starting a managed session.
 For lifecycle logs and structured observability, see
 [Observability](../docs/observability.md).
+
+For signed native releases, the production container, one-time cloud bootstrap,
+operator-owned NomadNet pages, Railway deployment, backups, upgrades, and
+verification, see
+[Deploy prnsd](../docs/deploy-prnsd.md).

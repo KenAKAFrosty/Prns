@@ -745,6 +745,16 @@ audience = ["ci", "release"]
 entrypoint = ["bash", "tools/release/write-release-audit-evidence.sh"]
 requires = ["bash", "git", "shasum"]
 
+[[task]]
+id = "release.prnsd.distribution"
+summary = "Package, reproduce, inventory, and describe native and OCI prnsd release artifacts."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["ci", "operator", "release"]
+entrypoint = ["python3", "tools/release/prnsd-distribution.py"]
+requires = ["python3"]
+
 [[internal]]
 path = "tools/release/flasher_acceptance_contract.py"
 reason = "Shared acceptance schema and scaffold implementation used by release commands and bundled qualification tools."
