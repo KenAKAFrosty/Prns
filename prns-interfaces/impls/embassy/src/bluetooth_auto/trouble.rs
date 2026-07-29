@@ -86,7 +86,6 @@ const ADV_WINDOW: Duration = Duration::from_millis(600);
 const SCAN_WINDOW: Duration = Duration::from_millis(300);
 #[cfg(not(target_arch = "riscv32"))]
 const SCAN_WINDOW: Duration = Duration::from_millis(600);
-#[cfg(target_arch = "riscv32")]
 const DISCOVERY_TURN_REST: Duration = Duration::from_millis(20);
 
 const CONTROL_QUEUE_DEPTH: usize = 2;
@@ -1450,7 +1449,6 @@ pub async fn acceptor<T: TroubleTransport>(
             }
         }
         drop(radio);
-        #[cfg(target_arch = "riscv32")]
         Timer::after(DISCOVERY_TURN_REST).await;
     }
 }
@@ -1507,7 +1505,6 @@ pub async fn dialer<T: TroubleTransport>(
                 Ok(None) => {
                     hub.dial_failed.send(target.addr.into_inner()).await;
                     drop(radio);
-                    #[cfg(target_arch = "riscv32")]
                     Timer::after(DISCOVERY_TURN_REST).await;
                     continue;
                 }
@@ -1515,7 +1512,6 @@ pub async fn dialer<T: TroubleTransport>(
                     crate::diagnostic_log::warn!("ble connection slot claim failed: {error:?}");
                     hub.dial_failed.send(target.addr.into_inner()).await;
                     drop(radio);
-                    #[cfg(target_arch = "riscv32")]
                     Timer::after(DISCOVERY_TURN_REST).await;
                     continue;
                 }
@@ -1550,7 +1546,6 @@ pub async fn dialer<T: TroubleTransport>(
             }
         }
         drop(radio);
-        #[cfg(target_arch = "riscv32")]
         Timer::after(DISCOVERY_TURN_REST).await;
     }
 }

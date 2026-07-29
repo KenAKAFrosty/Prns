@@ -178,7 +178,7 @@ const COMMANDS_CAP: usize = 8;
 pub const LIFECYCLE_CAP: usize = 8;
 const COMPLETIONS_CAP: usize = 4;
 
-const CORE1_STACK_BYTES: usize = 80 * 1024;
+const CORE1_STACK_BYTES: usize = 72 * 1024;
 
 const RENDER_INTERVAL: Duration = Duration::from_millis(500);
 const RENDER_TICKS_PER_BATTERY: u8 = 4;
