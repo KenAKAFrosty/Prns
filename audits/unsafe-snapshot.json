@@ -1480,6 +1480,23 @@
     },
     {
       "graphs": {
+        "daemon-linux": [
+          "parallel"
+        ]
+      },
+      "name": "cc",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 13,
+        "externs": 0,
+        "functions": 2,
+        "impls": 2,
+        "tokens": 17
+      },
+      "version": "1.2.67"
+    },
+    {
+      "graphs": {
         "android": []
       },
       "name": "cesu8",
@@ -3009,7 +3026,8 @@
         "daemon-linux": [
           "futures",
           "futures-channel",
-          "futures-util"
+          "futures-util",
+          "vendored"
         ],
         "desktop-linux": [
           "futures",
@@ -5760,6 +5778,7 @@
     },
     {
       "graphs": {
+        "daemon-linux": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": []
@@ -8241,6 +8260,21 @@
     },
     {
       "graphs": {
+        "daemon-linux": []
+      },
+      "name": "jobserver",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 28,
+        "externs": 0,
+        "functions": 10,
+        "impls": 2,
+        "tokens": 40
+      },
+      "version": "0.1.35"
+    },
+    {
+      "graphs": {
         "wasm": [
           "default",
           "std",
@@ -8462,8 +8496,10 @@
     {
       "graphs": {
         "daemon-linux": [
+          "cc",
           "default",
-          "pkg-config"
+          "pkg-config",
+          "vendored"
         ],
         "desktop-linux": [
           "default",
@@ -12678,6 +12714,7 @@
         "android": [
           "bluetooth-auto",
           "log",
+          "network-device-selection",
           "serial",
           "shared-instance",
           "tcp",
@@ -12696,6 +12733,7 @@
           "interface-discovery",
           "kiss",
           "log",
+          "network-device-selection",
           "pipe",
           "rnode",
           "serial",
@@ -12718,6 +12756,7 @@
           "interface-discovery",
           "kiss",
           "log",
+          "network-device-selection",
           "pipe",
           "rnode",
           "serial",
@@ -12740,6 +12779,7 @@
           "interface-discovery",
           "kiss",
           "log",
+          "network-device-selection",
           "pipe",
           "rnode",
           "serial",
@@ -12755,6 +12795,7 @@
         "desktop-linux": [
           "bluetooth-auto",
           "log",
+          "network-device-selection",
           "serial",
           "shared-instance",
           "tcp",
@@ -12765,6 +12806,7 @@
         "desktop-macos": [
           "bluetooth-auto",
           "log",
+          "network-device-selection",
           "serial",
           "shared-instance",
           "tcp",
@@ -12775,6 +12817,7 @@
         "desktop-windows": [
           "bluetooth-auto",
           "log",
+          "network-device-selection",
           "serial",
           "shared-instance",
           "tcp",
@@ -12785,6 +12828,7 @@
         "esp32-c6": [
           "bluetooth-auto",
           "log",
+          "network-device-selection",
           "serial",
           "tcp",
           "usb",
@@ -12793,6 +12837,7 @@
         "esp32-s3-heltec": [
           "bluetooth-auto",
           "log",
+          "network-device-selection",
           "serial",
           "tcp",
           "usb",
@@ -12801,6 +12846,7 @@
         "esp32-s3-tbeam": [
           "bluetooth-auto",
           "log",
+          "network-device-selection",
           "serial",
           "tcp",
           "usb",
@@ -12808,6 +12854,7 @@
         ],
         "ios": [
           "bluetooth-auto",
+          "network-device-selection",
           "tcp",
           "wifi-auto"
         ],
@@ -13071,6 +13118,7 @@
           "default",
           "observability",
           "std",
+          "tokio-cloud-host",
           "tokio-host",
           "tray"
         ],
@@ -13079,6 +13127,7 @@
           "default",
           "observability",
           "std",
+          "tokio-cloud-host",
           "tokio-host",
           "tray"
         ],
@@ -13087,6 +13136,7 @@
           "default",
           "observability",
           "std",
+          "tokio-cloud-host",
           "tokio-host",
           "tray"
         ]
@@ -14990,6 +15040,10 @@
     },
     {
       "graphs": {
+        "daemon-linux": [
+          "default",
+          "std"
+        ],
         "desktop-linux": [
           "default",
           "std"
