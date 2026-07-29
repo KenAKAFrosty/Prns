@@ -39,9 +39,9 @@ Entries are deduplicated by SPDX identifier and exact notice text.
 - `pako 2.2.0` — `MIT AND Zlib`
 - `tslib 2.8.1` — `0BSD`
 
-## Vendored native code
+## Node addon vendored native code
 
-- `libdbus 1.14.4` — `AFL-2.1` alternative selected from its `AFL-2.1 OR GPL-2.0-or-later` dual license; built from the source vendored by `libdbus-sys` and statically linked into the Linux `personal-rns` Node addon and full Linux `prnsd` native release.
+- `libdbus 1.14.4` — `AFL-2.1` alternative selected from its `AFL-2.1 OR GPL-2.0-or-later` dual license; built from the source vendored by `libdbus-sys` and statically linked into the Linux `personal-rns` Node addon.
 
 ## Android Maven runtime
 
@@ -129,7 +129,7 @@ License: AFL-2.1
 
 Used by: `libdbus 1.14.4`
 
-Release graphs: Node addon Linux, daemon Linux
+Release graphs: Node addon Linux
 
 ```text
 dbus is licensed to you under your choice of the Academic Free
@@ -5434,6 +5434,42 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
+### MIT (7427abc63036)
+
+License: MIT License
+
+Used by: `miniz_oxide 0.8.9`
+
+Release graphs: ESP32-C6, ESP32-S3 Heltec, ESP32-S3 T-Beam, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64
+
+```text
+MIT License
+
+Copyright 2013-2014 RAD Game Tools and Valve Software
+Copyright 2010-2014 Rich Geldreich and Tenacious Software LLC
+Copyright (c) 2017 Frommi
+Copyright (c) 2017-2024 oyvindln
+
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ### MIT (775a3e20a9af)
 
 License: MIT License
@@ -7347,41 +7383,6 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
-```
-
-### MIT (ac9859ce4e9a)
-
-License: MIT License
-
-Used by: `miniz_oxide 0.8.9`
-
-Release graphs: ESP32-C6, ESP32-S3 Heltec, ESP32-S3 T-Beam, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64
-
-```text
-MIT License
-
-Copyright 2013-2014 RAD Game Tools and Valve Software
-Copyright 2010-2014 Rich Geldreich and Tenacious Software LLC
-Copyright (c) 2017 Frommi
-Copyright (c) 2017-2024 oyvindln
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
 ```
 
 ### MIT (ad4fcfaf8d5b)
