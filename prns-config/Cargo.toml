@@ -18,7 +18,6 @@ include = ["src/**", "tests/**", "examples/**", "Cargo.toml", "README.md"]
 
 [dependencies]
 prns-core = { version = "=0.3.0", path = "../prns-core", default-features = false, features = ["interface-discovery", "std"] }
-home = "0.5.12"
 shlex = "1"
 tempfile = "3.27"
 

@@ -30,6 +30,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         interfaces: |node: &PrnsNodeHandle| {
             node.attach(AutoWifi::default());
         },
+        persistence: NoPersistence,
     });
     let node_a_handle = node_a.handle();
 
@@ -53,6 +54,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         interfaces: |node: &PrnsNodeHandle| {
             node.attach(AutoWifi::default());
         },
+        persistence: NoPersistence,
     });
     let node_b_handle = node_b.handle();
 

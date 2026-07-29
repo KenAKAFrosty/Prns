@@ -134,6 +134,7 @@ mod linux_only {
             request_endpoints: request_endpoints![],
             on_event: |_event, _state| {},
             interfaces: ManuallyAttached,
+            persistence: NoPersistence,
         });
         let commands = node.handle();
         let auto = WifiDirectAuto::new(backend, GoIntent::PREFER_OWNER);
@@ -181,6 +182,7 @@ mod linux_only {
                 }
             },
             interfaces: ManuallyAttached,
+            persistence: NoPersistence,
         });
         let commands = node.handle();
         let auto = WifiDirectAuto::new(backend, GoIntent::PREFER_CLIENT);

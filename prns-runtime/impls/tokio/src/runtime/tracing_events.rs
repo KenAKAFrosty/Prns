@@ -129,6 +129,41 @@ fn emit_message(message: &Message<'_>) {
 
 fn emit_diagnostic(diagnostic: &Diagnostic) {
     match diagnostic {
+        Diagnostic::PersistenceRestored {
+            routes,
+            destination_identities,
+            tunnels,
+            ratchets,
+            refused,
+            dropped,
+        } => {
+            tracing::info!(
+                target: "prns.runtime",
+                event = "persistence_restored",
+                routes,
+                destination_identities,
+                tunnels,
+                ratchets,
+                refused,
+                dropped,
+            );
+        }
+        Diagnostic::PersistenceFlushed { cause, target } => {
+            tracing::debug!(
+                target: "prns.runtime",
+                event = "persistence_flushed",
+                cause = cause.name(),
+                persistence_target = target.name(),
+            );
+        }
+        Diagnostic::PersistenceFlushFailed { cause, target } => {
+            tracing::error!(
+                target: "prns.runtime",
+                event = "persistence_flush_failed",
+                cause = cause.name(),
+                persistence_target = target.name(),
+            );
+        }
         Diagnostic::SelfRatchetRotated { destination } => {
             tracing::info!(target: "prns.runtime", event = "self_ratchet_rotated");
             tracing::debug!(

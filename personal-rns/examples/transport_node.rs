@@ -28,6 +28,7 @@ async fn main() {
         request_endpoints: request_endpoints![],
         on_event: |_event, _state| {},
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
     });
     let relay_handle = relay.handle();
     let _server = relay_handle.supervise(server);
@@ -44,6 +45,7 @@ async fn main() {
         interfaces: move |node: &PrnsNodeHandle| {
             node.attach(announcer_client);
         },
+        persistence: NoPersistence,
     });
     let announcing_handle = announcing_node.handle();
 
@@ -63,6 +65,7 @@ async fn main() {
         interfaces: move |node: &PrnsNodeHandle| {
             node.attach(listener_client);
         },
+        persistence: NoPersistence,
     });
     println!("Announcer and listener: TCP clients of the relay, with no link to each other");
 

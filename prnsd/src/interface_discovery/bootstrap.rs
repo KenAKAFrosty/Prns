@@ -161,7 +161,7 @@ fn bootstrap_action(active: bool, capacity: AutoConnectCapacity) -> BootstrapAct
 mod tests {
     use personal_rns::from_plan::{PlanAttachments, PlanRuntimeContext};
     use personal_rns::runtime::{
-        ManuallyAttached, PreConfiguredDestination, PrnsNode, PrnsNodeRecipe,
+        ManuallyAttached, NoPersistence, PreConfiguredDestination, PrnsNode, PrnsNodeRecipe,
     };
     use personal_rns::storage::GrowableHeap;
 
@@ -251,6 +251,7 @@ mod tests {
             storage: GrowableHeap,
             request_endpoints: personal_rns::request_endpoints![],
             interfaces: ManuallyAttached,
+            persistence: NoPersistence,
             on_event: |_event, _state: &()| {},
         });
         let handle = node.handle();

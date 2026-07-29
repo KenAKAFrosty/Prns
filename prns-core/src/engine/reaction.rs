@@ -26,8 +26,47 @@ pub enum EngineReaction<'a> {
     Directive(Directive<'a>),
 }
 
-/// A notice that something has just happened within the engine.
 #[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PersistenceFlushCause {
+    Startup,
+    Interval,
+    RouteChange,
+    RatchetRotation,
+    Shutdown,
+}
+
+impl PersistenceFlushCause {
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Startup => "startup",
+            Self::Interval => "interval",
+            Self::RouteChange => "route_change",
+            Self::RatchetRotation => "ratchet_rotation",
+            Self::Shutdown => "shutdown",
+        }
+    }
+}
+
+/// The independently stored half of a persistence flush.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PersistenceFlushTarget {
+    RoutingState,
+    Ratchets,
+}
+
+impl PersistenceFlushTarget {
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::RoutingState => "routing_state",
+            Self::Ratchets => "ratchets",
+        }
+    }
+}
+
 pub enum Journaled<'a> {
     /// RNS 1.4.0's announce-handler `received_announce` callback as data.
     AnnounceHeard {
@@ -37,6 +76,20 @@ pub enum Journaled<'a> {
 
     SelfRatchetRotated {
         destination: DestinationHash,
+    },
+
+    /// A host persistence worker injected an ordered save notice into the engine journal.
+    /// The engine itself performs no storage IO.
+    PersistenceFlushed {
+        cause: PersistenceFlushCause,
+        target: PersistenceFlushTarget,
+    },
+
+    /// A host persistence worker injected an ordered save-failure notice into the engine
+    /// journal. Storage-specific error detail stays in the host log.
+    PersistenceFlushFailed {
+        cause: PersistenceFlushCause,
+        target: PersistenceFlushTarget,
     },
     AnnounceHeldDropped {
         destination: DestinationHash,

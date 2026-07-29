@@ -1,4 +1,5 @@
 use core::time::Duration;
+use personal_rns::runtime::NoPersistence;
 
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy, Settlement,
@@ -13,7 +14,7 @@ use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
     boot_timeline_origin, DestinationIdentityRetentionControl, Diagnostic, FlushMark,
     ManuallyAttached, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle,
-    PrnsNodeRecipe, RegionFlush, ServeMyRequestEndpoints, RouteSeedProgress,
+    PrnsNodeRecipe, RegionFlush, RouteSeedProgress, ServeMyRequestEndpoints,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::{TcpClientInterface, TcpServer};
@@ -81,6 +82,7 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
             request_endpoints: request_endpoints![],
             on_event: |_event, _state| {},
             interfaces: ManuallyAttached,
+            persistence: NoPersistence,
         });
         let commands_a = node_a.handle();
         let _server_sup = commands_a.supervise(server);
@@ -103,6 +105,7 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
             interfaces: |node: &PrnsNodeHandle| {
                 node.attach(client);
             },
+            persistence: NoPersistence,
         })
         .with_timeline_origin(boot_timeline_origin(&store));
         let commands_b = node_b.handle();
@@ -156,6 +159,7 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
         request_endpoints: request_endpoints![],
         on_event: |_event, _state| {},
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
     });
     let commands_a = node_a.handle();
     let _server_sup = commands_a.supervise(server);
@@ -171,6 +175,7 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
         interfaces: |node: &PrnsNodeHandle| {
             node.attach(client);
         },
+        persistence: NoPersistence,
     })
     .with_timeline_origin(boot_timeline_origin(&store));
 
@@ -263,6 +268,7 @@ async fn a_reconnecting_peer_reclaims_a_rebooted_relays_routes_through_its_tunne
                 }
             },
             interfaces: ManuallyAttached,
+            persistence: NoPersistence,
         })
         .with_timeline_origin(boot_timeline_origin(&store));
         let commands_relay = relay.handle();
@@ -280,6 +286,7 @@ async fn a_reconnecting_peer_reclaims_a_rebooted_relays_routes_through_its_tunne
             interfaces: |node: &PrnsNodeHandle| {
                 node.attach(client);
             },
+            persistence: NoPersistence,
         });
         let commands_c = node_c.handle();
 
@@ -353,6 +360,7 @@ async fn a_reconnecting_peer_reclaims_a_rebooted_relays_routes_through_its_tunne
         request_endpoints: request_endpoints![],
         on_event: |_event, _state| {},
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
     })
     .with_timeline_origin(boot_timeline_origin(&store));
 
@@ -380,6 +388,7 @@ async fn a_reconnecting_peer_reclaims_a_rebooted_relays_routes_through_its_tunne
         interfaces: |node: &PrnsNodeHandle| {
             node.attach(client);
         },
+        persistence: NoPersistence,
     });
 
     let proven = async {
@@ -433,6 +442,7 @@ async fn a_quiet_flush_skips_unchanged_regions_and_a_change_rewrites() {
             }
         },
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
     });
     let commands_a = node_a.handle();
     let _server_sup = commands_a.supervise(server);
@@ -453,6 +463,7 @@ async fn a_quiet_flush_skips_unchanged_regions_and_a_change_rewrites() {
         interfaces: |node: &PrnsNodeHandle| {
             node.attach(client);
         },
+        persistence: NoPersistence,
     });
     let commands_b = node_b.handle();
 
@@ -624,6 +635,7 @@ async fn a_rebooted_destination_decrypts_singles_sealed_to_its_pre_reboot_ratche
             request_endpoints: request_endpoints![],
             on_event: |_event, _state| {},
             interfaces: ManuallyAttached,
+            persistence: NoPersistence,
         })
         .with_timeline_origin(boot_timeline_origin(&store_r));
         let commands_r = node_r.handle();
@@ -647,6 +659,7 @@ async fn a_rebooted_destination_decrypts_singles_sealed_to_its_pre_reboot_ratche
             interfaces: |node: &PrnsNodeHandle| {
                 node.attach(client);
             },
+            persistence: NoPersistence,
         });
         let commands_p = node_p.handle();
 
@@ -708,6 +721,7 @@ async fn a_rebooted_destination_decrypts_singles_sealed_to_its_pre_reboot_ratche
         request_endpoints: request_endpoints![],
         on_event: |_event, _state| {},
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
     })
     .with_timeline_origin(boot_timeline_origin(&store_r));
     let ratchets = node_r.seed_self_ratchets_from_vault(&vault_r);
@@ -728,6 +742,7 @@ async fn a_rebooted_destination_decrypts_singles_sealed_to_its_pre_reboot_ratche
         interfaces: |node: &PrnsNodeHandle| {
             node.attach(client);
         },
+        persistence: NoPersistence,
     });
     let routes = node_p.seed_routes_from_store(&store_p);
     assert_eq!(routes.seeded_count, 1, "R's route seeds on P");

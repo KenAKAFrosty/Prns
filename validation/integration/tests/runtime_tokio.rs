@@ -1,4 +1,5 @@
 use core::time::Duration;
+use personal_rns::runtime::NoPersistence;
 
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
@@ -79,6 +80,7 @@ async fn two_nodes_stand_up_and_one_hears_the_others_announce() {
         request_endpoints: request_endpoints![],
         on_event: |_event, _state| {},
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
     });
     let commands_a = node_a.handle();
     let _server_sup = commands_a.supervise(server);
@@ -99,6 +101,7 @@ async fn two_nodes_stand_up_and_one_hears_the_others_announce() {
         interfaces: |node: &PrnsNodeHandle| {
             node.attach(client);
         },
+        persistence: NoPersistence,
     });
 
     tokio::spawn(async move {
@@ -150,6 +153,7 @@ async fn an_interface_added_through_the_handle_carries_traffic_until_torn_down()
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: |_event, _state| {},
     });
     let commands_a = node_a.handle();
@@ -163,6 +167,7 @@ async fn an_interface_added_through_the_handle_carries_traffic_until_torn_down()
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
                 let _ = heard_tx.send(destination);
@@ -253,6 +258,7 @@ async fn a_supervisor_spawns_a_member_and_tearing_the_supervisor_down_cascades_t
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: |_event, _state| {},
     });
     let commands_a = node_a.handle();
@@ -266,6 +272,7 @@ async fn a_supervisor_spawns_a_member_and_tearing_the_supervisor_down_cascades_t
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
                 let _ = heard_tx.send(destination);
@@ -341,6 +348,7 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
                 destination,
@@ -368,6 +376,7 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
             node.attach(client_a);
         },
         on_event: |_event, _state| {},
+        persistence: NoPersistence,
     });
     let commands_a = node_a.handle();
 
@@ -383,6 +392,7 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
             node.attach(client_b);
         },
         on_event: |_event, _state| {},
+        persistence: NoPersistence,
     });
     let commands_b = node_b.handle();
 
@@ -498,6 +508,7 @@ async fn a_recipe_accept_destination_receives_a_resource() {
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: |_event, _state| {},
     });
     let commands_a = node_a.handle();
@@ -519,6 +530,7 @@ async fn a_recipe_accept_destination_receives_a_resource() {
                 let _ = heard_tx.send(destination);
             }
         },
+        persistence: NoPersistence,
     });
     let commands_b = node_b.handle();
 

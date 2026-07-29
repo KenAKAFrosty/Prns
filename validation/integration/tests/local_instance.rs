@@ -1,4 +1,5 @@
 use core::time::Duration;
+use personal_rns::runtime::NoPersistence;
 
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
@@ -102,6 +103,7 @@ async fn becomes_the_instance_when_none_is_running() {
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: |_event, _state| {},
     });
 
@@ -144,6 +146,7 @@ async fn a_control_collision_prevents_election_and_releases_the_bus() {
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: |_event, _state| {},
     });
     let intent = instance(
@@ -181,6 +184,7 @@ async fn joins_as_a_client_when_an_instance_is_already_running() {
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: |_event, _state| {},
     });
 
@@ -214,6 +218,7 @@ async fn refuses_to_take_a_role_when_told_to_and_an_instance_exists() {
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: |_event, _state| {},
     });
 
@@ -247,6 +252,7 @@ async fn a_client_rides_the_instances_bus() {
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
                 let _ = heard_tx.send(destination);
@@ -273,6 +279,7 @@ async fn a_client_rides_the_instances_bus() {
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: |_event, _state| {},
     });
     let handle_b = node_b.handle();

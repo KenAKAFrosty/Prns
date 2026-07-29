@@ -286,6 +286,7 @@ pub struct ReliabilityMetricsSnapshot {
 impl ReliabilityMetricsSnapshot {
     pub fn record_journaled(&mut self, journaled: &Journaled<'_>) {
         match journaled {
+            Journaled::PersistenceFlushed { .. } | Journaled::PersistenceFlushFailed { .. } => {}
             Journaled::CommandSettled { settlement, .. } => {
                 let settled = SettledOperation::from(settlement);
                 self.operations.record(settled.operation, settled.outcome);

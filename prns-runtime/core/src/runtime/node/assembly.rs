@@ -148,9 +148,9 @@ where
 }
 
 #[allow(clippy::expect_used)]
-pub fn assemble_node<'a, D, St, R, F, I, S>(
-    recipe: PrnsNodeRecipe<D, St, R, F, I, S>,
-) -> (AssembledNode<St, R, F, S>, I)
+pub fn assemble_node<'a, D, St, R, F, I, S, P>(
+    recipe: PrnsNodeRecipe<D, St, R, F, I, S, P>,
+) -> (AssembledNode<St, R, F, S>, I, P)
 where
     D: IntoIterator<Item = PreConfiguredDestination<'a>>,
     R: RequestEndpointSet<St>,
@@ -164,6 +164,7 @@ where
         storage: _,
         request_endpoints: _,
         interfaces,
+        persistence,
         on_event,
     } = recipe;
 
@@ -174,7 +175,7 @@ where
         request_endpoints: PhantomData,
     };
     configure_assembled_node(&mut node, pre_configured_destinations, transport_identity);
-    (node, interfaces)
+    (node, interfaces, persistence)
 }
 
 #[expect(
@@ -182,10 +183,10 @@ where
     clippy::undocumented_unsafe_blocks,
     reason = "every AssembledNode field is initialized before the slot is exposed"
 )]
-pub fn assemble_node_in_place<'a, 'slot, D, St, R, F, I, S>(
+pub fn assemble_node_in_place<'a, 'slot, D, St, R, F, I, S, P>(
     slot: &'slot mut MaybeUninit<AssembledNode<St, R, F, S>>,
-    recipe: PrnsNodeRecipe<D, St, R, F, I, S>,
-) -> (&'slot mut AssembledNode<St, R, F, S>, I)
+    recipe: PrnsNodeRecipe<D, St, R, F, I, S, P>,
+) -> (&'slot mut AssembledNode<St, R, F, S>, I, P)
 where
     D: IntoIterator<Item = PreConfiguredDestination<'a>>,
     R: RequestEndpointSet<St>,
@@ -199,6 +200,7 @@ where
         storage: _,
         request_endpoints: _,
         interfaces,
+        persistence,
         on_event,
     } = recipe;
     let node = slot.as_mut_ptr();
@@ -212,7 +214,7 @@ where
     }
     let node = unsafe { slot.assume_init_mut() };
     configure_assembled_node(node, pre_configured_destinations, transport_identity);
-    (node, interfaces)
+    (node, interfaces, persistence)
 }
 
 #[allow(clippy::expect_used)]
@@ -226,8 +228,10 @@ fn configure_assembled_node<'a, D, St, R, F, S>(
     F: FnMut(PrnsEvent<'_>, &St),
     S: StorageLayout,
 {
+    let mut any_destination_declared = false;
     let mut any_destination_serves = false;
     for destination in pre_configured_destinations {
+        any_destination_declared = true;
         any_destination_serves |= matches!(
             destination,
             PreConfiguredDestination::Single {
@@ -239,7 +243,7 @@ fn configure_assembled_node<'a, D, St, R, F, S>(
             .expect("recipe destination is valid and fits the store");
     }
     assert!(
-        R::REGISTRATIONS.is_empty() || any_destination_serves,
+        R::REGISTRATIONS.is_empty() || any_destination_serves || !any_destination_declared,
         "the recipe declares request endpoints but no destination serves them; set request_endpoints: ServeMyRequestEndpoints::Yes on a destination"
     );
 
@@ -260,7 +264,7 @@ mod tests {
     use crate::identity::IdentityHash;
     use crate::routing::request_handlers::RequestPathHash;
     use crate::runtime::request_endpoints::{Decline, RequestContext, RequestEndpointPolicy};
-    use crate::runtime::ManuallyAttached;
+    use crate::runtime::{ManuallyAttached, NoPersistence};
     use crate::storage::TestFixedStorage;
 
     type Storage = TestFixedStorage<4, 4, 128, 4, 4, 4, 2, 2, 2, 2, 2, 2>;
@@ -325,7 +329,7 @@ mod tests {
     fn in_place_assembly_initializes_and_configures_the_node() {
         let mut slot = MaybeUninit::uninit();
         let storage: Storage = TestFixedStorage;
-        let (node, ManuallyAttached) = assemble_node_in_place(
+        let (node, ManuallyAttached, NoPersistence) = assemble_node_in_place(
             &mut slot,
             PrnsNodeRecipe {
                 transport_identity: Some(Zeroizing::new([0x33; IDENTITY_SECRET_KEY_LEN])),
@@ -337,6 +341,7 @@ mod tests {
                 storage,
                 request_endpoints: (),
                 interfaces: ManuallyAttached,
+                persistence: NoPersistence,
                 on_event: |_, _| {},
             },
         );
@@ -351,7 +356,7 @@ mod tests {
     fn declared_endpoints_with_no_serving_destination_fail_loudly() {
         let mut slot = MaybeUninit::uninit();
         let storage: Storage = TestFixedStorage;
-        let (_node, ManuallyAttached) = assemble_node_in_place(
+        let (_node, ManuallyAttached, NoPersistence) = assemble_node_in_place(
             &mut slot,
             PrnsNodeRecipe {
                 transport_identity: None,
@@ -363,6 +368,7 @@ mod tests {
                 storage,
                 request_endpoints: Routes,
                 interfaces: ManuallyAttached,
+                persistence: NoPersistence,
                 on_event: |_, _| {},
             },
         );

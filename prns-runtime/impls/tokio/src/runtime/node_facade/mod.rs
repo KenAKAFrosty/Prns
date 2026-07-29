@@ -42,11 +42,12 @@ pub use node_lifecycle::{
     SharedInstanceIdentityError,
 };
 pub use persistence::{
-    boot_timeline_origin, wall_clock_timeline_origin, DestinationIdentitySeedReport, FlushError,
-    FlushFailurePolicy, FlushMark, FlushReport, NodePersistence, PersistenceEvent,
-    PersistenceFlushStatus, PersistenceRestoreReport, PersistenceTrigger, PersistenceWorker,
-    PrepareFlushError, PreparedFlush, RatchetSeedReport, RegionFlush, RouteSeedProgress,
-    RouteSeedReport, TunnelSeedReport,
+    boot_timeline_origin, wall_clock_timeline_origin, DefaultLocationError,
+    DestinationIdentitySeedReport, FlushError, FlushFailurePolicy, FlushMark, FlushReport,
+    NodePersistence, PersistenceEvent, PersistenceFlushStatus, PersistenceIntent,
+    PersistenceRestoreReport, PersistenceTrigger, PersistenceWorker, PrepareFlushError,
+    PreparedFlush, RatchetSeedReport, RegionFlush, RouteSeedProgress, RouteSeedReport, SaveOnLearn,
+    SaveOnLearnWiring, TunnelSeedReport,
 };
 pub use request_response::ResponseSendError;
 pub use resource_admission::{ResourceAdmissionPeer, ResourceOfferAdmission, ResourceOfferMonitor};

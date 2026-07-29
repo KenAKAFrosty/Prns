@@ -58,6 +58,7 @@ async fn main() {
         request_endpoints: request_endpoints![Status],
         on_event: |_event, _state| {},
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
     });
     let responder_handle = responder.handle();
     let _server = responder_handle.supervise(server);
@@ -76,6 +77,7 @@ async fn main() {
         interfaces: move |node: &PrnsNodeHandle| {
             node.attach(client);
         },
+        persistence: NoPersistence,
     });
     let requester_handle = requester.handle();
     let announcer = responder_handle.clone();
@@ -146,7 +148,7 @@ fn responder_destination() -> PreConfiguredDestination<'static> {
     PreConfiguredDestination::Single {
         resource_strategy: ResourceStrategy::AcceptNone,
         app_name: "prns-example",
-        aspects: &["app-state", "responder"],
+        aspects: &["example", "app-state"],
         identity: try_generate_identity_secret().expect("OS entropy should be available"),
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
@@ -160,7 +162,7 @@ fn requester_destination() -> PreConfiguredDestination<'static> {
     PreConfiguredDestination::Single {
         resource_strategy: ResourceStrategy::AcceptNone,
         app_name: "prns-example",
-        aspects: &["app-state", "requester"],
+        aspects: &["example", "app-state"],
         identity: try_generate_identity_secret().expect("OS entropy should be available"),
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,

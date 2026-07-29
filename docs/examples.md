@@ -17,8 +17,10 @@ Every one runs from a fresh clone and ends on a bounded success condition, so yo
 | [`app_state.rs`](../personal-rns/examples/app_state.rs) | Your node's typed app state serving requests: an endpoint reads and updates a shared `StatusBoard` on every hit, the stand-in for your database or cache: `cargo tools guide rust-app-state`. |
 | [`resource_transfer.rs`](../personal-rns/examples/resource_transfer.rs) | Send 64 KiB over a link as a [Resource](more-concepts.md#resource) and get verified settlement (proof the data arrived intact): `cargo tools guide rust-resource-transfer`. |
 | [`dynamic_interface.rs`](../personal-rns/examples/dynamic_interface.rs) | Attach a new [Interface](more-concepts.md#the-essentials) to a running node, observe it live, then tear it down and observe its removal: `cargo tools guide rust-dynamic-interface`. |
+| [`persistence.rs`](../personal-rns/examples/persistence.rs) | Run it twice, on purpose. The first run hears an announce and saves what it learned; the second run restores it from disk and proves the destination is still known while nobody announces at all: `cargo tools guide rust-persistence`. Delete the printed directory to start over. |
 
-If you're familiar with Rust and want to de-sugar the command, you can run the focused examples directly:
+
+If you're familiar with Rust and want to de-sugar the commands, you can run the focused examples directly, e.g.:
 
 ```console
 cargo run --locked -p personal-rns --example bounded_request --features tokio-host,tcp

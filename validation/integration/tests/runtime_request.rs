@@ -1,4 +1,5 @@
 use core::time::Duration;
+use personal_rns::runtime::NoPersistence;
 
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, EstablishLink,
@@ -89,6 +90,7 @@ async fn a_request_endpoints_answers_a_live_request_over_tcp() {
         request_endpoints: request_endpoints![Echo],
         on_event: |_event, _state| {},
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
     });
 
     let announcer = node_a.handle();
@@ -149,6 +151,7 @@ async fn a_request_endpoints_answers_a_live_request_over_tcp() {
         interfaces: |node: &PrnsNodeHandle| {
             node.attach(client);
         },
+        persistence: NoPersistence,
     });
     let commands_b = node_b.handle();
 
@@ -234,6 +237,7 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
         request_endpoints: request_endpoints![Echo],
         on_event: |_event, _state| {},
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
     });
 
     let announcer = node_a.handle();
@@ -282,6 +286,7 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
         interfaces: |node: &PrnsNodeHandle| {
             node.attach(client);
         },
+        persistence: NoPersistence,
     });
     let handle = node_b.handle();
 
@@ -360,6 +365,7 @@ async fn the_hopspot_node_page_serves_over_tcp() {
         request_endpoints: request_endpoints![node_pages::NodeIndexPage],
         on_event: |_event, _state| {},
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
     });
 
     let announcer = node_a.handle();
@@ -408,6 +414,7 @@ async fn the_hopspot_node_page_serves_over_tcp() {
         interfaces: |node: &PrnsNodeHandle| {
             node.attach(client);
         },
+        persistence: NoPersistence,
     });
     let handle = node_b.handle();
 
@@ -485,6 +492,7 @@ async fn serve_the_hopspot_page_for_a_stock_client() {
         request_endpoints: node_pages::NodePageRoutes,
         on_event: |_event, _state| {},
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
     });
 
     let announcer = node_a.handle();
@@ -544,6 +552,7 @@ async fn a_split_response_answers_a_small_request_over_tcp() {
         request_endpoints: request_endpoints![Fat],
         on_event: |_event, _state| {},
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
     });
 
     let announcer = node_a.handle();
@@ -592,6 +601,7 @@ async fn a_split_response_answers_a_small_request_over_tcp() {
         interfaces: |node: &PrnsNodeHandle| {
             node.attach(client);
         },
+        persistence: NoPersistence,
     });
     let handle = node_b.handle();
 

@@ -62,8 +62,19 @@ impl PreConfiguredDestination<'_> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ManuallyAttached;
 
-pub struct PrnsNodeRecipe<Destinations, AppState, RequestEndpoints, OnEvent, Interfaces, Storage>
-where
+/// The explicit "this node forgets everything at exit" answer to the recipe's `persistence` field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NoPersistence;
+
+pub struct PrnsNodeRecipe<
+    Destinations,
+    AppState,
+    RequestEndpoints,
+    OnEvent,
+    Interfaces,
+    Storage,
+    Persistence = NoPersistence,
+> where
     OnEvent: FnMut(PrnsEvent<'_>, &AppState),
 {
     /// The transport role takes a whole identity, never a bare address: a transport node signs (tunnel synthesis), and RNS 1.4.0 keeps a dedicated persisted transport identity.
@@ -78,5 +89,6 @@ where
     pub storage: Storage,
     pub request_endpoints: RequestEndpoints,
     pub interfaces: Interfaces,
+    pub persistence: Persistence,
     pub on_event: OnEvent,
 }

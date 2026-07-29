@@ -80,8 +80,8 @@ pub use prns_runtime::interfaces::InterfaceStatus;
 pub use prns_runtime::routing::links::resources::ResourceStrategy;
 pub use prns_runtime::routing::ProofStrategy;
 pub use prns_runtime::runtime::{
-    Diagnostic, ManuallyAttached, Message, PreConfiguredDestination, PrnsEvent, PrnsNodeApi,
-    PrnsNodeRecipe, RuntimeHealth, SendError,
+    Diagnostic, ManuallyAttached, Message, NoPersistence, PreConfiguredDestination, PrnsEvent,
+    PrnsNodeApi, PrnsNodeRecipe, RuntimeHealth, SendError,
 };
 pub use prns_runtime::wire::{DestinationHash, TransportId};
 

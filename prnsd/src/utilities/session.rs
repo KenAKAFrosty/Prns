@@ -1,3 +1,4 @@
+use personal_rns::runtime::NoPersistence;
 use std::fmt;
 use std::future::Future;
 use std::time::Duration;
@@ -231,6 +232,7 @@ fn utility_node() -> UtilityNode {
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: ignore_event,
     })
 }

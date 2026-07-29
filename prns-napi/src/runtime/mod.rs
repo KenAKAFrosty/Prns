@@ -1,3 +1,4 @@
+use personal_rns::runtime::NoPersistence;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -383,6 +384,7 @@ async fn run_node(
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: move |event, _state: &()| sink.dispatch(event),
     });
     let mut registration_failure: Option<String> = None;

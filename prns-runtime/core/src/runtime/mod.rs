@@ -39,8 +39,8 @@ pub use identity_blackhole::{
 };
 pub use node::{
     assemble_node, configure_preconfigured_destination, AssembledNode,
-    ConfigurePreconfiguredDestinationError, ManuallyAttached, PreConfiguredDestination,
-    PrnsNodeRecipe, ServeMyRequestEndpoints,
+    ConfigurePreconfiguredDestinationError, ManuallyAttached, NoPersistence,
+    PreConfiguredDestination, PrnsNodeRecipe, ServeMyRequestEndpoints,
 };
 
 #[doc(hidden)]

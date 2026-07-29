@@ -1,3 +1,4 @@
+use personal_rns::runtime::NoPersistence;
 use std::fmt::Write as _;
 #[cfg(target_os = "ios")]
 use std::net::SocketAddr;
@@ -594,6 +595,7 @@ async fn run_engine(
         storage: GrowableHeap,
         request_endpoints: personal_hopspot_core::node_pages::NodePageRoutes,
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: move |event: PrnsEvent<'_>, _state: &()| match event {
             PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
                 destination,

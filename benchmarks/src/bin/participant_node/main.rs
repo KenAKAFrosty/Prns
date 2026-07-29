@@ -9,6 +9,7 @@ mod link_channel;
 mod request;
 mod resource;
 
+use personal_rns::runtime::NoPersistence;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{sync::Arc, time::Duration};
 
@@ -38,7 +39,7 @@ use personal_rns::runtime::request_endpoints::{
 };
 use personal_rns::runtime::{
     generate_identity_secret, Diagnostic, Message, PreConfiguredDestination, PrnsEvent, PrnsNode,
-    PrnsNodeHandle, PrnsNodeRecipe, ServeMyRequestEndpoints, SegmentCompression,
+    PrnsNodeHandle, PrnsNodeRecipe, SegmentCompression, ServeMyRequestEndpoints,
 };
 #[cfg(feature = "fixed-storage")]
 type NodeStorage = personal_rns::storage::Esp32S3<allocator_api2::alloc::Global>;
@@ -541,6 +542,7 @@ async fn run_relay(manifest: &Manifest, addr: &str) {
             node.add_interface(side_a);
             node.add_interface(side_b);
         },
+        persistence: NoPersistence,
     });
 
     println!(
@@ -593,6 +595,7 @@ where
                 node.add_interface(server);
             }
         },
+        persistence: NoPersistence,
     });
     (node, addresses)
 }
@@ -622,6 +625,7 @@ where
         interfaces: |node: &PrnsNodeHandle| {
             node.attach(client);
         },
+        persistence: NoPersistence,
     })
 }
 

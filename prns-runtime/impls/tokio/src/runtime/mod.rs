@@ -31,16 +31,17 @@ pub use identity_bootstrap::{
 pub use interface_store::{InterfaceStore, Subscription};
 pub use node_facade::{
     boot_timeline_origin, wall_clock_timeline_origin, AttachIntent, Attachable, AttachedInterface,
-    AttachedSupervisor, ByteStreamReader, ByteStreamWriter, DestinationIdentitySeedReport,
-    DetachedFleet, Fleet, FlushError, FlushFailurePolicy, FlushMark, FlushReport,
-    InterfaceAttachmentMetadata, InterfaceSupervisor, NodePersistence, NodeRunError,
-    NonRoutingIdentityError, PersistenceEvent, PersistenceFlushStatus, PersistenceRestoreReport,
-    PersistenceTrigger, PersistenceWorker, PrepareFlushError, PreparedFlush,
-    PreparedResourceReceiver, PrnsNode, PrnsNodeHandle, RatchetSeedReport, RegionFlush,
-    RegisterRequestEndpointError, RequestPathError, ResourceAdmissionPeer, ResourceOfferAdmission,
-    ResourceOfferMonitor, ResourceProgress, ResourceReceipt, ResourceReceiveError,
-    ResourceSendError, ResponseSendError, RouteSeedProgress, RouteSeedReport, SegmentCompression,
-    SharedInstanceIdentityError, StreamId, TunnelSeedReport, AUTO_COMPRESS_MAX_LEN,
+    AttachedSupervisor, ByteStreamReader, ByteStreamWriter, DefaultLocationError,
+    DestinationIdentitySeedReport, DetachedFleet, Fleet, FlushError, FlushFailurePolicy, FlushMark,
+    FlushReport, InterfaceAttachmentMetadata, InterfaceSupervisor, NodePersistence, NodeRunError,
+    NonRoutingIdentityError, PersistenceEvent, PersistenceFlushStatus, PersistenceIntent,
+    PersistenceRestoreReport, PersistenceTrigger, PersistenceWorker, PrepareFlushError,
+    PreparedFlush, PreparedResourceReceiver, PrnsNode, PrnsNodeHandle, RatchetSeedReport,
+    RegionFlush, RegisterRequestEndpointError, RequestPathError, ResourceAdmissionPeer,
+    ResourceOfferAdmission, ResourceOfferMonitor, ResourceProgress, ResourceReceipt,
+    ResourceReceiveError, ResourceSendError, ResponseSendError, RouteSeedProgress, RouteSeedReport,
+    SaveOnLearn, SaveOnLearnWiring, SegmentCompression, SharedInstanceIdentityError, StreamId,
+    TunnelSeedReport, AUTO_COMPRESS_MAX_LEN,
 };
 #[cfg(feature = "rnx")]
 pub use process_commands::ProcessCommands;

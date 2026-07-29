@@ -125,6 +125,16 @@ entrypoint = ["python3", "tools/guide/run-rust-example.py", "transport_node", "t
 requires = ["cargo", "python3"]
 
 [[task]]
+id = "guide.rust-persistence"
+summary = "Rust follow-up: a node saves what it learns and proves it across a full restart; run it twice."
+domain = "guide"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer"]
+entrypoint = ["python3", "tools/guide/run-rust-example.py", "persistence", "tokio-host,tcp"]
+requires = ["cargo", "python3"]
+
+[[task]]
 id = "build.napi"
 summary = "Build the Node.js native addon and its generated TypeScript definitions."
 domain = "build"

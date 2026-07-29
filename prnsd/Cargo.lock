@@ -3026,7 +3026,6 @@ dependencies = [
 name = "prns-config"
 version = "0.3.0"
 dependencies = [
- "home",
  "prns-core",
  "shlex 1.3.0",
  "tempfile",

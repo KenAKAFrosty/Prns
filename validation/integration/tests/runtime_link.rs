@@ -1,4 +1,5 @@
 use core::time::Duration;
+use personal_rns::runtime::NoPersistence;
 
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
@@ -82,6 +83,7 @@ async fn a_link_establishes_and_carries_data_across_two_nodes_over_udp() {
         interfaces: |node: &PrnsNodeHandle| {
             node.attach(udp_a);
         },
+        persistence: NoPersistence,
     });
 
     let announcer = node_a.handle();
@@ -128,6 +130,7 @@ async fn a_link_establishes_and_carries_data_across_two_nodes_over_udp() {
         interfaces: |node: &PrnsNodeHandle| {
             node.attach(udp_b);
         },
+        persistence: NoPersistence,
     });
     let handle = node_b.handle();
 

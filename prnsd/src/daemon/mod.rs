@@ -5,6 +5,8 @@ mod identity;
 mod interface_failure;
 mod interface_ownership;
 
+use personal_rns::runtime::NoPersistence;
+
 pub(crate) use configured_interfaces::{
     construct as construct_configured_interfaces, AttachedConfiguredInterface,
 };
@@ -206,8 +208,7 @@ pub(super) async fn run(
         },
     };
 
-    let persist_dir = persistence::store_dir(&storage_dir);
-    let node_persistence = match NodePersistence::open(&persist_dir) {
+    let node_persistence = match NodePersistence::in_reticulum_dir(&config_dir) {
         Ok(node_persistence) => Some(node_persistence),
         Err(error) => {
             tracing::error!(event = "persistence_unavailable", %error);
@@ -246,6 +247,7 @@ pub(super) async fn run(
             services::ListRoute
         ],
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: move |event, _state: &services::DaemonRequestState| {
             if let PrnsEvent::Diagnostic(Diagnostic::SelfRatchetRotated { destination }) = event {
                 let _ = rotated_tx.send(destination);

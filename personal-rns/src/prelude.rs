@@ -1,11 +1,13 @@
 pub use crate::{
     request_endpoints, CommandId, DestinationHash, Diagnostic, EngineCommand, InterfaceStatus,
-    ManuallyAttached, Message, PacketReceiptDelivered, PreConfiguredDestination, PrnsEvent,
-    PrnsNodeApi, PrnsNodeRecipe, ProofStrategy, RatchetPolicy, ResourceStrategy, RuntimeHealth,
-    SendError, Zeroizing, IDENTITY_SECRET_KEY_LEN,
+    ManuallyAttached, Message, NoPersistence, PacketReceiptDelivered, PreConfiguredDestination,
+    PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, ProofStrategy, RatchetPolicy, ResourceStrategy,
+    RuntimeHealth, SendError, Zeroizing, IDENTITY_SECRET_KEY_LEN,
 };
 
-pub use crate::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget};
+pub use crate::engine::{
+    AnnounceAppData, AnnounceNow, AnnounceTarget, PersistenceFlushCause, PersistenceFlushTarget,
+};
 pub use crate::interfaces::{BitrateBps, InterfaceKind};
 pub use crate::manifold::reconnect::ReconnectPolicy;
 pub use crate::routing::LinkRequestPolicy;
@@ -25,6 +27,13 @@ pub use crate::Esp32S3;
 pub use crate::{
     fill_os_entropy, try_generate_identity_secret, AttachIntent, Attachable, AttachedInterface,
     AttachedSupervisor, Fleet, PrnsNode, PrnsNodeHandle,
+};
+
+#[cfg(feature = "tokio-host")]
+pub use crate::node_introspection::NodeIntrospection;
+#[cfg(feature = "tokio-host")]
+pub use crate::runtime::{
+    NodePersistence, PersistenceEvent, PersistenceFlushStatus, SaveOnLearn, SaveOnLearnWiring,
 };
 
 #[cfg(all(feature = "embassy-host", not(feature = "tokio-host")))]

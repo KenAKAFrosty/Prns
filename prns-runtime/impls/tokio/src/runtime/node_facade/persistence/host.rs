@@ -12,18 +12,51 @@ use crate::wire::DestinationHash;
 use crate::engine::InstantMillis;
 use crate::manifold::driver::SelfRatchetSnapshot;
 
+use prns_runtime::runtime::{Diagnostic, NoPersistence};
+
+use crate::engine::PersistenceFlushCause;
+
 use super::{
     boot_timeline_origin, DestinationIdentitySeedReport, FlushError, FlushMark, FlushReport,
     PrepareFlushError, PrnsEvent, PrnsNode, PrnsNodeHandle, RatchetSeedReport, RequestEndpointSet,
-    RouteSeedReport, TunnelSeedReport,
+    RouteSeedProgress, RouteSeedReport, TunnelSeedReport,
 };
 
 const WRITE_PROBE: &str = ".write-probe";
 const DEFAULT_FLUSH_INTERVAL: Duration = Duration::from_secs(5 * 60);
+const SAVE_ON_LEARN_DEBOUNCE: Duration = Duration::from_secs(2);
 
 pub struct NodePersistence {
     store: FileStore,
     vault: FileVault,
+}
+
+#[derive(Debug)]
+pub enum DefaultLocationError {
+    HomeDirectoryUnavailable,
+    Io(std::io::Error),
+}
+
+impl core::fmt::Display for DefaultLocationError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::HomeDirectoryUnavailable => formatter.write_str(
+                "could not determine the conventional Reticulum directory; no home directory is available",
+            ),
+            Self::Io(error) => {
+                write!(formatter, "could not open the default persistence directory: {error}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for DefaultLocationError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::HomeDirectoryUnavailable => None,
+            Self::Io(error) => Some(error),
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -55,7 +88,19 @@ impl PersistenceRestoreReport {
 }
 
 impl NodePersistence {
-    pub fn open(directory: impl Into<PathBuf>) -> Result<Self, std::io::Error> {
+    /// Resolves the conventional Reticulum directory (`/etc/reticulum` holding a config, else `~/.config/reticulum` holding one, else `~/.reticulum`) and opens the snapshot store beneath it.
+    pub fn at_default_location() -> Result<Self, DefaultLocationError> {
+        let reticulum_dir = crate::persistence::reticulum_directory::resolve()
+            .ok_or(DefaultLocationError::HomeDirectoryUnavailable)?;
+        Self::in_reticulum_dir(reticulum_dir).map_err(DefaultLocationError::Io)
+    }
+
+    /// Snapshots live in a `prns` subdir of the RNS storage dir: a config dir shared with stock RNS keeps its own msgpack `storage/tunnels`, and our sealed region of the same name must never clobber it.
+    pub fn in_reticulum_dir(directory: impl Into<PathBuf>) -> Result<Self, std::io::Error> {
+        Self::custom_dir(directory.into().join("storage").join("prns"))
+    }
+
+    pub fn custom_dir(directory: impl Into<PathBuf>) -> Result<Self, std::io::Error> {
         let directory = directory.into();
         std::fs::create_dir_all(&directory)?;
         #[cfg(unix)]
@@ -91,8 +136,21 @@ impl NodePersistence {
         F: FnMut(PrnsEvent<'_>, &St),
         S: StorageLayout,
     {
+        self.restore_reporting(node, |_| {})
+    }
+
+    pub fn restore_reporting<St, R, F, S>(
+        &self,
+        node: &mut PrnsNode<St, R, F, S>,
+        progress: impl FnMut(RouteSeedProgress),
+    ) -> PersistenceRestoreReport
+    where
+        R: RequestEndpointSet<St>,
+        F: FnMut(PrnsEvent<'_>, &St),
+        S: StorageLayout,
+    {
         PersistenceRestoreReport {
-            routes: node.seed_routes_from_store(&self.store),
+            routes: node.seed_routes_from_store_reporting(&self.store, progress),
             destination_identities: node.seed_destination_identities_from_store(&self.store),
             tunnels: node.seed_tunnels_from_store(&self.store),
             ratchets: node.seed_self_ratchets_from_vault(&self.vault),
@@ -113,6 +171,77 @@ impl NodePersistence {
             changes: None,
             change_debounce: Duration::ZERO,
             failure_policy: FlushFailurePolicy::Tolerate,
+        }
+    }
+}
+
+pub struct SaveOnLearn {
+    route_changes: mpsc::UnboundedSender<()>,
+    ratchet_rotations: mpsc::UnboundedSender<DestinationHash>,
+}
+
+pub struct SaveOnLearnWiring {
+    route_changes: mpsc::UnboundedReceiver<()>,
+    ratchet_rotations: mpsc::UnboundedReceiver<DestinationHash>,
+}
+
+impl SaveOnLearn {
+    #[must_use]
+    pub fn channel() -> (Self, SaveOnLearnWiring) {
+        let (route_changes_sender, route_changes) = mpsc::unbounded_channel();
+        let (ratchet_rotations_sender, ratchet_rotations) = mpsc::unbounded_channel();
+        (
+            Self {
+                route_changes: route_changes_sender,
+                ratchet_rotations: ratchet_rotations_sender,
+            },
+            SaveOnLearnWiring {
+                route_changes,
+                ratchet_rotations,
+            },
+        )
+    }
+
+    pub fn observe(&self, event: &PrnsEvent<'_>) {
+        match event {
+            PrnsEvent::Diagnostic(
+                Diagnostic::AnnounceHeard { .. } | Diagnostic::RouteRemoved { .. },
+            ) => {
+                let _ignored = self.route_changes.send(());
+            }
+            PrnsEvent::Diagnostic(Diagnostic::SelfRatchetRotated { destination }) => {
+                let _ignored = self.ratchet_rotations.send(*destination);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The recipe's `persistence` field vocabulary: `NoPersistence` or a [`NodePersistence`], resolved by the host at construction.
+pub trait PersistenceIntent {
+    fn into_node_persistence(self) -> Option<NodePersistence>;
+}
+
+impl PersistenceIntent for NoPersistence {
+    fn into_node_persistence(self) -> Option<NodePersistence> {
+        None
+    }
+}
+
+impl PersistenceIntent for NodePersistence {
+    fn into_node_persistence(self) -> Option<NodePersistence> {
+        Some(self)
+    }
+}
+
+impl From<PersistenceTrigger> for PersistenceFlushCause {
+    fn from(trigger: PersistenceTrigger) -> Self {
+        match trigger {
+            PersistenceTrigger::Startup => Self::Startup,
+            PersistenceTrigger::Interval => Self::Interval,
+            PersistenceTrigger::RouteChange => Self::RouteChange,
+            PersistenceTrigger::RatchetRotation => Self::RatchetRotation,
+            PersistenceTrigger::Shutdown => Self::Shutdown,
         }
     }
 }
@@ -244,6 +373,13 @@ impl PersistenceWorker {
         self.changes = Some(changes);
         self.change_debounce = debounce;
         self
+    }
+
+    /// A flush rewrites each changed region whole, the same granularity the RNS reference uses for its path table; tens of thousands of routes still serialize to a few megabytes, unchanged regions are fingerprint-skipped, and the debounce coalesces bursts, so this trigger governs write frequency rather than write size.
+    #[must_use]
+    pub fn with_save_on_learn(self, wiring: SaveOnLearnWiring) -> Self {
+        self.with_ratchet_rotations(wiring.ratchet_rotations)
+            .with_route_changes(wiring.route_changes, SAVE_ON_LEARN_DEBOUNCE)
     }
 
     pub async fn flush_now(

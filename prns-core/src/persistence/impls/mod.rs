@@ -1,6 +1,7 @@
 cfg_if::cfg_if! {
     if #[cfg(feature = "std")] {
         mod file;
+        pub mod reticulum_directory;
 
         pub use file::{FileStore, FileStoreError};
     }

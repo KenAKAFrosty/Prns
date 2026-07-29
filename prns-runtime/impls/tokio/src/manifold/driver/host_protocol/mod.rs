@@ -3,7 +3,10 @@ use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 
-use crate::engine::{CommandId, Departure, IssuedCommand, SendRequestFailure, Settlement};
+use crate::engine::{
+    CommandId, Departure, IssuedCommand, PersistenceFlushCause, PersistenceFlushTarget,
+    SendRequestFailure, Settlement,
+};
 use crate::interfaces::{ConnectionView, InterfaceDescriptor, InterfaceId};
 use crate::manifold::grant_lane::{TokioGrantConsumer, TokioGrantProducer};
 use crate::routing::links::channel::byte_stream::StreamId;
@@ -25,6 +28,16 @@ use prns_runtime::runtime::{PersistedStateSnapshot, SelfRatchetSnapshot, SelfRat
 #[allow(clippy::large_enum_variant)]
 pub enum HostCommand {
     Engine(IssuedCommand),
+    NotePersistenceFlush {
+        cause: PersistenceFlushCause,
+        target: PersistenceFlushTarget,
+        observed: Option<oneshot::Sender<()>>,
+    },
+    NotePersistenceFlushFailure {
+        cause: PersistenceFlushCause,
+        target: PersistenceFlushTarget,
+        observed: oneshot::Sender<()>,
+    },
     AwaitedEngine {
         issued: IssuedCommand,
         completion: oneshot::Sender<Settlement>,

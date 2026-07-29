@@ -120,6 +120,8 @@ fn an_ifac_frame_crosses_the_seam_and_leaves_masked_through_the_peer() {
             *heard_sink.borrow_mut() += 1;
         }
         Journaled::Delivered(_)
+        | Journaled::PersistenceFlushed { .. }
+        | Journaled::PersistenceFlushFailed { .. }
         | Journaled::SelfRatchetRotated { .. }
         | Journaled::CommandSettled { .. }
         | Journaled::AnnounceHeldDropped { .. }

@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use personal_rns::runtime::NoPersistence;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -476,6 +477,7 @@ async fn run(
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: move |event, _state: &()| {
             if !publish_event(event_sink.as_ref(), event) {
                 event_backpressure.notify_waiters();
@@ -1154,7 +1156,9 @@ fn publish_event(sink: &dyn NativeEventSink, event: PrnsEvent<'_>) -> bool {
     match event {
         PrnsEvent::Message(message) => publish_message(sink, message),
         PrnsEvent::Diagnostic(diagnostic) => {
-            sink.publish_diagnostic(translate_diagnostic(diagnostic));
+            if let Some(diagnostic) = translate_diagnostic(diagnostic) {
+                sink.publish_diagnostic(diagnostic);
+            }
             true
         }
     }
@@ -1273,8 +1277,11 @@ fn publish_message(sink: &dyn NativeEventSink, message: Message<'_>) -> bool {
     sink.publish_application(event)
 }
 
-fn translate_diagnostic(diagnostic: Diagnostic) -> DiagnosticEvent {
-    match diagnostic {
+fn translate_diagnostic(diagnostic: Diagnostic) -> Option<DiagnosticEvent> {
+    Some(match diagnostic {
+        Diagnostic::PersistenceRestored { .. }
+        | Diagnostic::PersistenceFlushed { .. }
+        | Diagnostic::PersistenceFlushFailed { .. } => return None,
         Diagnostic::AnnounceHeard {
             destination,
             hops,
@@ -1357,7 +1364,7 @@ fn translate_diagnostic(diagnostic: Diagnostic) -> DiagnosticEvent {
                 destination: host_destination(destination),
             },
         },
-    }
+    })
 }
 
 #[cfg(test)]

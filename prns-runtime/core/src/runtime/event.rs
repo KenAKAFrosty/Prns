@@ -10,7 +10,7 @@
 
 use crate::engine::LinkClosedReason;
 use crate::engine::{CommandId, HeldDropCause, LinkEstablished, RouteRemovalCause, Settlement};
-use crate::engine::{InstantMillis, Journaled};
+use crate::engine::{InstantMillis, Journaled, PersistenceFlushCause, PersistenceFlushTarget};
 use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
 use crate::routing::delivery::Delivery;
@@ -97,6 +97,28 @@ pub enum Diagnostic {
         destination: DestinationHash,
         hops: u8,
         source_interface: InterfaceId,
+    },
+    /// The recipe's persistence store was seeded into this boot's engine before the first frame moved.
+    PersistenceRestored {
+        routes: u32,
+        destination_identities: u32,
+        tunnels: u32,
+        ratchets: u32,
+        refused: u32,
+        dropped: u32,
+    },
+    /// The persistence worker landed one independently stored part of a save.
+    PersistenceFlushed {
+        cause: PersistenceFlushCause,
+        target: PersistenceFlushTarget,
+    },
+    /// The persistence worker could not land one independently stored part of a save.
+    ///
+    /// Storage-specific error detail is written to the host log; this owned diagnostic
+    /// preserves the stable policy-relevant facts for applications.
+    PersistenceFlushFailed {
+        cause: PersistenceFlushCause,
+        target: PersistenceFlushTarget,
     },
     AnnounceHeldDropped {
         destination: DestinationHash,
@@ -254,6 +276,12 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
             }),
             Journaled::CommandSettled { id, settlement } => {
                 PrnsEvent::Diagnostic(Diagnostic::CommandSettled { id, settlement })
+            }
+            Journaled::PersistenceFlushed { cause, target } => {
+                PrnsEvent::Diagnostic(Diagnostic::PersistenceFlushed { cause, target })
+            }
+            Journaled::PersistenceFlushFailed { cause, target } => {
+                PrnsEvent::Diagnostic(Diagnostic::PersistenceFlushFailed { cause, target })
             }
             Journaled::LinkEstablished(established) => {
                 PrnsEvent::Diagnostic(Diagnostic::LinkEstablished(established))

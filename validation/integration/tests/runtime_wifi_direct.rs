@@ -1,4 +1,5 @@
 use core::time::Duration;
+use personal_rns::runtime::NoPersistence;
 use std::net::Ipv4Addr;
 
 use personal_rns::engine::{
@@ -166,6 +167,7 @@ async fn a_wifi_direct_group_forms_and_carries_an_announce_between_two_nodes() {
         request_endpoints: request_endpoints![],
         on_event: |_event, _state| {},
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
     });
     let commands_a = node_a.handle();
     let _sup_a = commands_a.supervise(WifiDirectAuto::new(backend_a, GoIntent::PREFER_CLIENT));
@@ -183,6 +185,7 @@ async fn a_wifi_direct_group_forms_and_carries_an_announce_between_two_nodes() {
             }
         },
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
     });
     let commands_b = node_b.handle();
     let _sup_b = commands_b.supervise(WifiDirectAuto::new(backend_b, GoIntent::PREFER_OWNER));

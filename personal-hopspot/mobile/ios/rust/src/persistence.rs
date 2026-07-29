@@ -21,7 +21,7 @@ pub(crate) struct PreparedPersistence {
 impl PreparedPersistence {
     pub(crate) fn open(storage_directory: &Path) -> Result<Self, std::io::Error> {
         Ok(Self {
-            persistence: NodePersistence::open(storage_directory.join(STORE_DIRECTORY))?,
+            persistence: NodePersistence::custom_dir(storage_directory.join(STORE_DIRECTORY))?,
         })
     }
 
@@ -171,7 +171,7 @@ mod tests {
     };
     use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
     use personal_rns::runtime::{
-        Diagnostic, ManuallyAttached, PreConfiguredDestination, PrnsNodeRecipe,
+        Diagnostic, ManuallyAttached, NoPersistence, PreConfiguredDestination, PrnsNodeRecipe,
         ServeMyRequestEndpoints,
     };
     use personal_rns::storage::GrowableHeap;
@@ -261,6 +261,7 @@ mod tests {
             storage: GrowableHeap,
             request_endpoints: personal_rns::request_endpoints![],
             interfaces: ManuallyAttached,
+            persistence: NoPersistence,
             on_event: |_event, _state| {},
         });
         let handle_a = node_a.handle();
@@ -291,6 +292,7 @@ mod tests {
                     let _ = change_tx.send(());
                 }
             },
+            persistence: NoPersistence,
         })
         .with_timeline_origin(prepared.timeline_origin());
         let handle_b = node_b.handle();
@@ -357,6 +359,7 @@ mod tests {
             storage: GrowableHeap,
             request_endpoints: personal_rns::request_endpoints![],
             interfaces: ManuallyAttached,
+            persistence: NoPersistence,
             on_event: |_event, _state| {},
         })
         .with_timeline_origin(restarted.timeline_origin());
@@ -384,6 +387,7 @@ mod tests {
                 handle.attach(requester_client);
             },
             on_event: |_event, _state| {},
+            persistence: NoPersistence,
         });
         let requester_handle = requester_node.handle();
         let request = async {
@@ -438,6 +442,7 @@ mod tests {
             storage: GrowableHeap,
             request_endpoints: personal_rns::request_endpoints![],
             interfaces: ManuallyAttached,
+            persistence: NoPersistence,
             on_event,
         })
         .with_timeline_origin(timeline_origin)

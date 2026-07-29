@@ -1,4 +1,5 @@
 use core::time::Duration;
+use personal_rns::runtime::NoPersistence;
 
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
@@ -58,6 +59,7 @@ async fn an_app_dials_the_shared_instance_and_is_heard_at_a_discounted_hop() {
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
                 destination,
@@ -79,6 +81,7 @@ async fn an_app_dials_the_shared_instance_and_is_heard_at_a_discounted_hop() {
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: |_event, _state| {},
     });
     let app_commands = app.handle();
@@ -151,6 +154,7 @@ async fn a_leaf_shared_instance_carries_announces_across_its_local_boundary() {
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: |_event, _state| {},
     })
     .with_shared_instance_identity(secret(0xD1))
@@ -180,6 +184,7 @@ async fn a_leaf_shared_instance_carries_announces_across_its_local_boundary() {
                 let _ = network_heard_tx.send(destination);
             }
         },
+        persistence: NoPersistence,
     });
     let network_handle = network_node.handle();
 
@@ -207,6 +212,7 @@ async fn a_leaf_shared_instance_carries_announces_across_its_local_boundary() {
                 let _ = local_heard_tx.send(destination);
             }
         },
+        persistence: NoPersistence,
     });
     let local_handle = local_node.handle();
 

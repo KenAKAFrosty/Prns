@@ -14,6 +14,7 @@ async fn main() {
         request_endpoints: request_endpoints![],
         on_event: |_event, _state| {},
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
     });
     let handle = node.handle();
     let server = TcpServer::bind("127.0.0.1:0")

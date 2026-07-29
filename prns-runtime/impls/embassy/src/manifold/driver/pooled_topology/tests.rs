@@ -60,6 +60,8 @@ fn a_pooled_ifac_slot_added_at_runtime_opens_inbound_then_frees_on_remove() {
             *heard_sink.borrow_mut() += 1;
         }
         Journaled::Delivered(_)
+        | Journaled::PersistenceFlushed { .. }
+        | Journaled::PersistenceFlushFailed { .. }
         | Journaled::SelfRatchetRotated { .. }
         | Journaled::CommandSettled { .. }
         | Journaled::AnnounceHeldDropped { .. }
@@ -182,6 +184,8 @@ fn a_pooled_slot_retagged_at_runtime_carries_traffic_under_the_new_id() {
             *heard_sink.borrow_mut() += 1;
         }
         Journaled::Delivered(_)
+        | Journaled::PersistenceFlushed { .. }
+        | Journaled::PersistenceFlushFailed { .. }
         | Journaled::SelfRatchetRotated { .. }
         | Journaled::CommandSettled { .. }
         | Journaled::AnnounceHeldDropped { .. }

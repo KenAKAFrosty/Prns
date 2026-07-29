@@ -1,3 +1,4 @@
+use personal_rns::runtime::NoPersistence;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -155,6 +156,7 @@ where
         request_endpoints: make_request_endpoints(),
         interfaces: personal_rns::runtime::ManuallyAttached,
         on_event: listener_event,
+        persistence: NoPersistence,
     });
     if !args.no_auth {
         for identity in &args.allowed {

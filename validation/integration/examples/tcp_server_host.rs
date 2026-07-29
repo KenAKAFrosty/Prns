@@ -1,6 +1,7 @@
 #![allow(clippy::expect_used)]
 
 use core::time::Duration;
+use personal_rns::runtime::NoPersistence;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
@@ -56,6 +57,7 @@ async fn main() {
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
                 source_interface,

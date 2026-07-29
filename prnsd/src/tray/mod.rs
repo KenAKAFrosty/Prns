@@ -449,6 +449,11 @@ mod platform {
     }
 
     pub(crate) fn run(args: cli::DaemonArgs, managed: Option<ManagedProcess>) -> ! {
+        let report_panic = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |panic_info| {
+            report_panic(panic_info);
+            std::process::exit(101);
+        }));
         let mut event_loop_builder = EventLoop::<TrayEvent>::with_user_event();
         #[cfg(target_os = "macos")]
         {

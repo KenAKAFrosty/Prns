@@ -34,6 +34,7 @@ async fn main() {
         app_state: (),
         on_event: |_event, _state| {},
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
     });
     let node_a_handle = node_a.handle();
     let _server = node_a_handle.supervise(tcp_server_interface);
@@ -61,6 +62,7 @@ async fn main() {
         interfaces: move |node: &PrnsNodeHandle| {
             node.attach(client);
         },
+        persistence: NoPersistence,
     });
     let node_b_handle = node_b.handle();
     println!("Node B: TCP client only (no radio or USB discovery)");

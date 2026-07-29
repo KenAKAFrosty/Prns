@@ -1,5 +1,6 @@
 #![allow(clippy::expect_used)]
 
+use personal_rns::runtime::NoPersistence;
 use std::string::String;
 
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
@@ -82,6 +83,7 @@ async fn main() {
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: |event, _state: &()| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
                 destination,

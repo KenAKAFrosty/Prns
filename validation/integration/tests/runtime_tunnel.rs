@@ -1,4 +1,5 @@
 use core::time::Duration;
+use personal_rns::runtime::NoPersistence;
 
 use personal_rns::engine::RatchetPolicy;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
@@ -84,6 +85,7 @@ async fn a_recipe_node_synthesizes_a_tunnel_when_its_transport_is_a_held_identit
         interfaces: |node: &PrnsNodeHandle| {
             node.attach(client);
         },
+        persistence: NoPersistence,
     });
 
     let probe = async move {

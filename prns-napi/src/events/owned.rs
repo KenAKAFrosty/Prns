@@ -181,7 +181,7 @@ impl OwnedEvent {
     pub fn capture(event: PrnsEvent<'_>) -> Option<Self> {
         match event {
             PrnsEvent::Message(message) => Self::capture_message(message),
-            PrnsEvent::Diagnostic(diagnostic) => Some(Self::capture_diagnostic(diagnostic)),
+            PrnsEvent::Diagnostic(diagnostic) => Self::capture_diagnostic(diagnostic),
         }
     }
 
@@ -275,8 +275,11 @@ impl OwnedEvent {
         }
     }
 
-    fn capture_diagnostic(diagnostic: Diagnostic) -> Self {
-        match diagnostic {
+    fn capture_diagnostic(diagnostic: Diagnostic) -> Option<Self> {
+        Some(match diagnostic {
+            Diagnostic::PersistenceRestored { .. }
+            | Diagnostic::PersistenceFlushed { .. }
+            | Diagnostic::PersistenceFlushFailed { .. } => return None,
             Diagnostic::AnnounceHeard {
                 destination,
                 hops,
@@ -354,6 +357,6 @@ impl OwnedEvent {
                     RouteRemovalCause::Dropped => "routeDropped",
                 },
             },
-        }
+        })
     }
 }

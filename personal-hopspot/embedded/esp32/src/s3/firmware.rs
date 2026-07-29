@@ -138,8 +138,9 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         pre_configured_destinations: destinations.into_preconfigured_destinations(),
         app_state: (),
         storage: EngineStorageType::default(),
-        routes: screen::node_pages::NodePageRoutes,
-        interfaces: personal_rns::runtime::Manual,
+        request_endpoints: screen::node_pages::NodePageRoutes,
+        interfaces: personal_rns::runtime::ManuallyAttached,
+        persistence: personal_rns::runtime::NoPersistence,
         on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
     };
 

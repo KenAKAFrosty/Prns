@@ -42,6 +42,7 @@ async fn main() {
         request_endpoints: request_endpoints![Echo],
         on_event: |_event, _state| {},
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
     });
     let responder_handle = responder.handle();
     let _server = responder_handle.supervise(tcp_server);
@@ -64,6 +65,7 @@ async fn main() {
         interfaces: move |node: &PrnsNodeHandle| {
             node.attach(tcp_client);
         },
+        persistence: NoPersistence,
     });
     let requester_handle = requester.handle();
 

@@ -1,8 +1,9 @@
 mod host;
 
 pub use host::{
-    FlushFailurePolicy, NodePersistence, PersistenceEvent, PersistenceFlushStatus,
-    PersistenceRestoreReport, PersistenceTrigger, PersistenceWorker,
+    DefaultLocationError, FlushFailurePolicy, NodePersistence, PersistenceEvent,
+    PersistenceFlushStatus, PersistenceIntent, PersistenceRestoreReport, PersistenceTrigger,
+    PersistenceWorker, SaveOnLearn, SaveOnLearnWiring,
 };
 
 use tokio::sync::oneshot;

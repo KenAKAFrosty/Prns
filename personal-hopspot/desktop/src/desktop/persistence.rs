@@ -10,7 +10,7 @@ const PERSISTENCE_INTERVAL: Duration = Duration::from_secs(60);
 const SHUTDOWN_FLUSH_TIMEOUT: Duration = Duration::from_secs(3);
 
 pub(super) fn open(storage_dir: &Path) -> Result<NodePersistence, std::io::Error> {
-    NodePersistence::open(storage_dir.join(PERSISTENCE_DIRECTORY))
+    NodePersistence::custom_dir(storage_dir.join(PERSISTENCE_DIRECTORY))
 }
 
 pub(super) struct ShutdownFlush {

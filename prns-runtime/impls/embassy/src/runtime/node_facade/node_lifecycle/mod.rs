@@ -22,7 +22,7 @@ use super::super::{
 };
 use super::command_handle::PrnsNodeHandle;
 use prns_runtime::runtime::placement::assemble_node_in_place;
-use prns_runtime::runtime::{assemble_node, AssembledNode};
+use prns_runtime::runtime::{assemble_node, AssembledNode, NoPersistence};
 
 pub struct ManifoldWiring<
     M,
@@ -218,7 +218,7 @@ where
         unsafe {
             let assembled = &mut *core::ptr::addr_of_mut!((*node).node)
                 .cast::<MaybeUninit<AssembledNode<St, R, F, S>>>();
-            let (_, ManuallyAttached) = assemble_node_in_place(assembled, recipe);
+            let (_, ManuallyAttached, NoPersistence) = assemble_node_in_place(assembled, recipe);
             core::ptr::addr_of_mut!((*node).inbound).write(inbound);
             core::ptr::addr_of_mut!((*node).egress).write(egress);
             core::ptr::addr_of_mut!((*node).notify).write(notify);
@@ -264,7 +264,7 @@ where
                 "PrnsNode INTERFACE_CAPACITY must cover every manifold lane"
             );
         }
-        let (node, ManuallyAttached) = assemble_node(recipe);
+        let (node, ManuallyAttached, NoPersistence) = assemble_node(recipe);
         let mut descriptors = HeaplessVec::new();
         for descriptor in wiring.initial {
             if descriptors.push(descriptor).is_err() {

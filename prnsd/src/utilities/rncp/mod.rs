@@ -1,6 +1,7 @@
 mod args;
 mod io;
 
+use personal_rns::runtime::NoPersistence;
 use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -498,6 +499,7 @@ where
         request_endpoints: make_request_endpoints(),
         interfaces: personal_rns::runtime::ManuallyAttached,
         on_event: listener_event,
+        persistence: NoPersistence,
     });
     if args.allow_fetch && !args.no_auth {
         for identity in &args.allowed {

@@ -494,6 +494,26 @@ where
                 let _ = ready.send(applied);
                 CommandEffect::UNCHANGED
             }
+            HostCommand::NotePersistenceFlush {
+                cause,
+                target,
+                observed,
+            } => {
+                journal.route(Journaled::PersistenceFlushed { cause, target });
+                if let Some(observed) = observed {
+                    let _ = observed.send(());
+                }
+                CommandEffect::UNCHANGED
+            }
+            HostCommand::NotePersistenceFlushFailure {
+                cause,
+                target,
+                observed,
+            } => {
+                journal.route(Journaled::PersistenceFlushFailed { cause, target });
+                let _ = observed.send(());
+                CommandEffect::UNCHANGED
+            }
             HostCommand::SnapshotPersistedState { reply } => {
                 if let Some(snapshot) = persistence_snapshots::snapshot_persisted_state(engine, now)
                 {

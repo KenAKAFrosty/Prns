@@ -1,3 +1,4 @@
+use personal_rns::runtime::NoPersistence;
 use std::io;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
@@ -112,6 +113,7 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
         storage: GrowableHeap,
         request_endpoints: personal_hopspot_core::node_pages::NodePageRoutes,
         interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: move |event, _state: &()| {
             if let PrnsEvent::Diagnostic(Diagnostic::SelfRatchetRotated { destination }) = event {
                 let _ = rotated_tx.send(destination);
