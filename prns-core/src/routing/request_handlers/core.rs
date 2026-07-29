@@ -61,6 +61,7 @@ pub trait RequestHandlerTable {
         policy: RequestPolicy,
     ) -> Result<(), TablePushError>;
 
+    fn remove_at(&mut self, slot: usize);
     fn set_policy_at(&mut self, slot: usize, policy: RequestPolicy);
     fn clear_allowed_at(&mut self, slot: usize);
     fn allowed_contains_at(&self, slot: usize, identity: &IdentityHash) -> bool;
@@ -101,6 +102,20 @@ impl<C: RequestHandlerTable> RequestHandlers<C> {
             }
             None => self.table.push(destination, path_hash, policy),
         }
+    }
+
+    /// Remove a handler row if it exists. An already absent route is an
+    /// idempotent no-op, which lets runtime reconcilers converge safely.
+    pub fn unregister(
+        &mut self,
+        destination: &DestinationHash,
+        path_hash: &RequestPathHash,
+    ) -> bool {
+        let Some(slot) = self.slot_for(destination, path_hash) else {
+            return false;
+        };
+        self.table.remove_at(slot);
+        true
     }
 
     pub fn allow(
@@ -239,6 +254,25 @@ mod tests {
             "a fresh registration starts from an empty list",
         );
         assert_eq!(handlers.len(), 1, "re-registration keeps one row");
+    }
+
+    #[test]
+    fn unregister_removes_exactly_one_handler_and_is_idempotent() {
+        let mut handlers = TestHandlers::default();
+        let first = RequestPathHash::of("/page/first.mu");
+        let second = RequestPathHash::of("/page/second.mu");
+        handlers
+            .register(dest(1), first, RequestPolicy::AllowAll)
+            .unwrap();
+        handlers
+            .register(dest(1), second, RequestPolicy::AllowAll)
+            .unwrap();
+
+        assert!(handlers.unregister(&dest(1), &first));
+        assert!(!handlers.unregister(&dest(1), &first));
+        assert!(!handlers.permits(&dest(1), &first, None));
+        assert!(handlers.permits(&dest(1), &second, None));
+        assert_eq!(handlers.len(), 1);
     }
 
     #[test]

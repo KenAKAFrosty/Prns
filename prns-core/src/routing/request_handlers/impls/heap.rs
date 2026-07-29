@@ -44,6 +44,15 @@ impl RequestHandlerTable for HeapRequestHandlerTable {
         Ok(())
     }
 
+    fn remove_at(&mut self, slot: usize) {
+        if slot < self.destinations.len() {
+            self.destinations.remove(slot);
+            self.path_hashes.remove(slot);
+            self.policies.remove(slot);
+            self.allowed.remove(slot);
+        }
+    }
+
     fn set_policy_at(&mut self, slot: usize, policy: RequestPolicy) {
         if let Some(existing) = self.policies.get_mut(slot) {
             *existing = policy;

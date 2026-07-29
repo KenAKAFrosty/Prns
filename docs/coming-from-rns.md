@@ -110,11 +110,15 @@ The doctor checks your toolchain and installs nothing. The smoke run proves the 
 
 ## Serve NomadNet pages directly from the daemon
 
-*(jot: IN-FLIGHT FEATURE (2026-07-29, this checkout's uncommitted work per user) — prnsd hosts the pages a NomadNet node serves today, no NomadNet process required. Draft ONLY against the landed tree when the time comes: verify what actually ships (page/file serving? which paths, which config/stanza or CLI verbs, where content lives on disk) and how it's proven (ideally interop-tested against a real NomadNet browser before this section makes the claim). Angle to keep: pairs beautifully with the hosted-node/Railway story — a cloud prnsd that also serves your pages; and it extends the "one binary" theme. Nothing about this exists under nomadnet/micron names in prnsd/src yet as of scaffolding; the request-endpoint plumbing looks like the likely substrate.)*
+Drop `.mu` files into `pages/` inside your Reticulum config directory, and prnsd becomes a page host: it announces a `nomadnetwork.node` destination and serves each file at the `/page/` paths NomadNet browsers already request, with `index.mu` as the landing page. A NomadNet process does not need to run for your node to have a presence on the network.
+
+Pages are read from disk per request, so edits go live immediately. Prnsd lightly rescans the directory every five minutes to register additions and retire deleted or renamed paths; `prnsd pages refresh` applies the same reconciliation on demand.
+
+This pairs naturally with a hosted node: the same daemon routing traffic in the cloud carries your pages with it.
 
 ## Beyond the daemon
 
-*(jot: short outro widening the after-picture — the same protocol on a $5 board (flash a Hopspot), in a browser tab, and behind SDKs for the languages listed in the README; links only, one paragraph, doors-to-paths.)*
+prnsd is one face of a larger engine, and that engine goes everywhere: onto a $5 microcontroller ([flash a Hopspot](https://prns.dev/flash)), into a browser tab, and inside your own software through [SDKs for Rust, TypeScript, Python, and more](../README.md#what-is-prns). Anything you build against one lane meshes with the rest, including the RNS network you already run.
 
 ## Verify it yourself
 

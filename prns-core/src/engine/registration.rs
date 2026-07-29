@@ -210,8 +210,30 @@ impl<S: StorageLayout> EngineState<S> {
         path: &str,
         policy: RequestPolicy,
     ) -> Result<(), TablePushError> {
+        self.register_request_handler_hash(destination, RequestPathHash::of(path), policy)
+    }
+
+    /// Register a request handler when the host has already derived the
+    /// protocol path hash.
+    pub fn register_request_handler_hash(
+        &mut self,
+        destination: &DestinationHash,
+        path_hash: RequestPathHash,
+        policy: RequestPolicy,
+    ) -> Result<(), TablePushError> {
         self.request_handlers
-            .register(*destination, RequestPathHash::of(path), policy)
+            .register(*destination, path_hash, policy)
+    }
+
+    /// Remove a runtime request handler. Requests already admitted before this
+    /// mutation may still reach the application router; callers that need an
+    /// immediate content cutoff should update their application state first.
+    pub fn unregister_request_handler_hash(
+        &mut self,
+        destination: &DestinationHash,
+        path_hash: &RequestPathHash,
+    ) -> bool {
+        self.request_handlers.unregister(destination, path_hash)
     }
 
     /// Admit one identified peer to an [`RequestPolicy::AllowList`] handler (RNS 1.4.0's `allowed_list`)

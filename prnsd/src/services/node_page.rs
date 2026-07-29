@@ -30,15 +30,12 @@ pub(crate) fn activate<R, F, S>(
     node: &mut PrnsNode<DaemonRequestState, R, F, S>,
     identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
     catalog: &NodePageCatalog,
-) -> Result<Option<NodePageDestination>, ConfigurePreconfiguredDestinationError>
+) -> Result<NodePageDestination, ConfigurePreconfiguredDestinationError>
 where
     R: RequestEndpointSet<DaemonRequestState>,
     F: FnMut(PrnsEvent<'_>, &DaemonRequestState),
     S: StorageLayout,
 {
-    if catalog.is_empty() {
-        return Ok(None);
-    }
     let destination =
         node.register_preconfigured_destination(PreConfiguredDestination::Single {
             app_name: APP_NAME,
@@ -52,13 +49,13 @@ where
             request_endpoints: ServeMyRequestEndpoints::No,
         })?;
     for path in catalog.request_paths() {
-        node.register_request_path(&destination, path, RequestPolicy::AllowAll)
+        node.register_request_path(&destination, &path, RequestPolicy::AllowAll)
             .map_err(ConfigurePreconfiguredDestinationError::RegisterRequestHandler)?;
     }
-    Ok(Some(NodePageDestination {
+    Ok(NodePageDestination {
         hash: destination,
         index_path: catalog.index_path(),
-    }))
+    })
 }
 
 #[cfg(test)]

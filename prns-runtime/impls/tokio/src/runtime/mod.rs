@@ -40,8 +40,8 @@ pub use node_facade::{
     RegionFlush, RegisterRequestEndpointError, RequestPathError, ResourceAdmissionPeer,
     ResourceOfferAdmission, ResourceOfferMonitor, ResourceProgress, ResourceReceipt,
     ResourceReceiveError, ResourceSendError, ResponseSendError, RouteSeedProgress, RouteSeedReport,
-    SaveOnLearn, SaveOnLearnWiring, SegmentCompression, SharedInstanceIdentityError, StreamId,
-    TunnelSeedReport, AUTO_COMPRESS_MAX_LEN,
+    RuntimeRequestHandlerError, SaveOnLearn, SaveOnLearnWiring, SegmentCompression,
+    SharedInstanceIdentityError, StreamId, TunnelSeedReport, AUTO_COMPRESS_MAX_LEN,
 };
 #[cfg(feature = "rnx")]
 pub use process_commands::ProcessCommands;

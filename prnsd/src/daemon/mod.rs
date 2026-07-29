@@ -40,6 +40,7 @@ use personal_rns::PlanRuntimeContext;
 use prnsd_control::{config_digest, ManagedProcess, ReloadRequest, ReloadResult, ServiceError};
 
 const TRAY_STATUS_INTERVAL: Duration = Duration::from_secs(2);
+const NODE_PAGE_REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct DaemonStatus {
@@ -399,6 +400,7 @@ pub(super) async fn run(
         },
         None => services::ManagementDestinations::none(),
     };
+    let node_page_destination = management_destinations.node_page_destination();
 
     if plan.panic_on_interface_error && startup.failed != 0 {
         tracing::error!(
@@ -514,6 +516,8 @@ pub(super) async fn run(
         shutdown,
         operating_system_shutdown,
     ));
+    let mut page_refresh_tick = Box::pin(tokio::time::sleep(NODE_PAGE_REFRESH_INTERVAL));
+    let mut page_refresh_tasks = tokio::task::JoinSet::new();
     loop {
         tokio::select! {
             result = &mut node_run => {
@@ -580,8 +584,91 @@ pub(super) async fn run(
                     }
                 }
             }
+            _ = &mut page_refresh_tick => {
+                if let Some(destination) = node_page_destination {
+                    let pages = node_pages.clone();
+                    let handle = prns_handle.clone();
+                    page_refresh_tasks.spawn(async move {
+                        match pages.refresh(&handle, destination).await {
+                            Ok(report) if report.added != 0 || report.removed != 0 => {
+                                tracing::info!(
+                                    event = "node_pages_refreshed",
+                                    discovered = report.discovered,
+                                    added = report.added,
+                                    removed = report.removed,
+                                    unchanged = report.unchanged,
+                                    cause = "periodic",
+                                );
+                            }
+                            Ok(_) => {}
+                            Err(error) => {
+                                tracing::warn!(
+                                    event = "node_pages_refresh_failed",
+                                    cause = "periodic",
+                                    error = %error,
+                                );
+                            }
+                        }
+                    });
+                }
+                page_refresh_tick
+                    .as_mut()
+                    .reset(tokio::time::Instant::now() + NODE_PAGE_REFRESH_INTERVAL);
+            }
+            request = node_pages::next_refresh_request(&config_dir) => {
+                match request {
+                    Ok(request) => {
+                        let pages = node_pages.clone();
+                        let handle = prns_handle.clone();
+                        page_refresh_tasks.spawn(async move {
+                            let result = match node_page_destination {
+                                Some(destination) => pages.refresh(&handle, destination).await,
+                                None => {
+                                    Err(node_pages::NodePageRefreshError::DestinationUnavailable)
+                                }
+                            };
+                            match &result {
+                                Ok(report) => tracing::info!(
+                                    event = "node_pages_refreshed",
+                                    discovered = report.discovered,
+                                    added = report.added,
+                                    removed = report.removed,
+                                    unchanged = report.unchanged,
+                                    cause = "operator",
+                                ),
+                                Err(error) => tracing::warn!(
+                                    event = "node_pages_refresh_failed",
+                                    cause = "operator",
+                                    error = %error,
+                                ),
+                            }
+                            if let Err(error) = request.finish(result) {
+                                tracing::warn!(
+                                    event = "node_pages_refresh_result_failed",
+                                    error = %error,
+                                );
+                            }
+                        });
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            event = "node_pages_refresh_request_failed",
+                            error = %error,
+                        );
+                    }
+                }
+            }
+            completed = page_refresh_tasks.join_next(), if !page_refresh_tasks.is_empty() => {
+                if let Some(Err(error)) = completed {
+                    tracing::warn!(
+                        event = "node_pages_refresh_task_failed",
+                        error = %error,
+                    );
+                }
+            }
         }
     }
+    page_refresh_tasks.shutdown().await;
     drop(persistence_run);
     drop(node_run);
     if let Some(task) = tray_status_task {

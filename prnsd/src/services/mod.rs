@@ -24,11 +24,21 @@ pub(crate) use remote_management::{PathRoute, StatusRoute};
 pub(crate) use request_routes::DaemonRequestRoutes;
 pub(crate) use request_state::{DaemonRequestState, TransportStatusIdentity};
 
-pub(crate) struct ManagementDestinations(Vec<AnnouncedDestination>);
+pub(crate) struct ManagementDestinations {
+    announced: Vec<AnnouncedDestination>,
+    node_pages: Option<node_page::NodePageDestination>,
+}
 
 impl ManagementDestinations {
     pub(crate) const fn none() -> Self {
-        Self(Vec::new())
+        Self {
+            announced: Vec::new(),
+            node_pages: None,
+        }
+    }
+
+    pub(crate) fn node_page_destination(&self) -> Option<personal_rns::wire::DestinationHash> {
+        self.node_pages.as_ref().map(|destination| destination.hash)
     }
 }
 
@@ -113,8 +123,8 @@ where
             }
         }
     }
-    match node_page::activate(node, identity.clone(), node_pages) {
-        Ok(Some(destination)) => {
+    let node_page_destination = match node_page::activate(node, identity.clone(), node_pages) {
+        Ok(destination) => {
             tracing::info!(
                 event = "node_pages_enabled",
                 destination = ?destination.hash.as_bytes(),
@@ -123,7 +133,7 @@ where
             if plan.node_page_announcements.is_enabled() {
                 destinations.push(AnnouncedDestination {
                     hash: destination.hash,
-                    available_when: Some(destination.index_path),
+                    available_when: Some(destination.index_path.clone()),
                     interval: plan.node_page_announcements.interval().duration(),
                 });
             } else {
@@ -132,8 +142,8 @@ where
                     destination = ?destination.hash.as_bytes(),
                 );
             }
+            Some(destination)
         }
-        Ok(None) => {}
         Err(error) => {
             tracing::error!(
                 event = "node_pages_start_failed",
@@ -141,13 +151,16 @@ where
             );
             return Err(HostedServiceActivationFailed);
         }
-    }
-    Ok(ManagementDestinations(destinations))
+    };
+    Ok(ManagementDestinations {
+        announced: destinations,
+        node_pages: node_page_destination,
+    })
 }
 
 pub(crate) fn spawn_management_announcements(
     handle: PrnsNodeHandle,
     destinations: ManagementDestinations,
 ) -> Option<ManagementAnnounceTask> {
-    management_announcements::spawn(handle, destinations.0)
+    management_announcements::spawn(handle, destinations.announced)
 }

@@ -156,7 +156,10 @@ Prnsd's operator-owned NomadNet page destination is served whenever an indexed p
 `Yes`. `node_page_announce_interval` is a positive whole number of minutes and defaults to `360`,
 matching the conventional six-hour NomadNet cadence. Disabling announcements does not disable
 direct requests, and deleting `pages/index.mu` makes the announcement unavailable independently of
-the configured policy. These daemon-wide settings require a managed restart after editing:
+the configured policy. Page contents are read per request. Safe top-level `.mu` additions, removals,
+and renames are reconciled every five minutes, or immediately with
+`prnsd pages refresh --config <directory>`. These daemon-wide announcement settings require a
+managed restart after editing:
 
 ```ini
 [reticulum]

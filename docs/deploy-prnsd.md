@@ -100,10 +100,18 @@ the conventional six-hour NomadNet cadence. Operators can set
 `announce_node_page = No` or change `node_page_announce_interval` under
 `[reticulum]`; serving remains available when announcement is disabled.
 
-New filenames are indexed when the daemon starts; restart after adding or
-renaming a file. Hidden files, non-`.mu` files, directories, symlinks, and files
-larger than 1 MiB are not served. Keep the flat directory private and edit it as
-UID/GID `65532` in the container. The initially seeded page is a gentle Prns
+The daemon lightly reconciles filenames every five minutes. To publish an
+addition, deletion, or rename immediately, run:
+
+```sh
+prnsd pages refresh --config /var/lib/prnsd
+```
+
+That command uses the configuration-local control lane, so it works with both
+the foreground container daemon and a conventional managed installation.
+Hidden files, non-`.mu` files, directories, symlinks, and files larger than
+1 MiB are not served. Keep the flat directory private and edit it as UID/GID
+`65532` in the container. The initially seeded page is a gentle Prns
 introduction, not immutable product content: operators may replace it with
 their own page or remove it to disable this showcase entirely.
 

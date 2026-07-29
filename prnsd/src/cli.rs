@@ -88,6 +88,24 @@ pub struct LaunchArgs {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Args)]
+pub struct PagesArgs {
+    #[command(subcommand)]
+    pub command: PagesCommand,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Subcommand)]
+pub enum PagesCommand {
+    #[command(about = "Rescan the live daemon's pages directory now")]
+    Refresh(PagesRefreshArgs),
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Args)]
+pub struct PagesRefreshArgs {
+    #[arg(long, value_name = "DIR")]
+    pub config: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Args)]
 pub struct I2pArgs {
     #[command(subcommand)]
     pub command: I2pCommand,
@@ -162,6 +180,8 @@ pub enum Command {
     I2p(I2pArgs),
     #[command(about = "Inspect and safely edit Reticulum interfaces")]
     Interfaces(Box<InterfacesArgs>),
+    #[command(about = "Manage hosted NomadNet pages")]
+    Pages(PagesArgs),
     #[command(about = "Show Reticulum interface and transport status")]
     Status(RnstatusArgs),
     #[command(about = "Inspect and manage Reticulum paths")]
@@ -197,6 +217,7 @@ pub fn parse_from(args: impl IntoIterator<Item = OsString>) -> Result<Command, c
                     | "run"
                     | "i2p"
                     | "interfaces"
+                    | "pages"
                     | "status"
                     | "path"
                     | "probe"
@@ -302,6 +323,18 @@ mod tests {
                 config: Some(PathBuf::from("/node")),
                 persistence_policy: PersistencePolicy::BestEffort,
                 bootstrap: None,
+            })
+        );
+    }
+
+    #[test]
+    fn page_refresh_accepts_the_daemon_configuration_directory() {
+        assert_eq!(
+            parse(&["prnsd", "pages", "refresh", "--config", "/node"]),
+            Command::Pages(PagesArgs {
+                command: PagesCommand::Refresh(PagesRefreshArgs {
+                    config: Some(PathBuf::from("/node")),
+                }),
             })
         );
     }
