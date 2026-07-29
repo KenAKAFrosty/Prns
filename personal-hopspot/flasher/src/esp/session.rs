@@ -216,6 +216,7 @@ impl EspSession for EspflashSession {
             part_bytes: 0,
             part_blocks: 0,
             operation_total: total,
+            reported_bytes: None,
         };
         let mut target = chip.flash_target(SpiAttachParams::default(), use_stub, true, false);
         target
@@ -303,6 +304,7 @@ struct FlashProgress<'a> {
     part_bytes: u64,
     part_blocks: u64,
     operation_total: u64,
+    reported_bytes: Option<u64>,
 }
 
 impl ProgressCallbacks for FlashProgress<'_> {
@@ -319,17 +321,15 @@ impl ProgressCallbacks for FlashProgress<'_> {
                 .checked_div(self.part_blocks)
                 .unwrap_or_default()
         };
-        self.reporter.progress(
-            Phase::Writing,
-            Some(self.board),
+        self.report_progress(
             self.completed_bytes
                 .saturating_add(part_current)
                 .min(self.operation_total),
-            self.operation_total,
         );
     }
 
     fn verifying(&mut self) {
+        self.reporter.finish_progress();
         self.reporter.phase(
             Phase::VerifyingFlash,
             Some(self.board),
@@ -341,12 +341,22 @@ impl ProgressCallbacks for FlashProgress<'_> {
         // An already-matching segment is complete too; count it so total progress
         // remains monotonic and reaches 100% when espflash skips a write.
         self.completed_bytes = self.completed_bytes.saturating_add(self.part_bytes);
+        self.report_progress(self.completed_bytes.min(self.operation_total));
+    }
+}
+
+impl FlashProgress<'_> {
+    fn report_progress(&mut self, current: u64) {
+        if self.reported_bytes == Some(current) {
+            return;
+        }
         self.reporter.progress(
             Phase::Writing,
             Some(self.board),
-            self.completed_bytes.min(self.operation_total),
+            current,
             self.operation_total,
         );
+        self.reported_bytes = Some(current);
     }
 }
 

@@ -161,6 +161,12 @@ impl Reporter {
         }
     }
 
+    pub(crate) fn finish_progress(self) {
+        if matches!(self.output_mode, OutputMode::Human) {
+            println!();
+        }
+    }
+
     pub(crate) fn success(self, board: &str, message: &str) {
         self.emit_success(Some(board), message);
     }
