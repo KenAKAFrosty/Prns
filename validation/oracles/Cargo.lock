@@ -295,15 +295,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "home"
-version = "0.5.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc627f471c528ff0c4a49e1d5e60450c8f6461dd6d10ba9dcd3a61d3dff7728d"
-dependencies = [
- "windows-sys",
-]
-
-[[package]]
 name = "hybrid-array"
 version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -363,9 +354,8 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "prns-config"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
- "home",
  "prns-core",
  "shlex",
  "tempfile",
@@ -373,7 +363,7 @@ dependencies = [
 
 [[package]]
 name = "prns-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "aes",
  "cbc",
@@ -392,7 +382,7 @@ dependencies = [
 
 [[package]]
 name = "prns-validation-oracles"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "prns-config",
  "prns-core",

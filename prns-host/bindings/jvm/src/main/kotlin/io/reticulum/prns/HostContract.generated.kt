@@ -5,7 +5,7 @@ import java.math.BigInteger
 object HostContract {
     const val ABI: Int = 1
     const val SCHEMA_VERSION: Int = 1
-    const val PRODUCT_VERSION = "0.3.0"
+    const val PRODUCT_VERSION = "0.3.1"
     const val DESTINATION_HASH_LENGTH = 16
     const val IDENTITY_HASH_LENGTH = 16
     const val INTERFACE_ID_LENGTH = 8
