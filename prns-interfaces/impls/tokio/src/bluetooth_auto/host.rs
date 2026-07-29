@@ -551,7 +551,9 @@ async fn run_platform_bluetooth(
 mod tests {
     use super::*;
     use prns_runtime::interfaces::ConnectionState;
-    use prns_runtime::runtime::{Manual, PreConfiguredDestination, PrnsNode, PrnsNodeRecipe};
+    use prns_runtime::runtime::{
+        ManuallyAttached, NoPersistence, PreConfiguredDestination, PrnsNode, PrnsNodeRecipe,
+    };
     use prns_runtime::storage::GrowableHeap;
 
     #[test]
@@ -561,8 +563,9 @@ mod tests {
             pre_configured_destinations: std::iter::empty::<PreConfiguredDestination<'static>>(),
             app_state: (),
             storage: GrowableHeap,
-            routes: prns_runtime::routes![],
-            interfaces: Manual,
+            request_endpoints: prns_runtime::request_endpoints![],
+            interfaces: ManuallyAttached,
+            persistence: NoPersistence,
             on_event: |_event, _state: &()| {},
         });
         let attached = node

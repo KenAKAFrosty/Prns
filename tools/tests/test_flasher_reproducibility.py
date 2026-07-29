@@ -202,6 +202,7 @@ class FlasherReproducibilityTests(unittest.TestCase):
             )
             with zipfile.ZipFile(first) as archive:
                 names = set(archive.namelist())
+            self.assertFalse(any(name.endswith("/") for name in names))
             prefix = f"Prns-{VERSION}/"
             for relative in REQUIRED_SOURCE_FILES:
                 self.assertIn(f"{prefix}{relative}", names)

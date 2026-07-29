@@ -31,7 +31,7 @@ use personal_rns::routing::{
     UnblackholeIdentityOutcome,
 };
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
-use personal_rns::runtime::request_router::RespondToken;
+use personal_rns::runtime::request_endpoints::RespondToken;
 use personal_rns::runtime::{
     DestinationIdentityRetentionControl, IdentityBlackholeControl, IdentityBlackholeSource,
     RoutingControl, RoutingControlError,
@@ -1733,7 +1733,7 @@ impl PrnsNode {
         let attached = self
             .manager
             .on_node_runtime(move |handle| async move {
-                TcpServer::bind(bind.as_str(), bitrate)
+                TcpServer::bind_with_bitrate(bind.as_str(), bitrate)
                     .await
                     .map(|server| handle.supervise(server))
             })
@@ -1752,7 +1752,11 @@ impl PrnsNode {
         options: TcpClientOptions,
     ) -> CodeResult<InterfaceHandle> {
         let bitrate = parse_bitrate(options.bitrate_bps)?;
-        let client = TcpClientInterface::new(options.target, bitrate, ReconnectPolicy::STANDARD);
+        let client = TcpClientInterface::new_with_bitrate(
+            options.target,
+            bitrate,
+            ReconnectPolicy::STANDARD,
+        );
         let handle = self.manager.handle()?;
         let attached = handle.add_interface(client);
         Ok(InterfaceHandle::from_interface(attached))

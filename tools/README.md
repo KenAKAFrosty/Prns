@@ -30,7 +30,7 @@ cargo tools verify
 For example:
 
 ```console
-cargo tools guide rust
+cargo tools guide rust-basics
 cargo tools release firmware build -- heltec-v4 target/dev-flash
 cargo tools release source package -- --output target/source.zip
 cargo tools release candidate build -- target/candidate preview KEY_ID

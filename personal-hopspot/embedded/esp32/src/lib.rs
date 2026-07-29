@@ -50,6 +50,7 @@ pub mod bluetooth_auto;
 pub mod c6;
 mod flash;
 mod identity;
+mod persistence;
 #[cfg(all(
     target_arch = "xtensa",
     feature = "bluetooth-auto",

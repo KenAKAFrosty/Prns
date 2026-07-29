@@ -14,7 +14,7 @@ const PERSISTENCE_DIRECTORY: &str = "prns";
 const PERSISTENCE_INTERVAL: Duration = Duration::from_secs(30);
 
 pub(super) fn open(storage_dir: &Path) -> Result<NodePersistence, std::io::Error> {
-    NodePersistence::open(storage_dir.join(PERSISTENCE_DIRECTORY))
+    NodePersistence::custom_dir(storage_dir.join(PERSISTENCE_DIRECTORY))
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

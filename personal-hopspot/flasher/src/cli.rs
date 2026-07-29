@@ -66,6 +66,12 @@ pub(crate) enum CommandMode {
         /// Read HOPSPOT_WIFI_SSID/PASSWORD from the environment.
         #[arg(long)]
         wifi_from_env: bool,
+        #[arg(
+            long,
+            value_name = "TARGET",
+            help = "One outbound Reticulum TCP target as IPv4, hostname, or URL; port defaults to 4242."
+        )]
+        tcp_client: Option<String>,
         /// Use only a previously verified local cache.
         #[arg(long)]
         offline: bool,

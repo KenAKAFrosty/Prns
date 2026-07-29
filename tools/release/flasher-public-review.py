@@ -44,7 +44,7 @@ def main() -> int:
     discover.add_argument("--repository", required=True)
     discover.add_argument("--version", required=True)
     discover.add_argument("--source-commit", required=True)
-    discover.add_argument("--workflow-run-id", type=int, required=True)
+    discover.add_argument("--workflow-run-id", type=int)
     discover.add_argument("--signed-candidate-sha256", required=True)
     discover.add_argument("--manifest-sha256", required=True)
     arguments = parser.parse_args()

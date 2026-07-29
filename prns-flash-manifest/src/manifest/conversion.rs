@@ -279,6 +279,17 @@ fn convert_provisioning(
             field: "provisioning slot disagrees with the HSPCFG1 wire contract".to_string(),
         });
     }
+    if slot.tcp_client.as_ref().is_some_and(|tcp_client| {
+        tcp_client.target_format != "ipv4-or-dns"
+            || tcp_client.max_clients != 1
+            || tcp_client.default_port == 0
+            || tcp_client.hostname_max_bytes != crate::CONFIG_TCP_CLIENT_HOSTNAME_MAX_BYTES
+    }) {
+        return Err(ManifestError::CatalogMismatch {
+            board: board.to_string(),
+            field: "TCP client provisioning contract is unsupported".to_string(),
+        });
+    }
     Ok(ProvisioningSlot {
         format: ProvisioningFormat::parse(&slot.format).map_err(|error| {
             ManifestError::CatalogMismatch {
@@ -291,6 +302,7 @@ fn convert_provisioning(
         size: slot.size,
         ssid_max_bytes: slot.ssid_max_bytes,
         password_max_bytes: slot.password_max_bytes,
+        tcp_client: slot.tcp_client,
     })
 }
 

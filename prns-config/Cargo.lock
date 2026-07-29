@@ -486,7 +486,7 @@ dependencies = [
 
 [[package]]
 name = "prns-config"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "home",
  "prns-core",
@@ -498,7 +498,7 @@ dependencies = [
 
 [[package]]
 name = "prns-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "aes",
  "cbc",

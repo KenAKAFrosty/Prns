@@ -1,3 +1,4 @@
+use personal_rns::runtime::NoPersistence;
 use std::io;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
@@ -12,7 +13,7 @@ use personal_rns::interfaces::bluetooth_auto::{
     AndroidHost, Endpoint, LinkCapabilities, BLE_HW_MTU,
 };
 use personal_rns::interfaces::wifi_direct::GoIntent;
-use personal_rns::runtime::{Diagnostic, Manual, PrnsEvent, PrnsNode, PrnsNodeRecipe};
+use personal_rns::runtime::{Diagnostic, ManuallyAttached, PrnsEvent, PrnsNode, PrnsNodeRecipe};
 use personal_rns::shared_instance::rns_rpc::{SharedInstanceCredentials, SharedInstanceRpcServer};
 use personal_rns::shared_instance::SharedInstanceServer;
 use personal_rns::storage::GrowableHeap;
@@ -110,8 +111,9 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
         pre_configured_destinations: destinations.into_preconfigured_destinations(),
         app_state: (),
         storage: GrowableHeap,
-        routes: personal_hopspot_core::node_pages::NodePageRoutes,
-        interfaces: Manual,
+        request_endpoints: personal_hopspot_core::node_pages::NodePageRoutes,
+        interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: move |event, _state: &()| {
             if let PrnsEvent::Diagnostic(Diagnostic::SelfRatchetRotated { destination }) = event {
                 let _ = rotated_tx.send(destination);

@@ -4,25 +4,30 @@ use core::mem::MaybeUninit;
 use embassy_futures::join::join;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::{Channel, Receiver};
+use embedded_storage_async::nor_flash::NorFlash;
 use heapless::Vec as HeaplessVec;
 use static_cell::StaticCell;
 
 use crate::engine::{IssuedCommand, Journaled, MAX_SEND_REQUEST_DATA_LEN};
 use crate::interfaces::{InterfaceDescriptor, InterfaceId, InterfaceIfac};
-use crate::manifold::driver::{run_pooled, InterfaceLifecycle, PooledEgress, PooledWiring};
+use crate::manifold::driver::{
+    run_pooled, InterfaceLifecycle, PooledEgress, PooledWiring, ResumableHost,
+};
 use crate::manifold::grant::ManifoldLaneReader;
 use crate::manifold::Host;
 use crate::storage::StorageLayout;
 
-use super::super::request_router::RouteSet;
+use super::super::request_endpoints::RequestEndpointSet;
 use super::super::request_runner::{run_router, RunnerRequest};
 use super::super::{
-    EmbassyInterfaceStore, InterfaceInspectionStore, Manual, NoInterfaceInspectionStore,
-    PreConfiguredDestination, PrnsEvent, PrnsNodeRecipe,
+    EmbassyInterfaceStore, EmbeddedFlashPersistence, EmbeddedPersistenceDiagnostic,
+    EmbeddedPersistenceRestoreReport, InterfaceInspectionStore, ManifoldPersistence,
+    ManuallyAttached, NoInterfaceInspectionStore, NoManifoldPersistence, PreConfiguredDestination,
+    PrnsEvent, PrnsNodeRecipe,
 };
 use super::command_handle::PrnsNodeHandle;
 use prns_runtime::runtime::placement::assemble_node_in_place;
-use prns_runtime::runtime::{assemble_node, AssembledNode};
+use prns_runtime::runtime::{assemble_node, AssembledNode, NoPersistence};
 
 pub struct ManifoldWiring<
     M,
@@ -125,14 +130,14 @@ impl<
         MAX_SEND_REQUEST_DATA_LEN,
     >
 where
-    R: RouteSet<St>,
+    R: RequestEndpointSet<St>,
     F: FnMut(PrnsEvent<'_>, &St),
     S: StorageLayout,
     H: Host,
     M: RawMutex + 'static,
 {
     pub fn new<'d, D>(
-        recipe: PrnsNodeRecipe<D, St, R, F, Manual, S>,
+        recipe: PrnsNodeRecipe<D, St, R, F, ManuallyAttached, S>,
         wiring: ManifoldWiring<M, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
         host: H,
     ) -> Self
@@ -176,24 +181,37 @@ impl<
         ROUTED_REQUEST_BYTES,
     >
 where
-    R: RouteSet<St>,
+    R: RequestEndpointSet<St>,
     F: FnMut(PrnsEvent<'_>, &St),
     S: StorageLayout,
     H: Host,
     M: RawMutex + 'static,
 {
+    pub fn init_static<'d, D>(
+        cell: &'static StaticCell<Self>,
+        recipe: PrnsNodeRecipe<D, St, R, F, ManuallyAttached, S>,
+        wiring: ManifoldWiring<M, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
+        host: H,
+    ) -> &'static mut Self
+    where
+        D: IntoIterator<Item = PreConfiguredDestination<'d>>,
+    {
+        let (node, NoPersistence) = Self::init_static_with_persistence(cell, recipe, wiring, host);
+        node
+    }
+
     #[expect(
         unsafe_code,
         clippy::undocumented_unsafe_blocks,
         clippy::mut_from_ref,
         reason = "every PrnsNode field is initialized before the slot is exposed"
     )]
-    pub fn init_static<'d, D>(
+    pub fn init_static_with_persistence<'d, D, P>(
         cell: &'static StaticCell<Self>,
-        recipe: PrnsNodeRecipe<D, St, R, F, Manual, S>,
+        recipe: PrnsNodeRecipe<D, St, R, F, ManuallyAttached, S, P>,
         wiring: ManifoldWiring<M, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
         host: H,
-    ) -> &'static mut Self
+    ) -> (&'static mut Self, P)
     where
         D: IntoIterator<Item = PreConfiguredDestination<'d>>,
     {
@@ -215,10 +233,10 @@ where
             handle,
         } = wiring;
         let node = slot.as_mut_ptr();
-        unsafe {
+        let persistence = unsafe {
             let assembled = &mut *core::ptr::addr_of_mut!((*node).node)
                 .cast::<MaybeUninit<AssembledNode<St, R, F, S>>>();
-            let (_, Manual) = assemble_node_in_place(assembled, recipe);
+            let (_, ManuallyAttached, persistence) = assemble_node_in_place(assembled, recipe);
             core::ptr::addr_of_mut!((*node).inbound).write(inbound);
             core::ptr::addr_of_mut!((*node).egress).write(egress);
             core::ptr::addr_of_mut!((*node).notify).write(notify);
@@ -228,18 +246,19 @@ where
             core::ptr::addr_of_mut!((*node).host).write(host);
             core::ptr::addr_of_mut!((*node).descriptors).write(HeaplessVec::new());
             core::ptr::addr_of_mut!((*node).ifacs).write(ifacs);
-        }
+            persistence
+        };
         let node = unsafe { slot.assume_init_mut() };
         for descriptor in initial {
             if node.descriptors.push(descriptor).is_err() {
                 unreachable!()
             }
         }
-        node
+        (node, persistence)
     }
 
     pub fn new_with_request_capacity<'d, D>(
-        recipe: PrnsNodeRecipe<D, St, R, F, Manual, S>,
+        recipe: PrnsNodeRecipe<D, St, R, F, ManuallyAttached, S>,
         wiring: ManifoldWiring<M, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
         host: H,
         _capacity: RequestRoutingCapacity<ROUTED_REQUESTS, ROUTED_REQUEST_BYTES>,
@@ -251,7 +270,7 @@ where
     }
 
     fn build<'d, D>(
-        recipe: PrnsNodeRecipe<D, St, R, F, Manual, S>,
+        recipe: PrnsNodeRecipe<D, St, R, F, ManuallyAttached, S>,
         wiring: ManifoldWiring<M, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
         host: H,
     ) -> Self
@@ -264,7 +283,7 @@ where
                 "PrnsNode INTERFACE_CAPACITY must cover every manifold lane"
             );
         }
-        let (node, Manual) = assemble_node(recipe);
+        let (node, ManuallyAttached, NoPersistence) = assemble_node(recipe);
         let mut descriptors = HeaplessVec::new();
         for descriptor in wiring.initial {
             if descriptors.push(descriptor).is_err() {
@@ -337,11 +356,12 @@ where
             mut engine,
             state,
             mut on_event,
-            routes: _,
+            request_endpoints: _,
         } = node;
         let request_channel =
             Channel::<M, RunnerRequest<ROUTED_REQUEST_BYTES>, ROUTED_REQUESTS>::new();
         let request_sender = request_channel.sender();
+        let mut persistence = NoManifoldPersistence;
         let manifold = run_pooled(
             &mut engine,
             &mut host,
@@ -367,6 +387,7 @@ where
             },
             crate::manifold::decline_all(),
             store,
+            &mut persistence,
         );
         let router =
             run_router::<St, R, M, COMMANDS, COMPLETIONS, ROUTED_REQUESTS, ROUTED_REQUEST_BYTES>(
@@ -406,6 +427,61 @@ where
     where
         Store: InterfaceInspectionStore,
     {
+        let mut persistence = NoManifoldPersistence;
+        self.run_manifold_with_inspection_store_and_persistence(store, &mut persistence)
+            .await;
+    }
+
+    pub async fn run_manifold_with_persistence_and_interface_store<
+        Fl,
+        Observe,
+        const PENDING: usize,
+        const INTERFACES: usize,
+        const PACKET_PHY_CAPACITY: usize,
+        const PACKET_PHY_INDEX_BUCKETS: usize,
+    >(
+        &mut self,
+        store: &EmbassyInterfaceStore<M, INTERFACES, PACKET_PHY_CAPACITY, PACKET_PHY_INDEX_BUCKETS>,
+        persistence: &mut EmbeddedFlashPersistence<Fl, Observe, PENDING>,
+    ) where
+        M: Sync,
+        Fl: NorFlash,
+        Observe: FnMut(EmbeddedPersistenceDiagnostic),
+    {
+        const {
+            assert!(
+                INTERFACES >= INTERFACE_CAPACITY,
+                "EmbassyInterfaceStore INTERFACES must cover PrnsNode INTERFACE_CAPACITY"
+            );
+        }
+        self.run_manifold_with_inspection_store_and_persistence(store, persistence)
+            .await;
+    }
+
+    pub async fn restore_embedded_persistence<Fl, Observe, const PENDING: usize>(
+        &mut self,
+        persistence: &mut EmbeddedFlashPersistence<Fl, Observe, PENDING>,
+    ) -> EmbeddedPersistenceRestoreReport
+    where
+        Fl: NorFlash,
+        Observe: FnMut(EmbeddedPersistenceDiagnostic),
+        H: ResumableHost,
+    {
+        let report = persistence
+            .restore(&mut self.node.engine, self.host.now())
+            .await;
+        self.host.resume_at(report.logical_start);
+        report
+    }
+
+    async fn run_manifold_with_inspection_store_and_persistence<Store, P>(
+        &mut self,
+        store: &Store,
+        persistence: &mut P,
+    ) where
+        Store: InterfaceInspectionStore,
+        P: ManifoldPersistence<S>,
+    {
         let PrnsNode {
             node,
             inbound,
@@ -422,7 +498,7 @@ where
             engine,
             state,
             on_event,
-            routes: _,
+            request_endpoints: _,
         } = node;
         let request_channel =
             Channel::<M, RunnerRequest<ROUTED_REQUEST_BYTES>, ROUTED_REQUESTS>::new();
@@ -452,6 +528,7 @@ where
             },
             crate::manifold::decline_all(),
             store,
+            persistence,
         );
         let router =
             run_router::<St, R, M, COMMANDS, COMPLETIONS, ROUTED_REQUESTS, ROUTED_REQUEST_BYTES>(

@@ -36,4 +36,4 @@ case prns.CommandFailed:
 }
 ```
 
-The module has no Go dependencies. Its version tag must use the monorepo submodule form `prns-host/bindings/go/v0.3.0`.
+The module has no Go dependencies. Its version tag must use the monorepo submodule form `prns-host/bindings/go/v0.3.1`.

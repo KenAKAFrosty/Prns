@@ -1,3 +1,4 @@
+#[cfg(feature = "rnode")]
 use std::collections::HashSet;
 use std::fmt;
 use std::io;
@@ -18,23 +19,45 @@ use prns_runtime::runtime::{AttachIntent, Attachable, PrnsNodeHandle};
 
 use crate::i2p::{DuplicateI2pPeer, I2pInterfaceNameError, I2pPeerAddressError, RnsI2pStorage};
 use crate::reconnect::ReconnectPolicy;
+#[cfg(feature = "rnode")]
 use crate::rnode::multi::RNodeMultiMembersError;
+#[cfg(feature = "wifi-auto")]
 use crate::wifi_auto::AutoWifiSettingsError;
 
+#[cfg(feature = "ax25")]
 mod ax25_kiss;
+#[cfg(feature = "backbone")]
 mod backbone;
+#[cfg(feature = "bluetooth-auto")]
 mod bluetooth_auto;
+#[cfg(feature = "i2p")]
 mod i2p;
+#[cfg(feature = "kiss")]
 mod kiss;
+#[cfg(feature = "pipe")]
 mod pipe;
+#[cfg(feature = "rnode")]
 mod rnode;
+#[cfg(feature = "serial")]
 mod serial;
+#[cfg(any(
+    feature = "kiss",
+    feature = "ax25",
+    feature = "rnode",
+    feature = "weave"
+))]
 mod station_identification;
+#[cfg(feature = "tcp")]
 mod tcp;
+#[cfg(feature = "udp")]
 mod udp;
+#[cfg(feature = "usb")]
 mod usb_auto;
+#[cfg(feature = "weave")]
 mod weave;
+#[cfg(feature = "websocket")]
 mod websocket;
+#[cfg(feature = "wifi-auto")]
 mod wifi_auto;
 
 const RECONNECT_POLICY: ReconnectPolicy = ReconnectPolicy::STANDARD;
@@ -52,6 +75,7 @@ pub enum PlanOutcome<'a> {
 #[derive(Debug, Clone)]
 pub enum PlanFailure {
     MissingIfacCredentials,
+    #[cfg(feature = "wifi-auto")]
     AutoWifiSettings(AutoWifiSettingsError),
     Network(Arc<io::Error>),
     EmptyStationIdentification,
@@ -63,7 +87,9 @@ pub enum PlanFailure {
     DuplicateI2pPeer(DuplicateI2pPeer),
     MissingI2pStorage,
     MissingBleIdentity,
+    #[cfg(feature = "rnode")]
     RNodeMultiMembers(RNodeMultiMembersError),
+    #[cfg(feature = "weave")]
     WeaveIdentity(getrandom::Error),
     InterfaceNotBuilt(PlannedInterfaceKind),
 }
@@ -74,6 +100,7 @@ impl fmt::Display for PlanFailure {
             Self::MissingIfacCredentials => {
                 formatter.write_str("IFAC requires a network name or passphrase")
             }
+            #[cfg(feature = "wifi-auto")]
             Self::AutoWifiSettings(error) => error.fmt(formatter),
             Self::Network(error) => error.fmt(formatter),
             Self::EmptyStationIdentification => {
@@ -93,7 +120,9 @@ impl fmt::Display for PlanFailure {
             Self::MissingBleIdentity => {
                 formatter.write_str("Bluetooth Auto requires a persisted BLE identity")
             }
+            #[cfg(feature = "rnode")]
             Self::RNodeMultiMembers(error) => error.fmt(formatter),
+            #[cfg(feature = "weave")]
             Self::WeaveIdentity(error) => {
                 write!(formatter, "could not generate the Weave discovery identity: {error}")
             }
@@ -109,12 +138,16 @@ impl fmt::Display for PlanFailure {
 impl std::error::Error for PlanFailure {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            #[cfg(feature = "wifi-auto")]
             Self::AutoWifiSettings(error) => Some(error),
             Self::Network(error) => Some(error.as_ref()),
             Self::I2pInterfaceName(error) => Some(error),
             Self::I2pPeerAddress(error) => Some(error),
             Self::DuplicateI2pPeer(error) => Some(error),
+            #[cfg(feature = "rnode")]
             Self::RNodeMultiMembers(error) => Some(error),
+            #[cfg(feature = "weave")]
+            Self::WeaveIdentity(_) => None,
             Self::MissingIfacCredentials
             | Self::EmptyStationIdentification
             | Self::Ax25Address(_)
@@ -122,12 +155,12 @@ impl std::error::Error for PlanFailure {
             | Self::UngroupedRNodeMultiMember
             | Self::MissingI2pStorage
             | Self::MissingBleIdentity
-            | Self::WeaveIdentity(_)
             | Self::InterfaceNotBuilt(_) => None,
         }
     }
 }
 
+#[cfg(feature = "wifi-auto")]
 impl From<AutoWifiSettingsError> for PlanFailure {
     fn from(error: AutoWifiSettingsError) -> Self {
         Self::AutoWifiSettings(error)
@@ -176,12 +209,14 @@ impl From<DuplicateI2pPeer> for PlanFailure {
     }
 }
 
+#[cfg(feature = "rnode")]
 impl From<RNodeMultiMembersError> for PlanFailure {
     fn from(error: RNodeMultiMembersError) -> Self {
         Self::RNodeMultiMembers(error)
     }
 }
 
+#[cfg(feature = "weave")]
 impl From<getrandom::Error> for PlanFailure {
     fn from(error: getrandom::Error) -> Self {
         Self::WeaveIdentity(error)
@@ -267,6 +302,7 @@ impl PlanAttachments {
         });
     }
 
+    #[cfg(feature = "rnode")]
     fn push_supervisor(
         &mut self,
         lifecycle: ConfiguredInterfaceLifecycle,
@@ -360,23 +396,32 @@ pub async fn attach_plan_with_context(
     report: &mut impl FnMut(PlanOutcome<'_>),
 ) -> PlanAttachments {
     let mut attachments = PlanAttachments::default();
+    #[cfg(feature = "rnode")]
     let mut rnode_multi_parents = HashSet::new();
     for interface in &plan.interfaces {
         if let PlannedMedium::RnodeMulti { member } = &interface.medium {
-            let parent = member.parent();
-            let key = (parent.name(), parent.device());
-            if rnode_multi_parents.insert(key) {
-                rnode::stand_up_multi(
-                    handle,
-                    plan.interfaces.iter().filter_map(|candidate| {
-                        let PlannedMedium::RnodeMulti { member } = &candidate.medium else {
-                            return None;
-                        };
-                        (member.parent() == parent).then_some((candidate, member))
-                    }),
-                    &mut attachments,
-                    report,
-                );
+            #[cfg(feature = "rnode")]
+            {
+                let parent = member.parent();
+                let key = (parent.name(), parent.device());
+                if rnode_multi_parents.insert(key) {
+                    rnode::stand_up_multi(
+                        handle,
+                        plan.interfaces.iter().filter_map(|candidate| {
+                            let PlannedMedium::RnodeMulti { member } = &candidate.medium else {
+                                return None;
+                            };
+                            (member.parent() == parent).then_some((candidate, member))
+                        }),
+                        &mut attachments,
+                        report,
+                    );
+                }
+            }
+            #[cfg(not(feature = "rnode"))]
+            {
+                let _ = member;
+                stand_up(handle, interface, context, &mut attachments, report).await;
             }
         } else {
             stand_up(handle, interface, context, &mut attachments, report).await;
@@ -405,7 +450,17 @@ async fn stand_up<'a>(
         access,
     };
     let result = match &interface.medium {
-        PlannedMedium::AutoWifi(planned) => wifi_auto::stand_up(construction, planned),
+        PlannedMedium::AutoWifi(planned) => {
+            #[cfg(feature = "wifi-auto")]
+            {
+                wifi_auto::stand_up(construction, planned)
+            }
+            #[cfg(not(feature = "wifi-auto"))]
+            {
+                let _ = planned;
+                Err(PlanFailure::InterfaceNotBuilt(PlannedInterfaceKind::Auto))
+            }
+        }
         PlannedMedium::PrnsUsbAuto => {
             #[cfg(feature = "usb")]
             {
@@ -464,7 +519,17 @@ async fn stand_up<'a>(
             tcp::stand_up_server(construction, listener, *framing).await
         }
         PlannedMedium::Udp { flow } => udp::stand_up(construction, flow).await,
-        PlannedMedium::Serial { device, line } => serial::stand_up(construction, device, *line),
+        PlannedMedium::Serial { device, line } => {
+            #[cfg(feature = "serial")]
+            {
+                serial::stand_up(construction, device, *line)
+            }
+            #[cfg(not(feature = "serial"))]
+            {
+                let _ = (device, line);
+                Err(PlanFailure::InterfaceNotBuilt(PlannedInterfaceKind::Serial))
+            }
+        }
         PlannedMedium::Kiss {
             device,
             line,
@@ -474,19 +539,38 @@ async fn stand_up<'a>(
             slottime_ms,
             flow_control,
             station_id,
-        } => kiss::stand_up(
-            construction,
-            kiss::Configuration {
-                device,
-                line: *line,
-                preamble_ms: *preamble_ms,
-                txtail_ms: *txtail_ms,
-                persistence: *persistence,
-                slottime_ms: *slottime_ms,
-                flow_control: *flow_control,
-                station_id,
-            },
-        ),
+        } => {
+            #[cfg(feature = "kiss")]
+            {
+                kiss::stand_up(
+                    construction,
+                    kiss::Configuration {
+                        device,
+                        line: *line,
+                        preamble_ms: *preamble_ms,
+                        txtail_ms: *txtail_ms,
+                        persistence: *persistence,
+                        slottime_ms: *slottime_ms,
+                        flow_control: *flow_control,
+                        station_id,
+                    },
+                )
+            }
+            #[cfg(not(feature = "kiss"))]
+            {
+                let _ = (
+                    device,
+                    line,
+                    preamble_ms,
+                    txtail_ms,
+                    persistence,
+                    slottime_ms,
+                    flow_control,
+                    station_id,
+                );
+                Err(PlanFailure::InterfaceNotBuilt(PlannedInterfaceKind::Kiss))
+            }
+        }
         PlannedMedium::Ax25Kiss {
             device,
             line,
@@ -497,20 +581,42 @@ async fn stand_up<'a>(
             flow_control,
             callsign,
             ssid,
-        } => ax25_kiss::stand_up(
-            construction,
-            ax25_kiss::Configuration {
-                device,
-                line: *line,
-                preamble_ms: *preamble_ms,
-                txtail_ms: *txtail_ms,
-                persistence: *persistence,
-                slottime_ms: *slottime_ms,
-                flow_control: *flow_control,
-                callsign,
-                ssid: *ssid,
-            },
-        ),
+        } => {
+            #[cfg(feature = "ax25")]
+            {
+                ax25_kiss::stand_up(
+                    construction,
+                    ax25_kiss::Configuration {
+                        device,
+                        line: *line,
+                        preamble_ms: *preamble_ms,
+                        txtail_ms: *txtail_ms,
+                        persistence: *persistence,
+                        slottime_ms: *slottime_ms,
+                        flow_control: *flow_control,
+                        callsign,
+                        ssid: *ssid,
+                    },
+                )
+            }
+            #[cfg(not(feature = "ax25"))]
+            {
+                let _ = (
+                    device,
+                    line,
+                    preamble_ms,
+                    txtail_ms,
+                    persistence,
+                    slottime_ms,
+                    flow_control,
+                    callsign,
+                    ssid,
+                );
+                Err(PlanFailure::InterfaceNotBuilt(
+                    PlannedInterfaceKind::Ax25Kiss,
+                ))
+            }
+        }
         PlannedMedium::Rnode {
             transport,
             frequency_hz,
@@ -522,22 +628,54 @@ async fn stand_up<'a>(
             station_id,
             airtime_limit_short,
             airtime_limit_long,
-        } => rnode::stand_up(
-            construction,
-            rnode::Configuration {
-                transport,
-                frequency_hz: *frequency_hz,
-                bandwidth_hz: *bandwidth_hz,
-                tx_power_dbm: *tx_power_dbm,
-                spreading_factor: *spreading_factor,
-                coding_rate: *coding_rate,
-                flow_control: *flow_control,
-                station_id,
-                airtime_limit_short: *airtime_limit_short,
-                airtime_limit_long: *airtime_limit_long,
-            },
-        ),
-        PlannedMedium::RnodeMulti { .. } => Err(PlanFailure::UngroupedRNodeMultiMember),
+        } => {
+            #[cfg(feature = "rnode")]
+            {
+                rnode::stand_up(
+                    construction,
+                    rnode::Configuration {
+                        transport,
+                        frequency_hz: *frequency_hz,
+                        bandwidth_hz: *bandwidth_hz,
+                        tx_power_dbm: *tx_power_dbm,
+                        spreading_factor: *spreading_factor,
+                        coding_rate: *coding_rate,
+                        flow_control: *flow_control,
+                        station_id,
+                        airtime_limit_short: *airtime_limit_short,
+                        airtime_limit_long: *airtime_limit_long,
+                    },
+                )
+            }
+            #[cfg(not(feature = "rnode"))]
+            {
+                let _ = (
+                    transport,
+                    frequency_hz,
+                    bandwidth_hz,
+                    tx_power_dbm,
+                    spreading_factor,
+                    coding_rate,
+                    flow_control,
+                    station_id,
+                    airtime_limit_short,
+                    airtime_limit_long,
+                );
+                Err(PlanFailure::InterfaceNotBuilt(PlannedInterfaceKind::Rnode))
+            }
+        }
+        PlannedMedium::RnodeMulti { .. } => {
+            #[cfg(feature = "rnode")]
+            {
+                Err(PlanFailure::UngroupedRNodeMultiMember)
+            }
+            #[cfg(not(feature = "rnode"))]
+            {
+                Err(PlanFailure::InterfaceNotBuilt(
+                    PlannedInterfaceKind::RnodeMulti,
+                ))
+            }
+        }
         PlannedMedium::Backbone { listener } => {
             backbone::stand_up_server(construction, listener).await
         }
@@ -552,7 +690,17 @@ async fn stand_up<'a>(
             peers,
             reachability,
         } => i2p::stand_up(construction, peers, *reachability, context),
-        PlannedMedium::Weave { device } => weave::stand_up(construction, device),
+        PlannedMedium::Weave { device } => {
+            #[cfg(feature = "weave")]
+            {
+                weave::stand_up(construction, device)
+            }
+            #[cfg(not(feature = "weave"))]
+            {
+                let _ = device;
+                Err(PlanFailure::InterfaceNotBuilt(PlannedInterfaceKind::Weave))
+            }
+        }
     };
     match result {
         Ok(id) => {

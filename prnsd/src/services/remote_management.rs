@@ -8,12 +8,12 @@ use personal_rns::rns_remote_management::{
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::request_handlers::RequestHandlerError;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
-use personal_rns::runtime::request_router::{
-    Decline, RequestContext, RequestRoute, RoutePolicy, RouteSet,
+use personal_rns::runtime::request_endpoints::{
+    Decline, RequestContext, RequestEndpoint, RequestEndpointPolicy, RequestEndpointSet,
 };
 use personal_rns::runtime::{
     ConfigurePreconfiguredDestinationError, PreConfiguredDestination, PrnsEvent, PrnsNode,
-    RegisterRequestRouteError, RequestHandlerRegistration,
+    RegisterRequestEndpointError, ServeMyRequestEndpoints,
 };
 use personal_rns::storage::StorageLayout;
 use personal_rns::wire::DestinationHash;
@@ -25,9 +25,9 @@ pub const PATH_PATH: &str = "/path";
 
 pub struct StatusRoute;
 
-impl RequestRoute<DaemonRequestState> for StatusRoute {
-    const PATH: &'static str = STATUS_PATH;
-    const POLICY: RoutePolicy = RoutePolicy::AllowList(&[]);
+impl RequestEndpoint<DaemonRequestState> for StatusRoute {
+    const ENDPOINT_ID: &'static str = STATUS_PATH;
+    const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowList(&[]);
 
     async fn handle(mut context: RequestContext<'_, DaemonRequestState>) -> Result<(), Decline> {
         let request = decode_status_request(context.data).map_err(|_| Decline::Ignore)?;
@@ -49,9 +49,9 @@ impl RequestRoute<DaemonRequestState> for StatusRoute {
 
 pub struct PathRoute;
 
-impl RequestRoute<DaemonRequestState> for PathRoute {
-    const PATH: &'static str = PATH_PATH;
-    const POLICY: RoutePolicy = RoutePolicy::AllowList(&[]);
+impl RequestEndpoint<DaemonRequestState> for PathRoute {
+    const ENDPOINT_ID: &'static str = PATH_PATH;
+    const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowList(&[]);
 
     async fn handle(mut context: RequestContext<'_, DaemonRequestState>) -> Result<(), Decline> {
         let request = decode_path_request(context.data).map_err(|_| Decline::Ignore)?;
@@ -74,7 +74,7 @@ pub enum ActivationError {
     Destination(ConfigurePreconfiguredDestinationError),
     Route {
         path: &'static str,
-        source: RegisterRequestRouteError,
+        source: RegisterRequestEndpointError,
     },
     Acl {
         path: &'static str,
@@ -88,7 +88,7 @@ pub fn activate<R, F, S>(
     allowed: &[IdentityHash],
 ) -> Result<DestinationHash, ActivationError>
 where
-    R: RouteSet<DaemonRequestState>,
+    R: RequestEndpointSet<DaemonRequestState>,
     F: FnMut(PrnsEvent<'_>, &DaemonRequestState),
     S: StorageLayout,
 {
@@ -102,7 +102,7 @@ where
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
             resource_strategy: ResourceStrategy::AcceptNone,
-            request_handlers: RequestHandlerRegistration::None,
+            request_endpoints: ServeMyRequestEndpoints::No,
         })
         .map_err(ActivationError::Destination)?;
     node.register_request_route::<StatusRoute>(&destination)

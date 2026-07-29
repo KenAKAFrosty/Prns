@@ -1,4 +1,4 @@
-use embassy_futures::select::{select5, Either5};
+use embassy_futures::select::{select6, Either6};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::Receiver;
 use heapless::Vec as HeaplessVec;
@@ -15,7 +15,7 @@ use crate::manifold::kernel::{fire_due_reason, merge_wake_schedules_delta};
 use crate::manifold::timers::{wait_for_due_reason, wait_for_pacer};
 use crate::manifold::{AppDeciders, Host};
 use crate::routing::links::resources::ResourceOffer;
-use crate::runtime::InterfaceInspectionStore;
+use crate::runtime::{InterfaceInspectionStore, ManifoldPersistence};
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
 
 use super::egress::{
@@ -85,6 +85,7 @@ pub(crate) async fn run_pooled<
     mut on_journaled: impl FnMut(Journaled<'_>),
     deciders: AppDeciders<impl FnMut(&ProofRequest) -> bool, impl FnMut(&ResourceOffer) -> bool>,
     store: &Store,
+    persistence: &mut impl ManifoldPersistence<S>,
 ) where
     S: StorageLayout,
     H: Host,
@@ -117,16 +118,18 @@ pub(crate) async fn run_pooled<
         let wake = wake_schedules.soonest(host.now());
         let pacer_wake = soonest_pacer_release(&pacers);
 
-        match select5(
+        let persistence_deadline = persistence.deadline(host.now());
+        match select6(
             notify.receive(),
             commands.receive(),
             wait_for_due_reason(&*host, wake),
             wait_for_pacer(&*host, pacer_wake),
             lifecycle.receive(),
+            wait_for_persistence(&*host, persistence_deadline),
         )
         .await
         {
-            Either5::First(_) => {
+            Either6::First(_) => {
                 while notify.try_receive().is_ok() {}
                 for (lane_id, lane) in inbound.iter_mut() {
                     while let Some((target, packet_phy, frame)) = lane.try_read() {
@@ -169,7 +172,10 @@ pub(crate) async fn run_pooled<
                                         ifacs,
                                         &mut pacers,
                                         now,
-                                        &mut on_journaled,
+                                        &mut |journaled| {
+                                            persistence.observe(&journaled, now);
+                                            on_journaled(journaled);
+                                        },
                                     )
                                 },
                             },
@@ -184,7 +190,7 @@ pub(crate) async fn run_pooled<
                     }
                 }
             }
-            Either5::Second(issued) => {
+            Either6::Second(issued) => {
                 let now = host.now();
                 let delta = engine.ingest_command_into(
                     issued,
@@ -198,7 +204,10 @@ pub(crate) async fn run_pooled<
                             ifacs,
                             &mut pacers,
                             now,
-                            &mut on_journaled,
+                            &mut |journaled| {
+                                persistence.observe(&journaled, now);
+                                on_journaled(journaled);
+                            },
                         )
                     },
                 );
@@ -209,7 +218,7 @@ pub(crate) async fn run_pooled<
                     AttachedInterfaces::new(&*descriptors),
                 );
             }
-            Either5::Third(reason) => {
+            Either6::Third(reason) => {
                 let now = host.now();
                 let delta = fire_due_reason(
                     &mut *engine,
@@ -224,7 +233,10 @@ pub(crate) async fn run_pooled<
                             ifacs,
                             &mut pacers,
                             now,
-                            &mut on_journaled,
+                            &mut |journaled| {
+                                persistence.observe(&journaled, now);
+                                on_journaled(journaled);
+                            },
                         )
                     },
                 );
@@ -235,11 +247,11 @@ pub(crate) async fn run_pooled<
                     AttachedInterfaces::new(&*descriptors),
                 );
             }
-            Either5::Fourth(()) => {
+            Either6::Fourth(()) => {
                 let now = host.now();
                 flush_due_pacers(&mut pacers, now, &mut *egress, ifacs);
             }
-            Either5::Fifth(message) => match message {
+            Either6::Fifth(message) => match message {
                 InterfaceLifecycle::Add { descriptor } => {
                     let descriptor = clamp_to_embedded_ceiling(descriptor);
                     let id = descriptor.id;
@@ -289,7 +301,10 @@ pub(crate) async fn run_pooled<
                                 ifacs,
                                 &mut pacers,
                                 now,
-                                &mut on_journaled,
+                                &mut |journaled| {
+                                    persistence.observe(&journaled, now);
+                                    on_journaled(journaled);
+                                },
                             )
                         },
                     );
@@ -322,6 +337,14 @@ pub(crate) async fn run_pooled<
                     }
                 }
             },
+            Either6::Sixth(()) => {}
+        }
+        let now = host.now();
+        if persistence
+            .deadline(now)
+            .is_some_and(|deadline| deadline.0 <= now.0)
+        {
+            persistence.progress(engine, now).await;
         }
         if Store::RETAINS_COUNTS {
             let mut dirty = engine.take_dirty_interfaces();
@@ -341,6 +364,13 @@ pub(crate) async fn run_pooled<
                 store.signal_interface_counts_changed();
             }
         }
+    }
+}
+
+async fn wait_for_persistence(host: &impl Host, deadline: Option<crate::engine::InstantMillis>) {
+    match deadline {
+        Some(deadline) => host.sleep_until(deadline).await,
+        None => core::future::pending().await,
     }
 }
 

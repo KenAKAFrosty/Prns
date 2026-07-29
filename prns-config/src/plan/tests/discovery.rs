@@ -68,6 +68,7 @@ fn a_discoverable_listener_plans_its_announcement_and_gateway_mode() {
                  discovery_name = Public Spine\n\
                  discovery_encrypt = Yes\n\
                  reachable_on = spine.example.com\n\
+                 reachable_port = 18443\n\
                  publish_ifac = Yes\n\
                  latitude = 41.88\n\
                  longitude = -87.63\n\
@@ -93,7 +94,7 @@ fn a_discoverable_listener_plans_its_announcement_and_gateway_mode() {
         announcement.advertisement,
         DiscoveryAdvertisementPlan::Backbone {
             reachable_on: "spine.example.com".to_string(),
-            port: 4242,
+            port: 18443,
         }
     );
 }

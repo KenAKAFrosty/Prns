@@ -15,6 +15,7 @@ pub(super) enum ValueKind {
     U64,
     U32,
     U16,
+    NonZeroU16,
     U8,
     I16,
     I64,
@@ -28,6 +29,7 @@ pub(super) enum ValueKind {
     RnodeMultiFrequency,
     RnodeMultiTxPower,
     BlackholeUpdateInterval,
+    NodePageAnnounceInterval,
 }
 
 impl ValueKind {
@@ -47,6 +49,7 @@ impl ValueKind {
             ValueKind::U64 => "a non-negative integer",
             ValueKind::U32 => "an integer from 0 through 4294967295",
             ValueKind::U16 => "an integer from 0 through 65535",
+            ValueKind::NonZeroU16 => "an integer from 1 through 65535",
             ValueKind::U8 => "an integer from 0 through 255",
             ValueKind::I16 => "an integer from -32768 through 32767",
             ValueKind::I64 => "a signed 64-bit integer",
@@ -66,6 +69,9 @@ impl ValueKind {
             ValueKind::BlackholeUpdateInterval => {
                 "a finite number of minutes representable by the host; values below 2 use 2 minutes"
             }
+            ValueKind::NodePageAnnounceInterval => {
+                "an integer from 1 through 307445734561825860 minutes"
+            }
         }
     }
 
@@ -80,6 +86,7 @@ impl ValueKind {
             ValueKind::LinkMtu => "131072",
             ValueKind::U64 | ValueKind::U32 => "1000000",
             ValueKind::U16 => "4242",
+            ValueKind::NonZeroU16 => "4242",
             ValueKind::U8 => "8",
             ValueKind::I16 | ValueKind::I64 => "0",
             ValueKind::F64 => "1.0",
@@ -92,6 +99,7 @@ impl ValueKind {
             ValueKind::RnodeMultiFrequency => "868000000",
             ValueKind::RnodeMultiTxPower => "7",
             ValueKind::BlackholeUpdateInterval => "60.0",
+            ValueKind::NodePageAnnounceInterval => "360",
         }
     }
 }
@@ -162,6 +170,11 @@ pub(super) const GLOBAL_RULES: &[(&str, KeyRule)] = &[
         Applied(ValueKind::IdentityHashes),
     ),
     (global_key::RESPOND_TO_PROBES, Applied(ValueKind::Bool)),
+    (global_key::ANNOUNCE_NODE_PAGE, Applied(ValueKind::Bool)),
+    (
+        global_key::NODE_PAGE_ANNOUNCE_INTERVAL,
+        Applied(ValueKind::NodePageAnnounceInterval),
+    ),
     (
         global_key::FORCE_SHARED_INSTANCE_BITRATE,
         Applied(ValueKind::Bitrate),
@@ -270,6 +283,8 @@ fn common_interface_key_rule(key: &str) -> Option<KeyRule> {
         interface_key::DISCOVERY_ENCRYPT | interface_key::PUBLISH_IFAC => {
             Some(discovery_detail_key_rule(ValueKind::Bool))
         }
+
+        interface_key::REACHABLE_PORT => Some(discovery_detail_key_rule(ValueKind::NonZeroU16)),
 
         interface_key::LATITUDE | interface_key::LONGITUDE | interface_key::HEIGHT => {
             Some(discovery_detail_key_rule(ValueKind::F64))

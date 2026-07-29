@@ -39,6 +39,8 @@ async fn routing_control_drops_a_live_route_and_journals_the_explicit_removal() 
         | Journaled::ResourceNeedsDecompression { .. }
         | Journaled::ResourceSegmentReceived { .. }
         | Journaled::ResourceAssembled { .. }
+        | Journaled::PersistenceFlushed { .. }
+        | Journaled::PersistenceFlushFailed { .. }
         | Journaled::LinkInterfaceMismatch { .. } => {}
     };
 
@@ -164,6 +166,8 @@ async fn the_manifold_culls_an_expired_route_at_its_deadline() {
         | Journaled::ResourceNeedsDecompression { .. }
         | Journaled::ResourceSegmentReceived { .. }
         | Journaled::ResourceAssembled { .. }
+        | Journaled::PersistenceFlushed { .. }
+        | Journaled::PersistenceFlushFailed { .. }
         | Journaled::LinkInterfaceMismatch { .. } => {}
     };
 

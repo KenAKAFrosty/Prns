@@ -1170,6 +1170,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "embedded-storage"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a21dea9854beb860f3062d10228ce9b976da520a73474aed3171ec276bc0c032"
+
+[[package]]
+name = "embedded-storage-async"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1763775e2323b7d5f0aa6090657f5e21cfa02ede71f5dc40eead06d64dcd15cc"
+dependencies = [
+ "embedded-storage",
+]
+
+[[package]]
 name = "endi"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2020,6 +2035,7 @@ version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "328c4789d42200f1eeec05bd86c9c13c7f091d2ba9a6ea35acdf51f31bc0f043"
 dependencies = [
+ "cc",
  "pkg-config",
 ]
 
@@ -2900,7 +2916,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "personal-rns"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "cfg-if",
  "prns-core",
@@ -3024,7 +3040,7 @@ dependencies = [
 
 [[package]]
 name = "prns-config"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "home",
  "prns-core",
@@ -3034,7 +3050,7 @@ dependencies = [
 
 [[package]]
 name = "prns-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "aes",
  "base64",
@@ -3043,6 +3059,8 @@ dependencies = [
  "crc32fast",
  "data-encoding",
  "ed25519-dalek",
+ "embedded-storage",
+ "embedded-storage-async",
  "heapless 0.8.0",
  "hkdf",
  "hmac",
@@ -3059,7 +3077,7 @@ dependencies = [
 
 [[package]]
 name = "prns-ffi"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "cfg-if",
  "dispatch2",
@@ -3076,7 +3094,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-embassy"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "embassy-futures",
  "embassy-net",
@@ -3095,7 +3113,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-tokio"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "bluer",
  "btleplug",
@@ -3132,7 +3150,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "bzip2",
  "cfg-if",
@@ -3142,11 +3160,12 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime-embassy"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "embassy-futures",
  "embassy-sync 0.8.0",
  "embassy-time",
+ "embedded-storage-async",
  "heapless 0.8.0",
  "log",
  "portable-atomic",
@@ -3157,7 +3176,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime-tokio"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "futures-util",
  "getrandom 0.2.17",
@@ -3173,11 +3192,12 @@ dependencies = [
 
 [[package]]
 name = "prnsd"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "base64",
  "clap",
  "data-encoding",
+ "dbus",
  "ksni",
  "log",
  "opentelemetry",
@@ -3187,6 +3207,7 @@ dependencies = [
  "prns-config",
  "prnsd-control",
  "serde_json",
+ "tempfile",
  "time",
  "tokio",
  "tracing",

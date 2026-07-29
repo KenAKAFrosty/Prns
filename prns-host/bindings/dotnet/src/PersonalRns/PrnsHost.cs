@@ -430,16 +430,18 @@ public sealed class PrnsHost : IAsyncDisposable
             );
         }
         using (nativeCommand)
-        using (
-            cancellationToken.Register(
-                static state => Native.prns_command_interrupt_wait((CommandHandle)state!),
-                nativeCommand
-            )
-        )
+        using (var readiness = NativeReadiness.ForCommand(nativeCommand))
         {
-            var settlement = await Task.Run(() => Wait(nativeCommand)).ConfigureAwait(false);
-            cancellationToken.ThrowIfCancellationRequested();
-            return settlement;
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var settlement = Poll(nativeCommand);
+                if (settlement is not null)
+                {
+                    return settlement;
+                }
+                await readiness.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
         }
     }
 
@@ -900,13 +902,17 @@ public sealed class PrnsHost : IAsyncDisposable
         throw new InvalidOperationException("Native command submission returned no result.");
     }
 
-    private static CommandSettlement Wait(CommandHandle command)
+    private static CommandSettlement? Poll(CommandHandle command)
     {
         var result = new Native.CommandResult
         {
             StructSize = (nuint)Marshal.SizeOf<Native.CommandResult>(),
         };
-        var status = Native.prns_command_wait(command, Native.NeverTimeout, ref result);
+        var status = Native.prns_command_wait(command, 0, ref result);
+        if (status == Status.TimedOut)
+        {
+            return null;
+        }
         PrnsException.ThrowIfError(status);
         if (result.Failure != 0)
         {

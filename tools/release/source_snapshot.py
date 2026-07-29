@@ -72,6 +72,31 @@ def resolve_commit(repository: Path, commit: str) -> str:
     return resolved
 
 
+def compact_archive(value: bytes) -> bytes:
+    output = io.BytesIO()
+    with (
+        zipfile.ZipFile(io.BytesIO(value), mode="r") as source,
+        zipfile.ZipFile(
+            output,
+            mode="w",
+            compression=zipfile.ZIP_DEFLATED,
+            compresslevel=9,
+        ) as destination,
+    ):
+        for member in source.infolist():
+            if member.is_dir():
+                continue
+            member.extra = b""
+            member.comment = b""
+            destination.writestr(
+                member,
+                source.read(member),
+                compress_type=zipfile.ZIP_DEFLATED,
+                compresslevel=9,
+            )
+    return output.getvalue()
+
+
 def git_archive(repository: Path, *, commit: str, version: str) -> bytes:
     resolved = resolve_commit(repository, commit)
     environment = os.environ.copy()
@@ -95,7 +120,7 @@ def git_archive(repository: Path, *, commit: str, version: str) -> bytes:
         raise ValueError(f"git archive failed for source snapshot: {detail}")
     if not result.stdout:
         raise ValueError("git archive produced an empty source snapshot")
-    return result.stdout
+    return compact_archive(result.stdout)
 
 
 def validate_archive_members(value: bytes, *, version: str) -> None:

@@ -1,4 +1,5 @@
 use core::time::Duration;
+use personal_rns::runtime::NoPersistence;
 
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy, Settlement,
@@ -8,12 +9,12 @@ use personal_rns::identity::{MarkDestinationUsedOutcome, Zeroizing, IDENTITY_SEC
 use personal_rns::interfaces::{BitrateBps, InterfaceId};
 use personal_rns::manifold::reconnect::ReconnectPolicy;
 use personal_rns::persistence::{read_tunnels_snapshot, FileStore, PersistedStore, SnapshotRegion};
-use personal_rns::routes;
+use personal_rns::request_endpoints;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
-    boot_timeline_origin, DestinationIdentityRetentionControl, Diagnostic, FlushMark, Manual,
-    PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe, RegionFlush,
-    RequestHandlerRegistration, RouteSeedProgress,
+    boot_timeline_origin, DestinationIdentityRetentionControl, Diagnostic, FlushMark,
+    ManuallyAttached, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle,
+    PrnsNodeRecipe, RegionFlush, RouteSeedProgress, ServeMyRequestEndpoints,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::{TcpClientInterface, TcpServer};
@@ -45,7 +46,7 @@ fn single(identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> PreConfiguredDe
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
-        request_handlers: RequestHandlerRegistration::None,
+        request_endpoints: ServeMyRequestEndpoints::No,
     }
 }
 
@@ -121,7 +122,7 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
         .expect("the test destination name is valid");
 
     let flushed_high_water = {
-        let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+        let server = TcpServer::bind_with_bitrate("127.0.0.1:0", BITRATE)
             .await
             .expect("server binds");
         let addr = server.local_addr().expect("bound addr").to_string();
@@ -130,9 +131,10 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
             pre_configured_destinations: [single(secret(0xA1))],
             app_state: (),
             storage: GrowableHeap,
-            routes: routes![],
+            request_endpoints: request_endpoints![],
             on_event: |_event, _state| {},
-            interfaces: Manual,
+            interfaces: ManuallyAttached,
+            persistence: NoPersistence,
         });
         let commands_a = node_a.handle();
         let _server_sup = commands_a.supervise(server);
@@ -145,7 +147,7 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
             pre_configured_destinations: [single(secret(0xB2))],
             app_state: (),
             storage: GrowableHeap,
-            routes: routes![],
+            request_endpoints: request_endpoints![],
             on_event: move |event, _state| {
                 if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event
                 {
@@ -155,6 +157,7 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
             interfaces: |node: &PrnsNodeHandle| {
                 node.attach(client);
             },
+            persistence: NoPersistence,
         })
         .with_timeline_origin(boot_timeline_origin(&store));
         let commands_b = node_b.handle();
@@ -196,7 +199,7 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
         }
     };
 
-    let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+    let server = TcpServer::bind_with_bitrate("127.0.0.1:0", BITRATE)
         .await
         .expect("server rebinds");
     let addr = server.local_addr().expect("bound addr").to_string();
@@ -205,9 +208,10 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
         pre_configured_destinations: [single(secret(0xA1))],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         on_event: |_event, _state| {},
-        interfaces: Manual,
+        interfaces: ManuallyAttached,
+        persistence: NoPersistence,
     });
     let commands_a = node_a.handle();
     let _server_sup = commands_a.supervise(server);
@@ -218,11 +222,12 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
         pre_configured_destinations: [single(secret(0xB2))],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         on_event: |_event, _state| {},
         interfaces: |node: &PrnsNodeHandle| {
             node.attach(client);
         },
+        persistence: NoPersistence,
     })
     .with_timeline_origin(boot_timeline_origin(&store));
 
@@ -297,7 +302,7 @@ async fn a_reconnecting_peer_reclaims_a_rebooted_relays_routes_through_its_tunne
         .expect("the test destination name is valid");
 
     {
-        let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+        let server = TcpServer::bind_with_bitrate("127.0.0.1:0", BITRATE)
             .await
             .expect("server binds");
         let addr = server.local_addr().expect("bound addr").to_string();
@@ -307,14 +312,15 @@ async fn a_reconnecting_peer_reclaims_a_rebooted_relays_routes_through_its_tunne
             pre_configured_destinations: [single(secret(0xB2))],
             app_state: (),
             storage: GrowableHeap,
-            routes: routes![],
+            request_endpoints: request_endpoints![],
             on_event: move |event, _state| {
                 if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event
                 {
                     let _ = heard_tx.send(destination);
                 }
             },
-            interfaces: Manual,
+            interfaces: ManuallyAttached,
+            persistence: NoPersistence,
         })
         .with_timeline_origin(boot_timeline_origin(&store));
         let commands_relay = relay.handle();
@@ -327,11 +333,12 @@ async fn a_reconnecting_peer_reclaims_a_rebooted_relays_routes_through_its_tunne
             pre_configured_destinations: [single(secret(0xC5))],
             app_state: (),
             storage: GrowableHeap,
-            routes: routes![],
+            request_endpoints: request_endpoints![],
             on_event: |_event, _state| {},
             interfaces: |node: &PrnsNodeHandle| {
                 node.attach(client);
             },
+            persistence: NoPersistence,
         });
         let commands_c = node_c.handle();
 
@@ -393,7 +400,7 @@ async fn a_reconnecting_peer_reclaims_a_rebooted_relays_routes_through_its_tunne
         }
     }
 
-    let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+    let server = TcpServer::bind_with_bitrate("127.0.0.1:0", BITRATE)
         .await
         .expect("server rebinds");
     let addr = server.local_addr().expect("bound addr").to_string();
@@ -402,9 +409,10 @@ async fn a_reconnecting_peer_reclaims_a_rebooted_relays_routes_through_its_tunne
         pre_configured_destinations: [single(secret(0xB2))],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         on_event: |_event, _state| {},
-        interfaces: Manual,
+        interfaces: ManuallyAttached,
+        persistence: NoPersistence,
     })
     .with_timeline_origin(boot_timeline_origin(&store));
 
@@ -427,11 +435,12 @@ async fn a_reconnecting_peer_reclaims_a_rebooted_relays_routes_through_its_tunne
         pre_configured_destinations: [single(secret(0xC5))],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         on_event: |_event, _state| {},
         interfaces: |node: &PrnsNodeHandle| {
             node.attach(client);
         },
+        persistence: NoPersistence,
     });
 
     let proven = async {
@@ -468,7 +477,7 @@ async fn a_quiet_flush_skips_unchanged_regions_and_a_change_rewrites() {
         .destination_hash()
         .expect("the test destination name is valid");
 
-    let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+    let server = TcpServer::bind_with_bitrate("127.0.0.1:0", BITRATE)
         .await
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
@@ -478,25 +487,26 @@ async fn a_quiet_flush_skips_unchanged_regions_and_a_change_rewrites() {
         pre_configured_destinations: [single(secret(0xA1)), single(secret(0xA3))],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::CommandSettled { id, settlement }) = event {
                 let _ = settled_tx.send((id, settlement));
             }
         },
-        interfaces: Manual,
+        interfaces: ManuallyAttached,
+        persistence: NoPersistence,
     });
     let commands_a = node_a.handle();
     let _server_sup = commands_a.supervise(server);
 
-    let client = TcpClientInterface::new(addr, BITRATE, ReconnectPolicy::STANDARD);
+    let client = TcpClientInterface::new_with_bitrate(addr, BITRATE, ReconnectPolicy::STANDARD);
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xB2))],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
                 let _ = heard_tx.send(destination);
@@ -505,6 +515,7 @@ async fn a_quiet_flush_skips_unchanged_regions_and_a_change_rewrites() {
         interfaces: |node: &PrnsNodeHandle| {
             node.attach(client);
         },
+        persistence: NoPersistence,
     });
     let commands_b = node_b.handle();
 
@@ -602,7 +613,7 @@ fn ratcheted(
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::Ratcheted,
-        request_handlers: RequestHandlerRegistration::None,
+        request_endpoints: ServeMyRequestEndpoints::No,
     }
 }
 
@@ -619,7 +630,7 @@ async fn a_rebooted_destination_decrypts_singles_sealed_to_its_pre_reboot_ratche
         .expect("the test destination name is valid");
 
     {
-        let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+        let server = TcpServer::bind_with_bitrate("127.0.0.1:0", BITRATE)
             .await
             .expect("server binds");
         let addr = server.local_addr().expect("bound addr").to_string();
@@ -628,9 +639,10 @@ async fn a_rebooted_destination_decrypts_singles_sealed_to_its_pre_reboot_ratche
             pre_configured_destinations: [ratcheted(secret(0xD1))],
             app_state: (),
             storage: GrowableHeap,
-            routes: routes![],
+            request_endpoints: request_endpoints![],
             on_event: |_event, _state| {},
-            interfaces: Manual,
+            interfaces: ManuallyAttached,
+            persistence: NoPersistence,
         })
         .with_timeline_origin(boot_timeline_origin(&store_r));
         let commands_r = node_r.handle();
@@ -644,7 +656,7 @@ async fn a_rebooted_destination_decrypts_singles_sealed_to_its_pre_reboot_ratche
             pre_configured_destinations: [single(secret(0xB2))],
             app_state: (),
             storage: GrowableHeap,
-            routes: routes![],
+            request_endpoints: request_endpoints![],
             on_event: move |event, _state| {
                 if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event
                 {
@@ -654,6 +666,7 @@ async fn a_rebooted_destination_decrypts_singles_sealed_to_its_pre_reboot_ratche
             interfaces: |node: &PrnsNodeHandle| {
                 node.attach(client);
             },
+            persistence: NoPersistence,
         });
         let commands_p = node_p.handle();
 
@@ -703,7 +716,7 @@ async fn a_rebooted_destination_decrypts_singles_sealed_to_its_pre_reboot_ratche
         }
     }
 
-    let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+    let server = TcpServer::bind_with_bitrate("127.0.0.1:0", BITRATE)
         .await
         .expect("server rebinds");
     let addr = server.local_addr().expect("bound addr").to_string();
@@ -712,9 +725,10 @@ async fn a_rebooted_destination_decrypts_singles_sealed_to_its_pre_reboot_ratche
         pre_configured_destinations: [ratcheted(secret(0xD1))],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         on_event: |_event, _state| {},
-        interfaces: Manual,
+        interfaces: ManuallyAttached,
+        persistence: NoPersistence,
     })
     .with_timeline_origin(boot_timeline_origin(&store_r));
     let ratchets = node_r.seed_self_ratchets_from_vault(&vault_r);
@@ -730,11 +744,12 @@ async fn a_rebooted_destination_decrypts_singles_sealed_to_its_pre_reboot_ratche
         pre_configured_destinations: [single(secret(0xB2))],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         on_event: |_event, _state| {},
         interfaces: |node: &PrnsNodeHandle| {
             node.attach(client);
         },
+        persistence: NoPersistence,
     });
     let routes = node_p.seed_routes_from_store(&store_p);
     assert_eq!(routes.seeded_count, 1, "R's route seeds on P");

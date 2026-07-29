@@ -142,7 +142,11 @@ pub struct TcpServer {
 }
 
 impl TcpServer {
-    pub async fn bind(
+    pub async fn bind(addr: impl tokio::net::ToSocketAddrs) -> io::Result<Self> {
+        Self::bind_with_bitrate(addr, tcp::TCP_BITRATE_ESTIMATE).await
+    }
+
+    pub async fn bind_with_bitrate(
         addr: impl tokio::net::ToSocketAddrs,
         bitrate: BitrateBps,
     ) -> io::Result<Self> {

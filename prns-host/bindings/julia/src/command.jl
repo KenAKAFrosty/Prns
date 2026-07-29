@@ -10,12 +10,31 @@ end
 
 mutable struct Command
     pointer::Ptr{Cvoid}
+    readiness::Base.AsyncCondition
+    registration::Ptr{Cvoid}
     guard::ReentrantLock
     wait_guard::ReentrantLock
 end
 
 function Command(pointer::Ptr{Cvoid})
-    command = Command(pointer, ReentrantLock(), ReentrantLock())
+    readiness, registration = try
+        register_readiness(pointer, :prns_command_register_readiness)
+    catch
+        ccall(
+            native_symbol(:prns_command_release),
+            Cvoid,
+            (Ptr{Cvoid},),
+            pointer,
+        )
+        rethrow()
+    end
+    command = Command(
+        pointer,
+        readiness,
+        registration,
+        ReentrantLock(),
+        ReentrantLock(),
+    )
     finalizer(close, command)
     command
 end
@@ -747,18 +766,35 @@ function Base.wait(
                 NativeStringView(C_NULL, 0),
             ),
         )
-        checked_status(
-            :wait_command,
-            ccall(
-                native_symbol(:prns_command_wait),
-                UInt32,
-                (Ptr{Cvoid}, UInt32, Ref{NativeCommandResult}),
-                command_pointer(command),
-                timeout_milliseconds,
-                output,
-            ),
-        )
-        decode_settlement(output[])
+        if timeout_milliseconds != NEVER_TIMEOUT
+            checked_status(
+                :wait_command,
+                ccall(
+                    native_symbol(:prns_command_wait),
+                    UInt32,
+                    (Ptr{Cvoid}, UInt32, Ref{NativeCommandResult}),
+                    command_pointer(command),
+                    timeout_milliseconds,
+                    output,
+                ),
+            )
+            return decode_settlement(output[])
+        end
+        while true
+            status = Status(
+                ccall(
+                    native_symbol(:prns_command_wait),
+                    UInt32,
+                    (Ptr{Cvoid}, UInt32, Ref{NativeCommandResult}),
+                    command_pointer(command),
+                    UInt32(0),
+                    output,
+                ),
+            )
+            status == StatusTimedOut && (wait(command.readiness); continue)
+            status == StatusOk || throw(StatusFailure(:wait_command, status))
+            return decode_settlement(output[])
+        end
     end
 end
 
@@ -776,10 +812,12 @@ function interrupt_wait!(command::Command)
 end
 
 function Base.close(command::Command)
-    pointer = lock(command.guard) do
+    pointer, registration = lock(command.guard) do
         pointer = command.pointer
+        registration = command.registration
         command.pointer = C_NULL
-        pointer
+        command.registration = C_NULL
+        (pointer, registration)
     end
     pointer == C_NULL && return nothing
     ccall(
@@ -789,6 +827,7 @@ function Base.close(command::Command)
         pointer,
     )
     lock(command.wait_guard) do
+        release_readiness(registration, command.readiness)
         ccall(
             native_symbol(:prns_command_release),
             Cvoid,

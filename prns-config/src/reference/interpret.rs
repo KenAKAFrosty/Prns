@@ -285,6 +285,12 @@ fn take_interface_discovery(
         coerce_bool,
     )?;
     discovery.reachable_on = opt(rest, interface_key::REACHABLE_ON, interface, coerce_string)?;
+    discovery.reachable_port = opt(
+        rest,
+        interface_key::REACHABLE_PORT,
+        interface,
+        coerce_nonzero_u16,
+    )?;
     discovery.publish_ifac = opt(rest, interface_key::PUBLISH_IFAC, interface, coerce_bool)?;
     discovery.latitude = opt(rest, interface_key::LATITUDE, interface, coerce_f64)?;
     discovery.longitude = opt(rest, interface_key::LONGITUDE, interface, coerce_f64)?;
@@ -870,6 +876,18 @@ fn coerce_u16(value: &Value, interface: &str, key: &str) -> Result<u16, Referenc
         key,
         "expected a port or small integer (0-65535)",
     )
+}
+
+fn coerce_nonzero_u16(value: &Value, interface: &str, key: &str) -> Result<u16, ReferenceError> {
+    let value = coerce_u16(value, interface, key)?;
+    if value == 0 {
+        return Err(bad_value(
+            interface,
+            key,
+            "expected a port from 1 through 65535",
+        ));
+    }
+    Ok(value)
 }
 
 fn coerce_u8(value: &Value, interface: &str, key: &str) -> Result<u8, ReferenceError> {

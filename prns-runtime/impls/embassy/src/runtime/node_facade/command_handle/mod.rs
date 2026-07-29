@@ -14,7 +14,7 @@ use crate::engine::{
 use crate::routing::links::LinkId;
 use crate::wire::DestinationHash;
 
-use super::super::request_router::RespondToken;
+use super::super::request_endpoints::RespondToken;
 use super::super::{PrnsNodeApi, SendError};
 
 const NO_AWAITER: u64 = u64::MAX;

@@ -99,7 +99,7 @@ cat > "$OUT_HTML" <<HTMLEOF
       <div class="metarow">
         <div class="chips">
           <span class="chip lic">MIT / Apache 2.0</span>
-          <span class="chip">Correct</span>
+          <span class="chip">Safe</span>
           <span class="chip">Robust</span>
           <span class="chip">Fast</span>
         </div>

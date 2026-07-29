@@ -5,7 +5,7 @@ mod identity_blackhole;
 pub mod node;
 pub mod node_introspection;
 pub mod packet_phy_retention;
-pub mod request_router;
+pub mod request_endpoints;
 #[cfg(feature = "rns-management")]
 pub mod rns_management;
 #[cfg(feature = "rns-management")]
@@ -39,8 +39,8 @@ pub use identity_blackhole::{
 };
 pub use node::{
     assemble_node, configure_preconfigured_destination, AssembledNode,
-    ConfigurePreconfiguredDestinationError, Manual, PreConfiguredDestination, PrnsNodeRecipe,
-    RequestHandlerRegistration,
+    ConfigurePreconfiguredDestinationError, ManuallyAttached, NoPersistence,
+    PreConfiguredDestination, PrnsNodeRecipe, ServeMyRequestEndpoints,
 };
 
 #[doc(hidden)]

@@ -1,0 +1,485 @@
+name: sign unified suite release
+
+on:
+  workflow_dispatch:
+    inputs:
+      flasher_sign_run_id:
+        description: Successful deferred flasher signing workflow run ID
+        required: true
+        type: string
+      daemon_candidate_run_id:
+        description: Successful prnsd native candidate workflow run ID
+        required: true
+        type: string
+      image_candidate_run_id:
+        description: Successful prnsd image candidate workflow run ID
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  artifact-metadata: write
+  attestations: write
+  contents: write
+  id-token: write
+  packages: write
+
+concurrency:
+  group: suite-signing
+  cancel-in-progress: false
+
+jobs:
+  sign:
+    name: Verify, publish, attest, and sign suite
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    environment: release-signing
+    env:
+      FLASHER_RUN_ID: ${{ inputs.flasher_sign_run_id }}
+      DAEMON_RUN_ID: ${{ inputs.daemon_candidate_run_id }}
+      IMAGE_RUN_ID: ${{ inputs.image_candidate_run_id }}
+    outputs:
+      flasher_bundle_sha256: ${{ steps.flasher.outputs.bundle_sha256 }}
+      flasher_manifest_sha256: ${{ steps.flasher.outputs.manifest_sha256 }}
+      image_digest: ${{ steps.image.outputs.manifest_digest }}
+      published_at: ${{ steps.prerelease.outputs.published_at }}
+      source_commit: ${{ steps.identity.outputs.source_commit }}
+      version: ${{ steps.identity.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Require exact protected release authority
+        id: identity
+        env:
+          REF_PROTECTED: ${{ github.ref_protected }}
+        run: |
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$REF_PROTECTED" = "true"
+          test "$GITHUB_SHA" = "$GITHUB_WORKFLOW_SHA"
+          [[ "$FLASHER_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$DAEMON_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$IMAGE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          version="$(cat VERSION)"
+          test "$version" = "0.3.1"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "source_commit=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+      - name: Verify all three producer workflow runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          verify_run() {
+            run_id="$1"
+            workflow_path="$2"
+            output="${RUNNER_TEMP}/run-${run_id}.json"
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}" > "$output"
+            test "$(jq -r '.id' "$output")" = "$run_id"
+            test "$(jq -r '.path' "$output")" = "$workflow_path"
+            test "$(jq -r '.event' "$output")" = "workflow_dispatch"
+            test "$(jq -r '.status' "$output")" = "completed"
+            test "$(jq -r '.conclusion' "$output")" = "success"
+            test "$(jq -r '.head_sha' "$output")" = "$GITHUB_SHA"
+            test "$(jq -r '.head_repository.full_name' "$output")" = "$GITHUB_REPOSITORY"
+          }
+          verify_run "$FLASHER_RUN_ID" ".github/workflows/flasher-sign.yml"
+          verify_run "$DAEMON_RUN_ID" ".github/workflows/prnsd-candidate.yml"
+          verify_run "$IMAGE_RUN_ID" ".github/workflows/prnsd-image-candidate.yml"
+          test "$(jq -r '.inputs.suite_input' "${RUNNER_TEMP}/run-${FLASHER_RUN_ID}.json")" = \
+            "true"
+      - name: Download exact signed flasher evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          run-id: ${{ inputs.flasher_sign_run_id }}
+          pattern: flasher-signed-candidate-run-*
+          path: target/flasher
+          merge-multiple: true
+          github-token: ${{ github.token }}
+      - name: Download exact native daemon evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          run-id: ${{ inputs.daemon_candidate_run_id }}
+          pattern: prnsd-unsigned-candidate-*
+          path: target/daemon
+          merge-multiple: true
+          github-token: ${{ github.token }}
+      - name: Download exact image evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          run-id: ${{ inputs.image_candidate_run_id }}
+          pattern: prnsd-unsigned-image-*
+          path: target/image
+          merge-multiple: true
+          github-token: ${{ github.token }}
+      - name: Reverify signed flasher and producer identities
+        id: flasher
+        env:
+          PRNS_MINISIGN_PUBLIC_KEY: release/keys/minisign.pub
+        run: |
+          test "$(jq -r '.release.commit' target/flasher/candidate/flash-manifest.json)" = "$GITHUB_SHA"
+          test "$(jq -r '.release.version' target/flasher/candidate/flash-manifest.json)" = "$(cat VERSION)"
+          test "$(jq -r '.source_commit' target/daemon/prnsd-candidate-${GITHUB_SHA}.json)" = "$GITHUB_SHA"
+          test "$(jq -r '.workflow.run_id' target/daemon/prnsd-candidate-${GITHUB_SHA}.json)" = "$DAEMON_RUN_ID"
+          test "$(jq -r '.source_commit' target/image/prnsd-image-candidate-${GITHUB_SHA}.json)" = "$GITHUB_SHA"
+          test "$(jq -r '.workflow.run_id' target/image/prnsd-image-candidate-${GITHUB_SHA}.json)" = "$IMAGE_RUN_ID"
+          ./tools/prns release prnsd distribution -- candidate-verify \
+            --assets target/daemon \
+            --index "target/daemon/prnsd-candidate-${GITHUB_SHA}.json" \
+            --source-commit "$GITHUB_SHA" \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow-run-id "$DAEMON_RUN_ID"
+          ./tools/prns release prnsd distribution -- image-candidate-verify \
+            --assets target/image \
+            --index "target/image/prnsd-image-candidate-${GITHUB_SHA}.json" \
+            --source-commit "$GITHUB_SHA" \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow-run-id "$IMAGE_RUN_ID"
+          ./tools/prns release candidate verify -- target/flasher/candidate
+          bundle="target/flasher/release/prns-flasher-candidate-v$(cat VERSION)-signed.tar.gz"
+          ./tools/prns release candidate package -- target/flasher/candidate "${RUNNER_TEMP}/repacked-flasher.tar.gz"
+          cmp "$bundle" "${RUNNER_TEMP}/repacked-flasher.tar.gz"
+          echo "bundle_sha256=$(sha256sum "$bundle" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "manifest_sha256=$(sha256sum target/flasher/candidate/flash-manifest.json | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+        with:
+          version: v0.35.0
+          driver-opts: |
+            image=moby/buildkit:v0.31.2@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Install registry transport
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes skopeo
+          skopeo --version
+      - name: Push immutable per-platform image candidates
+        run: |
+          check_or_push() {
+            architecture="$1"
+            layout="target/image/prnsd-linux-${architecture}.oci.tar"
+            tag="ghcr.io/kenakafrosty/prnsd:candidate-${GITHUB_SHA}-${architecture}"
+            expected="$(./tools/prns release prnsd distribution -- oci-digest \
+              --layout "$layout" --platform "linux/${architecture}")"
+            if skopeo inspect --raw "docker://${tag}" > "${RUNNER_TEMP}/${architecture}.json" 2>/dev/null; then
+              actual="sha256:$(sha256sum "${RUNNER_TEMP}/${architecture}.json" | awk '{print $1}')"
+              test "$actual" = "$expected"
+            else
+              skopeo copy \
+                --override-os linux \
+                --override-arch "$architecture" \
+                --preserve-digests \
+                "oci-archive:${layout}" \
+                "docker://${tag}"
+              skopeo inspect --raw "docker://${tag}" > "${RUNNER_TEMP}/${architecture}.json"
+              actual="sha256:$(sha256sum "${RUNNER_TEMP}/${architecture}.json" | awk '{print $1}')"
+              test "$actual" = "$expected"
+            fi
+          }
+          check_or_push amd64
+          check_or_push arm64
+      - name: Publish or verify immutable candidate manifest
+        id: image
+        run: |
+          candidate="ghcr.io/kenakafrosty/prnsd:candidate-${GITHUB_SHA}"
+          expected_children="$(
+            jq -r '.platform_digests[]' "target/image/prnsd-image-candidate-${GITHUB_SHA}.json" |
+              sort
+          )"
+          if skopeo inspect --raw "docker://${candidate}" > "${RUNNER_TEMP}/candidate.json" 2>/dev/null; then
+            actual_children="$(jq -r '.manifests[].digest' "${RUNNER_TEMP}/candidate.json" | sort)"
+            test "$actual_children" = "$expected_children"
+          else
+            docker manifest create "$candidate" \
+              "ghcr.io/kenakafrosty/prnsd:candidate-${GITHUB_SHA}-amd64" \
+              "ghcr.io/kenakafrosty/prnsd:candidate-${GITHUB_SHA}-arm64"
+            docker manifest push "$candidate"
+            skopeo inspect --raw "docker://${candidate}" > "${RUNNER_TEMP}/candidate.json"
+          fi
+          manifest_digest="sha256:$(sha256sum "${RUNNER_TEMP}/candidate.json" | awk '{print $1}')"
+          amd64="$(jq -r '.platform_digests["linux/amd64"]' "target/image/prnsd-image-candidate-${GITHUB_SHA}.json")"
+          arm64="$(jq -r '.platform_digests["linux/arm64"]' "target/image/prnsd-image-candidate-${GITHUB_SHA}.json")"
+          ./tools/prns release prnsd distribution -- image-metadata \
+            --source-commit "$GITHUB_SHA" \
+            --manifest-digest "$manifest_digest" \
+            --platform-digest "linux/amd64=${amd64}" \
+            --platform-digest "linux/arm64=${arm64}" \
+            --output "target/prnsd-image-v$(cat VERSION).json"
+          ./tools/prns release prnsd distribution -- railway-contract \
+            --source-commit "$GITHUB_SHA" \
+            --image-digest "$manifest_digest" \
+            --output "target/railway-template-contract-v$(cat VERSION).json"
+          echo "manifest_digest=$manifest_digest" >> "$GITHUB_OUTPUT"
+      - name: Stage the exact suite assets
+        run: |
+          version="$(cat VERSION)"
+          mkdir -p target/assets target/custody
+          stage() {
+            source="$1"
+            destination="target/assets/$(basename "$source")"
+            test -f "$source"
+            test ! -e "$destination"
+            cp "$source" "$destination"
+          }
+          for source in target/daemon/*; do stage "$source"; done
+          for source in target/image/*.spdx.json; do stage "$source"; done
+          stage "target/image/prnsd-image-candidate-${GITHUB_SHA}.json"
+          stage "target/prnsd-image-v${version}.json"
+          stage "target/railway-template-contract-v${version}.json"
+          for source in target/flasher/release/*; do
+            if [[ "$(basename "$source")" != attestation-subjects.sha256 ]]; then
+              stage "$source"
+            fi
+          done
+          for source in target/flasher/candidate/cli/hopspot-flash-*; do stage "$source"; done
+          stage target/flasher/candidate/flash-manifest.json
+          stage target/flasher/candidate/flash-manifest.json.minisig
+          stage target/flasher/candidate/channels/stable.json
+          stage target/flasher/candidate/channels/stable.json.minisig
+          stage target/flasher/candidate/cli/install.sh
+          stage target/flasher/candidate/cli/install.ps1
+          stage target/flasher/candidate/cli/README.md
+          stage target/flasher/candidate/qualification/QUALIFICATION.md
+          stage target/flasher/candidate/qualification/create-flasher-acceptance.py
+          stage target/flasher/candidate/qualification/validate-flasher-acceptance.py
+          stage target/flasher/candidate/qualification/flasher_acceptance_contract.py
+          stage target/flasher/candidate/qualification/serve-flasher-candidate.py
+          stage target/flasher/candidate/qualification/verify-flasher-candidate-files.py
+          stage target/flasher/candidate/qualification/validate-flasher-tester-roster.py
+          stage target/flasher/candidate/qualification/flasher_tester_roster.py
+          stage target/flasher/candidate/qualification/package-flasher-qualification-evidence.py
+          stage target/flasher/candidate/qualification/tester-roster.json
+          stage target/flasher/candidate/audit/release-audit-evidence.md
+          stage target/flasher/candidate/metadata/build.json
+          stage target/flasher/candidate/metadata/sparse-sizes.json
+          stage target/flasher/candidate/metadata/reproducibility.json
+          stage target/flasher/candidate/metadata/release-history.json
+          while IFS= read -r relative; do
+            stage "target/flasher/candidate/${relative}"
+          done < <(jq -r '[.targets[].parts[].path] | unique[]' target/flasher/candidate/flash-manifest.json)
+      - name: Build daemon and flasher provenance subjects
+        run: |
+          : > target/custody/native-subjects.sha256
+          for path in \
+            target/assets/prnsd-0.3.1-* \
+            target/assets/prns-flasher-candidate-v0.3.1-signed.tar.gz
+          do
+            case "$path" in
+              *.tar.gz|*.zip)
+                printf '%s  %s\n' \
+                  "$(sha256sum "$path" | awk '{print $1}')" \
+                  "$(basename "$path")" \
+                  >> target/custody/native-subjects.sha256
+                ;;
+            esac
+          done
+          test "$(wc -l < target/custody/native-subjects.sha256)" -eq 6
+      - name: Attest daemon archives and signed flasher bundle
+        id: native_attestation
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26
+        with:
+          subject-checksums: target/custody/native-subjects.sha256
+      - name: Attest immutable OCI manifest
+        id: image_attestation
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26
+        with:
+          subject-name: ghcr.io/kenakafrosty/prnsd
+          subject-digest: ${{ steps.image.outputs.manifest_digest }}
+          push-to-registry: true
+      - name: Preserve provenance bundles as release assets
+        env:
+          IMAGE_ATTESTATION: ${{ steps.image_attestation.outputs.bundle-path }}
+          NATIVE_ATTESTATION: ${{ steps.native_attestation.outputs.bundle-path }}
+        run: |
+          cp "$NATIVE_ATTESTATION" target/assets/prnsd-native-attestation-v0.3.1.json
+          cp "$IMAGE_ATTESTATION" target/assets/prnsd-image-attestation-v0.3.1.json
+          rm target/custody/native-subjects.sha256
+      - name: Build and sign exact suite custody
+        env:
+          PRNS_MINISIGN_SECRET_KEY_B64: ${{ secrets.PRNS_MINISIGN_SECRET_KEY_B64 }}
+        run: |
+          ./tools/prns release toolchain minisign install -- "${RUNNER_TEMP}/prns-release-bin"
+          export PRNS_MINISIGN_BIN="${RUNNER_TEMP}/prns-release-bin/minisign"
+          ./tools/prns release prnsd distribution -- inventory create \
+            --assets target/assets \
+            --output target/custody/SHA256SUMS.txt
+          ./tools/prns release prnsd distribution -- suite-record \
+            --assets target/assets \
+            --inventory target/custody/SHA256SUMS.txt \
+            --source-commit "$GITHUB_SHA" \
+            --output "target/custody/release-record-v$(cat VERSION).json"
+          test -n "$PRNS_MINISIGN_SECRET_KEY_B64"
+          umask 077
+          secret_key="${RUNNER_TEMP}/prns-release-signing.key"
+          trap 'rm -f "$secret_key"' EXIT HUP INT TERM
+          printf '%s' "$PRNS_MINISIGN_SECRET_KEY_B64" | base64 --decode > "$secret_key"
+          test -s "$secret_key"
+          ./tools/prns release document sign -- target/custody/SHA256SUMS.txt "$secret_key"
+          ./tools/prns release document sign -- \
+            "target/custody/release-record-v$(cat VERSION).json" "$secret_key"
+          "$PRNS_MINISIGN_BIN" -Vm target/custody/SHA256SUMS.txt \
+            -x target/custody/SHA256SUMS.txt.minisig \
+            -p release/keys/minisign.pub
+          ./tools/prns release prnsd distribution -- inventory verify \
+            --assets target/assets \
+            --inventory target/custody/SHA256SUMS.txt
+          cp release/keys/minisign.pub target/custody/minisign.pub
+      - name: Publish complete immutable suite prerelease
+        id: prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(cat VERSION)"
+          tag="v${version}"
+          title="Prns ${version} unified release candidate"
+          if gh release view "$tag" > "${RUNNER_TEMP}/release.txt" 2>/dev/null; then
+            gh release view "$tag" \
+              --json isDraft,isPrerelease,targetCommitish,title \
+              > "${RUNNER_TEMP}/release.json"
+            draft="$(jq -r '.isDraft' "${RUNNER_TEMP}/release.json")"
+            test "$draft" = "true" || test "$draft" = "false"
+            test "$(jq -r '.isPrerelease' "${RUNNER_TEMP}/release.json")" = "true"
+            test "$(jq -r '.targetCommitish' "${RUNNER_TEMP}/release.json")" = "$GITHUB_SHA"
+            test "$(jq -r '.title' "${RUNNER_TEMP}/release.json")" = "$title"
+          else
+            test "$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" 2>/dev/null || true)" = ""
+            gh release create "$tag" \
+              --target "$GITHUB_SHA" \
+              --title "$title" \
+              --notes "Signed unified suite candidate. Stable promotion requires independent release, OCI, anonymous-pull, and deployment verification." \
+              --draft \
+              --prerelease \
+              --latest=false
+          fi
+          mapfile -t assets < <(find target/assets target/custody -maxdepth 1 -type f | sort)
+          declare -A names=()
+          for asset in "${assets[@]}"; do
+            name="$(basename "$asset")"
+            test -z "${names[$name]:-}"
+            names[$name]="$asset"
+          done
+          for name in "${!names[@]}"; do
+            local_asset="${names[$name]}"
+            remote="${RUNNER_TEMP}/${name}"
+            if gh release view "$tag" --json assets --jq '.assets[].name' | grep -Fxq "$name"; then
+              gh release download "$tag" --pattern "$name" --dir "$RUNNER_TEMP"
+              cmp "$local_asset" "$remote"
+            else
+              gh release upload "$tag" "$local_asset"
+            fi
+          done
+          expected="$(printf '%s\n' "${!names[@]}" | sort)"
+          actual="$(
+            while IFS= read -r name; do
+              case "$name" in
+                "acceptance-v${version}.json" | \
+                "acceptance-v${version}.json.minisig" | \
+                "flasher-release-record-v${version}.json" | \
+                "flasher-release-record-v${version}.json.minisig" | \
+                "deployment-qualification-v${version}.json" | \
+                "qualification-evidence-v${version}.tar.gz")
+                  ;;
+                public-review-v${version}-run-*-attempt-*.json)
+                  ;;
+                *)
+                  printf '%s\n' "$name"
+                  ;;
+              esac
+            done < <(gh release view "$tag" --json assets --jq '.assets[].name')
+          )"
+          actual="$(sort <<< "$actual")"
+          test "$actual" = "$expected"
+          gh release edit "$tag" --draft=false --prerelease=true --latest=false
+          published_at="$(gh release view "$tag" --json publishedAt --jq '.publishedAt')"
+          [[ "$published_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]
+          echo "published_at=$published_at" >> "$GITHUB_OUTPUT"
+
+  public-review:
+    name: Approve protected public release
+    needs: sign
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: public-release
+    permissions:
+      actions: read
+      contents: write
+    env:
+      RELEASE_VERSION: ${{ needs.sign.outputs.version }}
+      SIGNED_BUNDLE_SHA256: ${{ needs.sign.outputs.flasher_bundle_sha256 }}
+      MANIFEST_SHA256: ${{ needs.sign.outputs.flasher_manifest_sha256 }}
+      PUBLISHED_AT: ${{ needs.sign.outputs.published_at }}
+      SOURCE_COMMIT: ${{ needs.sign.outputs.source_commit }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          ref: ${{ needs.sign.outputs.source_commit }}
+      - name: Re-fetch the complete public suite prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_SHA" = "$SOURCE_COMMIT"
+          test "$GITHUB_WORKFLOW_SHA" = "$SOURCE_COMMIT"
+          test "$(cat VERSION)" = "$RELEASE_VERSION"
+          mkdir -p target/public-review
+          gh release view "v${RELEASE_VERSION}" \
+            --json isDraft,isPrerelease,publishedAt,tagName,targetCommitish \
+            > target/public-review/release.json
+          test "$(jq -r '.isDraft' target/public-review/release.json)" = "false"
+          test "$(jq -r '.isPrerelease' target/public-review/release.json)" = "true"
+          test "$(jq -r '.publishedAt' target/public-review/release.json)" = "$PUBLISHED_AT"
+          test "$(jq -r '.targetCommitish' target/public-review/release.json)" = "$SOURCE_COMMIT"
+          gh release download "v${RELEASE_VERSION}" \
+            --pattern "prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz" \
+            --pattern flash-manifest.json \
+            --dir target/public-review
+          test "$(sha256sum "target/public-review/prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz" | awk '{print $1}')" = \
+            "$SIGNED_BUNDLE_SHA256"
+          test "$(sha256sum target/public-review/flash-manifest.json | awk '{print $1}')" = \
+            "$MANIFEST_SHA256"
+      - name: Capture this protected review job
+        id: review
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            > target/public-review/run.json
+          gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}/jobs?per_page=100" \
+            --jq ".jobs[] | select(.name == \"Approve protected public release\")" \
+            > target/public-review/job-pages.json
+          test "$(jq -s 'length' target/public-review/job-pages.json)" -eq 1
+          jq -s '.[0]' target/public-review/job-pages.json > target/public-review/job.json
+          test "$(jq -r '.run_id' target/public-review/job.json)" = "$GITHUB_RUN_ID"
+          test "$(jq -r '.run_attempt' target/public-review/job.json)" = "$GITHUB_RUN_ATTEMPT"
+          evidence="public-review-v${RELEASE_VERSION}-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}.json"
+          approved_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          ./tools/prns release public-review -- create \
+            --release-json target/public-review/release.json \
+            --run-json target/public-review/run.json \
+            --job-json target/public-review/job.json \
+            --signed-bundle "target/public-review/prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz" \
+            --manifest target/public-review/flash-manifest.json \
+            --repository "$GITHUB_REPOSITORY" \
+            --version "$RELEASE_VERSION" \
+            --source-commit "$SOURCE_COMMIT" \
+            --approved-at "$approved_at" \
+            --output "target/public-review/${evidence}"
+          echo "evidence=target/public-review/${evidence}" >> "$GITHUB_OUTPUT"
+      - name: Publish immutable suite public-review evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLIC_REVIEW_EVIDENCE: ${{ steps.review.outputs.evidence }}
+        run: |
+          name="$(basename "$PUBLIC_REVIEW_EVIDENCE")"
+          mkdir -p "${RUNNER_TEMP}/published-review"
+          if gh release view "v${RELEASE_VERSION}" --json assets --jq '.assets[].name' |
+            grep -Fxq "$name"; then
+            gh release download "v${RELEASE_VERSION}" --pattern "$name" \
+              --dir "${RUNNER_TEMP}/published-review"
+            cmp "$PUBLIC_REVIEW_EVIDENCE" "${RUNNER_TEMP}/published-review/$name"
+          else
+            gh release upload "v${RELEASE_VERSION}" "$PUBLIC_REVIEW_EVIDENCE"
+          fi

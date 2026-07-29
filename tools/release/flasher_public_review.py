@@ -9,6 +9,8 @@ from pathlib import Path
 
 
 WORKFLOW_PATH = ".github/workflows/flasher-sign.yml"
+SUITE_WORKFLOW_PATH = ".github/workflows/suite-sign.yml"
+WORKFLOW_PATHS = {WORKFLOW_PATH, SUITE_WORKFLOW_PATH}
 JOB_NAME = "Approve protected public release"
 EVIDENCE_FIELDS = {
     "schema",
@@ -127,11 +129,19 @@ def release_identity(
 
 
 def run_identity(
-    run: dict, *, repository: str, run_id: int, run_attempt: int, workflow_sha: str
+    run: dict,
+    *,
+    repository: str,
+    run_id: int,
+    run_attempt: int,
+    workflow_path: str,
+    workflow_sha: str,
 ) -> None:
     if run.get("id") != run_id or run.get("run_attempt") != run_attempt:
         raise ValueError("public-review workflow run identity differs from the evidence")
-    if run.get("path") != WORKFLOW_PATH or run.get("event") != "workflow_dispatch":
+    if workflow_path not in WORKFLOW_PATHS:
+        raise ValueError("public-review signing workflow is not a registered release reviewer")
+    if run.get("path") != workflow_path or run.get("event") != "workflow_dispatch":
         raise ValueError("public-review evidence was not produced by the signing workflow")
     if run.get("head_sha") != workflow_sha:
         raise ValueError("public-review workflow revision differs from the signed source")
@@ -179,6 +189,9 @@ def build_evidence(
         run.get("run_attempt"), "public-review workflow run attempt"
     )
     workflow_sha = require_commit(run.get("head_sha"), "public-review workflow SHA")
+    workflow_path = run.get("path")
+    if not isinstance(workflow_path, str):
+        raise ValueError("public-review workflow path is unavailable")
     if workflow_sha != source_commit:
         raise ValueError("public-review workflow SHA differs from the signed source commit")
     run_identity(
@@ -186,6 +199,7 @@ def build_evidence(
         repository=repository,
         run_id=run_id,
         run_attempt=run_attempt,
+        workflow_path=workflow_path,
         workflow_sha=workflow_sha,
     )
     job_id = require_positive(job.get("id"), "public-review workflow job ID")
@@ -210,7 +224,7 @@ def build_evidence(
     return {
         "schema": 2,
         "repository": repository,
-        "workflow_path": WORKFLOW_PATH,
+        "workflow_path": workflow_path,
         "workflow_sha": workflow_sha,
         "workflow_run_id": run_id,
         "workflow_run_attempt": run_attempt,
@@ -249,11 +263,15 @@ def validate_evidence(
     workflow_sha = require_commit(
         evidence.get("workflow_sha"), "public-review workflow SHA"
     )
+    workflow_path = evidence.get("workflow_path")
+    if not isinstance(workflow_path, str):
+        raise ValueError("public-review workflow path is unavailable")
     run_identity(
         run,
         repository=repository,
         run_id=run_id,
         run_attempt=run_attempt,
+        workflow_path=workflow_path,
         workflow_sha=workflow_sha,
     )
     job_identity(
@@ -297,15 +315,16 @@ def discover_evidence(
     repository: str,
     version: str,
     source_commit: str,
-    workflow_run_id: int,
+    workflow_run_id: int | None,
     signed_candidate_sha256: str,
     manifest_sha256: str,
 ) -> list[Path]:
     validate_version(version)
     require_commit(source_commit, "public-review source commit")
-    workflow_run_id = require_positive(
-        workflow_run_id, "public-review workflow run ID"
-    )
+    if workflow_run_id is not None:
+        workflow_run_id = require_positive(
+            workflow_run_id, "public-review workflow run ID"
+        )
     signed_candidate_sha256 = require_sha256(
         signed_candidate_sha256, "signed candidate SHA-256"
     )
@@ -313,16 +332,21 @@ def discover_evidence(
     if not directory.is_dir():
         raise ValueError("public-review evidence directory is unavailable")
 
-    prefix = f"public-review-v{version}-run-{workflow_run_id}-attempt-"
+    prefix = f"public-review-v{version}-run-"
     paths = [path for path in directory.iterdir() if path.name.startswith(prefix)]
-    candidates: list[tuple[int, Path]] = []
-    attempts: set[int] = set()
+    candidates: list[tuple[int, int, Path]] = []
+    attempts: set[tuple[int, int]] = set()
     for path in paths:
         if not path.is_file() or path.is_symlink():
             raise ValueError("public-review evidence directory contains a non-file entry")
         evidence = load_object(path, "public-review evidence")
         if set(evidence) != EVIDENCE_FIELDS or evidence.get("schema") != 2:
             raise ValueError("public-review evidence has an unsupported shape")
+        evidence_run_id = require_positive(
+            evidence.get("workflow_run_id"), "public-review workflow run ID"
+        )
+        if workflow_run_id is not None and evidence_run_id != workflow_run_id:
+            continue
         run_attempt = require_positive(
             evidence.get("workflow_run_attempt"),
             "public-review workflow run attempt",
@@ -330,7 +354,7 @@ def discover_evidence(
         require_positive(evidence.get("workflow_job_id"), "public-review workflow job ID")
         expected_name = evidence_asset_name(
             version=version,
-            run_id=workflow_run_id,
+            run_id=evidence_run_id,
             run_attempt=run_attempt,
         )
         if path.name != expected_name:
@@ -339,9 +363,8 @@ def discover_evidence(
             )
         expected_identity = {
             "repository": repository,
-            "workflow_path": WORKFLOW_PATH,
             "workflow_sha": source_commit,
-            "workflow_run_id": workflow_run_id,
+            "workflow_run_id": evidence_run_id,
             "version": version,
             "source_commit": source_commit,
             "signed_candidate_sha256": signed_candidate_sha256,
@@ -353,13 +376,21 @@ def discover_evidence(
             )
         parse_time(evidence.get("prerelease_published_at"), "prerelease publishedAt")
         parse_time(evidence.get("approved_at"), "public-review approval")
-        if run_attempt in attempts:
+        if evidence.get("workflow_path") not in WORKFLOW_PATHS:
+            raise ValueError("public-review evidence names an unregistered workflow")
+        identity = (evidence_run_id, run_attempt)
+        if identity in attempts:
             raise ValueError("public-review evidence repeats a workflow run attempt")
-        attempts.add(run_attempt)
-        candidates.append((run_attempt, path))
+        attempts.add(identity)
+        candidates.append((evidence_run_id, run_attempt, path))
     if not candidates:
         raise ValueError("no persistent public-review evidence assets were found")
-    return [path for _, path in sorted(candidates, key=lambda candidate: candidate[0])]
+    return [
+        path
+        for _, _, path in sorted(
+            candidates, key=lambda candidate: (candidate[0], candidate[1])
+        )
+    ]
 
 
 def write_evidence(path: Path, evidence: dict) -> None:

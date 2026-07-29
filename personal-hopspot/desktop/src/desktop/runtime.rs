@@ -196,8 +196,9 @@ fn run_node(ready_tx: Sender<(WindowHandles, persistence::ShutdownFlush)>) {
             pre_configured_destinations: destinations.into_preconfigured_destinations(),
             app_state: (),
             storage: GrowableHeap,
-            routes: screen::node_pages::NodePageRoutes,
-            interfaces: Manual,
+            request_endpoints: screen::node_pages::NodePageRoutes,
+            interfaces: ManuallyAttached,
+            persistence: NoPersistence,
             on_event: move |event, _state: &()| {
                 if let PrnsEvent::Diagnostic(Diagnostic::SelfRatchetRotated { destination }) = event
                 {
@@ -278,7 +279,7 @@ fn run_node(ready_tx: Sender<(WindowHandles, persistence::ShutdownFlush)>) {
 
         let (tcp_status, tcp_id, tcp_target) = match std::env::var("HOPSPOT_TCP_TARGET") {
             Ok(target) if !target.is_empty() => {
-                let tcp = TcpClientInterface::new(
+                let tcp = TcpClientInterface::new_with_bitrate(
                     target.clone(),
                     tcp::TCP_BITRATE_ESTIMATE,
                     ReconnectPolicy::STANDARD,

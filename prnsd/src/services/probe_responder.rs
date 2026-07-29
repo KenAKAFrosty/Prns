@@ -2,10 +2,10 @@ use personal_rns::engine::RatchetPolicy;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
-use personal_rns::runtime::request_router::RouteSet;
+use personal_rns::runtime::request_endpoints::RequestEndpointSet;
 use personal_rns::runtime::{
     ConfigurePreconfiguredDestinationError, PreConfiguredDestination, PrnsEvent, PrnsNode,
-    RequestHandlerRegistration,
+    ServeMyRequestEndpoints,
 };
 use personal_rns::storage::StorageLayout;
 use personal_rns::wire::DestinationHash;
@@ -15,7 +15,7 @@ pub fn activate<St, R, F, S>(
     identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
 ) -> Result<DestinationHash, ConfigurePreconfiguredDestinationError>
 where
-    R: RouteSet<St>,
+    R: RequestEndpointSet<St>,
     F: FnMut(PrnsEvent<'_>, &St),
     S: StorageLayout,
 {
@@ -28,6 +28,6 @@ where
         link_requests: LinkRequestPolicy::AcceptNone,
         ratchet: RatchetPolicy::NoRatchets,
         resource_strategy: ResourceStrategy::AcceptNone,
-        request_handlers: RequestHandlerRegistration::None,
+        request_endpoints: ServeMyRequestEndpoints::No,
     })
 }

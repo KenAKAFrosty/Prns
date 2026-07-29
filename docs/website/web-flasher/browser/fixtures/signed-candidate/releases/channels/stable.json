@@ -3,5 +3,5 @@
   "channel": "stable",
   "version": "0.2.6",
   "manifest_url": "https://reticulum.rs/releases/0.2.6/flash-manifest.json",
-  "manifest_sha256": "547b8a7124fc7ec8ab83856b276b489c77a2a5edebefbcab2f9c052774fb4e6f"
+  "manifest_sha256": "df6f429fa9ec7555be420647ad039d7d62808bf76fb71daa92a073348dccc423"
 }

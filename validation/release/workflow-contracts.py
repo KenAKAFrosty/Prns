@@ -444,12 +444,49 @@ def validate() -> list[str]:
         "--qualification-evidence",
         "--public-review-evidence",
         "Select and verify the exact successful protected public review",
-        "actions/runs/${signing_run_id}/attempts/${run_attempt}",
+        "actions/runs/${review_run_id}/attempts/${run_attempt}",
+        "flasher-release-record-v${RELEASE_VERSION}.json",
     ):
         if finalization_gate not in finalization:
             errors.append(
                 f"flasher-finalize-evidence.yml is missing gate {finalization_gate!r}"
             )
+
+    suite_signing = (
+        ROOT / ".github" / "workflows" / "suite-sign.yml"
+    ).read_text(encoding="utf-8")
+    for suite_gate in (
+        "Require exact protected release authority",
+        "Verify all three producer workflow runs",
+        "candidate-${GITHUB_SHA}",
+        "inventory create",
+        "suite-record",
+        "name: Approve protected public release",
+        "environment: public-release",
+        "./tools/prns release public-review -- create",
+        "public-review-v${RELEASE_VERSION}-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}.json",
+    ):
+        if suite_gate not in suite_signing:
+            errors.append(f"suite-sign.yml is missing custody gate {suite_gate!r}")
+
+    suite_promotion = (
+        ROOT / ".github" / "workflows" / "suite-promote.yml"
+    ).read_text(encoding="utf-8")
+    for suite_gate in (
+        "flasher_acceptance_commit:",
+        "flasher_finalization_run_id:",
+        "flasher_release_record_sha256:",
+        ".github/workflows/flasher-finalize-evidence.yml",
+        "flasher-release-record-v${version}.json",
+        "./tools/prns release verify --",
+        "./tools/prns release public-review -- verify",
+        "gh attestation verify \"$bundle\"",
+        "docker pull --platform linux/amd64",
+        "docker pull --platform linux/arm64",
+        "Promote semver and latest only to the verified digest",
+    ):
+        if suite_gate not in suite_promotion:
+            errors.append(f"suite-promote.yml is missing custody gate {suite_gate!r}")
 
     installation = (
         ROOT / ".github" / "workflows" / "flasher-installation-qualification.yml"

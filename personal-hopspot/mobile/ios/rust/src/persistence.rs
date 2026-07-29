@@ -1,7 +1,7 @@
 use core::time::Duration;
 use std::path::Path;
 
-use personal_rns::runtime::request_router::RouteSet;
+use personal_rns::runtime::request_endpoints::RequestEndpointSet;
 use personal_rns::runtime::{
     NodePersistence, PersistenceEvent, PersistenceFlushStatus, PersistenceRestoreReport, PrnsEvent,
     PrnsNode, PrnsNodeHandle, RegionFlush,
@@ -21,7 +21,7 @@ pub(crate) struct PreparedPersistence {
 impl PreparedPersistence {
     pub(crate) fn open(storage_directory: &Path) -> Result<Self, std::io::Error> {
         Ok(Self {
-            persistence: NodePersistence::open(storage_directory.join(STORE_DIRECTORY))?,
+            persistence: NodePersistence::custom_dir(storage_directory.join(STORE_DIRECTORY))?,
         })
     }
 
@@ -34,7 +34,7 @@ impl PreparedPersistence {
         node: &mut PrnsNode<St, R, F, S>,
     ) -> PersistenceRestoreReport
     where
-        R: RouteSet<St>,
+        R: RequestEndpointSet<St>,
         F: FnMut(PrnsEvent<'_>, &St),
         S: StorageLayout,
     {
@@ -171,7 +171,8 @@ mod tests {
     };
     use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
     use personal_rns::runtime::{
-        Diagnostic, Manual, PreConfiguredDestination, PrnsNodeRecipe, RequestHandlerRegistration,
+        Diagnostic, ManuallyAttached, NoPersistence, PreConfiguredDestination, PrnsNodeRecipe,
+        ServeMyRequestEndpoints,
     };
     use personal_rns::storage::GrowableHeap;
     use personal_rns::tcp::{TcpClientInterface, TcpServer};
@@ -249,15 +250,18 @@ mod tests {
         let announced = test_destination(0xA1);
         let destination = announced.destination_hash().unwrap();
 
-        let server = TcpServer::bind("127.0.0.1:0", TEST_BITRATE).await.unwrap();
+        let server = TcpServer::bind_with_bitrate("127.0.0.1:0", TEST_BITRATE)
+            .await
+            .unwrap();
         let server_address = server.local_addr().unwrap().to_string();
         let node_a = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: None,
             pre_configured_destinations: [test_destination(0xA1)],
             app_state: (),
             storage: GrowableHeap,
-            routes: personal_rns::routes![],
-            interfaces: Manual,
+            request_endpoints: personal_rns::request_endpoints![],
+            interfaces: ManuallyAttached,
+            persistence: NoPersistence,
             on_event: |_event, _state| {},
         });
         let handle_a = node_a.handle();
@@ -277,7 +281,7 @@ mod tests {
             pre_configured_destinations: [test_destination(0xB2)],
             app_state: (),
             storage: GrowableHeap,
-            routes: personal_rns::routes![],
+            request_endpoints: personal_rns::request_endpoints![],
             interfaces: |handle: &PrnsNodeHandle| {
                 handle.attach(client);
             },
@@ -288,6 +292,7 @@ mod tests {
                     let _ = change_tx.send(());
                 }
             },
+            persistence: NoPersistence,
         })
         .with_timeline_origin(prepared.timeline_origin());
         let handle_b = node_b.handle();
@@ -343,15 +348,18 @@ mod tests {
         announcer.abort();
 
         let restarted = PreparedPersistence::open(root.path()).unwrap();
-        let restarted_server = TcpServer::bind("127.0.0.1:0", TEST_BITRATE).await.unwrap();
+        let restarted_server = TcpServer::bind_with_bitrate("127.0.0.1:0", TEST_BITRATE)
+            .await
+            .unwrap();
         let restarted_address = restarted_server.local_addr().unwrap().to_string();
         let mut restarted_node = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: Some(Zeroizing::new([0xB3; IDENTITY_SECRET_KEY_LEN])),
             pre_configured_destinations: [test_destination(0xB2)],
             app_state: (),
             storage: GrowableHeap,
-            routes: personal_rns::routes![],
-            interfaces: Manual,
+            request_endpoints: personal_rns::request_endpoints![],
+            interfaces: ManuallyAttached,
+            persistence: NoPersistence,
             on_event: |_event, _state| {},
         })
         .with_timeline_origin(restarted.timeline_origin());
@@ -374,11 +382,12 @@ mod tests {
             pre_configured_destinations: std::iter::empty::<PreConfiguredDestination<'static>>(),
             app_state: (),
             storage: GrowableHeap,
-            routes: personal_rns::routes![],
+            request_endpoints: personal_rns::request_endpoints![],
             interfaces: move |handle: &PrnsNodeHandle| {
                 handle.attach(requester_client);
             },
             on_event: |_event, _state| {},
+            persistence: NoPersistence,
         });
         let requester_handle = requester_node.handle();
         let request = async {
@@ -414,7 +423,7 @@ mod tests {
             proof: ProofStrategy::ProveAll,
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
-            request_handlers: RequestHandlerRegistration::None,
+            request_endpoints: ServeMyRequestEndpoints::No,
         }
     }
 
@@ -431,8 +440,9 @@ mod tests {
             pre_configured_destinations: [destination],
             app_state: (),
             storage: GrowableHeap,
-            routes: personal_rns::routes![],
-            interfaces: Manual,
+            request_endpoints: personal_rns::request_endpoints![],
+            interfaces: ManuallyAttached,
+            persistence: NoPersistence,
             on_event,
         })
         .with_timeline_origin(timeline_origin)

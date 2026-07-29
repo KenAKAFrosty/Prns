@@ -50,6 +50,11 @@ impl InterfaceOptions {
             boolean(self.discovery_encrypt),
         )?;
         push(&mut values, "reachable_on", text(self.reachable_on))?;
+        push(
+            &mut values,
+            "reachable_port",
+            unsigned(self.reachable_port.map(u64::from)),
+        )?;
         push(&mut values, "publish_ifac", boolean(self.publish_ifac))?;
         push(&mut values, "latitude", decimal(self.latitude))?;
         push(&mut values, "longitude", decimal(self.longitude))?;

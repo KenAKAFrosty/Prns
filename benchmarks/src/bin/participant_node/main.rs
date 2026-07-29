@@ -9,6 +9,7 @@ mod link_channel;
 mod request;
 mod resource;
 
+use personal_rns::runtime::NoPersistence;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{sync::Arc, time::Duration};
 
@@ -27,18 +28,18 @@ use personal_rns::interfaces::{
 };
 use personal_rns::manifold::interface_seam::{Interface, InterfaceSeam};
 use personal_rns::manifold::reconnect::ReconnectPolicy;
-use personal_rns::routes;
+use personal_rns::request_endpoints;
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::links::resources::{ResourceStrategy, MAX_EFFICIENT_SIZE};
 use personal_rns::routing::links::LinkId;
 use personal_rns::routing::request_handlers::RequestPathHash;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
-use personal_rns::runtime::request_router::{
-    Decline, RequestContext, RequestRoute, RoutePolicy, RouteSet,
+use personal_rns::runtime::request_endpoints::{
+    Decline, RequestContext, RequestEndpoint, RequestEndpointPolicy, RequestEndpointSet,
 };
 use personal_rns::runtime::{
     generate_identity_secret, Diagnostic, Message, PreConfiguredDestination, PrnsEvent, PrnsNode,
-    PrnsNodeHandle, PrnsNodeRecipe, RequestHandlerRegistration, SegmentCompression,
+    PrnsNodeHandle, PrnsNodeRecipe, SegmentCompression, ServeMyRequestEndpoints,
 };
 #[cfg(feature = "fixed-storage")]
 type NodeStorage = personal_rns::storage::Esp32S3<allocator_api2::alloc::Global>;
@@ -535,12 +536,13 @@ async fn run_relay(manifest: &Manifest, addr: &str) {
         pre_configured_destinations: std::iter::empty::<PreConfiguredDestination<'static>>(),
         app_state: (),
         storage: NodeStorage::default(),
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         on_event: |_: PrnsEvent<'_>, _: &()| {},
         interfaces: |node: &PrnsNodeHandle| {
             node.add_interface(side_a);
             node.add_interface(side_b);
         },
+        persistence: NoPersistence,
     });
 
     println!(
@@ -557,13 +559,13 @@ async fn run_relay(manifest: &Manifest, addr: &str) {
 async fn build_responder_node<St, R, F>(
     single: PreConfiguredDestination<'static>,
     app_state: St,
-    routes: R,
+    request_endpoints: R,
     on_event: F,
     manifest: &Manifest,
     addr: &str,
 ) -> (PrnsNode<St, R, F, NodeStorage>, String)
 where
-    R: RouteSet<St>,
+    R: RequestEndpointSet<St>,
     F: FnMut(PrnsEvent<'_>, &St),
 {
     let tcp_policy = benchmark_tcp_policy(&manifest.profile);
@@ -586,13 +588,14 @@ where
         pre_configured_destinations: [single],
         app_state,
         storage: NodeStorage::default(),
-        routes,
+        request_endpoints,
         on_event,
         interfaces: |node: &PrnsNodeHandle| {
             for server in servers {
                 node.add_interface(server);
             }
         },
+        persistence: NoPersistence,
     });
     (node, addresses)
 }
@@ -617,11 +620,12 @@ where
         pre_configured_destinations: [single],
         app_state: (),
         storage: NodeStorage::default(),
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         on_event,
         interfaces: |node: &PrnsNodeHandle| {
             node.attach(client);
         },
+        persistence: NoPersistence,
     })
 }
 

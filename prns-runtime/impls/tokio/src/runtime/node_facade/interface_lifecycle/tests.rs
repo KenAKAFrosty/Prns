@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tokio::sync::mpsc::{self, UnboundedReceiver};
@@ -18,6 +19,25 @@ use crate::node_introspection::{InterfaceIfacSnapshot, InterfaceInventoryEntry};
 
 use super::super::PrnsNodeHandle;
 use super::{drive_interfaces, DriverMsg, Fleet, RuntimeIfac};
+
+struct LiveRun {
+    live: Arc<AtomicUsize>,
+}
+
+impl LiveRun {
+    fn new(live: Arc<AtomicUsize>, overlaps: Arc<AtomicUsize>) -> Self {
+        if live.fetch_add(1, Ordering::SeqCst) != 0 {
+            overlaps.fetch_add(1, Ordering::SeqCst);
+        }
+        Self { live }
+    }
+}
+
+impl Drop for LiveRun {
+    fn drop(&mut self) {
+        self.live.fetch_sub(1, Ordering::SeqCst);
+    }
+}
 
 fn handle() -> (PrnsNodeHandle, UnboundedReceiver<HostCommand>) {
     let (commands, command_rx) = mpsc::unbounded_channel();
@@ -204,6 +224,59 @@ async fn a_self_completing_interface_run_deregisters_it() {
                 );
         }
     );
+}
+
+#[tokio::test]
+async fn replacement_waits_for_the_previous_same_id_run_to_drop() {
+    let (msg_tx, msg_rx) = mpsc::unbounded_channel::<DriverMsg>();
+    let (cmd_tx, _cmd_rx) = mpsc::unbounded_channel::<HostCommand>();
+    let (started_tx, mut started_rx) = mpsc::unbounded_channel();
+    let live = Arc::new(AtomicUsize::new(0));
+    let overlaps = Arc::new(AtomicUsize::new(0));
+    let id = InterfaceId::from_channel_tag(
+        crate::interfaces::InterfaceKind::BluetoothAuto,
+        b"same-id-replacement",
+    );
+
+    let exercise = async {
+        for _ in 0..64 {
+            let live = live.clone();
+            let overlaps = overlaps.clone();
+            let started_tx = started_tx.clone();
+            msg_tx
+                .send(DriverMsg::Add {
+                    id,
+                    supervisor: None,
+                    build: Box::new(move || {
+                        let guard = LiveRun::new(live, overlaps);
+                        let _ = started_tx.send(());
+                        Box::pin(async move {
+                            let _guard = guard;
+                            core::future::pending().await
+                        })
+                    }),
+                })
+                .expect("the driver is listening");
+            started_rx.recv().await.expect("the run starts");
+            msg_tx
+                .send(DriverMsg::Stop { id })
+                .expect("the driver is listening");
+        }
+        drop(msg_tx);
+    };
+
+    tokio::join!(
+        drive_interfaces(
+            std::vec![],
+            msg_rx,
+            cmd_tx,
+            Arc::new(Mutex::new(HashMap::new())),
+        ),
+        exercise,
+    );
+
+    assert_eq!(overlaps.load(Ordering::SeqCst), 0);
+    assert_eq!(live.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]

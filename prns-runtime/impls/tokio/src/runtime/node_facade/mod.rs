@@ -27,9 +27,11 @@ use crate::interfaces::InterfaceId;
 use crate::manifold::driver::HostCommand;
 use crate::routing::links::channel::MessageType;
 use crate::routing::links::LinkId;
+use crate::routing::request_handlers::{RequestPathHash, RequestPolicy};
+use crate::storage::TablePushError;
 use crate::wire::DestinationHash;
 
-use super::request_router::RespondToken;
+use super::request_endpoints::RespondToken;
 use super::{InterfaceStore, SendError};
 pub use byte_stream::{ByteStreamReader, ByteStreamWriter, StreamId};
 pub use interface_lifecycle::{
@@ -38,15 +40,16 @@ pub use interface_lifecycle::{
 };
 use interface_lifecycle::{DriverMsg, RegisteredInterface};
 pub use node_lifecycle::{
-    NodeRunError, NonRoutingIdentityError, PrnsNode, RegisterRequestRouteError,
+    NodeRunError, NonRoutingIdentityError, PrnsNode, RegisterRequestEndpointError,
     SharedInstanceIdentityError,
 };
 pub use persistence::{
-    boot_timeline_origin, wall_clock_timeline_origin, DestinationIdentitySeedReport, FlushError,
-    FlushFailurePolicy, FlushMark, FlushReport, NodePersistence, PersistenceEvent,
-    PersistenceFlushStatus, PersistenceRestoreReport, PersistenceTrigger, PersistenceWorker,
-    PrepareFlushError, PreparedFlush, RatchetSeedReport, RegionFlush, RouteSeedProgress,
-    RouteSeedReport, TunnelSeedReport,
+    boot_timeline_origin, wall_clock_timeline_origin, DefaultLocationError,
+    DestinationIdentitySeedReport, FlushError, FlushFailurePolicy, FlushMark, FlushReport,
+    NodePersistence, PersistenceEvent, PersistenceFlushStatus, PersistenceIntent,
+    PersistenceRestoreReport, PersistenceTrigger, PersistenceWorker, PrepareFlushError,
+    PreparedFlush, RatchetSeedReport, RegionFlush, RouteSeedProgress, RouteSeedReport, SaveOnLearn,
+    SaveOnLearnWiring, TunnelSeedReport,
 };
 pub use request_response::ResponseSendError;
 pub use resource_admission::{ResourceAdmissionPeer, ResourceOfferAdmission, ResourceOfferMonitor};
@@ -74,6 +77,23 @@ pub enum RequestPathError {
     Failed(RequestPathFailure),
     NodeStopped,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeRequestHandlerError {
+    TableFull,
+    NodeStopped,
+}
+
+impl core::fmt::Display for RuntimeRequestHandlerError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::TableFull => formatter.write_str("the request-handler table is full"),
+            Self::NodeStopped => formatter.write_str("the node stopped before applying the route"),
+        }
+    }
+}
+
+impl std::error::Error for RuntimeRequestHandlerError {}
 
 impl PrnsNodeHandle {
     #[cfg(test)]
@@ -261,6 +281,50 @@ impl PrnsNodeHandle {
             Some(Settlement::AllowRequester(result)) => result.map_err(SendError::Failed),
             Some(_) | None => Err(SendError::NodeStopped),
         }
+    }
+
+    /// Register or replace a request path while the node is running. This
+    /// resolves only after the manifold has applied the mutation.
+    pub async fn register_request_path(
+        &self,
+        destination: DestinationHash,
+        path: &str,
+        policy: RequestPolicy,
+    ) -> Result<(), RuntimeRequestHandlerError> {
+        let (ready, applied) = oneshot::channel();
+        self.commands
+            .send(HostCommand::RegisterRequestHandler {
+                destination,
+                path_hash: RequestPathHash::of(path),
+                policy,
+                ready,
+            })
+            .map_err(|_| RuntimeRequestHandlerError::NodeStopped)?;
+        match applied.await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(TablePushError::TableFull)) => Err(RuntimeRequestHandlerError::TableFull),
+            Err(_) => Err(RuntimeRequestHandlerError::NodeStopped),
+        }
+    }
+
+    /// Remove a request path while the node is running. `Ok(false)` means the
+    /// route was already absent.
+    pub async fn unregister_request_path(
+        &self,
+        destination: DestinationHash,
+        path: &str,
+    ) -> Result<bool, RuntimeRequestHandlerError> {
+        let (ready, applied) = oneshot::channel();
+        self.commands
+            .send(HostCommand::UnregisterRequestHandler {
+                destination,
+                path_hash: RequestPathHash::of(path),
+                ready,
+            })
+            .map_err(|_| RuntimeRequestHandlerError::NodeStopped)?;
+        applied
+            .await
+            .map_err(|_| RuntimeRequestHandlerError::NodeStopped)
     }
 
     pub(crate) async fn settle(&self, command: EngineCommand) -> Option<Settlement> {

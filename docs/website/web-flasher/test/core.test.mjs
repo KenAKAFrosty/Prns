@@ -125,6 +125,49 @@ test("configuration uses UTF-8 byte limits without truncation", () => {
   assert.equal(image[11], 0);
 });
 
+test("configuration encodes one numeric or DNS TCP target", () => {
+  const numeric = provisioningImage({
+    action: "configure",
+    ssid: "mesh",
+    password: "",
+    tcpClient: { hostKind: "ipv4", host: "192.0.2.10", port: 4242 },
+  });
+  assert.equal(numeric[9], 1);
+  assert.equal(numeric[112], 4);
+  assert.deepEqual(Array.from(numeric.slice(113, 119)), [0x10, 0x92, 192, 0, 2, 10]);
+
+  const hostname = provisioningImage({
+    action: "configure",
+    ssid: "mesh",
+    password: "",
+    tcpClient: { hostKind: "hostname", host: "node.example", port: 5252 },
+  });
+  assert.equal(hostname[9], 2);
+  assert.equal(hostname[112], 12);
+  assert.deepEqual(Array.from(hostname.slice(113, 115)), [0x14, 0x84]);
+  assert.equal(new TextDecoder().decode(hostname.slice(115, 127)), "node.example");
+});
+
+test("configuration rejects malformed TCP targets", () => {
+  for (const tcpClient of [
+    { hostKind: "ipv4", host: "0.0.0.0", port: 4242 },
+    { hostKind: "ipv4", host: "192.0.2.01", port: 4242 },
+    { hostKind: "hostname", host: "Node.Example", port: 4242 },
+    { hostKind: "hostname", host: "node..example", port: 4242 },
+    { hostKind: "hostname", host: "node.example", port: 0 },
+  ]) {
+    assert.throws(
+      () => provisioningImage({
+        action: "configure",
+        ssid: "mesh",
+        password: "",
+        tcpClient,
+      }),
+      FlashBridgeError,
+    );
+  }
+});
+
 test("standard digest vectors match", async () => {
   const bytes = new TextEncoder().encode("test");
   assert.equal(await sha256Hex(bytes, webcrypto), "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08");

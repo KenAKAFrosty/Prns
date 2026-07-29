@@ -23,7 +23,7 @@ pub(super) async fn run_runtime_endpoint(
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         resource_strategy: ResourceStrategy::AcceptNone,
-        request_handlers: RequestHandlerRegistration::None,
+        request_endpoints: ServeMyRequestEndpoints::No,
     };
     let destination = single
         .destination_hash()
@@ -72,7 +72,7 @@ pub(super) async fn run_runtime_endpoint(
 
     if role == "responder" {
         let (node, bound) =
-            build_responder_node(single, (), routes![], on_event, manifest, addr).await;
+            build_responder_node(single, (), request_endpoints![], on_event, manifest, addr).await;
         let commands = node.handle();
         println!("READY role=responder addr={bound}");
         let firehose = async {

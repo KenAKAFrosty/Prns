@@ -8,6 +8,9 @@ internal static class Native
     internal const string Library = "prns_host";
     internal const uint NeverTimeout = uint.MaxValue;
 
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    internal delegate void ReadinessCallback(nint context);
+
     [StructLayout(LayoutKind.Sequential)]
     internal struct ByteView
     {
@@ -309,6 +312,14 @@ internal static class Native
     );
 
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern Status prns_command_register_readiness(
+        CommandHandle command,
+        ReadinessCallback callback,
+        nint context,
+        out ReadinessRegistrationHandle registration
+    );
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
     internal static extern void prns_command_interrupt_wait(CommandHandle command);
 
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
@@ -325,6 +336,17 @@ internal static class Native
         HostHandle host,
         out EventStreamHandle stream
     );
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern Status prns_event_stream_register_readiness(
+        EventStreamHandle stream,
+        ReadinessCallback callback,
+        nint context,
+        out ReadinessRegistrationHandle registration
+    );
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void prns_readiness_registration_release(nint registration);
 
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
     internal static extern void prns_event_stream_interrupt_wait(EventStreamHandle stream);
@@ -436,6 +458,18 @@ internal sealed class EventHandle : SafeHandleZeroOrMinusOneIsInvalid
     protected override bool ReleaseHandle()
     {
         Native.prns_event_release(handle);
+        return true;
+    }
+}
+
+internal sealed class ReadinessRegistrationHandle : SafeHandleZeroOrMinusOneIsInvalid
+{
+    private ReadinessRegistrationHandle()
+        : base(true) { }
+
+    protected override bool ReleaseHandle()
+    {
+        Native.prns_readiness_registration_release(handle);
         return true;
     }
 }

@@ -9,27 +9,27 @@ use crate::units::RttMillis;
 use crate::wire::DestinationHash;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RoutePolicy {
+pub enum RequestEndpointPolicy {
     AllowNone,
     AllowAll,
     AllowList(&'static [IdentityHash]),
 }
 
-impl RoutePolicy {
+impl RequestEndpointPolicy {
     #[must_use]
     pub fn engine_policy(self) -> RequestPolicy {
         match self {
-            RoutePolicy::AllowNone => RequestPolicy::AllowNone,
-            RoutePolicy::AllowAll => RequestPolicy::AllowAll,
-            RoutePolicy::AllowList(_) => RequestPolicy::AllowList,
+            RequestEndpointPolicy::AllowNone => RequestPolicy::AllowNone,
+            RequestEndpointPolicy::AllowAll => RequestPolicy::AllowAll,
+            RequestEndpointPolicy::AllowList(_) => RequestPolicy::AllowList,
         }
     }
 
-    /// The identities to admit at registration — non-empty only for [`RoutePolicy::AllowList`].
+    /// The identities to admit at registration — non-empty only for [`RequestEndpointPolicy::AllowList`].
     #[must_use]
     pub fn seed_list(self) -> &'static [IdentityHash] {
         match self {
-            RoutePolicy::AllowList(list) => list,
+            RequestEndpointPolicy::AllowList(list) => list,
             _ => &[],
         }
     }
@@ -105,7 +105,7 @@ impl<const N: usize> ResponseSink for heapless::Vec<u8, N> {
     }
 }
 
-/// Only needed if you don't respond to the request inside your [`handle`](RequestRoute::handle) function.
+/// Only needed if you don't respond to the request inside your [`handle`](RequestEndpoint::handle) function.
 /// See [`respond_token`](RequestContext::respond_token).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RespondToken {
@@ -201,34 +201,39 @@ impl<S> RequestContext<'_, S> {
         Ok(self)
     }
 
-    /// The token to answer this request later. You can keep it, return `Err(Decline::Ignore)` now, and
-    /// answer from another task through the platform command handle.
+    /// The token to answer this request later. You can keep it, return `Err(Decline::Ignore)` now, and answer from another task through the platform command handle.
+    ///
+    /// In this context, "keeping it" usually means capturing it somewhere in your AppState
     #[must_use]
     pub fn respond_token(&self) -> RespondToken {
         self.respond_token
     }
 }
 
+/// What a requester names to reach a [`RequestEndpoint`]: the stable hash of its `ENDPOINT_ID` string.
+pub type RequestEndpointId = RequestPathHash;
+
 #[allow(async_fn_in_trait)]
-pub trait RequestRoute<AppState> {
-    const PATH: &'static str;
-    const POLICY: RoutePolicy;
+pub trait RequestEndpoint<AppState = ()> {
+    /// You can use whatever string value you like (it's hashed and truncated so the wire length will be stable), but it's common convention to use URL/filesystem-like syntax, e.g., "/example/thing"
+    const ENDPOINT_ID: &'static str;
+    const POLICY: RequestEndpointPolicy;
     async fn handle(context: RequestContext<'_, AppState>) -> Result<(), Decline>;
 }
 
-/// A compile-time set of routes, produced by [`routes!`](crate::routes); you probably want
+/// A compile-time set of endpoints, produced by [`request_endpoints!`](crate::request_endpoints); you probably want
 /// that macro rather than this trait directly.
 #[allow(async_fn_in_trait)]
-pub trait RouteSet<S> {
-    const REGISTRATIONS: &'static [(&'static str, RoutePolicy)];
+pub trait RequestEndpointSet<S> {
+    const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)];
     async fn dispatch(cx: RequestContext<'_, S>, path_hash: RequestPathHash)
         -> Result<(), Decline>;
 }
 
-/// The empty route set — what [`routes!`](crate::routes) with no arms hands back, and what a node
+/// The empty route set — what [`request_endpoints!`](crate::request_endpoints) with no arms hands back, and what a node
 /// that serves no requests carries. It registers nothing and declines every request as `Ignore`.
-impl<S> RouteSet<S> for () {
-    const REGISTRATIONS: &'static [(&'static str, RoutePolicy)] = &[];
+impl<S> RequestEndpointSet<S> for () {
+    const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)] = &[];
     async fn dispatch(
         _cx: RequestContext<'_, S>,
         _path_hash: RequestPathHash,
@@ -237,15 +242,15 @@ impl<S> RouteSet<S> for () {
     }
 }
 
-/// The value [`routes!`](crate::routes) hands back when given no routes — the empty [`RouteSet`].
+/// The value [`request_endpoints!`](crate::request_endpoints) hands back when given no endpoints — the empty [`RequestEndpointSet`].
 /// A named constructor so the macro needn't expand to a bare `()`, which `clippy::unused_unit`
 /// flags at every call site.
-pub const fn no_routes() {}
+pub const fn no_request_endpoints() {}
 
 /// Route one request to the handler its `path_hash` selects, building the [`RequestContext`] over
-/// the app's shared `state` and the runner's grant `sink`. `RouteSet::dispatch` is a static fn, so
-/// the runner dispatches with only `&state` and the route-set type `R` — no `Router` wrapper.
-pub async fn dispatch_request<'a, S, R: RouteSet<S>>(
+/// the app's shared `state` and the runner's grant `sink`. `RequestEndpointSet::dispatch` is a static fn, so
+/// the runner dispatches with only `&state` and the endpoint-set type `R` — no `Router` wrapper.
+pub async fn dispatch_request<'a, S, R: RequestEndpointSet<S>>(
     state: &'a S,
     path_hash: RequestPathHash,
     request: InboundRequest<'a>,
@@ -263,43 +268,43 @@ pub async fn dispatch_request<'a, S, R: RouteSet<S>>(
     R::dispatch(cx, path_hash).await
 }
 
-/// Compose route types into a [`RouteSet`] value, e.g., `routes![Health, Echo, Status]`. Each arm awaits
+/// Compose route types into a [`RequestEndpointSet`] value, e.g., `request_endpoints![Health, Echo, Status]`. Each arm awaits
 /// a concrete handler future, so the set is monomorphized. There's no boxing and it's`no_std`-clean.
 #[macro_export]
-macro_rules! routes {
+macro_rules! request_endpoints {
     () => {
-        $crate::runtime::request_router::no_routes()
+        $crate::runtime::request_endpoints::no_request_endpoints()
     };
-    ($($route:ty),+ $(,)?) => {{
-        struct RouteSetImpl;
-        impl<S> $crate::runtime::request_router::RouteSet<S> for RouteSetImpl
+    ($($endpoint:ty),+ $(,)?) => {{
+        struct RequestEndpointSetImpl;
+        impl<S> $crate::runtime::request_endpoints::RequestEndpointSet<S> for RequestEndpointSetImpl
         where
-            $($route: $crate::runtime::request_router::RequestRoute<S>,)+
+            $($endpoint: $crate::runtime::request_endpoints::RequestEndpoint<S>,)+
         {
-            const REGISTRATIONS: &'static [(&'static str, $crate::runtime::request_router::RoutePolicy)] = &[
+            const REGISTRATIONS: &'static [(&'static str, $crate::runtime::request_endpoints::RequestEndpointPolicy)] = &[
                 $((
-                    <$route as $crate::runtime::request_router::RequestRoute<S>>::PATH,
-                    <$route as $crate::runtime::request_router::RequestRoute<S>>::POLICY,
+                    <$endpoint as $crate::runtime::request_endpoints::RequestEndpoint<S>>::ENDPOINT_ID,
+                    <$endpoint as $crate::runtime::request_endpoints::RequestEndpoint<S>>::POLICY,
                 ),)+
             ];
 
             async fn dispatch(
-                cx: $crate::runtime::request_router::RequestContext<'_, S>,
+                cx: $crate::runtime::request_endpoints::RequestContext<'_, S>,
                 path_hash: $crate::routing::request_handlers::RequestPathHash,
-            ) -> ::core::result::Result<(), $crate::runtime::request_router::Decline> {
+            ) -> ::core::result::Result<(), $crate::runtime::request_endpoints::Decline> {
                 $(
                     if path_hash
                         == $crate::routing::request_handlers::RequestPathHash::of(
-                            <$route as $crate::runtime::request_router::RequestRoute<S>>::PATH,
+                            <$endpoint as $crate::runtime::request_endpoints::RequestEndpoint<S>>::ENDPOINT_ID,
                         )
                     {
-                        return <$route as $crate::runtime::request_router::RequestRoute<S>>::handle(cx).await;
+                        return <$endpoint as $crate::runtime::request_endpoints::RequestEndpoint<S>>::handle(cx).await;
                     }
                 )+
-                ::core::result::Result::Err($crate::runtime::request_router::Decline::Ignore)
+                ::core::result::Result::Err($crate::runtime::request_endpoints::Decline::Ignore)
             }
         }
-        RouteSetImpl
+        RequestEndpointSetImpl
     }};
 }
 
@@ -312,18 +317,18 @@ mod tests {
     }
 
     struct Health;
-    impl RequestRoute<App> for Health {
-        const PATH: &'static str = "/health";
-        const POLICY: RoutePolicy = RoutePolicy::AllowAll;
+    impl RequestEndpoint<App> for Health {
+        const ENDPOINT_ID: &'static str = "/health";
+        const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
         async fn handle(mut cx: RequestContext<'_, App>) -> Result<(), Decline> {
             cx.respond_packed(b"ok")
         }
     }
 
     struct Greet;
-    impl RequestRoute<App> for Greet {
-        const PATH: &'static str = "/greet";
-        const POLICY: RoutePolicy = RoutePolicy::AllowAll;
+    impl RequestEndpoint<App> for Greet {
+        const ENDPOINT_ID: &'static str = "/greet";
+        const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
         async fn handle(mut cx: RequestContext<'_, App>) -> Result<(), Decline> {
             let greeting = cx.state.greeting;
             cx.respond_packed(greeting)
@@ -333,32 +338,37 @@ mod tests {
     const ADMIN: IdentityHash = IdentityHash::new([0xAD; 16]);
 
     struct Admin;
-    impl RequestRoute<App> for Admin {
-        const PATH: &'static str = "/admin";
-        const POLICY: RoutePolicy = RoutePolicy::AllowList(&[ADMIN]);
+    impl RequestEndpoint<App> for Admin {
+        const ENDPOINT_ID: &'static str = "/admin";
+        const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowList(&[ADMIN]);
         async fn handle(_cx: RequestContext<'_, App>) -> Result<(), Decline> {
             Err(Decline::CloseLink)
         }
     }
 
     struct Ack;
-    impl RequestRoute<App> for Ack {
-        const PATH: &'static str = "/ack";
-        const POLICY: RoutePolicy = RoutePolicy::AllowAll;
+    impl RequestEndpoint<App> for Ack {
+        const ENDPOINT_ID: &'static str = "/ack";
+        const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
         async fn handle(mut cx: RequestContext<'_, App>) -> Result<(), Decline> {
             cx.respond_packed(&[])
         }
     }
 
-    fn registrations<R: RouteSet<App>>(_routes: R) -> &'static [(&'static str, RoutePolicy)] {
+    fn registrations<R: RequestEndpointSet<App>>(
+        _endpoints: R,
+    ) -> &'static [(&'static str, RequestEndpointPolicy)] {
         R::REGISTRATIONS
     }
 
     #[test]
-    fn the_route_set_is_the_registration_set_the_recipe_stands_up() {
-        let registrations = registrations(crate::routes![Health, Greet, Admin, Ack]);
+    fn the_endpoint_set_is_the_registration_set_the_recipe_stands_up() {
+        let registrations = registrations(crate::request_endpoints![Health, Greet, Admin, Ack]);
         assert_eq!(registrations.len(), 4);
-        assert_eq!(registrations[0], ("/health", RoutePolicy::AllowAll));
+        assert_eq!(
+            registrations[0],
+            ("/health", RequestEndpointPolicy::AllowAll)
+        );
         assert_eq!(registrations[2].0, "/admin");
         assert_eq!(registrations[2].1.engine_policy(), RequestPolicy::AllowList);
         assert_eq!(registrations[2].1.seed_list(), &[ADMIN]);
@@ -379,10 +389,10 @@ mod tests {
 
     #[cfg(feature = "alloc")]
     #[test]
-    fn dispatch_routes_by_path_then_answers_or_declines() {
+    fn dispatch_endpoints_by_path_then_answers_or_declines() {
         futures_executor::block_on(async {
-            async fn dispatch<R: RouteSet<App>>(
-                _routes: &R,
+            async fn dispatch<R: RequestEndpointSet<App>>(
+                _endpoints: &R,
                 state: &App,
                 path: &str,
                 sink: &mut dyn ResponseSink,
@@ -399,36 +409,36 @@ mod tests {
                 dispatch_request::<App, R>(state, RequestPathHash::of(path), request, sink).await
             }
 
-            let routes = crate::routes![Health, Greet, Admin, Ack];
+            let endpoints = crate::request_endpoints![Health, Greet, Admin, Ack];
             let state = App { greeting: b"hi" };
 
             let mut greet = std::vec::Vec::new();
             assert_eq!(
-                dispatch(&routes, &state, "/greet", &mut greet).await,
+                dispatch(&endpoints, &state, "/greet", &mut greet).await,
                 Ok(())
             );
             assert_eq!(greet.as_slice(), b"hi");
 
             let mut health = std::vec::Vec::new();
             assert_eq!(
-                dispatch(&routes, &state, "/health", &mut health).await,
+                dispatch(&endpoints, &state, "/health", &mut health).await,
                 Ok(())
             );
             assert_eq!(health.as_slice(), b"ok");
 
             let mut ack = std::vec::Vec::new();
-            assert_eq!(dispatch(&routes, &state, "/ack", &mut ack).await, Ok(()));
+            assert_eq!(dispatch(&endpoints, &state, "/ack", &mut ack).await, Ok(()));
             assert!(ack.is_empty());
 
             let mut admin = std::vec::Vec::new();
             assert_eq!(
-                dispatch(&routes, &state, "/admin", &mut admin).await,
+                dispatch(&endpoints, &state, "/admin", &mut admin).await,
                 Err(Decline::CloseLink)
             );
 
             let mut miss = std::vec::Vec::new();
             assert_eq!(
-                dispatch(&routes, &state, "/nope", &mut miss).await,
+                dispatch(&endpoints, &state, "/nope", &mut miss).await,
                 Err(Decline::Ignore)
             );
         });

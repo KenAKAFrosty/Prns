@@ -30,6 +30,11 @@ const _: () = assert!(
     }
 );
 
+#[cfg(target_arch = "xtensa")]
+const _: () = assert!(
+    Esp32S3::<PsramAlloc>::MAX_COMPACTED_FLASH_JOURNAL_BYTES <= crate::persistence::S3_ARENA_BYTES
+);
+
 /// A `Default`-able allocator that places allocations in PSRAM. esp-alloc's own
 /// `ExternalMemory` targets the same region but is not `Default`, which the column recipes
 /// need to build themselves from `StorageLayout`; this thin ZST forwards to it.
@@ -113,6 +118,19 @@ mod riscv {
         const CHANNEL_REORDER_DEPTH: usize = 1;
         const LINK_MTU: usize = EMBEDDED_MAX_LINK_MTU;
         const CHANNEL_MESSAGE_BYTES: usize = channel_mdu(Self::LINK_MTU);
+        pub(super) const MAX_COMPACTED_FLASH_JOURNAL_BYTES: usize = Self::TRACKED_DESTINATIONS
+            * (personal_rns::persistence::flash_journal_record_storage_len(
+                personal_rns::persistence::maximum_route_upsert_payload_len(0, 0),
+                4,
+            ) + 3)
+            + 512
+            + Self::UPSTREAM_APP_DESTINATIONS
+                * personal_rns::persistence::flash_journal_record_storage_len(
+                    personal_rns::wire::TRUNCATED_HASH_BYTE_LEN
+                        + personal_rns::persistence::self_ratchets_snapshot_len(8),
+                    4,
+                )
+            + personal_rns::persistence::flash_journal_record_storage_len(0, 4);
     }
 
     impl StorageLayout for C6Storage {
@@ -196,3 +214,7 @@ mod riscv {
         >;
     }
 }
+
+#[cfg(target_arch = "riscv32")]
+const _: () =
+    assert!(C6Storage::MAX_COMPACTED_FLASH_JOURNAL_BYTES <= crate::persistence::C6_ARENA_BYTES);

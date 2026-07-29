@@ -28,6 +28,7 @@ pub struct DaemonPlan {
     pub remote_management: RemoteManagementPlan,
     pub probe_responder: ProbeResponderPlan,
     pub blackhole_exchange: BlackholeExchangePlan,
+    pub node_page_announcements: NodePageAnnouncementPlan,
     pub protocol: ProtocolPlan,
     pub logging: LoggingPlan,
     pub panic_on_interface_error: bool,
@@ -66,6 +67,41 @@ pub enum BlackholePublicationPlan {
 impl BlackholePublicationPlan {
     pub const fn is_enabled(self) -> bool {
         matches!(self, Self::Enabled)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NodePageAnnouncementPlan {
+    enabled: bool,
+    interval: NodePageAnnouncementInterval,
+}
+
+impl NodePageAnnouncementPlan {
+    pub const fn is_enabled(self) -> bool {
+        self.enabled
+    }
+
+    pub const fn interval(self) -> NodePageAnnouncementInterval {
+        self.interval
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NodePageAnnouncementInterval(Duration);
+
+impl NodePageAnnouncementInterval {
+    pub const DEFAULT: Self = Self(Duration::from_secs(6 * 60 * 60));
+
+    fn from_configured_minutes(minutes: u64) -> Option<Self> {
+        minutes
+            .checked_mul(60)
+            .map(Duration::from_secs)
+            .filter(|duration| !duration.is_zero())
+            .map(Self)
+    }
+
+    pub const fn duration(self) -> Duration {
+        self.0
     }
 }
 
@@ -266,6 +302,8 @@ pub(super) fn build_plan(config: &ReferenceConfig) -> Result<DaemonPlan, Vec<Pla
     let transport = transport_plan(config);
     let blackhole_exchange =
         blackhole_exchange(config).map_err(|error| vec![PlanningError::Global(error)])?;
+    let node_page_announcements =
+        node_page_announcements(config).map_err(|error| vec![PlanningError::Global(error)])?;
     let common =
         global_common_policy(config).map_err(|error| vec![PlanningError::Global(error)])?;
     let announce_rate =
@@ -316,6 +354,7 @@ pub(super) fn build_plan(config: &ReferenceConfig) -> Result<DaemonPlan, Vec<Pla
             ProbeResponderPlan::Disabled
         },
         blackhole_exchange,
+        node_page_announcements,
         protocol: ProtocolPlan {
             randomize_local_hop_count: global_bool(
                 &config.globals,
@@ -334,6 +373,23 @@ pub(super) fn build_plan(config: &ReferenceConfig) -> Result<DaemonPlan, Vec<Pla
         network_identity_path: config.network_identity_path.as_deref().map(PathBuf::from),
         discovery: discovery_policy(config),
         interfaces,
+    })
+}
+
+fn node_page_announcements(
+    config: &ReferenceConfig,
+) -> Result<NodePageAnnouncementPlan, GlobalPlanError> {
+    let interval = match global_u64(&config.globals, global_key::NODE_PAGE_ANNOUNCE_INTERVAL) {
+        Some(minutes) => NodePageAnnouncementInterval::from_configured_minutes(minutes).ok_or(
+            GlobalPlanError {
+                key: global_key::NODE_PAGE_ANNOUNCE_INTERVAL,
+            },
+        )?,
+        None => NodePageAnnouncementInterval::DEFAULT,
+    };
+    Ok(NodePageAnnouncementPlan {
+        enabled: global_bool(&config.globals, global_key::ANNOUNCE_NODE_PAGE, true),
+        interval,
     })
 }
 

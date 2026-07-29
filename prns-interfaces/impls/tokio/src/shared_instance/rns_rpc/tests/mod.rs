@@ -34,7 +34,7 @@ use super::framing::{
     ensure_frame_length, read_auth_frame, read_frame, write_frame, write_frame_header,
 };
 use super::persistence::{load_or_seed_rns_rpc_key, reticulum_storage_dir, RnsRpcKeyStorageError};
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use super::server::{bind_abstract_rpc, RpcBind};
 use super::server::{
     serve_connection, RpcService, SharedInstanceRpcBindError, SharedInstanceRpcServer,

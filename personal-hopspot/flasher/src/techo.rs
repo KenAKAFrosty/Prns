@@ -12,6 +12,11 @@ use crate::release::PreparedUf2Target;
 
 const REBOOT_TIMEOUT: Duration = Duration::from_secs(20);
 
+enum Uf2CopyOutcome {
+    Synchronized,
+    RebootObserved,
+}
+
 pub(crate) fn flash(
     board: &BoardCatalogEntry,
     target: &PreparedUf2Target,
@@ -26,7 +31,7 @@ pub(crate) fn flash(
         Some(&board.slug),
         &format!("Copying verified UF2 to {}…", destination.display()),
     );
-    copy_uf2(
+    let copy_outcome = copy_uf2(
         &destination,
         &mount,
         target.part().bytes(),
@@ -34,12 +39,14 @@ pub(crate) fn flash(
         reporter,
     )?;
 
-    reporter.phase(
-        Phase::Resetting,
-        Some(&board.slug),
-        "Waiting for TECHOBOOT to disappear as the device reboots…",
-    );
-    wait_for_reboot(&mount, REBOOT_TIMEOUT, Duration::from_millis(200))?;
+    if matches!(copy_outcome, Uf2CopyOutcome::Synchronized) {
+        reporter.phase(
+            Phase::Resetting,
+            Some(&board.slug),
+            "Waiting for TECHOBOOT to disappear as the device reboots…",
+        );
+        wait_for_reboot(&mount, REBOOT_TIMEOUT, Duration::from_millis(200))?;
+    }
     if crate::esp::cancelled() {
         return Err(AppError::Cancelled);
     }
@@ -56,7 +63,7 @@ fn copy_uf2(
     bytes: &[u8],
     board_slug: &str,
     reporter: Reporter,
-) -> Result<(), AppError> {
+) -> Result<Uf2CopyOutcome, AppError> {
     let mut output = OpenOptions::new()
         .create(true)
         .truncate(true)
@@ -83,12 +90,52 @@ fn copy_uf2(
             bytes.len() as u64,
         );
     }
-    output
-        .flush()
-        .and_then(|_| output.sync_all())
-        .map_err(|error| AppError::uf2_delivery(format!("UF2 flush/sync failed: {error}")))?;
+    let file_sync = output.flush().and_then(|_| output.sync_all());
     drop(output);
-    sync_mount_directory(mount)
+    if let Err(error) = file_sync {
+        return confirm_reboot_after_synchronization_interruption(
+            mount,
+            board_slug,
+            reporter,
+            "UF2 flush/sync failed",
+            error,
+            REBOOT_TIMEOUT,
+            Duration::from_millis(200),
+        );
+    }
+    if let Err(error) = sync_mount_directory(mount) {
+        return confirm_reboot_after_synchronization_interruption(
+            mount,
+            board_slug,
+            reporter,
+            "TECHOBOOT directory sync failed",
+            error,
+            REBOOT_TIMEOUT,
+            Duration::from_millis(200),
+        );
+    }
+    Ok(Uf2CopyOutcome::Synchronized)
+}
+
+fn confirm_reboot_after_synchronization_interruption(
+    mount: &Path,
+    board_slug: &str,
+    reporter: Reporter,
+    operation: &str,
+    error: std::io::Error,
+    timeout: Duration,
+    poll: Duration,
+) -> Result<Uf2CopyOutcome, AppError> {
+    reporter.phase(
+        Phase::Resetting,
+        Some(board_slug),
+        "UF2 synchronization was interrupted; checking whether TECHOBOOT rebooted…",
+    );
+    match wait_for_reboot(mount, timeout, poll) {
+        Ok(()) => Ok(Uf2CopyOutcome::RebootObserved),
+        Err(AppError::Cancelled) => Err(AppError::Cancelled),
+        Err(_) => Err(AppError::uf2_delivery(format!("{operation}: {error}"))),
+    }
 }
 
 fn wait_for_reboot(mount: &Path, timeout: Duration, poll: Duration) -> Result<(), AppError> {
@@ -131,16 +178,12 @@ fn select_mount(
 }
 
 #[cfg(unix)]
-fn sync_mount_directory(mount: &Path) -> Result<(), AppError> {
-    std::fs::File::open(mount)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|error| {
-            AppError::uf2_delivery(format!("TECHOBOOT directory sync failed: {error}"))
-        })
+fn sync_mount_directory(mount: &Path) -> std::io::Result<()> {
+    std::fs::File::open(mount).and_then(|directory| directory.sync_all())
 }
 
 #[cfg(windows)]
-fn sync_mount_directory(_mount: &Path) -> Result<(), AppError> {
+fn sync_mount_directory(_mount: &Path) -> std::io::Result<()> {
     // File::sync_all above flushes the copied UF2. Windows does not permit opening a directory
     // with std::fs::File, so there is no additional portable directory handle to flush.
     Ok(())
@@ -371,6 +414,47 @@ mod tests {
             wait_for_reboot(&stuck, Duration::ZERO, Duration::from_millis(1)),
             Err(AppError::WriteVerifyReset(_))
         ));
+        fs::remove_dir(stuck).expect("remove stuck mount");
+    }
+
+    #[test]
+    fn reboot_after_sync_interruption_is_success_only_when_mount_disappears() {
+        let disappearing = temporary_mount("sync-interrupted-disappearing");
+        fs::create_dir(&disappearing).expect("create disappearing mount");
+        let remover = disappearing.clone();
+        let thread = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(5));
+            fs::remove_dir(remover).expect("remove disappearing mount");
+        });
+        let outcome = confirm_reboot_after_synchronization_interruption(
+            &disappearing,
+            "t-echo",
+            Reporter::json_lines(),
+            "UF2 flush/sync failed",
+            std::io::Error::other("bootloader disconnected"),
+            Duration::from_millis(100),
+            Duration::from_millis(1),
+        )
+        .expect("reboot confirms delivery");
+        assert!(matches!(outcome, Uf2CopyOutcome::RebootObserved));
+        thread.join().expect("join remover");
+
+        let stuck = temporary_mount("sync-interrupted-stuck");
+        fs::create_dir(&stuck).expect("create stuck mount");
+        let result = confirm_reboot_after_synchronization_interruption(
+            &stuck,
+            "t-echo",
+            Reporter::json_lines(),
+            "UF2 flush/sync failed",
+            std::io::Error::other("storage failure"),
+            Duration::ZERO,
+            Duration::from_millis(1),
+        );
+        let error = match result {
+            Err(error) => error,
+            Ok(_) => panic!("persistent mount does not prove reboot"),
+        };
+        assert!(error.to_string().contains("storage failure"));
         fs::remove_dir(stuck).expect("remove stuck mount");
     }
 }

@@ -1,17 +1,10 @@
 # Getting Started
 
-This guide is a progressive path through the repository: understand what Prns
-owns, obtain one real result, inspect the smallest consumer, then choose the
-capability that matches your application.
+This guide takes you from a fresh clone of the repo, to a running Reticulum node, in just a few minutes. 
 
-## Understand Prns
+Everything here works on an ordinary laptop or desktop. You don't need special hardware.
 
-Prns is one Reticulum engine with bounded APIs for firmware, browsers, native
-applications, and daemons. Interfaces and host adapters depend inward on that
-engine, while compatibility, performance, and release claims are backed by
-checked-in tests and reproducible evidence.
-
-## Check the host
+## Check your setup
 
 From the repository root:
 
@@ -19,105 +12,72 @@ From the repository root:
 ./tools/prns doctor getting-started
 ```
 
-The doctor reports missing commands and important version mismatches. It prints
-platform-specific setup guidance but never installs or changes host software.
-Use `tools\prns.cmd` instead of `./tools/prns` on Windows.
+The doctor checks for the handful of tools this guide uses, and tells you what's missing and how to get it. It only reports; it never installs or changes anything on your machine. (On Windows, use `tools\prns.cmd` instead of `./tools/prns`.)
 
-## Obtain one result
+This is also your first look at `./tools/prns`, the repository's task runner. `./tools/prns list` shows everything else it can do. None of that additional functionality is necessary for this guide, though.
 
-```console
-./tools/prns doctor rust
-cargo tools guide rust
-```
+## Hear your first announce
 
-The example creates two real nodes with fresh identities. Node A listens on an
-OS-selected localhost TCP port, Node B connects, and Node B exits only after it
-observes Node A's Reticulum announce through its TCP client. See the
-[Personal RNS guide](../personal-rns/README.md) for the complete invocation and
-the API anatomy. It does not activate discovery radios or require an existing
-Reticulum network.
-
-## Inspect the example
-
-Read
-[`personal-rns/examples/node_basics.rs`](../personal-rns/examples/node_basics.rs).
-It is intentionally small enough to show the complete ownership shape: node
-recipes own state and events, handles issue commands and attach interfaces, and
-the process exits through a bounded success condition.
-
-The default does not activate discovery hardware. To additionally attach Node
-B's Wi-Fi, USB, and Bluetooth auto interfaces:
+Once your Rust toolchain is set up, you can use the `cargo tools` shortcut for the same tools runner.
 
 ```console
-cargo tools guide rust -- --with-auto
+cargo tools guide rust-basics
 ```
 
-That opt-in may multicast, advertise or request Bluetooth permission, and open
-compatible USB devices. Missing adapters or peers do not make the example fail;
-the localhost TCP path remains the executable contract.
-
-## Choose a capability
-
-| Goal | Continue here |
-| --- | --- |
-| Run and inspect a managed node | [Prnsd guide](../prnsd/README.md) |
-| Send requests, resources, or change interfaces | [Example catalog](examples.md) |
-| Own a node inside a long-lived application | [Application integration](application-integration.md) |
-| Build a Rust consumer | [Personal RNS guide](../personal-rns/README.md) |
-| Build a browser or TypeScript consumer | [JavaScript package guide](https://github.com/KenAKAFrosty/Prns/blob/main/prns-js/README.md) |
-| Build against a native SDK | [Native binding guides](https://github.com/KenAKAFrosty/Prns/blob/main/prns-host/bindings/README.md) |
-| Build a board-backed node | [Embedded guide](embedded.md) |
-| Develop or physically qualify Hopspot | [Personal Hopspot guide](../personal-hopspot/README.md) |
-| Validate a change | [Testing guide](testing.md) |
-| Measure performance | [Benchmark guide](../benchmarks/README.md) |
-
-## Build an embedded node
-
-The [embedded guide](embedded.md) starts with a non-flashing XIAO ESP32-C6
-firmware build, then traces the same `PrnsNodeRecipe` through hardware bring-up,
-fixed storage, interfaces, identities, and static NomadNet routes. It uses a
-shipped board application so the example is honest about the obligations a
-bare-metal host must supply.
-
-## Test a change
+The first build may take a few minutes (incremental builds after the first one are fast). The run itself is over in about a second. You should see something like:
 
 ```console
-cargo test --locked
+Node A: TCP server listening on 127.0.0.1:51990
+Node B: TCP client only (no radio or USB discovery)
+Success: Node B observed Node A's real Reticulum announce on InterfaceId([1, 14, 21, 39, 95, 182, 20, 1]) (Some(TcpClient)).
+Node B interface inventory:
+  InterfaceId([1, 14, 21, 39, 95, 182, 20, 1]) connection=Connected rx=188 tx=0
 ```
 
-That is the normal core path. The [testing guide](testing.md) explains the
-workspace, integration, platform, and longer PR lanes.
+Let's break those down a bit:
+- The example created two nodes
+- Each node generated a fresh Identity on the spot. 
+- Node A registered a Destination and began announcing it. 
+- Node B, which connected over a localhost TCP Interface, heard the signed Announce, verified it, and reported which interface carried it. 
 
-## Measure performance
+Each of the [six terms](/README.md#new-to-reticulum) you learned did its job, live, on your machine.
+
+## Read the code that did it
+
+The whole program is one file: [`personal-rns/examples/node_basics.rs`](../personal-rns/examples/node_basics.rs). It's worth five minutes, because its shape is the shape of every Prns app:
+
+- A `PrnsNodeRecipe` declares everything the node is: its destinations, its storage, its event handler, its interfaces. Every field is required, so if it compiles, nothing was forgotten.
+- `PrnsNode::new` returns a node based on that recipe. The node instance can then provide you with a handle. 
+- The node is what runs; the handle is how the rest of your program talks to it, from issuing commands to attaching interfaces mid-flight.
+- Events arrive as plain values in your `on_event` function. Node B's entire success condition is listening for `AnnounceHeard` and checking who it heard.
+
+Describe the node, run it, react to events, issue commands. That's the foundation everything else builds on.
+
+## Drop the wires
+
+That first run stays on localhost on purpose, and its code wires Node B to Node A's port by hand. The follow-up example, [`auto_discovery.rs`](../personal-rns/examples/auto_discovery.rs), deletes that wiring. Neither node is given any address; both simply turn on Wi-Fi auto-discovery:
 
 ```console
-./tools/prns doctor benchmarks
-cargo benchmark --smoke
+cargo tools guide rust-auto-discovery
 ```
 
-The smoke run validates the benchmark machinery without making a publishable
-performance claim. Continue in the [benchmark guide](../benchmarks/README.md).
+The run succeeds when Node B hears Node A's announce anyway. 
 
-## Run these guides locally
+On one machine they meet through a local rendezvous port, which is the same mechanism a second Prns app on your device would use to join the shared instance. (This is why you'll see a 'TcpClient' interface still; it's an automatic one, not the explcitly-named one in the basic example above)
 
-```console
-./tools/prns doctor docs
-cargo run -p docs
-```
+Across two machines it's genuine multicast discovery over your LAN. 
 
-The hosted/default site build renders the canonical Markdown files from this
-clone. The compact embedded-device site intentionally does not include them.
+After its first local-only success, the example keeps listening for a minute, so you can run the same command on a second computer on the same network and watch each machine print the other's announce. (Your OS may ask you to approve local-network access the first time.)
 
-## Find deeper operations
+## Choose your path
 
-`./tools/prns` is bootstrap-safe; `cargo tools` is the convenient post-Rust
-alias into the same registry:
+You've now seen a node born, announced, and heard. Where next depends on what you're building:
 
-```console
-./tools/prns list
-cargo tools explain guide.rust
-python3 validation/run.py list --platform current
-```
+- **Building an app?** The [example catalog](examples.md#example-catalog) ladders up from here: request and response, resource transfer, changing interfaces on a live node. Then [application integration](application-integration.md) covers owning a node inside a long-lived program, in Rust or any of the SDK languages. When you're ready to use Prns in your Rust apps, the crate is a `cargo add personal-rns` away.
 
-Read [repository tools](../tools/README.md) for the control plane and
-[validation](validation.md) for the evidence model.
+- **Running a transport node for yourself or the ecosystem?** Take a look at [`prnsd`](../prnsd/README.md), the daemon. It owns the interfaces on a machine, and every Reticulum app on that machine shares its one instance.
+
+- **Putting it on hardware?** [Flash a Hopspot](https://prns.dev/flash) in minutes, or work through the [embedded guide](embedded.md) to build board firmware from source.
+
+
+Want to help make Prns itself even better? See [CONTRIBUTING.md](../CONTRIBUTING.md)

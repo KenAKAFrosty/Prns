@@ -11,9 +11,9 @@ use crate::wire::DestinationHash;
 use super::super::PrnsEvent;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RequestHandlerRegistration {
-    None,
-    NodeRouteSet,
+pub enum ServeMyRequestEndpoints {
+    No,
+    Yes,
 }
 
 pub enum PreConfiguredDestination<'a> {
@@ -31,7 +31,7 @@ pub enum PreConfiguredDestination<'a> {
         ratchet: RatchetPolicy,
         /// Whether links to this destination accept inbound resources, and how large. The runtime counterpart is the handle's `set_resource_strategy`; most destinations want `ResourceStrategy::AcceptNone` until they expect a transfer.
         resource_strategy: ResourceStrategy,
-        request_handlers: RequestHandlerRegistration,
+        request_endpoints: ServeMyRequestEndpoints,
     },
 }
 
@@ -60,10 +60,21 @@ impl PreConfiguredDestination<'_> {
 
 /// The explicit "I wire interfaces myself" answer to the recipe's `interfaces` field: attach everything after construction through the node handle (or, on a board, at slot activation).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Manual;
+pub struct ManuallyAttached;
 
-pub struct PrnsNodeRecipe<Destinations, AppState, Routes, OnEvent, Interfaces, Storage>
-where
+/// The explicit "this node forgets everything at exit" answer to the recipe's `persistence` field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NoPersistence;
+
+pub struct PrnsNodeRecipe<
+    Destinations,
+    AppState,
+    RequestEndpoints,
+    OnEvent,
+    Interfaces,
+    Storage,
+    Persistence = NoPersistence,
+> where
     OnEvent: FnMut(PrnsEvent<'_>, &AppState),
 {
     /// The transport role takes a whole identity, never a bare address: a transport node signs (tunnel synthesis), and RNS 1.4.0 keeps a dedicated persisted transport identity.
@@ -76,7 +87,8 @@ where
     /// carried as a value so the recipe owns it and `PrnsNode::new` no longer
     /// assumes one.
     pub storage: Storage,
-    pub routes: Routes,
+    pub request_endpoints: RequestEndpoints,
     pub interfaces: Interfaces,
+    pub persistence: Persistence,
     pub on_event: OnEvent,
 }

@@ -1,7 +1,10 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 #![allow(clippy::missing_safety_doc)]
 
+mod readiness;
+
 use std::collections::BTreeMap;
+use std::ffi::c_void;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
 use std::slice;
@@ -27,6 +30,7 @@ use prns_host_core::{
 use prns_host_native::{
     CommandHandle, CommandWait, NativeEventSink, NativeHost, NativeStartError, NativeSubmitError,
 };
+use readiness::{Readiness, ReadinessCallback, RegisteredReadiness};
 
 const NEVER_TIMEOUT: u32 = u32::MAX;
 
@@ -138,7 +142,29 @@ struct Shared {
     queue: Mutex<BoundedHostQueue<()>>,
     resources: Mutex<BTreeMap<u64, PrnsResourceStream>>,
     ready: Condvar,
+    application_readiness: Arc<Readiness>,
+    diagnostic_readiness: Arc<Readiness>,
     stop_requested: AtomicBool,
+}
+
+impl Shared {
+    fn readiness(&self, lane: ConsumerLane) -> &Arc<Readiness> {
+        match lane {
+            ConsumerLane::ApplicationEvents => &self.application_readiness,
+            ConsumerLane::Diagnostics => &self.diagnostic_readiness,
+        }
+    }
+
+    fn notify_lane(&self, lane: ConsumerLane) {
+        self.ready.notify_all();
+        self.readiness(lane).notify();
+    }
+
+    fn notify_all(&self) {
+        self.ready.notify_all();
+        self.application_readiness.notify();
+        self.diagnostic_readiness.notify();
+    }
 }
 
 pub struct HostPublisher {
@@ -165,12 +191,12 @@ impl HostPublisher {
         match queue.push_application_event(event) {
             Ok(()) => {
                 drop(queue);
-                self.shared.ready.notify_all();
+                self.shared.notify_lane(ConsumerLane::ApplicationEvents);
                 Ok(())
             }
             Err(rejected) => {
                 drop(queue);
-                self.shared.ready.notify_all();
+                self.shared.notify_all();
                 Err(*rejected.event)
             }
         }
@@ -213,7 +239,7 @@ impl HostPublisher {
 
     pub fn publish_diagnostic(&self, event: DiagnosticEvent) {
         lock(&self.shared.queue).push_diagnostic(event);
-        self.shared.ready.notify_all();
+        self.shared.notify_lane(ConsumerLane::Diagnostics);
     }
 
     pub fn backend_exited(&self) {
@@ -226,7 +252,7 @@ impl HostPublisher {
             let _ = queue.transition(LifecycleState::Running);
         }
         drop(queue);
-        self.shared.ready.notify_all();
+        self.shared.notify_all();
     }
 
     fn request_stop(&self) {
@@ -239,7 +265,7 @@ impl HostPublisher {
             let _ = queue.transition(LifecycleState::Stopping);
         }
         drop(queue);
-        self.shared.ready.notify_all();
+        self.shared.notify_all();
     }
 
     fn finish_stop(&self) {
@@ -257,7 +283,7 @@ impl HostPublisher {
             let _ = queue.transition(LifecycleState::Stopped(reason));
         }
         drop(queue);
-        self.shared.ready.notify_all();
+        self.shared.notify_all();
     }
 
     fn fail(&self, detail: String) {
@@ -269,7 +295,7 @@ impl HostPublisher {
             }));
         }
         drop(queue);
-        self.shared.ready.notify_all();
+        self.shared.notify_all();
     }
 }
 
@@ -311,12 +337,28 @@ pub struct PrnsEventStream {
     lane: ConsumerLane,
     pending_diagnostics_gap: Mutex<u128>,
     interrupted: AtomicBool,
+    readiness_registration: Mutex<Option<Arc<RegisteredReadiness>>>,
 }
 
 impl Drop for PrnsEventStream {
     fn drop(&mut self) {
+        let registration = lock(&self.readiness_registration).take();
+        if let Some(registration) = registration {
+            self.shared.readiness(self.lane).unregister(&registration);
+        }
         lock(&self.shared.queue).release_consumer(self.lane);
-        self.shared.ready.notify_all();
+        self.shared.notify_all();
+    }
+}
+
+pub struct PrnsReadinessRegistration {
+    readiness: Arc<Readiness>,
+    registered: Arc<RegisteredReadiness>,
+}
+
+impl Drop for PrnsReadinessRegistration {
+    fn drop(&mut self) {
+        self.readiness.unregister(&self.registered);
     }
 }
 
@@ -338,6 +380,17 @@ pub struct PrnsResourceStream {
 pub struct PrnsCommand {
     handle: CommandHandle,
     cached: Mutex<Option<CachedCommandResult>>,
+    readiness: Arc<Readiness>,
+    readiness_registration: Mutex<Option<Arc<RegisteredReadiness>>>,
+}
+
+impl Drop for PrnsCommand {
+    fn drop(&mut self) {
+        let registration = lock(&self.readiness_registration).take();
+        if let Some(registration) = registration {
+            self.readiness.unregister(&registration);
+        }
+    }
 }
 
 struct CachedCommandResult {
@@ -368,6 +421,8 @@ fn host_capsule_with_phase(limits: CoreLimits, running: bool) -> (PrnsHost, Host
         queue: Mutex::new(queue),
         resources: Mutex::new(BTreeMap::new()),
         ready: Condvar::new(),
+        application_readiness: Arc::new(Readiness::new()),
+        diagnostic_readiness: Arc::new(Readiness::new()),
         stop_requested: AtomicBool::new(false),
     });
     (
@@ -831,7 +886,14 @@ unsafe fn submit_host_command(
     let Some(native) = native.as_ref() else {
         return status(AbiStatus::Stopped);
     };
-    let handle = match native.submit(command) {
+    let readiness = Arc::new(Readiness::new());
+    let weak_readiness = Arc::downgrade(&readiness);
+    let command_readiness = Arc::new(move || {
+        if let Some(readiness) = weak_readiness.upgrade() {
+            readiness.notify();
+        }
+    });
+    let handle = match native.submit_with_readiness(command, Some(command_readiness)) {
         Ok(handle) => handle,
         Err(NativeSubmitError::Busy) => return status(AbiStatus::QueueFull),
         Err(NativeSubmitError::Stopped) => return status(AbiStatus::Stopped),
@@ -839,6 +901,8 @@ unsafe fn submit_host_command(
     *out = Box::into_raw(Box::new(PrnsCommand {
         handle,
         cached: Mutex::new(None),
+        readiness,
+        readiness_registration: Mutex::new(None),
     }));
     status(AbiStatus::Ok)
 }
@@ -1625,6 +1689,40 @@ pub unsafe extern "C" fn prns_command_interrupt_wait(command: *mut PrnsCommand) 
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn prns_command_register_readiness(
+    command: *mut PrnsCommand,
+    callback: Option<ReadinessCallback>,
+    context: *mut c_void,
+    out_registration: *mut *mut PrnsReadinessRegistration,
+) -> u32 {
+    catch_status(|| {
+        let command = match unsafe { required_ref(command) } {
+            Ok(command) => command,
+            Err(error) => return error,
+        };
+        let out_registration = match unsafe { required_mut(out_registration) } {
+            Ok(out_registration) => out_registration,
+            Err(error) => return error,
+        };
+        *out_registration = ptr::null_mut();
+        let Some(callback) = callback else {
+            return status(AbiStatus::InvalidArgument);
+        };
+        let readiness = Arc::clone(&command.readiness);
+        let registered = match readiness.register(callback, context) {
+            Ok(registered) => registered,
+            Err(_) => return status(AbiStatus::AlreadyClaimed),
+        };
+        *lock(&command.readiness_registration) = Some(Arc::clone(&registered));
+        *out_registration = Box::into_raw(Box::new(PrnsReadinessRegistration {
+            readiness,
+            registered,
+        }));
+        status(AbiStatus::Ok)
+    })
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn prns_command_release(command: *mut PrnsCommand) {
     if !command.is_null() {
         let _ = catch_unwind(AssertUnwindSafe(|| unsafe {
@@ -1655,6 +1753,7 @@ unsafe fn claim_stream(
         lane,
         pending_diagnostics_gap: Mutex::new(0),
         interrupted: AtomicBool::new(false),
+        readiness_registration: Mutex::new(None),
     }));
     status(AbiStatus::Ok)
 }
@@ -1688,7 +1787,52 @@ pub unsafe extern "C" fn prns_event_stream_release(stream: *mut PrnsEventStream)
 pub unsafe extern "C" fn prns_event_stream_interrupt_wait(stream: *mut PrnsEventStream) {
     if let Ok(Some(stream)) = catch_unwind(AssertUnwindSafe(|| unsafe { stream.as_ref() })) {
         stream.interrupted.store(true, Ordering::Release);
-        stream.shared.ready.notify_all();
+        stream.shared.notify_lane(stream.lane);
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn prns_event_stream_register_readiness(
+    stream: *mut PrnsEventStream,
+    callback: Option<ReadinessCallback>,
+    context: *mut c_void,
+    out_registration: *mut *mut PrnsReadinessRegistration,
+) -> u32 {
+    catch_status(|| {
+        let stream = match unsafe { required_ref(stream) } {
+            Ok(stream) => stream,
+            Err(error) => return error,
+        };
+        let out_registration = match unsafe { required_mut(out_registration) } {
+            Ok(out_registration) => out_registration,
+            Err(error) => return error,
+        };
+        *out_registration = ptr::null_mut();
+        let Some(callback) = callback else {
+            return status(AbiStatus::InvalidArgument);
+        };
+        let readiness = Arc::clone(stream.shared.readiness(stream.lane));
+        let registered = match readiness.register(callback, context) {
+            Ok(registered) => registered,
+            Err(_) => return status(AbiStatus::AlreadyClaimed),
+        };
+        *lock(&stream.readiness_registration) = Some(Arc::clone(&registered));
+        *out_registration = Box::into_raw(Box::new(PrnsReadinessRegistration {
+            readiness,
+            registered,
+        }));
+        status(AbiStatus::Ok)
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn prns_readiness_registration_release(
+    registration: *mut PrnsReadinessRegistration,
+) {
+    if !registration.is_null() {
+        let _ = catch_unwind(AssertUnwindSafe(|| unsafe {
+            drop(Box::from_raw(registration));
+        }));
     }
 }
 
@@ -2405,9 +2549,27 @@ mod tests {
     use prns_host_core::{
         DestinationHash, InterfaceId, LinkId, ResourceHash, ResourceStreamId, SingleDelivery,
     };
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::Barrier;
 
     fn limits() -> CoreLimits {
         CoreLimits::try_new(1, 2, 64, 1).unwrap_or_else(|_| CoreLimits::balanced())
+    }
+
+    unsafe extern "C" fn count_readiness(context: *mut c_void) {
+        let counter = unsafe { &*context.cast::<AtomicUsize>() };
+        counter.fetch_add(1, Ordering::AcqRel);
+    }
+
+    struct BlockingReadiness {
+        entered: Barrier,
+        resume: Barrier,
+    }
+
+    unsafe extern "C" fn block_readiness(context: *mut c_void) {
+        let readiness = unsafe { &*context.cast::<BlockingReadiness>() };
+        readiness.entered.wait();
+        readiness.resume.wait();
     }
 
     #[test]
@@ -2462,6 +2624,127 @@ mod tests {
         );
         unsafe {
             prns_event_stream_release(duplicate);
+        }
+    }
+
+    #[test]
+    fn readiness_registration_signals_without_owning_event_delivery() {
+        let (mut host, publisher) = host_capsule(limits());
+        let mut stream = ptr::null_mut();
+        assert_eq!(
+            unsafe { prns_host_claim_application_events(&mut host, &mut stream) },
+            status(AbiStatus::Ok)
+        );
+        let readiness_count = AtomicUsize::new(0);
+        let context = ptr::from_ref(&readiness_count).cast_mut().cast::<c_void>();
+        let mut registration = ptr::null_mut();
+        assert_eq!(
+            unsafe {
+                prns_event_stream_register_readiness(
+                    stream,
+                    Some(count_readiness),
+                    context,
+                    &mut registration,
+                )
+            },
+            status(AbiStatus::Ok)
+        );
+        assert_eq!(readiness_count.load(Ordering::Acquire), 0);
+
+        let mut duplicate = ptr::null_mut();
+        assert_eq!(
+            unsafe {
+                prns_event_stream_register_readiness(
+                    stream,
+                    Some(count_readiness),
+                    context,
+                    &mut duplicate,
+                )
+            },
+            status(AbiStatus::AlreadyClaimed)
+        );
+        assert!(duplicate.is_null());
+
+        assert!(publisher
+            .publish_application(ApplicationEvent::SingleDelivery(SingleDelivery {
+                destination: DestinationHash::new([7; 16]),
+                source_interface: InterfaceId::new([8; 8]),
+                plaintext: vec![1, 2, 3],
+            }))
+            .is_ok());
+        assert_eq!(readiness_count.load(Ordering::Acquire), 1);
+
+        let mut event = ptr::null_mut();
+        assert_eq!(
+            unsafe { prns_event_stream_next(stream, 0, &mut event) },
+            status(AbiStatus::Ok)
+        );
+        unsafe {
+            prns_event_release(event);
+            prns_readiness_registration_release(registration);
+        }
+        assert!(publisher
+            .publish_application(ApplicationEvent::SingleDelivery(SingleDelivery {
+                destination: DestinationHash::new([9; 16]),
+                source_interface: InterfaceId::new([10; 8]),
+                plaintext: vec![4, 5, 6],
+            }))
+            .is_ok());
+        assert_eq!(readiness_count.load(Ordering::Acquire), 1);
+        unsafe {
+            prns_event_stream_release(stream);
+        }
+    }
+
+    #[test]
+    fn stream_release_quiesces_its_readiness_callback() {
+        let (mut host, publisher) = host_capsule(limits());
+        let mut stream = ptr::null_mut();
+        assert_eq!(
+            unsafe { prns_host_claim_diagnostics(&mut host, &mut stream) },
+            status(AbiStatus::Ok)
+        );
+        let readiness = BlockingReadiness {
+            entered: Barrier::new(2),
+            resume: Barrier::new(2),
+        };
+        let context = ptr::from_ref(&readiness).cast_mut().cast::<c_void>();
+        let mut registration = ptr::null_mut();
+        assert_eq!(
+            unsafe {
+                prns_event_stream_register_readiness(
+                    stream,
+                    Some(block_readiness),
+                    context,
+                    &mut registration,
+                )
+            },
+            status(AbiStatus::Ok)
+        );
+        let publishing = std::thread::spawn(move || {
+            publisher.publish_diagnostic(DiagnosticEvent::Delivered {
+                detail: "during-release".into(),
+            });
+        });
+        readiness.entered.wait();
+        let stream_address = stream as usize;
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (released_tx, released_rx) = std::sync::mpsc::channel();
+        let releasing = std::thread::spawn(move || {
+            let _ = started_tx.send(());
+            unsafe {
+                prns_event_stream_release(stream_address as *mut PrnsEventStream);
+            }
+            let _ = released_tx.send(());
+        });
+        assert!(started_rx.recv_timeout(Duration::from_secs(1)).is_ok());
+        assert!(released_rx.recv_timeout(Duration::from_millis(20)).is_err());
+        readiness.resume.wait();
+        assert!(publishing.join().is_ok());
+        assert!(released_rx.recv_timeout(Duration::from_secs(1)).is_ok());
+        assert!(releasing.join().is_ok());
+        unsafe {
+            prns_readiness_registration_release(registration);
         }
     }
 
@@ -2637,6 +2920,47 @@ mod tests {
             status(AbiStatus::Ok)
         );
         assert_eq!(lifecycle.phase, AbiLifecyclePhase::Running as u32);
+
+        let target = b"127.0.0.1:9";
+        let mut command = ptr::null_mut();
+        assert_eq!(
+            unsafe {
+                prns_host_attach_tcp_client(
+                    host,
+                    PrnsStringView {
+                        data: target.as_ptr(),
+                        length: target.len(),
+                    },
+                    AbiBitrateKind::Auto as u32,
+                    0,
+                    &mut command,
+                )
+            },
+            status(AbiStatus::Ok)
+        );
+        let readiness_count = AtomicUsize::new(0);
+        let context = ptr::from_ref(&readiness_count).cast_mut().cast::<c_void>();
+        let mut registration = ptr::null_mut();
+        assert_eq!(
+            unsafe {
+                prns_command_register_readiness(
+                    command,
+                    Some(count_readiness),
+                    context,
+                    &mut registration,
+                )
+            },
+            status(AbiStatus::Ok)
+        );
+        unsafe {
+            prns_command_interrupt_wait(command);
+        }
+        assert!(readiness_count.load(Ordering::Acquire) > 0);
+        unsafe {
+            prns_readiness_registration_release(registration);
+            prns_command_release(command);
+        }
+
         assert_eq!(unsafe { prns_host_stop(host) }, status(AbiStatus::Ok));
         assert_eq!(
             unsafe { prns_host_lifecycle(host, &mut lifecycle) },

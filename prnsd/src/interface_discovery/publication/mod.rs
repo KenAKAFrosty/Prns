@@ -71,7 +71,7 @@ pub(crate) fn prepare(
             link_requests: LinkRequestPolicy::AcceptNone,
             ratchet: RatchetPolicy::NoRatchets,
             resource_strategy: ResourceStrategy::AcceptNone,
-            request_handlers: personal_rns::runtime::RequestHandlerRegistration::None,
+            request_endpoints: personal_rns::runtime::ServeMyRequestEndpoints::No,
         },
         PreparedDiscoveryPublisher {
             destination,

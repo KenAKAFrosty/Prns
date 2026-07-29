@@ -366,6 +366,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "embedded-storage"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a21dea9854beb860f3062d10228ce9b976da520a73474aed3171ec276bc0c032"
+
+[[package]]
+name = "embedded-storage-async"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1763775e2323b7d5f0aa6090657f5e21cfa02ede71f5dc40eead06d64dcd15cc"
+dependencies = [
+ "embedded-storage",
+]
+
+[[package]]
 name = "fiat-crypto"
 version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -541,7 +556,7 @@ checksum = "8d5439c4ad607c3c23abf66de8c8bf57ba8adcd1f129e699851a6e43935d339d"
 
 [[package]]
 name = "personal-rns"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "cfg-if",
  "prns-core",
@@ -568,13 +583,15 @@ dependencies = [
 
 [[package]]
 name = "prns-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "aes",
  "cbc",
  "cfg-if",
  "crc32fast",
  "ed25519-dalek",
+ "embedded-storage",
+ "embedded-storage-async",
  "heapless 0.8.0",
  "hkdf",
  "hmac",
@@ -586,14 +603,14 @@ dependencies = [
 
 [[package]]
 name = "prns-host"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "prns-runtime",
 ]
 
 [[package]]
 name = "prns-host-native"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "personal-rns",
  "prns-host",
@@ -602,7 +619,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-embassy"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "embassy-futures",
  "embassy-net",
@@ -617,7 +634,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-tokio"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "cfg-if",
  "heapless 0.8.0",
@@ -629,7 +646,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "bzip2",
  "cfg-if",
@@ -639,11 +656,12 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime-embassy"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "embassy-futures",
  "embassy-sync",
  "embassy-time",
+ "embedded-storage-async",
  "heapless 0.8.0",
  "portable-atomic",
  "prns-core",
@@ -653,7 +671,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime-tokio"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "futures-util",
  "getrandom",

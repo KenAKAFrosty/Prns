@@ -378,7 +378,8 @@ fn attach_discovered(
             })
         }
         DiscoveredConnectionKind::TcpClient => {
-            let interface = TcpClientInterface::new(target, AUTOCONNECT_BITRATE, RECONNECT_POLICY);
+            let interface =
+                TcpClientInterface::new_with_bitrate(target, AUTOCONNECT_BITRATE, RECONNECT_POLICY);
             let status = interface.status();
             let attached = attach_with_access(handle, interface, plan)?;
             Ok(AttachedDiscoveredInterface {

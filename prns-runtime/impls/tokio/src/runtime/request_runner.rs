@@ -15,8 +15,8 @@ use crate::units::RttMillis;
 use crate::wire::DestinationHash;
 
 use super::node_facade::PrnsNodeHandle;
-use super::request_router::{dispatch_request, Decline, InboundRequest, RouteSet};
-use super::request_router::{ResponseCapacityExceeded, ResponseSink};
+use super::request_endpoints::{dispatch_request, Decline, InboundRequest, RequestEndpointSet};
+use super::request_endpoints::{ResponseCapacityExceeded, ResponseSink};
 
 pub(super) const REQUEST_QUEUE_DEPTH: usize = 1024;
 const MAX_IN_FLIGHT: usize = 256;
@@ -70,7 +70,7 @@ impl ResponseSink for RunnerResponse {
     }
 }
 
-pub(super) async fn run_router<St, R: RouteSet<St>>(
+pub(super) async fn run_router<St, R: RequestEndpointSet<St>>(
     state: &St,
     mut requests: mpsc::Receiver<RunnerRequest>,
     commands: PrnsNodeHandle,
@@ -107,7 +107,7 @@ pub(super) async fn run_router<St, R: RouteSet<St>>(
     }
 }
 
-async fn dispatch_guarded<St, R: RouteSet<St>>(
+async fn dispatch_guarded<St, R: RequestEndpointSet<St>>(
     state: &St,
     commands: &PrnsNodeHandle,
     request: RunnerRequest,
@@ -123,7 +123,7 @@ async fn dispatch_guarded<St, R: RouteSet<St>>(
     }
 }
 
-async fn dispatch<St, R: RouteSet<St>>(
+async fn dispatch<St, R: RequestEndpointSet<St>>(
     state: &St,
     commands: &PrnsNodeHandle,
     request: RunnerRequest,
@@ -176,7 +176,7 @@ mod tests {
     use crate::engine::{EngineCommand, IssuedCommand};
     use crate::manifold::driver::HostCommand;
     use crate::routing::request_handlers::RequestPathHash;
-    use crate::runtime::request_router::{RequestContext, RoutePolicy};
+    use crate::runtime::request_endpoints::{RequestContext, RequestEndpointPolicy};
 
     #[test]
     fn static_file_sink_preserves_filename_and_borrowed_bytes() {
@@ -190,10 +190,10 @@ mod tests {
         assert_eq!(bytes.as_ptr(), FILE.as_ptr());
     }
 
-    struct PanickingRouteSet;
+    struct PanickingRequestEndpointSet;
 
-    impl RouteSet<()> for PanickingRouteSet {
-        const REGISTRATIONS: &'static [(&'static str, RoutePolicy)] = &[];
+    impl RequestEndpointSet<()> for PanickingRequestEndpointSet {
+        const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)] = &[];
 
         async fn dispatch(
             _context: RequestContext<'_, ()>,
@@ -208,7 +208,7 @@ mod tests {
         let (commands, mut command_rx) = mpsc::unbounded_channel();
         let handle = PrnsNodeHandle::over(commands);
         let link_id = LinkId::new([0x44; 16]);
-        dispatch_guarded::<(), PanickingRouteSet>(
+        dispatch_guarded::<(), PanickingRequestEndpointSet>(
             &(),
             &handle,
             RunnerRequest {

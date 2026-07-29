@@ -79,6 +79,33 @@ pub fn persisted_route_row_wire_len(row: &PersistedRouteRow<'_>) -> usize {
         + row.announce_id_ring.len().min(RING_MAX_PERSISTED_IDS) * ANNOUNCE_ID_WIRE_LEN
 }
 
+#[must_use]
+pub const fn maximum_persisted_route_row_wire_len(
+    app_data_len: usize,
+    announce_history_depth: usize,
+) -> usize {
+    let persisted_history_depth = if announce_history_depth < RING_MAX_PERSISTED_IDS {
+        announce_history_depth
+    } else {
+        RING_MAX_PERSISTED_IDS
+    };
+    MIN_PERSISTED_ROUTE_ROW_WIRE_LEN
+        + TRUNCATED_HASH_BYTE_LEN
+        + RATCHET_BYTE_LEN
+        + app_data_len
+        + persisted_history_depth * ANNOUNCE_ID_WIRE_LEN
+}
+
+#[must_use]
+pub const fn maximum_route_upsert_payload_len(
+    app_data_len: usize,
+    announce_history_depth: usize,
+) -> usize {
+    SNAPSHOT_OVERHEAD_LEN
+        + ROW_COUNT_LEN
+        + maximum_persisted_route_row_wire_len(app_data_len, announce_history_depth)
+}
+
 pub fn routing_table_snapshot_len<'a>(rows: impl Iterator<Item = PersistedRouteRow<'a>>) -> usize {
     SNAPSHOT_OVERHEAD_LEN
         + ROW_COUNT_LEN

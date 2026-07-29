@@ -5,6 +5,7 @@ fn classify_card(
     usb_id: InterfaceId,
     wifi_id: Option<InterfaceId>,
     tcp_id: Option<InterfaceId>,
+    tcp_client: Option<&HopspotTcpClientConfig>,
     lora_id: InterfaceId,
     espnow_id: Option<InterfaceId>,
 ) -> Option<(screen::CardKind, screen::CardLabel)> {
@@ -17,10 +18,21 @@ fn classify_card(
     } else if Some(id) == espnow_id {
         Some((screen::CardKind::EspNow, screen::card_label("ESP-NOW")))
     } else if Some(id) == tcp_id {
-        Some((
-            screen::CardKind::Tcp,
-            screen::tcp_card_label(HOPSPOT_TCP_TARGET),
-        ))
+        let tcp_client = tcp_client?;
+        let label = match &tcp_client.host {
+            HopspotTcpClientHost::Ipv4(address) => {
+                let mut target = heapless::String::<22>::new();
+                let octets = address.octets();
+                let _ = write!(
+                    target,
+                    "{}.{}.{}.{}:{}",
+                    octets[0], octets[1], octets[2], octets[3], tcp_client.port
+                );
+                screen::tcp_card_label(target.as_str())
+            }
+            HopspotTcpClientHost::Hostname(hostname) => screen::tcp_card_label(hostname),
+        };
+        Some((screen::CardKind::Tcp, label))
     } else {
         #[cfg(feature = "bluetooth-auto")]
         if id == BLE_SUPERVISOR_ID {
@@ -120,11 +132,12 @@ pub(super) fn build_cards(
     usb_id: InterfaceId,
     wifi_id: Option<InterfaceId>,
     tcp_id: Option<InterfaceId>,
+    tcp_client: Option<&HopspotTcpClientConfig>,
     lora_id: InterfaceId,
     espnow_id: Option<InterfaceId>,
 ) -> HVec<screen::Card, 8> {
     screen::snapshots_to_cards(snapshots, |id| {
-        classify_card(id, usb_id, wifi_id, tcp_id, lora_id, espnow_id)
+        classify_card(id, usb_id, wifi_id, tcp_id, tcp_client, lora_id, espnow_id)
     })
 }
 

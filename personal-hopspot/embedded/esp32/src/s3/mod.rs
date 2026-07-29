@@ -93,7 +93,9 @@ use personal_rns::runtime::{
     PrnsNodeRecipe, StaticManifoldLane,
 };
 use personal_rns::storage::StorageLayout;
-use personal_rns::tcp::{TcpClient, TcpClientInput, TcpSocketBuffers};
+use personal_rns::tcp::{
+    TcpClient, TcpClientInput, TcpClientTarget, TcpSocketBuffers, TCP_DNS_HOSTNAME_MAX_BYTES,
+};
 use personal_rns::usb_auto::{UsbAutoDevice, UsbAutoDeviceInput};
 use personal_rns::wifi_auto::{
     AutoWifi, AutoWifiSegment, AutoWifiShared, AutoWifiStatus, AutoWifiTopology,
@@ -130,11 +132,24 @@ const HOPSPOT_CONFIG_MAGIC: &[u8; 8] = b"HSPCFG1\0";
 #[cfg(feature = "wifi-auto")]
 const HOPSPOT_CONFIG_VERSION: u8 = 1;
 #[cfg(feature = "wifi-auto")]
-const HOPSPOT_CONFIG_READ_WORDS: usize = 32;
+const HOPSPOT_CONFIG_READ_WORDS: usize = 92;
 #[cfg(feature = "wifi-auto")]
 const HOPSPOT_CONFIG_SSID_MAX: usize = 32;
 #[cfg(feature = "wifi-auto")]
 const HOPSPOT_CONFIG_PASSWORD_MAX: usize = 64;
+#[cfg(feature = "wifi-auto")]
+const HOPSPOT_CONFIG_TCP_KIND_OFFSET: usize = 9;
+#[cfg(feature = "wifi-auto")]
+const HOPSPOT_CONFIG_TCP_HOST_LENGTH_OFFSET: usize =
+    16 + HOPSPOT_CONFIG_SSID_MAX + HOPSPOT_CONFIG_PASSWORD_MAX;
+#[cfg(feature = "wifi-auto")]
+const HOPSPOT_CONFIG_TCP_PORT_OFFSET: usize = HOPSPOT_CONFIG_TCP_HOST_LENGTH_OFFSET + 1;
+#[cfg(feature = "wifi-auto")]
+const HOPSPOT_CONFIG_TCP_TARGET_OFFSET: usize = HOPSPOT_CONFIG_TCP_PORT_OFFSET + 2;
+#[cfg(feature = "wifi-auto")]
+const HOPSPOT_CONFIG_TCP_HOSTNAME_MAX: usize = 253;
+#[cfg(feature = "wifi-auto")]
+const HOPSPOT_TCP_DEFAULT_PORT: u16 = 4242;
 
 /// Fallback Wi-Fi network the board joins as a station, read at build time. Normal flashing writes the
 /// same values into the reserved `hopcfg` flash slot so the published firmware artifact can stay
@@ -148,9 +163,6 @@ const WIFI_PASSWORD: &str = match option_env!("HOPSPOT_WIFI_PASSWORD") {
     None => "",
 };
 
-/// The LAN Reticulum TCP node the board dials (`ip:port`, e.g. `192.168.1.50:4242`), read at build
-/// time like the Wi-Fi credentials. Empty (or unparseable) leaves the TCP interface down. No DNS — a
-/// resolved address only. Rides the Wi-Fi stack, so it needs Wi-Fi up.
 const HOPSPOT_TCP_TARGET: &str = match option_env!("HOPSPOT_TCP_TARGET") {
     Some(target) => target,
     None => "",
@@ -178,7 +190,7 @@ const COMMANDS_CAP: usize = 8;
 pub const LIFECYCLE_CAP: usize = 8;
 const COMPLETIONS_CAP: usize = 4;
 
-const CORE1_STACK_BYTES: usize = 80 * 1024;
+const CORE1_STACK_BYTES: usize = 72 * 1024;
 
 const RENDER_INTERVAL: Duration = Duration::from_millis(500);
 const RENDER_TICKS_PER_BATTERY: u8 = 4;
@@ -232,6 +244,7 @@ mod display;
 use captive_portal::ap_ssid;
 #[cfg(feature = "wifi-auto")]
 use configuration::{hopspot_wifi_config, HopspotWifiConfig};
+use configuration::{HopspotTcpClientConfig, HopspotTcpClientHost};
 use connectivity::build_tcp;
 #[cfg(feature = "wifi-auto")]
 use connectivity::{build_wifi, espnow_channel_policy, EspNowAdapter};

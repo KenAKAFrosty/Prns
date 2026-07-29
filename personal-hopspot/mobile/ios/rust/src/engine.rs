@@ -1,3 +1,4 @@
+use personal_rns::runtime::NoPersistence;
 use std::fmt::Write as _;
 #[cfg(target_os = "ios")]
 use std::net::SocketAddr;
@@ -22,7 +23,7 @@ use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, In
 use personal_rns::manifold::tokio::TokioInterfaceStatus;
 use personal_rns::node_introspection::NodeIntrospection;
 use personal_rns::runtime::{
-    Diagnostic, Manual, NodeRunError, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
+    Diagnostic, ManuallyAttached, NodeRunError, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wifi_auto::{AutoWifi, AutoWifiStatus};
@@ -592,8 +593,9 @@ async fn run_engine(
         pre_configured_destinations: destinations.into_preconfigured_destinations(),
         app_state: (),
         storage: GrowableHeap,
-        routes: personal_hopspot_core::node_pages::NodePageRoutes,
-        interfaces: Manual,
+        request_endpoints: personal_hopspot_core::node_pages::NodePageRoutes,
+        interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: move |event: PrnsEvent<'_>, _state: &()| match event {
             PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
                 destination,

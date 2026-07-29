@@ -61,6 +61,8 @@ async fn a_loopback_frame_crosses_the_seam_and_the_rebroadcast_leaves_through_th
         | Journaled::ResourceNeedsDecompression { .. }
         | Journaled::ResourceSegmentReceived { .. }
         | Journaled::ResourceAssembled { .. }
+        | Journaled::PersistenceFlushed { .. }
+        | Journaled::PersistenceFlushFailed { .. }
         | Journaled::LinkInterfaceMismatch { .. } => {}
     };
 
@@ -412,6 +414,8 @@ async fn a_delivery_answers_with_a_proof_directive_on_the_arrival_lane() {
         | Journaled::ResourceNeedsDecompression { .. }
         | Journaled::ResourceSegmentReceived { .. }
         | Journaled::ResourceAssembled { .. }
+        | Journaled::PersistenceFlushed { .. }
+        | Journaled::PersistenceFlushFailed { .. }
         | Journaled::LinkInterfaceMismatch { .. } => {}
     };
 

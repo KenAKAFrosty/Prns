@@ -69,6 +69,7 @@ pub struct ReferenceInterfaceDiscovery {
     pub name: Option<String>,
     pub encrypt: Option<bool>,
     pub reachable_on: Option<String>,
+    pub reachable_port: Option<u16>,
     pub publish_ifac: Option<bool>,
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,

@@ -453,7 +453,9 @@ async fn station_identification_armed_by_one_radio_broadcasts_on_every_radio() {
 
 #[tokio::test]
 async fn a_serial_drop_removes_and_recreates_every_logical_radio_together() {
-    use prns_runtime::runtime::{Manual, PreConfiguredDestination, PrnsNode, PrnsNodeRecipe};
+    use prns_runtime::runtime::{
+        ManuallyAttached, NoPersistence, PreConfiguredDestination, PrnsNode, PrnsNodeRecipe,
+    };
     use prns_runtime::storage::GrowableHeap;
 
     let settings = vec![member(0), member(1)];
@@ -486,8 +488,9 @@ async fn a_serial_drop_removes_and_recreates_every_logical_radio_together() {
         pre_configured_destinations: std::iter::empty::<PreConfiguredDestination<'static>>(),
         app_state: (),
         storage: GrowableHeap,
-        routes: prns_runtime::routes![],
-        interfaces: Manual,
+        request_endpoints: prns_runtime::request_endpoints![],
+        interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: |_event, _state: &()| {},
     });
     let handle = node.handle();

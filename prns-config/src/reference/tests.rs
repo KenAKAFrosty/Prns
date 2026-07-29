@@ -286,6 +286,7 @@ fn parse_types_every_stock_discovery_setting() {
              discovery_name = Public Spine\n\
              discovery_encrypt = Yes\n\
              reachable_on = spine.example.com\n\
+             reachable_port = 18443\n\
              publish_ifac = Yes\n\
              latitude = 41.88\n\
              longitude = -87.63\n\
@@ -325,6 +326,7 @@ fn parse_types_every_stock_discovery_setting() {
         spine.discovery.reachable_on.as_deref(),
         Some("spine.example.com"),
     );
+    assert_eq!(spine.discovery.reachable_port, Some(18443));
     assert_eq!(spine.discovery.publish_ifac, Some(true));
     assert_eq!(spine.discovery.latitude, Some(41.88));
     assert_eq!(spine.discovery.longitude, Some(-87.63));
@@ -421,6 +423,12 @@ fn malformed_discovery_trust_and_cost_values_are_rejected_in_context() {
     assert!(matches!(
         parse(
             "[interfaces]\n[[Spine]]\ntype = BackboneInterface\nenabled = Yes\ndiscoverable = Yes\ndiscovery_stamp_value = -1\n",
+        ),
+        Err(ref errors) if has_code(errors, ConfigDiagnosticCode::InvalidValue),
+    ));
+    assert!(matches!(
+        parse(
+            "[interfaces]\n[[Spine]]\ntype = BackboneInterface\nenabled = Yes\ndiscoverable = Yes\nreachable_port = 0\n",
         ),
         Err(ref errors) if has_code(errors, ConfigDiagnosticCode::InvalidValue),
     ));
@@ -961,6 +969,49 @@ fn blackhole_exchange_globals_are_typed_and_invalid_intervals_are_actionable() {
     assert_eq!(diagnostic.line(), 2);
     assert!(diagnostic.accepted().unwrap().contains("finite"));
     assert!(diagnostic.correction().contains("60.0"));
+}
+
+#[test]
+fn node_page_announcement_controls_are_typed_and_zero_is_rejected() {
+    let report = parse_named(
+        "/tmp/rns/config",
+        "[reticulum]\nannounce_node_page = No\nnode_page_announce_interval = 360\n",
+    )
+    .unwrap();
+    assert_eq!(
+        report
+            .value
+            .globals
+            .get(global_key::ANNOUNCE_NODE_PAGE)
+            .and_then(ReferenceValue::as_scalar),
+        Some("No")
+    );
+    assert_eq!(
+        report
+            .value
+            .globals
+            .get(global_key::NODE_PAGE_ANNOUNCE_INTERVAL)
+            .and_then(ReferenceValue::as_scalar),
+        Some("360")
+    );
+    assert!(!report
+        .warnings
+        .iter()
+        .any(|warning| matches!(warning.code(), ConfigDiagnosticCode::UnsupportedSetting)));
+
+    let errors = parse_named(
+        "/tmp/rns/config",
+        "[reticulum]\nnode_page_announce_interval = 0\n",
+    )
+    .unwrap_err();
+    let diagnostic = errors
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| diagnostic.path().ends_with("node_page_announce_interval"))
+        .expect("node-page interval diagnostic");
+    assert_eq!(diagnostic.line(), 2);
+    assert!(diagnostic.accepted().unwrap().contains("1 through"));
+    assert!(diagnostic.correction().contains("360"));
 }
 
 #[test]

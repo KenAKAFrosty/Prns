@@ -85,6 +85,7 @@ pub enum BoardFlashTarget {
     EspSerial {
         expected_chip: &'static str,
         supports_provisioning: bool,
+        supports_tcp_client_provisioning: bool,
     },
     Uf2MassStorage {
         mount_label: &'static str,
@@ -111,6 +112,16 @@ impl BoardFlashTarget {
             Self::EspSerial { expected_chip, .. } => Some(expected_chip),
             Self::Uf2MassStorage { .. } => None,
         }
+    }
+
+    pub const fn supports_tcp_client_provisioning(self) -> bool {
+        matches!(
+            self,
+            Self::EspSerial {
+                supports_tcp_client_provisioning: true,
+                ..
+            }
+        )
     }
 }
 

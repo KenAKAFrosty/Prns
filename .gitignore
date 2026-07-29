@@ -1,4 +1,5 @@
 /target/
+/.build/
 # Nested build output — ignored regardless of where a crate/app dir lives or moves to
 **/target/
 **/build/

@@ -11,6 +11,11 @@ on:
         description: Lowercase SHA-256 of the exact downloaded unsigned candidate archive
         required: true
         type: string
+      suite_input:
+        description: Preserve signed output for unified suite custody without creating a release
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   actions: read
@@ -196,10 +201,11 @@ jobs:
           name: flasher-signed-candidate-run-${{ github.run_id }}
           path: |
             target/release/*
-            target/candidate/cli/hopspot-flash-*
+            target/candidate/**
           retention-days: 30
           if-no-files-found: error
       - name: Publish immutable signed candidate as a prerelease
+        if: ${{ !inputs.suite_input }}
         id: prerelease
         env:
           CANDIDATE_VERSION: ${{ steps.candidate.outputs.version }}
@@ -322,6 +328,7 @@ jobs:
   public-review:
     name: Approve protected public release
     needs: sign
+    if: ${{ !inputs.suite_input }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: public-release

@@ -17,9 +17,12 @@ system.
    not an exception; misuse, contract mismatch, and native status failure are.
 6. Expose application and diagnostic events as the ecosystem's native
    single-consumer stream abstraction.
-7. Wire cancellation directly to `prns_command_interrupt_wait` or
-   `prns_event_stream_interrupt_wait`, then wait for the foreign call to return
-   before releasing its handle.
+7. Register command and event readiness with the ecosystem’s scheduler, drain
+   the source nonblockingly once after registration and after each wake, and
+   wire cancellation directly to `prns_command_interrupt_wait` or
+   `prns_event_stream_interrupt_wait`.
+   Release the readiness registration before its callback context and release
+   the source handle only after any active drain returns.
 8. Decode every generated event case. Unknown discriminants fail loudly instead
    of becoming lossy maps.
 9. Run a live smoke that creates a real ephemeral host, rejects a second stream

@@ -3,7 +3,9 @@
 The JVM SDK is a thin, typed adapter over the versioned Personal RNS C host
 contract. Kotlin callers receive sealed command outcomes and cold
 single-consumer `Flow` event streams. Java callers use the same classes and
-`AutoCloseable` ownership with direct blocking bridges.
+`AutoCloseable` ownership with direct blocking bridges. Native readiness wakes
+Kotlin coroutines through a conflated channel without occupying
+`Dispatchers.IO`.
 
 ```kotlin
 Host(
@@ -66,7 +68,7 @@ exclude the desktop JNA runtime selected by the Maven POM, and place the Persona
 RNS libraries from the Android release artifact in the normal ABI directories:
 
 ```kotlin
-implementation("io.reticulum:personal-rns:0.3.0") {
+implementation("io.reticulum:personal-rns:0.3.1") {
     exclude(group = "net.java.dev.jna", module = "jna")
 }
 implementation("net.java.dev.jna:jna:5.19.1@aar")

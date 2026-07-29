@@ -1096,6 +1096,65 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         self.assertNotEqual(mismatched.returncode, 0)
         self.assertIn("source commit differs", mismatched.stderr)
 
+    def test_unified_suite_review_can_follow_the_original_flasher_attestation(self) -> None:
+        (
+            signed_bundle,
+            bundle,
+            metadata,
+            acceptance,
+            candidate_run,
+            qualification_evidence,
+        ) = self.make_release_evidence()
+        review = json.loads(self.public_review_evidence.read_text(encoding="utf-8"))
+        review["workflow_path"] = ".github/workflows/suite-sign.yml"
+        review["workflow_run_id"] = 91
+        suite_review = (
+            self.workspace
+            / f"public-review-v{VERSION}-run-91-attempt-2.json"
+        )
+        write_json(suite_review, review)
+        record = self.workspace / f"flasher-release-record-v{VERSION}.json"
+
+        created = run_script(
+            "flasher-release-record.py",
+            "create",
+            "--candidate",
+            self.fixture.root,
+            "--candidate-run",
+            candidate_run,
+            "--signed-bundle",
+            signed_bundle,
+            "--acceptance",
+            acceptance,
+            "--acceptance-source-commit",
+            ACCEPTANCE_COMMIT,
+            "--qualification-evidence",
+            qualification_evidence,
+            "--public-review-evidence",
+            suite_review,
+            "--prerelease-published-at",
+            "2026-07-20T12:00:00Z",
+            "--attestation-bundle",
+            bundle,
+            "--attestation-metadata",
+            metadata,
+            "--repository",
+            REPOSITORY,
+            "--output",
+            record,
+        )
+
+        self.assertEqual(created.returncode, 0, created.stderr)
+        value = json.loads(record.read_text(encoding="utf-8"))
+        self.assertEqual(
+            value["public_review"]["workflow_path"],
+            ".github/workflows/suite-sign.yml",
+        )
+        self.assertEqual(
+            value["attestation"]["metadata"]["workflow_run_id"], 77
+        )
+        self.assertEqual(value["public_review"]["workflow_run_id"], 91)
+
     def test_release_record_requires_provenance_for_every_firmware_payload(self) -> None:
         signed_bundle, bundle, metadata, acceptance, candidate_run, qualification_evidence = (
             self.make_release_evidence(include_firmware_attestations=False)
@@ -1341,7 +1400,7 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         self.assertIn("--public-review-evidence", evidence)
         self.assertIn("Select and verify the exact successful protected public review", evidence)
         self.assertIn(
-            "actions/runs/${signing_run_id}/attempts/${run_attempt}", evidence
+            "actions/runs/${review_run_id}/attempts/${run_attempt}", evidence
         )
         self.assertIn("./tools/prns release document sign -- \"$record\"", evidence)
         self.assertIn("release_record_sha256:", promotion)

@@ -18,7 +18,7 @@ const SECRET_COUNT_LEN: usize = 2;
 const LAST_ROTATED_NEVER_TAG: u8 = 0;
 const LAST_ROTATED_AT_TAG: u8 = 1;
 
-pub fn self_ratchets_snapshot_len(secret_count: usize) -> usize {
+pub const fn self_ratchets_snapshot_len(secret_count: usize) -> usize {
     SNAPSHOT_OVERHEAD_LEN
         + LAST_ROTATED_TAG_LEN
         + INSTANT_LEN
@@ -95,7 +95,7 @@ impl PersistedSelfRatchets<'_> {
     }
 
     #[allow(clippy::expect_used)]
-    pub fn secrets_newest_first(&self) -> impl Iterator<Item = X25519SecretKey> + '_ {
+    pub fn secrets_newest_first(&self) -> impl DoubleEndedIterator<Item = X25519SecretKey> + '_ {
         self.secrets.chunks_exact(X25519SecretKey::LEN).map(|raw| {
             X25519SecretKey::new(raw.try_into().expect("chunks_exact yields exact chunks"))
         })

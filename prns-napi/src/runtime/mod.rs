@@ -1,3 +1,4 @@
+use personal_rns::runtime::NoPersistence;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -8,11 +9,11 @@ use personal_rns::engine::RatchetPolicy;
 use personal_rns::routing::request_handlers::RequestPolicy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
-    Manual, PreConfiguredDestination, PrnsNodeRecipe, RequestHandlerRegistration,
+    ManuallyAttached, PreConfiguredDestination, PrnsNodeRecipe, ServeMyRequestEndpoints,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::{
-    routes, PlanAttachments, PrnsNode, PrnsNodeHandle, ResourceStrategy, Zeroizing,
+    request_endpoints, PlanAttachments, PrnsNode, PrnsNodeHandle, ResourceStrategy, Zeroizing,
     IDENTITY_SECRET_KEY_LEN,
 };
 use tokio::sync::{mpsc, oneshot};
@@ -69,7 +70,7 @@ fn build_destinations<'a>(
                 link_requests: single.link_requests,
                 ratchet: single.ratchet,
                 resource_strategy: single.resource_strategy,
-                request_handlers: RequestHandlerRegistration::None,
+                request_endpoints: ServeMyRequestEndpoints::No,
             },
         })
         .collect()
@@ -381,8 +382,9 @@ async fn run_node(
         pre_configured_destinations: destinations,
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
-        interfaces: Manual,
+        request_endpoints: request_endpoints![],
+        interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: move |event, _state: &()| sink.dispatch(event),
     });
     let mut registration_failure: Option<String> = None;

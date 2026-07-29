@@ -10,6 +10,7 @@ use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::mpsc::{self, Receiver, Sender, UnboundedReceiver};
 use tokio::sync::watch;
 
+pub use crate::network_device::AutoWifiDevicePolicy;
 use crate::reconnect::ReconnectPolicy;
 use crate::tcp::{tune, TcpClientInterface, TcpServerConnection};
 use prns_core::engine::InstantMillis;
@@ -161,49 +162,6 @@ pub struct AutoWifi {
 enum HostNetworkDiscovery {
     Enumerated,
     PlatformRendezvous,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AutoWifiDevicePolicy {
-    allowed: std::vec::Vec<String>,
-    ignored: std::vec::Vec<String>,
-}
-
-impl AutoWifiDevicePolicy {
-    #[must_use]
-    pub fn new(
-        allowed: impl Into<std::vec::Vec<String>>,
-        ignored: impl Into<std::vec::Vec<String>>,
-    ) -> Self {
-        Self {
-            allowed: allowed.into(),
-            ignored: ignored.into(),
-        }
-    }
-
-    pub fn allowed(&self) -> &[String] {
-        &self.allowed
-    }
-
-    pub fn ignored(&self) -> &[String] {
-        &self.ignored
-    }
-
-    pub(crate) fn allows(&self, name: &str, is_loopback: bool) -> bool {
-        if is_loopback || self.ignored.iter().any(|ignored| ignored == name) {
-            return false;
-        }
-        if !self.allowed.is_empty() {
-            return self.allowed.iter().any(|allowed| allowed == name);
-        }
-        !is_virtual(name)
-    }
-}
-
-impl Default for AutoWifiDevicePolicy {
-    fn default() -> Self {
-        Self::new(std::vec::Vec::new(), std::vec::Vec::new())
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -602,7 +560,7 @@ impl InterfaceSupervisor for AutoWifi {
         } else {
             None
         };
-        let mut loopback = bounce_to_local_core(&rendezvous, &sup.fleet, sup.policy);
+        let mut loopback = bounce_to_local_core(&settings, &rendezvous, &sup.fleet, sup.policy);
 
         loop {
             if !sup.status.is_enabled() {
@@ -1123,11 +1081,12 @@ fn platform_gateway_inventory() -> GatewayInventory {
 
 /// A node that cannot claim the local rendezvous port joins its current holder over loopback.
 fn bounce_to_local_core(
+    settings: &AutoWifiSettings,
     rendezvous: &Option<TcpListener>,
     fleet: &Fleet,
     policy: EffectiveInterfacePolicy,
 ) -> Option<AttachedInterface> {
-    if rendezvous.is_some() {
+    if !settings.prns_rendezvous_enabled() || rendezvous.is_some() {
         return None;
     }
     let target = std::format!("127.0.0.1:{}", contract::TCP_RENDEZVOUS_PORT);
@@ -1169,16 +1128,6 @@ fn gateway_addr(iface: &netdev::Interface) -> Option<IpAddr> {
         .copied()
         .map(IpAddr::V4)
         .or_else(|| gateway.ipv6.first().copied().map(IpAddr::V6))
-}
-
-fn is_virtual(name: &str) -> bool {
-    const VIRTUAL_PREFIXES: [&str; 14] = [
-        "utun", "tun", "tap", "ppp", "ipsec", "awdl", "llw", "gif", "stf", "bridge", "vmnet",
-        "vnic", "docker", "p2p",
-    ];
-    VIRTUAL_PREFIXES
-        .iter()
-        .any(|prefix| name.starts_with(prefix))
 }
 
 fn link_local_for_scope(index: u32) -> Option<Ipv6Addr> {
@@ -1284,14 +1233,6 @@ mod tests {
             index,
             link_local: Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, link_local_tail),
         }
-    }
-
-    #[test]
-    fn wifi_direct_group_netdevs_read_as_virtual() {
-        assert!(is_virtual("p2p-wlan0-0"));
-        assert!(is_virtual("p2p-dev-wlan0"));
-        assert!(!is_virtual("wlan0"));
-        assert!(!is_virtual("wlp0s20f3"));
     }
 
     #[test]
@@ -1692,6 +1633,29 @@ mod tests {
             1,
             "we never dial our own advertised rendezvous",
         );
+    }
+
+    #[tokio::test]
+    async fn custom_group_nodes_never_dial_the_stock_loopback_rendezvous() {
+        let (sup, _guard) = test_supervisor();
+        let custom = AutoWifiSettings::new(
+            b"field-mesh".to_vec(),
+            contract::DiscoveryScope::Site,
+            contract::MulticastAddressType::Permanent,
+            30_000,
+            40_000,
+            AutoWifiDevicePolicy::default(),
+        )
+        .expect("ports are valid");
+        assert!(
+            bounce_to_local_core(&custom, &None, &sup.fleet, sup.policy).is_none(),
+            "a node that opted out of the stock rendezvous has no holder to join",
+        );
+
+        let stock =
+            bounce_to_local_core(&AutoWifiSettings::default(), &None, &sup.fleet, sup.policy)
+                .expect("a stock node that lost the port joins its holder over loopback");
+        stock.teardown();
     }
 
     #[test]

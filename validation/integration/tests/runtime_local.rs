@@ -1,4 +1,5 @@
 use core::time::Duration;
+use personal_rns::runtime::NoPersistence;
 
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
@@ -7,11 +8,11 @@ use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::BitrateBps;
 use personal_rns::interfaces::InterfaceKind;
 use personal_rns::manifold::reconnect::ReconnectPolicy;
-use personal_rns::routes;
+use personal_rns::request_endpoints;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
-    Diagnostic, Manual, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle,
-    PrnsNodeRecipe, RequestHandlerRegistration,
+    Diagnostic, ManuallyAttached, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle,
+    PrnsNodeRecipe, ServeMyRequestEndpoints,
 };
 use personal_rns::shared_instance::SharedInstanceServer;
 use personal_rns::storage::GrowableHeap;
@@ -33,7 +34,7 @@ fn single(identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> PreConfiguredDe
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
-        request_handlers: RequestHandlerRegistration::None,
+        request_endpoints: ServeMyRequestEndpoints::No,
     }
 }
 
@@ -56,8 +57,9 @@ async fn an_app_dials_the_shared_instance_and_is_heard_at_a_discounted_hop() {
         pre_configured_destinations: [single(secret(0xD1))],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
-        interfaces: Manual,
+        request_endpoints: request_endpoints![],
+        interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
                 destination,
@@ -77,12 +79,13 @@ async fn an_app_dials_the_shared_instance_and_is_heard_at_a_discounted_hop() {
         pre_configured_destinations: [app_single],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
-        interfaces: Manual,
+        request_endpoints: request_endpoints![],
+        interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: |_event, _state| {},
     });
     let app_commands = app.handle();
-    let _attached = app_commands.add_interface(TcpClientInterface::new(
+    let _attached = app_commands.add_interface(TcpClientInterface::new_with_bitrate(
         std::format!("127.0.0.1:{port}"),
         BITRATE,
         ReconnectPolicy::STANDARD,
@@ -136,7 +139,7 @@ async fn a_leaf_shared_instance_carries_announces_across_its_local_boundary() {
         .local_addr()
         .expect("the local port is known")
         .port();
-    let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+    let server = TcpServer::bind_with_bitrate("127.0.0.1:0", BITRATE)
         .await
         .expect("the network server binds");
     let network_addr = server
@@ -149,8 +152,9 @@ async fn a_leaf_shared_instance_carries_announces_across_its_local_boundary() {
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
-        interfaces: Manual,
+        request_endpoints: request_endpoints![],
+        interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: |_event, _state| {},
     })
     .with_shared_instance_identity(secret(0xD1))
@@ -164,13 +168,14 @@ async fn a_leaf_shared_instance_carries_announces_across_its_local_boundary() {
         .destination_hash()
         .expect("the network destination is valid");
     let (network_heard_tx, mut network_heard_rx) = tokio::sync::mpsc::unbounded_channel();
-    let network_client = TcpClientInterface::new(network_addr, BITRATE, ReconnectPolicy::STANDARD);
+    let network_client =
+        TcpClientInterface::new_with_bitrate(network_addr, BITRATE, ReconnectPolicy::STANDARD);
     let network_node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [network_single],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         interfaces: |node: &PrnsNodeHandle| {
             node.attach(network_client);
         },
@@ -179,6 +184,7 @@ async fn a_leaf_shared_instance_carries_announces_across_its_local_boundary() {
                 let _ = network_heard_tx.send(destination);
             }
         },
+        persistence: NoPersistence,
     });
     let network_handle = network_node.handle();
 
@@ -187,7 +193,7 @@ async fn a_leaf_shared_instance_carries_announces_across_its_local_boundary() {
         .destination_hash()
         .expect("the local destination is valid");
     let (local_heard_tx, mut local_heard_rx) = tokio::sync::mpsc::unbounded_channel();
-    let local_client = TcpClientInterface::new(
+    let local_client = TcpClientInterface::new_with_bitrate(
         std::format!("127.0.0.1:{local_port}"),
         BITRATE,
         ReconnectPolicy::STANDARD,
@@ -197,7 +203,7 @@ async fn a_leaf_shared_instance_carries_announces_across_its_local_boundary() {
         pre_configured_destinations: [local_single],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         interfaces: |node: &PrnsNodeHandle| {
             node.attach(local_client);
         },
@@ -206,6 +212,7 @@ async fn a_leaf_shared_instance_carries_announces_across_its_local_boundary() {
                 let _ = local_heard_tx.send(destination);
             }
         },
+        persistence: NoPersistence,
     });
     let local_handle = local_node.handle();
 

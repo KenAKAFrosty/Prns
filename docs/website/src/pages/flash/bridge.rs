@@ -73,6 +73,15 @@ pub(super) struct BridgeProvisioning {
     pub(super) size: u32,
     pub(super) ssid: String,
     pub(super) password: String,
+    pub(super) tcp_client: Option<BridgeTcpClient>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct BridgeTcpClient {
+    pub(super) host_kind: &'static str,
+    pub(super) host: String,
+    pub(super) port: u16,
 }
 
 #[derive(Deserialize)]
@@ -137,7 +146,9 @@ impl BridgeRequest {
     ) -> Result<Self, String> {
         match (&provisioning, target.provisioning()) {
             (Some(request), Some(slot))
-                if request.offset == slot.offset() && request.size == slot.size() => {}
+                if request.offset == slot.offset()
+                    && request.size == slot.size()
+                    && (request.tcp_client.is_none() || slot.tcp_client().is_some()) => {}
             (Some(_), Some(_)) => {
                 return Err(
                     "The bridge provisioning request disagrees with the signed target.".to_string(),
@@ -543,6 +554,7 @@ mod tests {
     const ESP_TARGET: BoardFlashTarget = BoardFlashTarget::EspSerial {
         expected_chip: "esp32s3",
         supports_provisioning: true,
+        supports_tcp_client_provisioning: true,
     };
 
     #[test]
@@ -743,6 +755,7 @@ mod tests {
                 size: slot.size(),
                 ssid: "network".to_string(),
                 password: "password".to_string(),
+                tcp_client: None,
             }),
             ESP_TARGET,
         )?;
@@ -754,6 +767,7 @@ mod tests {
                 "size": slot.size(),
                 "ssid": "network",
                 "password": "password",
+                "tcpClient": null,
             })
         );
 
@@ -771,10 +785,12 @@ mod tests {
                 size: 0x1000,
                 ssid: String::new(),
                 password: String::new(),
+                tcp_client: None,
             }),
             BoardFlashTarget::EspSerial {
                 expected_chip: "esp32c6",
                 supports_provisioning: false,
+                supports_tcp_client_provisioning: false,
             },
         )
         .is_err());

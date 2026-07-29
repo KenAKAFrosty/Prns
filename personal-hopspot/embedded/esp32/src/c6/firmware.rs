@@ -8,10 +8,17 @@ pub async fn run(spawner: Spawner) {
         wifi,
         #[cfg(feature = "bluetooth-auto")]
         bluetooth,
+        identity_entropy,
         mac,
         timebase,
         _rtc,
     } = XiaoEsp32C6::bringup();
+
+    let node_bootstrap = crate::identity::bootstrap_node_identity();
+    crate::identity::log_persistence("node", node_bootstrap.persistence());
+    let ble_bootstrap = crate::identity::bootstrap_ble_identity();
+    crate::identity::log_persistence("Bluetooth", ble_bootstrap.persistence());
+    drop(identity_entropy);
 
     #[cfg(feature = "esp-now")]
     let (_espnow_controller, espnow, _espnow_status) = {
@@ -33,10 +40,6 @@ pub async fn run(spawner: Spawner) {
         (controller, espnow, espnow_status)
     };
 
-    let node_bootstrap = crate::identity::bootstrap_node_identity();
-    crate::identity::log_persistence("node", node_bootstrap.persistence());
-    let ble_bootstrap = crate::identity::bootstrap_ble_identity();
-    crate::identity::log_persistence("Bluetooth", ble_bootstrap.persistence());
     let node_identity = node_bootstrap.into_identity();
     let transport_secret = node_identity.transport_secret();
     let destination_secret = node_identity.into_destination_secret();
@@ -85,23 +88,23 @@ pub async fn run(spawner: Spawner) {
             (identity, fleet)
         });
     let host = EmbassyHost::new_with_timebase(timebase, hardware_entropy as fn(&mut [u8]));
+    let recipe = PrnsNodeRecipe {
+        transport_identity: Some(transport_secret),
+        pre_configured_destinations: destinations.into_preconfigured_destinations(),
+        app_state: (),
+        storage: C6Storage,
+        request_endpoints: personal_hopspot_core::node_pages::NodePageRoutes,
+        interfaces: personal_rns::runtime::ManuallyAttached,
+        persistence: crate::persistence::c6(),
+        on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
+    };
 
     static NODE: StaticCell<Node> = StaticCell::new();
-    let node: &'static mut Node = PrnsNode::init_static(
-        &NODE,
-        PrnsNodeRecipe {
-            transport_identity: Some(transport_secret),
-            pre_configured_destinations: destinations.into_preconfigured_destinations(),
-            app_state: (),
-            storage: C6Storage,
-            routes: personal_hopspot_core::node_pages::NodePageRoutes,
-            interfaces: personal_rns::runtime::Manual,
-            on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
-        },
-        manifold_wiring,
-        host,
-    );
-    spawner.spawn(manifold_task(node).expect("manifold task fits"));
+    let (node, persistence) =
+        PrnsNode::init_static_with_persistence(&NODE, recipe, manifold_wiring, host);
+    static PERSISTENCE: StaticCell<crate::persistence::C6Persistence> = StaticCell::new();
+    let persistence = PERSISTENCE.init(persistence);
+    spawner.spawn(manifold_task(node, persistence).expect("manifold task fits"));
     #[cfg(feature = "bluetooth-auto")]
     if let Some((identity, fleet)) = ble {
         spawner.spawn(

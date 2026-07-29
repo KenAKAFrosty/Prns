@@ -4,7 +4,8 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 
 pub use prns_runtime::{
-    crypto, engine, identity, interfaces, persistence, rncp, routes, routing, storage, units, wire,
+    crypto, engine, identity, interfaces, persistence, request_endpoints, rncp, routing, storage,
+    units, wire,
 };
 
 #[cfg(feature = "rnx")]
@@ -79,8 +80,8 @@ pub use prns_runtime::interfaces::InterfaceStatus;
 pub use prns_runtime::routing::links::resources::ResourceStrategy;
 pub use prns_runtime::routing::ProofStrategy;
 pub use prns_runtime::runtime::{
-    Diagnostic, Manual, Message, PreConfiguredDestination, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe,
-    RuntimeHealth, SendError,
+    Diagnostic, ManuallyAttached, Message, NoPersistence, PreConfiguredDestination, PrnsEvent,
+    PrnsNodeApi, PrnsNodeRecipe, RuntimeHealth, SendError,
 };
 pub use prns_runtime::wire::{DestinationHash, TransportId};
 
@@ -100,11 +101,16 @@ pub use prns_runtime_tokio::runtime::{
 };
 
 #[cfg(all(feature = "embassy-host", not(feature = "tokio-host")))]
-pub use prns_runtime_embassy::runtime::{Fleet, PrnsNode, PrnsNodeHandle};
+pub use prns_runtime_embassy::runtime::{
+    EmbeddedFlashPersistence, EmbeddedPersistenceDiagnostic, EmbeddedPersistenceFailure,
+    EmbeddedPersistencePolicy, EmbeddedPersistenceRestoreReport, Fleet, PrnsNode, PrnsNodeHandle,
+};
 
 #[cfg(all(feature = "embassy-host", feature = "tokio-host"))]
 pub use prns_runtime_embassy::runtime::{
-    PrnsNode as EmbassyPrnsNode, PrnsNodeHandle as EmbassyPrnsNodeHandle,
+    EmbeddedFlashPersistence, EmbeddedPersistenceDiagnostic, EmbeddedPersistenceFailure,
+    EmbeddedPersistencePolicy, EmbeddedPersistenceRestoreReport, PrnsNode as EmbassyPrnsNode,
+    PrnsNodeHandle as EmbassyPrnsNodeHandle,
 };
 
 #[cfg(all(

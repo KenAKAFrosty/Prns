@@ -1,6 +1,6 @@
 [package]
 name = "personal-rns"
-version = "0.3.0"
+version = "0.3.1"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -19,7 +19,11 @@ path = "src/lib.rs"
 
 [[example]]
 name = "node_basics"
-required-features = ["tokio-host", "tcp", "wifi-auto", "usb", "bluetooth-auto"]
+required-features = ["tokio-host", "tcp"]
+
+[[example]]
+name = "auto_discovery"
+required-features = ["tokio-host", "wifi-auto"]
 
 [[example]]
 name = "bounded_request"
@@ -31,6 +35,18 @@ required-features = ["tokio-host", "tcp"]
 
 [[example]]
 name = "dynamic_interface"
+required-features = ["tokio-host", "tcp"]
+
+[[example]]
+name = "app_state"
+required-features = ["tokio-host", "tcp"]
+
+[[example]]
+name = "transport_node"
+required-features = ["tokio-host", "tcp"]
+
+[[example]]
+name = "persistence"
 required-features = ["tokio-host", "tcp"]
 
 [features]
@@ -59,6 +75,7 @@ keyring-libdbus = ["prns-core/keyring-libdbus"]
 flash = ["prns-core/flash"]
 
 tcp = ["prns-interfaces-tokio?/tcp", "prns-interfaces-embassy?/tcp"]
+tcp-dns = ["tcp", "prns-interfaces-embassy?/tcp-dns"]
 wifi-auto = ["prns-interfaces-tokio?/wifi-auto", "prns-interfaces-embassy?/wifi-auto"]
 wifi-direct = ["prns-interfaces-tokio?/wifi-direct"]
 wifi-aware = ["prns-interfaces-tokio?/wifi-aware"]
@@ -82,12 +99,12 @@ esp-now = ["prns-interfaces-embassy?/esp-now"]
 
 [dependencies]
 cfg-if = "1.0"
-prns-core = { version = "=0.3.0", path = "../prns-core", default-features = false }
-prns-runtime = { version = "=0.3.0", path = "../prns-runtime/core", default-features = false }
-prns-runtime-tokio = { version = "=0.3.0", path = "../prns-runtime/impls/tokio", optional = true, default-features = false }
-prns-runtime-embassy = { version = "=0.3.0", path = "../prns-runtime/impls/embassy", optional = true, default-features = false }
-prns-interfaces-tokio = { version = "=0.3.0", path = "../prns-interfaces/impls/tokio", optional = true, default-features = false }
-prns-interfaces-embassy = { version = "=0.3.0", path = "../prns-interfaces/impls/embassy", optional = true, default-features = false }
+prns-core = { version = "=0.3.1", path = "../prns-core", default-features = false }
+prns-runtime = { version = "=0.3.1", path = "../prns-runtime/core", default-features = false }
+prns-runtime-tokio = { version = "=0.3.1", path = "../prns-runtime/impls/tokio", optional = true, default-features = false }
+prns-runtime-embassy = { version = "=0.3.1", path = "../prns-runtime/impls/embassy", optional = true, default-features = false }
+prns-interfaces-tokio = { version = "=0.3.1", path = "../prns-interfaces/impls/tokio", optional = true, default-features = false }
+prns-interfaces-embassy = { version = "=0.3.1", path = "../prns-interfaces/impls/embassy", optional = true, default-features = false }
 
 [dev-dependencies]
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "sync", "time"] }

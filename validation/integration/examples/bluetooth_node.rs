@@ -2,6 +2,7 @@
 #[tokio::main]
 async fn main() {
     use core::time::Duration;
+    use personal_rns::runtime::NoPersistence;
     use std::string::String;
 
     use personal_rns::engine::RatchetPolicy;
@@ -9,12 +10,12 @@ async fn main() {
     use personal_rns::interfaces::bluetooth_auto::{
         AppleHost, BleIdentity, Endpoint, LinkCapabilities, BLE_HW_MTU,
     };
-    use personal_rns::routes;
+    use personal_rns::request_endpoints;
     use personal_rns::routing::links::resources::ResourceStrategy;
     use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
     use personal_rns::runtime::{
-        Diagnostic, Manual, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeRecipe,
-        RequestHandlerRegistration,
+        Diagnostic, ManuallyAttached, PreConfiguredDestination, PrnsEvent, PrnsNode,
+        PrnsNodeRecipe, ServeMyRequestEndpoints,
     };
     use personal_rns::storage::GrowableHeap;
     use prns_ffi::bluetooth_auto::macos::MacosBleBackend;
@@ -49,7 +50,7 @@ async fn main() {
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
-        request_handlers: RequestHandlerRegistration::None,
+        request_endpoints: ServeMyRequestEndpoints::No,
     };
 
     let node = PrnsNode::new(PrnsNodeRecipe {
@@ -57,8 +58,9 @@ async fn main() {
         pre_configured_destinations: [me],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
-        interfaces: Manual,
+        request_endpoints: request_endpoints![],
+        interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
                 source_interface,

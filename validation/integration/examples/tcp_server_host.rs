@@ -1,6 +1,7 @@
 #![allow(clippy::expect_used)]
 
 use core::time::Duration;
+use personal_rns::runtime::NoPersistence;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
@@ -9,11 +10,11 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::BitrateBps;
-use personal_rns::routes;
+use personal_rns::request_endpoints;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
-    Diagnostic, Manual, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeRecipe,
-    RequestHandlerRegistration,
+    Diagnostic, ManuallyAttached, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeRecipe,
+    ServeMyRequestEndpoints,
 };
 use personal_rns::storage::GrowableHeap;
 use prns_interfaces_tokio::tcp::TcpServer;
@@ -27,7 +28,7 @@ async fn main() {
         .and_then(|p| p.parse().ok())
         .unwrap_or(4242);
     let bind = std::format!("0.0.0.0:{port}");
-    let server = TcpServer::bind(bind.as_str(), BITRATE)
+    let server = TcpServer::bind_with_bitrate(bind.as_str(), BITRATE)
         .await
         .expect("the TCP server binds");
     std::println!("tcp-server-host: listening on {bind}");
@@ -41,7 +42,7 @@ async fn main() {
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
-        request_handlers: RequestHandlerRegistration::None,
+        request_endpoints: ServeMyRequestEndpoints::No,
     };
     let my_dest = me
         .destination_hash()
@@ -54,8 +55,9 @@ async fn main() {
         pre_configured_destinations: [me],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
-        interfaces: Manual,
+        request_endpoints: request_endpoints![],
+        interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
                 source_interface,

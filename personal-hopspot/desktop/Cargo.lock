@@ -907,6 +907,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a21dea9854beb860f3062d10228ce9b976da520a73474aed3171ec276bc0c032"
 
 [[package]]
+name = "embedded-storage-async"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1763775e2323b7d5f0aa6090657f5e21cfa02ede71f5dc40eead06d64dcd15cc"
+dependencies = [
+ "embedded-storage",
+]
+
+[[package]]
 name = "endi"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1985,7 +1994,7 @@ dependencies = [
 
 [[package]]
 name = "personal-rns"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "cfg-if",
  "prns-core",
@@ -2071,7 +2080,7 @@ checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
 
 [[package]]
 name = "prns-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "aes",
  "cbc",
@@ -2079,6 +2088,7 @@ dependencies = [
  "crc32fast",
  "ed25519-dalek",
  "embedded-storage",
+ "embedded-storage-async",
  "heapless 0.8.0",
  "hkdf",
  "hmac",
@@ -2093,7 +2103,7 @@ dependencies = [
 
 [[package]]
 name = "prns-ffi"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "cfg-if",
  "dispatch2",
@@ -2110,7 +2120,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-embassy"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "embassy-futures",
  "embassy-net",
@@ -2129,7 +2139,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-tokio"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "bluer",
  "cfg-if",
@@ -2151,7 +2161,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "bzip2",
  "cfg-if",
@@ -2161,11 +2171,12 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime-embassy"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "embassy-futures",
  "embassy-sync 0.8.0",
  "embassy-time",
+ "embedded-storage-async",
  "heapless 0.8.0",
  "log",
  "portable-atomic",
@@ -2176,7 +2187,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime-tokio"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "futures-util",
  "getrandom 0.2.17",

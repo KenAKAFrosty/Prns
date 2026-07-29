@@ -785,6 +785,13 @@ impl InterfaceSettingSpec {
                     _ => None,
                 })
             }
+            interface_key::REACHABLE_PORT => {
+                discovery_advertisement(planned).and_then(|value| match value {
+                    DiscoveryAdvertisementPlan::Backbone { port, .. }
+                    | DiscoveryAdvertisementPlan::TcpServer { port, .. } => Some(port.to_string()),
+                    _ => None,
+                })
+            }
             interface_key::LATITUDE => discovery_announcement(planned)
                 .and_then(|announcement| announcement.location.latitude)
                 .map(concise_decimal),

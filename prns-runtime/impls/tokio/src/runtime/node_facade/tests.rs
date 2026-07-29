@@ -7,7 +7,9 @@ use crate::engine::{
 use crate::identity::IdentityHash;
 use crate::manifold::driver::HostCommand;
 use crate::routing::links::LinkId;
-use crate::runtime::SendError;
+use crate::routing::request_handlers::{RequestPathHash, RequestPolicy};
+use crate::runtime::{RuntimeRequestHandlerError, SendError};
+use crate::storage::TablePushError;
 use crate::wire::DestinationHash;
 
 use super::PrnsNodeHandle;
@@ -65,6 +67,79 @@ async fn an_awaited_send_issues_the_completion_carrying_command() {
     }
 
     assert_eq!(send.await.expect("the send task joins"), Ok(delivered(7)),);
+}
+
+#[tokio::test]
+async fn runtime_request_path_mutations_are_acknowledged() {
+    let (prns, mut command_rx) = handle();
+    let issuer = prns.clone();
+    let register = tokio::spawn(async move {
+        issuer
+            .register_request_path(PEER, "/page/new.mu", RequestPolicy::AllowAll)
+            .await
+    });
+
+    match command_rx.recv().await.expect("registration command") {
+        HostCommand::RegisterRequestHandler {
+            destination,
+            path_hash,
+            policy,
+            ready,
+        } => {
+            assert_eq!(destination, PEER);
+            assert_eq!(path_hash, RequestPathHash::of("/page/new.mu"));
+            assert_eq!(policy, RequestPolicy::AllowAll);
+            ready.send(Ok(())).expect("registration waiter");
+        }
+        _ => panic!("request path registration uses its host command"),
+    }
+    assert_eq!(register.await.expect("registration joins"), Ok(()));
+
+    let issuer = prns.clone();
+    let unregister =
+        tokio::spawn(async move { issuer.unregister_request_path(PEER, "/page/new.mu").await });
+    match command_rx.recv().await.expect("unregistration command") {
+        HostCommand::UnregisterRequestHandler {
+            destination,
+            path_hash,
+            ready,
+        } => {
+            assert_eq!(destination, PEER);
+            assert_eq!(path_hash, RequestPathHash::of("/page/new.mu"));
+            ready.send(true).expect("unregistration waiter");
+        }
+        _ => panic!("request path unregistration uses its host command"),
+    }
+    assert_eq!(unregister.await.expect("unregistration joins"), Ok(true));
+}
+
+#[tokio::test]
+async fn runtime_request_path_registration_reports_capacity_and_shutdown() {
+    let (prns, mut command_rx) = handle();
+    let issuer = prns.clone();
+    let register = tokio::spawn(async move {
+        issuer
+            .register_request_path(PEER, "/page/full.mu", RequestPolicy::AllowAll)
+            .await
+    });
+    let HostCommand::RegisterRequestHandler { ready, .. } =
+        command_rx.recv().await.expect("registration command")
+    else {
+        panic!("request path registration uses its host command");
+    };
+    ready
+        .send(Err(TablePushError::TableFull))
+        .expect("registration waiter");
+    assert_eq!(
+        register.await.expect("registration joins"),
+        Err(RuntimeRequestHandlerError::TableFull)
+    );
+
+    drop(command_rx);
+    assert_eq!(
+        prns.unregister_request_path(PEER, "/page/full.mu").await,
+        Err(RuntimeRequestHandlerError::NodeStopped)
+    );
 }
 
 #[tokio::test]

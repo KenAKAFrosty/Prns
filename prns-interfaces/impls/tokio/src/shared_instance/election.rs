@@ -36,7 +36,7 @@ pub struct SharedInstanceClientIntent {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SharedInstanceTransport {
     Tcp,
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     AbstractUnix {
         socket_path: String,
     },
@@ -86,7 +86,7 @@ pub enum SharedInstanceBusEndpoint {
     Tcp {
         port: u16,
     },
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     AbstractUnix {
         socket_path: String,
     },
@@ -96,7 +96,7 @@ impl std::fmt::Display for SharedInstanceBusEndpoint {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Tcp { port } => write!(formatter, "127.0.0.1:{port}"),
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             Self::AbstractUnix { socket_path } => write!(formatter, "\\0rns/{socket_path}"),
         }
     }
@@ -123,9 +123,9 @@ impl std::error::Error for ExistingSharedInstanceUnavailable {}
 pub enum SharedInstanceEndpoint {
     TcpBus,
     TcpControl,
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     AbstractUnixBus,
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     AbstractUnixControl,
 }
 
@@ -135,9 +135,9 @@ impl SharedInstanceEndpoint {
         match self {
             Self::TcpBus => "tcp_bus",
             Self::TcpControl => "tcp_control",
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             Self::AbstractUnixBus => "abstract_unix_bus",
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             Self::AbstractUnixControl => "abstract_unix_control",
         }
     }
@@ -188,7 +188,7 @@ pub async fn connect_existing_shared_instance(
                 .unwrap_or(address);
             Ok(attach_existing(handle, stream, of, instance.policy))
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         SharedInstanceTransport::AbstractUnix { socket_path } => {
             let endpoint = SharedInstanceBusEndpoint::AbstractUnix {
                 socket_path: socket_path.clone(),
@@ -222,7 +222,7 @@ async fn join_existing(
                     .map(Some);
             }
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         SharedInstanceTransport::AbstractUnix { socket_path } => {
             if let Some(stream) = connect_abstract_bus(socket_path) {
                 let at = std::format!("\\0rns/{socket_path}");
@@ -277,7 +277,7 @@ async fn become_instance(
 ) -> Result<(), SharedInstanceActivationError> {
     let server = match &instance.transport {
         SharedInstanceTransport::Tcp => SharedInstanceServer::with_port(instance.ports.bus),
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         SharedInstanceTransport::AbstractUnix { socket_path } => {
             SharedInstanceServer::abstract_unix(socket_path.clone())
         }
@@ -299,7 +299,7 @@ async fn become_instance(
             handle.clone(),
             blackholes,
         ),
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         SharedInstanceTransport::AbstractUnix { socket_path } => {
             SharedInstanceRpcServer::abstract_unix_with_blackholes(
                 instance.credentials.clone(),
@@ -327,7 +327,7 @@ impl SharedInstanceActivationError {
                 endpoint: SharedInstanceEndpoint::TcpBus,
                 kind,
             },
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             SharedInstanceServerBindError::AbstractUnix(kind) => Self {
                 endpoint: SharedInstanceEndpoint::AbstractUnixBus,
                 kind,
@@ -341,7 +341,7 @@ impl SharedInstanceActivationError {
                 endpoint: SharedInstanceEndpoint::TcpControl,
                 kind,
             },
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             SharedInstanceRpcBindError::AbstractUnix(kind) => Self {
                 endpoint: SharedInstanceEndpoint::AbstractUnixControl,
                 kind,
@@ -360,8 +360,11 @@ async fn probe_tcp(addr: &str) -> Option<TcpStream> {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn connect_abstract_bus(socket_path: &str) -> Option<tokio::net::UnixStream> {
+    #[cfg(target_os = "android")]
+    use std::os::android::net::SocketAddrExt;
+    #[cfg(target_os = "linux")]
     use std::os::linux::net::SocketAddrExt;
     let name = std::format!("rns/{socket_path}");
     let addr = std::os::unix::net::SocketAddr::from_abstract_name(name.as_bytes()).ok()?;

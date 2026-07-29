@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use personal_rns::runtime::NoPersistence;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -23,7 +24,7 @@ use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::links::channel::MessageType;
 use personal_rns::routing::request_handlers::RequestPolicy as EngineRequestPolicy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
-use personal_rns::runtime::request_router::RespondToken;
+use personal_rns::runtime::request_endpoints::RespondToken;
 use personal_rns::runtime::{
     Diagnostic, Message, PrnsEvent, RequestPathError, ResourceSendError, SegmentCompression,
 };
@@ -32,10 +33,10 @@ use personal_rns::tcp::{TcpClientInterface, TcpServer};
 use personal_rns::udp::UdpInterface;
 use personal_rns::units::{DurationMillis, RttMillis};
 use personal_rns::{
-    load_or_create_identity_secret, routes, try_generate_identity_secret, AttachedInterface,
-    AttachedSupervisor, Manual, PreConfiguredDestination, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
-    RatchetPolicy, ResourceStrategy as EngineResourceStrategy, SendError, Zeroizing,
-    IDENTITY_SECRET_KEY_LEN,
+    load_or_create_identity_secret, request_endpoints, try_generate_identity_secret,
+    AttachedInterface, AttachedSupervisor, ManuallyAttached, PreConfiguredDestination, PrnsNode,
+    PrnsNodeHandle, PrnsNodeRecipe, RatchetPolicy, ResourceStrategy as EngineResourceStrategy,
+    SendError, Zeroizing, IDENTITY_SECRET_KEY_LEN,
 };
 use prns_host::{
     ApplicationEvent, Bitrate, Capability, ChannelMessage, CommandFailure, CommandOutcome,
@@ -92,29 +93,37 @@ struct CompletionState {
     interrupted: bool,
 }
 
+pub type CommandReadiness = Arc<dyn Fn() + Send + Sync>;
+
 struct CommandCompletion {
     state: Mutex<CompletionState>,
     ready: Condvar,
+    readiness: Option<CommandReadiness>,
 }
 
 impl CommandCompletion {
-    fn new() -> Self {
+    fn new(readiness: Option<CommandReadiness>) -> Self {
         Self {
             state: Mutex::new(CompletionState {
                 result: None,
                 interrupted: false,
             }),
             ready: Condvar::new(),
+            readiness,
         }
     }
 
     fn finish(&self, result: Result<CommandOutcome, CommandFailure>) {
         let mut state = lock(&self.state);
-        if state.result.is_none() {
-            state.result = Some(result);
+        if state.result.is_some() {
+            return;
         }
+        state.result = Some(result);
         drop(state);
         self.ready.notify_all();
+        if let Some(readiness) = &self.readiness {
+            readiness();
+        }
     }
 }
 
@@ -167,6 +176,9 @@ impl CommandHandle {
     pub fn interrupt_wait(&self) {
         lock(&self.completion.state).interrupted = true;
         self.completion.ready.notify_all();
+        if let Some(readiness) = &self.completion.readiness {
+            readiness();
+        }
     }
 }
 
@@ -248,10 +260,18 @@ impl NativeHost {
     }
 
     pub fn submit(&self, command: HostCommand) -> Result<CommandHandle, NativeSubmitError> {
+        self.submit_with_readiness(command, None)
+    }
+
+    pub fn submit_with_readiness(
+        &self,
+        command: HostCommand,
+        readiness: Option<CommandReadiness>,
+    ) -> Result<CommandHandle, NativeSubmitError> {
         if self.stopped.load(Ordering::Acquire) {
             return Err(NativeSubmitError::Stopped);
         }
-        let completion = Arc::new(CommandCompletion::new());
+        let completion = Arc::new(CommandCompletion::new(readiness));
         let job = CommandJob {
             command,
             completion: Arc::clone(&completion),
@@ -393,7 +413,7 @@ fn build_destinations<'a>(
                 link_requests: LinkRequestPolicy::AcceptAll,
                 ratchet: RatchetPolicy::NoRatchets,
                 resource_strategy: EngineResourceStrategy::AcceptNone,
-                request_handlers: personal_rns::runtime::RequestHandlerRegistration::None,
+                request_endpoints: personal_rns::runtime::ServeMyRequestEndpoints::No,
             },
         })
         .collect()
@@ -474,8 +494,9 @@ async fn run(
         pre_configured_destinations: destinations,
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
-        interfaces: Manual,
+        request_endpoints: request_endpoints![],
+        interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: move |event, _state: &()| {
             if !publish_event(event_sink.as_ref(), event) {
                 event_backpressure.notify_waiters();
@@ -617,7 +638,7 @@ async fn execute_command(
             }
         }
         HostCommand::AttachTcpServer { bind, bitrate } => {
-            let server = TcpServer::bind(bind.as_str(), engine_bitrate(*bitrate)?)
+            let server = TcpServer::bind_with_bitrate(bind.as_str(), engine_bitrate(*bitrate)?)
                 .await
                 .map_err(|error| CommandFailure::BindFailed {
                     detail: error.to_string(),
@@ -628,7 +649,7 @@ async fn execute_command(
             Ok(CommandOutcome::InterfaceAttached { interface })
         }
         HostCommand::AttachTcpClient { target, bitrate } => {
-            let client = TcpClientInterface::new(
+            let client = TcpClientInterface::new_with_bitrate(
                 target.clone(),
                 engine_bitrate(*bitrate)?,
                 ReconnectPolicy::STANDARD,
@@ -1154,7 +1175,9 @@ fn publish_event(sink: &dyn NativeEventSink, event: PrnsEvent<'_>) -> bool {
     match event {
         PrnsEvent::Message(message) => publish_message(sink, message),
         PrnsEvent::Diagnostic(diagnostic) => {
-            sink.publish_diagnostic(translate_diagnostic(diagnostic));
+            if let Some(diagnostic) = translate_diagnostic(diagnostic) {
+                sink.publish_diagnostic(diagnostic);
+            }
             true
         }
     }
@@ -1273,8 +1296,11 @@ fn publish_message(sink: &dyn NativeEventSink, message: Message<'_>) -> bool {
     sink.publish_application(event)
 }
 
-fn translate_diagnostic(diagnostic: Diagnostic) -> DiagnosticEvent {
-    match diagnostic {
+fn translate_diagnostic(diagnostic: Diagnostic) -> Option<DiagnosticEvent> {
+    Some(match diagnostic {
+        Diagnostic::PersistenceRestored { .. }
+        | Diagnostic::PersistenceFlushed { .. }
+        | Diagnostic::PersistenceFlushFailed { .. } => return None,
         Diagnostic::AnnounceHeard {
             destination,
             hops,
@@ -1357,13 +1383,14 @@ fn translate_diagnostic(diagnostic: Diagnostic) -> DiagnosticEvent {
                 destination: host_destination(destination),
             },
         },
-    }
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use prns_host::{DestinationName, PrnsLimits, SingleDestinationConfig};
+    use std::sync::atomic::AtomicUsize;
 
     struct Sink;
 
@@ -1393,6 +1420,22 @@ mod tests {
             required_capabilities: Vec::new(),
             limits: PrnsLimits::balanced(),
         }
+    }
+
+    #[test]
+    fn command_completion_and_interruption_signal_readiness() {
+        let readiness_count = Arc::new(AtomicUsize::new(0));
+        let callback_count = Arc::clone(&readiness_count);
+        let completion = Arc::new(CommandCompletion::new(Some(Arc::new(move || {
+            callback_count.fetch_add(1, Ordering::AcqRel);
+        }))));
+        let command = CommandHandle {
+            completion: Arc::clone(&completion),
+        };
+        completion.finish(Ok(CommandOutcome::Announced));
+        assert_eq!(readiness_count.load(Ordering::Acquire), 1);
+        command.interrupt_wait();
+        assert_eq!(readiness_count.load(Ordering::Acquire), 2);
     }
 
     #[test]

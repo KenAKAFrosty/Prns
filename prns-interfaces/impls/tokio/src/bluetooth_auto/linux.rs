@@ -374,6 +374,7 @@ enum Observed {
     },
     DiscoveryEnded,
     GattServerEnded,
+    L2capAccepted(Result<(SeqPacket, L2capSocketAddr), BluerError>),
     GattRetry,
     Connected(Address, Result<BluerLink, BluerError>),
     Resweep,
@@ -449,7 +450,6 @@ pub struct BluerBackend {
     awaiting_data_reader: HashMap<Address, AwaitingDataReader>,
     listener: Option<Arc<SeqPacketListener>>,
     l2cap_router: Arc<std::sync::Mutex<AcceptRouter<SeqPacket>>>,
-    _accept_task: Option<tokio::task::JoinHandle<()>>,
     advertisement: AdvertisementState,
     gatt_retry_at: Option<Instant>,
     _application: Option<ApplicationHandle>,
@@ -501,7 +501,6 @@ impl BluerBackend {
             awaiting_data_reader: HashMap::new(),
             listener: None,
             l2cap_router: Arc::new(std::sync::Mutex::new(AcceptRouter::new())),
-            _accept_task: None,
             advertisement: AdvertisementState::Off,
             gatt_retry_at: None,
             _application: None,
@@ -667,12 +666,6 @@ impl BluerBackend {
         self.columba_rx_control = Some(Box::pin(columba_rx));
         self.columba_tx_control = Some(Box::pin(columba_tx));
         self.listener = listener;
-        if let Some(listener) = self.listener.clone() {
-            self._accept_task = Some(tokio::spawn(accept_loop(
-                listener,
-                self.l2cap_router.clone(),
-            )));
-        }
         self._application = Some(application);
         Ok(())
     }
@@ -687,9 +680,6 @@ impl BluerBackend {
         self.pending_columba.clear();
         self.pending_data.clear();
         self.awaiting_data_reader.clear();
-        if let Some(task) = self._accept_task.take() {
-            task.abort();
-        }
         if let Ok(mut router) = self.l2cap_router.lock() {
             *router = AcceptRouter::new();
         }
@@ -914,29 +904,12 @@ async fn await_scan_stopped(adapter: &Adapter) {
     }
 }
 
-async fn accept_loop(
-    listener: Arc<SeqPacketListener>,
-    router: Arc<std::sync::Mutex<AcceptRouter<SeqPacket>>>,
-) {
-    loop {
-        match listener.accept().await {
-            Ok((socket, peer)) => {
-                let delivered = match router.lock() {
-                    Ok(mut router) => router.deliver(peer.addr, socket).is_ok(),
-                    Err(_) => return,
-                };
-                if !delivered {
-                    crate::diagnostic_log::debug!(
-                        "bluetooth: inbound L2CAP CoC from {} had no waiting link; dropped",
-                        peer.addr
-                    );
-                }
-            }
-            Err(error) => {
-                crate::diagnostic_log::debug!("bluetooth: L2CAP accept loop ended: {error}");
-                return;
-            }
-        }
+async fn next_l2cap_accept(
+    listener: Option<&Arc<SeqPacketListener>>,
+) -> Result<(SeqPacket, L2capSocketAddr), BluerError> {
+    match listener {
+        Some(listener) => Ok(listener.accept().await?),
+        None => core::future::pending().await,
     }
 }
 
@@ -1100,6 +1073,7 @@ impl BleBackend<{ BluerBackend::MAX_PEERS }> for BluerBackend {
                 let data_control = self.data_control.as_mut();
                 let columba_rx_control = self.columba_rx_control.as_mut();
                 let columba_tx_control = self.columba_tx_control.as_mut();
+                let listener = self.listener.as_ref();
                 let connects = &mut self.connects;
                 let gatt_retry_at = self.gatt_retry_at;
                 tokio::select! {
@@ -1169,6 +1143,7 @@ impl BleBackend<{ BluerBackend::MAX_PEERS }> for BluerBackend {
                         None => Observed::GattServerEnded,
                     },
                     (target, result) = next_connect(connects) => Observed::Connected(target, result),
+                    accepted = next_l2cap_accept(listener) => Observed::L2capAccepted(accepted),
                     () = retry_or_pending(gatt_retry_at) => Observed::GattRetry,
                     () = tokio::time::sleep(RESWEEP_INTERVAL), if want_discovery => Observed::Resweep,
                 }
@@ -1217,6 +1192,23 @@ impl BleBackend<{ BluerBackend::MAX_PEERS }> for BluerBackend {
                     self.discovery_health.failing_since.get_or_insert(now);
                 }
                 Observed::GattServerEnded => {
+                    self.recover_gatt_server();
+                    self.gatt_retry_at = Some(Instant::now() + CONTROL_PLANE_RETRY_INTERVAL);
+                }
+                Observed::L2capAccepted(Ok((socket, peer))) => {
+                    let delivered = match self.l2cap_router.lock() {
+                        Ok(mut router) => router.deliver(peer.addr, socket).is_ok(),
+                        Err(_) => false,
+                    };
+                    if !delivered {
+                        crate::diagnostic_log::debug!(
+                            "bluetooth: inbound L2CAP CoC from {} had no waiting link; dropped",
+                            peer.addr
+                        );
+                    }
+                }
+                Observed::L2capAccepted(Err(error)) => {
+                    crate::diagnostic_log::debug!("bluetooth: L2CAP accept loop ended: {error:?}");
                     self.recover_gatt_server();
                     self.gatt_retry_at = Some(Instant::now() + CONTROL_PLANE_RETRY_INTERVAL);
                 }

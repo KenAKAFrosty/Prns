@@ -494,6 +494,45 @@ where
                 let _ = ready.send(applied);
                 CommandEffect::UNCHANGED
             }
+            HostCommand::RegisterRequestHandler {
+                destination,
+                path_hash,
+                policy,
+                ready,
+            } => {
+                let result = engine.register_request_handler_hash(&destination, path_hash, policy);
+                let _ = ready.send(result);
+                CommandEffect::UNCHANGED
+            }
+            HostCommand::UnregisterRequestHandler {
+                destination,
+                path_hash,
+                ready,
+            } => {
+                let removed = engine.unregister_request_handler_hash(&destination, &path_hash);
+                let _ = ready.send(removed);
+                CommandEffect::UNCHANGED
+            }
+            HostCommand::NotePersistenceFlush {
+                cause,
+                target,
+                observed,
+            } => {
+                journal.route(Journaled::PersistenceFlushed { cause, target });
+                if let Some(observed) = observed {
+                    let _ = observed.send(());
+                }
+                CommandEffect::UNCHANGED
+            }
+            HostCommand::NotePersistenceFlushFailure {
+                cause,
+                target,
+                observed,
+            } => {
+                journal.route(Journaled::PersistenceFlushFailed { cause, target });
+                let _ = observed.send(());
+                CommandEffect::UNCHANGED
+            }
             HostCommand::SnapshotPersistedState { reply } => {
                 if let Some(snapshot) = persistence_snapshots::snapshot_persisted_state(engine, now)
                 {

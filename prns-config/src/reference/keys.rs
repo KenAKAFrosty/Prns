@@ -19,6 +19,8 @@ pub(crate) mod global {
     pub const ENABLE_REMOTE_MANAGEMENT: &str = "enable_remote_management";
     pub const REMOTE_MANAGEMENT_ALLOWED: &str = "remote_management_allowed";
     pub const RESPOND_TO_PROBES: &str = "respond_to_probes";
+    pub const ANNOUNCE_NODE_PAGE: &str = "announce_node_page";
+    pub const NODE_PAGE_ANNOUNCE_INTERVAL: &str = "node_page_announce_interval";
     pub const FORCE_SHARED_INSTANCE_BITRATE: &str = "force_shared_instance_bitrate";
     pub const PANIC_ON_INTERFACE_ERROR: &str = "panic_on_interface_error";
     pub const USE_IMPLICIT_PROOF: &str = "use_implicit_proof";
@@ -84,6 +86,7 @@ pub(crate) mod interface {
     pub const DISCOVERY_NAME: &str = "discovery_name";
     pub const DISCOVERY_ENCRYPT: &str = "discovery_encrypt";
     pub const REACHABLE_ON: &str = "reachable_on";
+    pub const REACHABLE_PORT: &str = "reachable_port";
     pub const PUBLISH_IFAC: &str = "publish_ifac";
     pub const LATITUDE: &str = "latitude";
     pub const LONGITUDE: &str = "longitude";
@@ -183,6 +186,7 @@ pub(crate) mod interface {
         DISCOVERY_NAME,
         DISCOVERY_ENCRYPT,
         REACHABLE_ON,
+        REACHABLE_PORT,
         PUBLISH_IFAC,
         LATITUDE,
         LONGITUDE,

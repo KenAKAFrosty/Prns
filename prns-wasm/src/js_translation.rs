@@ -20,6 +20,16 @@ use crate::runtime::{OutboundFrame, OutboundTarget};
 pub(crate) fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
     let object = Object::new();
     match journaled {
+        Journaled::PersistenceFlushed { cause, target } => {
+            set_str(&object, "type", "persistenceFlushed");
+            set_str(&object, "cause", cause.name());
+            set_str(&object, "target", target.name());
+        }
+        Journaled::PersistenceFlushFailed { cause, target } => {
+            set_str(&object, "type", "persistenceFlushFailed");
+            set_str(&object, "cause", cause.name());
+            set_str(&object, "target", target.name());
+        }
         Journaled::AnnounceHeard { observation, .. } => {
             set_str(&object, "type", "announce");
             set_bytes(&object, "destination", observation.destination.as_bytes());

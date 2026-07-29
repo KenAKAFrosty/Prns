@@ -78,6 +78,14 @@ Scripted mutations support validation, dry-run diffs, safe repair, and explicit
 live apply. Read [Prnsd configuration](../docs/prnsd-config.md) before operating
 real interfaces or remote management.
 
+Prnsd also serves safe top-level `.mu` files from `pages/` in that configuration
+directory. File edits are read live, and path additions or removals reconcile
+every five minutes. Apply them immediately with:
+
+```console
+cargo prnsd pages refresh --config target/quickstart-node
+```
+
 ## Build and API contract
 
 ```console
@@ -89,3 +97,8 @@ The first command produces the locked release-profile daemon artifact. The
 second prints the daemon's direct options without starting a managed session.
 For lifecycle logs and structured observability, see
 [Observability](../docs/observability.md).
+
+For signed native releases, the production container, one-time cloud bootstrap,
+operator-owned NomadNet pages, Railway deployment, backups, upgrades, and
+verification, see
+[Deploy prnsd](../docs/deploy-prnsd.md).

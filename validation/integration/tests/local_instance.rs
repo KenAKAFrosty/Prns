@@ -1,14 +1,15 @@
 use core::time::Duration;
+use personal_rns::runtime::NoPersistence;
 
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::routes;
+use personal_rns::request_endpoints;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
-    Diagnostic, Manual, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeRecipe,
-    RequestHandlerRegistration,
+    Diagnostic, ManuallyAttached, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeRecipe,
+    ServeMyRequestEndpoints,
 };
 use personal_rns::shared_instance::{
     join_shared_instance, ExistingSharedInstancePolicy, RnsBlackholeFiles,
@@ -32,7 +33,7 @@ fn single(identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> PreConfiguredDe
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
-        request_handlers: RequestHandlerRegistration::None,
+        request_endpoints: ServeMyRequestEndpoints::No,
     }
 }
 
@@ -100,8 +101,9 @@ async fn becomes_the_instance_when_none_is_running() {
         pre_configured_destinations: EMPTY,
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
-        interfaces: Manual,
+        request_endpoints: request_endpoints![],
+        interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: |_event, _state| {},
     });
 
@@ -142,8 +144,9 @@ async fn a_control_collision_prevents_election_and_releases_the_bus() {
         pre_configured_destinations: EMPTY,
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
-        interfaces: Manual,
+        request_endpoints: request_endpoints![],
+        interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: |_event, _state| {},
     });
     let intent = instance(
@@ -179,8 +182,9 @@ async fn joins_as_a_client_when_an_instance_is_already_running() {
         pre_configured_destinations: EMPTY,
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
-        interfaces: Manual,
+        request_endpoints: request_endpoints![],
+        interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: |_event, _state| {},
     });
 
@@ -212,8 +216,9 @@ async fn refuses_to_take_a_role_when_told_to_and_an_instance_exists() {
         pre_configured_destinations: EMPTY,
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
-        interfaces: Manual,
+        request_endpoints: request_endpoints![],
+        interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: |_event, _state| {},
     });
 
@@ -245,8 +250,9 @@ async fn a_client_rides_the_instances_bus() {
         pre_configured_destinations: EMPTY,
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
-        interfaces: Manual,
+        request_endpoints: request_endpoints![],
+        interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
                 let _ = heard_tx.send(destination);
@@ -271,8 +277,9 @@ async fn a_client_rides_the_instances_bus() {
         pre_configured_destinations: [single_b],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
-        interfaces: Manual,
+        request_endpoints: request_endpoints![],
+        interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: |_event, _state| {},
     });
     let handle_b = node_b.handle();

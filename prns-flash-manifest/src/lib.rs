@@ -8,7 +8,7 @@ mod trust;
 
 pub use catalog::{
     board_catalog, BoardBuild, BoardCatalog, BoardCatalogEntry, CatalogError, EspBuild,
-    ProvisioningDescriptor, Transport, Uf2Build,
+    ProvisioningDescriptor, TcpClientProvisioningDescriptor, Transport, Uf2Build,
 };
 pub use domain::{
     AfterResetStrategy, BeforeResetStrategy, BoardId, ChipFamily, DomainValueError, EspFlashPart,
@@ -22,8 +22,12 @@ pub use manifest::{
     ReleaseInfo, SigningInfo, SourceArchiveIdentity, TargetManifest,
 };
 pub use provisioning::{
-    provisioning_image, ProvisioningAction, ProvisioningError, WifiCredentials, CONFIG_MAGIC,
-    CONFIG_OFFSET, CONFIG_PASSWORD_MAX_BYTES, CONFIG_SIZE, CONFIG_SSID_MAX_BYTES, CONFIG_VERSION,
+    provisioning_image, ProvisioningAction, ProvisioningError, TcpClientEndpoint, TcpClientHost,
+    WifiCredentials, CONFIG_MAGIC, CONFIG_OFFSET, CONFIG_PASSWORD_MAX_BYTES, CONFIG_SIZE,
+    CONFIG_SSID_MAX_BYTES, CONFIG_TCP_CLIENT_HOSTNAME_MAX_BYTES,
+    CONFIG_TCP_CLIENT_HOST_LENGTH_OFFSET, CONFIG_TCP_CLIENT_KIND_OFFSET,
+    CONFIG_TCP_CLIENT_PORT_OFFSET, CONFIG_TCP_CLIENT_TARGET_OFFSET, CONFIG_VERSION,
+    DEFAULT_TCP_CLIENT_PORT,
 };
 pub use trust::{
     minisign_public_key_id, pinned_key_id, pinned_key_is_configured, sha256_hex, verify_minisign,

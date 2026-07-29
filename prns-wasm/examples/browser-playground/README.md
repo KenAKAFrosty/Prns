@@ -1,9 +1,10 @@
 # Browser transport playground
 
-This is the source for the static browser playground published with the Prns
+This is the quick guide for the static browser playground published with the Prns
 documentation. It is intentionally ordinary TypeScript, HTML, and CSS. The
-page owns its WebAssembly node exactly as a browser application would; it is
-not a Dioxus integration or a general-purpose client.
+page owns its WebAssembly node exactly as a browser application would. 
+
+The page doesn't use React, Solid, Dioxus, or any other web framework. The reason is to avoid making you have to learn a new framework if you're not familiar with the one we happened to choose, and to keep the example as universally-readable as possible.
 
 The playground keeps both Auto Wi-Fi and USB Auto behind explicit clicks,
 registers an LXMF delivery destination named `Prns Browser Playground`, and

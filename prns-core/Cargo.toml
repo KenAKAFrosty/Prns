@@ -1,6 +1,6 @@
 [package]
 name = "prns-core"
-version = "0.3.0"
+version = "0.3.1"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -48,7 +48,7 @@ keyring-zbus = ["_keyring-vault", "keyring/async-secret-service", "keyring/async
 keyring-libdbus = ["_keyring-vault", "keyring/sync-secret-service"]
 _keyring-vault = ["std", "dep:keyring", "keyring/crypto-rust", "keyring/apple-native", "keyring/windows-native"]
 # The embedded identity vault's flash backend (`FlashVault`). Persists the secret key to a board-owned NOR flash region over `embedded-storage`, generated once on first boot. no_std, no alloc; the board supplies the driver and the region bounds. Off by default. Only an embedded host links it.
-flash = ["dep:embedded-storage"]
+flash = ["dep:embedded-storage", "dep:embedded-storage-async"]
 
 [dependencies]
 cfg-if = "1.0"
@@ -85,8 +85,10 @@ keyring = { version = "3", optional = true, default-features = false }
 
 # Generic NOR-flash traits for the embedded identity vault's `FlashVault` (under `flash`): the board hands it any driver implementing `NorFlash`/`ReadNorFlash` (esp-storage on ESP, the nRF flash HAL, …) so the vault stays HAL-agnostic. no_std.
 embedded-storage = { version = "0.3", optional = true, default-features = false }
+embedded-storage-async = { version = "0.4", optional = true, default-features = false }
 
 [dev-dependencies]
+embassy-futures = "0.1"
 proptest = "1"
 rmpv = "1.3"
 serde_json = "1"

@@ -6,6 +6,8 @@ import os
 import sys
 from pathlib import Path
 
+ReadinessCallback = ctypes.CFUNCTYPE(None, ctypes.c_void_p)
+
 
 class ByteView(ctypes.Structure):
     _fields_ = [("data", ctypes.POINTER(ctypes.c_uint8)), ("length", ctypes.c_size_t)]
@@ -295,6 +297,13 @@ class NativeLibrary:
             ctypes.POINTER(CommandResult),
         ]
         lib.prns_command_wait.restype = ctypes.c_uint32
+        lib.prns_command_register_readiness.argtypes = [
+            ctypes.c_void_p,
+            ReadinessCallback,
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
+        lib.prns_command_register_readiness.restype = ctypes.c_uint32
         lib.prns_command_interrupt_wait.argtypes = [ctypes.c_void_p]
         lib.prns_command_interrupt_wait.restype = None
         lib.prns_command_release.argtypes = [ctypes.c_void_p]
@@ -309,6 +318,15 @@ class NativeLibrary:
             ctypes.POINTER(ctypes.c_void_p),
         ]
         lib.prns_host_claim_diagnostics.restype = ctypes.c_uint32
+        lib.prns_event_stream_register_readiness.argtypes = [
+            ctypes.c_void_p,
+            ReadinessCallback,
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
+        lib.prns_event_stream_register_readiness.restype = ctypes.c_uint32
+        lib.prns_readiness_registration_release.argtypes = [ctypes.c_void_p]
+        lib.prns_readiness_registration_release.restype = None
         lib.prns_event_stream_interrupt_wait.argtypes = [ctypes.c_void_p]
         lib.prns_event_stream_interrupt_wait.restype = None
         lib.prns_event_stream_release.argtypes = [ctypes.c_void_p]

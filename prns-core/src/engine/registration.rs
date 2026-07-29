@@ -210,8 +210,30 @@ impl<S: StorageLayout> EngineState<S> {
         path: &str,
         policy: RequestPolicy,
     ) -> Result<(), TablePushError> {
+        self.register_request_handler_hash(destination, RequestPathHash::of(path), policy)
+    }
+
+    /// Register a request handler when the host has already derived the
+    /// protocol path hash.
+    pub fn register_request_handler_hash(
+        &mut self,
+        destination: &DestinationHash,
+        path_hash: RequestPathHash,
+        policy: RequestPolicy,
+    ) -> Result<(), TablePushError> {
         self.request_handlers
-            .register(*destination, RequestPathHash::of(path), policy)
+            .register(*destination, path_hash, policy)
+    }
+
+    /// Remove a runtime request handler. Requests already admitted before this
+    /// mutation may still reach the application router; callers that need an
+    /// immediate content cutoff should update their application state first.
+    pub fn unregister_request_handler_hash(
+        &mut self,
+        destination: &DestinationHash,
+        path_hash: &RequestPathHash,
+    ) -> bool {
+        self.request_handlers.unregister(destination, path_hash)
     }
 
     /// Admit one identified peer to an [`RequestPolicy::AllowList`] handler (RNS 1.4.0's `allowed_list`)
@@ -407,6 +429,16 @@ impl<S: StorageLayout> EngineState<S> {
     ) -> SeedSelfRatchetsOutcome {
         self.self_ratchets
             .seed(destination, last_rotated, secrets_newest_first)
+    }
+
+    pub fn replace_persisted_self_ratchets(
+        &mut self,
+        destination: &DestinationHash,
+        last_rotated: LastRotated,
+        secrets_newest_first: impl DoubleEndedIterator<Item = X25519SecretKey>,
+    ) -> SeedSelfRatchetsOutcome {
+        self.self_ratchets
+            .replace_persisted(destination, last_rotated, secrets_newest_first)
     }
 }
 
@@ -881,5 +913,26 @@ mod tests {
             Some(InstantMillis(now.0 + DEPARTED_INTERFACE_GRACE_MS)),
             "the not-yet-attached interface holds the route warm from boot",
         );
+    }
+
+    #[test]
+    fn restoring_an_expired_route_does_not_refresh_its_age() {
+        use crate::routing::announce::defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
+        use crate::routing::warmth::DEPARTED_INTERFACE_GRACE_MS;
+
+        let app_data = [0x5E; 4];
+        let (row, _) = signed_seed_row(&app_data);
+        let mut state = EngineState::<TestStorageLayout>::default();
+        let restored_at = InstantMillis(DEFAULT_ROUTE_EXPIRY_MILLIS + 10_000);
+        assert_eq!(
+            state.seed_route(&row, restored_at),
+            RouteSeedOutcome::Seeded
+        );
+        state.cull_expired_routes(
+            InstantMillis(restored_at.0 + DEPARTED_INTERFACE_GRACE_MS + 1),
+            crate::interfaces::AttachedInterfaces::new(&[]),
+            &mut |_| {},
+        );
+        assert_eq!(state.route_count(), 0);
     }
 }

@@ -21,7 +21,7 @@ use crate::manifold::driver::{
 use crate::manifold::interface_seam::{frame_cap_for, Interface};
 use crate::node_introspection::{InterfaceIfacSnapshot, InterfaceInventoryEntry};
 
-use super::super::Manual;
+use super::super::ManuallyAttached;
 use super::PrnsNodeHandle;
 
 /// How many frames a host lane holds in flight. RNS resource transfer bursts a whole window of parts at once (`Resource.WINDOW_MAX_FAST` is 75, plus its flexibility), so a lane carrying a transfer must be deeper than that window or it sheds parts and the transfer stalls; the old byte-budget collapsed a fat-MTU lane to a handful of slots, exactly that failure. Growable slots (`HeapFrameSlot`) cost only the frames actually in flight, so the depth is generous.
@@ -341,12 +341,12 @@ pub trait Attachable {
     ) -> Self::Attached;
 }
 
-/// The recipe's `interfaces` answer: [`Manual`] says the app attaches through the handle itself, a closure over the handle is the inline shopping list, prefabs compose the common cases.
+/// The recipe's `interfaces` answer: [`ManuallyAttached`] says the app attaches through the handle itself, a closure over the handle is the inline shopping list, prefabs compose the common cases.
 pub trait AttachIntent {
     fn attach(self, handle: &PrnsNodeHandle);
 }
 
-impl AttachIntent for Manual {
+impl AttachIntent for ManuallyAttached {
     fn attach(self, _handle: &PrnsNodeHandle) {}
 }
 
@@ -597,7 +597,7 @@ pub(super) async fn drive_interfaces(
                     stops.insert(id, stop_tx);
                 }
                 Some(DriverMsg::Stop { id }) => {
-                    stop_interface(&mut stops, id);
+                    let stopped = stop_interface(&mut stops, id);
                     supervisor_of.remove(&id);
                     forget_status(&interfaces, id);
                     stop_supervised_members(
@@ -607,27 +607,30 @@ pub(super) async fn drive_interfaces(
                         &commands,
                         id,
                     );
+                    if stopped {
+                        drain_stopped_interface(
+                            &mut futures,
+                            &mut stops,
+                            &mut supervisor_of,
+                            &interfaces,
+                            &commands,
+                            id,
+                        )
+                        .await;
+                    }
                 }
                 None => open = false,
             },
             // An interface whose run future ended on its own (a dropped connection, no reconnect) deregisters itself: its descriptor must not outlive its wire. A future ended by a `Stop` already had its id pulled from `stops`, so the `stops.remove` here is what distinguishes a natural completion from a deliberate one.
             done = futures.next(), if !futures.is_empty() => {
                 if let Some(Some(id)) = done {
-                    if stops.remove(&id).is_some() {
-                        supervisor_of.remove(&id);
-                        forget_status(&interfaces, id);
-                        let _ = commands.send(HostCommand::RemoveInterface {
-                            id,
-                            departure: Departure::MayReturn,
-                        });
-                        stop_supervised_members(
-                            &mut stops,
-                            &mut supervisor_of,
-                            &interfaces,
-                            &commands,
-                            id,
-                        );
-                    }
+                    complete_interface(
+                        &mut stops,
+                        &mut supervisor_of,
+                        &interfaces,
+                        &commands,
+                        id,
+                    );
                 }
             }
         }
@@ -672,9 +675,49 @@ fn forget_status(
     }
 }
 
-fn stop_interface(stops: &mut HashMap<InterfaceId, oneshot::Sender<()>>, id: InterfaceId) {
+fn stop_interface(stops: &mut HashMap<InterfaceId, oneshot::Sender<()>>, id: InterfaceId) -> bool {
     if let Some(stop) = stops.remove(&id) {
         let _ = stop.send(());
+        true
+    } else {
+        false
+    }
+}
+
+async fn drain_stopped_interface(
+    futures: &mut FuturesUnordered<Pin<Box<dyn Future<Output = Option<InterfaceId>>>>>,
+    stops: &mut HashMap<InterfaceId, oneshot::Sender<()>>,
+    supervisor_of: &mut HashMap<InterfaceId, InterfaceId>,
+    interfaces: &Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
+    commands: &UnboundedSender<HostCommand>,
+    stopped_id: InterfaceId,
+) {
+    while let Some(done) = futures.next().await {
+        let Some(id) = done else {
+            continue;
+        };
+        complete_interface(stops, supervisor_of, interfaces, commands, id);
+        if id == stopped_id {
+            return;
+        }
+    }
+}
+
+fn complete_interface(
+    stops: &mut HashMap<InterfaceId, oneshot::Sender<()>>,
+    supervisor_of: &mut HashMap<InterfaceId, InterfaceId>,
+    interfaces: &Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
+    commands: &UnboundedSender<HostCommand>,
+    id: InterfaceId,
+) {
+    if stops.remove(&id).is_some() {
+        supervisor_of.remove(&id);
+        forget_status(interfaces, id);
+        let _ = commands.send(HostCommand::RemoveInterface {
+            id,
+            departure: Departure::MayReturn,
+        });
+        stop_supervised_members(stops, supervisor_of, interfaces, commands, id);
     }
 }
 
@@ -691,7 +734,7 @@ fn stop_supervised_members(
         .map(|(member, _)| *member)
         .collect();
     for member in members {
-        stop_interface(stops, member);
+        let _ = stop_interface(stops, member);
         supervisor_of.remove(&member);
         forget_status(interfaces, member);
         let _ = commands.send(HostCommand::RemoveInterface {

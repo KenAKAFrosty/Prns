@@ -4,7 +4,7 @@ use crate::engine::InstantMillis;
 use crate::identity::Zeroizing;
 use crate::manifold::driver::{HostCommand, SelfRatchetSnapshot};
 use crate::routing::{BlackholeExpiry, BlackholedIdentity};
-use crate::runtime::{Manual, PreConfiguredDestination, PrnsNodeRecipe};
+use crate::runtime::{ManuallyAttached, NoPersistence, PreConfiguredDestination, PrnsNodeRecipe};
 use crate::wire::DestinationHash;
 
 use super::super::{PrnsNode, PrnsNodeHandle};
@@ -65,8 +65,9 @@ fn boot_blackholes_seed_against_the_resumed_timeline() {
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: (),
         storage: crate::storage::GrowableHeap,
-        routes: crate::routes![],
-        interfaces: Manual,
+        request_endpoints: crate::request_endpoints![],
+        interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: |_event, _state: &()| {},
     })
     .with_timeline_origin(InstantMillis(1_000));
@@ -104,4 +105,15 @@ fn boot_blackholes_seed_against_the_resumed_timeline() {
     );
     assert!(prns.node.engine.is_identity_blackholed(&identity));
     assert_eq!(prns.node.engine.blackholed_identity_count(), 1);
+}
+
+#[test]
+fn a_reticulum_dir_nests_snapshots_under_storage_prns() {
+    let reticulum_dir =
+        std::env::temp_dir().join(format!("prns-reticulum-dir-{}", std::process::id()));
+    let opened = super::NodePersistence::in_reticulum_dir(&reticulum_dir);
+    let nested = reticulum_dir.join("storage").join("prns").is_dir();
+    let _ = std::fs::remove_dir_all(&reticulum_dir);
+    opened.unwrap();
+    assert!(nested);
 }

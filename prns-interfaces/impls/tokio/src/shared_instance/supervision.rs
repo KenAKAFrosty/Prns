@@ -3,7 +3,7 @@ use std::vec::Vec;
 
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use tokio::net::UnixListener;
 
 use crate::byte_stream::framing;
@@ -111,7 +111,7 @@ pub struct SharedInstanceServer {
     bind_addr: Option<String>,
     policy: EffectiveInterfacePolicy,
     status: TokioInterfaceStatus,
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     socket_path: Option<String>,
 }
 
@@ -120,11 +120,11 @@ pub struct BoundSharedInstanceServer {
     tcp_listener: Option<TcpListener>,
     policy: EffectiveInterfacePolicy,
     status: TokioInterfaceStatus,
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     abstract_unix: BoundAbstractUnix,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 enum BoundAbstractUnix {
     Disabled,
     Listening {
@@ -136,7 +136,7 @@ enum BoundAbstractUnix {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SharedInstanceServerBindError {
     Tcp(std::io::ErrorKind),
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     AbstractUnix(std::io::ErrorKind),
 }
 
@@ -156,12 +156,12 @@ impl SharedInstanceServer {
             bind_addr: Some(bind_addr),
             policy: shared_instance::configured_policy(Default::default()),
             status: TokioInterfaceStatus::new(id, ConnectionState::Disconnected),
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             socket_path: None,
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[must_use]
     pub fn abstract_unix(socket_path: impl Into<String>) -> Self {
         let socket_path = socket_path.into();
@@ -183,7 +183,7 @@ impl SharedInstanceServer {
     }
 
     /// Set the AF_UNIX `socket_path` to match an app configured with a non-default `local_socket_path` (the abstract socket bound becomes `\0rns/{socket_path}`). Linux only.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[must_use]
     pub fn with_socket_path(mut self, socket_path: impl Into<String>) -> Self {
         let socket_path = socket_path.into();
@@ -208,7 +208,7 @@ impl SharedInstanceServer {
             ),
             None => None,
         };
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         let abstract_unix = match self.socket_path {
             Some(socket_path) => {
                 let listener = bind_abstract_unix(&socket_path)
@@ -226,7 +226,7 @@ impl SharedInstanceServer {
             tcp_listener,
             policy: self.policy,
             status: self.status,
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             abstract_unix,
         })
     }
@@ -239,8 +239,11 @@ impl Default for SharedInstanceServer {
 }
 
 /// Bind the abstract AF_UNIX socket `\0rns/{socket_path}` (Linux's abstract namespace, where the leading null is implied by [`from_abstract_name`](std::os::linux::net::SocketAddrExt)).
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn bind_abstract_unix(socket_path: &str) -> std::io::Result<UnixListener> {
+    #[cfg(target_os = "android")]
+    use std::os::android::net::SocketAddrExt;
+    #[cfg(target_os = "linux")]
     use std::os::linux::net::SocketAddrExt;
     let name = std::format!("rns/{socket_path}");
     let addr = std::os::unix::net::SocketAddr::from_abstract_name(name.as_bytes())?;
@@ -290,7 +293,7 @@ impl InterfaceSupervisor for BoundSharedInstanceServer {
             }
         };
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             let unix = async {
                 let BoundAbstractUnix::Listening {
@@ -311,7 +314,7 @@ impl InterfaceSupervisor for BoundSharedInstanceServer {
             };
             tokio::join!(tcp, unix);
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             tcp.await;
         }
@@ -395,7 +398,7 @@ mod tests {
         assert_eq!(descriptor.hardware_mtu, Some(524_288));
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[test]
     fn constructors_select_exactly_one_shared_instance_transport() {
         assert!(SharedInstanceServer::new().bind_addr.is_some());
@@ -413,9 +416,12 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[tokio::test]
     async fn the_abstract_socket_binds_and_accepts_a_connection() {
+        #[cfg(target_os = "android")]
+        use std::os::android::net::SocketAddrExt;
+        #[cfg(target_os = "linux")]
         use std::os::linux::net::SocketAddrExt;
         let listener =
             bind_abstract_unix("personal-test-stage3b").expect("the abstract socket binds");
@@ -434,9 +440,12 @@ mod tests {
             .expect("the server accepts the abstract-socket connection");
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[tokio::test]
     async fn binding_reserves_only_the_selected_endpoint_before_the_supervisor_runs() {
+        #[cfg(target_os = "android")]
+        use std::os::android::net::SocketAddrExt;
+        #[cfg(target_os = "linux")]
         use std::os::linux::net::SocketAddrExt;
         let probe = TcpListener::bind("127.0.0.1:0")
             .await

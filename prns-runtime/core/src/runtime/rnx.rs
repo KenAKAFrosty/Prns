@@ -6,8 +6,8 @@ use prns_core::rnx::{
 };
 use prns_core::wire::DestinationHash;
 
-use super::request_router::{
-    Decline, RequestContext, RequestRoute, ResponseCapacityExceeded, RoutePolicy,
+use super::request_endpoints::{
+    Decline, RequestContext, RequestEndpoint, RequestEndpointPolicy, ResponseCapacityExceeded,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,11 +18,11 @@ pub enum RnxAuthorization {
 }
 
 impl RnxAuthorization {
-    const fn route_policy(self) -> RoutePolicy {
+    const fn route_policy(self) -> RequestEndpointPolicy {
         match self {
-            Self::DenyAll => RoutePolicy::AllowNone,
-            Self::AllowList(identities) => RoutePolicy::AllowList(identities),
-            Self::Public => RoutePolicy::AllowAll,
+            Self::DenyAll => RequestEndpointPolicy::AllowNone,
+            Self::AllowList(identities) => RequestEndpointPolicy::AllowList(identities),
+            Self::Public => RequestEndpointPolicy::AllowAll,
         }
     }
 }
@@ -234,12 +234,12 @@ pub trait RnxCommandHandler<State> {
     ) -> RnxCompletion;
 }
 
-impl<State, Endpoint> RequestRoute<State> for Endpoint
+impl<State, Endpoint> RequestEndpoint<State> for Endpoint
 where
     Endpoint: RnxCommandHandler<State>,
 {
-    const PATH: &'static str = prns_core::rnx::COMMAND_PATH;
-    const POLICY: RoutePolicy = Endpoint::AUTHORIZATION.route_policy();
+    const ENDPOINT_ID: &'static str = prns_core::rnx::COMMAND_PATH;
+    const POLICY: RequestEndpointPolicy = Endpoint::AUTHORIZATION.route_policy();
 
     async fn handle(mut context: RequestContext<'_, State>) -> Result<(), Decline> {
         if context.destination != Endpoint::destination(context.state) {
@@ -334,10 +334,10 @@ mod tests {
     #[test]
     fn the_endpoint_type_is_the_route_and_bounds_its_output() {
         futures_executor::block_on(async {
-            async fn dispatch<R: super::super::request_router::RouteSet<App>>(
-                _routes: &R,
+            async fn dispatch<R: super::super::request_endpoints::RequestEndpointSet<App>>(
+                _endpoints: &R,
                 destination: DestinationHash,
-                sink: &mut dyn super::super::request_router::ResponseSink,
+                sink: &mut dyn super::super::request_endpoints::ResponseSink,
             ) -> Result<(), Decline> {
                 let request = ExecutionRequest {
                     command: alloc::string::String::from("status"),
@@ -347,7 +347,7 @@ mod tests {
                     stdin: None,
                 };
                 let data = encode_execution_request(&request).unwrap();
-                let inbound = super::super::request_router::InboundRequest::new(
+                let inbound = super::super::request_endpoints::InboundRequest::new(
                     destination,
                     LinkId::new([1; 16]),
                     RequestId([2; 16]),
@@ -356,7 +356,7 @@ mod tests {
                     RttMillis::new(4),
                     &data,
                 );
-                super::super::request_router::dispatch_request::<App, R>(
+                super::super::request_endpoints::dispatch_request::<App, R>(
                     &App,
                     RequestPathHash::of(prns_core::rnx::COMMAND_PATH),
                     inbound,
@@ -365,11 +365,17 @@ mod tests {
                 .await
             }
 
-            let routes = crate::routes![RnxEndpoint];
-            assert_eq!(DeniedEndpoint::POLICY, RoutePolicy::AllowNone);
-            assert_eq!(RnxEndpoint::POLICY, RoutePolicy::AllowList(&[ADMIN]));
+            let endpoints = crate::request_endpoints![RnxEndpoint];
+            assert_eq!(DeniedEndpoint::POLICY, RequestEndpointPolicy::AllowNone);
+            assert_eq!(
+                RnxEndpoint::POLICY,
+                RequestEndpointPolicy::AllowList(&[ADMIN])
+            );
             let mut encoded = heapless::Vec::<u8, 128>::new();
-            assert_eq!(dispatch(&routes, DESTINATION, &mut encoded).await, Ok(()));
+            assert_eq!(
+                dispatch(&endpoints, DESTINATION, &mut encoded).await,
+                Ok(())
+            );
             let ExecutionResult::Executed(result) =
                 decode_execution_result(encoded.as_slice()).unwrap()
             else {
@@ -383,7 +389,7 @@ mod tests {
             let mut wrong_destination = heapless::Vec::<u8, 128>::new();
             assert_eq!(
                 dispatch(
-                    &routes,
+                    &endpoints,
                     DestinationHash::new([0x66; 16]),
                     &mut wrong_destination,
                 )

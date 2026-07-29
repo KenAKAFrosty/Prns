@@ -8,7 +8,7 @@ use crate::interfaces::{
 };
 use crate::manifold::driver::EmbassyHost;
 use crate::manifold::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
-use crate::runtime::Diagnostic;
+use crate::runtime::{Diagnostic, NoPersistence};
 use crate::storage::GrowableHeap;
 use embassy_futures::block_on;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -79,8 +79,9 @@ fn a_recipe_node_hears_an_ifac_announce_a_supervisor_stands_a_peer_up_for() {
         }],
         app_state: (),
         storage: GrowableHeap,
-        routes: crate::routes![],
-        interfaces: crate::runtime::Manual,
+        request_endpoints: crate::request_endpoints![],
+        interfaces: crate::runtime::ManuallyAttached,
+        persistence: NoPersistence,
         on_event: move |event: PrnsEvent<'_>, _state: &()| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { .. }) = event {
                 *heard_sink.borrow_mut() += 1;

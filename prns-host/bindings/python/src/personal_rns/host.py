@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import ctypes
+import os
 import threading
 from dataclasses import dataclass
 from functools import wraps
@@ -19,53 +20,171 @@ from ._native import (
     Lifecycle,
     Limits as NativeLimits,
     NativeLibrary,
+    ReadinessCallback,
     RequestHandlerConfig as NativeRequestHandlerConfig,
     StringView,
     bytes_from_view,
 )
 
-NEVER_TIMEOUT = 2**32 - 1
 T = TypeVar("T")
 
 
-def _daemon_future(function):
-    loop = asyncio.get_running_loop()
-    future = loop.create_future()
-    done = threading.Event()
+class _NativeReadiness:
+    def __init__(self, native: NativeLibrary, source, register):
+        self._native = native
+        self._lock = threading.Lock()
+        self._closed = False
+        self._read_fd = None
+        self._write_fd = None
+        self._loop = None
+        self._event = None
+        self._signaled = False
+        self._waiters = 0
+        if os.name != "nt":
+            self._read_fd, self._write_fd = os.pipe()
+            os.set_blocking(self._read_fd, False)
+            os.set_blocking(self._write_fd, False)
+        self._context = ctypes.py_object(self)
+        self._context_pointer = ctypes.cast(
+            ctypes.pointer(self._context),
+            ctypes.c_void_p,
+        )
+        registration = ctypes.c_void_p()
+        try:
+            _check(
+                register(
+                    source,
+                    _signal_native_readiness,
+                    self._context_pointer,
+                    ctypes.byref(registration),
+                )
+            )
+        except BaseException:
+            if self._read_fd is not None:
+                os.close(self._read_fd)
+            if self._write_fd is not None:
+                os.close(self._write_fd)
+            raise
+        self._registration = registration
 
-    def complete(result=None, error=None):
-        if future.done():
+    def signal(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            write_fd = self._write_fd
+            if write_fd is None:
+                self._signaled = True
+                loop = self._loop
+                event = self._event
+            else:
+                loop = None
+                event = None
+        if write_fd is None:
+            if loop is not None and event is not None:
+                try:
+                    loop.call_soon_threadsafe(event.set)
+                except RuntimeError:
+                    pass
             return
-        if error is None:
-            future.set_result(result)
-        else:
-            future.set_exception(error)
-
-    def run():
         try:
-            result = function()
-        except BaseException as error:
-            loop.call_soon_threadsafe(complete, None, error)
-        else:
-            loop.call_soon_threadsafe(complete, result, None)
+            os.write(write_fd, b"\0")
+        except (BlockingIOError, OSError):
+            pass
+
+    async def wait(self) -> None:
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("native readiness is closed")
+            self._waiters += 1
+            read_fd = self._read_fd
+            if read_fd is None:
+                loop = asyncio.get_running_loop()
+                if self._loop is not loop:
+                    self._loop = loop
+                    self._event = asyncio.Event()
+                event = self._event
+                if self._signaled:
+                    self._signaled = False
+                    self._waiters -= 1
+                    return
+            else:
+                event = None
+        try:
+            if read_fd is None:
+                await event.wait()
+                with self._lock:
+                    event.clear()
+                    self._signaled = False
+                return
+            loop = asyncio.get_running_loop()
+            ready = loop.create_future()
+
+            def mark_ready() -> None:
+                if not ready.done():
+                    ready.set_result(None)
+
+            loop.add_reader(read_fd, mark_ready)
+            try:
+                await ready
+                while True:
+                    try:
+                        if not os.read(read_fd, 4_096):
+                            return
+                    except BlockingIOError:
+                        return
+            finally:
+                loop.remove_reader(read_fd)
         finally:
-            done.set()
+            with self._lock:
+                self._waiters -= 1
+                close_fds = self._closed and self._waiters == 0
+            if close_fds:
+                self._close_fds()
 
-    threading.Thread(target=run, daemon=True).start()
-    return future, done
+    def close(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            registration = self._registration
+            self._registration = ctypes.c_void_p()
+            write_fd = self._write_fd
+            close_fds = self._waiters == 0
+        if write_fd is not None:
+            try:
+                os.write(write_fd, b"\0")
+            except (BlockingIOError, OSError):
+                pass
+        self._native.library.prns_readiness_registration_release(registration)
+        if self._loop is not None and self._event is not None:
+            try:
+                self._loop.call_soon_threadsafe(self._event.set)
+            except RuntimeError:
+                pass
+        if close_fds:
+            self._close_fds()
+
+    def _close_fds(self) -> None:
+        with self._lock:
+            read_fd = self._read_fd
+            write_fd = self._write_fd
+            self._read_fd = None
+            self._write_fd = None
+        if read_fd is not None:
+            os.close(read_fd)
+        if write_fd is not None:
+            os.close(write_fd)
 
 
-async def _await_daemon(future):
-    while True:
-        try:
-            return await asyncio.wait_for(asyncio.shield(future), 0.1)
-        except asyncio.TimeoutError:
-            continue
+def _signal_readiness(context) -> None:
+    readiness = ctypes.cast(
+        context,
+        ctypes.POINTER(ctypes.py_object),
+    ).contents.value
+    readiness.signal()
 
 
-def _consume_future(future):
-    if future is not None and future.done() and not future.cancelled():
-        future.exception()
+_signal_native_readiness = ReadinessCallback(_signal_readiness)
 
 
 class PrnsError(Exception):
@@ -416,52 +535,54 @@ class Command:
         self._handle = handle
         self._closed = False
         self._lock = threading.RLock()
-        self._pending: asyncio.Future[CommandSettlement] | None = None
-        self._pending_done: threading.Event | None = None
+        self._readiness = _NativeReadiness(
+            native,
+            handle,
+            native.library.prns_command_register_readiness,
+        )
 
     def __await__(self):
         return self.wait().__await__()
 
     async def wait(self) -> CommandSettlement:
-        with self._lock:
-            if self._closed:
-                raise RuntimeError("command handle is closed")
-            if self._pending is None:
-                self._pending, self._pending_done = _daemon_future(
-                    self._wait_blocking
-                )
-            pending = self._pending
         try:
-            return await _await_daemon(pending)
-        except asyncio.CancelledError:
-            with self._lock:
-                if not self._closed:
-                    self._native.library.prns_command_interrupt_wait(self._handle)
-            while self._pending_done is not None and not self._pending_done.is_set():
-                await asyncio.sleep(0)
-            while not pending.done():
-                await asyncio.sleep(0)
-            _consume_future(pending)
-            raise
+            while True:
+                with self._lock:
+                    if self._closed:
+                        raise RuntimeError("command handle is closed")
+                    status, settlement = self._poll()
+                if status is g.Status.TIMED_OUT:
+                    await self._readiness.wait()
+                    continue
+                if status is not g.Status.OK:
+                    raise PrnsError(status)
+                if settlement is None:
+                    raise RuntimeError("settled command did not provide a result")
+                return settlement
         finally:
             self.close()
 
-    def _wait_blocking(self) -> CommandSettlement:
+    def _poll(self) -> tuple[g.Status, CommandSettlement | None]:
         result = CommandResult()
         result.struct_size = ctypes.sizeof(CommandResult)
-        _check(
+        status = _status(
             self._native.library.prns_command_wait(
                 self._handle,
-                NEVER_TIMEOUT,
+                0,
                 ctypes.byref(result),
             )
         )
+        if status is not g.Status.OK:
+            return status, None
         detail = bytes_from_view(result.detail).decode()
         if result.failure:
-            return CommandFailed(
-                _decode_command_failure(
-                    g.CommandFailureKind(result.failure),
-                    detail,
+            return (
+                status,
+                CommandFailed(
+                    _decode_command_failure(
+                        g.CommandFailureKind(result.failure),
+                        detail,
+                    )
                 )
             )
         outcome = g.CommandOutcomeKind(result.outcome)
@@ -504,19 +625,16 @@ class Command:
             decoded = g.CommandOutcomeRequesterAllowed()
         else:
             raise RuntimeError(f"unknown command outcome {outcome}")
-        return CommandSucceeded(decoded)
+        return status, CommandSucceeded(decoded)
 
     def close(self) -> None:
         with self._lock:
             if self._closed:
                 return
             self._closed = True
-            pending_done = self._pending_done
-            if pending_done is not None and not pending_done.is_set():
-                self._native.library.prns_command_interrupt_wait(self._handle)
-        if pending_done is not None:
-            pending_done.wait()
-        self._native.library.prns_command_release(self._handle)
+            self._native.library.prns_command_interrupt_wait(self._handle)
+            self._readiness.close()
+            self._native.library.prns_command_release(self._handle)
 
 
 class ResourceStream:
@@ -570,9 +688,12 @@ class EventStream(AsyncIterator[T]):
         self._handle = handle
         self._closed = False
         self._lock = threading.RLock()
-        self._pending: asyncio.Future[T] | None = None
-        self._pending_done: threading.Event | None = None
-        self._released = threading.Event()
+        self._reading = False
+        self._readiness = _NativeReadiness(
+            native,
+            handle,
+            native.library.prns_event_stream_register_readiness,
+        )
 
     def __aiter__(self) -> EventStream[T]:
         return self
@@ -581,45 +702,43 @@ class EventStream(AsyncIterator[T]):
         with self._lock:
             if self._closed:
                 raise StopAsyncIteration
-            if self._pending is not None:
+            if self._reading:
                 raise RuntimeError("an event read is already pending")
-            self._pending, self._pending_done = _daemon_future(self._next_blocking)
-            pending = self._pending
+            self._reading = True
         try:
-            return await _await_daemon(pending)
-        except StopAsyncIteration:
-            self.close()
-            raise
-        except asyncio.CancelledError:
-            with self._lock:
-                if not self._closed:
-                    self._native.library.prns_event_stream_interrupt_wait(self._handle)
-            while self._pending_done is not None and not self._pending_done.is_set():
-                await asyncio.sleep(0)
-            while not pending.done():
-                await asyncio.sleep(0)
-            _consume_future(pending)
-            raise
+            while True:
+                with self._lock:
+                    if self._closed:
+                        raise StopAsyncIteration
+                    status, event = self._poll()
+                if status is g.Status.WOULD_BLOCK:
+                    await self._readiness.wait()
+                    continue
+                if status is g.Status.STOPPED:
+                    self.close()
+                    raise StopAsyncIteration
+                if status is not g.Status.OK:
+                    raise PrnsError(status)
+                if event is None:
+                    raise RuntimeError("ready event stream did not provide an event")
+                return event
         finally:
             with self._lock:
-                if self._pending is pending:
-                    self._pending = None
+                self._reading = False
 
-    def _next_blocking(self) -> T:
+    def _poll(self) -> tuple[g.Status, T | None]:
         event = ctypes.c_void_p()
         status = _status(
             self._native.library.prns_event_stream_next(
                 self._handle,
-                NEVER_TIMEOUT,
+                0,
                 ctypes.byref(event),
             )
         )
-        if status is g.Status.STOPPED:
-            raise StopAsyncIteration
         if status is not g.Status.OK:
-            raise PrnsError(status)
+            return status, None
         try:
-            return _decode_event(self._native, event)
+            return status, _decode_event(self._native, event)
         finally:
             self._native.library.prns_event_release(event)
 
@@ -630,39 +749,16 @@ class EventStream(AsyncIterator[T]):
         await self.aclose()
 
     async def aclose(self) -> None:
-        owns_release, pending_done = self._begin_close()
-        if not owns_release:
-            while not self._released.is_set():
-                await asyncio.sleep(0)
-            return
-        while pending_done is not None and not pending_done.is_set():
-            await asyncio.sleep(0)
-        self._release()
+        self.close()
 
     def close(self) -> None:
-        owns_release, pending_done = self._begin_close()
-        if not owns_release:
-            self._released.wait()
-            return
-        if pending_done is not None:
-            pending_done.wait()
-        self._release()
-
-    def _begin_close(self) -> tuple[bool, threading.Event | None]:
         with self._lock:
             if self._closed:
-                return False, self._pending_done
+                return
             self._closed = True
-            pending_done = self._pending_done
-            if pending_done is not None and not pending_done.is_set():
-                self._native.library.prns_event_stream_interrupt_wait(self._handle)
-            return True, pending_done
-
-    def _release(self) -> None:
-        try:
+            self._native.library.prns_event_stream_interrupt_wait(self._handle)
+            self._readiness.close()
             self._native.library.prns_event_stream_release(self._handle)
-        finally:
-            self._released.set()
 
 
 def _event_bytes(native: NativeLibrary, event, field: g.EventField) -> bytes:

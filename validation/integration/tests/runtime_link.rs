@@ -1,17 +1,20 @@
 use core::time::Duration;
+use personal_rns::runtime::NoPersistence;
 
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::udp::UDP_BITRATE_ESTIMATE;
-use personal_rns::routes;
+use personal_rns::request_endpoints;
 use personal_rns::routing::request_handlers::RequestPathHash;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
-use personal_rns::runtime::request_router::{Decline, RequestContext, RequestRoute, RoutePolicy};
+use personal_rns::runtime::request_endpoints::{
+    Decline, RequestContext, RequestEndpoint, RequestEndpointPolicy,
+};
 use personal_rns::runtime::{
     Diagnostic, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
-    RequestHandlerRegistration,
+    ServeMyRequestEndpoints,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::udp::UdpInterface;
@@ -25,9 +28,9 @@ fn secret(byte: u8) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
 struct Responder;
 
 struct Echo;
-impl RequestRoute<Responder> for Echo {
-    const PATH: &'static str = QUERY_PATH;
-    const POLICY: RoutePolicy = RoutePolicy::AllowAll;
+impl RequestEndpoint<Responder> for Echo {
+    const ENDPOINT_ID: &'static str = QUERY_PATH;
+    const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
     async fn handle(mut cx: RequestContext<'_, Responder>) -> Result<(), Decline> {
         let asked = cx.data;
         let _ = cx.write_packed(asked);
@@ -56,7 +59,7 @@ async fn a_link_establishes_and_carries_data_across_two_nodes_over_udp() {
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
-        request_handlers: RequestHandlerRegistration::NodeRouteSet,
+        request_endpoints: ServeMyRequestEndpoints::Yes,
     };
     let dest_a = responder_dest
         .destination_hash()
@@ -75,11 +78,12 @@ async fn a_link_establishes_and_carries_data_across_two_nodes_over_udp() {
         pre_configured_destinations: [responder_dest],
         app_state: Responder,
         storage: GrowableHeap,
-        routes: routes![Echo],
+        request_endpoints: request_endpoints![Echo],
         on_event: |_event, _state| {},
         interfaces: |node: &PrnsNodeHandle| {
             node.attach(udp_a);
         },
+        persistence: NoPersistence,
     });
 
     let announcer = node_a.handle();
@@ -113,11 +117,11 @@ async fn a_link_establishes_and_carries_data_across_two_nodes_over_udp() {
             proof: ProofStrategy::ProveAll,
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
-            request_handlers: RequestHandlerRegistration::None,
+            request_endpoints: ServeMyRequestEndpoints::No,
         }],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
                 let _ = heard_tx.send(destination);
@@ -126,6 +130,7 @@ async fn a_link_establishes_and_carries_data_across_two_nodes_over_udp() {
         interfaces: |node: &PrnsNodeHandle| {
             node.attach(udp_b);
         },
+        persistence: NoPersistence,
     });
     let handle = node_b.handle();
 

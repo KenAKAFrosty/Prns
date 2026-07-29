@@ -13,7 +13,9 @@ import tempfile
 from flasher_acceptance_contract import parse_utc_timestamp
 from flasher_public_review import (
     EVIDENCE_FIELDS,
-    WORKFLOW_PATH as PUBLIC_REVIEW_WORKFLOW_PATH,
+    SUITE_WORKFLOW_PATH,
+    WORKFLOW_PATH,
+    WORKFLOW_PATHS,
     evidence_asset_name,
     require_commit as require_review_commit,
     require_positive,
@@ -131,7 +133,6 @@ def public_review_identity(
         raise ValueError(f"public-review evidence must be named {expected_name}")
     expected = {
         "repository": repository,
-        "workflow_path": PUBLIC_REVIEW_WORKFLOW_PATH,
         "workflow_sha": source_commit,
         "version": version,
         "source_commit": source_commit,
@@ -141,6 +142,9 @@ def public_review_identity(
     }
     if any(evidence.get(field) != value for field, value in expected.items()):
         raise ValueError("public-review evidence differs from the exact signed release")
+    workflow_path = evidence.get("workflow_path")
+    if workflow_path not in WORKFLOW_PATHS:
+        raise ValueError("public-review evidence names an unregistered release workflow")
     require_review_commit(evidence.get("workflow_sha"), "public-review workflow SHA")
     require_review_sha256(
         evidence.get("signed_candidate_sha256"), "public-review candidate SHA-256"
@@ -154,7 +158,7 @@ def public_review_identity(
     parse_utc_timestamp(evidence.get("approved_at"), "public-review approval")
     return {
         "evidence": file_identity(path),
-        "workflow_path": PUBLIC_REVIEW_WORKFLOW_PATH,
+        "workflow_path": workflow_path,
         "workflow_sha": source_commit,
         "workflow_run_id": run_id,
         "workflow_run_attempt": run_attempt,
@@ -405,10 +409,15 @@ def build_record(arguments: argparse.Namespace) -> dict:
         manifest_sha256=sha256(manifest_path),
         prerelease_published_at=arguments.prerelease_published_at,
     )
-    if public_review["workflow_run_id"] != attestation.get("workflow_run_id"):
+    if (
+        public_review["workflow_path"] == WORKFLOW_PATH
+        and public_review["workflow_run_id"] != attestation.get("workflow_run_id")
+    ):
         raise ValueError(
             "public-review evidence was not produced by the attested signing run"
         )
+    if public_review["workflow_path"] not in {WORKFLOW_PATH, SUITE_WORKFLOW_PATH}:
+        raise ValueError("public-review evidence was not produced by a release workflow")
 
     return {
         "schema": 1,

@@ -17,7 +17,7 @@ use crate::interfaces::InterfaceIfac;
 use crate::interfaces::{InterfaceDescriptor, InterfaceId};
 use crate::manifold::grant::{GrantProducer, ManifoldLaneReader};
 use crate::manifold::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
-use crate::runtime::NoInterfaceInspectionStore;
+use crate::runtime::{NoInterfaceInspectionStore, NoManifoldPersistence};
 use crate::storage::GrowableHeap;
 
 use super::super::test_support::{descriptor, WATCHDOG};
@@ -60,6 +60,8 @@ fn a_pooled_ifac_slot_added_at_runtime_opens_inbound_then_frees_on_remove() {
             *heard_sink.borrow_mut() += 1;
         }
         Journaled::Delivered(_)
+        | Journaled::PersistenceFlushed { .. }
+        | Journaled::PersistenceFlushFailed { .. }
         | Journaled::SelfRatchetRotated { .. }
         | Journaled::CommandSettled { .. }
         | Journaled::AnnounceHeldDropped { .. }
@@ -88,6 +90,7 @@ fn a_pooled_ifac_slot_added_at_runtime_opens_inbound_then_frees_on_remove() {
     let count = block_on(async {
         let mut descriptors: HeaplessVec<InterfaceDescriptor, 1> = HeaplessVec::new();
         let mut ifacs: HeaplessVec<InterfaceIfac, 1> = HeaplessVec::new();
+        let mut persistence = NoManifoldPersistence;
         let _ = ifacs.push(InterfaceIfac {
             id: source,
             context: network,
@@ -107,6 +110,7 @@ fn a_pooled_ifac_slot_added_at_runtime_opens_inbound_then_frees_on_remove() {
             app,
             crate::manifold::decline_all(),
             &NoInterfaceInspectionStore,
+            &mut persistence,
         );
 
         let driver = async {
@@ -182,6 +186,8 @@ fn a_pooled_slot_retagged_at_runtime_carries_traffic_under_the_new_id() {
             *heard_sink.borrow_mut() += 1;
         }
         Journaled::Delivered(_)
+        | Journaled::PersistenceFlushed { .. }
+        | Journaled::PersistenceFlushFailed { .. }
         | Journaled::SelfRatchetRotated { .. }
         | Journaled::CommandSettled { .. }
         | Journaled::AnnounceHeldDropped { .. }
@@ -210,6 +216,7 @@ fn a_pooled_slot_retagged_at_runtime_carries_traffic_under_the_new_id() {
     let count = block_on(async {
         let mut descriptors: HeaplessVec<InterfaceDescriptor, 1> = HeaplessVec::new();
         let mut ifacs: HeaplessVec<InterfaceIfac, 1> = HeaplessVec::new();
+        let mut persistence = NoManifoldPersistence;
         let manifold = run_pooled(
             &mut engine,
             &mut host,
@@ -225,6 +232,7 @@ fn a_pooled_slot_retagged_at_runtime_carries_traffic_under_the_new_id() {
             app,
             crate::manifold::decline_all(),
             &NoInterfaceInspectionStore,
+            &mut persistence,
         );
 
         let driver = async {

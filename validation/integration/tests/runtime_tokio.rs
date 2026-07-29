@@ -1,4 +1,5 @@
 use core::time::Duration;
+use personal_rns::runtime::NoPersistence;
 
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
@@ -7,12 +8,12 @@ use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::BitrateBps;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceStatus};
 use personal_rns::manifold::reconnect::ReconnectPolicy;
-use personal_rns::routes;
+use personal_rns::request_endpoints;
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
-    Diagnostic, Fleet, InterfaceSupervisor, Manual, PreConfiguredDestination, PrnsEvent, PrnsNode,
-    PrnsNodeHandle, PrnsNodeRecipe, RequestHandlerRegistration,
+    Diagnostic, Fleet, InterfaceSupervisor, ManuallyAttached, PreConfiguredDestination, PrnsEvent,
+    PrnsNode, PrnsNodeHandle, PrnsNodeRecipe, ServeMyRequestEndpoints,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::{TcpClientInterface, TcpServer};
@@ -35,7 +36,7 @@ impl InterfaceSupervisor for DialOnce {
     }
 
     async fn run(self, fleet: Fleet) {
-        let _member = fleet.add(TcpClientInterface::new(
+        let _member = fleet.add(TcpClientInterface::new_with_bitrate(
             self.addr,
             BITRATE,
             ReconnectPolicy::STANDARD,
@@ -56,7 +57,7 @@ fn single(identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> PreConfiguredDe
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
-        request_handlers: RequestHandlerRegistration::None,
+        request_endpoints: ServeMyRequestEndpoints::No,
     }
 }
 
@@ -67,7 +68,7 @@ async fn two_nodes_stand_up_and_one_hears_the_others_announce() {
         .destination_hash()
         .expect("the test destination name is valid");
 
-    let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+    let server = TcpServer::bind_with_bitrate("127.0.0.1:0", BITRATE)
         .await
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
@@ -76,21 +77,22 @@ async fn two_nodes_stand_up_and_one_hears_the_others_announce() {
         pre_configured_destinations: [single_a],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         on_event: |_event, _state| {},
-        interfaces: Manual,
+        interfaces: ManuallyAttached,
+        persistence: NoPersistence,
     });
     let commands_a = node_a.handle();
     let _server_sup = commands_a.supervise(server);
 
-    let client = TcpClientInterface::new(addr, BITRATE, ReconnectPolicy::STANDARD);
+    let client = TcpClientInterface::new_with_bitrate(addr, BITRATE, ReconnectPolicy::STANDARD);
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xB2))],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
                 let _ = heard_tx.send(destination);
@@ -99,6 +101,7 @@ async fn two_nodes_stand_up_and_one_hears_the_others_announce() {
         interfaces: |node: &PrnsNodeHandle| {
             node.attach(client);
         },
+        persistence: NoPersistence,
     });
 
     tokio::spawn(async move {
@@ -139,7 +142,7 @@ async fn an_interface_added_through_the_handle_carries_traffic_until_torn_down()
         .destination_hash()
         .expect("the test destination name is valid");
 
-    let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+    let server = TcpServer::bind_with_bitrate("127.0.0.1:0", BITRATE)
         .await
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
@@ -148,8 +151,9 @@ async fn an_interface_added_through_the_handle_carries_traffic_until_torn_down()
         pre_configured_destinations: [single_a],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
-        interfaces: Manual,
+        request_endpoints: request_endpoints![],
+        interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: |_event, _state| {},
     });
     let commands_a = node_a.handle();
@@ -161,8 +165,9 @@ async fn an_interface_added_through_the_handle_carries_traffic_until_torn_down()
         pre_configured_destinations: [single(secret(0xD2))],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
-        interfaces: Manual,
+        request_endpoints: request_endpoints![],
+        interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
                 let _ = heard_tx.send(destination);
@@ -171,7 +176,7 @@ async fn an_interface_added_through_the_handle_carries_traffic_until_torn_down()
     });
     let commands_b = node_b.handle();
 
-    let attached = commands_b.add_interface(TcpClientInterface::new(
+    let attached = commands_b.add_interface(TcpClientInterface::new_with_bitrate(
         addr,
         BITRATE,
         ReconnectPolicy::STANDARD,
@@ -242,7 +247,7 @@ async fn a_supervisor_spawns_a_member_and_tearing_the_supervisor_down_cascades_t
         .destination_hash()
         .expect("the test destination name is valid");
 
-    let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+    let server = TcpServer::bind_with_bitrate("127.0.0.1:0", BITRATE)
         .await
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
@@ -251,8 +256,9 @@ async fn a_supervisor_spawns_a_member_and_tearing_the_supervisor_down_cascades_t
         pre_configured_destinations: [single_a],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
-        interfaces: Manual,
+        request_endpoints: request_endpoints![],
+        interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: |_event, _state| {},
     });
     let commands_a = node_a.handle();
@@ -264,8 +270,9 @@ async fn a_supervisor_spawns_a_member_and_tearing_the_supervisor_down_cascades_t
         pre_configured_destinations: [single(secret(0xF2))],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
-        interfaces: Manual,
+        request_endpoints: request_endpoints![],
+        interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
                 let _ = heard_tx.send(destination);
@@ -328,7 +335,7 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
         .destination_hash()
         .expect("the test destination name is valid");
 
-    let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+    let server = TcpServer::bind_with_bitrate("127.0.0.1:0", BITRATE)
         .await
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
@@ -339,8 +346,9 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
         pre_configured_destinations: [single(secret(0x55))],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
-        interfaces: Manual,
+        request_endpoints: request_endpoints![],
+        interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
                 destination,
@@ -355,33 +363,36 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
     let commands_s = node_s.handle();
     let _server_sup = commands_s.supervise(server);
 
-    let client_a = TcpClientInterface::new(addr.clone(), BITRATE, ReconnectPolicy::STANDARD);
+    let client_a =
+        TcpClientInterface::new_with_bitrate(addr.clone(), BITRATE, ReconnectPolicy::STANDARD);
     let client_a_status = client_a.status();
     let node_a = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [single_a],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         interfaces: |node: &PrnsNodeHandle| {
             node.attach(client_a);
         },
         on_event: |_event, _state| {},
+        persistence: NoPersistence,
     });
     let commands_a = node_a.handle();
 
-    let client_b = TcpClientInterface::new(addr, BITRATE, ReconnectPolicy::STANDARD);
+    let client_b = TcpClientInterface::new_with_bitrate(addr, BITRATE, ReconnectPolicy::STANDARD);
     let client_b_status = client_b.status();
     let node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [single_b],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         interfaces: |node: &PrnsNodeHandle| {
             node.attach(client_b);
         },
         on_event: |_event, _state| {},
+        persistence: NoPersistence,
     });
     let commands_b = node_b.handle();
 
@@ -482,11 +493,11 @@ async fn a_recipe_accept_destination_receives_a_resource() {
             max_uncompressed_bytes: 1024 * 1024,
             accept_compressed: true,
         },
-        request_handlers: RequestHandlerRegistration::None,
+        request_endpoints: ServeMyRequestEndpoints::No,
     };
     let dest_a = single_a.destination_hash().expect("valid destination");
 
-    let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+    let server = TcpServer::bind_with_bitrate("127.0.0.1:0", BITRATE)
         .await
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
@@ -495,21 +506,22 @@ async fn a_recipe_accept_destination_receives_a_resource() {
         pre_configured_destinations: [single_a],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
-        interfaces: Manual,
+        request_endpoints: request_endpoints![],
+        interfaces: ManuallyAttached,
+        persistence: NoPersistence,
         on_event: |_event, _state| {},
     });
     let commands_a = node_a.handle();
     let _server_sup = commands_a.supervise(server);
 
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
-    let client = TcpClientInterface::new(addr, BITRATE, ReconnectPolicy::STANDARD);
+    let client = TcpClientInterface::new_with_bitrate(addr, BITRATE, ReconnectPolicy::STANDARD);
     let node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xF2))],
         app_state: (),
         storage: GrowableHeap,
-        routes: routes![],
+        request_endpoints: request_endpoints![],
         interfaces: |node: &PrnsNodeHandle| {
             node.attach(client);
         },
@@ -518,6 +530,7 @@ async fn a_recipe_accept_destination_receives_a_resource() {
                 let _ = heard_tx.send(destination);
             }
         },
+        persistence: NoPersistence,
     });
     let commands_b = node_b.handle();
 

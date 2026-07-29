@@ -1,8 +1,9 @@
 mod host;
 
 pub use host::{
-    FlushFailurePolicy, NodePersistence, PersistenceEvent, PersistenceFlushStatus,
-    PersistenceRestoreReport, PersistenceTrigger, PersistenceWorker,
+    DefaultLocationError, FlushFailurePolicy, NodePersistence, PersistenceEvent,
+    PersistenceFlushStatus, PersistenceIntent, PersistenceRestoreReport, PersistenceTrigger,
+    PersistenceWorker, SaveOnLearn, SaveOnLearnWiring,
 };
 
 use tokio::sync::oneshot;
@@ -27,7 +28,7 @@ use crate::storage::StorageLayout;
 use crate::wire::DestinationHash;
 use prns_runtime::runtime::persistence_snapshots::self_ratchet_identity_label;
 
-use super::super::request_router::RouteSet;
+use super::super::request_endpoints::RequestEndpointSet;
 use super::super::PrnsEvent;
 use super::{PrnsNode, PrnsNodeHandle};
 
@@ -154,7 +155,7 @@ impl PrnsNodeHandle {
 
 impl<St, R, F, S: StorageLayout> PrnsNode<St, R, F, S>
 where
-    R: RouteSet<St>,
+    R: RequestEndpointSet<St>,
     F: FnMut(PrnsEvent<'_>, &St),
 {
     /// Must precede [`seed_routes_from_store`](Self::seed_routes_from_store) so restored rows sit in this boot's past.

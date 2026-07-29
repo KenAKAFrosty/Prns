@@ -45,6 +45,10 @@ impl PreparedTarget {
         let board_id = target.board_id().clone();
         match target {
             ReleaseTarget::EspSerial(target) => {
+                let supports_tcp_client_provisioning = target
+                    .provisioning()
+                    .and_then(|slot| slot.tcp_client())
+                    .is_some();
                 let descriptors = target.parts();
                 verify_artifact_count(&board_id, descriptors.len(), artifacts.len())?;
                 let parts = descriptors
@@ -57,6 +61,7 @@ impl PreparedTarget {
                     version,
                     board_id,
                     parts,
+                    supports_tcp_client_provisioning,
                 }))
             }
             ReleaseTarget::Uf2(target) => {
@@ -99,6 +104,7 @@ pub(crate) struct PreparedEspTarget {
     version: ReleaseVersion,
     board_id: BoardId,
     parts: Vec<PreparedEspPart>,
+    supports_tcp_client_provisioning: bool,
 }
 
 impl PreparedEspTarget {
@@ -112,6 +118,10 @@ impl PreparedEspTarget {
 
     pub(crate) fn parts(&self) -> &[PreparedEspPart] {
         &self.parts
+    }
+
+    pub(crate) const fn supports_tcp_client_provisioning(&self) -> bool {
+        self.supports_tcp_client_provisioning
     }
 }
 

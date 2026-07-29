@@ -3,14 +3,17 @@ use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 
-use crate::engine::{CommandId, Departure, IssuedCommand, SendRequestFailure, Settlement};
+use crate::engine::{
+    CommandId, Departure, IssuedCommand, PersistenceFlushCause, PersistenceFlushTarget,
+    SendRequestFailure, Settlement,
+};
 use crate::interfaces::{ConnectionView, InterfaceDescriptor, InterfaceId};
 use crate::manifold::grant_lane::{TokioGrantConsumer, TokioGrantProducer};
 use crate::routing::links::channel::byte_stream::StreamId;
 use crate::routing::links::request::RequestId;
 use crate::routing::links::resources::{ResourceHash, ResourceMetadata, ResourceStrategy};
 use crate::routing::links::LinkId;
-use crate::routing::request_handlers::RequestPathHash;
+use crate::routing::request_handlers::{RequestPathHash, RequestPolicy};
 use crate::runtime::node_introspection::NodeIntrospectionRequest;
 #[cfg(feature = "runtime-metrics")]
 use crate::runtime::RuntimeMetricsSnapshot;
@@ -18,6 +21,7 @@ use crate::runtime::{
     ClearAnnounceQueuesOutcome, DestinationIdentityRetentionHostCommand, DropRouteOutcome,
     DropRoutesViaOutcome, IdentityBlackholeHostCommand,
 };
+use crate::storage::TablePushError;
 use crate::units::RttMillis;
 use crate::wire::{DestinationHash, TransportId};
 use prns_runtime::runtime::{PersistedStateSnapshot, SelfRatchetSnapshot, SelfRatchetsSnapshot};
@@ -25,6 +29,16 @@ use prns_runtime::runtime::{PersistedStateSnapshot, SelfRatchetSnapshot, SelfRat
 #[allow(clippy::large_enum_variant)]
 pub enum HostCommand {
     Engine(IssuedCommand),
+    NotePersistenceFlush {
+        cause: PersistenceFlushCause,
+        target: PersistenceFlushTarget,
+        observed: Option<oneshot::Sender<()>>,
+    },
+    NotePersistenceFlushFailure {
+        cause: PersistenceFlushCause,
+        target: PersistenceFlushTarget,
+        observed: oneshot::Sender<()>,
+    },
     AwaitedEngine {
         issued: IssuedCommand,
         completion: oneshot::Sender<Settlement>,
@@ -73,6 +87,21 @@ pub enum HostCommand {
     SetResourceStrategy {
         destination: DestinationHash,
         strategy: ResourceStrategy,
+        ready: oneshot::Sender<bool>,
+    },
+    /// Mutate a request route on the manifold and acknowledge the exact table
+    /// outcome before the host publishes matching application state.
+    RegisterRequestHandler {
+        destination: DestinationHash,
+        path_hash: RequestPathHash,
+        policy: RequestPolicy,
+        ready: oneshot::Sender<Result<(), TablePushError>>,
+    },
+    /// Remove a request route on the manifold. The boolean distinguishes a
+    /// landed removal from an already-absent, idempotent reconciliation.
+    UnregisterRequestHandler {
+        destination: DestinationHash,
+        path_hash: RequestPathHash,
         ready: oneshot::Sender<bool>,
     },
     /// Serialize every persisted region on the manifold — the one place a consistent view exists — and hand the sealed images back; the caller owns the store IO, so flush cadence stays host policy.

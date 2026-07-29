@@ -1,3 +1,4 @@
+use personal_rns::runtime::NoPersistence;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -11,13 +12,13 @@ use personal_rns::rnx::{
 use personal_rns::routing::announce::derive_single_destination_hash;
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
-use personal_rns::runtime::request_router::RouteSet;
+use personal_rns::runtime::request_endpoints::RequestEndpointSet;
 use personal_rns::runtime::rnx::{
     HeapRnxOutput, RnxAuthorization, RnxCommandHandler, RnxCompletion, RnxOutput,
 };
 use personal_rns::runtime::{
     Diagnostic, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle, ProcessCommands,
-    RequestHandlerRegistration, ResourceAdmissionPeer, ResourceOfferAdmission,
+    ResourceAdmissionPeer, ResourceOfferAdmission, ServeMyRequestEndpoints,
 };
 use personal_rns::shared_instance::connect_existing_shared_instance;
 use personal_rns::storage::GrowableHeap;
@@ -107,12 +108,12 @@ pub(super) async fn run(mut args: RnxArgs) -> Result<(), RnxError> {
     }
     if args.no_auth {
         listen_with_routes(args, configuration, secret, destination, || {
-            personal_rns::routes![PublicRnxEndpoint]
+            personal_rns::request_endpoints![PublicRnxEndpoint]
         })
         .await
     } else {
         listen_with_routes(args, configuration, secret, destination, || {
-            personal_rns::routes![RnxEndpoint]
+            personal_rns::request_endpoints![RnxEndpoint]
         })
         .await
     }
@@ -123,10 +124,10 @@ async fn listen_with_routes<R, F>(
     configuration: LoadedConfiguration,
     secret: IdentitySecretKey,
     destination: DestinationHash,
-    make_routes: F,
+    make_request_endpoints: F,
 ) -> Result<(), RnxError>
 where
-    R: RouteSet<ListenerState>,
+    R: RequestEndpointSet<ListenerState>,
     F: FnOnce() -> R,
 {
     let allowed: Arc<[IdentityHash]> = args.allowed.clone().into();
@@ -142,7 +143,7 @@ where
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
             resource_strategy: ResourceStrategy::AcceptIf,
-            request_handlers: RequestHandlerRegistration::NodeRouteSet,
+            request_endpoints: ServeMyRequestEndpoints::Yes,
         }],
         app_state: ListenerState {
             handle,
@@ -152,9 +153,10 @@ where
             execution_slots: Semaphore::new(MAX_CONCURRENT_COMMANDS),
         },
         storage: GrowableHeap,
-        routes: make_routes(),
-        interfaces: personal_rns::runtime::Manual,
+        request_endpoints: make_request_endpoints(),
+        interfaces: personal_rns::runtime::ManuallyAttached,
         on_event: listener_event,
+        persistence: NoPersistence,
     });
     if !args.no_auth {
         for identity in &args.allowed {

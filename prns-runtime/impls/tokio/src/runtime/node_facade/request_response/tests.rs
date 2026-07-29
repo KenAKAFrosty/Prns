@@ -10,7 +10,7 @@ use crate::routing::links::request::{
 };
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
-use crate::runtime::request_router::RespondToken;
+use crate::runtime::request_endpoints::RespondToken;
 use crate::units::DurationMillis;
 use crate::units::RttMillis;
 
