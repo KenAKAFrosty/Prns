@@ -3789,6 +3789,7 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
+        "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-tbeam": [],
@@ -3895,6 +3896,7 @@
         ],
         "esp32-c6": [
           "dhcpv4",
+          "dns",
           "medium-ethernet",
           "multicast",
           "proto-ipv4",
@@ -3904,6 +3906,7 @@
         ],
         "esp32-s3-heltec": [
           "dhcpv4",
+          "dns",
           "medium-ethernet",
           "multicast",
           "proto-ipv4",
@@ -3913,6 +3916,7 @@
         ],
         "esp32-s3-tbeam": [
           "dhcpv4",
+          "dns",
           "medium-ethernet",
           "multicast",
           "proto-ipv4",
@@ -4643,6 +4647,9 @@
     {
       "graphs": {
         "android": [],
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
@@ -4667,10 +4674,20 @@
     },
     {
       "graphs": {
+        "android": [],
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
+        "desktop-linux": [],
+        "desktop-macos": [],
+        "desktop-windows": [],
+        "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-tbeam": [],
-        "nrf52840": []
+        "ios": [],
+        "nrf52840": [],
+        "wasm": []
       },
       "name": "embedded-storage-async",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -12005,6 +12022,7 @@
           "log",
           "lora",
           "tcp",
+          "tcp-dns",
           "usb",
           "wifi-auto"
         ],
@@ -12018,6 +12036,7 @@
           "log",
           "lora",
           "tcp",
+          "tcp-dns",
           "usb",
           "wifi-auto"
         ],
@@ -12031,6 +12050,7 @@
           "log",
           "lora",
           "tcp",
+          "tcp-dns",
           "usb",
           "wifi-auto"
         ],
@@ -12411,6 +12431,7 @@
         "daemon-linux": [
           "alloc",
           "embassy-host",
+          "flash",
           "i2p",
           "interface-discovery",
           "interface-discovery-archive",
@@ -12425,6 +12446,7 @@
         "daemon-macos": [
           "alloc",
           "embassy-host",
+          "flash",
           "i2p",
           "interface-discovery",
           "interface-discovery-archive",
@@ -12439,6 +12461,7 @@
         "daemon-windows": [
           "alloc",
           "embassy-host",
+          "flash",
           "i2p",
           "interface-discovery",
           "interface-discovery-archive",
@@ -12664,6 +12687,7 @@
           "log",
           "lora",
           "tcp",
+          "tcp-dns",
           "usb",
           "wifi-auto"
         ],
@@ -12674,6 +12698,7 @@
           "log",
           "lora",
           "tcp",
+          "tcp-dns",
           "usb",
           "wifi-auto"
         ],
@@ -12684,6 +12709,7 @@
           "log",
           "lora",
           "tcp",
+          "tcp-dns",
           "usb",
           "wifi-auto"
         ],
@@ -15364,10 +15390,12 @@
           "medium-ethernet",
           "multicast",
           "proto-dhcpv4",
+          "proto-dns",
           "proto-ipv4",
           "proto-ipv6",
           "socket",
           "socket-dhcpv4",
+          "socket-dns",
           "socket-tcp",
           "socket-udp"
         ],
@@ -15376,10 +15404,12 @@
           "medium-ethernet",
           "multicast",
           "proto-dhcpv4",
+          "proto-dns",
           "proto-ipv4",
           "proto-ipv6",
           "socket",
           "socket-dhcpv4",
+          "socket-dns",
           "socket-tcp",
           "socket-udp"
         ],
@@ -15388,10 +15418,12 @@
           "medium-ethernet",
           "multicast",
           "proto-dhcpv4",
+          "proto-dns",
           "proto-ipv4",
           "proto-ipv6",
           "socket",
           "socket-dhcpv4",
+          "socket-dns",
           "socket-tcp",
           "socket-udp"
         ],

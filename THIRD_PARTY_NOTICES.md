@@ -4286,7 +4286,7 @@ License: MIT License
 
 Used by: `embedded-storage-async 0.4.1`
 
-Release graphs: ESP32-C6, ESP32-S3 Heltec, ESP32-S3 T-Beam, nRF52840
+Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 T-Beam, WASM, desktop Linux, desktop Windows, desktop macOS, engine, iOS, nRF52840
 
 ```text
 Copyright (c) 2022 Diego Barrios Romero
