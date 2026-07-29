@@ -87,7 +87,12 @@ NPM = (
     ("tslib 2.8.1", "0BSD", "docs/website/node_modules/tslib/LICENSE.txt"),
 )
 VENDORED = (
-    ("libdbus 1.14.4", "AFL-2.1", "release/licenses/libdbus-AFL-2.1.txt", "Node addon Linux"),
+    (
+        "libdbus 1.14.4",
+        "AFL-2.1",
+        "release/licenses/libdbus-AFL-2.1.txt",
+        ("Node addon Linux", "daemon Linux"),
+    ),
 )
 
 
@@ -190,7 +195,7 @@ def notice_bundle() -> str:
             )
             notice["packages"].add(package)
             notice["graphs"].add("website JavaScript")
-        for package, identifier, relative, graph in VENDORED:
+        for package, identifier, relative, graphs in VENDORED:
             path = ROOT / relative
             if not path.is_file():
                 raise RuntimeError(f"vendored notice source {relative} is missing")
@@ -200,7 +205,7 @@ def notice_bundle() -> str:
                 {"name": identifier, "packages": set(), "graphs": set()},
             )
             notice["packages"].add(package)
-            notice["graphs"].add(graph)
+            notice["graphs"].update(graphs)
     nordic = [key for key in notices if key[0] == "LicenseRef-Nordic-SoftDevice"]
     if len(nordic) != 1:
         raise RuntimeError("Nordic SoftDevice notice was not generated exactly once")
@@ -229,12 +234,13 @@ def notice_bundle() -> str:
             "- `tslib 2.8.1` — `0BSD`",
         ]
     )
-    lines.extend(["", "## Node addon vendored native code", ""])
+    lines.extend(["", "## Vendored native code", ""])
     lines.extend(
         [
             "- `libdbus 1.14.4` — `AFL-2.1` alternative selected from its "
             "`AFL-2.1 OR GPL-2.0-or-later` dual license; built from the source vendored by "
-            "`libdbus-sys` and statically linked into the Linux `personal-rns` Node addon.",
+            "`libdbus-sys` and statically linked into the Linux `personal-rns` Node addon and "
+            "full Linux `prnsd` native release.",
         ]
     )
     lines.extend(["", "## Android Maven runtime", ""])
