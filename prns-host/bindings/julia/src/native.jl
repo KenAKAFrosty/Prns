@@ -1,6 +1,48 @@
 const NEVER_TIMEOUT = typemax(UInt32)
-const EVENT_WAIT_SLICE_MILLIS = UInt32(50)
 const NATIVE_LIBRARY = Ref{Ptr{Cvoid}}(C_NULL)
+
+function signal_async_condition(context::Ptr{Cvoid})::Cvoid
+    ccall(:uv_async_send, Cint, (Ptr{Cvoid},), context)
+    nothing
+end
+
+readiness_callback() =
+    @cfunction(signal_async_condition, Cvoid, (Ptr{Cvoid},))
+
+function register_readiness(pointer::Ptr{Cvoid}, symbol::Symbol)
+    readiness = Base.AsyncCondition()
+    registration = Ref{Ptr{Cvoid}}(C_NULL)
+    status = Status(
+        ccall(
+            native_symbol(symbol),
+            UInt32,
+            (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Ref{Ptr{Cvoid}}),
+            pointer,
+            readiness_callback(),
+            Base.unsafe_convert(Ptr{Cvoid}, readiness),
+            registration,
+        ),
+    )
+    if status != StatusOk
+        close(readiness)
+        throw(StatusFailure(:register_readiness, status))
+    end
+    readiness, registration[]
+end
+
+function release_readiness(
+    registration::Ptr{Cvoid},
+    readiness::Base.AsyncCondition,
+)
+    ccall(
+        native_symbol(:prns_readiness_registration_release),
+        Cvoid,
+        (Ptr{Cvoid},),
+        registration,
+    )
+    close(readiness)
+    nothing
+end
 
 struct NativeByteView
     data::Ptr{UInt8}

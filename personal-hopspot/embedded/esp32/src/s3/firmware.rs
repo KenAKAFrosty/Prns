@@ -129,7 +129,19 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         )
     });
 
-    let tcp_built = tcp_stack.and_then(build_tcp);
+    #[cfg(feature = "wifi-auto")]
+    let tcp_built = tcp_stack.and_then(|stack| {
+        wifi_config
+            .tcp_client
+            .as_ref()
+            .and_then(|tcp_client| build_tcp(stack, tcp_client))
+    });
+    #[cfg(not(feature = "wifi-auto"))]
+    let tcp_built: Option<(
+        TcpClient<'static>,
+        &'static EmbassyInterfaceStatus,
+        InterfaceId,
+    )> = None;
     let tcp_status = tcp_built.as_ref().map(|(_, status, _)| *status);
     let tcp_id = tcp_built.as_ref().map(|(_, _, id)| *id);
 
@@ -140,7 +152,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         storage: EngineStorageType::default(),
         request_endpoints: screen::node_pages::NodePageRoutes,
         interfaces: personal_rns::runtime::ManuallyAttached,
-        persistence: personal_rns::runtime::NoPersistence,
+        persistence: crate::persistence::s3(),
         on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
     };
 
@@ -194,13 +206,16 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let core1_stack = mk_static!(CpuStack<CORE1_STACK_BYTES>, CpuStack::new());
     esp_rtos::start_second_core(cpu_control, software_interrupt, core1_stack, move || {
         static NODE: StaticCell<S3Node> = StaticCell::new();
-        let node: &'static mut S3Node = PrnsNode::init_static(&NODE, recipe, manifold_wiring, host);
+        let (node, persistence) =
+            PrnsNode::init_static_with_persistence(&NODE, recipe, manifold_wiring, host);
+        static PERSISTENCE: StaticCell<crate::persistence::S3Persistence> = StaticCell::new();
+        let persistence = PERSISTENCE.init(persistence);
 
         static EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
         EXECUTOR
             .init(esp_rtos::embassy::Executor::new())
             .run(|spawner| {
-                spawner.spawn(manifold_task(node).expect("manifold task fits"));
+                spawner.spawn(manifold_task(node, persistence).expect("manifold task fits"));
             })
     });
 
@@ -305,6 +320,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         let mut oled_sleep_at_ms: Option<u64> = None;
         let mut render_tick = Ticker::every(RENDER_INTERVAL);
         let mut settle_after_draw = false;
+        let mut persistence_notice_visible = false;
         loop {
             if ticks_to_battery == 0 {
                 battery_state = battery_gauge.sample(&mut battery_source);
@@ -318,11 +334,16 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 lora_status,
                 espnow_card_status,
             );
+            #[cfg(feature = "wifi-auto")]
+            let tcp_card_config = wifi_config.tcp_client.as_ref();
+            #[cfg(not(feature = "wifi-auto"))]
+            let tcp_card_config: Option<&HopspotTcpClientConfig> = None;
             let mut cards = build_cards(
                 &snapshots,
                 usb_status.id(),
                 wifi_id,
                 tcp_id,
+                tcp_card_config,
                 lora_status.id(),
                 espnow_card_id,
             );
@@ -350,6 +371,15 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 details
             };
             ui_state.sync(content);
+            let state_not_saved = crate::persistence::state_not_saved();
+            if state_not_saved {
+                ui_state.show_notice(screen::UiNotice::StateNotSaved);
+                notice_until_ms = None;
+                persistence_notice_visible = true;
+            } else if persistence_notice_visible {
+                ui_state.clear_notice();
+                persistence_notice_visible = false;
+            }
             if notice_until_ms.is_some_and(|until| now_ms >= until) {
                 ui_state.clear_notice();
                 notice_until_ms = None;
@@ -709,8 +739,12 @@ pub(super) async fn run_core<B: Esp32S3Board>(
 }
 
 #[embassy_executor::task]
-async fn manifold_task(node: &'static mut S3Node) {
-    node.run_manifold_with_interface_store(&INTERFACE_STORE)
+async fn manifold_task(
+    node: &'static mut S3Node,
+    persistence: &'static mut crate::persistence::S3Persistence,
+) {
+    let _ = node.restore_embedded_persistence(persistence).await;
+    node.run_manifold_with_persistence_and_interface_store(&INTERFACE_STORE, persistence)
         .await
 }
 

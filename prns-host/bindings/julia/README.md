@@ -1,6 +1,6 @@
 # PersonalRns.jl
 
-`PersonalRns` is a thin Julia adapter over the stable native host capsule. Its concrete event, command, configuration, and outcome types are generated from the repository’s language-neutral contract. Julia multiple dispatch handles command cases directly, stream claims remain explicit values, and blocking waits remain interruptible without starving Julia task scheduling.
+`PersonalRns` is a thin Julia adapter over the stable native host capsule. Its concrete event, command, configuration, and outcome types are generated from the repository’s language-neutral contract. Julia multiple dispatch handles command cases directly, stream claims remain explicit values, and native readiness wakes Julia tasks through libuv without polling or occupying a worker thread.
 
 Registry and release-source packages resolve the matching native artifact
 automatically. Source-tree development can set `PRNS_HOST_LIBRARY` to an

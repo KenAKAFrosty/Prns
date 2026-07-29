@@ -138,8 +138,12 @@ static BLE_SHARED: BluetoothAutoShared<BLE_PEER_CAPACITY> =
 static BLE_OUTBOUND_WAKE: Signal<Mtx, ()> = Signal::new();
 
 #[embassy_executor::task]
-async fn manifold_task(node: &'static mut Node) {
-    node.run_manifold_with_interface_store(&INTERFACE_STORE)
+async fn manifold_task(
+    node: &'static mut Node,
+    persistence: &'static mut crate::persistence::C6Persistence,
+) {
+    let _ = node.restore_embedded_persistence(persistence).await;
+    node.run_manifold_with_persistence_and_interface_store(&INTERFACE_STORE, persistence)
         .await
 }
 

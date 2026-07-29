@@ -1,8 +1,6 @@
 import CPrnsHost
 import Foundation
 
-let nativeNeverTimeout = UInt32.max
-
 final class NativeArena {
     private struct Allocation {
         let pointer: UnsafeMutableRawPointer
@@ -265,17 +263,109 @@ func verifyNativeContract() throws {
     }
 }
 
-func asyncNative<Value: Sendable>(
-    interrupt: @escaping @Sendable () -> Void,
-    operation: @escaping @Sendable () throws -> Value
-) async throws -> Value {
-    try await withTaskCancellationHandler {
-        try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                continuation.resume(with: Result(catching: operation))
+private func signalNativeReadiness(
+    _ context: UnsafeMutableRawPointer?
+) {
+    guard let context else {
+        return
+    }
+    Unmanaged<NativeReadiness>
+        .fromOpaque(context)
+        .takeUnretainedValue()
+        .signal()
+}
+
+final class NativeReadiness: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+    private var pending = false
+    private var registration: OpaquePointer?
+
+    private init() {}
+
+    static func command(_ command: OpaquePointer) throws -> NativeReadiness {
+        let readiness = NativeReadiness()
+        var registration: OpaquePointer?
+        try checkedStatus(
+            prns_command_register_readiness(
+                command,
+                signalNativeReadiness,
+                Unmanaged.passUnretained(readiness).toOpaque(),
+                &registration
+            ),
+            operation: "registerCommandReadiness"
+        )
+        guard let registration else {
+            throw StatusFailure(
+                operation: "registerCommandReadiness",
+                status: .backendFailed
+            )
+        }
+        readiness.registration = registration
+        return readiness
+    }
+
+    static func eventStream(_ stream: OpaquePointer) throws -> NativeReadiness {
+        let readiness = NativeReadiness()
+        var registration: OpaquePointer?
+        try checkedStatus(
+            prns_event_stream_register_readiness(
+                stream,
+                signalNativeReadiness,
+                Unmanaged.passUnretained(readiness).toOpaque(),
+                &registration
+            ),
+            operation: "registerEventReadiness"
+        )
+        guard let registration else {
+            throw StatusFailure(
+                operation: "registerEventReadiness",
+                status: .backendFailed
+            )
+        }
+        readiness.registration = registration
+        return readiness
+    }
+
+    func signal() {
+        lock.lock()
+        let continuations = continuations
+        self.continuations.removeAll()
+        if continuations.isEmpty {
+            pending = true
+        }
+        lock.unlock()
+        for continuation in continuations {
+            continuation.resume()
+        }
+    }
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            if pending || registration == nil {
+                pending = false
+                lock.unlock()
+                continuation.resume()
+            } else {
+                continuations.append(continuation)
+                lock.unlock()
             }
         }
-    } onCancel: {
-        interrupt()
+    }
+
+    func close() {
+        lock.lock()
+        let registration = registration
+        self.registration = nil
+        let continuations = continuations
+        self.continuations.removeAll()
+        lock.unlock()
+        if let registration {
+            prns_readiness_registration_release(registration)
+        }
+        for continuation in continuations {
+            continuation.resume()
+        }
     }
 }

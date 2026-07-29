@@ -367,6 +367,9 @@ html, body {
     background: rgb(17 21 28 / 0.86);
     white-space: normal;
 }
+.flash-board-card {
+    min-width: 0;
+}
 .flash-board-card .platform-chip--muted {
     color: var(--color-paper);
 }

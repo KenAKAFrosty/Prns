@@ -12,7 +12,7 @@ use embedded_hal_bus::spi::ExclusiveDevice;
 use epd_waveshare::color::Color as EpdColor;
 
 use nrf_softdevice::ble::l2cap;
-use nrf_softdevice::Softdevice;
+use nrf_softdevice::{Flash, Softdevice};
 
 use personal_hopspot_core as hopspot;
 use personal_rns::bluetooth_auto::{BluetoothAuto, BluetoothAutoStatus};
@@ -50,8 +50,12 @@ const EINK_ANIMATION_MS: u64 = 0;
 const NOTICE_MS: u64 = 900;
 
 #[embassy_executor::task]
-async fn manifold_task(node: &'static mut Node) {
-    node.run_manifold_with_interface_store(&INTERFACE_STORE)
+async fn manifold_task(
+    node: &'static mut Node,
+    persistence: &'static mut super::persistence::TechoPersistence,
+) {
+    let _ = node.restore_embedded_persistence(persistence).await;
+    node.run_manifold_with_persistence_and_interface_store(&INTERFACE_STORE, persistence)
         .await
 }
 
@@ -111,6 +115,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
     let l2cap: &'static l2cap::L2cap<L2capPacket> = L2CAP.init(l2cap::L2cap::init(sd));
     let sd: &'static Softdevice = sd;
     spawner.spawn(softdevice_task(sd, vbus).expect("softdevice task fits"));
+    let flash = Flash::take(sd);
     if let Some(identity) = ble_identity {
         super::bluetooth_auto::set_columba_identity(server, identity);
     }
@@ -207,27 +212,26 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
     );
     let host = EmbassyHost::new(seeded_entropy as fn(&mut [u8]));
     static NODE: StaticCell<Node> = StaticCell::new();
-    let node: &'static mut Node = PrnsNode::init_static(
-        &NODE,
-        PrnsNodeRecipe {
-            transport_identity: Some(transport_secret),
-            pre_configured_destinations: hopspot::HopspotDestinationSet::new(
-                destination_secret,
-                ANNOUNCE_APP_DATA,
-                NODE_ANNOUNCE_APP_DATA,
-            )
-            .into_preconfigured_destinations(),
-            app_state: (),
-            storage: crate::storage::TechoStorage,
-            request_endpoints: hopspot::node_pages::NodePageRoutes,
-            interfaces: personal_rns::runtime::ManuallyAttached,
-            persistence: personal_rns::runtime::NoPersistence,
-            on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
-        },
-        manifold_wiring,
-        host,
-    );
-    spawner.spawn(manifold_task(node).expect("manifold task fits"));
+    let recipe = PrnsNodeRecipe {
+        transport_identity: Some(transport_secret),
+        pre_configured_destinations: hopspot::HopspotDestinationSet::new(
+            destination_secret,
+            ANNOUNCE_APP_DATA,
+            NODE_ANNOUNCE_APP_DATA,
+        )
+        .into_preconfigured_destinations(),
+        app_state: (),
+        storage: crate::storage::TechoStorage,
+        request_endpoints: hopspot::node_pages::NodePageRoutes,
+        interfaces: personal_rns::runtime::ManuallyAttached,
+        persistence: super::persistence::new(flash),
+        on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
+    };
+    let (node, persistence) =
+        PrnsNode::init_static_with_persistence(&NODE, recipe, manifold_wiring, host);
+    static PERSISTENCE: StaticCell<super::persistence::TechoPersistence> = StaticCell::new();
+    let persistence = PERSISTENCE.init(persistence);
+    spawner.spawn(manifold_task(node, persistence).expect("manifold task fits"));
     let lora_seam = lora_lane.into_seam(NOTIFY.sender(), seeded_entropy);
 
     let usb_seam = usb_lane.into_seam(NOTIFY.sender(), seeded_entropy);
@@ -293,6 +297,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
         let mut notice_until_ms =
             identity_startup_notice.map(|_| embassy_time::Instant::now().as_millis() + 5_000);
         let mut battery_gauge = hopspot::BatteryGauge::lipo();
+        let mut persistence_notice_visible = false;
         loop {
             let mut adc = [0i16; 1];
             saadc.sample(&mut adc).await;
@@ -309,6 +314,15 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                 local_docs: None,
             };
             ui_state.sync(content);
+            let state_not_saved = super::persistence::state_not_saved();
+            if state_not_saved {
+                ui_state.show_notice(hopspot::UiNotice::StateNotSaved);
+                notice_until_ms = None;
+                persistence_notice_visible = true;
+            } else if persistence_notice_visible {
+                ui_state.clear_notice();
+                persistence_notice_visible = false;
+            }
             if notice_until_ms.is_some_and(|until| now_ms >= until) {
                 ui_state.clear_notice();
                 notice_until_ms = None;

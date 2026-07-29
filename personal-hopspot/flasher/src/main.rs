@@ -136,6 +136,7 @@ fn run(cli: Cli, reporter: Reporter) -> Result<(), AppError> {
             wifi_ssid,
             wifi_password_stdin,
             wifi_from_env,
+            tcp_client,
             offline,
             yes,
             monitor,
@@ -152,11 +153,13 @@ fn run(cli: Cli, reporter: Reporter) -> Result<(), AppError> {
             }
             let provisioning = wifi::resolve(
                 board.supports_provisioning(),
+                board.supports_tcp_client_provisioning(),
                 WifiOptions {
                     mode: wifi,
                     ssid: wifi_ssid,
                     password_stdin: wifi_password_stdin,
                     from_env: wifi_from_env,
+                    tcp_client,
                     interactive,
                 },
             )?;
@@ -302,11 +305,13 @@ fn guided(catalog: &BoardCatalog, reporter: Reporter) -> Result<(), AppError> {
     };
     let provisioning = wifi::resolve(
         board.supports_provisioning(),
+        board.supports_tcp_client_provisioning(),
         WifiOptions {
             mode: wifi_mode,
             ssid: None,
             password_stdin: false,
             from_env: false,
+            tcp_client: None,
             interactive: true,
         },
     )?;

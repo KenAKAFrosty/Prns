@@ -254,8 +254,10 @@ typedef uint32_t PrnsEventField;
 typedef struct PrnsHost PrnsHost;
 typedef struct PrnsCommand PrnsCommand;
 typedef struct PrnsEventStream PrnsEventStream;
+typedef struct PrnsReadinessRegistration PrnsReadinessRegistration;
 typedef struct PrnsEvent PrnsEvent;
 typedef struct PrnsResourceStream PrnsResourceStream;
+typedef void (*PrnsReadinessCallback)(void *context);
 
 typedef struct PrnsByteView {
     const uint8_t *data;
@@ -373,10 +375,13 @@ PRNS_HOST_API PrnsStatus prns_host_allow_requester(PrnsHost *host, PrnsByteView 
 PRNS_HOST_API PrnsStatus prns_host_stop(PrnsHost *host);
 /* Result views remain valid until prns_command_release. */
 PRNS_HOST_API PrnsStatus prns_command_wait(PrnsCommand *command, uint32_t timeout_millis, PrnsCommandResult *out_result);
+PRNS_HOST_API PrnsStatus prns_command_register_readiness(PrnsCommand *command, PrnsReadinessCallback callback, void *context, PrnsReadinessRegistration **out_registration);
 PRNS_HOST_API void prns_command_interrupt_wait(PrnsCommand *command);
 PRNS_HOST_API void prns_command_release(PrnsCommand *command);
 PRNS_HOST_API PrnsStatus prns_host_claim_application_events(PrnsHost *host, PrnsEventStream **out_stream);
 PRNS_HOST_API PrnsStatus prns_host_claim_diagnostics(PrnsHost *host, PrnsEventStream **out_stream);
+PRNS_HOST_API PrnsStatus prns_event_stream_register_readiness(PrnsEventStream *stream, PrnsReadinessCallback callback, void *context, PrnsReadinessRegistration **out_registration);
+PRNS_HOST_API void prns_readiness_registration_release(PrnsReadinessRegistration *registration);
 PRNS_HOST_API void prns_event_stream_interrupt_wait(PrnsEventStream *stream);
 PRNS_HOST_API void prns_event_stream_release(PrnsEventStream *stream);
 PRNS_HOST_API PrnsStatus prns_event_stream_next(PrnsEventStream *stream, uint32_t timeout_millis, PrnsEvent **out_event);

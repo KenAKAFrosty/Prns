@@ -9,9 +9,16 @@ public enum CommandSettlement: Sendable {
 public final class Command: @unchecked Sendable {
     private let stateLock = NSLock()
     private let waitLock = NSLock()
+    private let readiness: NativeReadiness
     private var pointer: OpaquePointer?
 
-    init(pointer: OpaquePointer) {
+    init(pointer: OpaquePointer) throws {
+        do {
+            readiness = try NativeReadiness.command(pointer)
+        } catch {
+            prns_command_release(pointer)
+            throw error
+        }
         self.pointer = pointer
     }
 
@@ -210,7 +217,7 @@ public final class Command: @unchecked Sendable {
         guard let output else {
             throw StatusFailure(operation: "submitCommand", status: .backendFailed)
         }
-        return Command(pointer: output)
+        return try Command(pointer: output)
     }
 
     private func snapshot() throws -> OpaquePointer {
@@ -231,11 +238,20 @@ public final class Command: @unchecked Sendable {
     }
 
     public func value() async throws -> CommandSettlement {
-        return try await asyncNative {
+        return try await withTaskCancellationHandler {
+            while true {
+                if let settlement = try poll() {
+                    return settlement
+                }
+                await readiness.wait()
+            }
+        } onCancel: {
             self.interruptWait()
-        } operation: {
-            self.waitLock.lock()
-            defer { self.waitLock.unlock() }
+        }
+    }
+
+    private func poll() throws -> CommandSettlement? {
+        try waitLock.withLock {
             let pointer = try self.snapshot()
             var result = PrnsCommandResult(
                 struct_size: MemoryLayout<PrnsCommandResult>.size,
@@ -249,10 +265,13 @@ public final class Command: @unchecked Sendable {
             let status = Status(
                 rawValue: prns_command_wait(
                     pointer,
-                    nativeNeverTimeout,
+                    0,
                     &result
                 )
             )
+            if status == .timedOut {
+                return nil
+            }
             if status == .interrupted {
                 throw CancellationError()
             }
@@ -380,9 +399,10 @@ public final class Command: @unchecked Sendable {
         guard let pointer else {
             return
         }
-        waitLock.lock()
-        prns_command_release(pointer)
-        waitLock.unlock()
+        waitLock.withLock {
+            readiness.close()
+            prns_command_release(pointer)
+        }
     }
 }
 

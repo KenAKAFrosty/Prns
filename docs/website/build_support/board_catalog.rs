@@ -27,8 +27,9 @@ pub(crate) fn generate() {
                     .as_deref()
                     .expect("validated ESP catalog target has a chip family");
                 format!(
-                    "BoardFlashTarget::EspSerial {{ expected_chip: {expected_chip:?}, supports_provisioning: {} }}",
-                    board.supports_provisioning()
+                    "BoardFlashTarget::EspSerial {{ expected_chip: {expected_chip:?}, supports_provisioning: {}, supports_tcp_client_provisioning: {} }}",
+                    board.supports_provisioning(),
+                    board.supports_tcp_client_provisioning()
                 )
             }
             (Transport::Uf2MassStorage, BoardBuild::Uf2(build)) => format!(

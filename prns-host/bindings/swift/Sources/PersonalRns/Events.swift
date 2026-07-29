@@ -1,12 +1,25 @@
 import CPrnsHost
 import Foundation
 
+private enum NativeEventPoll<Element> {
+    case value(Element)
+    case waiting
+    case stopped
+}
+
 final class NativeEventStream: @unchecked Sendable {
     private let stateLock = NSLock()
     private let waitLock = NSLock()
+    private let readiness: NativeReadiness
     private var pointer: OpaquePointer?
 
-    init(pointer: OpaquePointer) {
+    init(pointer: OpaquePointer) throws {
+        do {
+            readiness = try NativeReadiness.eventStream(pointer)
+        } catch {
+            prns_event_stream_release(pointer)
+            throw error
+        }
         self.pointer = pointer
     }
 
@@ -34,22 +47,40 @@ final class NativeEventStream: @unchecked Sendable {
     func next<Element: Sendable>(
         decode: @escaping @Sendable (OpaquePointer) throws -> Element
     ) async throws -> Element? {
-        return try await asyncNative {
+        return try await withTaskCancellationHandler {
+            while true {
+                switch try poll(decode: decode) {
+                case .value(let value):
+                    return value
+                case .waiting:
+                    await readiness.wait()
+                case .stopped:
+                    return nil
+                }
+            }
+        } onCancel: {
             self.interruptWait()
-        } operation: {
-            self.waitLock.lock()
-            defer { self.waitLock.unlock() }
+        }
+    }
+
+    private func poll<Element: Sendable>(
+        decode: @escaping @Sendable (OpaquePointer) throws -> Element
+    ) throws -> NativeEventPoll<Element> {
+        try waitLock.withLock {
             let pointer = try self.snapshot()
             var event: OpaquePointer?
             let status = Status(
                 rawValue: prns_event_stream_next(
                     pointer,
-                    nativeNeverTimeout,
+                    0,
                     &event
                 )
             )
             if status == .stopped {
-                return nil
+                return .stopped
+            }
+            if status == .wouldBlock {
+                return .waiting
             }
             if status == .interrupted {
                 throw CancellationError()
@@ -61,7 +92,7 @@ final class NativeEventStream: @unchecked Sendable {
                 )
             }
             defer { prns_event_release(event) }
-            return try decode(event)
+            return .value(try decode(event))
         }
     }
 
@@ -76,9 +107,10 @@ final class NativeEventStream: @unchecked Sendable {
         guard let pointer else {
             return
         }
-        waitLock.lock()
-        prns_event_stream_release(pointer)
-        waitLock.unlock()
+        waitLock.withLock {
+            readiness.close()
+            prns_event_stream_release(pointer)
+        }
     }
 }
 

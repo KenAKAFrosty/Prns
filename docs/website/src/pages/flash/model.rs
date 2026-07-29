@@ -68,6 +68,8 @@ pub(super) struct FlasherState {
     pub(super) release: Signal<Option<ReleaseDetails>>,
     pub(super) ssid: Signal<String>,
     pub(super) password: Signal<String>,
+    pub(super) tcp_enabled: Signal<bool>,
+    pub(super) tcp_target: Signal<String>,
 }
 
 impl FlasherState {
@@ -226,10 +228,22 @@ mod tests {
             .flash_target
             .expect("flash target")
             .supports_provisioning());
+        assert!(heltec
+            .flash_target
+            .expect("flash target")
+            .supports_tcp_client_provisioning());
+        assert!(t_beam
+            .flash_target
+            .expect("flash target")
+            .supports_tcp_client_provisioning());
         assert!(!xiao
             .flash_target
             .expect("flash target")
             .supports_provisioning());
+        assert!(!xiao
+            .flash_target
+            .expect("flash target")
+            .supports_tcp_client_provisioning());
         assert!(matches!(
             t_echo.flash_target.expect("flash target"),
             BoardFlashTarget::Uf2MassStorage { .. }

@@ -20,6 +20,7 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// A connection idle past [`SOCKET_TIMEOUT`] is dropped for reconnect, while [`KEEP_ALIVE`] prevents a quiet live link from reaching that timeout.
 pub const SOCKET_TIMEOUT: Duration = Duration::from_secs(24);
 pub const KEEP_ALIVE: Duration = Duration::from_secs(5);
+pub const TCP_DNS_HOSTNAME_MAX_BYTES: usize = 253;
 
 pub struct TcpSocketBuffers<'a> {
     pub rx: &'a mut [u8],
@@ -28,7 +29,7 @@ pub struct TcpSocketBuffers<'a> {
 
 pub struct TcpClientInput<'a> {
     pub stack: Stack<'a>,
-    pub target: IpEndpoint,
+    pub target: TcpClientTarget,
     pub channel_tag: &'a [u8],
     pub bitrate: BitrateBps,
     pub reconnect_policy: ReconnectPolicy,
@@ -36,10 +37,41 @@ pub struct TcpClientInput<'a> {
     pub status: &'a EmbassyInterfaceStatus,
 }
 
+pub struct TcpClientTarget {
+    endpoint: Option<IpEndpoint>,
+    #[cfg(feature = "tcp-dns")]
+    hostname: heapless::String<TCP_DNS_HOSTNAME_MAX_BYTES>,
+    #[cfg(feature = "tcp-dns")]
+    port: u16,
+}
+
+impl TcpClientTarget {
+    #[must_use]
+    pub fn endpoint(endpoint: IpEndpoint) -> Self {
+        Self {
+            endpoint: Some(endpoint),
+            #[cfg(feature = "tcp-dns")]
+            hostname: heapless::String::new(),
+            #[cfg(feature = "tcp-dns")]
+            port: endpoint.port,
+        }
+    }
+
+    #[cfg(feature = "tcp-dns")]
+    #[must_use]
+    pub fn dns(hostname: heapless::String<TCP_DNS_HOSTNAME_MAX_BYTES>, port: u16) -> Self {
+        Self {
+            endpoint: None,
+            hostname,
+            port,
+        }
+    }
+}
+
 pub struct TcpClient<'a> {
     id: InterfaceId,
     stack: Stack<'a>,
-    target: IpEndpoint,
+    target: TcpClientTarget,
     tag: &'a [u8],
     bitrate: BitrateBps,
     reconnect_policy: ReconnectPolicy,
@@ -122,11 +154,28 @@ impl Interface for TcpClient<'_> {
                 status.wait_until_enabled().await;
                 continue;
             }
+            let resolved_target = select(
+                with_timeout(CONNECT_TIMEOUT, resolve_target(stack, &target)),
+                status.wait_until_disabled(),
+            )
+            .await;
+            let Either::First(Ok(Some(resolved_target))) = resolved_target else {
+                if status.is_enabled() {
+                    status.set_connection(ConnectionState::Disconnected);
+                    let reconnect_delay = reconnect.next_delay(|bytes| seam.fill_entropy(bytes));
+                    let _ = select(
+                        Timer::after(Duration::from_millis(reconnect_delay.as_millis() as u64)),
+                        status.wait_until_disabled(),
+                    )
+                    .await;
+                }
+                continue;
+            };
             let mut socket = TcpSocket::new(stack, &mut *rx_buffer, &mut *tx_buffer);
             socket.set_timeout(Some(SOCKET_TIMEOUT));
             socket.set_keep_alive(Some(KEEP_ALIVE));
             let connected = select(
-                with_timeout(CONNECT_TIMEOUT, socket.connect(target)),
+                with_timeout(CONNECT_TIMEOUT, socket.connect(resolved_target)),
                 status.wait_until_disabled(),
             )
             .await;
@@ -163,6 +212,31 @@ impl Interface for TcpClient<'_> {
             }
         }
     }
+}
+
+async fn resolve_target(_stack: Stack<'_>, target: &TcpClientTarget) -> Option<IpEndpoint> {
+    if let Some(endpoint) = target.endpoint {
+        return Some(endpoint);
+    }
+    #[cfg(feature = "tcp-dns")]
+    {
+        use embassy_net::dns::DnsQueryType;
+        use embassy_net::IpAddress;
+
+        return _stack
+            .dns_query(target.hostname.as_str(), DnsQueryType::A)
+            .await
+            .ok()?
+            .into_iter()
+            .find_map(|address| match address {
+                IpAddress::Ipv4(address) => {
+                    Some(IpEndpoint::new(IpAddress::Ipv4(address), target.port))
+                }
+                IpAddress::Ipv6(_) => None,
+            });
+    }
+    #[cfg(not(feature = "tcp-dns"))]
+    None
 }
 
 #[expect(

@@ -84,6 +84,18 @@ await using (host)
         {
             throw new InvalidOperationException("The wrong lane rejected a second claim.");
         }
+        using var cancellation = new CancellationTokenSource();
+        await using var iterator = events.GetAsyncEnumerator(cancellation.Token);
+        var waiting = iterator.MoveNextAsync().AsTask();
+        cancellation.Cancel();
+        try
+        {
+            await waiting;
+            throw new InvalidOperationException("A cancelled event wait completed successfully.");
+        }
+        catch (OperationCanceledException)
+        {
+        }
     }
 
     var reclaim = host.ClaimEvents();
@@ -92,4 +104,13 @@ await using (host)
         throw new InvalidOperationException($"{unreleased.Lane} was not released for reclaim.");
     }
     await ((StreamClaim<ApplicationEvent>.Claimed)reclaim).Stream.DisposeAsync();
+
+    var settled = await host.CloseLinkAsync(new LinkId(new byte[HostContract.LinkIdLength]));
+    if (
+        settled
+        is not CommandSettlement.Succeeded { Outcome: CommandOutcome.LinkCloseQueued }
+    )
+    {
+        throw new InvalidOperationException("An asynchronous command did not settle.");
+    }
 }

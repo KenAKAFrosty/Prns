@@ -2,6 +2,9 @@ use embedded_storage::nor_flash::{
     check_erase, check_read, check_write, ErrorType, NorFlash, NorFlashError, NorFlashErrorKind,
     ReadNorFlash,
 };
+use embedded_storage_async::nor_flash::{
+    NorFlash as AsyncNorFlash, ReadNorFlash as AsyncReadNorFlash,
+};
 use esp_hal::rom::spiflash::{
     esp_rom_spiflash_erase_sector, esp_rom_spiflash_read, esp_rom_spiflash_write,
     ESP_ROM_SPIFLASH_RESULT_OK,
@@ -87,6 +90,31 @@ impl<const CAPACITY: usize> NorFlash for EspRomFlash<CAPACITY> {
             at += chunk.len() as u32;
         }
         Ok(())
+    }
+}
+
+impl<const CAPACITY: usize> AsyncReadNorFlash for EspRomFlash<CAPACITY> {
+    const READ_SIZE: usize = WORD_LEN;
+
+    async fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
+        ReadNorFlash::read(self, offset, bytes)
+    }
+
+    fn capacity(&self) -> usize {
+        ReadNorFlash::capacity(self)
+    }
+}
+
+impl<const CAPACITY: usize> AsyncNorFlash for EspRomFlash<CAPACITY> {
+    const WRITE_SIZE: usize = WORD_LEN;
+    const ERASE_SIZE: usize = SECTOR_LEN;
+
+    async fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
+        NorFlash::erase(self, from, to)
+    }
+
+    async fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
+        NorFlash::write(self, offset, bytes)
     }
 }
 

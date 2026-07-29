@@ -26,6 +26,10 @@ CLI_TARGETS = {
     "x86_64-pc-windows-msvc": ".zip",
 }
 SHIPPING_BOARDS = {"heltec-v4", "t-beam-supreme", "xiao-esp32-c6", "t-echo"}
+SOURCE_APPLICATION_CAPACITIES = {
+    "heltec-v4": 0x670000,
+    "t-beam-supreme": 0x670000,
+}
 REQUIRED_RELEASE_FILES = (
     "VERSION",
     "flash-manifest.json",
@@ -357,7 +361,8 @@ def verify(arguments: argparse.Namespace) -> dict:
             if (
                 application is None
                 or not isinstance(application.get("size"), int)
-                or application["size"] + 1024 * 1024 > 0x7F0000
+                or application["size"] + 1024 * 1024
+                > SOURCE_APPLICATION_CAPACITIES[board_slug]
             ):
                 raise ValueError(
                     f"target {board_slug} does not retain 1 MiB application headroom"

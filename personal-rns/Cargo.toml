@@ -75,6 +75,7 @@ keyring-libdbus = ["prns-core/keyring-libdbus"]
 flash = ["prns-core/flash"]
 
 tcp = ["prns-interfaces-tokio?/tcp", "prns-interfaces-embassy?/tcp"]
+tcp-dns = ["tcp", "prns-interfaces-embassy?/tcp-dns"]
 wifi-auto = ["prns-interfaces-tokio?/wifi-auto", "prns-interfaces-embassy?/wifi-auto"]
 wifi-direct = ["prns-interfaces-tokio?/wifi-direct"]
 wifi-aware = ["prns-interfaces-tokio?/wifi-aware"]

@@ -58,15 +58,19 @@ pub use prns_runtime_tokio::runtime::ProcessCommands;
 #[cfg(all(feature = "embassy-host", not(feature = "tokio-host")))]
 pub use prns_runtime_embassy::runtime::{
     minimum_interface_store_capacity, minimum_manifold_notification_capacity, CompletionPool,
-    EmbassyFleet, EmbassyInterfaceStore, Fleet, InboundDeliveryError, InterfaceLane,
-    LaneClaimError, ManifoldLaneSet, ManifoldWiring, OutboundFrame, PrnsNode, PrnsNodeHandle,
-    RequestRoutingCapacity, StaticManifoldLane, SupervisorLane,
+    EmbassyFleet, EmbassyInterfaceStore, EmbeddedFlashPersistence, EmbeddedPersistenceDiagnostic,
+    EmbeddedPersistenceFailure, EmbeddedPersistencePolicy, EmbeddedPersistenceRestoreReport, Fleet,
+    InboundDeliveryError, InterfaceLane, LaneClaimError, ManifoldLaneSet, ManifoldWiring,
+    OutboundFrame, PrnsNode, PrnsNodeHandle, RequestRoutingCapacity, StaticManifoldLane,
+    SupervisorLane,
 };
 
 #[cfg(all(feature = "embassy-host", feature = "tokio-host"))]
 pub use prns_runtime_embassy::runtime::{
     minimum_interface_store_capacity, minimum_manifold_notification_capacity, CompletionPool,
-    EmbassyFleet, EmbassyInterfaceStore, InboundDeliveryError, InterfaceLane, LaneClaimError,
-    ManifoldLaneSet, ManifoldWiring, OutboundFrame, PrnsNode as EmbassyPrnsNode,
-    PrnsNodeHandle as EmbassyPrnsNodeHandle, StaticManifoldLane, SupervisorLane,
+    EmbassyFleet, EmbassyInterfaceStore, EmbeddedFlashPersistence, EmbeddedPersistenceDiagnostic,
+    EmbeddedPersistenceFailure, EmbeddedPersistencePolicy, EmbeddedPersistenceRestoreReport,
+    InboundDeliveryError, InterfaceLane, LaneClaimError, ManifoldLaneSet, ManifoldWiring,
+    OutboundFrame, PrnsNode as EmbassyPrnsNode, PrnsNodeHandle as EmbassyPrnsNodeHandle,
+    StaticManifoldLane, SupervisorLane,
 };

@@ -69,6 +69,15 @@ impl<const MAX_RATCHETED_DESTINATIONS: usize, const RETAINED_RATCHETS_PER_DESTIN
         let _ = row.insert(0, secret);
     }
 
+    fn clear_secrets(&mut self, index: usize) {
+        if let Some(row) = self.secrets.get_mut(index) {
+            row.clear();
+        }
+        if let Some(slot) = self.last_rotated.get_mut(index) {
+            *slot = LastRotated::Never;
+        }
+    }
+
     fn push(&mut self, destination: DestinationHash) -> Result<(), TrackRatchetsError> {
         self.destinations
             .push(destination)

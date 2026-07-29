@@ -15,6 +15,7 @@ pub use super::grant_lane::{embassy_grant_lane, EmbassyGrantConsumer, EmbassyGra
 pub use egress::{EgressOutcome, EmbassyEgress, ManifoldEgress, PooledEgress};
 pub use fixed_topology::{run, run_with_deciders, run_with_store, ManifoldWiring};
 pub use host::EmbassyHost;
+pub(crate) use host::ResumableHost;
 pub use interface_seam::EmbassyInterfaceSeam;
 pub use interface_status::EmbassyInterfaceStatus;
 pub(crate) use pooled_topology::run_pooled;

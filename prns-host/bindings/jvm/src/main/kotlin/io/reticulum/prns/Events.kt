@@ -4,18 +4,16 @@ import com.sun.jna.Pointer
 import com.sun.jna.ptr.ByteByReference
 import com.sun.jna.ptr.LongByReference
 import com.sun.jna.ptr.PointerByReference
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withContext
 import java.math.BigInteger
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
 
 class EventFlow<Event : Any> internal constructor(
     pointer: Pointer,
@@ -24,7 +22,17 @@ class EventFlow<Event : Any> internal constructor(
     private val stateLock = ReentrantLock()
     private val waitLock = ReentrantLock()
     private val consumerMode = AtomicInteger(UNCLAIMED)
+    private val readiness: NativeReadiness
     private var pointer: Pointer? = pointer
+
+    init {
+        try {
+            readiness = NativeReadiness.eventStream(pointer)
+        } catch (failure: Throwable) {
+            NativeApi.library.prns_event_stream_release(pointer)
+            throw failure
+        }
+    }
 
     override suspend fun collect(collector: FlowCollector<Event>) {
         if (!consumerMode.compareAndSet(UNCLAIMED, FLOW_CONSUMER)) {
@@ -91,45 +99,41 @@ class EventFlow<Event : Any> internal constructor(
         }
     }
 
-    private suspend fun nextEvent(): Pointer? = withContext(Dispatchers.IO) {
-        waitLock.lock()
+    private suspend fun nextEvent(): Pointer? {
         try {
-            val stream = stateLock.withLock {
-                pointer ?: return@withContext null
-            }
-            suspendCancellableCoroutine { continuation ->
-                continuation.invokeOnCancellation {
-                    NativeApi.library.prns_event_stream_interrupt_wait(stream)
-                }
-                try {
-                    val output = PointerByReference()
-                    val status = Status.fromRawValue(
-                        NativeApi.library.prns_event_stream_next(
-                            stream,
-                            -1,
-                            output,
-                        ),
-                    ) ?: Status.BACKEND_FAILED
-                    val event = output.value
-                    when {
-                        !continuation.isActive -> {
-                            event?.let(NativeApi.library::prns_event_release)
-                        }
-                        status == Status.OK -> continuation.resume(requireNotNull(event))
-                        status == Status.STOPPED -> continuation.resume(null)
-                        else -> continuation.resumeWithException(
-                            StatusException("nextEvent", status),
-                        )
-                    }
-                } catch (failure: Throwable) {
-                    if (continuation.isActive) {
-                        continuation.resumeWithException(failure)
+            while (true) {
+                currentCoroutineContext().ensureActive()
+                val (status, event) = pollEvent()
+                when (status) {
+                    Status.OK -> return requireNotNull(event)
+                    Status.WOULD_BLOCK -> readiness.await()
+                    Status.STOPPED -> return null
+                    else -> {
+                        event?.let(NativeApi.library::prns_event_release)
+                        throw StatusException("nextEvent", status)
                     }
                 }
             }
-        } finally {
-            waitLock.unlock()
+        } catch (failure: CancellationException) {
+            stateLock.withLock {
+                pointer?.let(NativeApi.library::prns_event_stream_interrupt_wait)
+            }
+            throw failure
         }
+    }
+
+    private fun pollEvent(): Pair<Status, Pointer?> = waitLock.withLock {
+        val stream = stateLock.withLock { pointer }
+            ?: return@withLock Status.STOPPED to null
+        val output = PointerByReference()
+        val status = Status.fromRawValue(
+            NativeApi.library.prns_event_stream_next(
+                stream,
+                0,
+                output,
+            ),
+        ) ?: Status.BACKEND_FAILED
+        status to output.value
     }
 
     override fun close() {
@@ -141,6 +145,7 @@ class EventFlow<Event : Any> internal constructor(
         }
         if (stream != null) {
             waitLock.withLock {
+                readiness.close()
                 NativeApi.library.prns_event_stream_release(stream)
             }
         }

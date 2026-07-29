@@ -669,6 +669,9 @@ function clearProvisioning(request) {
   if (request?.provisioning) {
     request.provisioning.password = "";
     request.provisioning.ssid = "";
+    if (request.provisioning.tcpClient) {
+      request.provisioning.tcpClient.host = "";
+    }
   }
 }
 
