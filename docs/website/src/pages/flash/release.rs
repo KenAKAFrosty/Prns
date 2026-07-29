@@ -1,8 +1,8 @@
 use dioxus::prelude::*;
 use prns_flash_manifest::{
     board_catalog, provisioning_image, sha256_hex, verify_minisign, ProvisioningAction,
-    ReleaseChannel, ReleaseTarget, ValidatedChannelDescriptor, ValidatedFlashManifest,
-    WifiCredentials,
+    ReleaseChannel, ReleaseTarget, TcpClientEndpoint, TcpClientHost, ValidatedChannelDescriptor,
+    ValidatedFlashManifest, WifiCredentials,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -107,7 +107,7 @@ impl fmt::Display for ReleaseAcquisitionError {
                 "Do not connect a device. Use the signed CLI release path until website signing custody is restored."
             }
             ReleaseRecovery::ReviewSelection => {
-                "Review the selected board and Wi-Fi values, then prepare and verify the release again. No device access has started."
+                "Review the selected board, Wi-Fi values, and optional TCP target, then prepare and verify the release again. No device access has started."
             }
         })
     }
@@ -123,6 +123,7 @@ pub(super) async fn prepare_release(
     selected_action: WifiAction,
     ssid: String,
     password: String,
+    tcp_target: Option<String>,
     mut state: FlasherState,
     generation: u64,
 ) {
@@ -142,6 +143,7 @@ pub(super) async fn prepare_release(
         selected_action,
         ssid,
         password,
+        tcp_target,
         state.flash_target,
     )
     .await;
@@ -167,6 +169,8 @@ pub(super) async fn prepare_release(
             state.prepared.set(true);
             state.ssid.set(String::new());
             state.password.set(String::new());
+            state.tcp_enabled.set(false);
+            state.tcp_target.set(String::new());
             bridge::focus_status();
         }
         Err(message) => {
@@ -175,6 +179,8 @@ pub(super) async fn prepare_release(
             state.prepared.set(false);
             state.ssid.set(String::new());
             state.password.set(String::new());
+            state.tcp_enabled.set(false);
+            state.tcp_target.set(String::new());
             bridge::focus_status();
         }
     }
@@ -185,6 +191,7 @@ async fn acquire_release(
     selected_action: WifiAction,
     ssid: String,
     password: String,
+    tcp_target: Option<String>,
     flash_target: BoardFlashTarget,
 ) -> Result<AcquiredRelease, ReleaseAcquisitionError> {
     if !trust::key_is_configured() {
@@ -260,7 +267,7 @@ async fn acquire_release(
                 "The signed release does not contain this board.",
             )
         })?;
-    let provisioning = bridge_provisioning(target, selected_action, ssid, password)
+    let provisioning = bridge_provisioning(target, selected_action, ssid, password, tcp_target)
         .map_err(ReleaseAcquisitionError::review_selection)?;
     let request = BridgeRequest::from_target(
         target,
@@ -345,6 +352,7 @@ fn bridge_provisioning(
     action: WifiAction,
     ssid: String,
     password: String,
+    tcp_target: Option<String>,
 ) -> Result<Option<BridgeProvisioning>, String> {
     let Some(slot) = target.provisioning() else {
         return match action {
@@ -354,13 +362,34 @@ fn bridge_provisioning(
             }
         };
     };
-    let provisioning_action = match action {
-        WifiAction::Preserve => ProvisioningAction::Preserve,
-        WifiAction::Clear => ProvisioningAction::Clear,
-        WifiAction::Configure => ProvisioningAction::Configure(WifiCredentials {
+    let tcp_client = tcp_target
+        .as_deref()
+        .map(TcpClientEndpoint::parse)
+        .transpose()
+        .map_err(|error| error.to_string())?;
+    if tcp_client.is_some() && action != WifiAction::Configure {
+        return Err("TCP client configuration requires configured Wi-Fi.".to_string());
+    }
+    if tcp_client.is_some() && slot.tcp_client().is_none() {
+        return Err("This signed target does not support TCP client provisioning.".to_string());
+    }
+    let provisioning_action = match (action, tcp_client.as_ref()) {
+        (WifiAction::Preserve, None) => ProvisioningAction::Preserve,
+        (WifiAction::Clear, None) => ProvisioningAction::Clear,
+        (WifiAction::Preserve | WifiAction::Clear, Some(_)) => {
+            return Err("TCP client configuration requires configured Wi-Fi.".to_string())
+        }
+        (WifiAction::Configure, None) => ProvisioningAction::Configure(WifiCredentials {
             ssid: ssid.clone(),
             password: password.clone(),
         }),
+        (WifiAction::Configure, Some(tcp_client)) => ProvisioningAction::ConfigureWithTcp {
+            wifi: WifiCredentials {
+                ssid: ssid.clone(),
+                password: password.clone(),
+            },
+            tcp_client: tcp_client.clone(),
+        },
     };
     provisioning_image(&provisioning_action).map_err(|error| error.to_string())?;
     Ok(Some(BridgeProvisioning {
@@ -377,6 +406,18 @@ fn bridge_provisioning(
         } else {
             String::new()
         },
+        tcp_client: tcp_client.map(|endpoint| match endpoint.host {
+            TcpClientHost::Ipv4(address) => bridge::BridgeTcpClient {
+                host_kind: "ipv4",
+                host: address.to_string(),
+                port: endpoint.port,
+            },
+            TcpClientHost::Hostname(hostname) => bridge::BridgeTcpClient {
+                host_kind: "hostname",
+                host: hostname,
+                port: endpoint.port,
+            },
+        }),
     }))
 }
 
@@ -428,20 +469,30 @@ mod tests {
             .find(|target| target.board_id().as_str() == "xiao-esp32-c6")
             .ok_or("missing non-provisionable target")?;
 
-        assert!(
-            bridge_provisioning(target, WifiAction::Preserve, String::new(), String::new())?
-                .is_none()
-        );
+        assert!(bridge_provisioning(
+            target,
+            WifiAction::Preserve,
+            String::new(),
+            String::new(),
+            None,
+        )?
+        .is_none());
         assert!(bridge_provisioning(
             target,
             WifiAction::Configure,
             "network".to_string(),
-            "password".to_string()
+            "password".to_string(),
+            None,
         )
         .is_err());
-        assert!(
-            bridge_provisioning(target, WifiAction::Clear, String::new(), String::new()).is_err()
-        );
+        assert!(bridge_provisioning(
+            target,
+            WifiAction::Clear,
+            String::new(),
+            String::new(),
+            None,
+        )
+        .is_err());
         Ok(())
     }
 
@@ -457,7 +508,7 @@ mod tests {
         let selection = ReleaseAcquisitionError::review_selection("Wi-Fi value is too long");
         let selection_message = selection.to_string();
         assert!(selection_message.contains("Wi-Fi value is too long"));
-        assert!(selection_message.contains("Review the selected board and Wi-Fi values"));
+        assert!(selection_message.contains("optional TCP target"));
         assert!(selection_message.contains("No device access has started"));
     }
 

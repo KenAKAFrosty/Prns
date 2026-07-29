@@ -55,6 +55,13 @@ impl BoardCatalogEntry {
     pub fn supports_provisioning(&self) -> bool {
         self.provisioning.is_some()
     }
+
+    pub fn supports_tcp_client_provisioning(&self) -> bool {
+        self.provisioning
+            .as_ref()
+            .and_then(|slot| slot.tcp_client.as_ref())
+            .is_some()
+    }
 }
 
 /// Public transport used by a board.
@@ -83,6 +90,17 @@ pub struct ProvisioningDescriptor {
     pub ssid_max_bytes: usize,
     /// Maximum encoded password bytes.
     pub password_max_bytes: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tcp_client: Option<TcpClientProvisioningDescriptor>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TcpClientProvisioningDescriptor {
+    pub target_format: String,
+    pub max_clients: u8,
+    pub default_port: u16,
+    pub hostname_max_bytes: usize,
 }
 
 /// Developer build recipe.
@@ -317,6 +335,30 @@ fn validate_provisioning(board: &BoardCatalogEntry) -> Result<(), CatalogError> 
             "provisioning descriptor disagrees with the wire contract",
         ));
     }
+    if let Some(tcp_client) = &slot.tcp_client {
+        if tcp_client.target_format != "ipv4-or-dns"
+            || tcp_client.max_clients != 1
+            || tcp_client.default_port == 0
+            || tcp_client.hostname_max_bytes != crate::CONFIG_TCP_CLIENT_HOSTNAME_MAX_BYTES
+        {
+            return Err(invalid(
+                board,
+                "TCP client provisioning must allow one IPv4 or DNS target",
+            ));
+        }
+        let BoardBuild::Esp(build) = &board.build else {
+            return Err(invalid(
+                board,
+                "TCP client provisioning requires an ESP build",
+            ));
+        };
+        if build.chip != "esp32s3" || !board.interfaces.iter().any(|value| value == "TCP Client") {
+            return Err(invalid(
+                board,
+                "TCP client provisioning requires a capable ESP32-S3 target",
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -397,6 +439,20 @@ mod tests {
                 ("t-echo", None, None),
             ]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn embedded_catalog_limits_tcp_client_provisioning_to_roomy_wifi_boards(
+    ) -> Result<(), CatalogError> {
+        let catalog = board_catalog()?;
+        let capable = catalog
+            .boards
+            .iter()
+            .filter(|board| board.supports_tcp_client_provisioning())
+            .map(|board| board.slug.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(capable, ["heltec-v4", "t-beam-supreme"]);
         Ok(())
     }
 

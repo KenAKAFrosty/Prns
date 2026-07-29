@@ -6,6 +6,11 @@ export const CONFIG_OFFSET = 0xd000;
 export const CONFIG_SIZE = 0x1000;
 export const CONFIG_SSID_MAX_BYTES = 32;
 export const CONFIG_PASSWORD_MAX_BYTES = 64;
+export const CONFIG_TCP_HOSTNAME_MAX_BYTES = 253;
+
+const CONFIG_TCP_HOST_LENGTH_OFFSET = 112;
+const CONFIG_TCP_PORT_OFFSET = 113;
+const CONFIG_TCP_TARGET_OFFSET = 115;
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const VERSION_PATTERN = /^[A-Za-z0-9.+-]+$/;
@@ -287,6 +292,7 @@ export function provisioningImage(provisioning) {
   image.fill(0xff);
   image.set(new TextEncoder().encode("HSPCFG1\0"), 0);
   image[8] = 1;
+  image[9] = 0;
   if (provisioning.action === "clear") {
     image[10] = 0;
     image[11] = 0;
@@ -316,7 +322,78 @@ export function provisioningImage(provisioning) {
   image[11] = password.length;
   image.set(ssid, 16);
   image.set(password, 16 + CONFIG_SSID_MAX_BYTES);
+  const tcpClient = provisioning.tcpClient;
+  if (tcpClient !== null && tcpClient !== undefined) {
+    if (
+      typeof tcpClient !== "object"
+      || !Number.isInteger(tcpClient.port)
+      || tcpClient.port < 1
+      || tcpClient.port > 65535
+    ) {
+      throw new FlashBridgeError("invalid_config", "TCP client port must be between 1 and 65535.");
+    }
+    let target;
+    if (tcpClient.hostKind === "ipv4") {
+      const octets = parseIpv4(tcpClient.host);
+      if (
+        octets === null
+        || octets.every(byte => byte === 0)
+        || octets.every(byte => byte === 255)
+        || (octets[0] >= 224 && octets[0] <= 239)
+      ) {
+        throw new FlashBridgeError("invalid_config", "TCP client IPv4 address is not a usable unicast target.");
+      }
+      image[9] = 1;
+      target = Uint8Array.from(octets);
+    } else if (tcpClient.hostKind === "hostname") {
+      if (!validHostname(tcpClient.host)) {
+        throw new FlashBridgeError("invalid_config", "TCP client hostname is not canonical.");
+      }
+      target = new TextEncoder().encode(tcpClient.host);
+      if (target.length > CONFIG_TCP_HOSTNAME_MAX_BYTES) {
+        throw new FlashBridgeError(
+          "invalid_config",
+          `TCP client hostname is ${target.length} bytes; maximum is ${CONFIG_TCP_HOSTNAME_MAX_BYTES}.`,
+        );
+      }
+      image[9] = 2;
+    } else {
+      throw new FlashBridgeError("invalid_config", "TCP client target kind is unsupported.");
+    }
+    image[CONFIG_TCP_HOST_LENGTH_OFFSET] = target.length;
+    image[CONFIG_TCP_PORT_OFFSET] = tcpClient.port >>> 8;
+    image[CONFIG_TCP_PORT_OFFSET + 1] = tcpClient.port & 0xff;
+    image.set(target, CONFIG_TCP_TARGET_OFFSET);
+  }
   return image;
+}
+
+function parseIpv4(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const parts = value.split(".");
+  if (parts.length !== 4) {
+    return null;
+  }
+  const octets = parts.map(part => {
+    if (!/^(0|[1-9][0-9]{0,2})$/.test(part)) {
+      return NaN;
+    }
+    return Number(part);
+  });
+  return octets.every(octet => Number.isInteger(octet) && octet <= 255) ? octets : null;
+}
+
+function validHostname(value) {
+  if (typeof value !== "string" || value.length === 0 || value.length > CONFIG_TCP_HOSTNAME_MAX_BYTES) {
+    return false;
+  }
+  return value.split(".").every(label => (
+    label.length > 0
+    && label.length <= 63
+    && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label)
+  ));
 }
 
 export async function sha256Hex(bytes, cryptoImpl = globalThis.crypto) {

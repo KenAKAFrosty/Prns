@@ -430,6 +430,16 @@ impl<S: StorageLayout> EngineState<S> {
         self.self_ratchets
             .seed(destination, last_rotated, secrets_newest_first)
     }
+
+    pub fn replace_persisted_self_ratchets(
+        &mut self,
+        destination: &DestinationHash,
+        last_rotated: LastRotated,
+        secrets_newest_first: impl DoubleEndedIterator<Item = X25519SecretKey>,
+    ) -> SeedSelfRatchetsOutcome {
+        self.self_ratchets
+            .replace_persisted(destination, last_rotated, secrets_newest_first)
+    }
 }
 
 #[cfg(test)]
@@ -903,5 +913,26 @@ mod tests {
             Some(InstantMillis(now.0 + DEPARTED_INTERFACE_GRACE_MS)),
             "the not-yet-attached interface holds the route warm from boot",
         );
+    }
+
+    #[test]
+    fn restoring_an_expired_route_does_not_refresh_its_age() {
+        use crate::routing::announce::defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
+        use crate::routing::warmth::DEPARTED_INTERFACE_GRACE_MS;
+
+        let app_data = [0x5E; 4];
+        let (row, _) = signed_seed_row(&app_data);
+        let mut state = EngineState::<TestStorageLayout>::default();
+        let restored_at = InstantMillis(DEFAULT_ROUTE_EXPIRY_MILLIS + 10_000);
+        assert_eq!(
+            state.seed_route(&row, restored_at),
+            RouteSeedOutcome::Seeded
+        );
+        state.cull_expired_routes(
+            InstantMillis(restored_at.0 + DEPARTED_INTERFACE_GRACE_MS + 1),
+            crate::interfaces::AttachedInterfaces::new(&[]),
+            &mut |_| {},
+        );
+        assert_eq!(state.route_count(), 0);
     }
 }

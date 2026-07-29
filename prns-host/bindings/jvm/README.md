@@ -3,7 +3,9 @@
 The JVM SDK is a thin, typed adapter over the versioned Personal RNS C host
 contract. Kotlin callers receive sealed command outcomes and cold
 single-consumer `Flow` event streams. Java callers use the same classes and
-`AutoCloseable` ownership with direct blocking bridges.
+`AutoCloseable` ownership with direct blocking bridges. Native readiness wakes
+Kotlin coroutines through a conflated channel without occupying
+`Dispatchers.IO`.
 
 ```kotlin
 Host(

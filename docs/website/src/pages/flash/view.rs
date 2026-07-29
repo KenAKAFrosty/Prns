@@ -28,11 +28,14 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
         .expect("the guided flasher only renders cataloged flash targets");
     let is_esp = flash_target.uses_web_serial();
     let supports_wifi = flash_target.supports_provisioning();
+    let supports_tcp_client = flash_target.supports_tcp_client_provisioning();
 
     let mut confirmed = use_signal(|| false);
     let mut wifi_action = use_signal(|| WifiAction::Preserve);
     let mut ssid = use_signal(String::new);
     let mut password = use_signal(String::new);
+    let mut tcp_enabled = use_signal(|| false);
+    let mut tcp_target = use_signal(String::new);
     let phase = use_signal(|| BridgePhase::Idle);
     let mut status = use_signal(|| initial_status(flash_target).to_string());
     let progress_current = use_signal(|| 0_u64);
@@ -54,6 +57,8 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
         release: release_details,
         ssid,
         password,
+        tcp_enabled,
+        tcp_target,
     };
 
     let drop_generation = Arc::clone(&preparation_generation);
@@ -83,7 +88,12 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
     let browser_ready = !is_esp || web_serial().permits_esp_flash();
     let browser_checking = is_esp && web_serial() == WebSerialCapability::Checking;
     let browser_blocked = is_esp && web_serial() == WebSerialCapability::Unavailable;
-    let can_prepare = confirmed() && !busy && !embedded && key_ready && browser_ready;
+    let can_prepare = confirmed()
+        && !busy
+        && !embedded
+        && key_ready
+        && browser_ready
+        && (!tcp_enabled() || !tcp_target().trim().is_empty());
     let can_flash = prepared() && !busy && browser_ready;
     let action_label = match flash_target {
         BoardFlashTarget::EspSerial { .. } => "Connect and flash",
@@ -182,6 +192,8 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                                             let event_state = state.clone();
                                             move |_| {
                                                 wifi_action.set(value);
+                                                tcp_enabled.set(false);
+                                                tcp_target.set(String::new());
                                                 invalidate_preparation(
                                                     event_state.clone(),
                                                     "Configuration choice changed. Prepare and verify the release again.",
@@ -235,6 +247,62 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                                                 );
                                             }
                                         },
+                                    }
+                                }
+                            }
+                            if supports_tcp_client {
+                                label { class: "mt-4 flex items-start gap-3 rounded-lg border border-line/60 bg-surface/40 p-4 text-sm text-soft",
+                                    input {
+                                        r#type: "checkbox",
+                                        checked: tcp_enabled(),
+                                        disabled: device_operation_active,
+                                        onchange: {
+                                            let event_state = state.clone();
+                                            move |event| {
+                                                let enabled = event.checked();
+                                                tcp_enabled.set(enabled);
+                                                if !enabled {
+                                                    tcp_target.set(String::new());
+                                                }
+                                                invalidate_preparation(
+                                                    event_state.clone(),
+                                                    "TCP client configuration changed. Prepare and verify the release again.",
+                                                    false,
+                                                );
+                                            }
+                                        },
+                                    }
+                                    span {
+                                        "Connect one outbound Reticulum TCP client"
+                                        span { class: "mt-1 block text-xs text-mid",
+                                            "Use an IPv4 address, DNS hostname, or URL. The S3 resolves hostnames with the Wi-Fi network's DHCP-provided DNS server and refreshes them when reconnecting."
+                                        }
+                                    }
+                                }
+                                if tcp_enabled() {
+                                    label { class: "flash-wifi-field mt-4",
+                                        span { "TCP target" }
+                                        input {
+                                            value: tcp_target(),
+                                            maxlength: "512",
+                                            autocomplete: "off",
+                                            placeholder: "node.example:4242",
+                                            disabled: device_operation_active,
+                                            oninput: {
+                                                let event_state = state.clone();
+                                                move |event| {
+                                                    tcp_target.set(event.value());
+                                                    invalidate_preparation(
+                                                        event_state.clone(),
+                                                        "TCP client configuration changed. Prepare and verify the release again.",
+                                                        false,
+                                                    );
+                                                }
+                                            },
+                                        }
+                                        span { class: "mt-1 block text-xs text-mid",
+                                            "One client only. Port 4242 is used when omitted; IPv6 literals are not supported in this embedded profile."
+                                        }
                                     }
                                 }
                             }
@@ -342,6 +410,11 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                             let selected_action = wifi_action();
                             let selected_ssid = ssid();
                             let selected_password = password();
+                            let selected_tcp_target = if tcp_enabled() {
+                                Some(tcp_target())
+                            } else {
+                                None
+                            };
                             let mut preparation_state = event_state.clone();
                             let generation = preparation_state.begin_preparation();
                             prepared.set(false);
@@ -352,6 +425,7 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                                     selected_action,
                                     selected_ssid,
                                     selected_password,
+                                    selected_tcp_target,
                                     preparation_state,
                                     generation,
                                 )
@@ -421,6 +495,8 @@ fn invalidate_preparation(mut state: FlasherState, message: &str, clear_credenti
     if clear_credentials {
         state.ssid.set(String::new());
         state.password.set(String::new());
+        state.tcp_enabled.set(false);
+        state.tcp_target.set(String::new());
     }
     bridge::clear_prepared();
 }

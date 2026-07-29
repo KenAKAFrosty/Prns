@@ -8,14 +8,35 @@ use static_cell::ConstStaticCell;
 
 pub(super) fn build_tcp(
     stack: Stack<'static>,
+    config: &HopspotTcpClientConfig,
 ) -> Option<(
     TcpClient<'static>,
     &'static EmbassyInterfaceStatus,
     InterfaceId,
 )> {
-    let addr = HOPSPOT_TCP_TARGET.parse::<::core::net::SocketAddr>().ok()?;
-    let target = IpEndpoint::new(addr.ip().into(), addr.port());
-    let channel_tag = HOPSPOT_TCP_TARGET.as_bytes();
+    let channel_tag = mk_static!([u8; 256], [0u8; 256]);
+    let (target, target_len) = match &config.host {
+        HopspotTcpClientHost::Ipv4(address) => {
+            channel_tag[0] = 1;
+            channel_tag[1..5].copy_from_slice(&address.octets());
+            (
+                TcpClientTarget::endpoint(IpEndpoint::new((*address).into(), config.port)),
+                5,
+            )
+        }
+        HopspotTcpClientHost::Hostname(hostname) => {
+            let dns_hostname =
+                heapless::String::<TCP_DNS_HOSTNAME_MAX_BYTES>::try_from(hostname.as_str()).ok()?;
+            channel_tag[0] = 2;
+            channel_tag[1..1 + hostname.len()].copy_from_slice(hostname.as_bytes());
+            (
+                TcpClientTarget::dns(dns_hostname, config.port),
+                1 + hostname.len(),
+            )
+        }
+    };
+    channel_tag[target_len..target_len + 2].copy_from_slice(&config.port.to_be_bytes());
+    let channel_tag: &'static [u8] = &channel_tag[..target_len + 2];
     let id = TcpClient::interface_id(channel_tag);
     let status: &'static EmbassyInterfaceStatus = mk_static!(
         EmbassyInterfaceStatus,

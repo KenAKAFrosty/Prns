@@ -3,7 +3,7 @@
 The .NET adapter is a thin, idiomatic presentation of the common host contract:
 
 - `SafeHandle` owns every native handle.
-- A bounded one-slot `Channel<T>` bridges blocking native pulls to `IAsyncEnumerable<T>` without moving pressure policy out of Rust.
+- Native readiness resumes `ValueTask` and `IAsyncEnumerable<T>` consumers without a blocking worker or moving pressure policy out of Rust.
 - `StreamClaim<T>` makes single-consumer ownership explicit.
 - Every contract union is a sealed record hierarchy with an exhaustive `Match` method generated from the language-neutral schema.
 - Fixed-size hashes and identifiers validate and copy at construction.

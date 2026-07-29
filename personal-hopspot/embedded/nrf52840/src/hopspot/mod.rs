@@ -5,5 +5,6 @@ mod firmware;
 mod identity;
 mod input;
 mod node;
+pub(crate) mod persistence;
 
 pub(super) use firmware::run;

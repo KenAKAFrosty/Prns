@@ -18,9 +18,13 @@ The header is generated from `prns-host/schema/host-contract-v1.json`. Run `./to
 - Application events remain lossless within configured count and byte bounds. Exceeding either bound fails the host explicitly.
 - Diagnostics may drop newest and later produce one `DiagnosticsDropped` event with the exact accumulated `uint128` count.
 - `prns_event_stream_next` is pull-based. Zero milliseconds is nonblocking, `UINT32_MAX` waits indefinitely, and every finite nonzero timeout is bounded.
+- Commands and event streams each accept one readiness registration. Registration observes subsequent changes; consumers first inspect the source nonblockingly, then wait for a hint whenever it cannot make progress.
+- Readiness callbacks carry no event or settlement data. They schedule the foreign runtime’s waiter and return; consumers retain authority by calling `prns_command_wait` or `prns_event_stream_next` with a zero timeout.
+- Wake hints may be coalesced or spurious. A consumer drains until the source reports timed out or would block, then waits for another hint.
+- Releasing a readiness registration or its source waits for an in-flight callback to return. The callback must not release its own registration or source.
 - All entry points contain Rust panics and return `PRNS_STATUS_PANIC` where a status can be returned.
 
-Host and stream operations are safe from multiple native threads. An individual event or resource handle must not be released while another thread is reading it.
+Host, command, and stream operations are safe from multiple native threads. An individual event or resource handle must not be released while another thread is reading it.
 
 ## Versioning
 

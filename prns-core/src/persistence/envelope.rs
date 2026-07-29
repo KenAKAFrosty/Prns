@@ -110,7 +110,7 @@ pub fn snapshot_fingerprint(sealed: &[u8]) -> Option<SnapshotFingerprint> {
     Some(SnapshotFingerprint(fingerprint))
 }
 
-fn crc32(bytes: &[u8]) -> u32 {
+pub(crate) fn crc32(bytes: &[u8]) -> u32 {
     #[cfg(feature = "std")]
     return crc32fast::hash(bytes);
 

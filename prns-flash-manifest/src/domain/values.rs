@@ -2,7 +2,7 @@ use std::fmt;
 
 use thiserror::Error;
 
-use crate::ProvisioningDescriptor;
+use crate::{ProvisioningDescriptor, TcpClientProvisioningDescriptor};
 
 /// Failure to construct one of the validated release-domain values.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -368,6 +368,7 @@ pub struct ProvisioningSlot {
     pub(crate) size: u32,
     pub(crate) ssid_max_bytes: usize,
     pub(crate) password_max_bytes: usize,
+    pub(crate) tcp_client: Option<TcpClientProvisioningDescriptor>,
 }
 
 impl ProvisioningSlot {
@@ -401,6 +402,10 @@ impl ProvisioningSlot {
         self.password_max_bytes
     }
 
+    pub fn tcp_client(&self) -> Option<&TcpClientProvisioningDescriptor> {
+        self.tcp_client.as_ref()
+    }
+
     pub(crate) fn to_wire(&self) -> ProvisioningDescriptor {
         ProvisioningDescriptor {
             format: self.format.as_str().to_string(),
@@ -409,6 +414,7 @@ impl ProvisioningSlot {
             size: self.size,
             ssid_max_bytes: self.ssid_max_bytes,
             password_max_bytes: self.password_max_bytes,
+            tcp_client: self.tcp_client.clone(),
         }
     }
 }

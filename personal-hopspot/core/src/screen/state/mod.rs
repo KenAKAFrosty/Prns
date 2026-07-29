@@ -74,6 +74,7 @@ pub enum UiNotice {
     Saved,
     IdentityReset,
     IdentityUnstable,
+    StateNotSaved,
 }
 
 impl UiNotice {
@@ -88,6 +89,7 @@ impl UiNotice {
             Self::Saved => "Saved",
             Self::IdentityReset => "Identity Reset",
             Self::IdentityUnstable => "Identity Unstable",
+            Self::StateNotSaved => "State Not Saved",
         }
     }
 }

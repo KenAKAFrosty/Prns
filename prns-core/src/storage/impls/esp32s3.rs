@@ -8,6 +8,10 @@ use crate::identity::destination_identity::{
 };
 use crate::identity::held::FixedHeldIdentityTable;
 use crate::interfaces::EMBEDDED_MAX_LINK_MTU;
+#[cfg(feature = "flash")]
+use crate::persistence::{
+    flash_journal_record_storage_len, maximum_route_upsert_payload_len, self_ratchets_snapshot_len,
+};
 use crate::routing::announce::defaults::MAX_ANNOUNCE_IDS_PER_DESTINATION;
 use crate::routing::announce::destination_announce_limit::{
     destination_announce_limit_index_buckets, FixedHeapDestinationAnnounceLimitTable,
@@ -90,6 +94,20 @@ type Esp32S3OutgoingAssemblies = FixedStaticOutgoingAssemblyTable<MAX_CONCURRENT
 type Esp32S3OutgoingAssemblies = FixedOutgoingAssemblyTable<MAX_CONCURRENT_LINKS>;
 
 pub struct Esp32S3<A: Allocator = Global>(PhantomData<A>);
+
+#[cfg(feature = "flash")]
+impl<A: Allocator> Esp32S3<A> {
+    pub const MAX_COMPACTED_FLASH_JOURNAL_BYTES: usize = MAX_TRACKED_DESTINATIONS
+        * (flash_journal_record_storage_len(maximum_route_upsert_payload_len(0, 0), 4) + 3)
+        + RETAINED_ANNOUNCE_APP_DATA_BYTES
+        + MAX_UPSTREAM_APP_DESTINATIONS
+            * flash_journal_record_storage_len(
+                crate::wire::TRUNCATED_HASH_BYTE_LEN
+                    + self_ratchets_snapshot_len(RETAINED_RATCHETS_PER_DESTINATION),
+                4,
+            )
+        + flash_journal_record_storage_len(0, 4);
+}
 
 impl<A: Allocator> Default for Esp32S3<A> {
     fn default() -> Self {

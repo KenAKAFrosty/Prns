@@ -113,6 +113,7 @@ pub trait SelfRatchetTable {
 
     fn set_last_rotated(&mut self, index: usize, at: InstantMillis);
     fn insert_newest_secret(&mut self, index: usize, secret: X25519SecretKey);
+    fn clear_secrets(&mut self, index: usize);
     fn push(&mut self, destination: DestinationHash) -> Result<(), TrackRatchetsError>;
 }
 
@@ -211,6 +212,25 @@ impl<C: SelfRatchetTable> SelfRatchets<C> {
         {
             return SeedSelfRatchetsOutcome::AlreadyMinted;
         }
+        for secret in secrets_newest_first.rev() {
+            self.table.insert_newest_secret(index, secret);
+        }
+        if let LastRotated::At(at) = last_rotated {
+            self.table.set_last_rotated(index, at);
+        }
+        SeedSelfRatchetsOutcome::Seeded
+    }
+
+    pub fn replace_persisted(
+        &mut self,
+        destination: &DestinationHash,
+        last_rotated: LastRotated,
+        secrets_newest_first: impl DoubleEndedIterator<Item = X25519SecretKey>,
+    ) -> SeedSelfRatchetsOutcome {
+        let Some(index) = self.index_of(destination) else {
+            return SeedSelfRatchetsOutcome::Untracked;
+        };
+        self.table.clear_secrets(index);
         for secret in secrets_newest_first.rev() {
             self.table.insert_newest_secret(index, secret);
         }
@@ -450,6 +470,33 @@ mod tests {
             SeedSelfRatchetsOutcome::AlreadyMinted,
         );
         assert_eq!(ratchets.newest_ratchet_key(&dest(1)), Some(public_of(0x11)));
+    }
+
+    #[test]
+    fn a_later_persisted_delta_replaces_the_prior_ratchet_row() {
+        let mut ratchets = TestRatchets::default();
+        ratchets.track(dest(1)).unwrap();
+        ratchets.rotate_if_due(&dest(1), InstantMillis(1_000), &mut fill(0x11));
+        let stored = [
+            X25519SecretKey::new([0x33; 32]),
+            X25519SecretKey::new([0x22; 32]),
+        ];
+        assert_eq!(
+            ratchets.replace_persisted(
+                &dest(1),
+                LastRotated::At(InstantMillis(8_000)),
+                stored.iter().map(X25519SecretKey::cloned),
+            ),
+            SeedSelfRatchetsOutcome::Seeded,
+        );
+        let kept = ratchets.secrets_newest_first(&dest(1));
+        assert_eq!(kept.len(), 2);
+        assert_eq!(x25519_public_key(&kept[0]).0, *public_of(0x33).as_bytes());
+        assert_eq!(x25519_public_key(&kept[1]).0, *public_of(0x22).as_bytes());
+        assert_eq!(
+            ratchets.last_rotated_of(&dest(1)),
+            Some(LastRotated::At(InstantMillis(8_000))),
+        );
     }
 
     #[test]

@@ -52,6 +52,15 @@ impl SelfRatchetTable for HeapSelfRatchetTable {
         row.insert(0, secret);
     }
 
+    fn clear_secrets(&mut self, index: usize) {
+        if let Some(row) = self.secrets.get_mut(index) {
+            row.clear();
+        }
+        if let Some(slot) = self.last_rotated.get_mut(index) {
+            *slot = LastRotated::Never;
+        }
+    }
+
     fn push(&mut self, destination: DestinationHash) -> Result<(), TrackRatchetsError> {
         self.destinations.push(destination);
         self.last_rotated.push(LastRotated::Never);

@@ -54,6 +54,7 @@ pub use envelope::{
 #[allow(unused_imports)]
 pub use impls::*;
 pub use routing_table::{
+    maximum_persisted_route_row_wire_len, maximum_route_upsert_payload_len,
     persisted_route_row_wire_len, read_routing_table_snapshot, routing_table_snapshot_len,
     write_routing_table_snapshot, PersistedRouteRows, RoutingTableSnapshotWriteError,
 };

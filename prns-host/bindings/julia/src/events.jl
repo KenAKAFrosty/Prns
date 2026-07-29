@@ -10,18 +10,39 @@ abstract type OwnedEventStream end
 
 mutable struct ApplicationEventStream <: OwnedEventStream
     pointer::Ptr{Cvoid}
+    readiness::Base.AsyncCondition
+    registration::Ptr{Cvoid}
     guard::ReentrantLock
     wait_guard::ReentrantLock
 end
 
 mutable struct DiagnosticEventStream <: OwnedEventStream
     pointer::Ptr{Cvoid}
+    readiness::Base.AsyncCondition
+    registration::Ptr{Cvoid}
     guard::ReentrantLock
     wait_guard::ReentrantLock
 end
 
 function owned_event_stream(::Type{T}, pointer::Ptr{Cvoid}) where {T<:OwnedEventStream}
-    stream = T(pointer, ReentrantLock(), ReentrantLock())
+    readiness, registration = try
+        register_readiness(pointer, :prns_event_stream_register_readiness)
+    catch
+        ccall(
+            native_symbol(:prns_event_stream_release),
+            Cvoid,
+            (Ptr{Cvoid},),
+            pointer,
+        )
+        rethrow()
+    end
+    stream = T(
+        pointer,
+        readiness,
+        registration,
+        ReentrantLock(),
+        ReentrantLock(),
+    )
     finalizer(close, stream)
     stream
 end
@@ -70,33 +91,22 @@ function next_event(stream::OwnedEventStream)
     lock(stream.wait_guard) do
         output = Ref{Ptr{Cvoid}}(C_NULL)
         while true
-            status = next_event_status(stream, EVENT_WAIT_SLICE_MILLIS, output)
-            if status == StatusTimedOut
-                yield()
-                continue
-            end
+            status = Status(
+                ccall(
+                    native_symbol(:prns_event_stream_next),
+                    UInt32,
+                    (Ptr{Cvoid}, UInt32, Ref{Ptr{Cvoid}}),
+                    stream_pointer(stream),
+                    UInt32(0),
+                    output,
+                ),
+            )
+            status == StatusWouldBlock && (wait(stream.readiness); continue)
             status == StatusStopped && throw(EOFError())
             status == StatusOk || throw(StatusFailure(:next_event, status))
             return output[]
         end
     end
-end
-
-function next_event_status(
-    stream::OwnedEventStream,
-    timeout_milliseconds::UInt32,
-    output::Ref{Ptr{Cvoid}},
-)
-    Status(
-        ccall(
-            native_symbol(:prns_event_stream_next),
-            UInt32,
-            (Ptr{Cvoid}, UInt32, Ref{Ptr{Cvoid}}),
-            stream_pointer(stream),
-            timeout_milliseconds,
-            output,
-        ),
-    )
 end
 
 function interrupt_wait!(stream::OwnedEventStream)
@@ -113,10 +123,12 @@ function interrupt_wait!(stream::OwnedEventStream)
 end
 
 function Base.close(stream::OwnedEventStream)
-    pointer = lock(stream.guard) do
+    pointer, registration = lock(stream.guard) do
         pointer = stream.pointer
+        registration = stream.registration
         stream.pointer = C_NULL
-        pointer
+        stream.registration = C_NULL
+        (pointer, registration)
     end
     pointer == C_NULL && return nothing
     ccall(
@@ -126,6 +138,7 @@ function Base.close(stream::OwnedEventStream)
         pointer,
     )
     lock(stream.wait_guard) do
+        release_readiness(registration, stream.readiness)
         ccall(
             native_symbol(:prns_event_stream_release),
             Cvoid,

@@ -46,13 +46,30 @@ impl TechoStorage {
     const LINKS: usize = 2;
     const BLACKHOLED_IDENTITIES: usize = 0;
     const BLACKHOLE_REASON_BYTES: usize = 0;
-    const HELD_ANNOUNCES: usize = 16;
+    const HELD_ANNOUNCES: usize = 4;
     const HELD_ANNOUNCE_APP_DATA_BYTES: usize = Self::HELD_ANNOUNCES * 64;
     const RESOURCE_TRANSFER_BYTES: usize = 1504;
     const CHANNEL_REORDER_DEPTH: usize = 2;
     const LINK_MTU: usize = 1024;
     const CHANNEL_MESSAGE_BYTES: usize = channel_mdu(Self::LINK_MTU);
+    const MAX_COMPACTED_FLASH_JOURNAL_BYTES: usize = Self::TRACKED_DESTINATIONS
+        * (personal_rns::persistence::flash_journal_record_storage_len(
+            personal_rns::persistence::maximum_route_upsert_payload_len(0, 0),
+            4,
+        ) + 3)
+        + 256
+        + Self::UPSTREAM_APP_DESTINATIONS
+            * personal_rns::persistence::flash_journal_record_storage_len(
+                personal_rns::wire::TRUNCATED_HASH_BYTE_LEN
+                    + personal_rns::persistence::self_ratchets_snapshot_len(4),
+                4,
+            )
+        + personal_rns::persistence::flash_journal_record_storage_len(0, 4);
 }
+
+const _: () = assert!(
+    TechoStorage::MAX_COMPACTED_FLASH_JOURNAL_BYTES <= crate::hopspot::persistence::ARENA_BYTES
+);
 
 impl StorageLayout for TechoStorage {
     const LIMITS: DisplayedStorageLimits = DisplayedStorageLimits {

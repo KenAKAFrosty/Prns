@@ -36,7 +36,7 @@ pub(super) fn validate_target(
         || target.transport != board.transport
         || target.expected_chip != board.expected_chip
         || target.flash_size != board.flash_size
-        || target.provisioning != board.provisioning
+        || !provisioning_is_compatible(target.provisioning.as_ref(), board.provisioning.as_ref())
     {
         return Err(mismatch(target, "board transport/capability fields"));
     }
@@ -64,6 +64,25 @@ pub(super) fn validate_target(
         }
     }
     validate_parts(target, version)
+}
+
+fn provisioning_is_compatible(
+    target: Option<&crate::ProvisioningDescriptor>,
+    board: Option<&crate::ProvisioningDescriptor>,
+) -> bool {
+    match (target, board) {
+        (None, None) => true,
+        (Some(target), Some(board)) => {
+            target.format == board.format
+                && target.version == board.version
+                && target.offset == board.offset
+                && target.size == board.size
+                && target.ssid_max_bytes == board.ssid_max_bytes
+                && target.password_max_bytes == board.password_max_bytes
+                && (target.tcp_client == board.tcp_client || target.tcp_client.is_none())
+        }
+        _ => false,
+    }
 }
 
 pub(super) fn validate_release(manifest: &FlashManifest) -> Result<(), ManifestError> {

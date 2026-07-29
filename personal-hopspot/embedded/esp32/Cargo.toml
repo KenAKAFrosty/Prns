@@ -24,7 +24,7 @@ wifi-auto = ["esp-radio/wifi", "esp-radio/coex", "esp-rtos/esp-radio", "personal
 esp-now = ["esp-radio/esp-now", "esp-radio/coex", "esp-rtos/esp-radio", "personal-rns/esp-now"]
 lora = ["personal-rns/lora"]
 usb = ["personal-rns/usb"]
-tcp = ["wifi-auto", "personal-rns/tcp"]
+tcp = ["wifi-auto", "personal-rns/tcp-dns", "embassy-net/dns"]
 source-archive = [
     "personal-hopspot-core/source-archive",
     "personal-rns/large-static-responses",
@@ -37,6 +37,7 @@ personal-hopspot-core = { path = "../../core", default-features = false }
 embedded-graphics = "0.8"
 heapless = { version = "0.8", default-features = false }
 embedded-storage = "0.3"
+embedded-storage-async = "0.4"
 
 [target.'cfg(target_arch = "xtensa")'.dependencies]
 personal-rns = { path = "../../../personal-rns", default-features = false, features = ["embassy-host", "external-alloc", "flash", "log"] }

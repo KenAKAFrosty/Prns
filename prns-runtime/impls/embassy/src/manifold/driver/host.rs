@@ -10,6 +10,10 @@ pub struct EmbassyHost<E> {
     draw_entropy: E,
 }
 
+pub trait ResumableHost: Host {
+    fn resume_at(&mut self, logical_start: InstantMillis);
+}
+
 impl<E> EmbassyHost<E>
 where
     E: FnMut(&mut [u8]),
@@ -41,5 +45,14 @@ where
 
     fn fill_entropy(&mut self, bytes: &mut [u8]) {
         (self.draw_entropy)(bytes);
+    }
+}
+
+impl<E> ResumableHost for EmbassyHost<E>
+where
+    E: FnMut(&mut [u8]),
+{
+    fn resume_at(&mut self, logical_start: InstantMillis) {
+        self.timebase = EmbassyTimebase::start_at(logical_start);
     }
 }

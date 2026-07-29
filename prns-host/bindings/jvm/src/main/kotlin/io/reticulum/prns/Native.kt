@@ -2,6 +2,7 @@ package io.reticulum.prns
 
 import com.sun.jna.IntegerType
 import com.sun.jna.Library
+import com.sun.jna.Callback
 import com.sun.jna.Memory
 import com.sun.jna.Native
 import com.sun.jna.Pointer
@@ -15,6 +16,10 @@ internal class SizeT(value: Long = 0) : IntegerType(Native.SIZE_T_SIZE, value, t
     override fun toByte(): Byte = toLong().toByte()
 
     override fun toShort(): Short = toLong().toShort()
+}
+
+internal fun interface NativeReadinessCallback : Callback {
+    fun invoke(context: Pointer?)
 }
 
 @Structure.FieldOrder("data", "length")
@@ -362,10 +367,23 @@ internal interface PrnsNative : Library {
     ): Int
     fun prns_host_stop(host: Pointer): Int
     fun prns_command_wait(command: Pointer, timeoutMillis: Int, result: NativeCommandResult): Int
+    fun prns_command_register_readiness(
+        command: Pointer,
+        callback: NativeReadinessCallback,
+        context: Pointer?,
+        registration: PointerByReference,
+    ): Int
     fun prns_command_interrupt_wait(command: Pointer)
     fun prns_command_release(command: Pointer)
     fun prns_host_claim_application_events(host: Pointer, stream: PointerByReference): Int
     fun prns_host_claim_diagnostics(host: Pointer, stream: PointerByReference): Int
+    fun prns_event_stream_register_readiness(
+        stream: Pointer,
+        callback: NativeReadinessCallback,
+        context: Pointer?,
+        registration: PointerByReference,
+    ): Int
+    fun prns_readiness_registration_release(registration: Pointer)
     fun prns_event_stream_interrupt_wait(stream: Pointer)
     fun prns_event_stream_release(stream: Pointer)
     fun prns_event_stream_next(

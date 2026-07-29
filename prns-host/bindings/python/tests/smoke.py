@@ -1,4 +1,5 @@
 import asyncio
+import threading
 
 import personal_rns as prns
 
@@ -12,14 +13,26 @@ async def main():
     first = host.claim_events()
     assert isinstance(first, prns.StreamClaimed)
     assert isinstance(host.claim_events(), prns.StreamAlreadyClaimed)
+    python_threads = threading.active_count()
     pending = asyncio.create_task(first.stream.__anext__())
     await asyncio.sleep(0)
+    assert threading.active_count() == python_threads
     pending.cancel()
     try:
         await pending
     except asyncio.CancelledError:
         pass
     await first.stream.aclose()
+    second = host.claim_events()
+    assert isinstance(second, prns.StreamClaimed)
+    pending = asyncio.create_task(second.stream.__anext__())
+    await asyncio.sleep(0)
+    await second.stream.aclose()
+    try:
+        await pending
+        raise AssertionError("closed event stream produced an event")
+    except StopAsyncIteration:
+        pass
     settled = await host.close_link(prns.LinkId(bytes(prns.LINK_ID_LENGTH)))
     assert isinstance(settled, prns.CommandSucceeded)
     assert isinstance(settled.outcome, prns.CommandOutcomeLinkCloseQueued)

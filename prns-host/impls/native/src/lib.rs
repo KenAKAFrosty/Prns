@@ -93,29 +93,37 @@ struct CompletionState {
     interrupted: bool,
 }
 
+pub type CommandReadiness = Arc<dyn Fn() + Send + Sync>;
+
 struct CommandCompletion {
     state: Mutex<CompletionState>,
     ready: Condvar,
+    readiness: Option<CommandReadiness>,
 }
 
 impl CommandCompletion {
-    fn new() -> Self {
+    fn new(readiness: Option<CommandReadiness>) -> Self {
         Self {
             state: Mutex::new(CompletionState {
                 result: None,
                 interrupted: false,
             }),
             ready: Condvar::new(),
+            readiness,
         }
     }
 
     fn finish(&self, result: Result<CommandOutcome, CommandFailure>) {
         let mut state = lock(&self.state);
-        if state.result.is_none() {
-            state.result = Some(result);
+        if state.result.is_some() {
+            return;
         }
+        state.result = Some(result);
         drop(state);
         self.ready.notify_all();
+        if let Some(readiness) = &self.readiness {
+            readiness();
+        }
     }
 }
 
@@ -168,6 +176,9 @@ impl CommandHandle {
     pub fn interrupt_wait(&self) {
         lock(&self.completion.state).interrupted = true;
         self.completion.ready.notify_all();
+        if let Some(readiness) = &self.completion.readiness {
+            readiness();
+        }
     }
 }
 
@@ -249,10 +260,18 @@ impl NativeHost {
     }
 
     pub fn submit(&self, command: HostCommand) -> Result<CommandHandle, NativeSubmitError> {
+        self.submit_with_readiness(command, None)
+    }
+
+    pub fn submit_with_readiness(
+        &self,
+        command: HostCommand,
+        readiness: Option<CommandReadiness>,
+    ) -> Result<CommandHandle, NativeSubmitError> {
         if self.stopped.load(Ordering::Acquire) {
             return Err(NativeSubmitError::Stopped);
         }
-        let completion = Arc::new(CommandCompletion::new());
+        let completion = Arc::new(CommandCompletion::new(readiness));
         let job = CommandJob {
             command,
             completion: Arc::clone(&completion),
@@ -1371,6 +1390,7 @@ fn translate_diagnostic(diagnostic: Diagnostic) -> Option<DiagnosticEvent> {
 mod tests {
     use super::*;
     use prns_host::{DestinationName, PrnsLimits, SingleDestinationConfig};
+    use std::sync::atomic::AtomicUsize;
 
     struct Sink;
 
@@ -1400,6 +1420,22 @@ mod tests {
             required_capabilities: Vec::new(),
             limits: PrnsLimits::balanced(),
         }
+    }
+
+    #[test]
+    fn command_completion_and_interruption_signal_readiness() {
+        let readiness_count = Arc::new(AtomicUsize::new(0));
+        let callback_count = Arc::clone(&readiness_count);
+        let completion = Arc::new(CommandCompletion::new(Some(Arc::new(move || {
+            callback_count.fetch_add(1, Ordering::AcqRel);
+        }))));
+        let command = CommandHandle {
+            completion: Arc::clone(&completion),
+        };
+        completion.finish(Ok(CommandOutcome::Announced));
+        assert_eq!(readiness_count.load(Ordering::Acquire), 1);
+        command.interrupt_wait();
+        assert_eq!(readiness_count.load(Ordering::Acquire), 2);
     }
 
     #[test]

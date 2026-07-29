@@ -18,7 +18,13 @@
         "offset": 53248,
         "size": 4096,
         "ssid_max_bytes": 32,
-        "password_max_bytes": 64
+        "password_max_bytes": 64,
+        "tcp_client": {
+          "target_format": "ipv4-or-dns",
+          "max_clients": 1,
+          "default_port": 4242,
+          "hostname_max_bytes": 253
+        }
       },
       "build": {
         "kind": "esp",
@@ -51,7 +57,13 @@
         "offset": 53248,
         "size": 4096,
         "ssid_max_bytes": 32,
-        "password_max_bytes": 64
+        "password_max_bytes": 64,
+        "tcp_client": {
+          "target_format": "ipv4-or-dns",
+          "max_clients": 1,
+          "default_port": 4242,
+          "hostname_max_bytes": 253
+        }
       },
       "build": {
         "kind": "esp",

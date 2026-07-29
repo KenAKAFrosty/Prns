@@ -1,13 +1,13 @@
 package io.reticulum.prns
 
 import com.sun.jna.Pointer
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock as withSuspendLock
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
 
 sealed interface CommandSettlement
 
@@ -20,49 +20,64 @@ data class CommandFailed(
 class Command internal constructor(pointer: Pointer) : AutoCloseable {
     private val stateLock = ReentrantLock()
     private val waitLock = ReentrantLock()
+    private val asyncWait = Mutex()
+    private val readiness: NativeReadiness
     private var pointer: Pointer? = pointer
 
-    suspend fun await(): CommandSettlement = withContext(Dispatchers.IO) {
-        waitLock.lock()
+    init {
         try {
-            val nativePointer = stateLock.withLock {
-                pointer
-                    ?: throw StatusException("command", Status.STOPPED)
-            }
-            suspendCancellableCoroutine { continuation ->
-                continuation.invokeOnCancellation {
-                    NativeApi.library.prns_command_interrupt_wait(nativePointer)
-                }
-                try {
-                    val result = NativeCommandResult()
-                    result.structSize = SizeT(result.size().toLong())
-                    result.write()
-                    val status = Status.fromRawValue(
-                        NativeApi.library.prns_command_wait(
-                            nativePointer,
-                            -1,
-                            result,
-                        ),
-                    ) ?: Status.BACKEND_FAILED
-                    result.read()
-                    when {
-                        !continuation.isActive -> Unit
-                        status == Status.OK -> continuation.resume(
-                            decodeCommandSettlement(result),
-                        )
-                        else -> continuation.resumeWithException(
-                            StatusException("waitCommand", status),
-                        )
-                    }
-                } catch (failure: Throwable) {
-                    if (continuation.isActive) {
-                        continuation.resumeWithException(failure)
-                    }
-                }
-            }
-        } finally {
-            waitLock.unlock()
+            readiness = NativeReadiness.command(pointer)
+        } catch (failure: Throwable) {
+            NativeApi.library.prns_command_release(pointer)
+            throw failure
         }
+    }
+
+    suspend fun await(): CommandSettlement = asyncWait.withSuspendLock {
+        try {
+            awaitSettlement()
+        } catch (failure: CancellationException) {
+            stateLock.withLock {
+                pointer?.let(NativeApi.library::prns_command_interrupt_wait)
+            }
+            throw failure
+        }
+    }
+
+    private suspend fun awaitSettlement(): CommandSettlement {
+        while (true) {
+            currentCoroutineContext().ensureActive()
+            val settlement = poll()
+            if (settlement != null) {
+                return settlement
+            }
+            readiness.await()
+        }
+    }
+
+    private fun poll(): CommandSettlement? = waitLock.withLock {
+        val nativePointer = stateLock.withLock {
+            pointer
+                ?: throw StatusException("command", Status.STOPPED)
+        }
+        val result = NativeCommandResult()
+        result.structSize = SizeT(result.size().toLong())
+        result.write()
+        val status = Status.fromRawValue(
+            NativeApi.library.prns_command_wait(
+                nativePointer,
+                0,
+                result,
+            ),
+        ) ?: Status.BACKEND_FAILED
+        if (status == Status.TIMED_OUT) {
+            return@withLock null
+        }
+        if (status != Status.OK) {
+            throw StatusException("waitCommand", status)
+        }
+        result.read()
+        decodeCommandSettlement(result)
     }
 
     /**
@@ -100,6 +115,7 @@ class Command internal constructor(pointer: Pointer) : AutoCloseable {
         }
         if (nativePointer != null) {
             waitLock.withLock {
+                readiness.close()
                 NativeApi.library.prns_command_release(nativePointer)
             }
         }

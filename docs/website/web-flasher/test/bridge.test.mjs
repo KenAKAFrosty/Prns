@@ -157,6 +157,11 @@ test("oversized signed documents stop before the signature response is fetched",
 
 test("prepare verifies every artifact and never sends credentials", async () => {
   const { value, payloads } = request();
+  value.provisioning.tcpClient = {
+    hostKind: "hostname",
+    host: "node.example",
+    port: 4242,
+  };
   const calls = [];
   const events = [];
   await prepare(value, (event) => events.push(event), {
@@ -178,6 +183,7 @@ test("prepare verifies every artifact and never sends credentials", async () => 
   assert.equal(configurationBytes.some((byte) => byte !== 0), true);
   assert.equal(value.provisioning.ssid, "");
   assert.equal(value.provisioning.password, "");
+  assert.equal(value.provisioning.tcpClient.host, "");
   clearPrepared();
   assert.equal(testing.prepared(), null);
   assert.equal(configurationBytes.every((byte) => byte === 0), true);

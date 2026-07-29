@@ -1,5 +1,3 @@
-using System.Threading.Channels;
-
 namespace PersonalRns;
 
 public enum AsyncLaneName
@@ -40,8 +38,8 @@ internal sealed class NativeEventStream<T> : OwnedAsyncStream<T>
     private readonly EventStreamHandle _handle;
     private readonly Func<EventHandle, T> _decode;
     private readonly CancellationTokenSource _stopping = new();
-    private readonly Channel<T> _channel;
-    private readonly Task _pump;
+    private readonly SemaphoreSlim _drain = new(1, 1);
+    private readonly NativeReadiness _readiness;
     private int _claimed;
     private int _disposed;
 
@@ -49,21 +47,15 @@ internal sealed class NativeEventStream<T> : OwnedAsyncStream<T>
     {
         _handle = handle;
         _decode = decode;
-        _channel = Channel.CreateBounded<T>(
-            new BoundedChannelOptions(1)
-            {
-                SingleReader = true,
-                SingleWriter = true,
-                FullMode = BoundedChannelFullMode.Wait,
-                AllowSynchronousContinuations = false,
-            }
-        );
-        _pump = Task.Factory.StartNew(
-            Pump,
-            CancellationToken.None,
-            TaskCreationOptions.LongRunning,
-            TaskScheduler.Default
-        );
+        try
+        {
+            _readiness = NativeReadiness.ForEventStream(handle);
+        }
+        catch
+        {
+            handle.Dispose();
+            throw;
+        }
     }
 
     public override async IAsyncEnumerator<T> GetAsyncEnumerator(
@@ -74,52 +66,65 @@ internal sealed class NativeEventStream<T> : OwnedAsyncStream<T>
         {
             throw new InvalidOperationException("This stream already has a consumer.");
         }
-        await foreach (
-            var value in _channel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false)
-        )
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            _stopping.Token
+        );
+        while (true)
         {
-            yield return value;
-        }
-    }
-
-    private void Pump()
-    {
-        Exception? failure = null;
-        try
-        {
-            while (!_stopping.IsCancellationRequested)
+            linked.Token.ThrowIfCancellationRequested();
+            T? value = default;
+            var hasValue = false;
+            var waited = false;
+            var status = Status.WouldBlock;
+            await _drain.WaitAsync(linked.Token).ConfigureAwait(false);
+            try
             {
-                var status = Native.prns_event_stream_next(
-                    _handle,
-                    Native.NeverTimeout,
-                    out var @event
-                );
-                if (status == Status.Interrupted && _stopping.IsCancellationRequested)
+                if (Volatile.Read(ref _disposed) != 0)
+                {
+                    yield break;
+                }
+                status = Native.prns_event_stream_next(_handle, 0, out var @event);
+                if (status == Status.Ok)
+                {
+                    using (@event)
+                    {
+                        value = _decode(@event);
+                    }
+                    hasValue = true;
+                }
+                else
                 {
                     @event?.Dispose();
-                    break;
                 }
-                if (status == Status.Stopped)
+                if (status == Status.WouldBlock)
                 {
-                    @event?.Dispose();
-                    break;
-                }
-                PrnsException.ThrowIfError(status);
-                using (@event)
-                {
-                    var value = _decode(@event);
-                    _channel.Writer.WriteAsync(value, _stopping.Token).AsTask().GetAwaiter().GetResult();
+                    await _readiness.WaitAsync(linked.Token).ConfigureAwait(false);
+                    waited = true;
                 }
             }
+            finally
+            {
+                _drain.Release();
+            }
+            if (hasValue)
+            {
+                yield return value!;
+                continue;
+            }
+            if (waited)
+            {
+                continue;
+            }
+            if (status == Status.Stopped)
+            {
+                yield break;
+            }
+            if (status != Status.WouldBlock)
+            {
+                PrnsException.ThrowIfError(status);
+            }
         }
-        catch (OperationCanceledException) when (_stopping.IsCancellationRequested)
-        {
-        }
-        catch (Exception error)
-        {
-            failure = error;
-        }
-        _channel.Writer.TryComplete(failure);
     }
 
     public override async ValueTask DisposeAsync()
@@ -130,15 +135,18 @@ internal sealed class NativeEventStream<T> : OwnedAsyncStream<T>
         }
         _stopping.Cancel();
         Native.prns_event_stream_interrupt_wait(_handle);
+        await _drain.WaitAsync().ConfigureAwait(false);
         try
         {
-            await _pump.ConfigureAwait(false);
+            _readiness.Dispose();
+            _handle.Dispose();
         }
-        catch (OperationCanceledException)
+        finally
         {
+            _drain.Release();
+            _drain.Dispose();
+            _stopping.Dispose();
         }
-        _handle.Dispose();
-        _stopping.Dispose();
     }
 }
 
