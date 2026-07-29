@@ -2,6 +2,7 @@
 
 This checked bundle covers the shipped Rust, JavaScript, and Android release graphs.
 It was generated with `cargo-about 0.9.1` by `./tools/prns repo notices generate`.
+Each locked Rust manifest closure is fetched before cargo-about reads its target-filtered packaged license material offline.
 Entries are deduplicated by SPDX identifier and exact notice text.
 
 ## Release graphs

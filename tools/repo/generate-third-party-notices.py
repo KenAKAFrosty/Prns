@@ -113,29 +113,38 @@ def about_version() -> str:
     return version
 
 
+def fetch_manifest(manifest: str) -> None:
+    command = [
+        "cargo",
+        "fetch",
+        "--locked",
+        "--manifest-path",
+        str(ROOT / manifest),
+    ]
+    process = subprocess.run(command, cwd=ROOT, text=True, capture_output=True)
+    if process.returncode:
+        sys.stderr.write(process.stdout)
+        sys.stderr.write(process.stderr)
+        raise RuntimeError(f"cargo fetch failed for {manifest}")
+
+
 def generate_graph(manifest: str, target: str, directory: Path) -> dict:
-    config = directory / f"about-{len(list(directory.iterdir()))}.toml"
-    config.write_text(
-        ABOUT.read_text(encoding="utf-8").replace(
-            "ignore-dev-dependencies = true",
-            f'ignore-dev-dependencies = true\ntargets = ["{target}"]',
-            1,
-        ),
-        encoding="utf-8",
-    )
-    output = config.with_suffix(".json")
+    output = directory / f"about-{len(list(directory.iterdir()))}.json"
     command = [
         "cargo",
         "about",
         "generate",
         "--locked",
+        "--offline",
         "--fail",
         "--format",
         "json",
         "--config",
-        str(config),
+        str(ABOUT),
         "--manifest-path",
         str(ROOT / manifest),
+        "--target",
+        target,
         "--output-file",
         str(output),
     ]
@@ -152,7 +161,11 @@ def notice_bundle() -> str:
     notices: dict[tuple[str, str], dict] = {}
     with tempfile.TemporaryDirectory(prefix="prns-about-") as temp:
         directory = Path(temp)
+        fetched_manifests: set[str] = set()
         for graph, manifest, target in GRAPHS:
+            if manifest not in fetched_manifests:
+                fetch_manifest(manifest)
+                fetched_manifests.add(manifest)
             data = generate_graph(manifest, target, directory)
             for license_info in data["licenses"]:
                 text = normalized_notice_text(license_info["text"])
@@ -202,6 +215,8 @@ def notice_bundle() -> str:
         "",
         "This checked bundle covers the shipped Rust, JavaScript, and Android release graphs.",
         f"It was generated with `{version}` by `./tools/prns repo notices generate`.",
+        "Each locked Rust manifest closure is fetched before cargo-about reads its target-filtered "
+        "packaged license material offline.",
         "Entries are deduplicated by SPDX identifier and exact notice text.",
         "",
         "## Release graphs",
