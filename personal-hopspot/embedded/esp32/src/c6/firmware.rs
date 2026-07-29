@@ -8,10 +8,17 @@ pub async fn run(spawner: Spawner) {
         wifi,
         #[cfg(feature = "bluetooth-auto")]
         bluetooth,
+        identity_entropy,
         mac,
         timebase,
         _rtc,
     } = XiaoEsp32C6::bringup();
+
+    let node_bootstrap = crate::identity::bootstrap_node_identity();
+    crate::identity::log_persistence("node", node_bootstrap.persistence());
+    let ble_bootstrap = crate::identity::bootstrap_ble_identity();
+    crate::identity::log_persistence("Bluetooth", ble_bootstrap.persistence());
+    drop(identity_entropy);
 
     #[cfg(feature = "esp-now")]
     let (_espnow_controller, espnow, _espnow_status) = {
@@ -33,10 +40,6 @@ pub async fn run(spawner: Spawner) {
         (controller, espnow, espnow_status)
     };
 
-    let node_bootstrap = crate::identity::bootstrap_node_identity();
-    crate::identity::log_persistence("node", node_bootstrap.persistence());
-    let ble_bootstrap = crate::identity::bootstrap_ble_identity();
-    crate::identity::log_persistence("Bluetooth", ble_bootstrap.persistence());
     let node_identity = node_bootstrap.into_identity();
     let transport_secret = node_identity.transport_secret();
     let destination_secret = node_identity.into_destination_secret();

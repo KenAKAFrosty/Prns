@@ -5,6 +5,7 @@ use esp_hal::interrupt::software::SoftwareInterruptControl;
 use esp_hal::peripherals::BT;
 #[cfg(feature = "esp-now")]
 use esp_hal::peripherals::WIFI;
+use esp_hal::rng::TrngSource;
 use esp_hal::rtc_cntl::Rtc;
 use esp_hal::timer::timg::TimerGroup;
 use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
@@ -37,6 +38,7 @@ pub(crate) struct C6Hardware {
     pub(crate) wifi: WIFI<'static>,
     #[cfg(feature = "bluetooth-auto")]
     pub(crate) bluetooth: BT<'static>,
+    pub(crate) identity_entropy: TrngSource<'static>,
     pub(crate) mac: [u8; 6],
     pub(crate) timebase: EmbassyTimebase,
     pub(crate) _rtc: Rtc<'static>,
@@ -63,6 +65,7 @@ impl XiaoEsp32C6 {
         rtc.rwdt.disable();
         rtc.swd.disable();
         let timebase = EmbassyTimebase::start_at(InstantMillis(rtc.current_time_us() / 1000));
+        let identity_entropy = TrngSource::new(peripherals.RNG, peripherals.ADC1);
 
         let base_mac = base_mac_address();
         let mut mac = [0u8; 6];
@@ -75,6 +78,7 @@ impl XiaoEsp32C6 {
             wifi: peripherals.WIFI,
             #[cfg(feature = "bluetooth-auto")]
             bluetooth: peripherals.BT,
+            identity_entropy,
             mac,
             timebase,
             _rtc: rtc,
