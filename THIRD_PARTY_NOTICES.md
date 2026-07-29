@@ -40,7 +40,7 @@ Entries are deduplicated by SPDX identifier and exact notice text.
 
 ## Vendored native code
 
-- `libdbus 1.14.4` — `AFL-2.1` alternative selected from its `AFL-2.1 OR GPL-2.0-or-later` dual license; built from the source vendored by `libdbus-sys` and statically linked into the Linux `personal-rns` Node addon and full `prnsd` native release.
+- `libdbus 1.14.4` — `AFL-2.1` alternative selected from its `AFL-2.1 OR GPL-2.0-or-later` dual license; built from the source vendored by `libdbus-sys` and statically linked into the Linux `personal-rns` Node addon and full Linux `prnsd` native release.
 
 ## Android Maven runtime
 
@@ -128,7 +128,7 @@ License: AFL-2.1
 
 Used by: `libdbus 1.14.4`
 
-Release graphs: Node addon Linux
+Release graphs: Node addon Linux, daemon Linux
 
 ```text
 dbus is licensed to you under your choice of the Academic Free
@@ -5931,7 +5931,7 @@ DEALINGS IN THE SOFTWARE.
 
 License: MIT License
 
-Used by: `cc 1.2.65`, `cc 1.3.0`, `cfg-if 1.0.4`, `cmake 0.1.58`, `find-msvc-tools 0.1.9`, `js-sys 0.3.103`, `js-sys 0.3.99`, `longest-increasing-subsequence 0.1.0`, `pkg-config 0.3.33`, `socket2 0.6.4`, `socket2 0.6.5`, `wasm-bindgen 0.2.122`, `wasm-bindgen 0.2.126`, `wasm-bindgen-futures 0.4.72`, `wasm-bindgen-macro 0.2.122`, `wasm-bindgen-macro 0.2.126`, `wasm-bindgen-macro-support 0.2.122`, `wasm-bindgen-macro-support 0.2.126`, `wasm-bindgen-shared 0.2.122`, `wasm-bindgen-shared 0.2.126`, `web-sys 0.3.99`
+Used by: `cc 1.2.65`, `cc 1.2.67`, `cc 1.3.0`, `cfg-if 1.0.4`, `cmake 0.1.58`, `find-msvc-tools 0.1.9`, `js-sys 0.3.103`, `js-sys 0.3.99`, `longest-increasing-subsequence 0.1.0`, `pkg-config 0.3.33`, `socket2 0.6.4`, `socket2 0.6.5`, `wasm-bindgen 0.2.122`, `wasm-bindgen 0.2.126`, `wasm-bindgen-futures 0.4.72`, `wasm-bindgen-macro 0.2.122`, `wasm-bindgen-macro 0.2.126`, `wasm-bindgen-macro-support 0.2.122`, `wasm-bindgen-macro-support 0.2.126`, `wasm-bindgen-shared 0.2.122`, `wasm-bindgen-shared 0.2.126`, `web-sys 0.3.99`
 
 Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 T-Beam, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
 
