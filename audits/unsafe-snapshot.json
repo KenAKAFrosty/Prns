@@ -13176,11 +13176,11 @@
       "name": "prnsd",
       "source": "prnsd",
       "unsafe": {
-        "blocks": 1,
-        "externs": 1,
+        "blocks": 0,
+        "externs": 0,
         "functions": 0,
         "impls": 0,
-        "tokens": 2
+        "tokens": 0
       },
       "version": "0.3.1"
     },
