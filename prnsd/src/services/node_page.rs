@@ -19,7 +19,7 @@ use super::DaemonRequestState;
 
 const APP_NAME: &str = "nomadnetwork";
 const ASPECTS: &[&str] = &["node"];
-const ANNOUNCE_APP_DATA: &[u8] = b"Prns Daemon | High-performance Reticulum";
+const ANNOUNCE_APP_DATA: &[u8] = b"Prns: High-performance Reticulum";
 
 pub(crate) struct NodePageDestination {
     pub(crate) hash: DestinationHash,
