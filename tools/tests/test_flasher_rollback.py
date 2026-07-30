@@ -668,6 +668,10 @@ class FlasherRollbackTests(unittest.TestCase):
         self.assertIn("default: retain", candidate)
         self.assertIn("guard-bootstrap", candidate)
         self.assertIn("signed candidate on a stable release", candidate)
+        self.assertLess(
+            candidate.index("mkdir -p target"),
+            candidate.index("> target/bootstrap-releases.json"),
+        )
         self.assertIn("probe-stable", candidate)
         self.assertIn("cmp target/bootstrap-live/stable.json", candidate)
         self.assertIn("flasher-release-history-${{ github.run_id }}", candidate)
