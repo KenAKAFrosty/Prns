@@ -55,6 +55,12 @@ pub trait InterfaceSeam {
 
     async fn next_outbound(&mut self) -> &[u8];
 
+    /// Accept responsibility for a frame copied into the interface's own
+    /// bounded pending storage, allowing the seam-owned slot to be reused.
+    /// This is not completion; [`complete_outbound`](Self::complete_outbound)
+    /// still reports the eventual disposition.
+    fn accept_outbound_custody(&mut self) {}
+
     fn complete_outbound(&mut self, _disposition: OutboundDisposition) {}
 
     /// A further frame already committed for this interface, if one is waiting. Never parks; the borrow contract matches [`next_outbound`](Self::next_outbound). Serve loops use it to coalesce a burst that queued behind the frame being written into one wire write; the default never offers one, so a seam without it simply never batches.

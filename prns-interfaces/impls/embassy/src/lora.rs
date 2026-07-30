@@ -1057,6 +1057,7 @@ where
                         let now = InstantMillis(started.elapsed().as_millis());
                         let len = outbound.len();
                         pending_buf[..len].copy_from_slice(&outbound[..len]);
+                        seam.accept_outbound_custody();
                         pending_airtime_us = packet_airtime(&pending_buf[..len], &profile);
                         pending_enqueued_at_ms = now.0;
                         pending_len = Some(len);

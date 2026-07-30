@@ -32,5 +32,11 @@ The Heltec V4 release validation build measured this complete stewardship path
 at 13,484 additional linked bytes versus the pre-change trunk build, while BSS
 decreased by 128 bytes. The retained flash cost covers interrupt-evidence
 handling, transactional recovery, adaptive access, explicit outcomes, and
-operator diagnostics; the pending-frame redesign removes the former four-frame
-LoRa queue rather than spending additional RAM.
+operator diagnostics.
+
+The embedded Hopspot lane holds one packet in active radio custody and three
+waiting outbound packets. Only the outbound side is deeper. Compared with the
+one-slot lane, the two additional 508-byte payload slots add 1,088 bytes of
+static storage on Heltec V4 and reduce its linker-reserved stack from 37,212 to
+36,124 bytes; total reserved DRAM is unchanged and the path performs no heap
+allocation. The same comparison adds 1,056 bytes of BSS on T-Echo/nRF52840.

@@ -91,6 +91,10 @@ impl InterfaceSeam for TokioInterfaceSeam {
         self.outbound.peek().await.frame()
     }
 
+    fn accept_outbound_custody(&mut self) {
+        self.outbound.release();
+    }
+
     fn try_next_outbound(&mut self) -> Option<&[u8]> {
         self.outbound.release();
         Some(self.outbound.try_peek()?.frame())

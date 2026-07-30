@@ -41,20 +41,29 @@ pub enum LaneClaimError {
     FrameCapacityExceeded { required: usize, capacity: usize },
 }
 
-pub struct StaticManifoldLane<M: RawMutex + 'static, const FRAME: usize, const DEPTH: usize> {
+pub struct StaticManifoldLane<
+    M: RawMutex + 'static,
+    const FRAME: usize,
+    const INBOUND_DEPTH: usize,
+    const OUTBOUND_DEPTH: usize = INBOUND_DEPTH,
+> {
     taken: AtomicBool,
     ingress_pressure_events: AtomicU32,
     egress_pressure_events: AtomicU32,
-    inbound_buffer: ConstStaticCell<LaneBuffer<FRAME, DEPTH>>,
+    inbound_buffer: ConstStaticCell<LaneBuffer<FRAME, INBOUND_DEPTH>>,
     inbound_channel: StaticCell<LaneChannel<M, FRAME>>,
     manifold_inbound: StaticCell<EmbassyGrantConsumer<'static, M, FRAME>>,
-    outbound_buffer: ConstStaticCell<LaneBuffer<FRAME, DEPTH>>,
+    outbound_buffer: ConstStaticCell<LaneBuffer<FRAME, OUTBOUND_DEPTH>>,
     outbound_channel: StaticCell<LaneChannel<M, FRAME>>,
     manifold_outbound: StaticCell<EmbassyGrantProducer<'static, M, FRAME>>,
 }
 
-impl<M: RawMutex + Sync + 'static, const FRAME: usize, const DEPTH: usize>
-    StaticManifoldLane<M, FRAME, DEPTH>
+impl<
+        M: RawMutex + Sync + 'static,
+        const FRAME: usize,
+        const INBOUND_DEPTH: usize,
+        const OUTBOUND_DEPTH: usize,
+    > StaticManifoldLane<M, FRAME, INBOUND_DEPTH, OUTBOUND_DEPTH>
 {
     #[must_use]
     pub const fn new() -> Self {
@@ -62,10 +71,10 @@ impl<M: RawMutex + Sync + 'static, const FRAME: usize, const DEPTH: usize>
             taken: AtomicBool::new(false),
             ingress_pressure_events: AtomicU32::new(0),
             egress_pressure_events: AtomicU32::new(0),
-            inbound_buffer: ConstStaticCell::new([const { FrameSlot::empty() }; DEPTH]),
+            inbound_buffer: ConstStaticCell::new([const { FrameSlot::empty() }; INBOUND_DEPTH]),
             inbound_channel: StaticCell::new(),
             manifold_inbound: StaticCell::new(),
-            outbound_buffer: ConstStaticCell::new([const { FrameSlot::empty() }; DEPTH]),
+            outbound_buffer: ConstStaticCell::new([const { FrameSlot::empty() }; OUTBOUND_DEPTH]),
             outbound_channel: StaticCell::new(),
             manifold_outbound: StaticCell::new(),
         }
@@ -121,8 +130,12 @@ impl<M: RawMutex + Sync + 'static, const FRAME: usize, const DEPTH: usize>
     }
 }
 
-impl<M: RawMutex + Sync + 'static, const FRAME: usize, const DEPTH: usize> Default
-    for StaticManifoldLane<M, FRAME, DEPTH>
+impl<
+        M: RawMutex + Sync + 'static,
+        const FRAME: usize,
+        const INBOUND_DEPTH: usize,
+        const OUTBOUND_DEPTH: usize,
+    > Default for StaticManifoldLane<M, FRAME, INBOUND_DEPTH, OUTBOUND_DEPTH>
 {
     fn default() -> Self {
         Self::new()
@@ -159,30 +172,42 @@ impl<M: RawMutex + Sync + 'static, const LANE_COUNT: usize, const NOTIFY: usize>
         }
     }
 
-    pub fn claim_interface<const FRAME: usize, const DEPTH: usize>(
+    pub fn claim_interface<
+        const FRAME: usize,
+        const INBOUND_DEPTH: usize,
+        const OUTBOUND_DEPTH: usize,
+    >(
         &mut self,
-        storage: &'static StaticManifoldLane<M, FRAME, DEPTH>,
+        storage: &'static StaticManifoldLane<M, FRAME, INBOUND_DEPTH, OUTBOUND_DEPTH>,
         descriptor: InterfaceDescriptor,
     ) -> Result<InterfaceLane<M, FRAME>, LaneClaimError> {
         self.claim_interface_configuration(storage, descriptor, None)
     }
 
-    pub fn claim_interface_with_ifac<const FRAME: usize, const DEPTH: usize>(
+    pub fn claim_interface_with_ifac<
+        const FRAME: usize,
+        const INBOUND_DEPTH: usize,
+        const OUTBOUND_DEPTH: usize,
+    >(
         &mut self,
-        storage: &'static StaticManifoldLane<M, FRAME, DEPTH>,
+        storage: &'static StaticManifoldLane<M, FRAME, INBOUND_DEPTH, OUTBOUND_DEPTH>,
         descriptor: InterfaceDescriptor,
         context: IfacContext,
     ) -> Result<InterfaceLane<M, FRAME>, LaneClaimError> {
         self.claim_interface_configuration(storage, descriptor, Some(context))
     }
 
-    fn claim_interface_configuration<const FRAME: usize, const DEPTH: usize>(
+    fn claim_interface_configuration<
+        const FRAME: usize,
+        const INBOUND_DEPTH: usize,
+        const OUTBOUND_DEPTH: usize,
+    >(
         &mut self,
-        storage: &'static StaticManifoldLane<M, FRAME, DEPTH>,
+        storage: &'static StaticManifoldLane<M, FRAME, INBOUND_DEPTH, OUTBOUND_DEPTH>,
         mut descriptor: InterfaceDescriptor,
         context: Option<IfacContext>,
     ) -> Result<InterfaceLane<M, FRAME>, LaneClaimError> {
-        self.validate_claim::<DEPTH>(descriptor.id)?;
+        self.validate_claim::<INBOUND_DEPTH>(descriptor.id)?;
         if let Some(mtu) = descriptor.hardware_mtu {
             descriptor.hardware_mtu = Some(mtu.min(EMBEDDED_MAX_LINK_MTU));
         }
@@ -199,7 +224,7 @@ impl<M: RawMutex + Sync + 'static, const LANE_COUNT: usize, const NOTIFY: usize>
 
         let id = descriptor.id;
         let taken = storage.try_take(id, None)?;
-        self.register_lane::<DEPTH>(id, taken.manifold_inbound, taken.manifold_outbound);
+        self.register_lane::<INBOUND_DEPTH>(id, taken.manifold_inbound, taken.manifold_outbound);
         if self.initial.push(descriptor).is_err() {
             unreachable!()
         }
@@ -211,18 +236,26 @@ impl<M: RawMutex + Sync + 'static, const LANE_COUNT: usize, const NOTIFY: usize>
         Ok(taken.interface)
     }
 
-    pub fn claim_supervisor<const FRAME: usize, const DEPTH: usize>(
+    pub fn claim_supervisor<
+        const FRAME: usize,
+        const INBOUND_DEPTH: usize,
+        const OUTBOUND_DEPTH: usize,
+    >(
         &mut self,
-        storage: &'static StaticManifoldLane<M, FRAME, DEPTH>,
+        storage: &'static StaticManifoldLane<M, FRAME, INBOUND_DEPTH, OUTBOUND_DEPTH>,
         supervisor: InterfaceId,
         outbound_wake: &'static Signal<M, ()>,
     ) -> Result<SupervisorLane<M, FRAME>, LaneClaimError> {
         self.claim_supervisor_configuration(storage, supervisor, None, outbound_wake)
     }
 
-    pub fn claim_supervisor_with_ifac<const FRAME: usize, const DEPTH: usize>(
+    pub fn claim_supervisor_with_ifac<
+        const FRAME: usize,
+        const INBOUND_DEPTH: usize,
+        const OUTBOUND_DEPTH: usize,
+    >(
         &mut self,
-        storage: &'static StaticManifoldLane<M, FRAME, DEPTH>,
+        storage: &'static StaticManifoldLane<M, FRAME, INBOUND_DEPTH, OUTBOUND_DEPTH>,
         supervisor: InterfaceId,
         context: IfacContext,
         outbound_wake: &'static Signal<M, ()>,
@@ -230,16 +263,24 @@ impl<M: RawMutex + Sync + 'static, const LANE_COUNT: usize, const NOTIFY: usize>
         self.claim_supervisor_configuration(storage, supervisor, Some(context), outbound_wake)
     }
 
-    fn claim_supervisor_configuration<const FRAME: usize, const DEPTH: usize>(
+    fn claim_supervisor_configuration<
+        const FRAME: usize,
+        const INBOUND_DEPTH: usize,
+        const OUTBOUND_DEPTH: usize,
+    >(
         &mut self,
-        storage: &'static StaticManifoldLane<M, FRAME, DEPTH>,
+        storage: &'static StaticManifoldLane<M, FRAME, INBOUND_DEPTH, OUTBOUND_DEPTH>,
         supervisor: InterfaceId,
         context: Option<IfacContext>,
         outbound_wake: &'static Signal<M, ()>,
     ) -> Result<SupervisorLane<M, FRAME>, LaneClaimError> {
-        self.validate_claim::<DEPTH>(supervisor)?;
+        self.validate_claim::<INBOUND_DEPTH>(supervisor)?;
         let taken = storage.try_take(supervisor, Some(outbound_wake))?;
-        self.register_lane::<DEPTH>(supervisor, taken.manifold_inbound, taken.manifold_outbound);
+        self.register_lane::<INBOUND_DEPTH>(
+            supervisor,
+            taken.manifold_inbound,
+            taken.manifold_outbound,
+        );
         if let Some(context) = context {
             if self
                 .ifacs
