@@ -100,9 +100,15 @@ VENDORED = (
 
 
 def normalized_notice_text(value: str) -> str:
-    """Keep legal text intact while making line endings and trailing space reproducible."""
+    """Keep legal words intact while making presentation whitespace reproducible."""
     normalized = value.replace("\r\n", "\n").replace("\r", "\n")
-    return "\n".join(line.rstrip() for line in normalized.split("\n")).strip()
+    lines: list[str] = []
+    for line in normalized.split("\n"):
+        line = line.rstrip()
+        if not line and lines and not lines[-1]:
+            continue
+        lines.append(line)
+    return "\n".join(lines).strip()
 
 
 def about_binary() -> str:
@@ -259,7 +265,8 @@ def notice_bundle() -> str:
         f"It was generated with `{version}` by `./tools/prns repo notices generate`.",
         "Each locked Rust manifest closure is fetched into a fresh isolated Cargo home before "
         "cargo-about reads its target-filtered packaged license material offline.",
-        "Entries are deduplicated by SPDX identifier and exact notice text.",
+        "Entries are deduplicated by SPDX identifier and canonical notice text; line endings, "
+        "trailing space, and repeated blank lines are normalized without changing legal words.",
         "",
         "## Release graphs",
         "",

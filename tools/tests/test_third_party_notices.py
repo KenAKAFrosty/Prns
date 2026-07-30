@@ -21,6 +21,20 @@ SPEC.loader.exec_module(notices)
 
 
 class ThirdPartyNoticeTests(unittest.TestCase):
+    def test_notice_text_normalizes_presentation_only_whitespace(self) -> None:
+        source = (
+            "Copyright Example  \r\n"
+            "\r\n"
+            " \r\n"
+            "Permission is granted.\t\r\n"
+            "\r\n"
+        )
+
+        self.assertEqual(
+            notices.normalized_notice_text(source),
+            "Copyright Example\n\nPermission is granted.",
+        )
+
     def test_fetch_uses_the_complete_locked_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             cargo_home = Path(temporary)
