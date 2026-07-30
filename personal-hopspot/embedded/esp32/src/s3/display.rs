@@ -187,11 +187,34 @@ pub(super) fn add_manifold_pressure(
     }
 }
 
+pub(super) fn add_lora_spectrum(
+    details: &mut screen::InterfaceMenuDetails,
+    selected_card: Option<&screen::Card>,
+    spectrum: &LoRaSpectrumStatus,
+) {
+    if !selected_card.is_some_and(|card| card.kind() == screen::CardKind::LoRa) {
+        return;
+    }
+    let snapshot = spectrum.snapshot();
+    details.push_lora_spectrum(screen::LoRaSpectrumMenuDetails {
+        channel_busy_per_mille: snapshot.channel_busy_per_mille,
+        noise_floor_dbm: snapshot.noise_floor_dbm,
+        cca_threshold_dbm: snapshot.cca_threshold_dbm,
+        deferrals: snapshot.deferrals,
+        false_preambles: snapshot.false_preambles,
+        contention_timeouts: snapshot.contention_timeouts,
+        duty_holds: snapshot.duty_holds,
+        duty_timeouts: snapshot.duty_timeouts,
+        radio_recoveries: snapshot.radio_recoveries,
+    });
+}
+
 #[cfg(feature = "wifi-auto")]
 pub(super) fn build_interface_menu_details(
     selected_card: Option<&screen::Card>,
     snapshots: &[InterfaceSnapshot],
     usb: &EmbassyInterfaceStatus,
+    lora_spectrum: &LoRaSpectrumStatus,
     wifi_config: &HopspotWifiConfig,
     ap_ssid: Option<&str>,
 ) -> screen::InterfaceMenuDetails {
@@ -215,6 +238,7 @@ pub(super) fn build_interface_menu_details(
         }
         _ => screen::InterfaceMenuDetails::empty(),
     };
+    add_lora_spectrum(&mut details, selected_card, lora_spectrum);
     add_manifold_pressure(&mut details, selected_card);
     details
 }

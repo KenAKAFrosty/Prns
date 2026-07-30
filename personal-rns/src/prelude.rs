@@ -65,7 +65,9 @@ pub use crate::i2p::I2pInterface;
 #[cfg(all(feature = "kiss", feature = "tokio-host"))]
 pub use crate::kiss::KissInterface;
 #[cfg(all(feature = "lora", feature = "embassy-host"))]
-pub use crate::lora::{LoRaInterface, LoRaInterfaceInput};
+pub use crate::lora::{
+    LoRaConfigError, LoRaInterface, LoRaInterfaceInput, LoRaSpectrumSnapshot, LoRaSpectrumStatus,
+};
 #[cfg(all(feature = "pipe", feature = "tokio-host"))]
 pub use crate::pipe::PipeInterface;
 #[cfg(all(feature = "rnode", feature = "tokio-host"))]

@@ -71,14 +71,21 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         EmbassyInterfaceStatus,
         EmbassyInterfaceStatus::new(lora_id, ConnectionState::Initializing)
     );
+    let lora_spectrum: &'static LoRaSpectrumStatus =
+        mk_static!(LoRaSpectrumStatus, LoRaSpectrumStatus::new());
     #[cfg(feature = "lora")]
-    let lora = LoRaInterface::new(LoRaInterfaceInput {
+    let lora = match LoRaInterface::new(LoRaInterfaceInput {
         radio: lora_radio,
         profile: lora_profile,
+        airtime_policy: AirtimePolicy::Regional,
         control: &LORA_CONTROL,
         status: lora_status,
+        spectrum: lora_spectrum,
         lifecycle: LIFECYCLE.dyn_sender(),
-    });
+    }) {
+        Ok(lora) => lora,
+        Err(_) => panic!("the built-in LoRa profile and regional policy must be valid"),
+    };
 
     // The Wi-Fi stack carries both the Wi-Fi Auto UDP and the TCP client, so it stands up before the
     // node moves to core 1 — activating the TCP slot is a core-0-only act.
@@ -361,12 +368,18 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 ui_state.selected_card(content.cards),
                 &snapshots,
                 usb_status,
+                lora_spectrum,
                 &wifi_config,
                 menu_ap_ssid,
             );
             #[cfg(not(feature = "wifi-auto"))]
             let interface_menu_details = {
                 let mut details = screen::InterfaceMenuDetails::empty();
+                add_lora_spectrum(
+                    &mut details,
+                    ui_state.selected_card(content.cards),
+                    lora_spectrum,
+                );
                 add_manifold_pressure(&mut details, ui_state.selected_card(content.cards));
                 details
             };

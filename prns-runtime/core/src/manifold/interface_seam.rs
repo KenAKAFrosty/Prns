@@ -12,6 +12,8 @@ pub enum OutboundDropReason {
     Disabled,
     Disconnected,
     TimedOut,
+    ContentionTimeout,
+    DutyLimited,
     TransportFailure,
     Rejected,
 }

@@ -72,7 +72,7 @@ use personal_rns::interfaces::bluetooth_auto::{BleIdentity, BLE_HW_MTU};
 use personal_rns::interfaces::esp_now::{
     self as espnow_core, Channel as EspNowChannel, ChannelPolicy, ESP_NOW_V2_AIR_MTU,
 };
-use personal_rns::interfaces::lora::{DEFAULT_915_PROFILE, LORA_MAX_PAYLOAD};
+use personal_rns::interfaces::lora::{AirtimePolicy, DEFAULT_915_PROFILE, LORA_MAX_PAYLOAD};
 use personal_rns::interfaces::usb_auto::device_descriptor;
 use personal_rns::interfaces::wifi_auto as wifi_auto_contract;
 use personal_rns::interfaces::BitrateBps;
@@ -80,7 +80,7 @@ use personal_rns::interfaces::{
     ConnectionState, InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus, MacAddress,
     Membership,
 };
-use personal_rns::lora::{LoRaControl, LoRaInterface, LoRaInterfaceInput};
+use personal_rns::lora::{LoRaControl, LoRaInterface, LoRaInterfaceInput, LoRaSpectrumStatus};
 use personal_rns::manifold::embassy::{
     EmbassyHost, EmbassyInterfaceSeam, EmbassyInterfaceStatus, EmbassyTimebase, InterfaceLifecycle,
 };
@@ -248,10 +248,10 @@ use configuration::{HopspotTcpClientConfig, HopspotTcpClientHost};
 use connectivity::build_tcp;
 #[cfg(feature = "wifi-auto")]
 use connectivity::{build_wifi, espnow_channel_policy, EspNowAdapter};
-#[cfg(not(feature = "wifi-auto"))]
-use display::add_manifold_pressure;
 #[cfg(feature = "wifi-auto")]
 use display::build_interface_menu_details;
+#[cfg(not(feature = "wifi-auto"))]
+use display::{add_lora_spectrum, add_manifold_pressure};
 use display::{build_cards, build_snapshots, button_task};
 
 static WIFI_SHARED: AutoWifiShared<MEMBERS> = AutoWifiShared::new(WIFI_SUPERVISOR_ID);

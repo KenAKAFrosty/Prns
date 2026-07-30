@@ -47,11 +47,42 @@ impl AirtimeLedger {
             long_per_mille: per_mille(self.long.total(now), AIRTIME_LONG_WINDOW_MS),
         }
     }
+
+    /// Utilization if `airtime_us` were transmitted now, without recording it.
+    ///
+    /// Duty admission must ask this question before a transmission. Looking
+    /// only at the current ledger permits a single slow frame to cross the
+    /// configured limit.
+    pub fn projected_utilization(
+        &mut self,
+        now: InstantMillis,
+        airtime_us: u64,
+    ) -> AirtimeUtilization {
+        AirtimeUtilization {
+            short_per_mille: projected_per_mille(
+                self.short.total(now).saturating_add(airtime_us),
+                AIRTIME_SHORT_WINDOW_MS,
+            ),
+            long_per_mille: projected_per_mille(
+                self.long.total(now).saturating_add(airtime_us),
+                AIRTIME_LONG_WINDOW_MS,
+            ),
+        }
+    }
 }
 
 fn per_mille(total_us: u64, window_ms: u64) -> u16 {
     let window_us = window_ms * 1_000;
     (total_us.saturating_mul(1_000) / window_us).min(1_000) as u16
+}
+
+fn projected_per_mille(total_us: u64, window_ms: u64) -> u16 {
+    let window_us = window_ms * 1_000;
+    total_us
+        .saturating_mul(1_000)
+        .saturating_add(window_us.saturating_sub(1))
+        .saturating_div(window_us)
+        .min(1_000) as u16
 }
 
 #[cfg(test)]
@@ -139,5 +170,30 @@ mod tests {
         let report = ledger.utilization(InstantMillis(1_000 + 100 * AIRTIME_LONG_WINDOW_MS));
         assert_eq!(report.short_per_mille, 0);
         assert_eq!(report.long_per_mille, 0);
+    }
+
+    #[test]
+    fn projected_utilization_accounts_for_the_candidate_without_recording_it() {
+        let mut ledger = AirtimeLedger::new();
+        ledger.record_tx(InstantMillis(1_000), 1_350_000);
+
+        let projected = ledger.projected_utilization(InstantMillis(1_000), 300_000);
+        assert_eq!(projected.short_per_mille, 110);
+        assert_eq!(
+            ledger.utilization(InstantMillis(1_000)).short_per_mille,
+            90,
+            "asking about a candidate does not spend its airtime"
+        );
+    }
+
+    #[test]
+    fn projected_utilization_rounds_up_so_admission_cannot_hide_fractional_overage() {
+        let mut ledger = AirtimeLedger::new();
+        let projected = ledger.projected_utilization(InstantMillis(1_000), 1_500_001);
+        assert_eq!(
+            projected.short_per_mille, 101,
+            "10.000006% cannot be admitted as exactly 10%"
+        );
+        assert_eq!(ledger.utilization(InstantMillis(1_000)).short_per_mille, 0);
     }
 }
