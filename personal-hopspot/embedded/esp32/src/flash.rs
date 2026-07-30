@@ -73,7 +73,10 @@ impl<const CAPACITY: usize> NorFlash for EspRomFlash<CAPACITY> {
     fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
         check_erase(self, from, to).map_err(EspRomFlashError::Contract)?;
         for sector in from as usize / SECTOR_LEN..to as usize / SECTOR_LEN {
-            erase_sector(sector as u32)?;
+            let sector = sector as u32;
+            if !sector_is_erased(sector)? {
+                erase_sector(sector)?;
+            }
         }
         Ok(())
     }
@@ -175,6 +178,18 @@ fn erase_sector(sector: u32) -> Result<(), EspRomFlashError> {
         }
     }
     Ok(())
+}
+
+fn sector_is_erased(sector: u32) -> Result<bool, EspRomFlashError> {
+    let base = sector * SECTOR_LEN as u32;
+    for offset in (0..SECTOR_LEN).step_by(BOUNCE_WORDS * WORD_LEN) {
+        let mut bounce = [0u32; BOUNCE_WORDS];
+        read_words(base + offset as u32, &mut bounce, BOUNCE_WORDS * WORD_LEN)?;
+        if bounce.iter().any(|word| *word != u32::MAX) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 impl core::fmt::Display for EspRomFlashError {
