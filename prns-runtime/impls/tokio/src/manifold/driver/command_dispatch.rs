@@ -1,5 +1,5 @@
 use crate::engine::{
-    Directive, EngineCommand, EngineReaction, EngineState, InstantMillis, IssuedCommand, Journaled,
+    Directive, EngineReaction, EngineState, InstantMillis, IssuedCommand, Journaled, PrnsCommand,
     Respond, RespondData, SendRequest, SendRequestData, SendSinglePacketEntropy,
     SendSinglePacketFailure, SendSinglePacketPrepared, SendSinglePacketWriteError, Settlement,
     WakeSchedules,
@@ -143,7 +143,7 @@ where
             HostCommand::Engine(issued) => {
                 let id = issued.id;
                 match (crypto_pool, issued.command) {
-                    (Some(pool), EngineCommand::SendSinglePacket(send)) => {
+                    (Some(pool), PrnsCommand::SendSinglePacket(send)) => {
                         defer_send_single_packet!(pool, id, send)
                     }
                     (_, command) => CommandEffect::Delta(engine.ingest_command_into(
@@ -159,7 +159,7 @@ where
                 let id = issued.id;
                 journal.register_completion(id, completion);
                 match (crypto_pool, issued.command) {
-                    (Some(pool), EngineCommand::SendSinglePacket(send)) => {
+                    (Some(pool), PrnsCommand::SendSinglePacket(send)) => {
                         defer_send_single_packet!(pool, id, send)
                     }
                     (_, command) => CommandEffect::Delta(engine.ingest_command_into(
@@ -238,7 +238,7 @@ where
                     Some(data) => engine.ingest_command_into(
                         IssuedCommand {
                             id: respond.id,
-                            command: EngineCommand::Respond(Respond {
+                            command: PrnsCommand::Respond(Respond {
                                 link_id: respond.link_id,
                                 request_id: respond.request_id,
                                 payload: crate::engine::RespondPayload::Packed(data),
@@ -286,7 +286,7 @@ where
                         Ok(send_data) => engine.ingest_command_into(
                             IssuedCommand {
                                 id,
-                                command: EngineCommand::SendRequest(SendRequest {
+                                command: PrnsCommand::SendRequest(SendRequest {
                                     link_id,
                                     path_hash,
                                     data: send_data,

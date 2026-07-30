@@ -3,9 +3,9 @@ mod forward;
 mod resource;
 
 use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, Directive, EngineCommand,
-    EngineReaction, EngineState, EstablishLink, IngestIo, InstantMillis, IssuedCommand, Journaled,
-    LinkEstablished, RatchetPolicy, SendSinglePacket, SendSinglePacketPayload, Settlement,
+    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, Directive, EngineReaction,
+    EngineState, EstablishLink, IngestIo, InstantMillis, IssuedCommand, Journaled, LinkEstablished,
+    PrnsCommand, RatchetPolicy, SendSinglePacket, SendSinglePacketPayload, Settlement,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::tcp;

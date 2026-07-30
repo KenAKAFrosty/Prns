@@ -63,7 +63,7 @@ use esp_radio::esp_now::{
 };
 #[cfg(feature = "bluetooth-auto")]
 use personal_rns::bluetooth_auto::{BluetoothAutoShared, BluetoothAutoStatus};
-use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand};
+use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand};
 #[cfg(feature = "wifi-auto")]
 use personal_rns::esp_now::EspNowInterface;
 #[cfg(feature = "bluetooth-auto")]

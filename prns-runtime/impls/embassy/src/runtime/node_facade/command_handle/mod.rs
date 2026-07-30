@@ -7,9 +7,8 @@ use embassy_sync::signal::Signal;
 use portable_atomic::{AtomicU64, Ordering};
 
 use crate::engine::{
-    CloseLink, CommandId, EngineCommand, IssuedCommand, PacketReceiptDelivered, Respond,
-    RespondData, RespondPayload, SendSinglePacket, SendSinglePacketFailure,
-    SendSinglePacketPayload, Settlement,
+    CloseLink, CommandId, IssuedCommand, PacketReceiptDelivered, PrnsCommand, Respond, RespondData,
+    RespondPayload, SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload, Settlement,
 };
 use crate::routing::links::LinkId;
 use crate::wire::DestinationHash;
@@ -118,7 +117,7 @@ impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> PrnsNodeHandle<'a, 
     }
 
     /// Queues a command without awaiting settlement and returns its ID, or `None` when the command lane is full.
-    pub fn issue(&self, command: EngineCommand) -> Option<CommandId> {
+    pub fn issue(&self, command: PrnsCommand) -> Option<CommandId> {
         let id = self.pool.mint();
         self.commands.try_send(IssuedCommand { id, command }).ok()?;
         Some(id)
@@ -142,7 +141,7 @@ impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> PrnsNodeHandle<'a, 
         self.commands
             .try_send(IssuedCommand {
                 id,
-                command: EngineCommand::SendSinglePacket(SendSinglePacket {
+                command: PrnsCommand::SendSinglePacket(SendSinglePacket {
                     destination,
                     payload,
                 }),
@@ -164,7 +163,7 @@ impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> PrnsNodeHandle<'a, 
 
     /// Moves a prebuilt response into the command lane, returning `false` when full.
     pub fn respond_owned_packed(&self, responder: RespondToken, data: RespondData) -> bool {
-        self.issue(EngineCommand::Respond(Respond {
+        self.issue(PrnsCommand::Respond(Respond {
             link_id: responder.link_id,
             request_id: responder.request_id,
             payload: RespondPayload::Packed(data),
@@ -173,7 +172,7 @@ impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> PrnsNodeHandle<'a, 
     }
 
     pub fn respond_static_bytes(&self, responder: RespondToken, data: &'static [u8]) -> bool {
-        self.issue(EngineCommand::Respond(Respond {
+        self.issue(PrnsCommand::Respond(Respond {
             link_id: responder.link_id,
             request_id: responder.request_id,
             payload: RespondPayload::StaticBytes(data),
@@ -188,7 +187,7 @@ impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> PrnsNodeHandle<'a, 
         name: &'static str,
         bytes: &'static [u8],
     ) -> bool {
-        self.issue(EngineCommand::Respond(Respond {
+        self.issue(PrnsCommand::Respond(Respond {
             link_id: responder.link_id,
             request_id: responder.request_id,
             payload: RespondPayload::StaticFile { name, bytes },
@@ -198,7 +197,7 @@ impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> PrnsNodeHandle<'a, 
 
     /// Sever an active link. Returns `false` if the command lane is full.
     pub fn close_link(&self, link_id: LinkId) -> bool {
-        self.issue(EngineCommand::CloseLink(CloseLink { link_id }))
+        self.issue(PrnsCommand::CloseLink(CloseLink { link_id }))
             .is_some()
     }
 
@@ -222,7 +221,7 @@ impl<M: RawMutex, const N: usize> Drop for SlotGuard<'_, M, N> {
 impl<M: RawMutex, const COMMANDS: usize, const N: usize> PrnsNodeApi
     for PrnsNodeHandle<'_, M, COMMANDS, N>
 {
-    fn issue(&self, command: EngineCommand) -> Option<CommandId> {
+    fn issue(&self, command: PrnsCommand) -> Option<CommandId> {
         self.issue(command)
     }
 

@@ -83,7 +83,7 @@ mod tests {
     use super::*;
     use crate::engine::test_support::*;
     use crate::engine::IngestPacketOutcome;
-    use crate::engine::{CommandId, EngineCommand, IssuedCommand, SendGroup, SendGroupPayload};
+    use crate::engine::{CommandId, IssuedCommand, PrnsCommand, SendGroup, SendGroupPayload};
     use crate::identity::in_memory::InMemoryNodeIdentity;
     use crate::identity::IdentitySigner;
     use crate::interfaces::AttachedInterfaces;
@@ -103,7 +103,7 @@ mod tests {
         payload.extend_from_slice(plaintext).unwrap();
         IssuedCommand {
             id: CommandId(7),
-            command: EngineCommand::SendGroup(SendGroup {
+            command: PrnsCommand::SendGroup(SendGroup {
                 destination,
                 payload,
             }),

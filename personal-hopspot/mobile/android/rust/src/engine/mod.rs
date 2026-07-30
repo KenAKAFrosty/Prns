@@ -12,7 +12,7 @@ use personal_hopspot_core::{
     card_label, CardKind, CardLabel, MobileEngineFailure, MobileEngineState,
 };
 use personal_rns::bluetooth_auto::BluetoothAutoStatus;
-use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand};
+use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand};
 use personal_rns::identity::IdentityHash;
 use personal_rns::interfaces::bluetooth_auto::BleIdentity;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus};
@@ -580,7 +580,7 @@ pub(crate) fn announce() {
     log::info!("hopspot: manual announce -> lxmf.delivery on every interface");
     let _ = resources
         .handle
-        .issue(EngineCommand::AnnounceNow(AnnounceNow {
+        .issue(PrnsCommand::AnnounceNow(AnnounceNow {
             destination: resources.destination,
             target: AnnounceTarget::AllInterfaces,
             app_data: AnnounceAppData::Registered,
@@ -588,7 +588,7 @@ pub(crate) fn announce() {
     log::info!("hopspot: manual announce -> nomadnetwork.node on every interface");
     let _ = resources
         .handle
-        .issue(EngineCommand::AnnounceNow(AnnounceNow {
+        .issue(PrnsCommand::AnnounceNow(AnnounceNow {
             destination: resources.node_page_destination,
             target: AnnounceTarget::AllInterfaces,
             app_data: AnnounceAppData::Registered,

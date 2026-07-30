@@ -161,7 +161,7 @@ const fn region_name(region: RegionFlush) -> &'static str {
 mod tests {
     use super::*;
     use personal_rns::engine::{
-        AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
+        AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand, RatchetPolicy,
     };
     use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
     use personal_rns::interfaces::{BitrateBps, InterfaceId};
@@ -304,7 +304,7 @@ mod tests {
             loop {
                 interval.tick().await;
                 if announce_handle
-                    .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                    .issue(PrnsCommand::AnnounceNow(AnnounceNow {
                         destination,
                         target: AnnounceTarget::AllInterfaces,
                         app_data: AnnounceAppData::Registered,

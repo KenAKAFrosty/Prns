@@ -3,8 +3,8 @@ use crate::engine::test_support::*;
 use crate::engine::IngestIo;
 use crate::engine::{
     AnnounceAppData, AnnounceIngest, AnnounceNow, AnnounceTarget, DeferredCrypto, Directive,
-    EngineCommand, EngineReaction, EngineState, IgnoreReason, IngestPacketOutcome, IssuedCommand,
-    Journaled, LinkEstablished, PacketReceiptDelivered, SendToLinkFailure, Settlement,
+    EngineReaction, EngineState, IgnoreReason, IngestPacketOutcome, IssuedCommand, Journaled,
+    LinkEstablished, PacketReceiptDelivered, PrnsCommand, SendToLinkFailure, Settlement,
     WakeSchedule,
 };
 use crate::engine::{EstablishLinkFailure, WakeSchedules};
@@ -153,7 +153,7 @@ fn an_establish_link_needs_a_known_route_and_takes_relayed_ones() {
         state.ingest_command(
             IssuedCommand {
                 id: CommandId(7),
-                command: EngineCommand::EstablishLink(establish()),
+                command: PrnsCommand::EstablishLink(establish()),
             },
             AttachedInterfaces::new(&arrival_interfaces()),
         ),
@@ -170,7 +170,7 @@ fn an_establish_link_needs_a_known_route_and_takes_relayed_ones() {
     let outcome = state.ingest_command(
         IssuedCommand {
             id: CommandId(8),
-            command: EngineCommand::EstablishLink(establish()),
+            command: PrnsCommand::EstablishLink(establish()),
         },
         AttachedInterfaces::new(&arrival_interfaces()),
     );
@@ -189,7 +189,7 @@ fn the_command_lane_fires_the_link_request_at_the_route_interface() {
     let delta = state.ingest_command_into(
         IssuedCommand {
             id: CommandId(9),
-            command: EngineCommand::EstablishLink(establish()),
+            command: PrnsCommand::EstablishLink(establish()),
         },
         AttachedInterfaces::new(&arrival_interfaces()),
         InstantMillis(1_000),
@@ -1107,7 +1107,7 @@ fn link_data_crosses_the_active_link_and_journals_the_delivery() {
     let _ = initiator.ingest_command_into(
         IssuedCommand {
             id: CommandId(9),
-            command: EngineCommand::SendToLink(SendToLink {
+            command: PrnsCommand::SendToLink(SendToLink {
                 link_id,
                 payload: SendToLinkPayload::from_slice(b"hello over the link").unwrap(),
             }),
@@ -1227,7 +1227,7 @@ fn commanded_link_data(
     let _ = engine.ingest_command_into(
         IssuedCommand {
             id: CommandId(9),
-            command: EngineCommand::SendToLink(SendToLink {
+            command: PrnsCommand::SendToLink(SendToLink {
                 link_id,
                 payload: SendToLinkPayload::from_slice(payload).unwrap(),
             }),
@@ -2032,7 +2032,7 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
     let _ = initiator.ingest_command_into(
         IssuedCommand {
             id: CommandId(10),
-            command: EngineCommand::CloseLink(crate::engine::CloseLink { link_id }),
+            command: PrnsCommand::CloseLink(crate::engine::CloseLink { link_id }),
         },
         AttachedInterfaces::new(&arrival_interfaces()),
         InstantMillis(2_800),
@@ -2116,7 +2116,7 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
 
     let command = |engine: &mut EngineState<TestStorageLayout>,
                    id: u64,
-                   command: EngineCommand,
+                   command: PrnsCommand,
                    now: u64,
                    iv_fill: u8| {
         let mut sent = std::vec::Vec::new();
@@ -2161,7 +2161,7 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
     let (sent, settled, size_hints) = command(
         &mut initiator,
         20,
-        EngineCommand::SendRequest(ask.clone()),
+        PrnsCommand::SendRequest(ask.clone()),
         2_000,
         0xD1,
     );
@@ -2198,7 +2198,7 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
     let (identify_frames, _, size_hints) = command(
         &mut initiator,
         21,
-        EngineCommand::Identify(Identify {
+        PrnsCommand::Identify(Identify {
             link_id,
             identity: asker,
         }),
@@ -2239,7 +2239,7 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
     let (sent, _, size_hints) = command(
         &mut initiator,
         22,
-        EngineCommand::SendRequest(ask),
+        PrnsCommand::SendRequest(ask),
         2_400,
         0xF1,
     );
@@ -2288,7 +2288,7 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
     let (responses, settled, size_hints) = command(
         &mut responder,
         23,
-        EngineCommand::Respond(Respond {
+        PrnsCommand::Respond(Respond {
             link_id,
             request_id,
             payload: crate::engine::RespondPayload::Packed(
@@ -2402,7 +2402,7 @@ fn the_initiator_identifies_itself_and_the_responder_journals_it() {
     let _ = initiator.ingest_command_into(
         IssuedCommand {
             id: CommandId(11),
-            command: EngineCommand::Identify(Identify {
+            command: PrnsCommand::Identify(Identify {
                 link_id,
                 identity: revealed,
             }),
@@ -2519,7 +2519,7 @@ fn the_initiator_identifies_itself_and_the_responder_journals_it() {
     let outcome = responder.ingest_command(
         IssuedCommand {
             id: CommandId(12),
-            command: EngineCommand::Identify(Identify {
+            command: PrnsCommand::Identify(Identify {
                 link_id,
                 identity: responder.held_identity_hashes()[0],
             }),
@@ -2545,7 +2545,7 @@ fn a_send_to_link_demands_an_active_link() {
     let mut initiator = neighbor_with_a_route();
     let send = |link_id| IssuedCommand {
         id: CommandId(9),
-        command: EngineCommand::SendToLink(SendToLink {
+        command: PrnsCommand::SendToLink(SendToLink {
             link_id,
             payload: SendToLinkPayload::from_slice(b"too early").unwrap(),
         }),
@@ -2814,7 +2814,7 @@ fn a_close_link_command_settles_and_closes_the_peer() {
         initiator.ingest_command(
             IssuedCommand {
                 id: CommandId(11),
-                command: EngineCommand::CloseLink(CloseLink {
+                command: PrnsCommand::CloseLink(CloseLink {
                     link_id: LinkId::new([0x77; 16]),
                 }),
             },
@@ -2831,7 +2831,7 @@ fn a_close_link_command_settles_and_closes_the_peer() {
     let _ = initiator.ingest_command_into(
         IssuedCommand {
             id: CommandId(12),
-            command: EngineCommand::CloseLink(CloseLink { link_id }),
+            command: PrnsCommand::CloseLink(CloseLink { link_id }),
         },
         AttachedInterfaces::new(&arrival_interfaces()),
         InstantMillis(2_000),
@@ -2986,7 +2986,7 @@ fn a_narrow_interface_negotiates_the_link_mtu_down_end_to_end() {
     let _ = initiator.ingest_command_into(
         IssuedCommand {
             id: CommandId(9),
-            command: EngineCommand::SendToLink(SendToLink {
+            command: PrnsCommand::SendToLink(SendToLink {
                 link_id: dispatch.link_id,
                 payload: SendToLinkPayload::from_slice(&[0x42; 250]).unwrap(),
             }),
@@ -3019,7 +3019,7 @@ fn a_narrow_interface_negotiates_the_link_mtu_down_end_to_end() {
     let _ = initiator.ingest_command_into(
         IssuedCommand {
             id: CommandId(10),
-            command: EngineCommand::SendToLink(SendToLink {
+            command: PrnsCommand::SendToLink(SendToLink {
                 link_id: dispatch.link_id,
                 payload: SendToLinkPayload::from_slice(&[0x42; 200]).unwrap(),
             }),

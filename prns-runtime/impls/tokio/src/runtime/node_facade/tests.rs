@@ -1,8 +1,9 @@
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 
 use crate::engine::{
-    AnnounceNow, AnnounceNowFailure, EngineCommand, EstablishLink, EstablishLinkFailure, Identify,
-    PacketReceiptDelivered, PathFound, Settlement, MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN,
+    AnnounceNow, AnnounceNowFailure, EstablishLink, EstablishLinkFailure, Identify,
+    PacketReceiptDelivered, PathFound, PrnsCommand, Settlement,
+    MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN,
 };
 use crate::identity::IdentityHash;
 use crate::manifold::driver::HostCommand;
@@ -58,7 +59,7 @@ async fn an_awaited_send_issues_the_completion_carrying_command() {
 
     match command_rx.recv().await.expect("the command was issued") {
         HostCommand::AwaitedEngine { issued, completion } => {
-            assert!(matches!(issued.command, EngineCommand::SendSinglePacket(_)));
+            assert!(matches!(issued.command, PrnsCommand::SendSinglePacket(_)));
             completion
                 .send(Settlement::SendSinglePacket(Ok(delivered(7))))
                 .expect("the awaiter is still parked");
@@ -154,7 +155,7 @@ async fn establish_link_resolves_the_link_id_from_the_settlement() {
         HostCommand::AwaitedEngine { issued, completion } => {
             assert_eq!(
                 issued.command,
-                EngineCommand::EstablishLink(EstablishLink { destination: PEER }),
+                PrnsCommand::EstablishLink(EstablishLink { destination: PEER }),
             );
             completion
                 .send(Settlement::EstablishLink(Ok(LinkEstablished {
@@ -237,7 +238,7 @@ async fn identify_awaits_the_matching_write_settlement() {
     };
     assert_eq!(
         issued.command,
-        EngineCommand::Identify(Identify { link_id, identity })
+        PrnsCommand::Identify(Identify { link_id, identity })
     );
     completion
         .send(Settlement::Identify(Ok(())))
@@ -257,7 +258,7 @@ async fn request_path_mints_an_id_and_awaits_the_typed_result() {
     else {
         panic!("request_path must issue an awaited engine command");
     };
-    let EngineCommand::RequestPath(request) = issued.command else {
+    let PrnsCommand::RequestPath(request) = issued.command else {
         panic!("request_path must issue its matching engine command");
     };
     assert_eq!(request.destination, PEER);
@@ -291,7 +292,7 @@ async fn announce_now_awaits_and_surfaces_its_typed_settlement() {
     else {
         panic!("announce_now must issue an awaited engine command");
     };
-    assert_eq!(issued.command, EngineCommand::AnnounceNow(expected));
+    assert_eq!(issued.command, PrnsCommand::AnnounceNow(expected));
     completion
         .send(Settlement::AnnounceNow(Err(AnnounceNowFailure::Rejected(
             crate::engine::AnnounceNowRejection::UnknownDestination,

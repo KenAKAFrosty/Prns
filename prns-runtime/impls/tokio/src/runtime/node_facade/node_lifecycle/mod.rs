@@ -10,9 +10,8 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 
 use crate::engine::{
-    CommandId, EngineCommand, EstablishLinkFailure, Journaled, LinkEstablished,
-    PacketReceiptDelivered, PersistenceFlushTarget, SendSinglePacketFailure,
-    SetTransportIdentityError,
+    CommandId, EstablishLinkFailure, Journaled, LinkEstablished, PacketReceiptDelivered,
+    PersistenceFlushTarget, PrnsCommand, SendSinglePacketFailure, SetTransportIdentityError,
 };
 use crate::identity::held::HoldIdentityError;
 use crate::identity::{IdentityHash, Zeroizing, IDENTITY_SECRET_KEY_LEN};
@@ -432,7 +431,7 @@ where
         self.handle.clone()
     }
 
-    pub fn issue(&self, command: EngineCommand) -> Option<CommandId> {
+    pub fn issue(&self, command: PrnsCommand) -> Option<CommandId> {
         self.handle.issue(command)
     }
 

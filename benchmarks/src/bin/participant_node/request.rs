@@ -160,7 +160,7 @@ pub(super) async fn respond_request_runtime(
         tokio::select! {
             _ = announce.tick(), if announcing => {
                 if commands
-                    .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                    .issue(PrnsCommand::AnnounceNow(AnnounceNow {
                         destination,
                         target: AnnounceTarget::AllInterfaces,
                         app_data: AnnounceAppData::Registered,

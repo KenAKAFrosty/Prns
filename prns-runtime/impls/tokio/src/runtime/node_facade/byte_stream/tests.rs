@@ -3,7 +3,7 @@ use std::io;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::engine::{
-    EngineCommand, IssuedCommand, PacketReceiptDelivered, SendToChannelFailure, Settlement,
+    IssuedCommand, PacketReceiptDelivered, PrnsCommand, SendToChannelFailure, Settlement,
 };
 use crate::manifold::compression;
 use crate::manifold::driver::{HostCommand, StreamInbound};
@@ -133,7 +133,7 @@ async fn writer_frames_each_write_as_a_stream_data_send_and_closes_with_eof() {
         else {
             panic!("expected an awaited engine command");
         };
-        let EngineCommand::SendToChannel(send) = command else {
+        let PrnsCommand::SendToChannel(send) = command else {
             panic!("expected a SendToChannel command");
         };
         assert_eq!(send.link_id, link);
@@ -171,7 +171,7 @@ async fn writer_packs_a_compressible_write_into_one_compressed_message() {
     else {
         panic!("expected an awaited engine command");
     };
-    let EngineCommand::SendToChannel(send) = command else {
+    let PrnsCommand::SendToChannel(send) = command else {
         panic!("expected a SendToChannel command");
     };
     let frame = parse(&send.body).unwrap();
@@ -225,7 +225,7 @@ async fn a_mixed_stream_round_trips_writer_to_reader() {
         else {
             panic!("expected an awaited engine command");
         };
-        let EngineCommand::SendToChannel(send) = command else {
+        let PrnsCommand::SendToChannel(send) = command else {
             panic!("expected a SendToChannel command");
         };
         let frame = parse(&send.body).unwrap();
@@ -281,7 +281,7 @@ async fn writer_retries_a_chunk_past_a_full_send_window() {
     else {
         panic!("expected the retried command");
     };
-    let EngineCommand::SendToChannel(send) = command else {
+    let PrnsCommand::SendToChannel(send) = command else {
         panic!("expected a SendToChannel command");
     };
     assert_eq!(send.message_type, STREAM_DATA_TYPE);

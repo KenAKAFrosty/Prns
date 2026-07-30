@@ -2,7 +2,7 @@ use crate::engine::FanTarget;
 use crate::interfaces::{FrameSink, FrameSinkError, InterfaceId, PacketPhyStats, INTERFACE_ID_LEN};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-// repr(C): crosses the dual-core channel inside `FrameSlot`; see the layout note on `EngineCommand`.
+// repr(C): crosses the dual-core channel inside `FrameSlot`; see the layout note on `PrnsCommand`.
 #[repr(C)]
 pub enum FrameTarget {
     Direct(InterfaceId),

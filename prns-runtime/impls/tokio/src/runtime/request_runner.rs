@@ -237,7 +237,7 @@ async fn dispatch<St, R: RequestEndpointSet<St>>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::{EngineCommand, IssuedCommand};
+    use crate::engine::{IssuedCommand, PrnsCommand};
     use crate::manifold::driver::HostCommand;
     use crate::routing::request_handlers::RequestPathHash;
     use crate::runtime::request_endpoints::{RequestContext, RequestEndpointPolicy};
@@ -304,7 +304,7 @@ mod tests {
         assert!(matches!(
             command_rx.recv().await,
             Some(HostCommand::Engine(IssuedCommand {
-                command: EngineCommand::CloseLink(close),
+                command: PrnsCommand::CloseLink(close),
                 ..
             })) if close.link_id == link_id
         ));

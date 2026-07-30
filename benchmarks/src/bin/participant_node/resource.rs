@@ -137,7 +137,7 @@ pub(super) async fn respond_resource_runtime(
         tokio::select! {
             _ = announce.tick(), if announcing => {
                 if commands
-                    .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                    .issue(PrnsCommand::AnnounceNow(AnnounceNow {
                         destination,
                         target: AnnounceTarget::AllInterfaces,
                         app_data: AnnounceAppData::Registered,
@@ -169,7 +169,7 @@ pub(super) async fn respond_resource_runtime(
                         payload_bytes += bytes as u64;
                         let ack = resource_ack_payload(received);
                         commands
-                            .issue(EngineCommand::SendToLink(SendToLink {
+                            .issue(PrnsCommand::SendToLink(SendToLink {
                                 link_id,
                                 payload: SendToLinkPayload::from_slice(&ack)
                                     .expect("resource acknowledgement fits"),

@@ -3,7 +3,7 @@ mod linux_only {
     use core::time::Duration;
 
     use personal_rns::engine::{
-        AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
+        AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand, RatchetPolicy,
     };
     use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
     use personal_rns::request_endpoints;
@@ -146,7 +146,7 @@ mod linux_only {
             loop {
                 ticker.tick().await;
                 if commands
-                    .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                    .issue(PrnsCommand::AnnounceNow(AnnounceNow {
                         destination: dest,
                         target: AnnounceTarget::AllInterfaces,
                         app_data: AnnounceAppData::Registered,

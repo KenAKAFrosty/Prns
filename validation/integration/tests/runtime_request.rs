@@ -2,7 +2,7 @@ use core::time::Duration;
 use personal_rns::runtime::NoPersistence;
 
 use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, EstablishLink,
+    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EstablishLink, PrnsCommand,
     RatchetPolicy, SendRequest, SendRequestData, Settlement,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
@@ -100,7 +100,7 @@ async fn a_request_endpoints_answers_a_live_request_over_tcp() {
         loop {
             ticker.tick().await;
             if announcer
-                .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                .issue(PrnsCommand::AnnounceNow(AnnounceNow {
                     destination: dest_a,
                     target: AnnounceTarget::AllInterfaces,
                     app_data: AnnounceAppData::Registered,
@@ -166,7 +166,7 @@ async fn a_request_endpoints_answers_a_live_request_over_tcp() {
         assert_eq!(destination, dest_a, "heard the responder's destination");
 
         let link_cmd = commands_b
-            .issue(EngineCommand::EstablishLink(EstablishLink { destination }))
+            .issue(PrnsCommand::EstablishLink(EstablishLink { destination }))
             .expect("the initiator node is running");
         let link_id = loop {
             match heard_rx.recv().await.expect("initiator stays alive") {
@@ -183,7 +183,7 @@ async fn a_request_endpoints_answers_a_live_request_over_tcp() {
         };
 
         commands_b
-            .issue(EngineCommand::SendRequest(SendRequest {
+            .issue(PrnsCommand::SendRequest(SendRequest {
                 link_id,
                 path_hash: RequestPathHash::of(QUERY_PATH),
                 data: SendRequestData::from_slice(b"ping").expect("request fits a single packet"),
@@ -247,7 +247,7 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
         loop {
             ticker.tick().await;
             if announcer
-                .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                .issue(PrnsCommand::AnnounceNow(AnnounceNow {
                     destination: dest_a,
                     target: AnnounceTarget::AllInterfaces,
                     app_data: AnnounceAppData::Registered,
@@ -375,7 +375,7 @@ async fn the_hopspot_node_page_serves_over_tcp() {
         loop {
             ticker.tick().await;
             if announcer
-                .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                .issue(PrnsCommand::AnnounceNow(AnnounceNow {
                     destination: dest_a,
                     target: AnnounceTarget::AllInterfaces,
                     app_data: AnnounceAppData::Registered,
@@ -508,7 +508,7 @@ async fn serve_the_hopspot_page_for_a_stock_client() {
         loop {
             ticker.tick().await;
             if announcer
-                .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                .issue(PrnsCommand::AnnounceNow(AnnounceNow {
                     destination: dest_a,
                     target: AnnounceTarget::AllInterfaces,
                     app_data: AnnounceAppData::Registered,
@@ -562,7 +562,7 @@ async fn a_split_response_answers_a_small_request_over_tcp() {
         loop {
             ticker.tick().await;
             if announcer
-                .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                .issue(PrnsCommand::AnnounceNow(AnnounceNow {
                     destination: dest_a,
                     target: AnnounceTarget::AllInterfaces,
                     app_data: AnnounceAppData::Registered,

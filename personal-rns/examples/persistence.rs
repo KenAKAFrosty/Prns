@@ -129,7 +129,7 @@ async fn main() {
         loop {
             ticker.tick().await;
             if announcer_handle
-                .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                .issue(PrnsCommand::AnnounceNow(AnnounceNow {
                     destination: announced_hash,
                     target: AnnounceTarget::AllInterfaces,
                     app_data: AnnounceAppData::Registered,

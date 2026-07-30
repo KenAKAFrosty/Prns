@@ -9,7 +9,7 @@ use tokio::sync::mpsc::{self, UnboundedReceiver};
 use tokio::sync::oneshot;
 
 use crate::engine::{
-    EngineCommand, SendToChannel, SendToChannelBody, SendToChannelFailure, Settlement,
+    PrnsCommand, SendToChannel, SendToChannelBody, SendToChannelFailure, Settlement,
     MAX_SEND_TO_CHANNEL_BODY_LEN,
 };
 use crate::manifold::compression;
@@ -122,7 +122,7 @@ async fn send_chunk(
                 "stream chunk exceeds the channel body",
             ));
         }
-        let command = EngineCommand::SendToChannel(SendToChannel {
+        let command = PrnsCommand::SendToChannel(SendToChannel {
             link_id,
             message_type: STREAM_DATA_TYPE,
             body,

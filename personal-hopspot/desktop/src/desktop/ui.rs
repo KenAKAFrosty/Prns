@@ -11,7 +11,7 @@ use embedded_graphics_simulator::{
     BinaryColorTheme, OutputSettings, OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent,
 };
 use heapless::Vec as HVec;
-use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand};
+use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand};
 use personal_rns::interfaces::lora::{RadioProfile, DEFAULT_915_PROFILE};
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus};
 use personal_rns::storage::{GrowableHeap, StorageLayout};
@@ -582,7 +582,7 @@ pub(super) fn run_window(handles: WindowHandles) {
         UiAction::Announce => {
             ui_state.show_notice(screen::UiNotice::Announcing);
             *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
-            if let Some(id) = handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
+            if let Some(id) = handle.issue(PrnsCommand::AnnounceNow(AnnounceNow {
                 destination,
                 target: AnnounceTarget::AllInterfaces,
                 app_data: AnnounceAppData::Registered,
@@ -594,7 +594,7 @@ pub(super) fn run_window(handles: WindowHandles) {
                     destination = ?destination.as_bytes(),
                 );
             }
-            let _ = handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
+            let _ = handle.issue(PrnsCommand::AnnounceNow(AnnounceNow {
                 destination: node_page_destination,
                 target: AnnounceTarget::AllInterfaces,
                 app_data: AnnounceAppData::Registered,

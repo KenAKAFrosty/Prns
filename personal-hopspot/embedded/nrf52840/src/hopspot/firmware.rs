@@ -16,7 +16,7 @@ use nrf_softdevice::{Flash, Softdevice};
 
 use personal_hopspot_core as hopspot;
 use personal_rns::bluetooth_auto::{BluetoothAuto, BluetoothAutoStatus};
-use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand};
+use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand};
 use personal_rns::interfaces::bluetooth_auto::{Endpoint, LinkCapabilities, Nrf52Host, BLE_HW_MTU};
 use personal_rns::interfaces::lora::DEFAULT_915_PROFILE;
 use personal_rns::interfaces::usb_auto::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
@@ -400,12 +400,12 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                             ui_state.show_notice(hopspot::UiNotice::Announcing);
                             notice_until_ms =
                                 Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
-                            let _ = ui_handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
+                            let _ = ui_handle.issue(PrnsCommand::AnnounceNow(AnnounceNow {
                                 destination: self_destination,
                                 target: AnnounceTarget::AllInterfaces,
                                 app_data: AnnounceAppData::Registered,
                             }));
-                            let _ = ui_handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
+                            let _ = ui_handle.issue(PrnsCommand::AnnounceNow(AnnounceNow {
                                 destination: node_page_destination,
                                 target: AnnounceTarget::AllInterfaces,
                                 app_data: AnnounceAppData::Registered,

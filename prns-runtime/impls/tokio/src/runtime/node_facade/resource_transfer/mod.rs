@@ -404,7 +404,7 @@ impl PrnsNodeHandle {
         strategy: ResourceStrategy,
     ) -> Result<(), crate::runtime::SendError<crate::engine::SetResourceStrategyFailure>> {
         match self
-            .settle(crate::engine::EngineCommand::SetResourceStrategy(
+            .settle(crate::engine::PrnsCommand::SetResourceStrategy(
                 crate::engine::SetResourceStrategy { link_id, strategy },
             ))
             .await

@@ -16,11 +16,11 @@ use tokio::sync::oneshot;
 
 use crate::engine::{
     AllowRequester, AllowRequesterFailure, AnnounceNow, AnnounceNowFailure, CloseLink, CommandId,
-    EngineCommand, EstablishLink, EstablishLinkFailure, Identify, IdentifyFailure, IssuedCommand,
-    LinkEstablished, PacketReceiptDelivered, PathFound, PathRequestId, RequestPath,
-    RequestPathFailure, SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload,
-    SendToChannel, SendToChannelBody, SendToChannelFailure, SendToLink, SendToLinkFailure,
-    SendToLinkPayload, Settlement, PATH_REQUEST_ID_LEN,
+    EstablishLink, EstablishLinkFailure, Identify, IdentifyFailure, IssuedCommand, LinkEstablished,
+    PacketReceiptDelivered, PathFound, PathRequestId, PrnsCommand, RequestPath, RequestPathFailure,
+    SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload, SendToChannel,
+    SendToChannelBody, SendToChannelFailure, SendToLink, SendToLinkFailure, SendToLinkPayload,
+    Settlement, PATH_REQUEST_ID_LEN,
 };
 use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
@@ -125,7 +125,7 @@ impl PrnsNodeHandle {
         self.store.clone()
     }
 
-    pub fn issue(&self, command: EngineCommand) -> Option<CommandId> {
+    pub fn issue(&self, command: PrnsCommand) -> Option<CommandId> {
         let id = self.mint();
         self.commands
             .send(HostCommand::Engine(IssuedCommand { id, command }))
@@ -151,7 +151,7 @@ impl PrnsNodeHandle {
         let payload =
             SendSinglePacketPayload::from_slice(data).map_err(|()| SendError::PayloadTooLarge)?;
         match self
-            .settle(EngineCommand::SendSinglePacket(SendSinglePacket {
+            .settle(PrnsCommand::SendSinglePacket(SendSinglePacket {
                 destination,
                 payload,
             }))
@@ -187,7 +187,7 @@ impl PrnsNodeHandle {
         destination: DestinationHash,
     ) -> Result<LinkEstablished, SendError<EstablishLinkFailure>> {
         match self
-            .settle(EngineCommand::EstablishLink(EstablishLink { destination }))
+            .settle(PrnsCommand::EstablishLink(EstablishLink { destination }))
             .await
         {
             Some(Settlement::EstablishLink(result)) => result.map_err(SendError::Failed),
@@ -202,7 +202,7 @@ impl PrnsNodeHandle {
         let mut request_id = [0; PATH_REQUEST_ID_LEN];
         getrandom::getrandom(&mut request_id).map_err(|_| RequestPathError::EntropyUnavailable)?;
         match self
-            .settle(EngineCommand::RequestPath(RequestPath {
+            .settle(PrnsCommand::RequestPath(RequestPath {
                 destination,
                 id: PathRequestId::new(request_id),
             }))
@@ -219,7 +219,7 @@ impl PrnsNodeHandle {
         identity: IdentityHash,
     ) -> Result<(), SendError<IdentifyFailure>> {
         match self
-            .settle(EngineCommand::Identify(Identify { link_id, identity }))
+            .settle(PrnsCommand::Identify(Identify { link_id, identity }))
             .await
         {
             Some(Settlement::Identify(result)) => result.map_err(SendError::Failed),
@@ -235,7 +235,7 @@ impl PrnsNodeHandle {
         let payload =
             SendToLinkPayload::from_slice(data).map_err(|()| SendError::PayloadTooLarge)?;
         match self
-            .settle(EngineCommand::SendToLink(SendToLink { link_id, payload }))
+            .settle(PrnsCommand::SendToLink(SendToLink { link_id, payload }))
             .await
         {
             Some(Settlement::SendToLink(result)) => result.map_err(SendError::Failed),
@@ -251,7 +251,7 @@ impl PrnsNodeHandle {
     ) -> Result<PacketReceiptDelivered, SendError<SendToChannelFailure>> {
         let body = SendToChannelBody::from_slice(data).map_err(|()| SendError::PayloadTooLarge)?;
         match self
-            .settle(EngineCommand::SendToChannel(SendToChannel {
+            .settle(PrnsCommand::SendToChannel(SendToChannel {
                 link_id,
                 message_type,
                 body,
@@ -267,7 +267,7 @@ impl PrnsNodeHandle {
         &self,
         announce: AnnounceNow,
     ) -> Result<(), SendError<AnnounceNowFailure>> {
-        match self.settle(EngineCommand::AnnounceNow(announce)).await {
+        match self.settle(PrnsCommand::AnnounceNow(announce)).await {
             Some(Settlement::AnnounceNow(result)) => result.map_err(SendError::Failed),
             Some(_) | None => Err(SendError::NodeStopped),
         }
@@ -277,7 +277,7 @@ impl PrnsNodeHandle {
         &self,
         allow: AllowRequester,
     ) -> Result<(), SendError<AllowRequesterFailure>> {
-        match self.settle(EngineCommand::AllowRequester(allow)).await {
+        match self.settle(PrnsCommand::AllowRequester(allow)).await {
             Some(Settlement::AllowRequester(result)) => result.map_err(SendError::Failed),
             Some(_) | None => Err(SendError::NodeStopped),
         }
@@ -327,7 +327,7 @@ impl PrnsNodeHandle {
             .map_err(|_| RuntimeRequestHandlerError::NodeStopped)
     }
 
-    pub(crate) async fn settle(&self, command: EngineCommand) -> Option<Settlement> {
+    pub(crate) async fn settle(&self, command: PrnsCommand) -> Option<Settlement> {
         let id = self.mint();
         let (completion, settled) = oneshot::channel();
         self.commands
@@ -340,13 +340,13 @@ impl PrnsNodeHandle {
     }
 
     pub fn close_link(&self, link_id: LinkId) -> bool {
-        self.issue(EngineCommand::CloseLink(CloseLink { link_id }))
+        self.issue(PrnsCommand::CloseLink(CloseLink { link_id }))
             .is_some()
     }
 }
 
 impl super::PrnsNodeApi for PrnsNodeHandle {
-    fn issue(&self, command: EngineCommand) -> Option<CommandId> {
+    fn issue(&self, command: PrnsCommand) -> Option<CommandId> {
         self.issue(command)
     }
 

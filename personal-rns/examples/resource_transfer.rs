@@ -64,7 +64,7 @@ async fn main() {
         loop {
             ticker.tick().await;
             if announcer
-                .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                .issue(PrnsCommand::AnnounceNow(AnnounceNow {
                     destination: receiver_hash,
                     target: AnnounceTarget::AllInterfaces,
                     app_data: AnnounceAppData::Registered,
