@@ -119,6 +119,7 @@ pub(crate) enum TrayActionError {
     ForegroundSession,
     TemporaryScript(io::Error),
     ScriptWrite(io::Error),
+    #[cfg(unix)]
     ScriptPermissions(io::Error),
     Launch {
         program: &'static str,
@@ -154,6 +155,7 @@ impl fmt::Display for TrayActionError {
             Self::ScriptWrite(error) => {
                 write!(formatter, "could not write the terminal launcher: {error}")
             }
+            #[cfg(unix)]
             Self::ScriptPermissions(error) => {
                 write!(
                     formatter,

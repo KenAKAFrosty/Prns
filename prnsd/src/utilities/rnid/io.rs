@@ -92,6 +92,9 @@ impl AtomicOutput {
         overwrite: OverwritePolicy,
         sensitivity: OutputSensitivity,
     ) -> Result<Self, IdentityIoError> {
+        #[cfg(not(unix))]
+        let _ = sensitivity;
+
         let final_path = expand_user_path(path)?;
         if overwrite == OverwritePolicy::Refuse && final_path.exists() {
             return Err(IdentityIoError::AlreadyExists(final_path));
