@@ -6,10 +6,18 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use build_support::{generate_board_catalog, generate_board_images};
+use prns_flash_manifest::{
+    board_catalog, minisign_public_key_id, ManifestTargetSetPolicy, Sha256Digest,
+};
 
 const REPO_VERSION_PATH: &str = "../../VERSION";
 const EMBEDDED_SITE_ENV: &str = "PRNS_EMBEDDED_SITE";
 const SOURCE_ARCHIVE_ENV: &str = "PRNS_SOURCE_ARCHIVE";
+const LOCAL_DEV_PUBLIC_KEY_ENV: &str = "PRNS_LOCAL_DEV_PUBLIC_KEY";
+const LOCAL_DEV_BOARDS_ENV: &str = "PRNS_LOCAL_DEV_BOARDS";
+const LOCAL_DEV_SOURCE_DIGEST_ENV: &str = "PRNS_LOCAL_DEV_SOURCE_DIGEST";
+const LOCAL_DEV_SOURCE_STATE_ENV: &str = "PRNS_LOCAL_DEV_SOURCE_STATE";
+const LOCAL_DEV_PUBLIC_KEY_PATH_ENV: &str = "PRNS_LOCAL_DEV_PUBLIC_KEY_PATH";
 
 fn main() {
     let version = build_version();
@@ -29,6 +37,7 @@ fn main() {
     );
     generate_board_images();
     generate_board_catalog();
+    configure_local_development(&version, &commit);
 
     println!("cargo:rustc-env=PRNS_BUILD_VERSION={version}");
     println!("cargo:rustc-env=PRNS_GIT_COMMIT={commit}");
@@ -44,6 +53,10 @@ fn main() {
     println!("cargo:rerun-if-env-changed=PRNS_BUILD_CHANNEL");
     println!("cargo:rerun-if-env-changed={EMBEDDED_SITE_ENV}");
     println!("cargo:rerun-if-env-changed={SOURCE_ARCHIVE_ENV}");
+    println!("cargo:rerun-if-env-changed={LOCAL_DEV_PUBLIC_KEY_ENV}");
+    println!("cargo:rerun-if-env-changed={LOCAL_DEV_BOARDS_ENV}");
+    println!("cargo:rerun-if-env-changed={LOCAL_DEV_SOURCE_DIGEST_ENV}");
+    println!("cargo:rerun-if-env-changed={LOCAL_DEV_SOURCE_STATE_ENV}");
 
     if let Some(head) = git_output(&["rev-parse", "--git-path", "HEAD"]) {
         println!("cargo:rerun-if-changed={head}");
@@ -55,6 +68,95 @@ fn main() {
             }
         }
     }
+}
+
+fn configure_local_development(version: &str, commit: &str) {
+    let enabled = env::var_os("CARGO_FEATURE_LOCAL_DEV_FLASHER").is_some();
+    let inputs = [
+        LOCAL_DEV_PUBLIC_KEY_ENV,
+        LOCAL_DEV_BOARDS_ENV,
+        LOCAL_DEV_SOURCE_DIGEST_ENV,
+        LOCAL_DEV_SOURCE_STATE_ENV,
+    ];
+    if !enabled {
+        if let Some(name) = inputs.iter().find(|name| env::var_os(name).is_some()) {
+            panic!("{name} is forbidden without the local-dev-flasher feature");
+        }
+        return;
+    }
+    if env::var_os("CARGO_FEATURE_EMBEDDED_SITE").is_some()
+        || env::var_os("CARGO_FEATURE_BROWSER_TEST_FIXTURE").is_some()
+    {
+        panic!("local-dev-flasher is mutually exclusive with every other website profile");
+    }
+    let key_path = required_environment_path(LOCAL_DEV_PUBLIC_KEY_ENV);
+    let public_key = fs::read_to_string(&key_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", key_path.display()));
+    if minisign_public_key_id(&public_key).is_none() {
+        panic!("{LOCAL_DEV_PUBLIC_KEY_ENV} is not a canonical Minisign public key");
+    }
+    let boards = required_environment(LOCAL_DEV_BOARDS_ENV);
+    let board_slugs = boards.split(',').collect::<Vec<_>>();
+    let catalog =
+        board_catalog().unwrap_or_else(|error| panic!("shared board catalog is invalid: {error}"));
+    let policy = ManifestTargetSetPolicy::local_development(&catalog, &board_slugs)
+        .unwrap_or_else(|error| panic!("{LOCAL_DEV_BOARDS_ENV} is invalid: {error}"));
+    let selected = catalog
+        .boards
+        .iter()
+        .filter(|board| {
+            policy
+                .expected_board_slugs()
+                .any(|slug| slug == board.slug.as_str())
+        })
+        .map(|board| board.slug.as_str())
+        .collect::<Vec<_>>()
+        .join(",");
+    if boards != selected {
+        panic!("{LOCAL_DEV_BOARDS_ENV} must use canonical shipping-board order");
+    }
+    let digest = required_environment(LOCAL_DEV_SOURCE_DIGEST_ENV);
+    Sha256Digest::parse(digest.clone())
+        .unwrap_or_else(|error| panic!("{LOCAL_DEV_SOURCE_DIGEST_ENV} is invalid: {error}"));
+    let state = required_environment(LOCAL_DEV_SOURCE_STATE_ENV);
+    if !matches!(state.as_str(), "clean" | "dirty") {
+        panic!("{LOCAL_DEV_SOURCE_STATE_ENV} must be clean or dirty");
+    }
+    if commit.len() != 40
+        || !commit
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        panic!("local-dev-flasher requires a lowercase full HEAD commit");
+    }
+    let base = read_repo_version().expect("local-dev-flasher requires repository VERSION");
+    let expected_version = format!("{base}-dev.{state}.{digest}");
+    if version != expected_version {
+        panic!("PRNS_BUILD_VERSION must equal {expected_version}");
+    }
+    let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"));
+    let embedded_key = out_dir.join("local-dev-minisign.pub");
+    fs::write(&embedded_key, public_key)
+        .unwrap_or_else(|error| panic!("could not stage ephemeral public key: {error}"));
+    println!(
+        "cargo:rustc-env={LOCAL_DEV_PUBLIC_KEY_PATH_ENV}={}",
+        embedded_key.display()
+    );
+    println!("cargo:rustc-env={LOCAL_DEV_BOARDS_ENV}={boards}");
+    println!("cargo:rustc-env={LOCAL_DEV_SOURCE_DIGEST_ENV}={digest}");
+    println!("cargo:rustc-env={LOCAL_DEV_SOURCE_STATE_ENV}={state}");
+    println!("cargo:rerun-if-changed={}", key_path.display());
+}
+
+fn required_environment(name: &str) -> String {
+    env::var(name)
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| panic!("{name} is required for local-dev-flasher"))
+}
+
+fn required_environment_path(name: &str) -> PathBuf {
+    PathBuf::from(required_environment(name))
 }
 
 fn staged_source_available() -> bool {

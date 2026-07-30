@@ -66,10 +66,6 @@ pub(super) struct FlasherState {
     pub(super) preparation_generation: Arc<AtomicU64>,
     pub(super) prepared: Signal<bool>,
     pub(super) release: Signal<Option<ReleaseDetails>>,
-    pub(super) ssid: Signal<String>,
-    pub(super) password: Signal<String>,
-    pub(super) tcp_enabled: Signal<bool>,
-    pub(super) tcp_target: Signal<String>,
 }
 
 impl FlasherState {

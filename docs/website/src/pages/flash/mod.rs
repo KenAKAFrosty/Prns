@@ -9,12 +9,13 @@ mod view;
 use dioxus::prelude::*;
 use dioxus_i18n::t;
 
+use crate::local_development;
 use crate::platforms::{
     board_target_by_slug, Tier, SHIPPING_BOARD_TARGETS, UPCOMING_BOARD_TARGETS,
 };
 use crate::routes::Route;
 
-use view::{BoardTargetCard, GuidedFlasher, UnavailablePanel};
+use view::{BoardTargetCard, GuidedFlasher, LocalBuildUnavailablePanel, UnavailablePanel};
 
 #[component]
 pub fn FlashPage() -> Element {
@@ -51,8 +52,10 @@ fn FlashExperience(selected_slug: Option<String>) -> Element {
         }
 
         if let Some(target) = selected_target {
-            if target.is_flashable() {
+            if target.is_flashable() && local_development::board_is_included(target.slug) {
                 GuidedFlasher { key: "{target.slug}", target }
+            } else if target.is_flashable() && local_development::enabled() {
+                LocalBuildUnavailablePanel {}
             } else {
                 UnavailablePanel {}
             }

@@ -258,6 +258,10 @@ impl BridgeErrorCode {
             Self::FlashFailed => "flash_failed",
         }
     }
+
+    pub(super) const fn retains_prepared_plan(self) -> bool {
+        matches!(self, Self::PermissionDenied)
+    }
 }
 
 impl fmt::Display for BridgeErrorCode {
@@ -494,5 +498,14 @@ mod tests {
                 format!("\"{}\"", code.wire())
             );
         }
+    }
+
+    #[test]
+    fn only_device_picker_denial_retains_the_prepared_plan() {
+        let retaining = BridgeErrorCode::ALL
+            .into_iter()
+            .filter(|code| code.retains_prepared_plan())
+            .collect::<Vec<_>>();
+        assert_eq!(retaining, vec![BridgeErrorCode::PermissionDenied]);
     }
 }

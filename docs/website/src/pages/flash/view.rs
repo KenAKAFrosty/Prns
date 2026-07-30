@@ -6,6 +6,7 @@ use std::sync::{
 use dioxus::prelude::*;
 
 use crate::components::PlatformChip;
+use crate::local_development;
 use crate::platforms::{BoardFlashTarget, BoardTarget, PreparationProfile, Tier};
 use crate::routes::Route;
 use crate::site_mode::embedded_docs_mode;
@@ -55,10 +56,6 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
         preparation_generation: Arc::clone(&preparation_generation),
         prepared,
         release: release_details,
-        ssid,
-        password,
-        tcp_enabled,
-        tcp_target,
     };
 
     let drop_generation = Arc::clone(&preparation_generation);
@@ -102,7 +99,7 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
 
     rsx! {
         section { class: "flash-flasher-panel",
-            BrowserTestFixtureMarker {}
+            BuildTrustMarker {}
             div { class: "flash-flasher-panel__main",
                 p { class: "text-xs font-semibold tracking-[0.2em] uppercase text-accent",
                     "Selected target"
@@ -149,7 +146,6 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                                     } else {
                                         "Board confirmation changed. Confirm the exact board before preparing."
                                     },
-                                    true,
                                 );
                             }
                         },
@@ -193,11 +189,9 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                                             move |_| {
                                                 wifi_action.set(value);
                                                 tcp_enabled.set(false);
-                                                tcp_target.set(String::new());
                                                 invalidate_preparation(
                                                     event_state.clone(),
                                                     "Configuration choice changed. Prepare and verify the release again.",
-                                                    true,
                                                 );
                                             }
                                         },
@@ -213,7 +207,10 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                                     input {
                                         value: ssid(),
                                         maxlength: "32",
-                                        autocomplete: "off",
+                                        name: "username",
+                                        autocomplete: "username",
+                                        autocapitalize: "none",
+                                        spellcheck: "false",
                                         disabled: device_operation_active,
                                         oninput: {
                                             let event_state = state.clone();
@@ -222,7 +219,6 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                                                 invalidate_preparation(
                                                     event_state.clone(),
                                                     "Configuration changed. Prepare and verify the release again.",
-                                                    false,
                                                 );
                                             }
                                         },
@@ -234,7 +230,8 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                                         r#type: "password",
                                         value: password(),
                                         maxlength: "64",
-                                        autocomplete: "new-password",
+                                        name: "password",
+                                        autocomplete: "current-password",
                                         disabled: device_operation_active,
                                         oninput: {
                                             let event_state = state.clone();
@@ -243,7 +240,6 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                                                 invalidate_preparation(
                                                     event_state.clone(),
                                                     "Configuration changed. Prepare and verify the release again.",
-                                                    false,
                                                 );
                                             }
                                         },
@@ -261,13 +257,9 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                                             move |event| {
                                                 let enabled = event.checked();
                                                 tcp_enabled.set(enabled);
-                                                if !enabled {
-                                                    tcp_target.set(String::new());
-                                                }
                                                 invalidate_preparation(
                                                     event_state.clone(),
                                                     "TCP client configuration changed. Prepare and verify the release again.",
-                                                    false,
                                                 );
                                             }
                                         },
@@ -285,6 +277,7 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                                         input {
                                             value: tcp_target(),
                                             maxlength: "512",
+                                            name: "tcp-target",
                                             autocomplete: "off",
                                             placeholder: "node.example:4242",
                                             disabled: device_operation_active,
@@ -295,7 +288,6 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                                                     invalidate_preparation(
                                                         event_state.clone(),
                                                         "TCP client configuration changed. Prepare and verify the release again.",
-                                                        false,
                                                     );
                                                 }
                                             },
@@ -465,7 +457,6 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                                     } else {
                                         "Cancellation requested; an active write will finish its safe operation before stopping."
                                     },
-                                    true,
                                 );
                                 if !was_preparing {
                                     status.set("Cancellation requested; an active write will finish its safe operation before stopping.".to_string());
@@ -481,7 +472,7 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
     }
 }
 
-fn invalidate_preparation(mut state: FlasherState, message: &str, clear_credentials: bool) {
+fn invalidate_preparation(mut state: FlasherState, message: &str) {
     let was_preparing = (state.preparation_active)();
     state.invalidate_preparation();
     state.prepared.set(false);
@@ -492,18 +483,12 @@ fn invalidate_preparation(mut state: FlasherState, message: &str, clear_credenti
         state.phase.set(BridgePhase::Idle);
     }
     state.status.set(message.to_string());
-    if clear_credentials {
-        state.ssid.set(String::new());
-        state.password.set(String::new());
-        state.tcp_enabled.set(false);
-        state.tcp_target.set(String::new());
-    }
     bridge::clear_prepared();
 }
 
-#[cfg(feature = "browser-test-fixture")]
+#[cfg(all(feature = "browser-test-fixture", not(feature = "local-dev-flasher")))]
 #[component]
-fn BrowserTestFixtureMarker() -> Element {
+fn BuildTrustMarker() -> Element {
     rsx! {
         span {
             hidden: true,
@@ -512,9 +497,20 @@ fn BrowserTestFixtureMarker() -> Element {
     }
 }
 
-#[cfg(not(feature = "browser-test-fixture"))]
+#[cfg(all(feature = "local-dev-flasher", not(feature = "browser-test-fixture")))]
 #[component]
-fn BrowserTestFixtureMarker() -> Element {
+fn BuildTrustMarker() -> Element {
+    rsx! {
+        span {
+            hidden: true,
+            "data-prns-local-dev-flasher": local_development::TRUST_MARKER,
+        }
+    }
+}
+
+#[cfg(not(any(feature = "browser-test-fixture", feature = "local-dev-flasher")))]
+#[component]
+fn BuildTrustMarker() -> Element {
     rsx! {}
 }
 
@@ -542,6 +538,7 @@ fn PreparationInstructions(profile: PreparationProfile, flash_target: BoardFlash
 
 #[component]
 pub(super) fn BoardTargetCard(board: &'static BoardTarget, selected: bool) -> Element {
+    let included = local_development::board_is_included(board.slug);
     rsx! {
         div { class: board_card_class(board, selected),
             div { class: "flex flex-wrap items-start gap-3",
@@ -561,7 +558,7 @@ pub(super) fn BoardTargetCard(board: &'static BoardTarget, selected: bool) -> El
                 }
                 p { class: "flash-board-silicon font-mono text-xs", "{board.silicon}" }
             }
-            if board.is_flashable() {
+            if board.is_flashable() && included {
                 div { class: "mt-5 flex justify-end",
                     if selected {
                         span { class: "py-2.5 text-xs font-bold uppercase tracking-wider text-accent", "Selected" }
@@ -573,6 +570,10 @@ pub(super) fn BoardTargetCard(board: &'static BoardTarget, selected: bool) -> El
                             span { class: "flash-card-action__arrow", "→" }
                         }
                     }
+                }
+            } else if board.is_flashable() {
+                p { class: "flash-interfaces-pending mt-4",
+                    "Not included in this local build"
                 }
             } else {
                 p { class: "flash-interfaces-pending mt-4",
@@ -606,6 +607,16 @@ pub(super) fn UnavailablePanel() -> Element {
         section { class: "rounded-card border border-line/60 bg-layer/40 p-5",
             h2 { class: "text-xl font-semibold text-paper", "Not flashable yet" }
             p { class: "mt-3 text-soft", "This target is still in bring-up or roadmap tracking." }
+        }
+    }
+}
+
+#[component]
+pub(super) fn LocalBuildUnavailablePanel() -> Element {
+    rsx! {
+        section { class: "rounded-card border border-amber-300/40 bg-amber-300/10 p-5",
+            h2 { class: "text-xl font-semibold text-amber-100", "Not included in this local build" }
+            p { class: "mt-3 text-soft", "Restart the developer flasher task with this board selected to build and sign it from the current working tree." }
         }
     }
 }

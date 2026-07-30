@@ -26,7 +26,7 @@ const BROWSER_SUPPORT_SCRIPT: &str =
     "return Boolean(window.isSecureContext && navigator.serial && navigator.serial.requestPort);";
 
 const FOCUS_STATUS_SCRIPT: &str =
-    "document.getElementById('flash-status')?.focus({ preventScroll: false });";
+    "document.getElementById('flash-status')?.focus({ preventScroll: true });";
 
 const FAIL_CLOSED_SCRIPT: &str = r#"
 const bridge = window.__prnsFlash;
@@ -397,10 +397,11 @@ pub(super) async fn run_flash(mut state: FlasherState) {
                 return;
             }
         };
+        let retains_prepared_plan = event
+            .code
+            .is_some_and(BridgeErrorCode::retains_prepared_plan);
         if apply_event(&event, &mut state) {
-            state.prepared.set(false);
-            state.ssid.set(String::new());
-            state.password.set(String::new());
+            state.prepared.set(retains_prepared_plan);
             focus_status();
             return;
         }
@@ -412,8 +413,6 @@ async fn fail_closed(state: &mut FlasherState, message: String) {
     state.phase.set(BridgePhase::Failed);
     state.status.set(device_boundary_failure(&message));
     state.prepared.set(false);
-    state.ssid.set(String::new());
-    state.password.set(String::new());
     focus_status();
 }
 
@@ -497,7 +496,7 @@ fn event_message(event: &BridgeEvent, flash_target: BoardFlashTarget) -> String 
             "Verification passed. Resetting into Personal Hopspot…".to_string()
         }
         BridgePhase::Success => {
-            "Verified serial flash complete. The device is starting Personal Hopspot.".to_string()
+            "Finished — Verified serial flash complete. The device disconnected and re-enumerated after reset; Personal Hopspot is starting. You can close this page.".to_string()
         }
         BridgePhase::DownloadRequested => match flash_target {
             BoardFlashTarget::Uf2MassStorage { mount_label } => format!(

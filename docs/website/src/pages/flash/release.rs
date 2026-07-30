@@ -167,20 +167,12 @@ pub(super) async fn prepare_release(
         Ok(details) => {
             state.release.set(Some(details));
             state.prepared.set(true);
-            state.ssid.set(String::new());
-            state.password.set(String::new());
-            state.tcp_enabled.set(false);
-            state.tcp_target.set(String::new());
             bridge::focus_status();
         }
         Err(message) => {
             state.phase.set(BridgePhase::Failed);
             state.status.set(message);
             state.prepared.set(false);
-            state.ssid.set(String::new());
-            state.password.set(String::new());
-            state.tcp_enabled.set(false);
-            state.tcp_target.set(String::new());
             bridge::focus_status();
         }
     }
@@ -237,6 +229,18 @@ async fn acquire_release(
     )
     .map_err(|error| error.to_string())?;
     let catalog = board_catalog().map_err(|error| error.to_string())?;
+    #[cfg(feature = "local-dev-flasher")]
+    let manifest = {
+        let policy = crate::local_development::manifest_target_set_policy(&catalog)
+            .map_err(|error| error.to_string())?;
+        ValidatedFlashManifest::from_json_with_target_set(
+            documents.document.as_bytes(),
+            &catalog,
+            &policy,
+        )
+        .map_err(|error| error.to_string())?
+    };
+    #[cfg(not(feature = "local-dev-flasher"))]
     let manifest = ValidatedFlashManifest::from_json(documents.document.as_bytes(), &catalog)
         .map_err(|error| error.to_string())?;
     let expected_key_id = trust::key_id()
