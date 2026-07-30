@@ -22,6 +22,8 @@ function request() {
     boardSlug: "heltec-v4",
     displayName: "Heltec LoRa 32 V4",
     transport: "esp-serial",
+    installMode: "preserve-data",
+    eraseConfirmed: false,
     expectedChip: "esp32s3",
     flashSize: 8 * 1024 * 1024,
     flashMode: "dio",
@@ -67,9 +69,47 @@ test("transport-specific request identity is complete and bounded", () => {
       sha256: "d".repeat(64),
     }],
   });
+  delete uf2.installMode;
+  delete uf2.eraseConfirmed;
   assert.equal(validateRequest(uf2).mountLabel, "TECHOBOOT");
   uf2.mountLabel = "";
   assert.throws(() => validateRequest(uf2), /UF2 target identity is incomplete/);
+});
+
+test("ESP install mode requires an exact destructive confirmation", () => {
+  const fresh = request();
+  fresh.installMode = "erase-all";
+  assert.throws(() => validateRequest(fresh), /target identity is incomplete/);
+  fresh.eraseConfirmed = true;
+  fresh.provisioning = null;
+  assert.equal(validateRequest(fresh).installMode, "erase-all");
+
+  const standard = request();
+  standard.eraseConfirmed = true;
+  assert.throws(() => validateRequest(standard), /target identity is incomplete/);
+
+  const unknown = request();
+  unknown.installMode = "erase";
+  assert.throws(() => validateRequest(unknown), /target identity is incomplete/);
+});
+
+test("fresh install accepts blank or explicitly configured provisioning only", () => {
+  const blank = request();
+  blank.installMode = "erase-all";
+  blank.eraseConfirmed = true;
+  blank.provisioning = null;
+  assert.equal(validateRequest(blank).provisioning, null);
+
+  const configured = request();
+  configured.installMode = "erase-all";
+  configured.eraseConfirmed = true;
+  configured.provisioning.action = "configure";
+  assert.equal(validateRequest(configured).provisioning.action, "configure");
+
+  const misleadingPreserve = request();
+  misleadingPreserve.installMode = "erase-all";
+  misleadingPreserve.eraseConfirmed = true;
+  assert.throws(() => validateRequest(misleadingPreserve), /explicitly configured new provisioning/);
 });
 
 test("provisioning overlap is rejected", () => {

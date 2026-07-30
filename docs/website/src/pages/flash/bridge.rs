@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::platforms::BoardFlashTarget;
 
 use super::contract::{self, BridgeErrorCode, BridgePhase};
-use super::model::{part_kind, FlasherState};
+use super::model::{part_kind, DestructiveConfirmation, FlasherState, InstallMode};
 use super::protocol;
 
 const PREPARE_SCRIPT: &str = r#"
@@ -50,6 +50,10 @@ pub(super) struct BridgeRequest {
     before_reset: Option<String>,
     after_reset: Option<String>,
     mount_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    install_mode: Option<InstallMode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    erase_confirmed: Option<bool>,
     provisioning: Option<BridgeProvisioning>,
     parts: Vec<BridgePart>,
 }
@@ -104,6 +108,8 @@ impl BridgeRequest {
     pub(super) fn from_target(
         target: &ReleaseTarget,
         manifest_url: &str,
+        install_mode: InstallMode,
+        destructive_confirmation: DestructiveConfirmation,
         provisioning: Option<BridgeProvisioning>,
         catalog_target: BoardFlashTarget,
     ) -> Result<Self, String> {
@@ -117,10 +123,19 @@ impl BridgeRequest {
                     target.display_name(),
                     esp,
                     base_url,
+                    install_mode,
+                    destructive_confirmation,
                     provisioning,
                 )
             }
             (ReleaseTarget::Uf2(uf2), BoardFlashTarget::Uf2MassStorage { mount_label }) => {
+                if install_mode != InstallMode::PreserveData
+                    || destructive_confirmation != DestructiveConfirmation::Unconfirmed
+                {
+                    return Err(
+                        "A UF2 release cannot request destructive ESP installation.".to_string()
+                    );
+                }
                 Self::from_uf2_target(
                     target.board_id().as_str(),
                     target.display_name(),
@@ -142,8 +157,15 @@ impl BridgeRequest {
         display_name: &str,
         target: &EspSerialTarget,
         base_url: &str,
+        install_mode: InstallMode,
+        destructive_confirmation: DestructiveConfirmation,
         provisioning: Option<BridgeProvisioning>,
     ) -> Result<Self, String> {
+        if !destructive_confirmation.permits(install_mode) {
+            return Err(
+                "The ESP install mode does not have the required confirmation state.".to_string(),
+            );
+        }
         match (&provisioning, target.provisioning()) {
             (Some(request), Some(slot))
                 if request.offset == slot.offset()
@@ -171,6 +193,8 @@ impl BridgeRequest {
             before_reset: Some(target.before_reset().as_str().to_string()),
             after_reset: Some(target.after_reset().as_str().to_string()),
             mount_label: None,
+            install_mode: Some(install_mode),
+            erase_confirmed: Some(destructive_confirmation.is_confirmed()),
             provisioning,
             parts: target
                 .parts()
@@ -215,6 +239,8 @@ impl BridgeRequest {
             before_reset: None,
             after_reset: None,
             mount_label: Some(mount_label.to_string()),
+            install_mode: None,
+            erase_confirmed: None,
             provisioning: None,
             parts: vec![BridgePart {
                 kind: part_kind(FlashPartKind::Uf2),
@@ -397,11 +423,18 @@ pub(super) async fn run_flash(mut state: FlasherState) {
                 return;
             }
         };
-        let retains_prepared_plan = event
-            .code
-            .is_some_and(BridgeErrorCode::retains_prepared_plan);
+        let fresh_install = (state.install_mode)() == InstallMode::EraseAll;
+        let retains_prepared_plan = !fresh_install
+            && event
+                .code
+                .is_some_and(BridgeErrorCode::retains_prepared_plan);
         if apply_event(&event, &mut state) {
             state.prepared.set(retains_prepared_plan);
+            if fresh_install {
+                state
+                    .destructive_confirmation
+                    .set(DestructiveConfirmation::Unconfirmed);
+            }
             focus_status();
             return;
         }
@@ -411,8 +444,16 @@ pub(super) async fn run_flash(mut state: FlasherState) {
 async fn fail_closed(state: &mut FlasherState, message: String) {
     stop_local_engine().await;
     state.phase.set(BridgePhase::Failed);
-    state.status.set(device_boundary_failure(&message));
+    state.status.set(device_boundary_failure(
+        &message,
+        (state.install_mode)() == InstallMode::EraseAll,
+    ));
     state.prepared.set(false);
+    if (state.install_mode)() == InstallMode::EraseAll {
+        state
+            .destructive_confirmation
+            .set(DestructiveConfirmation::Unconfirmed);
+    }
     focus_status();
 }
 
@@ -427,11 +468,13 @@ fn preparation_boundary_failure(diagnosis: &str) -> String {
     )
 }
 
-fn device_boundary_failure(diagnosis: &str) -> String {
-    format!(
-        "{} Do not assume success. Disconnect and reconnect the board, follow its BOOT/RESET recovery instructions, reload this page, and restart the complete plan; use the CLI if it repeats.",
-        diagnosis.trim()
-    )
+fn device_boundary_failure(diagnosis: &str, fresh_install: bool) -> String {
+    let recovery = if fresh_install {
+        "The device may be blank. Disconnect and reconnect it, re-enter BOOT mode, reload this page, select Fresh install, confirm the destructive action again, and restart the complete fresh-install plan."
+    } else {
+        "Do not assume success. Disconnect and reconnect the board, follow its BOOT/RESET recovery instructions, reload this page, and restart the complete plan; use the CLI if it repeats."
+    };
+    format!("{} {recovery}", diagnosis.trim())
 }
 
 fn apply_event(event: &BridgeEvent, state: &mut FlasherState) -> bool {
@@ -446,12 +489,16 @@ fn apply_event(event: &BridgeEvent, state: &mut FlasherState) -> bool {
         event
             .message
             .clone()
-            .unwrap_or_else(|| event_message(event, state.flash_target)),
+            .unwrap_or_else(|| event_message(event, state.flash_target, (state.install_mode)())),
     );
     contract::phase(event.phase).terminal()
 }
 
-fn event_message(event: &BridgeEvent, flash_target: BoardFlashTarget) -> String {
+fn event_message(
+    event: &BridgeEvent,
+    flash_target: BoardFlashTarget,
+    install_mode: InstallMode,
+) -> String {
     match event.phase {
         BridgePhase::Idle => "Confirm the exact board to begin.".to_string(),
         BridgePhase::ValidatingManifest => {
@@ -476,8 +523,15 @@ fn event_message(event: &BridgeEvent, flash_target: BoardFlashTarget) -> String 
             "Checking detected {} against the selected chip and flash-capacity plan…",
             event.detected_chip.as_deref().unwrap_or("the expected chip")
         ),
+        BridgePhase::Erasing => {
+            "Erasing the entire flash. Cancellation is disabled until every replacement part verifies and reset completes…".to_string()
+        }
         BridgePhase::Writing => format!(
-            "Writing{}{} without a full erase…",
+            "{}{}{}…",
+            match install_mode {
+                InstallMode::PreserveData => "Writing",
+                InstallMode::EraseAll => "Installing",
+            },
             event
                 .part
                 .as_deref()
@@ -486,7 +540,7 @@ fn event_message(event: &BridgeEvent, flash_target: BoardFlashTarget) -> String 
             match (event.part_index, event.part_count) {
                 (Some(index), Some(count)) => format!(" (part {} of {count})", index + 1),
                 _ => String::new(),
-            }
+            },
         ),
         BridgePhase::VerifyingFlash => {
             "All sparse parts passed device-side MD5 verification. Preparing the final reset…"
@@ -578,7 +632,7 @@ mod tests {
                 detected_chip: None,
                 bytes: None,
             };
-            assert!(!event_message(&event, ESP_TARGET).is_empty());
+            assert!(!event_message(&event, ESP_TARGET, InstallMode::PreserveData).is_empty());
         }
     }
 
@@ -608,6 +662,7 @@ mod tests {
                 bytes: None,
             },
             ESP_TARGET,
+            InstallMode::PreserveData,
         );
         assert!(target_check.starts_with("Checking detected ESP32-S3"));
         assert!(!target_check.contains("matched"));
@@ -628,6 +683,7 @@ mod tests {
                 bytes: None,
             },
             ESP_TARGET,
+            InstallMode::PreserveData,
         );
         assert!(flash_check.contains("passed device-side MD5 verification"));
         assert!(!flash_check.contains("Performing"));
@@ -639,7 +695,7 @@ mod tests {
         const MANIFEST: &[u8] = include_bytes!(
             "../../../web-flasher/browser/fixtures/signed-candidate/releases/0.2.6/flash-manifest.json"
         );
-        const REQUEST_FIELDS: [&str; 13] = [
+        const UF2_REQUEST_FIELDS: [&str; 13] = [
             "schema",
             "boardSlug",
             "displayName",
@@ -654,6 +710,23 @@ mod tests {
             "provisioning",
             "parts",
         ];
+        const ESP_REQUEST_FIELDS: [&str; 15] = [
+            "schema",
+            "boardSlug",
+            "displayName",
+            "transport",
+            "expectedChip",
+            "flashSize",
+            "flashMode",
+            "flashFrequency",
+            "beforeReset",
+            "afterReset",
+            "mountLabel",
+            "installMode",
+            "eraseConfirmed",
+            "provisioning",
+            "parts",
+        ];
         const PART_FIELDS: [&str; 6] = ["kind", "path", "url", "offset", "size", "sha256"];
 
         let catalog = board_catalog()?;
@@ -663,13 +736,16 @@ mod tests {
             let catalog_target = board_target_by_slug(target.board_id().as_str())
                 .and_then(|board| board.flash_target)
                 .ok_or("missing cataloged flash target")?;
-            let request = BridgeRequest::from_target(target, manifest_url, None, catalog_target)?;
+            let request = BridgeRequest::from_target(
+                target,
+                manifest_url,
+                InstallMode::PreserveData,
+                DestructiveConfirmation::Unconfirmed,
+                None,
+                catalog_target,
+            )?;
             let wire = serde_json::to_value(request)?;
             let object = wire.as_object().ok_or("bridge request is not an object")?;
-            assert_eq!(
-                object.keys().map(String::as_str).collect::<BTreeSet<_>>(),
-                REQUEST_FIELDS.into_iter().collect()
-            );
             assert_eq!(wire["schema"], contract::schema());
             assert_eq!(wire["boardSlug"], target.board_id().as_str());
             assert_eq!(wire["displayName"], target.display_name());
@@ -699,7 +775,13 @@ mod tests {
 
             match target {
                 ReleaseTarget::EspSerial(esp) => {
+                    assert_eq!(
+                        object.keys().map(String::as_str).collect::<BTreeSet<_>>(),
+                        ESP_REQUEST_FIELDS.into_iter().collect()
+                    );
                     assert_eq!(wire["transport"], "esp-serial");
+                    assert_eq!(wire["installMode"], "preserve-data");
+                    assert_eq!(wire["eraseConfirmed"], false);
                     assert_eq!(wire["expectedChip"], esp.expected_chip().as_str());
                     assert_eq!(wire["flashSize"], esp.flash_size());
                     assert_eq!(wire["flashMode"], esp.flash_mode().as_str());
@@ -714,7 +796,13 @@ mod tests {
                         .all(|part| part["offset"].is_number()));
                 }
                 ReleaseTarget::Uf2(_) => {
+                    assert_eq!(
+                        object.keys().map(String::as_str).collect::<BTreeSet<_>>(),
+                        UF2_REQUEST_FIELDS.into_iter().collect()
+                    );
                     assert_eq!(wire["transport"], "uf2-mass-storage");
+                    assert!(wire.get("installMode").is_none());
+                    assert!(wire.get("eraseConfirmed").is_none());
                     assert_eq!(wire["mountLabel"], "TECHOBOOT");
                     for field in [
                         "expectedChip",
@@ -748,6 +836,8 @@ mod tests {
         let request = BridgeRequest::from_target(
             target,
             "https://reticulum.rs/releases/0.2.6/flash-manifest.json",
+            InstallMode::EraseAll,
+            DestructiveConfirmation::Confirmed,
             Some(BridgeProvisioning {
                 action: "configure".to_string(),
                 offset: slot.offset(),
@@ -758,8 +848,11 @@ mod tests {
             }),
             ESP_TARGET,
         )?;
+        let wire = serde_json::to_value(request)?;
+        assert_eq!(wire["installMode"], "erase-all");
+        assert_eq!(wire["eraseConfirmed"], true);
         assert_eq!(
-            serde_json::to_value(request)?["provisioning"],
+            wire["provisioning"],
             serde_json::json!({
                 "action": "configure",
                 "offset": slot.offset(),
@@ -778,6 +871,8 @@ mod tests {
         assert!(BridgeRequest::from_target(
             target,
             "https://reticulum.rs/releases/0.2.6/flash-manifest.json",
+            InstallMode::PreserveData,
+            DestructiveConfirmation::Unconfirmed,
             Some(BridgeProvisioning {
                 action: "clear".to_string(),
                 offset: 0xd000,
@@ -793,6 +888,23 @@ mod tests {
             },
         )
         .is_err());
+
+        let target = manifest
+            .targets()
+            .iter()
+            .find(|target| target.board_id().as_str() == "t-echo")
+            .ok_or("missing UF2 target")?;
+        assert!(BridgeRequest::from_target(
+            target,
+            "https://reticulum.rs/releases/0.2.6/flash-manifest.json",
+            InstallMode::EraseAll,
+            DestructiveConfirmation::Confirmed,
+            None,
+            BoardFlashTarget::Uf2MassStorage {
+                mount_label: "TECHOBOOT",
+            },
+        )
+        .is_err());
         Ok(())
     }
 
@@ -803,11 +915,16 @@ mod tests {
         assert!(preparation.contains("Reload this page"));
         assert!(preparation.contains("No device access has started"));
 
-        let device = device_boundary_failure("local device engine stopped");
+        let device = device_boundary_failure("local device engine stopped", false);
         assert!(device.contains("local device engine stopped"));
         assert!(device.contains("Do not assume success"));
         assert!(device.contains("BOOT/RESET"));
         assert!(device.contains("restart the complete plan"));
+
+        let fresh = device_boundary_failure("local device engine stopped", true);
+        assert!(fresh.contains("device may be blank"));
+        assert!(fresh.contains("confirm the destructive action again"));
+        assert!(fresh.contains("complete fresh-install plan"));
 
         let cancel = FAIL_CLOSED_SCRIPT
             .find("bridge.cancel?.()")

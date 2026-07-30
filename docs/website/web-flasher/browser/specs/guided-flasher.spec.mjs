@@ -56,6 +56,8 @@ test("the exact staged production bundle performs a hardware-free sparse flash",
       boardSlug: target.board_slug,
       displayName: target.display_name,
       transport: target.transport,
+      installMode: "preserve-data",
+      eraseConfirmed: false,
       expectedChip: target.expected_chip,
       flashSize: target.flash_size,
       flashMode: target.flash_mode,
@@ -174,6 +176,8 @@ test("the exact staged production bundle traps same-document Back during an acti
       boardSlug: target.board_slug,
       displayName: target.display_name,
       transport: target.transport,
+      installMode: "preserve-data",
+      eraseConfirmed: false,
       expectedChip: target.expected_chip,
       flashSize: target.flash_size,
       flashMode: target.flash_mode,
@@ -395,6 +399,8 @@ test("guided ESP flow verifies the signed candidate, protects credentials, and c
     partKinds: ["bootloader", "partition-table", "application"],
   });
   expect(bridgeEvidence.provisioningWasCleared).toBe(true);
+  expect(bridgeEvidence.eraseCount).toBe(0);
+  expect(bridgeEvidence.phaseLog).not.toContain("erasing");
   expect(bridgeEvidence.phaseLog).toEqual(
     expect.arrayContaining([
       "validating_manifest",
@@ -427,6 +433,175 @@ test("guided ESP flow verifies the signed candidate, protects credentials, and c
       args: ["credential-redaction-probe", { nested: { safe: "value" } }],
     }),
   );
+});
+
+test("fresh blank install requires separate confirmation and emits an erase phase", async ({
+  page,
+}) => {
+  await installFakeBridge(page, { supported: true });
+  await selectBoard(page, "heltec-v4");
+  await page.getByRole("checkbox", { name: /checked the board label and image/i }).check();
+  await page.getByRole("radio", { name: /Fresh install — erase all device data/i }).check();
+
+  await expect(page.getByText(/Node identity, BLE identity, routes, ratchets/i).last()).toBeVisible();
+  await expect(page.getByText(/eFuses and the factory MAC are unaffected/i)).toBeVisible();
+  await expect(page.getByRole("radio", { name: "Leave Wi-Fi and TCP blank" })).toBeChecked();
+  await expect(page.getByRole("radio", { name: /Preserve existing configuration/i })).toHaveCount(0);
+
+  const prepare = page.getByRole("button", { name: "Prepare and verify release" });
+  await expect(prepare).toBeDisabled();
+  const eraseConfirmation = page.getByRole("checkbox", {
+    name: /understand that Fresh install erases all device data/i,
+  });
+  await eraseConfirmation.check();
+  await expect(prepare).toBeEnabled();
+  await prepare.click();
+  await expect(page.locator("#flash-status")).toContainText("Release ready:");
+
+  const stateAfterPreparation = await page.evaluate(() => window.__prnsFlashTest.state);
+  expect(stateAfterPreparation.lastRequest).toMatchObject({
+    installMode: "erase-all",
+    eraseConfirmed: true,
+    provisioningAction: null,
+    ssidBytes: 0,
+    passwordBytes: 0,
+  });
+
+  await page.getByRole("button", { name: "Connect, erase, and install" }).click();
+  await expect(page.locator("#flash-status")).toContainText("Verified serial flash complete");
+  const state = await page.evaluate(() => window.__prnsFlashTest.state);
+  expect(state.eraseCount).toBe(1);
+  expect(state.phaseLog.indexOf("verifying_target")).toBeLessThan(
+    state.phaseLog.indexOf("erasing"),
+  );
+  expect(state.phaseLog.indexOf("erasing")).toBeLessThan(state.phaseLog.indexOf("writing"));
+  await expect(eraseConfirmation).not.toBeChecked();
+
+  const accessibility = await new AxeBuilder({ page })
+    .include(".flash-flasher-panel")
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+    .analyze();
+  expect(accessibility.violations).toEqual([]);
+});
+
+test("fresh configured values stay local and replace blank provisioning only when selected", async ({
+  page,
+}) => {
+  const evidence = observeCredentialLeaks(page);
+  await installFakeBridge(page, { supported: true });
+  await selectBoard(page, "heltec-v4");
+  await page.getByRole("checkbox", { name: /checked the board label and image/i }).check();
+  await page.getByRole("radio", { name: /Fresh install — erase all device data/i }).check();
+  await page
+    .getByRole("checkbox", { name: /understand that Fresh install erases all device data/i })
+    .check();
+  await page.getByRole("radio", { name: "Configure new values locally" }).check();
+  await page.getByLabel("SSID").fill(SECRET_SSID);
+  await page.getByLabel("Password").fill(SECRET_PASSWORD);
+  await page.getByRole("button", { name: "Prepare and verify release" }).click();
+  await expect(page.locator("#flash-status")).toContainText("Release ready:");
+
+  expect(await page.evaluate(() => window.__prnsFlashTest.state.lastRequest)).toMatchObject({
+    installMode: "erase-all",
+    eraseConfirmed: true,
+    provisioningAction: "configure",
+    ssidBytes: new TextEncoder().encode(SECRET_SSID).length,
+    passwordBytes: new TextEncoder().encode(SECRET_PASSWORD).length,
+  });
+  await assertNoCredentialLeak(page, evidence);
+});
+
+test("fresh mode and confirmation changes invalidate the prepared plan and restore defaults", async ({
+  page,
+}) => {
+  await installFakeBridge(page, { supported: true });
+  await selectBoard(page, "heltec-v4");
+  await page.getByRole("checkbox", { name: /checked the board label and image/i }).check();
+  await page.getByRole("radio", { name: /Fresh install — erase all device data/i }).check();
+  const eraseConfirmation = page.getByRole("checkbox", {
+    name: /understand that Fresh install erases all device data/i,
+  });
+  await eraseConfirmation.check();
+  await page.getByRole("button", { name: "Prepare and verify release" }).click();
+  const connectFresh = page.getByRole("button", { name: "Connect, erase, and install" });
+  await expect(connectFresh).toBeEnabled();
+
+  await eraseConfirmation.uncheck();
+  await expect(connectFresh).toBeDisabled();
+  await eraseConfirmation.check();
+  await expect(connectFresh).toBeDisabled();
+
+  await page
+    .getByRole("radio", { name: /Update firmware and preserve device data/i })
+    .check();
+  await expect(
+    page.getByRole("radio", { name: "Preserve existing configuration" }),
+  ).toBeChecked();
+  await expect(eraseConfirmation).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Connect and flash" })).toBeDisabled();
+});
+
+test("fresh erase failure writes nothing and consumes destructive confirmation", async ({
+  page,
+}) => {
+  await installFakeBridge(page, { supported: true, failureCode: "erase_failure" });
+  await selectBoard(page, "heltec-v4");
+  await page.getByRole("checkbox", { name: /checked the board label and image/i }).check();
+  await page.getByRole("radio", { name: /Fresh install — erase all device data/i }).check();
+  const eraseConfirmation = page.getByRole("checkbox", {
+    name: /understand that Fresh install erases all device data/i,
+  });
+  await eraseConfirmation.check();
+  await page.getByRole("button", { name: "Prepare and verify release" }).click();
+  await page.getByRole("button", { name: "Connect, erase, and install" }).click();
+
+  await expect(page.locator("#flash-status")).toContainText(/device may be blank/i);
+  const state = await page.evaluate(() => window.__prnsFlashTest.state);
+  expect(state.eraseCount).toBe(1);
+  expect(state.completedPartCount).toBe(0);
+  expect(state.phaseLog).not.toContain("writing");
+  await expect(eraseConfirmation).not.toBeChecked();
+  await expect(page.getByRole("button", { name: "Prepare and verify release" })).toBeDisabled();
+});
+
+test("fresh device-picker retry requires confirmation again before any erase", async ({ page }) => {
+  await installFakeBridge(page, { supported: true, failureCode: "permission_denied" });
+  await selectBoard(page, "heltec-v4");
+  await page.getByRole("checkbox", { name: /checked the board label and image/i }).check();
+  await page.getByRole("radio", { name: /Fresh install — erase all device data/i }).check();
+  const eraseConfirmation = page.getByRole("checkbox", {
+    name: /understand that Fresh install erases all device data/i,
+  });
+  await eraseConfirmation.check();
+  await page.getByRole("button", { name: "Prepare and verify release" }).click();
+  await page.getByRole("button", { name: "Connect, erase, and install" }).click();
+
+  await expect(page.locator("#flash-status")).toContainText(/No serial port was selected/i);
+  expect(await page.evaluate(() => window.__prnsFlashTest.state.eraseCount)).toBe(0);
+  await expect(eraseConfirmation).not.toBeChecked();
+  await expect(page.getByRole("button", { name: "Connect, erase, and install" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Prepare and verify release" })).toBeDisabled();
+});
+
+test("fresh install blocks navigation and cancellation after erasure begins", async ({ page }) => {
+  await installFakeBridge(page, { supported: true, pauseAtWriting: true });
+  await selectBoard(page, "heltec-v4");
+  await page.getByRole("checkbox", { name: /checked the board label and image/i }).check();
+  await page.getByRole("radio", { name: /Fresh install — erase all device data/i }).check();
+  await page
+    .getByRole("checkbox", { name: /understand that Fresh install erases all device data/i })
+    .check();
+  await page.getByRole("button", { name: "Prepare and verify release" }).click();
+  await page.getByRole("button", { name: "Connect, erase, and install" }).click();
+
+  const cancellation = page.getByRole("button", {
+    name: "Cancellation unavailable after erase begins",
+  });
+  await expect(cancellation).toBeDisabled();
+  expect(await dispatchBeforeUnload(page)).toBe(true);
+  expect(await page.evaluate(() => window.__prnsFlashTest.state.cancellationLocked)).toBe(true);
+  await page.evaluate(() => window.__prnsFlashTest.resume());
+  await expect(page.locator("#flash-status")).toContainText("Verified serial flash complete");
 });
 
 test("browser support is feature-detected and T-Echo stays on the signed UF2 route", async ({
@@ -773,6 +948,9 @@ test("responsive and reduced-motion layouts remain usable at release breakpoints
   await page.setViewportSize({ width: 900, height: 900 });
   const desktopInputs = await inputPositions(page);
   expect(Math.abs(desktopInputs.ssidY - desktopInputs.passwordY)).toBeLessThan(2);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.getByRole("radio", { name: /Fresh install — erase all device data/i }).check();
+  await expect(page.getByText(/eFuses and the factory MAC are unaffected/i)).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 

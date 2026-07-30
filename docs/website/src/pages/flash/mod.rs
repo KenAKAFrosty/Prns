@@ -47,7 +47,7 @@ fn FlashExperience(selected_slug: Option<String>) -> Element {
                 "Flash a Personal Hopspot"
             }
             p { class: "mt-4 max-w-3xl leading-relaxed text-soft",
-                "Choose the exact board, verify the signed release locally, then write only its sparse firmware parts. Existing Wi-Fi is preserved unless you explicitly change it."
+                "Choose the exact board and verify the signed release locally. Standard updates preserve device data; Fresh install is a separately confirmed full-chip erase for ESP targets."
             }
         }
 

@@ -5,6 +5,7 @@ use std::sync::{
 
 use dioxus::prelude::{Signal, WritableExt};
 use prns_flash_manifest::FlashPartKind;
+use serde::Serialize;
 
 use crate::platforms::{BoardFlashTarget, BoardTarget, PreparationProfile, SHIPPING_BOARD_TARGETS};
 
@@ -15,6 +16,19 @@ pub(super) enum WifiAction {
     Preserve,
     Configure,
     Clear,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum InstallMode {
+    PreserveData,
+    EraseAll,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum DestructiveConfirmation {
+    Unconfirmed,
+    Confirmed,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -37,6 +51,35 @@ impl WifiAction {
             Self::Configure => "configure",
             Self::Clear => "clear",
         }
+    }
+
+    pub(super) const fn for_install_mode(install_mode: InstallMode) -> Self {
+        match install_mode {
+            InstallMode::PreserveData => Self::Preserve,
+            InstallMode::EraseAll => Self::Clear,
+        }
+    }
+}
+
+impl InstallMode {
+    pub(super) const fn wire(self) -> &'static str {
+        match self {
+            Self::PreserveData => "preserve-data",
+            Self::EraseAll => "erase-all",
+        }
+    }
+}
+
+impl DestructiveConfirmation {
+    pub(super) const fn permits(self, install_mode: InstallMode) -> bool {
+        match install_mode {
+            InstallMode::PreserveData => matches!(self, Self::Unconfirmed),
+            InstallMode::EraseAll => matches!(self, Self::Confirmed),
+        }
+    }
+
+    pub(super) const fn is_confirmed(self) -> bool {
+        matches!(self, Self::Confirmed)
     }
 }
 
@@ -66,6 +109,8 @@ pub(super) struct FlasherState {
     pub(super) preparation_generation: Arc<AtomicU64>,
     pub(super) prepared: Signal<bool>,
     pub(super) release: Signal<Option<ReleaseDetails>>,
+    pub(super) install_mode: Signal<InstallMode>,
+    pub(super) destructive_confirmation: Signal<DestructiveConfirmation>,
 }
 
 impl FlasherState {
@@ -126,20 +171,31 @@ pub(super) fn preparation_guide(
     }
 }
 
-pub(super) const fn guided_steps(target: BoardFlashTarget) -> &'static [&'static str] {
-    match target {
-        BoardFlashTarget::Uf2MassStorage { .. } => &[
+pub(super) const fn guided_steps(
+    target: BoardFlashTarget,
+    install_mode: InstallMode,
+) -> &'static [&'static str] {
+    match (target, install_mode) {
+        (BoardFlashTarget::Uf2MassStorage { .. }, _) => &[
             "Confirm the exact board pictured above.",
             "Prepare the release; its Minisign signature, byte count, and SHA-256 are checked locally.",
             "Download the verified UF2, follow the board preparation instructions, and copy it to the bootloader drive.",
             "The bootloader drive disappears when the device reboots.",
         ],
-        BoardFlashTarget::EspSerial { .. } => &[
+        (BoardFlashTarget::EspSerial { .. }, InstallMode::PreserveData) => &[
             "Confirm the exact board pictured above.",
             "Prepare the release; all sparse parts are downloaded and SHA-256 verified before USB access.",
             "Connect and choose the board's USB serial port.",
-            "The chip family is checked before any write begins.",
+            "The chip family and physical flash capacity are checked before any write begins.",
             "Every part receives device-side MD5 verification before reset.",
+        ],
+        (BoardFlashTarget::EspSerial { .. }, InstallMode::EraseAll) => &[
+            "Confirm the exact board and the separate full-chip erase warning.",
+            "Prepare the release; all replacement parts are downloaded and SHA-256 verified before USB access.",
+            "Connect and choose the board's USB serial port.",
+            "The chip family and physical flash capacity are checked before erasure begins.",
+            "Erase the entire flash, then write and device-verify every replacement part.",
+            "Report success only after USB disconnect and re-enumeration prove the final reset.",
         ],
     }
 }
@@ -255,5 +311,17 @@ mod tests {
         assert!(!WebSerialCapability::Checking.permits_esp_flash());
         assert!(!WebSerialCapability::Unavailable.permits_esp_flash());
         assert!(WebSerialCapability::Supported.permits_esp_flash());
+    }
+
+    #[test]
+    fn install_mode_owns_confirmation_and_wifi_defaults() {
+        assert!(DestructiveConfirmation::Unconfirmed.permits(InstallMode::PreserveData));
+        assert!(!DestructiveConfirmation::Confirmed.permits(InstallMode::PreserveData));
+        assert!(!DestructiveConfirmation::Unconfirmed.permits(InstallMode::EraseAll));
+        assert!(DestructiveConfirmation::Confirmed.permits(InstallMode::EraseAll));
+        assert!(WifiAction::for_install_mode(InstallMode::PreserveData) == WifiAction::Preserve);
+        assert!(WifiAction::for_install_mode(InstallMode::EraseAll) == WifiAction::Clear);
+        assert_eq!(InstallMode::PreserveData.wire(), "preserve-data");
+        assert_eq!(InstallMode::EraseAll.wire(), "erase-all");
     }
 }

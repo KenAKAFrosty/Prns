@@ -13,6 +13,7 @@ export async function installFakeBridge(page, overrides = {}) {
     const state = {
       active: false,
       cancelled: false,
+      cancellationLocked: false,
       cleanupCount: 0,
       clearPreparedCount: 0,
       lastRequest: null,
@@ -22,6 +23,7 @@ export async function installFakeBridge(page, overrides = {}) {
       provisioningWasCleared: false,
       readyCount: 0,
       completedPartCount: 0,
+      eraseCount: 0,
       resumePreparation: null,
       resumeWriting: null,
     };
@@ -125,6 +127,9 @@ export async function installFakeBridge(page, overrides = {}) {
       if (code === "reset_failure") {
         return "Firmware verified, but reset failed. Press RESET and check the next boot.";
       }
+      if (code === "erase_failure") {
+        return "Full-chip erase failed. The device may be blank; confirm and retry the complete fresh-install plan.";
+      }
       return "The device operation stopped. Re-enter BOOT mode, press RESET, and restart the complete sparse plan.";
     };
 
@@ -149,6 +154,8 @@ export async function installFakeBridge(page, overrides = {}) {
           expectedChip: request.expectedChip,
           mountLabel: request.mountLabel,
           transport: request.transport,
+          installMode: request.installMode ?? null,
+          eraseConfirmed: request.eraseConfirmed ?? null,
           provisioningAction: request.provisioning?.action ?? null,
           ssidBytes: new TextEncoder().encode(request.provisioning?.ssid ?? "").length,
           passwordBytes: new TextEncoder().encode(request.provisioning?.password ?? "").length,
@@ -229,6 +236,7 @@ export async function installFakeBridge(page, overrides = {}) {
           requireCurrentPreparation(generation);
           prepared = {
             expectedChip: request.expectedChip,
+            installMode: request.installMode,
             mountLabel: request.mountLabel,
             parts: request.parts.map(({ kind, size }) => ({ kind, size })),
             transport: request.transport,
@@ -280,6 +288,7 @@ export async function installFakeBridge(page, overrides = {}) {
         }
         state.active = true;
         state.cancelled = false;
+        state.cancellationLocked = false;
         let retainPreparedPlan = false;
         window.addEventListener("beforeunload", navigationGuard);
         document.addEventListener("click", internalNavigationGuard, true);
@@ -302,7 +311,7 @@ export async function installFakeBridge(page, overrides = {}) {
               code: config.failureCode,
               message: failMessage(config.failureCode),
             });
-            retainPreparedPlan = true;
+            retainPreparedPlan = prepared.installMode === "preserve-data";
             return;
           }
           await emitEvent(emit, { phase: "connecting" });
@@ -317,6 +326,20 @@ export async function installFakeBridge(page, overrides = {}) {
               message: failMessage(config.failureCode),
             });
             return;
+          }
+
+          if (prepared.installMode === "erase-all") {
+            state.cancellationLocked = true;
+            await emitEvent(emit, { phase: "erasing" });
+            state.eraseCount += 1;
+            if (config.failureCode === "erase_failure") {
+              await emitEvent(emit, {
+                phase: "failed",
+                code: config.failureCode,
+                message: failMessage(config.failureCode),
+              });
+              return;
+            }
           }
 
           const total = prepared.parts.reduce((sum, part) => sum + part.size, 0);
@@ -383,6 +406,7 @@ export async function installFakeBridge(page, overrides = {}) {
           await emitEvent(emit, { phase: "success", current: total, total });
         } finally {
           state.active = false;
+          state.cancellationLocked = false;
           state.resumeWriting = null;
           if (!retainPreparedPlan) {
             state.preparedBoardSlug = null;
@@ -397,7 +421,9 @@ export async function installFakeBridge(page, overrides = {}) {
       cancel() {
         preparationGeneration += 1;
         clearPreparingRequest();
-        state.cancelled = true;
+        if (!state.cancellationLocked) {
+          state.cancelled = true;
+        }
         state.resumePreparation?.();
         state.resumeWriting?.();
       },
@@ -408,7 +434,9 @@ export async function installFakeBridge(page, overrides = {}) {
         state.clearPreparedCount += 1;
         state.resumePreparation?.();
         if (state.active) {
-          state.cancelled = true;
+          if (!state.cancellationLocked) {
+            state.cancelled = true;
+          }
           state.resumeWriting?.();
         } else {
           prepared = null;

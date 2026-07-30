@@ -24,6 +24,7 @@ let DefaultTransport = null;
 let activeNavigationEnvironment = null;
 let activeHistoryGuard = null;
 let historyGuardSequence = 0;
+let cancellationLocked = false;
 const RESET_ENUMERATION_TIMEOUT_MS = 10_000;
 const ESP32S3_WDT_WPROTECT = 0x600080b0;
 const ESP32S3_WDT_CONFIG0 = 0x60008098;
@@ -267,6 +268,7 @@ export async function prepare(request, emit = () => {}, dependencies = {}) {
       beforeReset: request.beforeReset,
       afterReset: request.afterReset,
       mountLabel: request.mountLabel,
+      installMode: request.installMode,
       files,
     };
     events.emit({
@@ -345,6 +347,7 @@ export async function flash(emit = () => {}, dependencies = {}) {
   let retainPreparedPlan = false;
   active = true;
   cancelRequested = false;
+  cancellationLocked = false;
   setNavigationGuard(true, environment);
   try {
     events.emit({ phase: "requesting_port" });
@@ -421,6 +424,20 @@ export async function flash(emit = () => {}, dependencies = {}) {
     }
     if (cancelRequested) {
       throw new FlashBridgeError("cancelled", "Flashing was cancelled before writing.");
+    }
+
+    if (prepared.installMode === "erase-all") {
+      cancellationLocked = true;
+      events.emit({ phase: "erasing" });
+      try {
+        await loader.eraseFlash();
+      } catch (error) {
+        throw new FlashBridgeError(
+          "erase_failure",
+          "Full-chip erasure failed.",
+          { cause: error },
+        );
+      }
     }
 
     const total = prepared.files.reduce((sum, file) => sum + file.bytes.length, 0);
@@ -505,11 +522,16 @@ export async function flash(emit = () => {}, dependencies = {}) {
     return { success: true };
   } catch (error) {
     const resetFailure = error instanceof FlashBridgeError && error.code === "reset_failure";
-    const failure = safeFailure(error, deviceLost && !resetFailure);
+    const failure = safeFailure(
+      error,
+      deviceLost && !resetFailure,
+      cancellationLocked,
+    );
     if (!events.terminal) {
       events.emit({ phase: failure.code === "cancelled" ? "cancelled" : "failed", ...failure });
     }
-    retainPreparedPlan = failure.code === "permission_denied";
+    retainPreparedPlan = failure.code === "permission_denied"
+      && prepared.installMode === "preserve-data";
     throw error;
   } finally {
     active = false;
@@ -522,6 +544,7 @@ export async function flash(emit = () => {}, dependencies = {}) {
     if (!retainPreparedPlan) {
       discardPrepared();
     }
+    cancellationLocked = false;
   }
 }
 
@@ -539,13 +562,15 @@ function throwEarlyFailure(events, error, discard = true) {
 export function cancel() {
   preparationGeneration += 1;
   discardPreparingRequest();
-  cancelRequested = true;
+  if (!cancellationLocked) {
+    cancelRequested = true;
+  }
 }
 
 export function clearPrepared() {
   preparationGeneration += 1;
   discardPreparingRequest();
-  cancelRequested = active;
+  cancelRequested = active && !cancellationLocked;
   if (!active) {
     discardPrepared();
   }
@@ -790,6 +815,7 @@ export const testing = {
     discardPrepared();
     active = false;
     cancelRequested = false;
+    cancellationLocked = false;
     activeNavigationEnvironment = null;
     activeHistoryGuard = null;
   },

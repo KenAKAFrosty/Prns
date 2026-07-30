@@ -11,7 +11,10 @@ use crate::platforms::BoardFlashTarget;
 
 use super::bridge::{self, BridgeProvisioning, BridgeRequest};
 use super::contract::BridgePhase;
-use super::model::{part_kind, FlasherState, PartDetails, ReleaseDetails, WifiAction};
+use super::model::{
+    part_kind, DestructiveConfirmation, FlasherState, InstallMode, PartDetails, ReleaseDetails,
+    WifiAction,
+};
 use super::trust;
 
 const RELEASE_CHANNEL: &str = env!("PRNS_BUILD_CHANNEL");
@@ -118,12 +121,18 @@ struct AcquiredRelease {
     details: ReleaseDetails,
 }
 
+pub(super) struct ReleaseSelection {
+    pub(super) board_slug: String,
+    pub(super) install_mode: InstallMode,
+    pub(super) destructive_confirmation: DestructiveConfirmation,
+    pub(super) wifi_action: WifiAction,
+    pub(super) ssid: String,
+    pub(super) password: String,
+    pub(super) tcp_target: Option<String>,
+}
+
 pub(super) async fn prepare_release(
-    board_slug: String,
-    selected_action: WifiAction,
-    ssid: String,
-    password: String,
-    tcp_target: Option<String>,
+    selection: ReleaseSelection,
     mut state: FlasherState,
     generation: u64,
 ) {
@@ -138,15 +147,8 @@ pub(super) async fn prepare_release(
     state.progress_current.set(0);
     state.progress_total.set(0);
 
-    let acquired = acquire_release(
-        board_slug,
-        selected_action,
-        ssid,
-        password,
-        tcp_target,
-        state.flash_target,
-    )
-    .await;
+    let install_mode = selection.install_mode;
+    let acquired = acquire_release(selection, state.flash_target).await;
     if !state.preparation_is_current(generation) {
         return;
     }
@@ -173,19 +175,29 @@ pub(super) async fn prepare_release(
             state.phase.set(BridgePhase::Failed);
             state.status.set(message);
             state.prepared.set(false);
+            if install_mode == InstallMode::EraseAll {
+                state
+                    .destructive_confirmation
+                    .set(DestructiveConfirmation::Unconfirmed);
+            }
             bridge::focus_status();
         }
     }
 }
 
 async fn acquire_release(
-    board_slug: String,
-    selected_action: WifiAction,
-    ssid: String,
-    password: String,
-    tcp_target: Option<String>,
+    selection: ReleaseSelection,
     flash_target: BoardFlashTarget,
 ) -> Result<AcquiredRelease, ReleaseAcquisitionError> {
+    let ReleaseSelection {
+        board_slug,
+        install_mode,
+        destructive_confirmation,
+        wifi_action,
+        ssid,
+        password,
+        tcp_target,
+    } = selection;
     if !trust::key_is_configured() {
         return Err(ReleaseAcquisitionError::custody_unavailable(
             "Release signing custody is not configured.",
@@ -271,11 +283,20 @@ async fn acquire_release(
                 "The signed release does not contain this board.",
             )
         })?;
-    let provisioning = bridge_provisioning(target, selected_action, ssid, password, tcp_target)
-        .map_err(ReleaseAcquisitionError::review_selection)?;
+    let provisioning = bridge_provisioning(
+        target,
+        install_mode,
+        wifi_action,
+        ssid,
+        password,
+        tcp_target,
+    )
+    .map_err(ReleaseAcquisitionError::review_selection)?;
     let request = BridgeRequest::from_target(
         target,
         descriptor.manifest_url(),
+        install_mode,
+        destructive_confirmation,
         provisioning,
         flash_target,
     )?;
@@ -353,11 +374,18 @@ fn require_exact_manifest_url(version: &str, manifest_url: &str) -> Result<(), S
 
 fn bridge_provisioning(
     target: &ReleaseTarget,
+    install_mode: InstallMode,
     action: WifiAction,
     ssid: String,
     password: String,
     tcp_target: Option<String>,
 ) -> Result<Option<BridgeProvisioning>, String> {
+    if install_mode == InstallMode::EraseAll && action == WifiAction::Clear {
+        if tcp_target.is_some() {
+            return Err("Blank fresh installation cannot configure a TCP client.".to_string());
+        }
+        return Ok(None);
+    }
     let Some(slot) = target.provisioning() else {
         return match action {
             WifiAction::Preserve => Ok(None),
@@ -439,7 +467,7 @@ mod tests {
         bridge_provisioning, require_exact_manifest_url, ReleaseAcquisitionError,
         FETCH_SIGNED_DOCUMENTS_SCRIPT,
     };
-    use crate::pages::flash::model::WifiAction;
+    use crate::pages::flash::model::{InstallMode, WifiAction};
     use prns_flash_manifest::{board_catalog, ValidatedFlashManifest};
 
     #[test]
@@ -475,6 +503,7 @@ mod tests {
 
         assert!(bridge_provisioning(
             target,
+            InstallMode::PreserveData,
             WifiAction::Preserve,
             String::new(),
             String::new(),
@@ -483,6 +512,7 @@ mod tests {
         .is_none());
         assert!(bridge_provisioning(
             target,
+            InstallMode::PreserveData,
             WifiAction::Configure,
             "network".to_string(),
             "password".to_string(),
@@ -491,12 +521,22 @@ mod tests {
         .is_err());
         assert!(bridge_provisioning(
             target,
+            InstallMode::PreserveData,
             WifiAction::Clear,
             String::new(),
             String::new(),
             None,
         )
         .is_err());
+        assert!(bridge_provisioning(
+            target,
+            InstallMode::EraseAll,
+            WifiAction::Clear,
+            String::new(),
+            String::new(),
+            None,
+        )?
+        .is_none());
         Ok(())
     }
 

@@ -69,6 +69,8 @@ function request() {
       boardSlug: "heltec-v4",
       displayName: "Heltec LoRa 32 V4",
       transport: "esp-serial",
+      installMode: "preserve-data",
+      eraseConfirmed: false,
       expectedChip: "esp32s3",
       flashSize: 8 * 1024 * 1024,
       flashMode: "dio",
@@ -319,6 +321,9 @@ test("throwing preparation event consumers cannot retain provisioning bytes", as
 
 test("hash mismatch fails before serial access", async () => {
   const { value, payloads } = request();
+  value.installMode = "erase-all";
+  value.eraseConfirmed = true;
+  value.provisioning = null;
   payloads[0][0] = 99;
   const events = [];
   await assert.rejects(
@@ -329,6 +334,14 @@ test("hash mismatch fails before serial access", async () => {
     }),
   );
   assert.equal(events.at(-1).code, "artifact_hash_mismatch");
+  let serialRequests = 0;
+  await assert.rejects(
+    flash(() => {}, {
+      serial: { requestPort: async () => { serialRequests += 1; } },
+    }),
+    /Prepare and verify/,
+  );
+  assert.equal(serialRequests, 0);
 });
 
 test("artifact acquisition accepts exact multi-chunk streams without buffering fallbacks", async () => {
@@ -504,6 +517,7 @@ test("successful flash requires MD5 callback and cleans up", async () => {
 
     async main() { timeline.push("chip-detected"); return "ESP32-S3 (QFN56) (revision v0.2)"; }
     async readFlashId() { timeline.push("flash-size-checked"); return FLASH_ID_8_MB; }
+    async eraseFlash() { assert.fail("standard install must never erase the full flash"); }
     async writeFlash(options) {
       assert.equal(options.eraseAll, false);
       assert.equal(options.compress, true);
@@ -739,9 +753,225 @@ async function prepareDefault() {
   });
 }
 
+async function prepareFresh(configure = false) {
+  const { value, payloads } = request();
+  value.installMode = "erase-all";
+  value.eraseConfirmed = true;
+  value.provisioning = configure
+    ? {
+        action: "configure",
+        offset: 0xd000,
+        size: 0x1000,
+        ssid: "fresh-network",
+        password: "fresh-password",
+      }
+    : null;
+  let fetchIndex = 0;
+  await prepare(value, () => {}, {
+    loadEsptool: false,
+    cryptoImpl: webcrypto,
+    fetchImpl: async () => {
+      const data = payloads[fetchIndex++];
+      return streamedResponse(data);
+    },
+  });
+}
+
 function environment() {
   return { isSecureContext: true, addEventListener() {}, removeEventListener() {} };
 }
+
+test("fresh blank install erases exactly once after target validation and before every write", async () => {
+  await prepareFresh();
+  assert.equal(testing.prepared().files.length, 3);
+  const timeline = [];
+  class FakeTransport {
+    setDeviceLostCallback() {}
+    async disconnect() {}
+  }
+  class FakeLoader {
+    chip = { CHIP_NAME: "ESP32-S3" };
+
+    async main() {
+      timeline.push("chip");
+      return "ESP32-S3 (QFN56) (revision v0.2)";
+    }
+    async readFlashId() {
+      timeline.push("capacity");
+      return FLASH_ID_8_MB;
+    }
+    async eraseFlash() { timeline.push("erase"); }
+    async writeFlash({ fileArray }) {
+      timeline.push(`write:${fileArray[0].address}`);
+    }
+    async writeReg() {}
+  }
+  const events = [];
+  await flash((event) => {
+    events.push(event);
+    timeline.push(`event:${event.phase}`);
+  }, {
+    environment: environment(),
+    serial: { requestPort: async () => ({}) },
+    TransportImpl: FakeTransport,
+    LoaderImpl: FakeLoader,
+    proveReset: async (_serial, _port, reset) => reset(),
+  });
+
+  assert.equal(timeline.filter((entry) => entry === "erase").length, 1);
+  assert.ok(timeline.indexOf("capacity") < timeline.indexOf("event:erasing"));
+  assert.ok(timeline.indexOf("event:erasing") < timeline.indexOf("erase"));
+  assert.ok(timeline.indexOf("erase") < timeline.indexOf("write:0"));
+  assert.deepEqual(
+    timeline.filter((entry) => entry.startsWith("write:")),
+    ["write:0", "write:32768", "write:65536"],
+  );
+  assert.equal(events.at(-1).phase, "success");
+});
+
+test("fresh explicit configuration adds only the new provisioning image", async () => {
+  await prepareFresh(true);
+  assert.deepEqual(
+    testing.prepared().files.map(({ kind, offset }) => [kind, offset]),
+    [
+      ["bootloader", 0],
+      ["partition-table", 0x8000],
+      ["application", 0x10000],
+      ["provisioning", 0xd000],
+    ],
+  );
+});
+
+test("fresh erase failure performs no writes and requires a complete fresh-install retry", async () => {
+  await prepareFresh();
+  let erases = 0;
+  let writes = 0;
+  class FakeTransport {
+    setDeviceLostCallback() {}
+    async disconnect() {}
+  }
+  class FakeLoader {
+    chip = { CHIP_NAME: "ESP32-S3" };
+
+    async main() { return "ESP32-S3 (QFN56) (revision v0.2)"; }
+    async readFlashId() { return FLASH_ID_8_MB; }
+    async eraseFlash() {
+      erases += 1;
+      throw new Error("erase command stopped");
+    }
+    async writeFlash() { writes += 1; }
+  }
+  const events = [];
+  await assert.rejects(
+    flash((event) => events.push(event), {
+      environment: environment(),
+      serial: { requestPort: async () => ({}) },
+      TransportImpl: FakeTransport,
+      LoaderImpl: FakeLoader,
+    }),
+  );
+  assert.deepEqual({ erases, writes }, { erases: 1, writes: 0 });
+  assert.deepEqual(
+    terminalEvents(events).map(({ phase, code }) => ({ phase, code })),
+    [{ phase: "failed", code: "erase_failure" }],
+  );
+  assert.match(events.at(-1).message, /device may be blank/i);
+  assert.match(events.at(-1).message, /complete fresh-install plan/i);
+});
+
+test("fresh target failures and missing confirmation cannot reach full-chip erase", async () => {
+  for (const scenario of [
+    { chip: "ESP32-C6", flashId: FLASH_ID_8_MB, code: "wrong_chip" },
+    { chip: "ESP32-S3", flashId: FLASH_ID_4_MB, code: "wrong_flash_size" },
+  ]) {
+    testing.reset();
+    await prepareFresh();
+    let erases = 0;
+    class FakeTransport {
+      setDeviceLostCallback() {}
+      async disconnect() {}
+    }
+    class FakeLoader {
+      chip = { CHIP_NAME: scenario.chip };
+
+      async main() { return scenario.chip; }
+      async readFlashId() { return scenario.flashId; }
+      async eraseFlash() { erases += 1; }
+    }
+    const events = [];
+    await assert.rejects(
+      flash((event) => events.push(event), {
+        environment: environment(),
+        serial: { requestPort: async () => ({}) },
+        TransportImpl: FakeTransport,
+        LoaderImpl: FakeLoader,
+      }),
+    );
+    assert.equal(erases, 0);
+    assert.equal(events.at(-1).code, scenario.code);
+  }
+
+  const unconfirmed = request();
+  unconfirmed.value.installMode = "erase-all";
+  unconfirmed.value.provisioning = null;
+  let fetches = 0;
+  await assert.rejects(
+    prepare(unconfirmed.value, () => {}, {
+      loadEsptool: false,
+      cryptoImpl: webcrypto,
+      fetchImpl: async () => {
+        fetches += 1;
+        return streamedResponse(unconfirmed.payloads[0]);
+      },
+    }),
+    /target identity is incomplete/,
+  );
+  assert.equal(fetches, 0);
+  assert.equal(testing.prepared(), null);
+});
+
+test("fresh erasure locks cancellation and device loss requires complete reinstall", async () => {
+  await prepareFresh();
+  let writes = 0;
+  class FakeTransport {
+    setDeviceLostCallback(callback) { this.lost = callback; }
+    async disconnect() {}
+  }
+  class FakeLoader {
+    chip = { CHIP_NAME: "ESP32-S3" };
+
+    constructor({ transport }) {
+      this.transport = transport;
+    }
+    async main() { return "ESP32-S3 (QFN56) (revision v0.2)"; }
+    async readFlashId() { return FLASH_ID_8_MB; }
+    async eraseFlash() {
+      cancel();
+      clearPrepared();
+    }
+    async writeFlash() {
+      writes += 1;
+      if (writes === 1) {
+        this.transport.lost();
+        throw new Error("device disconnected");
+      }
+    }
+  }
+  const events = [];
+  await assert.rejects(
+    flash((event) => events.push(event), {
+      environment: environment(),
+      serial: { requestPort: async () => ({}) },
+      TransportImpl: FakeTransport,
+      LoaderImpl: FakeLoader,
+    }),
+  );
+  assert.equal(writes, 1);
+  assert.equal(events.at(-1).code, "device_lost");
+  assert.match(events.at(-1).message, /device may be blank/i);
+  assert.match(events.at(-1).message, /complete fresh-install plan/i);
+  assert.equal(events.some(({ phase }) => phase === "cancelled"), false);
+});
 
 test("typed ESP failures emit once, clean up, and never reset after an incomplete plan", async () => {
   const cases = [
@@ -1068,7 +1298,8 @@ test("reset failure is reported only after writes verify", async () => {
 });
 
 test("reset enumeration timeout cannot emit success after verified writes", async () => {
-  await prepareDefault();
+  await prepareFresh();
+  let erases = 0;
   let writes = 0;
   class FakeTransport {
     setDeviceLostCallback() {}
@@ -1079,6 +1310,7 @@ test("reset enumeration timeout cannot emit success after verified writes", asyn
 
     async main() { return "ESP32-S3 (QFN56) (revision v0.2)"; }
     async readFlashId() { return FLASH_ID_8_MB; }
+    async eraseFlash() { erases += 1; }
     async writeFlash() { writes += 1; }
     async writeReg() {}
   }
@@ -1095,11 +1327,13 @@ test("reset enumeration timeout cannot emit success after verified writes", asyn
       },
     }),
   );
-  assert.equal(writes, 4);
+  assert.deepEqual({ erases, writes }, { erases: 1, writes: 3 });
   assert.deepEqual(
     terminalEvents(events).map(({ phase, code }) => ({ phase, code })),
     [{ phase: "failed", code: "reset_failure" }],
   );
+  assert.match(events.at(-1).message, /device may be blank/i);
+  assert.match(events.at(-1).message, /complete fresh-install plan/i);
   assert.equal(events.some(({ phase }) => phase === "success"), false);
 });
 
