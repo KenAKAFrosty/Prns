@@ -101,6 +101,10 @@ pub(crate) fn atomic_write(
 pub(crate) fn cleanup_stale(paths: &ServicePaths) -> Result<(), ServiceError> {
     remove_if_present(&paths.record, "could not remove stale prnsd session record")?;
     remove_if_present(
+        &paths.active_config,
+        "could not remove stale managed prnsd configuration record",
+    )?;
+    remove_if_present(
         &paths.ready,
         "could not remove stale prnsd readiness marker",
     )?;

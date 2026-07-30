@@ -83,7 +83,7 @@ impl RequestEndpoint<DaemonRequestState> for ListRoute {
         let response = RnsBlackholeTable::from_entries(entries)
             .encode_message_pack()
             .map_err(|_| Decline::Ignore)?;
-        context.respond_packed(&response)
+        context.respond(response)
     }
 }
 

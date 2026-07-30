@@ -4190,7 +4190,7 @@ DEALINGS IN THE SOFTWARE.
 
 License: MIT License
 
-Used by: `anstream 1.0.0`, `anstyle 1.0.14`, `anstyle-parse 1.0.0`, `anstyle-query 1.1.5`, `anstyle-wincon 3.0.11`, `clap 4.6.1`, `clap_builder 4.6.0`, `clap_derive 4.6.1`, `clap_lex 1.1.0`, `colorchoice 1.0.5`, `env_filter 0.1.4`, `is_terminal_polyfill 1.70.2`, `once_cell_polyfill 1.70.2`, `serde_spanned 1.1.1`, `toml 1.1.3+spec-1.1.0`, `toml_datetime 1.1.1+spec-1.1.0`, `toml_edit 0.25.12+spec-1.1.0`, `toml_edit 0.25.13+spec-1.1.0`, `toml_parser 1.1.2+spec-1.1.0`, `toml_writer 1.1.2+spec-1.1.0`
+Used by: `anstream 1.0.0`, `anstyle 1.0.14`, `anstyle-parse 1.0.0`, `anstyle-query 1.1.5`, `anstyle-wincon 3.0.11`, `clap 4.6.1`, `clap_builder 4.6.0`, `clap_derive 4.6.1`, `clap_lex 1.1.0`, `colorchoice 1.0.5`, `env_filter 0.1.4`, `is_terminal_polyfill 1.70.2`, `once_cell_polyfill 1.70.2`, `serde_spanned 1.1.1`, `toml 1.1.3+spec-1.1.0`, `toml 1.1.4+spec-1.1.0`, `toml_datetime 1.1.1+spec-1.1.0`, `toml_edit 0.25.12+spec-1.1.0`, `toml_edit 0.25.13+spec-1.1.0`, `toml_parser 1.1.2+spec-1.1.0`, `toml_parser 1.1.3+spec-1.1.0`, `toml_writer 1.1.2+spec-1.1.0`
 
 Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 T-Beam, daemon Linux, daemon Windows, daemon macOS, desktop Linux, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64
 
@@ -6036,7 +6036,7 @@ License: MIT License
 
 Used by: `winnow 0.7.15`, `winnow 1.0.3`, `winnow 1.0.4`
 
-Release graphs: ESP32-C6, ESP32-S3 Heltec, ESP32-S3 T-Beam, daemon Linux, desktop Linux, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, website Rust/WASM
+Release graphs: ESP32-C6, ESP32-S3 Heltec, ESP32-S3 T-Beam, daemon Linux, daemon Windows, daemon macOS, desktop Linux, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, website Rust/WASM
 
 ```text
 Permission is hereby granted, free of charge, to any person obtaining

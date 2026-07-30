@@ -1,6 +1,6 @@
+#![expect(clippy::expect_used, clippy::panic)]
+
 use core::time::Duration;
-use std::error::Error;
-use std::io;
 
 use personal_rns::prelude::*;
 
@@ -15,21 +15,26 @@ impl RequestEndpoint for Echo {
 
     async fn handle(mut context: RequestContext<'_, ()>) -> Result<(), Decline> {
         let data_from_request = context.data;
-        context.respond_packed(data_from_request)
+        context.respond(data_from_request)
     }
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
-    let responder_destination = responder_destination()?;
+async fn main() {
+    let responder_destination = responder_destination();
 
-    let responder_hash = responder_destination.destination_hash().map_err(|error| {
-        io::Error::other(format!("invalid example destination name: {error:?}"))
-    })?;
+    let responder_hash = responder_destination
+        .destination_hash()
+        .expect("invalid example destination name");
 
-    let tcp_server = TcpServer::bind("127.0.0.1:0").await?;
+    let tcp_server = TcpServer::bind("127.0.0.1:0")
+        .await
+        .expect("could not bind a localhost TCP server");
 
-    let server_address = tcp_server.local_addr()?.to_string();
+    let server_address = tcp_server
+        .local_addr()
+        .expect("could not read the bound server address")
+        .to_string();
 
     let responder = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
@@ -50,7 +55,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let tcp_client = TcpClientInterface::new(server_address);
     let requester = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        pre_configured_destinations: [requester_destination()?],
+        pre_configured_destinations: [requester_destination()],
         app_state: (),
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
@@ -89,7 +94,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let destination = announce_heard_listener
                 .recv()
                 .await
-                .ok_or_else(|| io::Error::other("The announce stream closed before delivery"))?;
+                .expect("The announce stream closed before delivery");
             if destination == responder_hash {
                 break;
             }
@@ -97,11 +102,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let link_id = requester_handle
             .establish_link(responder_hash)
             .await
-            .map_err(|error| {
-                io::Error::other(format!(
-                    "the link to the responder did not establish: {error:?}"
-                ))
-            })?;
+            .expect("the link to the responder did not establish");
 
         let original_message = b"bounded";
 
@@ -112,9 +113,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 original_message,
             )
             .await
-            .map_err(|error| {
-                io::Error::other(format!("the echo request did not settle: {error:?}"))
-            })?;
+            .expect("the echo request did not settle");
 
         assert_eq!(
             response.as_slice(),
@@ -122,55 +121,49 @@ async fn main() -> Result<(), Box<dyn Error>> {
             "The echo response should match what was sent"
         );
         println!("Received {} bytes in {rtt:?}", response.len());
-        Ok::<(), Box<dyn Error>>(())
     };
 
     tokio::select! {
         result = tokio::time::timeout(EXCHANGE_TIMEOUT, exchange) => {
-            result
-                .map_err(|_| io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "The exchange did not complete within 10 seconds",
-                ))??;
+            result.expect("The exchange did not complete within 10 seconds");
         }
         result = responder.run() => {
-            result?;
-            return Err(io::Error::other("The responder stopped before the exchange").into());
+            result.expect("The responder failed");
+            panic!("The responder stopped before the exchange");
         }
         result = requester.run() => {
-            result?;
-            return Err(io::Error::other("The requester stopped before the exchange").into());
+            result.expect("The requester failed");
+            panic!("The requester stopped before the exchange");
         }
     }
-    Ok(())
 }
 
-fn responder_destination() -> Result<PreConfiguredDestination<'static>, Box<dyn Error>> {
-    Ok(PreConfiguredDestination::Single {
+fn responder_destination() -> PreConfiguredDestination<'static> {
+    PreConfiguredDestination::Single {
         request_endpoints: ServeMyRequestEndpoints::Yes,
 
         resource_strategy: ResourceStrategy::AcceptNone,
         app_name: "prns-example",
-        aspects: &["bounded-request", "responder"],
-        identity: try_generate_identity_secret()?,
+        aspects: &["example", "bounded-request"],
+        identity: try_generate_identity_secret().expect("identity generation failed"),
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
-    })
+    }
 }
 
-fn requester_destination() -> Result<PreConfiguredDestination<'static>, Box<dyn Error>> {
-    Ok(PreConfiguredDestination::Single {
+fn requester_destination() -> PreConfiguredDestination<'static> {
+    PreConfiguredDestination::Single {
         request_endpoints: ServeMyRequestEndpoints::No,
 
         resource_strategy: ResourceStrategy::AcceptNone,
         app_name: "prns-example",
-        aspects: &["bounded-request", "requester"],
-        identity: try_generate_identity_secret()?,
+        aspects: &["example", "bounded-request"],
+        identity: try_generate_identity_secret().expect("identity generation failed"),
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
-    })
+    }
 }

@@ -1,6 +1,6 @@
+#![expect(clippy::expect_used, clippy::panic)]
+
 use core::time::Duration;
-use std::error::Error;
-use std::io;
 
 use personal_rns::prelude::*;
 
@@ -18,7 +18,7 @@ enum WatchedEvent {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() {
     let persistence_dir = std::env::temp_dir().join("prns-example-persistence");
 
     let (watched_events_sender, mut watched_events_listener) =
@@ -26,12 +26,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let listener = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        pre_configured_destinations: [listener_destination()?],
+        pre_configured_destinations: [listener_destination()],
         app_state: (),
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         interfaces: ManuallyAttached,
-        persistence: NodePersistence::custom_dir(&persistence_dir)?,
+        persistence: NodePersistence::custom_dir(&persistence_dir)
+            .expect("could not use the persistence directory"),
 
         on_event: move |event, _state| {
             let watched_event = match event {
@@ -57,16 +58,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let restored_routes = tokio::select! {
         watched_event = watched_events_listener.recv() => {
-            match watched_event
-                .ok_or_else(|| io::Error::other("The event stream closed before restoration"))?
-            {
+            match watched_event.expect("The event stream closed before restoration") {
                 WatchedEvent::Restored { routes } => routes,
-                _ => return Err(io::Error::other("The restore report was not the first event").into()),
+                _ => panic!("The restore report was not the first event"),
             }
         }
         result = &mut run_listener => {
-            result?;
-            return Err(io::Error::other("The listening node stopped before restoring").into());
+            result.expect("The listening node failed");
+            panic!("The listening node stopped before restoring");
         }
     };
 
@@ -78,8 +77,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let routes = tokio::select! {
             routes = handle.routes() => routes,
             result = &mut run_listener => {
-                result?;
-                return Err(io::Error::other("The listening node stopped before introspection").into());
+                result.expect("The listening node failed");
+                panic!("The listening node stopped before introspection");
             }
         };
         for route in &routes {
@@ -91,17 +90,24 @@ async fn main() -> Result<(), Box<dyn Error>> {
         println!("Success: the node remembered across a full restart; nobody announced anything.");
         println!("Delete {} to start over.", persistence_dir.display());
         let _ = shutdown_listener.send(());
-        run_listener.await?;
-        return Ok(());
+        run_listener
+            .await
+            .expect("The listening node failed during shutdown");
+        return;
     }
 
     println!("First run: nothing on disk yet; standing up a sibling node to announce something");
-    let announcing_destination = announcer_destination()?;
-    let announced_hash = announcing_destination.destination_hash().map_err(|error| {
-        io::Error::other(format!("invalid example destination name: {error:?}"))
-    })?;
-    let server = TcpServer::bind("127.0.0.1:0").await?;
-    let server_address = server.local_addr()?.to_string();
+    let announcing_destination = announcer_destination();
+    let announced_hash = announcing_destination
+        .destination_hash()
+        .expect("invalid example destination name");
+    let server = TcpServer::bind("127.0.0.1:0")
+        .await
+        .expect("could not bind a localhost TCP server");
+    let server_address = server
+        .local_addr()
+        .expect("could not read the bound server address")
+        .to_string();
     let _server = handle.supervise(server);
 
     let client = TcpClientInterface::new(server_address);
@@ -142,19 +148,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let watched_event = tokio::select! {
             watched_event = tokio::time::timeout_at(deadline, watched_events_listener.recv()) => {
                 watched_event
-                    .map_err(|_| io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        "The announce was not heard and saved within 10 seconds",
-                    ))?
-                    .ok_or_else(|| io::Error::other("The event stream closed before persistence"))?
+                    .expect("The announce was not heard and saved within 10 seconds")
+                    .expect("The event stream closed before persistence")
             }
             result = &mut run_listener => {
-                result?;
-                return Err(io::Error::other("The listening node stopped before saving").into());
+                result.expect("The listening node failed");
+                panic!("The listening node stopped before saving");
             }
             result = &mut run_announcer => {
-                result?;
-                return Err(io::Error::other("The announcing node stopped before delivery").into());
+                result.expect("The announcing node failed");
+                panic!("The announcing node stopped before delivery");
             }
         };
         match watched_event {
@@ -178,34 +181,35 @@ async fn main() -> Result<(), Box<dyn Error>> {
         "Run the same command again; nobody will announce, and the node will still know the way."
     );
     let _ = shutdown_listener.send(());
-    run_listener.await?;
-    Ok(())
+    run_listener
+        .await
+        .expect("The listening node failed during shutdown");
 }
 
-fn announcer_destination() -> Result<PreConfiguredDestination<'static>, Box<dyn Error>> {
-    Ok(PreConfiguredDestination::Single {
+fn announcer_destination() -> PreConfiguredDestination<'static> {
+    PreConfiguredDestination::Single {
         resource_strategy: ResourceStrategy::AcceptNone,
         app_name: "prns-example",
-        aspects: &["persistence", "announcer"],
-        identity: try_generate_identity_secret()?,
+        aspects: &["example", "persistence"],
+        identity: try_generate_identity_secret().expect("identity generation failed"),
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         request_endpoints: ServeMyRequestEndpoints::No,
-    })
+    }
 }
 
-fn listener_destination() -> Result<PreConfiguredDestination<'static>, Box<dyn Error>> {
-    Ok(PreConfiguredDestination::Single {
+fn listener_destination() -> PreConfiguredDestination<'static> {
+    PreConfiguredDestination::Single {
         resource_strategy: ResourceStrategy::AcceptNone,
         app_name: "prns-example",
-        aspects: &["persistence", "listener"],
-        identity: try_generate_identity_secret()?,
+        aspects: &["example", "persistence"],
+        identity: try_generate_identity_secret().expect("identity generation failed"),
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         request_endpoints: ServeMyRequestEndpoints::No,
-    })
+    }
 }

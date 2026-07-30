@@ -151,25 +151,27 @@ minimum). Imported lists are persisted under `storage/blackhole/<source identity
 configured order after the local list, and included in this daemon's own published aggregate.
 Shared-instance clients neither publish nor import.
 
-Prnsd's operator-owned NomadNet page destination is served whenever an indexed page is present.
-`announce_node_page` controls only whether the node advertises that destination; it defaults to
-`Yes`. `node_page_announce_interval` is a positive whole number of minutes and defaults to `360`,
-matching the conventional six-hour NomadNet cadence. Disabling announcements does not disable
-direct requests, and deleting `pages/index.mu` makes the announcement unavailable independently of
-the configured policy. Page contents are read per request. Safe top-level `.mu` additions, removals,
-and renames are reconciled every five minutes, or immediately with
-`prnsd pages refresh --config <directory>`. These daemon-wide announcement settings require a
-managed restart after editing:
+Prnsd's operator-owned NomadNet page destination is served whenever
+`nnpages/pages/index.mu` is present. NNPages policy is deliberately absent from the stock Reticulum
+configuration. It lives in `nnpages/settings.toml` beneath the same configuration directory:
 
-```ini
-[reticulum]
-  announce_node_page = Yes
-  node_page_announce_interval = 360
+```toml
+announce = true
+announce_interval_minutes = 360
 ```
+
+Both keys are optional and default to automatic announcements every six hours. A missing file uses
+the same defaults. Malformed, unreadable, duplicate, or unknown settings are reported and cause the
+complete default policy to be used. Disabling announcements does not disable direct requests, and
+deleting `index.mu` independently makes the announcement unavailable. Page contents are read per
+request. Safe recursive additions, removals, and renames are reconciled every five minutes, or
+immediately with `prnsd nnpages refresh --config <directory>`; that same reconciliation reloads
+`settings.toml` without a daemon restart. The validated display name lives separately in
+`nnpages/name`.
 
 Backbone endpoint discovery is independently controlled by the interface's `discoverable` setting.
 Changing it with `prnsd interfaces edit ... --discoverable false --apply` updates a managed
-daemon's publication state without changing the listener or the node-page announcement policy.
+daemon's publication state without changing the listener or NNPages announcement policy.
 
 ## I2P readiness check
 

@@ -37,6 +37,10 @@ RUN install -D -m 0755 prnsd/target/release/prnsd /image/usr/local/bin/prnsd \
     && install -D -m 0644 LICENSE-MIT /image/usr/share/doc/prnsd/LICENSE-MIT \
     && install -D -m 0644 THIRD_PARTY_NOTICES.md /image/usr/share/doc/prnsd/THIRD_PARTY_NOTICES.md \
     && install -D -m 0644 release/keys/minisign.pub /image/usr/share/doc/prnsd/minisign.pub \
+    && if test -f release/source-bundle/source.zip; then \
+         install -D -m 0644 release/source-bundle/source.zip /image/usr/share/prnsd/source.zip; \
+         install -D -m 0644 release/source-bundle/source.zip.sha256 /image/usr/share/prnsd/source.zip.sha256; \
+       fi \
     && install -d -m 0700 -o 65532 -g 65532 /image/var/lib/prnsd
 
 FROM gcr.io/distroless/cc-debian12:nonroot@sha256:fccdbb0a547c14e23fcf4ce8ad62ca5d43b4faae8d22cd292f490fef9946c96e

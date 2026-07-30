@@ -5,7 +5,12 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
+import re
 import shutil
+
+
+RELEASE_RECORD_NAME = re.compile(r"release-record-v.+\.json")
+SIGNED_CANDIDATE_NAME = re.compile(r"prns-flasher-candidate-v.+-signed\.tar\.gz")
 
 
 def sha256(path: Path) -> str:
@@ -112,6 +117,42 @@ def require_empty_output(output: Path) -> None:
         if not output.is_dir() or any(output.iterdir()):
             raise ValueError("release-history output must be a new or empty directory")
     output.mkdir(parents=True, exist_ok=True)
+
+
+def bootstrap_blocking_custody_tags(releases: object) -> list[str]:
+    """Return releases proving that stable website history already exists."""
+
+    if not isinstance(releases, list):
+        raise ValueError("GitHub releases response must be a JSON array")
+    blocking = set()
+    for release in releases:
+        if not isinstance(release, dict):
+            raise ValueError("GitHub releases response contains a malformed release")
+        tag = release.get("tag_name")
+        draft = release.get("draft")
+        prerelease = release.get("prerelease")
+        assets = release.get("assets")
+        if (
+            not isinstance(tag, str)
+            or not tag
+            or not isinstance(draft, bool)
+            or not isinstance(prerelease, bool)
+            or not isinstance(assets, list)
+        ):
+            raise ValueError(f"GitHub release metadata is malformed for {tag!r}")
+        names = []
+        for asset in assets:
+            name = asset.get("name") if isinstance(asset, dict) else None
+            if not isinstance(name, str) or not name:
+                raise ValueError(f"GitHub release asset metadata is malformed for {tag}")
+            names.append(name)
+        has_release_record = any(RELEASE_RECORD_NAME.fullmatch(name) for name in names)
+        has_signed_candidate = any(
+            SIGNED_CANDIDATE_NAME.fullmatch(name) for name in names
+        )
+        if has_release_record or (not draft and not prerelease and has_signed_candidate):
+            blocking.add(tag)
+    return sorted(blocking)
 
 
 def prepare_bootstrap(output: Path) -> dict:

@@ -205,7 +205,7 @@ mod tests {
 
         async fn handle(mut context: RequestContext<'_, ()>) -> Result<(), Decline> {
             let destination = context.destination;
-            context.respond_packed(destination.as_bytes())
+            context.respond(destination.as_bytes())
         }
     }
 
@@ -246,7 +246,7 @@ mod tests {
         const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
         async fn handle(mut context: RequestContext<'_, ()>) -> Result<(), Decline> {
-            context.respond_static_bytes(&PAGE)
+            context.respond_static_messagepack_bytes(&PAGE)
         }
     }
 

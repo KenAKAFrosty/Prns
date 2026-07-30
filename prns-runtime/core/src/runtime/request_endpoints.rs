@@ -61,6 +61,25 @@ pub trait ResponseSink {
     ) -> Result<(), ResponseCapacityExceeded> {
         Err(ResponseCapacityExceeded)
     }
+
+    #[cfg(feature = "std")]
+    fn put_open_bytes(
+        &mut self,
+        _file: std::fs::File,
+        _byte_len: u64,
+    ) -> Result<(), ResponseCapacityExceeded> {
+        Err(ResponseCapacityExceeded)
+    }
+
+    #[cfg(feature = "std")]
+    fn put_open_file(
+        &mut self,
+        _name: &str,
+        _file: std::fs::File,
+        _byte_len: u64,
+    ) -> Result<(), ResponseCapacityExceeded> {
+        Err(ResponseCapacityExceeded)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -164,22 +183,66 @@ pub struct RequestContext<'a, S> {
 }
 
 impl<S> RequestContext<'_, S> {
-    pub fn respond_packed(&mut self, bytes: &[u8]) -> Result<(), Decline> {
+    /// Send a normal application response exactly as supplied.
+    ///
+    /// This is the default for text, protocol messages, and arbitrary byte payloads:
+    ///
+    /// ```ignore
+    /// context.respond("pong")
+    /// ```
+    ///
+    /// Reticulum calls this payload "packed", but it does not require MessagePack. Use
+    /// [`respond_messagepack_bytes`](Self::respond_messagepack_bytes) only when the peer
+    /// specifically expects a MessagePack `bin` value, and the file methods only for
+    /// named-file/resource semantics.
+    pub fn respond(&mut self, data: impl AsRef<[u8]>) -> Result<(), Decline> {
         self.sink
-            .put_packed(bytes)
+            .put_packed(data.as_ref())
             .map_err(|_| Decline::ResponseTooLarge)
     }
 
-    pub fn respond_bytes(&mut self, bytes: &[u8]) -> Result<(), Decline> {
+    /// Legacy Reticulum spelling for [`respond`](Self::respond).
+    #[deprecated(note = "use RequestContext::respond for exact application payloads")]
+    #[doc(hidden)]
+    pub fn respond_packed(&mut self, bytes: &[u8]) -> Result<(), Decline> {
+        self.respond(bytes)
+    }
+
+    /// Encode `bytes` as one MessagePack `bin` value before responding.
+    pub fn respond_messagepack_bytes(&mut self, bytes: &[u8]) -> Result<(), Decline> {
         self.sink
             .put_bytes(bytes)
             .map_err(|_| Decline::ResponseTooLarge)
     }
 
-    pub fn respond_static_bytes(&mut self, bytes: &'static [u8]) -> Result<(), Decline> {
+    /// Legacy ambiguous spelling for
+    /// [`respond_messagepack_bytes`](Self::respond_messagepack_bytes).
+    #[deprecated(
+        note = "use RequestContext::respond_messagepack_bytes for a MessagePack bin value"
+    )]
+    #[doc(hidden)]
+    pub fn respond_bytes(&mut self, bytes: &[u8]) -> Result<(), Decline> {
+        self.respond_messagepack_bytes(bytes)
+    }
+
+    /// Encode static bytes as one MessagePack `bin` value without first copying the source.
+    pub fn respond_static_messagepack_bytes(
+        &mut self,
+        bytes: &'static [u8],
+    ) -> Result<(), Decline> {
         self.sink
             .put_static_bytes(bytes)
             .map_err(|_| Decline::ResponseTooLarge)
+    }
+
+    /// Legacy ambiguous spelling for
+    /// [`respond_static_messagepack_bytes`](Self::respond_static_messagepack_bytes).
+    #[deprecated(
+        note = "use RequestContext::respond_static_messagepack_bytes for a static MessagePack bin value"
+    )]
+    #[doc(hidden)]
+    pub fn respond_static_bytes(&mut self, bytes: &'static [u8]) -> Result<(), Decline> {
+        self.respond_static_messagepack_bytes(bytes)
     }
 
     /// Respond with a Reticulum Resource whose metadata names the file for native clients.
@@ -193,6 +256,40 @@ impl<S> RequestContext<'_, S> {
     ) -> Result<(), Decline> {
         self.sink
             .put_static_file(name, bytes)
+            .map_err(|_| Decline::ResponseTooLarge)
+    }
+
+    /// Respond with bytes from an already-open regular file.
+    ///
+    /// Host runtimes keep the handle open until its response lane is available, then read it in
+    /// bounded segments. Opening and validating the handle before calling this method keeps path
+    /// policy in the application and avoids retaining the complete payload per queued request.
+    #[cfg(feature = "std")]
+    #[doc(hidden)]
+    pub fn respond_open_bytes(
+        &mut self,
+        file: std::fs::File,
+        byte_len: u64,
+    ) -> Result<(), Decline> {
+        self.sink
+            .put_open_bytes(file, byte_len)
+            .map_err(|_| Decline::ResponseTooLarge)
+    }
+
+    /// Respond with an already-open regular file and Reticulum filename metadata.
+    ///
+    /// The host runtime streams the file after acquiring the response lane, so queued requests
+    /// retain one handle and a small descriptor rather than a copy of the file.
+    #[cfg(feature = "std")]
+    #[doc(hidden)]
+    pub fn respond_open_file(
+        &mut self,
+        name: &str,
+        file: std::fs::File,
+        byte_len: u64,
+    ) -> Result<(), Decline> {
+        self.sink
+            .put_open_file(name, file, byte_len)
             .map_err(|_| Decline::ResponseTooLarge)
     }
 
@@ -321,7 +418,7 @@ mod tests {
         const ENDPOINT_ID: &'static str = "/health";
         const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
         async fn handle(mut cx: RequestContext<'_, App>) -> Result<(), Decline> {
-            cx.respond_packed(b"ok")
+            cx.respond("ok")
         }
     }
 
@@ -331,7 +428,7 @@ mod tests {
         const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
         async fn handle(mut cx: RequestContext<'_, App>) -> Result<(), Decline> {
             let greeting = cx.state.greeting;
-            cx.respond_packed(greeting)
+            cx.respond(greeting)
         }
     }
 
@@ -351,7 +448,7 @@ mod tests {
         const ENDPOINT_ID: &'static str = "/ack";
         const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
         async fn handle(mut cx: RequestContext<'_, App>) -> Result<(), Decline> {
-            cx.respond_packed(&[])
+            cx.respond([0u8; 0])
         }
     }
 
@@ -377,7 +474,7 @@ mod tests {
     }
 
     #[test]
-    fn raw_byte_sinks_frame_atomically() {
+    fn messagepack_binary_sinks_frame_atomically() {
         let mut exact = heapless::Vec::<u8, 7>::new();
         exact.put_bytes(b"hello").unwrap();
         assert_eq!(exact.as_slice(), &[0xC4, 5, b'h', b'e', b'l', b'l', b'o']);

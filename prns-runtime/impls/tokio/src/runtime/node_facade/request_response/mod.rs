@@ -288,7 +288,9 @@ impl PrnsNodeHandle {
 
     /// Send a static response as a NomadNet-compatible named file without copying the complete
     /// payload. Each segment is bounded to 256 KiB and the next segment is not read until the
-    /// current resource proof settles.
+    /// current resource proof settles. RNS 1.4.0 hands a metadata-bearing response to the
+    /// requester as the raw resource payload, so the bytes travel bare: no response envelope,
+    /// no binary header.
     pub(crate) async fn respond_static_file_settled(
         &self,
         responder: RespondToken,
@@ -298,25 +300,52 @@ impl PrnsNodeHandle {
         let mut packed_metadata = [0u8; 6 + 2 + u8::MAX as usize];
         let metadata_len = write_file_metadata(name.as_bytes(), &mut packed_metadata)
             .map_err(|_| ResponseSendError::UnrepresentableLength)?;
-        let mut binary_header = [0u8; MAX_PACKED_BINARY_HEADER_LEN];
-        let binary_header_len = write_packed_binary_header(bytes.len(), &mut binary_header)
-            .map_err(|_| ResponseSendError::UnrepresentableLength)?;
-        let mut prefix = std::vec::Vec::with_capacity(RESPONSE_WIRE_OVERHEAD + binary_header_len);
-        prefix.extend_from_slice(&response_envelope_prefix(&responder.request_id));
-        prefix.extend_from_slice(&binary_header[..binary_header_len]);
-        let response_len = u64::try_from(prefix.len())
-            .ok()
-            .and_then(|prefix_len| {
-                u64::try_from(bytes.len())
-                    .ok()
-                    .and_then(|bytes_len| prefix_len.checked_add(bytes_len))
-            })
-            .ok_or(ResponseSendError::UnrepresentableLength)?;
+        let response_len =
+            u64::try_from(bytes.len()).map_err(|_| ResponseSendError::UnrepresentableLength)?;
 
         self.send_resource_streaming(
             responder.link_id,
             response_len,
-            std::io::Cursor::new(prefix).chain(std::io::Cursor::new(bytes)),
+            std::io::Cursor::new(bytes),
+            ResourceStreamOptions {
+                packed_metadata: Some(packed_metadata[..metadata_len].into()),
+                compression: SegmentCompression::AUTO,
+                answers_request: Some(responder.request_id),
+                progress: None,
+                segment_size: STATIC_RESPONSE_SEGMENT_BYTES as u64,
+                max_in_flight_segments: 1,
+            },
+        )
+        .await
+        .map_err(|error| match error {
+            ResourceSendError::Source(error) => ResponseSendError::Source(error),
+            ResourceSendError::UnrepresentableLength => ResponseSendError::UnrepresentableLength,
+            ResourceSendError::Rejected(error) => {
+                ResponseSendError::Rejected(RespondFailure::Resource(error))
+            }
+            ResourceSendError::NodeStopped => ResponseSendError::NodeStopped,
+        })?;
+        Ok(responder.rtt)
+    }
+
+    /// Send an already-open file as a NomadNet-compatible named response. The handle is consumed
+    /// only after the request runner acquires the link's response lane, and at most one 256 KiB
+    /// segment is retained while the resource proof settles.
+    pub(crate) async fn respond_open_file_settled(
+        &self,
+        responder: RespondToken,
+        name: &str,
+        file: std::fs::File,
+        byte_len: u64,
+    ) -> Result<RttMillis, ResponseSendError> {
+        let mut packed_metadata = [0u8; 6 + 2 + u8::MAX as usize];
+        let metadata_len = write_file_metadata(name.as_bytes(), &mut packed_metadata)
+            .map_err(|_| ResponseSendError::UnrepresentableLength)?;
+
+        self.send_resource_streaming(
+            responder.link_id,
+            byte_len,
+            tokio::fs::File::from_std(file),
             ResourceStreamOptions {
                 packed_metadata: Some(packed_metadata[..metadata_len].into()),
                 compression: SegmentCompression::AUTO,

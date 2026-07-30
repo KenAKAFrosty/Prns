@@ -63,7 +63,7 @@ impl<S> RequestEndpoint<S> for NoSourceNodeIndexPage {
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
     async fn handle(mut context: RequestContext<'_, S>) -> Result<(), Decline> {
-        context.respond_static_bytes(HOPSPOT_INDEX_PAGE_NO_SOURCE)
+        context.respond_static_messagepack_bytes(HOPSPOT_INDEX_PAGE_NO_SOURCE)
     }
 }
 
@@ -74,7 +74,7 @@ impl<S> RequestEndpoint<S> for NodeQuickstartPage {
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
     async fn handle(mut context: RequestContext<'_, S>) -> Result<(), Decline> {
-        context.respond_static_bytes(QUICKSTART_PAGE)
+        context.respond_static_messagepack_bytes(QUICKSTART_PAGE)
     }
 }
 
@@ -87,7 +87,7 @@ impl<S> RequestEndpoint<S> for SourceNodeIndexPage {
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
     async fn handle(mut context: RequestContext<'_, S>) -> Result<(), Decline> {
-        context.respond_static_bytes(HOPSPOT_INDEX_PAGE_WITH_SOURCE)
+        context.respond_static_messagepack_bytes(HOPSPOT_INDEX_PAGE_WITH_SOURCE)
     }
 }
 
@@ -130,9 +130,9 @@ impl<S> RequestEndpointSet<S> for NoSourceNodePageRoutes {
         path_hash: RequestPathHash,
     ) -> Result<(), Decline> {
         if path_hash == RequestPathHash::of(INDEX_PATH) {
-            context.respond_static_bytes(HOPSPOT_INDEX_PAGE_NO_SOURCE)
+            context.respond_static_messagepack_bytes(HOPSPOT_INDEX_PAGE_NO_SOURCE)
         } else if path_hash == RequestPathHash::of(QUICKSTART_PATH) {
-            context.respond_static_bytes(QUICKSTART_PAGE)
+            context.respond_static_messagepack_bytes(QUICKSTART_PAGE)
         } else {
             Err(Decline::Ignore)
         }
@@ -156,9 +156,9 @@ impl<S> RequestEndpointSet<S> for SourceNodePageRoutes {
         path_hash: RequestPathHash,
     ) -> Result<(), Decline> {
         if path_hash == RequestPathHash::of(INDEX_PATH) {
-            context.respond_static_bytes(HOPSPOT_INDEX_PAGE_WITH_SOURCE)
+            context.respond_static_messagepack_bytes(HOPSPOT_INDEX_PAGE_WITH_SOURCE)
         } else if path_hash == RequestPathHash::of(QUICKSTART_PATH) {
-            context.respond_static_bytes(QUICKSTART_PAGE)
+            context.respond_static_messagepack_bytes(QUICKSTART_PAGE)
         } else if path_hash == RequestPathHash::of(SOURCE_ARCHIVE_PATH) {
             context.respond_static_file("source.zip", SOURCE_ARCHIVE)
         } else if path_hash == RequestPathHash::of(SOURCE_CHECKSUM_PATH) {

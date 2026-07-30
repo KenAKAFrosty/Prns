@@ -110,18 +110,19 @@ The doctor checks your toolchain and installs nothing. The smoke run proves the 
 
 ## Serve NomadNet pages directly from the daemon
 
-Drop `.mu` files into `pages/` inside your Reticulum config directory, and prnsd becomes a page host: it announces a `nomadnetwork.node` destination and serves each file at the `/page/` paths NomadNet browsers already request, with `index.mu` as the landing page. A NomadNet process does not need to run for your node to have a presence on the network.
+The prnsd that owns the routing tables can also host your NomadNet pages. Drop `.mu` files into `nnpages/pages/` under its active Reticulum configuration directory, and each is served from the node's stable `nomadnetwork.node` destination at `/page/<path>`; safe subdirectories become path segments. The `nnpages/files/` tree serves regular downloads at `/file/<path>`. The cloud-server bootstrap seeds `index.mu`, `source.mu`, and `coming-from-rns.mu`; the managed auxiliary pages update only while their first-line marker remains, while `index.mu` is operator-owned immediately. A separate NomadNet process is not required.
 
-Pages are read from disk per request, so edits go live immediately. Prnsd lightly rescans the directory every five minutes to register additions and retire deleted or renamed paths; `prnsd pages refresh` applies the same reconciliation on demand.
+Serving stays live: file handles are opened beneath those roots for each request and streamed in bounded segments, so edits and deletions take effect immediately without loading a complete download into memory. A light reconciliation every five minutes registers new paths and retires deleted or renamed ones; `prnsd nnpages refresh` runs the same acknowledged reconciliation on demand. Hidden or unsafe path components, symlinks, non-`.mu` files in `nnpages/pages/`, pages larger than 1 MiB, and downloads larger than 32 MiB are never served.
 
-This pairs naturally with a hosted node: the same daemon routing traffic in the cloud carries your pages with it.
+Automatic announcements are enabled every six hours by default and run only while `index.mu` is serveable. `nnpages/settings.toml` controls that policy only: tune `announce` and `announce_interval_minutes` there. Disabling automatic announcements does not disable serving or `prnsd nnpages announce`, which can still announce on demand whenever `index.mu` is available. Settings changes apply during the five-minute reconciliation or immediately with `prnsd nnpages refresh`.
+
+The display name deliberately lives outside the policy file. `prnsd nnpages rename "My Node"` atomically writes the validated, live-read name to `nnpages/name`; when that file is missing or invalid, the destination uses its registered default name. `prnsd nnpages seed` creates the complete editable layout, starter pages, and default `settings.toml` without replacing operator-owned files, while `--source` also stages the exact shipped source bundle. With a managed `cargo prnsd` session these commands select its active configuration automatically; pass `--config` for a nondefault foreground or container daemon. The routing owner that carries your traffic can carry your pages too.
 
 ## Beyond the daemon
 
-prnsd is one face of a larger engine, and that engine goes everywhere: onto a $5 microcontroller ([flash a Hopspot](https://prns.dev/flash)), into a browser tab, and inside your own software through [SDKs for Rust, TypeScript, Python, and more](../README.md#what-is-prns). Anything you build against one lane meshes with the rest, including the RNS network you already run.
+`prnsd` is one face of a larger engine, and that engine goes everywhere: onto a $5 microcontroller ([flash a Hopspot](https://prns.dev/flash)), into a browser tab, and inside your own software through [SDKs for Rust, TypeScript, and many more](../README.md#what-is-prns). Anything you build against one meshes with the rest, including any RNS network you already participate in.
 
 ## Verify it yourself
 
-*(jot: the receipts shelf — run the interoperability suite against real stock RNS 1.4.0 nodes on your own machine; measure both implementations with the benchmark suite. Inventory grammar, link text = verbs.)*
-
-*(drafting guardrail, delete before landing: PARITY LEDGER — features stock RNS 1.4.0 also has, so they stay OUT of the gains sections or the page overclaims: remote management, probe responder, blackhole publish/subscribe/exchange, management announcements, announce ingress/egress controls, interface modes matrix, rnid identity signing, bz2 compression, RNode incl. BLE and multi, Weave. The opener's "applies your stanzas as written" is where parity lives.)*
+- [Run the interoperability suite](validation.md): real stock RNS 1.4.0 nodes against Prns nodes, on your own machine, traffic checked byte for byte.
+- [Read the benchmark methodology](../benchmarks/README.md): how runs are calibrated, qualified, and published before any number becomes a claim.

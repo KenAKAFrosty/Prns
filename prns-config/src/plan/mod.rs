@@ -23,9 +23,8 @@ pub use interface::{
 pub use node::{
     parse_and_plan, parse_and_plan_named, BlackholeExchangePlan, BlackholePublicationPlan,
     BlackholeSources, BlackholeUpdateInterval, DaemonPlan, LogLevel, LoggingPlan,
-    NodePageAnnouncementInterval, NodePageAnnouncementPlan, ProbeResponderPlan, ProtocolPlan,
-    RemoteManagementAccessControlList, RemoteManagementPlan, SharedInstance,
-    SharedInstanceTransport, TransportIdentityPolicy, TransportPlan,
+    ProbeResponderPlan, ProtocolPlan, RemoteManagementAccessControlList, RemoteManagementPlan,
+    SharedInstance, SharedInstanceTransport, TransportIdentityPolicy, TransportPlan,
 };
 pub use rnode::{
     RNodeBleAddress, RNodeBleName, RNodeBleTarget, RNodeSerialDevice, RNodeTcpHost, RNodeTcpTarget,

@@ -19,26 +19,28 @@ const MANAGEMENT_ANNOUNCE_INTERVAL: Duration = Duration::from_secs(2 * 60 * 60);
 pub(crate) use blackhole_exchange::{
     spawn_updater as spawn_blackhole_updater, BlackholeUpdateTask, ListRoute,
 };
-pub(crate) use management_announcements::{AnnouncedDestination, ManagementAnnounceTask};
+pub(crate) use management_announcements::{
+    announce_for, AnnouncedDestination, AnnouncementSchedule, ManagementAnnounceTask,
+};
 pub(crate) use remote_management::{PathRoute, StatusRoute};
 pub(crate) use request_routes::DaemonRequestRoutes;
 pub(crate) use request_state::{DaemonRequestState, TransportStatusIdentity};
 
 pub(crate) struct ManagementDestinations {
     announced: Vec<AnnouncedDestination>,
-    node_pages: Option<node_page::NodePageDestination>,
+    nnpages: Option<node_page::NodePageDestination>,
 }
 
 impl ManagementDestinations {
     pub(crate) const fn none() -> Self {
         Self {
             announced: Vec::new(),
-            node_pages: None,
+            nnpages: None,
         }
     }
 
     pub(crate) fn node_page_destination(&self) -> Option<personal_rns::wire::DestinationHash> {
-        self.node_pages.as_ref().map(|destination| destination.hash)
+        self.nnpages.as_ref().map(|destination| destination.hash)
     }
 }
 
@@ -48,7 +50,7 @@ pub(crate) fn activate<R, F, S>(
     node: &mut PrnsNode<DaemonRequestState, R, F, S>,
     plan: &DaemonPlan,
     identity: &Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
-    node_pages: &crate::node_pages::NodePageCatalog,
+    nnpages: &crate::nnpages::NnPagesCatalog,
 ) -> Result<ManagementDestinations, HostedServiceActivationFailed>
 where
     R: RequestEndpointSet<DaemonRequestState>,
@@ -62,7 +64,8 @@ where
                 destinations.push(AnnouncedDestination {
                     hash: destination,
                     available_when: None,
-                    interval: MANAGEMENT_ANNOUNCE_INTERVAL,
+                    name_file: None,
+                    schedule: AnnouncementSchedule::Fixed(MANAGEMENT_ANNOUNCE_INTERVAL),
                 });
                 tracing::info!(
                     event = "remote_management_enabled",
@@ -85,7 +88,8 @@ where
                 destinations.push(AnnouncedDestination {
                     hash: destination,
                     available_when: None,
-                    interval: MANAGEMENT_ANNOUNCE_INTERVAL,
+                    name_file: None,
+                    schedule: AnnouncementSchedule::Fixed(MANAGEMENT_ANNOUNCE_INTERVAL),
                 });
                 tracing::info!(
                     event = "probe_responder_enabled",
@@ -107,7 +111,8 @@ where
                 destinations.push(AnnouncedDestination {
                     hash: destination,
                     available_when: None,
-                    interval: MANAGEMENT_ANNOUNCE_INTERVAL,
+                    name_file: None,
+                    schedule: AnnouncementSchedule::Fixed(MANAGEMENT_ANNOUNCE_INTERVAL),
                 });
                 tracing::info!(
                     event = "blackhole_publisher_enabled",
@@ -123,30 +128,24 @@ where
             }
         }
     }
-    let node_page_destination = match node_page::activate(node, identity.clone(), node_pages) {
+    let node_page_destination = match node_page::activate(node, identity.clone(), nnpages) {
         Ok(destination) => {
             tracing::info!(
-                event = "node_pages_enabled",
+                event = "nnpages_enabled",
                 destination = ?destination.hash.as_bytes(),
                 index = %destination.index_path.display(),
             );
-            if plan.node_page_announcements.is_enabled() {
-                destinations.push(AnnouncedDestination {
-                    hash: destination.hash,
-                    available_when: Some(destination.index_path.clone()),
-                    interval: plan.node_page_announcements.interval().duration(),
-                });
-            } else {
-                tracing::info!(
-                    event = "node_page_announcements_disabled",
-                    destination = ?destination.hash.as_bytes(),
-                );
-            }
+            destinations.push(AnnouncedDestination {
+                hash: destination.hash,
+                available_when: Some(destination.index_path.clone()),
+                name_file: Some(nnpages.node_name_path()),
+                schedule: AnnouncementSchedule::NnPages(nnpages.announcement_settings()),
+            });
             Some(destination)
         }
         Err(error) => {
             tracing::error!(
-                event = "node_pages_start_failed",
+                event = "nnpages_start_failed",
                 error = ?error,
             );
             return Err(HostedServiceActivationFailed);
@@ -154,7 +153,7 @@ where
     };
     Ok(ManagementDestinations {
         announced: destinations,
-        node_pages: node_page_destination,
+        nnpages: node_page_destination,
     })
 }
 
