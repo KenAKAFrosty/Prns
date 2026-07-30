@@ -3,8 +3,9 @@ import { webcrypto } from "node:crypto";
 import test from "node:test";
 
 import {
+  esptoolFlashSizeValue,
   FlashBridgeError,
-  flashSizeValue,
+  flashSizeLabel,
   jedecFlashSizeBytes,
   md5Hex,
   normalizeChipName,
@@ -188,9 +189,15 @@ test("JEDEC capacity decoding accepts known IDs and fails closed on unknown IDs"
 });
 
 test("binary flash capacities use IEC units", () => {
-  assert.equal(flashSizeValue(4 * 1024 * 1024), "4 MiB");
-  assert.equal(flashSizeValue(8 * 1024 * 1024), "8 MiB");
-  assert.equal(flashSizeValue(16 * 1024 * 1024), "16 MiB");
+  assert.equal(flashSizeLabel(4 * 1024 * 1024), "4 MiB");
+  assert.equal(flashSizeLabel(8 * 1024 * 1024), "8 MiB");
+  assert.equal(flashSizeLabel(16 * 1024 * 1024), "16 MiB");
+});
+
+test("esptool flash capacities use exact API tokens", () => {
+  assert.equal(esptoolFlashSizeValue(4 * 1024 * 1024), "4MB");
+  assert.equal(esptoolFlashSizeValue(8 * 1024 * 1024), "8MB");
+  assert.equal(esptoolFlashSizeValue(16 * 1024 * 1024), "16MB");
 });
 
 test("every production bridge error has actionable recovery guidance", () => {

@@ -280,6 +280,7 @@ export async function installFakeBridge(page, overrides = {}) {
         }
         state.active = true;
         state.cancelled = false;
+        let retainPreparedPlan = false;
         window.addEventListener("beforeunload", navigationGuard);
         document.addEventListener("click", internalNavigationGuard, true);
         try {
@@ -301,6 +302,7 @@ export async function installFakeBridge(page, overrides = {}) {
               code: config.failureCode,
               message: failMessage(config.failureCode),
             });
+            retainPreparedPlan = true;
             return;
           }
           await emitEvent(emit, { phase: "connecting" });
@@ -381,9 +383,11 @@ export async function installFakeBridge(page, overrides = {}) {
           await emitEvent(emit, { phase: "success", current: total, total });
         } finally {
           state.active = false;
-          state.preparedBoardSlug = null;
           state.resumeWriting = null;
-          prepared = null;
+          if (!retainPreparedPlan) {
+            state.preparedBoardSlug = null;
+            prepared = null;
+          }
           state.cleanupCount += 1;
           window.removeEventListener("beforeunload", navigationGuard);
           document.removeEventListener("click", internalNavigationGuard, true);

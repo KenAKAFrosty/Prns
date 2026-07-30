@@ -258,6 +258,7 @@ test("a preparation rejected as busy clears the rejected credentials", async () 
     serial: { requestPort: async () => ({}) },
     TransportImpl: FakeTransport,
     LoaderImpl: FakeLoader,
+    proveReset: async () => {},
   });
   await writeStarted;
 
@@ -493,6 +494,7 @@ test("successful flash requires MD5 callback and cleans up", async () => {
   const configurationBytes = testing.prepared().files.at(-1).bytes;
   let disconnected = false;
   const timeline = [];
+  const watchdogWrites = [];
   class FakeTransport {
     setDeviceLostCallback() {}
     async disconnect() { disconnected = true; }
@@ -505,11 +507,15 @@ test("successful flash requires MD5 callback and cleans up", async () => {
     async writeFlash(options) {
       assert.equal(options.eraseAll, false);
       assert.equal(options.compress, true);
+      assert.equal(options.flashSize, "8MB");
       assert.match(options.calculateMD5Hash(options.fileArray[0].data), /^[0-9a-f]{32}$/);
       options.reportProgress(0, options.fileArray[0].data.length, options.fileArray[0].data.length);
       timeline.push("part-write-and-md5-complete");
     }
-    async after(mode) { assert.equal(mode, "hard_reset"); timeline.push("reset-complete"); }
+    async writeReg(address, value) {
+      watchdogWrites.push([address, value]);
+      if (watchdogWrites.length === 4) timeline.push("reset-complete");
+    }
   }
   const events = [];
   await flash((event) => {
@@ -520,6 +526,7 @@ test("successful flash requires MD5 callback and cleans up", async () => {
     serial: { requestPort: async () => ({}) },
     TransportImpl: FakeTransport,
     LoaderImpl: FakeLoader,
+    proveReset: async (_serial, _port, reset) => reset(),
   });
   assert.equal(disconnected, true);
   assert.equal(events.at(-1).phase, "success");
@@ -539,6 +546,12 @@ test("successful flash requires MD5 callback and cleans up", async () => {
     timeline.indexOf("event:verifying_flash") < timeline.indexOf("event:resetting"),
   );
   assert.ok(timeline.indexOf("event:resetting") < timeline.indexOf("reset-complete"));
+  assert.deepEqual(watchdogWrites, [
+    [0x600080b0, 0x50d83aa1],
+    [0x6000809c, 2000],
+    [0x60008098, 0xd0000104],
+    [0x600080b0, 0],
+  ]);
   assert.equal(testing.prepared(), null);
   assert.equal(configurationBytes.every((byte) => byte === 0), true);
 });
@@ -575,6 +588,7 @@ test("compressed write progress is scaled to logical manifest bytes", async () =
     serial: { requestPort: async () => ({}) },
     TransportImpl: FakeTransport,
     LoaderImpl: FakeLoader,
+    proveReset: async () => {},
   });
 
   const halfBootloader = events.find(
@@ -664,6 +678,7 @@ test("active writes install and remove the navigation guard", async () => {
     serial: { requestPort: async () => ({}) },
     TransportImpl: FakeTransport,
     LoaderImpl: FakeLoader,
+    proveReset: async () => {},
   });
   await writing;
   let prevented = false;
@@ -849,6 +864,7 @@ test("typed ESP failures emit once, clean up, and never reset after an incomplet
 
 test("permission cancellation is distinct and happens before transport creation", async () => {
   await prepareDefault();
+  const preparedPlan = testing.prepared();
   const configurationBytes = testing.prepared().files.at(-1).bytes;
   const events = [];
   let guardAdds = 0;
@@ -871,6 +887,30 @@ test("permission cancellation is distinct and happens before transport creation"
     [{ phase: "failed", code: "permission_denied" }],
   );
   assert.deepEqual({ guardAdds, guardRemoves }, { guardAdds: 1, guardRemoves: 1 });
+  assert.equal(testing.prepared(), preparedPlan);
+  assert.equal(configurationBytes.every((byte) => byte === 0), false);
+
+  class FakeTransport {
+    setDeviceLostCallback() {}
+    async disconnect() {}
+  }
+  class FakeLoader {
+    chip = { CHIP_NAME: "ESP32-S3" };
+
+    async main() { return "ESP32-S3 (QFN56) (revision v0.2)"; }
+    async readFlashId() { return FLASH_ID_8_MB; }
+    async writeFlash() {}
+    async after() {}
+  }
+  const retryEvents = [];
+  await flash((event) => retryEvents.push(event), {
+    environment: environment(),
+    serial: { requestPort: async () => ({}) },
+    TransportImpl: FakeTransport,
+    LoaderImpl: FakeLoader,
+    proveReset: async () => {},
+  });
+  assert.equal(retryEvents.at(-1).phase, "success");
   assert.equal(testing.prepared(), null);
   assert.equal(configurationBytes.every((byte) => byte === 0), true);
 });
@@ -1006,7 +1046,7 @@ test("reset failure is reported only after writes verify", async () => {
     async main() { return "ESP32-S3 (QFN56) (revision v0.2)"; }
     async readFlashId() { return FLASH_ID_8_MB; }
     async writeFlash() { writes += 1; }
-    async after() { resets += 1; throw new Error("reset unavailable"); }
+    async writeReg() { resets += 1; throw new Error("reset unavailable"); }
   }
   const events = [];
   await assert.rejects(
@@ -1015,6 +1055,7 @@ test("reset failure is reported only after writes verify", async () => {
       serial: { requestPort: async () => ({}) },
       TransportImpl: FakeTransport,
       LoaderImpl: FakeLoader,
+      proveReset: async (_serial, _port, reset) => reset(),
     }),
   );
   assert.deepEqual(
@@ -1024,6 +1065,65 @@ test("reset failure is reported only after writes verify", async () => {
   assert.deepEqual({ disconnects, resets, writes }, { disconnects: 1, resets: 1, writes: 4 });
   assert.equal(testing.prepared(), null);
   assert.equal(configurationBytes.every((byte) => byte === 0), true);
+});
+
+test("reset enumeration timeout cannot emit success after verified writes", async () => {
+  await prepareDefault();
+  let writes = 0;
+  class FakeTransport {
+    setDeviceLostCallback() {}
+    async disconnect() {}
+  }
+  class FakeLoader {
+    chip = { CHIP_NAME: "ESP32-S3" };
+
+    async main() { return "ESP32-S3 (QFN56) (revision v0.2)"; }
+    async readFlashId() { return FLASH_ID_8_MB; }
+    async writeFlash() { writes += 1; }
+    async writeReg() {}
+  }
+  const events = [];
+  await assert.rejects(
+    flash((event) => events.push(event), {
+      environment: environment(),
+      serial: { requestPort: async () => ({}) },
+      TransportImpl: FakeTransport,
+      LoaderImpl: FakeLoader,
+      proveReset: async (_serial, _port, reset) => {
+        await reset();
+        throw new Error("USB enumeration timeout");
+      },
+    }),
+  );
+  assert.equal(writes, 4);
+  assert.deepEqual(
+    terminalEvents(events).map(({ phase, code }) => ({ phase, code })),
+    [{ phase: "failed", code: "reset_failure" }],
+  );
+  assert.equal(events.some(({ phase }) => phase === "success"), false);
+});
+
+test("USB reset proof requires selected-port disconnect before matching re-enumeration", async () => {
+  const listeners = new Map();
+  const selectedPort = {
+    getInfo: () => ({ usbVendorId: 0x303a, usbProductId: 0x1001 }),
+  };
+  const reenumeratedPort = {
+    getInfo: () => ({ usbVendorId: 0x303a, usbProductId: 0x1001 }),
+  };
+  const serial = {
+    addEventListener(name, listener) { listeners.set(name, listener); },
+    removeEventListener(name, listener) {
+      assert.equal(listeners.get(name), listener);
+      listeners.delete(name);
+    },
+  };
+  await testing.proveUsbReset(serial, selectedPort, async () => {
+    listeners.get("connect")({ target: reenumeratedPort });
+    listeners.get("disconnect")({ target: selectedPort });
+    listeners.get("connect")({ target: reenumeratedPort });
+  });
+  assert.equal(listeners.size, 0);
 });
 
 test("cancellation stops at the next verified part boundary", async () => {
@@ -1167,7 +1267,9 @@ test("retry after a partial write requires re-preparation and restarts the compl
     async main() { return "ESP32-S3 (QFN56) (revision v0.2)"; }
     async readFlashId() { return FLASH_ID_8_MB; }
     async writeFlash({ fileArray }) { retryAddresses.push(fileArray[0].address); }
-    async after() { retryResets += 1; }
+    async writeReg(address) {
+      if (address === 0x60008098) retryResets += 1;
+    }
   }
   const retryEvents = [];
   await flash((event) => retryEvents.push(event), {
@@ -1175,6 +1277,7 @@ test("retry after a partial write requires re-preparation and restarts the compl
     serial: { requestPort: async () => ({}) },
     TransportImpl: RetryTransport,
     LoaderImpl: RetryLoader,
+    proveReset: async (_serial, _port, reset) => reset(),
   });
   assert.deepEqual(retryAddresses, [0, 0x8000, 0x10000, 0xd000]);
   assert.deepEqual({ retryDisconnects, retryResets }, { retryDisconnects: 1, retryResets: 1 });
