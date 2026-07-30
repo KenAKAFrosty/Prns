@@ -4,9 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import difflib
 import hashlib
 import json
+import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -87,18 +90,40 @@ NPM = (
     ("tslib 2.8.1", "0BSD", "docs/website/node_modules/tslib/LICENSE.txt"),
 )
 VENDORED = (
-    ("libdbus 1.14.4", "AFL-2.1", "release/licenses/libdbus-AFL-2.1.txt", "Node addon Linux"),
+    (
+        "libdbus 1.14.4",
+        "AFL-2.1",
+        "release/licenses/libdbus-AFL-2.1.txt",
+        ("Node addon Linux", "daemon Linux"),
+    ),
 )
 
 
 def normalized_notice_text(value: str) -> str:
-    """Keep legal text intact while making line endings and trailing space reproducible."""
+    """Keep legal words intact while making presentation whitespace reproducible."""
     normalized = value.replace("\r\n", "\n").replace("\r", "\n")
-    return "\n".join(line.rstrip() for line in normalized.split("\n")).strip()
+    lines: list[str] = []
+    for line in normalized.split("\n"):
+        line = line.rstrip()
+        if not line and lines and not lines[-1]:
+            continue
+        lines.append(line)
+    return "\n".join(lines).strip()
 
 
-def about_version() -> str:
-    process = subprocess.run(["cargo", "about", "--version"], text=True, capture_output=True)
+def about_binary() -> str:
+    """Resolve the pinned tool before isolating Cargo's mutable package cache."""
+    binary = shutil.which("cargo-about")
+    if binary is None:
+        raise RuntimeError(
+            "cargo-about 0.9.1 is required: "
+            "cargo install cargo-about --version 0.9.1 --locked --features cli"
+        )
+    return binary
+
+
+def about_version(binary: str) -> str:
+    process = subprocess.run([binary, "--version"], text=True, capture_output=True)
     version = process.stdout.strip()
     if process.returncode or version != "cargo-about 0.9.1":
         raise RuntimeError(
@@ -108,33 +133,65 @@ def about_version() -> str:
     return version
 
 
-def generate_graph(manifest: str, target: str, directory: Path) -> dict:
-    config = directory / f"about-{len(list(directory.iterdir()))}.toml"
-    config.write_text(
-        ABOUT.read_text(encoding="utf-8").replace(
-            "ignore-dev-dependencies = true",
-            f'ignore-dev-dependencies = true\ntargets = ["{target}"]',
-            1,
-        ),
-        encoding="utf-8",
-    )
-    output = config.with_suffix(".json")
+def isolated_cargo_environment(cargo_home: Path) -> dict[str, str]:
+    environment = os.environ.copy()
+    environment["CARGO_HOME"] = str(cargo_home)
+    return environment
+
+
+def fetch_manifest(manifest: str, cargo_home: Path) -> None:
     command = [
         "cargo",
-        "about",
+        "fetch",
+        "--locked",
+        "--manifest-path",
+        str(ROOT / manifest),
+    ]
+    process = subprocess.run(
+        command,
+        cwd=ROOT,
+        env=isolated_cargo_environment(cargo_home),
+        text=True,
+        capture_output=True,
+    )
+    if process.returncode:
+        sys.stderr.write(process.stdout)
+        sys.stderr.write(process.stderr)
+        raise RuntimeError(f"cargo fetch failed for {manifest}")
+
+
+def generate_graph(
+    manifest: str,
+    target: str,
+    directory: Path,
+    cargo_home: Path,
+    binary: str,
+) -> dict:
+    output = directory / f"about-{len(list(directory.iterdir()))}.json"
+    command = [
+        binary,
         "generate",
         "--locked",
+        "--offline",
         "--fail",
         "--format",
         "json",
         "--config",
-        str(config),
+        str(ABOUT),
         "--manifest-path",
         str(ROOT / manifest),
+        "--target",
+        target,
         "--output-file",
         str(output),
     ]
-    process = subprocess.run(command, cwd=ROOT, text=True, capture_output=True)
+    process = subprocess.run(
+        command,
+        cwd=ROOT,
+        env=isolated_cargo_environment(cargo_home),
+        text=True,
+        capture_output=True,
+    )
     if process.returncode:
         sys.stderr.write(process.stdout)
         sys.stderr.write(process.stderr)
@@ -143,12 +200,21 @@ def generate_graph(manifest: str, target: str, directory: Path) -> dict:
 
 
 def notice_bundle() -> str:
-    version = about_version()
+    binary = about_binary()
+    version = about_version(binary)
     notices: dict[tuple[str, str], dict] = {}
     with tempfile.TemporaryDirectory(prefix="prns-about-") as temp:
-        directory = Path(temp)
+        temporary = Path(temp)
+        cargo_home = temporary / "cargo-home"
+        cargo_home.mkdir()
+        directory = temporary / "output"
+        directory.mkdir()
+        fetched_manifests: set[str] = set()
         for graph, manifest, target in GRAPHS:
-            data = generate_graph(manifest, target, directory)
+            if manifest not in fetched_manifests:
+                fetch_manifest(manifest, cargo_home)
+                fetched_manifests.add(manifest)
+            data = generate_graph(manifest, target, directory, cargo_home, binary)
             for license_info in data["licenses"]:
                 text = normalized_notice_text(license_info["text"])
                 key = (license_info["id"], text)
@@ -177,7 +243,7 @@ def notice_bundle() -> str:
             )
             notice["packages"].add(package)
             notice["graphs"].add("website JavaScript")
-        for package, identifier, relative, graph in VENDORED:
+        for package, identifier, relative, graphs in VENDORED:
             path = ROOT / relative
             if not path.is_file():
                 raise RuntimeError(f"vendored notice source {relative} is missing")
@@ -187,7 +253,7 @@ def notice_bundle() -> str:
                 {"name": identifier, "packages": set(), "graphs": set()},
             )
             notice["packages"].add(package)
-            notice["graphs"].add(graph)
+            notice["graphs"].update(graphs)
     nordic = [key for key in notices if key[0] == "LicenseRef-Nordic-SoftDevice"]
     if len(nordic) != 1:
         raise RuntimeError("Nordic SoftDevice notice was not generated exactly once")
@@ -197,7 +263,10 @@ def notice_bundle() -> str:
         "",
         "This checked bundle covers the shipped Rust, JavaScript, and Android release graphs.",
         f"It was generated with `{version}` by `./tools/prns repo notices generate`.",
-        "Entries are deduplicated by SPDX identifier and exact notice text.",
+        "Each locked Rust manifest closure is fetched into a fresh isolated Cargo home before "
+        "cargo-about reads its target-filtered packaged license material offline.",
+        "Entries are deduplicated by SPDX identifier and canonical notice text; line endings, "
+        "trailing space, and repeated blank lines are normalized without changing legal words.",
         "",
         "## Release graphs",
         "",
@@ -214,12 +283,13 @@ def notice_bundle() -> str:
             "- `tslib 2.8.1` — `0BSD`",
         ]
     )
-    lines.extend(["", "## Node addon vendored native code", ""])
+    lines.extend(["", "## Vendored native code", ""])
     lines.extend(
         [
             "- `libdbus 1.14.4` — `AFL-2.1` alternative selected from its "
             "`AFL-2.1 OR GPL-2.0-or-later` dual license; built from the source vendored by "
-            "`libdbus-sys` and statically linked into the Linux `personal-rns` Node addon.",
+            "`libdbus-sys` and statically linked into the Linux `personal-rns` Node addon and "
+            "full Linux `prnsd` native release.",
         ]
     )
     lines.extend(["", "## Android Maven runtime", ""])
@@ -282,6 +352,19 @@ def main() -> int:
         print(f"wrote {shown}")
         return 0
     if not arguments.output.exists() or arguments.output.read_bytes() != rendered_bytes:
+        committed = (
+            arguments.output.read_text(encoding="utf-8")
+            if arguments.output.exists()
+            else ""
+        )
+        sys.stderr.writelines(
+            difflib.unified_diff(
+                committed.splitlines(keepends=True),
+                rendered.splitlines(keepends=True),
+                fromfile=f"{arguments.output} (committed)",
+                tofile=f"{arguments.output} (generated)",
+            )
+        )
         print("THIRD_PARTY_NOTICES.md drifted; review and regenerate with --write", file=sys.stderr)
         return 1
     print("THIRD_PARTY_NOTICES.md matches the locked release graphs")
