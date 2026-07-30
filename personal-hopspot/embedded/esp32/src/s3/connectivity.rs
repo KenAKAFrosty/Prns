@@ -369,6 +369,20 @@ const WIFI_SCAN_TIMEOUT: Duration = Duration::from_secs(10);
 const WIFI_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[cfg(feature = "wifi-auto")]
+extern "C" {
+    fn esp_wifi_disconnect_internal() -> i32;
+}
+
+#[cfg(feature = "wifi-auto")]
+#[allow(clippy::undocumented_unsafe_blocks)]
+fn cancel_station_connection() {
+    let result = unsafe { esp_wifi_disconnect_internal() };
+    if result != 0 {
+        log::warn!("wifi: station cancellation failed code={result}");
+    }
+}
+
+#[cfg(feature = "wifi-auto")]
 #[embassy_executor::task]
 async fn wifi_connect_task(
     mut controller: WifiController<'static>,
@@ -484,6 +498,7 @@ async fn wifi_connect_task(
                     embassy_futures::select::Either::First(Err(_)) => {
                         WIFI_STATION_JOINED.store(false, Ordering::Relaxed);
                         log::warn!("wifi: station connection timed out");
+                        cancel_station_connection();
                         let next = recovery.complete(StationAttemptOutcome::ConnectionFailed(
                             ConnectionFailure::Timeout,
                         ));
@@ -491,6 +506,7 @@ async fn wifi_connect_task(
                     }
                     embassy_futures::select::Either::Second(()) => {
                         WIFI_STATION_JOINED.store(false, Ordering::Relaxed);
+                        cancel_station_connection();
                     }
                 }
             }
