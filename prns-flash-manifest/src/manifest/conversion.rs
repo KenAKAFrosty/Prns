@@ -12,8 +12,8 @@ use crate::{
 
 use super::validation::validate_target;
 use super::{
-    ChannelDescriptor, FlashManifest, FlashPart, FlashPartKind, ManifestError, ReleaseChannel,
-    TargetManifest,
+    ChannelDescriptor, FlashManifest, FlashPart, FlashPartKind, ManifestError,
+    ManifestTargetSetPolicy, ReleaseChannel, TargetManifest,
 };
 
 impl ValidatedFlashManifest {
@@ -21,6 +21,15 @@ impl ValidatedFlashManifest {
     pub fn from_json(bytes: &[u8], catalog: &BoardCatalog) -> Result<Self, ManifestError> {
         let wire: FlashManifest = serde_json::from_slice(bytes)?;
         wire.into_validated(catalog)
+    }
+
+    pub fn from_json_with_target_set(
+        bytes: &[u8],
+        catalog: &BoardCatalog,
+        policy: &ManifestTargetSetPolicy,
+    ) -> Result<Self, ManifestError> {
+        let wire: FlashManifest = serde_json::from_slice(bytes)?;
+        wire.into_validated_with_target_set(catalog, policy)
     }
 }
 

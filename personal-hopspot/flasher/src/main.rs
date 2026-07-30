@@ -21,7 +21,9 @@ use prns_flash_manifest::{
 };
 use serde::Serialize;
 
-use build::{assemble_manifest, build_board, default_artifact_root};
+use build::{
+    assemble_manifest, build_board, default_artifact_root, BuildVersion, ManifestTargetProfile,
+};
 use cli::{CacheCommand, ChannelArg, Cli, CommandMode, WifiMode};
 use error::AppError;
 use events::{Phase, Reporter};
@@ -106,11 +108,19 @@ fn run(cli: Cli, reporter: Reporter) -> Result<(), AppError> {
             ));
             Ok(())
         }
-        Some(CommandMode::Build { board, out_root }) => {
+        Some(CommandMode::Build {
+            board,
+            out_root,
+            developer_version,
+        }) => {
             let board = find_board(&catalog, &board)?;
             let repo = repo_root()?;
             let out_root = out_root.unwrap_or_else(|| default_artifact_root(&repo));
-            let output = build_board(board, &repo, &out_root, reporter)?;
+            let build_version = developer_version
+                .as_deref()
+                .map(BuildVersion::Developer)
+                .unwrap_or(BuildVersion::Repository);
+            let output = build_board(board, &repo, &out_root, build_version, reporter)?;
             println!("artifact directory: {}", output.output_dir.display());
             println!("target record: {}", output.target_record.display());
             Ok(())
@@ -120,9 +130,25 @@ fn run(cli: Cli, reporter: Reporter) -> Result<(), AppError> {
             channel,
             commit,
             key_id,
+            developer_version,
+            boards,
         }) => {
-            let path =
-                assemble_manifest(&catalog, &repo_root()?, &out_root, channel, commit, key_id)?;
+            let target_profile = match developer_version.as_deref() {
+                Some(version) => ManifestTargetProfile::LocalDevelopment {
+                    version,
+                    board_slugs: &boards,
+                },
+                None => ManifestTargetProfile::Production,
+            };
+            let path = assemble_manifest(
+                &catalog,
+                &repo_root()?,
+                &out_root,
+                channel,
+                commit,
+                key_id,
+                target_profile,
+            )?;
             println!("manifest: {}", path.display());
             Ok(())
         }
@@ -205,7 +231,14 @@ fn execute_flash(
     esp::begin_cancellable_operation()?;
     let prepared = if request.local_build {
         let repo = repo_root()?;
-        build_board(board, &repo, &default_artifact_root(&repo), reporter)?.prepared
+        build_board(
+            board,
+            &repo,
+            &default_artifact_root(&repo),
+            BuildVersion::Repository,
+            reporter,
+        )?
+        .prepared
     } else if let Some(candidate) = request.candidate {
         prepare_candidate_target(catalog, &board.slug, request.channel, candidate, reporter)?
     } else {

@@ -105,6 +105,8 @@ pub(crate) enum CommandMode {
         board: String,
         #[arg(long, value_name = "DIR")]
         out_root: Option<PathBuf>,
+        #[arg(long, value_name = "VERSION", hide = true)]
+        developer_version: Option<String>,
     },
     /// Assemble manifest v2 after all four developer artifacts have been built.
     #[command(hide = true)]
@@ -117,6 +119,15 @@ pub(crate) enum CommandMode {
         commit: String,
         #[arg(long, value_name = "KEY_ID")]
         key_id: String,
+        #[arg(long, value_name = "VERSION", hide = true, requires = "boards")]
+        developer_version: Option<String>,
+        #[arg(
+            long = "board",
+            value_name = "BOARD",
+            hide = true,
+            requires = "developer_version"
+        )]
+        boards: Vec<String>,
     },
 }
 
@@ -167,7 +178,7 @@ impl ChannelArg {
 mod tests {
     use clap::{error::ErrorKind, Parser};
 
-    use super::Cli;
+    use super::{Cli, CommandMode};
 
     #[test]
     fn json_and_monitor_are_rejected_with_usage_exit_code() {
@@ -210,6 +221,53 @@ mod tests {
             "--json",
         ])
         .is_ok());
+    }
+
+    #[test]
+    fn developer_manifest_inputs_require_each_other_and_repeat_boards() {
+        let base = [
+            "hopspot-flash",
+            "assemble-manifest",
+            "--out-root",
+            "/tmp/candidate",
+            "--commit",
+            "0123456789abcdef0123456789abcdef01234567",
+            "--key-id",
+            "1FB2CA18B2C25E1F",
+        ];
+        let mut version_only = base.to_vec();
+        version_only.extend(["--developer-version", "0.3.1-dev.clean.abc"]);
+        assert!(Cli::try_parse_from(version_only).is_err());
+
+        let mut board_only = base.to_vec();
+        board_only.extend(["--board", "heltec-v4"]);
+        assert!(Cli::try_parse_from(board_only).is_err());
+
+        let mut complete = base.to_vec();
+        complete.extend([
+            "--developer-version",
+            "0.3.1-dev.clean.abc",
+            "--board",
+            "heltec-v4",
+            "--board",
+            "t-echo",
+        ]);
+        let cli = Cli::try_parse_from(complete).expect("valid local manifest inputs");
+        let Some(CommandMode::AssembleManifest {
+            developer_version,
+            boards,
+            ..
+        }) = cli.command
+        else {
+            panic!("assemble-manifest command was not parsed");
+        };
+        assert_eq!(
+            (developer_version.as_deref(), boards.as_slice()),
+            (
+                Some("0.3.1-dev.clean.abc"),
+                ["heltec-v4".to_string(), "t-echo".to_string()].as_slice()
+            )
+        );
     }
 }
 

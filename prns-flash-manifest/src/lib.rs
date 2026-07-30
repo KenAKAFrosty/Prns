@@ -18,8 +18,9 @@ pub use domain::{
     ValidatedReleaseInfo, ValidatedSigningInfo,
 };
 pub use manifest::{
-    ChannelDescriptor, FlashManifest, FlashPart, FlashPartKind, ManifestError, ReleaseChannel,
-    ReleaseInfo, SigningInfo, SourceArchiveIdentity, TargetManifest,
+    ChannelDescriptor, FlashManifest, FlashPart, FlashPartKind, ManifestError,
+    ManifestTargetSetPolicy, ReleaseChannel, ReleaseInfo, SigningInfo, SourceArchiveIdentity,
+    TargetManifest,
 };
 pub use provisioning::{
     provisioning_image, ProvisioningAction, ProvisioningError, TcpClientEndpoint, TcpClientHost,

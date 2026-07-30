@@ -2,11 +2,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::{
-    BoardBuild, BoardCatalog, BoardCatalogEntry, FlashPart, FlashPartKind, ImmutableArtifactPath,
-    KeyId, ReleaseVersion, Sha256Digest, Transport, CONFIG_OFFSET, ESP_FLASH_SECTOR_SIZE,
+    BoardBuild, BoardCatalogEntry, FlashPart, FlashPartKind, ImmutableArtifactPath, KeyId,
+    ReleaseVersion, Sha256Digest, Transport, CONFIG_OFFSET, ESP_FLASH_SECTOR_SIZE,
 };
 
-use super::{FlashManifest, ManifestError, TargetManifest};
+use super::{FlashManifest, ManifestError, ManifestTargetSetPolicy, TargetManifest};
 
 pub(super) fn validate_target(
     target: &TargetManifest,
@@ -111,7 +111,7 @@ pub(super) fn validate_sha256(value: &str) -> Result<(), String> {
 
 pub(super) fn validate_target_set(
     manifest: &FlashManifest,
-    catalog: &BoardCatalog,
+    policy: &ManifestTargetSetPolicy,
 ) -> Result<(), ManifestError> {
     let actual = manifest
         .targets
@@ -121,10 +121,10 @@ pub(super) fn validate_target_set(
     if actual.len() != manifest.targets.len() {
         return Err(ManifestError::TargetSet("duplicate board slug".to_string()));
     }
-    let expected = catalog
-        .boards
+    let expected = policy
+        .expected
         .iter()
-        .map(|board| board.slug.as_str())
+        .map(String::as_str)
         .collect::<BTreeSet<_>>();
     if actual != expected {
         return Err(ManifestError::TargetSet(format!(
