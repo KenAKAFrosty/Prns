@@ -58,6 +58,14 @@ def write_oci_layout(path: Path, platform: str, payload: bytes = b"manifest") ->
 
 
 class PrnsdDistributionTests(unittest.TestCase):
+    def test_dockerfile_frontend_has_deterministic_expose_history(self) -> None:
+        syntax = (ROOT / "Dockerfile").read_text(encoding="utf-8").splitlines()[0]
+        self.assertEqual(
+            syntax,
+            "# syntax=docker/dockerfile:1.26.0@sha256:"
+            "ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32",
+        )
+
     def test_native_archives_are_byte_reproducible_and_self_describing(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
