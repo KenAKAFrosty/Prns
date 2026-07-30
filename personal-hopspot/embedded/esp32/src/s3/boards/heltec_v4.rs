@@ -101,7 +101,9 @@ impl Esp32S3Board for HeltecBoard {
     type Battery = HeltecBattery;
 
     fn flush(display: &mut Self::Display) {
-        let _ = display.flush();
+        if let Err(error) = display.flush() {
+            log::error!("OLED render failed: {error:?}");
+        }
     }
 
     fn set_display_awake(display: &mut Self::Display, awake: bool) {
@@ -113,6 +115,7 @@ impl Esp32S3Board for HeltecBoard {
     ) -> S3BoardHardware<Self::Display, Self::Battery> {
         let (sw_int1, timebase, rtc) = s3::boot_common!(p, Self::BOOT_BANNER);
 
+        s3::boot_stage("oled.begin");
         // OLED (Heltec V4: Vext active-low gates panel power; pulse RST; I2C0 on 17/18).
         let mut _vext = Output::new(p.GPIO36, Level::Low, OutputConfig::default());
         let mut rst = Output::new(p.GPIO21, Level::High, OutputConfig::default());
@@ -133,10 +136,23 @@ impl Esp32S3Board for HeltecBoard {
             DisplayRotation::Rotate90,
         )
         .into_buffered_graphics_mode();
-        let oled_ok = display.init().is_ok();
+        let oled_ok = match display.init() {
+            Ok(()) => {
+                s3::boot_stage("oled.ready");
+                log::info!("OLED initialized");
+                true
+            }
+            Err(error) => {
+                s3::boot_stage("oled.failed");
+                log::error!("OLED initialization failed: {error:?}");
+                false
+            }
+        };
         if oled_ok {
             screen::splash(&mut display, screen::SplashContent::Brand);
-            let _ = display.flush();
+            if let Err(error) = display.flush() {
+                log::error!("OLED splash failed: {error:?}");
+            }
         }
 
         #[cfg(feature = "lora")]

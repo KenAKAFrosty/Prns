@@ -307,6 +307,13 @@ fn hardware_entropy(bytes: &mut [u8]) {
 
 fn ignore_events(_event: PrnsEvent<'_>, _state: &()) {}
 
+pub(crate) fn boot_stage(stage: &str) {
+    log::info!(
+        "boot-stage t_ms={} stage={stage}",
+        embassy_time::Instant::now().as_millis()
+    );
+}
+
 const DCACHE_FREE_BASE: usize = 0x3FCF_0000;
 const DCACHE_FREE_LEN: usize = 32 * 1024;
 
@@ -376,7 +383,12 @@ macro_rules! boot_common {
         let timebase = ::personal_rns::manifold::embassy::EmbassyTimebase::start_at(
             ::personal_rns::engine::InstantMillis(rtc.current_time_us() / 1000),
         );
-        ::esp_println::println!("{} boot — recipe runtime, engine core 1 + I/O core 0", $banner);
+        ::esp_println::println!(
+            "{} boot {} commit={} — recipe runtime, engine core 1 + I/O core 0",
+            $banner,
+            env!("HOPSPOT_BUILD_IDENTITY"),
+            env!("HOPSPOT_BUILD_COMMIT_SHORT")
+        );
         (sw_int.software_interrupt1, timebase, rtc)
     }};
 }

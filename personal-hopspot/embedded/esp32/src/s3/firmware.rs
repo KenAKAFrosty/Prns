@@ -83,12 +83,22 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     // The Wi-Fi stack carries both the Wi-Fi Auto UDP and the TCP client, so it stands up before the
     // node moves to core 1 — activating the TCP slot is a core-0-only act.
     #[cfg(feature = "wifi-auto")]
+    boot_stage("wifi.begin");
+    #[cfg(feature = "wifi-auto")]
     let (wifi, tcp_stack, esp_now) = build_wifi(
         &spawner,
         wifi_hardware,
         mac_octets,
         &wifi_config,
         radio_mode == RadioMode::AccessPoint,
+    );
+    #[cfg(feature = "wifi-auto")]
+    boot_stage("wifi.ready");
+    #[cfg(feature = "wifi-auto")]
+    log::info!(
+        "Wi-Fi initialized station={} TCP={}",
+        wifi.is_some(),
+        tcp_stack.is_some()
     );
     #[cfg(not(feature = "wifi-auto"))]
     let wifi: Option<AutoWifi<'static, MEMBERS>> = None;
@@ -130,12 +140,16 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     });
 
     #[cfg(feature = "wifi-auto")]
+    boot_stage("tcp.begin");
+    #[cfg(feature = "wifi-auto")]
     let tcp_built = tcp_stack.and_then(|stack| {
         wifi_config
             .tcp_client
             .as_ref()
             .and_then(|tcp_client| build_tcp(stack, tcp_client))
     });
+    #[cfg(feature = "wifi-auto")]
+    boot_stage("tcp.ready");
     #[cfg(not(feature = "wifi-auto"))]
     let tcp_built: Option<(
         TcpClient<'static>,
@@ -204,6 +218,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let host = EmbassyHost::new_with_timebase(timebase, hardware_entropy as fn(&mut [u8]));
 
     let core1_stack = mk_static!(CpuStack<CORE1_STACK_BYTES>, CpuStack::new());
+    boot_stage("core1.start.begin");
     esp_rtos::start_second_core(cpu_control, software_interrupt, core1_stack, move || {
         static NODE: StaticCell<S3Node> = StaticCell::new();
         let (node, persistence) =
@@ -212,12 +227,14 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         let persistence = PERSISTENCE.init(persistence);
 
         static EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
+        boot_stage("core1.executor.ready");
         EXECUTOR
             .init(esp_rtos::embassy::Executor::new())
             .run(|spawner| {
                 spawner.spawn(manifold_task(node, persistence).expect("manifold task fits"));
             })
     });
+    boot_stage("core1.start.ready");
 
     let usb_seam = usb_lane.into_seam(NOTIFY.sender(), hardware_entropy);
     spawner.spawn(usb_device_task(usb_rx, usb_tx, usb_seam, usb_status).expect("usb task fits"));
@@ -278,6 +295,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     ) = (None, None);
 
     let render = async move {
+        boot_stage("display.runtime.begin");
         let access_point = if !cfg!(feature = "wifi-auto") {
             screen::AccessPointState::Unsupported
         } else if radio_mode == RadioMode::AccessPoint {
@@ -321,6 +339,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         let mut render_tick = Ticker::every(RENDER_INTERVAL);
         let mut settle_after_draw = false;
         let mut persistence_notice_visible = false;
+        let mut first_render_pending = true;
         loop {
             if ticks_to_battery == 0 {
                 battery_state = battery_gauge.sample(&mut battery_source);
@@ -400,6 +419,9 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 }
             }
             if oled_ok && oled_awake {
+                if first_render_pending {
+                    boot_stage("display.first-render.begin");
+                }
                 screen::render(
                     &mut display,
                     screen::RenderFrame {
@@ -411,6 +433,13 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                     },
                 );
                 B::flush(&mut display);
+                if first_render_pending {
+                    boot_stage("display.first-render.complete");
+                    first_render_pending = false;
+                }
+            } else if first_render_pending {
+                boot_stage("display.first-render.unavailable");
+                first_render_pending = false;
             }
             if settle_after_draw {
                 Timer::after(Duration::from_millis(screen::COALESCE_MS)).await;
@@ -743,7 +772,9 @@ async fn manifold_task(
     node: &'static mut S3Node,
     persistence: &'static mut crate::persistence::S3Persistence,
 ) {
+    boot_stage("persistence.restore.begin");
     let _ = node.restore_embedded_persistence(persistence).await;
+    boot_stage("persistence.restore.complete");
     node.run_manifold_with_persistence_and_interface_store(&INTERFACE_STORE, persistence)
         .await
 }

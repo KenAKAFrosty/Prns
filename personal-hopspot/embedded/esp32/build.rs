@@ -9,11 +9,39 @@ use flate2::Compression;
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=../../../VERSION");
+    println!("cargo:rerun-if-env-changed=PRNS_BUILD_VERSION");
+    println!("cargo:rerun-if-env-changed=PRNS_BUILD_SOURCE_DIGEST");
+    println!("cargo:rerun-if-env-changed=PRNS_SOURCE_SHA256");
     track_git_head();
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
     let build_commit_short = git_commit_short();
+    let build_version = env::var("PRNS_BUILD_VERSION")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            fs::read_to_string("../../../VERSION")
+                .ok()
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
+        })
+        .unwrap_or_else(|| env::var("CARGO_PKG_VERSION").unwrap());
+    let build_source_digest = env::var("PRNS_BUILD_SOURCE_DIGEST")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            env::var("PRNS_SOURCE_SHA256")
+                .ok()
+                .filter(|value| !value.is_empty())
+        })
+        .unwrap_or_else(|| build_commit_short.clone());
     println!("cargo:rustc-env=HOPSPOT_BUILD_COMMIT_SHORT={build_commit_short}");
+    println!("cargo:rustc-env=HOPSPOT_BUILD_VERSION={build_version}");
+    println!("cargo:rustc-env=HOPSPOT_BUILD_SOURCE_DIGEST={build_source_digest}");
+    println!(
+        "cargo:rustc-env=HOPSPOT_BUILD_IDENTITY=version={build_version} source={build_source_digest}"
+    );
 
     // Only the ESP32-S3 (xtensa) overrides the linker's memory layout. The C6 (riscv32) takes
     // esp-hal's bundled esp32c6 memory.x; a generically-named package-root memory.x would shadow it
