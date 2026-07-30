@@ -174,6 +174,27 @@ def validate() -> list[str]:
         if mutable in candidate:
             errors.append(f"flasher-candidate.yml contains mutable production input {mutable!r}")
 
+    daemon_candidate = (
+        ROOT / ".github" / "workflows" / "prnsd-candidate.yml"
+    ).read_text(encoding="utf-8")
+    for linkage_gate in (
+        "components: llvm-tools-preview",
+        'sysroot="$(cygpath --unix "$(rustc --print sysroot)")"',
+        'host="$(rustc --print host-tuple)"',
+        'llvm_readobj="${sysroot}/lib/rustlib/${host}/bin/llvm-readobj.exe"',
+        'test -x "$llvm_readobj"',
+        '"$llvm_readobj" --coff-imports',
+    ):
+        if linkage_gate not in daemon_candidate:
+            errors.append(
+                "prnsd-candidate.yml is missing deterministic Windows linkage gate "
+                f"{linkage_gate!r}"
+            )
+    if "rustup which llvm-readobj" in daemon_candidate:
+        errors.append(
+            "prnsd-candidate.yml must resolve llvm-readobj from the pinned Rust sysroot"
+        )
+
     ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     readiness = (
         ROOT / ".github" / "workflows" / "release-readiness.yml"
