@@ -171,8 +171,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
         EmbassyInterfaceStatus::new(lora_id, ConnectionState::Initializing),
     );
     static LORA_SPECTRUM: StaticCell<LoRaSpectrumStatus> = StaticCell::new();
-    let lora_spectrum: &'static LoRaSpectrumStatus =
-        LORA_SPECTRUM.init(LoRaSpectrumStatus::new());
+    let lora_spectrum: &'static LoRaSpectrumStatus = LORA_SPECTRUM.init(LoRaSpectrumStatus::new());
     let lora = match LoRaInterface::new(LoRaInterfaceInput {
         radio,
         profile: lora_profile,
