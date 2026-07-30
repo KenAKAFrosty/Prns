@@ -19,7 +19,6 @@ use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
 use esp_hal::Async;
 
 use embassy_executor::Spawner;
-use embassy_futures::join::join;
 use embassy_futures::select::{select3, Either3};
 #[cfg(feature = "wifi-auto")]
 use embassy_net::tcp::TcpSocket;
@@ -53,8 +52,8 @@ use esp_radio::wifi::scan::ScanConfig;
 use esp_radio::wifi::sta::StationConfig;
 #[cfg(feature = "wifi-auto")]
 use esp_radio::wifi::{
-    Config as WifiConfig, ControllerConfig, Interface as WifiStaDevice, PowerSaveMode,
-    WifiController, WifiError,
+    Config as WifiConfig, ControllerConfig, DisconnectReason, Interface as WifiStaDevice,
+    PowerSaveMode, WifiController, WifiError,
 };
 
 #[cfg(feature = "wifi-auto")]
@@ -103,6 +102,11 @@ use personal_rns::wifi_auto::{
 #[cfg(feature = "bluetooth-auto")]
 use prns_interfaces_embassy::bluetooth_auto::PEER_CAPACITY as EMBEDDED_BLE_PEER_CAPACITY;
 
+#[cfg(feature = "wifi-auto")]
+use crate::station_recovery::{
+    AccessPoint as StationAccessPoint, AttemptOutcome as StationAttemptOutcome, ConnectionFailure,
+    ConnectionTarget, ScanFailure, StationAttempt, StationRecovery, StationYield,
+};
 use crate::storage::EngineStorageType;
 
 use personal_hopspot_core as screen;
@@ -203,6 +207,24 @@ const BUTTON_DEBOUNCE: Duration = Duration::from_millis(25);
 type Mtx = CriticalSectionRawMutex;
 type Handle = PrnsNodeHandle<'static, Mtx, COMMANDS_CAP, COMPLETIONS_CAP>;
 type UsbSeam = EmbassyInterfaceSeam<'static, Mtx, NOTIFY_CAP, EMBEDDED_MAX_WIRE_FRAME_LEN>;
+#[cfg(feature = "lora")]
+type S3LoraInterface = LoRaInterface<
+    'static,
+    ExclusiveDevice<Spi<'static, esp_hal::Async>, Output<'static>, Delay>,
+    Input<'static>,
+    Input<'static>,
+    Output<'static>,
+    Delay,
+>;
+#[cfg(feature = "lora")]
+type S3LoraSeam = EmbassyInterfaceSeam<'static, Mtx, NOTIFY_CAP, LORA_MAX_PAYLOAD>;
+#[cfg(feature = "esp-now")]
+type S3EspNowInterface = EspNowInterface<'static, EspNowAdapter>;
+#[cfg(feature = "esp-now")]
+type S3EspNowSeam = EmbassyInterfaceSeam<'static, Mtx, NOTIFY_CAP, ESP_NOW_V2_AIR_MTU>;
+type S3TcpSeam = EmbassyInterfaceSeam<'static, Mtx, NOTIFY_CAP, EMBEDDED_MAX_WIRE_FRAME_LEN>;
+#[cfg(feature = "wifi-auto")]
+type S3WifiFleet = Fleet<Mtx, { wifi_auto_contract::HARDWARE_MTU }, NOTIFY_CAP, LIFECYCLE_CAP>;
 #[cfg(feature = "bluetooth-auto")]
 type S3BleFleet = Fleet<Mtx, BLE_HW_MTU, NOTIFY_CAP, LIFECYCLE_CAP>;
 type InterfaceStore = EmbassyInterfaceStore<
@@ -446,13 +468,12 @@ async fn usb_device_task(
 /// PSRAM registers first and that order is load-bearing: the allocator serves a capability-free
 /// allocation from the first region with space, so external must lead or ordinary boot
 /// allocations bleed the two small internal regions dry and the radio bring-up — whose
-/// allocations genuinely require internal SRAM — finds crumbs and dies on core 0
-/// (measured on the Heltec V4: wifi init 37.9K + ble connector 31.6K of 75.8K internal, 60 bytes left).
+/// allocations genuinely require internal SRAM — finds crumbs and dies on core 0.
 macro_rules! boot_common {
     ($p:ident, $banner:expr) => {{
         ::esp_println::logger::init_logger_from_env();
         ::esp_alloc::psram_allocator!($p.PSRAM, ::esp_hal::psram);
-        ::esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 38 * 1024);
+        ::esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 43 * 1024);
         $crate::s3::reclaim_dcache_region();
         let timg0 = ::esp_hal::timer::timg::TimerGroup::new($p.TIMG0);
         let sw_int =

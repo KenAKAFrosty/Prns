@@ -264,19 +264,9 @@ pub(super) async fn run_core<B: Esp32S3Board>(
 
     #[cfg(feature = "wifi-auto")]
     let wifi = wifi.zip(wifi_supervisor_lane).map(|(interface, lane)| {
-        let fleet: Fleet<Mtx, { wifi_auto_contract::HARDWARE_MTU }, NOTIFY_CAP, LIFECYCLE_CAP> =
-            lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());
+        let fleet: S3WifiFleet = lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());
         (interface, fleet)
     });
-    // The Wi-Fi Auto run loop's two MTU receive buffers live on the heap (the D-cache donation),
-    // not on the bounded `#[esp_rtos::main]` stack that run()'s future rides; the alloc-free
-    // embassy AutoWifi just borrows them. Leaked: they live for the program's whole life anyway.
-    #[cfg(feature = "wifi-auto")]
-    let wifi_data_buf: &'static mut [u8] =
-        alloc::vec![0u8; wifi_auto_contract::HARDWARE_MTU].leak();
-    #[cfg(feature = "wifi-auto")]
-    let wifi_sec_data_buf: &'static mut [u8] =
-        alloc::vec![0u8; wifi_auto_contract::HARDWARE_MTU].leak();
     #[cfg(feature = "bluetooth-auto")]
     let ble = ble_identity
         .zip(ble_supervisor_lane)
@@ -292,6 +282,15 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         use personal_rns::interfaces::InterfaceStatus;
         status.id()
     });
+    #[cfg(feature = "wifi-auto")]
+    if let Some((interface, fleet)) = wifi {
+        let data_buf: &'static mut [u8] = alloc::vec![0u8; wifi_auto_contract::HARDWARE_MTU].leak();
+        let secondary_data_buf: &'static mut [u8] =
+            alloc::vec![0u8; wifi_auto_contract::HARDWARE_MTU].leak();
+        spawner.spawn(
+            wifi_task(interface, fleet, data_buf, secondary_data_buf).expect("Wi-Fi task fits"),
+        );
+    }
 
     #[cfg(feature = "esp-now")]
     let espnow_card_id = espnow.as_ref().map(|(interface, _)| interface.id());
@@ -665,7 +664,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
 
     #[cfg(all(feature = "bluetooth-auto", not(feature = "wifi-auto")))]
     {
-        let _ = (wifi, tcp, has_wifi);
+        let _ = (tcp, has_wifi);
         if let Some((identity, fleet)) = ble {
             spawner.spawn(
                 ble_task(spawner, ble_connector, mac_octets, identity, fleet)
@@ -682,45 +681,27 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 interface.run(seam).await;
             }
         };
-        match (wifi, tcp) {
-            (Some((wifi, wifi_fleet)), Some((tcp, tcp_seam))) => {
-                join(
-                    join(
-                        join(lora_run, espnow_run),
-                        join(
-                            wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
-                            tcp.run(tcp_seam),
-                        ),
-                    ),
-                    render,
-                )
-                .await;
+        match tcp {
+            Some((tcp, tcp_seam)) => {
+                join(join(join(lora_run, espnow_run), tcp.run(tcp_seam)), render).await;
             }
-            (Some((wifi, wifi_fleet)), None) => {
-                join(
-                    join(
-                        join(lora_run, espnow_run),
-                        wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
-                    ),
-                    render,
-                )
-                .await;
-            }
-            (None, _) => {
+            None => {
                 join(join(lora_run, espnow_run), render).await;
             }
         }
     }
     #[cfg(all(feature = "bluetooth-auto", feature = "wifi-auto"))]
     {
-        let lora_run = lora.run(lora_seam);
-        let espnow_run = async {
-            if let Some((interface, seam)) = espnow {
-                interface.run(seam).await;
-            }
-        };
+        spawner.spawn(lora_task(lora, lora_seam).expect("LoRa task fits"));
+        if let Some((interface, seam)) = espnow {
+            spawner.spawn(espnow_task(interface, seam).expect("ESP-NOW task fits"));
+        }
+        if let Some((interface, seam)) = tcp {
+            spawner.spawn(tcp_task(interface, seam).expect("TCP task fits"));
+        }
         match radio_mode {
             RadioMode::Ble => {
+                boot_stage(BootPhase::BluetoothBegin);
                 let ble_connector = esp_radio::ble::controller::BleConnector::new(
                     bluetooth,
                     esp_radio::ble::Config::default()
@@ -735,65 +716,41 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                             .expect("Bluetooth task fits"),
                     );
                 }
-                match (wifi, tcp) {
-                    (Some((wifi, wifi_fleet)), Some((tcp, tcp_seam))) => {
-                        join(
-                            join(join(lora_run, espnow_run), tcp.run(tcp_seam)),
-                            join(
-                                wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
-                                render,
-                            ),
-                        )
-                        .await;
-                    }
-                    (Some((wifi, wifi_fleet)), None) => {
-                        join(
-                            join(lora_run, espnow_run),
-                            join(
-                                wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
-                                render,
-                            ),
-                        )
-                        .await;
-                    }
-                    (None, _) => {
-                        join(join(lora_run, espnow_run), render).await;
-                    }
-                }
             }
             RadioMode::AccessPoint => {
                 let _ = (bluetooth, ble);
-                match (wifi, tcp) {
-                    (Some((wifi, wifi_fleet)), Some((tcp, tcp_seam))) => {
-                        join(
-                            join(
-                                join(lora_run, espnow_run),
-                                join(
-                                    wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
-                                    tcp.run(tcp_seam),
-                                ),
-                            ),
-                            render,
-                        )
-                        .await;
-                    }
-                    (Some((wifi, wifi_fleet)), None) => {
-                        join(
-                            join(
-                                join(lora_run, espnow_run),
-                                wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
-                            ),
-                            render,
-                        )
-                        .await;
-                    }
-                    (None, _) => {
-                        join(join(lora_run, espnow_run), render).await;
-                    }
-                }
             }
         }
+        render.await;
     }
+}
+
+#[cfg(feature = "lora")]
+#[embassy_executor::task]
+async fn lora_task(interface: S3LoraInterface, seam: S3LoraSeam) {
+    interface.run(seam).await
+}
+
+#[cfg(feature = "esp-now")]
+#[embassy_executor::task]
+async fn espnow_task(interface: S3EspNowInterface, seam: S3EspNowSeam) {
+    interface.run(seam).await
+}
+
+#[embassy_executor::task]
+async fn tcp_task(interface: TcpClient<'static>, seam: S3TcpSeam) {
+    interface.run(seam).await
+}
+
+#[cfg(feature = "wifi-auto")]
+#[embassy_executor::task]
+async fn wifi_task(
+    interface: AutoWifi<'static, MEMBERS>,
+    fleet: S3WifiFleet,
+    data_buf: &'static mut [u8],
+    secondary_data_buf: &'static mut [u8],
+) {
+    interface.run(fleet, data_buf, secondary_data_buf).await
 }
 
 #[embassy_executor::task]

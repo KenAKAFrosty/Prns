@@ -48,8 +48,11 @@ pub mod bluetooth_auto;
     not(feature = "wifi-auto")
 ))]
 pub mod c6;
+#[cfg(any(target_arch = "riscv32", target_arch = "xtensa"))]
 mod flash;
+#[cfg(any(target_arch = "riscv32", target_arch = "xtensa"))]
 mod identity;
+#[cfg(any(target_arch = "riscv32", target_arch = "xtensa"))]
 mod persistence;
 #[cfg(all(
     target_arch = "xtensa",
@@ -61,4 +64,7 @@ mod persistence;
     feature = "wifi-auto"
 ))]
 pub mod s3;
+#[cfg(any(test, target_arch = "xtensa"))]
+mod station_recovery;
+#[cfg(any(target_arch = "riscv32", target_arch = "xtensa"))]
 mod storage;
