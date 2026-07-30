@@ -140,6 +140,7 @@ pub(super) fn build_wifi(
         };
         let wifi_status = AutoWifiStatus::new(&WIFI_SHARED);
         spawner.spawn(net_task(runner).expect("net task fits"));
+        spawner.spawn(network_ready_task(stack).expect("network readiness task fits"));
         spawner.spawn(
             wifi_connect_task(controller, wifi_status, config.clone(), ap_enabled)
                 .expect("wifi connect task fits"),
@@ -345,6 +346,22 @@ pub(super) fn espnow_channel_policy(station_configured: bool) -> ChannelPolicy {
 #[embassy_executor::task(pool_size = 2)]
 pub(super) async fn net_task(mut runner: Runner<'static, WifiStaDevice<'static>>) -> ! {
     runner.run().await
+}
+
+#[cfg(feature = "wifi-auto")]
+#[embassy_executor::task]
+async fn network_ready_task(stack: Stack<'static>) -> ! {
+    loop {
+        stack.wait_link_up().await;
+        while stack.config_v4().is_none() {
+            Timer::after(Duration::from_millis(100)).await;
+        }
+        boot_stage(BootPhase::NetworkReady);
+        log::info!("wifi: IPv4 network configuration ready");
+        while stack.is_link_up() && stack.config_v4().is_some() {
+            Timer::after(WIFI_LINK_CHECK_INTERVAL).await;
+        }
+    }
 }
 
 #[cfg(feature = "wifi-auto")]

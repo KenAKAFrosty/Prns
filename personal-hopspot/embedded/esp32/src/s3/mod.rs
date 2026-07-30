@@ -42,7 +42,7 @@ use embedded_hal_bus::spi::ExclusiveDevice;
 use heapless::Vec as HVec;
 #[cfg(feature = "wifi-auto")]
 use portable_atomic::AtomicBool;
-use portable_atomic::{AtomicU64, Ordering};
+use portable_atomic::{AtomicU32, AtomicU64, Ordering};
 use static_cell::StaticCell;
 
 #[cfg(feature = "wifi-auto")]
@@ -300,6 +300,7 @@ const PACKET_PHY_INDEX_BUCKETS: usize =
 
 #[cfg(feature = "wifi-auto")]
 static WIFI_STATION_JOINED: AtomicBool = AtomicBool::new(false);
+static CORE_ONE_HEARTBEAT: AtomicU64 = AtomicU64::new(0);
 
 fn hardware_entropy(bytes: &mut [u8]) {
     Rng::new().read(bytes);
@@ -307,9 +308,91 @@ fn hardware_entropy(bytes: &mut [u8]) {
 
 fn ignore_events(_event: PrnsEvent<'_>, _state: &()) {}
 
-pub(crate) fn boot_stage(stage: &str) {
+const BOOT_PHASE_MAGIC: u32 = 0x5052_0000;
+
+#[derive(Clone, Copy)]
+pub(crate) enum BootPhase {
+    OledBegin = 1,
+    OledReady = 2,
+    OledFailed = 3,
+    WifiBegin = 4,
+    WifiReady = 5,
+    TcpBegin = 6,
+    TcpReady = 7,
+    CoreOneStartBegin = 8,
+    CoreOneStartReady = 9,
+    CoreOneExecutorReady = 10,
+    PersistenceRestoreBegin = 11,
+    PersistenceRestoreComplete = 12,
+    DisplayRuntimeBegin = 13,
+    DisplayFirstRenderBegin = 14,
+    DisplayFirstRenderComplete = 15,
+    DisplayFirstRenderUnavailable = 16,
+    WifiConnectionBegin = 17,
+    WifiAssociated = 18,
+    WifiFallbackScanBegin = 19,
+    WifiFallbackScanComplete = 20,
+    NetworkReady = 21,
+    BluetoothBegin = 22,
+    BluetoothReady = 23,
+    WatchdogReady = 24,
+    AnnounceBegin = 25,
+    AnnounceDeliveryIssueReturned = 26,
+    AnnounceNodeIssueReturned = 27,
+}
+
+impl BootPhase {
+    fn label(self) -> &'static str {
+        match self {
+            Self::OledBegin => "oled.begin",
+            Self::OledReady => "oled.ready",
+            Self::OledFailed => "oled.failed",
+            Self::WifiBegin => "wifi.begin",
+            Self::WifiReady => "wifi.ready",
+            Self::TcpBegin => "tcp.begin",
+            Self::TcpReady => "tcp.ready",
+            Self::CoreOneStartBegin => "core1.start.begin",
+            Self::CoreOneStartReady => "core1.start.ready",
+            Self::CoreOneExecutorReady => "core1.executor.ready",
+            Self::PersistenceRestoreBegin => "persistence.restore.begin",
+            Self::PersistenceRestoreComplete => "persistence.restore.complete",
+            Self::DisplayRuntimeBegin => "display.runtime.begin",
+            Self::DisplayFirstRenderBegin => "display.first-render.begin",
+            Self::DisplayFirstRenderComplete => "display.first-render.complete",
+            Self::DisplayFirstRenderUnavailable => "display.first-render.unavailable",
+            Self::WifiConnectionBegin => "wifi.connection.begin",
+            Self::WifiAssociated => "wifi.associated",
+            Self::WifiFallbackScanBegin => "wifi.fallback-scan.begin",
+            Self::WifiFallbackScanComplete => "wifi.fallback-scan.complete",
+            Self::NetworkReady => "network.ready",
+            Self::BluetoothBegin => "bluetooth.begin",
+            Self::BluetoothReady => "bluetooth.ready",
+            Self::WatchdogReady => "watchdog.ready",
+            Self::AnnounceBegin => "announce.begin",
+            Self::AnnounceDeliveryIssueReturned => "announce.delivery.issue.return",
+            Self::AnnounceNodeIssueReturned => "announce.node.issue.return",
+        }
+    }
+}
+
+#[esp_hal::ram(unstable(rtc_fast, persistent))]
+static LAST_BOOT_PHASE: AtomicU32 = AtomicU32::new(0);
+
+pub(crate) fn previous_boot_phase() -> u32 {
+    let encoded = LAST_BOOT_PHASE.load(Ordering::Relaxed);
+    if encoded & 0xFFFF_0000 == BOOT_PHASE_MAGIC {
+        encoded & 0x0000_FFFF
+    } else {
+        0
+    }
+}
+
+pub(crate) fn boot_stage(phase: BootPhase) {
+    let number = phase as u32;
+    let stage = phase.label();
+    LAST_BOOT_PHASE.store(BOOT_PHASE_MAGIC | number, Ordering::Relaxed);
     log::info!(
-        "boot-stage t_ms={} stage={stage}",
+        "boot-stage t_ms={} phase={number} stage={stage}",
         embassy_time::Instant::now().as_millis()
     );
 }
@@ -384,10 +467,12 @@ macro_rules! boot_common {
             ::personal_rns::engine::InstantMillis(rtc.current_time_us() / 1000),
         );
         ::esp_println::println!(
-            "{} boot {} commit={} — recipe runtime, engine core 1 + I/O core 0",
+            "{} boot {} commit={} reset={:?} previous_phase={} — recipe runtime, engine core 1 + I/O core 0",
             $banner,
             env!("HOPSPOT_BUILD_IDENTITY"),
-            env!("HOPSPOT_BUILD_COMMIT_SHORT")
+            env!("HOPSPOT_BUILD_COMMIT_SHORT"),
+            ::esp_hal::system::reset_reason(),
+            $crate::s3::previous_boot_phase()
         );
         (sw_int.software_interrupt1, timebase, rtc)
     }};

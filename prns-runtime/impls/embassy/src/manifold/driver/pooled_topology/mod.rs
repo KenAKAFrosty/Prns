@@ -267,6 +267,7 @@ pub(crate) async fn run_pooled<
                     }
                     #[cfg(feature = "log")]
                     log::info!(
+                        target: "personal_hopspot_esp32",
                         "manifold: Add kind={:?} present={present} descriptors={}",
                         id.kind(),
                         descriptors.len()
@@ -283,6 +284,7 @@ pub(crate) async fn run_pooled<
                     }
                     #[cfg(feature = "log")]
                     log::info!(
+                        target: "personal_hopspot_esp32",
                         "manifold: Remove kind={:?} found={} descriptors={}",
                         id.kind(),
                         found.is_some(),

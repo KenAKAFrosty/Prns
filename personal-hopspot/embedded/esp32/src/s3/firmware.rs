@@ -35,15 +35,23 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         cpu_control,
         software_interrupt,
         timebase,
-        _rtc,
+        rtc,
     } = hardware.manifold;
     #[cfg(feature = "wifi-auto")]
-    let wifi_config = hopspot_wifi_config();
+    let (wifi_config, wifi_config_source) = hopspot_wifi_config();
     #[cfg(feature = "wifi-auto")]
     let station_configured = wifi_config.has_station();
     #[cfg(not(feature = "wifi-auto"))]
     let station_configured = false;
     let radio_mode = boot_radio_mode(station_configured);
+    #[cfg(feature = "wifi-auto")]
+    log::info!(
+        "wifi-config source={wifi_config_source:?} station={} ssid_len={} password_len={} tcp={}",
+        station_configured,
+        wifi_config.ssid.len(),
+        wifi_config.password.len(),
+        wifi_config.tcp_client.is_some()
+    );
 
     let usb_status: &'static EmbassyInterfaceStatus = mk_static!(
         EmbassyInterfaceStatus,
@@ -83,7 +91,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     // The Wi-Fi stack carries both the Wi-Fi Auto UDP and the TCP client, so it stands up before the
     // node moves to core 1 — activating the TCP slot is a core-0-only act.
     #[cfg(feature = "wifi-auto")]
-    boot_stage("wifi.begin");
+    boot_stage(BootPhase::WifiBegin);
     #[cfg(feature = "wifi-auto")]
     let (wifi, tcp_stack, esp_now) = build_wifi(
         &spawner,
@@ -93,10 +101,10 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         radio_mode == RadioMode::AccessPoint,
     );
     #[cfg(feature = "wifi-auto")]
-    boot_stage("wifi.ready");
+    boot_stage(BootPhase::WifiReady);
     #[cfg(feature = "wifi-auto")]
     log::info!(
-        "Wi-Fi initialized station={} TCP={}",
+        "Wi-Fi initialized station={} network_stack={}",
         wifi.is_some(),
         tcp_stack.is_some()
     );
@@ -140,7 +148,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     });
 
     #[cfg(feature = "wifi-auto")]
-    boot_stage("tcp.begin");
+    boot_stage(BootPhase::TcpBegin);
     #[cfg(feature = "wifi-auto")]
     let tcp_built = tcp_stack.and_then(|stack| {
         wifi_config
@@ -149,7 +157,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             .and_then(|tcp_client| build_tcp(stack, tcp_client))
     });
     #[cfg(feature = "wifi-auto")]
-    boot_stage("tcp.ready");
+    boot_stage(BootPhase::TcpReady);
     #[cfg(not(feature = "wifi-auto"))]
     let tcp_built: Option<(
         TcpClient<'static>,
@@ -218,7 +226,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let host = EmbassyHost::new_with_timebase(timebase, hardware_entropy as fn(&mut [u8]));
 
     let core1_stack = mk_static!(CpuStack<CORE1_STACK_BYTES>, CpuStack::new());
-    boot_stage("core1.start.begin");
+    boot_stage(BootPhase::CoreOneStartBegin);
     esp_rtos::start_second_core(cpu_control, software_interrupt, core1_stack, move || {
         static NODE: StaticCell<S3Node> = StaticCell::new();
         let (node, persistence) =
@@ -227,14 +235,15 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         let persistence = PERSISTENCE.init(persistence);
 
         static EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
-        boot_stage("core1.executor.ready");
+        boot_stage(BootPhase::CoreOneExecutorReady);
         EXECUTOR
             .init(esp_rtos::embassy::Executor::new())
             .run(|spawner| {
                 spawner.spawn(manifold_task(node, persistence).expect("manifold task fits"));
+                spawner.spawn(core_one_liveness_task().expect("core-one liveness task fits"));
             })
     });
-    boot_stage("core1.start.ready");
+    boot_stage(BootPhase::CoreOneStartReady);
 
     let usb_seam = usb_lane.into_seam(NOTIFY.sender(), hardware_entropy);
     spawner.spawn(usb_device_task(usb_rx, usb_tx, usb_seam, usb_status).expect("usb task fits"));
@@ -295,7 +304,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     ) = (None, None);
 
     let render = async move {
-        boot_stage("display.runtime.begin");
+        boot_stage(BootPhase::DisplayRuntimeBegin);
         let access_point = if !cfg!(feature = "wifi-auto") {
             screen::AccessPointState::Unsupported
         } else if radio_mode == RadioMode::AccessPoint {
@@ -420,7 +429,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             }
             if oled_ok && oled_awake {
                 if first_render_pending {
-                    boot_stage("display.first-render.begin");
+                    boot_stage(BootPhase::DisplayFirstRenderBegin);
                 }
                 screen::render(
                     &mut display,
@@ -434,11 +443,11 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 );
                 B::flush(&mut display);
                 if first_render_pending {
-                    boot_stage("display.first-render.complete");
+                    boot_stage(BootPhase::DisplayFirstRenderComplete);
                     first_render_pending = false;
                 }
             } else if first_render_pending {
-                boot_stage("display.first-render.unavailable");
+                boot_stage(BootPhase::DisplayFirstRenderUnavailable);
                 first_render_pending = false;
             }
             if settle_after_draw {
@@ -526,19 +535,32 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                             }
                         }
                         screen::UiAction::Announce => {
+                            boot_stage(BootPhase::AnnounceBegin);
                             ui_state.show_notice(screen::UiNotice::Announcing);
                             notice_until_ms =
                                 Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
-                            let _ = handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
-                                destination: self_destination,
-                                target: AnnounceTarget::AllInterfaces,
-                                app_data: AnnounceAppData::Registered,
-                            }));
-                            let _ = handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
-                                destination: node_page_destination,
-                                target: AnnounceTarget::AllInterfaces,
-                                app_data: AnnounceAppData::Registered,
-                            }));
+                            let delivery_queued =
+                                handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
+                                    destination: self_destination,
+                                    target: AnnounceTarget::AllInterfaces,
+                                    app_data: AnnounceAppData::Registered,
+                                }));
+                            boot_stage(BootPhase::AnnounceDeliveryIssueReturned);
+                            log::info!(
+                                "announce-ui destination=delivery queued={}",
+                                delivery_queued.is_some()
+                            );
+                            let node_queued =
+                                handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
+                                    destination: node_page_destination,
+                                    target: AnnounceTarget::AllInterfaces,
+                                    app_data: AnnounceAppData::Registered,
+                                }));
+                            boot_stage(BootPhase::AnnounceNodeIssueReturned);
+                            log::info!(
+                                "announce-ui destination=node queued={}",
+                                node_queued.is_some()
+                            );
                         }
                         screen::UiAction::ToggleSelectedInterface => {
                             if let Some(card) = ui_state.selected_card(content.cards) {
@@ -627,6 +649,8 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     };
 
     #[cfg(all(feature = "bluetooth-auto", not(feature = "wifi-auto")))]
+    boot_stage(BootPhase::BluetoothBegin);
+    #[cfg(all(feature = "bluetooth-auto", not(feature = "wifi-auto")))]
     let ble_connector = esp_radio::ble::controller::BleConnector::new(
         bluetooth,
         esp_radio::ble::Config::default()
@@ -634,6 +658,10 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             .with_max_connections(BLE_PEER_CAPACITY as u8),
     )
     .expect("ble connector");
+    #[cfg(all(feature = "bluetooth-auto", not(feature = "wifi-auto")))]
+    boot_stage(BootPhase::BluetoothReady);
+
+    spawner.spawn(watchdog_task(rtc.rwdt).expect("watchdog task fits"));
 
     #[cfg(all(feature = "bluetooth-auto", not(feature = "wifi-auto")))]
     {
@@ -700,6 +728,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                         .with_max_connections(BLE_PEER_CAPACITY as u8),
                 )
                 .expect("ble connector");
+                boot_stage(BootPhase::BluetoothReady);
                 if let Some((identity, fleet)) = ble {
                     spawner.spawn(
                         ble_task(spawner, ble_connector, mac_octets, identity, fleet)
@@ -772,11 +801,50 @@ async fn manifold_task(
     node: &'static mut S3Node,
     persistence: &'static mut crate::persistence::S3Persistence,
 ) {
-    boot_stage("persistence.restore.begin");
+    boot_stage(BootPhase::PersistenceRestoreBegin);
     let _ = node.restore_embedded_persistence(persistence).await;
-    boot_stage("persistence.restore.complete");
+    boot_stage(BootPhase::PersistenceRestoreComplete);
     node.run_manifold_with_persistence_and_interface_store(&INTERFACE_STORE, persistence)
         .await
+}
+
+#[embassy_executor::task]
+async fn watchdog_task(mut watchdog: esp_hal::rtc_cntl::Rwdt) -> ! {
+    watchdog.enable();
+    watchdog.set_timeout(
+        esp_hal::rtc_cntl::RwdtStage::Stage0,
+        esp_hal::time::Duration::from_secs(15),
+    );
+    watchdog.set_stage_action(
+        esp_hal::rtc_cntl::RwdtStage::Stage0,
+        esp_hal::rtc_cntl::RwdtStageAction::ResetSystem,
+    );
+    watchdog.feed();
+    boot_stage(BootPhase::WatchdogReady);
+    let mut last_core_one_heartbeat = CORE_ONE_HEARTBEAT.load(Ordering::Relaxed);
+    let mut core_one_stalled_ticks = 0u32;
+    loop {
+        Timer::after(Duration::from_secs(1)).await;
+        let core_one_heartbeat = CORE_ONE_HEARTBEAT.load(Ordering::Relaxed);
+        if core_one_heartbeat != last_core_one_heartbeat {
+            last_core_one_heartbeat = core_one_heartbeat;
+            core_one_stalled_ticks = 0;
+            watchdog.feed();
+        } else {
+            core_one_stalled_ticks = core_one_stalled_ticks.saturating_add(1);
+            if core_one_stalled_ticks == 2 {
+                log::warn!("watchdog: core1 heartbeat missing");
+            }
+        }
+    }
+}
+
+#[embassy_executor::task]
+async fn core_one_liveness_task() -> ! {
+    loop {
+        Timer::after(Duration::from_secs(1)).await;
+        CORE_ONE_HEARTBEAT.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 #[cfg(feature = "bluetooth-auto")]
