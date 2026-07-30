@@ -15,6 +15,8 @@ use esp_hal::rng::Rng;
 use esp_hal::rom::spiflash::esp_rom_spiflash_read;
 use esp_hal::spi::master::Spi;
 use esp_hal::system::Stack as CpuStack;
+#[cfg(feature = "wifi-auto")]
+use esp_hal::time::Duration as HalDuration;
 use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
 use esp_hal::Async;
 
@@ -47,7 +49,7 @@ use static_cell::StaticCell;
 #[cfg(feature = "wifi-auto")]
 use esp_radio::wifi::ap::AccessPointConfig;
 #[cfg(feature = "wifi-auto")]
-use esp_radio::wifi::scan::ScanConfig;
+use esp_radio::wifi::scan::{ScanConfig, ScanTypeConfig};
 #[cfg(feature = "wifi-auto")]
 use esp_radio::wifi::sta::StationConfig;
 #[cfg(feature = "wifi-auto")]
@@ -104,8 +106,8 @@ use prns_interfaces_embassy::bluetooth_auto::PEER_CAPACITY as EMBEDDED_BLE_PEER_
 
 #[cfg(feature = "wifi-auto")]
 use crate::station_recovery::{
-    AccessPoint as StationAccessPoint, AttemptOutcome as StationAttemptOutcome, ConnectionFailure,
-    ConnectionTarget, ScanFailure, StationAttempt, StationRecovery, StationYield,
+    AccessPoint as StationAccessPoint, ConnectionFailure, ConnectionOutcome, ScanFailure,
+    ScanOutcome, StationAttempt, StationRecovery, StationYield,
 };
 use crate::storage::EngineStorageType;
 
@@ -352,8 +354,8 @@ pub(crate) enum BootPhase {
     DisplayFirstRenderUnavailable = 16,
     WifiConnectionBegin = 17,
     WifiAssociated = 18,
-    WifiFallbackScanBegin = 19,
-    WifiFallbackScanComplete = 20,
+    WifiDiscoveryBegin = 19,
+    WifiDiscoveryComplete = 20,
     NetworkReady = 21,
     BluetoothBegin = 22,
     BluetoothReady = 23,
@@ -384,8 +386,8 @@ impl BootPhase {
             Self::DisplayFirstRenderUnavailable => "display.first-render.unavailable",
             Self::WifiConnectionBegin => "wifi.connection.begin",
             Self::WifiAssociated => "wifi.associated",
-            Self::WifiFallbackScanBegin => "wifi.fallback-scan.begin",
-            Self::WifiFallbackScanComplete => "wifi.fallback-scan.complete",
+            Self::WifiDiscoveryBegin => "wifi.discovery.begin",
+            Self::WifiDiscoveryComplete => "wifi.discovery.complete",
             Self::NetworkReady => "network.ready",
             Self::BluetoothBegin => "bluetooth.begin",
             Self::BluetoothReady => "bluetooth.ready",

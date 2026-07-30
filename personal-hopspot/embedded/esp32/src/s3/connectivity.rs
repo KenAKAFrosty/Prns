@@ -134,10 +134,14 @@ pub(super) fn build_wifi(
             )
         };
         let wifi_status = AutoWifiStatus::new(&WIFI_SHARED);
+        let station_credentials = StationCredentials {
+            ssid: config.ssid.clone(),
+            password: config.password.clone(),
+        };
         spawner.spawn(net_task(runner).expect("net task fits"));
         spawner.spawn(network_ready_task(stack).expect("network readiness task fits"));
         spawner.spawn(
-            wifi_connect_task(controller, wifi_status, config.clone(), ap_enabled)
+            wifi_connect_task(controller, wifi_status, station_credentials, ap_enabled)
                 .expect("wifi connect task fits"),
         );
         Some(AutoWifiSegment {
@@ -362,23 +366,73 @@ async fn network_ready_task(stack: Stack<'static>) -> ! {
 #[cfg(feature = "wifi-auto")]
 const WIFI_LINK_CHECK_INTERVAL: Duration = Duration::from_secs(2);
 #[cfg(feature = "wifi-auto")]
-const WIFI_RETRY_DELAY: Duration = Duration::from_secs(2);
+const WIFI_INTER_CHANNEL_DELAY: Duration = Duration::from_millis(25);
 #[cfg(feature = "wifi-auto")]
-const WIFI_SCAN_TIMEOUT: Duration = Duration::from_secs(10);
+const WIFI_CHANNEL_SCAN_TIMEOUT: Duration = Duration::from_millis(500);
 #[cfg(feature = "wifi-auto")]
 const WIFI_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+#[cfg(feature = "wifi-auto")]
+const WIFI_SCAN_MIN_DWELL: HalDuration = HalDuration::from_millis(5);
+#[cfg(feature = "wifi-auto")]
+const WIFI_SCAN_MAX_DWELL: HalDuration = HalDuration::from_millis(20);
+#[cfg(feature = "wifi-auto")]
+const DRIVER_STOP_RETRY_DELAY: Duration = Duration::from_millis(25);
+#[cfg(feature = "wifi-auto")]
+const ESP_OK: i32 = 0;
+#[cfg(feature = "wifi-auto")]
+const ESP_ERR_WIFI_NOT_INIT: i32 = 12_289;
+#[cfg(feature = "wifi-auto")]
+const ESP_ERR_WIFI_NOT_STARTED: i32 = 12_290;
+
+#[cfg(feature = "wifi-auto")]
+struct StationCredentials {
+    ssid: String,
+    password: String,
+}
 
 #[cfg(feature = "wifi-auto")]
 extern "C" {
     fn esp_wifi_disconnect_internal() -> i32;
+    fn esp_wifi_scan_stop() -> i32;
 }
 
 #[cfg(feature = "wifi-auto")]
 #[allow(clippy::undocumented_unsafe_blocks)]
-fn cancel_station_connection() {
-    let result = unsafe { esp_wifi_disconnect_internal() };
-    if result != 0 {
-        log::warn!("wifi: station cancellation failed code={result}");
+async fn stop_station_connection() {
+    let mut reported = None;
+    loop {
+        let result = unsafe { esp_wifi_disconnect_internal() };
+        if matches!(
+            result,
+            ESP_OK | ESP_ERR_WIFI_NOT_INIT | ESP_ERR_WIFI_NOT_STARTED
+        ) {
+            return;
+        }
+        if reported != Some(result) {
+            log::warn!("wifi: station stop pending code={result}");
+            reported = Some(result);
+        }
+        Timer::after(DRIVER_STOP_RETRY_DELAY).await;
+    }
+}
+
+#[cfg(feature = "wifi-auto")]
+#[allow(clippy::undocumented_unsafe_blocks)]
+async fn stop_station_scan() {
+    let mut reported = None;
+    loop {
+        let result = unsafe { esp_wifi_scan_stop() };
+        if matches!(
+            result,
+            ESP_OK | ESP_ERR_WIFI_NOT_INIT | ESP_ERR_WIFI_NOT_STARTED
+        ) {
+            return;
+        }
+        if reported != Some(result) {
+            log::warn!("wifi: scan stop pending code={result}");
+            reported = Some(result);
+        }
+        Timer::after(DRIVER_STOP_RETRY_DELAY).await;
     }
 }
 
@@ -387,21 +441,26 @@ fn cancel_station_connection() {
 async fn wifi_connect_task(
     mut controller: WifiController<'static>,
     status: AutoWifiStatus<MEMBERS>,
-    config: HopspotWifiConfig,
+    credentials: StationCredentials,
     ap_enabled: bool,
 ) -> ! {
     let base = StationConfig::default()
-        .with_ssid(config.ssid.clone())
-        .with_password(config.password.clone());
+        .with_ssid(credentials.ssid.clone())
+        .with_password(credentials.password.clone());
     let mut recovery = StationRecovery::new();
 
     loop {
+        let mut resumed = false;
         while !status.is_enabled() {
             if controller.is_connected() {
                 let _ = controller.disconnect_async().await;
             }
             WIFI_STATION_JOINED.store(false, Ordering::Relaxed);
             status.wait_until_radio_enabled().await;
+            resumed = true;
+        }
+        if resumed {
+            recovery.resume_now();
         }
         if controller.is_connected() {
             WIFI_STATION_JOINED.store(true, Ordering::Relaxed);
@@ -431,97 +490,144 @@ async fn wifi_connect_task(
             continue;
         }
         WIFI_STATION_JOINED.store(false, Ordering::Relaxed);
-        match recovery.next_attempt() {
-            StationAttempt::Connect(target) => {
-                let (station, pinned) = match target {
-                    ConnectionTarget::Direct => (base.clone(), false),
-                    ConnectionTarget::Pinned(access_point) => (
-                        base.clone()
-                            .with_bssid(access_point.bssid)
-                            .with_channel(access_point.channel),
-                        true,
-                    ),
+        let Some(attempt) = recovery.begin_attempt() else {
+            Timer::after(DRIVER_STOP_RETRY_DELAY).await;
+            continue;
+        };
+        match attempt {
+            StationAttempt::Connect(attempt) => {
+                let access_point = attempt.access_point();
+                let station = base
+                    .clone()
+                    .with_bssid(access_point.bssid)
+                    .with_channel(access_point.channel);
+                let configured = {
+                    let mode = station_wifi_mode(station, ap_enabled);
+                    match controller.set_config(&mode) {
+                        Ok(()) => true,
+                        Err(error) => {
+                            log::warn!("wifi: station configuration failed: {error:?}");
+                            false
+                        }
+                    }
                 };
-                if let Err(error) = controller.set_config(&station_wifi_mode(station, ap_enabled)) {
-                    log::warn!("wifi: station configuration failed: {error:?}");
-                    let next = recovery.complete(StationAttemptOutcome::ConnectionFailed(
-                        ConnectionFailure::Driver,
-                    ));
+                if !configured {
+                    let next = recovery.finish_connection(
+                        attempt,
+                        ConnectionOutcome::Failed(ConnectionFailure::Driver),
+                    );
                     apply_station_yield(next, &status).await;
                     continue;
                 }
                 if !status.is_enabled() {
+                    let next = recovery.finish_connection(attempt, ConnectionOutcome::Cancelled);
+                    recovery.resume_now();
+                    apply_station_yield(next, &status).await;
                     continue;
                 }
                 boot_stage(BootPhase::WifiConnectionBegin);
-                log::info!("wifi: station connection begin pinned={pinned}");
+                let started_at = embassy_time::Instant::now().as_millis();
+                log::info!(
+                    "wifi: station connection begin channel={}",
+                    access_point.channel
+                );
                 let connected = embassy_futures::select::select(
                     with_timeout(WIFI_CONNECT_TIMEOUT, controller.connect_async()),
                     status.wait_until_radio_disabled(),
                 )
                 .await;
-                match connected {
+                let next = match connected {
                     embassy_futures::select::Either::First(Ok(Ok(connected))) => {
                         WIFI_STATION_JOINED.store(true, Ordering::Relaxed);
                         boot_stage(BootPhase::WifiAssociated);
                         log::info!(
-                            "wifi: station connected pinned={} channel={}",
-                            pinned,
-                            connected.channel
+                            "wifi: station connected channel={} elapsed_ms={}",
+                            connected.channel,
+                            embassy_time::Instant::now()
+                                .as_millis()
+                                .saturating_sub(started_at)
                         );
-                        let next = recovery.complete(StationAttemptOutcome::Connected(
-                            StationAccessPoint {
+                        let next = recovery.finish_connection(
+                            attempt,
+                            ConnectionOutcome::Connected(StationAccessPoint {
                                 bssid: connected.bssid,
                                 channel: connected.channel,
-                            },
-                        ));
+                            }),
+                        );
                         if let Err(error) = controller.set_power_saving(PowerSaveMode::None) {
                             log::warn!("wifi: power-save configuration failed: {error:?}");
                         }
-                        apply_station_yield(next, &status).await;
+                        next
                     }
                     embassy_futures::select::Either::First(Ok(Err(error))) => {
                         WIFI_STATION_JOINED.store(false, Ordering::Relaxed);
                         match error {
                             WifiError::Disconnected(disconnected) => log::warn!(
-                                "wifi: station connection failed ({:?}, rssi {})",
+                                "wifi: station connection failed ({:?}, rssi {}) elapsed_ms={}",
                                 disconnected.reason,
-                                disconnected.rssi
+                                disconnected.rssi,
+                                embassy_time::Instant::now()
+                                    .as_millis()
+                                    .saturating_sub(started_at)
                             ),
-                            other => log::warn!("wifi: station connection failed: {other:?}"),
+                            other => log::warn!(
+                                "wifi: station connection failed: {other:?} elapsed_ms={}",
+                                embassy_time::Instant::now()
+                                    .as_millis()
+                                    .saturating_sub(started_at)
+                            ),
                         }
                         let failure = classify_connection_failure(error);
-                        let next =
-                            recovery.complete(StationAttemptOutcome::ConnectionFailed(failure));
-                        apply_station_yield(next, &status).await;
+                        recovery.finish_connection(attempt, ConnectionOutcome::Failed(failure))
                     }
                     embassy_futures::select::Either::First(Err(_)) => {
                         WIFI_STATION_JOINED.store(false, Ordering::Relaxed);
-                        log::warn!("wifi: station connection timed out");
-                        cancel_station_connection();
-                        let next = recovery.complete(StationAttemptOutcome::ConnectionFailed(
-                            ConnectionFailure::Timeout,
-                        ));
-                        apply_station_yield(next, &status).await;
+                        log::warn!(
+                            "wifi: station connection timed out elapsed_ms={}",
+                            embassy_time::Instant::now()
+                                .as_millis()
+                                .saturating_sub(started_at)
+                        );
+                        stop_station_connection().await;
+                        recovery.finish_connection(
+                            attempt,
+                            ConnectionOutcome::Failed(ConnectionFailure::Timeout),
+                        )
                     }
                     embassy_futures::select::Either::Second(()) => {
                         WIFI_STATION_JOINED.store(false, Ordering::Relaxed);
-                        cancel_station_connection();
+                        stop_station_connection().await;
+                        let next =
+                            recovery.finish_connection(attempt, ConnectionOutcome::Cancelled);
+                        recovery.resume_now();
+                        next
                     }
-                }
+                };
+                apply_station_yield(next, &status).await;
             }
-            StationAttempt::Scan => {
-                boot_stage(BootPhase::WifiFallbackScanBegin);
-                log::info!("wifi: fallback scan begin");
+            StationAttempt::Scan(attempt) => {
+                let channel = attempt.channel();
+                if attempt.starts_sweep() {
+                    boot_stage(BootPhase::WifiDiscoveryBegin);
+                    log::info!("wifi: discovery sweep begin");
+                }
                 let scan_config = ScanConfig::default()
-                    .with_ssid(config.ssid.as_str())
+                    .with_ssid(credentials.ssid.as_str())
+                    .with_channel(channel)
+                    .with_scan_type(ScanTypeConfig::Active {
+                        min: WIFI_SCAN_MIN_DWELL,
+                        max: WIFI_SCAN_MAX_DWELL,
+                    })
                     .with_max(8);
                 let scan = embassy_futures::select::select(
-                    with_timeout(WIFI_SCAN_TIMEOUT, controller.scan_async(&scan_config)),
+                    with_timeout(
+                        WIFI_CHANNEL_SCAN_TIMEOUT,
+                        controller.scan_async(&scan_config),
+                    ),
                     status.wait_until_radio_disabled(),
                 )
                 .await;
-                match scan {
+                let next = match scan {
                     embassy_futures::select::Either::First(Ok(Ok(networks))) => {
                         let best = networks
                             .iter()
@@ -530,25 +636,35 @@ async fn wifi_connect_task(
                                 bssid: access_point.bssid,
                                 channel: access_point.channel,
                             });
-                        boot_stage(BootPhase::WifiFallbackScanComplete);
-                        log::info!("wifi: fallback scan complete found={}", best.is_some());
-                        let next = recovery.complete(StationAttemptOutcome::ScanCompleted(best));
-                        apply_station_yield(next, &status).await;
+                        if best.is_some() || attempt.ends_sweep() {
+                            boot_stage(BootPhase::WifiDiscoveryComplete);
+                        }
+                        if best.is_some() {
+                            log::info!("wifi: discovery found channel={channel}");
+                        } else if attempt.ends_sweep() {
+                            log::warn!("wifi: configured network absent");
+                        }
+                        let outcome = best.map_or(ScanOutcome::NotFound, ScanOutcome::Found);
+                        recovery.finish_scan(attempt, outcome)
                     }
                     embassy_futures::select::Either::First(Ok(Err(error))) => {
-                        log::warn!("wifi: fallback scan failed: {error:?}");
-                        let next = recovery
-                            .complete(StationAttemptOutcome::ScanFailed(ScanFailure::Driver));
-                        apply_station_yield(next, &status).await;
+                        log::warn!("wifi: discovery scan failed channel={channel}: {error:?}");
+                        stop_station_scan().await;
+                        recovery.finish_scan(attempt, ScanOutcome::Failed(ScanFailure::Driver))
                     }
                     embassy_futures::select::Either::First(Err(_)) => {
-                        log::warn!("wifi: fallback scan timed out");
-                        let next = recovery
-                            .complete(StationAttemptOutcome::ScanFailed(ScanFailure::Timeout));
-                        apply_station_yield(next, &status).await;
+                        log::warn!("wifi: discovery scan timed out channel={channel}");
+                        stop_station_scan().await;
+                        recovery.finish_scan(attempt, ScanOutcome::Failed(ScanFailure::Timeout))
                     }
-                    embassy_futures::select::Either::Second(()) => {}
-                }
+                    embassy_futures::select::Either::Second(()) => {
+                        stop_station_scan().await;
+                        let next = recovery.finish_scan(attempt, ScanOutcome::Cancelled);
+                        recovery.resume_now();
+                        next
+                    }
+                };
+                apply_station_yield(next, &status).await;
             }
         }
     }
@@ -585,10 +701,19 @@ fn classify_connection_failure(error: WifiError) -> ConnectionFailure {
 #[cfg(feature = "wifi-auto")]
 async fn apply_station_yield(next: StationYield, status: &AutoWifiStatus<MEMBERS>) {
     match next {
-        StationYield::MonitorLink => {}
-        StationYield::RetryDelay => {
+        StationYield::Continue | StationYield::MonitorLink | StationYield::Disabled => {}
+        StationYield::InterChannel => {
             let _ = embassy_futures::select::select(
-                Timer::after(WIFI_RETRY_DELAY),
+                Timer::after(WIFI_INTER_CHANNEL_DELAY),
+                status.wait_until_radio_disabled(),
+            )
+            .await;
+        }
+        StationYield::Retry(delay) => {
+            let delay_seconds = delay.seconds();
+            log::info!("wifi: station recovery delay_secs={delay_seconds}");
+            let _ = embassy_futures::select::select(
+                Timer::after(Duration::from_secs(delay_seconds)),
                 status.wait_until_radio_disabled(),
             )
             .await;
