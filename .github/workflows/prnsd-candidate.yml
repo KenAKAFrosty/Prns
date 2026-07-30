@@ -102,9 +102,13 @@ jobs:
               } > "$evidence"
               ;;
             Windows)
+              sysroot="$(cygpath --unix "$(rustc --print sysroot)")"
+              host="$(rustc --print host-tuple)"
+              llvm_readobj="${sysroot}/lib/rustlib/${host}/bin/llvm-readobj.exe"
+              test -x "$llvm_readobj"
               {
                 file "${{ matrix.platform.binary }}"
-                "$(rustup which llvm-readobj)" --coff-imports "${{ matrix.platform.binary }}"
+                "$llvm_readobj" --coff-imports "${{ matrix.platform.binary }}"
               } > "$evidence"
               ;;
             *)
