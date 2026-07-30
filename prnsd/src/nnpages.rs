@@ -835,50 +835,9 @@ pub(crate) fn replace_file(temporary: &Path, destination: &Path) -> io::Result<(
 
 #[cfg(windows)]
 pub(crate) fn replace_file(temporary: &Path, destination: &Path) -> io::Result<()> {
-    use std::ffi::c_void;
-    use std::os::windows::ffi::OsStrExt as _;
-
-    if !destination.exists() {
-        return fs::rename(temporary, destination);
-    }
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        fn ReplaceFileW(
-            replaced: *const u16,
-            replacement: *const u16,
-            backup: *const u16,
-            flags: u32,
-            exclude: *mut c_void,
-            reserved: *mut c_void,
-        ) -> i32;
-    }
-    let replaced = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
-    let replacement = temporary
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
-    // SAFETY: both paths are valid, NUL-terminated UTF-16 buffers for the duration of
-    // the call; the optional backup and extension arguments are deliberately null.
-    let succeeded = unsafe {
-        ReplaceFileW(
-            replaced.as_ptr(),
-            replacement.as_ptr(),
-            std::ptr::null(),
-            1, // REPLACEFILE_WRITE_THROUGH
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-        )
-    };
-    if succeeded != 0 {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
-    }
+    tempfile::TempPath::try_from_path(temporary.to_path_buf())?
+        .persist(destination)
+        .map_err(|error| error.error)
 }
 
 fn decode_request(path: &Path) -> Option<PendingNnPagesRefresh> {
