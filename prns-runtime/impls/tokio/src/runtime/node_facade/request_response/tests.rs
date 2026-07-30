@@ -258,6 +258,10 @@ async fn static_file_response_waits_for_each_proof_and_bounds_each_window() {
             segment.data.len() <= super::STATIC_RESPONSE_SEGMENT_BYTES,
             "one live plaintext window remains bounded"
         );
+        assert!(
+            segment.data.as_slice().iter().all(|byte| *byte == 0x42),
+            "every window carries bare file bytes with no envelope or binary header"
+        );
         if expected_index == 1 {
             let HostResourceMetadata::Packed(metadata) = &segment.metadata else {
                 panic!("first segment carries filename metadata");
@@ -288,6 +292,45 @@ async fn static_file_response_waits_for_each_proof_and_bounds_each_window() {
         }
         expected_index += 1;
     }
+
+    assert_eq!(responding.await.unwrap().unwrap(), token.rtt);
+}
+
+#[tokio::test]
+async fn an_open_file_response_streams_from_its_handle_with_filename_metadata() {
+    let (handle, mut command_rx) = handle();
+    let token = RespondToken {
+        link_id: LinkId::new([17; 16]),
+        request_id: RequestId([18; 16]),
+        rtt: RttMillis::new(51),
+    };
+    let expected = std::fs::read("Cargo.toml").unwrap();
+    let source = std::fs::File::open("Cargo.toml").unwrap();
+    let byte_len = expected.len() as u64;
+    let responding = tokio::spawn(async move {
+        handle
+            .respond_open_file_settled(token, "Cargo.toml", source, byte_len)
+            .await
+    });
+
+    let Some(HostCommand::SendResourceSegment(segment)) = command_rx.recv().await else {
+        panic!("expected an open-file response resource segment");
+    };
+    assert_eq!(segment.request_id, Some(token.request_id));
+    assert_eq!(segment.segment_index, 1);
+    assert_eq!(segment.total_segments, 1);
+    assert_eq!(segment.data.as_slice(), expected.as_slice());
+    let HostResourceMetadata::Packed(metadata) = &segment.metadata else {
+        panic!("the segment carries filename metadata");
+    };
+    assert_eq!(
+        parse_file_metadata(metadata.as_slice()).unwrap(),
+        b"Cargo.toml"
+    );
+    segment
+        .completion
+        .send(Settlement::Respond(Ok(())))
+        .unwrap();
 
     assert_eq!(responding.await.unwrap().unwrap(), token.rtt);
 }

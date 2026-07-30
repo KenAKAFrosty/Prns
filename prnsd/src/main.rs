@@ -6,7 +6,7 @@ mod i2p;
 mod interface_discovery;
 mod interfaces;
 mod managed_service;
-mod node_pages;
+mod nnpages;
 mod observability;
 mod persistence;
 mod services;
@@ -102,10 +102,10 @@ async fn run_command(command: cli::Command) -> ExitCode {
         }
         cli::Command::I2p(args) => i2p::run(args).await,
         cli::Command::Interfaces(args) => interfaces::run(*args),
-        cli::Command::Pages(args) => match node_pages::run_cli(args).await {
+        cli::Command::NnPages(args) => match nnpages::run_cli(args).await {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
-                eprintln!("prnsd pages: {error}");
+                eprintln!("prnsd nnpages: {error}");
                 ExitCode::FAILURE
             }
         },

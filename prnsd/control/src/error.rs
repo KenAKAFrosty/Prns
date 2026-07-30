@@ -12,6 +12,10 @@ pub enum ServiceError {
     InvalidRecord,
     IncompleteRecord,
     InvalidManagedEnvironment,
+    InvalidManagedConfigRecord,
+    ManagedConfigUnavailable {
+        pid: u32,
+    },
     ManagedInstanceAlreadyRunning,
     ProcessExited {
         log: PathBuf,
@@ -42,6 +46,13 @@ impl fmt::Display for ServiceError {
             Self::InvalidManagedEnvironment => {
                 formatter.write_str("the internal prnsd managed environment is invalid")
             }
+            Self::InvalidManagedConfigRecord => {
+                formatter.write_str("the managed prnsd configuration record is invalid")
+            }
+            Self::ManagedConfigUnavailable { pid } => write!(
+                formatter,
+                "managed prnsd process {pid} has not published its configuration directory"
+            ),
             Self::ManagedInstanceAlreadyRunning => {
                 formatter.write_str("another managed prnsd instance already owns the session")
             }

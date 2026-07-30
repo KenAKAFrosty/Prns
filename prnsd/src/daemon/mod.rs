@@ -1,5 +1,5 @@
 mod background;
-mod configuration;
+pub(crate) mod configuration;
 mod configured_interfaces;
 mod identity;
 mod interface_failure;
@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::shutdown::ShutdownSignal;
-use crate::{cli, interface_discovery, node_pages, observability, persistence, services, splash};
+use crate::{cli, interface_discovery, nnpages, observability, persistence, services, splash};
 use personal_rns::browser_rendezvous::{AutoWifiDevicePolicy, BrowserRendezvous};
 use personal_rns::config::{SharedInstance, TransportIdentityPolicy};
 use personal_rns::engine::{
@@ -40,7 +40,7 @@ use personal_rns::PlanRuntimeContext;
 use prnsd_control::{config_digest, ManagedProcess, ReloadRequest, ReloadResult, ServiceError};
 
 const TRAY_STATUS_INTERVAL: Duration = Duration::from_secs(2);
-const NODE_PAGE_REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60);
+const NNPAGES_REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct DaemonStatus {
@@ -182,15 +182,15 @@ pub(super) async fn run(
             diagnostic = %diagnostic,
         );
     }
-    let node_pages = match node_pages::NodePageCatalog::discover(&config_dir) {
+    let nnpages = match nnpages::NnPagesCatalog::discover(&config_dir) {
         Ok(catalog) => catalog,
         Err(error) => {
             tracing::warn!(
-                event = "node_pages_unavailable",
-                root = %node_pages::page_root(&config_dir).display(),
+                event = "nnpages_unavailable",
+                root = %nnpages::root(&config_dir).display(),
                 error = %error,
             );
-            node_pages::NodePageCatalog::empty(node_pages::page_root(&config_dir))
+            nnpages::NnPagesCatalog::empty(&config_dir)
         }
     };
     let network_identity =
@@ -316,7 +316,7 @@ pub(super) async fn run(
             transport: visible_identity_hash,
             network: network_identity_hash,
         });
-    let request_node_pages = node_pages.clone();
+    let request_nnpages = nnpages.clone();
     let mut prns = PrnsNode::new_with_handle(move |handle| PrnsNodeRecipe {
         transport_identity: transport_secret,
         pre_configured_destinations: std::iter::empty(),
@@ -324,7 +324,7 @@ pub(super) async fn run(
             handle,
             remote_management_transport,
             started,
-            request_node_pages,
+            request_nnpages,
         ),
         storage: GrowableHeap,
         request_endpoints: services::DaemonRequestRoutes,
@@ -391,7 +391,7 @@ pub(super) async fn run(
     let startup = interface_ownership.startup();
 
     let management_destinations = match interface_ownership.routing_tables() {
-        Some(_) => match services::activate(&mut prns, &plan, &visible_secret, &node_pages) {
+        Some(_) => match services::activate(&mut prns, &plan, &visible_secret, &nnpages) {
             Ok(destinations) => destinations,
             Err(_) => {
                 observability.shutdown().await;
@@ -451,6 +451,13 @@ pub(super) async fn run(
         started,
     });
 
+    if let Some(managed) = managed.as_ref() {
+        if let Err(error) = managed.publish_config_dir(&config_dir) {
+            tracing::error!(event = "managed_config_publish_failed", error = %error);
+            observability.shutdown().await;
+            process::exit(1);
+        }
+    }
     tracing::info!(
         event = if startup.degraded() {
             "daemon_ready_degraded"
@@ -516,8 +523,8 @@ pub(super) async fn run(
         shutdown,
         operating_system_shutdown,
     ));
-    let mut page_refresh_tick = Box::pin(tokio::time::sleep(NODE_PAGE_REFRESH_INTERVAL));
-    let mut page_refresh_tasks = tokio::task::JoinSet::new();
+    let mut nnpages_refresh_tick = Box::pin(tokio::time::sleep(NNPAGES_REFRESH_INTERVAL));
+    let mut nnpages_refresh_tasks = tokio::task::JoinSet::new();
     loop {
         tokio::select! {
             result = &mut node_run => {
@@ -584,26 +591,28 @@ pub(super) async fn run(
                     }
                 }
             }
-            _ = &mut page_refresh_tick => {
+            _ = &mut nnpages_refresh_tick => {
                 if let Some(destination) = node_page_destination {
-                    let pages = node_pages.clone();
+                    let nnpages = nnpages.clone();
                     let handle = prns_handle.clone();
-                    page_refresh_tasks.spawn(async move {
-                        match pages.refresh(&handle, destination).await {
+                    nnpages_refresh_tasks.spawn(async move {
+                        match nnpages.refresh(&handle, destination).await {
                             Ok(report) if report.added != 0 || report.removed != 0 => {
                                 tracing::info!(
-                                    event = "node_pages_refreshed",
+                                    event = "nnpages_refreshed",
                                     discovered = report.discovered,
                                     added = report.added,
                                     removed = report.removed,
                                     unchanged = report.unchanged,
+                                    settings = report.settings_status.as_control_value(),
+                                    settings_changed = report.settings_changed,
                                     cause = "periodic",
                                 );
                             }
                             Ok(_) => {}
                             Err(error) => {
                                 tracing::warn!(
-                                    event = "node_pages_refresh_failed",
+                                    event = "nnpages_refresh_failed",
                                     cause = "periodic",
                                     error = %error,
                                 );
@@ -611,64 +620,123 @@ pub(super) async fn run(
                         }
                     });
                 }
-                page_refresh_tick
+                nnpages_refresh_tick
                     .as_mut()
-                    .reset(tokio::time::Instant::now() + NODE_PAGE_REFRESH_INTERVAL);
+                    .reset(tokio::time::Instant::now() + NNPAGES_REFRESH_INTERVAL);
             }
-            request = node_pages::next_refresh_request(&config_dir) => {
+            request = nnpages::next_refresh_request(&config_dir) => {
                 match request {
                     Ok(request) => {
-                        let pages = node_pages.clone();
+                        let nnpages = nnpages.clone();
                         let handle = prns_handle.clone();
-                        page_refresh_tasks.spawn(async move {
-                            let result = match node_page_destination {
-                                Some(destination) => pages.refresh(&handle, destination).await,
-                                None => {
-                                    Err(node_pages::NodePageRefreshError::DestinationUnavailable)
+                        nnpages_refresh_tasks.spawn(async move {
+                            match request.kind() {
+                                nnpages::NnPagesControlKind::Refresh => {
+                                    let result = match node_page_destination {
+                                        Some(destination) => {
+                                            nnpages.refresh(&handle, destination).await
+                                        }
+                                        None => Err(
+                                            nnpages::NnPagesRefreshError::DestinationUnavailable,
+                                        ),
+                                    };
+                                    match &result {
+                                        Ok(report) => tracing::info!(
+                                            event = "nnpages_refreshed",
+                                            discovered = report.discovered,
+                                            added = report.added,
+                                            removed = report.removed,
+                                            unchanged = report.unchanged,
+                                            settings = report.settings_status.as_control_value(),
+                                            settings_changed = report.settings_changed,
+                                            cause = "operator",
+                                        ),
+                                        Err(error) => tracing::warn!(
+                                            event = "nnpages_refresh_failed",
+                                            cause = "operator",
+                                            error = %error,
+                                        ),
+                                    }
+                                    if let Err(error) = request.finish(result) {
+                                        tracing::warn!(
+                                            event = "nnpages_refresh_result_failed",
+                                            error = %error,
+                                        );
+                                    }
                                 }
-                            };
-                            match &result {
-                                Ok(report) => tracing::info!(
-                                    event = "node_pages_refreshed",
-                                    discovered = report.discovered,
-                                    added = report.added,
-                                    removed = report.removed,
-                                    unchanged = report.unchanged,
-                                    cause = "operator",
-                                ),
-                                Err(error) => tracing::warn!(
-                                    event = "node_pages_refresh_failed",
-                                    cause = "operator",
-                                    error = %error,
-                                ),
-                            }
-                            if let Err(error) = request.finish(result) {
-                                tracing::warn!(
-                                    event = "node_pages_refresh_result_failed",
-                                    error = %error,
-                                );
+                                nnpages::NnPagesControlKind::Announce => {
+                                    let succeeded = match node_page_destination {
+                                        Some(destination)
+                                            if nnpages::is_page_available(&nnpages.index_path()) =>
+                                        {
+                                            match handle
+                                                .announce_now(services::announce_for(
+                                                    destination,
+                                                    Some(&nnpages.node_name_path()),
+                                                ))
+                                                .await
+                                            {
+                                                Ok(_) => true,
+                                                Err(error) => {
+                                                    tracing::warn!(
+                                                        event = "nnpages_announce_failed",
+                                                        cause = "operator",
+                                                        error = ?error,
+                                                    );
+                                                    false
+                                                }
+                                            }
+                                        }
+                                        Some(_) => {
+                                            tracing::warn!(
+                                                event = "nnpages_announce_failed",
+                                                cause = "index_unavailable",
+                                            );
+                                            false
+                                        }
+                                        None => {
+                                            tracing::warn!(
+                                                event = "nnpages_announce_failed",
+                                                cause = "destination_unavailable",
+                                            );
+                                            false
+                                        }
+                                    };
+                                    if succeeded {
+                                        tracing::info!(
+                                            event = "nnpages_announced",
+                                            cause = "operator",
+                                        );
+                                    }
+                                    if let Err(error) = request.finish_announce(succeeded) {
+                                        tracing::warn!(
+                                            event = "nnpages_announce_result_failed",
+                                            error = %error,
+                                        );
+                                    }
+                                }
                             }
                         });
                     }
                     Err(error) => {
                         tracing::warn!(
-                            event = "node_pages_refresh_request_failed",
+                            event = "nnpages_refresh_request_failed",
                             error = %error,
                         );
                     }
                 }
             }
-            completed = page_refresh_tasks.join_next(), if !page_refresh_tasks.is_empty() => {
+            completed = nnpages_refresh_tasks.join_next(), if !nnpages_refresh_tasks.is_empty() => {
                 if let Some(Err(error)) = completed {
                     tracing::warn!(
-                        event = "node_pages_refresh_task_failed",
+                        event = "nnpages_refresh_task_failed",
                         error = %error,
                     );
                 }
             }
         }
     }
-    page_refresh_tasks.shutdown().await;
+    nnpages_refresh_tasks.shutdown().await;
     drop(persistence_run);
     drop(node_run);
     if let Some(task) = tray_status_task {

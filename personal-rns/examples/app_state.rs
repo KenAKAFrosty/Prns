@@ -22,7 +22,7 @@ impl RequestEndpoint<StatusBoard> for Status {
         let hits = context.state.hits.get() + 1;
         context.state.hits.set(hits);
         let reply = format!("{}, visitor {hits}", context.state.greeting);
-        context.respond_packed(reply.as_bytes())
+        context.respond(reply.as_bytes())
     }
 }
 

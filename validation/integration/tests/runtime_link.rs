@@ -34,7 +34,7 @@ impl RequestEndpoint<Responder> for Echo {
     async fn handle(mut cx: RequestContext<'_, Responder>) -> Result<(), Decline> {
         let asked = cx.data;
         let _ = cx.write_packed(asked);
-        cx.respond_packed(b"-pong")
+        cx.respond(b"-pong")
     }
 }
 

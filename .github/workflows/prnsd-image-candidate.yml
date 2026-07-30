@@ -55,6 +55,10 @@ jobs:
       - name: Build one native-platform OCI layout
         run: |
           mkdir -p target/image
+          ./tools/prns release source package -- \
+            --commit "$GITHUB_SHA" \
+            --version "$(cat VERSION)" \
+            --output release/source-bundle/source.zip
           source_epoch="$(git show -s --format=%ct HEAD)"
           build_date="$(git show -s --format=%cI HEAD)"
           docker buildx build \

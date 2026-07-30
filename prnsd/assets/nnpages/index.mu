@@ -1,3 +1,4 @@
+#!bg=000
 `c
 ⠀`F6eb⢀⠀⠀⠀⣀⣀⣀⡀⠀⠀⢀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀`f
 ⠀⠀`F6eb⢡⠖⠋⠁⠀⠀⠉⠓⢦⠁⠀⠀⠀⠀⣿⡿⢿⣶⣦⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀`f
@@ -15,11 +16,13 @@ High-performance Reticulum, built to run on any device.
 
 >>`!Welcome`!
 
-This is a Prns cloud host: an operator-owned Reticulum node running the same Prns engine used on embedded, desktop, mobile, games, and the web.
+This is a Prns Daemon: an operator-owned Reticulum node running the same Prns engine used on embedded, desktop, mobile, games, and the web.
 
-This page is served directly from the node's `F6ebpages/index.mu`f file. Its operator can edit it, add more `F6eb.mu`f pages, or remove it entirely.
+`c
+`F6eb`_`[Coming from RNS?`:/page/coming-from-rns.mu]`_`f   `F6eb`_`[Download the source`:/page/source.mu]`_`f
 
-Full guides: source clone or `B6eb`F222 https://prns.dev `f`b
+`F999On the web:`f  `B6eb`F222 https://prns.dev `f`b  `B6eb`F222 https://reticulum.rs `f`b
+`a
 
 >>`!Why Prns?`!
 
@@ -65,14 +68,14 @@ Byte-for-byte wire parity with the reference implementation, a live interop suit
 >>
 `F6eb•`f `F6eb`!Free and open source`!`f
 >>>
-MIT / Apache-2.0
+MIT / Apache-2.0. `F6eb`_`[Get the source`:/page/source.mu]`_`f
 
 >>
 -∿
 
 `F999"Reticulum is the foundational communication infrastructure of a bright future we can have, as long as we all build it."`f
 
-`F999This cloud host is one small piece of that future.`f
+`F999This daemon is one small piece of that future.`f
 
 <
 -

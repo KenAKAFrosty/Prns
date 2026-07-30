@@ -38,7 +38,7 @@ impl RequestEndpoint<Responder> for Echo {
     async fn handle(mut cx: RequestContext<'_, Responder>) -> Result<(), Decline> {
         let asked = cx.data;
         let _ = cx.write_packed(asked);
-        cx.respond_packed(b"-pong")
+        cx.respond(b"-pong")
     }
 }
 
@@ -47,7 +47,7 @@ impl RequestEndpoint<Responder> for Fat {
     const ENDPOINT_ID: &'static str = "/test/fat";
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
     async fn handle(mut cx: RequestContext<'_, Responder>) -> Result<(), Decline> {
-        cx.respond_packed(&fat_body())
+        cx.respond(fat_body())
     }
 }
 

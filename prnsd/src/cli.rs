@@ -88,19 +88,49 @@ pub struct LaunchArgs {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Args)]
-pub struct PagesArgs {
+pub struct NnPagesArgs {
     #[command(subcommand)]
-    pub command: PagesCommand,
+    pub command: NnPagesCommand,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Subcommand)]
-pub enum PagesCommand {
+pub enum NnPagesCommand {
     #[command(about = "Rescan the live daemon's pages directory now")]
-    Refresh(PagesRefreshArgs),
+    Refresh(NnPagesRefreshArgs),
+    #[command(about = "Write the starter pages and refresh the source page")]
+    Seed(NnPagesSeedArgs),
+    #[command(about = "Announce the hosted page destination now")]
+    Announce(NnPagesAnnounceArgs),
+    #[command(about = "Rename the announced node")]
+    Rename(NnPagesRenameArgs),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Args)]
-pub struct PagesRefreshArgs {
+pub struct NnPagesRefreshArgs {
+    #[arg(long, value_name = "DIR")]
+    pub config: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Args)]
+pub struct NnPagesSeedArgs {
+    #[arg(long)]
+    pub source: bool,
+    #[arg(long, value_name = "ZIP", requires = "source")]
+    pub source_archive: Option<PathBuf>,
+    #[arg(long, value_name = "DIR")]
+    pub config: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Args)]
+pub struct NnPagesAnnounceArgs {
+    #[arg(long, value_name = "DIR")]
+    pub config: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Args)]
+pub struct NnPagesRenameArgs {
+    #[arg(value_name = "NAME")]
+    pub name: String,
     #[arg(long, value_name = "DIR")]
     pub config: Option<PathBuf>,
 }
@@ -180,8 +210,8 @@ pub enum Command {
     I2p(I2pArgs),
     #[command(about = "Inspect and safely edit Reticulum interfaces")]
     Interfaces(Box<InterfacesArgs>),
-    #[command(about = "Manage hosted NomadNet pages")]
-    Pages(PagesArgs),
+    #[command(name = "nnpages", about = "Manage hosted NomadNet pages")]
+    NnPages(NnPagesArgs),
     #[command(about = "Show Reticulum interface and transport status")]
     Status(RnstatusArgs),
     #[command(about = "Inspect and manage Reticulum paths")]
@@ -217,7 +247,7 @@ pub fn parse_from(args: impl IntoIterator<Item = OsString>) -> Result<Command, c
                     | "run"
                     | "i2p"
                     | "interfaces"
-                    | "pages"
+                    | "nnpages"
                     | "status"
                     | "path"
                     | "probe"
@@ -328,15 +358,101 @@ mod tests {
     }
 
     #[test]
-    fn page_refresh_accepts_the_daemon_configuration_directory() {
+    fn nnpages_refresh_accepts_the_daemon_configuration_directory() {
         assert_eq!(
-            parse(&["prnsd", "pages", "refresh", "--config", "/node"]),
-            Command::Pages(PagesArgs {
-                command: PagesCommand::Refresh(PagesRefreshArgs {
+            parse(&["prnsd", "nnpages", "refresh", "--config", "/node"]),
+            Command::NnPages(NnPagesArgs {
+                command: NnPagesCommand::Refresh(NnPagesRefreshArgs {
                     config: Some(PathBuf::from("/node")),
                 }),
             })
         );
+    }
+
+    #[test]
+    fn nnpages_seed_accepts_the_daemon_configuration_directory() {
+        assert_eq!(
+            parse(&["prnsd", "nnpages", "seed", "--config", "/node"]),
+            Command::NnPages(NnPagesArgs {
+                command: NnPagesCommand::Seed(NnPagesSeedArgs {
+                    source: false,
+                    source_archive: None,
+                    config: Some(PathBuf::from("/node")),
+                }),
+            })
+        );
+    }
+
+    #[test]
+    fn nnpages_seed_accepts_the_source_flag() {
+        assert_eq!(
+            parse(&["prnsd", "nnpages", "seed", "--source"]),
+            Command::NnPages(NnPagesArgs {
+                command: NnPagesCommand::Seed(NnPagesSeedArgs {
+                    source: true,
+                    source_archive: None,
+                    config: None,
+                }),
+            })
+        );
+    }
+
+    #[test]
+    fn nnpages_seed_accepts_an_explicit_source_archive() {
+        assert_eq!(
+            parse(&[
+                "prnsd",
+                "nnpages",
+                "seed",
+                "--source",
+                "--source-archive",
+                "/release/source.zip"
+            ]),
+            Command::NnPages(NnPagesArgs {
+                command: NnPagesCommand::Seed(NnPagesSeedArgs {
+                    source: true,
+                    source_archive: Some(PathBuf::from("/release/source.zip")),
+                    config: None,
+                }),
+            })
+        );
+    }
+
+    #[test]
+    fn nnpages_announce_accepts_the_daemon_configuration_directory() {
+        assert_eq!(
+            parse(&["prnsd", "nnpages", "announce", "--config", "/node"]),
+            Command::NnPages(NnPagesArgs {
+                command: NnPagesCommand::Announce(NnPagesAnnounceArgs {
+                    config: Some(PathBuf::from("/node")),
+                }),
+            })
+        );
+    }
+
+    #[test]
+    fn nnpages_rename_takes_the_new_node_name() {
+        assert_eq!(
+            parse(&[
+                "prnsd",
+                "nnpages",
+                "rename",
+                "Frosty Relay",
+                "--config",
+                "/node"
+            ]),
+            Command::NnPages(NnPagesArgs {
+                command: NnPagesCommand::Rename(NnPagesRenameArgs {
+                    name: String::from("Frosty Relay"),
+                    config: Some(PathBuf::from("/node")),
+                }),
+            })
+        );
+    }
+
+    #[test]
+    fn retired_pages_command_is_not_an_alias() {
+        assert!(parse_from(["prnsd", "pages", "refresh"].map(OsString::from)).is_err());
     }
 
     #[test]

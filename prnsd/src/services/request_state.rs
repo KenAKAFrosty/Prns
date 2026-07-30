@@ -4,7 +4,7 @@ use personal_rns::identity::IdentityHash;
 use personal_rns::rns_remote_management::RemoteTransportStatus;
 use personal_rns::runtime::PrnsNodeHandle;
 
-use crate::node_pages::NodePageCatalog;
+use crate::nnpages::NnPagesCatalog;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TransportStatusIdentity {
@@ -17,7 +17,7 @@ pub struct DaemonRequestState {
     handle: PrnsNodeHandle,
     transport: Option<TransportStatusIdentity>,
     started: Instant,
-    node_pages: NodePageCatalog,
+    nnpages: NnPagesCatalog,
 }
 
 impl DaemonRequestState {
@@ -25,13 +25,13 @@ impl DaemonRequestState {
         handle: PrnsNodeHandle,
         transport: Option<TransportStatusIdentity>,
         started: Instant,
-        node_pages: NodePageCatalog,
+        nnpages: NnPagesCatalog,
     ) -> Self {
         Self {
             handle,
             transport,
             started,
-            node_pages,
+            nnpages,
         }
     }
 
@@ -39,8 +39,8 @@ impl DaemonRequestState {
         &self.handle
     }
 
-    pub fn node_pages(&self) -> &NodePageCatalog {
-        &self.node_pages
+    pub fn nnpages(&self) -> &NnPagesCatalog {
+        &self.nnpages
     }
 
     pub fn transport_status(&self) -> Option<RemoteTransportStatus> {

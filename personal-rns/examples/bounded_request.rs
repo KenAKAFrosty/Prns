@@ -15,7 +15,7 @@ impl RequestEndpoint for Echo {
 
     async fn handle(mut context: RequestContext<'_, ()>) -> Result<(), Decline> {
         let data_from_request = context.data;
-        context.respond_packed(data_from_request)
+        context.respond(data_from_request)
     }
 }
 

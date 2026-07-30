@@ -115,6 +115,10 @@ jobs:
         shell: bash
         run: |
           source_epoch="$(git show -s --format=%ct HEAD)"
+          ./tools/prns release source package -- \
+            --commit "$GITHUB_SHA" \
+            --version "$(cat VERSION)" \
+            --output "target/prnsd-release/${{ matrix.pass }}/source.zip"
           archive="prnsd-0.3.1-${{ matrix.platform.target }}"
           if [[ "${{ matrix.platform.target }}" == *windows-msvc ]]; then
             archive="${archive}.zip"
@@ -127,7 +131,12 @@ jobs:
             --source-commit "$GITHUB_SHA" \
             --source-date-epoch "$source_epoch" \
             --rustc "$(rustc --version)" \
+            --source-archive "target/prnsd-release/${{ matrix.pass }}/source.zip" \
+            --source-checksum "target/prnsd-release/${{ matrix.pass }}/source.zip.sha256" \
             --output "target/prnsd-release/${{ matrix.pass }}/${archive}"
+          rm \
+            "target/prnsd-release/${{ matrix.pass }}/source.zip" \
+            "target/prnsd-release/${{ matrix.pass }}/source.zip.sha256"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: prnsd-native-${{ matrix.platform.target }}-${{ matrix.pass }}-${{ github.run_id }}

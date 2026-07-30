@@ -27,7 +27,7 @@ impl RequestEndpoint<RequestServer> for BenchSizedRequestEndpoint {
                 .response_bytes
                 .fetch_add(wanted as u64, Ordering::Relaxed);
         }
-        cx.respond_packed(&framed)
+        cx.respond(framed)
     }
 }
 
