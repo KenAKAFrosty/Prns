@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from contextlib import redirect_stderr
 import importlib.util
+from io import StringIO
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -66,6 +69,25 @@ class ThirdPartyNoticeTests(unittest.TestCase):
             "x86_64-unknown-linux-gnu",
         )
         self.assertEqual(run.call_args.kwargs["env"]["CARGO_HOME"], str(cargo_home))
+
+    def test_mismatch_reports_the_exact_unified_diff(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "THIRD_PARTY_NOTICES.md"
+            output.write_text("old notice\n", encoding="utf-8")
+            stderr = StringIO()
+            with (
+                mock.patch.object(notices, "notice_bundle", return_value="new notice\n"),
+                mock.patch.object(sys, "argv", ["generator", "--output", str(output)]),
+                redirect_stderr(stderr),
+            ):
+                result = notices.main()
+
+        self.assertEqual(result, 1)
+        diagnostic = stderr.getvalue()
+        self.assertIn(f"--- {output} (committed)", diagnostic)
+        self.assertIn(f"+++ {output} (generated)", diagnostic)
+        self.assertIn("-old notice", diagnostic)
+        self.assertIn("+new notice", diagnostic)
 
 
 if __name__ == "__main__":

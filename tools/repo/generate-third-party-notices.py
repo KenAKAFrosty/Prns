@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import difflib
 import hashlib
 import json
 import os
@@ -344,6 +345,19 @@ def main() -> int:
         print(f"wrote {shown}")
         return 0
     if not arguments.output.exists() or arguments.output.read_bytes() != rendered_bytes:
+        committed = (
+            arguments.output.read_text(encoding="utf-8")
+            if arguments.output.exists()
+            else ""
+        )
+        sys.stderr.writelines(
+            difflib.unified_diff(
+                committed.splitlines(keepends=True),
+                rendered.splitlines(keepends=True),
+                fromfile=f"{arguments.output} (committed)",
+                tofile=f"{arguments.output} (generated)",
+            )
+        )
         print("THIRD_PARTY_NOTICES.md drifted; review and regenerate with --write", file=sys.stderr)
         return 1
     print("THIRD_PARTY_NOTICES.md matches the locked release graphs")
