@@ -93,6 +93,7 @@ jobs:
             # Signed prereleases were never admitted to stable website history. A
             # release record, or a signed candidate on a stable release, proves
             # that bootstrap would discard custody and therefore fails closed.
+            mkdir -p target
             gh api --paginate \
               "repos/${GITHUB_REPOSITORY}/releases?per_page=100" |
               jq -s 'add' > target/bootstrap-releases.json
