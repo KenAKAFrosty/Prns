@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import shutil
 import sys
 import tarfile
 import tempfile
@@ -32,6 +33,8 @@ PLATFORM_PATTERN = re.compile(r"linux/(?:amd64|arm64)\Z")
 IDENTITY_HASH_PATTERN = re.compile(r"[0-9a-f]{32}\Z")
 ARCHIVE_DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 SOURCE_CHECKSUM_PATTERN = re.compile(r"([0-9a-f]{64})  source\.zip\n\Z")
+FLASHER_BOARD_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
+FLASHER_PAYLOAD_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 IMAGE_SOURCE_ARCHIVE_PATH = "usr/share/prnsd/source.zip"
 IMAGE_SOURCE_CHECKSUM_PATH = "usr/share/prnsd/source.zip.sha256"
 OCI_LAYER_MODES = {
@@ -39,9 +42,7 @@ OCI_LAYER_MODES = {
     "application/vnd.oci.image.layer.v1.tar+gzip": "r:gz",
 }
 MAX_IMAGE_SOURCE_ARCHIVE_BYTES = 32 * 1024 * 1024
-IMAGE_SOURCE_PATHS = frozenset(
-    {IMAGE_SOURCE_ARCHIVE_PATH, IMAGE_SOURCE_CHECKSUM_PATH}
-)
+IMAGE_SOURCE_PATHS = frozenset({IMAGE_SOURCE_ARCHIVE_PATH, IMAGE_SOURCE_CHECKSUM_PATH})
 IMAGE_SOURCE_ANCESTORS = frozenset(
     ancestor
     for hosted in IMAGE_SOURCE_PATHS
@@ -93,6 +94,114 @@ def regular_file(path: Path, label: str) -> Path:
     return path
 
 
+def flasher_payload_identities(manifest_path: Path) -> dict[str, dict[str, str | int]]:
+    manifest = json.loads(
+        regular_file(manifest_path, "flasher manifest").read_text(encoding="utf-8")
+    )
+    release = manifest.get("release") if isinstance(manifest, dict) else None
+    version = suite_version()
+    targets = manifest.get("targets") if isinstance(manifest, dict) else None
+    if (
+        not isinstance(release, dict)
+        or release.get("version") != version
+        or release.get("channel") != "stable"
+        or not isinstance(targets, list)
+        or not targets
+    ):
+        raise ValueError("flasher manifest is not the stable suite release identity")
+
+    identities: dict[str, dict[str, str | int]] = {}
+    candidate_paths: set[str] = set()
+    board_slugs: set[str] = set()
+    for target in targets:
+        board = target.get("board_slug") if isinstance(target, dict) else None
+        parts = target.get("parts") if isinstance(target, dict) else None
+        if (
+            not isinstance(board, str)
+            or FLASHER_BOARD_PATTERN.fullmatch(board) is None
+            or board in board_slugs
+            or not isinstance(parts, list)
+            or not parts
+        ):
+            raise ValueError(
+                "flasher manifest has an invalid or duplicate board identity"
+            )
+        board_slugs.add(board)
+        for part in parts:
+            path = part.get("path") if isinstance(part, dict) else None
+            checksum = part.get("sha256") if isinstance(part, dict) else None
+            size = part.get("size") if isinstance(part, dict) else None
+            if (
+                not isinstance(path, str)
+                or path in candidate_paths
+                or not isinstance(checksum, str)
+                or ARCHIVE_DIGEST_PATTERN.fullmatch(checksum) is None
+                or not isinstance(size, int)
+                or isinstance(size, bool)
+                or size <= 0
+            ):
+                raise ValueError("flasher manifest has an invalid or duplicate payload")
+            relative = PurePosixPath(path)
+            expected_prefix = ("firmware", "hopspot", board, version)
+            if (
+                relative.is_absolute()
+                or len(relative.parts) != 5
+                or relative.parts[:4] != expected_prefix
+                or FLASHER_PAYLOAD_NAME_PATTERN.fullmatch(relative.name) is None
+            ):
+                raise ValueError(
+                    f"flasher payload path does not match board {board}: {path}"
+                )
+            candidate_paths.add(path)
+            asset_name = f"prns-hopspot-{version}-{board}-{relative.name}"
+            if asset_name in identities:
+                raise ValueError(
+                    f"flasher payload asset name is ambiguous: {asset_name}"
+                )
+            identities[asset_name] = {
+                "asset": asset_name,
+                "board_slug": board,
+                "candidate_path": path,
+                "sha256": checksum,
+                "size": size,
+            }
+    return identities
+
+
+def stage_flasher_payloads(arguments: argparse.Namespace) -> None:
+    candidate = arguments.candidate.resolve()
+    assets = arguments.assets.resolve()
+    if not arguments.candidate.is_dir() or arguments.candidate.is_symlink():
+        raise ValueError("flasher candidate must be one regular directory")
+    if not arguments.assets.is_dir() or arguments.assets.is_symlink():
+        raise ValueError("suite assets must be one regular directory")
+    identities = flasher_payload_identities(candidate / "flash-manifest.json")
+    copies: list[tuple[Path, Path, dict[str, str | int]]] = []
+    for asset_name, identity in sorted(identities.items()):
+        source = candidate / str(identity["candidate_path"])
+        destination = assets / asset_name
+        if not source.resolve().is_relative_to(candidate):
+            raise ValueError(f"flasher payload escapes the candidate: {source}")
+        regular_file(source, f"flasher payload {identity['candidate_path']}")
+        if source.stat().st_size != identity["size"]:
+            raise ValueError(
+                f"flasher payload size differs: {identity['candidate_path']}"
+            )
+        if sha256(source) != identity["sha256"]:
+            raise ValueError(
+                f"flasher payload checksum differs: {identity['candidate_path']}"
+            )
+        if destination.exists() or destination.is_symlink():
+            raise ValueError(f"flasher payload asset already exists: {asset_name}")
+        copies.append((source, destination, identity))
+    for source, destination, identity in copies:
+        shutil.copyfile(source, destination, follow_symlinks=False)
+        print(
+            f"staged {identity['candidate_path']} as {destination.name} "
+            f"({identity['sha256']})"
+        )
+
+
 def archive_members(
     *,
     binary: Path,
@@ -132,16 +241,28 @@ def archive_members(
     }
     sources = (
         (executable, binary_bytes, 0o755),
-        ("LICENSE-APACHE", regular_file(ROOT / "LICENSE-APACHE", "Apache license").read_bytes(), 0o644),
-        ("LICENSE-MIT", regular_file(ROOT / "LICENSE-MIT", "MIT license").read_bytes(), 0o644),
+        (
+            "LICENSE-APACHE",
+            regular_file(ROOT / "LICENSE-APACHE", "Apache license").read_bytes(),
+            0o644,
+        ),
+        (
+            "LICENSE-MIT",
+            regular_file(ROOT / "LICENSE-MIT", "MIT license").read_bytes(),
+            0o644,
+        ),
         (
             "THIRD_PARTY_NOTICES.md",
-            regular_file(ROOT / "THIRD_PARTY_NOTICES.md", "third-party notices").read_bytes(),
+            regular_file(
+                ROOT / "THIRD_PARTY_NOTICES.md", "third-party notices"
+            ).read_bytes(),
             0o644,
         ),
         (
             "minisign.pub",
-            regular_file(ROOT / "release/keys/minisign.pub", "Minisign public key").read_bytes(),
+            regular_file(
+                ROOT / "release/keys/minisign.pub", "Minisign public key"
+            ).read_bytes(),
             0o644,
         ),
         ("build-identity.json", canonical_json(identity), 0o644),
@@ -151,10 +272,16 @@ def archive_members(
     return root, [(f"{root}/{name}", content, mode) for name, content, mode in sources]
 
 
-def tar_archive(output: Path, root: str, members: list[tuple[str, bytes, int]], epoch: int) -> None:
+def tar_archive(
+    output: Path, root: str, members: list[tuple[str, bytes, int]], epoch: int
+) -> None:
     with output.open("wb") as raw:
-        with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=epoch) as compressed:
-            with tarfile.open(fileobj=compressed, mode="w", format=tarfile.USTAR_FORMAT) as archive:
+        with gzip.GzipFile(
+            filename="", mode="wb", fileobj=raw, mtime=epoch
+        ) as compressed:
+            with tarfile.open(
+                fileobj=compressed, mode="w", format=tarfile.USTAR_FORMAT
+            ) as archive:
                 directory = tarfile.TarInfo(root)
                 directory.type = tarfile.DIRTYPE
                 directory.mode = 0o755
@@ -172,7 +299,9 @@ def tar_archive(output: Path, root: str, members: list[tuple[str, bytes, int]], 
                     archive.addfile(info, io.BytesIO(content))
 
 
-def zip_archive(output: Path, members: list[tuple[str, bytes, int]], epoch: int) -> None:
+def zip_archive(
+    output: Path, members: list[tuple[str, bytes, int]], epoch: int
+) -> None:
     import datetime
 
     timestamp = datetime.datetime.fromtimestamp(epoch, datetime.timezone.utc)
@@ -240,7 +369,10 @@ def parse_platform_digest(value: str) -> tuple[str, str]:
         platform, digest = value.split("=", maxsplit=1)
     except ValueError as error:
         raise ValueError("platform digest must use PLATFORM=sha256:DIGEST") from error
-    if PLATFORM_PATTERN.fullmatch(platform) is None or SHA256_PATTERN.fullmatch(digest) is None:
+    if (
+        PLATFORM_PATTERN.fullmatch(platform) is None
+        or SHA256_PATTERN.fullmatch(digest) is None
+    ):
         raise ValueError(f"invalid platform digest {value!r}")
     return platform, digest
 
@@ -364,9 +496,7 @@ def oci_source_archive_sha256(layout: Path, platform: str) -> str:
                                 f"{platform} image layer contains an invalid whiteout"
                             )
                         removed = (
-                            f"{directory}/{removed_base}"
-                            if directory
-                            else removed_base
+                            f"{directory}/{removed_base}" if directory else removed_base
                         )
                         effect = ("remove", removed)
                     else:
@@ -407,7 +537,10 @@ def oci_source_archive_sha256(layout: Path, platform: str) -> str:
                         continue
                     if name not in IMAGE_SOURCE_PATHS:
                         continue
-                    if not member.isfile() or member.size > MAX_IMAGE_SOURCE_ARCHIVE_BYTES:
+                    if (
+                        not member.isfile()
+                        or member.size > MAX_IMAGE_SOURCE_ARCHIVE_BYTES
+                    ):
                         raise ValueError(f"{platform} image hosts an invalid {name}")
                     extracted = layer.extractfile(member)
                     if extracted is None:
@@ -469,7 +602,9 @@ def write_image_metadata(arguments: argparse.Namespace) -> None:
     manifest = arguments.manifest_digest
     if SHA256_PATTERN.fullmatch(manifest) is None:
         raise ValueError("manifest digest must be one lowercase SHA-256 OCI digest")
-    platforms = dict(parse_platform_digest(value) for value in arguments.platform_digest)
+    platforms = dict(
+        parse_platform_digest(value) for value in arguments.platform_digest
+    )
     if set(platforms) != {"linux/amd64", "linux/arm64"}:
         raise ValueError("image metadata requires exactly linux/amd64 and linux/arm64")
     value = {
@@ -567,7 +702,9 @@ def write_candidate_index(arguments: argparse.Namespace) -> None:
     if not any(str(item["name"]).endswith(".spdx.json") for item in files):
         raise ValueError("daemon candidate has no SPDX SBOM")
     if len([item for item in files if str(item["name"]).endswith("-linkage.txt")]) != 5:
-        raise ValueError("daemon candidate requires linkage evidence for all five targets")
+        raise ValueError(
+            "daemon candidate requires linkage evidence for all five targets"
+        )
     value = {
         "assets": files,
         "repository": arguments.repository,
@@ -639,7 +776,8 @@ def indexed_files(root: Path, index: Path) -> list[dict[str, str | int]]:
             raise ValueError(f"candidate assets must be flat regular files: {path}")
         files.append(path)
     return [
-        file_identity(path) for path in sorted(files, key=lambda candidate: candidate.name)
+        file_identity(path)
+        for path in sorted(files, key=lambda candidate: candidate.name)
     ]
 
 
@@ -705,7 +843,9 @@ def verify_candidate_index(arguments: argparse.Namespace) -> None:
         raise ValueError("native candidate index is missing linkage evidence")
     if f"prnsd-{version}-source.spdx.json" not in names:
         raise ValueError("native candidate index is missing its source SPDX SBOM")
-    print(f"verified exact native candidate from workflow run {arguments.workflow_run_id}")
+    print(
+        f"verified exact native candidate from workflow run {arguments.workflow_run_id}"
+    )
 
 
 def verify_image_candidate_index(arguments: argparse.Namespace) -> None:
@@ -735,7 +875,9 @@ def verify_image_candidate_index(arguments: argparse.Namespace) -> None:
         "prnsd-linux-arm64.spdx.json",
     }
     if {str(item["name"]) for item in actual} != expected_names:
-        raise ValueError("image candidate does not contain its exact OCI and SBOM matrix")
+        raise ValueError(
+            "image candidate does not contain its exact OCI and SBOM matrix"
+        )
     expected_digests = {
         platform: oci_platform_digest(
             root / f"prnsd-{platform.replace('/', '-')}.oci.tar", platform
@@ -758,7 +900,9 @@ def verify_image_candidate_index(arguments: argparse.Namespace) -> None:
             raise ValueError(
                 "image candidate source archive differs from its recorded digest"
             )
-    print(f"verified exact image candidate from workflow run {arguments.workflow_run_id}")
+    print(
+        f"verified exact image candidate from workflow run {arguments.workflow_run_id}"
+    )
 
 
 def create_inventory(arguments: argparse.Namespace) -> None:
@@ -774,11 +918,16 @@ def create_inventory(arguments: argparse.Namespace) -> None:
         if not entry.is_file() or entry.is_symlink():
             raise ValueError(f"release assets must be flat regular files: {entry}")
         if "\n" in entry.name or "\r" in entry.name or "  " in entry.name:
-            raise ValueError(f"release asset has an unsafe checksum name: {entry.name!r}")
+            raise ValueError(
+                f"release asset has an unsafe checksum name: {entry.name!r}"
+            )
         entries.append(entry)
     if not entries:
         raise ValueError("release asset inventory cannot be empty")
-    lines = [f"{sha256(path)}  {path.name}\n" for path in sorted(entries, key=lambda path: path.name)]
+    lines = [
+        f"{sha256(path)}  {path.name}\n"
+        for path in sorted(entries, key=lambda path: path.name)
+    ]
     output.write_text("".join(lines), encoding="utf-8", newline="\n")
     print(f"inventoried {len(entries)} release assets in {output}")
 
@@ -802,8 +951,7 @@ def verify_inventory(arguments: argparse.Namespace) -> None:
     actual = {
         path.name: path
         for path in root.iterdir()
-        if path.name
-        not in {inventory.name, f"{inventory.name}.minisig"}
+        if path.name not in {inventory.name, f"{inventory.name}.minisig"}
     }
     if set(actual) != set(expected):
         raise ValueError(
@@ -826,10 +974,24 @@ def suite_record_value(root: Path, inventory: Path, commit: str) -> dict:
     expected = read_inventory(inventory)
     daemon_names = {archive_name(version, target) for target in TARGETS}
     if not daemon_names.issubset(expected):
-        raise ValueError("suite inventory is missing one or more native daemon archives")
+        raise ValueError(
+            "suite inventory is missing one or more native daemon archives"
+        )
     flasher_bundle = f"prns-flasher-candidate-v{version}-signed.tar.gz"
     if flasher_bundle not in expected:
         raise ValueError("suite inventory is missing the signed flasher candidate")
+    flasher_manifest = "flash-manifest.json"
+    if flasher_manifest not in expected:
+        raise ValueError("suite inventory is missing the signed flasher manifest")
+    flasher_payloads = flasher_payload_identities(root / flasher_manifest)
+    for asset_name, identity in flasher_payloads.items():
+        if asset_name not in expected:
+            raise ValueError(f"suite inventory is missing flasher payload {asset_name}")
+        if expected[asset_name] != identity["sha256"]:
+            raise ValueError(f"suite flasher payload checksum differs: {asset_name}")
+        payload = regular_file(root / asset_name, f"suite flasher payload {asset_name}")
+        if payload.stat().st_size != identity["size"]:
+            raise ValueError(f"suite flasher payload size differs: {asset_name}")
     image_metadata_name = f"prnsd-image-v{version}.json"
     image_metadata_path = regular_file(
         root / image_metadata_name, "signed-image metadata"
@@ -891,21 +1053,24 @@ def suite_record_value(root: Path, inventory: Path, commit: str) -> dict:
         or railway.get("image")
         != f"ghcr.io/kenakafrosty/prnsd@{metadata['manifest_digest']}"
         or railway.get("replicas") != 1
-        or railway.get("volume")
-        != {"mount_path": "/var/lib/prnsd", "required": True}
+        or railway.get("volume") != {"mount_path": "/var/lib/prnsd", "required": True}
         or not isinstance(railway.get("network"), dict)
         or railway["network"].get("internal_port") != 4242
     ):
         raise ValueError("Railway contract differs from the signed image identity")
     linkage = sorted(name for name in expected if name.endswith("-linkage.txt"))
     if len(linkage) != 5:
-        raise ValueError("suite inventory requires linkage evidence for all native targets")
+        raise ValueError(
+            "suite inventory requires linkage evidence for all native targets"
+        )
     sboms = sorted(name for name in expected if name.endswith(".spdx.json"))
     if len(sboms) < 3:
         raise ValueError("suite inventory requires source and per-platform SPDX SBOMs")
     attestations = sorted(name for name in expected if "attestation" in name)
     if len(attestations) < 2:
-        raise ValueError("suite inventory requires native and OCI provenance attestations")
+        raise ValueError(
+            "suite inventory requires native and OCI provenance attestations"
+        )
     assets = [
         {
             "name": name,
@@ -919,6 +1084,8 @@ def suite_record_value(root: Path, inventory: Path, commit: str) -> dict:
         "attestations": attestations,
         "daemon_archives": sorted(daemon_names),
         "flasher": {
+            "manifest": flasher_manifest,
+            "payloads": [flasher_payloads[name] for name in sorted(flasher_payloads)],
             "signed_candidate": flasher_bundle,
         },
         "image": {
@@ -967,7 +1134,8 @@ def verify_suite_release(arguments: argparse.Namespace) -> None:
         root / f"release-record-v{version}.json", "suite release record"
     )
     record_signature = regular_file(
-        root / f"release-record-v{version}.json.minisig", "suite release record signature"
+        root / f"release-record-v{version}.json.minisig",
+        "suite release record signature",
     )
     public_key = regular_file(root / "minisign.pub", "suite Minisign public key")
     if public_key.read_bytes() != (ROOT / "release/keys/minisign.pub").read_bytes():
@@ -983,7 +1151,9 @@ def verify_suite_release(arguments: argparse.Namespace) -> None:
     actual: dict[str, Path] = {}
     for path in root.iterdir():
         if not path.is_file() or path.is_symlink():
-            raise ValueError(f"downloaded suite contains a non-regular asset: {path.name}")
+            raise ValueError(
+                f"downloaded suite contains a non-regular asset: {path.name}"
+            )
         actual[path.name] = path
     supplemental = {
         name
@@ -1032,13 +1202,14 @@ def verify_suite_release(arguments: argparse.Namespace) -> None:
         not isinstance(record, dict)
         or set(record) != required_fields
         or record.get("schema") != 2
-        or record.get("release")
-        != {"source_commit": commit, "version": version}
+        or record.get("release") != {"source_commit": commit, "version": version}
     ):
         raise ValueError("suite release record has an unsupported identity or shape")
     expected_record = suite_record_value(root, inventory, commit)
     if record != expected_record:
-        raise ValueError("suite release record differs from the exact inventoried assets")
+        raise ValueError(
+            "suite release record differs from the exact inventoried assets"
+        )
     if record.get("inventory") != file_identity(inventory):
         raise ValueError("suite release record does not bind the checksum inventory")
     expected_assets = [
@@ -1050,9 +1221,14 @@ def verify_suite_release(arguments: argparse.Namespace) -> None:
         for name, checksum in sorted(expected.items())
     ]
     if record.get("assets") != expected_assets:
-        raise ValueError("suite release record asset evidence differs from the inventory")
+        raise ValueError(
+            "suite release record asset evidence differs from the inventory"
+        )
     image = record.get("image")
-    if not isinstance(image, dict) or image.get("manifest_digest") != arguments.image_digest:
+    if (
+        not isinstance(image, dict)
+        or image.get("manifest_digest") != arguments.image_digest
+    ):
         raise ValueError("suite release record differs from the required OCI digest")
     metadata_name = image.get("metadata")
     if not isinstance(metadata_name, str) or metadata_name not in expected:
@@ -1126,11 +1302,15 @@ def write_deployment_evidence(arguments: argparse.Namespace) -> None:
 
 
 def verify_deployment_evidence(arguments: argparse.Namespace) -> None:
-    evidence_path = regular_file(arguments.evidence, "deployment qualification evidence")
+    evidence_path = regular_file(
+        arguments.evidence, "deployment qualification evidence"
+    )
     if re.fullmatch(r"[0-9a-f]{64}", arguments.evidence_sha256) is None:
         raise ValueError("deployment evidence SHA-256 is malformed")
     if sha256(evidence_path) != arguments.evidence_sha256:
-        raise ValueError("deployment qualification evidence differs from its recorded SHA-256")
+        raise ValueError(
+            "deployment qualification evidence differs from its recorded SHA-256"
+        )
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
     expected_checks = {
         "backbone_publicly_reachable": True,
@@ -1152,7 +1332,9 @@ def verify_deployment_evidence(arguments: argparse.Namespace) -> None:
         or evidence.get("checks") != expected_checks
         or workflow.get("run_id") != arguments.workflow_run_id
     ):
-        raise ValueError("deployment qualification evidence differs from the required release")
+        raise ValueError(
+            "deployment qualification evidence differs from the required release"
+        )
     print(f"verified protected deployment qualification {evidence_path.name}")
 
 
@@ -1178,13 +1360,17 @@ def parser() -> argparse.ArgumentParser:
 
     oci_digest = commands.add_parser("oci-digest")
     oci_digest.add_argument("--layout", type=Path, required=True)
-    oci_digest.add_argument("--platform", choices=["linux/amd64", "linux/arm64"], required=True)
+    oci_digest.add_argument(
+        "--platform", choices=["linux/amd64", "linux/arm64"], required=True
+    )
     oci_digest.set_defaults(run=print_oci_digest)
 
     oci_compare = commands.add_parser("oci-compare")
     oci_compare.add_argument("--primary", type=Path, required=True)
     oci_compare.add_argument("--reproduction", type=Path, required=True)
-    oci_compare.add_argument("--platform", choices=["linux/amd64", "linux/arm64"], required=True)
+    oci_compare.add_argument(
+        "--platform", choices=["linux/amd64", "linux/arm64"], required=True
+    )
     oci_compare.set_defaults(run=compare_oci)
 
     image = commands.add_parser("image-metadata")
@@ -1235,8 +1421,15 @@ def parser() -> argparse.ArgumentParser:
     image_candidate_verify.add_argument("--workflow-run-id", type=int, required=True)
     image_candidate_verify.set_defaults(run=verify_image_candidate_index)
 
+    flasher_payloads = commands.add_parser("flasher-payloads")
+    flasher_payloads.add_argument("--candidate", type=Path, required=True)
+    flasher_payloads.add_argument("--assets", type=Path, required=True)
+    flasher_payloads.set_defaults(run=stage_flasher_payloads)
+
     inventory = commands.add_parser("inventory")
-    inventory_commands = inventory.add_subparsers(dest="inventory_command", required=True)
+    inventory_commands = inventory.add_subparsers(
+        dest="inventory_command", required=True
+    )
     create = inventory_commands.add_parser("create")
     create.add_argument("--assets", type=Path, required=True)
     create.add_argument("--output", type=Path, required=True)

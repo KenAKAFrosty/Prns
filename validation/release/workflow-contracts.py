@@ -501,6 +501,7 @@ def validate() -> list[str]:
         "target/flasher/candidate/channels/stable.json.minisig",
         "required suite asset is missing: ${source}",
         "duplicate suite asset basename: ${source} conflicts with ${destination}",
+        "prnsd distribution -- flasher-payloads",
         "/attempts/${run_attempt}/jobs?per_page=100",
         "Publish immutable signed candidate as a prerelease",
         "candidate-${GITHUB_SHA}",
