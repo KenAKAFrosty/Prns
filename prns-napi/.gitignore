@@ -1,4 +1,6 @@
 target/
 node_modules/
+artifacts/
+npm/
 *.node
 tests/dist/

@@ -289,7 +289,7 @@ requires = ["cargo", "git"]
 id = "release.host-sdk.rust.publish"
 summary = "Publish the verified Rust crate graph to crates.io in dependency order from one approved commit."
 domain = "release"
-effect = "network-write"
+effect = "external-write"
 platforms = ["any"]
 audience = ["ci", "release"]
 entrypoint = ["python", "tools/release/publish-rust-crates.py"]
@@ -304,6 +304,16 @@ platforms = ["any"]
 audience = ["developer", "ci", "release"]
 entrypoint = ["python", "tools/release/generate-julia-artifacts.py"]
 requires = ["git"]
+
+[[task]]
+id = "release.host-sdk.javascript.stage"
+summary = "Stage canonical package documents into every generated N-API platform package allowlist."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci", "release"]
+entrypoint = ["python", "tools/release/stage-napi-platform-packages.py"]
+requires = []
 
 [[task]]
 id = "release.host-sdk.sources.package"

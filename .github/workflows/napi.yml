@@ -399,11 +399,9 @@ jobs:
       - run: npx napi artifacts
         working-directory: prns-napi
       - name: stage platform package documents
-        run: |
-          for directory in prns-napi/npm/*/; do
-            cp LICENSE-MIT LICENSE-APACHE "$directory"
-            cp prns-host/distribution/PACKAGE.md "$directory/README.md"
-          done
+        run: >-
+          python tools/prns run release.host-sdk.javascript.stage --
+          --packages prns-napi/npm
       - run: npm --prefix prns-js run pack:check
       - name: pack npm artifacts
         run: |
@@ -482,12 +480,10 @@ jobs:
           path: prns-napi/artifacts
       - run: npx napi artifacts
         working-directory: prns-napi
-      - name: copy license and readme into platform packages
-        run: |
-          for dir in prns-napi/npm/*/; do
-            cp LICENSE-MIT LICENSE-APACHE "$dir"
-            cp prns-host/distribution/PACKAGE.md "$dir/README.md"
-          done
+      - name: stage platform package documents
+        run: >-
+          python tools/prns run release.host-sdk.javascript.stage --
+          --packages prns-napi/npm
       - name: publish platform packages
         run: npx napi pre-publish -t npm
         working-directory: prns-napi
