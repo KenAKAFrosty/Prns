@@ -26,6 +26,20 @@ impl RepositoryDocument {
 
 pub const GUIDE_DOCUMENTS: &[RepositoryDocument] = &[
     RepositoryDocument {
+        title: "Run and inspect a node",
+        summary:
+            "Start an isolated prnsd node, inspect its interfaces, attach to logs, and stop it cleanly.",
+        section: GuideSection::Start,
+        source_path: "prnsd/README.md",
+    },
+    RepositoryDocument {
+        title: "Build a Rust application",
+        summary:
+            "Run two real nodes, then learn the recipe, handles, events, features, and API contract.",
+        section: GuideSection::Start,
+        source_path: "personal-rns/README.md",
+    },
+    RepositoryDocument {
         title: "Getting Started",
         summary: "Run a node, try the Rust API, test a change, and measure performance.",
         section: GuideSection::Start,
@@ -136,12 +150,7 @@ pub const GUIDE_DOCUMENTS: &[RepositoryDocument] = &[
     },
 ];
 
-const ROUTE_MAPPINGS: &[(&str, &str)] = &[
-    ("README.md", "/"),
-    ("CONTRIBUTING.md", "/contributing"),
-    ("prnsd/README.md", "/crates/prnsd"),
-    ("personal-rns/README.md", "/crates/personal-rns"),
-];
+const ROUTE_MAPPINGS: &[(&str, &str)] = &[("CONTRIBUTING.md", "/contributing")];
 
 pub fn repository_markup(
     source_path: &str,
@@ -244,14 +253,8 @@ mod tests {
 
     use super::*;
 
-    const MOUNTED_SOURCES: &[(&str, &str)] = &[
-        ("CONTRIBUTING.md", include_str!("../../../CONTRIBUTING.md")),
-        ("prnsd/README.md", include_str!("../../../prnsd/README.md")),
-        (
-            "personal-rns/README.md",
-            include_str!("../../../personal-rns/README.md"),
-        ),
-    ];
+    const MOUNTED_SOURCES: &[(&str, &str)] =
+        &[("CONTRIBUTING.md", include_str!("../../../CONTRIBUTING.md"))];
 
     fn repository_root() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -366,13 +369,23 @@ mod tests {
 
     #[test]
     fn mounted_markdown_resolves_to_site_routes() {
+        let markup = repository_markup("README.md", "[contribute](CONTRIBUTING.md)", false)
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(markup, "[contribute](/contributing)");
+    }
+
+    #[test]
+    fn unmounted_markdown_resolves_to_github_and_keeps_fragments() {
         let markup = repository_markup(
             "docs/coming-from-rns.md",
             "[the SDK list](../README.md#what-is-prns)",
             false,
         )
         .unwrap_or_else(|error| panic!("{error}"));
-        assert_eq!(markup, "[the SDK list](/#what-is-prns)");
+        assert_eq!(
+            markup,
+            "[the SDK list](https://github.com/KenAKAFrosty/Prns/blob/main/README.md#what-is-prns)"
+        );
     }
 
     #[test]
@@ -386,10 +399,7 @@ mod tests {
     fn every_resolved_repository_target_is_a_live_site_route() {
         for (_, route) in ROUTE_MAPPINGS {
             assert!(
-                matches!(
-                    *route,
-                    "/" | "/contributing" | "/crates/prnsd" | "/crates/personal-rns"
-                ),
+                matches!(*route, "/contributing"),
                 "dead local route {route}"
             );
         }

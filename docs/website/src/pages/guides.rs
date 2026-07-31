@@ -1,7 +1,6 @@
 use dioxus::prelude::*;
 
 use crate::repository_docs::{GuideSection, GUIDE_DOCUMENTS};
-use crate::routes::Route;
 
 #[component]
 pub fn GuidesIndex() -> Element {
@@ -45,26 +44,6 @@ pub fn GuidesIndex() -> Element {
                 h2 { class: "text-2xl font-semibold text-paper", "{title}" }
                 p { class: "mt-2 text-sm text-soft max-w-2xl", "{introduction}" }
                 div { class: "mt-5 grid gap-4 md:grid-cols-2",
-                    if section == GuideSection::Start {
-                        Link {
-                            to: Route::SingleCrate { name: "prnsd".to_string() },
-                            class: "block rounded-card border border-line/60 bg-layer/40 p-5 hover:border-accent/40 hover:-translate-y-px transition-all",
-                            h3 { class: "text-lg font-semibold text-paper", "Run and inspect a node" }
-                            p { class: "mt-2 text-sm leading-relaxed text-soft",
-                                "Start an isolated prnsd node, inspect its interfaces, attach to logs, and stop it cleanly."
-                            }
-                            p { class: "mt-3 text-sm text-accent", "Open the prnsd guide →" }
-                        }
-                        Link {
-                            to: Route::SingleCrate { name: "personal-rns".to_string() },
-                            class: "block rounded-card border border-line/60 bg-layer/40 p-5 hover:border-accent/40 hover:-translate-y-px transition-all",
-                            h3 { class: "text-lg font-semibold text-paper", "Build a Rust application" }
-                            p { class: "mt-2 text-sm leading-relaxed text-soft",
-                                "Run two real nodes, then learn the recipe, handles, events, features, and API contract."
-                            }
-                            p { class: "mt-3 text-sm text-accent", "Open the Rust guide →" }
-                        }
-                    }
                     for document in GUIDE_DOCUMENTS.iter().filter(|document| document.section == section) {
                         a {
                             key: "{document.source_path}",

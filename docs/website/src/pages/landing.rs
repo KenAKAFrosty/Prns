@@ -5,6 +5,7 @@ use unic_langid::langid;
 
 use crate::components::PlatformChip;
 use crate::platforms::LANDING_PLATFORM_CHIPS;
+use crate::repository_docs::REPOSITORY_BLOB_BASE;
 use crate::routes::Route;
 use crate::site_mode::embedded_docs_mode;
 
@@ -253,9 +254,9 @@ pub fn Landing() -> Element {
                         body: t!("start-daemon-body"),
                         chips: "cargo prnsd --detach".to_string(),
                         target_label: t!("start-daemon-target"),
-                        target: UseCaseTarget::Route(Route::SingleCrate {
-                            name: "prnsd".to_string(),
-                        }),
+                        target: UseCaseTarget::NewTab(format!(
+                            "{REPOSITORY_BLOB_BASE}/prnsd/README.md"
+                        )),
                     }
                     if !embedded_docs {
                         UseCaseCard {
@@ -264,7 +265,9 @@ pub fn Landing() -> Element {
                             body: t!("start-web-body"),
                             chips: t!("start-web-code"),
                             target_label: t!("start-web-target"),
-                            target: UseCaseTarget::NewTab("/browser-node-playground-console/"),
+                            target: UseCaseTarget::NewTab(
+                                "/browser-node-playground-console/".to_string(),
+                            ),
                         }
                     }
                     UseCaseCard {
@@ -273,9 +276,9 @@ pub fn Landing() -> Element {
                         body: t!("start-rust-body"),
                         chips: "cargo tools guide rust".to_string(),
                         target_label: t!("start-rust-target"),
-                        target: UseCaseTarget::Route(Route::SingleCrate {
-                            name: "personal-rns".to_string(),
-                        }),
+                        target: UseCaseTarget::NewTab(format!(
+                            "{REPOSITORY_BLOB_BASE}/README.md"
+                        )),
                     }
                 }
             }
@@ -402,7 +405,7 @@ fn UseCaseCard(
 #[derive(Clone, PartialEq)]
 enum UseCaseTarget {
     Route(Route),
-    NewTab(&'static str),
+    NewTab(String),
 }
 
 #[derive(Clone, Copy, PartialEq)]

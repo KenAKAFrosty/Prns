@@ -1,6 +1,5 @@
 mod benchmarks;
 mod contributing;
-mod crates;
 mod flash;
 mod guides;
 mod landing;
@@ -9,7 +8,6 @@ mod platforms;
 
 pub use benchmarks::{BenchmarksHostPage, BenchmarksPage};
 pub use contributing::ContributingPage;
-pub use crates::{CratesIndex, SingleCrate};
 pub use flash::{FlashBoardPage, FlashPage};
 pub use guides::GuidesIndex;
 pub use landing::Landing;

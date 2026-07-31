@@ -39,6 +39,8 @@ mod tests {
         let markup = contributing_markup();
 
         assert!(!markup.starts_with("# Contributing"));
-        assert!(markup.contains("](/#license)"));
+        assert!(
+            markup.contains("](https://github.com/KenAKAFrosty/Prns/blob/main/README.md#license)")
+        );
     }
 }
