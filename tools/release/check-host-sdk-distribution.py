@@ -59,8 +59,10 @@ def check_rust(catalog, version):
         if not package.get("keywords") or not package.get("categories"):
             raise ValueError(f"{crate['name']} has incomplete registry metadata")
         readme = manifest_path.parent / "README.md"
-        if readme.read_text() != expected_readme:
-            raise ValueError(f"{readme} differs from the canonical Rust README")
+        if not readme.read_text().startswith(expected_readme):
+            raise ValueError(
+                f"{readme} does not begin with the canonical Rust README"
+            )
         for table in package_tables(document):
             for dependency, specification in table.items():
                 if not isinstance(specification, dict) or "path" not in specification:

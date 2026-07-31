@@ -16,7 +16,7 @@ on:
         type: boolean
         default: false
   push:
-    branches: [main]
+    branches: [trunk]
     paths:
       - "prns-host/**"
       - "personal-rns/**"

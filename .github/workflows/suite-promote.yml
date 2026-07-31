@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       source_commit:
-        description: Full protected main source commit
+        description: Full protected trunk source commit
         required: true
         type: string
       image_digest:
@@ -20,7 +20,7 @@ on:
         required: true
         type: string
       flasher_acceptance_commit:
-        description: Reviewed main commit containing the physical flasher acceptance record
+        description: Reviewed trunk commit containing the physical flasher acceptance record
         required: true
         type: string
       flasher_finalization_run_id:
@@ -62,7 +62,7 @@ jobs:
         env:
           REF_PROTECTED: ${{ github.ref_protected }}
         run: |
-          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_REF" = "refs/heads/trunk"
           test "$REF_PROTECTED" = "true"
           test "$GITHUB_SHA" = "${{ inputs.source_commit }}"
           test "${{ inputs.package_is_public }}" = "true"

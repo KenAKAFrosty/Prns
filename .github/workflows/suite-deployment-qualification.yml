@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       source_commit:
-        description: Full protected main source commit
+        description: Full protected trunk source commit
         required: true
         type: string
       image_digest:
@@ -73,7 +73,7 @@ jobs:
         env:
           REF_PROTECTED: ${{ github.ref_protected }}
         run: |
-          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_REF" = "refs/heads/trunk"
           test "$REF_PROTECTED" = "true"
           test "$GITHUB_SHA" = "${{ inputs.source_commit }}"
           test "${{ inputs.persistence_restored }}" = "true"

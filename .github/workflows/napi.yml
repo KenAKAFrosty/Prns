@@ -16,7 +16,7 @@ on:
         type: string
         default: "next"
   push:
-    branches: [main]
+    branches: [trunk]
     paths:
       - "prns-napi/**"
       - "prns-js/**"

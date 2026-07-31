@@ -54,7 +54,7 @@ jobs:
         env:
           REF_PROTECTED: ${{ github.ref_protected }}
         run: |
-          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_REF" = "refs/heads/trunk"
           test "$REF_PROTECTED" = "true"
           test "$GITHUB_SHA" = "$GITHUB_WORKFLOW_SHA"
           [[ "$FLASHER_RUN_ID" =~ ^[1-9][0-9]*$ ]]
@@ -463,7 +463,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_REF" = "refs/heads/trunk"
           test "$GITHUB_SHA" = "$SOURCE_COMMIT"
           test "$GITHUB_WORKFLOW_SHA" = "$SOURCE_COMMIT"
           test "$(cat VERSION)" = "$RELEASE_VERSION"
