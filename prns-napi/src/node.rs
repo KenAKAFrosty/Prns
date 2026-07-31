@@ -49,10 +49,12 @@ use prns_host::{
     Bitrate as HostBitrate, CommandFailure as HostCommandFailure,
     CommandOutcome as HostCommandOutcome, DestinationConfig as HostDestinationConfig,
     DestinationIdentityConfig, DestinationLinkRequestPolicy, DestinationName,
-    DestinationProofStrategy, DestinationRatchetPolicy, HostCommand as StableHostCommand,
-    HostConfig, HostRole, IdentityConfig, IdentitySecret, PersistenceConfig, PrnsLimits,
-    RequestHandlerConfig, RequestPolicy as HostRequestPolicy,
-    ResourceStrategy as HostResourceStrategy, SingleDestinationConfig,
+    DestinationProofStrategy, DestinationRatchetPolicy, DiscoveryScope,
+    HostCommand as StableHostCommand, HostConfig, HostRole, IdentityConfig, IdentitySecret,
+    InterfaceConfig as StableInterfaceConfig, MultiRNodeMemberConfig, MulticastAddressType,
+    PersistenceConfig, PrnsLimits, RNodeRadioConfig, RequestHandlerConfig,
+    RequestPolicy as HostRequestPolicy, ResourceStrategy as HostResourceStrategy, SerialDataBits,
+    SerialLineConfig, SerialParity, SerialStopBits, SingleDestinationConfig,
 };
 use prns_host_native::{
     CommandWait, NativeHost, NativeSnapshotError, NativeStartError, NativeSubmitError,
@@ -200,6 +202,69 @@ pub struct UdpOptions {
     pub local: String,
     pub peer: String,
     pub bitrate_bps: Option<f64>,
+}
+
+#[napi(object)]
+pub struct SerialLineSpec {
+    pub baud: u32,
+    pub data_bits: String,
+    pub parity: String,
+    pub stop_bits: String,
+}
+
+#[napi(object)]
+pub struct RNodeRadioSpec {
+    pub frequency_hz: f64,
+    pub bandwidth_hz: u32,
+    pub tx_power_dbm: i32,
+    pub spreading_factor: u32,
+    pub coding_rate: u32,
+}
+
+#[napi(object)]
+pub struct MultiRNodeMemberSpec {
+    pub name: String,
+    pub virtual_port: u32,
+    pub radio: RNodeRadioSpec,
+    pub flow_control: bool,
+    pub outgoing: bool,
+}
+
+#[napi(object)]
+pub struct InterfaceConfigSpec {
+    pub kind: String,
+    pub group_id: Option<String>,
+    pub discovery_scope: Option<String>,
+    pub discovery_port: Option<u32>,
+    pub data_port: Option<u32>,
+    pub devices: Option<Vec<String>>,
+    pub ignored_devices: Option<Vec<String>>,
+    pub multicast_address_type: Option<String>,
+    pub target: Option<String>,
+    pub bind: Option<String>,
+    pub local: Option<String>,
+    pub peer: Option<String>,
+    pub bitrate_bps: Option<f64>,
+    pub port: Option<String>,
+    pub line: Option<SerialLineSpec>,
+    pub flow_control: Option<bool>,
+    pub preamble_millis: Option<u32>,
+    pub transmit_tail_millis: Option<u32>,
+    pub persistence: Option<u32>,
+    pub slot_time_millis: Option<u32>,
+    pub station_callsign: Option<String>,
+    pub station_interval_seconds: Option<f64>,
+    pub callsign: Option<String>,
+    pub ssid: Option<u32>,
+    pub radio: Option<RNodeRadioSpec>,
+    pub airtime_limit_short_centi_percent: Option<u32>,
+    pub airtime_limit_long_centi_percent: Option<u32>,
+    pub members: Option<Vec<MultiRNodeMemberSpec>>,
+    pub command: Option<Vec<String>>,
+    pub respawn_delay_millis: Option<f64>,
+    pub peers: Option<Vec<String>>,
+    pub connectable: Option<bool>,
+    pub url: Option<String>,
 }
 
 #[napi(object)]
@@ -838,6 +903,268 @@ fn parse_host_bitrate(value: Option<f64>) -> CodeResult<HostBitrate> {
     }
 }
 
+fn interface_config_error(detail: impl Into<String>) -> crate::errors::CodeError {
+    code_err(ErrorCode::ConfigInvalid, detail.into())
+}
+
+fn required_interface_field<T>(value: Option<T>, name: &str) -> CodeResult<T> {
+    value.ok_or_else(|| interface_config_error(format!("{name} is required")))
+}
+
+fn interface_u64(value: f64, name: &str) -> CodeResult<u64> {
+    if value.is_finite() && value >= 0.0 && value.fract() == 0.0 && value <= 9_007_199_254_740_991.0
+    {
+        Ok(value as u64)
+    } else {
+        Err(interface_config_error(format!(
+            "{name} must be a non-negative safe integer"
+        )))
+    }
+}
+
+fn interface_u16(value: u32, name: &str) -> CodeResult<u16> {
+    u16::try_from(value)
+        .map_err(|_| interface_config_error(format!("{name} exceeds the 16-bit range")))
+}
+
+fn interface_u8(value: u32, name: &str) -> CodeResult<u8> {
+    u8::try_from(value)
+        .map_err(|_| interface_config_error(format!("{name} exceeds the 8-bit range")))
+}
+
+fn interface_i16(value: i32, name: &str) -> CodeResult<i16> {
+    i16::try_from(value)
+        .map_err(|_| interface_config_error(format!("{name} exceeds the signed 16-bit range")))
+}
+
+fn serial_line(spec: SerialLineSpec) -> CodeResult<SerialLineConfig> {
+    let data_bits = match spec.data_bits.as_str() {
+        "Five" => SerialDataBits::Five,
+        "Six" => SerialDataBits::Six,
+        "Seven" => SerialDataBits::Seven,
+        "Eight" => SerialDataBits::Eight,
+        other => {
+            return Err(interface_config_error(format!(
+                "unknown serial data bits {other:?}"
+            )))
+        }
+    };
+    let parity = match spec.parity.as_str() {
+        "None" => SerialParity::None,
+        "Even" => SerialParity::Even,
+        "Odd" => SerialParity::Odd,
+        other => {
+            return Err(interface_config_error(format!(
+                "unknown serial parity {other:?}"
+            )))
+        }
+    };
+    let stop_bits = match spec.stop_bits.as_str() {
+        "One" => SerialStopBits::One,
+        "Two" => SerialStopBits::Two,
+        other => {
+            return Err(interface_config_error(format!(
+                "unknown serial stop bits {other:?}"
+            )))
+        }
+    };
+    Ok(SerialLineConfig {
+        baud: spec.baud,
+        data_bits,
+        parity,
+        stop_bits,
+    })
+}
+
+fn rnode_radio(spec: RNodeRadioSpec) -> CodeResult<RNodeRadioConfig> {
+    Ok(RNodeRadioConfig {
+        frequency_hz: interface_u64(spec.frequency_hz, "frequencyHz")?,
+        bandwidth_hz: spec.bandwidth_hz,
+        tx_power_dbm: interface_i16(spec.tx_power_dbm, "txPowerDbm")?,
+        spreading_factor: interface_u8(spec.spreading_factor, "spreadingFactor")?,
+        coding_rate: interface_u8(spec.coding_rate, "codingRate")?,
+    })
+}
+
+fn discovery_scope(value: Option<String>) -> CodeResult<Option<DiscoveryScope>> {
+    value
+        .map(|value| match value.as_str() {
+            "Link" => Ok(DiscoveryScope::Link),
+            "Admin" => Ok(DiscoveryScope::Admin),
+            "Site" => Ok(DiscoveryScope::Site),
+            "Organization" => Ok(DiscoveryScope::Organization),
+            "Global" => Ok(DiscoveryScope::Global),
+            other => Err(interface_config_error(format!(
+                "unknown discovery scope {other:?}"
+            ))),
+        })
+        .transpose()
+}
+
+fn multicast_address_type(value: Option<String>) -> CodeResult<Option<MulticastAddressType>> {
+    value
+        .map(|value| match value.as_str() {
+            "Temporary" => Ok(MulticastAddressType::Temporary),
+            "Permanent" => Ok(MulticastAddressType::Permanent),
+            other => Err(interface_config_error(format!(
+                "unknown multicast address type {other:?}"
+            ))),
+        })
+        .transpose()
+}
+
+fn stable_interface_config(spec: InterfaceConfigSpec) -> CodeResult<StableInterfaceConfig> {
+    let kind = spec.kind.clone();
+    let config = match kind.as_str() {
+        "AutoLan" => StableInterfaceConfig::AutoLan {
+            group_id: spec.group_id,
+            discovery_scope: discovery_scope(spec.discovery_scope)?,
+            discovery_port: spec
+                .discovery_port
+                .map(|value| interface_u16(value, "discoveryPort"))
+                .transpose()?,
+            data_port: spec
+                .data_port
+                .map(|value| interface_u16(value, "dataPort"))
+                .transpose()?,
+            devices: spec.devices.unwrap_or_default(),
+            ignored_devices: spec.ignored_devices.unwrap_or_default(),
+            multicast_address_type: multicast_address_type(spec.multicast_address_type)?,
+        },
+        "TcpClient" => StableInterfaceConfig::TcpClient {
+            target: required_interface_field(spec.target, "target")?,
+            bitrate: parse_host_bitrate(spec.bitrate_bps)?,
+        },
+        "TcpServer" => StableInterfaceConfig::TcpServer {
+            bind: required_interface_field(spec.bind, "bind")?,
+            bitrate: parse_host_bitrate(spec.bitrate_bps)?,
+        },
+        "Udp" => StableInterfaceConfig::Udp {
+            local: required_interface_field(spec.local, "local")?,
+            peer: required_interface_field(spec.peer, "peer")?,
+            bitrate: parse_host_bitrate(spec.bitrate_bps)?,
+        },
+        "Serial" => StableInterfaceConfig::Serial {
+            port: required_interface_field(spec.port, "port")?,
+            line: serial_line(required_interface_field(spec.line, "line")?)?,
+        },
+        "Kiss" => StableInterfaceConfig::Kiss {
+            port: required_interface_field(spec.port, "port")?,
+            line: serial_line(required_interface_field(spec.line, "line")?)?,
+            flow_control: required_interface_field(spec.flow_control, "flowControl")?,
+            preamble_millis: required_interface_field(spec.preamble_millis, "preambleMillis")?,
+            transmit_tail_millis: required_interface_field(
+                spec.transmit_tail_millis,
+                "transmitTailMillis",
+            )?,
+            persistence: interface_u8(
+                required_interface_field(spec.persistence, "persistence")?,
+                "persistence",
+            )?,
+            slot_time_millis: required_interface_field(spec.slot_time_millis, "slotTimeMillis")?,
+            station_callsign: spec.station_callsign,
+            station_interval_seconds: spec
+                .station_interval_seconds
+                .map(|value| interface_u64(value, "stationIntervalSeconds"))
+                .transpose()?,
+        },
+        "Ax25Kiss" => StableInterfaceConfig::Ax25Kiss {
+            port: required_interface_field(spec.port, "port")?,
+            line: serial_line(required_interface_field(spec.line, "line")?)?,
+            flow_control: required_interface_field(spec.flow_control, "flowControl")?,
+            preamble_millis: required_interface_field(spec.preamble_millis, "preambleMillis")?,
+            transmit_tail_millis: required_interface_field(
+                spec.transmit_tail_millis,
+                "transmitTailMillis",
+            )?,
+            persistence: interface_u8(
+                required_interface_field(spec.persistence, "persistence")?,
+                "persistence",
+            )?,
+            slot_time_millis: required_interface_field(spec.slot_time_millis, "slotTimeMillis")?,
+            callsign: required_interface_field(spec.callsign, "callsign")?,
+            ssid: interface_u8(required_interface_field(spec.ssid, "ssid")?, "ssid")?,
+        },
+        "RNode" => StableInterfaceConfig::RNode {
+            port: required_interface_field(spec.port, "port")?,
+            radio: rnode_radio(required_interface_field(spec.radio, "radio")?)?,
+            flow_control: required_interface_field(spec.flow_control, "flowControl")?,
+            station_callsign: spec.station_callsign,
+            station_interval_seconds: spec
+                .station_interval_seconds
+                .map(|value| interface_u64(value, "stationIntervalSeconds"))
+                .transpose()?,
+            airtime_limit_short_centi_percent: spec
+                .airtime_limit_short_centi_percent
+                .map(|value| interface_u16(value, "airtimeLimitShortCentiPercent"))
+                .transpose()?,
+            airtime_limit_long_centi_percent: spec
+                .airtime_limit_long_centi_percent
+                .map(|value| interface_u16(value, "airtimeLimitLongCentiPercent"))
+                .transpose()?,
+        },
+        "MultiRNode" => StableInterfaceConfig::MultiRNode {
+            port: required_interface_field(spec.port, "port")?,
+            station_callsign: spec.station_callsign,
+            station_interval_seconds: spec
+                .station_interval_seconds
+                .map(|value| interface_u64(value, "stationIntervalSeconds"))
+                .transpose()?,
+            members: required_interface_field(spec.members, "members")?
+                .into_iter()
+                .map(|member| {
+                    Ok(MultiRNodeMemberConfig {
+                        name: member.name,
+                        virtual_port: interface_u8(member.virtual_port, "virtualPort")?,
+                        radio: rnode_radio(member.radio)?,
+                        flow_control: member.flow_control,
+                        outgoing: member.outgoing,
+                    })
+                })
+                .collect::<CodeResult<Vec<_>>>()?,
+        },
+        "Pipe" => StableInterfaceConfig::Pipe {
+            command: required_interface_field(spec.command, "command")?,
+            respawn_delay_millis: interface_u64(
+                required_interface_field(spec.respawn_delay_millis, "respawnDelayMillis")?,
+                "respawnDelayMillis",
+            )?,
+        },
+        "BackboneClient" => StableInterfaceConfig::BackboneClient {
+            target: required_interface_field(spec.target, "target")?,
+            bitrate: parse_host_bitrate(spec.bitrate_bps)?,
+        },
+        "BackboneServer" => StableInterfaceConfig::BackboneServer {
+            bind: required_interface_field(spec.bind, "bind")?,
+            bitrate: parse_host_bitrate(spec.bitrate_bps)?,
+        },
+        "I2p" => StableInterfaceConfig::I2p {
+            peers: required_interface_field(spec.peers, "peers")?,
+            connectable: required_interface_field(spec.connectable, "connectable")?,
+        },
+        "Weave" => StableInterfaceConfig::Weave {
+            port: required_interface_field(spec.port, "port")?,
+        },
+        "AutomaticUsb" => StableInterfaceConfig::AutomaticUsb,
+        "AutomaticBluetoothLe" => StableInterfaceConfig::AutomaticBluetoothLe,
+        "WebSocketClient" => StableInterfaceConfig::WebSocketClient {
+            target: required_interface_field(spec.target, "target")?,
+        },
+        "WebSocketServer" => StableInterfaceConfig::WebSocketServer {
+            bind: required_interface_field(spec.bind, "bind")?,
+        },
+        "BrowserRendezvous" => StableInterfaceConfig::BrowserRendezvous {
+            url: required_interface_field(spec.url, "url")?,
+        },
+        other => {
+            return Err(interface_config_error(format!(
+                "unknown interface kind {other:?}"
+            )))
+        }
+    };
+    Ok(config)
+}
+
 fn host_resource_strategy(spec: &ResourceStrategySpec) -> CodeResult<HostResourceStrategy> {
     match parse_resource_strategy(spec)? {
         ResourceStrategy::AcceptNone => Ok(HostResourceStrategy::Refuse),
@@ -1190,14 +1517,14 @@ fn host_command_error(error: HostCommandFailure) -> crate::errors::CodeError {
         HostCommandFailure::InvalidBitrate | HostCommandFailure::InvalidConfiguration { .. } => {
             ErrorCode::InvalidArgument
         }
-        HostCommandFailure::BindFailed { .. }
-        | HostCommandFailure::WriteFailed { .. }
-        | HostCommandFailure::PermissionDenied { .. }
-        | HostCommandFailure::DeviceUnavailable { .. }
-        | HostCommandFailure::ConnectFailed { .. }
-        | HostCommandFailure::BackendFailed { .. }
-        | HostCommandFailure::UnsupportedByBackend
-        | HostCommandFailure::UnknownInterface => ErrorCode::AttachFailed,
+        HostCommandFailure::BindFailed { .. } => ErrorCode::BindFailed,
+        HostCommandFailure::WriteFailed { .. } => ErrorCode::WriteFailed,
+        HostCommandFailure::PermissionDenied { .. } => ErrorCode::PermissionDenied,
+        HostCommandFailure::DeviceUnavailable { .. } => ErrorCode::DeviceUnavailable,
+        HostCommandFailure::ConnectFailed { .. } => ErrorCode::ConnectFailed,
+        HostCommandFailure::BackendFailed { .. } => ErrorCode::BackendFailed,
+        HostCommandFailure::UnsupportedByBackend => ErrorCode::Unsupported,
+        HostCommandFailure::UnknownInterface => ErrorCode::UnknownInterface,
         _ => ErrorCode::Internal,
     };
     code_err(code, detail)
@@ -1369,6 +1696,26 @@ impl PrnsNode {
     #[napi(ts_return_type = "Promise<InterfaceHandle>")]
     pub async fn attach_udp(&self, options: UdpOptions) -> Result<Fallible<InterfaceHandle>> {
         Ok(Fallible(self.attach_udp_inner(options).await))
+    }
+
+    #[napi(ts_return_type = "Promise<InterfaceHandle>")]
+    pub async fn attach_interface(
+        &self,
+        config: InterfaceConfigSpec,
+    ) -> Result<Fallible<InterfaceHandle>> {
+        Ok(Fallible(self.attach_interface_inner(config).await))
+    }
+
+    #[napi]
+    pub fn preview_validate_interface_config(
+        &self,
+        spec: InterfaceConfigSpec,
+    ) -> Result<String, ErrorCode> {
+        let config = stable_interface_config(spec)?;
+        config
+            .validate()
+            .map_err(|error| interface_config_error(format!("{error:?}")))?;
+        Ok(format!("{:?}", config.kind()))
     }
 
     #[napi(ts_return_type = "Promise<InterfaceHandle>")]
@@ -2015,6 +2362,28 @@ impl PrnsNode {
                 Arc::clone(&self.host),
                 interface,
                 "udp",
+            )),
+            other => Err(code_err(
+                ErrorCode::Internal,
+                format!("unexpected attach outcome: {other:?}"),
+            )),
+        }
+    }
+
+    async fn attach_interface_inner(
+        &self,
+        spec: InterfaceConfigSpec,
+    ) -> CodeResult<InterfaceHandle> {
+        let config = stable_interface_config(spec)?;
+        let kind = format!("{:?}", config.kind());
+        let outcome = self
+            .submit_host(StableHostCommand::AttachInterface { config })
+            .await?;
+        match outcome {
+            HostCommandOutcome::InterfaceAttached { interface } => Ok(InterfaceHandle::from_host(
+                Arc::clone(&self.host),
+                interface,
+                &kind,
             )),
             other => Err(code_err(
                 ErrorCode::Internal,

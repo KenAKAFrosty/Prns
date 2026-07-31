@@ -39,35 +39,46 @@ test("packaged native API starts, exposes lifecycle, and stops", async () => {
   });
   assert.equal(created.tag, "Ready");
   assert.equal(created.data.lifecycle.tag, "Running");
-  const events = created.data.claimEvents();
-  assert.equal(events.tag, "Claimed");
-  assert.deepEqual(created.data.claimEvents(), {
-    tag: "AlreadyClaimed",
-    data: { lane: "ApplicationEvents" },
-  });
-  const attached = await created.data.execute(
-    esm.Tag("AttachTcpClient", {
-      target: "127.0.0.1:9",
-      bitrate: esm.Tag("Auto"),
-    }),
-  );
-  assert.equal(attached.tag, "Succeeded");
-  assert.equal(attached.data.tag, "InterfaceAttached");
-  const attachedSnapshot = await created.data.snapshot();
-  assert.equal(attachedSnapshot.backend.backend, "Native");
-  assert.ok(attachedSnapshot.backend.interfaceKinds.includes("TcpClient"));
-  assert.equal(attachedSnapshot.interfaces.length, 1);
-  assert.equal(attachedSnapshot.interfaces[0].kind, "TcpClient");
-  const detached = await created.data.execute(
-    esm.Tag("DetachInterface", {
-      interface: attached.data.data.interface,
-    }),
-  );
-  assert.equal(detached.tag, "Succeeded");
-  assert.equal(detached.data.tag, "InterfaceDetached");
-  assert.equal((await created.data.snapshot()).interfaces.length, 0);
-  assert.equal((await created.data.stop()).tag, "Stopped");
-  assert.equal(created.data.lifecycle.tag, "Stopped");
+  try {
+    const events = created.data.claimEvents();
+    assert.equal(events.tag, "Claimed");
+    assert.deepEqual(created.data.claimEvents(), {
+      tag: "AlreadyClaimed",
+      data: { lane: "ApplicationEvents" },
+    });
+    const attached = await created.data.execute(
+      esm.Tag("AttachTcpClient", {
+        target: "127.0.0.1:9",
+        bitrate: esm.Tag("Auto"),
+      }),
+    );
+    assert.equal(attached.tag, "Succeeded");
+    assert.equal(attached.data.tag, "InterfaceAttached");
+    const attachedSnapshot = await created.data.snapshot();
+    assert.equal(attachedSnapshot.backend.backend, "Native");
+    assert.ok(attachedSnapshot.backend.interfaceKinds.includes("TcpClient"));
+    assert.equal(attachedSnapshot.interfaces.length, 1);
+    assert.equal(attachedSnapshot.interfaces[0].kind, "TcpClient");
+    const unsupported = await created.data.attachInterface(
+      esm.Tag("BrowserRendezvous", { url: "ws://fixture.invalid/rendezvous" }),
+    );
+    assert.deepEqual(unsupported, {
+      tag: "Failed",
+      data: { tag: "UnsupportedByBackend", data: undefined },
+    });
+    const detached = await created.data.execute(
+      esm.Tag("DetachInterface", {
+        interface: attached.data.data.interface,
+      }),
+    );
+    assert.equal(detached.tag, "Succeeded");
+    assert.equal(detached.data.tag, "InterfaceDetached");
+    assert.equal((await created.data.snapshot()).interfaces.length, 0);
+    assert.equal((await created.data.stop()).tag, "Stopped");
+    assert.equal(created.data.lifecycle.tag, "Stopped");
+  } finally {
+    await created.data.stop().catch(() => {});
+  }
 });
 
 test("packaged native API completes the persistent two-node journey", async () => {

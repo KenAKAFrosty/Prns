@@ -79,6 +79,8 @@ export declare class PrnsNode {
   attachTcpServer(options: TcpServerOptions): Promise<InterfaceHandle>
   attachTcpClient(options: TcpClientOptions): Promise<InterfaceHandle>
   attachUdp(options: UdpOptions): Promise<InterfaceHandle>
+  attachInterface(config: InterfaceConfigSpec): Promise<InterfaceHandle>
+  previewValidateInterfaceConfig(spec: InterfaceConfigSpec): string
   attachSharedInstanceServer(options?: SharedInstanceOptions | undefined | null): Promise<InterfaceHandle>
   attachSharedInstanceClient(options?: SharedInstanceOptions | undefined | null): Promise<InterfaceHandle>
   attachConfig(configText: string): Promise<ConfigAttachResult>
@@ -276,6 +278,42 @@ export interface IdentitySpec {
   path?: string
 }
 
+export interface InterfaceConfigSpec {
+  kind: string
+  groupId?: string
+  discoveryScope?: string
+  discoveryPort?: number
+  dataPort?: number
+  devices?: Array<string>
+  ignoredDevices?: Array<string>
+  multicastAddressType?: string
+  target?: string
+  bind?: string
+  local?: string
+  peer?: string
+  bitrateBps?: number
+  port?: string
+  line?: SerialLineSpec
+  flowControl?: boolean
+  preambleMillis?: number
+  transmitTailMillis?: number
+  persistence?: number
+  slotTimeMillis?: number
+  stationCallsign?: string
+  stationIntervalSeconds?: number
+  callsign?: string
+  ssid?: number
+  radio?: RNodeRadioSpec
+  airtimeLimitShortCentiPercent?: number
+  airtimeLimitLongCentiPercent?: number
+  members?: Array<MultiRNodeMemberSpec>
+  command?: Array<string>
+  respawnDelayMillis?: number
+  peers?: Array<string>
+  connectable?: boolean
+  url?: string
+}
+
 export interface InterfaceInfo {
   id: Buffer
   kind?: InterfaceKindName
@@ -300,6 +338,14 @@ export interface InterfaceInventoryInfo {
 export interface LinkInfo {
   linkId: Buffer
   rttMillis: number
+}
+
+export interface MultiRNodeMemberSpec {
+  name: string
+  virtualPort: number
+  radio: RNodeRadioSpec
+  flowControl: boolean
+  outgoing: boolean
 }
 
 export interface NodeOptions {
@@ -380,6 +426,14 @@ export interface RetainIdentityResult {
   alreadyRetainedDestinationCount: number
 }
 
+export interface RNodeRadioSpec {
+  frequencyHz: number
+  bandwidthHz: number
+  txPowerDbm: number
+  spreadingFactor: number
+  codingRate: number
+}
+
 export interface RouteInfo {
   destination: Buffer
   hops: number
@@ -400,6 +454,13 @@ export interface SendResourceOptions {
   metadata?: Buffer
   compression?: CompressionName
   progress?: boolean
+}
+
+export interface SerialLineSpec {
+  baud: number
+  dataBits: string
+  parity: string
+  stopBits: string
 }
 
 export interface SharedInstanceOptions {

@@ -169,6 +169,65 @@ type RawNodeOptions = {
   persistencePath?: string;
 };
 
+type RawSerialLine = {
+  baud: number;
+  dataBits: string;
+  parity: string;
+  stopBits: string;
+};
+
+type RawRNodeRadio = {
+  frequencyHz: number;
+  bandwidthHz: number;
+  txPowerDbm: number;
+  spreadingFactor: number;
+  codingRate: number;
+};
+
+type RawMultiRNodeMember = {
+  name: string;
+  virtualPort: number;
+  radio: RawRNodeRadio;
+  flowControl: boolean;
+  outgoing: boolean;
+};
+
+type RawInterfaceConfig = {
+  kind: InterfaceKind;
+  groupId?: string | undefined;
+  discoveryScope?: string | undefined;
+  discoveryPort?: number | undefined;
+  dataPort?: number | undefined;
+  devices?: string[];
+  ignoredDevices?: string[];
+  multicastAddressType?: string | undefined;
+  target?: string;
+  bind?: string;
+  local?: string;
+  peer?: string;
+  bitrateBps?: number | undefined;
+  port?: string;
+  line?: RawSerialLine;
+  flowControl?: boolean;
+  preambleMillis?: number;
+  transmitTailMillis?: number;
+  persistence?: number;
+  slotTimeMillis?: number;
+  stationCallsign?: string | undefined;
+  stationIntervalSeconds?: number | undefined;
+  callsign?: string;
+  ssid?: number;
+  radio?: RawRNodeRadio;
+  airtimeLimitShortCentiPercent?: number | undefined;
+  airtimeLimitLongCentiPercent?: number | undefined;
+  members?: RawMultiRNodeMember[];
+  command?: string[];
+  respawnDelayMillis?: number;
+  peers?: string[];
+  connectable?: boolean;
+  url?: string;
+};
+
 type RawNode = {
   readonly identityHash: Buffer;
   readonly destinationHashes: Buffer[];
@@ -235,6 +294,7 @@ type RawNode = {
     peer: string;
     bitrateBps?: number;
   }): Promise<RawInterface>;
+  attachInterface(config: RawInterfaceConfig): Promise<RawInterface>;
   hostSnapshot(): Promise<RawHostSnapshot>;
 };
 
@@ -705,48 +765,7 @@ export class Prns {
           },
           AttachInterface: async ({ config }) => {
             validateInterfaceConfig(config);
-            const raw = await casework.match_into<Promise<RawInterface>>().from(
-              config,
-              {
-                AutoLan: unsupportedInterface,
-                TcpClient: ({ target, bitrate }) =>
-                  this.#raw.attachTcpClient(
-                    optionalBitrate(
-                      { target },
-                      bitrateBitsPerSecond(bitrate),
-                    ),
-                  ),
-                TcpServer: ({ bind, bitrate }) =>
-                  this.#raw.attachTcpServer(
-                    optionalBitrate(
-                      { bind },
-                      bitrateBitsPerSecond(bitrate),
-                    ),
-                  ),
-                Udp: ({ local, peer, bitrate }) =>
-                  this.#raw.attachUdp(
-                    optionalBitrate(
-                      { local, peer },
-                      bitrateBitsPerSecond(bitrate),
-                    ),
-                  ),
-                Serial: unsupportedInterface,
-                Kiss: unsupportedInterface,
-                Ax25Kiss: unsupportedInterface,
-                RNode: unsupportedInterface,
-                MultiRNode: unsupportedInterface,
-                Pipe: unsupportedInterface,
-                BackboneClient: unsupportedInterface,
-                BackboneServer: unsupportedInterface,
-                I2p: unsupportedInterface,
-                Weave: unsupportedInterface,
-                AutomaticUsb: unsupportedInterface,
-                AutomaticBluetoothLe: unsupportedInterface,
-                WebSocketClient: unsupportedInterface,
-                WebSocketServer: unsupportedInterface,
-                BrowserRendezvous: unsupportedInterface,
-              },
-            );
+            const raw = await this.#raw.attachInterface(rawInterfaceConfig(config));
             const attached = new NativeInterface(raw);
             this.#interfaces.set(interfaceKey(attached.id), attached);
             return casework.Tag("InterfaceAttached", {
@@ -1901,8 +1920,38 @@ function commandFailure(error: unknown): CommandFailure {
   if (details.code === "PRNS_INVALID_CHANNEL_MESSAGE_TYPE") {
     return casework.Tag("InvalidChannelMessageType");
   }
-  if (details.code === "PRNS_ATTACH_FAILED") {
+  if (
+    details.code === "PRNS_CONFIG_INVALID" ||
+    details.code === "PRNS_INVALID_ARGUMENT"
+  ) {
+    return casework.Tag("InvalidConfiguration", { detail: details.detail });
+  }
+  if (
+    details.code === "PRNS_BIND_FAILED" ||
+    details.code === "PRNS_ATTACH_FAILED"
+  ) {
     return casework.Tag("BindFailed", { detail: details.detail });
+  }
+  if (details.code === "PRNS_UNSUPPORTED") {
+    return casework.Tag("UnsupportedByBackend");
+  }
+  if (details.code === "PRNS_UNKNOWN_INTERFACE") {
+    return casework.Tag("UnknownInterface");
+  }
+  if (details.code === "PRNS_PERMISSION_DENIED") {
+    return casework.Tag("PermissionDenied", { detail: details.detail });
+  }
+  if (
+    details.code === "PRNS_DEVICE_UNAVAILABLE" ||
+    details.code === "PRNS_UNAVAILABLE"
+  ) {
+    return casework.Tag("DeviceUnavailable", { detail: details.detail });
+  }
+  if (details.code === "PRNS_CONNECT_FAILED") {
+    return casework.Tag("ConnectFailed", { detail: details.detail });
+  }
+  if (details.code === "PRNS_BACKEND_FAILED") {
+    return casework.Tag("BackendFailed", { detail: details.detail });
   }
   return casework.Tag("WriteFailed", { detail: details.detail });
 }
@@ -2002,8 +2051,177 @@ function bitrateBitsPerSecond(bitrate: Bitrate): number | undefined {
   });
 }
 
-function unsupportedInterface(): never {
-  throw new CommandRejected(casework.Tag("UnsupportedByBackend"));
+function rawInterfaceConfig(config: InterfaceConfig): RawInterfaceConfig {
+  return casework.match_into<RawInterfaceConfig>().from(config, {
+    AutoLan: ({
+      groupId,
+      discoveryScope,
+      discoveryPort,
+      dataPort,
+      devices,
+      ignoredDevices,
+      multicastAddressType,
+    }) => ({
+      kind: "AutoLan",
+      groupId,
+      discoveryScope,
+      discoveryPort,
+      dataPort,
+      devices: Array.from(devices),
+      ignoredDevices: Array.from(ignoredDevices),
+      multicastAddressType,
+    }),
+    TcpClient: ({ target, bitrate }) => ({
+      kind: "TcpClient",
+      target,
+      bitrateBps: bitrateBitsPerSecond(bitrate),
+    }),
+    TcpServer: ({ bind, bitrate }) => ({
+      kind: "TcpServer",
+      bind,
+      bitrateBps: bitrateBitsPerSecond(bitrate),
+    }),
+    Udp: ({ local, peer, bitrate }) => ({
+      kind: "Udp",
+      local,
+      peer,
+      bitrateBps: bitrateBitsPerSecond(bitrate),
+    }),
+    Serial: ({ port, line }) => ({
+      kind: "Serial",
+      port,
+      line: rawSerialLine(line),
+    }),
+    Kiss: ({
+      port,
+      line,
+      flowControl,
+      preambleMillis,
+      transmitTailMillis,
+      persistence,
+      slotTimeMillis,
+      stationCallsign,
+      stationIntervalSeconds,
+    }) => ({
+      kind: "Kiss",
+      port,
+      line: rawSerialLine(line),
+      flowControl,
+      preambleMillis,
+      transmitTailMillis,
+      persistence,
+      slotTimeMillis,
+      stationCallsign,
+      stationIntervalSeconds,
+    }),
+    Ax25Kiss: ({
+      port,
+      line,
+      flowControl,
+      preambleMillis,
+      transmitTailMillis,
+      persistence,
+      slotTimeMillis,
+      callsign,
+      ssid,
+    }) => ({
+      kind: "Ax25Kiss",
+      port,
+      line: rawSerialLine(line),
+      flowControl,
+      preambleMillis,
+      transmitTailMillis,
+      persistence,
+      slotTimeMillis,
+      callsign,
+      ssid,
+    }),
+    RNode: ({
+      port,
+      radio,
+      flowControl,
+      stationCallsign,
+      stationIntervalSeconds,
+      airtimeLimitShortCentiPercent,
+      airtimeLimitLongCentiPercent,
+    }) => ({
+      kind: "RNode",
+      port,
+      radio: rawRNodeRadio(radio),
+      flowControl,
+      stationCallsign,
+      stationIntervalSeconds,
+      airtimeLimitShortCentiPercent,
+      airtimeLimitLongCentiPercent,
+    }),
+    MultiRNode: ({
+      port,
+      stationCallsign,
+      stationIntervalSeconds,
+      members,
+    }) => ({
+      kind: "MultiRNode",
+      port,
+      stationCallsign,
+      stationIntervalSeconds,
+      members: members.map((member) => ({
+        name: member.name,
+        virtualPort: member.virtualPort,
+        radio: rawRNodeRadio(member.radio),
+        flowControl: member.flowControl,
+        outgoing: member.outgoing,
+      })),
+    }),
+    Pipe: ({ command, respawnDelayMillis }) => ({
+      kind: "Pipe",
+      command: Array.from(command),
+      respawnDelayMillis,
+    }),
+    BackboneClient: ({ target, bitrate }) => ({
+      kind: "BackboneClient",
+      target,
+      bitrateBps: bitrateBitsPerSecond(bitrate),
+    }),
+    BackboneServer: ({ bind, bitrate }) => ({
+      kind: "BackboneServer",
+      bind,
+      bitrateBps: bitrateBitsPerSecond(bitrate),
+    }),
+    I2p: ({ peers, connectable }) => ({
+      kind: "I2p",
+      peers: Array.from(peers),
+      connectable,
+    }),
+    Weave: ({ port }) => ({ kind: "Weave", port }),
+    AutomaticUsb: () => ({ kind: "AutomaticUsb" }),
+    AutomaticBluetoothLe: () => ({ kind: "AutomaticBluetoothLe" }),
+    WebSocketClient: ({ target }) => ({ kind: "WebSocketClient", target }),
+    WebSocketServer: ({ bind }) => ({ kind: "WebSocketServer", bind }),
+    BrowserRendezvous: ({ url }) => ({ kind: "BrowserRendezvous", url }),
+  });
+}
+
+function rawSerialLine(
+  line: import("../contract.js").SerialLineConfig,
+): RawSerialLine {
+  return {
+    baud: line.baud,
+    dataBits: line.dataBits,
+    parity: line.parity,
+    stopBits: line.stopBits,
+  };
+}
+
+function rawRNodeRadio(
+  radio: import("../contract.js").RNodeRadioConfig,
+): RawRNodeRadio {
+  return {
+    frequencyHz: radio.frequencyHz,
+    bandwidthHz: radio.bandwidthHz,
+    txPowerDbm: radio.txPowerDbm,
+    spreadingFactor: radio.spreadingFactor,
+    codingRate: radio.codingRate,
+  };
 }
 
 function validateInterfaceConfig(config: InterfaceConfig): void {
@@ -2186,8 +2404,8 @@ function validateCallsign(value: string): void {
 }
 
 function validateWebSocket(name: string, value: string): void {
-  if (!value.startsWith("ws://") && !value.startsWith("wss://")) {
-    invalidConfiguration(`${name} must use ws:// or wss://`);
+  if (!value.startsWith("ws://")) {
+    invalidConfiguration(`${name} must use ws://`);
   }
 }
 
