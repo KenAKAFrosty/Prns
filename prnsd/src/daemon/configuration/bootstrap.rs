@@ -548,6 +548,33 @@ fn seed_source_page_tracked(
     })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SourcePageRefresh {
+    Rewritten(SourcePageState),
+    Unchanged,
+    OperatorOwned,
+    Absent,
+}
+
+pub(crate) fn refresh_source_page(
+    config_dir: &Path,
+) -> Result<SourcePageRefresh, ServerBootstrapError> {
+    let path = crate::nnpages::page_root(config_dir).join(crate::nnpages::SOURCE_PAGE_FILE_NAME);
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.file_type().is_file() => {}
+        Ok(_) => return Ok(SourcePageRefresh::OperatorOwned),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(SourcePageRefresh::Absent)
+        }
+        Err(source) => return Err(nnpages_storage("inspect managed page", &path, source)),
+    }
+    Ok(match seed_source_page(config_dir)? {
+        SourcePageSeed::Written { state, .. } => SourcePageRefresh::Rewritten(state),
+        SourcePageSeed::Unchanged(_) => SourcePageRefresh::Unchanged,
+        SourcePageSeed::OperatorOwned => SourcePageRefresh::OperatorOwned,
+    })
+}
+
 pub(crate) fn seed_coming_from_rns_page(
     config_dir: &Path,
 ) -> Result<ManagedPageSeed, ServerBootstrapError> {
@@ -1630,6 +1657,78 @@ mod tests {
         assert!(std::fs::read_to_string(&path)
             .expect("source page is readable")
             .contains(":/file/source.zip.sha256"));
+    }
+
+    #[test]
+    fn a_refresh_rerenders_the_managed_source_page_when_the_archive_appears() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        seed_source_page(directory.path()).expect("source page seeding succeeds");
+        assert_eq!(
+            refresh_source_page(directory.path()).expect("refresh succeeds"),
+            SourcePageRefresh::Unchanged
+        );
+
+        let files = crate::nnpages::file_root(directory.path());
+        std::fs::create_dir_all(&files).expect("file root");
+        std::fs::write(
+            files.join(crate::nnpages::SOURCE_ARCHIVE_FILE_NAME),
+            vec![0u8; 2048],
+        )
+        .expect("archive");
+
+        assert_eq!(
+            refresh_source_page(directory.path()).expect("refresh succeeds"),
+            SourcePageRefresh::Rewritten(SourcePageState::ArchiveStaged {
+                archive_bytes: 2048,
+                has_checksum: false,
+            })
+        );
+        let page =
+            crate::nnpages::page_root(directory.path()).join(crate::nnpages::SOURCE_PAGE_FILE_NAME);
+        let rendered = std::fs::read_to_string(page).expect("source page is readable");
+        assert!(rendered.contains(":/file/source.zip"));
+        assert!(rendered.contains("(2.0 KB)"));
+    }
+
+    #[test]
+    fn a_refresh_leaves_an_operator_owned_source_page_alone() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let SourcePageSeed::Written { path, .. } =
+            seed_source_page(directory.path()).expect("source page seeding succeeds")
+        else {
+            panic!("a fresh directory writes the source page");
+        };
+        std::fs::write(&path, b"operator edition").expect("operator edits page");
+        assert_eq!(
+            refresh_source_page(directory.path()).expect("refresh succeeds"),
+            SourcePageRefresh::OperatorOwned
+        );
+        assert_eq!(
+            std::fs::read(&path).expect("page is readable"),
+            b"operator edition"
+        );
+    }
+
+    #[test]
+    fn a_refresh_without_a_source_page_touches_nothing() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        assert_eq!(
+            refresh_source_page(directory.path()).expect("refresh succeeds"),
+            SourcePageRefresh::Absent
+        );
+        assert!(!crate::nnpages::root(directory.path()).exists());
+
+        let SourcePageSeed::Written { path, .. } =
+            seed_source_page(directory.path()).expect("source page seeding succeeds")
+        else {
+            panic!("a fresh directory writes the source page");
+        };
+        std::fs::remove_file(&path).expect("operator removes page");
+        assert_eq!(
+            refresh_source_page(directory.path()).expect("refresh succeeds"),
+            SourcePageRefresh::Absent
+        );
+        assert!(!path.exists());
     }
 
     #[test]

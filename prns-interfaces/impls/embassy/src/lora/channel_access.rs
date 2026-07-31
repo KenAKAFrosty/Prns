@@ -1,5 +1,7 @@
 use prns_core::interfaces::lora::{Modulation, RadioProfile};
 
+use super::airtime_quantum::BackoffRate;
+
 const NOISE_SAMPLE_COUNT: usize = 32;
 const NOISE_PERCENTILE: usize = 20;
 const INTERFERENCE_MARGIN_DB: i16 = 11;
@@ -11,9 +13,7 @@ const FAST_MIN_SLOT_MS: u64 = 6;
 const MAX_SLOT_MS: u64 = 100;
 const FAST_BITRATE_BPS: u32 = 30_000;
 const DIFS_SLOTS: u64 = 2;
-const POST_TX_YIELD_SLOTS: u64 = 3;
-const CONTENTION_BAND_SLOTS: u8 = 15;
-const CONTENTION_BANDS: u8 = 4;
+const CONTENTION_BAND_SLOTS: u64 = 15;
 const MIN_PENDING_TTL_MS: u64 = 30_000;
 const MAX_PENDING_TTL_MS: u64 = 120_000;
 
@@ -44,12 +44,35 @@ pub(crate) enum ChannelAccessAction {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BackoffSelection {
+    Primary { band: u8 },
+    TieBreak,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ChannelAccessState {
-    WaitingForClear { clear_ms: u64 },
-    NeedBackoff { band: u8 },
+    NeedBackoff(BackoffSelection),
+    WaitingForClear { clear_ms: u64, remaining_ms: u64 },
     Backoff { remaining_ms: u64 },
     FinalCheck,
     Complete,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ContentionPriority {
+    Fresh { short_airtime_per_mille: u16 },
+    Continuation,
+}
+
+impl ContentionPriority {
+    const fn band(self) -> u8 {
+        match self {
+            Self::Fresh {
+                short_airtime_per_mille,
+            } => utilization_band(short_airtime_per_mille),
+            Self::Continuation => 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,7 +80,6 @@ pub(crate) struct ChannelTiming {
     slot_ms: u64,
     difs_ms: u64,
     sample_ms: u64,
-    post_tx_yield_ms: u64,
 }
 
 impl ChannelTiming {
@@ -82,21 +104,15 @@ impl ChannelTiming {
             slot_ms,
             difs_ms: slot_ms * DIFS_SLOTS,
             sample_ms: clamp_u64(slot_ms / 4, 3, 12),
-            post_tx_yield_ms: slot_ms * POST_TX_YIELD_SLOTS,
         }
     }
 
-    #[cfg(test)]
-    const fn slot_ms(self) -> u64 {
+    pub(crate) const fn slot_ms(self) -> u64 {
         self.slot_ms
     }
 
     pub(crate) const fn sample_ms(self) -> u64 {
         self.sample_ms
-    }
-
-    pub(crate) const fn post_tx_yield_ms(self) -> u64 {
-        self.post_tx_yield_ms
     }
 }
 
@@ -116,14 +132,22 @@ pub(crate) struct ChannelAccess {
     state: ChannelAccessState,
     last_observation_ms: u64,
     expires_at_ms: u64,
-    interruption_band: u8,
+    rate_remainder: u16,
     deferrals: u32,
 }
 
 impl ChannelAccess {
     #[cfg(test)]
     pub(crate) fn new(profile: RadioProfile, now_ms: u64, packet_airtime_us: u64) -> Self {
-        Self::new_at(profile, now_ms, now_ms, packet_airtime_us)
+        Self::new_at(
+            profile,
+            now_ms,
+            now_ms,
+            packet_airtime_us,
+            ContentionPriority::Fresh {
+                short_airtime_per_mille: 0,
+            },
+        )
     }
 
     pub(crate) fn new_at(
@@ -131,19 +155,41 @@ impl ChannelAccess {
         now_ms: u64,
         enqueued_at_ms: u64,
         packet_airtime_us: u64,
+        priority: ContentionPriority,
     ) -> Self {
         Self {
             timing: ChannelTiming::for_profile(profile),
-            state: ChannelAccessState::WaitingForClear { clear_ms: 0 },
+            state: ChannelAccessState::NeedBackoff(BackoffSelection::Primary {
+                band: priority.band(),
+            }),
             last_observation_ms: now_ms,
             expires_at_ms: enqueued_at_ms.saturating_add(pending_ttl_ms(packet_airtime_us)),
-            interruption_band: 0,
+            rate_remainder: 0,
             deferrals: 0,
         }
     }
 
-    pub(crate) const fn timing(&self) -> ChannelTiming {
-        self.timing
+    pub(crate) fn next_poll_ms(&self, rate: BackoffRate) -> u64 {
+        let state_limit_ms = match self.state {
+            ChannelAccessState::WaitingForClear {
+                clear_ms,
+                remaining_ms,
+            } => {
+                if clear_ms < self.timing.difs_ms {
+                    self.timing.difs_ms - clear_ms
+                } else {
+                    rate.time_to_progress_ms(remaining_ms, self.rate_remainder)
+                }
+            }
+            ChannelAccessState::Backoff { remaining_ms } => {
+                rate.time_to_progress_ms(remaining_ms, self.rate_remainder)
+            }
+            ChannelAccessState::FinalCheck => 1,
+            ChannelAccessState::NeedBackoff(_) | ChannelAccessState::Complete => {
+                self.timing.sample_ms
+            }
+        };
+        state_limit_ms.min(self.timing.sample_ms).max(1)
     }
 
     pub(crate) const fn deferrals(&self) -> u32 {
@@ -155,16 +201,28 @@ impl ChannelAccess {
     }
 
     pub(crate) fn restart_contention(&mut self, now_ms: u64) {
-        self.state = ChannelAccessState::WaitingForClear { clear_ms: 0 };
+        self.state = match self.state {
+            ChannelAccessState::Backoff { remaining_ms }
+            | ChannelAccessState::WaitingForClear { remaining_ms, .. } => {
+                ChannelAccessState::WaitingForClear {
+                    clear_ms: 0,
+                    remaining_ms,
+                }
+            }
+            ChannelAccessState::FinalCheck => ChannelAccessState::WaitingForClear {
+                clear_ms: 0,
+                remaining_ms: 0,
+            },
+            state @ (ChannelAccessState::NeedBackoff(_) | ChannelAccessState::Complete) => state,
+        };
         self.last_observation_ms = now_ms;
-        self.interruption_band = 0;
     }
 
     pub(crate) fn observe(
         &mut self,
         now_ms: u64,
         observation: ChannelObservation,
-        short_airtime_per_mille: u16,
+        rate: BackoffRate,
     ) -> ChannelAccessAction {
         if now_ms >= self.expires_at_ms {
             self.state = ChannelAccessState::Complete;
@@ -178,61 +236,62 @@ impl ChannelAccess {
         }
 
         match self.state {
-            ChannelAccessState::WaitingForClear { clear_ms } => {
-                let clear_ms = clear_ms.saturating_add(elapsed_ms);
-                if clear_ms < self.timing.difs_ms {
-                    self.state = ChannelAccessState::WaitingForClear { clear_ms };
+            ChannelAccessState::NeedBackoff(_) => ChannelAccessAction::NeedBackoffEntropy,
+            ChannelAccessState::WaitingForClear {
+                clear_ms,
+                remaining_ms,
+            } => {
+                let total_clear_ms = clear_ms.saturating_add(elapsed_ms);
+                if total_clear_ms < self.timing.difs_ms {
+                    self.state = ChannelAccessState::WaitingForClear {
+                        clear_ms: total_clear_ms,
+                        remaining_ms,
+                    };
                     ChannelAccessAction::Wait
                 } else {
-                    let band =
-                        utilization_band(short_airtime_per_mille).max(self.interruption_band);
-                    self.state = ChannelAccessState::NeedBackoff { band };
-                    ChannelAccessAction::NeedBackoffEntropy
+                    self.advance_backoff(
+                        remaining_ms,
+                        total_clear_ms.saturating_sub(self.timing.difs_ms),
+                        rate,
+                    )
                 }
             }
-            ChannelAccessState::NeedBackoff { .. } => ChannelAccessAction::NeedBackoffEntropy,
             ChannelAccessState::Backoff { remaining_ms } => {
-                let remaining_ms = remaining_ms.saturating_sub(elapsed_ms);
-                if remaining_ms == 0 {
-                    self.state = ChannelAccessState::FinalCheck;
-                    ChannelAccessAction::ReadyForFinalCheck
-                } else {
-                    self.state = ChannelAccessState::Backoff { remaining_ms };
-                    ChannelAccessAction::Wait
-                }
+                self.advance_backoff(remaining_ms, elapsed_ms, rate)
             }
             ChannelAccessState::FinalCheck => ChannelAccessAction::ReadyForFinalCheck,
             ChannelAccessState::Complete => ChannelAccessAction::Expired,
         }
     }
 
-    /// Supply fresh, uniformly distributed entropy. `u16::MAX` is rejected so
-    /// all 15 slot choices have the same number of source values.
     pub(crate) fn choose_backoff(&mut self, entropy: u16) -> bool {
-        let ChannelAccessState::NeedBackoff { band } = self.state else {
+        let ChannelAccessState::NeedBackoff(selection) = self.state else {
             return false;
         };
-        if entropy == u16::MAX {
-            return false;
-        }
-        let slot = band
-            .saturating_mul(CONTENTION_BAND_SLOTS)
-            .saturating_add((entropy % u16::from(CONTENTION_BAND_SLOTS)) as u8);
-        let remaining_ms = u64::from(slot).saturating_mul(self.timing.slot_ms);
-        self.state = if remaining_ms == 0 {
-            ChannelAccessState::FinalCheck
-        } else {
-            ChannelAccessState::Backoff { remaining_ms }
+        let (start_ms, width_ms) = match selection {
+            BackoffSelection::Primary { band } => (
+                u64::from(band)
+                    .saturating_mul(CONTENTION_BAND_SLOTS)
+                    .saturating_mul(self.timing.slot_ms),
+                CONTENTION_BAND_SLOTS.saturating_mul(self.timing.slot_ms),
+            ),
+            BackoffSelection::TieBreak => (0, self.timing.slot_ms),
         };
+        let offset_ms = u64::from(entropy).saturating_mul(width_ms) >> 16;
+        self.state = ChannelAccessState::WaitingForClear {
+            clear_ms: 0,
+            remaining_ms: start_ms.saturating_add(offset_ms),
+        };
+        self.rate_remainder = 0;
         true
     }
 
     pub(crate) fn after_entropy(&self) -> ChannelAccessAction {
         match self.state {
-            ChannelAccessState::FinalCheck => ChannelAccessAction::ReadyForFinalCheck,
-            ChannelAccessState::Backoff { .. } => ChannelAccessAction::Wait,
-            ChannelAccessState::NeedBackoff { .. } => ChannelAccessAction::NeedBackoffEntropy,
-            ChannelAccessState::WaitingForClear { .. } => ChannelAccessAction::Wait,
+            ChannelAccessState::NeedBackoff(_) => ChannelAccessAction::NeedBackoffEntropy,
+            ChannelAccessState::WaitingForClear { .. }
+            | ChannelAccessState::Backoff { .. }
+            | ChannelAccessState::FinalCheck => ChannelAccessAction::Wait,
             ChannelAccessState::Complete => ChannelAccessAction::Expired,
         }
     }
@@ -258,17 +317,53 @@ impl ChannelAccess {
         }
     }
 
-    fn defer(&mut self) -> ChannelAccessAction {
-        if matches!(
-            self.state,
-            ChannelAccessState::WaitingForClear { clear_ms: 0 }
-        ) {
-            return ChannelAccessAction::Wait;
+    fn advance_backoff(
+        &mut self,
+        remaining_ms: u64,
+        elapsed_ms: u64,
+        rate: BackoffRate,
+    ) -> ChannelAccessAction {
+        let progress_ms = rate.scale_elapsed_ms(elapsed_ms, &mut self.rate_remainder);
+        let remaining_ms = remaining_ms.saturating_sub(progress_ms);
+        if remaining_ms == 0 {
+            self.state = ChannelAccessState::FinalCheck;
+            ChannelAccessAction::ReadyForFinalCheck
+        } else {
+            self.state = ChannelAccessState::Backoff { remaining_ms };
+            ChannelAccessAction::Wait
         }
-        self.deferrals = self.deferrals.saturating_add(1);
-        self.interruption_band =
-            (self.interruption_band + 1).min(CONTENTION_BANDS.saturating_sub(1));
-        self.state = ChannelAccessState::WaitingForClear { clear_ms: 0 };
+    }
+
+    fn defer(&mut self) -> ChannelAccessAction {
+        let redraws_tail = matches!(self.state, ChannelAccessState::FinalCheck);
+        self.state = match self.state {
+            ChannelAccessState::NeedBackoff(selection) => {
+                ChannelAccessState::NeedBackoff(selection)
+            }
+            ChannelAccessState::WaitingForClear {
+                clear_ms: 0,
+                remaining_ms,
+            } => ChannelAccessState::WaitingForClear {
+                clear_ms: 0,
+                remaining_ms,
+            },
+            ChannelAccessState::WaitingForClear { remaining_ms, .. }
+            | ChannelAccessState::Backoff { remaining_ms } => {
+                self.deferrals = self.deferrals.saturating_add(1);
+                ChannelAccessState::WaitingForClear {
+                    clear_ms: 0,
+                    remaining_ms,
+                }
+            }
+            ChannelAccessState::FinalCheck => {
+                self.deferrals = self.deferrals.saturating_add(1);
+                ChannelAccessState::NeedBackoff(BackoffSelection::TieBreak)
+            }
+            ChannelAccessState::Complete => ChannelAccessState::Complete,
+        };
+        if redraws_tail {
+            self.rate_remainder = 0;
+        }
         ChannelAccessAction::Wait
     }
 }
@@ -427,6 +522,19 @@ impl DemodulatorActivity {
         self.expires_at_ms = 0;
     }
 
+    pub(crate) const fn next_poll_ms(&self, now_ms: u64, ordinary_poll_ms: u64) -> u64 {
+        if self.active {
+            let remaining_ms = self.expires_at_ms.saturating_sub(now_ms);
+            if remaining_ms == 0 {
+                1
+            } else {
+                remaining_ms
+            }
+        } else {
+            ordinary_poll_ms
+        }
+    }
+
     /// Returns `(busy, false_preamble_expired)`.
     pub(crate) fn observe(&mut self, now_ms: u64) -> (bool, bool) {
         if !self.active {
@@ -458,36 +566,26 @@ const fn false_preamble_watchdog_ms(profile: RadioProfile) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lora::airtime_quantum::ServiceAge;
     use prns_core::interfaces::lora::{
         CodingRate, Frequency, LoraBandwidth, ModemPreset, PreambleSymbols, Region,
         SpreadingFactor, TxPower, DEFAULT_915_PROFILE,
     };
 
-    fn observe_clear_for(
-        access: &mut ChannelAccess,
-        start_ms: u64,
-        duration_ms: u64,
-        utilization: u16,
-    ) -> ChannelAccessAction {
-        let sample_ms = access.timing().sample_ms();
-        let mut action = ChannelAccessAction::Wait;
-        let mut now = start_ms;
-        while now <= start_ms + duration_ms {
-            action = access.observe(now, ChannelObservation::Clear, utilization);
-            if matches!(action, ChannelAccessAction::NeedBackoffEntropy) {
-                break;
-            }
-            now += sample_ms;
-        }
-        action
+    fn begin(access: &mut ChannelAccess, entropy: u16) {
+        assert_eq!(
+            access.observe(0, ChannelObservation::Clear, BackoffRate::ONE),
+            ChannelAccessAction::NeedBackoffEntropy
+        );
+        assert!(access.choose_backoff(entropy));
+        assert_eq!(access.after_entropy(), ChannelAccessAction::Wait);
     }
 
     #[test]
-    fn timing_tracks_symbols_and_preserves_rnode_bounds() {
+    fn timing_tracks_symbols_and_preserves_profile_bounds() {
         let normal = ChannelTiming::for_profile(DEFAULT_915_PROFILE);
         assert_eq!(normal.slot_ms(), 99);
         assert_eq!(normal.sample_ms(), 12);
-        assert_eq!(normal.post_tx_yield_ms(), 297);
 
         let fastest = RadioProfile {
             frequency: Frequency::new(915_000_000),
@@ -510,69 +608,207 @@ mod tests {
     }
 
     #[test]
-    fn a_transmit_requires_difs_backoff_and_a_final_clear_check() {
+    fn a_transmit_requires_real_difs_ticket_and_a_final_clear_check() {
         let mut access = ChannelAccess::new(DEFAULT_915_PROFILE, 0, 1_000_000);
+        begin(&mut access, 0);
+        let difs_ms = access.timing.difs_ms;
         assert_eq!(
-            observe_clear_for(&mut access, 0, 500, 0),
-            ChannelAccessAction::NeedBackoffEntropy
+            access.observe(difs_ms - 1, ChannelObservation::Clear, BackoffRate::ONE),
+            ChannelAccessAction::Wait
         );
-        assert!(access.choose_backoff(1));
-        let after_backoff = access.observe(400, ChannelObservation::Clear, 0);
-        assert_eq!(after_backoff, ChannelAccessAction::ReadyForFinalCheck);
         assert_eq!(
-            access.final_check(400, ChannelObservation::Clear),
+            access.observe(difs_ms, ChannelObservation::Clear, BackoffRate::ONE),
+            ChannelAccessAction::ReadyForFinalCheck
+        );
+        assert_eq!(
+            access.final_check(difs_ms, ChannelObservation::Clear),
             ChannelAccessAction::Transmit
         );
     }
 
     #[test]
-    fn busy_channel_freezes_backoff_and_escalates_the_next_window() {
-        let mut access = ChannelAccess::new(DEFAULT_915_PROFILE, 0, 1_000_000);
-        assert_eq!(
-            observe_clear_for(&mut access, 0, 500, 0),
-            ChannelAccessAction::NeedBackoffEntropy
-        );
-        assert!(access.choose_backoff(14));
-        assert_eq!(
-            access.observe(400, ChannelObservation::Busy, 0),
-            ChannelAccessAction::Wait
-        );
-        assert_eq!(access.deferrals(), 1);
+    fn full_entropy_maps_to_millisecond_tickets_across_self_airtime_bands() {
+        let timing = ChannelTiming::for_profile(DEFAULT_915_PROFILE);
+        let width_ms = 15 * timing.slot_ms;
 
-        assert_eq!(
-            observe_clear_for(&mut access, 401, 500, 0),
-            ChannelAccessAction::NeedBackoffEntropy
-        );
-        assert!(access.choose_backoff(0));
+        let mut access = ChannelAccess::new(DEFAULT_915_PROFILE, 0, 1_000_000);
+        begin(&mut access, u16::MAX / 2 + 1);
         assert_eq!(
             access.state,
-            ChannelAccessState::Backoff {
-                remaining_ms: 15 * 99,
+            ChannelAccessState::WaitingForClear {
+                clear_ms: 0,
+                remaining_ms: width_ms / 2,
+            }
+        );
+
+        let mut loaded = ChannelAccess::new_at(
+            DEFAULT_915_PROFILE,
+            0,
+            0,
+            1_000_000,
+            ContentionPriority::Fresh {
+                short_airtime_per_mille: 1_000,
             },
-            "one interruption raises an otherwise idle channel into the second window"
+        );
+        begin(&mut loaded, u16::MAX);
+        assert_eq!(
+            loaded.state,
+            ChannelAccessState::WaitingForClear {
+                clear_ms: 0,
+                remaining_ms: 3 * width_ms + width_ms - 1,
+            }
+        );
+
+        let mut continuation = ChannelAccess::new_at(
+            DEFAULT_915_PROFILE,
+            0,
+            0,
+            1_000_000,
+            ContentionPriority::Continuation,
+        );
+        begin(&mut continuation, 0);
+        assert_eq!(
+            continuation.state,
+            ChannelAccessState::WaitingForClear {
+                clear_ms: 0,
+                remaining_ms: 0,
+            }
         );
     }
 
     #[test]
-    fn entropy_rejection_is_unbiased_and_non_advancing() {
+    fn busy_channel_restarts_difs_and_permanently_freezes_ticket_progress() {
         let mut access = ChannelAccess::new(DEFAULT_915_PROFILE, 0, 1_000_000);
+        begin(&mut access, u16::MAX / 2 + 1);
+        let difs_ms = access.timing.difs_ms;
         assert_eq!(
-            observe_clear_for(&mut access, 0, 500, 0),
+            access.observe(difs_ms + 100, ChannelObservation::Clear, BackoffRate::ONE),
+            ChannelAccessAction::Wait
+        );
+        let ChannelAccessState::Backoff {
+            remaining_ms: frozen_ms,
+        } = access.state
+        else {
+            panic!("ticket should be counting down");
+        };
+        assert_eq!(
+            access.observe(difs_ms + 112, ChannelObservation::Busy, BackoffRate::ONE),
+            ChannelAccessAction::Wait
+        );
+        assert_eq!(access.deferrals(), 1);
+        assert_eq!(
+            access.state,
+            ChannelAccessState::WaitingForClear {
+                clear_ms: 0,
+                remaining_ms: frozen_ms,
+            }
+        );
+
+        let resumed_at = difs_ms + 112 + difs_ms;
+        assert_eq!(
+            access.observe(resumed_at, ChannelObservation::Clear, BackoffRate::ONE),
+            ChannelAccessAction::Wait
+        );
+        assert_eq!(
+            access.state,
+            ChannelAccessState::Backoff {
+                remaining_ms: frozen_ms,
+            },
+            "DIFS consumes clear time but not the frozen ticket"
+        );
+    }
+
+    #[test]
+    fn a_busy_final_check_draws_only_a_one_slot_tie_break_tail() {
+        let mut access = ChannelAccess::new(DEFAULT_915_PROFILE, 0, 1_000_000);
+        begin(&mut access, 0);
+        let difs_ms = access.timing.difs_ms;
+        assert_eq!(
+            access.observe(difs_ms, ChannelObservation::Clear, BackoffRate::ONE),
+            ChannelAccessAction::ReadyForFinalCheck
+        );
+        assert_eq!(
+            access.final_check(difs_ms, ChannelObservation::Busy),
+            ChannelAccessAction::Wait
+        );
+        assert_eq!(
+            access.observe(difs_ms, ChannelObservation::Clear, BackoffRate::ONE),
             ChannelAccessAction::NeedBackoffEntropy
         );
-        assert!(!access.choose_backoff(u16::MAX));
+        assert!(access.choose_backoff(u16::MAX));
         assert_eq!(
-            access.after_entropy(),
-            ChannelAccessAction::NeedBackoffEntropy
+            access.state,
+            ChannelAccessState::WaitingForClear {
+                clear_ms: 0,
+                remaining_ms: access.timing.slot_ms - 1,
+            }
         );
-        assert!(access.choose_backoff(u16::MAX - 1));
+    }
+
+    #[test]
+    fn earned_age_accelerates_only_ticket_time_and_caps_at_three_times() {
+        let mut age = ServiceAge::new(DEFAULT_915_PROFILE);
+        age.record_peer_airtime(age.quantum().us());
+        let mut access = ChannelAccess::new(DEFAULT_915_PROFILE, 0, 1_000_000);
+        begin(&mut access, u16::MAX / 2 + 1);
+        let initial_ticket_ms = 15 * access.timing.slot_ms / 2;
+        let difs_ms = access.timing.difs_ms;
+        assert_eq!(
+            access.observe(difs_ms + 100, ChannelObservation::Clear, age.backoff_rate()),
+            ChannelAccessAction::Wait
+        );
+        assert_eq!(
+            access.state,
+            ChannelAccessState::Backoff {
+                remaining_ms: initial_ticket_ms - 300,
+            }
+        );
+    }
+
+    #[test]
+    fn fractional_ticket_progress_survives_channel_interruptions() {
+        let mut age = ServiceAge::new(DEFAULT_915_PROFILE);
+        age.record_peer_airtime(age.quantum().us() / 4);
+        let rate = age.backoff_rate();
+        let mut access = ChannelAccess::new(DEFAULT_915_PROFILE, 0, 1_000_000);
+        begin(&mut access, u16::MAX / 2 + 1);
+        let initial_ticket_ms = 15 * access.timing.slot_ms / 2;
+        let difs_ms = access.timing.difs_ms;
+
+        assert_eq!(
+            access.observe(difs_ms + 1, ChannelObservation::Clear, rate),
+            ChannelAccessAction::Wait
+        );
+        assert_eq!(access.rate_remainder, 1 << 15);
+        assert_eq!(
+            access.observe(difs_ms + 2, ChannelObservation::Busy, rate),
+            ChannelAccessAction::Wait
+        );
+        assert_eq!(access.rate_remainder, 1 << 15);
+
+        let resumed_at = difs_ms + 2 + difs_ms;
+        assert_eq!(
+            access.observe(resumed_at, ChannelObservation::Clear, rate),
+            ChannelAccessAction::Wait
+        );
+        assert_eq!(
+            access.observe(resumed_at + 1, ChannelObservation::Clear, rate),
+            ChannelAccessAction::Wait
+        );
+        assert_eq!(
+            access.state,
+            ChannelAccessState::Backoff {
+                remaining_ms: initial_ticket_ms - 3,
+            }
+        );
+        assert_eq!(access.rate_remainder, 0);
     }
 
     #[test]
     fn contention_expires_instead_of_forcing_a_transmit() {
         let mut access = ChannelAccess::new(DEFAULT_915_PROFILE, 0, 100_000);
         assert_eq!(
-            access.observe(30_000, ChannelObservation::Busy, 0),
+            access.observe(30_000, ChannelObservation::Busy, BackoffRate::ONE),
             ChannelAccessAction::Expired
         );
     }
@@ -637,241 +873,17 @@ mod tests {
         let mut activity = DemodulatorActivity::new();
         activity.preamble_detected(1_000, DEFAULT_915_PROFILE);
         let watchdog = false_preamble_watchdog_ms(DEFAULT_915_PROFILE);
+        assert_eq!(activity.next_poll_ms(1_000, 12), watchdog);
         assert_eq!(activity.observe(1_000 + watchdog - 1), (true, false));
         assert_eq!(activity.observe(1_000 + watchdog), (false, true));
 
         activity.preamble_detected(2_000, DEFAULT_915_PROFILE);
         activity.header_valid(2_100, DEFAULT_915_PROFILE);
+        assert!(activity.next_poll_ms(2_100, 12) > 12);
         assert_eq!(activity.observe(2_100 + watchdog), (true, false));
         activity.frame_finished();
+        assert_eq!(activity.next_poll_ms(2_100, 12), 12);
         assert_eq!(activity.observe(20_000), (false, false));
-    }
-
-    #[derive(Clone, Copy)]
-    struct SimulationResult {
-        collisions: u64,
-        successes: [u64; 8],
-    }
-
-    fn next_entropy(state: &mut u32) -> u16 {
-        let mut value = *state;
-        value ^= value << 13;
-        value ^= value >> 17;
-        value ^= value << 5;
-        *state = value;
-        value as u16
-    }
-
-    fn simulate_adaptive(node_count: usize, target_successes: u64) -> SimulationResult {
-        let timing = ChannelTiming::for_profile(DEFAULT_915_PROFILE);
-        let sample_ms = timing.sample_ms();
-        let frame_airtime_ms = 250u64;
-        let mut access: [Option<ChannelAccess>; 8] = core::array::from_fn(|_| None);
-        let mut entropy: [u32; 8] = core::array::from_fn(|index| 0x9e37_79b9 ^ (index as u32 + 1));
-        let mut eligible_at_ms = [0u64; 8];
-        let mut successes = [0u64; 8];
-        let mut successful_tx_at_ms = [[0u64; 1_024]; 8];
-        let mut collisions = 0u64;
-        let mut busy_until_ms = 0u64;
-        let mut now_ms = 0u64;
-
-        while successes.iter().sum::<u64>() < target_successes {
-            assert!(now_ms < 20_000_000, "adaptive simulation made no progress");
-            let channel_busy = now_ms < busy_until_ms;
-            let mut candidates = [false; 8];
-            for node in 0..node_count {
-                if access[node].is_none() && now_ms >= eligible_at_ms[node] {
-                    access[node] = Some(ChannelAccess::new(
-                        DEFAULT_915_PROFILE,
-                        now_ms,
-                        frame_airtime_ms * 1_000,
-                    ));
-                }
-                let Some(contender) = access[node].as_mut() else {
-                    continue;
-                };
-                let live_transmissions = successful_tx_at_ms[node][..successes[node] as usize]
-                    .iter()
-                    .filter(|sent_at| now_ms.saturating_sub(**sent_at) < 15_000)
-                    .count() as u64;
-                let short_airtime_per_mille = live_transmissions
-                    .saturating_mul(frame_airtime_ms)
-                    .saturating_mul(1_000)
-                    .saturating_div(15_000)
-                    .min(1_000) as u16;
-                let mut action = contender.observe(
-                    now_ms,
-                    if channel_busy {
-                        ChannelObservation::Busy
-                    } else {
-                        ChannelObservation::Clear
-                    },
-                    short_airtime_per_mille,
-                );
-                while matches!(action, ChannelAccessAction::NeedBackoffEntropy) {
-                    if contender.choose_backoff(next_entropy(&mut entropy[node])) {
-                        action = contender.after_entropy();
-                    }
-                }
-                if matches!(action, ChannelAccessAction::ReadyForFinalCheck) {
-                    action = contender.final_check(
-                        now_ms,
-                        if channel_busy {
-                            ChannelObservation::Busy
-                        } else {
-                            ChannelObservation::Clear
-                        },
-                    );
-                }
-                candidates[node] = matches!(action, ChannelAccessAction::Transmit);
-                if matches!(action, ChannelAccessAction::Expired) {
-                    access[node] = None;
-                    eligible_at_ms[node] = now_ms.saturating_add(timing.post_tx_yield_ms());
-                }
-            }
-
-            let candidate_count = candidates[..node_count]
-                .iter()
-                .filter(|candidate| **candidate)
-                .count();
-            if candidate_count > 0 {
-                busy_until_ms = now_ms.saturating_add(frame_airtime_ms);
-                if candidate_count == 1 {
-                    let winner = candidates[..node_count]
-                        .iter()
-                        .position(|candidate| *candidate)
-                        .expect("one candidate has a position");
-                    successful_tx_at_ms[winner][successes[winner] as usize] = now_ms;
-                    successes[winner] += 1;
-                } else {
-                    collisions += 1;
-                }
-                for node in 0..node_count {
-                    if candidates[node] {
-                        access[node] = None;
-                        eligible_at_ms[node] =
-                            busy_until_ms.saturating_add(timing.post_tx_yield_ms());
-                    }
-                }
-            }
-            now_ms = now_ms.saturating_add(sample_ms);
-        }
-        SimulationResult {
-            collisions,
-            successes,
-        }
-    }
-
-    fn simulate_rnode_baseline(node_count: usize, target_successes: u64) -> SimulationResult {
-        let timing = ChannelTiming::for_profile(DEFAULT_915_PROFILE);
-        let sample_ms = timing.sample_ms();
-        let frame_airtime_ms = 250u64;
-        let mut clear_ms = [0u64; 8];
-        let mut backoff_ms = [None; 8];
-        let mut entropy: [u32; 8] = core::array::from_fn(|index| 0x9e37_79b9 ^ (index as u32 + 1));
-        let mut eligible_at_ms = [0u64; 8];
-        let mut successes = [0u64; 8];
-        let mut collisions = 0u64;
-        let mut busy_until_ms = 0u64;
-        let mut now_ms = 0u64;
-
-        while successes.iter().sum::<u64>() < target_successes {
-            assert!(now_ms < 20_000_000, "baseline simulation made no progress");
-            let channel_busy = now_ms < busy_until_ms;
-            let mut candidates = [false; 8];
-            for node in 0..node_count {
-                if now_ms < eligible_at_ms[node] {
-                    continue;
-                }
-                if channel_busy {
-                    clear_ms[node] = 0;
-                    backoff_ms[node] = None;
-                    continue;
-                }
-                if clear_ms[node] < timing.difs_ms {
-                    clear_ms[node] = clear_ms[node].saturating_add(sample_ms);
-                    continue;
-                }
-                match backoff_ms[node] {
-                    None => {
-                        let slots = u64::from(next_entropy(&mut entropy[node]) % 15);
-                        let remaining = slots.saturating_mul(timing.slot_ms);
-                        if remaining == 0 {
-                            candidates[node] = true;
-                        } else {
-                            backoff_ms[node] = Some(remaining);
-                        }
-                    }
-                    Some(remaining) => {
-                        let remaining = remaining.saturating_sub(sample_ms);
-                        if remaining == 0 {
-                            candidates[node] = true;
-                        } else {
-                            backoff_ms[node] = Some(remaining);
-                        }
-                    }
-                }
-            }
-
-            let candidate_count = candidates[..node_count]
-                .iter()
-                .filter(|candidate| **candidate)
-                .count();
-            if candidate_count > 0 {
-                busy_until_ms = now_ms.saturating_add(frame_airtime_ms);
-                if candidate_count == 1 {
-                    let winner = candidates[..node_count]
-                        .iter()
-                        .position(|candidate| *candidate)
-                        .expect("one candidate has a position");
-                    successes[winner] += 1;
-                } else {
-                    collisions += 1;
-                }
-                for node in 0..node_count {
-                    if candidates[node] {
-                        clear_ms[node] = 0;
-                        backoff_ms[node] = None;
-                        eligible_at_ms[node] =
-                            busy_until_ms.saturating_add(timing.post_tx_yield_ms());
-                    }
-                }
-            }
-            now_ms = now_ms.saturating_add(sample_ms);
-        }
-        SimulationResult {
-            collisions,
-            successes,
-        }
-    }
-
-    fn fairness_meets_ninety_percent(successes: &[u64]) -> bool {
-        let sum = successes.iter().sum::<u64>() as u128;
-        let squares = successes
-            .iter()
-            .map(|successes| u128::from(*successes).pow(2))
-            .sum::<u128>();
-        10 * sum.pow(2) >= 9 * successes.len() as u128 * squares
-    }
-
-    #[test]
-    fn adaptive_contention_is_fair_and_no_more_collision_prone_than_the_rnode_window() {
-        for node_count in [2, 4, 8] {
-            let target_successes = node_count as u64 * 300;
-            let adaptive = simulate_adaptive(node_count, target_successes);
-            let baseline = simulate_rnode_baseline(node_count, target_successes);
-            assert!(
-                fairness_meets_ninety_percent(&adaptive.successes[..node_count]),
-                "{node_count} nodes: successes {:?}",
-                &adaptive.successes[..node_count]
-            );
-            assert!(
-                adaptive.collisions <= baseline.collisions,
-                "{node_count} nodes: adaptive collisions {}, baseline {}",
-                adaptive.collisions,
-                baseline.collisions
-            );
-        }
     }
 
     #[test]
@@ -879,11 +891,13 @@ mod tests {
         let timing = ChannelTiming::for_profile(DEFAULT_915_PROFILE);
         for slots in [0u16, 1, 7, 14] {
             let mut access = ChannelAccess::new(DEFAULT_915_PROFILE, 0, 250_000);
+            let entropy = ((u32::from(slots) << 16) / 15) as u16;
             let mut now_ms = 0;
             let adaptive_ms = loop {
-                let mut action = access.observe(now_ms, ChannelObservation::Clear, 0);
+                let mut action =
+                    access.observe(now_ms, ChannelObservation::Clear, BackoffRate::ONE);
                 if matches!(action, ChannelAccessAction::NeedBackoffEntropy) {
-                    assert!(access.choose_backoff(slots));
+                    assert!(access.choose_backoff(entropy));
                     action = access.after_entropy();
                 }
                 if matches!(action, ChannelAccessAction::ReadyForFinalCheck)
@@ -907,5 +921,19 @@ mod tests {
                 "{slots} slots: adaptive {adaptive_ms}ms, baseline {baseline_ms}ms"
             );
         }
+    }
+
+    #[test]
+    fn rnode_baseline_freezes_a_selected_wait_but_restarts_difs() {
+        let timing = ChannelTiming::for_profile(DEFAULT_915_PROFILE);
+        let mut remaining_ms = Some(7 * timing.slot_ms);
+        remaining_ms = remaining_ms.map(|remaining| remaining - timing.sample_ms());
+        let frozen = remaining_ms;
+
+        let mut clear_ms = 0;
+        assert_eq!(remaining_ms, frozen, "busy does not redraw cw_wait");
+        clear_ms += timing.sample_ms();
+        assert!(clear_ms < timing.difs_ms, "busy does restart DIFS");
+        assert_eq!(remaining_ms, frozen);
     }
 }
