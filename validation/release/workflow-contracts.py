@@ -463,11 +463,17 @@ def validate() -> list[str]:
         "qualification/tester-roster.json",
         "Signed candidate SHA-256:",
         "Manifest SHA-256:",
+        "git/matching-refs/tags/${tag}",
+        "[.[] | select(.ref == $ref)] | length",
+        "--json isDraft,isPrerelease,targetCommitish,name",
+        "tag $tag exists without the resumable draft release",
     ):
         if custody_gate not in signing:
             errors.append(f"flasher-sign.yml is missing custody gate {custody_gate!r}")
     if "subject-path:" in signing:
         errors.append("flasher-sign.yml must preserve canonical names with subject-checksums")
+    if "targetCommitish,title" in signing:
+        errors.append("flasher-sign.yml must use gh release view's supported name field")
 
     finalization = (
         ROOT / ".github" / "workflows" / "flasher-finalize-evidence.yml"
@@ -502,6 +508,10 @@ def validate() -> list[str]:
         "required suite asset is missing: ${source}",
         "duplicate suite asset basename: ${source} conflicts with ${destination}",
         "prnsd distribution -- flasher-payloads",
+        "git/matching-refs/tags/${tag}",
+        "[.[] | select(.ref == $ref)] | length",
+        "--json isDraft,isPrerelease,targetCommitish,name",
+        "tag $tag exists without the resumable suite prerelease",
         "/attempts/${run_attempt}/jobs?per_page=100",
         "Publish immutable signed candidate as a prerelease",
         "candidate-${GITHUB_SHA}",
@@ -518,6 +528,8 @@ def validate() -> list[str]:
         errors.append(
             "suite-sign.yml relies on workflow inputs absent from GitHub's run API"
         )
+    if "targetCommitish,title" in suite_signing:
+        errors.append("suite-sign.yml must use gh release view's supported name field")
     stable_gate = suite_signing.find("- name: Require stable flasher release input")
     registry_login = suite_signing.find("docker/login-action@")
     if stable_gate < 0 or registry_login < 0 or stable_gate > registry_login:
