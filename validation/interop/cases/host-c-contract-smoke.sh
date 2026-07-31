@@ -30,8 +30,8 @@ for compiler in cc c++; do
         -o "$scratch/journey-$name"
     env LD_LIBRARY_PATH="${root}/prns-host/abi/c/target/debug" \
         "$scratch/journey-$name" \
-        prns-host/conformance/persistent-two-node-v2.json \
-        prns-host/conformance/interface-configs-v2.json \
+        prns-host/conformance/persistent-two-node-v1.json \
+        prns-host/conformance/interface-configs-v1.json \
         "$scratch/state-$name"
 done
 

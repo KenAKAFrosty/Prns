@@ -35,13 +35,16 @@ test("browser subpath exposes the shared release contract and casework", () => {
 
 test("generated JavaScript contract agrees with language-neutral vectors", async () => {
   const vectors = JSON.parse(
-    await readFile("../prns-host/conformance/host-contract-v2.json", "utf8"),
+    await readFile("../prns-host/conformance/host-contract-v1.json", "utf8"),
   );
   assert.equal(HOST_CONTRACT_ABI, vectors.abi);
   assert.equal(HOST_SCHEMA_VERSION, vectors.schemaVersion);
   assert.equal(PRODUCT_VERSION, vectors.productVersion);
   assert.equal(DESTINATION_HASH_LENGTH, vectors.fixedBytes.DestinationHash);
   assert.deepEqual(balancedLimits(), vectors.limits);
+  assert.equal(vectors.integerChecks.safeUint.typescript, "number");
+  assert.equal(vectors.integerChecks.u64.typescript, "bigint");
+  assert.ok(vectors.integerChecks.u64.accepted.includes("18446744073709551615"));
 });
 
 test("generated contract inventories and guards accept exactly their known strings", () => {

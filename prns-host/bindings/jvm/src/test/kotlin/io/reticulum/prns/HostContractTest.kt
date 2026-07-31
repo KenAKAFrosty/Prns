@@ -39,7 +39,7 @@ class HostContractTest {
     @Test
     fun everySharedInterfaceFixtureMarshals() {
         val text = Files.readString(
-            Path.of("..", "..", "conformance", "interface-configs-v2.json"),
+            Path.of("..", "..", "conformance", "interface-configs-v1.json"),
         )
         val line = SerialLineConfig(115_200, SerialDataBits.EIGHT, SerialParity.NONE, SerialStopBits.ONE)
         val ax25Line = line.copy(baud = 9_600)
@@ -469,7 +469,7 @@ private data class JourneyResource(
 
 private fun loadJourneyFixture(): JourneyFixture {
     val text = Files.readString(
-        Path.of("..", "..", "conformance", "persistent-two-node-v2.json"),
+        Path.of("..", "..", "conformance", "persistent-two-node-v1.json"),
     )
     return JourneyFixture(
         schemaVersion = text.jsonLong("schemaVersion").toInt(),

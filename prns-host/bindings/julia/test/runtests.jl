@@ -101,7 +101,7 @@ interface_fixture_path = normpath(
     "..",
     "..",
     "conformance",
-    "interface-configs-v2.json",
+    "interface-configs-v1.json",
 )
 interface_fixture = read(interface_fixture_path, String)
 line = SerialLineConfig(
@@ -222,7 +222,7 @@ fixture_path = normpath(
     "..",
     "..",
     "conformance",
-    "persistent-two-node-v2.json",
+    "persistent-two-node-v1.json",
 )
 fixture = read(fixture_path, String)
 @test json_integer(fixture, "schemaVersion") == PersonalRns.HOST_SCHEMA_VERSION

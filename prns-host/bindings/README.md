@@ -6,8 +6,9 @@ system.
 
 ## Required shape
 
-1. Generate the language's constants, fixed-size values, enums, and closed
-   unions from `host-contract-v1.json`.
+1. Generate the language's constants, scalar policy, fixed-size values, enums,
+   records, closed unions, handles, operation inventory, and raw protocol from
+   `host-contract-v1.json`.
 2. Load the matching native capsule and verify contract ABI, schema version, and
    product version before host creation.
 3. Translate semantic configuration into size-prefixed C structures whose
@@ -25,9 +26,9 @@ system.
    the source handle only after any active drain returns.
 8. Decode every generated event case. Unknown discriminants fail loudly instead
    of becoming lossy maps.
-9. Marshal every case in `../conformance/interface-configs-v2.json` through the
+9. Marshal every case in `../conformance/interface-configs-v1.json` through the
    language adapter without requiring the corresponding hardware.
-10. Run the shared `../conformance/persistent-two-node-v2.json` journey over a
+10. Run the shared `../conformance/persistent-two-node-v1.json` journey over a
    real loopback TCP connection: persist two hosts, attach, announce and
    discover, establish a link, request and respond, transfer the resource from
    its listed chunks through the bounded upload path, stop, restart, and verify
@@ -62,6 +63,7 @@ Android and Apple/desktop libraries. Ruby is the smallest dynamic-language port.
 Zig and C++ are the smallest systems-language layers. None needs a new ABI.
 
 New language projections belong in
-`tools/repo/generate-host-contract.py`; hand-maintained discriminants do not.
+`tools/repo/generate-host-contract.py`; hand-maintained discriminants or raw
+operation lists do not.
 Convenience helpers come after the raw semantic surface and conformance smoke,
 and must compile down to the same bounded, interruptible happy path.

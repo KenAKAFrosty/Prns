@@ -48,6 +48,15 @@ def main():
             / "Program.cs",
             consumer / "Program.cs",
         )
+        conformance = consumer / "prns-host" / "conformance"
+        conformance.mkdir(parents=True)
+        shutil.copy2(
+            ROOT
+            / "prns-host"
+            / "conformance"
+            / "persistent-two-node-v2.json",
+            conformance / "persistent-two-node-v2.json",
+        )
         environment = os.environ.copy()
         environment["DOTNET_CLI_HOME"] = str(consumer / ".dotnet")
         environment["DOTNET_SKIP_FIRST_TIME_EXPERIENCE"] = "1"

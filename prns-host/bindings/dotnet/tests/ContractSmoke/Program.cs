@@ -172,15 +172,18 @@ await using (host)
     }
 }
 
+#if PRNS_CONTRACT_INTERNALS
 MarshalInterfaceFixtures();
+#endif
 await PersistentTwoNodeJourneyAsync();
 
+#if PRNS_CONTRACT_INTERNALS
 static void MarshalInterfaceFixtures()
 {
     var fixturePath = Path.Combine(
         "prns-host",
         "conformance",
-        "interface-configs-v2.json"
+        "interface-configs-v1.json"
     );
     var fixture = JsonSerializer.Deserialize<InterfaceFixture>(
         File.ReadAllText(fixturePath),
@@ -290,13 +293,14 @@ static void MarshalInterfaceFixtures()
         }
     }
 }
+#endif
 
 static async Task PersistentTwoNodeJourneyAsync()
 {
     var fixturePath = Path.Combine(
         "prns-host",
         "conformance",
-        "persistent-two-node-v2.json"
+        "persistent-two-node-v1.json"
     );
     var fixture = JsonSerializer.Deserialize<JourneyFixture>(
         await File.ReadAllTextAsync(fixturePath),
@@ -556,12 +560,14 @@ internal sealed record JourneyFixture(
     JourneyResource Resource
 );
 
+#if PRNS_CONTRACT_INTERNALS
 internal sealed record InterfaceFixture(
     uint SchemaVersion,
     InterfaceFixtureCase[] Interfaces
 );
 
 internal sealed record InterfaceFixtureCase(string Kind);
+#endif
 
 internal sealed record JourneyDestination(
     string AppName,

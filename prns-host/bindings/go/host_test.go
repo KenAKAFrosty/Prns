@@ -59,7 +59,7 @@ func fixtureBytes(t *testing.T, value string) []byte {
 func loadJourneyFixture(t *testing.T) journeyFixture {
 	t.Helper()
 	value, err := os.ReadFile(filepath.Join(
-		"..", "..", "conformance", "persistent-two-node-v2.json",
+		"..", "..", "conformance", "persistent-two-node-v1.json",
 	))
 	if err != nil {
 		t.Fatal(err)
@@ -76,7 +76,7 @@ func loadJourneyFixture(t *testing.T) journeyFixture {
 
 func TestMarshalEveryInterfaceFixture(t *testing.T) {
 	value, err := os.ReadFile(filepath.Join(
-		"..", "..", "conformance", "interface-configs-v2.json",
+		"..", "..", "conformance", "interface-configs-v1.json",
 	))
 	if err != nil {
 		t.Fatal(err)

@@ -10,11 +10,11 @@ from personal_rns.host import _Arena, _marshal_interface
 
 
 JOURNEY = json.loads(
-    (Path(__file__).parents[3] / "conformance/persistent-two-node-v2.json")
+    (Path(__file__).parents[3] / "conformance/persistent-two-node-v1.json")
     .read_text()
 )
 INTERFACES = json.loads(
-    (Path(__file__).parents[3] / "conformance/interface-configs-v2.json")
+    (Path(__file__).parents[3] / "conformance/interface-configs-v1.json")
     .read_text()
 )
 

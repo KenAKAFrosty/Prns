@@ -505,7 +505,7 @@ private func loadJourneyFixture() throws -> JourneyFixture {
     }
     return try JSONDecoder().decode(
         JourneyFixture.self,
-        from: Data(contentsOf: url.appendingPathComponent("conformance/persistent-two-node-v2.json"))
+        from: Data(contentsOf: url.appendingPathComponent("conformance/persistent-two-node-v1.json"))
     )
 }
 
@@ -516,7 +516,7 @@ private func loadInterfaceFixture() throws -> InterfaceFixture {
     }
     return try JSONDecoder().decode(
         InterfaceFixture.self,
-        from: Data(contentsOf: url.appendingPathComponent("conformance/interface-configs-v2.json"))
+        from: Data(contentsOf: url.appendingPathComponent("conformance/interface-configs-v1.json"))
     )
 }
 

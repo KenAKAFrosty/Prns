@@ -415,6 +415,7 @@ static int create_host(
     capability = server ? PRNS_CAPABILITY_TCP_SERVER : PRNS_CAPABILITY_TCP_CLIENT;
     options.struct_size = sizeof(options);
     options.required_abi = PRNS_HOST_CONTRACT_ABI;
+    options.required_schema_version = PRNS_HOST_SCHEMA_VERSION;
     options.required_product_version = string_view("0.3.1");
     options.limits.struct_size = sizeof(options.limits);
     options.limits.pending_commands = (size_t)PRNS_BALANCED_PENDING_COMMANDS;
