@@ -194,6 +194,64 @@ class PrnsdDistributionTests(unittest.TestCase):
                     types.SimpleNamespace(assets=root, inventory=inventory)
                 )
 
+    def test_flasher_payload_assets_preserve_signed_board_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            candidate = root / "candidate"
+            assets = root / "assets"
+            candidate.mkdir()
+            assets.mkdir()
+            targets = []
+            for board, content in (
+                ("heltec-v4", b"heltec application"),
+                ("t-beam-supreme", b"t-beam application"),
+            ):
+                relative = f"firmware/hopspot/{board}/0.3.1/application.bin"
+                payload = candidate / relative
+                payload.parent.mkdir(parents=True)
+                payload.write_bytes(content)
+                targets.append(
+                    {
+                        "board_slug": board,
+                        "parts": [
+                            {
+                                "path": relative,
+                                "sha256": hashlib.sha256(content).hexdigest(),
+                                "size": len(content),
+                            }
+                        ],
+                    }
+                )
+            (candidate / "flash-manifest.json").write_bytes(
+                distribution.canonical_json(
+                    {
+                        "release": {"channel": "stable", "version": "0.3.1"},
+                        "targets": targets,
+                    }
+                )
+            )
+            distribution.stage_flasher_payloads(
+                types.SimpleNamespace(candidate=candidate, assets=assets)
+            )
+            self.assertEqual(
+                (assets / "prns-hopspot-0.3.1-heltec-v4-application.bin").read_bytes(),
+                b"heltec application",
+            )
+            self.assertEqual(
+                (
+                    assets / "prns-hopspot-0.3.1-t-beam-supreme-application.bin"
+                ).read_bytes(),
+                b"t-beam application",
+            )
+
+            (candidate / targets[0]["parts"][0]["path"]).write_bytes(b"tampered")
+            new_assets = root / "new-assets"
+            new_assets.mkdir()
+            with self.assertRaisesRegex(ValueError, "size differs"):
+                distribution.stage_flasher_payloads(
+                    types.SimpleNamespace(candidate=candidate, assets=new_assets)
+                )
+
     def test_image_metadata_requires_both_shipping_architectures(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "image.json"
@@ -203,15 +261,21 @@ class PrnsdDistributionTests(unittest.TestCase):
                 platform_digest=[f"linux/amd64=sha256:{'d' * 64}"],
                 output=output,
             )
-            with self.assertRaisesRegex(ValueError, "exactly linux/amd64 and linux/arm64"):
+            with self.assertRaisesRegex(
+                ValueError, "exactly linux/amd64 and linux/arm64"
+            ):
                 distribution.write_image_metadata(arguments)
 
     def test_native_candidate_verification_rejects_post_index_changes(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             for target in distribution.TARGETS:
-                (root / distribution.archive_name("0.3.1", target)).write_bytes(target.encode())
-                (root / f"{target}-linkage.txt").write_text("linkage\n", encoding="utf-8")
+                (root / distribution.archive_name("0.3.1", target)).write_bytes(
+                    target.encode()
+                )
+                (root / f"{target}-linkage.txt").write_text(
+                    "linkage\n", encoding="utf-8"
+                )
             (root / "prnsd-0.3.1-source.spdx.json").write_text("{}\n", encoding="utf-8")
             index = root / f"prnsd-candidate-{'a' * 40}.json"
             arguments = types.SimpleNamespace(
@@ -353,7 +417,9 @@ class PrnsdDistributionTests(unittest.TestCase):
                     )
                 )
 
-    def test_image_source_parsing_applies_whiteouts_before_layer_additions(self) -> None:
+    def test_image_source_parsing_applies_whiteouts_before_layer_additions(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             source = b"replacement source"
             layout = Path(temporary) / "image.oci.tar"
@@ -466,6 +532,35 @@ class PrnsdDistributionTests(unittest.TestCase):
                 "prns-flasher-candidate-v0.3.1-signed.tar.gz",
             ):
                 (assets / name).write_text("evidence\n", encoding="utf-8")
+            candidate = root / "flasher-candidate"
+            candidate.mkdir()
+            payload_content = b"signed firmware payload"
+            payload_relative = "firmware/hopspot/heltec-v4/0.3.1/application.bin"
+            payload = candidate / payload_relative
+            payload.parent.mkdir(parents=True)
+            payload.write_bytes(payload_content)
+            manifest = {
+                "release": {"channel": "stable", "version": "0.3.1"},
+                "targets": [
+                    {
+                        "board_slug": "heltec-v4",
+                        "parts": [
+                            {
+                                "path": payload_relative,
+                                "sha256": hashlib.sha256(payload_content).hexdigest(),
+                                "size": len(payload_content),
+                            }
+                        ],
+                    }
+                ],
+            }
+            (candidate / "flash-manifest.json").write_bytes(
+                distribution.canonical_json(manifest)
+            )
+            shutil.copy2(candidate / "flash-manifest.json", assets)
+            distribution.stage_flasher_payloads(
+                types.SimpleNamespace(candidate=candidate, assets=assets)
+            )
             distribution.write_image_metadata(
                 types.SimpleNamespace(
                     source_commit=commit,
@@ -489,9 +584,7 @@ class PrnsdDistributionTests(unittest.TestCase):
                     {
                         "source_commit": commit,
                         "version": "0.3.1",
-                        "workflow": {
-                            "path": ".github/workflows/prnsd-candidate.yml"
-                        },
+                        "workflow": {"path": ".github/workflows/prnsd-candidate.yml"},
                     }
                 )
             )
@@ -521,6 +614,19 @@ class PrnsdDistributionTests(unittest.TestCase):
                     output=record,
                 )
             )
+            record_value = json.loads(record.read_text(encoding="utf-8"))
+            self.assertEqual(
+                record_value["flasher"]["payloads"],
+                [
+                    {
+                        "asset": "prns-hopspot-0.3.1-heltec-v4-application.bin",
+                        "board_slug": "heltec-v4",
+                        "candidate_path": payload_relative,
+                        "sha256": hashlib.sha256(payload_content).hexdigest(),
+                        "size": len(payload_content),
+                    }
+                ],
+            )
             for path in assets.iterdir():
                 shutil.copy2(path, release / path.name)
             for path in (inventory, record):
@@ -528,25 +634,22 @@ class PrnsdDistributionTests(unittest.TestCase):
                 (release / f"{path.name}.minisig").write_text(
                     "signature\n", encoding="utf-8"
                 )
-            shutil.copy2(
-                ROOT / "release/keys/minisign.pub", release / "minisign.pub"
-            )
+            shutil.copy2(ROOT / "release/keys/minisign.pub", release / "minisign.pub")
             verify = types.SimpleNamespace(
                 assets=release,
                 source_commit=commit,
                 image_digest=manifest_digest,
             )
             distribution.verify_suite_release(verify)
-            (
-                release
-                / "public-review-v0.3.1-run-71-attempt-2.json"
-            ).write_text("{}\n", encoding="utf-8")
-            (
-                release / "qualification-evidence-v0.3.1.tar.gz"
-            ).write_bytes(b"separately signed flasher evidence")
-            (
-                release / "deployment-qualification-v0.3.1.json"
-            ).write_text("{}\n", encoding="utf-8")
+            (release / "public-review-v0.3.1-run-71-attempt-2.json").write_text(
+                "{}\n", encoding="utf-8"
+            )
+            (release / "qualification-evidence-v0.3.1.tar.gz").write_bytes(
+                b"separately signed flasher evidence"
+            )
+            (release / "deployment-qualification-v0.3.1.json").write_text(
+                "{}\n", encoding="utf-8"
+            )
             distribution.verify_suite_release(verify)
             (release / "unexpected").write_text("not inventoried\n", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "not exact"):

@@ -290,9 +290,9 @@ jobs:
           stage target/flasher/candidate/metadata/sparse-sizes.json
           stage target/flasher/candidate/metadata/reproducibility.json
           stage target/flasher/candidate/metadata/release-history.json
-          while IFS= read -r relative; do
-            stage "target/flasher/candidate/${relative}"
-          done < <(jq -r '[.targets[].parts[].path] | unique[]' target/flasher/candidate/flash-manifest.json)
+          ./tools/prns release prnsd distribution -- flasher-payloads \
+            --candidate target/flasher/candidate \
+            --assets target/assets
       - name: Build daemon and flasher provenance subjects
         run: |
           : > target/custody/native-subjects.sha256
