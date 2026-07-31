@@ -154,7 +154,7 @@ mod tests {
         }
         queue.push(&packet(22, 12)).unwrap();
         assert_eq!(queue.used, LORA_TX_QUEUE_BYTES);
-        let before = queue.storage.clone();
+        let before = *queue.storage;
         let before_head = queue.head;
         let before_used = queue.used;
 
