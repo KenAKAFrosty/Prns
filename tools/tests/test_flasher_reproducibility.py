@@ -697,12 +697,25 @@ class FlasherReproducibilityTests(unittest.TestCase):
             ROOT / "validation" / "release" / "workflow-contracts.py"
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        candidate_workflow = (
-            ROOT / ".github" / "workflows" / "flasher-candidate.yml"
-        ).read_text(encoding="utf-8")
-        windows_start = candidate_workflow.index("target: x86_64-pc-windows-msvc")
-        windows_end = candidate_workflow.index("runs-on:", windows_start)
-        self.assertIn("link-arg=/Brepro", candidate_workflow[windows_start:windows_end])
+        for workflow_name in ("flasher-candidate.yml", "prnsd-candidate.yml"):
+            workflow = (
+                ROOT / ".github" / "workflows" / workflow_name
+            ).read_text(encoding="utf-8")
+            windows_start = workflow.index("target: x86_64-pc-windows-msvc")
+            windows_end = workflow.index("runs-on:", windows_start)
+            windows_matrix = workflow[windows_start:windows_end]
+            self.assertIn("linker=rust-lld", windows_matrix)
+            self.assertIn("linker-flavor=lld-link", windows_matrix)
+            self.assertIn("link-arg=/Brepro", windows_matrix)
+            self.assertIn(
+                "Expose and prove the Rust-bundled Windows linker",
+                workflow,
+            )
+            self.assertIn(
+                "${sysroot}/lib/rustlib/${host}/bin/rust-lld.exe",
+                workflow,
+            )
+            self.assertIn(r"grep -E '^LLD 22\.1\.2 '", workflow)
 
     def test_shipping_firmware_reuses_one_embedded_site_build(self) -> None:
         shipping = (
