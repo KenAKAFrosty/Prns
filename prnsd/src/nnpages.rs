@@ -49,6 +49,7 @@ static CONTROL_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone)]
 pub(crate) struct NnPagesCatalog {
+    config_dir: Arc<PathBuf>,
     root: Arc<PathBuf>,
     pages_root: Arc<PathBuf>,
     files_root: Arc<PathBuf>,
@@ -101,6 +102,7 @@ pub(crate) struct NnPagesRefreshReport {
 #[derive(Debug)]
 pub(crate) enum NnPagesRefreshError {
     Scan(io::Error),
+    SourcePage(Box<crate::daemon::configuration::ServerBootstrapError>),
     Runtime {
         operation: &'static str,
         path: String,
@@ -196,6 +198,9 @@ impl core::fmt::Display for NnPagesRefreshError {
             Self::Scan(error) => {
                 write!(formatter, "could not scan the hosted directories: {error}")
             }
+            Self::SourcePage(source) => {
+                write!(formatter, "could not re-render the source page: {source}")
+            }
             Self::Runtime {
                 operation,
                 path,
@@ -218,6 +223,7 @@ impl std::error::Error for NnPagesRefreshError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Scan(error) => Some(error),
+            Self::SourcePage(source) => Some(source),
             Self::Runtime { source, .. } => Some(source),
             Self::CatalogPoisoned | Self::DestinationUnavailable => None,
         }
@@ -230,11 +236,18 @@ impl NnPagesCatalog {
         let pages_root = page_root(config_dir);
         let files_root = file_root(config_dir);
         let routes = scan_routes(&pages_root, &files_root)?;
-        Ok(Self::new(root, pages_root, files_root, routes))
+        Ok(Self::new(
+            config_dir.to_path_buf(),
+            root,
+            pages_root,
+            files_root,
+            routes,
+        ))
     }
 
     pub(crate) fn empty(config_dir: &Path) -> Self {
         Self::new(
+            config_dir.to_path_buf(),
             root(config_dir),
             page_root(config_dir),
             file_root(config_dir),
@@ -243,6 +256,7 @@ impl NnPagesCatalog {
     }
 
     fn new(
+        config_dir: PathBuf,
         root: PathBuf,
         pages_root: PathBuf,
         files_root: PathBuf,
@@ -252,6 +266,7 @@ impl NnPagesCatalog {
         log_settings_snapshot(&settings, "startup");
         let (settings_sender, _) = tokio::sync::watch::channel(settings.effective());
         Self {
+            config_dir: Arc::new(config_dir),
             root: Arc::new(root),
             pages_root: Arc::new(pages_root),
             files_root: Arc::new(files_root),
@@ -295,12 +310,21 @@ impl NnPagesCatalog {
         handle: &PrnsNodeHandle,
         destination: DestinationHash,
     ) -> Result<NnPagesRefreshReport, NnPagesRefreshError> {
+        use crate::daemon::configuration::{
+            refresh_source_page, SourcePageRefresh, SourcePageState,
+        };
+
         let _guard = self.reconciliation.lock().await;
+        let config_dir = Arc::clone(&self.config_dir);
         let root = Arc::clone(&self.root);
         let pages_root = Arc::clone(&self.pages_root);
         let files_root = Arc::clone(&self.files_root);
-        let (discovered, settings) = tokio::task::spawn_blocking(move || {
-            (scan_routes(&pages_root, &files_root), settings::load(&root))
+        let (source_page, discovered, settings) = tokio::task::spawn_blocking(move || {
+            (
+                refresh_source_page(&config_dir),
+                scan_routes(&pages_root, &files_root),
+                settings::load(&root),
+            )
         })
         .await
         .map_err(|error| {
@@ -308,6 +332,26 @@ impl NnPagesCatalog {
                 "route scanner task failed: {error}"
             )))
         })?;
+        match source_page.map_err(|source| NnPagesRefreshError::SourcePage(Box::new(source)))? {
+            SourcePageRefresh::Rewritten(SourcePageState::ArchiveMissing) => {
+                tracing::info!(
+                    event = "nnpages_source_page_rerendered",
+                    archive = "missing"
+                );
+            }
+            SourcePageRefresh::Rewritten(SourcePageState::ArchiveStaged {
+                archive_bytes, ..
+            }) => {
+                tracing::info!(
+                    event = "nnpages_source_page_rerendered",
+                    archive = "staged",
+                    archive_bytes,
+                );
+            }
+            SourcePageRefresh::Unchanged
+            | SourcePageRefresh::OperatorOwned
+            | SourcePageRefresh::Absent => {}
+        }
         let discovered = discovered.map_err(NnPagesRefreshError::Scan)?;
         let current = self
             .snapshot()
