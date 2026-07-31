@@ -71,7 +71,7 @@ fn FlashExperience(selected_slug: Option<String>) -> Element {
                 if selected_target.is_some() { "Change board" } else { "Select the exact board" }
             }
             p { class: "mt-3 max-w-3xl leading-relaxed text-soft",
-                "The four shipping targets are first. Hardware still in bring-up remains visible, but cannot be flashed from a public release."
+                "The five shipping targets are first. Hardware still in bring-up remains visible, but cannot be flashed from a public release."
             }
             div { class: "mt-6 grid gap-4 md:grid-cols-2",
                 for board in SHIPPING_BOARD_TARGETS.iter() {

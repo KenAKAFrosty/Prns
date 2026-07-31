@@ -5,13 +5,15 @@ from __future__ import annotations
 
 MERGED_BASELINES = {
     "heltec-v4": 7_643_152,
+    "heltec-v4-r8": 7_643_152,
     "t-beam-supreme": 7_639_296,
     "xiao-esp32-c6": 1_309_056,
 }
 SPARSE_BASELINES = {
-    board: MERGED_BASELINES[board] for board in ("heltec-v4", "t-beam-supreme")
+    board: MERGED_BASELINES[board]
+    for board in ("heltec-v4", "heltec-v4-r8", "t-beam-supreme")
 }
-SHIPPING_BOARDS = {"heltec-v4", "t-beam-supreme", "xiao-esp32-c6", "t-echo"}
+SHIPPING_BOARDS = {"heltec-v4", "heltec-v4-r8", "t-beam-supreme", "xiao-esp32-c6", "t-echo"}
 REQUIRED_REDUCTION_PERCENT = 60
 
 

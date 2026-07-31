@@ -75,9 +75,12 @@ pub(super) fn build_wifi(
         .with_static_rx_buf_num(3)
         .with_dynamic_rx_buf_num(3)
         .with_rx_ba_win(2);
+    log::info!("wifi::new begin");
     let Ok((mut controller, interfaces)) = esp_radio::wifi::new(wifi, wifi_config) else {
+        log::info!("wifi::new failed");
         return (None, None, None);
     };
+    log::info!("wifi::new ready");
     let esp_now = interfaces.esp_now;
 
     // In SoftAP mode, APSTA brings the AP up whether or not a station uplink is configured;

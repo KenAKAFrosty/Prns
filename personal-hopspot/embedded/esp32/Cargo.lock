@@ -1723,6 +1723,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "hopspot-heltec-v4-r8"
+version = "0.1.0"
+dependencies = [
+ "embassy-executor",
+ "esp-hal",
+ "esp-rtos",
+ "personal-hopspot-esp32",
+]
+
+[[package]]
 name = "hopspot-t-beam-supreme"
 version = "0.1.0"
 dependencies = [

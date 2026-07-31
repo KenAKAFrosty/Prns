@@ -11,6 +11,7 @@ import re
 
 SHIPPING_BOARDS = (
     "heltec-v4",
+    "heltec-v4-r8",
     "t-beam-supreme",
     "xiao-esp32-c6",
     "t-echo",
@@ -195,7 +196,7 @@ def scaffold(
         for target in raw_targets
     }
     if len(targets) != len(raw_targets) or set(targets) != set(SHIPPING_BOARDS):
-        raise ValueError("manifest must contain exactly the four shipping boards")
+        raise ValueError("manifest must contain exactly the shipping board set")
     if any(
         not isinstance(target.get("display_name"), str)
         or not target["display_name"].strip()

@@ -177,7 +177,7 @@ if find "$embedded_dist" \( -path '*/firmware/*' -o -path '*/assets/flasher/*' \
 fi
 
 cd "$root"
-for board in heltec-v4 t-beam-supreme xiao-esp32-c6 t-echo; do
+for board in heltec-v4 heltec-v4-r8 t-beam-supreme xiao-esp32-c6 t-echo; do
     PRNS_EMBEDDED_SITE_READY=1 cargo run --locked -p hopspot-flash -- build "$board" --out-root "$candidate"
 done
 cargo run --locked -p hopspot-flash -- assemble-manifest \

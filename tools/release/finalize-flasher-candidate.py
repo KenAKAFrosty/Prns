@@ -10,6 +10,7 @@ from pathlib import Path, PurePosixPath
 import shutil
 import sys
 
+from flasher_sparse_sizes import SHIPPING_BOARDS
 from flasher_sparse_sizes import build_report as build_sparse_size_report
 from flasher_sparse_sizes import render_summary as render_sparse_size_summary
 from flasher_website_history import allowed_historical_signatures
@@ -78,8 +79,14 @@ def validate_manifest(candidate: Path, version: str, channel: str, commit: str, 
     pinned_key_id = public_key_line.removeprefix(prefix).strip()
     if not public_key_line.startswith(prefix) or pinned_key_id.upper() != key_id.upper():
         raise ValueError("candidate signing key ID disagrees with its pinned Minisign public key")
-    if len(manifest.get("targets", [])) != 4:
-        raise ValueError("candidate manifest does not contain all four shipping targets")
+    targets = manifest.get("targets", [])
+    boards = {
+        target.get("board_slug")
+        for target in targets
+        if isinstance(target, dict) and isinstance(target.get("board_slug"), str)
+    }
+    if len(targets) != len(SHIPPING_BOARDS) or boards != SHIPPING_BOARDS:
+        raise ValueError("candidate manifest does not contain exactly the shipping board set")
     return manifest
 
 

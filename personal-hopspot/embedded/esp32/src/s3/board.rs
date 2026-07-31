@@ -48,6 +48,8 @@ pub(crate) trait Esp32S3Board {
     const NODE_ANNOUNCE_APP_DATA: &'static [u8];
     const BOOT_BANNER: &'static str;
     const USB_INTERFACE_ID: InterfaceId;
+    /// Stand up `esp_radio::wifi::new` (and BLE coex that depends on it).
+    const BRING_UP_WIFI: bool = true;
     type Display: DrawTarget<Color = BinaryColor>;
     type Battery: screen::BatterySource;
 

@@ -27,6 +27,8 @@ def roster(version: str) -> dict:
     hosts = (
         ("heltec-v4", "cli", "linux", "x86_64"),
         ("heltec-v4", "web", "linux", "x86_64"),
+        ("heltec-v4-r8", "cli", "linux", "x86_64"),
+        ("heltec-v4-r8", "web", "linux", "x86_64"),
         ("t-beam-supreme", "cli", "macos", "aarch64"),
         ("t-beam-supreme", "web", "macos", "aarch64"),
         ("xiao-esp32-c6", "cli", "windows", "x86_64"),

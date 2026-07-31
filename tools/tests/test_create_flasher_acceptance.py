@@ -34,6 +34,8 @@ def complete_roster() -> dict:
     hosts = {
         ("heltec-v4", "cli"): ("linux", "x86_64"),
         ("heltec-v4", "web"): ("linux", "x86_64"),
+        ("heltec-v4-r8", "cli"): ("linux", "x86_64"),
+        ("heltec-v4-r8", "web"): ("linux", "x86_64"),
         ("t-beam-supreme", "cli"): ("macos", "aarch64"),
         ("t-beam-supreme", "web"): ("macos", "aarch64"),
         ("xiao-esp32-c6", "cli"): ("windows", "x86_64"),
@@ -95,7 +97,8 @@ def complete_roster() -> dict:
 
 def manifest() -> dict:
     boards = (
-        ("heltec-v4", "Heltec LoRa 32 V4", "esp-serial", "esp32s3", True),
+        ("heltec-v4", "Heltec LoRa 32 V4 (S3R2)", "esp-serial", "esp32s3", True),
+        ("heltec-v4-r8", "Heltec LoRa 32 V4 (S3R8)", "esp-serial", "esp32s3", True),
         ("t-beam-supreme", "LilyGO T-Beam Supreme", "esp-serial", "esp32s3", True),
         ("xiao-esp32-c6", "Seeed XIAO ESP32-C6", "esp-serial", "esp32c6", False),
         ("t-echo", "LilyGO T-Echo", "uf2-mass-storage", None, False),
@@ -163,7 +166,7 @@ class AcceptanceScaffoldTests(unittest.TestCase):
         )
         self.assertEqual(candidate["prerelease_published_at"], PUBLISHED_AT)
         self.assertEqual(record["schema"], 3)
-        self.assertEqual(len(record["runs"]), 8)
+        self.assertEqual(len(record["runs"]), 10)
         self.assertEqual(len(record["browser_fallbacks"]), 4)
         self.assertEqual(len(record["installation_smoke"]), 5)
         self.assertTrue(

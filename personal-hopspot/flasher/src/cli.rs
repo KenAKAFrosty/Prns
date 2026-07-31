@@ -108,7 +108,7 @@ pub(crate) enum CommandMode {
         #[arg(long, value_name = "VERSION", hide = true)]
         developer_version: Option<String>,
     },
-    /// Assemble manifest v2 after all four developer artifacts have been built.
+    /// Assemble manifest v2 after all shipping developer artifacts have been built.
     #[command(hide = true)]
     AssembleManifest {
         #[arg(long, value_name = "DIR")]

@@ -1,10 +1,6 @@
 #[cfg(target_arch = "xtensa")]
 use allocator_api2::alloc::{AllocError, Allocator};
 #[cfg(target_arch = "xtensa")]
-use allocator_api2::boxed::Box;
-#[cfg(target_arch = "xtensa")]
-use allocator_api2::vec::Vec;
-#[cfg(target_arch = "xtensa")]
 use core::alloc::Layout;
 #[cfg(target_arch = "xtensa")]
 use core::ptr::NonNull;
@@ -39,33 +35,116 @@ const _: () = assert!(
     Esp32S3::<PsramAlloc>::MAX_COMPACTED_FLASH_JOURNAL_BYTES <= crate::persistence::S3_ARENA_BYTES
 );
 
-/// A `Default`-able allocator that places allocations in PSRAM. esp-alloc's own
-/// `ExternalMemory` targets the same region but is not `Default`, which the column recipes
-/// need to build themselves from `StorageLayout`; this thin ZST forwards to it.
+/// A `Default`-able allocator that places allocations in PSRAM.
+///
+/// On Heltec V4-R8, PSRAM is owned by a private bump allocator (see [`init_private_psram_heap`]) so
+/// ordinary boot/`log` allocs cannot share a freelist with engine construction. Other S3 boards
+/// keep PSRAM in `esp_alloc`'s global heap and this forwards to `ExternalMemory`.
 #[cfg(target_arch = "xtensa")]
 #[derive(Default, Clone, Copy)]
 pub struct PsramAlloc;
 
 #[cfg(target_arch = "xtensa")]
-pub fn allocate_lora_tx_queue() -> &'static mut [u8; personal_rns::lora::LORA_TX_QUEUE_BYTES] {
-    let mut storage = Vec::with_capacity_in(personal_rns::lora::LORA_TX_QUEUE_BYTES, PsramAlloc);
-    storage.resize(personal_rns::lora::LORA_TX_QUEUE_BYTES, 0);
-    Box::leak(storage.into_boxed_slice())
-        .try_into()
-        .expect("the LoRa transmit queue allocation has its requested length")
+use core::cell::RefCell;
+#[cfg(target_arch = "xtensa")]
+use core::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(target_arch = "xtensa")]
+use critical_section::Mutex;
+
+#[cfg(target_arch = "xtensa")]
+struct PSRAMBump {
+    start: *mut u8,
+    size: usize,
+    offset: usize,
+}
+
+// SAFETY: start/offset are only touched under PRIVATE_PSRAM's critical section.
+#[cfg(target_arch = "xtensa")]
+unsafe impl Send for PSRAMBump {}
+
+#[cfg(target_arch = "xtensa")]
+static PRIVATE_PSRAM: Mutex<RefCell<Option<PSRAMBump>>> = Mutex::new(RefCell::new(None));
+#[cfg(target_arch = "xtensa")]
+static PRIVATE_PSRAM_START: AtomicUsize = AtomicUsize::new(0);
+#[cfg(target_arch = "xtensa")]
+static PRIVATE_PSRAM_SIZE: AtomicUsize = AtomicUsize::new(0);
+
+/// Install a PSRAM bump allocator used only by [`PsramAlloc`]. Do not also register the same
+/// range with `esp_alloc::HEAP`. Deallocate is a no-op (boot/engine construction is allocate-heavy);
+/// call [`reinit_private_psram_heap`] to reclaim.
+#[cfg(target_arch = "xtensa")]
+pub unsafe fn init_private_psram_heap(start: *mut u8, size: usize) {
+    PRIVATE_PSRAM_START.store(start as usize, Ordering::Relaxed);
+    PRIVATE_PSRAM_SIZE.store(size, Ordering::Relaxed);
+    critical_section::with(|cs| {
+        let mut slot = PRIVATE_PSRAM.borrow_ref_mut(cs);
+        assert!(slot.is_none(), "private PSRAM heap already initialized");
+        *slot = Some(PSRAMBump {
+            start,
+            size,
+            offset: 0,
+        });
+    });
+}
+
+/// Reset the private PSRAM bump cursor over the window from [`init_private_psram_heap`].
+/// No-op when this board uses the global `esp_alloc` external region instead.
+#[cfg(target_arch = "xtensa")]
+pub fn reinit_private_psram_heap() {
+    let start = PRIVATE_PSRAM_START.load(Ordering::Relaxed) as *mut u8;
+    let size = PRIVATE_PSRAM_SIZE.load(Ordering::Relaxed);
+    if start.is_null() || size == 0 {
+        return;
+    }
+    critical_section::with(|cs| {
+        *PRIVATE_PSRAM.borrow_ref_mut(cs) = None;
+    });
+    // SAFETY: same mapped window as init; exclusive to PsramAlloc.
+    unsafe { init_private_psram_heap(start, size) };
 }
 
 #[cfg(target_arch = "xtensa")]
-// SAFETY: Every operation is forwarded unchanged to esp-alloc's ExternalMemory allocator. This ZST
-// neither creates a second heap nor changes pointer/layout provenance.
+pub fn allocate_lora_tx_queue() -> &'static mut [u8; personal_rns::lora::LORA_TX_QUEUE_BYTES] {
+    // Keep this in static RAM like the T-Echo face. Allocating it from PSRAM via PsramAlloc hangs
+    // during Heltec V4-R8 bring-up when the private bump owns the Octal window.
+    use static_cell::ConstStaticCell;
+    static CELL: ConstStaticCell<[u8; personal_rns::lora::LORA_TX_QUEUE_BYTES]> =
+        ConstStaticCell::new([0; personal_rns::lora::LORA_TX_QUEUE_BYTES]);
+    CELL.take()
+}
+
+#[cfg(target_arch = "xtensa")]
+// SAFETY: Private bump returns exclusive slices from the mapped PSRAM window; ExternalMemory
+// fallback preserves esp-alloc's contract. Deallocate is a no-op for the bump path.
 unsafe impl Allocator for PsramAlloc {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        esp_alloc::ExternalMemory.allocate(layout)
+        critical_section::with(|cs| {
+            if let Some(bump) = PRIVATE_PSRAM.borrow_ref_mut(cs).as_mut() {
+                let align = layout.align().max(8);
+                let aligned = (bump.offset + align - 1) & !(align - 1);
+                let end = aligned.checked_add(layout.size()).ok_or(AllocError)?;
+                if end > bump.size {
+                    return Err(AllocError);
+                }
+                // SAFETY: offset stays within the mapped window; bump is exclusive.
+                let ptr = unsafe { NonNull::new_unchecked(bump.start.add(aligned)) };
+                bump.offset = end;
+                Ok(NonNull::slice_from_raw_parts(ptr, layout.size()))
+            } else {
+                esp_alloc::ExternalMemory.allocate(layout)
+            }
+        })
     }
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        // SAFETY: The Allocator contract requires callers to return the same pointer/layout pair
-        // produced by this allocator; forwarding preserves that contract and provenance.
-        unsafe { esp_alloc::ExternalMemory.deallocate(ptr, layout) }
+        critical_section::with(|cs| {
+            if PRIVATE_PSRAM.borrow_ref(cs).is_some() {
+                // Bump: intentional leak until reinit.
+                let _ = (ptr, layout);
+            } else {
+                // SAFETY: same pointer/layout as a prior ExternalMemory allocate.
+                unsafe { esp_alloc::ExternalMemory.deallocate(ptr, layout) };
+            }
+        })
     }
 }
 
