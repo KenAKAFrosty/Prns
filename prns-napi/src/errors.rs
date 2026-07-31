@@ -52,6 +52,8 @@ pub enum ErrorCode {
     RoutingControlFailed,
     BlackholeFailed,
     RetentionFailed,
+    PermissionDenied,
+    Unavailable,
     Internal,
 }
 
@@ -106,6 +108,8 @@ impl AsRef<str> for ErrorCode {
             Self::RoutingControlFailed => "PRNS_ROUTING_CONTROL_FAILED",
             Self::BlackholeFailed => "PRNS_BLACKHOLE_FAILED",
             Self::RetentionFailed => "PRNS_RETENTION_FAILED",
+            Self::PermissionDenied => "PRNS_PERMISSION_DENIED",
+            Self::Unavailable => "PRNS_UNAVAILABLE",
             Self::Internal => "PRNS_INTERNAL",
         }
     }

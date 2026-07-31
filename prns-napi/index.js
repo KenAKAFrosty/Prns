@@ -589,6 +589,7 @@ if (!nativeBinding) {
 module.exports = nativeBinding
 module.exports.InterfaceHandle = nativeBinding.InterfaceHandle
 module.exports.PrnsNode = nativeBinding.PrnsNode
+module.exports.backendInfo = nativeBinding.backendInfo
 module.exports.generateIdentitySecret = nativeBinding.generateIdentitySecret
 module.exports.hostContractAbi = nativeBinding.hostContractAbi
 module.exports.hostSchemaVersion = nativeBinding.hostSchemaVersion

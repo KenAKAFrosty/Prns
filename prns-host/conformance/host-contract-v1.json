@@ -62,6 +62,7 @@
       "IdentityNotHeld": 20,
       "InvalidBitrate": 12,
       "InvalidChannelMessageType": 32,
+      "InvalidConfiguration": 33,
       "LinkBusy": 24,
       "LinkNotActive": 17,
       "NoRouteToDestination": 8,
@@ -73,11 +74,14 @@
       "PayloadTooLarge": 3,
       "RequestAllowListFull": 23,
       "RequestPolicyNotAllowList": 22,
+      "ResourceEarlyEof": 35,
+      "ResourceLengthOverrun": 36,
       "ResourceMetadataTooLarge": 26,
       "ResourcePredecessorFailed": 29,
       "ResourceRejectedByPeer": 27,
       "ResourceSequencingFailed": 28,
       "ResourceTableFull": 25,
+      "ResourceUploadCancelled": 34,
       "UnknownDestination": 4,
       "UnknownInterface": 7,
       "UnknownLink": 16,
@@ -135,6 +139,13 @@
       "RouteInterfaceGone": 213,
       "SelfRatchetRotated": 208
     },
+    "DiscoveryScope": {
+      "Admin": 2,
+      "Global": 5,
+      "Link": 1,
+      "Organization": 4,
+      "Site": 3
+    },
     "EventField": {
       "ArrivedOn": 22,
       "AttachedInterface": 21,
@@ -185,6 +196,37 @@
       "GenerateEphemeral": 2,
       "LoadOrCreate": 3
     },
+    "InterfaceHealth": {
+      "Connected": 2,
+      "Degraded": 3,
+      "Disabled": 7,
+      "Disconnected": 6,
+      "Failed": 5,
+      "Initializing": 1,
+      "Reconnecting": 4,
+      "Unknown": 8
+    },
+    "InterfaceKind": {
+      "AutoLan": 1,
+      "AutomaticBluetoothLe": 16,
+      "AutomaticUsb": 15,
+      "Ax25Kiss": 7,
+      "BackboneClient": 11,
+      "BackboneServer": 12,
+      "BrowserRendezvous": 19,
+      "I2p": 13,
+      "Kiss": 6,
+      "MultiRNode": 9,
+      "Pipe": 10,
+      "RNode": 8,
+      "Serial": 5,
+      "TcpClient": 2,
+      "TcpServer": 3,
+      "Udp": 4,
+      "Weave": 14,
+      "WebSocketClient": 17,
+      "WebSocketServer": 18
+    },
     "LifecyclePhase": {
       "Failed": 5,
       "Running": 2,
@@ -196,6 +238,10 @@
       "MalformedRtt": 3,
       "PeerClosed": 2,
       "Timeout": 1
+    },
+    "MulticastAddressType": {
+      "Permanent": 2,
+      "Temporary": 1
     },
     "PersistenceConfigKind": {
       "Directory": 2,
@@ -228,6 +274,21 @@
     "ResponseTimeoutKind": {
       "Exact": 2,
       "LinkDefault": 1
+    },
+    "SerialDataBits": {
+      "Eight": 8,
+      "Five": 5,
+      "Seven": 7,
+      "Six": 6
+    },
+    "SerialParity": {
+      "Even": 2,
+      "None": 1,
+      "Odd": 3
+    },
+    "SerialStopBits": {
+      "One": 1,
+      "Two": 2
     },
     "Status": {
       "AlreadyClaimed": 5,
@@ -271,6 +332,34 @@
   },
   "productVersion": "0.3.1",
   "records": {
+    "BackendInfo": [
+      {
+        "name": "backend",
+        "type": "BackendKind"
+      },
+      {
+        "name": "capabilities",
+        "type": {
+          "array": "Capability"
+        }
+      },
+      {
+        "name": "interfaceKinds",
+        "type": {
+          "array": "InterfaceKind"
+        }
+      }
+    ],
+    "DestinationIdentitySnapshot": [
+      {
+        "name": "destination",
+        "type": "DestinationHash"
+      },
+      {
+        "name": "identity",
+        "type": "IdentityHash"
+      }
+    ],
     "DestinationName": [
       {
         "name": "appName",
@@ -283,6 +372,165 @@
         }
       }
     ],
+    "HostSnapshot": [
+      {
+        "name": "revision",
+        "type": "u64"
+      },
+      {
+        "name": "backend",
+        "type": "BackendInfo"
+      },
+      {
+        "name": "interfaces",
+        "type": {
+          "array": "InterfaceSnapshot"
+        }
+      },
+      {
+        "name": "routes",
+        "type": {
+          "array": "RouteSnapshot"
+        }
+      },
+      {
+        "name": "activeLinkCount",
+        "type": "u32"
+      },
+      {
+        "name": "destinationIdentities",
+        "type": {
+          "array": "DestinationIdentitySnapshot"
+        }
+      },
+      {
+        "name": "runtime",
+        "type": "RuntimeHealthSnapshot"
+      },
+      {
+        "name": "persistence",
+        "type": "PersistenceSnapshot"
+      }
+    ],
+    "InterfaceSnapshot": [
+      {
+        "name": "interfaceId",
+        "type": "InterfaceId"
+      },
+      {
+        "name": "name",
+        "optional": true,
+        "type": "string"
+      },
+      {
+        "name": "kind",
+        "optional": true,
+        "type": "InterfaceKind"
+      },
+      {
+        "name": "health",
+        "type": "InterfaceHealth"
+      },
+      {
+        "name": "failureDetail",
+        "optional": true,
+        "type": "string"
+      },
+      {
+        "name": "rxBytes",
+        "type": "u64"
+      },
+      {
+        "name": "txBytes",
+        "type": "u64"
+      },
+      {
+        "name": "rxBps",
+        "optional": true,
+        "type": "u64"
+      },
+      {
+        "name": "txBps",
+        "optional": true,
+        "type": "u64"
+      },
+      {
+        "name": "routeCount",
+        "type": "u32"
+      },
+      {
+        "name": "linkCount",
+        "type": "u32"
+      },
+      {
+        "name": "transportedLinkCount",
+        "type": "u32"
+      }
+    ],
+    "MultiRNodeMemberConfig": [
+      {
+        "name": "name",
+        "type": "string"
+      },
+      {
+        "name": "virtualPort",
+        "type": "u8"
+      },
+      {
+        "name": "radio",
+        "type": "RNodeRadioConfig"
+      },
+      {
+        "name": "flowControl",
+        "type": "bool"
+      },
+      {
+        "name": "outgoing",
+        "type": "bool"
+      }
+    ],
+    "PersistenceSnapshot": [
+      {
+        "name": "persistent",
+        "type": "bool"
+      },
+      {
+        "name": "restored",
+        "type": "bool"
+      },
+      {
+        "name": "lastFlushCause",
+        "optional": true,
+        "type": "PersistenceFlushCause"
+      },
+      {
+        "name": "lastFailureDetail",
+        "optional": true,
+        "type": "string"
+      }
+    ],
+    "RNodeRadioConfig": [
+      {
+        "name": "frequencyHz",
+        "type": "u64"
+      },
+      {
+        "name": "bandwidthHz",
+        "type": "u32"
+      },
+      {
+        "name": "txPowerDbm",
+        "type": "i16"
+      },
+      {
+        "name": "spreadingFactor",
+        "type": "u8"
+      },
+      {
+        "name": "codingRate",
+        "type": "u8"
+      }
+    ],
     "RequestHandlerConfig": [
       {
         "name": "path",
@@ -291,6 +539,101 @@
       {
         "name": "policy",
         "type": "RequestPolicy"
+      }
+    ],
+    "RouteSnapshot": [
+      {
+        "name": "destination",
+        "type": "DestinationHash"
+      },
+      {
+        "name": "hops",
+        "type": "u8"
+      },
+      {
+        "name": "viaIdentity",
+        "optional": true,
+        "type": "IdentityHash"
+      },
+      {
+        "name": "interfaceId",
+        "type": "InterfaceId"
+      },
+      {
+        "name": "learnedAtMillis",
+        "type": "u64"
+      },
+      {
+        "name": "lastRelayedAtMillis",
+        "type": "u64"
+      },
+      {
+        "name": "expiresAtMillis",
+        "type": "u64"
+      }
+    ],
+    "RuntimeHealthSnapshot": [
+      {
+        "name": "running",
+        "type": "bool"
+      },
+      {
+        "name": "uptimeMillis",
+        "type": "u64"
+      },
+      {
+        "name": "interfaceCount",
+        "type": "u32"
+      },
+      {
+        "name": "onlineInterfaceCount",
+        "type": "u32"
+      },
+      {
+        "name": "routeCount",
+        "type": "u32"
+      },
+      {
+        "name": "linkCount",
+        "type": "u32"
+      },
+      {
+        "name": "transportedLinkCount",
+        "type": "u32"
+      },
+      {
+        "name": "rxBytes",
+        "type": "u64"
+      },
+      {
+        "name": "txBytes",
+        "type": "u64"
+      },
+      {
+        "name": "rxBps",
+        "type": "u64"
+      },
+      {
+        "name": "txBps",
+        "type": "u64"
+      }
+    ],
+    "SerialLineConfig": [
+      {
+        "name": "baud",
+        "type": "u32"
+      },
+      {
+        "name": "dataBits",
+        "type": "SerialDataBits"
+      },
+      {
+        "name": "parity",
+        "type": "SerialParity"
+      },
+      {
+        "name": "stopBits",
+        "type": "SerialStopBits"
       }
     ]
   },
@@ -321,6 +664,7 @@
       "IdentityNotHeld": 20,
       "InvalidBitrate": 12,
       "InvalidChannelMessageType": 32,
+      "InvalidConfiguration": 33,
       "LinkBusy": 24,
       "LinkNotActive": 17,
       "NoRouteToDestination": 8,
@@ -332,11 +676,14 @@
       "PayloadTooLarge": 3,
       "RequestAllowListFull": 23,
       "RequestPolicyNotAllowList": 22,
+      "ResourceEarlyEof": 35,
+      "ResourceLengthOverrun": 36,
       "ResourceMetadataTooLarge": 26,
       "ResourcePredecessorFailed": 29,
       "ResourceRejectedByPeer": 27,
       "ResourceSequencingFailed": 28,
       "ResourceTableFull": 25,
+      "ResourceUploadCancelled": 34,
       "UnknownDestination": 4,
       "UnknownInterface": 7,
       "UnknownLink": 16,
@@ -392,6 +739,7 @@
     "HostCommand": {
       "AllowRequester": 18,
       "Announce": 1,
+      "AttachInterface": 19,
       "AttachTcpClient": 5,
       "AttachTcpServer": 4,
       "AttachUdp": 6,
@@ -413,6 +761,27 @@
       "Existing": 1,
       "GenerateEphemeral": 2,
       "LoadOrCreate": 3
+    },
+    "InterfaceConfig": {
+      "AutoLan": 1,
+      "AutomaticBluetoothLe": 16,
+      "AutomaticUsb": 15,
+      "Ax25Kiss": 7,
+      "BackboneClient": 11,
+      "BackboneServer": 12,
+      "BrowserRendezvous": 19,
+      "I2p": 13,
+      "Kiss": 6,
+      "MultiRNode": 9,
+      "Pipe": 10,
+      "RNode": 8,
+      "Serial": 5,
+      "TcpClient": 2,
+      "TcpServer": 3,
+      "Udp": 4,
+      "Weave": 14,
+      "WebSocketClient": 17,
+      "WebSocketServer": 18
     },
     "PersistenceConfig": {
       "Directory": 2,

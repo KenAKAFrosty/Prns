@@ -14,24 +14,29 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use prns_host_core::{
-    verify_host_contract, AbiApplicationEventKind, AbiBitrateKind, AbiCapability,
+    verify_host_contract, AbiApplicationEventKind, AbiBackendKind, AbiBitrateKind, AbiCapability,
     AbiCommandFailureKind, AbiCommandOutcomeKind, AbiDeliveryEvidenceKind,
     AbiDestinationConfigKind, AbiDestinationIdentityConfigKind, AbiDiagnosticEventKind,
-    AbiEventField, AbiHostRole, AbiIdentityConfigKind, AbiLifecyclePhase, AbiLinkClosedReason,
-    AbiPersistenceConfigKind, AbiPersistenceFlushCause, AbiPersistenceFlushTarget,
-    AbiRequestPolicy, AbiResourceCompressionKind, AbiResourceStrategyKind, AbiResponseTimeoutKind,
-    AbiStatus, AbiStopReason, ApplicationEvent, Bitrate, BoundedHostQueue, Capability,
-    CommandFailure, CommandOutcome, ConsumerLane, DeliveryEvidence, DestinationConfig,
-    DestinationHash, DestinationIdentityConfig, DestinationName, DiagnosticEvent, HostCommand,
-    HostConfig, HostFailure, HostRole, IdentityConfig, IdentityHash, IdentitySecret, InterfaceId,
-    LifecycleState, LinkClosedReason, LinkId, PersistenceConfig, PersistenceFlushCause,
-    PersistenceFlushTarget, PrnsLimits as CoreLimits, RequestHandlerConfig, RequestId,
-    RequestPathHash, RequestPolicy, ResourceAvailable, ResourceCompression, ResourceStrategy,
-    ResponseTimeout, StopReason, HOST_CONTRACT, HOST_SCHEMA_VERSION,
+    AbiDiscoveryScope, AbiEventField, AbiHostRole, AbiIdentityConfigKind, AbiInterfaceKind,
+    AbiLifecyclePhase, AbiLinkClosedReason, AbiMulticastAddressType, AbiPersistenceConfigKind,
+    AbiPersistenceFlushCause, AbiPersistenceFlushTarget, AbiRequestPolicy,
+    AbiResourceCompressionKind, AbiResourceStrategyKind, AbiResponseTimeoutKind, AbiSerialDataBits,
+    AbiSerialParity, AbiSerialStopBits, AbiStatus, AbiStopReason, ApplicationEvent, Bitrate,
+    BoundedHostQueue, Capability, CommandFailure, CommandOutcome, ConsumerLane, DeliveryEvidence,
+    DestinationConfig, DestinationHash, DestinationIdentityConfig, DestinationName,
+    DiagnosticEvent, DiscoveryScope, HostCommand, HostConfig, HostFailure, HostRole,
+    HostSnapshot as CoreHostSnapshot, IdentityConfig, IdentityHash, IdentitySecret,
+    InterfaceConfig, InterfaceHealth, InterfaceId, InterfaceKind, LifecycleState, LinkClosedReason,
+    LinkId, MultiRNodeMemberConfig, MulticastAddressType, PersistenceConfig, PersistenceFlushCause,
+    PersistenceFlushTarget, PrnsLimits as CoreLimits, RNodeRadioConfig, RequestHandlerConfig,
+    RequestId, RequestPathHash, RequestPolicy, ResourceAvailable, ResourceCompression,
+    ResourceStrategy, ResponseTimeout, SerialDataBits, SerialLineConfig, SerialParity,
+    SerialStopBits, StopReason, HOST_CONTRACT, HOST_SCHEMA_VERSION,
 };
 use prns_host_native::{
-    CommandHandle, CommandWait, IdentityStartError, NativeEventSink, NativeHost, NativeStartError,
-    NativeSubmitError, PersistenceStartError,
+    CommandHandle, CommandWait, IdentityStartError, NativeEventSink, NativeHost,
+    NativeSnapshotError, NativeStartError, NativeSubmitError, NativeUpload, PersistenceStartError,
+    UploadWriteError,
 };
 use readiness::{Readiness, ReadinessCallback, RegisteredReadiness};
 
@@ -58,6 +63,113 @@ pub struct PrnsContractInfo {
     pub schema_version: u32,
     pub product_version: PrnsStringView,
 }
+
+#[repr(C)]
+pub struct PrnsBackendInfo {
+    pub struct_size: usize,
+    pub backend: u32,
+    pub capabilities: *const u32,
+    pub capability_count: usize,
+    pub interface_kinds: *const u32,
+    pub interface_kind_count: usize,
+}
+
+#[repr(C)]
+pub struct PrnsInterfaceSnapshot {
+    pub struct_size: usize,
+    pub interface_id: PrnsByteView,
+    pub has_name: u8,
+    pub name: PrnsStringView,
+    pub has_kind: u8,
+    pub kind: u32,
+    pub health: u32,
+    pub has_failure_detail: u8,
+    pub failure_detail: PrnsStringView,
+    pub rx_bytes: u64,
+    pub tx_bytes: u64,
+    pub has_rx_bps: u8,
+    pub rx_bps: u64,
+    pub has_tx_bps: u8,
+    pub tx_bps: u64,
+    pub route_count: u32,
+    pub link_count: u32,
+    pub transported_link_count: u32,
+}
+
+#[repr(C)]
+pub struct PrnsRouteSnapshot {
+    pub struct_size: usize,
+    pub destination: PrnsByteView,
+    pub hops: u8,
+    pub has_via_identity: u8,
+    pub via_identity: PrnsByteView,
+    pub interface_id: PrnsByteView,
+    pub learned_at_millis: u64,
+    pub last_relayed_at_millis: u64,
+    pub expires_at_millis: u64,
+}
+
+#[repr(C)]
+pub struct PrnsDestinationIdentitySnapshot {
+    pub struct_size: usize,
+    pub destination: PrnsByteView,
+    pub identity: PrnsByteView,
+}
+
+#[repr(C)]
+pub struct PrnsRuntimeHealthSnapshot {
+    pub struct_size: usize,
+    pub running: u8,
+    pub uptime_millis: u64,
+    pub interface_count: u32,
+    pub online_interface_count: u32,
+    pub route_count: u32,
+    pub link_count: u32,
+    pub transported_link_count: u32,
+    pub rx_bytes: u64,
+    pub tx_bytes: u64,
+    pub rx_bps: u64,
+    pub tx_bps: u64,
+}
+
+#[repr(C)]
+pub struct PrnsPersistenceSnapshot {
+    pub struct_size: usize,
+    pub persistent: u8,
+    pub restored: u8,
+    pub has_last_flush_cause: u8,
+    pub last_flush_cause: u32,
+    pub has_last_failure_detail: u8,
+    pub last_failure_detail: PrnsStringView,
+}
+
+#[repr(C)]
+pub struct PrnsHostSnapshot {
+    pub struct_size: usize,
+    pub revision: u64,
+    pub backend: PrnsBackendInfo,
+    pub interfaces: *const PrnsInterfaceSnapshot,
+    pub interface_count: usize,
+    pub routes: *const PrnsRouteSnapshot,
+    pub route_count: usize,
+    pub active_link_count: u32,
+    pub destination_identities: *const PrnsDestinationIdentitySnapshot,
+    pub destination_identity_count: usize,
+    pub runtime: PrnsRuntimeHealthSnapshot,
+    pub persistence: PrnsPersistenceSnapshot,
+}
+
+static NATIVE_CAPABILITIES: [u32; 3] = [
+    AbiCapability::TcpClient as u32,
+    AbiCapability::TcpServer as u32,
+    AbiCapability::Udp as u32,
+];
+
+static NATIVE_INTERFACE_KINDS: [u32; 3] = [
+    AbiInterfaceKind::TcpClient as u32,
+    AbiInterfaceKind::TcpServer as u32,
+    AbiInterfaceKind::Udp as u32,
+];
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -101,6 +213,92 @@ pub struct PrnsRequestHandlerConfig {
     pub struct_size: usize,
     pub path: PrnsStringView,
     pub policy: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PrnsSerialLineConfig {
+    pub struct_size: usize,
+    pub baud: u32,
+    pub data_bits: u32,
+    pub parity: u32,
+    pub stop_bits: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PrnsRNodeRadioConfig {
+    pub struct_size: usize,
+    pub frequency_hz: u64,
+    pub bandwidth_hz: u32,
+    pub tx_power_dbm: i16,
+    pub spreading_factor: u8,
+    pub coding_rate: u8,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PrnsMultiRNodeMemberConfig {
+    pub struct_size: usize,
+    pub name: PrnsStringView,
+    pub virtual_port: u8,
+    pub radio: PrnsRNodeRadioConfig,
+    pub flow_control: u8,
+    pub outgoing: u8,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PrnsInterfaceConfig {
+    pub struct_size: usize,
+    pub kind: u32,
+    pub has_group_id: u8,
+    pub group_id: PrnsStringView,
+    pub has_discovery_scope: u8,
+    pub discovery_scope: u32,
+    pub has_discovery_port: u8,
+    pub discovery_port: u16,
+    pub has_data_port: u8,
+    pub data_port: u16,
+    pub devices: *const PrnsStringView,
+    pub device_count: usize,
+    pub ignored_devices: *const PrnsStringView,
+    pub ignored_device_count: usize,
+    pub has_multicast_address_type: u8,
+    pub multicast_address_type: u32,
+    pub target: PrnsStringView,
+    pub bind: PrnsStringView,
+    pub local: PrnsStringView,
+    pub peer: PrnsStringView,
+    pub bitrate_kind: u32,
+    pub bitrate_bps: u64,
+    pub port: PrnsStringView,
+    pub line: PrnsSerialLineConfig,
+    pub flow_control: u8,
+    pub preamble_millis: u32,
+    pub transmit_tail_millis: u32,
+    pub persistence: u8,
+    pub slot_time_millis: u32,
+    pub has_station_callsign: u8,
+    pub station_callsign: PrnsStringView,
+    pub has_station_interval_seconds: u8,
+    pub station_interval_seconds: u64,
+    pub callsign: PrnsStringView,
+    pub ssid: u8,
+    pub radio: PrnsRNodeRadioConfig,
+    pub has_airtime_limit_short_centi_percent: u8,
+    pub airtime_limit_short_centi_percent: u16,
+    pub has_airtime_limit_long_centi_percent: u8,
+    pub airtime_limit_long_centi_percent: u16,
+    pub members: *const PrnsMultiRNodeMemberConfig,
+    pub member_count: usize,
+    pub command: *const PrnsStringView,
+    pub command_count: usize,
+    pub respawn_delay_millis: u64,
+    pub peers: *const PrnsStringView,
+    pub peer_count: usize,
+    pub connectable: u8,
+    pub url: PrnsStringView,
 }
 
 #[repr(C)]
@@ -373,6 +571,13 @@ pub struct PrnsHost {
     destination_hashes: Vec<DestinationHash>,
 }
 
+pub struct PrnsHostInspection {
+    snapshot: CoreHostSnapshot,
+    interfaces: Vec<PrnsInterfaceSnapshot>,
+    routes: Vec<PrnsRouteSnapshot>,
+    destination_identities: Vec<PrnsDestinationIdentitySnapshot>,
+}
+
 pub struct PrnsEventStream {
     shared: Arc<Shared>,
     lane: ConsumerLane,
@@ -416,6 +621,11 @@ pub struct PrnsEvent {
 
 pub struct PrnsResourceStream {
     state: Mutex<ResourceState>,
+}
+
+pub struct PrnsResourceUpload {
+    upload: NativeUpload,
+    readiness: Arc<Readiness>,
 }
 
 pub struct PrnsIssuedCommand {
@@ -716,6 +926,220 @@ fn parse_bitrate(kind: u32, bits_per_second: u64) -> Result<Bitrate, u32> {
     }
 }
 
+unsafe fn read_strings(data: *const PrnsStringView, length: usize) -> Result<Vec<String>, u32> {
+    unsafe { read_array(data, length) }?
+        .iter()
+        .map(|value| unsafe { read_string(*value) }.map(str::to_string))
+        .collect()
+}
+
+unsafe fn optional_string(has_value: u8, value: PrnsStringView) -> Result<Option<String>, u32> {
+    if has_value == 0 {
+        Ok(None)
+    } else {
+        Ok(Some(unsafe { read_string(value) }?.to_string()))
+    }
+}
+
+fn parse_discovery_scope(value: u32) -> Result<DiscoveryScope, u32> {
+    match AbiDiscoveryScope::try_from(value).map_err(|_| status(AbiStatus::InvalidArgument))? {
+        AbiDiscoveryScope::Link => Ok(DiscoveryScope::Link),
+        AbiDiscoveryScope::Admin => Ok(DiscoveryScope::Admin),
+        AbiDiscoveryScope::Site => Ok(DiscoveryScope::Site),
+        AbiDiscoveryScope::Organization => Ok(DiscoveryScope::Organization),
+        AbiDiscoveryScope::Global => Ok(DiscoveryScope::Global),
+    }
+}
+
+fn parse_multicast_address_type(value: u32) -> Result<MulticastAddressType, u32> {
+    match AbiMulticastAddressType::try_from(value)
+        .map_err(|_| status(AbiStatus::InvalidArgument))?
+    {
+        AbiMulticastAddressType::Temporary => Ok(MulticastAddressType::Temporary),
+        AbiMulticastAddressType::Permanent => Ok(MulticastAddressType::Permanent),
+    }
+}
+
+fn parse_serial_line(value: &PrnsSerialLineConfig) -> Result<SerialLineConfig, u32> {
+    validate_size(value.struct_size, size_of::<PrnsSerialLineConfig>())?;
+    let data_bits = match AbiSerialDataBits::try_from(value.data_bits)
+        .map_err(|_| status(AbiStatus::InvalidArgument))?
+    {
+        AbiSerialDataBits::Five => SerialDataBits::Five,
+        AbiSerialDataBits::Six => SerialDataBits::Six,
+        AbiSerialDataBits::Seven => SerialDataBits::Seven,
+        AbiSerialDataBits::Eight => SerialDataBits::Eight,
+    };
+    let parity = match AbiSerialParity::try_from(value.parity)
+        .map_err(|_| status(AbiStatus::InvalidArgument))?
+    {
+        AbiSerialParity::None => SerialParity::None,
+        AbiSerialParity::Even => SerialParity::Even,
+        AbiSerialParity::Odd => SerialParity::Odd,
+    };
+    let stop_bits = match AbiSerialStopBits::try_from(value.stop_bits)
+        .map_err(|_| status(AbiStatus::InvalidArgument))?
+    {
+        AbiSerialStopBits::One => SerialStopBits::One,
+        AbiSerialStopBits::Two => SerialStopBits::Two,
+    };
+    Ok(SerialLineConfig {
+        baud: value.baud,
+        data_bits,
+        parity,
+        stop_bits,
+    })
+}
+
+fn parse_rnode_radio(value: &PrnsRNodeRadioConfig) -> Result<RNodeRadioConfig, u32> {
+    validate_size(value.struct_size, size_of::<PrnsRNodeRadioConfig>())?;
+    Ok(RNodeRadioConfig {
+        frequency_hz: value.frequency_hz,
+        bandwidth_hz: value.bandwidth_hz,
+        tx_power_dbm: value.tx_power_dbm,
+        spreading_factor: value.spreading_factor,
+        coding_rate: value.coding_rate,
+    })
+}
+
+unsafe fn parse_interface_config(value: &PrnsInterfaceConfig) -> Result<InterfaceConfig, u32> {
+    validate_size(value.struct_size, size_of::<PrnsInterfaceConfig>())?;
+    let kind =
+        AbiInterfaceKind::try_from(value.kind).map_err(|_| status(AbiStatus::InvalidArgument))?;
+    let optional_scope = || {
+        if value.has_discovery_scope == 0 {
+            Ok(None)
+        } else {
+            parse_discovery_scope(value.discovery_scope).map(Some)
+        }
+    };
+    let optional_multicast = || {
+        if value.has_multicast_address_type == 0 {
+            Ok(None)
+        } else {
+            parse_multicast_address_type(value.multicast_address_type).map(Some)
+        }
+    };
+    let optional_station =
+        || unsafe { optional_string(value.has_station_callsign, value.station_callsign) };
+    let optional_interval =
+        || (value.has_station_interval_seconds != 0).then_some(value.station_interval_seconds);
+    match kind {
+        AbiInterfaceKind::AutoLan => Ok(InterfaceConfig::AutoLan {
+            group_id: unsafe { optional_string(value.has_group_id, value.group_id) }?,
+            discovery_scope: optional_scope()?,
+            discovery_port: (value.has_discovery_port != 0).then_some(value.discovery_port),
+            data_port: (value.has_data_port != 0).then_some(value.data_port),
+            devices: unsafe { read_strings(value.devices, value.device_count) }?,
+            ignored_devices: unsafe {
+                read_strings(value.ignored_devices, value.ignored_device_count)
+            }?,
+            multicast_address_type: optional_multicast()?,
+        }),
+        AbiInterfaceKind::TcpClient => Ok(InterfaceConfig::TcpClient {
+            target: unsafe { read_string(value.target) }?.to_string(),
+            bitrate: parse_bitrate(value.bitrate_kind, value.bitrate_bps)?,
+        }),
+        AbiInterfaceKind::TcpServer => Ok(InterfaceConfig::TcpServer {
+            bind: unsafe { read_string(value.bind) }?.to_string(),
+            bitrate: parse_bitrate(value.bitrate_kind, value.bitrate_bps)?,
+        }),
+        AbiInterfaceKind::Udp => Ok(InterfaceConfig::Udp {
+            local: unsafe { read_string(value.local) }?.to_string(),
+            peer: unsafe { read_string(value.peer) }?.to_string(),
+            bitrate: parse_bitrate(value.bitrate_kind, value.bitrate_bps)?,
+        }),
+        AbiInterfaceKind::Serial => Ok(InterfaceConfig::Serial {
+            port: unsafe { read_string(value.port) }?.to_string(),
+            line: parse_serial_line(&value.line)?,
+        }),
+        AbiInterfaceKind::Kiss => Ok(InterfaceConfig::Kiss {
+            port: unsafe { read_string(value.port) }?.to_string(),
+            line: parse_serial_line(&value.line)?,
+            flow_control: value.flow_control != 0,
+            preamble_millis: value.preamble_millis,
+            transmit_tail_millis: value.transmit_tail_millis,
+            persistence: value.persistence,
+            slot_time_millis: value.slot_time_millis,
+            station_callsign: optional_station()?,
+            station_interval_seconds: optional_interval(),
+        }),
+        AbiInterfaceKind::Ax25Kiss => Ok(InterfaceConfig::Ax25Kiss {
+            port: unsafe { read_string(value.port) }?.to_string(),
+            line: parse_serial_line(&value.line)?,
+            flow_control: value.flow_control != 0,
+            preamble_millis: value.preamble_millis,
+            transmit_tail_millis: value.transmit_tail_millis,
+            persistence: value.persistence,
+            slot_time_millis: value.slot_time_millis,
+            callsign: unsafe { read_string(value.callsign) }?.to_string(),
+            ssid: value.ssid,
+        }),
+        AbiInterfaceKind::RNode => Ok(InterfaceConfig::RNode {
+            port: unsafe { read_string(value.port) }?.to_string(),
+            radio: parse_rnode_radio(&value.radio)?,
+            flow_control: value.flow_control != 0,
+            station_callsign: optional_station()?,
+            station_interval_seconds: optional_interval(),
+            airtime_limit_short_centi_percent: (value.has_airtime_limit_short_centi_percent != 0)
+                .then_some(value.airtime_limit_short_centi_percent),
+            airtime_limit_long_centi_percent: (value.has_airtime_limit_long_centi_percent != 0)
+                .then_some(value.airtime_limit_long_centi_percent),
+        }),
+        AbiInterfaceKind::MultiRNode => {
+            let members = unsafe { read_array(value.members, value.member_count) }?
+                .iter()
+                .map(|member| {
+                    validate_size(member.struct_size, size_of::<PrnsMultiRNodeMemberConfig>())?;
+                    Ok(MultiRNodeMemberConfig {
+                        name: unsafe { read_string(member.name) }?.to_string(),
+                        virtual_port: member.virtual_port,
+                        radio: parse_rnode_radio(&member.radio)?,
+                        flow_control: member.flow_control != 0,
+                        outgoing: member.outgoing != 0,
+                    })
+                })
+                .collect::<Result<Vec<_>, u32>>()?;
+            Ok(InterfaceConfig::MultiRNode {
+                port: unsafe { read_string(value.port) }?.to_string(),
+                station_callsign: optional_station()?,
+                station_interval_seconds: optional_interval(),
+                members,
+            })
+        }
+        AbiInterfaceKind::Pipe => Ok(InterfaceConfig::Pipe {
+            command: unsafe { read_strings(value.command, value.command_count) }?,
+            respawn_delay_millis: value.respawn_delay_millis,
+        }),
+        AbiInterfaceKind::BackboneClient => Ok(InterfaceConfig::BackboneClient {
+            target: unsafe { read_string(value.target) }?.to_string(),
+            bitrate: parse_bitrate(value.bitrate_kind, value.bitrate_bps)?,
+        }),
+        AbiInterfaceKind::BackboneServer => Ok(InterfaceConfig::BackboneServer {
+            bind: unsafe { read_string(value.bind) }?.to_string(),
+            bitrate: parse_bitrate(value.bitrate_kind, value.bitrate_bps)?,
+        }),
+        AbiInterfaceKind::I2p => Ok(InterfaceConfig::I2p {
+            peers: unsafe { read_strings(value.peers, value.peer_count) }?,
+            connectable: value.connectable != 0,
+        }),
+        AbiInterfaceKind::Weave => Ok(InterfaceConfig::Weave {
+            port: unsafe { read_string(value.port) }?.to_string(),
+        }),
+        AbiInterfaceKind::AutomaticUsb => Ok(InterfaceConfig::AutomaticUsb),
+        AbiInterfaceKind::AutomaticBluetoothLe => Ok(InterfaceConfig::AutomaticBluetoothLe),
+        AbiInterfaceKind::WebSocketClient => Ok(InterfaceConfig::WebSocketClient {
+            target: unsafe { read_string(value.target) }?.to_string(),
+        }),
+        AbiInterfaceKind::WebSocketServer => Ok(InterfaceConfig::WebSocketServer {
+            bind: unsafe { read_string(value.bind) }?.to_string(),
+        }),
+        AbiInterfaceKind::BrowserRendezvous => Ok(InterfaceConfig::BrowserRendezvous {
+            url: unsafe { read_string(value.url) }?.to_string(),
+        }),
+    }
+}
+
 fn parse_response_timeout(kind: u32, millis: u64) -> Result<ResponseTimeout, u32> {
     match AbiResponseTimeoutKind::try_from(kind).map_err(|_| status(AbiStatus::InvalidArgument))? {
         AbiResponseTimeoutKind::LinkDefault => Ok(ResponseTimeout::LinkDefault),
@@ -762,6 +1186,25 @@ pub unsafe extern "C" fn prns_contract_info(out_info: *mut PrnsContractInfo) -> 
         out.abi = HOST_CONTRACT.abi;
         out.schema_version = HOST_SCHEMA_VERSION;
         out.product_version = string_view(HOST_CONTRACT.product_version);
+        status(AbiStatus::Ok)
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn prns_backend_info(out_info: *mut PrnsBackendInfo) -> u32 {
+    catch_status(|| {
+        let out = match unsafe { required_mut(out_info) } {
+            Ok(out) => out,
+            Err(error) => return error,
+        };
+        if let Err(error) = validate_size(out.struct_size, size_of::<PrnsBackendInfo>()) {
+            return error;
+        }
+        out.backend = AbiBackendKind::Native as u32;
+        out.capabilities = NATIVE_CAPABILITIES.as_ptr();
+        out.capability_count = NATIVE_CAPABILITIES.len();
+        out.interface_kinds = NATIVE_INTERFACE_KINDS.as_ptr();
+        out.interface_kind_count = NATIVE_INTERFACE_KINDS.len();
         status(AbiStatus::Ok)
     })
 }
@@ -1085,7 +1528,7 @@ fn interface_kind_value(kind: InterfaceKind) -> u32 {
 }
 
 fn interface_health_value(health: InterfaceHealth) -> u32 {
-    use prns_host_core::InterfaceHealth as AbiInterfaceHealth;
+    use prns_host_core::AbiInterfaceHealth;
     match health {
         InterfaceHealth::Initializing => AbiInterfaceHealth::Initializing as u32,
         InterfaceHealth::Connected => AbiInterfaceHealth::Connected as u32,
@@ -1243,13 +1686,17 @@ unsafe fn submit_host_command(
         Err(NativeSubmitError::Busy) => return status(AbiStatus::QueueFull),
         Err(NativeSubmitError::Stopped) => return status(AbiStatus::Stopped),
     };
-    *out = Box::into_raw(Box::new(PrnsIssuedCommand {
+    *out = issued_command(handle, readiness);
+    status(AbiStatus::Ok)
+}
+
+fn issued_command(handle: CommandHandle, readiness: Arc<Readiness>) -> *mut PrnsIssuedCommand {
+    Box::into_raw(Box::new(PrnsIssuedCommand {
         handle,
         cached: Mutex::new(None),
         readiness,
         readiness_registration: Mutex::new(None),
-    }));
-    status(AbiStatus::Ok)
+    }))
 }
 
 #[no_mangle]
@@ -1415,6 +1862,25 @@ pub unsafe extern "C" fn prns_host_attach_udp(
                 out_command,
             )
         }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn prns_host_attach_interface(
+    host: *mut PrnsHost,
+    config: *const PrnsInterfaceConfig,
+    out_command: *mut *mut PrnsIssuedCommand,
+) -> u32 {
+    catch_status(|| {
+        let config = match unsafe { required_ref(config) } {
+            Ok(config) => config,
+            Err(error) => return error,
+        };
+        let config = match unsafe { parse_interface_config(config) } {
+            Ok(config) => config,
+            Err(error) => return error,
+        };
+        unsafe { submit_host_command(host, HostCommand::AttachInterface { config }, out_command) }
     })
 }
 
@@ -1648,6 +2114,148 @@ pub unsafe extern "C" fn prns_host_send_resource(
             )
         }
     })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn prns_host_begin_resource_upload(
+    host: *mut PrnsHost,
+    link_id: PrnsByteView,
+    declared_length: u64,
+    packed_metadata: *const PrnsByteView,
+    compression_kind: u32,
+    out_upload: *mut *mut PrnsResourceUpload,
+) -> u32 {
+    catch_status(|| {
+        let host = match unsafe { required_ref(host) } {
+            Ok(host) => host,
+            Err(error) => return error,
+        };
+        let link_id = match unsafe { read_fixed(link_id) } {
+            Ok(link_id) => LinkId::new(link_id),
+            Err(error) => return error,
+        };
+        let packed_metadata = match unsafe { packed_metadata.as_ref() } {
+            Some(metadata) => match unsafe { read_bytes(*metadata) } {
+                Ok(metadata) => Some(metadata.to_vec()),
+                Err(error) => return error,
+            },
+            None => None,
+        };
+        let compression = match parse_resource_compression(compression_kind) {
+            Ok(compression) => compression,
+            Err(error) => return error,
+        };
+        let out = match unsafe { required_mut(out_upload) } {
+            Ok(out) => out,
+            Err(error) => return error,
+        };
+        *out = ptr::null_mut();
+        let native = lock(&host.native);
+        let Some(native) = native.as_ref() else {
+            return status(AbiStatus::Stopped);
+        };
+        let readiness = Arc::new(Readiness::new());
+        let weak_readiness = Arc::downgrade(&readiness);
+        let command_readiness = Arc::new(move || {
+            if let Some(readiness) = weak_readiness.upgrade() {
+                readiness.notify();
+            }
+        });
+        let upload = match native.begin_resource_upload_with_readiness(
+            link_id,
+            declared_length,
+            packed_metadata,
+            compression,
+            Some(command_readiness),
+        ) {
+            Ok(upload) => upload,
+            Err(NativeSubmitError::Busy) => return status(AbiStatus::QueueFull),
+            Err(NativeSubmitError::Stopped) => return status(AbiStatus::Stopped),
+        };
+        *out = Box::into_raw(Box::new(PrnsResourceUpload { upload, readiness }));
+        status(AbiStatus::Ok)
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn prns_resource_upload_write(
+    upload: *mut PrnsResourceUpload,
+    chunk: PrnsByteView,
+) -> u32 {
+    catch_status(|| {
+        let upload = match unsafe { required_ref(upload) } {
+            Ok(upload) => upload,
+            Err(error) => return error,
+        };
+        let chunk = match unsafe { read_bytes(chunk) } {
+            Ok(chunk) => chunk,
+            Err(error) => return error,
+        };
+        match upload.upload.write(chunk) {
+            Ok(()) => status(AbiStatus::Ok),
+            Err(UploadWriteError::WouldBlock) => status(AbiStatus::WouldBlock),
+            Err(UploadWriteError::Stopped) => status(AbiStatus::Stopped),
+            Err(
+                UploadWriteError::ChunkTooLarge
+                | UploadWriteError::LengthOverrun
+                | UploadWriteError::Finished,
+            ) => status(AbiStatus::InvalidArgument),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn prns_resource_upload_is_writable(
+    upload: *const PrnsResourceUpload,
+    out_writable: *mut u8,
+) -> u32 {
+    catch_status(|| {
+        let upload = match unsafe { required_ref(upload) } {
+            Ok(upload) => upload,
+            Err(error) => return error,
+        };
+        let out = match unsafe { required_mut(out_writable) } {
+            Ok(out) => out,
+            Err(error) => return error,
+        };
+        *out = u8::from(upload.upload.is_writable());
+        status(AbiStatus::Ok)
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn prns_resource_upload_finish(
+    upload: *mut PrnsResourceUpload,
+    out_command: *mut *mut PrnsIssuedCommand,
+) -> u32 {
+    catch_status(|| {
+        let upload = match unsafe { required_ref(upload) } {
+            Ok(upload) => upload,
+            Err(error) => return error,
+        };
+        let out = match unsafe { required_mut(out_command) } {
+            Ok(out) => out,
+            Err(error) => return error,
+        };
+        *out = issued_command(upload.upload.finish(), Arc::clone(&upload.readiness));
+        status(AbiStatus::Ok)
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn prns_resource_upload_abort(upload: *mut PrnsResourceUpload) {
+    if let Ok(Some(upload)) = catch_unwind(AssertUnwindSafe(|| unsafe { upload.as_ref() })) {
+        upload.upload.abort();
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn prns_resource_upload_release(upload: *mut PrnsResourceUpload) {
+    if !upload.is_null() {
+        let _ = catch_unwind(AssertUnwindSafe(|| unsafe {
+            drop(Box::from_raw(upload));
+        }));
+    }
 }
 
 unsafe fn submit_resource_strategy_command(
@@ -1973,6 +2581,17 @@ fn cache_command_result(result: Result<CommandOutcome, CommandFailure>) -> Cache
                 }
                 CommandFailure::InvalidChannelMessageType => {
                     AbiCommandFailureKind::InvalidChannelMessageType as u32
+                }
+                CommandFailure::InvalidConfiguration { detail } => {
+                    cached.detail = detail;
+                    AbiCommandFailureKind::InvalidConfiguration as u32
+                }
+                CommandFailure::ResourceUploadCancelled => {
+                    AbiCommandFailureKind::ResourceUploadCancelled as u32
+                }
+                CommandFailure::ResourceEarlyEof => AbiCommandFailureKind::ResourceEarlyEof as u32,
+                CommandFailure::ResourceLengthOverrun => {
+                    AbiCommandFailureKind::ResourceLengthOverrun as u32
                 }
             };
         }
@@ -2962,6 +3581,29 @@ mod tests {
         DestinationHash, InterfaceId, LinkId, ResourceHash, ResourceStreamId, SingleDelivery,
     };
     use std::sync::atomic::AtomicUsize;
+
+    #[test]
+    fn backend_info_reports_exact_compiled_capabilities() {
+        let mut info = PrnsBackendInfo {
+            struct_size: size_of::<PrnsBackendInfo>(),
+            backend: 0,
+            capabilities: ptr::null(),
+            capability_count: 0,
+            interface_kinds: ptr::null(),
+            interface_kind_count: 0,
+        };
+        assert_eq!(
+            unsafe { prns_backend_info(&mut info) },
+            status(AbiStatus::Ok)
+        );
+        assert_eq!(info.backend, AbiBackendKind::Native as u32);
+        let capabilities =
+            unsafe { slice::from_raw_parts(info.capabilities, info.capability_count) };
+        let interface_kinds =
+            unsafe { slice::from_raw_parts(info.interface_kinds, info.interface_kind_count) };
+        assert_eq!(capabilities, NATIVE_CAPABILITIES);
+        assert_eq!(interface_kinds, NATIVE_INTERFACE_KINDS);
+    }
     use std::sync::Barrier;
 
     fn limits() -> CoreLimits {
@@ -3276,7 +3918,7 @@ mod tests {
     #[test]
     fn creation_gates_contract_and_lifecycle() {
         let version = HOST_CONTRACT.product_version.as_bytes();
-        let selected = limits();
+        let selected = CoreLimits::try_new(2, 2, 64, 1).unwrap_or_else(|_| CoreLimits::balanced());
         let native_limits = PrnsLimits {
             struct_size: size_of::<PrnsLimits>(),
             pending_commands: selected.pending_commands(),
@@ -3341,6 +3983,65 @@ mod tests {
         );
         assert_eq!(lifecycle.phase, AbiLifecyclePhase::Running as u32);
 
+        let mut inspection = ptr::null_mut();
+        assert_eq!(
+            unsafe { prns_host_snapshot(host, NEVER_TIMEOUT, &mut inspection) },
+            status(AbiStatus::Ok)
+        );
+        let mut snapshot = PrnsHostSnapshot {
+            struct_size: size_of::<PrnsHostSnapshot>(),
+            revision: 0,
+            backend: PrnsBackendInfo {
+                struct_size: 0,
+                backend: 0,
+                capabilities: ptr::null(),
+                capability_count: 0,
+                interface_kinds: ptr::null(),
+                interface_kind_count: 0,
+            },
+            interfaces: ptr::null(),
+            interface_count: 0,
+            routes: ptr::null(),
+            route_count: 0,
+            active_link_count: 0,
+            destination_identities: ptr::null(),
+            destination_identity_count: 0,
+            runtime: PrnsRuntimeHealthSnapshot {
+                struct_size: 0,
+                running: 0,
+                uptime_millis: 0,
+                interface_count: 0,
+                online_interface_count: 0,
+                route_count: 0,
+                link_count: 0,
+                transported_link_count: 0,
+                rx_bytes: 0,
+                tx_bytes: 0,
+                rx_bps: 0,
+                tx_bps: 0,
+            },
+            persistence: PrnsPersistenceSnapshot {
+                struct_size: 0,
+                persistent: 0,
+                restored: 0,
+                has_last_flush_cause: 0,
+                last_flush_cause: 0,
+                has_last_failure_detail: 0,
+                last_failure_detail: string_view(""),
+            },
+        };
+        assert_eq!(
+            unsafe { prns_host_snapshot_read(inspection, &mut snapshot) },
+            status(AbiStatus::Ok)
+        );
+        assert_eq!(snapshot.revision, 1);
+        assert_eq!(snapshot.backend.backend, AbiBackendKind::Native as u32);
+        assert_eq!(snapshot.runtime.running, 1);
+        assert_eq!(snapshot.persistence.persistent, 0);
+        unsafe {
+            prns_host_snapshot_release(inspection);
+        }
+
         let target = b"127.0.0.1:9";
         let mut command = ptr::null_mut();
         assert_eq!(
@@ -3379,6 +4080,105 @@ mod tests {
         unsafe {
             prns_readiness_registration_release(registration);
             prns_command_release(command);
+        }
+
+        let mut generic: PrnsInterfaceConfig = unsafe { std::mem::zeroed() };
+        generic.struct_size = size_of::<PrnsInterfaceConfig>();
+        generic.kind = AbiInterfaceKind::AutomaticUsb as u32;
+        command = ptr::null_mut();
+        assert_eq!(
+            unsafe { prns_host_attach_interface(host, &generic, &mut command) },
+            status(AbiStatus::Ok)
+        );
+        let mut generic_result = PrnsCommandResult {
+            struct_size: size_of::<PrnsCommandResult>(),
+            outcome: 0,
+            failure: 0,
+            evidence: 0,
+            rtt_millis: 0,
+            value: bytes_view(&[]),
+            detail: string_view(""),
+        };
+        assert_eq!(
+            unsafe { prns_command_wait(command, NEVER_TIMEOUT, &mut generic_result) },
+            status(AbiStatus::Ok)
+        );
+        assert_eq!(
+            generic_result.failure,
+            AbiCommandFailureKind::UnsupportedByBackend as u32
+        );
+        unsafe {
+            prns_command_release(command);
+        }
+
+        let link = [0u8; 16];
+        let mut upload = ptr::null_mut();
+        assert_eq!(
+            unsafe {
+                prns_host_begin_resource_upload(
+                    host,
+                    PrnsByteView {
+                        data: link.as_ptr(),
+                        length: link.len(),
+                    },
+                    1,
+                    ptr::null(),
+                    AbiResourceCompressionKind::Auto as u32,
+                    &mut upload,
+                )
+            },
+            status(AbiStatus::Ok)
+        );
+        let mut writable = 0;
+        assert_eq!(
+            unsafe { prns_resource_upload_is_writable(upload, &mut writable) },
+            status(AbiStatus::Ok)
+        );
+        assert_eq!(writable, 1);
+        let bytes = [1u8, 2];
+        assert_eq!(
+            unsafe {
+                prns_resource_upload_write(
+                    upload,
+                    PrnsByteView {
+                        data: bytes.as_ptr(),
+                        length: bytes.len(),
+                    },
+                )
+            },
+            status(AbiStatus::InvalidArgument)
+        );
+        command = ptr::null_mut();
+        assert_eq!(
+            unsafe { prns_resource_upload_finish(upload, &mut command) },
+            status(AbiStatus::Ok)
+        );
+        let mut result = PrnsCommandResult {
+            struct_size: size_of::<PrnsCommandResult>(),
+            outcome: 0,
+            failure: 0,
+            evidence: 0,
+            rtt_millis: 0,
+            value: PrnsByteView {
+                data: ptr::null(),
+                length: 0,
+            },
+            detail: PrnsStringView {
+                data: ptr::null(),
+                length: 0,
+            },
+        };
+        assert_eq!(
+            unsafe { prns_command_wait(command, NEVER_TIMEOUT, &mut result) },
+            status(AbiStatus::Ok)
+        );
+        assert_eq!(
+            result.failure,
+            AbiCommandFailureKind::ResourceLengthOverrun as u32
+        );
+        unsafe {
+            prns_command_release(command);
+            prns_resource_upload_release(upload);
         }
 
         assert_eq!(unsafe { prns_host_stop(host) }, status(AbiStatus::Ok));

@@ -1,4 +1,3 @@
-use personal_rns::runtime::NoPersistence;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -9,7 +8,8 @@ use personal_rns::engine::RatchetPolicy;
 use personal_rns::routing::request_handlers::RequestPolicy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
-    ManuallyAttached, PreConfiguredDestination, PrnsNodeRecipe, ServeMyRequestEndpoints,
+    ManuallyAttached, NodePersistence, PersistenceIntent, PreConfiguredDestination, PrnsNodeRecipe,
+    ServeMyRequestEndpoints,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::{
@@ -46,14 +46,28 @@ pub struct DestinationConfig {
 pub struct NodeConfig {
     pub transport_identity: Option<Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>>,
     pub destinations: Vec<DestinationConfig>,
+    pub persistence: RuntimePersistence,
+}
+
+pub enum RuntimePersistence {
+    Ephemeral,
+    Directory(NodePersistence),
+}
+
+impl PersistenceIntent for RuntimePersistence {
+    fn into_node_persistence(self) -> Option<NodePersistence> {
+        match self {
+            Self::Ephemeral => None,
+            Self::Directory(persistence) => Some(persistence),
+        }
+    }
 }
 
 fn build_destinations<'a>(
-    config: &'a NodeConfig,
+    destinations: &'a [DestinationConfig],
     aspect_refs: &'a [Vec<&'a str>],
 ) -> Vec<PreConfiguredDestination<'a>> {
-    config
-        .destinations
+    destinations
         .iter()
         .zip(aspect_refs)
         .map(|(dest, aspects)| match &dest.single {
@@ -76,17 +90,16 @@ fn build_destinations<'a>(
         .collect()
 }
 
-fn aspect_refs(config: &NodeConfig) -> Vec<Vec<&str>> {
-    config
-        .destinations
+fn aspect_refs(destinations: &[DestinationConfig]) -> Vec<Vec<&str>> {
+    destinations
         .iter()
         .map(|dest| dest.aspects.iter().map(String::as_str).collect())
         .collect()
 }
 
 pub fn destination_hashes(config: &NodeConfig) -> CodeResult<Vec<[u8; 16]>> {
-    let aspects = aspect_refs(config);
-    build_destinations(config, &aspects)
+    let aspects = aspect_refs(&config.destinations);
+    build_destinations(&config.destinations, &aspects)
         .iter()
         .map(|dest| {
             dest.destination_hash()
@@ -364,8 +377,13 @@ async fn run_node(
     mut shutdown_rx: oneshot::Receiver<()>,
     control_rx: mpsc::Receiver<ControlJob>,
 ) -> Exit {
-    let aspects = aspect_refs(&config);
-    let destinations = build_destinations(&config, &aspects);
+    let NodeConfig {
+        transport_identity,
+        destinations: configured_destinations,
+        persistence,
+    } = config;
+    let aspects = aspect_refs(&configured_destinations);
+    let destinations = build_destinations(&configured_destinations, &aspects);
     let mut hashes = Vec::with_capacity(destinations.len());
     for dest in &destinations {
         match dest.destination_hash() {
@@ -378,17 +396,17 @@ async fn run_node(
     }
     let failure_sink = sink.clone();
     let mut node = PrnsNode::new(PrnsNodeRecipe {
-        transport_identity: config.transport_identity.clone(),
+        transport_identity: transport_identity.clone(),
         pre_configured_destinations: destinations,
         app_state: (),
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         interfaces: ManuallyAttached,
-        persistence: NoPersistence,
+        persistence,
         on_event: move |event, _state: &()| sink.dispatch(event),
     });
     let mut registration_failure: Option<String> = None;
-    'register: for (dest, hash) in config.destinations.iter().zip(&hashes) {
+    'register: for (dest, hash) in configured_destinations.iter().zip(&hashes) {
         let Some(single) = &dest.single else {
             continue;
         };
@@ -410,13 +428,18 @@ async fn run_node(
     if ready_tx.send(Ok(handle)).is_err() {
         return Exit::Stopped;
     }
-    tokio::select! {
-        _ = &mut shutdown_rx => Exit::Stopped,
-        () = failure_sink.wait_failed() => Exit::Crashed("eventBackpressureExceeded".to_string()),
-        result = node.run() => match result {
-            Ok(()) => Exit::Crashed("engineStopped".to_string()),
-            Err(error) => Exit::Crashed(format!("{error}")),
-        },
+    let result = node
+        .run_until(async {
+            tokio::select! {
+                _ = &mut shutdown_rx => {}
+                () = failure_sink.wait_failed() => {}
+            }
+        })
+        .await;
+    match result {
+        Err(error) => Exit::Crashed(format!("{error}")),
+        Ok(()) if failure_sink.failed() => Exit::Crashed("eventBackpressureExceeded".to_string()),
+        Ok(()) => Exit::Stopped,
     }
 }
 

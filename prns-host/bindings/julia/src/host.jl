@@ -173,6 +173,97 @@ end
 identity_hash(host::Host) = host.identity
 destination_hashes(host::Host) = copy(host.destinations)
 
+function backend_info(host::Host)
+    with_host_pointer(host) do _
+        output = Ref(
+            NativeBackendInfo(
+                sizeof(NativeBackendInfo),
+                0,
+                C_NULL,
+                0,
+                C_NULL,
+                0,
+            ),
+        )
+        checked_status(
+            :backend_info,
+            ccall(
+                native_symbol(:prns_backend_info),
+                UInt32,
+                (Ref{NativeBackendInfo},),
+                output,
+            ),
+        )
+        decode_backend_info(output[])
+    end
+end
+
+function snapshot(host::Host; timeout_millis::UInt32=UInt32(5_000))
+    with_host_pointer(host) do pointer
+        inspection = Ref{Ptr{Cvoid}}(C_NULL)
+        checked_status(
+            :capture_snapshot,
+            ccall(
+                native_symbol(:prns_host_snapshot),
+                UInt32,
+                (Ptr{Cvoid}, UInt32, Ref{Ptr{Cvoid}}),
+                pointer,
+                timeout_millis,
+                inspection,
+            ),
+        )
+        try
+            output = Ref(
+                NativeHostSnapshot(
+                    sizeof(NativeHostSnapshot),
+                    0,
+                    NativeBackendInfo(0, 0, C_NULL, 0, C_NULL, 0),
+                    C_NULL,
+                    0,
+                    C_NULL,
+                    0,
+                    0,
+                    C_NULL,
+                    0,
+                    NativeRuntimeHealthSnapshot(
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                    ),
+                    NativePersistenceSnapshot(0, 0, 0, 0, 0, 0, NativeStringView(C_NULL, 0)),
+                ),
+            )
+            checked_status(
+                :read_snapshot,
+                ccall(
+                    native_symbol(:prns_host_snapshot_read),
+                    UInt32,
+                    (Ptr{Cvoid}, Ref{NativeHostSnapshot}),
+                    inspection[],
+                    output,
+                ),
+            )
+            decode_host_snapshot(output[])
+        finally
+            ccall(
+                native_symbol(:prns_host_snapshot_release),
+                Cvoid,
+                (Ptr{Cvoid},),
+                inspection[],
+            )
+        end
+    end
+end
+
 function stop!(host::Host)
     status = with_host_pointer(host) do pointer
         Status(

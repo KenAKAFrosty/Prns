@@ -9,6 +9,11 @@ func nativeHostContract() async throws {
     defer { host.close() }
 
     #expect(host.identityHash != (try IdentityHash([UInt8](repeating: 0, count: 16))))
+    #expect(try host.backendInfo.backend == .native)
+    #expect(try host.backendInfo.interfaceKinds.contains(.tcpClient))
+    let initialSnapshot = try host.snapshot()
+    #expect(initialSnapshot.runtime.running)
+    #expect(initialSnapshot.runtime.interfaceCount == 0)
 
     let firstClaim = try host.claimApplicationEvents()
     guard case .claimed(let events) = firstClaim else {
@@ -35,12 +40,26 @@ func nativeHostContract() async throws {
     }
 
     let attach = try host.execute(
-        .attachTcpClient(target: "127.0.0.1:9", bitrate: .auto)
+        .attachInterface(
+            config: .tcpClient(target: "127.0.0.1:9", bitrate: .auto)
+        )
     )
     defer { attach.close() }
     let attached = try await attach.value()
     guard case .succeeded(.interfaceAttached(let interface)) = attached else {
         Issue.record("attach command did not return an interface")
+        return
+    }
+    let attachedSnapshot = try host.snapshot()
+    #expect(attachedSnapshot.runtime.interfaceCount == 1)
+    #expect(attachedSnapshot.interfaces.first?.interfaceId == interface)
+    let resource = try await host.sendResource(
+        linkId: try LinkId([UInt8](repeating: 0, count: 16)),
+        payload: Array("bounded upload".utf8),
+        compression: .never
+    )
+    guard case .failed(.unknownLink) = resource else {
+        Issue.record("bounded resource upload returned the wrong settlement")
         return
     }
 

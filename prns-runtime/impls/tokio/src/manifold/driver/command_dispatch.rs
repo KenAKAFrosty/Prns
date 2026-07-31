@@ -443,6 +443,44 @@ where
                         });
                         let _ = reply.send(snapshot);
                     }
+                    NodeIntrospectionRequest::DestinationIdentities { reply } => {
+                        let snapshots = engine
+                            .destination_identities()
+                            .map(
+                                |entry| crate::node_introspection::DestinationIdentitySnapshot {
+                                    destination: entry.destination,
+                                    identity: entry.identity,
+                                    public: crate::identity::PublicIdentityMaterial::from_bytes(
+                                        entry.public_keys.public_key_bytes(),
+                                    ),
+                                },
+                            )
+                            .collect();
+                        let _ = reply.send(snapshots);
+                    }
+                    NodeIntrospectionRequest::EngineSnapshot { reply } => {
+                        let mut routes = std::vec::Vec::new();
+                        engine.visit_route_snapshots(topology.view(), |snapshot| {
+                            routes.push(snapshot);
+                        });
+                        let destination_identities = engine
+                            .destination_identities()
+                            .map(
+                                |entry| crate::node_introspection::DestinationIdentitySnapshot {
+                                    destination: entry.destination,
+                                    identity: entry.identity,
+                                    public: crate::identity::PublicIdentityMaterial::from_bytes(
+                                        entry.public_keys.public_key_bytes(),
+                                    ),
+                                },
+                            )
+                            .collect();
+                        let _ = reply.send(crate::node_introspection::EngineInspectionSnapshot {
+                            link_count: engine.link_count(),
+                            routes,
+                            destination_identities,
+                        });
+                    }
                 }
                 CommandEffect::UNCHANGED
             }

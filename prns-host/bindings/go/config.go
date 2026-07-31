@@ -67,6 +67,7 @@ const (
 	ConfigAllocationFailed
 	ConfigInvalidRequestPolicy
 	ConfigUnknownPersistence
+	ConfigUnknownInterface
 )
 
 type ConfigError struct {

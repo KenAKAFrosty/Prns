@@ -215,6 +215,32 @@ pub fn event_to_object(env: &Env, event: OwnedEvent) -> napi::Result<Object<'sta
             object.set("segmentIndex", segment_index as f64)?;
             object.set("totalSegments", total_segments as f64)?;
         }
+        OwnedEvent::PersistenceRestored {
+            routes,
+            destination_identities,
+            tunnels,
+            ratchets,
+            refused,
+            dropped,
+        } => {
+            object.set("type", "persistenceRestored")?;
+            object.set("routes", routes as f64)?;
+            object.set("destinationIdentities", destination_identities as f64)?;
+            object.set("tunnels", tunnels as f64)?;
+            object.set("ratchets", ratchets as f64)?;
+            object.set("refused", refused as f64)?;
+            object.set("dropped", dropped as f64)?;
+        }
+        OwnedEvent::PersistenceFlushed { cause, target } => {
+            object.set("type", "persistenceFlushed")?;
+            object.set("cause", cause)?;
+            object.set("target", target)?;
+        }
+        OwnedEvent::PersistenceFlushFailed { cause, target } => {
+            object.set("type", "persistenceFlushFailed")?;
+            object.set("cause", cause)?;
+            object.set("target", target)?;
+        }
         OwnedEvent::Uncategorized { kind, detail } => {
             object.set("type", kind)?;
             object.set("detail", detail)?;

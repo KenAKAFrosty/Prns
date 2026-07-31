@@ -10,6 +10,13 @@ use napi_derive::napi;
 
 use crate::errors::{code_err, ErrorCode};
 
+#[napi(object)]
+pub struct BackendInfo {
+    pub backend: String,
+    pub capabilities: Vec<String>,
+    pub interface_kinds: Vec<String>,
+}
+
 #[napi]
 pub fn version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
@@ -23,6 +30,22 @@ pub fn host_contract_abi() -> u32 {
 #[napi]
 pub fn host_schema_version() -> u32 {
     prns_host::HOST_SCHEMA_VERSION
+}
+
+#[napi]
+pub fn backend_info() -> BackendInfo {
+    let info = prns_host_native::native_backend_info();
+    BackendInfo {
+        backend: format!("{:?}", info.backend()),
+        capabilities: info
+            .capabilities()
+            .map(|capability| format!("{capability:?}"))
+            .collect(),
+        interface_kinds: info
+            .interface_kinds()
+            .map(|kind| format!("{kind:?}"))
+            .collect(),
+    }
 }
 
 #[napi]

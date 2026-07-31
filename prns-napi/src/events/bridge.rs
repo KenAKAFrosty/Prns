@@ -128,4 +128,8 @@ impl EventSink {
             failed.await;
         }
     }
+
+    pub fn failed(&self) -> bool {
+        self.queue.failed()
+    }
 }

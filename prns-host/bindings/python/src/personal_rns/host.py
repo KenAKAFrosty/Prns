@@ -6,23 +6,29 @@ import os
 import threading
 from dataclasses import dataclass
 from functools import wraps
-from typing import AsyncIterator, Generic, TypeVar
+from typing import AsyncIterable, AsyncIterator, Generic, TypeVar
 
 from . import generated as g
 from ._native import (
+    BackendInfo as NativeBackendInfo,
     ByteView,
     CommandResult,
     ContractInfo,
     DestinationConfig as NativeDestinationConfig,
     DestinationName as NativeDestinationName,
     HostOptions as NativeHostOptions,
+    HostSnapshot as NativeHostSnapshot,
     IdentityConfig as NativeIdentityConfig,
+    InterfaceConfig as NativeInterfaceConfig,
     Lifecycle,
     Limits as NativeLimits,
+    MultiRNodeMemberConfig as NativeMultiRNodeMemberConfig,
     NativeLibrary,
     PersistenceConfig as NativePersistenceConfig,
     ReadinessCallback,
     RequestHandlerConfig as NativeRequestHandlerConfig,
+    RNodeRadioConfig as NativeRNodeRadioConfig,
+    SerialLineConfig as NativeSerialLineConfig,
     StringView,
     bytes_from_view,
 )
@@ -496,6 +502,269 @@ def _marshal_destination(
     raise TypeError(f"unknown destination config {type(destination)!r}")
 
 
+def _marshal_serial_line(value: g.SerialLineConfig) -> NativeSerialLineConfig:
+    return NativeSerialLineConfig(
+        ctypes.sizeof(NativeSerialLineConfig),
+        value.baud,
+        value.data_bits,
+        value.parity,
+        value.stop_bits,
+    )
+
+
+def _marshal_radio(value: g.RNodeRadioConfig) -> NativeRNodeRadioConfig:
+    return NativeRNodeRadioConfig(
+        ctypes.sizeof(NativeRNodeRadioConfig),
+        value.frequency_hz,
+        value.bandwidth_hz,
+        value.tx_power_dbm,
+        value.spreading_factor,
+        value.coding_rate,
+    )
+
+
+def _marshal_interface(
+    value: g.InterfaceConfig,
+    arena: _Arena,
+) -> NativeInterfaceConfig:
+    result = NativeInterfaceConfig()
+    result.struct_size = ctypes.sizeof(NativeInterfaceConfig)
+
+    def set_bitrate(bitrate: g.Bitrate) -> None:
+        result.bitrate_kind, result.bitrate_bps = _marshal_bitrate(bitrate)
+
+    def set_station(callsign: str | None, interval: int | None) -> None:
+        if callsign is not None:
+            result.has_station_callsign = 1
+            result.station_callsign = arena.string(callsign)
+        if interval is not None:
+            result.has_station_interval_seconds = 1
+            result.station_interval_seconds = interval
+
+    def strings(values: tuple[str, ...]):
+        return arena.array(StringView, [arena.string(item) for item in values])
+
+    if isinstance(value, g.InterfaceConfigAutoLan):
+        result.kind = g.InterfaceKind.AUTO_LAN
+        if value.group_id is not None:
+            result.has_group_id = 1
+            result.group_id = arena.string(value.group_id)
+        if value.discovery_scope is not None:
+            result.has_discovery_scope = 1
+            result.discovery_scope = value.discovery_scope
+        if value.discovery_port is not None:
+            result.has_discovery_port = 1
+            result.discovery_port = value.discovery_port
+        if value.data_port is not None:
+            result.has_data_port = 1
+            result.data_port = value.data_port
+        result.devices = strings(value.devices)
+        result.device_count = len(value.devices)
+        result.ignored_devices = strings(value.ignored_devices)
+        result.ignored_device_count = len(value.ignored_devices)
+        if value.multicast_address_type is not None:
+            result.has_multicast_address_type = 1
+            result.multicast_address_type = value.multicast_address_type
+    elif isinstance(value, g.InterfaceConfigTcpClient):
+        result.kind = g.InterfaceKind.TCP_CLIENT
+        result.target = arena.string(value.target)
+        set_bitrate(value.bitrate)
+    elif isinstance(value, g.InterfaceConfigTcpServer):
+        result.kind = g.InterfaceKind.TCP_SERVER
+        result.bind = arena.string(value.bind)
+        set_bitrate(value.bitrate)
+    elif isinstance(value, g.InterfaceConfigUdp):
+        result.kind = g.InterfaceKind.UDP
+        result.local = arena.string(value.local)
+        result.peer = arena.string(value.peer)
+        set_bitrate(value.bitrate)
+    elif isinstance(value, g.InterfaceConfigSerial):
+        result.kind = g.InterfaceKind.SERIAL
+        result.port = arena.string(value.port)
+        result.line = _marshal_serial_line(value.line)
+    elif isinstance(value, g.InterfaceConfigKiss):
+        result.kind = g.InterfaceKind.KISS
+        result.port = arena.string(value.port)
+        result.line = _marshal_serial_line(value.line)
+        result.flow_control = value.flow_control
+        result.preamble_millis = value.preamble_millis
+        result.transmit_tail_millis = value.transmit_tail_millis
+        result.persistence = value.persistence
+        result.slot_time_millis = value.slot_time_millis
+        set_station(value.station_callsign, value.station_interval_seconds)
+    elif isinstance(value, g.InterfaceConfigAx25Kiss):
+        result.kind = g.InterfaceKind.AX25_KISS
+        result.port = arena.string(value.port)
+        result.line = _marshal_serial_line(value.line)
+        result.flow_control = value.flow_control
+        result.preamble_millis = value.preamble_millis
+        result.transmit_tail_millis = value.transmit_tail_millis
+        result.persistence = value.persistence
+        result.slot_time_millis = value.slot_time_millis
+        result.callsign = arena.string(value.callsign)
+        result.ssid = value.ssid
+    elif isinstance(value, g.InterfaceConfigRNode):
+        result.kind = g.InterfaceKind.R_NODE
+        result.port = arena.string(value.port)
+        result.radio = _marshal_radio(value.radio)
+        result.flow_control = value.flow_control
+        set_station(value.station_callsign, value.station_interval_seconds)
+        if value.airtime_limit_short_centi_percent is not None:
+            result.has_airtime_limit_short_centi_percent = 1
+            result.airtime_limit_short_centi_percent = (
+                value.airtime_limit_short_centi_percent
+            )
+        if value.airtime_limit_long_centi_percent is not None:
+            result.has_airtime_limit_long_centi_percent = 1
+            result.airtime_limit_long_centi_percent = (
+                value.airtime_limit_long_centi_percent
+            )
+    elif isinstance(value, g.InterfaceConfigMultiRNode):
+        result.kind = g.InterfaceKind.MULTI_R_NODE
+        result.port = arena.string(value.port)
+        set_station(value.station_callsign, value.station_interval_seconds)
+        members = [
+            NativeMultiRNodeMemberConfig(
+                ctypes.sizeof(NativeMultiRNodeMemberConfig),
+                arena.string(member.name),
+                member.virtual_port,
+                _marshal_radio(member.radio),
+                member.flow_control,
+                member.outgoing,
+            )
+            for member in value.members
+        ]
+        result.members = arena.array(NativeMultiRNodeMemberConfig, members)
+        result.member_count = len(members)
+    elif isinstance(value, g.InterfaceConfigPipe):
+        result.kind = g.InterfaceKind.PIPE
+        result.command = strings(value.command)
+        result.command_count = len(value.command)
+        result.respawn_delay_millis = value.respawn_delay_millis
+    elif isinstance(value, g.InterfaceConfigBackboneClient):
+        result.kind = g.InterfaceKind.BACKBONE_CLIENT
+        result.target = arena.string(value.target)
+        set_bitrate(value.bitrate)
+    elif isinstance(value, g.InterfaceConfigBackboneServer):
+        result.kind = g.InterfaceKind.BACKBONE_SERVER
+        result.bind = arena.string(value.bind)
+        set_bitrate(value.bitrate)
+    elif isinstance(value, g.InterfaceConfigI2p):
+        result.kind = g.InterfaceKind.I2P
+        result.peers = strings(value.peers)
+        result.peer_count = len(value.peers)
+        result.connectable = value.connectable
+    elif isinstance(value, g.InterfaceConfigWeave):
+        result.kind = g.InterfaceKind.WEAVE
+        result.port = arena.string(value.port)
+    elif isinstance(value, g.InterfaceConfigAutomaticUsb):
+        result.kind = g.InterfaceKind.AUTOMATIC_USB
+    elif isinstance(value, g.InterfaceConfigAutomaticBluetoothLe):
+        result.kind = g.InterfaceKind.AUTOMATIC_BLUETOOTH_LE
+    elif isinstance(value, g.InterfaceConfigWebSocketClient):
+        result.kind = g.InterfaceKind.WEB_SOCKET_CLIENT
+        result.target = arena.string(value.target)
+    elif isinstance(value, g.InterfaceConfigWebSocketServer):
+        result.kind = g.InterfaceKind.WEB_SOCKET_SERVER
+        result.bind = arena.string(value.bind)
+    elif isinstance(value, g.InterfaceConfigBrowserRendezvous):
+        result.kind = g.InterfaceKind.BROWSER_RENDEZVOUS
+        result.url = arena.string(value.url)
+    else:
+        raise TypeError(f"unknown interface config {type(value)!r}")
+    return result
+
+
+def _decode_backend(value: NativeBackendInfo) -> g.BackendInfo:
+    return g.BackendInfo(
+        g.BackendKind(value.backend),
+        tuple(g.Capability(value.capabilities[index]) for index in range(value.capability_count)),
+        tuple(
+            g.InterfaceKind(value.interface_kinds[index])
+            for index in range(value.interface_kind_count)
+        ),
+    )
+
+
+def _decode_host_snapshot(value: NativeHostSnapshot) -> g.HostSnapshot:
+    interfaces = tuple(
+        g.InterfaceSnapshot(
+            g.InterfaceId(bytes_from_view(item.interface_id)),
+            bytes_from_view(item.name).decode() if item.has_name else None,
+            g.InterfaceKind(item.kind) if item.has_kind else None,
+            g.InterfaceHealth(item.health),
+            bytes_from_view(item.failure_detail).decode()
+            if item.has_failure_detail
+            else None,
+            item.rx_bytes,
+            item.tx_bytes,
+            item.rx_bps if item.has_rx_bps else None,
+            item.tx_bps if item.has_tx_bps else None,
+            item.route_count,
+            item.link_count,
+            item.transported_link_count,
+        )
+        for item in (value.interfaces[index] for index in range(value.interface_count))
+    )
+    routes = tuple(
+        g.RouteSnapshot(
+            g.DestinationHash(bytes_from_view(item.destination)),
+            item.hops,
+            g.IdentityHash(bytes_from_view(item.via_identity))
+            if item.has_via_identity
+            else None,
+            g.InterfaceId(bytes_from_view(item.interface_id)),
+            item.learned_at_millis,
+            item.last_relayed_at_millis,
+            item.expires_at_millis,
+        )
+        for item in (value.routes[index] for index in range(value.route_count))
+    )
+    identities = tuple(
+        g.DestinationIdentitySnapshot(
+            g.DestinationHash(bytes_from_view(item.destination)),
+            g.IdentityHash(bytes_from_view(item.identity)),
+        )
+        for item in (
+            value.destination_identities[index]
+            for index in range(value.destination_identity_count)
+        )
+    )
+    runtime = value.runtime
+    persistence = value.persistence
+    return g.HostSnapshot(
+        value.revision,
+        _decode_backend(value.backend),
+        interfaces,
+        routes,
+        value.active_link_count,
+        identities,
+        g.RuntimeHealthSnapshot(
+            bool(runtime.running),
+            runtime.uptime_millis,
+            runtime.interface_count,
+            runtime.online_interface_count,
+            runtime.route_count,
+            runtime.link_count,
+            runtime.transported_link_count,
+            runtime.rx_bytes,
+            runtime.tx_bytes,
+            runtime.rx_bps,
+            runtime.tx_bps,
+        ),
+        g.PersistenceSnapshot(
+            bool(persistence.persistent),
+            bool(persistence.restored),
+            g.PersistenceFlushCause(persistence.last_flush_cause)
+            if persistence.has_last_flush_cause
+            else None,
+            bytes_from_view(persistence.last_failure_detail).decode()
+            if persistence.has_last_failure_detail
+            else None,
+        ),
+    )
+
+
 def _decode_command_failure(
     kind: g.CommandFailureKind,
     detail: str,
@@ -565,6 +834,14 @@ def _decode_command_failure(
             return g.CommandFailureChannelUntrackable()
         case g.CommandFailureKind.INVALID_CHANNEL_MESSAGE_TYPE:
             return g.CommandFailureInvalidChannelMessageType()
+        case g.CommandFailureKind.INVALID_CONFIGURATION:
+            return g.CommandFailureInvalidConfiguration(detail)
+        case g.CommandFailureKind.RESOURCE_UPLOAD_CANCELLED:
+            return g.CommandFailureResourceUploadCancelled()
+        case g.CommandFailureKind.RESOURCE_EARLY_EOF:
+            return g.CommandFailureResourceEarlyEof()
+        case g.CommandFailureKind.RESOURCE_LENGTH_OVERRUN:
+            return g.CommandFailureResourceLengthOverrun()
     raise RuntimeError(f"unknown command failure {kind}")
 
 
@@ -720,6 +997,71 @@ class ResourceStream:
                 self._native.library.prns_resource_stream_release(self._handle)
                 self._closed = True
 
+
+class ResourceUpload:
+    def __init__(self, native: NativeLibrary, handle: ctypes.c_void_p):
+        self._native = native
+        self._handle = handle
+        self._closed = False
+        self._finished = False
+        self._lock = threading.RLock()
+
+    async def write(self, chunk: bytes | bytearray | memoryview) -> None:
+        while True:
+            with self._lock:
+                if self._closed or self._finished:
+                    raise RuntimeError("resource upload is closed")
+                with _Arena() as arena:
+                    status = _status(
+                        self._native.library.prns_resource_upload_write(
+                            self._handle,
+                            arena.bytes(chunk),
+                        )
+                    )
+            if status is g.Status.OK:
+                return
+            if status is not g.Status.WOULD_BLOCK:
+                raise PrnsError(status)
+            await asyncio.sleep(0)
+
+    async def finish(self) -> CommandSettlement:
+        with self._lock:
+            if self._closed or self._finished:
+                raise RuntimeError("resource upload is closed")
+            handle = ctypes.c_void_p()
+            _check(
+                self._native.library.prns_resource_upload_finish(
+                    self._handle,
+                    ctypes.byref(handle),
+                )
+            )
+            self._finished = True
+        try:
+            return await Command(self._native, handle)
+        finally:
+            self.close()
+
+    def abort(self) -> None:
+        with self._lock:
+            if self._closed or self._finished:
+                return
+            self._native.library.prns_resource_upload_abort(self._handle)
+            self._finished = True
+
+    def close(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            if not self._finished:
+                self._native.library.prns_resource_upload_abort(self._handle)
+            self._native.library.prns_resource_upload_release(self._handle)
+            self._closed = True
+
+    async def __aenter__(self) -> ResourceUpload:
+        return self
+
+    async def __aexit__(self, _type, _value, _traceback) -> None:
+        self.close()
 
 class EventStream(AsyncIterator[T]):
     def __init__(self, native: NativeLibrary, handle: ctypes.c_void_p):
@@ -1160,6 +1502,37 @@ class Host:
             values.append(g.DestinationHash(bytes_from_view(value)))
         return tuple(values)
 
+    @property
+    @_host_operation
+    def backend_info(self) -> g.BackendInfo:
+        value = NativeBackendInfo()
+        value.struct_size = ctypes.sizeof(NativeBackendInfo)
+        _check(self._native.library.prns_backend_info(ctypes.byref(value)))
+        return _decode_backend(value)
+
+    @_host_operation
+    def snapshot(self, timeout_millis: int = 5_000) -> g.HostSnapshot:
+        inspection = ctypes.c_void_p()
+        _check(
+            self._native.library.prns_host_snapshot(
+                self._handle,
+                timeout_millis,
+                ctypes.byref(inspection),
+            )
+        )
+        try:
+            value = NativeHostSnapshot()
+            value.struct_size = ctypes.sizeof(NativeHostSnapshot)
+            _check(
+                self._native.library.prns_host_snapshot_read(
+                    inspection,
+                    ctypes.byref(value),
+                )
+            )
+            return _decode_host_snapshot(value)
+        finally:
+            self._native.library.prns_host_snapshot_release(inspection)
+
     @_host_operation
     def submit(self, command: g.HostCommand) -> Command:
         with _Arena() as arena:
@@ -1216,6 +1589,13 @@ class Host:
                     arena.string(command.peer),
                     kind,
                     value,
+                    ctypes.byref(handle),
+                )
+            elif isinstance(command, g.HostCommandAttachInterface):
+                interface = _marshal_interface(command.config, arena)
+                status = self._native.library.prns_host_attach_interface(
+                    self._handle,
+                    ctypes.byref(interface),
                     ctypes.byref(handle),
                 )
             elif isinstance(command, g.HostCommandDetachInterface):
@@ -1374,6 +1754,12 @@ class Host:
     ) -> CommandSettlement:
         return await self.submit(g.HostCommandAttachUdp(local, peer, bitrate))
 
+    async def attach_interface(
+        self,
+        config: g.InterfaceConfig,
+    ) -> CommandSettlement:
+        return await self.submit(g.HostCommandAttachInterface(config))
+
     async def detach_interface(
         self,
         interface: g.InterfaceId,
@@ -1440,14 +1826,69 @@ class Host:
         packed_metadata: bytes | None,
         compression: g.ResourceCompression,
     ) -> CommandSettlement:
-        return await self.submit(
-            g.HostCommandSendResource(
-                link_id,
-                payload,
-                packed_metadata,
-                compression,
-            )
+        upload = self.begin_resource_upload(
+            link_id,
+            len(payload),
+            packed_metadata,
+            compression,
         )
+        try:
+            await upload.write(payload)
+            return await upload.finish()
+        except BaseException:
+            upload.abort()
+            upload.close()
+            raise
+
+    @_host_operation
+    def begin_resource_upload(
+        self,
+        link_id: g.LinkId,
+        declared_length: int,
+        packed_metadata: bytes | None,
+        compression: g.ResourceCompression,
+    ) -> ResourceUpload:
+        if not 0 <= declared_length <= 0xffff_ffff_ffff_ffff:
+            raise ValueError("declared length must fit in 64 bits")
+        with _Arena() as arena:
+            metadata = (
+                None if packed_metadata is None else arena.bytes(packed_metadata)
+            )
+            handle = ctypes.c_void_p()
+            _check(
+                self._native.library.prns_host_begin_resource_upload(
+                    self._handle,
+                    arena.bytes(link_id.value),
+                    declared_length,
+                    None if metadata is None else ctypes.byref(metadata),
+                    _marshal_resource_compression(compression),
+                    ctypes.byref(handle),
+                )
+            )
+        return ResourceUpload(self._native, handle)
+
+    async def send_resource_stream(
+        self,
+        link_id: g.LinkId,
+        declared_length: int,
+        chunks: AsyncIterable[bytes],
+        packed_metadata: bytes | None,
+        compression: g.ResourceCompression,
+    ) -> CommandSettlement:
+        upload = self.begin_resource_upload(
+            link_id,
+            declared_length,
+            packed_metadata,
+            compression,
+        )
+        try:
+            async for chunk in chunks:
+                await upload.write(chunk)
+            return await upload.finish()
+        except BaseException:
+            upload.abort()
+            upload.close()
+            raise
 
     async def set_link_resource_strategy(
         self,

@@ -1,4 +1,6 @@
-use personal_rns::engine::{LinkClosedReason, RouteRemovalCause};
+use personal_rns::engine::{
+    LinkClosedReason, PersistenceFlushCause, PersistenceFlushTarget, RouteRemovalCause,
+};
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::runtime::{Diagnostic, Message, PrnsEvent};
 use prns_host::EventDelivery;
@@ -104,6 +106,22 @@ pub enum OwnedEvent {
         physical_transferred_bytes: u64,
         segment_index: u64,
         total_segments: u64,
+    },
+    PersistenceRestored {
+        routes: u64,
+        destination_identities: u64,
+        tunnels: u64,
+        ratchets: u64,
+        refused: u64,
+        dropped: u64,
+    },
+    PersistenceFlushed {
+        cause: &'static str,
+        target: &'static str,
+    },
+    PersistenceFlushFailed {
+        cause: &'static str,
+        target: &'static str,
     },
     Uncategorized {
         kind: &'static str,
@@ -277,9 +295,29 @@ impl OwnedEvent {
 
     fn capture_diagnostic(diagnostic: Diagnostic) -> Option<Self> {
         Some(match diagnostic {
-            Diagnostic::PersistenceRestored { .. }
-            | Diagnostic::PersistenceFlushed { .. }
-            | Diagnostic::PersistenceFlushFailed { .. } => return None,
+            Diagnostic::PersistenceRestored {
+                routes,
+                destination_identities,
+                tunnels,
+                ratchets,
+                refused,
+                dropped,
+            } => Self::PersistenceRestored {
+                routes: u64::from(routes),
+                destination_identities: u64::from(destination_identities),
+                tunnels: u64::from(tunnels),
+                ratchets: u64::from(ratchets),
+                refused: u64::from(refused),
+                dropped: u64::from(dropped),
+            },
+            Diagnostic::PersistenceFlushed { cause, target } => Self::PersistenceFlushed {
+                cause: persistence_cause(cause),
+                target: persistence_target(target),
+            },
+            Diagnostic::PersistenceFlushFailed { cause, target } => Self::PersistenceFlushFailed {
+                cause: persistence_cause(cause),
+                target: persistence_target(target),
+            },
             Diagnostic::AnnounceHeard {
                 destination,
                 hops,
@@ -358,5 +396,22 @@ impl OwnedEvent {
                 },
             },
         })
+    }
+}
+
+fn persistence_cause(cause: PersistenceFlushCause) -> &'static str {
+    match cause {
+        PersistenceFlushCause::Startup => "Startup",
+        PersistenceFlushCause::Interval => "Interval",
+        PersistenceFlushCause::RouteChange => "RouteChange",
+        PersistenceFlushCause::RatchetRotation => "RatchetRotation",
+        PersistenceFlushCause::Shutdown => "Shutdown",
+    }
+}
+
+fn persistence_target(target: PersistenceFlushTarget) -> &'static str {
+    match target {
+        PersistenceFlushTarget::RoutingState => "RoutingState",
+        PersistenceFlushTarget::Ratchets => "Ratchets",
     }
 }

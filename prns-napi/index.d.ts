@@ -45,6 +45,9 @@ export type PrnsNodeEvent =
   | { type: 'resourceFailed'; linkId: Buffer; hash: Buffer; cause: string }
   | { type: 'resourceSendProgress'; linkId: Buffer; transferredBytes: number; totalBytes: number; physicalTransferredBytes: number; transferred: number; total: number; physicalTransferred: number; segmentIndex: number; totalSegments: number }
   | { type: 'routeExpired' | 'routeEvicted' | 'routeInterfaceGone' | 'routeDropped'; destination: Buffer }
+  | { type: 'persistenceRestored'; routes: number; destinationIdentities: number; tunnels: number; ratchets: number; refused: number; dropped: number }
+  | { type: 'persistenceFlushed'; cause: 'startup' | 'interval' | 'routeChange' | 'ratchetRotation' | 'shutdown'; target: 'routingState' | 'ratchets' }
+  | { type: 'persistenceFlushFailed'; cause: 'startup' | 'interval' | 'routeChange' | 'ratchetRotation' | 'shutdown'; target: 'routingState' | 'ratchets' }
   | { type: 'delivered' | 'message'; detail: string }
   | { type: 'eventOverflow'; droppedDiagnostics: number }
   | { type: 'eventBackpressureExceeded'; rejectedEventBytes: number }
@@ -142,6 +145,14 @@ export interface AutoUsbOptions {
   baud?: number
 }
 
+export declare function backendInfo(): BackendInfo
+
+export interface BackendInfo {
+  backend: string
+  capabilities: Array<string>
+  interfaceKinds: Array<string>
+}
+
 export interface BlackholedIdentityInfo {
   identity: Buffer
   source: Buffer
@@ -235,6 +246,7 @@ export interface NodeOptions {
   applicationEventQueueLimit?: number
   retainedEventBytesLimit?: number
   diagnosticEventQueueLimit?: number
+  persistencePath?: string
 }
 
 export interface PacketReceipt {

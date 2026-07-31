@@ -11,6 +11,7 @@ from .host import (
     LifecycleSnapshot,
     PrnsError,
     ResourceStream,
+    ResourceUpload,
     StreamAlreadyClaimed,
     StreamClaim,
     StreamClaimed,

@@ -34,6 +34,10 @@ type nativeResourceStream struct {
 	pointer unsafe.Pointer
 }
 
+type nativeResourceUpload struct {
+	pointer unsafe.Pointer
+}
+
 type nativeAllocation struct {
 	pointer unsafe.Pointer
 	size    int
@@ -145,6 +149,273 @@ func marshalPersistence(
 		return result, ConfigError{Kind: ConfigUnknownPersistence, Field: "persistence"}
 	}
 	return result, nil
+}
+
+func nativeBool(value bool) C.uint8_t {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+func marshalStringViews(
+	arena *nativeArena,
+	values []string,
+) (*C.PrnsStringView, error) {
+	pointer, err := arena.allocate(len(values), C.sizeof_PrnsStringView)
+	if err != nil {
+		return nil, err
+	}
+	if len(values) == 0 {
+		return nil, nil
+	}
+	views := unsafe.Slice((*C.PrnsStringView)(pointer), len(values))
+	for index, value := range values {
+		views[index], err = arena.stringView(value)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return (*C.PrnsStringView)(pointer), nil
+}
+
+func marshalSerialLine(value SerialLineConfig) C.PrnsSerialLineConfig {
+	return C.PrnsSerialLineConfig{
+		struct_size: C.size_t(C.sizeof_PrnsSerialLineConfig),
+		baud:        C.uint32_t(value.Baud),
+		data_bits:   C.PrnsSerialDataBits(value.DataBits),
+		parity:      C.PrnsSerialParity(value.Parity),
+		stop_bits:   C.PrnsSerialStopBits(value.StopBits),
+	}
+}
+
+func marshalRNodeRadio(value RNodeRadioConfig) C.PrnsRNodeRadioConfig {
+	return C.PrnsRNodeRadioConfig{
+		struct_size:      C.size_t(C.sizeof_PrnsRNodeRadioConfig),
+		frequency_hz:     C.uint64_t(value.FrequencyHz),
+		bandwidth_hz:     C.uint32_t(value.BandwidthHz),
+		tx_power_dbm:     C.int16_t(value.TxPowerDbm),
+		spreading_factor: C.uint8_t(value.SpreadingFactor),
+		coding_rate:      C.uint8_t(value.CodingRate),
+	}
+}
+
+func marshalInterface(
+	arena *nativeArena,
+	value InterfaceConfig,
+) (C.PrnsInterfaceConfig, error) {
+	result := C.PrnsInterfaceConfig{
+		struct_size: C.size_t(C.sizeof_PrnsInterfaceConfig),
+	}
+	setBitrate := func(value Bitrate) error {
+		kind, bits, err := marshalBitrate(value)
+		if err != nil {
+			return err
+		}
+		result.bitrate_kind = kind
+		result.bitrate_bps = bits
+		return nil
+	}
+	setStation := func(callsign *string, interval *uint64) error {
+		if callsign != nil {
+			value, err := arena.stringView(*callsign)
+			if err != nil {
+				return err
+			}
+			result.has_station_callsign = 1
+			result.station_callsign = value
+		}
+		if interval != nil {
+			result.has_station_interval_seconds = 1
+			result.station_interval_seconds = C.uint64_t(*interval)
+		}
+		return nil
+	}
+	var err error
+	switch config := value.(type) {
+	case InterfaceConfigAutoLan:
+		result.kind = C.PRNS_INTERFACE_KIND_AUTO_LAN
+		if config.GroupId != nil {
+			result.has_group_id = 1
+			result.group_id, err = arena.stringView(*config.GroupId)
+			if err != nil {
+				return result, err
+			}
+		}
+		if config.DiscoveryScope != nil {
+			result.has_discovery_scope = 1
+			result.discovery_scope = C.PrnsDiscoveryScope(*config.DiscoveryScope)
+		}
+		if config.DiscoveryPort != nil {
+			result.has_discovery_port = 1
+			result.discovery_port = C.uint16_t(*config.DiscoveryPort)
+		}
+		if config.DataPort != nil {
+			result.has_data_port = 1
+			result.data_port = C.uint16_t(*config.DataPort)
+		}
+		result.devices, err = marshalStringViews(arena, config.Devices)
+		if err != nil {
+			return result, err
+		}
+		result.device_count = C.size_t(len(config.Devices))
+		result.ignored_devices, err = marshalStringViews(arena, config.IgnoredDevices)
+		if err != nil {
+			return result, err
+		}
+		result.ignored_device_count = C.size_t(len(config.IgnoredDevices))
+		if config.MulticastAddressType != nil {
+			result.has_multicast_address_type = 1
+			result.multicast_address_type = C.PrnsMulticastAddressType(
+				*config.MulticastAddressType,
+			)
+		}
+	case InterfaceConfigTcpClient:
+		result.kind = C.PRNS_INTERFACE_KIND_TCP_CLIENT
+		result.target, err = arena.stringView(config.Target)
+		if err == nil {
+			err = setBitrate(config.Bitrate)
+		}
+	case InterfaceConfigTcpServer:
+		result.kind = C.PRNS_INTERFACE_KIND_TCP_SERVER
+		result.bind, err = arena.stringView(config.Bind)
+		if err == nil {
+			err = setBitrate(config.Bitrate)
+		}
+	case InterfaceConfigUdp:
+		result.kind = C.PRNS_INTERFACE_KIND_UDP
+		result.local, err = arena.stringView(config.Local)
+		if err == nil {
+			result.peer, err = arena.stringView(config.Peer)
+		}
+		if err == nil {
+			err = setBitrate(config.Bitrate)
+		}
+	case InterfaceConfigSerial:
+		result.kind = C.PRNS_INTERFACE_KIND_SERIAL
+		result.port, err = arena.stringView(config.Port)
+		result.line = marshalSerialLine(config.Line)
+	case InterfaceConfigKiss:
+		result.kind = C.PRNS_INTERFACE_KIND_KISS
+		result.port, err = arena.stringView(config.Port)
+		result.line = marshalSerialLine(config.Line)
+		result.flow_control = nativeBool(config.FlowControl)
+		result.preamble_millis = C.uint32_t(config.PreambleMillis)
+		result.transmit_tail_millis = C.uint32_t(config.TransmitTailMillis)
+		result.persistence = C.uint8_t(config.Persistence)
+		result.slot_time_millis = C.uint32_t(config.SlotTimeMillis)
+		if err == nil {
+			err = setStation(config.StationCallsign, config.StationIntervalSeconds)
+		}
+	case InterfaceConfigAx25Kiss:
+		result.kind = C.PRNS_INTERFACE_KIND_AX25_KISS
+		result.port, err = arena.stringView(config.Port)
+		result.line = marshalSerialLine(config.Line)
+		result.flow_control = nativeBool(config.FlowControl)
+		result.preamble_millis = C.uint32_t(config.PreambleMillis)
+		result.transmit_tail_millis = C.uint32_t(config.TransmitTailMillis)
+		result.persistence = C.uint8_t(config.Persistence)
+		result.slot_time_millis = C.uint32_t(config.SlotTimeMillis)
+		if err == nil {
+			result.callsign, err = arena.stringView(config.Callsign)
+		}
+		result.ssid = C.uint8_t(config.Ssid)
+	case InterfaceConfigRNode:
+		result.kind = C.PRNS_INTERFACE_KIND_R_NODE
+		result.port, err = arena.stringView(config.Port)
+		result.radio = marshalRNodeRadio(config.Radio)
+		result.flow_control = nativeBool(config.FlowControl)
+		if err == nil {
+			err = setStation(config.StationCallsign, config.StationIntervalSeconds)
+		}
+		if config.AirtimeLimitShortCentiPercent != nil {
+			result.has_airtime_limit_short_centi_percent = 1
+			result.airtime_limit_short_centi_percent = C.uint16_t(
+				*config.AirtimeLimitShortCentiPercent,
+			)
+		}
+		if config.AirtimeLimitLongCentiPercent != nil {
+			result.has_airtime_limit_long_centi_percent = 1
+			result.airtime_limit_long_centi_percent = C.uint16_t(
+				*config.AirtimeLimitLongCentiPercent,
+			)
+		}
+	case InterfaceConfigMultiRNode:
+		result.kind = C.PRNS_INTERFACE_KIND_MULTI_R_NODE
+		result.port, err = arena.stringView(config.Port)
+		if err == nil {
+			err = setStation(config.StationCallsign, config.StationIntervalSeconds)
+		}
+		var membersPointer unsafe.Pointer
+		if err == nil {
+			membersPointer, err = arena.allocate(
+				len(config.Members),
+				C.sizeof_PrnsMultiRNodeMemberConfig,
+			)
+		}
+		if err == nil && len(config.Members) > 0 {
+			members := unsafe.Slice(
+				(*C.PrnsMultiRNodeMemberConfig)(membersPointer),
+				len(config.Members),
+			)
+			for index, member := range config.Members {
+				members[index].struct_size = C.size_t(C.sizeof_PrnsMultiRNodeMemberConfig)
+				members[index].name, err = arena.stringView(member.Name)
+				if err != nil {
+					break
+				}
+				members[index].virtual_port = C.uint8_t(member.VirtualPort)
+				members[index].radio = marshalRNodeRadio(member.Radio)
+				members[index].flow_control = nativeBool(member.FlowControl)
+				members[index].outgoing = nativeBool(member.Outgoing)
+			}
+		}
+		result.members = (*C.PrnsMultiRNodeMemberConfig)(membersPointer)
+		result.member_count = C.size_t(len(config.Members))
+	case InterfaceConfigPipe:
+		result.kind = C.PRNS_INTERFACE_KIND_PIPE
+		result.command, err = marshalStringViews(arena, config.Command)
+		result.command_count = C.size_t(len(config.Command))
+		result.respawn_delay_millis = C.uint64_t(config.RespawnDelayMillis)
+	case InterfaceConfigBackboneClient:
+		result.kind = C.PRNS_INTERFACE_KIND_BACKBONE_CLIENT
+		result.target, err = arena.stringView(config.Target)
+		if err == nil {
+			err = setBitrate(config.Bitrate)
+		}
+	case InterfaceConfigBackboneServer:
+		result.kind = C.PRNS_INTERFACE_KIND_BACKBONE_SERVER
+		result.bind, err = arena.stringView(config.Bind)
+		if err == nil {
+			err = setBitrate(config.Bitrate)
+		}
+	case InterfaceConfigI2p:
+		result.kind = C.PRNS_INTERFACE_KIND_I2P
+		result.peers, err = marshalStringViews(arena, config.Peers)
+		result.peer_count = C.size_t(len(config.Peers))
+		result.connectable = nativeBool(config.Connectable)
+	case InterfaceConfigWeave:
+		result.kind = C.PRNS_INTERFACE_KIND_WEAVE
+		result.port, err = arena.stringView(config.Port)
+	case InterfaceConfigAutomaticUsb:
+		result.kind = C.PRNS_INTERFACE_KIND_AUTOMATIC_USB
+	case InterfaceConfigAutomaticBluetoothLe:
+		result.kind = C.PRNS_INTERFACE_KIND_AUTOMATIC_BLUETOOTH_LE
+	case InterfaceConfigWebSocketClient:
+		result.kind = C.PRNS_INTERFACE_KIND_WEB_SOCKET_CLIENT
+		result.target, err = arena.stringView(config.Target)
+	case InterfaceConfigWebSocketServer:
+		result.kind = C.PRNS_INTERFACE_KIND_WEB_SOCKET_SERVER
+		result.bind, err = arena.stringView(config.Bind)
+	case InterfaceConfigBrowserRendezvous:
+		result.kind = C.PRNS_INTERFACE_KIND_BROWSER_RENDEZVOUS
+		result.url, err = arena.stringView(config.Url)
+	case nil:
+		err = ConfigError{Kind: ConfigUnknownInterface, Field: "interface"}
+	default:
+		err = ConfigError{Kind: ConfigUnknownInterface, Field: "interface"}
+	}
+	return result, err
 }
 
 func marshalDestinationName(
@@ -384,6 +655,184 @@ func ffiContractInfo() (uint32, uint32, string, Status) {
 		status
 }
 
+func copyBackendInfo(info C.PrnsBackendInfo) BackendInfo {
+	capabilities := make([]Capability, int(info.capability_count))
+	if len(capabilities) > 0 {
+		native := unsafe.Slice(info.capabilities, len(capabilities))
+		for index, value := range native {
+			capabilities[index] = Capability(value)
+		}
+	}
+	interfaceKinds := make([]InterfaceKind, int(info.interface_kind_count))
+	if len(interfaceKinds) > 0 {
+		native := unsafe.Slice(info.interface_kinds, len(interfaceKinds))
+		for index, value := range native {
+			interfaceKinds[index] = InterfaceKind(value)
+		}
+	}
+	return BackendInfo{
+		Backend:        BackendKind(info.backend),
+		Capabilities:   capabilities,
+		InterfaceKinds: interfaceKinds,
+	}
+}
+
+func ffiBackendInfo() (BackendInfo, Status) {
+	info := C.PrnsBackendInfo{
+		struct_size: C.size_t(C.sizeof_PrnsBackendInfo),
+	}
+	status := Status(C.prns_backend_info(&info))
+	return copyBackendInfo(info), status
+}
+
+func ffiHostSnapshot(host nativeHost, timeoutMillis uint32) (HostSnapshot, Status) {
+	var inspection *C.PrnsHostInspection
+	status := Status(C.prns_host_snapshot(
+		(*C.PrnsHost)(host.pointer),
+		C.uint32_t(timeoutMillis),
+		&inspection,
+	))
+	if status != StatusOk {
+		return HostSnapshot{}, status
+	}
+	defer C.prns_host_snapshot_release(inspection)
+	value := C.PrnsHostSnapshot{
+		struct_size: C.size_t(C.sizeof_PrnsHostSnapshot),
+	}
+	status = Status(C.prns_host_snapshot_read(inspection, &value))
+	if status != StatusOk {
+		return HostSnapshot{}, status
+	}
+	interfaces := make([]InterfaceSnapshot, int(value.interface_count))
+	if len(interfaces) > 0 {
+		native := unsafe.Slice(value.interfaces, len(interfaces))
+		for index, item := range native {
+			var interfaceID InterfaceId
+			copy(interfaceID[:], copyFixed(item.interface_id, InterfaceIdLength))
+			var name *string
+			if item.has_name != 0 {
+				decoded := string(copyStringView(item.name))
+				name = &decoded
+			}
+			var kind *InterfaceKind
+			if item.has_kind != 0 {
+				decoded := InterfaceKind(item.kind)
+				kind = &decoded
+			}
+			var failureDetail *string
+			if item.has_failure_detail != 0 {
+				decoded := string(copyStringView(item.failure_detail))
+				failureDetail = &decoded
+			}
+			var rxBps *uint64
+			if item.has_rx_bps != 0 {
+				decoded := uint64(item.rx_bps)
+				rxBps = &decoded
+			}
+			var txBps *uint64
+			if item.has_tx_bps != 0 {
+				decoded := uint64(item.tx_bps)
+				txBps = &decoded
+			}
+			interfaces[index] = InterfaceSnapshot{
+				InterfaceId:          interfaceID,
+				Name:                 name,
+				Kind:                 kind,
+				Health:               InterfaceHealth(item.health),
+				FailureDetail:        failureDetail,
+				RxBytes:              uint64(item.rx_bytes),
+				TxBytes:              uint64(item.tx_bytes),
+				RxBps:                rxBps,
+				TxBps:                txBps,
+				RouteCount:           uint32(item.route_count),
+				LinkCount:            uint32(item.link_count),
+				TransportedLinkCount: uint32(item.transported_link_count),
+			}
+		}
+	}
+	routes := make([]RouteSnapshot, int(value.route_count))
+	if len(routes) > 0 {
+		native := unsafe.Slice(value.routes, len(routes))
+		for index, item := range native {
+			var destination DestinationHash
+			copy(destination[:], copyFixed(item.destination, DestinationHashLength))
+			var interfaceID InterfaceId
+			copy(interfaceID[:], copyFixed(item.interface_id, InterfaceIdLength))
+			var viaIdentity *IdentityHash
+			if item.has_via_identity != 0 {
+				decoded := IdentityHash{}
+				copy(decoded[:], copyFixed(item.via_identity, IdentityHashLength))
+				viaIdentity = &decoded
+			}
+			routes[index] = RouteSnapshot{
+				Destination:         destination,
+				Hops:                uint8(item.hops),
+				ViaIdentity:         viaIdentity,
+				InterfaceId:         interfaceID,
+				LearnedAtMillis:     uint64(item.learned_at_millis),
+				LastRelayedAtMillis: uint64(item.last_relayed_at_millis),
+				ExpiresAtMillis:     uint64(item.expires_at_millis),
+			}
+		}
+	}
+	identities := make(
+		[]DestinationIdentitySnapshot,
+		int(value.destination_identity_count),
+	)
+	if len(identities) > 0 {
+		native := unsafe.Slice(value.destination_identities, len(identities))
+		for index, item := range native {
+			copy(
+				identities[index].Destination[:],
+				copyFixed(item.destination, DestinationHashLength),
+			)
+			copy(
+				identities[index].Identity[:],
+				copyFixed(item.identity, IdentityHashLength),
+			)
+		}
+	}
+	persistence := value.persistence
+	var flushCause *PersistenceFlushCause
+	if persistence.has_last_flush_cause != 0 {
+		decoded := PersistenceFlushCause(persistence.last_flush_cause)
+		flushCause = &decoded
+	}
+	var failureDetail *string
+	if persistence.has_last_failure_detail != 0 {
+		decoded := string(copyStringView(persistence.last_failure_detail))
+		failureDetail = &decoded
+	}
+	runtime := value.runtime
+	return HostSnapshot{
+		Revision:              uint64(value.revision),
+		Backend:               copyBackendInfo(value.backend),
+		Interfaces:            interfaces,
+		Routes:                routes,
+		ActiveLinkCount:       uint32(value.active_link_count),
+		DestinationIdentities: identities,
+		Runtime: RuntimeHealthSnapshot{
+			Running:              runtime.running != 0,
+			UptimeMillis:         uint64(runtime.uptime_millis),
+			InterfaceCount:       uint32(runtime.interface_count),
+			OnlineInterfaceCount: uint32(runtime.online_interface_count),
+			RouteCount:           uint32(runtime.route_count),
+			LinkCount:            uint32(runtime.link_count),
+			TransportedLinkCount: uint32(runtime.transported_link_count),
+			RxBytes:              uint64(runtime.rx_bytes),
+			TxBytes:              uint64(runtime.tx_bytes),
+			RxBps:                uint64(runtime.rx_bps),
+			TxBps:                uint64(runtime.tx_bps),
+		},
+		Persistence: PersistenceSnapshot{
+			Persistent:        persistence.persistent != 0,
+			Restored:          persistence.restored != 0,
+			LastFlushCause:    flushCause,
+			LastFailureDetail: failureDetail,
+		},
+	}, status
+}
+
 func ffiCreate(options HostOptions) (nativeHost, Status, error) {
 	arena := nativeArena{}
 	defer arena.close()
@@ -592,6 +1041,16 @@ func ffiExecute(host nativeHost, value HostCommand) (nativeCommand, Status, erro
 			peer,
 			kind,
 			bits,
+			&pointer,
+		))
+	case HostCommandAttachInterface:
+		config, err := marshalInterface(&arena, command.Config)
+		if err != nil {
+			return nativeCommand{}, StatusInvalidArgument, err
+		}
+		status = Status(C.prns_host_attach_interface(
+			(*C.PrnsHost)(host.pointer),
+			&config,
 			&pointer,
 		))
 	case HostCommandDetachInterface:
@@ -955,6 +1414,73 @@ func ffiResourceNext(
 
 func ffiResourceClose(stream nativeResourceStream) {
 	C.prns_resource_stream_release((*C.PrnsResourceStream)(stream.pointer))
+}
+
+func ffiBeginResourceUpload(
+	host nativeHost,
+	linkID LinkId,
+	declaredLength uint64,
+	packedMetadata *[]byte,
+	compression ResourceCompression,
+) (nativeResourceUpload, Status, error) {
+	arena := nativeArena{}
+	defer arena.close()
+	link, err := arena.byteView(linkID[:])
+	if err != nil {
+		return nativeResourceUpload{}, StatusInvalidArgument, err
+	}
+	var metadata *C.PrnsByteView
+	if packedMetadata != nil {
+		view, viewError := arena.byteView(*packedMetadata)
+		if viewError != nil {
+			return nativeResourceUpload{}, StatusInvalidArgument, viewError
+		}
+		metadata = &view
+	}
+	kind, err := marshalResourceCompression(compression)
+	if err != nil {
+		return nativeResourceUpload{}, StatusInvalidArgument, err
+	}
+	var upload *C.PrnsResourceUpload
+	status := Status(C.prns_host_begin_resource_upload(
+		(*C.PrnsHost)(host.pointer),
+		link,
+		C.uint64_t(declaredLength),
+		metadata,
+		kind,
+		&upload,
+	))
+	return nativeResourceUpload{pointer: unsafe.Pointer(upload)}, status, nil
+}
+
+func ffiResourceUploadWrite(upload nativeResourceUpload, chunk []byte) Status {
+	arena := nativeArena{}
+	defer arena.close()
+	view, err := arena.byteView(chunk)
+	if err != nil {
+		return StatusInvalidArgument
+	}
+	return Status(C.prns_resource_upload_write(
+		(*C.PrnsResourceUpload)(upload.pointer),
+		view,
+	))
+}
+
+func ffiResourceUploadFinish(upload nativeResourceUpload) (nativeCommand, Status) {
+	var command *C.PrnsIssuedCommand
+	status := Status(C.prns_resource_upload_finish(
+		(*C.PrnsResourceUpload)(upload.pointer),
+		&command,
+	))
+	return nativeCommand{pointer: unsafe.Pointer(command)}, status
+}
+
+func ffiResourceUploadAbort(upload nativeResourceUpload) {
+	C.prns_resource_upload_abort((*C.PrnsResourceUpload)(upload.pointer))
+}
+
+func ffiResourceUploadClose(upload nativeResourceUpload) {
+	C.prns_resource_upload_release((*C.PrnsResourceUpload)(upload.pointer))
 }
 
 func copyByteView(view C.PrnsByteView) []byte {

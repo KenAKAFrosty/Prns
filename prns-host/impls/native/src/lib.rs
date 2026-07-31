@@ -2,9 +2,11 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
-use std::time::Duration;
+use std::task::{Context, Poll};
+use std::time::{Duration, Instant};
 
 use personal_rns::engine::{
     AllowRequester, AllowRequesterFailure, AllowRequesterRejection, AnnounceAppData, AnnounceNow,
@@ -19,8 +21,9 @@ use personal_rns::engine::{
     SendToChannelFailure, SendToChannelRejection, SendToLinkFailure, SendToLinkRejection,
     SetResourceStrategyFailure, SetResourceStrategyRejection,
 };
-use personal_rns::interfaces::BitrateBps;
+use personal_rns::interfaces::{BitrateBps, ConnectionState, InterfaceKind as EngineInterfaceKind};
 use personal_rns::manifold::reconnect::ReconnectPolicy;
+use personal_rns::node_introspection::logical_interface_inventory;
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::links::channel::MessageType;
 use personal_rns::routing::request_handlers::RequestPolicy as EngineRequestPolicy;
@@ -41,20 +44,26 @@ use personal_rns::{
     ResourceStrategy as EngineResourceStrategy, SendError, Zeroizing, IDENTITY_SECRET_KEY_LEN,
 };
 use prns_host::{
-    ApplicationEvent, Bitrate, Capability, ChannelMessage, CommandFailure, CommandOutcome,
-    DeliveryEvidence, DestinationConfig, DestinationHash, DestinationIdentityConfig,
-    DiagnosticEvent, HostCommand, HostConfig, HostRole, IdentityConfig, IdentityHash, InterfaceId,
-    LinkClosedReason, LinkId, PacketHash, PersistenceConfig, PersistenceFlushCause,
-    PersistenceFlushTarget, RequestAvailable, RequestHandlerConfig, RequestId, RequestPathHash,
+    ApplicationEvent, BackendInfo, BackendKind, Bitrate, Capability, ChannelMessage,
+    CommandFailure, CommandOutcome, DeliveryEvidence, DestinationConfig, DestinationHash,
+    DestinationIdentityConfig, DestinationIdentitySnapshot, DiagnosticEvent, HostCommand,
+    HostConfig, HostRole, HostSnapshot, IdentityConfig, IdentityHash, InterfaceConfig,
+    InterfaceHealth, InterfaceId, InterfaceKind, InterfaceSnapshot, LinkClosedReason, LinkId,
+    PacketHash, PersistenceConfig, PersistenceFlushCause, PersistenceFlushTarget,
+    PersistenceSnapshot, RequestAvailable, RequestHandlerConfig, RequestId, RequestPathHash,
     RequestPolicy, ResourceAvailable, ResourceCompression, ResourceHash,
     ResourceNeedsDecompression, ResourceSegmentAvailable, ResourceStrategy, ResourceStreamId,
-    ResponseAvailable, ResponseSegmentAvailable, ResponseTimeout, SingleDelivery,
+    ResponseAvailable, ResponseSegmentAvailable, ResponseTimeout, RouteSnapshot,
+    RuntimeHealthSnapshot, SingleDelivery,
 };
+use tokio::io::{AsyncRead, ReadBuf};
 use tokio::sync::{mpsc, watch};
 
 const START_TIMEOUT: Duration = Duration::from_secs(5);
 const STOP_TIMEOUT: Duration = Duration::from_secs(5);
 const AUTO_BITRATE_BPS: u64 = 65_000_000;
+const UPLOAD_CHUNK_CAPACITY: usize = 4;
+const MAX_UPLOAD_CHUNK_BYTES: usize = 256 * 1024;
 
 static THREAD_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static RESOURCE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -99,6 +108,13 @@ pub enum PersistenceStartError {
 pub enum NativeSubmitError {
     Busy,
     Stopped,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NativeSnapshotError {
+    Busy,
+    Stopped,
+    TimedOut,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -215,6 +231,8 @@ impl Drop for CommandJob {
 
 pub struct NativeHost {
     commands: mpsc::Sender<CommandJob>,
+    uploads: mpsc::Sender<UploadJob>,
+    snapshots: mpsc::Sender<SnapshotJob>,
     shutdown: watch::Sender<bool>,
     join: Mutex<Option<std::thread::JoinHandle<()>>>,
     stopped: AtomicBool,
@@ -238,12 +256,32 @@ impl NativeHost {
         }
         let pending_commands = config.limits.pending_commands();
         let (command_tx, command_rx) = mpsc::channel(pending_commands);
+        let (upload_tx, upload_rx) = mpsc::channel(pending_commands);
+        let (snapshot_tx, snapshot_rx) = mpsc::channel(pending_commands);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
+        let persistence_snapshot = Arc::new(Mutex::new(match &config.persistence {
+            PersistenceConfig::Ephemeral => PersistenceSnapshot::ephemeral(),
+            PersistenceConfig::Directory { .. } => PersistenceSnapshot::persistent(),
+        }));
         let sequence = THREAD_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let worker_persistence = Arc::clone(&persistence_snapshot);
         let join = std::thread::Builder::new()
             .name(format!("prns-host-{sequence}"))
-            .spawn(move || worker(config, sink, command_rx, shutdown_rx, ready_tx))
+            .spawn(move || {
+                worker(
+                    config,
+                    sink,
+                    WorkerInputs {
+                        commands: command_rx,
+                        uploads: upload_rx,
+                        snapshots: snapshot_rx,
+                        shutdown: shutdown_rx,
+                        persistence: worker_persistence,
+                    },
+                    ready_tx,
+                )
+            })
             .map_err(|error| NativeStartError::Thread(error.to_string()))?;
         let ready = match ready_rx.recv_timeout(START_TIMEOUT) {
             Ok(ready) => ready,
@@ -261,6 +299,8 @@ impl NativeHost {
         }?;
         Ok(Self {
             commands: command_tx,
+            uploads: upload_tx,
+            snapshots: snapshot_tx,
             shutdown: shutdown_tx,
             join: Mutex::new(Some(join)),
             stopped: AtomicBool::new(false),
@@ -303,6 +343,80 @@ impl NativeHost {
         Ok(CommandHandle { completion })
     }
 
+    pub fn begin_resource_upload(
+        &self,
+        link_id: LinkId,
+        declared_length: u64,
+        packed_metadata: Option<Vec<u8>>,
+        compression: ResourceCompression,
+    ) -> Result<NativeUpload, NativeSubmitError> {
+        self.begin_resource_upload_with_readiness(
+            link_id,
+            declared_length,
+            packed_metadata,
+            compression,
+            None,
+        )
+    }
+
+    pub fn begin_resource_upload_with_readiness(
+        &self,
+        link_id: LinkId,
+        declared_length: u64,
+        packed_metadata: Option<Vec<u8>>,
+        compression: ResourceCompression,
+        readiness: Option<CommandReadiness>,
+    ) -> Result<NativeUpload, NativeSubmitError> {
+        if self.stopped.load(Ordering::Acquire) {
+            return Err(NativeSubmitError::Stopped);
+        }
+        let completion = Arc::new(CommandCompletion::new(readiness));
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let (chunks, source) = mpsc::channel(UPLOAD_CHUNK_CAPACITY);
+        self.uploads
+            .try_send(UploadJob {
+                link_id,
+                declared_length,
+                packed_metadata,
+                compression,
+                source: UploadSource::new(source),
+                completion: PendingCompletion(Arc::clone(&completion)),
+                cancelled: Arc::clone(&cancelled),
+            })
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => NativeSubmitError::Busy,
+                mpsc::error::TrySendError::Closed(_) => NativeSubmitError::Stopped,
+            })?;
+        Ok(NativeUpload {
+            chunks: Mutex::new(Some(chunks)),
+            completion,
+            cancelled,
+            declared_length,
+            written: AtomicU64::new(0),
+            finished: AtomicBool::new(false),
+        })
+    }
+
+    pub fn snapshot(&self, timeout: Option<Duration>) -> Result<HostSnapshot, NativeSnapshotError> {
+        if self.stopped.load(Ordering::Acquire) {
+            return Err(NativeSnapshotError::Stopped);
+        }
+        let (reply, result) = std::sync::mpsc::sync_channel(1);
+        self.snapshots
+            .try_send(SnapshotJob { reply })
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => NativeSnapshotError::Busy,
+                mpsc::error::TrySendError::Closed(_) => NativeSnapshotError::Stopped,
+            })?;
+        match timeout {
+            Some(timeout) => result.recv_timeout(timeout).map_err(|error| match error {
+                std::sync::mpsc::RecvTimeoutError::Timeout => NativeSnapshotError::TimedOut,
+                std::sync::mpsc::RecvTimeoutError::Disconnected => NativeSnapshotError::Stopped,
+            }),
+            None => result.recv().map_err(|_| NativeSnapshotError::Stopped),
+        }
+    }
+
     pub fn stop(&self) {
         if self.stopped.swap(true, Ordering::AcqRel) {
             return;
@@ -311,6 +425,162 @@ impl NativeHost {
         let join = lock(&self.join).take();
         if let Some(join) = join {
             let _ = join.join();
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UploadWriteError {
+    WouldBlock,
+    ChunkTooLarge,
+    LengthOverrun,
+    Finished,
+    Stopped,
+}
+
+pub struct NativeUpload {
+    chunks: Mutex<Option<mpsc::Sender<Vec<u8>>>>,
+    completion: Arc<CommandCompletion>,
+    cancelled: Arc<AtomicBool>,
+    declared_length: u64,
+    written: AtomicU64,
+    finished: AtomicBool,
+}
+
+impl NativeUpload {
+    pub fn write(&self, chunk: &[u8]) -> Result<(), UploadWriteError> {
+        if self.finished.load(Ordering::Acquire) {
+            return Err(UploadWriteError::Finished);
+        }
+        if chunk.len() > MAX_UPLOAD_CHUNK_BYTES {
+            return Err(UploadWriteError::ChunkTooLarge);
+        }
+        let length = u64::try_from(chunk.len()).map_err(|_| UploadWriteError::LengthOverrun)?;
+        let mut chunks = lock(&self.chunks);
+        let written = self.written.load(Ordering::Acquire);
+        if written.saturating_add(length) > self.declared_length {
+            self.finished.store(true, Ordering::Release);
+            self.cancelled.store(true, Ordering::Release);
+            chunks.take();
+            self.completion
+                .finish(Err(CommandFailure::ResourceLengthOverrun));
+            return Err(UploadWriteError::LengthOverrun);
+        }
+        let sender = chunks.as_ref().ok_or(UploadWriteError::Finished)?;
+        sender
+            .try_send(chunk.to_vec())
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => UploadWriteError::WouldBlock,
+                mpsc::error::TrySendError::Closed(_) => UploadWriteError::Stopped,
+            })?;
+        self.written.store(written + length, Ordering::Release);
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn is_writable(&self) -> bool {
+        lock(&self.chunks)
+            .as_ref()
+            .is_some_and(|sender| sender.capacity() > 0 && !sender.is_closed())
+    }
+
+    pub fn finish(&self) -> CommandHandle {
+        if !self.finished.swap(true, Ordering::AcqRel) {
+            lock(&self.chunks).take();
+            let written = self.written.load(Ordering::Acquire);
+            if written != self.declared_length {
+                self.cancelled.store(true, Ordering::Release);
+                self.completion
+                    .finish(Err(CommandFailure::ResourceEarlyEof));
+            }
+        }
+        CommandHandle {
+            completion: Arc::clone(&self.completion),
+        }
+    }
+
+    pub fn abort(&self) {
+        if !self.finished.swap(true, Ordering::AcqRel) {
+            self.cancelled.store(true, Ordering::Release);
+            lock(&self.chunks).take();
+            self.completion
+                .finish(Err(CommandFailure::ResourceUploadCancelled));
+        }
+    }
+}
+
+impl Drop for NativeUpload {
+    fn drop(&mut self) {
+        self.abort();
+    }
+}
+
+struct UploadJob {
+    link_id: LinkId,
+    declared_length: u64,
+    packed_metadata: Option<Vec<u8>>,
+    compression: ResourceCompression,
+    source: UploadSource,
+    completion: PendingCompletion,
+    cancelled: Arc<AtomicBool>,
+}
+
+struct SnapshotJob {
+    reply: std::sync::mpsc::SyncSender<HostSnapshot>,
+}
+
+struct PendingCompletion(Arc<CommandCompletion>);
+
+impl PendingCompletion {
+    fn finish(&self, result: Result<CommandOutcome, CommandFailure>) {
+        self.0.finish(result);
+    }
+}
+
+impl Drop for PendingCompletion {
+    fn drop(&mut self) {
+        self.0.finish(Err(CommandFailure::NodeStopped));
+    }
+}
+
+struct UploadSource {
+    chunks: mpsc::Receiver<Vec<u8>>,
+    active: Vec<u8>,
+    offset: usize,
+}
+
+impl UploadSource {
+    fn new(chunks: mpsc::Receiver<Vec<u8>>) -> Self {
+        Self {
+            chunks,
+            active: Vec::new(),
+            offset: 0,
+        }
+    }
+}
+
+impl AsyncRead for UploadSource {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        output: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        loop {
+            if self.offset < self.active.len() {
+                let available = &self.active[self.offset..];
+                let take = available.len().min(output.remaining());
+                output.put_slice(&available[..take]);
+                self.offset += take;
+                return Poll::Ready(Ok(()));
+            }
+            match Pin::new(&mut self.chunks).poll_recv(context) {
+                Poll::Ready(Some(chunk)) => {
+                    self.active = chunk;
+                    self.offset = 0;
+                }
+                Poll::Ready(None) => return Poll::Ready(Ok(())),
+                Poll::Pending => return Poll::Pending,
+            }
         }
     }
 }
@@ -328,6 +598,24 @@ pub fn native_capabilities() -> &'static [Capability] {
         Capability::TcpServer,
         Capability::Udp,
     ]
+}
+
+#[must_use]
+pub fn native_interface_kinds() -> &'static [InterfaceKind] {
+    &[
+        InterfaceKind::TcpClient,
+        InterfaceKind::TcpServer,
+        InterfaceKind::Udp,
+    ]
+}
+
+#[must_use]
+pub fn native_backend_info() -> BackendInfo {
+    BackendInfo::new(
+        BackendKind::Native,
+        native_capabilities().iter().copied(),
+        native_interface_kinds().iter().copied(),
+    )
 }
 
 #[must_use]
@@ -524,11 +812,18 @@ fn build_destinations<'a>(
         .collect()
 }
 
+struct WorkerInputs {
+    commands: mpsc::Receiver<CommandJob>,
+    uploads: mpsc::Receiver<UploadJob>,
+    snapshots: mpsc::Receiver<SnapshotJob>,
+    shutdown: watch::Receiver<bool>,
+    persistence: Arc<Mutex<PersistenceSnapshot>>,
+}
+
 fn worker(
     config: HostConfig,
     sink: Arc<dyn NativeEventSink>,
-    command_rx: mpsc::Receiver<CommandJob>,
-    shutdown_rx: watch::Receiver<bool>,
+    inputs: WorkerInputs,
     ready_tx: std::sync::mpsc::SyncSender<Result<Ready, NativeStartError>>,
 ) {
     let runtime = match tokio::runtime::Builder::new_multi_thread()
@@ -543,17 +838,23 @@ fn worker(
             return;
         }
     };
-    runtime.block_on(run(config, sink, command_rx, shutdown_rx, ready_tx));
+    runtime.block_on(run(config, sink, inputs, ready_tx));
     runtime.shutdown_timeout(STOP_TIMEOUT);
 }
 
 async fn run(
     config: HostConfig,
     sink: Arc<dyn NativeEventSink>,
-    command_rx: mpsc::Receiver<CommandJob>,
-    shutdown_rx: watch::Receiver<bool>,
+    inputs: WorkerInputs,
     ready_tx: std::sync::mpsc::SyncSender<Result<Ready, NativeStartError>>,
 ) {
+    let WorkerInputs {
+        commands: command_rx,
+        uploads: upload_rx,
+        snapshots: snapshot_rx,
+        shutdown: shutdown_rx,
+        persistence: persistence_snapshot,
+    } = inputs;
     let resolved = match resolve_config(config) {
         Ok(config) => config,
         Err(error) => {
@@ -596,6 +897,7 @@ async fn run(
     let event_sink = Arc::clone(&sink);
     let backpressure = Arc::new(tokio::sync::Notify::new());
     let event_backpressure = Arc::clone(&backpressure);
+    let event_persistence = Arc::clone(&persistence_snapshot);
     let mut node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: match role {
             HostRole::Endpoint => None,
@@ -608,7 +910,7 @@ async fn run(
         interfaces: ManuallyAttached,
         persistence,
         on_event: move |event, _state: &()| {
-            if !publish_event(event_sink.as_ref(), event) {
+            if !publish_event(event_sink.as_ref(), event, &event_persistence) {
                 event_backpressure.notify_waiters();
             }
         },
@@ -644,7 +946,15 @@ async fn run(
     {
         return;
     }
-    let commands = tokio::spawn(command_loop(command_rx, handle, shutdown_rx.clone()));
+    let commands = tokio::spawn(command_loop(
+        command_rx,
+        snapshot_rx,
+        handle.clone(),
+        shutdown_rx.clone(),
+        persistence_snapshot,
+        Instant::now(),
+    ));
+    let uploads = tokio::spawn(upload_loop(upload_rx, handle, shutdown_rx.clone()));
     let exit = tokio::select! {
         result = node.run_until(shutdown_requested(shutdown_rx)) => {
             result.map_err(|error| format!("{error}"))
@@ -653,6 +963,8 @@ async fn run(
     };
     commands.abort();
     let _ = commands.await;
+    uploads.abort();
+    let _ = uploads.await;
     match exit {
         Ok(()) => sink.stopped(),
         Err(detail) => sink.failed(detail),
@@ -682,26 +994,285 @@ impl Attachment {
 
 async fn command_loop(
     mut commands: mpsc::Receiver<CommandJob>,
+    mut snapshots: mpsc::Receiver<SnapshotJob>,
     handle: PrnsNodeHandle,
     mut shutdown: watch::Receiver<bool>,
+    persistence: Arc<Mutex<PersistenceSnapshot>>,
+    started_at: Instant,
 ) {
     let mut attachments = BTreeMap::new();
+    let mut snapshot_revision = 0u64;
     loop {
-        let job = tokio::select! {
-            job = commands.recv() => match job {
-                Some(job) => job,
+        let work = tokio::select! {
+            command = commands.recv() => match command {
+                Some(command) => HostWork::Command(command),
+                None => break,
+            },
+            snapshot = snapshots.recv() => match snapshot {
+                Some(snapshot) => HostWork::Snapshot(snapshot),
                 None => break,
             },
             _ = shutdown.wait_for(|stopping| *stopping) => break,
         };
-        let result = execute_command(&handle, &mut attachments, &job.command).await;
-        job.completion.finish(result);
+        match work {
+            HostWork::Command(job) => {
+                let result = execute_command(&handle, &mut attachments, &job.command).await;
+                job.completion.finish(result);
+            }
+            HostWork::Snapshot(job) => {
+                snapshot_revision = snapshot_revision.saturating_add(1);
+                if let Some(snapshot) = collect_snapshot(
+                    &handle,
+                    &attachments,
+                    snapshot_revision,
+                    started_at,
+                    &persistence,
+                )
+                .await
+                {
+                    let _ = job.reply.send(snapshot);
+                }
+            }
+        }
     }
     for (_, attachment) in attachments {
         attachment.teardown();
     }
     tokio::task::yield_now().await;
     tokio::task::yield_now().await;
+}
+
+enum HostWork {
+    Command(CommandJob),
+    Snapshot(SnapshotJob),
+}
+
+async fn collect_snapshot(
+    handle: &PrnsNodeHandle,
+    attachments: &BTreeMap<InterfaceId, Attachment>,
+    revision: u64,
+    started_at: Instant,
+    persistence: &Mutex<PersistenceSnapshot>,
+) -> Option<HostSnapshot> {
+    let inventory = logical_interface_inventory(handle.interface_inventory());
+    let interfaces: Vec<InterfaceSnapshot> = inventory
+        .into_iter()
+        .filter(|entry| attachments.contains_key(&host_interface(entry.snapshot.id)))
+        .map(|entry| {
+            let rates = entry.snapshot.transfer_rates;
+            InterfaceSnapshot {
+                interface_id: host_interface(entry.snapshot.id),
+                name: entry.name,
+                kind: entry.snapshot.id.kind().and_then(host_interface_kind),
+                health: host_interface_health(entry.snapshot.connection),
+                failure_detail: entry.snapshot.failure_reason.map(str::to_string),
+                rx_bytes: entry.snapshot.rx_bytes,
+                tx_bytes: entry.snapshot.tx_bytes,
+                rx_bps: rates.map(|rates| u64::from(rates.rx_bps)),
+                tx_bps: rates.map(|rates| u64::from(rates.tx_bps)),
+                route_count: entry.snapshot.destinations,
+                link_count: entry.snapshot.links,
+                transported_link_count: entry.snapshot.transported_links,
+            }
+        })
+        .collect();
+    let engine = handle.engine_inspection_snapshot().await?;
+    let routes: Vec<RouteSnapshot> = engine
+        .routes
+        .into_iter()
+        .map(|route| RouteSnapshot {
+            destination: host_destination(route.destination),
+            hops: route.hops,
+            via_identity: match route.via {
+                personal_rns::routing::routes::NextHop::Direct => None,
+                personal_rns::routing::routes::NextHop::Via(identity) => {
+                    Some(IdentityHash::new(*identity.as_bytes()))
+                }
+            },
+            interface_id: host_interface(route.interface),
+            learned_at_millis: route.learned_at.0,
+            last_relayed_at_millis: route.last_relayed_at.0,
+            expires_at_millis: route.expires_at.0,
+        })
+        .collect();
+    let destination_identities = engine
+        .destination_identities
+        .into_iter()
+        .map(|identity| DestinationIdentitySnapshot {
+            destination: host_destination(identity.destination),
+            identity: IdentityHash::new(*identity.identity.as_bytes()),
+        })
+        .collect();
+    let interface_count = u32::try_from(interfaces.len()).unwrap_or(u32::MAX);
+    let online_interface_count = u32::try_from(
+        interfaces
+            .iter()
+            .filter(|interface| {
+                matches!(
+                    interface.health,
+                    InterfaceHealth::Connected | InterfaceHealth::Degraded
+                )
+            })
+            .count(),
+    )
+    .unwrap_or(u32::MAX);
+    let runtime = RuntimeHealthSnapshot {
+        running: true,
+        uptime_millis: u64::try_from(started_at.elapsed().as_millis()).unwrap_or(u64::MAX),
+        interface_count,
+        online_interface_count,
+        route_count: u32::try_from(routes.len()).unwrap_or(u32::MAX),
+        link_count: engine.link_count,
+        transported_link_count: interfaces.iter().fold(0u32, |sum, entry| {
+            sum.saturating_add(entry.transported_link_count)
+        }),
+        rx_bytes: interfaces
+            .iter()
+            .fold(0u64, |sum, entry| sum.saturating_add(entry.rx_bytes)),
+        tx_bytes: interfaces
+            .iter()
+            .fold(0u64, |sum, entry| sum.saturating_add(entry.tx_bytes)),
+        rx_bps: interfaces.iter().fold(0u64, |sum, entry| {
+            sum.saturating_add(entry.rx_bps.unwrap_or_default())
+        }),
+        tx_bps: interfaces.iter().fold(0u64, |sum, entry| {
+            sum.saturating_add(entry.tx_bps.unwrap_or_default())
+        }),
+    };
+    Some(HostSnapshot {
+        revision,
+        backend: native_backend_info(),
+        interfaces,
+        routes,
+        active_link_count: engine.link_count,
+        destination_identities,
+        runtime,
+        persistence: lock(persistence).clone(),
+    })
+}
+
+fn host_interface_health(health: ConnectionState) -> InterfaceHealth {
+    match health {
+        ConnectionState::Initializing => InterfaceHealth::Initializing,
+        ConnectionState::Connected => InterfaceHealth::Connected,
+        ConnectionState::Degraded => InterfaceHealth::Degraded,
+        ConnectionState::Reconnecting => InterfaceHealth::Reconnecting,
+        ConnectionState::Failed => InterfaceHealth::Failed,
+        ConnectionState::Disconnected => InterfaceHealth::Disconnected,
+        ConnectionState::Disabled => InterfaceHealth::Disabled,
+        ConnectionState::Unknown => InterfaceHealth::Unknown,
+    }
+}
+
+fn host_interface_kind(kind: EngineInterfaceKind) -> Option<InterfaceKind> {
+    match kind {
+        EngineInterfaceKind::TcpClient => Some(InterfaceKind::TcpClient),
+        EngineInterfaceKind::TcpServer | EngineInterfaceKind::TcpServerPeer => {
+            Some(InterfaceKind::TcpServer)
+        }
+        EngineInterfaceKind::Udp => Some(InterfaceKind::Udp),
+        EngineInterfaceKind::Serial => Some(InterfaceKind::Serial),
+        EngineInterfaceKind::UsbAutoHost | EngineInterfaceKind::UsbAutoDevice => {
+            Some(InterfaceKind::AutomaticUsb)
+        }
+        EngineInterfaceKind::AutoWifi
+        | EngineInterfaceKind::WifiPeer
+        | EngineInterfaceKind::WifiDirect
+        | EngineInterfaceKind::WifiDirectPeer
+        | EngineInterfaceKind::WifiAware
+        | EngineInterfaceKind::WifiAwarePeer => Some(InterfaceKind::AutoLan),
+        EngineInterfaceKind::BluetoothAuto | EngineInterfaceKind::BluetoothPeer => {
+            Some(InterfaceKind::AutomaticBluetoothLe)
+        }
+        EngineInterfaceKind::Kiss => Some(InterfaceKind::Kiss),
+        EngineInterfaceKind::Ax25Kiss => Some(InterfaceKind::Ax25Kiss),
+        EngineInterfaceKind::Pipe => Some(InterfaceKind::Pipe),
+        EngineInterfaceKind::Rnode | EngineInterfaceKind::LoRa => Some(InterfaceKind::RNode),
+        EngineInterfaceKind::BackboneServer | EngineInterfaceKind::BackboneServerPeer => {
+            Some(InterfaceKind::BackboneServer)
+        }
+        EngineInterfaceKind::BackboneClient => Some(InterfaceKind::BackboneClient),
+        EngineInterfaceKind::WebSocketClient => Some(InterfaceKind::WebSocketClient),
+        EngineInterfaceKind::WebSocketServer | EngineInterfaceKind::WebSocketServerPeer => {
+            Some(InterfaceKind::WebSocketServer)
+        }
+        EngineInterfaceKind::I2p | EngineInterfaceKind::I2pPeer => Some(InterfaceKind::I2p),
+        EngineInterfaceKind::Weave | EngineInterfaceKind::WeavePeer => Some(InterfaceKind::Weave),
+        EngineInterfaceKind::Loopback
+        | EngineInterfaceKind::LocalServer
+        | EngineInterfaceKind::LocalClient
+        | EngineInterfaceKind::EspNow => None,
+    }
+}
+
+async fn upload_loop(
+    mut uploads: mpsc::Receiver<UploadJob>,
+    handle: PrnsNodeHandle,
+    mut shutdown: watch::Receiver<bool>,
+) {
+    loop {
+        let job = tokio::select! {
+            job = uploads.recv() => match job {
+                Some(job) => job,
+                None => break,
+            },
+            _ = shutdown.wait_for(|stopping| *stopping) => break,
+        };
+        let UploadJob {
+            link_id,
+            declared_length,
+            packed_metadata,
+            compression,
+            source,
+            completion,
+            cancelled,
+        } = job;
+        let compression = match compression {
+            ResourceCompression::Auto => SegmentCompression::AUTO,
+            ResourceCompression::Never => SegmentCompression::Never,
+        };
+        let result = match packed_metadata {
+            Some(metadata) => {
+                let (progress, _) = mpsc::unbounded_channel();
+                handle
+                    .send_resource_with_options(
+                        engine_link(link_id),
+                        declared_length,
+                        source,
+                        &metadata,
+                        compression,
+                        progress,
+                    )
+                    .await
+            }
+            None => {
+                handle
+                    .send_resource_with_compression(
+                        engine_link(link_id),
+                        declared_length,
+                        source,
+                        compression,
+                    )
+                    .await
+            }
+        };
+        let result = match result {
+            Ok(()) => Ok(CommandOutcome::ResourceSent),
+            Err(ResourceSendError::Source(error))
+                if cancelled.load(Ordering::Acquire)
+                    && error.kind() == std::io::ErrorKind::UnexpectedEof =>
+            {
+                Err(CommandFailure::ResourceUploadCancelled)
+            }
+            Err(ResourceSendError::Source(error))
+                if error.kind() == std::io::ErrorKind::UnexpectedEof =>
+            {
+                Err(CommandFailure::ResourceEarlyEof)
+            }
+            Err(error) => Err(resource_send_failure(error)),
+        };
+        completion.finish(result);
+    }
 }
 
 async fn execute_command(
@@ -793,6 +1364,58 @@ async fn execute_command(
             let interface = host_interface(attached.id());
             attachments.insert(interface, Attachment::Interface(attached));
             Ok(CommandOutcome::InterfaceAttached { interface })
+        }
+        HostCommand::AttachInterface { config } => {
+            config
+                .validate()
+                .map_err(|error| CommandFailure::InvalidConfiguration {
+                    detail: format!("{error:?}"),
+                })?;
+            match config {
+                InterfaceConfig::TcpServer { bind, bitrate } => {
+                    let server =
+                        TcpServer::bind_with_bitrate(bind.as_str(), engine_bitrate(*bitrate)?)
+                            .await
+                            .map_err(|error| CommandFailure::BindFailed {
+                                detail: error.to_string(),
+                            })?;
+                    let attached = handle.supervise(server);
+                    let interface = host_interface(attached.id());
+                    attachments.insert(interface, Attachment::Supervisor(attached));
+                    Ok(CommandOutcome::InterfaceAttached { interface })
+                }
+                InterfaceConfig::TcpClient { target, bitrate } => {
+                    let client = TcpClientInterface::new_with_bitrate(
+                        target.clone(),
+                        engine_bitrate(*bitrate)?,
+                        ReconnectPolicy::STANDARD,
+                    );
+                    let attached = handle.add_interface(client);
+                    let interface = host_interface(attached.id());
+                    attachments.insert(interface, Attachment::Interface(attached));
+                    Ok(CommandOutcome::InterfaceAttached { interface })
+                }
+                InterfaceConfig::Udp {
+                    local,
+                    peer,
+                    bitrate,
+                } => {
+                    let udp = UdpInterface::bind(
+                        local.as_str(),
+                        peer.as_str(),
+                        engine_bitrate(*bitrate)?,
+                    )
+                    .await
+                    .map_err(|error| CommandFailure::BindFailed {
+                        detail: error.to_string(),
+                    })?;
+                    let attached = handle.add_interface(udp);
+                    let interface = host_interface(attached.id());
+                    attachments.insert(interface, Attachment::Interface(attached));
+                    Ok(CommandOutcome::InterfaceAttached { interface })
+                }
+                _ => Err(CommandFailure::UnsupportedByBackend),
+            }
         }
         HostCommand::DetachInterface { interface } => {
             let Some(attachment) = attachments.remove(interface) else {
@@ -1291,15 +1914,41 @@ fn host_resource_hash(
     ResourceHash::new(*value.as_bytes())
 }
 
-fn publish_event(sink: &dyn NativeEventSink, event: PrnsEvent<'_>) -> bool {
+fn publish_event(
+    sink: &dyn NativeEventSink,
+    event: PrnsEvent<'_>,
+    persistence: &Mutex<PersistenceSnapshot>,
+) -> bool {
     match event {
         PrnsEvent::Message(message) => publish_message(sink, message),
         PrnsEvent::Diagnostic(diagnostic) => {
             if let Some(diagnostic) = translate_diagnostic(diagnostic) {
+                update_persistence_snapshot(persistence, &diagnostic);
                 sink.publish_diagnostic(diagnostic);
             }
             true
         }
+    }
+}
+
+fn update_persistence_snapshot(
+    persistence: &Mutex<PersistenceSnapshot>,
+    diagnostic: &DiagnosticEvent,
+) {
+    let mut persistence = lock(persistence);
+    match diagnostic {
+        DiagnosticEvent::PersistenceRestored { .. } => {
+            persistence.restored = true;
+            persistence.last_failure_detail = None;
+        }
+        DiagnosticEvent::PersistenceFlushed { cause, .. } => {
+            persistence.last_flush_cause = Some(*cause);
+            persistence.last_failure_detail = None;
+        }
+        DiagnosticEvent::PersistenceFlushFailed { cause, target } => {
+            persistence.last_failure_detail = Some(format!("{cause:?}:{target:?}"));
+        }
+        _ => {}
     }
 }
 
@@ -1710,6 +2359,66 @@ mod tests {
     }
 
     #[test]
+    fn snapshots_track_interface_changes_consistently() -> Result<(), String> {
+        let host =
+            NativeHost::start(config(), Arc::new(Sink)).map_err(|error| format!("{error:?}"))?;
+        let initial = host
+            .snapshot(Some(Duration::from_secs(2)))
+            .map_err(|error| format!("{error:?}"))?;
+        if initial.revision != 1
+            || !initial.interfaces.is_empty()
+            || !initial.routes.is_empty()
+            || initial.active_link_count != 0
+            || initial.runtime.interface_count != 0
+        {
+            return Err("initial snapshot was inconsistent".to_string());
+        }
+        let attached = host
+            .submit(HostCommand::AttachTcpClient {
+                target: "127.0.0.1:9".to_string(),
+                bitrate: Bitrate::Auto,
+            })
+            .map_err(|error| format!("{error:?}"))?;
+        let interface = match attached.wait(Some(Duration::from_secs(2))) {
+            CommandWait::Completed(Ok(CommandOutcome::InterfaceAttached { interface })) => {
+                interface
+            }
+            other => return Err(format!("{other:?}")),
+        };
+        let attached_snapshot = host
+            .snapshot(Some(Duration::from_secs(2)))
+            .map_err(|error| format!("{error:?}"))?;
+        if attached_snapshot.revision != 2
+            || attached_snapshot.interfaces.len() != 1
+            || attached_snapshot.interfaces[0].interface_id != interface
+            || attached_snapshot.interfaces[0].kind != Some(InterfaceKind::TcpClient)
+            || attached_snapshot.runtime.interface_count != 1
+        {
+            return Err("attached interface snapshot was inconsistent".to_string());
+        }
+        let detached = host
+            .submit(HostCommand::DetachInterface { interface })
+            .map_err(|error| format!("{error:?}"))?;
+        if !matches!(
+            detached.wait(Some(Duration::from_secs(2))),
+            CommandWait::Completed(Ok(CommandOutcome::InterfaceDetached { .. }))
+        ) {
+            return Err("interface did not detach".to_string());
+        }
+        let detached_snapshot = host
+            .snapshot(Some(Duration::from_secs(2)))
+            .map_err(|error| format!("{error:?}"))?;
+        if detached_snapshot.revision != 3
+            || !detached_snapshot.interfaces.is_empty()
+            || detached_snapshot.runtime.interface_count != 0
+        {
+            return Err("detached interface snapshot was inconsistent".to_string());
+        }
+        host.stop();
+        Ok(())
+    }
+
+    #[test]
     fn configured_host_registers_request_handlers() -> Result<(), String> {
         let mut config = config();
         config
@@ -1801,5 +2510,63 @@ mod tests {
         }
         fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
         Ok(())
+    }
+
+    fn isolated_upload(declared_length: u64) -> (NativeUpload, UploadSource) {
+        let completion = Arc::new(CommandCompletion::new(None));
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let (chunks, source) = mpsc::channel(UPLOAD_CHUNK_CAPACITY);
+        (
+            NativeUpload {
+                chunks: Mutex::new(Some(chunks)),
+                completion,
+                cancelled,
+                declared_length,
+                written: AtomicU64::new(0),
+                finished: AtomicBool::new(false),
+            },
+            UploadSource::new(source),
+        )
+    }
+
+    #[test]
+    fn upload_reports_overrun_and_early_eof() {
+        let (overrun, _source) = isolated_upload(1);
+        assert_eq!(overrun.write(&[1, 2]), Err(UploadWriteError::LengthOverrun));
+        assert!(matches!(
+            overrun.finish().wait(Some(Duration::ZERO)),
+            CommandWait::Completed(Err(CommandFailure::ResourceLengthOverrun))
+        ));
+
+        let (early, _source) = isolated_upload(2);
+        assert_eq!(early.write(&[1]), Ok(()));
+        assert!(matches!(
+            early.finish().wait(Some(Duration::ZERO)),
+            CommandWait::Completed(Err(CommandFailure::ResourceEarlyEof))
+        ));
+    }
+
+    #[test]
+    fn upload_is_bounded_and_release_cancels() {
+        let (upload, _source) = isolated_upload(16);
+        for _ in 0..UPLOAD_CHUNK_CAPACITY {
+            assert_eq!(upload.write(&[1]), Ok(()));
+        }
+        assert_eq!(upload.write(&[1]), Err(UploadWriteError::WouldBlock));
+        let command = CommandHandle {
+            completion: Arc::clone(&upload.completion),
+        };
+        drop(upload);
+        assert!(matches!(
+            command.wait(Some(Duration::ZERO)),
+            CommandWait::Completed(Err(CommandFailure::ResourceUploadCancelled))
+        ));
+    }
+
+    #[test]
+    fn upload_rejects_oversized_chunks() {
+        let (upload, _source) = isolated_upload((MAX_UPLOAD_CHUNK_BYTES + 1) as u64);
+        let chunk = vec![0; MAX_UPLOAD_CHUNK_BYTES + 1];
+        assert_eq!(upload.write(&chunk), Err(UploadWriteError::ChunkTooLarge));
     }
 }

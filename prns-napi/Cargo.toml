@@ -42,6 +42,7 @@ personal-rns = { path = "../personal-rns", default-features = false, features = 
     "parallel-resource-hash",
 ] }
 prns-host = { path = "../prns-host/core" }
+prns-host-native = { path = "../prns-host/impls/native" }
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util", "fs"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]

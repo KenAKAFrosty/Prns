@@ -2000,6 +2000,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "prns-host-native"
+version = "0.3.1"
+dependencies = [
+ "personal-rns",
+ "prns-host",
+ "tokio",
+]
+
+[[package]]
 name = "prns-interfaces-embassy"
 version = "0.3.1"
 dependencies = [
@@ -2054,6 +2063,7 @@ dependencies = [
  "napi-derive",
  "personal-rns",
  "prns-host",
+ "prns-host-native",
  "tokio",
 ]
 

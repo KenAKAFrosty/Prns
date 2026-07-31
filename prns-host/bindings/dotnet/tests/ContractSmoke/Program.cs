@@ -65,6 +65,15 @@ await using (host)
     {
         throw new InvalidOperationException("The real host identity hash is unavailable.");
     }
+    if (host.BackendInfo.Backend != BackendKind.Native)
+    {
+        throw new InvalidOperationException("The native backend reported the wrong kind.");
+    }
+    var initialSnapshot = host.CaptureSnapshot();
+    if (!initialSnapshot.Runtime.Running || initialSnapshot.Runtime.InterfaceCount != 0)
+    {
+        throw new InvalidOperationException("The initial runtime snapshot is inconsistent.");
+    }
 
     var firstClaim = host.ClaimEvents();
     if (firstClaim is StreamClaim<ApplicationEvent>.AlreadyClaimed rejected)
@@ -112,5 +121,49 @@ await using (host)
     )
     {
         throw new InvalidOperationException("An asynchronous command did not settle.");
+    }
+    var resource = await host.SendResourceAsync(
+        new LinkId(new byte[HostContract.LinkIdLength]),
+        "bounded upload"u8.ToArray(),
+        null,
+        new ResourceCompression.Never()
+    );
+    if (
+        resource
+        is not CommandSettlement.Failed { Failure: CommandFailure.UnknownLink }
+    )
+    {
+        throw new InvalidOperationException("Bounded resource upload returned the wrong failure.");
+    }
+
+    var attached = await host.AttachInterfaceAsync(
+        new InterfaceConfig.TcpClient("127.0.0.1:9", new Bitrate.Auto())
+    );
+    if (
+        attached
+        is not CommandSettlement.Succeeded
+        {
+            Outcome: CommandOutcome.InterfaceAttached attachedOutcome,
+        }
+    )
+    {
+        throw new InvalidOperationException("Generic interface attachment did not settle.");
+    }
+    var attachedSnapshot = host.CaptureSnapshot();
+    if (
+        attachedSnapshot.Runtime.InterfaceCount != 1
+        || attachedSnapshot.Interfaces.Length != 1
+        || attachedSnapshot.Interfaces[0].InterfaceId != attachedOutcome.Interface
+    )
+    {
+        throw new InvalidOperationException("The attached interface is absent from the snapshot.");
+    }
+    var detached = await host.DetachInterfaceAsync(attachedOutcome.Interface);
+    if (
+        detached
+        is not CommandSettlement.Succeeded { Outcome: CommandOutcome.InterfaceDetached }
+    )
+    {
+        throw new InvalidOperationException("Generic interface detachment did not settle.");
     }
 }

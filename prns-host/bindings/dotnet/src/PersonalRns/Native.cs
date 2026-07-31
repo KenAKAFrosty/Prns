@@ -3,7 +3,7 @@ using Microsoft.Win32.SafeHandles;
 
 namespace PersonalRns;
 
-internal static class Native
+internal static partial class Native
 {
     internal const string Library = "prns_host";
     internal const uint NeverTimeout = uint.MaxValue;

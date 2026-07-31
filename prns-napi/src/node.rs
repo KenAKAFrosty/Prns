@@ -113,6 +113,7 @@ pub struct NodeOptions {
     pub application_event_queue_limit: Option<u32>,
     pub retained_event_bytes_limit: Option<u32>,
     pub diagnostic_event_queue_limit: Option<u32>,
+    pub persistence_path: Option<String>,
 }
 
 #[napi(object)]
@@ -880,6 +881,20 @@ fn parse_options(options: NodeOptions) -> CodeResult<NodeConfig> {
     Ok(NodeConfig {
         transport_identity,
         destinations,
+        persistence: match options.persistence_path {
+            Some(path) => personal_rns::runtime::NodePersistence::custom_dir(Path::new(&path))
+                .map(crate::runtime::RuntimePersistence::Directory)
+                .map_err(|error| {
+                    code_err(
+                        match error.kind() {
+                            std::io::ErrorKind::PermissionDenied => ErrorCode::PermissionDenied,
+                            _ => ErrorCode::Unavailable,
+                        },
+                        format!("persistence directory at {path}: {error}"),
+                    )
+                })?,
+            None => crate::runtime::RuntimePersistence::Ephemeral,
+        },
     })
 }
 

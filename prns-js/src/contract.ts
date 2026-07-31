@@ -23,6 +23,7 @@ import type {
   InterfaceId,
   LinkId,
   PrnsLimits,
+  PersistenceConfig,
   PacketHash,
   RequestId,
   RequestPathHash,
@@ -55,6 +56,7 @@ export type PrnsCreateOptions = {
   readonly role: HostRoleName;
   readonly destinations?: readonly DestinationConfig[];
   readonly limits?: PrnsLimits;
+  readonly persistence?: PersistenceConfig;
 };
 
 export type LifecycleState =
@@ -80,12 +82,14 @@ export type BackendCapabilities =
       "Native",
       {
         readonly available: ReadonlySet<CapabilityName>;
+        readonly interfaceKinds: ReadonlySet<import("./contract.generated.js").InterfaceKind>;
       }
     >
   | Tag<
       "Browser",
       {
         readonly available: ReadonlySet<CapabilityName>;
+        readonly interfaceKinds: ReadonlySet<import("./contract.generated.js").InterfaceKind>;
       }
     >;
 
@@ -126,6 +130,7 @@ export type CommandOutcomeFor<Command extends HostCommand> =
               | Tag<"AttachTcpServer", unknown>
               | Tag<"AttachTcpClient", unknown>
               | Tag<"AttachUdp", unknown>
+              | Tag<"AttachInterface", unknown>
           ? Extract<CommandOutcome, { readonly tag: "InterfaceAttached" }>
           : Command extends Tag<"DetachInterface", unknown>
             ? Extract<CommandOutcome, { readonly tag: "InterfaceDetached" }>

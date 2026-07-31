@@ -33,6 +33,13 @@ pub struct DestinationIdentitySnapshot {
     pub public: PublicIdentityMaterial,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EngineInspectionSnapshot {
+    pub link_count: u32,
+    pub routes: Vec<RouteSnapshot>,
+    pub destination_identities: Vec<DestinationIdentitySnapshot>,
+}
+
 pub enum NodeIntrospectionRequest {
     LinkCount {
         reply: oneshot::Sender<u32>,
@@ -54,5 +61,11 @@ pub enum NodeIntrospectionRequest {
     DestinationIdentity {
         query: DestinationIdentityQuery,
         reply: oneshot::Sender<Option<DestinationIdentitySnapshot>>,
+    },
+    DestinationIdentities {
+        reply: oneshot::Sender<Vec<DestinationIdentitySnapshot>>,
+    },
+    EngineSnapshot {
+        reply: oneshot::Sender<EngineInspectionSnapshot>,
     },
 }

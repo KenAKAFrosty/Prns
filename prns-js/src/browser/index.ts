@@ -29,6 +29,7 @@ import type {
   DiagnosticEvent as HostDiagnosticEvent,
   HostCommand,
   IdentityHash,
+  InterfaceConfig,
   InterfaceId,
   LifecycleState as HostLifecycleState,
   LinkId,
@@ -88,6 +89,7 @@ export type {
   DeliveryEvidenceKind,
   HostCommand,
   IdentityHash,
+  InterfaceConfig,
   InterfaceId,
   LinkId,
   RequestId,
@@ -441,6 +443,7 @@ export type SendSinglePacketOutcome = CommandSettlementFor<
   CommandCase<"SendSinglePacket">
 >;
 export type CloseLinkOutcome = CommandSettlementFor<CommandCase<"CloseLink">>;
+export type AttachOutcome = CommandSettlementFor<CommandCase<"AttachInterface">>;
 export type EstablishLinkOutcome = CommandSettlementFor<
   CommandCase<"EstablishLink">
 >;
@@ -2800,6 +2803,8 @@ export class Prns {
         commandFailed(Tag("UnsupportedByBackend")),
       AttachUdp: async () =>
         commandFailed(Tag("UnsupportedByBackend")),
+      AttachInterface: async () =>
+        commandFailed(Tag("UnsupportedByBackend")),
       DetachInterface: async () =>
         commandFailed(Tag("UnsupportedByBackend")),
       EstablishLink: ({ destination }) =>
@@ -2972,6 +2977,10 @@ export class Prns {
 
   closeLink(value: LinkId): Promise<CloseLinkOutcome> {
     return this.execute(Tag("CloseLink", { linkId: value }));
+  }
+
+  attachInterface(config: InterfaceConfig): Promise<AttachOutcome> {
+    return this.execute(Tag("AttachInterface", { config }));
   }
 
   establishLink(

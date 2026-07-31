@@ -38,6 +38,11 @@ class HostContractTest {
                 IdentityHash(ByteArray(HostContract.IDENTITY_HASH_LENGTH)),
                 host.identityHash,
             )
+            assertEquals(BackendKind.NATIVE, host.backendInfo.backend)
+            assertTrue(InterfaceKind.TCP_CLIENT in host.backendInfo.interfaceKinds)
+            val initialSnapshot = host.snapshot()
+            assertTrue(initialSnapshot.runtime.running)
+            assertEquals(0, initialSnapshot.runtime.interfaceCount)
 
             val firstClaim = assertIs<StreamClaimed<EventFlow<ApplicationEvent>>>(
                 host.claimApplicationEvents(),
@@ -52,9 +57,11 @@ class HostContractTest {
             }
 
             val attached = host.execute(
-                HostCommandAttachTcpClient(
-                    target = "127.0.0.1:9",
-                    bitrate = BitrateAuto,
+                HostCommandAttachInterface(
+                    InterfaceConfigTcpClient(
+                        target = "127.0.0.1:9",
+                        bitrate = BitrateAuto,
+                    ),
                 ),
             ).use { command ->
                 withTimeout(2_000) {
@@ -64,6 +71,18 @@ class HostContractTest {
             val interfaceId = assertIs<CommandOutcomeInterfaceAttached>(
                 attached,
             ).`interface`
+            val resource = host.sendResource(
+                LinkId(ByteArray(HostContract.LINK_ID_LENGTH)),
+                Bytes("bounded upload".encodeToByteArray()),
+                null,
+                ResourceCompressionNever,
+            )
+            assertIs<CommandFailureUnknownLink>(
+                assertIs<CommandFailed>(resource).failure,
+            )
+            val attachedSnapshot = host.snapshot()
+            assertEquals(1, attachedSnapshot.runtime.interfaceCount)
+            assertEquals(interfaceId, attachedSnapshot.interfaces.single().interfaceId)
 
             val detached = host.execute(
                 HostCommandDetachInterface(interfaceId),

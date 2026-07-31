@@ -1,6 +1,7 @@
 package prns
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"testing"
@@ -18,6 +19,20 @@ func TestNativeHostContract(t *testing.T) {
 
 	if host.IdentityHash() == (IdentityHash{}) {
 		t.Fatal("native host returned an empty identity hash")
+	}
+	backend, err := host.BackendInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if backend.Backend != BackendKindNative {
+		t.Fatalf("native backend reported %v", backend.Backend)
+	}
+	initialSnapshot, err := host.Snapshot(2 * time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !initialSnapshot.Runtime.Running || initialSnapshot.Runtime.InterfaceCount != 0 {
+		t.Fatalf("unexpected initial snapshot: %+v", initialSnapshot.Runtime)
 	}
 
 	firstClaim, err := host.ClaimApplicationEvents()
@@ -45,9 +60,11 @@ func TestNativeHostContract(t *testing.T) {
 		t.Fatalf("event wait cancellation returned %v", err)
 	}
 
-	attach, err := host.Execute(HostCommandAttachTcpClient{
-		Target:  "127.0.0.1:9",
-		Bitrate: BitrateAuto{},
+	attach, err := host.Execute(HostCommandAttachInterface{
+		Config: InterfaceConfigTcpClient{
+			Target:  "127.0.0.1:9",
+			Bitrate: BitrateAuto{},
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -59,6 +76,24 @@ func TestNativeHostContract(t *testing.T) {
 		2*time.Second,
 	)
 	defer waitCancel()
+	resource, err := host.SendResource(
+		waitCtx,
+		LinkId{},
+		uint64(len("bounded upload")),
+		bytes.NewBufferString("bounded upload"),
+		nil,
+		ResourceCompressionNever{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed, ok := resource.(CommandFailed)
+	if !ok {
+		t.Fatalf("resource upload returned %T", resource)
+	}
+	if _, ok := failed.Failure.(CommandFailureUnknownLink); !ok {
+		t.Fatalf("resource upload failed with %T", failed.Failure)
+	}
 	settlement, err := attach.Wait(waitCtx)
 	if err != nil {
 		t.Fatal(err)
@@ -70,6 +105,15 @@ func TestNativeHostContract(t *testing.T) {
 	outcome, ok := succeeded.Outcome.(CommandOutcomeInterfaceAttached)
 	if !ok {
 		t.Fatalf("attach command produced %T", succeeded.Outcome)
+	}
+	attachedSnapshot, err := host.Snapshot(2 * time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attachedSnapshot.Runtime.InterfaceCount != 1 ||
+		len(attachedSnapshot.Interfaces) != 1 ||
+		attachedSnapshot.Interfaces[0].InterfaceId != outcome.Interface {
+		t.Fatalf("attached interface missing from snapshot: %+v", attachedSnapshot)
 	}
 
 	detach, err := host.Execute(HostCommandDetachInterface{

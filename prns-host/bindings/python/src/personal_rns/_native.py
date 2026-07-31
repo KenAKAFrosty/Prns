@@ -70,6 +70,197 @@ class RequestHandlerConfig(ctypes.Structure):
     ]
 
 
+class SerialLineConfig(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("baud", ctypes.c_uint32),
+        ("data_bits", ctypes.c_uint32),
+        ("parity", ctypes.c_uint32),
+        ("stop_bits", ctypes.c_uint32),
+    ]
+
+
+class RNodeRadioConfig(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("frequency_hz", ctypes.c_uint64),
+        ("bandwidth_hz", ctypes.c_uint32),
+        ("tx_power_dbm", ctypes.c_int16),
+        ("spreading_factor", ctypes.c_uint8),
+        ("coding_rate", ctypes.c_uint8),
+    ]
+
+
+class MultiRNodeMemberConfig(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("name", StringView),
+        ("virtual_port", ctypes.c_uint8),
+        ("radio", RNodeRadioConfig),
+        ("flow_control", ctypes.c_uint8),
+        ("outgoing", ctypes.c_uint8),
+    ]
+
+
+class InterfaceConfig(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("kind", ctypes.c_uint32),
+        ("has_group_id", ctypes.c_uint8),
+        ("group_id", StringView),
+        ("has_discovery_scope", ctypes.c_uint8),
+        ("discovery_scope", ctypes.c_uint32),
+        ("has_discovery_port", ctypes.c_uint8),
+        ("discovery_port", ctypes.c_uint16),
+        ("has_data_port", ctypes.c_uint8),
+        ("data_port", ctypes.c_uint16),
+        ("devices", ctypes.POINTER(StringView)),
+        ("device_count", ctypes.c_size_t),
+        ("ignored_devices", ctypes.POINTER(StringView)),
+        ("ignored_device_count", ctypes.c_size_t),
+        ("has_multicast_address_type", ctypes.c_uint8),
+        ("multicast_address_type", ctypes.c_uint32),
+        ("target", StringView),
+        ("bind", StringView),
+        ("local", StringView),
+        ("peer", StringView),
+        ("bitrate_kind", ctypes.c_uint32),
+        ("bitrate_bps", ctypes.c_uint64),
+        ("port", StringView),
+        ("line", SerialLineConfig),
+        ("flow_control", ctypes.c_uint8),
+        ("preamble_millis", ctypes.c_uint32),
+        ("transmit_tail_millis", ctypes.c_uint32),
+        ("persistence", ctypes.c_uint8),
+        ("slot_time_millis", ctypes.c_uint32),
+        ("has_station_callsign", ctypes.c_uint8),
+        ("station_callsign", StringView),
+        ("has_station_interval_seconds", ctypes.c_uint8),
+        ("station_interval_seconds", ctypes.c_uint64),
+        ("callsign", StringView),
+        ("ssid", ctypes.c_uint8),
+        ("radio", RNodeRadioConfig),
+        ("has_airtime_limit_short_centi_percent", ctypes.c_uint8),
+        ("airtime_limit_short_centi_percent", ctypes.c_uint16),
+        ("has_airtime_limit_long_centi_percent", ctypes.c_uint8),
+        ("airtime_limit_long_centi_percent", ctypes.c_uint16),
+        ("members", ctypes.POINTER(MultiRNodeMemberConfig)),
+        ("member_count", ctypes.c_size_t),
+        ("command", ctypes.POINTER(StringView)),
+        ("command_count", ctypes.c_size_t),
+        ("respawn_delay_millis", ctypes.c_uint64),
+        ("peers", ctypes.POINTER(StringView)),
+        ("peer_count", ctypes.c_size_t),
+        ("connectable", ctypes.c_uint8),
+        ("url", StringView),
+    ]
+
+
+class BackendInfo(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("backend", ctypes.c_uint32),
+        ("capabilities", ctypes.POINTER(ctypes.c_uint32)),
+        ("capability_count", ctypes.c_size_t),
+        ("interface_kinds", ctypes.POINTER(ctypes.c_uint32)),
+        ("interface_kind_count", ctypes.c_size_t),
+    ]
+
+
+class InterfaceSnapshot(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("interface_id", ByteView),
+        ("has_name", ctypes.c_uint8),
+        ("name", StringView),
+        ("has_kind", ctypes.c_uint8),
+        ("kind", ctypes.c_uint32),
+        ("health", ctypes.c_uint32),
+        ("has_failure_detail", ctypes.c_uint8),
+        ("failure_detail", StringView),
+        ("rx_bytes", ctypes.c_uint64),
+        ("tx_bytes", ctypes.c_uint64),
+        ("has_rx_bps", ctypes.c_uint8),
+        ("rx_bps", ctypes.c_uint64),
+        ("has_tx_bps", ctypes.c_uint8),
+        ("tx_bps", ctypes.c_uint64),
+        ("route_count", ctypes.c_uint32),
+        ("link_count", ctypes.c_uint32),
+        ("transported_link_count", ctypes.c_uint32),
+    ]
+
+
+class RouteSnapshot(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("destination", ByteView),
+        ("hops", ctypes.c_uint8),
+        ("has_via_identity", ctypes.c_uint8),
+        ("via_identity", ByteView),
+        ("interface_id", ByteView),
+        ("learned_at_millis", ctypes.c_uint64),
+        ("last_relayed_at_millis", ctypes.c_uint64),
+        ("expires_at_millis", ctypes.c_uint64),
+    ]
+
+
+class DestinationIdentitySnapshot(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("destination", ByteView),
+        ("identity", ByteView),
+    ]
+
+
+class RuntimeHealthSnapshot(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("running", ctypes.c_uint8),
+        ("uptime_millis", ctypes.c_uint64),
+        ("interface_count", ctypes.c_uint32),
+        ("online_interface_count", ctypes.c_uint32),
+        ("route_count", ctypes.c_uint32),
+        ("link_count", ctypes.c_uint32),
+        ("transported_link_count", ctypes.c_uint32),
+        ("rx_bytes", ctypes.c_uint64),
+        ("tx_bytes", ctypes.c_uint64),
+        ("rx_bps", ctypes.c_uint64),
+        ("tx_bps", ctypes.c_uint64),
+    ]
+
+
+class PersistenceSnapshot(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("persistent", ctypes.c_uint8),
+        ("restored", ctypes.c_uint8),
+        ("has_last_flush_cause", ctypes.c_uint8),
+        ("last_flush_cause", ctypes.c_uint32),
+        ("has_last_failure_detail", ctypes.c_uint8),
+        ("last_failure_detail", StringView),
+    ]
+
+
+class HostSnapshot(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("revision", ctypes.c_uint64),
+        ("backend", BackendInfo),
+        ("interfaces", ctypes.POINTER(InterfaceSnapshot)),
+        ("interface_count", ctypes.c_size_t),
+        ("routes", ctypes.POINTER(RouteSnapshot)),
+        ("route_count", ctypes.c_size_t),
+        ("active_link_count", ctypes.c_uint32),
+        (
+            "destination_identities",
+            ctypes.POINTER(DestinationIdentitySnapshot),
+        ),
+        ("destination_identity_count", ctypes.c_size_t),
+        ("runtime", RuntimeHealthSnapshot),
+        ("persistence", PersistenceSnapshot),
+    ]
+
+
 class DestinationConfig(ctypes.Structure):
     _fields_ = [
         ("struct_size", ctypes.c_size_t),
@@ -153,6 +344,8 @@ class NativeLibrary:
         lib = self.library
         lib.prns_contract_info.argtypes = [ctypes.POINTER(ContractInfo)]
         lib.prns_contract_info.restype = ctypes.c_uint32
+        lib.prns_backend_info.argtypes = [ctypes.POINTER(BackendInfo)]
+        lib.prns_backend_info.restype = ctypes.c_uint32
         lib.prns_host_create.argtypes = [
             ctypes.POINTER(HostOptions),
             ctypes.POINTER(ctypes.c_void_p),
@@ -160,6 +353,19 @@ class NativeLibrary:
         lib.prns_host_create.restype = ctypes.c_uint32
         lib.prns_host_release.argtypes = [ctypes.c_void_p]
         lib.prns_host_release.restype = None
+        lib.prns_host_snapshot.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
+        lib.prns_host_snapshot.restype = ctypes.c_uint32
+        lib.prns_host_snapshot_read.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(HostSnapshot),
+        ]
+        lib.prns_host_snapshot_read.restype = ctypes.c_uint32
+        lib.prns_host_snapshot_release.argtypes = [ctypes.c_void_p]
+        lib.prns_host_snapshot_release.restype = None
         lib.prns_host_lifecycle.argtypes = [
             ctypes.c_void_p,
             ctypes.POINTER(Lifecycle),
@@ -217,6 +423,12 @@ class NativeLibrary:
             ctypes.POINTER(ctypes.c_void_p),
         ]
         lib.prns_host_attach_udp.restype = ctypes.c_uint32
+        lib.prns_host_attach_interface.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(InterfaceConfig),
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
+        lib.prns_host_attach_interface.restype = ctypes.c_uint32
         lib.prns_host_detach_interface.argtypes = [
             ctypes.c_void_p,
             ByteView,
@@ -268,6 +480,31 @@ class NativeLibrary:
             ctypes.POINTER(ctypes.c_void_p),
         ]
         lib.prns_host_send_resource.restype = ctypes.c_uint32
+        lib.prns_host_begin_resource_upload.argtypes = [
+            ctypes.c_void_p,
+            ByteView,
+            ctypes.c_uint64,
+            ctypes.POINTER(ByteView),
+            ctypes.c_uint32,
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
+        lib.prns_host_begin_resource_upload.restype = ctypes.c_uint32
+        lib.prns_resource_upload_write.argtypes = [ctypes.c_void_p, ByteView]
+        lib.prns_resource_upload_write.restype = ctypes.c_uint32
+        lib.prns_resource_upload_is_writable.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_uint8),
+        ]
+        lib.prns_resource_upload_is_writable.restype = ctypes.c_uint32
+        lib.prns_resource_upload_finish.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
+        lib.prns_resource_upload_finish.restype = ctypes.c_uint32
+        lib.prns_resource_upload_abort.argtypes = [ctypes.c_void_p]
+        lib.prns_resource_upload_abort.restype = None
+        lib.prns_resource_upload_release.argtypes = [ctypes.c_void_p]
+        lib.prns_resource_upload_release.restype = None
         for name in (
             "prns_host_set_link_resource_strategy",
             "prns_host_set_destination_resource_strategy",

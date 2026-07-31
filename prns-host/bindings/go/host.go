@@ -1,8 +1,11 @@
 package prns
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"sync"
+	"time"
 )
 
 type StatusError struct {
@@ -99,6 +102,117 @@ func (host *Host) DestinationHashes() []DestinationHash {
 	result := make([]DestinationHash, len(host.destinationHashes))
 	copy(result, host.destinationHashes)
 	return result
+}
+
+func (host *Host) BackendInfo() (BackendInfo, error) {
+	info, status := ffiBackendInfo()
+	if status != StatusOk {
+		return BackendInfo{}, StatusError{
+			Operation: "read backend info",
+			Status:    status,
+		}
+	}
+	return info, nil
+}
+
+func (host *Host) Snapshot(timeout time.Duration) (HostSnapshot, error) {
+	host.mutex.Lock()
+	defer host.mutex.Unlock()
+	if host.native.pointer == nil {
+		return HostSnapshot{}, StatusError{
+			Operation: "capture snapshot",
+			Status:    StatusStopped,
+		}
+	}
+	millis := timeout.Milliseconds()
+	if millis < 0 {
+		millis = int64(nativeNeverTimeout)
+	}
+	if millis > int64(nativeNeverTimeout) {
+		millis = int64(nativeNeverTimeout)
+	}
+	result, status := ffiHostSnapshot(host.native, uint32(millis))
+	if status != StatusOk {
+		return HostSnapshot{}, StatusError{
+			Operation: "capture snapshot",
+			Status:    status,
+		}
+	}
+	return result, nil
+}
+
+func (host *Host) BeginResourceUpload(
+	linkID LinkId,
+	declaredLength uint64,
+	packedMetadata *[]byte,
+	compression ResourceCompression,
+) (*ResourceUpload, error) {
+	host.mutex.Lock()
+	defer host.mutex.Unlock()
+	if host.native.pointer == nil {
+		return nil, StatusError{
+			Operation: "begin resource upload",
+			Status:    StatusStopped,
+		}
+	}
+	native, status, err := ffiBeginResourceUpload(
+		host.native,
+		linkID,
+		declaredLength,
+		packedMetadata,
+		compression,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if status != StatusOk {
+		return nil, StatusError{
+			Operation: "begin resource upload",
+			Status:    status,
+		}
+	}
+	return &ResourceUpload{native: native}, nil
+}
+
+func (host *Host) SendResource(
+	ctx context.Context,
+	linkID LinkId,
+	declaredLength uint64,
+	source io.Reader,
+	packedMetadata *[]byte,
+	compression ResourceCompression,
+) (CommandSettlement, error) {
+	upload, err := host.BeginResourceUpload(
+		linkID,
+		declaredLength,
+		packedMetadata,
+		compression,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer upload.Close()
+	buffer := make([]byte, 256*1024)
+	for {
+		count, readError := source.Read(buffer)
+		if count > 0 {
+			if err := upload.Write(ctx, buffer[:count]); err != nil {
+				return nil, err
+			}
+		}
+		if readError == io.EOF {
+			break
+		}
+		if readError != nil {
+			return nil, readError
+		}
+	}
+	command, err := upload.Finish()
+	if err != nil {
+		return nil, err
+	}
+	defer command.Close()
+	return command.Wait(ctx)
 }
 
 func (host *Host) Execute(value HostCommand) (*Command, error) {

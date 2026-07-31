@@ -16,6 +16,174 @@ mutable struct Command
     wait_guard::ReentrantLock
 end
 
+mutable struct ResourceUpload
+    pointer::Ptr{Cvoid}
+    guard::ReentrantLock
+    finished::Bool
+end
+
+function begin_resource_upload(
+    host::Host,
+    link_id::LinkId,
+    declared_length::UInt64;
+    packed_metadata::Union{Nothing,Vector{UInt8}}=nothing,
+    compression::ResourceCompression=ResourceCompressionAuto(),
+)
+    arena = NativeArena()
+    try
+        link = native_byte_view(arena, link_id.bytes)
+        metadata = packed_metadata === nothing ? nothing :
+            Ref(native_byte_view(arena, packed_metadata))
+        output = Ref{Ptr{Cvoid}}(C_NULL)
+        status = GC.@preserve arena metadata begin
+            with_host_pointer(host) do pointer
+                ccall(
+                    native_symbol(:prns_host_begin_resource_upload),
+                    UInt32,
+                    (
+                        Ptr{Cvoid},
+                        NativeByteView,
+                        UInt64,
+                        Ptr{NativeByteView},
+                        UInt32,
+                        Ref{Ptr{Cvoid}},
+                    ),
+                    pointer,
+                    link,
+                    declared_length,
+                    metadata === nothing ? C_NULL : metadata,
+                    native_resource_compression(compression),
+                    output,
+                )
+            end
+        end
+        checked_status(:begin_resource_upload, status)
+        upload = ResourceUpload(output[], ReentrantLock(), false)
+        finalizer(close, upload)
+        upload
+    finally
+        close(arena)
+    end
+end
+
+function write!(upload::ResourceUpload, chunk::AbstractVector{UInt8})
+    while true
+        status = lock(upload.guard) do
+            upload.pointer == C_NULL &&
+                throw(StatusFailure(:resource_upload, StatusStopped))
+            upload.finished &&
+                throw(StatusFailure(:resource_upload, StatusStopped))
+            arena = NativeArena()
+            try
+                Status(
+                    ccall(
+                        native_symbol(:prns_resource_upload_write),
+                        UInt32,
+                        (Ptr{Cvoid}, NativeByteView),
+                        upload.pointer,
+                        native_byte_view(arena, chunk),
+                    ),
+                )
+            finally
+                close(arena)
+            end
+        end
+        status == StatusOk && return nothing
+        status == StatusWouldBlock ||
+            throw(StatusFailure(:write_resource_upload, status))
+        yield()
+    end
+end
+
+function finish!(upload::ResourceUpload)
+    lock(upload.guard) do
+        upload.pointer == C_NULL &&
+            throw(StatusFailure(:resource_upload, StatusStopped))
+        upload.finished &&
+            throw(StatusFailure(:resource_upload, StatusStopped))
+        output = Ref{Ptr{Cvoid}}(C_NULL)
+        checked_status(
+            :finish_resource_upload,
+            ccall(
+                native_symbol(:prns_resource_upload_finish),
+                UInt32,
+                (Ptr{Cvoid}, Ref{Ptr{Cvoid}}),
+                upload.pointer,
+                output,
+            ),
+        )
+        upload.finished = true
+        Command(output[])
+    end
+end
+
+function abort!(upload::ResourceUpload)
+    lock(upload.guard) do
+        if upload.pointer != C_NULL && !upload.finished
+            ccall(
+                native_symbol(:prns_resource_upload_abort),
+                Cvoid,
+                (Ptr{Cvoid},),
+                upload.pointer,
+            )
+            upload.finished = true
+        end
+    end
+    nothing
+end
+
+function Base.close(upload::ResourceUpload)
+    lock(upload.guard) do
+        upload.pointer == C_NULL && return nothing
+        if !upload.finished
+            ccall(
+                native_symbol(:prns_resource_upload_abort),
+                Cvoid,
+                (Ptr{Cvoid},),
+                upload.pointer,
+            )
+        end
+        ccall(
+            native_symbol(:prns_resource_upload_release),
+            Cvoid,
+            (Ptr{Cvoid},),
+            upload.pointer,
+        )
+        upload.pointer = C_NULL
+    end
+    nothing
+end
+
+function send_resource(
+    host::Host,
+    link_id::LinkId,
+    payload::AbstractVector{UInt8};
+    packed_metadata::Union{Nothing,Vector{UInt8}}=nothing,
+    compression::ResourceCompression=ResourceCompressionAuto(),
+)
+    upload = begin_resource_upload(
+        host,
+        link_id,
+        UInt64(length(payload));
+        packed_metadata=packed_metadata,
+        compression=compression,
+    )
+    try
+        write!(upload, payload)
+        command = finish!(upload)
+        try
+            wait(command)
+        finally
+            close(command)
+        end
+    catch
+        abort!(upload)
+        rethrow()
+    finally
+        close(upload)
+    end
+end
+
 function Command(pointer::Ptr{Cvoid})
     readiness, registration = try
         register_readiness(pointer, :prns_command_register_readiness)
@@ -215,6 +383,29 @@ function execute(host::Host, value::HostCommandAttachUdp)
                     peer_address,
                     kind,
                     bits,
+                    output,
+                )
+            end
+        end
+        submitted_command(status, output)
+    finally
+        close(arena)
+    end
+end
+
+function execute(host::Host, value::HostCommandAttachInterface)
+    arena = NativeArena()
+    try
+        config = Ref(native_interface(arena, value.config))
+        output = Ref{Ptr{Cvoid}}(C_NULL)
+        status = GC.@preserve arena config begin
+            with_host_pointer(host) do pointer
+                ccall(
+                    native_symbol(:prns_host_attach_interface),
+                    UInt32,
+                    (Ptr{Cvoid}, Ref{NativeInterfaceConfig}, Ref{Ptr{Cvoid}}),
+                    pointer,
+                    config,
                     output,
                 )
             end
@@ -747,6 +938,13 @@ function decode_command_failure(kind::CommandFailureKind, detail::String)
         return CommandFailureChannelUntrackable()
     kind == CommandFailureKindInvalidChannelMessageType &&
         return CommandFailureInvalidChannelMessageType()
+    kind == CommandFailureKindInvalidConfiguration &&
+        return CommandFailureInvalidConfiguration(detail)
+    kind == CommandFailureKindResourceUploadCancelled &&
+        return CommandFailureResourceUploadCancelled()
+    kind == CommandFailureKindResourceEarlyEof && return CommandFailureResourceEarlyEof()
+    kind == CommandFailureKindResourceLengthOverrun &&
+        return CommandFailureResourceLengthOverrun()
     throw(StatusFailure(:decode_command_failure, StatusBackendFailed))
 end
 

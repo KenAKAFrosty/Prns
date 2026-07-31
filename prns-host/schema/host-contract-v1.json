@@ -30,6 +30,121 @@
         { "name": "path", "type": "string" },
         { "name": "policy", "type": "RequestPolicy" }
       ]
+    },
+    {
+      "name": "SerialLineConfig",
+      "hashable": true,
+      "fields": [
+        { "name": "baud", "type": "u32" },
+        { "name": "dataBits", "type": "SerialDataBits" },
+        { "name": "parity", "type": "SerialParity" },
+        { "name": "stopBits", "type": "SerialStopBits" }
+      ]
+    },
+    {
+      "name": "RNodeRadioConfig",
+      "hashable": true,
+      "fields": [
+        { "name": "frequencyHz", "type": "u64" },
+        { "name": "bandwidthHz", "type": "u32" },
+        { "name": "txPowerDbm", "type": "i16" },
+        { "name": "spreadingFactor", "type": "u8" },
+        { "name": "codingRate", "type": "u8" }
+      ]
+    },
+    {
+      "name": "MultiRNodeMemberConfig",
+      "hashable": true,
+      "fields": [
+        { "name": "name", "type": "string" },
+        { "name": "virtualPort", "type": "u8" },
+        { "name": "radio", "type": "RNodeRadioConfig" },
+        { "name": "flowControl", "type": "bool" },
+        { "name": "outgoing", "type": "bool" }
+      ]
+    },
+    {
+      "name": "BackendInfo",
+      "hashable": true,
+      "fields": [
+        { "name": "backend", "type": "BackendKind" },
+        { "name": "capabilities", "type": { "array": "Capability" } },
+        { "name": "interfaceKinds", "type": { "array": "InterfaceKind" } }
+      ]
+    },
+    {
+      "name": "InterfaceSnapshot",
+      "fields": [
+        { "name": "interfaceId", "type": "InterfaceId" },
+        { "name": "name", "type": "string", "optional": true },
+        { "name": "kind", "type": "InterfaceKind", "optional": true },
+        { "name": "health", "type": "InterfaceHealth" },
+        { "name": "failureDetail", "type": "string", "optional": true },
+        { "name": "rxBytes", "type": "u64" },
+        { "name": "txBytes", "type": "u64" },
+        { "name": "rxBps", "type": "u64", "optional": true },
+        { "name": "txBps", "type": "u64", "optional": true },
+        { "name": "routeCount", "type": "u32" },
+        { "name": "linkCount", "type": "u32" },
+        { "name": "transportedLinkCount", "type": "u32" }
+      ]
+    },
+    {
+      "name": "RouteSnapshot",
+      "fields": [
+        { "name": "destination", "type": "DestinationHash" },
+        { "name": "hops", "type": "u8" },
+        { "name": "viaIdentity", "type": "IdentityHash", "optional": true },
+        { "name": "interfaceId", "type": "InterfaceId" },
+        { "name": "learnedAtMillis", "type": "u64" },
+        { "name": "lastRelayedAtMillis", "type": "u64" },
+        { "name": "expiresAtMillis", "type": "u64" }
+      ]
+    },
+    {
+      "name": "DestinationIdentitySnapshot",
+      "fields": [
+        { "name": "destination", "type": "DestinationHash" },
+        { "name": "identity", "type": "IdentityHash" }
+      ]
+    },
+    {
+      "name": "RuntimeHealthSnapshot",
+      "fields": [
+        { "name": "running", "type": "bool" },
+        { "name": "uptimeMillis", "type": "u64" },
+        { "name": "interfaceCount", "type": "u32" },
+        { "name": "onlineInterfaceCount", "type": "u32" },
+        { "name": "routeCount", "type": "u32" },
+        { "name": "linkCount", "type": "u32" },
+        { "name": "transportedLinkCount", "type": "u32" },
+        { "name": "rxBytes", "type": "u64" },
+        { "name": "txBytes", "type": "u64" },
+        { "name": "rxBps", "type": "u64" },
+        { "name": "txBps", "type": "u64" }
+      ]
+    },
+    {
+      "name": "PersistenceSnapshot",
+      "fields": [
+        { "name": "persistent", "type": "bool" },
+        { "name": "restored", "type": "bool" },
+        { "name": "lastFlushCause", "type": "PersistenceFlushCause", "optional": true },
+        { "name": "lastFailureDetail", "type": "string", "optional": true }
+      ]
+    },
+    {
+      "name": "HostSnapshot",
+      "fields": [
+        { "name": "revision", "type": "u64" },
+        { "name": "backend", "type": "BackendInfo" },
+        { "name": "interfaces", "type": { "array": "InterfaceSnapshot" } },
+        { "name": "routes", "type": { "array": "RouteSnapshot" } },
+        { "name": "activeLinkCount", "type": "u32" },
+        { "name": "destinationIdentities", "type": { "array": "DestinationIdentitySnapshot" } },
+        { "name": "runtime", "type": "RuntimeHealthSnapshot" },
+        { "name": "persistence", "type": "PersistenceSnapshot" }
+      ]
     }
   ],
   "limits": {
@@ -83,6 +198,84 @@
         { "name": "BrowserRendezvous", "value": 10 },
         { "name": "I2p", "value": 11 },
         { "name": "Weave", "value": 12 }
+      ]
+    },
+    {
+      "name": "InterfaceKind",
+      "values": [
+        { "name": "AutoLan", "value": 1 },
+        { "name": "TcpClient", "value": 2 },
+        { "name": "TcpServer", "value": 3 },
+        { "name": "Udp", "value": 4 },
+        { "name": "Serial", "value": 5 },
+        { "name": "Kiss", "value": 6 },
+        { "name": "Ax25Kiss", "value": 7 },
+        { "name": "RNode", "value": 8 },
+        { "name": "MultiRNode", "value": 9 },
+        { "name": "Pipe", "value": 10 },
+        { "name": "BackboneClient", "value": 11 },
+        { "name": "BackboneServer", "value": 12 },
+        { "name": "I2p", "value": 13 },
+        { "name": "Weave", "value": 14 },
+        { "name": "AutomaticUsb", "value": 15 },
+        { "name": "AutomaticBluetoothLe", "value": 16 },
+        { "name": "WebSocketClient", "value": 17 },
+        { "name": "WebSocketServer", "value": 18 },
+        { "name": "BrowserRendezvous", "value": 19 }
+      ]
+    },
+    {
+      "name": "InterfaceHealth",
+      "values": [
+        { "name": "Initializing", "value": 1 },
+        { "name": "Connected", "value": 2 },
+        { "name": "Degraded", "value": 3 },
+        { "name": "Reconnecting", "value": 4 },
+        { "name": "Failed", "value": 5 },
+        { "name": "Disconnected", "value": 6 },
+        { "name": "Disabled", "value": 7 },
+        { "name": "Unknown", "value": 8 }
+      ]
+    },
+    {
+      "name": "DiscoveryScope",
+      "values": [
+        { "name": "Link", "value": 1 },
+        { "name": "Admin", "value": 2 },
+        { "name": "Site", "value": 3 },
+        { "name": "Organization", "value": 4 },
+        { "name": "Global", "value": 5 }
+      ]
+    },
+    {
+      "name": "MulticastAddressType",
+      "values": [
+        { "name": "Temporary", "value": 1 },
+        { "name": "Permanent", "value": 2 }
+      ]
+    },
+    {
+      "name": "SerialDataBits",
+      "values": [
+        { "name": "Five", "value": 5 },
+        { "name": "Six", "value": 6 },
+        { "name": "Seven", "value": 7 },
+        { "name": "Eight", "value": 8 }
+      ]
+    },
+    {
+      "name": "SerialParity",
+      "values": [
+        { "name": "None", "value": 1 },
+        { "name": "Even", "value": 2 },
+        { "name": "Odd", "value": 3 }
+      ]
+    },
+    {
+      "name": "SerialStopBits",
+      "values": [
+        { "name": "One", "value": 1 },
+        { "name": "Two", "value": 2 }
       ]
     },
     {
@@ -209,7 +402,11 @@
         { "name": "ResourcePredecessorFailed", "value": 29 },
         { "name": "ChannelWindowFull", "value": 30 },
         { "name": "ChannelUntrackable", "value": 31 },
-        { "name": "InvalidChannelMessageType", "value": 32 }
+        { "name": "InvalidChannelMessageType", "value": 32 },
+        { "name": "InvalidConfiguration", "value": 33 },
+        { "name": "ResourceUploadCancelled", "value": 34 },
+        { "name": "ResourceEarlyEof", "value": 35 },
+        { "name": "ResourceLengthOverrun", "value": 36 }
       ]
     },
     {
@@ -377,6 +574,108 @@
             { "name": "path", "type": "string" }
           ]
         }
+      ]
+    },
+    {
+      "name": "InterfaceConfig",
+      "cases": [
+        {
+          "name": "AutoLan",
+          "value": 1,
+          "fields": [
+            { "name": "groupId", "type": "string", "optional": true },
+            { "name": "discoveryScope", "type": "DiscoveryScope", "optional": true },
+            { "name": "discoveryPort", "type": "u16", "optional": true },
+            { "name": "dataPort", "type": "u16", "optional": true },
+            { "name": "devices", "type": { "array": "string" } },
+            { "name": "ignoredDevices", "type": { "array": "string" } },
+            { "name": "multicastAddressType", "type": "MulticastAddressType", "optional": true }
+          ]
+        },
+        { "name": "TcpClient", "value": 2, "fields": [
+          { "name": "target", "type": "string" },
+          { "name": "bitrate", "type": "Bitrate" }
+        ] },
+        { "name": "TcpServer", "value": 3, "fields": [
+          { "name": "bind", "type": "string" },
+          { "name": "bitrate", "type": "Bitrate" }
+        ] },
+        { "name": "Udp", "value": 4, "fields": [
+          { "name": "local", "type": "string" },
+          { "name": "peer", "type": "string" },
+          { "name": "bitrate", "type": "Bitrate" }
+        ] },
+        { "name": "Serial", "value": 5, "fields": [
+          { "name": "port", "type": "string" },
+          { "name": "line", "type": "SerialLineConfig" }
+        ] },
+        { "name": "Kiss", "value": 6, "fields": [
+          { "name": "port", "type": "string" },
+          { "name": "line", "type": "SerialLineConfig" },
+          { "name": "flowControl", "type": "bool" },
+          { "name": "preambleMillis", "type": "u32" },
+          { "name": "transmitTailMillis", "type": "u32" },
+          { "name": "persistence", "type": "u8" },
+          { "name": "slotTimeMillis", "type": "u32" },
+          { "name": "stationCallsign", "type": "string", "optional": true },
+          { "name": "stationIntervalSeconds", "type": "u64", "optional": true }
+        ] },
+        { "name": "Ax25Kiss", "value": 7, "fields": [
+          { "name": "port", "type": "string" },
+          { "name": "line", "type": "SerialLineConfig" },
+          { "name": "flowControl", "type": "bool" },
+          { "name": "preambleMillis", "type": "u32" },
+          { "name": "transmitTailMillis", "type": "u32" },
+          { "name": "persistence", "type": "u8" },
+          { "name": "slotTimeMillis", "type": "u32" },
+          { "name": "callsign", "type": "string" },
+          { "name": "ssid", "type": "u8" }
+        ] },
+        { "name": "RNode", "value": 8, "fields": [
+          { "name": "port", "type": "string" },
+          { "name": "radio", "type": "RNodeRadioConfig" },
+          { "name": "flowControl", "type": "bool" },
+          { "name": "stationCallsign", "type": "string", "optional": true },
+          { "name": "stationIntervalSeconds", "type": "u64", "optional": true },
+          { "name": "airtimeLimitShortCentiPercent", "type": "u16", "optional": true },
+          { "name": "airtimeLimitLongCentiPercent", "type": "u16", "optional": true }
+        ] },
+        { "name": "MultiRNode", "value": 9, "fields": [
+          { "name": "port", "type": "string" },
+          { "name": "stationCallsign", "type": "string", "optional": true },
+          { "name": "stationIntervalSeconds", "type": "u64", "optional": true },
+          { "name": "members", "type": { "array": "MultiRNodeMemberConfig" } }
+        ] },
+        { "name": "Pipe", "value": 10, "fields": [
+          { "name": "command", "type": { "array": "string" } },
+          { "name": "respawnDelayMillis", "type": "u64" }
+        ] },
+        { "name": "BackboneClient", "value": 11, "fields": [
+          { "name": "target", "type": "string" },
+          { "name": "bitrate", "type": "Bitrate" }
+        ] },
+        { "name": "BackboneServer", "value": 12, "fields": [
+          { "name": "bind", "type": "string" },
+          { "name": "bitrate", "type": "Bitrate" }
+        ] },
+        { "name": "I2p", "value": 13, "fields": [
+          { "name": "peers", "type": { "array": "string" } },
+          { "name": "connectable", "type": "bool" }
+        ] },
+        { "name": "Weave", "value": 14, "fields": [
+          { "name": "port", "type": "string" }
+        ] },
+        { "name": "AutomaticUsb", "value": 15, "fields": [] },
+        { "name": "AutomaticBluetoothLe", "value": 16, "fields": [] },
+        { "name": "WebSocketClient", "value": 17, "fields": [
+          { "name": "target", "type": "string" }
+        ] },
+        { "name": "WebSocketServer", "value": 18, "fields": [
+          { "name": "bind", "type": "string" }
+        ] },
+        { "name": "BrowserRendezvous", "value": 19, "fields": [
+          { "name": "url", "type": "string" }
+        ] }
       ]
     },
     {
@@ -612,6 +911,13 @@
             { "name": "pathHash", "type": "RequestPathHash" },
             { "name": "identity", "type": "IdentityHash" }
           ]
+        },
+        {
+          "name": "AttachInterface",
+          "value": 19,
+          "fields": [
+            { "name": "config", "type": "InterfaceConfig" }
+          ]
         }
       ]
     },
@@ -725,7 +1031,13 @@
         { "name": "ResourcePredecessorFailed", "value": 29, "fields": [] },
         { "name": "ChannelWindowFull", "value": 30, "fields": [] },
         { "name": "ChannelUntrackable", "value": 31, "fields": [] },
-        { "name": "InvalidChannelMessageType", "value": 32, "fields": [] }
+        { "name": "InvalidChannelMessageType", "value": 32, "fields": [] },
+        { "name": "InvalidConfiguration", "value": 33, "fields": [
+          { "name": "detail", "type": "string" }
+        ] },
+        { "name": "ResourceUploadCancelled", "value": 34, "fields": [] },
+        { "name": "ResourceEarlyEof", "value": 35, "fields": [] },
+        { "name": "ResourceLengthOverrun", "value": 36, "fields": [] }
       ]
     },
     {

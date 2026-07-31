@@ -434,6 +434,43 @@ public sealed class PrnsHost : IAsyncDisposable
         }
     }
 
+    public BackendInfo BackendInfo
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(_disposed != 0, this);
+            var value = new Native.BackendInfo
+            {
+                StructSize = (nuint)Marshal.SizeOf<Native.BackendInfo>(),
+            };
+            PrnsException.ThrowIfError(Native.prns_backend_info(ref value));
+            return InspectionMarshaller.Decode(value);
+        }
+    }
+
+    public HostSnapshot CaptureSnapshot(uint timeoutMillis = 5_000)
+    {
+        ObjectDisposedException.ThrowIf(_disposed != 0, this);
+        PrnsException.ThrowIfError(
+            Native.prns_host_snapshot(_handle, timeoutMillis, out var inspection)
+        );
+        try
+        {
+            var value = new Native.HostSnapshot
+            {
+                StructSize = (nuint)Marshal.SizeOf<Native.HostSnapshot>(),
+            };
+            PrnsException.ThrowIfError(
+                Native.prns_host_snapshot_read(inspection, ref value)
+            );
+            return InspectionMarshaller.Decode(value);
+        }
+        finally
+        {
+            Native.prns_host_snapshot_release(inspection);
+        }
+    }
+
     public async ValueTask<CommandSettlement> ExecuteAsync(
         HostCommand command,
         CancellationToken cancellationToken = default
@@ -462,9 +499,19 @@ public sealed class PrnsHost : IAsyncDisposable
                 linkStrategy => Submit(linkStrategy, arena),
                 destinationStrategy => Submit(destinationStrategy, arena),
                 channel => Submit(channel, arena),
-                allow => Submit(allow, arena)
+                allow => Submit(allow, arena),
+                attachInterface => Submit(attachInterface, arena)
             );
         }
+        return await AwaitNativeCommandAsync(nativeCommand, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    internal async ValueTask<CommandSettlement> AwaitNativeCommandAsync(
+        CommandHandle nativeCommand,
+        CancellationToken cancellationToken
+    )
+    {
         using (nativeCommand)
         using (var readiness = NativeReadiness.ForCommand(nativeCommand))
         {
@@ -521,6 +568,11 @@ public sealed class PrnsHost : IAsyncDisposable
         CancellationToken cancellationToken = default
     ) => ExecuteAsync(new HostCommand.AttachUdp(local, peer, bitrate), cancellationToken);
 
+    public ValueTask<CommandSettlement> AttachInterfaceAsync(
+        InterfaceConfig config,
+        CancellationToken cancellationToken = default
+    ) => ExecuteAsync(new HostCommand.AttachInterface(config), cancellationToken);
+
     public ValueTask<CommandSettlement> DetachInterfaceAsync(
         InterfaceId interfaceId,
         CancellationToken cancellationToken = default
@@ -568,17 +620,71 @@ public sealed class PrnsHost : IAsyncDisposable
             cancellationToken
         );
 
-    public ValueTask<CommandSettlement> SendResourceAsync(
+    public async ValueTask<CommandSettlement> SendResourceAsync(
         LinkId linkId,
         ReadOnlyMemory<byte> payload,
         ReadOnlyMemory<byte>? packedMetadata,
         ResourceCompression compression,
         CancellationToken cancellationToken = default
-    ) =>
-        ExecuteAsync(
-            new HostCommand.SendResource(linkId, payload, packedMetadata, compression),
-            cancellationToken
+    )
+    {
+        await using var upload = BeginResourceUpload(
+            linkId,
+            (ulong)payload.Length,
+            packedMetadata,
+            compression
         );
+        try
+        {
+            await upload.WriteAsync(payload, cancellationToken).ConfigureAwait(false);
+            return await upload.FinishAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            upload.Abort();
+            throw;
+        }
+    }
+
+    public unsafe ResourceUpload BeginResourceUpload(
+        LinkId linkId,
+        ulong declaredLength,
+        ReadOnlyMemory<byte>? packedMetadata,
+        ResourceCompression compression
+    )
+    {
+        ObjectDisposedException.ThrowIf(_disposed != 0, this);
+        using var arena = new NativeArena();
+        var nativeLink = arena.Bytes(linkId.Span);
+        var compressionKind = MarshalResourceCompression(compression);
+        Status status;
+        nint upload;
+        if (packedMetadata is { } metadata)
+        {
+            var nativeMetadata = arena.Bytes(metadata.Span);
+            status = Native.prns_host_begin_resource_upload(
+                _handle,
+                nativeLink,
+                declaredLength,
+                &nativeMetadata,
+                compressionKind,
+                out upload
+            );
+        }
+        else
+        {
+            status = Native.prns_host_begin_resource_upload(
+                _handle,
+                nativeLink,
+                declaredLength,
+                null,
+                compressionKind,
+                out upload
+            );
+        }
+        PrnsException.ThrowIfError(status);
+        return new ResourceUpload(this, upload);
+    }
 
     public ValueTask<CommandSettlement> SetLinkResourceStrategyAsync(
         LinkId linkId,
@@ -700,6 +806,17 @@ public sealed class PrnsHost : IAsyncDisposable
             arena.String(command.Peer),
             bitrate.Kind,
             bitrate.Value,
+            out var nativeCommand
+        );
+        return Submitted(status, nativeCommand);
+    }
+
+    private CommandHandle Submit(HostCommand.AttachInterface command, NativeArena arena)
+    {
+        var config = InterfaceConfigMarshaller.Marshal(command.Config, arena);
+        var status = Native.prns_host_attach_interface(
+            _handle,
+            in config,
             out var nativeCommand
         );
         return Submitted(status, nativeCommand);
@@ -1039,6 +1156,13 @@ public sealed class PrnsHost : IAsyncDisposable
             CommandFailureKind.ChannelUntrackable => new CommandFailure.ChannelUntrackable(),
             CommandFailureKind.InvalidChannelMessageType =>
                 new CommandFailure.InvalidChannelMessageType(),
+            CommandFailureKind.InvalidConfiguration =>
+                new CommandFailure.InvalidConfiguration(detail),
+            CommandFailureKind.ResourceUploadCancelled =>
+                new CommandFailure.ResourceUploadCancelled(),
+            CommandFailureKind.ResourceEarlyEof => new CommandFailure.ResourceEarlyEof(),
+            CommandFailureKind.ResourceLengthOverrun =>
+                new CommandFailure.ResourceLengthOverrun(),
             _ => throw new InvalidOperationException("Unknown native command failure."),
         };
     }
