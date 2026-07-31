@@ -1,7 +1,7 @@
 use crate::units::HopCount;
 use crate::wire::{DestinationHash, WireError, TRUNCATED_HASH_BYTE_LEN};
 
-use super::{EngineCommand, Settleable, Settlement};
+use super::{PrnsCommand, Settleable, Settlement};
 
 pub const PATH_REQUEST_ID_LEN: usize = TRUNCATED_HASH_BYTE_LEN;
 
@@ -41,8 +41,8 @@ impl Settleable for RequestPath {
     type Success = PathFound;
     type Failure = RequestPathFailure;
 
-    fn into_command(self) -> EngineCommand {
-        EngineCommand::RequestPath(self)
+    fn into_command(self) -> PrnsCommand {
+        PrnsCommand::RequestPath(self)
     }
 
     fn from_settlement(settlement: Settlement) -> Option<Result<PathFound, RequestPathFailure>> {
@@ -85,7 +85,7 @@ mod tests {
             state.ingest_command(
                 IssuedCommand {
                     id: CommandId(7),
-                    command: EngineCommand::RequestPath(request),
+                    command: PrnsCommand::RequestPath(request),
                 },
                 AttachedInterfaces::new(&[]),
             ),
@@ -104,7 +104,7 @@ mod tests {
             id: PathRequestId::new([0x22; 16]),
         };
 
-        assert_eq!(verb.into_command(), EngineCommand::RequestPath(verb));
+        assert_eq!(verb.into_command(), PrnsCommand::RequestPath(verb));
         assert_eq!(
             RequestPath::from_settlement(Settlement::RequestPath(Ok(PathFound {
                 hops: HopCount(2)

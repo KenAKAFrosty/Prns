@@ -191,6 +191,7 @@ rm -rf -- "$embedded_dist"
 PRNS_BUILD_VERSION="$version" \
 PRNS_BUILD_COMMIT="$commit" \
 PRNS_BUILD_CHANNEL="$channel" \
+PRNS_API_DOCS_STAGED=1 \
 dx build --platform web --debug-symbols false --release --locked
 
 hosted_dist="$root/docs/website/target/dx/reticulum-site/release/web/public"

@@ -1,6 +1,6 @@
 pub use crate::{
-    request_endpoints, CommandId, DestinationHash, Diagnostic, EngineCommand, InterfaceStatus,
-    ManuallyAttached, Message, NoPersistence, PacketReceiptDelivered, PreConfiguredDestination,
+    request_endpoints, CommandId, DestinationHash, Diagnostic, InterfaceStatus, ManuallyAttached,
+    Message, NoPersistence, PacketReceiptDelivered, PreConfiguredDestination, PrnsCommand,
     PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, ProofStrategy, RatchetPolicy, ResourceStrategy,
     RuntimeHealth, SendError, Zeroizing, IDENTITY_SECRET_KEY_LEN,
 };
@@ -65,7 +65,10 @@ pub use crate::i2p::I2pInterface;
 #[cfg(all(feature = "kiss", feature = "tokio-host"))]
 pub use crate::kiss::KissInterface;
 #[cfg(all(feature = "lora", feature = "embassy-host"))]
-pub use crate::lora::{LoRaInterface, LoRaInterfaceInput};
+pub use crate::lora::{
+    LoRaConfigError, LoRaInterface, LoRaInterfaceInput, LoRaSpectrumSnapshot, LoRaSpectrumStatus,
+    LORA_TX_QUEUE_BYTES,
+};
 #[cfg(all(feature = "pipe", feature = "tokio-host"))]
 pub use crate::pipe::PipeInterface;
 #[cfg(all(feature = "rnode", feature = "tokio-host"))]

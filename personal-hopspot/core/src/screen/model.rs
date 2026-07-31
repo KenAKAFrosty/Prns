@@ -78,6 +78,19 @@ pub struct InterfaceMenuDetails {
     rows: HVec<InterfaceMenuDetailRow, INTERFACE_MENU_DETAIL_ROWS_CAP>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LoRaSpectrumMenuDetails {
+    pub channel_busy_per_mille: u16,
+    pub noise_floor_dbm: Option<i16>,
+    pub cca_threshold_dbm: Option<i16>,
+    pub deferrals: u32,
+    pub false_preambles: u32,
+    pub contention_timeouts: u32,
+    pub duty_holds: u32,
+    pub duty_timeouts: u32,
+    pub radio_recoveries: u32,
+}
+
 pub struct WifiNetworkStatus<'a> {
     pub station_ssid: Option<&'a str>,
     pub access_point_ssid: Option<&'a str>,
@@ -145,6 +158,50 @@ impl InterfaceMenuDetails {
         let mut value = InterfaceMenuDetailText::new();
         let _ = write!(value, "{events}");
         self.push_info("Ingress drops", value.as_str());
+    }
+
+    pub fn push_lora_spectrum(&mut self, spectrum: LoRaSpectrumMenuDetails) {
+        let mut value = InterfaceMenuDetailText::new();
+        let _ = write!(
+            value,
+            "{}.{}%",
+            spectrum.channel_busy_per_mille / 10,
+            spectrum.channel_busy_per_mille % 10
+        );
+        self.push_info("Busy", value.as_str());
+
+        if let (Some(noise), Some(threshold)) =
+            (spectrum.noise_floor_dbm, spectrum.cca_threshold_dbm)
+        {
+            value.clear();
+            let _ = write!(value, "{noise}/{threshold}");
+            self.push_info("N/CCA", value.as_str());
+        }
+        if spectrum.deferrals > 0 {
+            value.clear();
+            let _ = write!(value, "{}", spectrum.deferrals);
+            self.push_info("Defers", value.as_str());
+        }
+        if spectrum.contention_timeouts > 0 {
+            value.clear();
+            let _ = write!(value, "{}", spectrum.contention_timeouts);
+            self.push_info("CCA drops", value.as_str());
+        }
+        if spectrum.duty_holds > 0 || spectrum.duty_timeouts > 0 {
+            value.clear();
+            let _ = write!(value, "{}/{}", spectrum.duty_holds, spectrum.duty_timeouts);
+            self.push_info("Duty H/D", value.as_str());
+        }
+        if spectrum.false_preambles > 0 {
+            value.clear();
+            let _ = write!(value, "{}", spectrum.false_preambles);
+            self.push_info("False pre", value.as_str());
+        }
+        if spectrum.radio_recoveries > 0 {
+            value.clear();
+            let _ = write!(value, "{}", spectrum.radio_recoveries);
+            self.push_info("Recover", value.as_str());
+        }
     }
 
     pub(crate) fn push_supervisor_peers<I>(&mut self, peers: I) -> usize

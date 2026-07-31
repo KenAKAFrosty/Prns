@@ -4,9 +4,8 @@ use super::*;
 async fn a_link_establishes_and_carries_data_across_two_live_manifolds() {
     use crate::engine::test_support::{personal_node_destination, second_secret_key};
     use crate::engine::{
-        AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, EstablishLink,
-        LinkEstablished, RatchetPolicy, SendToLink, SendToLinkFailure, SendToLinkPayload,
-        Settlement,
+        AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EstablishLink, LinkEstablished,
+        PrnsCommand, RatchetPolicy, SendToLink, SendToLinkFailure, SendToLinkPayload, Settlement,
     };
     use crate::routing::delivery::Delivery;
     use crate::routing::links::LinkId;
@@ -124,7 +123,7 @@ async fn a_link_establishes_and_carries_data_across_two_live_manifolds() {
     b_command_tx
         .send(HostCommand::Engine(IssuedCommand {
             id: CommandId(1),
-            command: EngineCommand::AnnounceNow(AnnounceNow {
+            command: PrnsCommand::AnnounceNow(AnnounceNow {
                 destination: personal_node_destination(),
                 target: AnnounceTarget::AllInterfaces,
                 app_data: AnnounceAppData::Registered,
@@ -139,7 +138,7 @@ async fn a_link_establishes_and_carries_data_across_two_live_manifolds() {
     a_command_tx
         .send(HostCommand::Engine(IssuedCommand {
             id: CommandId(7),
-            command: EngineCommand::EstablishLink(EstablishLink {
+            command: PrnsCommand::EstablishLink(EstablishLink {
                 destination: personal_node_destination(),
             }),
         }))
@@ -171,7 +170,7 @@ async fn a_link_establishes_and_carries_data_across_two_live_manifolds() {
     a_command_tx
         .send(HostCommand::Engine(IssuedCommand {
             id: CommandId(8),
-            command: EngineCommand::SendToLink(SendToLink {
+            command: PrnsCommand::SendToLink(SendToLink {
                 link_id: established.link_id,
                 payload: SendToLinkPayload::from_slice(b"ping over the live link").unwrap(),
             }),
@@ -197,7 +196,7 @@ async fn a_link_establishes_and_carries_data_across_two_live_manifolds() {
     b_command_tx
         .send(HostCommand::Engine(IssuedCommand {
             id: CommandId(2),
-            command: EngineCommand::SendToLink(SendToLink {
+            command: PrnsCommand::SendToLink(SendToLink {
                 link_id: established.link_id,
                 payload: SendToLinkPayload::from_slice(b"pong right back").unwrap(),
             }),

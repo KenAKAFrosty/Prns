@@ -164,6 +164,17 @@ class TaskRegistryTests(unittest.TestCase):
             self.assertEqual(runner.run_task(task, []), 0)
         self.assertEqual(run.call_args.args[0][0], sys.executable)
 
+    def test_task_interruption_returns_standard_exit_status(self) -> None:
+        task = {
+            "id": "release.test",
+            "summary": "exercise interruption handling",
+            "effect": "read-only",
+            "platforms": ["any"],
+            "entrypoint": ["true"],
+        }
+        with mock.patch.object(runner.subprocess, "run", side_effect=KeyboardInterrupt):
+            self.assertEqual(runner.run_task(task, []), 130)
+
     def test_doctor_profiles_cover_each_beginner_outcome(self) -> None:
         profiles = runner.doctor_profile_map(self.manifest)
         self.assertEqual(

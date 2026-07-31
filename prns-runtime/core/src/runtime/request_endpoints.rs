@@ -191,7 +191,7 @@ impl<S> RequestContext<'_, S> {
     /// context.respond("pong")
     /// ```
     ///
-    /// Reticulum calls this payload "packed", but it does not require MessagePack. Use
+    /// RNS calls this payload "packed", but it does not require MessagePack. Use
     /// [`respond_messagepack_bytes`](Self::respond_messagepack_bytes) only when the peer
     /// specifically expects a MessagePack `bin` value, and the file methods only for
     /// named-file/resource semantics.

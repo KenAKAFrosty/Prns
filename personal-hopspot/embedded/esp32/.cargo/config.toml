@@ -22,6 +22,7 @@ ESP_LOG = "personal_hopspot_esp32=info,personal_rns=info"
 # fragment is in flight. esp-config reads these as `<CRATE>_<NAME>` at build time.
 TROUBLE_HOST_GATT_CLIENT_NOTIFICATION_MAX_SUBSCRIBERS = "2"
 TROUBLE_HOST_GATT_CLIENT_NOTIFICATION_QUEUE_SIZE = "2"
+ESP_HAL_CONFIG_STACK_GUARD_OFFSET = "8192"
 
 [alias]
 heltec-v4 = "build --release -p hopspot-heltec-v4 --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc"

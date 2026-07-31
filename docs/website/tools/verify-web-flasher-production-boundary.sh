@@ -6,6 +6,7 @@ workspace="$(cd "$website/../.." && pwd)"
 hosted="${1:-}"
 embedded="${2:-}"
 fixture_key="$website/web-flasher/browser/fixtures/signed-candidate/minisign.pub"
+production_key="$workspace/release/keys/minisign.pub"
 
 if [[ -z "$hosted" || -z "$embedded" ]]; then
     echo "usage: tools/verify-web-flasher-production-boundary.sh HOSTED_DIST EMBEDDED_DIST" >&2
@@ -23,6 +24,8 @@ trust_scan=(
     "$workspace/tools/release/flasher_browser_test_trust.py"
     --fixture-key
     "$fixture_key"
+    --production-key
+    "$production_key"
 )
 if [[ -f "$hosted/source.zip" ]]; then
     trust_scan+=(--allow-exact-blob "$hosted/source.zip")
@@ -33,9 +36,13 @@ if grep -n '^default[[:space:]]*=.*browser-test-fixture' "$website/Cargo.toml"; 
     echo "browser-test-fixture cannot be a default website feature" >&2
     exit 1
 fi
-if grep -R -n -E 'dx build.*browser-test-fixture|--features[^[:cntrl:]]*browser-test-fixture' \
+if grep -n '^default[[:space:]]*=.*local-dev-flasher' "$website/Cargo.toml"; then
+    echo "local-dev-flasher cannot be a default website feature" >&2
+    exit 1
+fi
+if grep -R -n -E 'dx build.*(browser-test-fixture|local-dev-flasher)|--features[^[:cntrl:]]*(browser-test-fixture|local-dev-flasher)' \
     "$workspace/tools/release/build-flasher-candidate.sh" "$workspace/.github/workflows"; then
-    echo "a production build command enables browser-test-fixture" >&2
+    echo "a production build command enables a non-production trust profile" >&2
     exit 1
 fi
 
@@ -48,4 +55,4 @@ if grep -R -a -l -i -E 'esptool-js|esp-web-install-button|unpkg|prns-flash\.js' 
     exit 1
 fi
 
-echo "verified production browser-test trust boundary and embedded flasher exclusion"
+echo "verified production development-trust boundary and embedded flasher exclusion"

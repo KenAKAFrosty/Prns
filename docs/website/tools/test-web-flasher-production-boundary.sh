@@ -99,6 +99,35 @@ if ! grep -qF 'browser-test-fixture is forbidden in embedded production builds' 
     exit 1
 fi
 
+local_key="$website/web-flasher/browser/fixtures/signed-candidate/minisign.pub"
+local_digest="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+local_version="0.3.1-dev.clean.$local_digest"
+local_commit="0123456789abcdef0123456789abcdef01234567"
+for invalid_features in \
+    "embedded-site local-dev-flasher" \
+    "browser-test-fixture local-dev-flasher"; do
+    if PRNS_BUILD_VERSION="$local_version" \
+        PRNS_BUILD_COMMIT="$local_commit" \
+        PRNS_LOCAL_DEV_PUBLIC_KEY="$local_key" \
+        PRNS_LOCAL_DEV_BOARDS="heltec-v4" \
+        PRNS_LOCAL_DEV_SOURCE_DIGEST="$local_digest" \
+        PRNS_LOCAL_DEV_SOURCE_STATE="clean" \
+        cargo check --locked --features "$invalid_features" \
+        >"$invalid_features_log" 2>&1; then
+        echo "invalid website features unexpectedly compiled: $invalid_features" >&2
+        exit 1
+    fi
+    grep -qF 'local-dev-flasher is mutually exclusive with every other website profile' \
+        "$invalid_features_log"
+done
+if PRNS_LOCAL_DEV_PUBLIC_KEY="$local_key" cargo check --locked \
+    >"$invalid_features_log" 2>&1; then
+    echo "production website unexpectedly accepted local development build inputs" >&2
+    exit 1
+fi
+grep -qF 'PRNS_LOCAL_DEV_PUBLIC_KEY is forbidden without the local-dev-flasher feature' \
+    "$invalid_features_log"
+
 cd "$workspace"
 bash "$website/tools/verify-web-flasher-production-boundary.sh" "$hosted" "$embedded"
 if find "$embedded" \( -name 'source.zip' -o -name 'source.zip.sha256' \) -print -quit | grep -q .; then
@@ -141,3 +170,21 @@ if bash "$website/tools/verify-web-flasher-production-boundary.sh" \
     exit 1
 fi
 grep -qF 'a production output contains the browser-test Minisign public key' "$trust_failure"
+rm "$trust_embedded/raw-key.wasm"
+
+printf '%s\n' \
+    'PRNS_LOCAL_DEV_FLASHER_TRUST_ROOT_V1' \
+    'PRNS_LOCAL_DEV_FLASHER_BANNER_V1' \
+    'LOCAL DEVELOPER FIRMWARE — EPHEMERALLY SIGNED, NOT A RELEASE' \
+    'RWQbcQAOQdNia9cRKsl1wJxV2iODb6aBWOI1G0yDDk4ORXKecWSigfoy' \
+    > "$trust_embedded/local-development.wasm"
+if bash "$website/tools/verify-web-flasher-production-boundary.sh" \
+    "$trust_hosted" "$trust_embedded" > "$trust_failure" 2>&1; then
+    echo "production boundary accepted local development trust material" >&2
+    exit 1
+fi
+grep -qF 'a production output contains the local-development trust marker' "$trust_failure"
+grep -qF 'a production output contains the local-development banner marker' "$trust_failure"
+grep -qF 'a production output contains the local-development banner' "$trust_failure"
+grep -qF 'a production output contains the non-production Minisign public key' "$trust_failure"
+rm "$trust_embedded/local-development.wasm"

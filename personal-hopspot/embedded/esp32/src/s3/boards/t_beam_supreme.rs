@@ -258,6 +258,7 @@ impl Esp32S3Board for TBeamSupremeBoard {
     ) -> S3BoardHardware<Self::Display, Self::Battery> {
         let (sw_int1, timebase, rtc) = s3::boot_common!(p, Self::BOOT_BANNER);
 
+        s3::boot_stage(s3::BootPhase::OledBegin);
         // AXP2101 PMU first (I2C1 on SDA 42 / SCL 41): the LoRa + OLED rails boot OFF, so nothing else
         // on those rails responds until this enables them. The handle is kept as the battery sense.
         let mut pmu_i2c = I2c::new(
@@ -302,6 +303,11 @@ impl Esp32S3Board for TBeamSupremeBoard {
         .with_scl(p.GPIO18);
         let mut display = Sh1106I2c::new(i2c);
         let oled_ok = display.init().is_ok();
+        s3::boot_stage(if oled_ok {
+            s3::BootPhase::OledReady
+        } else {
+            s3::BootPhase::OledFailed
+        });
         if oled_ok {
             screen::splash(&mut display, screen::SplashContent::Brand);
             let _ = display.flush();
@@ -366,7 +372,7 @@ impl Esp32S3Board for TBeamSupremeBoard {
                 cpu_control: p.CPU_CTRL,
                 software_interrupt: sw_int1,
                 timebase,
-                _rtc: rtc,
+                rtc,
             },
         }
     }

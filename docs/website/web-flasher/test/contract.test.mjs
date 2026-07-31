@@ -145,6 +145,23 @@ test("device sequences reject skipped phases and unstable progress", () => {
   );
 });
 
+test("fresh device sequences require erasure before writing and cannot cancel after it begins", () => {
+  const sequence = new BridgeEventSequence("device");
+  sequence.accept({ schema: 1, phase: "requesting_port" });
+  sequence.accept({ schema: 1, phase: "connecting" });
+  sequence.accept({ schema: 1, phase: "verifying_target", detectedChip: "ESP32-S3" });
+  sequence.accept({ schema: 1, phase: "erasing" });
+  assert.throws(
+    () => sequence.accept({
+      schema: 1,
+      phase: "cancelled",
+      code: "cancelled",
+      message: "stop",
+    }),
+    /transition erasing -> cancelled/,
+  );
+});
+
 test("UF2 download requests terminate without using serial success semantics", () => {
   const sequence = new BridgeEventSequence("device");
   sequence.accept({

@@ -6,7 +6,7 @@ use crate::routing::links::establish::WriteEstablishLinkRejection;
 use crate::routing::links::LinkId;
 use crate::wire::DestinationHash;
 
-use super::{EngineCommand, PacketReceiptDelivered, Settleable, Settlement};
+use super::{PacketReceiptDelivered, PrnsCommand, Settleable, Settlement};
 
 /// RNS 1.4.0 `Link(destination)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,8 +102,8 @@ impl Settleable for EstablishLink {
     type Success = LinkEstablished;
     type Failure = EstablishLinkFailure;
 
-    fn into_command(self) -> EngineCommand {
-        EngineCommand::EstablishLink(self)
+    fn into_command(self) -> PrnsCommand {
+        PrnsCommand::EstablishLink(self)
     }
 
     fn from_settlement(
@@ -133,8 +133,8 @@ impl Settleable for SendToLink {
     type Success = PacketReceiptDelivered;
     type Failure = SendToLinkFailure;
 
-    fn into_command(self) -> EngineCommand {
-        EngineCommand::SendToLink(self)
+    fn into_command(self) -> PrnsCommand {
+        PrnsCommand::SendToLink(self)
     }
 
     fn from_settlement(
@@ -164,8 +164,8 @@ impl Settleable for Identify {
     type Success = ();
     type Failure = IdentifyFailure;
 
-    fn into_command(self) -> EngineCommand {
-        EngineCommand::Identify(self)
+    fn into_command(self) -> PrnsCommand {
+        PrnsCommand::Identify(self)
     }
 
     fn from_settlement(settlement: Settlement) -> Option<Result<(), IdentifyFailure>> {
@@ -193,8 +193,8 @@ impl Settleable for CloseLink {
     type Success = ();
     type Failure = CloseLinkFailure;
 
-    fn into_command(self) -> EngineCommand {
-        EngineCommand::CloseLink(self)
+    fn into_command(self) -> PrnsCommand {
+        PrnsCommand::CloseLink(self)
     }
 
     fn from_settlement(settlement: Settlement) -> Option<Result<(), CloseLinkFailure>> {
@@ -228,7 +228,7 @@ mod tests {
             destination: DestinationHash::new([0x11; 16]),
         };
 
-        assert_eq!(verb.into_command(), EngineCommand::EstablishLink(verb));
+        assert_eq!(verb.into_command(), PrnsCommand::EstablishLink(verb));
         assert_eq!(
             EstablishLink::from_settlement(Settlement::EstablishLink(Ok(LinkEstablished {
                 link_id: LinkId::new([0x22; 16]),

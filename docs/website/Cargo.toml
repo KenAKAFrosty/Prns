@@ -15,6 +15,7 @@ embedded-site = []
 # Deterministic browser qualification only. This swaps the trust root, but never
 # bypasses Minisign or manifest validation, and is forbidden with embedded-site.
 browser-test-fixture = []
+local-dev-flasher = []
 
 # Own workspace: keeps the (heavy) web/UI dep tree out of the core suite's
 # build and off the no_std gate.

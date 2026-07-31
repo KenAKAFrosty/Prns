@@ -15,7 +15,7 @@ use personal_hopspot_core::{
     MobileEngineState, BLE_IDENTITY_STORAGE, NODE_IDENTITY_STORAGE,
 };
 use personal_rns::bluetooth_auto::{AutoBle, BluetoothAutoStatus};
-use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand};
+use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand};
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::IdentitySigner;
 use personal_rns::interfaces::wifi_auto as wifi_auto_contract;
@@ -423,20 +423,16 @@ pub(crate) fn announce() {
     let Some(runtime) = supervisor().runtime() else {
         return;
     };
-    let _ = runtime
-        .handle
-        .issue(EngineCommand::AnnounceNow(AnnounceNow {
-            destination: runtime.destination,
-            target: AnnounceTarget::AllInterfaces,
-            app_data: AnnounceAppData::Registered,
-        }));
-    let _ = runtime
-        .handle
-        .issue(EngineCommand::AnnounceNow(AnnounceNow {
-            destination: runtime.node_page_destination,
-            target: AnnounceTarget::AllInterfaces,
-            app_data: AnnounceAppData::Registered,
-        }));
+    let _ = runtime.handle.issue(PrnsCommand::AnnounceNow(AnnounceNow {
+        destination: runtime.destination,
+        target: AnnounceTarget::AllInterfaces,
+        app_data: AnnounceAppData::Registered,
+    }));
+    let _ = runtime.handle.issue(PrnsCommand::AnnounceNow(AnnounceNow {
+        destination: runtime.node_page_destination,
+        target: AnnounceTarget::AllInterfaces,
+        app_data: AnnounceAppData::Registered,
+    }));
     diagnostic("announce", format_args!("destinations=2"));
 }
 

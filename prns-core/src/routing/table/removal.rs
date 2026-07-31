@@ -7,7 +7,7 @@ use crate::routing::routes::{NextHop, RouteTable};
 use crate::wire::{DestinationHash, TransportId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-// repr(C): crosses the dual-core channel inside `Journaled`; see the layout note on `EngineCommand`.
+// repr(C): crosses the dual-core channel inside `Journaled`; see the layout note on `PrnsCommand`.
 #[repr(C)]
 pub enum RouteRemovalCause {
     Expired,

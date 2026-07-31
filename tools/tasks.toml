@@ -196,6 +196,16 @@ entrypoint = ["bash", "tools/device/install-prns-webusb-udev.sh"]
 requires = ["bash", "sudo", "udevadm"]
 
 [[task]]
+id = "device.hopspot.dev-flasher.serve"
+summary = "Build selected working-tree firmware, sign it ephemerally, and serve the real web flasher on loopback."
+domain = "device"
+effect = "network-listen"
+platforms = ["any"]
+audience = ["developer"]
+entrypoint = ["python", "tools/device/hopspot-dev-flasher.py"]
+requires = ["cargo", "dx", "git", "npm", "python"]
+
+[[task]]
 id = "repo.host-contract.generate"
 summary = "Regenerate every host-contract language artifact from the canonical schema."
 domain = "repo"
@@ -765,7 +775,7 @@ reason = "Shared reproducible build metadata implementation."
 
 [[internal]]
 path = "tools/release/flasher_browser_test_trust.py"
-reason = "Shared production browser-test trust boundary implementation."
+reason = "Shared production development-trust boundary implementation."
 
 [[internal]]
 path = "tools/release/flasher_candidate_output.py"

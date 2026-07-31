@@ -377,14 +377,14 @@ pub struct PrnsResourceStream {
     state: Mutex<ResourceState>,
 }
 
-pub struct PrnsCommand {
+pub struct PrnsIssuedCommand {
     handle: CommandHandle,
     cached: Mutex<Option<CachedCommandResult>>,
     readiness: Arc<Readiness>,
     readiness_registration: Mutex<Option<Arc<RegisteredReadiness>>>,
 }
 
-impl Drop for PrnsCommand {
+impl Drop for PrnsIssuedCommand {
     fn drop(&mut self) {
         let registration = lock(&self.readiness_registration).take();
         if let Some(registration) = registration {
@@ -871,7 +871,7 @@ pub unsafe extern "C" fn prns_host_destination_hash(
 unsafe fn submit_host_command(
     host: *mut PrnsHost,
     command: HostCommand,
-    out_command: *mut *mut PrnsCommand,
+    out_command: *mut *mut PrnsIssuedCommand,
 ) -> u32 {
     let host = match unsafe { required_ref(host) } {
         Ok(host) => host,
@@ -898,7 +898,7 @@ unsafe fn submit_host_command(
         Err(NativeSubmitError::Busy) => return status(AbiStatus::QueueFull),
         Err(NativeSubmitError::Stopped) => return status(AbiStatus::Stopped),
     };
-    *out = Box::into_raw(Box::new(PrnsCommand {
+    *out = Box::into_raw(Box::new(PrnsIssuedCommand {
         handle,
         cached: Mutex::new(None),
         readiness,
@@ -912,7 +912,7 @@ pub unsafe extern "C" fn prns_host_announce(
     host: *mut PrnsHost,
     destination: PrnsByteView,
     interface_id: *const PrnsByteView,
-    out_command: *mut *mut PrnsCommand,
+    out_command: *mut *mut PrnsIssuedCommand,
 ) -> u32 {
     catch_status(|| {
         let destination = match unsafe { read_fixed(destination) } {
@@ -944,7 +944,7 @@ pub unsafe extern "C" fn prns_host_send_single_packet(
     host: *mut PrnsHost,
     destination: PrnsByteView,
     payload: PrnsByteView,
-    out_command: *mut *mut PrnsCommand,
+    out_command: *mut *mut PrnsIssuedCommand,
 ) -> u32 {
     catch_status(|| {
         let destination = match unsafe { read_fixed(destination) } {
@@ -972,7 +972,7 @@ pub unsafe extern "C" fn prns_host_send_single_packet(
 pub unsafe extern "C" fn prns_host_close_link(
     host: *mut PrnsHost,
     link_id: PrnsByteView,
-    out_command: *mut *mut PrnsCommand,
+    out_command: *mut *mut PrnsIssuedCommand,
 ) -> u32 {
     catch_status(|| {
         let link_id = match unsafe { read_fixed(link_id) } {
@@ -989,7 +989,7 @@ pub unsafe extern "C" fn prns_host_attach_tcp_server(
     bind: PrnsStringView,
     bitrate_kind: u32,
     bitrate_bps: u64,
-    out_command: *mut *mut PrnsCommand,
+    out_command: *mut *mut PrnsIssuedCommand,
 ) -> u32 {
     catch_status(|| {
         let bind = match unsafe { read_string(bind) } {
@@ -1016,7 +1016,7 @@ pub unsafe extern "C" fn prns_host_attach_tcp_client(
     target: PrnsStringView,
     bitrate_kind: u32,
     bitrate_bps: u64,
-    out_command: *mut *mut PrnsCommand,
+    out_command: *mut *mut PrnsIssuedCommand,
 ) -> u32 {
     catch_status(|| {
         let target = match unsafe { read_string(target) } {
@@ -1044,7 +1044,7 @@ pub unsafe extern "C" fn prns_host_attach_udp(
     peer: PrnsStringView,
     bitrate_kind: u32,
     bitrate_bps: u64,
-    out_command: *mut *mut PrnsCommand,
+    out_command: *mut *mut PrnsIssuedCommand,
 ) -> u32 {
     catch_status(|| {
         let local = match unsafe { read_string(local) } {
@@ -1077,7 +1077,7 @@ pub unsafe extern "C" fn prns_host_attach_udp(
 pub unsafe extern "C" fn prns_host_detach_interface(
     host: *mut PrnsHost,
     interface_id: PrnsByteView,
-    out_command: *mut *mut PrnsCommand,
+    out_command: *mut *mut PrnsIssuedCommand,
 ) -> u32 {
     catch_status(|| {
         let interface = match unsafe { read_fixed(interface_id) } {
@@ -1098,7 +1098,7 @@ pub unsafe extern "C" fn prns_host_detach_interface(
 pub unsafe extern "C" fn prns_host_establish_link(
     host: *mut PrnsHost,
     destination: PrnsByteView,
-    out_command: *mut *mut PrnsCommand,
+    out_command: *mut *mut PrnsIssuedCommand,
 ) -> u32 {
     catch_status(|| {
         let destination = match unsafe { read_fixed(destination) } {
@@ -1119,7 +1119,7 @@ pub unsafe extern "C" fn prns_host_establish_link(
 pub unsafe extern "C" fn prns_host_request_path(
     host: *mut PrnsHost,
     destination: PrnsByteView,
-    out_command: *mut *mut PrnsCommand,
+    out_command: *mut *mut PrnsIssuedCommand,
 ) -> u32 {
     catch_status(|| {
         let destination = match unsafe { read_fixed(destination) } {
@@ -1135,7 +1135,7 @@ pub unsafe extern "C" fn prns_host_identify(
     host: *mut PrnsHost,
     link_id: PrnsByteView,
     identity: PrnsByteView,
-    out_command: *mut *mut PrnsCommand,
+    out_command: *mut *mut PrnsIssuedCommand,
 ) -> u32 {
     catch_status(|| {
         let link_id = match unsafe { read_fixed(link_id) } {
@@ -1161,7 +1161,7 @@ pub unsafe extern "C" fn prns_host_send_link_packet(
     host: *mut PrnsHost,
     link_id: PrnsByteView,
     payload: PrnsByteView,
-    out_command: *mut *mut PrnsCommand,
+    out_command: *mut *mut PrnsIssuedCommand,
 ) -> u32 {
     catch_status(|| {
         let link_id = match unsafe { read_fixed(link_id) } {
@@ -1190,7 +1190,7 @@ pub unsafe extern "C" fn prns_host_request(
     payload: PrnsByteView,
     timeout_kind: u32,
     timeout_millis: u64,
-    out_command: *mut *mut PrnsCommand,
+    out_command: *mut *mut PrnsIssuedCommand,
 ) -> u32 {
     catch_status(|| {
         let link_id = match unsafe { read_fixed(link_id) } {
@@ -1231,7 +1231,7 @@ pub unsafe extern "C" fn prns_host_respond(
     request_id: PrnsByteView,
     request_rtt_millis: u64,
     payload: PrnsByteView,
-    out_command: *mut *mut PrnsCommand,
+    out_command: *mut *mut PrnsIssuedCommand,
 ) -> u32 {
     catch_status(|| {
         let link_id = match unsafe { read_fixed(link_id) } {
@@ -1268,7 +1268,7 @@ pub unsafe extern "C" fn prns_host_send_resource(
     payload: PrnsByteView,
     packed_metadata: *const PrnsByteView,
     compression_kind: u32,
-    out_command: *mut *mut PrnsCommand,
+    out_command: *mut *mut PrnsIssuedCommand,
 ) -> u32 {
     catch_status(|| {
         let link_id = match unsafe { read_fixed(link_id) } {
@@ -1312,7 +1312,7 @@ unsafe fn submit_resource_strategy_command(
     strategy_kind: u32,
     maximum_uncompressed_bytes: u64,
     accept_compressed: u8,
-    out_command: *mut *mut PrnsCommand,
+    out_command: *mut *mut PrnsIssuedCommand,
 ) -> u32 {
     let strategy =
         match parse_resource_strategy(strategy_kind, maximum_uncompressed_bytes, accept_compressed)
@@ -1338,7 +1338,7 @@ pub unsafe extern "C" fn prns_host_set_link_resource_strategy(
     strategy_kind: u32,
     maximum_uncompressed_bytes: u64,
     accept_compressed: u8,
-    out_command: *mut *mut PrnsCommand,
+    out_command: *mut *mut PrnsIssuedCommand,
 ) -> u32 {
     catch_status(|| {
         let link_id = match unsafe { read_fixed(link_id) } {
@@ -1366,7 +1366,7 @@ pub unsafe extern "C" fn prns_host_set_destination_resource_strategy(
     strategy_kind: u32,
     maximum_uncompressed_bytes: u64,
     accept_compressed: u8,
-    out_command: *mut *mut PrnsCommand,
+    out_command: *mut *mut PrnsIssuedCommand,
 ) -> u32 {
     catch_status(|| {
         let destination = match unsafe { read_fixed(destination) } {
@@ -1393,7 +1393,7 @@ pub unsafe extern "C" fn prns_host_send_channel_message(
     link_id: PrnsByteView,
     message_type: u16,
     payload: PrnsByteView,
-    out_command: *mut *mut PrnsCommand,
+    out_command: *mut *mut PrnsIssuedCommand,
 ) -> u32 {
     catch_status(|| {
         let link_id = match unsafe { read_fixed(link_id) } {
@@ -1424,7 +1424,7 @@ pub unsafe extern "C" fn prns_host_allow_requester(
     destination: PrnsByteView,
     path_hash: PrnsByteView,
     identity: PrnsByteView,
-    out_command: *mut *mut PrnsCommand,
+    out_command: *mut *mut PrnsIssuedCommand,
 ) -> u32 {
     catch_status(|| {
         let destination = match unsafe { read_fixed(destination) } {
@@ -1637,7 +1637,7 @@ fn cache_command_result(result: Result<CommandOutcome, CommandFailure>) -> Cache
 
 #[no_mangle]
 pub unsafe extern "C" fn prns_command_wait(
-    command: *mut PrnsCommand,
+    command: *mut PrnsIssuedCommand,
     timeout_millis: u32,
     out_result: *mut PrnsCommandResult,
 ) -> u32 {
@@ -1682,7 +1682,7 @@ pub unsafe extern "C" fn prns_command_wait(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn prns_command_interrupt_wait(command: *mut PrnsCommand) {
+pub unsafe extern "C" fn prns_command_interrupt_wait(command: *mut PrnsIssuedCommand) {
     if let Ok(Some(command)) = catch_unwind(AssertUnwindSafe(|| unsafe { command.as_ref() })) {
         command.handle.interrupt_wait();
     }
@@ -1690,7 +1690,7 @@ pub unsafe extern "C" fn prns_command_interrupt_wait(command: *mut PrnsCommand) 
 
 #[no_mangle]
 pub unsafe extern "C" fn prns_command_register_readiness(
-    command: *mut PrnsCommand,
+    command: *mut PrnsIssuedCommand,
     callback: Option<ReadinessCallback>,
     context: *mut c_void,
     out_registration: *mut *mut PrnsReadinessRegistration,
@@ -1723,7 +1723,7 @@ pub unsafe extern "C" fn prns_command_register_readiness(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn prns_command_release(command: *mut PrnsCommand) {
+pub unsafe extern "C" fn prns_command_release(command: *mut PrnsIssuedCommand) {
     if !command.is_null() {
         let _ = catch_unwind(AssertUnwindSafe(|| unsafe {
             drop(Box::from_raw(command));

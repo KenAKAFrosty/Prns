@@ -1,4 +1,5 @@
 use embassy_futures::select::{select6, Either6};
+use embassy_futures::yield_now;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::Receiver;
 use heapless::Vec as HeaplessVec;
@@ -32,6 +33,9 @@ pub enum InterfaceLifecycle {
     },
     Remove {
         id: InterfaceId,
+    },
+    Update {
+        descriptor: InterfaceDescriptor,
     },
     Retag {
         old_id: InterfaceId,
@@ -267,6 +271,7 @@ pub(crate) async fn run_pooled<
                     }
                     #[cfg(feature = "log")]
                     log::info!(
+                        target: "personal_hopspot_esp32",
                         "manifold: Add kind={:?} present={present} descriptors={}",
                         id.kind(),
                         descriptors.len()
@@ -283,6 +288,7 @@ pub(crate) async fn run_pooled<
                     }
                     #[cfg(feature = "log")]
                     log::info!(
+                        target: "personal_hopspot_esp32",
                         "manifold: Remove kind={:?} found={} descriptors={}",
                         id.kind(),
                         found.is_some(),
@@ -309,6 +315,22 @@ pub(crate) async fn run_pooled<
                         },
                     );
                     wake_schedules = engine.wake_schedules(AttachedInterfaces::new(&*descriptors));
+                }
+                InterfaceLifecycle::Update { descriptor } => {
+                    let descriptor = clamp_to_embedded_ceiling(descriptor);
+                    if let Some(slot) = descriptors
+                        .iter()
+                        .position(|existing| existing.id == descriptor.id)
+                    {
+                        descriptors[slot] = descriptor;
+                        if let Some(pos) = pacers.iter().position(|pacer| pacer.id == descriptor.id)
+                        {
+                            pacers[pos] =
+                                InterfacePacer::from_descriptor(descriptor.id, &descriptor);
+                        }
+                        wake_schedules =
+                            engine.wake_schedules(AttachedInterfaces::new(&*descriptors));
+                    }
                 }
                 InterfaceLifecycle::Retag {
                     old_id,
@@ -345,6 +367,7 @@ pub(crate) async fn run_pooled<
             .is_some_and(|deadline| deadline.0 <= now.0)
         {
             persistence.progress(engine, now).await;
+            yield_now().await;
         }
         if Store::RETAINS_COUNTS {
             let mut dirty = engine.take_dirty_interfaces();

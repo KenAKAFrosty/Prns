@@ -13,6 +13,6 @@ pub use modulation::{
 };
 pub use policy::{defaults, descriptor};
 pub use profile::{
-    channel_tag, Frequency, ModemPreset, PreambleSymbols, RadioProfile, Region, TxPower,
-    CHANNEL_TAG_CAP, DEFAULT_915_PROFILE,
+    channel_tag, AirtimePolicy, AirtimePolicyError, Frequency, ModemPreset, PreambleSymbols,
+    RadioProfile, RadioProfileError, Region, TxPower, CHANNEL_TAG_CAP, DEFAULT_915_PROFILE,
 };

@@ -7,8 +7,8 @@ use espflash::image_format::{idf::IdfBootloaderFormat, ImageFormat};
 use espflash::target::{Chip, XtalFrequency};
 use prns_flash_manifest::{
     sha256_hex, BoardBuild, BoardCatalog, BoardCatalogEntry, FlashManifest, FlashPart,
-    FlashPartKind, ReleaseChannel, ReleaseInfo, ReleaseVersion, SigningInfo, SourceArchiveIdentity,
-    TargetManifest, FLASH_MANIFEST_SCHEMA,
+    FlashPartKind, ManifestTargetSetPolicy, ReleaseChannel, ReleaseInfo, ReleaseVersion,
+    SigningInfo, SourceArchiveIdentity, TargetManifest, FLASH_MANIFEST_SCHEMA,
 };
 
 use crate::cli::ChannelArg;
@@ -41,13 +41,27 @@ pub(crate) struct BuildOutput {
     pub(crate) target_record: PathBuf,
 }
 
+pub(crate) enum BuildVersion<'a> {
+    Repository,
+    Developer(&'a str),
+}
+
+pub(crate) enum ManifestTargetProfile<'a> {
+    Production,
+    LocalDevelopment {
+        version: &'a str,
+        board_slugs: &'a [String],
+    },
+}
+
 pub(crate) fn build_board(
     board: &BoardCatalogEntry,
     repo: &Path,
     out_root: &Path,
+    build_version: BuildVersion<'_>,
     reporter: Reporter,
 ) -> Result<BuildOutput, AppError> {
-    let version = release_version(repo)?;
+    let version = resolve_build_version(repo, build_version)?;
     match &board.build {
         BoardBuild::Esp(build) => build_esp(board, build, repo, out_root, &version, reporter),
         BoardBuild::Uf2(build) => build_uf2(board, build, repo, out_root, &version, reporter),
@@ -61,11 +75,36 @@ pub(crate) fn assemble_manifest(
     channel: ChannelArg,
     commit: String,
     key_id: String,
+    target_profile: ManifestTargetProfile<'_>,
 ) -> Result<PathBuf, AppError> {
-    let version = release_version(repo)?;
-    let mut targets = Vec::with_capacity(catalog.boards.len());
-    let mut source_capabilities = Vec::with_capacity(catalog.boards.len());
-    for board in &catalog.boards {
+    let (version, boards, policy) = match target_profile {
+        ManifestTargetProfile::Production => (
+            release_version(repo)?,
+            catalog.boards.iter().collect::<Vec<_>>(),
+            ManifestTargetSetPolicy::all_shipping_targets(catalog),
+        ),
+        ManifestTargetProfile::LocalDevelopment {
+            version,
+            board_slugs,
+        } => {
+            let slugs = board_slugs.iter().map(String::as_str).collect::<Vec<_>>();
+            let policy = ManifestTargetSetPolicy::local_development(catalog, &slugs)
+                .map_err(|error| AppError::developer_manifest(error.to_string()))?;
+            let version = resolve_build_version(repo, BuildVersion::Developer(version))?;
+            let boards = slugs
+                .iter()
+                .map(|slug| {
+                    catalog.board(slug).ok_or_else(|| {
+                        AppError::developer_manifest(format!("unknown board {slug:?}"))
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            (version, boards, policy)
+        }
+    };
+    let mut targets = Vec::with_capacity(boards.len());
+    let mut source_capabilities = Vec::with_capacity(boards.len());
+    for board in boards {
         let board_dir = board_output(out_root, &board.slug, &version);
         let record = board_dir.join("target.json");
         let bytes = fs::read(&record).map_err(|error| {
@@ -113,7 +152,7 @@ pub(crate) fn assemble_manifest(
         targets,
     };
     manifest
-        .validate(catalog)
+        .validate_with_target_set(catalog, &policy)
         .map_err(|error| AppError::developer_manifest(error.to_string()))?;
     let path = out_root.join("flash-manifest.json");
     let json = serde_json::to_vec_pretty(&manifest).map_err(|error| {
@@ -270,7 +309,11 @@ fn build_esp_parts(
         .arg("--target")
         .arg(&build.rust_target)
         .arg("-Zbuild-std=core,alloc")
+        .env("PRNS_BUILD_VERSION", version)
         .current_dir(crate_dir);
+    if let Some(source_digest) = developer_source_digest(version) {
+        cargo.env("PRNS_BUILD_SOURCE_DIGEST", source_digest);
+    }
     if source_enabled {
         cargo.arg("--features").arg("source-archive");
     }
@@ -760,6 +803,25 @@ fn release_version(repo: &Path) -> Result<String, AppError> {
         })
 }
 
+fn resolve_build_version(repo: &Path, build_version: BuildVersion<'_>) -> Result<String, AppError> {
+    match build_version {
+        BuildVersion::Repository => release_version(repo),
+        BuildVersion::Developer(version) => ReleaseVersion::parse(version.to_string())
+            .map(|version| version.as_str().to_string())
+            .map_err(|error| AppError::developer_repository(error.to_string())),
+    }
+}
+
+fn developer_source_digest(version: &str) -> Option<&str> {
+    let digest = version.rsplit('.').next()?;
+    (version.contains("-dev.")
+        && digest.len() == 64
+        && digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)))
+    .then_some(digest)
+}
+
 fn release_part_path(board: &str, version: &str, filename: &str) -> String {
     format!("firmware/hopspot/{board}/{version}/{filename}")
 }
@@ -823,6 +885,15 @@ mod tests {
             release_part_path("heltec-v4", "0.2.6", "application.bin"),
             "firmware/hopspot/heltec-v4/0.2.6/application.bin"
         );
+    }
+
+    #[test]
+    fn developer_source_digest_comes_from_the_immutable_version() {
+        let digest = "e3ffc728180a8194c2efb55f90b0285f093db6e53e6dc800d4b229426e966399";
+        let version = format!("0.3.1-dev.dirty.{digest}");
+        assert_eq!(developer_source_digest(&version), Some(digest));
+        assert_eq!(developer_source_digest("0.3.1"), None);
+        assert_eq!(developer_source_digest("0.3.1-dev.dirty.short"), None);
     }
 
     #[test]

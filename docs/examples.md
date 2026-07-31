@@ -49,18 +49,18 @@ Every native SDK follows the same recipe: create a host with explicit capabiliti
 
 | SDK | Authoritative recipe |
 | --- | --- |
-| Python | [Create, claim, and consume frozen event variants](https://github.com/KenAKAFrosty/Prns/blob/main/prns-host/bindings/python/README.md) |
-| .NET | [Create, claim, consume, and settle generated records](https://github.com/KenAKAFrosty/Prns/blob/main/prns-host/bindings/dotnet/README.md) |
-| Go | [Create, execute, wait with context, and switch on settlement](https://github.com/KenAKAFrosty/Prns/blob/main/prns-host/bindings/go/README.md) |
-| Swift | [Claim an `AsyncSequence`, execute, and switch on settlement](https://github.com/KenAKAFrosty/Prns/blob/main/prns-host/bindings/swift/README.md) |
-| Kotlin, Java, and Android | [Create, execute, await, and close deterministic owners](https://github.com/KenAKAFrosty/Prns/blob/main/prns-host/bindings/jvm/README.md) |
-| Julia | [Create, claim, execute, and wait through multiple dispatch](https://github.com/KenAKAFrosty/Prns/blob/main/prns-host/bindings/julia/README.md) |
-| C and C++ | [Create opaque owners, pull one stream, and release each handle](https://github.com/KenAKAFrosty/Prns/blob/main/prns-host/abi/c/README.md) |
+| Python | [Create, claim, and consume frozen event variants](../prns-host/bindings/python/README.md) |
+| .NET | [Create, claim, consume, and settle generated records](../prns-host/bindings/dotnet/README.md) |
+| Go | [Create, execute, wait with context, and switch on settlement](../prns-host/bindings/go/README.md) |
+| Swift | [Claim an `AsyncSequence`, execute, and switch on settlement](../prns-host/bindings/swift/README.md) |
+| Kotlin, Java, and Android | [Create, execute, await, and close deterministic owners](../prns-host/bindings/jvm/README.md) |
+| Julia | [Create, claim, execute, and wait through multiple dispatch](../prns-host/bindings/julia/README.md) |
+| C and C++ | [Create opaque owners, pull one stream, and release each handle](../prns-host/abi/c/README.md) |
 
-The native package graph and the validation suites that exercise these adapters live in the [host-contract guide](https://github.com/KenAKAFrosty/Prns/blob/main/prns-host/README.md).
+The native package graph and the validation suites that exercise these adapters live in the [host-contract guide](../prns-host/README.md).
 
 ## Community examples
 
 Examples and projects built outside this repository belong here too, and this section is meant to grow. Nothing is listed yet; yours could be the first.
 
-If you build something with Prns - a demo, a tool, a full application - we'd love to see it. [Open a issue](https://github.com/KenAKAFrosty/Prns/issues) telling us about it, or send a pull request adding your link right here.
+If you build something with Prns - a demo, a tool, a full application - we'd love to see it. [Open an issue](https://github.com/KenAKAFrosty/Prns/issues) telling us about it, or send a pull request adding your link right here.

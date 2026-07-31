@@ -78,7 +78,7 @@ impl Forward {
         let mut announce = Vec::with_capacity(1024);
         let issued = IssuedCommand {
             id: CommandId(0),
-            command: EngineCommand::AnnounceNow(AnnounceNow {
+            command: PrnsCommand::AnnounceNow(AnnounceNow {
                 destination: self.destination,
                 target: AnnounceTarget::AllInterfaces,
                 app_data: AnnounceAppData::Registered,
@@ -205,7 +205,7 @@ impl Forward {
     pub fn seal_single(&mut self) {
         let issued = IssuedCommand {
             id: CommandId(self.next_id),
-            command: EngineCommand::SendSinglePacket(SendSinglePacket {
+            command: PrnsCommand::SendSinglePacket(SendSinglePacket {
                 destination: self.destination,
                 payload: SendSinglePacketPayload::from_slice(&self.payload).expect("payload fits"),
             }),

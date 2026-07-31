@@ -109,8 +109,8 @@ async fn routing_control_drops_a_live_route_and_journals_the_explicit_removal() 
 #[tokio::test(start_paused = true)]
 async fn the_manifold_culls_an_expired_route_at_its_deadline() {
     use crate::engine::{
-        CommandId, EngineCommand, SendSinglePacket, SendSinglePacketFailure,
-        SendSinglePacketPayload, SendSinglePacketRejection, Settlement,
+        CommandId, PrnsCommand, SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload,
+        SendSinglePacketRejection, Settlement,
     };
     use crate::routing::announce::defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
     use crate::wire::DestinationHash;
@@ -208,7 +208,7 @@ async fn the_manifold_culls_an_expired_route_at_its_deadline() {
     command_tx
         .send(HostCommand::Engine(IssuedCommand {
             id: CommandId(3),
-            command: EngineCommand::SendSinglePacket(SendSinglePacket {
+            command: PrnsCommand::SendSinglePacket(SendSinglePacket {
                 destination,
                 payload: SendSinglePacketPayload::from_slice(b"late").expect("fits the MDU"),
             }),

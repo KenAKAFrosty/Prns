@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use embassy_futures::block_on;
@@ -12,17 +12,82 @@ use heapless::Vec as HeaplessVec;
 use crate::engine::test_support::{
     bytes_from_hex, pin_transport_id, TestStorageLayout, RNS_1_4_0_ANNOUNCE, TEST_TRANSPORT_ID,
 };
-use crate::engine::{EngineState, IssuedCommand, Journaled};
+use crate::engine::{EngineState, InstantMillis, IssuedCommand, Journaled};
 use crate::interfaces::InterfaceIfac;
 use crate::interfaces::{InterfaceDescriptor, InterfaceId};
 use crate::manifold::grant::{GrantProducer, ManifoldLaneReader};
 use crate::manifold::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
-use crate::runtime::{NoInterfaceInspectionStore, NoManifoldPersistence};
-use crate::storage::GrowableHeap;
+use crate::runtime::{ManifoldPersistence, NoInterfaceInspectionStore, NoManifoldPersistence};
+use crate::storage::{GrowableHeap, StorageLayout};
 
 use super::super::test_support::{descriptor, WATCHDOG};
 use super::super::{leaked_grant_lane, EmbassyHost, PooledEgress};
 use super::{run_pooled, InterfaceLifecycle, PooledWiring};
+
+struct AlwaysDuePersistence {
+    progress: Rc<Cell<usize>>,
+}
+
+impl<S: StorageLayout> ManifoldPersistence<S> for AlwaysDuePersistence {
+    fn observe(&mut self, _journaled: &Journaled<'_>, _now: InstantMillis) {}
+
+    fn deadline(&self, now: InstantMillis) -> Option<InstantMillis> {
+        Some(now)
+    }
+
+    async fn progress(&mut self, _engine: &mut EngineState<S>, _now: InstantMillis) {
+        let progress = self.progress.get() + 1;
+        self.progress.set(progress);
+        assert!(progress <= 4, "persistence monopolized the executor");
+    }
+}
+
+#[test]
+fn continuously_due_persistence_yields_to_sibling_tasks() {
+    let progress = Rc::new(Cell::new(0));
+    let observed = progress.clone();
+
+    block_on(async {
+        let mut engine = EngineState::<GrowableHeap>::default();
+        let mut host = EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0));
+        let notify: Channel<CriticalSectionRawMutex, InterfaceId, 1> = Channel::new();
+        let commands: Channel<CriticalSectionRawMutex, IssuedCommand, 1> = Channel::new();
+        let lifecycle: Channel<CriticalSectionRawMutex, InterfaceLifecycle, 1> = Channel::new();
+        let mut descriptors: HeaplessVec<InterfaceDescriptor, 1> = HeaplessVec::new();
+        let mut ifacs: HeaplessVec<InterfaceIfac, 1> = HeaplessVec::new();
+        let mut inbound: HeaplessVec<(InterfaceId, &'static mut dyn ManifoldLaneReader), 1> =
+            HeaplessVec::new();
+        let mut egress: PooledEgress<1> = PooledEgress::new();
+        let mut persistence = AlwaysDuePersistence { progress };
+        let manifold = run_pooled(
+            &mut engine,
+            &mut host,
+            PooledWiring {
+                descriptors: &mut descriptors,
+                ifacs: &mut ifacs,
+                inbound: &mut inbound,
+                egress: &mut egress,
+                notify: notify.receiver(),
+                commands: commands.receiver(),
+                lifecycle: lifecycle.receiver(),
+            },
+            |_| {},
+            crate::manifold::decline_all(),
+            &NoInterfaceInspectionStore,
+            &mut persistence,
+        );
+        let sibling = async {
+            yield_now().await;
+        };
+
+        match select(manifold, sibling).await {
+            Either::Second(()) => {}
+            Either::First(()) => unreachable!("the manifold loop never returns"),
+        }
+    });
+
+    assert!((1..=4).contains(&observed.get()));
+}
 
 #[test]
 fn a_pooled_ifac_slot_added_at_runtime_opens_inbound_then_frees_on_remove() {

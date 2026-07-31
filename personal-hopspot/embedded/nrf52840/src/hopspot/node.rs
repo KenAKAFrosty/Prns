@@ -20,6 +20,7 @@ use super::bluetooth_auto;
 
 pub(super) const LANE_COUNT: usize = 3;
 pub(super) const LANE_DEPTH: usize = 1;
+const LORA_OUTBOUND_DEPTH: usize = 1;
 const INTERFACE_CAPACITY: usize = 2 + bluetooth_auto::MEMBERS;
 pub(super) const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"techousb");
 pub(super) const NOTIFY_CAP: usize = minimum_manifold_notification_capacity(LANE_COUNT, LANE_DEPTH);
@@ -68,8 +69,12 @@ pub(super) static COMMANDS: Channel<Mtx, IssuedCommand, COMMANDS_CAP> = Channel:
 pub(super) static LIFECYCLE: Channel<Mtx, InterfaceLifecycle, LIFECYCLE_CAP> = Channel::new();
 pub(super) static COMPLETION: CompletionPool<Mtx, COMPLETIONS_CAP> = CompletionPool::new();
 pub(super) static INTERFACE_STORE: InterfaceStore = EmbassyInterfaceStore::new();
-pub(super) static LORA_MANIFOLD_LANE: StaticManifoldLane<Mtx, LORA_MAX_PAYLOAD, LANE_DEPTH> =
-    StaticManifoldLane::new();
+pub(super) static LORA_MANIFOLD_LANE: StaticManifoldLane<
+    Mtx,
+    LORA_MAX_PAYLOAD,
+    LANE_DEPTH,
+    LORA_OUTBOUND_DEPTH,
+> = StaticManifoldLane::new();
 pub(super) static BLE_MANIFOLD_LANE: StaticManifoldLane<Mtx, BLE_HW_MTU, LANE_DEPTH> =
     StaticManifoldLane::new();
 pub(super) static USB_MANIFOLD_LANE: StaticManifoldLane<

@@ -124,6 +124,29 @@ fn ingress_pressure_is_hidden_until_a_drop_is_observed() {
 }
 
 #[test]
+fn lora_spectrum_details_keep_the_common_case_compact() {
+    let mut details = InterfaceMenuDetails::empty();
+    details.push_lora_spectrum(LoRaSpectrumMenuDetails {
+        channel_busy_per_mille: 123,
+        noise_floor_dbm: Some(-120),
+        cca_threshold_dbm: Some(-109),
+        deferrals: 4,
+        false_preambles: 0,
+        contention_timeouts: 1,
+        duty_holds: 0,
+        duty_timeouts: 0,
+        radio_recoveries: 0,
+    });
+    let rows = details.as_slice();
+
+    assert_eq!(rows.len(), 4);
+    assert_eq!(rows[0].text(), "Busy 12.3%");
+    assert_eq!(rows[1].text(), "N/CCA -120/-109");
+    assert_eq!(rows[2].text(), "Defers 4");
+    assert_eq!(rows[3].text(), "CCA drops 1");
+}
+
+#[test]
 fn named_peer_rows_format_single_link_interfaces() {
     let mut details = InterfaceMenuDetails::empty();
     let count = details.push_named_peer("USB", Some(Liveness::Live));

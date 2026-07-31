@@ -6,7 +6,7 @@ use crate::engine::IngestIo;
 use crate::engine::Journaled;
 use crate::engine::{CommandId, SetResourceStrategy, Settlement};
 use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis};
-use crate::engine::{EngineCommand, IssuedCommand};
+use crate::engine::{IssuedCommand, PrnsCommand};
 use crate::identity::IdentityHash;
 use crate::interfaces::AttachedInterfaces;
 use crate::interfaces::{InboundPacket, InterfaceId};
@@ -404,7 +404,7 @@ pub(crate) fn set_strategy<S: StorageLayout>(
     engine.ingest_command_into(
         IssuedCommand {
             id: CommandId(9),
-            command: EngineCommand::SetResourceStrategy(SetResourceStrategy {
+            command: PrnsCommand::SetResourceStrategy(SetResourceStrategy {
                 link_id: link_id(),
                 strategy,
             }),

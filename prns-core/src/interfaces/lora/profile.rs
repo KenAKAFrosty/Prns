@@ -8,6 +8,8 @@ const DUTY_ONE_PERCENT_PER_MILLE: u16 = 10;
 const DUTY_QUEUE_BUDGET_MS: u32 = 4_000;
 const DUTY_TEN_PERCENT_PER_MILLE: u16 = 100;
 const MODULATION_TAG_LORA: u8 = 0x00;
+const SX1262_MIN_TX_POWER_DBM: i8 = -9;
+const SX1262_MAX_TX_POWER_DBM: i8 = 22;
 
 pub const CHANNEL_TAG_CAP: usize = 11;
 
@@ -176,6 +178,98 @@ impl Region {
     }
 }
 
+/// Why a LoRa radio profile cannot be applied safely.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RadioProfileError {
+    FrequencyOutsideRegion {
+        region: Region,
+        frequency_hz: u32,
+        minimum_hz: u32,
+        maximum_hz: u32,
+    },
+    TransmitPowerOutsideRadioRange {
+        power_dbm: i8,
+        minimum_dbm: i8,
+        maximum_dbm: i8,
+    },
+    TransmitPowerAboveRegionLimit {
+        region: Region,
+        power_dbm: i8,
+        maximum_dbm: i8,
+    },
+    EmptyPreamble,
+}
+
+/// Where a LoRa interface obtains its airtime limit.
+///
+/// Regional policy is the normal choice. A fixed override may tighten a
+/// region's limit, but cannot weaken it; `None` is accepted only for the
+/// explicit custom-band region.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AirtimePolicy {
+    Regional,
+    Fixed(Option<AirtimeDutyCycle>),
+}
+
+/// Why an explicit airtime policy cannot be applied to a region.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AirtimePolicyError {
+    MissingLimitForRegulatedRegion {
+        region: Region,
+    },
+    InvalidLimitPerMille {
+        limit: u16,
+    },
+    EmptyQueueBudget,
+    WeakerThanRegionalLimit {
+        region: Region,
+        regional_limit_per_mille: u16,
+        fixed_limit_per_mille: Option<u16>,
+    },
+}
+
+impl AirtimePolicy {
+    pub fn resolve(self, region: Region) -> Result<Option<AirtimeDutyCycle>, AirtimePolicyError> {
+        let regional = region.regulatory_duty_cycle();
+        let resolved = match self {
+            Self::Regional => return Ok(regional),
+            Self::Fixed(fixed) => fixed,
+        };
+
+        let Some(fixed) = resolved else {
+            return if regional.is_some() {
+                Err(AirtimePolicyError::MissingLimitForRegulatedRegion { region })
+            } else {
+                Ok(None)
+            };
+        };
+        for limit in [fixed.limit_short_per_mille, fixed.limit_long_per_mille]
+            .into_iter()
+            .flatten()
+        {
+            if limit == 0 || limit > 1_000 {
+                return Err(AirtimePolicyError::InvalidLimitPerMille { limit });
+            }
+        }
+        if fixed.max_queued_airtime_ms == 0 {
+            return Err(AirtimePolicyError::EmptyQueueBudget);
+        }
+        if let Some(regional_limit) = regional.and_then(|duty| duty.limit_long_per_mille) {
+            if fixed
+                .limit_long_per_mille
+                .is_none_or(|fixed_limit| fixed_limit > regional_limit)
+            {
+                return Err(AirtimePolicyError::WeakerThanRegionalLimit {
+                    region,
+                    regional_limit_per_mille: regional_limit,
+                    fixed_limit_per_mille: fixed.limit_long_per_mille,
+                });
+            }
+        }
+        Ok(Some(fixed))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModemPreset {
     ShortFast,
@@ -243,6 +337,40 @@ pub struct RadioProfile {
 }
 
 impl RadioProfile {
+    /// Validate the profile against both the selected region and the SX1262 PA.
+    pub const fn validate(self) -> Result<(), RadioProfileError> {
+        let frequency_hz = self.frequency.hz();
+        let (minimum_hz, maximum_hz) = self.region.band();
+        if frequency_hz < minimum_hz || frequency_hz > maximum_hz {
+            return Err(RadioProfileError::FrequencyOutsideRegion {
+                region: self.region,
+                frequency_hz,
+                minimum_hz,
+                maximum_hz,
+            });
+        }
+        let power_dbm = self.tx_power.dbm();
+        if power_dbm < SX1262_MIN_TX_POWER_DBM || power_dbm > SX1262_MAX_TX_POWER_DBM {
+            return Err(RadioProfileError::TransmitPowerOutsideRadioRange {
+                power_dbm,
+                minimum_dbm: SX1262_MIN_TX_POWER_DBM,
+                maximum_dbm: SX1262_MAX_TX_POWER_DBM,
+            });
+        }
+        let maximum_dbm = self.region.max_tx_power().dbm();
+        if power_dbm > maximum_dbm {
+            return Err(RadioProfileError::TransmitPowerAboveRegionLimit {
+                region: self.region,
+                power_dbm,
+                maximum_dbm,
+            });
+        }
+        if self.preamble.count() == 0 {
+            return Err(RadioProfileError::EmptyPreamble);
+        }
+        Ok(())
+    }
+
     pub const fn nominal_bitrate_bps(self) -> u32 {
         self.modulation.nominal_bitrate_bps()
     }
@@ -440,5 +568,71 @@ mod tests {
         a.region = Region::Eu868;
         b.region = Region::Unlimited;
         assert_eq!(channel_tag(&a), channel_tag(&b));
+    }
+
+    #[test]
+    fn profiles_reject_out_of_band_frequency_power_and_empty_preambles() {
+        assert_eq!(DEFAULT_915_PROFILE.validate(), Ok(()));
+
+        let mut outside_band = DEFAULT_915_PROFILE;
+        outside_band.frequency = Frequency::new(868_300_000);
+        assert!(matches!(
+            outside_band.validate(),
+            Err(RadioProfileError::FrequencyOutsideRegion {
+                region: Region::Us915,
+                ..
+            })
+        ));
+
+        let mut excessive_power = DEFAULT_915_PROFILE;
+        excessive_power.region = Region::Eu868;
+        excessive_power.frequency = Region::Eu868.default_frequency();
+        assert_eq!(
+            excessive_power.validate(),
+            Err(RadioProfileError::TransmitPowerAboveRegionLimit {
+                region: Region::Eu868,
+                power_dbm: 22,
+                maximum_dbm: 14,
+            })
+        );
+
+        let mut empty_preamble = DEFAULT_915_PROFILE;
+        empty_preamble.preamble = PreambleSymbols::new(0);
+        assert_eq!(
+            empty_preamble.validate(),
+            Err(RadioProfileError::EmptyPreamble)
+        );
+    }
+
+    #[test]
+    fn fixed_airtime_policy_can_only_preserve_or_tighten_regional_limits() {
+        let tighter = AirtimeDutyCycle {
+            limit_short_per_mille: None,
+            limit_long_per_mille: Some(5),
+            max_queued_airtime_ms: 2_000,
+        };
+        assert_eq!(
+            AirtimePolicy::Fixed(Some(tighter)).resolve(Region::Eu868),
+            Ok(Some(tighter))
+        );
+        assert_eq!(
+            AirtimePolicy::Fixed(None).resolve(Region::Eu868),
+            Err(AirtimePolicyError::MissingLimitForRegulatedRegion {
+                region: Region::Eu868,
+            })
+        );
+        assert!(matches!(
+            AirtimePolicy::Fixed(Some(AirtimeDutyCycle {
+                limit_short_per_mille: None,
+                limit_long_per_mille: Some(20),
+                max_queued_airtime_ms: 2_000,
+            }))
+            .resolve(Region::Eu868),
+            Err(AirtimePolicyError::WeakerThanRegionalLimit { .. })
+        ));
+        assert_eq!(
+            AirtimePolicy::Fixed(None).resolve(Region::Unlimited),
+            Ok(None)
+        );
     }
 }

@@ -6,7 +6,7 @@ use crate::routing::upstream_app_destinations::UpstreamAppDestinationKind;
 use crate::storage::StorageLayout;
 use crate::wire::DestinationHash;
 
-use super::{CommandId, CommandOutcome, EngineCommand, Settleable, Settlement};
+use super::{CommandId, CommandOutcome, PrnsCommand, Settleable, Settlement};
 
 /// `Destination.announce(app_data=…, attached_interface=…)` as data (RNS 1.4.0 Destination.py).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,8 +49,8 @@ impl Settleable for AnnounceNow {
     type Success = ();
     type Failure = AnnounceNowFailure;
 
-    fn into_command(self) -> EngineCommand {
-        EngineCommand::AnnounceNow(self)
+    fn into_command(self) -> PrnsCommand {
+        PrnsCommand::AnnounceNow(self)
     }
 
     fn from_settlement(settlement: Settlement) -> Option<Result<(), AnnounceNowFailure>> {
@@ -142,7 +142,7 @@ mod tests {
     fn announce_now(destination: DestinationHash) -> IssuedCommand {
         IssuedCommand {
             id: TEST_COMMAND_ID,
-            command: EngineCommand::AnnounceNow(AnnounceNow {
+            command: PrnsCommand::AnnounceNow(AnnounceNow {
                 destination,
                 target: AnnounceTarget::AllInterfaces,
                 app_data: AnnounceAppData::Registered,
@@ -264,7 +264,7 @@ mod tests {
         let interfaces = [routable_descriptor(InterfaceId::new([0xAA; 8]))];
         let on = |interface| IssuedCommand {
             id: TEST_COMMAND_ID,
-            command: EngineCommand::AnnounceNow(AnnounceNow {
+            command: PrnsCommand::AnnounceNow(AnnounceNow {
                 destination,
                 target: AnnounceTarget::Interface(interface),
                 app_data: AnnounceAppData::Registered,
@@ -305,10 +305,7 @@ mod tests {
             app_data: AnnounceAppData::Registered,
         };
 
-        assert_eq!(
-            verb.clone().into_command(),
-            EngineCommand::AnnounceNow(verb),
-        );
+        assert_eq!(verb.clone().into_command(), PrnsCommand::AnnounceNow(verb),);
         assert_eq!(
             AnnounceNow::from_settlement(Settlement::AnnounceNow(Ok(()))),
             Some(Ok(())),
@@ -330,7 +327,7 @@ mod tests {
                 .unwrap();
         let with_data = |destination| IssuedCommand {
             id: TEST_COMMAND_ID,
-            command: EngineCommand::AnnounceNow(AnnounceNow {
+            command: PrnsCommand::AnnounceNow(AnnounceNow {
                 destination,
                 target: AnnounceTarget::AllInterfaces,
                 app_data: AnnounceAppData::Data(oversized.clone()),

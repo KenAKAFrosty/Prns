@@ -11831,11 +11831,11 @@
       "name": "personal-hopspot-esp32",
       "source": "personal-hopspot/embedded/esp32",
       "unsafe": {
-        "blocks": 9,
+        "blocks": 14,
         "externs": 0,
         "functions": 1,
         "impls": 1,
-        "tokens": 11
+        "tokens": 16
       },
       "version": "0.1.0"
     },

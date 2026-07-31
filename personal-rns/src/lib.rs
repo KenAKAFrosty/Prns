@@ -74,7 +74,7 @@ pub use interface_families::wifi_direct;
 #[cfg(all(feature = "lora", feature = "embassy-host"))]
 pub use interface_families::{lora, radios};
 
-pub use prns_runtime::engine::{CommandId, EngineCommand, PacketReceiptDelivered, RatchetPolicy};
+pub use prns_runtime::engine::{CommandId, PacketReceiptDelivered, PrnsCommand, RatchetPolicy};
 pub use prns_runtime::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 pub use prns_runtime::interfaces::InterfaceStatus;
 pub use prns_runtime::routing::links::resources::ResourceStrategy;

@@ -456,5 +456,33 @@ mod tests {
             }),
             Err(ProtocolViolation::TotalChanged)
         );
+
+        let mut fresh = EventSequence::new(BridgeOperation::Device);
+        fresh
+            .accept(event(BridgePhase::RequestingPort))
+            .expect("requesting port");
+        fresh
+            .accept(event(BridgePhase::Connecting))
+            .expect("connecting");
+        fresh
+            .accept(EventFacts {
+                detected_chip: Some("ESP32-S3"),
+                ..event(BridgePhase::VerifyingTarget)
+            })
+            .expect("target check");
+        fresh
+            .accept(event(BridgePhase::Erasing))
+            .expect("full-chip erasure");
+        assert_eq!(
+            fresh.accept(EventFacts {
+                code: Some(BridgeErrorCode::Cancelled),
+                message: Some("stop"),
+                ..event(BridgePhase::Cancelled)
+            }),
+            Err(ProtocolViolation::Transition(
+                BridgePhase::Erasing,
+                BridgePhase::Cancelled
+            ))
+        );
     }
 }

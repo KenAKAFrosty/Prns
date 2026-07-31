@@ -3,6 +3,12 @@ use dioxus::prelude::*;
 #[cfg(all(feature = "embedded-site", feature = "browser-test-fixture"))]
 compile_error!("browser-test-fixture is forbidden in embedded production builds");
 
+#[cfg(all(feature = "embedded-site", feature = "local-dev-flasher"))]
+compile_error!("local-dev-flasher is forbidden in embedded production builds");
+
+#[cfg(all(feature = "browser-test-fixture", feature = "local-dev-flasher"))]
+compile_error!("local-dev-flasher is forbidden in browser-test-fixture builds");
+
 #[cfg(not(feature = "embedded-site"))]
 use dioxus_i18n::prelude::*;
 #[cfg(not(feature = "embedded-site"))]
@@ -14,6 +20,8 @@ mod components;
 mod embedded;
 #[cfg(not(feature = "embedded-site"))]
 mod links;
+#[cfg(not(feature = "embedded-site"))]
+mod local_development;
 #[cfg(not(feature = "embedded-site"))]
 mod pages;
 #[cfg(not(feature = "embedded-site"))]

@@ -53,14 +53,14 @@ pub struct CommandId(pub u64);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IssuedCommand {
     pub id: CommandId,
-    pub command: EngineCommand,
+    pub command: PrnsCommand,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-// repr(C) is CRITICAL here and on every enum that crosses the dual-core embassy channels (EngineCommand, Settlement, EngineReaction, Journaled, Directive, InterfaceLifecycle): the esp Xtensa toolchain miscompiled the default repr(Rust) layout, and core 1 read Directive's fan target at the wrong offset, corrupting the supervisor's match into UB.
+// repr(C) is CRITICAL here and on every enum that crosses the dual-core embassy channels (PrnsCommand, Settlement, EngineReaction, Journaled, Directive, InterfaceLifecycle): the esp Xtensa toolchain miscompiled the default repr(Rust) layout, and core 1 read Directive's fan target at the wrong offset, corrupting the supervisor's match into UB.
 // Proven on hardware both broken and fixed; do not remove.
 #[repr(C)]
-pub enum EngineCommand {
+pub enum PrnsCommand {
     AnnounceNow(AnnounceNow),
     SendSinglePacket(SendSinglePacket),
     SendGroup(SendGroup),
@@ -184,9 +184,9 @@ pub enum CommandOutcome {
     },
 }
 
-/// Paired verb-for-verb with [`EngineCommand`]: a data boundary erases type-level ties, so the tie is explicit here.
+/// Paired verb-for-verb with [`PrnsCommand`]: a data boundary erases type-level ties, so the tie is explicit here.
 #[derive(Debug, Clone, PartialEq, Eq)]
-// repr(C): crosses the dual-core channel; see the layout note on [`EngineCommand`].
+// repr(C): crosses the dual-core channel; see the layout note on [`PrnsCommand`].
 #[repr(C)]
 pub enum Settlement {
     AnnounceNow(Result<(), AnnounceNowFailure>),
@@ -244,7 +244,7 @@ pub trait Settleable {
     type Success;
     type Failure;
 
-    fn into_command(self) -> EngineCommand;
+    fn into_command(self) -> PrnsCommand;
     fn from_settlement(settlement: Settlement) -> Option<Result<Self::Success, Self::Failure>>;
 }
 
@@ -258,21 +258,21 @@ impl<S: StorageLayout> EngineState<S> {
         self.ingested_command_count = self.ingested_command_count.saturating_add(1);
         let IssuedCommand { id, command } = issued;
         match command {
-            EngineCommand::AnnounceNow(announce_now) => {
+            PrnsCommand::AnnounceNow(announce_now) => {
                 self.ingest_announce_now(id, announce_now, interfaces)
             }
-            EngineCommand::SendSinglePacket(send) => self.ingest_send_single_packet(id, send),
-            EngineCommand::SendGroup(send) => self.ingest_send_group(id, send),
-            EngineCommand::RequestPath(request) => CommandOutcome::OwesPathRequest { id, request },
-            EngineCommand::EstablishLink(establish) => self.ingest_establish_link(id, establish),
-            EngineCommand::SendToLink(send) => self.ingest_send_to_link(id, send),
-            EngineCommand::SendToChannel(send) => self.ingest_send_to_channel(id, send),
-            EngineCommand::Identify(identify) => self.ingest_identify(id, identify),
-            EngineCommand::SendRequest(request) => self.ingest_send_request(id, request),
-            EngineCommand::Respond(respond) => self.ingest_respond(id, respond),
-            EngineCommand::CloseLink(close) => self.ingest_close_link(id, close),
-            EngineCommand::SetResourceStrategy(set) => self.ingest_set_resource_strategy(id, set),
-            EngineCommand::AllowRequester(allow) => self.ingest_allow_requester_command(id, allow),
+            PrnsCommand::SendSinglePacket(send) => self.ingest_send_single_packet(id, send),
+            PrnsCommand::SendGroup(send) => self.ingest_send_group(id, send),
+            PrnsCommand::RequestPath(request) => CommandOutcome::OwesPathRequest { id, request },
+            PrnsCommand::EstablishLink(establish) => self.ingest_establish_link(id, establish),
+            PrnsCommand::SendToLink(send) => self.ingest_send_to_link(id, send),
+            PrnsCommand::SendToChannel(send) => self.ingest_send_to_channel(id, send),
+            PrnsCommand::Identify(identify) => self.ingest_identify(id, identify),
+            PrnsCommand::SendRequest(request) => self.ingest_send_request(id, request),
+            PrnsCommand::Respond(respond) => self.ingest_respond(id, respond),
+            PrnsCommand::CloseLink(close) => self.ingest_close_link(id, close),
+            PrnsCommand::SetResourceStrategy(set) => self.ingest_set_resource_strategy(id, set),
+            PrnsCommand::AllowRequester(allow) => self.ingest_allow_requester_command(id, allow),
         }
     }
 
@@ -296,7 +296,7 @@ mod tests {
         let destination = personal_node_destination();
         let issued_as = |id| IssuedCommand {
             id,
-            command: EngineCommand::AnnounceNow(AnnounceNow {
+            command: PrnsCommand::AnnounceNow(AnnounceNow {
                 destination,
                 target: AnnounceTarget::AllInterfaces,
                 app_data: AnnounceAppData::Registered,

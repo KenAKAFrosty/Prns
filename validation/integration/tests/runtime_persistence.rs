@@ -2,7 +2,7 @@ use core::time::Duration;
 use personal_rns::runtime::NoPersistence;
 
 use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy, Settlement,
+    AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand, RatchetPolicy, Settlement,
 };
 use personal_rns::identity::vault::FileVault;
 use personal_rns::identity::{MarkDestinationUsedOutcome, Zeroizing, IDENTITY_SECRET_KEY_LEN};
@@ -167,7 +167,7 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
             loop {
                 ticker.tick().await;
                 if commands_a
-                    .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                    .issue(PrnsCommand::AnnounceNow(AnnounceNow {
                         destination: dest_a,
                         target: AnnounceTarget::AllInterfaces,
                         app_data: AnnounceAppData::Registered,
@@ -347,7 +347,7 @@ async fn a_reconnecting_peer_reclaims_a_rebooted_relays_routes_through_its_tunne
             loop {
                 ticker.tick().await;
                 if commands_c
-                    .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                    .issue(PrnsCommand::AnnounceNow(AnnounceNow {
                         destination: dest_c,
                         target: AnnounceTarget::AllInterfaces,
                         app_data: AnnounceAppData::Registered,
@@ -561,7 +561,7 @@ async fn a_quiet_flush_skips_unchanged_regions_and_a_change_rewrites() {
             app_data: AnnounceAppData::Registered,
         };
         let second_announce_id = commands_a
-            .issue(EngineCommand::AnnounceNow(second_announce.clone()))
+            .issue(PrnsCommand::AnnounceNow(second_announce.clone()))
             .expect("node A accepts the second announce");
         loop {
             let (id, settlement) = settled_rx
@@ -676,7 +676,7 @@ async fn a_rebooted_destination_decrypts_singles_sealed_to_its_pre_reboot_ratche
             loop {
                 ticker.tick().await;
                 if announce_r
-                    .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                    .issue(PrnsCommand::AnnounceNow(AnnounceNow {
                         destination: dest_r,
                         target: AnnounceTarget::AllInterfaces,
                         app_data: AnnounceAppData::Registered,

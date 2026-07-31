@@ -16,7 +16,7 @@ use crate::routing::RouteRemovalCause;
 use crate::units::RttMillis;
 use crate::wire::DestinationHash;
 
-// repr(C) on this enum, Journaled, and Directive: they cross the dual-core channel; see the layout note on [`EngineCommand`].
+// repr(C) on this enum, Journaled, and Directive: they cross the dual-core channel; see the layout note on [`PrnsCommand`].
 #[repr(C)]
 pub enum EngineReaction<'a> {
     /// A notice that something has just happened within the engine.

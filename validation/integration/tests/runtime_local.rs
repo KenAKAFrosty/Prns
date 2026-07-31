@@ -2,7 +2,7 @@ use core::time::Duration;
 use personal_rns::runtime::NoPersistence;
 
 use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
+    AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand, RatchetPolicy,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::BitrateBps;
@@ -96,7 +96,7 @@ async fn an_app_dials_the_shared_instance_and_is_heard_at_a_discounted_hop() {
         loop {
             ticker.tick().await;
             if app_commands
-                .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                .issue(PrnsCommand::AnnounceNow(AnnounceNow {
                     destination: dest_app,
                     target: AnnounceTarget::AllInterfaces,
                     app_data: AnnounceAppData::Registered,
@@ -225,7 +225,7 @@ async fn a_leaf_shared_instance_carries_announces_across_its_local_boundary() {
             loop {
                 ticker.tick().await;
                 if handle
-                    .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                    .issue(PrnsCommand::AnnounceNow(AnnounceNow {
                         destination,
                         target: AnnounceTarget::AllInterfaces,
                         app_data: AnnounceAppData::Registered,

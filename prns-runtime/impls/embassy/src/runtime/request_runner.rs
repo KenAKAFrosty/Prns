@@ -188,7 +188,7 @@ async fn dispatch<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::EngineCommand;
+    use crate::engine::PrnsCommand;
     use crate::runtime::request_endpoints::{
         RequestContext, RequestEndpoint, RequestEndpointPolicy,
     };
@@ -292,7 +292,7 @@ mod tests {
         let Ok(issued) = channel.try_receive() else {
             panic!("response command");
         };
-        let EngineCommand::Respond(response) = issued.command else {
+        let PrnsCommand::Respond(response) = issued.command else {
             panic!("respond command");
         };
         assert_eq!(response.link_id, LinkId::new([1; 16]));
@@ -331,7 +331,7 @@ mod tests {
         let Ok(issued) = channel.try_receive() else {
             panic!("response command");
         };
-        let EngineCommand::Respond(response) = issued.command else {
+        let PrnsCommand::Respond(response) = issued.command else {
             panic!("respond command");
         };
         let crate::engine::RespondPayload::Packed(data) = response.payload else {

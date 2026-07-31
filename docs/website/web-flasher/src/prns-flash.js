@@ -1,7 +1,8 @@
 import {
   BoundedResponseError,
+  esptoolFlashSizeValue,
   FlashBridgeError,
-  flashSizeValue,
+  flashSizeLabel,
   jedecFlashSizeBytes,
   md5Hex,
   normalizeChipName,
@@ -23,6 +24,13 @@ let DefaultTransport = null;
 let activeNavigationEnvironment = null;
 let activeHistoryGuard = null;
 let historyGuardSequence = 0;
+let cancellationLocked = false;
+const RESET_ENUMERATION_TIMEOUT_MS = 10_000;
+const ESP32S3_WDT_WPROTECT = 0x600080b0;
+const ESP32S3_WDT_CONFIG0 = 0x60008098;
+const ESP32S3_WDT_CONFIG1 = 0x6000809c;
+const ESP32S3_WDT_WRITE_KEY = 0x50d83aa1;
+const ESP32S3_WDT_RESET_FLAGS = 0xd0000104;
 
 function operationEvents(emit, operation) {
   const sequence = new BridgeEventSequence(operation);
@@ -260,6 +268,7 @@ export async function prepare(request, emit = () => {}, dependencies = {}) {
       beforeReset: request.beforeReset,
       afterReset: request.afterReset,
       mountLabel: request.mountLabel,
+      installMode: request.installMode,
       files,
     };
     events.emit({
@@ -335,8 +344,10 @@ export async function flash(emit = () => {}, dependencies = {}) {
   }
   let transport = null;
   let deviceLost = false;
+  let retainPreparedPlan = false;
   active = true;
   cancelRequested = false;
+  cancellationLocked = false;
   setNavigationGuard(true, environment);
   try {
     events.emit({ phase: "requesting_port" });
@@ -408,11 +419,25 @@ export async function flash(emit = () => {}, dependencies = {}) {
     if (detectedFlashSize !== prepared.flashSize) {
       throw new FlashBridgeError(
         "wrong_flash_size",
-        `Wrong flash capacity: selected ${flashSizeValue(prepared.flashSize)}, detected ${flashSizeValue(detectedFlashSize)}.`,
+        `Wrong flash capacity: selected ${flashSizeLabel(prepared.flashSize)}, detected ${flashSizeLabel(detectedFlashSize)}.`,
       );
     }
     if (cancelRequested) {
       throw new FlashBridgeError("cancelled", "Flashing was cancelled before writing.");
+    }
+
+    if (prepared.installMode === "erase-all") {
+      cancellationLocked = true;
+      events.emit({ phase: "erasing" });
+      try {
+        await loader.eraseFlash();
+      } catch (error) {
+        throw new FlashBridgeError(
+          "erase_failure",
+          "Full-chip erasure failed.",
+          { cause: error },
+        );
+      }
     }
 
     const total = prepared.files.reduce((sum, file) => sum + file.bytes.length, 0);
@@ -428,7 +453,7 @@ export async function flash(emit = () => {}, dependencies = {}) {
           fileArray: [{ data: file.bytes, address: file.offset }],
           flashMode: prepared.flashMode,
           flashFreq: prepared.flashFrequency,
-          flashSize: flashSizeValue(prepared.flashSize),
+          flashSize: esptoolFlashSizeValue(prepared.flashSize),
           eraseAll: false,
           compress: true,
           reportProgress(_fileIndex, written, compressedTotal) {
@@ -469,9 +494,23 @@ export async function flash(emit = () => {}, dependencies = {}) {
     events.emit({ phase: "verifying_flash", current: total, total });
     events.emit({ phase: "resetting" });
     try {
-      await loader.after(mapAfterReset(prepared.afterReset));
+      const proveReset = dependencies.proveReset ?? proveUsbReset;
+      await proveReset(
+        serial,
+        port,
+        () => resetEspDevice(loader, prepared.afterReset),
+        {
+          timeoutMs: dependencies.resetEnumerationTimeoutMs,
+          setTimeoutImpl: dependencies.setTimeoutImpl,
+          clearTimeoutImpl: dependencies.clearTimeoutImpl,
+        },
+      );
     } catch (error) {
-      throw new FlashBridgeError("reset_failure", "All parts verified, but the final device reset failed.", { cause: error });
+      throw new FlashBridgeError(
+        "reset_failure",
+        "All parts verified, but USB disconnect and re-enumeration after reset were not observed.",
+        { cause: error },
+      );
     }
     if (cancelRequested) {
       throw new FlashBridgeError(
@@ -482,10 +521,17 @@ export async function flash(emit = () => {}, dependencies = {}) {
     events.emit({ phase: "success", current: total, total });
     return { success: true };
   } catch (error) {
-    const failure = safeFailure(error, deviceLost);
+    const resetFailure = error instanceof FlashBridgeError && error.code === "reset_failure";
+    const failure = safeFailure(
+      error,
+      deviceLost && !resetFailure,
+      cancellationLocked,
+    );
     if (!events.terminal) {
       events.emit({ phase: failure.code === "cancelled" ? "cancelled" : "failed", ...failure });
     }
+    retainPreparedPlan = failure.code === "permission_denied"
+      && prepared.installMode === "preserve-data";
     throw error;
   } finally {
     active = false;
@@ -495,7 +541,10 @@ export async function flash(emit = () => {}, dependencies = {}) {
     } catch {
       // The device may already be gone after a successful reset. Cleanup remains best effort.
     }
-    discardPrepared();
+    if (!retainPreparedPlan) {
+      discardPrepared();
+    }
+    cancellationLocked = false;
   }
 }
 
@@ -513,13 +562,15 @@ function throwEarlyFailure(events, error, discard = true) {
 export function cancel() {
   preparationGeneration += 1;
   discardPreparingRequest();
-  cancelRequested = true;
+  if (!cancellationLocked) {
+    cancelRequested = true;
+  }
 }
 
 export function clearPrepared() {
   preparationGeneration += 1;
   discardPreparingRequest();
-  cancelRequested = active;
+  cancelRequested = active && !cancellationLocked;
   if (!active) {
     discardPrepared();
   }
@@ -566,13 +617,88 @@ function mapBeforeReset(value) {
   return value === "usb-reset" ? "usb_reset" : "default_reset";
 }
 
-function mapAfterReset(value) {
-  if (value === "hard-reset" || value === "watchdog-reset") {
-    // esptool-js exposes a transport hard reset; this is the safe browser equivalent for
-    // espflash's watchdog reset strategy on native-USB ESP32-S3 boards.
-    return "hard_reset";
+async function resetEspDevice(loader, afterReset) {
+  if (afterReset === "hard-reset") {
+    await loader.after("hard_reset");
+    return;
   }
-  throw new FlashBridgeError("invalid_request", "The signed release requested an unsupported reset mode.");
+  if (
+    afterReset !== "watchdog-reset"
+    || normalizeChipName(loader.chip?.CHIP_NAME) !== "esp32s3"
+  ) {
+    throw new FlashBridgeError(
+      "invalid_request",
+      "The signed release requested an unsupported reset mode for the detected chip.",
+    );
+  }
+  await loader.writeReg(ESP32S3_WDT_WPROTECT, ESP32S3_WDT_WRITE_KEY);
+  await loader.writeReg(ESP32S3_WDT_CONFIG1, 2000);
+  await loader.writeReg(ESP32S3_WDT_CONFIG0, ESP32S3_WDT_RESET_FLAGS);
+  await loader.writeReg(ESP32S3_WDT_WPROTECT, 0);
+}
+
+async function proveUsbReset(serial, selectedPort, reset, options = {}) {
+  if (
+    typeof serial?.addEventListener !== "function"
+    || typeof serial?.removeEventListener !== "function"
+  ) {
+    throw new Error("Web Serial USB lifecycle events are unavailable.");
+  }
+  const selectedIdentity = usbPortIdentity(selectedPort);
+  if (!selectedIdentity) {
+    throw new Error("The selected serial port has no stable USB identity.");
+  }
+  const timeoutMs = options.timeoutMs ?? RESET_ENUMERATION_TIMEOUT_MS;
+  const setTimeoutImpl = options.setTimeoutImpl ?? globalThis.setTimeout;
+  const clearTimeoutImpl = options.clearTimeoutImpl ?? globalThis.clearTimeout;
+  let disconnected = false;
+  let timeout;
+  let resolveEvidence;
+  let rejectEvidence;
+  const evidence = new Promise((resolve, reject) => {
+    resolveEvidence = resolve;
+    rejectEvidence = reject;
+  });
+  const onDisconnect = (event) => {
+    if (event.target === selectedPort) {
+      disconnected = true;
+    }
+  };
+  const onConnect = (event) => {
+    if (disconnected && sameUsbIdentity(selectedIdentity, usbPortIdentity(event.target))) {
+      resolveEvidence();
+    }
+  };
+  serial.addEventListener("disconnect", onDisconnect);
+  serial.addEventListener("connect", onConnect);
+  timeout = setTimeoutImpl(() => {
+    rejectEvidence(new Error("Timed out waiting for USB disconnect and re-enumeration."));
+  }, timeoutMs);
+  try {
+    await reset();
+    await evidence;
+  } finally {
+    clearTimeoutImpl(timeout);
+    serial.removeEventListener("disconnect", onDisconnect);
+    serial.removeEventListener("connect", onConnect);
+  }
+}
+
+function usbPortIdentity(port) {
+  const info = port?.getInfo?.();
+  if (!Number.isInteger(info?.usbVendorId) || !Number.isInteger(info?.usbProductId)) {
+    return null;
+  }
+  return {
+    vendorId: info.usbVendorId,
+    productId: info.usbProductId,
+  };
+}
+
+function sameUsbIdentity(expected, actual) {
+  return actual !== null
+    && actual.vendorId === expected.vendorId
+    && actual.productId === expected.productId;
 }
 
 function setNavigationGuard(enabled, environment) {
@@ -682,12 +808,14 @@ function discardPreparingRequest() {
 
 export const testing = {
   prepared: () => prepared,
+  proveUsbReset,
   reset() {
     preparationGeneration += 1;
     discardPreparingRequest();
     discardPrepared();
     active = false;
     cancelRequested = false;
+    cancellationLocked = false;
     activeNavigationEnvironment = null;
     activeHistoryGuard = null;
   },
