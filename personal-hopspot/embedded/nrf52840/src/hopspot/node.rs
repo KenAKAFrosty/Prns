@@ -20,7 +20,7 @@ use super::bluetooth_auto;
 
 pub(super) const LANE_COUNT: usize = 3;
 pub(super) const LANE_DEPTH: usize = 1;
-const LORA_OUTBOUND_DEPTH: usize = 3;
+const LORA_OUTBOUND_DEPTH: usize = 1;
 const INTERFACE_CAPACITY: usize = 2 + bluetooth_auto::MEMBERS;
 pub(super) const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"techousb");
 pub(super) const NOTIFY_CAP: usize = minimum_manifold_notification_capacity(LANE_COUNT, LANE_DEPTH);

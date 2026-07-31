@@ -82,10 +82,13 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let lora_spectrum: &'static LoRaSpectrumStatus =
         mk_static!(LoRaSpectrumStatus, LoRaSpectrumStatus::new());
     #[cfg(feature = "lora")]
+    let lora_tx_queue = crate::storage::allocate_lora_tx_queue();
+    #[cfg(feature = "lora")]
     let lora = match LoRaInterface::new(LoRaInterfaceInput {
         radio: lora_radio,
         profile: lora_profile,
         airtime_policy: AirtimePolicy::Regional,
+        tx_queue: lora_tx_queue,
         control: &LORA_CONTROL,
         status: lora_status,
         spectrum: lora_spectrum,

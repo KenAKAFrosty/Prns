@@ -1,4 +1,4 @@
-use embassy_futures::select::{select, select4, Either, Either4};
+use embassy_futures::select::{select, select4, select5, Either, Either4, Either5};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::DynamicSender;
 use embassy_sync::signal::Signal;
@@ -30,14 +30,116 @@ use prns_runtime::manifold::throughput::ThroughputLedger;
 use crate::radios::sx126x::{self, RadioEvent, Sx126x};
 
 mod channel_access;
+mod transmit_queue;
 
 use channel_access::{
     ChannelAccess, ChannelAccessAction, ChannelObservation, ChannelTiming, DemodulatorActivity,
     NoiseFloor,
 };
+use transmit_queue::{TransmitQueue, TransmitQueueError};
 
 const IDLE_TICK: Duration = Duration::from_millis(250);
 const SENSING_UNPUBLISHED: u32 = u32::MAX;
+pub const LORA_TX_QUEUE_BYTES: usize = 6 * 1024;
+
+#[derive(Debug, PartialEq, Eq)]
+enum PacketPlacement {
+    Active,
+    Queued,
+}
+
+struct ActivePacket {
+    bytes: [u8; LORA_MAX_PAYLOAD],
+    len: Option<usize>,
+    airtime_us: u64,
+    activated_at_ms: u64,
+}
+
+impl ActivePacket {
+    const fn new() -> Self {
+        Self {
+            bytes: [0; LORA_MAX_PAYLOAD],
+            len: None,
+            airtime_us: 0,
+            activated_at_ms: 0,
+        }
+    }
+
+    fn activate(&mut self, packet: &[u8], profile: &RadioProfile, now_ms: u64) {
+        self.bytes[..packet.len()].copy_from_slice(packet);
+        self.len = Some(packet.len());
+        self.airtime_us = packet_airtime(packet, profile);
+        self.activated_at_ms = now_ms;
+    }
+
+    fn clear(&mut self) -> bool {
+        self.len.take().is_some()
+    }
+
+    fn recompute_airtime(&mut self, profile: &RadioProfile) {
+        let Some(len) = self.len else {
+            return;
+        };
+        self.airtime_us = packet_airtime(&self.bytes[..len], profile);
+    }
+
+    fn channel_access(&self, profile: RadioProfile, now_ms: u64) -> Option<ChannelAccess> {
+        self.len
+            .map(|_| ChannelAccess::new_at(profile, now_ms, self.activated_at_ms, self.airtime_us))
+    }
+}
+
+struct TransmitBacklog<'a> {
+    queue: TransmitQueue<'a>,
+    active: ActivePacket,
+}
+
+impl<'a> TransmitBacklog<'a> {
+    fn new(storage: &'a mut [u8; LORA_TX_QUEUE_BYTES]) -> Self {
+        Self {
+            queue: TransmitQueue::new(storage),
+            active: ActivePacket::new(),
+        }
+    }
+
+    fn accept(
+        &mut self,
+        packet: &[u8],
+        profile: &RadioProfile,
+        now_ms: u64,
+    ) -> Result<PacketPlacement, TransmitQueueError> {
+        if packet.len() > LORA_MAX_PAYLOAD {
+            return Err(TransmitQueueError::PacketTooLarge);
+        }
+        if self.active.len.is_none() && self.queue.is_empty() {
+            self.active.activate(packet, profile, now_ms);
+            return Ok(PacketPlacement::Active);
+        }
+        self.queue.push(packet)?;
+        Ok(PacketPlacement::Queued)
+    }
+
+    fn activate_next(&mut self, profile: &RadioProfile, now_ms: u64) -> bool {
+        if self.active.len.is_some() {
+            return false;
+        }
+        let Some(len) = self.queue.pop(&mut self.active.bytes) else {
+            return false;
+        };
+        self.active.len = Some(len);
+        self.active.airtime_us = packet_airtime(&self.active.bytes[..len], profile);
+        self.active.activated_at_ms = now_ms;
+        true
+    }
+
+    const fn can_accept_outbound(&self) -> bool {
+        if self.active.len.is_none() && self.queue.is_empty() {
+            true
+        } else {
+            self.queue.can_push_max_packet()
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LoRaSpectrumSnapshot {
@@ -532,6 +634,7 @@ pub struct LoRaInterfaceInput<'a, SPI, BUSY, DIO1, RST, DLY> {
     pub radio: Sx126x<SPI, BUSY, DIO1, RST, DLY>,
     pub profile: RadioProfile,
     pub airtime_policy: AirtimePolicy,
+    pub tx_queue: &'a mut [u8; LORA_TX_QUEUE_BYTES],
     pub control: &'a LoRaControl,
     pub status: &'a EmbassyInterfaceStatus,
     pub spectrum: &'a LoRaSpectrumStatus,
@@ -545,6 +648,7 @@ pub struct LoRaInterface<'a, SPI, BUSY, DIO1, RST, DLY> {
     airtime_policy: AirtimePolicy,
     duty: Option<AirtimeDutyCycle>,
     tag: HeaplessVec<u8, CHANNEL_TAG_CAP>,
+    tx_queue: &'a mut [u8; LORA_TX_QUEUE_BYTES],
     control: &'a LoRaControl,
     status: &'a EmbassyInterfaceStatus,
     spectrum: &'a LoRaSpectrumStatus,
@@ -565,6 +669,7 @@ impl<'a, SPI, BUSY, DIO1, RST, DLY> LoRaInterface<'a, SPI, BUSY, DIO1, RST, DLY>
             radio,
             profile,
             airtime_policy,
+            tx_queue,
             control,
             status,
             spectrum,
@@ -583,6 +688,7 @@ impl<'a, SPI, BUSY, DIO1, RST, DLY> LoRaInterface<'a, SPI, BUSY, DIO1, RST, DLY>
             airtime_policy,
             duty,
             tag,
+            tx_queue,
             control,
             status,
             spectrum,
@@ -623,6 +729,7 @@ where
             airtime_policy,
             duty,
             tag: _,
+            tx_queue,
             control,
             status,
             spectrum,
@@ -651,10 +758,7 @@ where
             crate::diagnostic_log::debug!("RNS_LORA initial RX arm failed: {e:?}");
         }
 
-        let mut pending_buf = [0u8; LORA_MAX_PAYLOAD];
-        let mut pending_len: Option<usize> = None;
-        let mut pending_airtime_us = 0u64;
-        let mut pending_enqueued_at_ms = 0u64;
+        let mut backlog = TransmitBacklog::new(tx_queue);
         let mut access: Option<ChannelAccess> = None;
         let mut access_suspended = true;
         let mut duty_was_held = false;
@@ -667,7 +771,7 @@ where
                 reassembler = LoRaReassembler::new();
                 activity.frame_finished();
                 noise = NoiseFloor::new();
-                if pending_len.take().is_some() {
+                if backlog.active.clear() {
                     access = None;
                     seam.complete_outbound(OutboundDisposition::Dropped(
                         OutboundDropReason::Disabled,
@@ -683,9 +787,18 @@ where
                 }
             }
 
-            if let Some(len) = pending_len {
+            let activation_time = InstantMillis(started.elapsed().as_millis());
+            if backlog.activate_next(&profile, activation_time.0) {
+                access = backlog.active.channel_access(profile, activation_time.0);
+                access_suspended = true;
+                duty_was_held = false;
+                reported_deferrals = 0;
+            }
+
+            if let Some(len) = backlog.active.len {
                 let before_wait = InstantMillis(started.elapsed().as_millis());
-                let projected = airtime.projected_utilization(before_wait, pending_airtime_us);
+                let projected =
+                    airtime.projected_utilization(before_wait, backlog.active.airtime_us);
                 let duty_permits = duty_cycle.is_none_or(|duty| duty.permits(projected));
                 if !duty_permits && !duty_was_held {
                     spectrum.add_duty_hold();
@@ -711,7 +824,7 @@ where
                         spectrum.add_duty_timeout();
                         OutboundDropReason::DutyLimited
                     };
-                    pending_len = None;
+                    backlog.active.clear();
                     access = None;
                     seam.complete_outbound(OutboundDisposition::Dropped(reason));
                     continue;
@@ -733,15 +846,22 @@ where
                 };
 
                 let mut next_action = None;
-                match select4(
+                let can_accept_outbound = backlog.can_accept_outbound();
+                match select5(
                     control.wait(),
                     status.wait_until_disabled(),
                     radio.read_event(&mut rx_buf),
                     Timer::after(Duration::from_millis(tick_ms)),
+                    async {
+                        if can_accept_outbound {
+                            return Some(seam.next_outbound().await);
+                        }
+                        core::future::pending::<Option<&[u8]>>().await
+                    },
                 )
                 .await
                 {
-                    Either4::First(new_profile) => {
+                    Either5::First(new_profile) => {
                         let changed = apply_profile(
                             &mut radio,
                             new_profile,
@@ -759,20 +879,15 @@ where
                             reassembler = LoRaReassembler::new();
                             activity.frame_finished();
                             noise = NoiseFloor::new();
-                            pending_airtime_us = packet_airtime(&pending_buf[..len], &profile);
-                            access = Some(ChannelAccess::new_at(
-                                profile,
-                                now.0,
-                                pending_enqueued_at_ms,
-                                pending_airtime_us,
-                            ));
+                            backlog.active.recompute_airtime(&profile);
+                            access = backlog.active.channel_access(profile, now.0);
                             access_suspended = true;
                             duty_was_held = false;
                             reported_deferrals = 0;
                         }
                     }
-                    Either4::Second(()) => continue,
-                    Either4::Third(Ok(event)) => {
+                    Either5::Second(()) => continue,
+                    Either5::Third(Ok(event)) => {
                         let now = InstantMillis(started.elapsed().as_millis());
                         let observation = observe_radio_event(
                             event,
@@ -804,7 +919,7 @@ where
                             }
                         }
                     }
-                    Either4::Third(Err(error)) => {
+                    Either5::Third(Err(error)) => {
                         crate::diagnostic_log::debug!("RNS_LORA rx event error: {error:?}");
                         activity.frame_finished();
                         if is_radio_fault(&error) {
@@ -822,7 +937,7 @@ where
                             }
                         }
                     }
-                    Either4::Fourth(()) => {
+                    Either5::Fourth(()) => {
                         let now = InstantMillis(started.elapsed().as_millis());
                         let observation = match sample_channel(
                             &mut radio,
@@ -860,6 +975,25 @@ where
                             }
                         }
                     }
+                    Either5::Fifth(Some(outbound)) => {
+                        let now = InstantMillis(started.elapsed().as_millis());
+                        match backlog.accept(outbound, &profile, now.0) {
+                            Ok(PacketPlacement::Queued) => seam.accept_outbound_custody(),
+                            Ok(PacketPlacement::Active) => {
+                                seam.accept_outbound_custody();
+                                access = backlog.active.channel_access(profile, now.0);
+                                access_suspended = true;
+                                duty_was_held = false;
+                                reported_deferrals = 0;
+                            }
+                            Err(TransmitQueueError::Full | TransmitQueueError::PacketTooLarge) => {
+                                seam.complete_outbound(OutboundDisposition::Dropped(
+                                    OutboundDropReason::Rejected,
+                                ));
+                            }
+                        }
+                    }
+                    Either5::Fifth(None) => {}
                 }
 
                 if matches!(next_action, Some(ChannelAccessAction::ReadyForFinalCheck)) {
@@ -935,7 +1069,7 @@ where
                             .map_or(ChannelTiming::for_profile(profile), ChannelAccess::timing);
                         let tx = transmit_packet(
                             &mut radio,
-                            &pending_buf[..len],
+                            &backlog.active.bytes[..len],
                             &mut seq,
                             &mut airtime,
                             &mut throughput,
@@ -966,7 +1100,7 @@ where
                         let completed_at_ms = started.elapsed().as_millis();
                         post_tx_yield_until_ms =
                             completed_at_ms.saturating_add(timing.post_tx_yield_ms());
-                        pending_len = None;
+                        backlog.active.clear();
                         access = None;
                         access_suspended = true;
                         duty_was_held = false;
@@ -975,7 +1109,7 @@ where
                     }
                     Some(ChannelAccessAction::Expired) => {
                         spectrum.add_contention_timeout();
-                        pending_len = None;
+                        backlog.active.clear();
                         access = None;
                         seam.complete_outbound(OutboundDisposition::Dropped(
                             OutboundDropReason::ContentionTimeout,
@@ -1048,23 +1182,22 @@ where
                         }
                     }
                     Either4::Fourth(Either::First(outbound)) => {
-                        if outbound.len() > pending_buf.len() {
-                            seam.complete_outbound(OutboundDisposition::Dropped(
-                                OutboundDropReason::Rejected,
-                            ));
-                            continue;
-                        }
                         let now = InstantMillis(started.elapsed().as_millis());
-                        let len = outbound.len();
-                        pending_buf[..len].copy_from_slice(&outbound[..len]);
-                        seam.accept_outbound_custody();
-                        pending_airtime_us = packet_airtime(&pending_buf[..len], &profile);
-                        pending_enqueued_at_ms = now.0;
-                        pending_len = Some(len);
-                        access = Some(ChannelAccess::new(profile, now.0, pending_airtime_us));
-                        access_suspended = true;
-                        duty_was_held = false;
-                        reported_deferrals = 0;
+                        match backlog.accept(outbound, &profile, now.0) {
+                            Ok(PacketPlacement::Active) => {
+                                seam.accept_outbound_custody();
+                                access = backlog.active.channel_access(profile, now.0);
+                                access_suspended = true;
+                                duty_was_held = false;
+                                reported_deferrals = 0;
+                            }
+                            Ok(PacketPlacement::Queued) => seam.accept_outbound_custody(),
+                            Err(TransmitQueueError::Full | TransmitQueueError::PacketTooLarge) => {
+                                seam.complete_outbound(OutboundDisposition::Dropped(
+                                    OutboundDropReason::Rejected,
+                                ));
+                            }
+                        }
                     }
                     Either4::Fourth(Either::Second(())) => {
                         let now = InstantMillis(started.elapsed().as_millis());
@@ -1142,6 +1275,74 @@ mod tests {
             "two frames: a full 255-byte frame plus the 147-byte remainder"
         );
         assert!(two_frames > one_frame);
+    }
+
+    #[test]
+    fn an_active_packet_accepts_a_fifo_burst_until_maximum_record_backpressure() {
+        let mut storage = [0; LORA_TX_QUEUE_BYTES];
+        let mut backlog = TransmitBacklog::new(&mut storage);
+        let profile = DEFAULT_915_PROFILE;
+
+        assert_eq!(
+            backlog.accept(&[0; LORA_MAX_PAYLOAD], &profile, 10),
+            Ok(PacketPlacement::Active)
+        );
+        for value in 1..=12 {
+            assert_eq!(
+                backlog.accept(&[value; LORA_MAX_PAYLOAD], &profile, 10),
+                Ok(PacketPlacement::Queued)
+            );
+        }
+        assert!(!backlog.can_accept_outbound());
+
+        for value in 0..=12 {
+            assert_eq!(
+                backlog.active.bytes[..backlog.active.len.unwrap()],
+                [value; LORA_MAX_PAYLOAD]
+            );
+            backlog.active.clear();
+            if value < 12 {
+                assert!(backlog.activate_next(&profile, 20 + u64::from(value)));
+            }
+        }
+        assert!(backlog.queue.is_empty());
+    }
+
+    #[test]
+    fn disable_drops_only_the_active_packet_and_activation_starts_a_fresh_profile_timeout() {
+        let mut storage = [0; LORA_TX_QUEUE_BYTES];
+        let mut backlog = TransmitBacklog::new(&mut storage);
+        let original_profile = DEFAULT_915_PROFILE;
+        let queued = [0xA5; 400];
+        backlog.accept(b"active", &original_profile, 1_000).unwrap();
+        backlog.accept(&queued, &original_profile, 1_001).unwrap();
+
+        assert!(backlog.active.clear());
+        assert!(!backlog.queue.is_empty());
+
+        let mut current_profile = original_profile;
+        current_profile.modulation = Modulation::Lora {
+            spreading_factor: SpreadingFactor::Sf12,
+            bandwidth: LoraBandwidth::Bw125kHz,
+            coding_rate: CodingRate::Cr48,
+        };
+        let activated_at_ms = 200_000;
+        assert!(backlog.activate_next(&current_profile, activated_at_ms));
+        assert_eq!(
+            backlog.active.airtime_us,
+            packet_airtime(&queued, &current_profile)
+        );
+        assert_eq!(backlog.active.activated_at_ms, activated_at_ms);
+
+        let access = backlog
+            .active
+            .channel_access(current_profile, activated_at_ms)
+            .unwrap();
+        let ttl_ms = channel_access::pending_ttl_ms(backlog.active.airtime_us);
+        assert!(!access.is_expired(activated_at_ms + ttl_ms - 1));
+        assert!(access.is_expired(activated_at_ms + ttl_ms));
+        assert!(backlog.active.clear());
+        assert!(!backlog.activate_next(&current_profile, activated_at_ms + ttl_ms));
     }
 
     #[test]

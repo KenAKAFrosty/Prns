@@ -5,7 +5,7 @@ use embassy_nrf::gpio::{Input, Output};
 use embassy_nrf::spim::Spim;
 use embassy_time::{Delay, Duration, Timer};
 use embassy_usb::{Builder, Config as UsbConfig};
-use static_cell::StaticCell;
+use static_cell::{ConstStaticCell, StaticCell};
 
 use embedded_graphics::prelude::*;
 use embedded_hal_bus::spi::ExclusiveDevice;
@@ -21,7 +21,9 @@ use personal_rns::interfaces::bluetooth_auto::{Endpoint, LinkCapabilities, Nrf52
 use personal_rns::interfaces::lora::{AirtimePolicy, DEFAULT_915_PROFILE};
 use personal_rns::interfaces::usb_auto::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
 use personal_rns::interfaces::{ConnectionState, InterfaceStatus};
-use personal_rns::lora::{LoRaInterface, LoRaInterfaceInput, LoRaSpectrumStatus};
+use personal_rns::lora::{
+    LoRaInterface, LoRaInterfaceInput, LoRaSpectrumStatus, LORA_TX_QUEUE_BYTES,
+};
 use personal_rns::manifold::embassy::{EmbassyHost, EmbassyInterfaceStatus};
 use personal_rns::manifold::interface_seam::Interface;
 use personal_rns::runtime::{Fleet, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe};
@@ -172,10 +174,14 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
     );
     static LORA_SPECTRUM: StaticCell<LoRaSpectrumStatus> = StaticCell::new();
     let lora_spectrum: &'static LoRaSpectrumStatus = LORA_SPECTRUM.init(LoRaSpectrumStatus::new());
+    static LORA_TX_QUEUE: ConstStaticCell<[u8; LORA_TX_QUEUE_BYTES]> =
+        ConstStaticCell::new([0; LORA_TX_QUEUE_BYTES]);
+    let lora_tx_queue = LORA_TX_QUEUE.take();
     let lora = match LoRaInterface::new(LoRaInterfaceInput {
         radio,
         profile: lora_profile,
         airtime_policy: AirtimePolicy::Regional,
+        tx_queue: lora_tx_queue,
         control: &LORA_CONTROL,
         status: lora_status,
         spectrum: lora_spectrum,

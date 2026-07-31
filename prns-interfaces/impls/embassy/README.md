@@ -10,9 +10,10 @@ MIT/Apache-2.0 license.
 
 ## Embedded LoRa spectrum access
 
-`LoRaInterfaceInput` requires an `AirtimePolicy` and a
-`LoRaSpectrumStatus`. Construction validates frequency, transmit power,
-preamble, and any fixed airtime limit before the radio task can start.
+`LoRaInterfaceInput` requires an `AirtimePolicy`, a `LoRaSpectrumStatus`, and
+`LORA_TX_QUEUE_BYTES` of caller-owned transmit queue storage. Construction
+validates frequency, transmit power, preamble, and any fixed airtime limit
+before the radio task can start.
 `AirtimePolicy::Regional` is the normal choice; a fixed policy may tighten a
 regional limit but cannot weaken one.
 
@@ -28,15 +29,7 @@ CCA levels, deferrals, false preambles, contention and duty drops, and radio
 recoveries. These diagnostics are observational; they do not provide a
 listen-before-talk bypass.
 
-The Heltec V4 release validation build measured this complete stewardship path
-at 13,484 additional linked bytes versus the pre-change trunk build, while BSS
-decreased by 128 bytes. The retained flash cost covers interrupt-evidence
-handling, transactional recovery, adaptive access, explicit outcomes, and
-operator diagnostics.
-
-The embedded Hopspot lane holds one packet in active radio custody and three
-waiting outbound packets. Only the outbound side is deeper. Compared with the
-one-slot lane, the two additional 508-byte payload slots add 1,088 bytes of
-static storage on Heltec V4 and reduce its linker-reserved stack from 37,212 to
-36,124 bytes; total reserved DRAM is unchanged and the path performs no heap
-allocation. The same comparison adds 1,056 bytes of BSS on T-Echo/nRF52840.
+The active packet remains separate from the packed 6 KiB FIFO, and its
+contention timeout begins only when it becomes active. A one-slot manifold lane
+provides the ingress handoff. ESP32-S3 Hopspots place the FIFO in PSRAM, while
+T-Echo supplies static SRAM storage.

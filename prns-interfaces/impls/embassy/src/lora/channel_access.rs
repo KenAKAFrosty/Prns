@@ -121,6 +121,7 @@ pub(crate) struct ChannelAccess {
 }
 
 impl ChannelAccess {
+    #[cfg(test)]
     pub(crate) fn new(profile: RadioProfile, now_ms: u64, packet_airtime_us: u64) -> Self {
         Self::new_at(profile, now_ms, now_ms, packet_airtime_us)
     }

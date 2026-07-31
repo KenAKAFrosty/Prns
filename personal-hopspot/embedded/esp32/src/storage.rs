@@ -1,6 +1,10 @@
 #[cfg(target_arch = "xtensa")]
 use allocator_api2::alloc::{AllocError, Allocator};
 #[cfg(target_arch = "xtensa")]
+use allocator_api2::boxed::Box;
+#[cfg(target_arch = "xtensa")]
+use allocator_api2::vec::Vec;
+#[cfg(target_arch = "xtensa")]
 use core::alloc::Layout;
 #[cfg(target_arch = "xtensa")]
 use core::ptr::NonNull;
@@ -41,6 +45,15 @@ const _: () = assert!(
 #[cfg(target_arch = "xtensa")]
 #[derive(Default, Clone, Copy)]
 pub struct PsramAlloc;
+
+#[cfg(target_arch = "xtensa")]
+pub fn allocate_lora_tx_queue() -> &'static mut [u8; personal_rns::lora::LORA_TX_QUEUE_BYTES] {
+    let mut storage = Vec::with_capacity_in(personal_rns::lora::LORA_TX_QUEUE_BYTES, PsramAlloc);
+    storage.resize(personal_rns::lora::LORA_TX_QUEUE_BYTES, 0);
+    Box::leak(storage.into_boxed_slice())
+        .try_into()
+        .expect("the LoRa transmit queue allocation has its requested length")
+}
 
 #[cfg(target_arch = "xtensa")]
 // SAFETY: Every operation is forwarded unchanged to esp-alloc's ExternalMemory allocator. This ZST

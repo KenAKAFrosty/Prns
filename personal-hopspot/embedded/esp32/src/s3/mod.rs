@@ -191,7 +191,7 @@ const INTERFACE_CAPACITY: usize =
 const WIFI_SUPERVISOR_ID: InterfaceId =
     InterfaceId::new([InterfaceKind::AutoWifi as u8, 0, 0, 0, 0, 0, 0, 0]);
 const LANE_DEPTH: usize = 1;
-const LORA_OUTBOUND_DEPTH: usize = 3;
+const LORA_OUTBOUND_DEPTH: usize = 1;
 pub const NOTIFY_CAP: usize = minimum_manifold_notification_capacity(LANE_COUNT, LANE_DEPTH);
 const COMMANDS_CAP: usize = 8;
 pub const LIFECYCLE_CAP: usize = 8;

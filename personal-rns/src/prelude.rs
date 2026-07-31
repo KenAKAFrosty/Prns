@@ -67,6 +67,7 @@ pub use crate::kiss::KissInterface;
 #[cfg(all(feature = "lora", feature = "embassy-host"))]
 pub use crate::lora::{
     LoRaConfigError, LoRaInterface, LoRaInterfaceInput, LoRaSpectrumSnapshot, LoRaSpectrumStatus,
+    LORA_TX_QUEUE_BYTES,
 };
 #[cfg(all(feature = "pipe", feature = "tokio-host"))]
 pub use crate::pipe::PipeInterface;
