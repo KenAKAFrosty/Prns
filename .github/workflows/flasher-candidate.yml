@@ -244,7 +244,7 @@ jobs:
           - os: windows-2025
             target: x86_64-pc-windows-msvc
             binary: target/x86_64-pc-windows-msvc/release/hopspot-flash.exe
-            rustflags: -D warnings -C link-arg=/Brepro
+            rustflags: -D warnings -C linker=rust-lld -C linker-flavor=lld-link -C link-arg=/Brepro
     runs-on: ${{ matrix.platform.os }}
     timeout-minutes: 180
     env:
@@ -257,6 +257,16 @@ jobs:
         with:
           toolchain: 1.96.0
           targets: ${{ matrix.platform.target }}
+      - name: Expose and prove the Rust-bundled Windows linker
+        if: matrix.platform.target == 'x86_64-pc-windows-msvc'
+        shell: bash
+        run: |
+          sysroot="$(cygpath --unix "$(rustc --print sysroot)")"
+          host="$(rustc --print host-tuple)"
+          rust_lld="${sysroot}/lib/rustlib/${host}/bin/rust-lld.exe"
+          test -x "$rust_lld"
+          "$rust_lld" -flavor link --version | grep -E '^LLD 22\.1\.2 '
+          dirname "$rust_lld" >> "$GITHUB_PATH"
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           shared-key: flasher-cli-${{ matrix.build_pass }}-${{ matrix.platform.target }}

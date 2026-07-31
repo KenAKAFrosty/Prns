@@ -43,7 +43,7 @@ jobs:
           - os: windows-2025
             target: x86_64-pc-windows-msvc
             binary: prnsd/target/x86_64-pc-windows-msvc/release/prnsd.exe
-            rustflags: -D warnings -C link-arg=/Brepro
+            rustflags: -D warnings -C linker=rust-lld -C linker-flavor=lld-link -C link-arg=/Brepro
     runs-on: ${{ matrix.platform.os }}
     timeout-minutes: 180
     env:
@@ -70,6 +70,16 @@ jobs:
           toolchain: 1.96.0
           targets: ${{ matrix.platform.target }}
           components: llvm-tools-preview
+      - name: Expose and prove the Rust-bundled Windows linker
+        if: matrix.platform.target == 'x86_64-pc-windows-msvc'
+        shell: bash
+        run: |
+          sysroot="$(cygpath --unix "$(rustc --print sysroot)")"
+          host="$(rustc --print host-tuple)"
+          rust_lld="${sysroot}/lib/rustlib/${host}/bin/rust-lld.exe"
+          test -x "$rust_lld"
+          "$rust_lld" -flavor link --version | grep -E '^LLD 22\.1\.2 '
+          dirname "$rust_lld" >> "$GITHUB_PATH"
       - name: Build the complete native daemon
         shell: bash
         run: |
@@ -105,9 +115,12 @@ jobs:
               sysroot="$(cygpath --unix "$(rustc --print sysroot)")"
               host="$(rustc --print host-tuple)"
               llvm_readobj="${sysroot}/lib/rustlib/${host}/bin/llvm-readobj.exe"
+              rust_lld="${sysroot}/lib/rustlib/${host}/bin/rust-lld.exe"
               test -x "$llvm_readobj"
+              test -x "$rust_lld"
               {
                 file "${{ matrix.platform.binary }}"
+                "$rust_lld" -flavor link --version
                 "$llvm_readobj" --coff-imports "${{ matrix.platform.binary }}"
               } > "$evidence"
               ;;
