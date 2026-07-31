@@ -4,7 +4,7 @@ use std::fmt;
 const ONE_SHOT_DAEMON_COMMANDS: &[&str] = &[
     "i2p",
     "interfaces",
-    "pages",
+    "nnpages",
     "status",
     "path",
     "probe",
@@ -206,7 +206,10 @@ pub(super) fn print_help() {
         "    cargo prnsd <stop|logs>\n",
         "    cargo prnsd i2p <COMMAND>\n",
         "    cargo prnsd interfaces [COMMAND] [OPTIONS]\n",
-        "    cargo prnsd pages refresh [--config DIR]\n",
+        "    cargo prnsd nnpages seed [--source [--source-archive ZIP]] [--config DIR]\n",
+        "    cargo prnsd nnpages refresh [--config DIR]\n",
+        "    cargo prnsd nnpages announce [--config DIR]\n",
+        "    cargo prnsd nnpages rename \"NAME\" [--config DIR]\n",
         "    cargo prnsd status [OPTIONS]\n",
         "    cargo prnsd path [OPTIONS]\n",
         "    cargo prnsd probe [OPTIONS] FULL_NAME DESTINATION_HASH\n",
@@ -225,7 +228,10 @@ pub(super) fn print_help() {
         "    i2p doctor            Check I2P router and SAM 3.1 readiness without starting Prnsd\n",
         "    i2p setup             Guide installation, SAM enablement, and interface configuration\n",
         "    interfaces            Safely inspect, edit, repair, and apply interface configuration\n",
-        "    pages refresh         Reconcile the running daemon's hosted NomadNet page routes\n",
+        "    nnpages seed          Establish the editable NNPages layout and starter content\n",
+        "    nnpages refresh       Reconcile hosted routes and settings with the running daemon\n",
+        "    nnpages announce      Announce the hosted page destination immediately\n",
+        "    nnpages rename        Save the node display name and announce it when available\n",
         "    status                Query the running shared RNS instance without starting Prnsd\n",
         "    path                  Inspect paths through the running shared RNS instance\n",
         "    probe                 Probe through the running shared RNS instance\n",
@@ -248,6 +254,8 @@ pub(super) fn print_help() {
         "    cargo prnsd restart --features otlp -- --config \"$HOME/.reticulum\"\n",
         "    cargo prnsd stop\n",
         "    cargo prnsd interfaces validate\n",
+        "    cargo prnsd nnpages seed\n",
+        "    cargo prnsd nnpages rename \"My Node\"\n",
         "    cargo prnsd status\n",
         "    cargo prnsd -- --help",
     ));
@@ -385,16 +393,19 @@ mod tests {
     }
 
     #[test]
-    fn pages_is_a_direct_one_shot_daemon_invocation() {
-        assert_eq!(
-            invocation(&["pages", "refresh", "--config", "/node"]),
-            Invocation {
-                action: Action::OneShot,
-                attach: false,
-                build_args: Vec::new(),
-                daemon_args: args(&["pages", "refresh", "--config", "/node"]),
-            }
-        );
+    fn every_nnpages_form_is_a_direct_one_shot_daemon_invocation() {
+        for daemon_args in [
+            &["nnpages", "seed", "--config", "/node"][..],
+            &["nnpages", "refresh", "--config", "/node"][..],
+            &["nnpages", "announce", "--config", "/node"][..],
+            &["nnpages", "rename", "My Node", "--config", "/node"][..],
+        ] {
+            let parsed = invocation(daemon_args);
+            assert_eq!(parsed.action, Action::OneShot);
+            assert!(!parsed.attach);
+            assert!(parsed.build_args.is_empty());
+            assert_eq!(parsed.daemon_args, args(daemon_args));
+        }
     }
 
     #[test]

@@ -16,12 +16,12 @@ use nrf_softdevice::{Flash, Softdevice};
 
 use personal_hopspot_core as hopspot;
 use personal_rns::bluetooth_auto::{BluetoothAuto, BluetoothAutoStatus};
-use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand};
+use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand};
 use personal_rns::interfaces::bluetooth_auto::{Endpoint, LinkCapabilities, Nrf52Host, BLE_HW_MTU};
-use personal_rns::interfaces::lora::DEFAULT_915_PROFILE;
+use personal_rns::interfaces::lora::{AirtimePolicy, DEFAULT_915_PROFILE};
 use personal_rns::interfaces::usb_auto::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
 use personal_rns::interfaces::{ConnectionState, InterfaceStatus};
-use personal_rns::lora::{LoRaInterface, LoRaInterfaceInput};
+use personal_rns::lora::{LoRaInterface, LoRaInterfaceInput, LoRaSpectrumStatus};
 use personal_rns::manifold::embassy::{EmbassyHost, EmbassyInterfaceStatus};
 use personal_rns::manifold::interface_seam::Interface;
 use personal_rns::runtime::{Fleet, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe};
@@ -170,13 +170,20 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
     let lora_status: &'static EmbassyInterfaceStatus = LORA_STATUS.init(
         EmbassyInterfaceStatus::new(lora_id, ConnectionState::Initializing),
     );
-    let lora = LoRaInterface::new(LoRaInterfaceInput {
+    static LORA_SPECTRUM: StaticCell<LoRaSpectrumStatus> = StaticCell::new();
+    let lora_spectrum: &'static LoRaSpectrumStatus = LORA_SPECTRUM.init(LoRaSpectrumStatus::new());
+    let lora = match LoRaInterface::new(LoRaInterfaceInput {
         radio,
         profile: lora_profile,
+        airtime_policy: AirtimePolicy::Regional,
         control: &LORA_CONTROL,
         status: lora_status,
+        spectrum: lora_spectrum,
         lifecycle: LIFECYCLE.dyn_sender(),
-    });
+    }) {
+        Ok(lora) => lora,
+        Err(_) => panic!("the built-in LoRa profile and regional policy must be valid"),
+    };
 
     let (usb_tx, usb_rx) = class.split();
     static USB_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
@@ -330,10 +337,27 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
             }
 
             let _ = panel.clear(EpdColor::White);
-            let interface_menu_details = hopspot::snapshots_to_interface_menu_details(
+            let mut interface_menu_details = hopspot::snapshots_to_interface_menu_details(
                 ui_state.selected_card(content.cards),
                 &snapshots,
             );
+            if ui_state
+                .selected_card(content.cards)
+                .is_some_and(|card| card.id() == lora_status.id())
+            {
+                let spectrum = lora_spectrum.snapshot();
+                interface_menu_details.push_lora_spectrum(hopspot::LoRaSpectrumMenuDetails {
+                    channel_busy_per_mille: spectrum.channel_busy_per_mille,
+                    noise_floor_dbm: spectrum.noise_floor_dbm,
+                    cca_threshold_dbm: spectrum.cca_threshold_dbm,
+                    deferrals: spectrum.deferrals,
+                    false_preambles: spectrum.false_preambles,
+                    contention_timeouts: spectrum.contention_timeouts,
+                    duty_holds: spectrum.duty_holds,
+                    duty_timeouts: spectrum.duty_timeouts,
+                    radio_recoveries: spectrum.radio_recoveries,
+                });
+            }
             hopspot::render(
                 &mut EinkScreen { panel: &mut panel },
                 hopspot::RenderFrame {
@@ -400,12 +424,12 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                             ui_state.show_notice(hopspot::UiNotice::Announcing);
                             notice_until_ms =
                                 Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
-                            let _ = ui_handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
+                            let _ = ui_handle.issue(PrnsCommand::AnnounceNow(AnnounceNow {
                                 destination: self_destination,
                                 target: AnnounceTarget::AllInterfaces,
                                 app_data: AnnounceAppData::Registered,
                             }));
-                            let _ = ui_handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
+                            let _ = ui_handle.issue(PrnsCommand::AnnounceNow(AnnounceNow {
                                 destination: node_page_destination,
                                 target: AnnounceTarget::AllInterfaces,
                                 app_data: AnnounceAppData::Registered,

@@ -90,16 +90,15 @@ jobs:
           PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
         run: |
           if [[ "$HISTORY_MODE" == bootstrap ]]; then
-            published_assets="$(
-              gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
-                --jq '.[] | .assets[]?.name'
-            )"
-            if grep -Eq \
-              '^(release-record-v.+\.json|prns-flasher-candidate-v.+-signed\.tar\.gz)$' \
-              <<< "$published_assets"; then
-              echo "bootstrap is forbidden after any signed schema-v2 custody asset exists" >&2
-              exit 4
-            fi
+            # Signed prereleases were never admitted to stable website history. A
+            # release record, or a signed candidate on a stable release, proves
+            # that bootstrap would discard custody and therefore fails closed.
+            mkdir -p target
+            gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/releases?per_page=100" |
+              jq -s 'add' > target/bootstrap-releases.json
+            ./tools/prns release website-history -- guard-bootstrap \
+              --releases target/bootstrap-releases.json
             mkdir -p target/bootstrap-live
             curl --fail --location --retry 5 --retry-all-errors \
               --output target/bootstrap-live/stable.json \

@@ -38,20 +38,33 @@ enum RunnerResponse {
         name: &'static str,
         bytes: &'static [u8],
     },
+    OpenBytes {
+        file: std::fs::File,
+        byte_len: u64,
+    },
+    OpenFile {
+        name: std::string::String,
+        file: std::fs::File,
+        byte_len: u64,
+    },
 }
 
 impl ResponseSink for RunnerResponse {
     fn put_packed(&mut self, bytes: &[u8]) -> Result<(), ResponseCapacityExceeded> {
         match self {
             Self::Buffered(body) => ResponseSink::put_packed(body, bytes),
-            Self::StaticFile { .. } => Err(ResponseCapacityExceeded),
+            Self::StaticFile { .. } | Self::OpenBytes { .. } | Self::OpenFile { .. } => {
+                Err(ResponseCapacityExceeded)
+            }
         }
     }
 
     fn put_bytes(&mut self, bytes: &[u8]) -> Result<(), ResponseCapacityExceeded> {
         match self {
             Self::Buffered(body) => ResponseSink::put_bytes(body, bytes),
-            Self::StaticFile { .. } => Err(ResponseCapacityExceeded),
+            Self::StaticFile { .. } | Self::OpenBytes { .. } | Self::OpenFile { .. } => {
+                Err(ResponseCapacityExceeded)
+            }
         }
     }
 
@@ -63,6 +76,39 @@ impl ResponseSink for RunnerResponse {
         match self {
             Self::Buffered(body) if body.is_empty() => {
                 *self = Self::StaticFile { name, bytes };
+                Ok(())
+            }
+            _ => Err(ResponseCapacityExceeded),
+        }
+    }
+
+    fn put_open_bytes(
+        &mut self,
+        file: std::fs::File,
+        byte_len: u64,
+    ) -> Result<(), ResponseCapacityExceeded> {
+        match self {
+            Self::Buffered(body) if body.is_empty() => {
+                *self = Self::OpenBytes { file, byte_len };
+                Ok(())
+            }
+            _ => Err(ResponseCapacityExceeded),
+        }
+    }
+
+    fn put_open_file(
+        &mut self,
+        name: &str,
+        file: std::fs::File,
+        byte_len: u64,
+    ) -> Result<(), ResponseCapacityExceeded> {
+        match self {
+            Self::Buffered(body) if body.is_empty() => {
+                *self = Self::OpenFile {
+                    name: name.to_owned(),
+                    file,
+                    byte_len,
+                };
                 Ok(())
             }
             _ => Err(ResponseCapacityExceeded),
@@ -153,6 +199,24 @@ async fn dispatch<St, R: RequestEndpointSet<St>>(
                         .respond_static_file_settled(responder, name, bytes)
                         .await
                 }
+                RunnerResponse::OpenBytes { file, byte_len } => {
+                    commands
+                        .respond_bytes_streaming(
+                            responder,
+                            byte_len,
+                            tokio::fs::File::from_std(file),
+                        )
+                        .await
+                }
+                RunnerResponse::OpenFile {
+                    name,
+                    file,
+                    byte_len,
+                } => {
+                    commands
+                        .respond_open_file_settled(responder, &name, file, byte_len)
+                        .await
+                }
             };
             if let Err(error) = result {
                 eprintln!(
@@ -173,7 +237,7 @@ async fn dispatch<St, R: RequestEndpointSet<St>>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::{EngineCommand, IssuedCommand};
+    use crate::engine::{IssuedCommand, PrnsCommand};
     use crate::manifold::driver::HostCommand;
     use crate::routing::request_handlers::RequestPathHash;
     use crate::runtime::request_endpoints::{RequestContext, RequestEndpointPolicy};
@@ -188,6 +252,18 @@ mod tests {
         };
         assert_eq!(name, "source.zip");
         assert_eq!(bytes.as_ptr(), FILE.as_ptr());
+    }
+
+    #[test]
+    fn open_file_sink_retains_the_handle_without_reading_it() {
+        let source = std::fs::File::open("Cargo.toml").unwrap();
+        let mut response = RunnerResponse::Buffered(std::vec::Vec::new());
+        ResponseSink::put_open_file(&mut response, "source.zip", source, 42).unwrap();
+        let RunnerResponse::OpenFile { name, byte_len, .. } = response else {
+            panic!("open file response");
+        };
+        assert_eq!(name, "source.zip");
+        assert_eq!(byte_len, 42);
     }
 
     struct PanickingRequestEndpointSet;
@@ -228,7 +304,7 @@ mod tests {
         assert!(matches!(
             command_rx.recv().await,
             Some(HostCommand::Engine(IssuedCommand {
-                command: EngineCommand::CloseLink(close),
+                command: PrnsCommand::CloseLink(close),
                 ..
             })) if close.link_id == link_id
         ));

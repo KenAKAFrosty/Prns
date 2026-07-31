@@ -3,7 +3,7 @@ use heapless::Vec as HeaplessVec;
 use crate::routing::delivery::send_group::SendGroupWriteError;
 use crate::wire::DestinationHash;
 
-use super::{EngineCommand, Settleable, Settlement, MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN};
+use super::{PrnsCommand, Settleable, Settlement, MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN};
 
 /// Conservative: RNS chunks every encrypted destination at one size.
 pub const MAX_SEND_GROUP_PLAINTEXT_LEN: usize = MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN;
@@ -32,8 +32,8 @@ impl Settleable for SendGroup {
     type Success = ();
     type Failure = SendGroupFailure;
 
-    fn into_command(self) -> EngineCommand {
-        EngineCommand::SendGroup(self)
+    fn into_command(self) -> PrnsCommand {
+        PrnsCommand::SendGroup(self)
     }
 
     fn from_settlement(settlement: Settlement) -> Option<Result<(), SendGroupFailure>> {

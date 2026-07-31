@@ -27,8 +27,8 @@ impl RequestEndpointSet<DaemonRequestState> for DaemonRequestRoutes {
         if path_hash == RequestPathHash::of(ListRoute::ENDPOINT_ID) {
             return ListRoute::handle(context).await;
         }
-        let pages = context.state.node_pages().clone();
-        pages.respond(context, path_hash).await
+        let nnpages = context.state.nnpages().clone();
+        nnpages.respond(context, path_hash).await
     }
 }
 

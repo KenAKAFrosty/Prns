@@ -66,8 +66,10 @@ pub fn BenchmarksPage() -> Element {
 
         section { class: "mt-10",
             p { class: "mb-6",
-                Link {
-                    to: Route::GuidePage { slug: "benchmarks".to_string() },
+                a {
+                    href: "https://github.com/KenAKAFrosty/Prns/blob/main/benchmarks/README.md",
+                    target: "_blank",
+                    rel: "noopener",
                     class: "text-accent hover:underline",
                     "Run and interpret the benchmarks locally →"
                 }

@@ -121,10 +121,10 @@ impl<Q: DutyQueue> DutyGate<Q> {
         &mut self,
         wire: &[u8],
         airtime_us: u64,
-        utilization: AirtimeUtilization,
+        projected_utilization: AirtimeUtilization,
         duty: &AirtimeDutyCycle,
     ) -> DutyVerdict {
-        if self.queue.is_empty() && !duty.exceeded_by(utilization) {
+        if self.queue.is_empty() && duty.permits(projected_utilization) {
             return DutyVerdict::Transmit;
         }
         self.enqueue(wire, airtime_us, duty);
@@ -133,11 +133,11 @@ impl<Q: DutyQueue> DutyGate<Q> {
 
     pub fn release_ready(
         &mut self,
-        utilization: AirtimeUtilization,
+        projected_utilization: AirtimeUtilization,
         duty: &AirtimeDutyCycle,
         send: impl FnOnce(&[u8]),
     ) -> bool {
-        if duty.exceeded_by(utilization) {
+        if !duty.permits(projected_utilization) {
             return false;
         }
         let Some((airtime_us, ())) = self.queue.pop_front_with(send) else {
@@ -199,7 +199,14 @@ mod tests {
 
     fn saturated() -> AirtimeUtilization {
         AirtimeUtilization {
-            short_per_mille: 100,
+            short_per_mille: 101,
+            long_per_mille: 0,
+        }
+    }
+
+    fn permitted() -> AirtimeUtilization {
+        AirtimeUtilization {
+            short_per_mille: 99,
             long_per_mille: 0,
         }
     }
@@ -221,7 +228,7 @@ mod tests {
         assert!(!gate.release_ready(saturated(), &DUTY, |bytes| sent.push(bytes.to_vec())));
         assert!(sent.is_empty(), "still over the limit");
 
-        assert!(gate.release_ready(idle(), &DUTY, |bytes| sent.push(bytes.to_vec())));
+        assert!(gate.release_ready(permitted(), &DUTY, |bytes| sent.push(bytes.to_vec())));
         assert_eq!(sent, std::vec![std::vec![7u8; 10]]);
         assert!(gate.is_empty());
         assert_eq!(gate.dropped_count(), 0);
@@ -241,7 +248,7 @@ mod tests {
         );
 
         let mut sent = std::vec::Vec::new();
-        while gate.release_ready(idle(), &DUTY, |bytes| sent.push(bytes.to_vec())) {}
+        while gate.release_ready(permitted(), &DUTY, |bytes| sent.push(bytes.to_vec())) {}
         assert_eq!(
             sent,
             std::vec![std::vec![2u8], std::vec![3u8]],
@@ -298,6 +305,24 @@ mod tests {
             1,
             "the full 2s budget still fits 1.8s of real frames: the refusal left no ghost airtime",
         );
+    }
+
+    #[test]
+    fn a_candidate_that_would_cross_the_limit_is_held() {
+        let mut gate: DutyGate<FixedDutyQueue<2, TEST_MTU>> = DutyGate::new();
+        assert_eq!(
+            gate.offer(
+                &[1, 2, 3],
+                300_000,
+                AirtimeUtilization {
+                    short_per_mille: 101,
+                    long_per_mille: 0,
+                },
+                &DUTY,
+            ),
+            DutyVerdict::Held
+        );
+        assert!(!gate.is_empty());
     }
 
     #[cfg(feature = "alloc")]

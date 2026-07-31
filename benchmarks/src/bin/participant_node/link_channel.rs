@@ -143,7 +143,7 @@ async fn respond(
         tokio::select! {
             _ = announce.tick(), if delivery_counters.delivered.load(Ordering::Acquire) == 0 => {
                 if commands
-                    .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                    .issue(PrnsCommand::AnnounceNow(AnnounceNow {
                         destination,
                         target: AnnounceTarget::AllInterfaces,
                         app_data: AnnounceAppData::Registered,
@@ -210,7 +210,7 @@ async fn initiate(
          sent: &mut u64,
          sent_sizes: &mut std::collections::HashMap<u64, usize>| {
             let len = sizes.next_len();
-            if let Some(id) = commands.issue(EngineCommand::SendSinglePacket(SendSinglePacket {
+            if let Some(id) = commands.issue(PrnsCommand::SendSinglePacket(SendSinglePacket {
                 destination,
                 payload: SendSinglePacketPayload::from_slice(&scratch[..len])
                     .expect("payload fits"),
@@ -298,7 +298,7 @@ async fn respond_link(
         tokio::select! {
             _ = announce.tick(), if announcing => {
                 if commands
-                    .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                    .issue(PrnsCommand::AnnounceNow(AnnounceNow {
                         destination,
                         target: AnnounceTarget::AllInterfaces,
                         app_data: AnnounceAppData::Registered,
@@ -352,7 +352,7 @@ async fn initiate_link(
         }
     };
     let establish = commands
-        .issue(EngineCommand::EstablishLink(EstablishLink { destination }))
+        .issue(PrnsCommand::EstablishLink(EstablishLink { destination }))
         .expect("manifold alive");
     let link_id = loop {
         match events.recv().await.expect("manifold alive") {
@@ -393,7 +393,7 @@ async fn initiate_link(
                         sent_sizes: &mut std::collections::HashMap<u64, usize>,
                         sent_payload_bytes: &mut u64| {
         let len = sizes.next_len();
-        if let Some(id) = commands.issue(EngineCommand::SendToLink(SendToLink {
+        if let Some(id) = commands.issue(PrnsCommand::SendToLink(SendToLink {
             link_id,
             payload: SendToLinkPayload::from_slice(&scratch[..len]).expect("payload fits"),
         })) {

@@ -12,6 +12,8 @@ pub enum OutboundDropReason {
     Disabled,
     Disconnected,
     TimedOut,
+    ContentionTimeout,
+    DutyLimited,
     TransportFailure,
     Rejected,
 }
@@ -52,6 +54,12 @@ pub trait InterfaceSeam {
     }
 
     async fn next_outbound(&mut self) -> &[u8];
+
+    /// Accept responsibility for a frame copied into the interface's own
+    /// bounded pending storage, allowing the seam-owned slot to be reused.
+    /// This is not completion; [`complete_outbound`](Self::complete_outbound)
+    /// still reports the eventual disposition.
+    fn accept_outbound_custody(&mut self) {}
 
     fn complete_outbound(&mut self, _disposition: OutboundDisposition) {}
 

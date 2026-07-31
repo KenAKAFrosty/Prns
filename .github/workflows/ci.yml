@@ -394,13 +394,13 @@ jobs:
           retention-days: 7
 
   windows-desktop:
-    # The Hopspot desktop face is the cross-platform proving ground, and nothing else in CI builds on
-    # Windows, so a Windows-only break (a path assumption, an OS cfg gate, the SDL2 link) reaches main
-    # unseen. This lane builds and lints personal-hopspot/desktop on windows-latest. It
-    # is a plain-std crate on stable (its own rust-toolchain.toml pins stable; RUSTUP_TOOLCHAIN below
-    # reasserts it belt-and-suspenders). It links SDL2 statically from source on Windows (sdl2
-    # `bundled` + `static-link`, see its Cargo.toml + .cargo/config.toml); that build needs CMake + the
-    # MSVC toolchain, both preinstalled on windows-latest.
+    # Windows-only cfg and lint failures must be caught before a release candidate is assembled.
+    # This lane checks the complete prnsd release feature set and builds/lints the Hopspot desktop
+    # face on windows-latest. Hopspot is a plain-std crate on stable (its own rust-toolchain.toml
+    # pins stable; RUSTUP_TOOLCHAIN below reasserts it belt-and-suspenders). It links SDL2 statically
+    # from source on Windows (sdl2 `bundled` + `static-link`, see its Cargo.toml +
+    # .cargo/config.toml); that build needs CMake + the MSVC toolchain, both preinstalled on
+    # windows-latest.
     runs-on: windows-latest
     timeout-minutes: 90
     env:
@@ -420,6 +420,9 @@ jobs:
       - name: clippy — native FFI boundary (Windows)
         run: cargo clippy --all-targets --locked -- -D warnings
         working-directory: prns-ffi
+      - name: check — complete prnsd release profile (Windows)
+        run: cargo check --locked --no-default-features --features tokio-host,observability,tray
+        working-directory: prnsd
       # Lint + compile parity with the Linux desktop-face step in feature-configs: this is what would
       # have caught the snapshot-refactor type mismatch that left main non-compiling.
       - name: clippy — hopspot desktop face (Windows)

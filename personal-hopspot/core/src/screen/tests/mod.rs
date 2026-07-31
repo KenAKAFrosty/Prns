@@ -41,7 +41,8 @@ use super::state::{
 use super::{
     card_label, render as render_screen, sort_cards_for_display, AccessPointState, Card,
     CardActivityTracker, CardKind, DisplayPowerControl, InputEvent, InterfaceMenuDetails, Liveness,
-    LocalDocsAccess, RenderFrame, ScreenContent, UiAction, UiConfiguration, UiState,
+    LoRaSpectrumMenuDetails, LocalDocsAccess, RenderFrame, ScreenContent, UiAction,
+    UiConfiguration, UiState,
 };
 
 const TEST_WIDTH: usize = WIDTH as usize;

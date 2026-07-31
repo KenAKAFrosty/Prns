@@ -1,8 +1,8 @@
 //! Two nodes with no addresses anywhere in the code find each other over Wi-Fi auto-discovery. See `docs/getting-started.md` for context.
 
+#![expect(clippy::expect_used, clippy::panic)]
+
 use core::time::Duration;
-use std::error::Error;
-use std::io;
 
 use personal_rns::prelude::*;
 
@@ -10,18 +10,20 @@ const DELIVERY_TIMEOUT: Duration = Duration::from_secs(10);
 const LISTEN_WINDOW: Duration = Duration::from_secs(60);
 
 #[tokio::main(flavor = "multi_thread")]
-async fn main() -> Result<(), Box<dyn Error>> {
-    let destination_a = example_preconfigured_destination()?;
-    let destination_a_hash = destination_a.destination_hash().map_err(|error| {
-        io::Error::other(format!("invalid example destination name: {error:?}"))
-    })?;
+async fn main() {
+    let destination_a = example_preconfigured_destination();
+    let destination_a_hash = destination_a
+        .destination_hash()
+        .expect("invalid example destination name");
 
-    let destination_b = example_preconfigured_destination()?;
+    let destination_b = example_preconfigured_destination();
 
     println!("Node A and Node B: Wi-Fi auto-discovery only; this program contains no addresses");
 
     let node_a = PrnsNode::new(PrnsNodeRecipe {
-        transport_identity: Some(try_generate_identity_secret()?),
+        transport_identity: Some(
+            try_generate_identity_secret().expect("identity generation failed"),
+        ),
         pre_configured_destinations: [destination_a],
         app_state: (),
         storage: GrowableHeap,
@@ -36,7 +38,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_b = PrnsNode::new(PrnsNodeRecipe {
-        transport_identity: Some(try_generate_identity_secret()?),
+        transport_identity: Some(
+            try_generate_identity_secret().expect("identity generation failed"),
+        ),
         pre_configured_destinations: [destination_b],
         app_state: (),
         storage: GrowableHeap,
@@ -64,7 +68,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         loop {
             ticker.tick().await;
             if announcer
-                .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                .issue(PrnsCommand::AnnounceNow(AnnounceNow {
                     destination: destination_a_hash,
                     target: AnnounceTarget::AllInterfaces,
                     app_data: AnnounceAppData::Registered,
@@ -84,19 +88,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let heard = tokio::select! {
             heard = tokio::time::timeout_at(deadline, heard_rx.recv()) => {
                 heard
-                    .map_err(|_| io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        "Node B did not observe Node A's announce within 10 seconds",
-                    ))?
-                    .ok_or_else(|| io::Error::other("Node B's event stream closed before delivery"))?
+                    .expect("Node B did not observe Node A's announce within 10 seconds")
+                    .expect("Node B's event stream closed before delivery")
             }
             result = &mut run_a => {
-                result?;
-                return Err(io::Error::other("Node A stopped before delivery").into());
+                result.expect("Node A failed");
+                panic!("Node A stopped before delivery");
             }
             result = &mut run_b => {
-                result?;
-                return Err(io::Error::other("Node B stopped before delivery").into());
+                result.expect("Node B failed");
+                panic!("Node B stopped before delivery");
             }
         };
         if heard.0 == destination_a_hash {
@@ -142,30 +143,28 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
             result = &mut run_a => {
-                result?;
-                return Err(io::Error::other("Node A stopped during the listen window").into());
+                result.expect("Node A failed");
+                panic!("Node A stopped during the listen window");
             }
             result = &mut run_b => {
-                result?;
-                return Err(io::Error::other("Node B stopped during the listen window").into());
+                result.expect("Node B failed");
+                panic!("Node B stopped during the listen window");
             }
         }
     }
     println!("Listen window closed.");
-    Ok(())
 }
 
-fn example_preconfigured_destination() -> Result<PreConfiguredDestination<'static>, Box<dyn Error>>
-{
-    Ok(PreConfiguredDestination::Single {
+fn example_preconfigured_destination() -> PreConfiguredDestination<'static> {
+    PreConfiguredDestination::Single {
         resource_strategy: ResourceStrategy::AcceptNone,
-        app_name: "prns-guide",
-        aspects: &["announce"],
-        identity: try_generate_identity_secret()?,
+        app_name: "prns-example",
+        aspects: &["example", "auto-discovery"],
+        identity: try_generate_identity_secret().expect("identity generation failed"),
         announce_app_data: b"hello from node A",
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         request_endpoints: ServeMyRequestEndpoints::No,
-    })
+    }
 }

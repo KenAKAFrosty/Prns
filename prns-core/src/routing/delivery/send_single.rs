@@ -375,7 +375,7 @@ mod tests {
     use crate::engine::test_support::*;
     use crate::engine::{
         AnnounceAppData, AnnounceIngest, AnnounceNow, AnnounceTarget, CommandOutcome,
-        EngineCommand, IngestPacketOutcome, IssuedCommand, RatchetPolicy, SendSinglePacketPayload,
+        IngestPacketOutcome, IssuedCommand, PrnsCommand, RatchetPolicy, SendSinglePacketPayload,
     };
     use crate::interfaces::AttachedInterfaces;
     use crate::interfaces::InboundPacket;
@@ -590,7 +590,7 @@ mod tests {
             state.ingest_command(
                 IssuedCommand {
                     id: CommandId(7),
-                    command: EngineCommand::SendSinglePacket(send.clone()),
+                    command: PrnsCommand::SendSinglePacket(send.clone()),
                 },
                 AttachedInterfaces::new(&[]),
             ),
@@ -743,7 +743,7 @@ mod tests {
             state.ingest_command(
                 IssuedCommand {
                     id: CommandId(7),
-                    command: EngineCommand::SendSinglePacket(send),
+                    command: PrnsCommand::SendSinglePacket(send),
                 },
                 AttachedInterfaces::new(&[]),
             ),
@@ -766,7 +766,7 @@ mod tests {
             state.ingest_command(
                 IssuedCommand {
                     id: CommandId(7),
-                    command: EngineCommand::SendSinglePacket(send_of(b"too-far")),
+                    command: PrnsCommand::SendSinglePacket(send_of(b"too-far")),
                 },
                 AttachedInterfaces::new(&[]),
             ),
@@ -791,7 +791,7 @@ mod tests {
             state.ingest_command(
                 IssuedCommand {
                     id: CommandId(7),
-                    command: EngineCommand::SendSinglePacket(send.clone()),
+                    command: PrnsCommand::SendSinglePacket(send.clone()),
                 },
                 AttachedInterfaces::new(&[]),
             ),

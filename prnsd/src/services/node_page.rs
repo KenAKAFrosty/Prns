@@ -13,13 +13,13 @@ use personal_rns::runtime::{
 use personal_rns::storage::StorageLayout;
 use personal_rns::wire::DestinationHash;
 
-use crate::node_pages::NodePageCatalog;
+use crate::nnpages::NnPagesCatalog;
 
 use super::DaemonRequestState;
 
 const APP_NAME: &str = "nomadnetwork";
 const ASPECTS: &[&str] = &["node"];
-const ANNOUNCE_APP_DATA: &[u8] = b"Prns Cloud Host";
+const ANNOUNCE_APP_DATA: &[u8] = b"Prns: High-performance Reticulum";
 
 pub(crate) struct NodePageDestination {
     pub(crate) hash: DestinationHash,
@@ -29,7 +29,7 @@ pub(crate) struct NodePageDestination {
 pub(crate) fn activate<R, F, S>(
     node: &mut PrnsNode<DaemonRequestState, R, F, S>,
     identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
-    catalog: &NodePageCatalog,
+    catalog: &NnPagesCatalog,
 ) -> Result<NodePageDestination, ConfigurePreconfiguredDestinationError>
 where
     R: RequestEndpointSet<DaemonRequestState>,
@@ -66,6 +66,6 @@ mod tests {
     fn node_page_uses_nomadnet_destination_conventions() {
         assert_eq!(APP_NAME, "nomadnetwork");
         assert_eq!(ASPECTS, ["node"]);
-        assert_eq!(ANNOUNCE_APP_DATA, b"Prns Cloud Host");
+        assert_eq!(ANNOUNCE_APP_DATA, b"Prns: High-performance Reticulum");
     }
 }

@@ -321,7 +321,7 @@ mod tests {
     use super::*;
     use crate::engine::test_support::{routable_descriptor, TestStorageLayout};
     use crate::engine::{Directive, EngineReaction};
-    use crate::engine::{EngineCommand, IssuedCommand, SetResourceStrategyFailure, Settlement};
+    use crate::engine::{IssuedCommand, PrnsCommand, SetResourceStrategyFailure, Settlement};
     use crate::interfaces::AttachedInterfaces;
     use crate::routing::links::data::write_link_packet;
     use crate::routing::links::resources::receive::tests_support::*;
@@ -751,7 +751,7 @@ mod tests {
         engine.ingest_command_into(
             IssuedCommand {
                 id: CommandId(9),
-                command: EngineCommand::SetResourceStrategy(SetResourceStrategy {
+                command: PrnsCommand::SetResourceStrategy(SetResourceStrategy {
                     link_id: link_id(),
                     strategy: ResourceStrategy::AcceptNone,
                 }),
@@ -825,7 +825,7 @@ mod tests {
         no_compression.ingest_command_into(
             IssuedCommand {
                 id: CommandId(9),
-                command: EngineCommand::SetResourceStrategy(SetResourceStrategy {
+                command: PrnsCommand::SetResourceStrategy(SetResourceStrategy {
                     link_id: link_id(),
                     strategy: ResourceStrategy::Accept {
                         max_uncompressed_bytes: 1 << 20,
@@ -853,7 +853,7 @@ mod tests {
         tiny_cap.ingest_command_into(
             IssuedCommand {
                 id: CommandId(9),
-                command: EngineCommand::SetResourceStrategy(SetResourceStrategy {
+                command: PrnsCommand::SetResourceStrategy(SetResourceStrategy {
                     link_id: link_id(),
                     strategy: ResourceStrategy::Accept {
                         max_uncompressed_bytes: 100,

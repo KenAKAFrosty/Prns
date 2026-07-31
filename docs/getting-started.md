@@ -73,7 +73,7 @@ After its first local-only success, the example keeps listening for a minute, so
 
 You've now seen a node born, announced, and heard. Where next depends on what you're building:
 
-- **Building an app?** The [example catalog](examples.md#example-catalog) ladders up from here: request and response, resource transfer, changing interfaces on a live node. Then [application integration](application-integration.md) covers owning a node inside a long-lived program, in Rust or any of the SDK languages. When you're ready to use Prns in your Rust apps, the crate is a `cargo add personal-rns` away.
+- **Building an app?** The [example catalog](examples.md#example-catalog) ladders up from here: request and response, resource transfer, changing interfaces on a live node, and the same recipe in every SDK language. When you're ready to use Prns in your Rust apps, the crate is a `cargo add personal-rns` away.
 
 - **Running a transport node for yourself or the ecosystem?** Take a look at [`prnsd`](../prnsd/README.md), the daemon. It owns the interfaces on a machine, and every Reticulum app on that machine shares its one instance.
 

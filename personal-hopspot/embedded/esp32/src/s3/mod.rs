@@ -64,7 +64,7 @@ use esp_radio::esp_now::{
 };
 #[cfg(feature = "bluetooth-auto")]
 use personal_rns::bluetooth_auto::{BluetoothAutoShared, BluetoothAutoStatus};
-use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand};
+use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand};
 #[cfg(feature = "wifi-auto")]
 use personal_rns::esp_now::EspNowInterface;
 #[cfg(feature = "bluetooth-auto")]
@@ -73,7 +73,7 @@ use personal_rns::interfaces::bluetooth_auto::{BleIdentity, BLE_HW_MTU};
 use personal_rns::interfaces::esp_now::{
     self as espnow_core, Channel as EspNowChannel, ChannelPolicy, ESP_NOW_V2_AIR_MTU,
 };
-use personal_rns::interfaces::lora::{DEFAULT_915_PROFILE, LORA_MAX_PAYLOAD};
+use personal_rns::interfaces::lora::{AirtimePolicy, DEFAULT_915_PROFILE, LORA_MAX_PAYLOAD};
 use personal_rns::interfaces::usb_auto::device_descriptor;
 use personal_rns::interfaces::wifi_auto as wifi_auto_contract;
 use personal_rns::interfaces::BitrateBps;
@@ -81,7 +81,7 @@ use personal_rns::interfaces::{
     ConnectionState, InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus, MacAddress,
     Membership,
 };
-use personal_rns::lora::{LoRaControl, LoRaInterface, LoRaInterfaceInput};
+use personal_rns::lora::{LoRaControl, LoRaInterface, LoRaInterfaceInput, LoRaSpectrumStatus};
 use personal_rns::manifold::embassy::{
     EmbassyHost, EmbassyInterfaceSeam, EmbassyInterfaceStatus, EmbassyTimebase, InterfaceLifecycle,
 };
@@ -191,6 +191,7 @@ const INTERFACE_CAPACITY: usize =
 const WIFI_SUPERVISOR_ID: InterfaceId =
     InterfaceId::new([InterfaceKind::AutoWifi as u8, 0, 0, 0, 0, 0, 0, 0]);
 const LANE_DEPTH: usize = 1;
+const LORA_OUTBOUND_DEPTH: usize = 3;
 pub const NOTIFY_CAP: usize = minimum_manifold_notification_capacity(LANE_COUNT, LANE_DEPTH);
 const COMMANDS_CAP: usize = 8;
 pub const LIFECYCLE_CAP: usize = 8;
@@ -272,10 +273,10 @@ use configuration::{HopspotTcpClientConfig, HopspotTcpClientHost};
 use connectivity::build_tcp;
 #[cfg(feature = "wifi-auto")]
 use connectivity::{build_wifi, espnow_channel_policy, EspNowAdapter};
-#[cfg(not(feature = "wifi-auto"))]
-use display::add_manifold_pressure;
 #[cfg(feature = "wifi-auto")]
 use display::build_interface_menu_details;
+#[cfg(not(feature = "wifi-auto"))]
+use display::{add_lora_spectrum, add_manifold_pressure};
 use display::{build_cards, build_snapshots, button_task};
 
 static WIFI_SHARED: AutoWifiShared<MEMBERS> = AutoWifiShared::new(WIFI_SUPERVISOR_ID);
@@ -296,8 +297,12 @@ static WIFI_MANIFOLD_LANE: StaticManifoldLane<
     { wifi_auto_contract::HARDWARE_MTU },
     LANE_DEPTH,
 > = StaticManifoldLane::new();
-static LORA_MANIFOLD_LANE: StaticManifoldLane<Mtx, LORA_MAX_PAYLOAD, LANE_DEPTH> =
-    StaticManifoldLane::new();
+static LORA_MANIFOLD_LANE: StaticManifoldLane<
+    Mtx,
+    LORA_MAX_PAYLOAD,
+    LANE_DEPTH,
+    LORA_OUTBOUND_DEPTH,
+> = StaticManifoldLane::new();
 #[cfg(feature = "bluetooth-auto")]
 static BLE_MANIFOLD_LANE: StaticManifoldLane<Mtx, BLE_HW_MTU, LANE_DEPTH> =
     StaticManifoldLane::new();

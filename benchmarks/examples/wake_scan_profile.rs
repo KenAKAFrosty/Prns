@@ -2,8 +2,8 @@ use personal_rns::interfaces::AttachedInterfaces;
 use std::time::Instant;
 
 use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, Directive, EngineCommand,
-    EngineReaction, EngineState, IngestIo, InstantMillis, IssuedCommand, Journaled, RatchetPolicy,
+    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, Directive, EngineReaction,
+    EngineState, IngestIo, InstantMillis, IssuedCommand, Journaled, PrnsCommand, RatchetPolicy,
     SendSinglePacket, SendSinglePacketPayload, WakeSchedule,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
@@ -56,7 +56,7 @@ fn announce_wire() -> (Vec<u8>, DestinationHash) {
     responder.ingest_command_into(
         IssuedCommand {
             id: CommandId(0),
-            command: EngineCommand::AnnounceNow(AnnounceNow {
+            command: PrnsCommand::AnnounceNow(AnnounceNow {
                 destination,
                 target: AnnounceTarget::AllInterfaces,
                 app_data: AnnounceAppData::Registered,
@@ -118,7 +118,7 @@ fn fill_outstanding(
         initiator.ingest_command_into(
             IssuedCommand {
                 id: CommandId(i as u64 + 1),
-                command: EngineCommand::SendSinglePacket(SendSinglePacket {
+                command: PrnsCommand::SendSinglePacket(SendSinglePacket {
                     destination,
                     payload: SendSinglePacketPayload::from_slice(&payload).expect("payload fits"),
                 }),

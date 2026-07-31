@@ -2,7 +2,7 @@ use core::time::Duration;
 use personal_rns::runtime::NoPersistence;
 
 use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
+    AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand, RatchetPolicy,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::BitrateBps;
@@ -109,7 +109,7 @@ async fn two_nodes_stand_up_and_one_hears_the_others_announce() {
         loop {
             ticker.tick().await;
             if commands_a
-                .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                .issue(PrnsCommand::AnnounceNow(AnnounceNow {
                     destination: dest_a,
                     target: AnnounceTarget::AllInterfaces,
                     app_data: AnnounceAppData::Registered,
@@ -196,7 +196,7 @@ async fn an_interface_added_through_the_handle_carries_traffic_until_torn_down()
         loop {
             ticker.tick().await;
             if commands_a
-                .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                .issue(PrnsCommand::AnnounceNow(AnnounceNow {
                     destination: dest_a,
                     target: AnnounceTarget::AllInterfaces,
                     app_data: AnnounceAppData::Registered,
@@ -288,7 +288,7 @@ async fn a_supervisor_spawns_a_member_and_tearing_the_supervisor_down_cascades_t
         loop {
             ticker.tick().await;
             if commands_a
-                .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                .issue(PrnsCommand::AnnounceNow(AnnounceNow {
                     destination: dest_a,
                     target: AnnounceTarget::AllInterfaces,
                     app_data: AnnounceAppData::Registered,
@@ -402,7 +402,7 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
             loop {
                 ticker.tick().await;
                 if commands
-                    .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                    .issue(PrnsCommand::AnnounceNow(AnnounceNow {
                         destination: dest,
                         target: AnnounceTarget::AllInterfaces,
                         app_data: AnnounceAppData::Registered,
@@ -540,7 +540,7 @@ async fn a_recipe_accept_destination_receives_a_resource() {
         loop {
             ticker.tick().await;
             if announcer
-                .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                .issue(PrnsCommand::AnnounceNow(AnnounceNow {
                     destination: dest_a,
                     target: AnnounceTarget::AllInterfaces,
                     app_data: AnnounceAppData::Registered,

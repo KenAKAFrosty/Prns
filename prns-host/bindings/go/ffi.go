@@ -464,7 +464,7 @@ func marshalResourceStrategy(
 func ffiExecute(host nativeHost, value HostCommand) (nativeCommand, Status, error) {
 	arena := nativeArena{}
 	defer arena.close()
-	var pointer *C.PrnsCommand
+	var pointer *C.PrnsIssuedCommand
 	var status Status
 	switch command := value.(type) {
 	case HostCommandAnnounce:
@@ -791,7 +791,7 @@ func ffiCommandWait(command nativeCommand) (nativeCommandResult, Status) {
 		struct_size: C.size_t(C.sizeof_PrnsCommandResult),
 	}
 	status := Status(C.prns_command_wait(
-		(*C.PrnsCommand)(command.pointer),
+		(*C.PrnsIssuedCommand)(command.pointer),
 		C.uint32_t(nativeNeverTimeout),
 		&result,
 	))
@@ -806,11 +806,11 @@ func ffiCommandWait(command nativeCommand) (nativeCommandResult, Status) {
 }
 
 func ffiCommandInterrupt(command nativeCommand) {
-	C.prns_command_interrupt_wait((*C.PrnsCommand)(command.pointer))
+	C.prns_command_interrupt_wait((*C.PrnsIssuedCommand)(command.pointer))
 }
 
 func ffiCommandClose(command nativeCommand) {
-	C.prns_command_release((*C.PrnsCommand)(command.pointer))
+	C.prns_command_release((*C.PrnsIssuedCommand)(command.pointer))
 }
 
 func ffiClaimApplication(host nativeHost) (nativeEventStream, Status) {

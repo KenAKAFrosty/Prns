@@ -138,6 +138,40 @@ fn capacity_failures_do_not_consume_static_lane_storage() {
 }
 
 #[test]
+fn outbound_depth_can_grow_without_spending_inbound_notification_capacity() {
+    static LANE: StaticManifoldLane<Mtx, 8, 1, 3> = StaticManifoldLane::new();
+    let id = InterfaceId::new(*b"asym-lne");
+    let mut lanes: ManifoldLaneSet<Mtx, 1, 1> = ManifoldLaneSet::new();
+    let InterfaceLane {
+        mut inbound,
+        outbound: _,
+        ..
+    } = lanes.claim_interface(&LANE, descriptor(id, 8)).unwrap();
+
+    inbound
+        .try_grant()
+        .expect("the one inbound slot is free")
+        .fill_for(id, b"in");
+    inbound.commit();
+    assert!(
+        inbound.try_grant().is_none(),
+        "outbound depth does not silently grow inbound storage"
+    );
+
+    let manifold_outbound = &mut lanes.egress.lanes[0].1;
+    for frame in [b"one".as_slice(), b"two", b"three"] {
+        assert_eq!(
+            manifold_outbound.try_write(FrameTarget::Direct(id), frame),
+            LaneWriteOutcome::Written
+        );
+    }
+    assert_eq!(
+        manifold_outbound.try_write(FrameTarget::Direct(id), b"four"),
+        LaneWriteOutcome::Full
+    );
+}
+
+#[test]
 fn an_interface_cannot_claim_a_lane_smaller_than_its_frame() {
     static LANE: StaticManifoldLane<Mtx, 8, 1> = StaticManifoldLane::new();
     let id = InterfaceId::new(*b"toosmall");

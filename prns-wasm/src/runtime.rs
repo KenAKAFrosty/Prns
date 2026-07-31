@@ -3,8 +3,8 @@ use core::convert::TryFrom;
 use js_sys::{Array, Object};
 use personal_rns::engine::{
     AllowRequester, AnnounceAppData, AnnounceNow, AnnounceTarget, CloseLink, CommandId, Directive,
-    EngineCommand, EngineReaction, EngineState, EstablishLink, FanTarget, Identify, InstantMillis,
-    IssuedCommand, Journaled, PathRequestId, RatchetPolicy, RequestPath, RequestResponseTimeout,
+    EngineReaction, EngineState, EstablishLink, FanTarget, Identify, InstantMillis, IssuedCommand,
+    Journaled, PathRequestId, PrnsCommand, RatchetPolicy, RequestPath, RequestResponseTimeout,
     Respond, RespondData, RespondPayload, SendRequest, SendRequestData, SendSinglePacket,
     SendSinglePacketPayload, SendToChannel, SendToChannelBody, SendToLink, SendToLinkPayload,
     SetResourceStrategy,
@@ -289,7 +289,7 @@ impl PrnsRuntime {
             .transpose()?
             .map_or(AnnounceTarget::AllInterfaces, AnnounceTarget::Interface);
         let id = self.mint_command_id();
-        let command = EngineCommand::AnnounceNow(AnnounceNow {
+        let command = PrnsCommand::AnnounceNow(AnnounceNow {
             destination,
             target,
             app_data: AnnounceAppData::Registered,
@@ -315,7 +315,7 @@ impl PrnsRuntime {
         let id = self.mint_command_id();
         self.ingest_command(
             id,
-            EngineCommand::SendSinglePacket(SendSinglePacket {
+            PrnsCommand::SendSinglePacket(SendSinglePacket {
                 destination,
                 payload,
             }),
@@ -339,7 +339,7 @@ impl PrnsRuntime {
         let id = self.mint_command_id();
         self.ingest_command(
             id,
-            EngineCommand::CloseLink(CloseLink { link_id }),
+            PrnsCommand::CloseLink(CloseLink { link_id }),
             now_ms,
             step.entropy.as_bytes().to_vec(),
         );
@@ -353,7 +353,7 @@ impl PrnsRuntime {
         let id = self.mint_command_id();
         self.ingest_command(
             id,
-            EngineCommand::EstablishLink(EstablishLink { destination }),
+            PrnsCommand::EstablishLink(EstablishLink { destination }),
             now_ms,
             entropy,
         );
@@ -372,7 +372,7 @@ impl PrnsRuntime {
         let id = self.mint_command_id();
         self.ingest_command(
             id,
-            EngineCommand::RequestPath(RequestPath {
+            PrnsCommand::RequestPath(RequestPath {
                 destination,
                 id: request_id,
             }),
@@ -390,7 +390,7 @@ impl PrnsRuntime {
         let id = self.mint_command_id();
         self.ingest_command(
             id,
-            EngineCommand::Identify(Identify { link_id, identity }),
+            PrnsCommand::Identify(Identify { link_id, identity }),
             now_ms,
             entropy,
         );
@@ -406,7 +406,7 @@ impl PrnsRuntime {
         let id = self.mint_command_id();
         self.ingest_command(
             id,
-            EngineCommand::SendToLink(SendToLink { link_id, payload }),
+            PrnsCommand::SendToLink(SendToLink { link_id, payload }),
             now_ms,
             entropy,
         );
@@ -426,7 +426,7 @@ impl PrnsRuntime {
         let id = self.mint_command_id();
         self.ingest_command(
             id,
-            EngineCommand::SendRequest(SendRequest {
+            PrnsCommand::SendRequest(SendRequest {
                 link_id,
                 path_hash,
                 data,
@@ -449,7 +449,7 @@ impl PrnsRuntime {
         let id = self.mint_command_id();
         self.ingest_command(
             id,
-            EngineCommand::Respond(Respond {
+            PrnsCommand::Respond(Respond {
                 link_id,
                 request_id,
                 payload: RespondPayload::Packed(payload),
@@ -580,7 +580,7 @@ impl PrnsRuntime {
         let id = self.mint_command_id();
         self.ingest_command(
             id,
-            EngineCommand::SetResourceStrategy(SetResourceStrategy { link_id, strategy }),
+            PrnsCommand::SetResourceStrategy(SetResourceStrategy { link_id, strategy }),
             now_ms,
             entropy,
         );
@@ -610,7 +610,7 @@ impl PrnsRuntime {
         let id = self.mint_command_id();
         self.ingest_command(
             id,
-            EngineCommand::SendToChannel(SendToChannel {
+            PrnsCommand::SendToChannel(SendToChannel {
                 link_id,
                 message_type,
                 body,
@@ -630,7 +630,7 @@ impl PrnsRuntime {
         let id = self.mint_command_id();
         self.ingest_command(
             id,
-            EngineCommand::AllowRequester(AllowRequester {
+            PrnsCommand::AllowRequester(AllowRequester {
                 destination,
                 path_hash,
                 identity,
@@ -727,7 +727,7 @@ impl PrnsRuntime {
             self.engine.ingest_command_into(
                 IssuedCommand {
                     id,
-                    command: EngineCommand::Respond(Respond {
+                    command: PrnsCommand::Respond(Respond {
                         link_id,
                         request_id,
                         payload: match response {
@@ -837,7 +837,7 @@ impl PrnsRuntime {
     fn ingest_command(
         &mut self,
         id: CommandId,
-        command: EngineCommand,
+        command: PrnsCommand,
         now_ms: u64,
         entropy: Vec<u8>,
     ) {

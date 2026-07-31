@@ -16,7 +16,8 @@ The `v0.3.1` release matrix is:
 | `prnsd-0.3.1-x86_64-pc-windows-msvc.zip` | Windows x86_64 |
 
 Native archives contain the executable, licenses, third-party notices, Minisign
-public key, and exact build identity. The Linux binaries are built natively on
+public key, exact build identity, and the commit-bound `source.zip` plus its
+SHA-256 sidecar. The Linux binaries are built natively on
 Ubuntu 24.04, so glibc 2.39 or newer is the supported baseline for this release.
 The full Linux build statically vendors its `libdbus` code; it does not require
 a separately installed `libdbus-1` shared library. Each release publishes the
@@ -88,32 +89,46 @@ creates a private `0600` configuration with one Backbone listener on
 `0.0.0.0:4242`. After that first write the configuration is operator-owned:
 bootstrap never rewrites an existing file.
 
-The same first bootstrap seeds an operator-owned NomadNet document root at
-`/var/lib/prnsd/pages` and publishes `index.mu` as `/page/index.mu` on the
-node's `nomadnetwork.node` destination. Every safe, top-level `.mu` filename in
-that directory is published at `/page/<filename>`. File contents are read from
-disk for each request, so edits and deletions take effect without a restart.
+The same first bootstrap creates `/var/lib/prnsd/nnpages`, with hosted
+documents under `pages/`, downloads under `files/`, announcement policy in
+`settings.toml`, and the optional display name in `name`. Every safe `.mu` path
+below `nnpages/pages/` is published at `/page/<path>` on the node's
+`nomadnetwork.node` destination; subdirectories become path segments. Regular
+downloads below `nnpages/files/` are published at `/file/<path>`. Official
+images stage their exact commit-bound source archive and checksum there, and
+the seeded `source.mu` links to them without requiring internet access. File
+handles are opened beneath those roots on each request and streamed one bounded
+segment at a time, so edits and deletions take effect without retaining complete
+downloads in memory.
 Deleting `index.mu` also stops the node-page announcement and is never a daemon
 error. Bootstrap does not recreate a deleted page once `config` exists.
-The node-page announcement is enabled by default and repeats every 360 minutes,
-the conventional six-hour NomadNet cadence. Operators can set
-`announce_node_page = No` or change `node_page_announce_interval` under
-`[reticulum]`; serving remains available when announcement is disabled.
+The hosted page destination announcement is enabled by default and repeats
+every 360 minutes, the conventional six-hour NomadNet cadence. Operators can
+set `announce = false` or change `announce_interval_minutes` in
+`/var/lib/prnsd/nnpages/settings.toml`; serving remains available when
+announcement is disabled.
 
 The daemon lightly reconciles filenames every five minutes. To publish an
 addition, deletion, or rename immediately, run:
 
 ```sh
-prnsd pages refresh --config /var/lib/prnsd
+prnsd nnpages refresh --config /var/lib/prnsd
 ```
 
 That command uses the configuration-local control lane, so it works with both
 the foreground container daemon and a conventional managed installation.
-Hidden files, non-`.mu` files, directories, symlinks, and files larger than
-1 MiB are not served. Keep the flat directory private and edit it as UID/GID
-`65532` in the container. The initially seeded page is a gentle Prns
-introduction, not immutable product content: operators may replace it with
-their own page or remove it to disable this showcase entirely.
+Hidden and unsafe path components, symlinks, non-`.mu` files in
+`nnpages/pages/`, pages larger than 1 MiB, and downloads larger than 32 MiB are
+not served. Keep the NNPages tree private and edit it as UID/GID `65532` in the
+container. The initially
+seeded index is a gentle Prns introduction, not immutable product content:
+operators may replace it or remove it to disable the showcase entirely.
+`source.mu` and `coming-from-rns.mu` retain a first-line managed marker and are
+refreshed by `prnsd nnpages seed` only while that marker remains; removing the
+marker makes either page operator-owned. `prnsd nnpages seed --source` stages
+the source bundle shipped beside a native executable or inside the image,
+while `--source-archive /path/to/source.zip` supplies an explicit archive.
+Existing different downloads are never overwritten.
 
 The bootstrap environment is fail-closed:
 
@@ -131,19 +146,19 @@ The bootstrap environment is fail-closed:
 - Partial pairs, zero or invalid ports, malformed hosts, and conflicting
   partial input stop startup.
 - Discovery stays disabled when there is no complete published endpoint.
-- `PRNSD_NODE_PAGE_ANNOUNCE=No` disables the seeded page's announcement while
+- `PRNSD_NNPAGES_ANNOUNCE=No` disables the seeded page's announcement while
   continuing to serve it by destination hash.
-- `PRNSD_NODE_PAGE_ANNOUNCE_INTERVAL` selects a positive whole number of
-  minutes and defaults to `360`.
+- `PRNSD_NNPAGES_ANNOUNCE_INTERVAL_MINUTES` selects a positive whole number
+  of minutes and defaults to `360`.
 
 The published port may differ from the listener port. The generated
 `reachable_port` is advertised to peers while `listen_port` remains the local
 socket. Operators can make the same distinction in a hand-written listening
 Backbone or TCP server stanza.
 
-To change bootstrap inputs after creation, edit or replace the configuration
-deliberately; restarting with different environment variables does not mutate
-operator state or reseed pages.
+To change bootstrap inputs after creation, edit the Reticulum `config` or
+NNPages `settings.toml` deliberately; restarting with different environment
+variables does not mutate either operator-owned file or recreate deleted pages.
 
 For a running managed daemon, Backbone publication is an ordinary interface
 setting and can be changed over SSH without a restart:
@@ -155,13 +170,17 @@ prnsd interfaces edit "Cloud Backbone" \
   --apply
 ```
 
-The page-announcement controls are daemon-wide settings. Change them under
-`[reticulum]` and restart the daemon deliberately:
+NNPages policy is independent of the stock Reticulum configuration. Edit the
+sidecar and ask the daemon to reload it:
 
-```ini
-[reticulum]
-  announce_node_page = No
-  node_page_announce_interval = 360
+```toml
+# /var/lib/prnsd/nnpages/settings.toml
+announce = false
+announce_interval_minutes = 360
+```
+
+```sh
+prnsd nnpages refresh --config /var/lib/prnsd
 ```
 
 ## Backup and restore
@@ -245,9 +264,10 @@ that must be published:
 Railway supplies `RAILWAY_TCP_PROXY_DOMAIN` and
 `RAILWAY_TCP_PROXY_PORT`. The one-time bootstrap therefore advertises the
 public proxy port while continuing to listen on `4242` inside the service.
-Expose `PRNSD_BACKBONE_DISCOVERABLE`, `PRNSD_NODE_PAGE_ANNOUNCE`, and
-`PRNSD_NODE_PAGE_ANNOUNCE_INTERVAL` as template variables so the initial
-operator-owned configuration is deployment-controllable.
+Expose `PRNSD_BACKBONE_DISCOVERABLE`, `PRNSD_NNPAGES_ANNOUNCE`, and
+`PRNSD_NNPAGES_ANNOUNCE_INTERVAL_MINUTES` as template variables so the initial
+operator-owned Reticulum configuration and NNPages sidecar are
+deployment-controllable.
 
 Before stable promotion, the protected qualification workflow requires a
 private deployment of the precise template revision, a successful public

@@ -2,7 +2,7 @@ use crate::routing::links::resources::build_outgoing::BuildOutgoingResourceError
 use crate::routing::links::resources::ResourceStrategy;
 use crate::routing::links::LinkId;
 
-use super::{EngineCommand, Settleable, Settlement};
+use super::{PrnsCommand, Settleable, Settlement};
 
 /// RNS 1.4.0 `Link.set_resource_strategy` as a command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,7 +22,7 @@ pub enum SetResourceStrategyFailure {
     Rejected(SetResourceStrategyRejection),
 }
 
-/// There is no `EngineCommand::SendResource`: resource payloads are borrowed slices far too large for the command lane, so sends enter through the host handle's `send_resource` streaming path and only their settlements ride the journal under these names.
+/// There is no `PrnsCommand::SendResource`: resource payloads are borrowed slices far too large for the command lane, so sends enter through the host handle's `send_resource` streaming path and only their settlements ride the journal under these names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SendResourceRejection {
     NoSuchLink,
@@ -49,8 +49,8 @@ impl Settleable for SetResourceStrategy {
     type Success = ();
     type Failure = SetResourceStrategyFailure;
 
-    fn into_command(self) -> EngineCommand {
-        EngineCommand::SetResourceStrategy(self)
+    fn into_command(self) -> PrnsCommand {
+        PrnsCommand::SetResourceStrategy(self)
     }
 
     fn from_settlement(settlement: Settlement) -> Option<Result<(), SetResourceStrategyFailure>> {

@@ -58,11 +58,26 @@ def write_oci_layout(path: Path, platform: str, payload: bytes = b"manifest") ->
 
 
 class PrnsdDistributionTests(unittest.TestCase):
+    def test_dockerfile_frontend_has_deterministic_expose_history(self) -> None:
+        syntax = (ROOT / "Dockerfile").read_text(encoding="utf-8").splitlines()[0]
+        self.assertEqual(
+            syntax,
+            "# syntax=docker/dockerfile:1.26.0@sha256:"
+            "ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32",
+        )
+
     def test_native_archives_are_byte_reproducible_and_self_describing(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             binary = root / "prnsd"
             binary.write_bytes(b"test daemon")
+            source = root / "source.zip"
+            source.write_bytes(b"exact source")
+            source_checksum = root / "source.zip.sha256"
+            source_checksum.write_text(
+                f"{hashlib.sha256(source.read_bytes()).hexdigest()}  source.zip\n",
+                encoding="utf-8",
+            )
             first = root / "first" / "prnsd-0.3.1-x86_64-unknown-linux-gnu.tar.gz"
             second = root / "second" / first.name
             common = {
@@ -71,6 +86,8 @@ class PrnsdDistributionTests(unittest.TestCase):
                 "source_commit": "a" * 40,
                 "source_date_epoch": 1_785_330_739,
                 "rustc": "rustc 1.96.0 (deadbeef 2026-01-01)",
+                "source_archive": source,
+                "source_checksum": source_checksum,
             }
             for output in (first, second):
                 distribution.build_archive(
@@ -89,9 +106,17 @@ class PrnsdDistributionTests(unittest.TestCase):
                 "prnsd-0.3.1-x86_64-unknown-linux-gnu/THIRD_PARTY_NOTICES.md",
                 names,
             )
+            self.assertIn(
+                "prnsd-0.3.1-x86_64-unknown-linux-gnu/source.zip",
+                names,
+            )
             self.assertEqual(identity["source_commit"], "a" * 40)
             self.assertEqual(
                 identity["features"], ["tokio-host", "observability", "tray"]
+            )
+            self.assertEqual(
+                identity["source_archive_sha256"],
+                hashlib.sha256(source.read_bytes()).hexdigest(),
             )
 
     def test_inventory_rejects_any_unrecorded_release_asset(self) -> None:
@@ -217,11 +242,11 @@ class PrnsdDistributionTests(unittest.TestCase):
                 {"allowed": ["Yes", "No"], "default": "Yes"},
             )
             self.assertEqual(
-                controls["PRNSD_NODE_PAGE_ANNOUNCE"],
+                controls["PRNSD_NNPAGES_ANNOUNCE"],
                 {"allowed": ["Yes", "No"], "default": "Yes"},
             )
             self.assertEqual(
-                controls["PRNSD_NODE_PAGE_ANNOUNCE_INTERVAL"],
+                controls["PRNSD_NNPAGES_ANNOUNCE_INTERVAL_MINUTES"],
                 {"default": "360", "unit": "minutes"},
             )
 

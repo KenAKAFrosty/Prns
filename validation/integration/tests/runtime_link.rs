@@ -2,7 +2,7 @@ use core::time::Duration;
 use personal_rns::runtime::NoPersistence;
 
 use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
+    AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand, RatchetPolicy,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::udp::UDP_BITRATE_ESTIMATE;
@@ -34,7 +34,7 @@ impl RequestEndpoint<Responder> for Echo {
     async fn handle(mut cx: RequestContext<'_, Responder>) -> Result<(), Decline> {
         let asked = cx.data;
         let _ = cx.write_packed(asked);
-        cx.respond_packed(b"-pong")
+        cx.respond(b"-pong")
     }
 }
 
@@ -92,7 +92,7 @@ async fn a_link_establishes_and_carries_data_across_two_nodes_over_udp() {
         loop {
             ticker.tick().await;
             if announcer
-                .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                .issue(PrnsCommand::AnnounceNow(AnnounceNow {
                     destination: dest_a,
                     target: AnnounceTarget::AllInterfaces,
                     app_data: AnnounceAppData::Registered,

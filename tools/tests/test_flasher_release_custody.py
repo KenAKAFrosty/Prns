@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -45,10 +46,32 @@ CLI_TARGETS = {
     "aarch64-unknown-linux-gnu": ".tar.gz",
     "x86_64-pc-windows-msvc": ".zip",
 }
+ESP_PARTITION_ENTRY = struct.Struct("<HBBII16sI")
+SOURCE_APPLICATION_HEADROOM = 1024 * 1024
 
 
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def esp_partition_table(
+    factory_size: int,
+    *,
+    factory_offset: int = 0x10000,
+    partition_type: int = 0x00,
+    subtype: int = 0x00,
+) -> bytes:
+    entry = ESP_PARTITION_ENTRY.pack(
+        0x50AA,
+        partition_type,
+        subtype,
+        factory_offset,
+        factory_size,
+        b"factory".ljust(16, b"\0"),
+        0,
+    )
+    md5_marker = b"\xeb\xeb" + b"\xff" * 30
+    return (entry + md5_marker).ljust(0xC00, b"\xff")
 
 
 def run_script(script: str, *arguments: object, environment: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
@@ -185,21 +208,41 @@ class CandidateFixture:
             hosted = root / "website" / "releases" / VERSION / relative
             hosted.parent.mkdir(parents=True, exist_ok=True)
             hosted.write_bytes(artifact.read_bytes())
+            application_part = {
+                "kind": "uf2" if board == "t-echo" else "application",
+                "path": relative,
+                "size": artifact.stat().st_size,
+                "sha256": sha256(artifact),
+            }
+            if board != "t-echo":
+                application_part["offset"] = 0x10000
+            parts = [application_part]
+            if board in {"heltec-v4", "t-beam-supreme"}:
+                partition_relative = f"firmware/{board}/partition-table.bin"
+                partition_artifact = root / partition_relative
+                partition_artifact.write_bytes(esp_partition_table(0xFF0000))
+                self.firmware_paths.append(partition_artifact)
+                partition_hosted = (
+                    root / "website" / "releases" / VERSION / partition_relative
+                )
+                partition_hosted.parent.mkdir(parents=True, exist_ok=True)
+                partition_hosted.write_bytes(partition_artifact.read_bytes())
+                parts.insert(
+                    0,
+                    {
+                        "kind": "partition-table",
+                        "path": partition_relative,
+                        "offset": 0x8000,
+                        "size": partition_artifact.stat().st_size,
+                        "sha256": sha256(partition_artifact),
+                    },
+                )
             target = {
                 "board_slug": board,
                 "transport": (
                     "uf2-mass-storage" if board == "t-echo" else "esp-serial"
                 ),
-                "parts": [
-                    {
-                        "kind": (
-                            "uf2" if board == "t-echo" else "application"
-                        ),
-                        "path": relative,
-                        "size": artifact.stat().st_size,
-                        "sha256": sha256(artifact),
-                    }
-                ],
+                "parts": parts,
             }
             if board in {"heltec-v4", "t-beam-supreme"}:
                 target["source"] = source_identity
@@ -223,6 +266,11 @@ class CandidateFixture:
                         ),
                         "source": (
                             source_identity
+                            if board in {"heltec-v4", "t-beam-supreme"}
+                            else None
+                        ),
+                        "reserve_bytes": (
+                            SOURCE_APPLICATION_HEADROOM
                             if board in {"heltec-v4", "t-beam-supreme"}
                             else None
                         ),
@@ -600,6 +648,84 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         result = self.validate_unsigned()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("SHA-256 mismatch", result.stderr)
+
+    def test_source_headroom_uses_the_shipped_partition_table(self) -> None:
+        result = self.validate_unsigned()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        target = next(
+            target
+            for target in self.fixture.manifest["targets"]
+            if target["board_slug"] == "heltec-v4"
+        )
+        application = next(
+            part for part in target["parts"] if part["kind"] == "application"
+        )
+        partition = next(
+            part for part in target["parts"] if part["kind"] == "partition-table"
+        )
+        partition_path = self.fixture.root / partition["path"]
+        partition_path.write_bytes(
+            esp_partition_table(
+                application["size"] + SOURCE_APPLICATION_HEADROOM - 1
+            )
+        )
+        partition["sha256"] = sha256(partition_path)
+        hosted = self.fixture.root / "website" / "releases" / VERSION / partition["path"]
+        hosted.write_bytes(partition_path.read_bytes())
+        write_json(self.fixture.manifest_path, self.fixture.manifest)
+
+        result = self.validate_unsigned()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("does not retain 1 MiB application headroom", result.stderr)
+
+    def test_source_headroom_rejects_missing_factory_partition(self) -> None:
+        target = next(
+            target
+            for target in self.fixture.manifest["targets"]
+            if target["board_slug"] == "heltec-v4"
+        )
+        partition = next(
+            part for part in target["parts"] if part["kind"] == "partition-table"
+        )
+        partition_path = self.fixture.root / partition["path"]
+        partition_path.write_bytes(
+            esp_partition_table(
+                0xFF0000,
+                partition_type=0x01,
+                subtype=0x02,
+            )
+        )
+        partition["sha256"] = sha256(partition_path)
+        hosted = self.fixture.root / "website" / "releases" / VERSION / partition["path"]
+        hosted.write_bytes(partition_path.read_bytes())
+        write_json(self.fixture.manifest_path, self.fixture.manifest)
+
+        result = self.validate_unsigned()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "exactly one factory application partition",
+            result.stderr,
+        )
+
+    def test_source_headroom_binds_application_offset(self) -> None:
+        target = next(
+            target
+            for target in self.fixture.manifest["targets"]
+            if target["board_slug"] == "heltec-v4"
+        )
+        application = next(
+            part for part in target["parts"] if part["kind"] == "application"
+        )
+        application["offset"] += 0x10000
+        write_json(self.fixture.manifest_path, self.fixture.manifest)
+
+        result = self.validate_unsigned()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "application offset disagrees with its factory partition",
+            result.stderr,
+        )
 
     def test_hosted_source_snapshot_is_bound_to_the_exact_commit(self) -> None:
         archive = self.fixture.root / "website" / "source.zip"

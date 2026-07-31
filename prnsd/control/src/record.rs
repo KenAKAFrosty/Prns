@@ -153,26 +153,26 @@ fn decode_bytes(value: &str) -> Option<Vec<u8>> {
 }
 
 #[cfg(unix)]
-fn encode_os(value: &OsStr) -> String {
+pub(crate) fn encode_os(value: &OsStr) -> String {
     use std::os::unix::ffi::OsStrExt;
     encode_bytes(value.as_bytes())
 }
 
 #[cfg(unix)]
-fn decode_os(value: &str) -> Option<OsString> {
+pub(crate) fn decode_os(value: &str) -> Option<OsString> {
     use std::os::unix::ffi::OsStringExt;
     decode_bytes(value).map(OsString::from_vec)
 }
 
 #[cfg(windows)]
-fn encode_os(value: &OsStr) -> String {
+pub(crate) fn encode_os(value: &OsStr) -> String {
     use std::os::windows::ffi::OsStrExt;
     let bytes: Vec<_> = value.encode_wide().flat_map(u16::to_le_bytes).collect();
     encode_bytes(&bytes)
 }
 
 #[cfg(windows)]
-fn decode_os(value: &str) -> Option<OsString> {
+pub(crate) fn decode_os(value: &str) -> Option<OsString> {
     use std::os::windows::ffi::OsStringExt;
     let bytes = decode_bytes(value)?;
     if !bytes.len().is_multiple_of(2) {
@@ -186,12 +186,12 @@ fn decode_os(value: &str) -> Option<OsString> {
 }
 
 #[cfg(not(any(unix, windows)))]
-fn encode_os(value: &OsStr) -> String {
+pub(crate) fn encode_os(value: &OsStr) -> String {
     encode_bytes(value.to_string_lossy().as_bytes())
 }
 
 #[cfg(not(any(unix, windows)))]
-fn decode_os(value: &str) -> Option<OsString> {
+pub(crate) fn decode_os(value: &str) -> Option<OsString> {
     decode_bytes(value)
         .and_then(|bytes| String::from_utf8(bytes).ok())
         .map(OsString::from)

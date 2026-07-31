@@ -1,23 +1,30 @@
+#![expect(clippy::expect_used, clippy::panic)]
+
 use core::time::Duration;
-use std::error::Error;
-use std::io;
 
 use personal_rns::prelude::*;
 
 const DELIVERY_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
-    let announcing_destination = example_destination()?;
-    let announced_hash = announcing_destination.destination_hash().map_err(|error| {
-        io::Error::other(format!("invalid example destination name: {error:?}"))
-    })?;
+async fn main() {
+    let announcing_destination = example_destination();
+    let announced_hash = announcing_destination
+        .destination_hash()
+        .expect("invalid example destination name");
 
-    let server = TcpServer::bind("127.0.0.1:0").await?;
-    let relay_address = server.local_addr()?.to_string();
+    let server = TcpServer::bind("127.0.0.1:0")
+        .await
+        .expect("could not bind a localhost TCP server");
+    let relay_address = server
+        .local_addr()
+        .expect("could not read the bound server address")
+        .to_string();
     let relay = PrnsNode::new(PrnsNodeRecipe {
-        transport_identity: Some(try_generate_identity_secret()?),
-        pre_configured_destinations: [example_destination()?],
+        transport_identity: Some(
+            try_generate_identity_secret().expect("identity generation failed"),
+        ),
+        pre_configured_destinations: [example_destination()],
         app_state: (),
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
@@ -48,7 +55,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let listener_client = TcpClientInterface::new(relay_address);
     let listening_node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        pre_configured_destinations: [example_destination()?],
+        pre_configured_destinations: [example_destination()],
         app_state: (),
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
@@ -70,7 +77,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         loop {
             ticker.tick().await;
             if announcer
-                .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                .issue(PrnsCommand::AnnounceNow(AnnounceNow {
                     destination: announced_hash,
                     target: AnnounceTarget::AllInterfaces,
                     app_data: AnnounceAppData::Registered,
@@ -90,23 +97,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let heard = tokio::select! {
             heard = tokio::time::timeout_at(deadline, heard_listener.recv()) => {
                 heard
-                    .map_err(|_| io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        "The relayed announce did not arrive within 10 seconds",
-                    ))?
-                    .ok_or_else(|| io::Error::other("The listener's event stream closed before delivery"))?
+                    .expect("The relayed announce did not arrive within 10 seconds")
+                    .expect("The listener's event stream closed before delivery")
             }
             result = &mut run_relay => {
-                result?;
-                return Err(io::Error::other("The relay stopped before delivery").into());
+                result.expect("The relay failed");
+                panic!("The relay stopped before delivery");
             }
             result = &mut run_announcer => {
-                result?;
-                return Err(io::Error::other("The announcing node stopped before delivery").into());
+                result.expect("The announcing node failed");
+                panic!("The announcing node stopped before delivery");
             }
             result = &mut run_listener => {
-                result?;
-                return Err(io::Error::other("The listening node stopped before delivery").into());
+                result.expect("The listening node failed");
+                panic!("The listening node stopped before delivery");
             }
         };
         if heard == announced_hash {
@@ -114,19 +118,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     }
     println!("Success: the announce crossed two links; only the transport node connected them");
-    Ok(())
 }
 
-fn example_destination() -> Result<PreConfiguredDestination<'static>, Box<dyn Error>> {
-    Ok(PreConfiguredDestination::Single {
+fn example_destination() -> PreConfiguredDestination<'static> {
+    PreConfiguredDestination::Single {
         resource_strategy: ResourceStrategy::AcceptNone,
         app_name: "prns-example",
-        aspects: &["transport-node"],
-        identity: try_generate_identity_secret()?,
+        aspects: &["example", "transport-node"],
+        identity: try_generate_identity_secret().expect("identity generation failed"),
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         request_endpoints: ServeMyRequestEndpoints::No,
-    })
+    }
 }

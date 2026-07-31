@@ -67,9 +67,13 @@ forbids and the reviewed metadata/token snapshot are the enforcement mechanisms.
 
 ## Notices and non-Cargo graphs
 
-`THIRD_PARTY_NOTICES.md` is generated and byte-checked with cargo-about 0.9.1. It deduplicates exact
-license texts across the graph matrix, includes bundled native-code notices, reproduces the Nordic
-terms, and appends the checked Android Maven and hosted JavaScript closures. The browser graph pins
+`THIRD_PARTY_NOTICES.md` is generated and byte-checked with cargo-about 0.9.1. Each complete locked
+manifest closure is fetched first; cargo-about then target-filters and reads only the packaged
+license material in offline mode, so mutable network responses cannot change signed release
+evidence. The bundle canonicalizes presentation-only whitespace (line endings, trailing space, and
+repeated blank lines) without changing legal words, then deduplicates those texts across the graph
+matrix. It includes bundled native-code notices, reproduces the Nordic terms, and appends the
+checked Android Maven and hosted JavaScript closures. The browser graph pins
 `esptool-js 0.6.0`, `spark-md5 3.0.2` (MIT alternative), and their exact transitive runtime graph.
 Playwright 1.61.1 and axe 4.12.1 are exact-pinned development-only browser/accessibility tools.
 Their locked registry sources, integrity hashes, and permissive/MPL licenses are audited, while

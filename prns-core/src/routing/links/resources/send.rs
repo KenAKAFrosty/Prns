@@ -149,19 +149,26 @@ impl<S: StorageLayout> EngineState<S> {
                 return crate::engine::WakeSchedules::UNCHANGED;
             }
         };
-        let response_envelope = response_envelope_prefix(&respond.request_id);
         let mut envelope = [0u8; RESPONSE_WIRE_OVERHEAD + MAX_PACKED_BINARY_HEADER_LEN];
-        envelope[..RESPONSE_WIRE_OVERHEAD].copy_from_slice(&response_envelope);
-        let Ok(binary_header_len) =
-            write_packed_binary_header(data.len(), &mut envelope[RESPONSE_WIRE_OVERHEAD..])
-        else {
-            sink(EngineReaction::Journaled(Journaled::CommandSettled {
-                id,
-                settlement: Settlement::Respond(Err(crate::engine::RespondFailure::WriteFailed)),
-            }));
-            return crate::engine::WakeSchedules::UNCHANGED;
+        let envelope_len = match file_name {
+            Some(_) => 0,
+            None => {
+                envelope[..RESPONSE_WIRE_OVERHEAD]
+                    .copy_from_slice(&response_envelope_prefix(&respond.request_id));
+                let Ok(binary_header_len) =
+                    write_packed_binary_header(data.len(), &mut envelope[RESPONSE_WIRE_OVERHEAD..])
+                else {
+                    sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                        id,
+                        settlement: Settlement::Respond(Err(
+                            crate::engine::RespondFailure::WriteFailed,
+                        )),
+                    }));
+                    return crate::engine::WakeSchedules::UNCHANGED;
+                };
+                RESPONSE_WIRE_OVERHEAD + binary_header_len
+            }
         };
-        let envelope_len = RESPONSE_WIRE_OVERHEAD + binary_header_len;
         let mut metadata_buffer = [0u8; STATIC_FILE_METADATA_BYTES];
         let metadata = match file_name {
             Some(name) => {
@@ -2016,6 +2023,10 @@ mod tests {
         assert_eq!(
             crate::rncp::parse_file_metadata(&opened[3..3 + metadata_len]).unwrap(),
             b"source.zip"
+        );
+        assert!(
+            opened[3 + metadata_len..].iter().all(|byte| *byte == 0x42),
+            "a file response carries the bare file bytes with no envelope or binary header"
         );
         assert!(
             first_state.sealed_transfer_bytes <= engine.outgoing_resources.transfer_capacity(),

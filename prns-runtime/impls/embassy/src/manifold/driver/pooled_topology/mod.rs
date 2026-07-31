@@ -34,6 +34,9 @@ pub enum InterfaceLifecycle {
     Remove {
         id: InterfaceId,
     },
+    Update {
+        descriptor: InterfaceDescriptor,
+    },
     Retag {
         old_id: InterfaceId,
         new_id: InterfaceId,
@@ -312,6 +315,22 @@ pub(crate) async fn run_pooled<
                         },
                     );
                     wake_schedules = engine.wake_schedules(AttachedInterfaces::new(&*descriptors));
+                }
+                InterfaceLifecycle::Update { descriptor } => {
+                    let descriptor = clamp_to_embedded_ceiling(descriptor);
+                    if let Some(slot) = descriptors
+                        .iter()
+                        .position(|existing| existing.id == descriptor.id)
+                    {
+                        descriptors[slot] = descriptor;
+                        if let Some(pos) = pacers.iter().position(|pacer| pacer.id == descriptor.id)
+                        {
+                            pacers[pos] =
+                                InterfacePacer::from_descriptor(descriptor.id, &descriptor);
+                        }
+                        wake_schedules =
+                            engine.wake_schedules(AttachedInterfaces::new(&*descriptors));
+                    }
                 }
                 InterfaceLifecycle::Retag {
                     old_id,

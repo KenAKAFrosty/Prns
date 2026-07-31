@@ -39,6 +39,8 @@ benchmarks/.benchmark-runs/
 /validation-artifacts/
 # Local design scratch — not part of the committed tree
 /scratch/
+/release/source-bundle/source.zip
+/release/source-bundle/source.zip.sha256
 
 /.codex/
 # Universal keyboard/mouse app — scratch build, not part of the committed tree yet

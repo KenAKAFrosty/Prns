@@ -5,7 +5,7 @@ use crate::identity::ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN;
 use crate::routing::delivery::send_single::SendSinglePacketWriteError;
 use crate::wire::{DestinationHash, BROADCAST_MDU};
 
-use super::{EngineCommand, PacketReceiptDelivered, Settleable, Settlement};
+use super::{PacketReceiptDelivered, PrnsCommand, Settleable, Settlement};
 
 /// RNS 1.4.0 `Packet.ENCRYPTED_MDU`: whole AES blocks, less one byte so PKCS7 always has room to pad.
 pub const MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN: usize =
@@ -38,8 +38,8 @@ impl Settleable for SendSinglePacket {
     type Success = PacketReceiptDelivered;
     type Failure = SendSinglePacketFailure;
 
-    fn into_command(self) -> EngineCommand {
-        EngineCommand::SendSinglePacket(self)
+    fn into_command(self) -> PrnsCommand {
+        PrnsCommand::SendSinglePacket(self)
     }
 
     fn from_settlement(

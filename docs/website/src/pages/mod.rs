@@ -11,7 +11,7 @@ pub use benchmarks::{BenchmarksHostPage, BenchmarksPage};
 pub use contributing::ContributingPage;
 pub use crates::{CratesIndex, SingleCrate};
 pub use flash::{FlashBoardPage, FlashPage};
-pub use guides::{GuidePage, GuidesIndex};
+pub use guides::GuidesIndex;
 pub use landing::Landing;
 pub use not_found::NotFound;
 pub use platforms::PlatformsPage;

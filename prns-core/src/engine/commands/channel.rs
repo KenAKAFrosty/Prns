@@ -4,7 +4,7 @@ use crate::routing::links::channel::{channel_mdu, MessageType};
 use crate::routing::links::data::LinkDataError;
 use crate::routing::links::LinkId;
 
-use super::{EngineCommand, PacketReceiptDelivered, Settleable, Settlement};
+use super::{PacketReceiptDelivered, PrnsCommand, Settleable, Settlement};
 
 pub const MAX_SEND_TO_CHANNEL_BODY_LEN: usize = channel_mdu(crate::wire::BROADCAST_MTU);
 
@@ -37,8 +37,8 @@ impl Settleable for SendToChannel {
     type Success = PacketReceiptDelivered;
     type Failure = SendToChannelFailure;
 
-    fn into_command(self) -> EngineCommand {
-        EngineCommand::SendToChannel(self)
+    fn into_command(self) -> PrnsCommand {
+        PrnsCommand::SendToChannel(self)
     }
 
     fn from_settlement(

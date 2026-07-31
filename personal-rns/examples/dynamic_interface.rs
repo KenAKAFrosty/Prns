@@ -1,16 +1,16 @@
+#![expect(clippy::expect_used, clippy::panic)]
+
 use core::time::Duration;
-use std::error::Error;
-use std::io;
 
 use personal_rns::prelude::*;
 
 const CHANGE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() {
     let node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        pre_configured_destinations: [example_destination()?],
+        pre_configured_destinations: [example_destination()],
         app_state: (),
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
@@ -19,7 +19,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         persistence: NoPersistence,
     });
     let handle = node.handle();
-    let server = TcpServer::bind("127.0.0.1:0").await?;
+    let server = TcpServer::bind("127.0.0.1:0")
+        .await
+        .expect("could not bind a localhost TCP server");
     let attached_interface = handle.supervise(server);
     let interface_id = attached_interface.id();
 
@@ -51,29 +53,25 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     tokio::select! {
         result = tokio::time::timeout(CHANGE_TIMEOUT, changes) => {
-            result.map_err(|_| io::Error::new(
-                io::ErrorKind::TimedOut,
-                "The interface change did not complete within 5 seconds",
-            ))?;
+            result.expect("The interface change did not complete within 5 seconds");
         }
         result = node.run() => {
-            result?;
-            return Err(io::Error::other("The node stopped before interface teardown").into());
+            result.expect("The node failed");
+            panic!("The node stopped before interface teardown");
         }
     }
-    Ok(())
 }
 
-fn example_destination() -> Result<PreConfiguredDestination<'static>, Box<dyn Error>> {
-    Ok(PreConfiguredDestination::Single {
+fn example_destination() -> PreConfiguredDestination<'static> {
+    PreConfiguredDestination::Single {
         resource_strategy: ResourceStrategy::AcceptNone,
         app_name: "prns-example",
-        aspects: &["dynamic-interface"],
-        identity: try_generate_identity_secret()?,
+        aspects: &["example", "dynamic-interface"],
+        identity: try_generate_identity_secret().expect("identity generation failed"),
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         request_endpoints: ServeMyRequestEndpoints::No,
-    })
+    }
 }

@@ -81,12 +81,23 @@ def archive_members(
     commit: str,
     epoch: int,
     rustc: str,
+    source_archive: Path,
+    source_checksum: Path,
 ) -> tuple[str, list[tuple[str, bytes, int]]]:
     root = f"prnsd-{version}-{target}"
     executable = "prnsd.exe" if target.endswith("-windows-msvc") else "prnsd"
     binary_bytes = regular_file(binary, "daemon binary").read_bytes()
     if not binary_bytes:
         raise ValueError("daemon binary is empty")
+    source_bytes = regular_file(source_archive, "source archive").read_bytes()
+    source_checksum_bytes = regular_file(
+        source_checksum, "source archive checksum"
+    ).read_bytes()
+    expected_source_checksum = (
+        f"{hashlib.sha256(source_bytes).hexdigest()}  source.zip\n".encode()
+    )
+    if source_checksum_bytes != expected_source_checksum:
+        raise ValueError("source archive checksum is malformed or stale")
     identity = {
         "binary_sha256": hashlib.sha256(binary_bytes).hexdigest(),
         "features": ["tokio-host", "observability", "tray"],
@@ -94,6 +105,7 @@ def archive_members(
         "rustc": rustc.strip(),
         "schema": 1,
         "source_commit": commit,
+        "source_archive_sha256": hashlib.sha256(source_bytes).hexdigest(),
         "source_date_epoch": epoch,
         "target": target,
         "version": version,
@@ -113,6 +125,8 @@ def archive_members(
             0o644,
         ),
         ("build-identity.json", canonical_json(identity), 0o644),
+        ("source.zip", source_bytes, 0o644),
+        ("source.zip.sha256", source_checksum_bytes, 0o644),
     )
     return root, [(f"{root}/{name}", content, mode) for name, content, mode in sources]
 
@@ -174,6 +188,8 @@ def build_archive(arguments: argparse.Namespace) -> None:
         commit=commit,
         epoch=epoch,
         rustc=arguments.rustc,
+        source_archive=arguments.source_archive,
+        source_checksum=arguments.source_checksum,
     )
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(
@@ -307,11 +323,11 @@ def write_railway_contract(arguments: argparse.Namespace) -> None:
                     "allowed": ["Yes", "No"],
                     "default": "Yes",
                 },
-                "PRNSD_NODE_PAGE_ANNOUNCE": {
+                "PRNSD_NNPAGES_ANNOUNCE": {
                     "allowed": ["Yes", "No"],
                     "default": "Yes",
                 },
-                "PRNSD_NODE_PAGE_ANNOUNCE_INTERVAL": {
+                "PRNSD_NNPAGES_ANNOUNCE_INTERVAL_MINUTES": {
                     "default": "360",
                     "unit": "minutes",
                 },
@@ -947,6 +963,8 @@ def parser() -> argparse.ArgumentParser:
     archive.add_argument("--source-commit", required=True)
     archive.add_argument("--source-date-epoch", type=int, required=True)
     archive.add_argument("--rustc", required=True)
+    archive.add_argument("--source-archive", type=Path, required=True)
+    archive.add_argument("--source-checksum", type=Path, required=True)
     archive.add_argument("--output", type=Path, required=True)
     archive.set_defaults(run=build_archive)
 

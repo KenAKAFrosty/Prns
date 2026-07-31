@@ -7,6 +7,12 @@ use crate::cli::BootstrapProfile;
 
 mod bootstrap;
 
+pub(crate) use bootstrap::{
+    format_archive_size, materialize_nnpages_settings, prepare_nnpages_layout,
+    seed_coming_from_rns_page, seed_default_page, seed_source_page, stage_bundled_source,
+    stage_source_archive, ManagedPageSeed, ServerBootstrapError, SourcePageSeed, SourcePageState,
+};
+
 pub(crate) const DEFAULT_CONFIG: &str = "[reticulum]\n\
     enable_transport = Yes\n\
     share_instance = Yes\n\
@@ -40,7 +46,7 @@ pub(super) fn load_or_exit(
                     receipt.config_path.display()
                 );
                 if let Some(path) = receipt.seeded_page {
-                    eprintln!("prnsd: seeded operator node page {}", path.display());
+                    eprintln!("prnsd: seeded operator NNPages index {}", path.display());
                 }
             }
             Ok(None) => {}

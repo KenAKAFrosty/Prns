@@ -8,7 +8,7 @@ use crate::routing::request_handlers::RequestPathHash;
 use crate::units::DurationMillis;
 use crate::wire::DestinationHash;
 
-use super::{EngineCommand, PacketReceiptDelivered, SendResourceFailure, Settleable, Settlement};
+use super::{PacketReceiptDelivered, PrnsCommand, SendResourceFailure, Settleable, Settlement};
 
 pub const MAX_SEND_REQUEST_DATA_LEN: usize =
     link_mdu(crate::wire::BROADCAST_MTU) - REQUEST_WIRE_OVERHEAD;
@@ -106,8 +106,8 @@ impl Settleable for SendRequest {
     type Success = PacketReceiptDelivered;
     type Failure = SendRequestFailure;
 
-    fn into_command(self) -> EngineCommand {
-        EngineCommand::SendRequest(self)
+    fn into_command(self) -> PrnsCommand {
+        PrnsCommand::SendRequest(self)
     }
 
     fn from_settlement(
@@ -137,8 +137,8 @@ impl Settleable for Respond {
     type Success = ();
     type Failure = RespondFailure;
 
-    fn into_command(self) -> EngineCommand {
-        EngineCommand::Respond(self)
+    fn into_command(self) -> PrnsCommand {
+        PrnsCommand::Respond(self)
     }
 
     fn from_settlement(settlement: Settlement) -> Option<Result<(), RespondFailure>> {
@@ -166,8 +166,8 @@ impl Settleable for AllowRequester {
     type Success = ();
     type Failure = AllowRequesterFailure;
 
-    fn into_command(self) -> EngineCommand {
-        EngineCommand::AllowRequester(self)
+    fn into_command(self) -> PrnsCommand {
+        PrnsCommand::AllowRequester(self)
     }
 
     fn from_settlement(settlement: Settlement) -> Option<Result<(), AllowRequesterFailure>> {

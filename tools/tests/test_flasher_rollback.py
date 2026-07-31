@@ -31,6 +31,7 @@ from flasher_rollback import (
 )
 from flasher_website_history import (
     apply_history,
+    bootstrap_blocking_custody_tags,
     prepare_bootstrap,
     prepare_retained,
     sha256,
@@ -132,6 +133,32 @@ def signed_candidate(root: Path, version: str = VERSION) -> tuple[Path, Path]:
 
 
 class FlasherRollbackTests(unittest.TestCase):
+    def test_bootstrap_guard_ignores_only_unpromoted_signed_candidates(self) -> None:
+        signed_candidate = {"name": "prns-flasher-candidate-v0.3.0-signed.tar.gz"}
+        prerelease = {
+            "tag_name": "v0.3.0",
+            "draft": False,
+            "prerelease": True,
+            "assets": [signed_candidate],
+        }
+        self.assertEqual(bootstrap_blocking_custody_tags([prerelease]), [])
+
+        stable = {**prerelease, "prerelease": False}
+        self.assertEqual(bootstrap_blocking_custody_tags([stable]), ["v0.3.0"])
+
+        prerelease_record = {
+            **prerelease,
+            "assets": [{"name": "release-record-v0.3.0.json"}],
+        }
+        self.assertEqual(
+            bootstrap_blocking_custody_tags([prerelease_record]), ["v0.3.0"]
+        )
+
+        with self.assertRaisesRegex(ValueError, "metadata is malformed"):
+            bootstrap_blocking_custody_tags(
+                [{"tag_name": "v0.3.0", "draft": False, "assets": []}]
+            )
+
     def test_history_bootstrap_is_explicit_empty_and_retention_is_cumulative(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             workspace = Path(temporary)
@@ -639,7 +666,12 @@ class FlasherRollbackTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("default: retain", candidate)
-        self.assertIn("bootstrap is forbidden after any signed schema-v2", candidate)
+        self.assertIn("guard-bootstrap", candidate)
+        self.assertIn("signed candidate on a stable release", candidate)
+        self.assertLess(
+            candidate.index("mkdir -p target"),
+            candidate.index("> target/bootstrap-releases.json"),
+        )
         self.assertIn("probe-stable", candidate)
         self.assertIn("cmp target/bootstrap-live/stable.json", candidate)
         self.assertIn("flasher-release-history-${{ github.run_id }}", candidate)

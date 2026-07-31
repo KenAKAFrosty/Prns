@@ -18,6 +18,7 @@ impl std::error::Error for StateDirectoryError {}
 pub struct ServicePaths {
     pub state_dir: PathBuf,
     pub record: PathBuf,
+    pub active_config: PathBuf,
     pub control_lock: PathBuf,
     pub runtime_lock: PathBuf,
     pub ready: PathBuf,
@@ -38,6 +39,7 @@ impl ServicePaths {
         let state_dir = path.as_ref().to_path_buf();
         Self {
             record: state_dir.join("session"),
+            active_config: state_dir.join("active-config"),
             control_lock: state_dir.join("control.lock"),
             runtime_lock: state_dir.join("runtime.lock"),
             ready: state_dir.join("ready"),
@@ -137,6 +139,7 @@ mod tests {
         let paths = ServicePaths::in_dir("/state/prnsd");
         assert_eq!(paths.state_dir, Path::new("/state/prnsd"));
         assert_eq!(paths.record, Path::new("/state/prnsd/session"));
+        assert_eq!(paths.active_config, Path::new("/state/prnsd/active-config"));
         assert_eq!(paths.human_log, Path::new("/state/prnsd/prnsd.log"));
         assert_eq!(paths.json_log, Path::new("/state/prnsd/prnsd.jsonl"));
     }

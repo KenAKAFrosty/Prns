@@ -972,46 +972,18 @@ fn blackhole_exchange_globals_are_typed_and_invalid_intervals_are_actionable() {
 }
 
 #[test]
-fn node_page_announcement_controls_are_typed_and_zero_is_rejected() {
+fn nomadnet_page_policy_is_not_part_of_the_stock_reticulum_section() {
     let report = parse_named(
         "/tmp/rns/config",
         "[reticulum]\nannounce_node_page = No\nnode_page_announce_interval = 360\n",
     )
-    .unwrap();
-    assert_eq!(
-        report
-            .value
-            .globals
-            .get(global_key::ANNOUNCE_NODE_PAGE)
-            .and_then(ReferenceValue::as_scalar),
-        Some("No")
-    );
-    assert_eq!(
-        report
-            .value
-            .globals
-            .get(global_key::NODE_PAGE_ANNOUNCE_INTERVAL)
-            .and_then(ReferenceValue::as_scalar),
-        Some("360")
-    );
-    assert!(!report
-        .warnings
-        .iter()
-        .any(|warning| matches!(warning.code(), ConfigDiagnosticCode::UnsupportedSetting)));
-
-    let errors = parse_named(
-        "/tmp/rns/config",
-        "[reticulum]\nnode_page_announce_interval = 0\n",
-    )
-    .unwrap_err();
-    let diagnostic = errors
-        .diagnostics()
-        .iter()
-        .find(|diagnostic| diagnostic.path().ends_with("node_page_announce_interval"))
-        .expect("node-page interval diagnostic");
-    assert_eq!(diagnostic.line(), 2);
-    assert!(diagnostic.accepted().unwrap().contains("1 through"));
-    assert!(diagnostic.correction().contains("360"));
+    .expect("unknown extension keys remain non-fatal");
+    for key in ["announce_node_page", "node_page_announce_interval"] {
+        assert!(report.warnings.iter().any(|warning| {
+            warning.path().ends_with(key)
+                && matches!(warning.code(), ConfigDiagnosticCode::UnknownKey)
+        }));
+    }
 }
 
 #[test]

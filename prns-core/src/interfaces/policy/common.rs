@@ -88,6 +88,17 @@ impl AirtimeDutyCycle {
                 .limit_long_per_mille
                 .is_some_and(|limit| utilization.long_per_mille >= limit)
     }
+
+    /// Whether a projected utilization remains at or below every configured
+    /// limit. Callers use this before transmitting so one long frame cannot
+    /// overshoot an otherwise clear ledger.
+    pub fn permits(&self, projected: crate::interfaces::AirtimeUtilization) -> bool {
+        self.limit_short_per_mille
+            .is_none_or(|limit| projected.short_per_mille <= limit)
+            && self
+                .limit_long_per_mille
+                .is_none_or(|limit| projected.long_per_mille <= limit)
+    }
 }
 
 /// RNS 1.4.0 `announce_rate_target`, `announce_rate_grace`, and `announce_rate_penalty`, with seconds widened to milliseconds.

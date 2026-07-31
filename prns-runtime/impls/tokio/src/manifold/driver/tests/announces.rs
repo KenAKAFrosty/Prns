@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 async fn a_commanded_announce_fans_to_every_interface_and_settles() {
     use crate::engine::{
-        AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, RatchetPolicy,
+        AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, PrnsCommand, RatchetPolicy,
         Settlement,
     };
     use crate::identity::Zeroizing;
@@ -80,7 +80,7 @@ async fn a_commanded_announce_fans_to_every_interface_and_settles() {
     command_tx
         .send(HostCommand::Engine(IssuedCommand {
             id: CommandId(7),
-            command: EngineCommand::AnnounceNow(AnnounceNow {
+            command: PrnsCommand::AnnounceNow(AnnounceNow {
                 destination,
                 target: AnnounceTarget::AllInterfaces,
                 app_data: AnnounceAppData::Registered,

@@ -18,9 +18,9 @@ use benchmarks::{
     WorkloadProfile as Profile,
 };
 use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, EstablishLink,
-    LinkClosedReason, RatchetPolicy, RequestResponseTimeout, SendSinglePacket,
-    SendSinglePacketPayload, SendToLink, SendToLinkFailure, SendToLinkPayload, Settlement,
+    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EstablishLink, LinkClosedReason,
+    PrnsCommand, RatchetPolicy, RequestResponseTimeout, SendSinglePacket, SendSinglePacketPayload,
+    SendToLink, SendToLinkFailure, SendToLinkPayload, Settlement,
 };
 use personal_rns::interfaces::{
     tcp, BitrateBps, ConfiguredInterfacePolicy, EffectiveInterfacePolicy, InterfaceDescriptor,

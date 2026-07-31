@@ -266,8 +266,8 @@ mod tests {
     use super::*;
     use crate::engine::test_support::*;
     use crate::engine::{
-        CommandId, EngineCommand, EngineReaction, IngestIo, IssuedCommand, Journaled,
-        PathRequestId, ProofRequest, RequestPath, PATH_REQUEST_TIMEOUT_MS,
+        CommandId, EngineReaction, IngestIo, IssuedCommand, Journaled, PathRequestId, PrnsCommand,
+        ProofRequest, RequestPath, PATH_REQUEST_TIMEOUT_MS,
     };
     use crate::interfaces::{InboundPacket, InterfaceId};
     use crate::routing::announce::defaults::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
@@ -576,7 +576,7 @@ mod tests {
         let delta = state.ingest_command_into(
             IssuedCommand {
                 id: CommandId(1),
-                command: EngineCommand::RequestPath(RequestPath {
+                command: PrnsCommand::RequestPath(RequestPath {
                     destination: DestinationHash::new([0x44; 16]),
                     id: PathRequestId::new([0x55; 16]),
                 }),

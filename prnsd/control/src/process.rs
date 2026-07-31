@@ -11,11 +11,13 @@ use std::os::unix::process::CommandExt;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
+use crate::active_config::{self, ActiveConfigRecord};
 use crate::logs::{open_log, rotate_log};
 use crate::record::{LogLane, ServiceRecord, ServiceState};
 use crate::state::{
     cleanup_stale, open_lock, prepare_state_dir, read_generation, read_record, ready_generation,
-    remove_generation_if_matching, runtime_is_locked, write_generation, write_record,
+    remove_generation_if_matching, remove_if_present, runtime_is_locked, write_generation,
+    write_record,
 };
 use crate::{ReloadRequest, ReloadResult, ServiceError, ServicePaths};
 
@@ -126,6 +128,10 @@ impl ManagedProcess {
             version,
             state: ServiceState::Starting,
         };
+        remove_if_present(
+            &paths.active_config,
+            "could not remove the previous managed prnsd configuration record",
+        )?;
         write_record(&paths, &record)?;
         Ok(Some(Self {
             paths,
@@ -140,6 +146,18 @@ impl ManagedProcess {
             self.generation,
             "could not mark prnsd ready",
         )
+    }
+
+    pub fn publish_config_dir(&self, directory: &Path) -> Result<PathBuf, ServiceError> {
+        let directory = active_config::absolute(directory)?;
+        active_config::write(
+            &self.paths,
+            &ActiveConfigRecord {
+                generation: self.generation,
+                directory: directory.clone(),
+            },
+        )?;
+        Ok(directory)
     }
 
     #[must_use]
@@ -179,6 +197,7 @@ impl Drop for ManagedProcess {
             .flatten()
             .is_some_and(|record| record.generation == self.generation)
         {
+            active_config::remove_if_matching(&self.paths, self.generation);
             let _ = fs::remove_file(&self.paths.record);
         }
     }
@@ -298,6 +317,19 @@ pub fn running(paths: &ServicePaths) -> Result<Option<ServiceRecord>, ServiceErr
         ServiceState::Starting
     };
     Ok(Some(record))
+}
+
+pub fn active_config_dir(paths: &ServicePaths) -> Result<Option<PathBuf>, ServiceError> {
+    let Some(session) = running(paths)? else {
+        return Ok(None);
+    };
+    let Some(record) = active_config::read(paths)? else {
+        return Err(ServiceError::ManagedConfigUnavailable { pid: session.pid });
+    };
+    if record.generation != session.generation {
+        return Err(ServiceError::ManagedConfigUnavailable { pid: session.pid });
+    }
+    Ok(Some(record.directory))
 }
 
 pub fn stop(paths: &ServicePaths) -> Result<bool, ServiceError> {
@@ -487,12 +519,74 @@ mod tests {
         let paths = test_paths("stale");
         prepare_state_dir(&paths).unwrap();
         fs::write(&paths.record, "stale").unwrap();
+        fs::write(&paths.active_config, "stale").unwrap();
         fs::write(&paths.ready, "1\n").unwrap();
         fs::write(&paths.stop, "1\n").unwrap();
         assert!(running(&paths).unwrap().is_none());
         assert!(!paths.record.exists());
+        assert!(!paths.active_config.exists());
         assert!(!paths.ready.exists());
         assert!(!paths.stop.exists());
+        fs::remove_dir_all(paths.state_dir).unwrap();
+    }
+
+    #[test]
+    fn active_configuration_must_match_the_live_managed_generation() {
+        let paths = test_paths("active-configuration");
+        prepare_state_dir(&paths).unwrap();
+        let lock = open_lock(&paths.runtime_lock, "test lock").unwrap();
+        lock.try_lock().unwrap();
+        let record = ServiceRecord {
+            generation: 41,
+            pid: 17,
+            signature: 9,
+            log_lane: LogLane::Human,
+            binary: PathBuf::from("/test/prnsd"),
+            version: "test".to_string(),
+            state: ServiceState::Starting,
+        };
+        write_record(&paths, &record).unwrap();
+
+        assert!(matches!(
+            active_config_dir(&paths),
+            Err(ServiceError::ManagedConfigUnavailable { pid: 17 })
+        ));
+
+        active_config::write(
+            &paths,
+            &ActiveConfigRecord {
+                generation: 40,
+                directory: PathBuf::from("/stale"),
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            active_config_dir(&paths),
+            Err(ServiceError::ManagedConfigUnavailable { pid: 17 })
+        ));
+
+        active_config::write(
+            &paths,
+            &ActiveConfigRecord {
+                generation: 41,
+                directory: PathBuf::from("/active"),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            active_config_dir(&paths).unwrap(),
+            Some(PathBuf::from("/active"))
+        );
+
+        fs::write(&paths.active_config, "malformed").unwrap();
+        assert!(matches!(
+            active_config_dir(&paths),
+            Err(ServiceError::InvalidManagedConfigRecord)
+        ));
+
+        lock.unlock().unwrap();
+        assert!(active_config_dir(&paths).unwrap().is_none());
+        assert!(!paths.active_config.exists());
         fs::remove_dir_all(paths.state_dir).unwrap();
     }
 
@@ -544,6 +638,9 @@ mod tests {
             return;
         }
         let managed = ManagedProcess::from_environment().unwrap().unwrap();
+        managed
+            .publish_config_dir(Path::new("managed-config"))
+            .unwrap();
         managed.mark_ready().unwrap();
         while !managed.stop_requested().unwrap() {
             thread::sleep(POLL_INTERVAL);
@@ -608,8 +705,13 @@ mod tests {
             running(&paths).unwrap().unwrap().state,
             ServiceState::Running
         );
+        assert_eq!(
+            active_config_dir(&paths).unwrap(),
+            Some(working_dir.join("managed-config"))
+        );
         assert!(stop(&paths).unwrap());
         assert!(running(&paths).unwrap().is_none());
+        assert!(!paths.active_config.exists());
         fs::remove_dir_all(paths.state_dir).unwrap();
     }
 }

@@ -474,7 +474,7 @@ mod tests {
     };
     use crate::engine::IngestIo;
     use crate::engine::{Directive, EngineReaction, Journaled, PacketReceiptDelivered};
-    use crate::engine::{EngineCommand, IssuedCommand, SendToChannel, Settlement};
+    use crate::engine::{IssuedCommand, PrnsCommand, SendToChannel, Settlement};
     use crate::identity::{in_memory::InMemoryNodeIdentity, IdentitySigner};
     use crate::interfaces::{InboundPacket, InterfaceId};
     use crate::routing::links::channel::MessageType;
@@ -582,7 +582,7 @@ mod tests {
         engine.ingest_command_into(
             IssuedCommand {
                 id,
-                command: EngineCommand::SendToChannel(SendToChannel {
+                command: PrnsCommand::SendToChannel(SendToChannel {
                     link_id,
                     message_type,
                     body: body(bytes),

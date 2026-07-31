@@ -149,7 +149,7 @@ impl ResourceCycle {
     fn announce_destination(&mut self) -> Vec<u8> {
         let issued = IssuedCommand {
             id: CommandId(0),
-            command: EngineCommand::AnnounceNow(AnnounceNow {
+            command: PrnsCommand::AnnounceNow(AnnounceNow {
                 destination: self.destination,
                 target: AnnounceTarget::AllInterfaces,
                 app_data: AnnounceAppData::Registered,
@@ -177,7 +177,7 @@ impl ResourceCycle {
     fn issue_link_request(&mut self) -> Vec<u8> {
         let issued = IssuedCommand {
             id: CommandId(1),
-            command: EngineCommand::EstablishLink(EstablishLink {
+            command: PrnsCommand::EstablishLink(EstablishLink {
                 destination: self.destination,
             }),
         };

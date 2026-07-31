@@ -43,7 +43,7 @@ impl RequestEndpoint<DaemonRequestState> for StatusRoute {
             context.state.transport_status(),
         )
         .map_err(|_| Decline::Ignore)?;
-        context.respond_packed(&response)
+        context.respond(response)
     }
 }
 
@@ -65,7 +65,7 @@ impl RequestEndpoint<DaemonRequestState> for PathRoute {
             }
         }
         .map_err(|_| Decline::Ignore)?;
-        context.respond_packed(&response)
+        context.respond(response)
     }
 }
 

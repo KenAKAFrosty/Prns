@@ -95,31 +95,6 @@ fn probe_responder_follows_the_explicit_stock_flag() {
 }
 
 #[test]
-fn node_page_announcements_default_to_nomadnet_cadence_and_can_be_disabled() {
-    let defaults = plan_of("");
-    assert!(defaults.node_page_announcements.is_enabled());
-    assert_eq!(
-        defaults.node_page_announcements.interval(),
-        NodePageAnnouncementInterval::DEFAULT
-    );
-    assert_eq!(
-        defaults.node_page_announcements.interval().duration(),
-        Duration::from_secs(6 * 60 * 60)
-    );
-
-    let configured = plan_of(
-        "[reticulum]\n\
-         announce_node_page = No\n\
-         node_page_announce_interval = 45\n",
-    );
-    assert!(!configured.node_page_announcements.is_enabled());
-    assert_eq!(
-        configured.node_page_announcements.interval().duration(),
-        Duration::from_secs(45 * 60)
-    );
-}
-
-#[test]
 fn blackhole_exchange_is_typed_with_stock_defaults_and_minimum_interval() {
     let defaults = plan_of("");
     assert_eq!(

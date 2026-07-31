@@ -73,6 +73,10 @@ impl<M: RawMutex, const NOTIFY: usize, const FRAME: usize> InterfaceSeam
         self.outbound.peek().await.frame()
     }
 
+    fn accept_outbound_custody(&mut self) {
+        self.outbound.release();
+    }
+
     fn complete_outbound(&mut self, _disposition: OutboundDisposition) {
         self.outbound.release();
     }

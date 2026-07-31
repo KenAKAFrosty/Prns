@@ -202,6 +202,59 @@ pub struct ReceivedAirFrame {
     pub phy: PacketPhyStats,
 }
 
+/// One receive-side IRQ observation from an SX126x in continuous RX.
+///
+/// Preamble and header events are channel evidence even before a complete
+/// frame exists. Callers implementing listen-before-talk must consume these
+/// events instead of waiting only for `RxDone`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RadioEvent {
+    PreambleDetected,
+    HeaderValid,
+    Frame(ReceivedAirFrame),
+    HeaderError,
+    CrcError,
+    Timeout,
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IrqEventKind {
+    PreambleDetected,
+    HeaderValid,
+    Frame,
+    HeaderError,
+    CrcError,
+    Timeout,
+    Other,
+}
+
+fn classify_rx_irq(flags: u16) -> IrqEventKind {
+    if flags & irq::RX_DONE != 0 {
+        return if flags & irq::CRC_ERR != 0 {
+            IrqEventKind::CrcError
+        } else {
+            IrqEventKind::Frame
+        };
+    }
+    if flags & irq::HEADER_ERR != 0 {
+        return IrqEventKind::HeaderError;
+    }
+    if flags & irq::HEADER_VALID != 0 {
+        return IrqEventKind::HeaderValid;
+    }
+    if flags & irq::PREAMBLE_DETECTED != 0 {
+        return IrqEventKind::PreambleDetected;
+    }
+    if flags & irq::CRC_ERR != 0 {
+        return IrqEventKind::CrcError;
+    }
+    if flags & irq::TIMEOUT != 0 {
+        return IrqEventKind::Timeout;
+    }
+    IrqEventKind::Other
+}
+
 pub struct Sx126x<SPI, BUSY, DIO1, RST, DLY> {
     spi: SPI,
     busy: BUSY,
@@ -476,16 +529,34 @@ where
         self.command(&[op::SET_RX, 0xFF, 0xFF, 0xFF]).await
     }
 
-    /// Wait for one frame on an already-[`arm_rx`](Self::arm_rx)'d radio. The radio stays in continuous RX, so call again for the next frame. Blocks until RxDone; bound it with a host-side timeout/select. Cancelling the wait does NOT drop the radio's RX.
-    pub async fn read_frame(&mut self, buf: &mut [u8]) -> Result<ReceivedAirFrame, Error> {
-        loop {
-            self.dio1.wait_for_high().await.map_err(|_| Error::Dio1)?;
-            let flags = self.irq_status().await?;
-            self.clear_irq(flags).await?;
-            if flags & irq::RX_DONE != 0 {
-                if flags & irq::CRC_ERR != 0 {
-                    return Err(Error::Crc);
-                }
+    /// Wait for one receive-side IRQ event on an already
+    /// [`arm_rx`](Self::arm_rx)'d radio. The radio remains in continuous RX.
+    pub async fn read_event(&mut self, buf: &mut [u8]) -> Result<RadioEvent, Error> {
+        self.dio1.wait_for_high().await.map_err(|_| Error::Dio1)?;
+        let flags = self.irq_status().await?;
+        self.clear_irq(flags).await?;
+        self.decode_radio_event(flags, buf).await
+    }
+
+    /// Read an already-latched IRQ event without waiting for DIO1. This is the
+    /// final race-closing check immediately before a listen-before-talk
+    /// transmitter changes the radio out of RX.
+    pub async fn poll_event(&mut self, buf: &mut [u8]) -> Result<Option<RadioEvent>, Error> {
+        let flags = self.irq_status().await?;
+        if flags == 0 {
+            return Ok(None);
+        }
+        self.clear_irq(flags).await?;
+        self.decode_radio_event(flags, buf).await.map(Some)
+    }
+
+    async fn decode_radio_event(
+        &mut self,
+        flags: u16,
+        buf: &mut [u8],
+    ) -> Result<RadioEvent, Error> {
+        match classify_rx_irq(flags) {
+            IrqEventKind::Frame => {
                 let mut status = [0u8; 3];
                 self.read_command(op::GET_RX_BUFFER_STATUS, &mut status)
                     .await?;
@@ -505,10 +576,30 @@ where
                     quality: None,
                 };
                 self.read_buffer(offset, &mut buf[..len]).await?;
-                return Ok(ReceivedAirFrame { len, phy });
+                Ok(RadioEvent::Frame(ReceivedAirFrame { len, phy }))
             }
-            if flags & irq::TIMEOUT != 0 {
-                return Err(Error::Timeout);
+            IrqEventKind::PreambleDetected => Ok(RadioEvent::PreambleDetected),
+            IrqEventKind::HeaderValid => Ok(RadioEvent::HeaderValid),
+            IrqEventKind::HeaderError => Ok(RadioEvent::HeaderError),
+            IrqEventKind::CrcError => Ok(RadioEvent::CrcError),
+            IrqEventKind::Timeout => Ok(RadioEvent::Timeout),
+            IrqEventKind::Other => Ok(RadioEvent::Other),
+        }
+    }
+
+    /// Wait for one complete frame while preserving the legacy frame-only API.
+    /// Channel-access code should use [`read_event`](Self::read_event) so it
+    /// sees preamble and header evidence.
+    pub async fn read_frame(&mut self, buf: &mut [u8]) -> Result<ReceivedAirFrame, Error> {
+        loop {
+            match self.read_event(buf).await? {
+                RadioEvent::Frame(frame) => return Ok(frame),
+                RadioEvent::CrcError => return Err(Error::Crc),
+                RadioEvent::Timeout => return Err(Error::Timeout),
+                RadioEvent::PreambleDetected
+                | RadioEvent::HeaderValid
+                | RadioEvent::HeaderError
+                | RadioEvent::Other => {}
             }
         }
     }
@@ -987,6 +1078,29 @@ mod tests {
         assert_eq!(image_calibration_pair(780_000_000), [0xC1, 0xC5]);
         assert_eq!(image_calibration_pair(868_000_000), [0xD7, 0xDB]);
         assert_eq!(image_calibration_pair(915_000_000), [0xE1, 0xE9]);
+    }
+
+    #[test]
+    fn receive_irq_classification_preserves_channel_evidence() {
+        assert_eq!(
+            classify_rx_irq(irq::PREAMBLE_DETECTED),
+            IrqEventKind::PreambleDetected
+        );
+        assert_eq!(
+            classify_rx_irq(irq::PREAMBLE_DETECTED | irq::HEADER_VALID),
+            IrqEventKind::HeaderValid
+        );
+        assert_eq!(
+            classify_rx_irq(irq::RX_DONE | irq::PREAMBLE_DETECTED | irq::HEADER_VALID),
+            IrqEventKind::Frame
+        );
+        assert_eq!(
+            classify_rx_irq(irq::RX_DONE | irq::CRC_ERR),
+            IrqEventKind::CrcError
+        );
+        assert_eq!(classify_rx_irq(irq::HEADER_ERR), IrqEventKind::HeaderError);
+        assert_eq!(classify_rx_irq(irq::TIMEOUT), IrqEventKind::Timeout);
+        assert_eq!(classify_rx_irq(irq::TX_DONE), IrqEventKind::Other);
     }
 
     #[test]

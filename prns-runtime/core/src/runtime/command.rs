@@ -1,5 +1,5 @@
 use crate::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, PacketReceiptDelivered,
+    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, PacketReceiptDelivered, PrnsCommand,
     SendSinglePacketFailure,
 };
 pub use crate::engine::{DropRouteOutcome, DropRoutesViaOutcome};
@@ -95,13 +95,13 @@ pub trait PrnsNodeApi {
     /// Queue an engine command and return the [`CommandId`] it was minted under — watch the event
     /// stream for the settlement tagged with it. `None` once the node has stopped (or the bounded
     /// embedded lane is full). The fire-and-forget escape hatch.
-    fn issue(&self, command: EngineCommand) -> Option<CommandId>;
+    fn issue(&self, command: PrnsCommand) -> Option<CommandId>;
 
     /// Announce `destination` on every interface with its registered app_data: RNS 1.4.0
     /// `Destination.announce()` with no arguments. `None` once the node has stopped. For one
     /// interface or explicit app_data, [`issue`](Self::issue) a custom [`AnnounceNow`].
     fn announce(&self, destination: DestinationHash) -> Option<CommandId> {
-        self.issue(EngineCommand::AnnounceNow(AnnounceNow {
+        self.issue(PrnsCommand::AnnounceNow(AnnounceNow {
             destination,
             target: AnnounceTarget::AllInterfaces,
             app_data: AnnounceAppData::Registered,

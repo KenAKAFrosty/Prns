@@ -1,6 +1,5 @@
 #[cfg(unix)]
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use personal_rns::config::{
     DiscoveryAdvertisementPlan, DiscoveryAnnouncementPlan, DiscoveryEncryption,
@@ -226,17 +225,21 @@ pub(super) enum DiscoveryAdvertisementResolutionError {
     UnknownInterface {
         interface: InterfaceId,
     },
+    #[cfg(unix)]
     HomeUnavailable {
         path: PathBuf,
     },
+    #[cfg(unix)]
     Execute {
         path: PathBuf,
         source: std::io::Error,
     },
+    #[cfg(unix)]
     Exit {
         path: PathBuf,
         status: std::process::ExitStatus,
     },
+    #[cfg(unix)]
     OutputNotUtf8 {
         path: PathBuf,
         source: std::string::FromUtf8Error,
@@ -249,17 +252,21 @@ impl core::fmt::Display for DiscoveryAdvertisementResolutionError {
             Self::UnknownInterface { interface } => {
                 write!(formatter, "unknown discovery interface {interface:?}")
             }
+            #[cfg(unix)]
             Self::HomeUnavailable { path } => write!(
                 formatter,
                 "reachable_on path {} needs a home directory, but HOME is unavailable",
                 path.display()
             ),
+            #[cfg(unix)]
             Self::Execute { path, source } => {
                 write!(formatter, "could not execute {}: {source}", path.display())
             }
+            #[cfg(unix)]
             Self::Exit { path, status } => {
                 write!(formatter, "{} exited with {status}", path.display())
             }
+            #[cfg(unix)]
             Self::OutputNotUtf8 { path, source } => {
                 write!(
                     formatter,
@@ -274,11 +281,13 @@ impl core::fmt::Display for DiscoveryAdvertisementResolutionError {
 impl std::error::Error for DiscoveryAdvertisementResolutionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            #[cfg(unix)]
             Self::Execute { source, .. } => Some(source),
+            #[cfg(unix)]
             Self::OutputNotUtf8 { source, .. } => Some(source),
-            Self::UnknownInterface { .. } | Self::HomeUnavailable { .. } | Self::Exit { .. } => {
-                None
-            }
+            Self::UnknownInterface { .. } => None,
+            #[cfg(unix)]
+            Self::HomeUnavailable { .. } | Self::Exit { .. } => None,
         }
     }
 }

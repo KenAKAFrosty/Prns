@@ -10,6 +10,7 @@ import sys
 
 from flasher_website_history import (
     apply_history,
+    bootstrap_blocking_custody_tags,
     prepare_bootstrap,
     prepare_retained,
     stable_descriptor_identity,
@@ -22,6 +23,8 @@ def main() -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     bootstrap = commands.add_parser("bootstrap")
     bootstrap.add_argument("--output", type=Path, required=True)
+    guard_bootstrap = commands.add_parser("guard-bootstrap")
+    guard_bootstrap.add_argument("--releases", type=Path, required=True)
     retain = commands.add_parser("retain")
     retain.add_argument("--candidate", type=Path, required=True)
     retain.add_argument("--release-record", type=Path, required=True)
@@ -35,7 +38,16 @@ def main() -> int:
     probe.add_argument("--descriptor", type=Path, required=True)
     arguments = parser.parse_args()
     try:
-        if arguments.command == "bootstrap":
+        if arguments.command == "guard-bootstrap":
+            releases = json.loads(arguments.releases.read_text(encoding="utf-8"))
+            blocking = bootstrap_blocking_custody_tags(releases)
+            if blocking:
+                raise ValueError(
+                    "bootstrap is forbidden after signed stable custody exists: "
+                    + ", ".join(blocking)
+                )
+            result = {"stable_custody": []}
+        elif arguments.command == "bootstrap":
             result = prepare_bootstrap(arguments.output)
         elif arguments.command == "retain":
             result = prepare_retained(
@@ -59,7 +71,10 @@ def main() -> int:
     except (OSError, ValueError, json.JSONDecodeError) as error:
         print(f"flasher website history failed: {error}", file=sys.stderr)
         return 1
-    print(json.dumps({"mode": result["mode"], "tree": result["tree"]}, sort_keys=True))
+    if arguments.command == "guard-bootstrap":
+        print(json.dumps(result, sort_keys=True))
+    else:
+        print(json.dumps({"mode": result["mode"], "tree": result["tree"]}, sort_keys=True))
     return 0
 
 
