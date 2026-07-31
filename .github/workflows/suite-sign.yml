@@ -370,15 +370,24 @@ jobs:
           title="Prns ${version} unified release candidate"
           if gh release view "$tag" > "${RUNNER_TEMP}/release.txt" 2>/dev/null; then
             gh release view "$tag" \
-              --json isDraft,isPrerelease,targetCommitish,title \
+              --json isDraft,isPrerelease,targetCommitish,name \
               > "${RUNNER_TEMP}/release.json"
             draft="$(jq -r '.isDraft' "${RUNNER_TEMP}/release.json")"
             test "$draft" = "true" || test "$draft" = "false"
             test "$(jq -r '.isPrerelease' "${RUNNER_TEMP}/release.json")" = "true"
             test "$(jq -r '.targetCommitish' "${RUNNER_TEMP}/release.json")" = "$GITHUB_SHA"
-            test "$(jq -r '.title' "${RUNNER_TEMP}/release.json")" = "$title"
+            test "$(jq -r '.name' "${RUNNER_TEMP}/release.json")" = "$title"
           else
-            test "$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" 2>/dev/null || true)" = ""
+            matching_refs="${RUNNER_TEMP}/matching-tag-refs.json"
+            gh api "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/${tag}" \
+              > "$matching_refs"
+            exact_ref="refs/tags/${tag}"
+            exact_matches="$(jq --arg ref "$exact_ref" \
+              '[.[] | select(.ref == $ref)] | length' "$matching_refs")"
+            if [[ "$exact_matches" -ne 0 ]]; then
+              echo "tag $tag exists without the resumable suite prerelease" >&2
+              exit 1
+            fi
             gh release create "$tag" \
               --target "$GITHUB_SHA" \
               --title "$title" \
