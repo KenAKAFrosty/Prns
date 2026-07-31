@@ -1,6 +1,8 @@
 import type {
   ApplicationEvent,
   BackendCapabilities,
+  BackendInfo,
+  BackendKind,
   BackendStartFailed,
   Bitrate,
   CapabilityName,
@@ -14,10 +16,12 @@ import type {
   DestinationHash,
   DiagnosticEvent,
   HostCommand,
+  HostSnapshot,
   IdentityConfig,
   IdentityHash,
   InterfaceConfig,
   InterfaceId,
+  InterfaceHealth,
   InterfaceKind,
   LifecycleState,
   LinkId,
@@ -86,6 +90,8 @@ export const {
 export type {
   ApplicationEvent,
   BackendCapabilities,
+  BackendInfo,
+  BackendKind,
   BackendStartFailed,
   Bitrate,
   CapabilityName,
@@ -101,11 +107,13 @@ export type {
   DestinationName,
   DiagnosticEvent,
   HostCommand,
+  HostSnapshot,
   HostRoleName,
   IdentityConfig,
   IdentityHash,
   IdentitySecret,
   InterfaceConfig,
+  InterfaceHealth,
   InterfaceId,
   InterfaceKind,
   LifecycleState,
@@ -226,6 +234,51 @@ type RawNode = {
     peer: string;
     bitrateBps?: number;
   }): Promise<RawInterface>;
+  hostSnapshot(): Promise<RawHostSnapshot>;
+};
+
+type RawHostSnapshot = {
+  revision: number;
+  backend: {
+    backend: string;
+    capabilities: string[];
+    interfaceKinds: string[];
+  };
+  interfaces: Array<{
+    interfaceId: Buffer;
+    name?: string;
+    kind?: string;
+    health: string;
+    failureDetail?: string;
+    rxBytes: number;
+    txBytes: number;
+    rxBps?: number;
+    txBps?: number;
+    routeCount: number;
+    linkCount: number;
+    transportedLinkCount: number;
+  }>;
+  routes: Array<{
+    destination: Buffer;
+    hops: number;
+    viaIdentity?: Buffer;
+    interfaceId: Buffer;
+    learnedAtMillis: number;
+    lastRelayedAtMillis: number;
+    expiresAtMillis: number;
+  }>;
+  activeLinkCount: number;
+  destinationIdentities: Array<{
+    destination: Buffer;
+    identity: Buffer;
+  }>;
+  runtime: HostSnapshot["runtime"];
+  persistence: {
+    persistent: boolean;
+    restored: boolean;
+    lastFlushCause?: string;
+    lastFailureDetail?: string;
+  };
 };
 
 type RawPacketReceipt = {
@@ -368,6 +421,66 @@ const NATIVE_INTERFACE_KINDS: ReadonlySet<InterfaceKind> = new Set(
   RAW_BACKEND_INFO.interfaceKinds as InterfaceKind[],
 );
 
+function decodeHostSnapshot(raw: RawHostSnapshot): HostSnapshot {
+  const backend: BackendInfo = {
+    backend: raw.backend.backend as BackendKind,
+    capabilities: raw.backend.capabilities as CapabilityName[],
+    interfaceKinds: raw.backend.interfaceKinds as InterfaceKind[],
+  };
+  return {
+    revision: raw.revision,
+    backend,
+    interfaces: raw.interfaces.map((entry) => ({
+      interfaceId: contract.interfaceId(entry.interfaceId),
+      health: entry.health as InterfaceHealth,
+      rxBytes: entry.rxBytes,
+      txBytes: entry.txBytes,
+      routeCount: entry.routeCount,
+      linkCount: entry.linkCount,
+      transportedLinkCount: entry.transportedLinkCount,
+      ...(entry.name === undefined ? {} : { name: entry.name }),
+      ...(entry.kind === undefined
+        ? {}
+        : { kind: entry.kind as InterfaceKind }),
+      ...(entry.failureDetail === undefined
+        ? {}
+        : { failureDetail: entry.failureDetail }),
+      ...(entry.rxBps === undefined ? {} : { rxBps: entry.rxBps }),
+      ...(entry.txBps === undefined ? {} : { txBps: entry.txBps }),
+    })),
+    routes: raw.routes.map((entry) => ({
+      destination: contract.destinationHash(entry.destination),
+      hops: entry.hops,
+      interfaceId: contract.interfaceId(entry.interfaceId),
+      learnedAtMillis: entry.learnedAtMillis,
+      lastRelayedAtMillis: entry.lastRelayedAtMillis,
+      expiresAtMillis: entry.expiresAtMillis,
+      ...(entry.viaIdentity === undefined
+        ? {}
+        : { viaIdentity: contract.identityHash(entry.viaIdentity) }),
+    })),
+    activeLinkCount: raw.activeLinkCount,
+    destinationIdentities: raw.destinationIdentities.map((entry) => ({
+      destination: contract.destinationHash(entry.destination),
+      identity: contract.identityHash(entry.identity),
+    })),
+    runtime: raw.runtime,
+    persistence: {
+      persistent: raw.persistence.persistent,
+      restored: raw.persistence.restored,
+      ...(raw.persistence.lastFlushCause === undefined
+        ? {}
+        : {
+            lastFlushCause: raw.persistence
+              .lastFlushCause as PersistenceFlushCause,
+          }),
+      ...(raw.persistence.lastFailureDetail === undefined
+        ? {}
+        : { lastFailureDetail: raw.persistence.lastFailureDetail }),
+    },
+  };
+}
+
 export class NativeInterface {
   readonly id: InterfaceId;
   readonly kind: string | undefined;
@@ -464,6 +577,10 @@ export class Prns {
 
   get lifecycle(): LifecycleState {
     return this.#lifecycle;
+  }
+
+  async snapshot(): Promise<HostSnapshot> {
+    return decodeHostSnapshot(await this.#raw.hostSnapshot());
   }
 
   claimEvents(): StreamClaim<ApplicationEvent> {

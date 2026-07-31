@@ -1,3 +1,4 @@
+use std::future::Future;
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -8,11 +9,10 @@ use napi_derive::napi;
 use personal_rns::engine::{
     AllowRequester, AllowRequesterFailure, AllowRequesterRejection, AnnounceAppData, AnnounceNow,
     AnnounceTarget, DeliveryEvidence, DeliveryProof, EstablishLinkFailure, EstablishLinkRejection,
-    IdentifyFailure, IdentifyRejection, RatchetPolicy, RequestPathFailure, RequestResponseTimeout,
-    RespondFailure, RespondRejection, SendRequestFailure, SendRequestRejection,
-    SendResourceFailure, SendResourceRejection, SendToChannelFailure, SendToChannelRejection,
-    SendToLinkFailure, SendToLinkRejection, SetResourceStrategyFailure,
-    SetResourceStrategyRejection,
+    IdentifyFailure, IdentifyRejection, RequestPathFailure, RequestResponseTimeout, RespondFailure,
+    RespondRejection, SendRequestFailure, SendRequestRejection, SendResourceFailure,
+    SendResourceRejection, SendToChannelFailure, SendToChannelRejection, SendToLinkFailure,
+    SendToLinkRejection, SetResourceStrategyFailure, SetResourceStrategyRejection,
 };
 use personal_rns::engine::{DropRouteOutcome, RouteSnapshot};
 use personal_rns::identity::{
@@ -22,15 +22,12 @@ use personal_rns::interfaces::shared_instance as shared_instance_contract;
 use personal_rns::interfaces::{
     BitrateBps, ConnectionState, InterfaceId, InterfaceSnapshot, Membership,
 };
-use personal_rns::manifold::reconnect::ReconnectPolicy;
 use personal_rns::node_introspection::{DestinationIdentityQuery, NodeIntrospection};
 use personal_rns::routing::links::channel::MessageType;
-use personal_rns::routing::request_handlers::RequestPolicy;
 use personal_rns::routing::{
     BlackholeExpiry, BlackholeIdentityOutcome, BlackholedIdentity, NextHop,
     UnblackholeIdentityOutcome,
 };
-use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::request_endpoints::RespondToken;
 use personal_rns::runtime::{
     DestinationIdentityRetentionControl, IdentityBlackholeControl, IdentityBlackholeSource,
@@ -40,25 +37,32 @@ use personal_rns::runtime::{
     RequestPathError, ResourceSendError, ResponseSendError, SegmentCompression,
 };
 use personal_rns::shared_instance::{SharedInstanceClient, SharedInstanceServer};
-use personal_rns::tcp::{TcpClientInterface, TcpServer};
-use personal_rns::udp::UdpInterface;
 use personal_rns::units::{DurationMillis, RttMillis};
 use personal_rns::wifi_auto::AutoWifi;
 use personal_rns::ResourceStrategy;
 use personal_rns::{attach_plan_with_context, PlanOutcome, PlanRuntimeContext};
 use personal_rns::{
-    load_or_create_ble_identity, load_or_create_identity_secret, try_generate_identity_secret,
-    AttachedInterface, AttachedSupervisor, AutoBluetoothLe, AutoUsb, PacketReceiptDelivered,
-    Zeroizing, IDENTITY_SECRET_KEY_LEN,
+    load_or_create_ble_identity, AttachedInterface, AttachedSupervisor, AutoBluetoothLe, AutoUsb,
+    PacketReceiptDelivered, PlanAttachments, PrnsNodeHandle,
 };
-use prns_host::PrnsLimits;
+use prns_host::{
+    Bitrate as HostBitrate, CommandFailure as HostCommandFailure,
+    CommandOutcome as HostCommandOutcome, DestinationConfig as HostDestinationConfig,
+    DestinationIdentityConfig, DestinationLinkRequestPolicy, DestinationName,
+    DestinationProofStrategy, DestinationRatchetPolicy, HostCommand as StableHostCommand,
+    HostConfig, HostRole, IdentityConfig, IdentitySecret, PersistenceConfig, PrnsLimits,
+    RequestHandlerConfig, RequestPolicy as HostRequestPolicy,
+    ResourceStrategy as HostResourceStrategy, SingleDestinationConfig,
+};
+use prns_host_native::{
+    CommandWait, NativeHost, NativeSnapshotError, NativeStartError, NativeSubmitError,
+};
 
 use crate::errors::{code_err, send_error, CodeResult, ErrorCode, Fallible};
 use crate::events::bridge::{EventQueue, EventSink};
 use crate::events::owned::OwnedEvent;
 use crate::events::translate;
 use crate::marshal;
-use crate::runtime::{DestinationConfig, NodeConfig, NodeManager, SingleConfig};
 
 #[napi(object)]
 pub struct IdentitySpec {
@@ -275,6 +279,74 @@ pub struct InterfaceInventoryInfo {
 }
 
 #[napi(object)]
+pub struct HostInterfaceSnapshotInfo {
+    pub interface_id: Buffer,
+    pub name: Option<String>,
+    pub kind: Option<String>,
+    pub health: String,
+    pub failure_detail: Option<String>,
+    pub rx_bytes: f64,
+    pub tx_bytes: f64,
+    pub rx_bps: Option<f64>,
+    pub tx_bps: Option<f64>,
+    pub route_count: u32,
+    pub link_count: u32,
+    pub transported_link_count: u32,
+}
+
+#[napi(object)]
+pub struct HostRouteSnapshotInfo {
+    pub destination: Buffer,
+    pub hops: u32,
+    pub via_identity: Option<Buffer>,
+    pub interface_id: Buffer,
+    pub learned_at_millis: f64,
+    pub last_relayed_at_millis: f64,
+    pub expires_at_millis: f64,
+}
+
+#[napi(object)]
+pub struct HostDestinationIdentitySnapshotInfo {
+    pub destination: Buffer,
+    pub identity: Buffer,
+}
+
+#[napi(object)]
+pub struct HostRuntimeHealthSnapshotInfo {
+    pub running: bool,
+    pub uptime_millis: f64,
+    pub interface_count: u32,
+    pub online_interface_count: u32,
+    pub route_count: u32,
+    pub link_count: u32,
+    pub transported_link_count: u32,
+    pub rx_bytes: f64,
+    pub tx_bytes: f64,
+    pub rx_bps: f64,
+    pub tx_bps: f64,
+}
+
+#[napi(object)]
+pub struct HostPersistenceSnapshotInfo {
+    pub persistent: bool,
+    pub restored: bool,
+    pub last_flush_cause: Option<String>,
+    pub last_failure_detail: Option<String>,
+}
+
+#[napi(object)]
+pub struct HostSnapshotInfo {
+    pub revision: f64,
+    pub backend: crate::BackendInfo,
+    pub interfaces: Vec<HostInterfaceSnapshotInfo>,
+    pub routes: Vec<HostRouteSnapshotInfo>,
+    pub active_link_count: u32,
+    pub destination_identities: Vec<HostDestinationIdentitySnapshotInfo>,
+    pub runtime: HostRuntimeHealthSnapshotInfo,
+    pub persistence: HostPersistenceSnapshotInfo,
+}
+
+#[napi(object)]
 pub struct RouteInfo {
     pub destination: Buffer,
     pub hops: u32,
@@ -333,15 +405,11 @@ pub struct RetainIdentityResult {
     pub already_retained_destination_count: u32,
 }
 
-fn resolve_identity(spec: &IdentitySpec) -> CodeResult<Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>> {
+fn identity_config(spec: &IdentitySpec) -> CodeResult<IdentityConfig> {
     match (&spec.secret, &spec.path) {
-        (Some(secret), None) => marshal::identity_secret(secret),
-        (None, Some(path)) => load_or_create_identity_secret(Path::new(path)).map_err(|error| {
-            code_err(
-                ErrorCode::InvalidIdentityFile,
-                format!("identity file at {path}: {error:?}"),
-            )
-        }),
+        (Some(secret), None) => marshal::identity_secret(secret)
+            .map(|secret| IdentityConfig::Existing(IdentitySecret::new(*secret))),
+        (None, Some(path)) => Ok(IdentityConfig::LoadOrCreate { path: path.clone() }),
         _ => Err(code_err(
             ErrorCode::InvalidArgument,
             "identity requires exactly one of secret or path",
@@ -349,11 +417,11 @@ fn resolve_identity(spec: &IdentitySpec) -> CodeResult<Zeroizing<[u8; IDENTITY_S
     }
 }
 
-fn parse_proof(value: Option<&str>) -> CodeResult<ProofStrategy> {
+fn parse_proof(value: Option<&str>) -> CodeResult<DestinationProofStrategy> {
     match value {
-        None | Some("proveAll") => Ok(ProofStrategy::ProveAll),
-        Some("proveNone") => Ok(ProofStrategy::ProveNone),
-        Some("proveIf") => Ok(ProofStrategy::ProveIf),
+        None | Some("proveAll") => Ok(DestinationProofStrategy::ProveAll),
+        Some("proveNone") => Ok(DestinationProofStrategy::ProveNone),
+        Some("proveIf") => Ok(DestinationProofStrategy::ProveIf),
         Some(other) => Err(code_err(
             ErrorCode::InvalidArgument,
             format!("unknown proof strategy {other:?}; expected proveAll, proveNone, or proveIf"),
@@ -361,10 +429,10 @@ fn parse_proof(value: Option<&str>) -> CodeResult<ProofStrategy> {
     }
 }
 
-fn parse_link_requests(value: Option<&str>) -> CodeResult<LinkRequestPolicy> {
+fn parse_link_requests(value: Option<&str>) -> CodeResult<DestinationLinkRequestPolicy> {
     match value {
-        None | Some("acceptAll") => Ok(LinkRequestPolicy::AcceptAll),
-        Some("acceptNone") => Ok(LinkRequestPolicy::AcceptNone),
+        None | Some("acceptAll") => Ok(DestinationLinkRequestPolicy::AcceptAll),
+        Some("acceptNone") => Ok(DestinationLinkRequestPolicy::AcceptNone),
         Some(other) => Err(code_err(
             ErrorCode::InvalidArgument,
             format!("unknown link request policy {other:?}; expected acceptAll or acceptNone"),
@@ -372,11 +440,11 @@ fn parse_link_requests(value: Option<&str>) -> CodeResult<LinkRequestPolicy> {
     }
 }
 
-fn parse_ratchet(value: Option<&str>) -> CodeResult<RatchetPolicy> {
+fn parse_ratchet(value: Option<&str>) -> CodeResult<DestinationRatchetPolicy> {
     match value {
-        None | Some("noRatchets") => Ok(RatchetPolicy::NoRatchets),
-        Some("ratcheted") => Ok(RatchetPolicy::Ratcheted),
-        Some("ratchetsRequired") => Ok(RatchetPolicy::RatchetsRequired),
+        None | Some("noRatchets") => Ok(DestinationRatchetPolicy::NoRatchets),
+        Some("ratcheted") => Ok(DestinationRatchetPolicy::Ratcheted),
+        Some("ratchetsRequired") => Ok(DestinationRatchetPolicy::RatchetsRequired),
         Some(other) => Err(code_err(
             ErrorCode::InvalidArgument,
             format!(
@@ -386,11 +454,11 @@ fn parse_ratchet(value: Option<&str>) -> CodeResult<RatchetPolicy> {
     }
 }
 
-fn parse_request_policy(value: Option<&str>) -> CodeResult<RequestPolicy> {
+fn parse_request_policy(value: Option<&str>) -> CodeResult<HostRequestPolicy> {
     match value {
-        None | Some("allowAll") => Ok(RequestPolicy::AllowAll),
-        Some("allowNone") => Ok(RequestPolicy::AllowNone),
-        Some("allowList") => Ok(RequestPolicy::AllowList),
+        None | Some("allowAll") => Ok(HostRequestPolicy::AllowAll),
+        Some("allowNone") => Ok(HostRequestPolicy::AllowNone),
+        Some("allowList") => Ok(HostRequestPolicy::AllowList),
         Some(other) => Err(code_err(
             ErrorCode::InvalidArgument,
             format!("unknown request policy {other:?}; expected allowAll, allowNone, or allowList"),
@@ -757,28 +825,40 @@ fn parse_compression(value: Option<&str>) -> CodeResult<SegmentCompression> {
     }
 }
 
-fn parse_bitrate(value: Option<f64>) -> CodeResult<BitrateBps> {
+fn parse_host_bitrate(value: Option<f64>) -> CodeResult<HostBitrate> {
     match value {
-        None => Ok(BitrateBps::guess(65_000_000)),
-        Some(bps) if bps.is_finite() && bps >= 1.0 => {
-            BitrateBps::new(bps as u64).ok_or_else(|| {
-                code_err(
-                    ErrorCode::InvalidArgument,
-                    "bitrateBps is below the minimum",
-                )
-            })
+        None => Ok(HostBitrate::Auto),
+        Some(bps) if bps.is_finite() && bps >= BitrateBps::MINIMUM as f64 => {
+            Ok(HostBitrate::BitsPerSecond(bps as u64))
         }
         Some(_) => Err(code_err(
             ErrorCode::InvalidArgument,
-            "bitrateBps must be a positive finite number",
+            "bitrateBps must be a finite number at or above the protocol minimum",
         )),
     }
 }
 
-fn parse_options(options: NodeOptions) -> CodeResult<NodeConfig> {
-    let transport = match options.role.as_deref().unwrap_or("endpoint") {
-        "endpoint" => false,
-        "transport" => true,
+fn host_resource_strategy(spec: &ResourceStrategySpec) -> CodeResult<HostResourceStrategy> {
+    match parse_resource_strategy(spec)? {
+        ResourceStrategy::AcceptNone => Ok(HostResourceStrategy::Refuse),
+        ResourceStrategy::Accept {
+            max_uncompressed_bytes,
+            accept_compressed,
+        } => Ok(HostResourceStrategy::Accept {
+            maximum_uncompressed_bytes: max_uncompressed_bytes,
+            accept_compressed,
+        }),
+        ResourceStrategy::AcceptIf => Err(code_err(
+            ErrorCode::InvalidArgument,
+            "conditional resource strategies are not configurable at startup",
+        )),
+    }
+}
+
+fn parse_options(options: NodeOptions, limits: PrnsLimits) -> CodeResult<HostConfig> {
+    let role = match options.role.as_deref().unwrap_or("endpoint") {
+        "endpoint" => HostRole::Endpoint,
+        "transport" => HostRole::Transport,
         other => {
             return Err(code_err(
                 ErrorCode::InvalidArgument,
@@ -786,35 +866,48 @@ fn parse_options(options: NodeOptions) -> CodeResult<NodeConfig> {
             ))
         }
     };
-    let node_identity = match options.identity.as_ref() {
-        Some(identity) => resolve_identity(identity)?,
-        None => try_generate_identity_secret().map_err(|error| {
-            code_err(
-                ErrorCode::Internal,
-                format!("entropy unavailable: {error:?}"),
-            )
-        })?,
-    };
-    let transport_identity = if transport {
-        Some(node_identity.clone())
-    } else {
-        None
+    let identity = match options.identity.as_ref() {
+        Some(identity) => identity_config(identity)?,
+        None => IdentityConfig::GenerateEphemeral,
     };
     let mut destinations = Vec::new();
     for spec in options.destinations.unwrap_or_default() {
+        let name = DestinationName::try_new(spec.app_name, spec.aspects).map_err(|error| {
+            code_err(
+                ErrorCode::InvalidArgument,
+                format!("invalid destination name: {error:?}"),
+            )
+        })?;
         let kind = spec.kind.as_deref().unwrap_or("single");
-        let single = match kind {
-            "plain" => None,
+        let destination = match kind {
+            "plain" => {
+                if spec
+                    .request_paths
+                    .as_ref()
+                    .is_some_and(|paths| !paths.is_empty())
+                {
+                    return Err(code_err(
+                        ErrorCode::InvalidArgument,
+                        "requestPaths require a single destination",
+                    ));
+                }
+                if spec.use_host_identity.unwrap_or(false) || spec.identity.is_some() {
+                    return Err(code_err(
+                        ErrorCode::InvalidArgument,
+                        "plain destinations do not have identities",
+                    ));
+                }
+                HostDestinationConfig::Plain(name)
+            }
             "single" => {
                 let identity = match (spec.use_host_identity.unwrap_or(false), &spec.identity) {
-                    (true, None) => node_identity.clone(),
-                    (false, Some(identity)) => resolve_identity(identity)?,
-                    (false, None) => try_generate_identity_secret().map_err(|error| {
-                        code_err(
-                            ErrorCode::Internal,
-                            format!("entropy unavailable: {error:?}"),
-                        )
-                    })?,
+                    (true, None) => DestinationIdentityConfig::HostIdentity,
+                    (false, Some(identity)) => {
+                        DestinationIdentityConfig::Dedicated(identity_config(identity)?)
+                    }
+                    (false, None) => {
+                        DestinationIdentityConfig::Dedicated(IdentityConfig::GenerateEphemeral)
+                    }
                     (true, Some(_)) => {
                         return Err(code_err(
                             ErrorCode::InvalidArgument,
@@ -822,14 +915,15 @@ fn parse_options(options: NodeOptions) -> CodeResult<NodeConfig> {
                         ))
                     }
                 };
-                let mut request_paths = Vec::new();
+                let mut request_handlers = Vec::new();
                 for path_spec in spec.request_paths.iter().flatten() {
-                    request_paths.push((
-                        path_spec.path.clone(),
-                        parse_request_policy(path_spec.policy.as_deref())?,
-                    ));
+                    request_handlers.push(RequestHandlerConfig {
+                        path: path_spec.path.clone(),
+                        policy: parse_request_policy(path_spec.policy.as_deref())?,
+                    });
                 }
-                Some(SingleConfig {
+                HostDestinationConfig::Single(SingleDestinationConfig {
+                    name,
                     identity,
                     announce_app_data: spec
                         .announce_app_data
@@ -842,10 +936,10 @@ fn parse_options(options: NodeOptions) -> CodeResult<NodeConfig> {
                     resource_strategy: spec
                         .resource_strategy
                         .as_ref()
-                        .map(parse_resource_strategy)
+                        .map(host_resource_strategy)
                         .transpose()?
-                        .unwrap_or(ResourceStrategy::AcceptNone),
-                    request_paths,
+                        .unwrap_or(HostResourceStrategy::Refuse),
+                    request_handlers,
                 })
             }
             other => {
@@ -855,52 +949,28 @@ fn parse_options(options: NodeOptions) -> CodeResult<NodeConfig> {
                 ))
             }
         };
-        if single.is_none()
-            && spec
-                .request_paths
-                .as_ref()
-                .is_some_and(|paths| !paths.is_empty())
-        {
-            return Err(code_err(
-                ErrorCode::InvalidArgument,
-                "requestPaths require a single destination",
-            ));
-        }
-        if single.is_none() && spec.use_host_identity.unwrap_or(false) {
-            return Err(code_err(
-                ErrorCode::InvalidArgument,
-                "plain destinations do not have identities",
-            ));
-        }
-        destinations.push(DestinationConfig {
-            app_name: spec.app_name,
-            aspects: spec.aspects,
-            single,
-        });
+        destinations.push(destination);
     }
-    Ok(NodeConfig {
-        transport_identity,
-        destinations,
+    Ok(HostConfig {
+        identity,
         persistence: match options.persistence_path {
-            Some(path) => personal_rns::runtime::NodePersistence::custom_dir(Path::new(&path))
-                .map(crate::runtime::RuntimePersistence::Directory)
-                .map_err(|error| {
-                    code_err(
-                        match error.kind() {
-                            std::io::ErrorKind::PermissionDenied => ErrorCode::PermissionDenied,
-                            _ => ErrorCode::Unavailable,
-                        },
-                        format!("persistence directory at {path}: {error}"),
-                    )
-                })?,
-            None => crate::runtime::RuntimePersistence::Ephemeral,
+            Some(path) => PersistenceConfig::Directory { path },
+            None => PersistenceConfig::Ephemeral,
         },
+        role,
+        destinations,
+        required_capabilities: Vec::new(),
+        limits,
     })
 }
 
 enum Attachment {
     Interface(AttachedInterface),
     Supervisor(AttachedSupervisor),
+    Host {
+        host: Arc<NativeHost>,
+        id: prns_host::InterfaceId,
+    },
     Ble {
         handle: personal_rns::PrnsNodeHandle,
         id: InterfaceId,
@@ -915,6 +985,14 @@ pub struct InterfaceHandle {
 }
 
 impl InterfaceHandle {
+    fn from_host(host: Arc<NativeHost>, id: prns_host::InterfaceId, kind: &str) -> Self {
+        Self {
+            id_bytes: id.into_bytes(),
+            kind_name: Some(kind.to_string()),
+            attachment: Mutex::new(Some(Attachment::Host { host, id })),
+        }
+    }
+
     fn from_ble(handle: personal_rns::PrnsNodeHandle, id: InterfaceId) -> Self {
         Self {
             id_bytes: *id.as_bytes(),
@@ -962,6 +1040,15 @@ impl InterfaceHandle {
             .unwrap_or_else(PoisonError::into_inner)
             .take();
         match taken {
+            Some(Attachment::Host { host, id }) => host
+                .submit(StableHostCommand::DetachInterface { interface: id })
+                .ok()
+                .is_some_and(|command| {
+                    matches!(
+                        command.wait(Some(std::time::Duration::from_secs(5))),
+                        CommandWait::Completed(Ok(HostCommandOutcome::InterfaceDetached { .. }))
+                    )
+                }),
             Some(Attachment::Interface(attached)) => {
                 attached.teardown();
                 true
@@ -981,7 +1068,9 @@ impl InterfaceHandle {
 
 #[napi]
 pub struct PrnsNode {
-    manager: Arc<NodeManager>,
+    host: Arc<NativeHost>,
+    sink: Mutex<Option<EventSink>>,
+    plan_attachments: Mutex<Vec<PlanAttachments>>,
     hashes: Vec<[u8; 16]>,
 }
 
@@ -1017,8 +1106,7 @@ pub fn start_node(
         diagnostics,
     )
     .map_err(|error| code_err(ErrorCode::InvalidArgument, format!("{error:?}")))?;
-    let config = parse_options(options)?;
-    let hashes = crate::runtime::destination_hashes(&config)?;
+    let config = parse_options(options, limits)?;
     let queue = EventQueue::new(limits);
     let dequeue = queue.clone();
     let tsfn = on_event
@@ -1028,13 +1116,17 @@ pub fn start_node(
             translate::event_to_object(&ctx.env, ctx.value)
         })
         .map_err(|error| code_err(ErrorCode::Internal, format!("{error}")))?;
-    let manager = NodeManager::start(
-        config,
-        EventSink::new(tsfn, queue),
-        limits.pending_commands(),
-    )?;
+    let sink = EventSink::new(tsfn, queue);
+    let host = NativeHost::start(config, Arc::new(sink.clone())).map_err(native_start_error)?;
+    let hashes = host
+        .destination_hashes()
+        .iter()
+        .map(|hash| hash.into_bytes())
+        .collect();
     Ok(PrnsNode {
-        manager: Arc::new(manager),
+        host: Arc::new(host),
+        sink: Mutex::new(Some(sink)),
+        plan_attachments: Mutex::new(Vec::new()),
         hashes,
     })
 }
@@ -1050,6 +1142,63 @@ fn event_limit(configured: Option<u32>, default: usize, name: &str) -> CodeResul
     }
 }
 
+fn native_start_error(error: NativeStartError) -> crate::errors::CodeError {
+    let detail = format!("{error:?}");
+    let code = match error {
+        NativeStartError::Identity(prns_host_native::IdentityStartError::EntropyUnavailable) => {
+            ErrorCode::EntropyUnavailable
+        }
+        NativeStartError::Identity(prns_host_native::IdentityStartError::PermissionDenied {
+            ..
+        })
+        | NativeStartError::Persistence(
+            prns_host_native::PersistenceStartError::PermissionDenied { .. },
+        ) => ErrorCode::PermissionDenied,
+        NativeStartError::Identity(
+            prns_host_native::IdentityStartError::Malformed { .. }
+            | prns_host_native::IdentityStartError::InvalidMaterial,
+        ) => ErrorCode::InvalidIdentityFile,
+        NativeStartError::Identity(prns_host_native::IdentityStartError::Unavailable {
+            ..
+        })
+        | NativeStartError::Persistence(
+            prns_host_native::PersistenceStartError::NotDirectory { .. }
+            | prns_host_native::PersistenceStartError::Unavailable { .. },
+        ) => ErrorCode::Unavailable,
+        NativeStartError::TimedOut => ErrorCode::StartTimeout,
+        NativeStartError::MissingCapabilities(_)
+        | NativeStartError::Destination(_)
+        | NativeStartError::Runtime(_)
+        | NativeStartError::Thread(_) => ErrorCode::StartFailed,
+    };
+    code_err(code, detail)
+}
+
+fn native_submit_error(error: NativeSubmitError) -> crate::errors::CodeError {
+    match error {
+        NativeSubmitError::Busy => code_err(ErrorCode::Busy, "engine busy"),
+        NativeSubmitError::Stopped => code_err(ErrorCode::NodeStopped, "node stopped"),
+    }
+}
+
+fn host_command_error(error: HostCommandFailure) -> crate::errors::CodeError {
+    let detail = format!("{error:?}");
+    let code = match error {
+        HostCommandFailure::NodeStopped => ErrorCode::NodeStopped,
+        HostCommandFailure::Busy => ErrorCode::Busy,
+        HostCommandFailure::PayloadTooLarge => ErrorCode::PayloadTooLarge,
+        HostCommandFailure::InvalidBitrate | HostCommandFailure::InvalidConfiguration { .. } => {
+            ErrorCode::InvalidArgument
+        }
+        HostCommandFailure::BindFailed { .. }
+        | HostCommandFailure::WriteFailed { .. }
+        | HostCommandFailure::UnsupportedByBackend
+        | HostCommandFailure::UnknownInterface => ErrorCode::AttachFailed,
+        _ => ErrorCode::Internal,
+    };
+    code_err(code, detail)
+}
+
 #[napi]
 impl PrnsNode {
     #[napi(getter)]
@@ -1062,12 +1211,21 @@ impl PrnsNode {
 
     #[napi(ts_return_type = "Promise<void>")]
     pub async fn ready(&self) -> Result<Fallible<()>> {
-        Ok(Fallible(self.manager.ready().await))
+        Ok(Fallible(Ok(())))
     }
 
     #[napi(ts_return_type = "Promise<void>")]
     pub async fn stop(&self) -> Result<Fallible<()>> {
-        Ok(Fallible(self.manager.stop().await))
+        self.plan_attachments
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
+        self.host.stop();
+        self.sink
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        Ok(Fallible(Ok(())))
     }
 
     #[napi(ts_return_type = "Promise<void>")]
@@ -1129,7 +1287,7 @@ impl PrnsNode {
     #[napi]
     pub fn close_link(&self, link_id: Buffer) -> Result<bool, ErrorCode> {
         let link_id = marshal::link_id(&link_id)?;
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         Ok(handle.close_link(link_id))
     }
 
@@ -1231,7 +1389,7 @@ impl PrnsNode {
 
     #[napi]
     pub fn attach_auto_wifi(&self) -> Result<InterfaceHandle, ErrorCode> {
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         let attached = handle.supervise(AutoWifi::new());
         Ok(InterfaceHandle::from_supervisor(attached))
     }
@@ -1241,7 +1399,7 @@ impl PrnsNode {
         &self,
         options: Option<AutoUsbOptions>,
     ) -> Result<InterfaceHandle, ErrorCode> {
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         let mut auto = AutoUsb::default();
         if let Some(baud) = options.and_then(|opts| opts.baud) {
             auto = auto.with_baud(baud);
@@ -1338,13 +1496,13 @@ impl PrnsNode {
 
     #[napi]
     pub fn interfaces(&self) -> Result<Vec<InterfaceInfo>, ErrorCode> {
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         Ok(handle.interfaces().iter().map(interface_info).collect())
     }
 
     #[napi]
     pub fn interface_inventory(&self) -> Result<Vec<InterfaceInventoryInfo>, ErrorCode> {
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         Ok(handle
             .interface_inventory()
             .into_iter()
@@ -1356,9 +1514,28 @@ impl PrnsNode {
             .collect())
     }
 
+    #[napi(ts_return_type = "Promise<HostSnapshotInfo>")]
+    pub async fn host_snapshot(&self) -> Result<Fallible<HostSnapshotInfo>> {
+        let host = Arc::clone(&self.host);
+        let snapshot = match tokio::task::spawn_blocking(move || {
+            host.snapshot(Some(std::time::Duration::from_secs(5)))
+        })
+        .await
+        {
+            Ok(snapshot) => snapshot
+                .map(host_snapshot_info)
+                .map_err(native_snapshot_error),
+            Err(error) => Err(code_err(
+                ErrorCode::Internal,
+                format!("snapshot task failed: {error}"),
+            )),
+        };
+        Ok(Fallible(snapshot))
+    }
+
     #[napi(ts_return_type = "Promise<number>")]
     pub async fn link_count(&self) -> Result<Fallible<u32>> {
-        Ok(Fallible(match self.manager.handle() {
+        Ok(Fallible(match self.handle() {
             Ok(handle) => Ok(NodeIntrospection::link_count(&handle).await),
             Err(error) => Err(error),
         }))
@@ -1366,7 +1543,7 @@ impl PrnsNode {
 
     #[napi(ts_return_type = "Promise<RouteInfo[]>")]
     pub async fn routes(&self) -> Result<Fallible<Vec<RouteInfo>>> {
-        Ok(Fallible(match self.manager.handle() {
+        Ok(Fallible(match self.handle() {
             Ok(handle) => Ok(NodeIntrospection::routes(&handle)
                 .await
                 .iter()
@@ -1383,7 +1560,7 @@ impl PrnsNode {
 
     #[napi(ts_return_type = "Promise<AnnounceRateInfo[]>")]
     pub async fn announce_rates(&self) -> Result<Fallible<Vec<AnnounceRateInfo>>> {
-        Ok(Fallible(match self.manager.handle() {
+        Ok(Fallible(match self.handle() {
             Ok(handle) => Ok(NodeIntrospection::announce_rates(&handle)
                 .await
                 .into_iter()
@@ -1494,6 +1671,37 @@ impl PrnsNode {
 }
 
 impl PrnsNode {
+    fn handle(&self) -> CodeResult<PrnsNodeHandle> {
+        self.host.preview_handle().map_err(native_submit_error)
+    }
+
+    async fn on_node_runtime<T, F, Fut>(&self, run: F) -> CodeResult<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(PrnsNodeHandle) -> Fut + Send + 'static,
+        Fut: Future<Output = T> + Send + 'static,
+    {
+        self.host
+            .on_preview_runtime(run)
+            .await
+            .map_err(native_submit_error)
+    }
+
+    async fn submit_host(&self, command: StableHostCommand) -> CodeResult<HostCommandOutcome> {
+        let command = self.host.submit(command).map_err(native_submit_error)?;
+        match tokio::task::spawn_blocking(move || command.wait(None)).await {
+            Ok(CommandWait::Completed(result)) => result.map_err(host_command_error),
+            Ok(CommandWait::TimedOut | CommandWait::Interrupted) => Err(code_err(
+                ErrorCode::Internal,
+                "host command wait interrupted",
+            )),
+            Err(error) => Err(code_err(
+                ErrorCode::Internal,
+                format!("host command task failed: {error}"),
+            )),
+        }
+    }
+
     fn attach_auto_bluetooth_le_inner(
         &self,
         identity_path: Option<&str>,
@@ -1517,7 +1725,7 @@ impl PrnsNode {
                 ))
             }
         };
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         let attached = handle.attach(AutoBluetoothLe::new(identity));
         let id = attached.id();
         Ok(InterfaceHandle::from_ble(handle, id))
@@ -1525,7 +1733,7 @@ impl PrnsNode {
 
     async fn establish_link_inner(&self, destination: Buffer) -> CodeResult<LinkInfo> {
         let destination = marshal::destination_hash(&destination)?;
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         let established = handle
             .establish_link_with_rtt(destination)
             .await
@@ -1538,7 +1746,7 @@ impl PrnsNode {
 
     async fn request_path_inner(&self, destination: Buffer) -> CodeResult<PathInfo> {
         let destination = marshal::destination_hash(&destination)?;
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         let found = handle.request_path(destination).await.map_err(path_error)?;
         Ok(PathInfo {
             hops: u32::from(found.hops.0),
@@ -1548,7 +1756,7 @@ impl PrnsNode {
     async fn identify_inner(&self, link_id: Buffer, identity: Buffer) -> CodeResult<()> {
         let link_id = marshal::link_id(&link_id)?;
         let identity = marshal::identity_hash(&identity)?;
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         handle
             .identify(link_id, identity)
             .await
@@ -1585,7 +1793,7 @@ impl PrnsNode {
             }
             None => RequestResponseTimeout::LinkDefault,
         };
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         let (packed, rtt) = handle
             .request_with_response_timeout(link_id, path_hash, &data, timeout)
             .await
@@ -1611,7 +1819,7 @@ impl PrnsNode {
 
     async fn respond_inner(&self, token: RespondTokenSpec, data: Buffer) -> CodeResult<f64> {
         let token = Self::respond_token(&token)?;
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         let byte_len = u64::try_from(data.len())
             .map_err(|_| code_err(ErrorCode::PayloadTooLarge, "response is too large"))?;
         handle
@@ -1623,7 +1831,7 @@ impl PrnsNode {
 
     async fn respond_file_inner(&self, token: RespondTokenSpec, path: String) -> CodeResult<f64> {
         let token = Self::respond_token(&token)?;
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         let file = tokio::fs::File::open(&path).await.map_err(|error| {
             code_err(
                 ErrorCode::InvalidArgument,
@@ -1658,7 +1866,7 @@ impl PrnsNode {
             path_hash: marshal::request_path_hash(&path_hash)?,
             identity: marshal::identity_hash(&identity)?,
         };
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         handle
             .allow_requester(allow)
             .await
@@ -1675,7 +1883,7 @@ impl PrnsNode {
             Some(id) => AnnounceTarget::Interface(marshal::interface_id(id)?),
             None => AnnounceTarget::AllInterfaces,
         };
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         handle
             .announce_now(AnnounceNow {
                 destination,
@@ -1692,7 +1900,7 @@ impl PrnsNode {
         data: Buffer,
     ) -> CodeResult<PacketReceipt> {
         let destination = marshal::destination_hash(&destination)?;
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         let receipt = handle
             .send_single_packet(destination, &data)
             .await
@@ -1706,7 +1914,7 @@ impl PrnsNode {
         data: Buffer,
     ) -> CodeResult<PacketReceipt> {
         let link_id = marshal::link_id(&link_id)?;
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         let receipt = handle
             .send_link_packet(link_id, &data)
             .await
@@ -1731,7 +1939,7 @@ impl PrnsNode {
                 )
             })?;
         let link_id = marshal::link_id(&link_id)?;
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         let receipt = handle
             .send_channel_message(link_id, message_type, &data)
             .await
@@ -1743,56 +1951,67 @@ impl PrnsNode {
         &self,
         options: TcpServerOptions,
     ) -> CodeResult<InterfaceHandle> {
-        let bitrate = parse_bitrate(options.bitrate_bps)?;
-        let bind = options.bind;
-        let attached = self
-            .manager
-            .on_node_runtime(move |handle| async move {
-                TcpServer::bind_with_bitrate(bind.as_str(), bitrate)
-                    .await
-                    .map(|server| handle.supervise(server))
+        let outcome = self
+            .submit_host(StableHostCommand::AttachTcpServer {
+                bind: options.bind,
+                bitrate: parse_host_bitrate(options.bitrate_bps)?,
             })
-            .await?
-            .map_err(|error| {
-                code_err(
-                    ErrorCode::AttachFailed,
-                    format!("tcp server bind failed: {error}"),
-                )
-            })?;
-        Ok(InterfaceHandle::from_supervisor(attached))
+            .await?;
+        match outcome {
+            HostCommandOutcome::InterfaceAttached { interface } => Ok(InterfaceHandle::from_host(
+                Arc::clone(&self.host),
+                interface,
+                "tcp-server",
+            )),
+            other => Err(code_err(
+                ErrorCode::Internal,
+                format!("unexpected attach outcome: {other:?}"),
+            )),
+        }
     }
 
     async fn attach_tcp_client_inner(
         &self,
         options: TcpClientOptions,
     ) -> CodeResult<InterfaceHandle> {
-        let bitrate = parse_bitrate(options.bitrate_bps)?;
-        let client = TcpClientInterface::new_with_bitrate(
-            options.target,
-            bitrate,
-            ReconnectPolicy::STANDARD,
-        );
-        let handle = self.manager.handle()?;
-        let attached = handle.add_interface(client);
-        Ok(InterfaceHandle::from_interface(attached))
+        let outcome = self
+            .submit_host(StableHostCommand::AttachTcpClient {
+                target: options.target,
+                bitrate: parse_host_bitrate(options.bitrate_bps)?,
+            })
+            .await?;
+        match outcome {
+            HostCommandOutcome::InterfaceAttached { interface } => Ok(InterfaceHandle::from_host(
+                Arc::clone(&self.host),
+                interface,
+                "tcp-client",
+            )),
+            other => Err(code_err(
+                ErrorCode::Internal,
+                format!("unexpected attach outcome: {other:?}"),
+            )),
+        }
     }
 
     async fn attach_udp_inner(&self, options: UdpOptions) -> CodeResult<InterfaceHandle> {
-        let bitrate = parse_bitrate(options.bitrate_bps)?;
-        let local = options.local;
-        let peer = options.peer;
-        let attached = self
-            .manager
-            .on_node_runtime(move |handle| async move {
-                UdpInterface::bind(local.as_str(), peer.as_str(), bitrate)
-                    .await
-                    .map(|udp| handle.add_interface(udp))
+        let outcome = self
+            .submit_host(StableHostCommand::AttachUdp {
+                local: options.local,
+                peer: options.peer,
+                bitrate: parse_host_bitrate(options.bitrate_bps)?,
             })
-            .await?
-            .map_err(|error| {
-                code_err(ErrorCode::AttachFailed, format!("udp bind failed: {error}"))
-            })?;
-        Ok(InterfaceHandle::from_interface(attached))
+            .await?;
+        match outcome {
+            HostCommandOutcome::InterfaceAttached { interface } => Ok(InterfaceHandle::from_host(
+                Arc::clone(&self.host),
+                interface,
+                "udp",
+            )),
+            other => Err(code_err(
+                ErrorCode::Internal,
+                format!("unexpected attach outcome: {other:?}"),
+            )),
+        }
     }
 
     async fn attach_shared_instance_server_inner(
@@ -1801,7 +2020,6 @@ impl PrnsNode {
     ) -> CodeResult<InterfaceHandle> {
         let port = options.and_then(|opts| opts.port);
         let attached = self
-            .manager
             .on_node_runtime(move |handle| async move {
                 let server = match port {
                     Some(port) => SharedInstanceServer::with_port(port),
@@ -1828,7 +2046,6 @@ impl PrnsNode {
             .unwrap_or(shared_instance_contract::DEFAULT_LOCAL_PORT);
         let target = format!("127.0.0.1:{port}");
         let attached = self
-            .manager
             .on_node_runtime(move |handle| async move {
                 tokio::net::TcpStream::connect(target.as_str())
                     .await
@@ -1852,7 +2069,12 @@ impl PrnsNode {
         link_id: [u8; 16],
     ) -> CodeResult<tokio::sync::mpsc::UnboundedSender<personal_rns::runtime::ResourceProgress>>
     {
-        let sink = self.manager.sink()?;
+        let sink = self
+            .sink
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+            .ok_or_else(|| code_err(ErrorCode::NodeStopped, "node stopped"))?;
         let (progress_tx, mut progress_rx) = tokio::sync::mpsc::unbounded_channel();
         tokio::spawn(async move {
             while let Some(progress) = progress_rx.recv().await {
@@ -1883,7 +2105,7 @@ impl PrnsNode {
         options: Option<SendResourceOptions>,
     ) -> CodeResult<()> {
         let link = marshal::link_id(&link_id)?;
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         let options = options.unwrap_or(SendResourceOptions {
             metadata: None,
             compression: None,
@@ -1929,7 +2151,7 @@ impl PrnsNode {
         options: Option<SendResourceOptions>,
     ) -> CodeResult<()> {
         let link = marshal::link_id(&link_id)?;
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         let options = options.unwrap_or(SendResourceOptions {
             metadata: None,
             compression: None,
@@ -1984,7 +2206,7 @@ impl PrnsNode {
 
     async fn receive_resource_inner(&self, link_id: Buffer) -> CodeResult<ResourceData> {
         let link = marshal::link_id(&link_id)?;
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         let mut collected: Vec<u8> = Vec::new();
         let receipt = handle
             .receive_resource(link, &mut collected)
@@ -2005,7 +2227,7 @@ impl PrnsNode {
         path: String,
     ) -> CodeResult<ResourceFileReceipt> {
         let link = marshal::link_id(&link_id)?;
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         let file = tokio::fs::File::create(&path).await.map_err(|error| {
             code_err(
                 ErrorCode::InvalidArgument,
@@ -2031,7 +2253,7 @@ impl PrnsNode {
     ) -> CodeResult<bool> {
         let destination = marshal::destination_hash(&destination)?;
         let strategy = parse_resource_strategy(&strategy)?;
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         Ok(handle.set_resource_strategy(destination, strategy).await)
     }
 
@@ -2042,7 +2264,7 @@ impl PrnsNode {
     ) -> CodeResult<()> {
         let link = marshal::link_id(&link_id)?;
         let strategy = parse_resource_strategy(&strategy)?;
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         handle
             .set_link_resource_strategy(link, strategy)
             .await
@@ -2051,7 +2273,7 @@ impl PrnsNode {
 
     async fn route_inner(&self, destination: Buffer) -> CodeResult<Option<RouteInfo>> {
         let destination = marshal::destination_hash(&destination)?;
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         Ok(NodeIntrospection::route(&handle, destination)
             .await
             .as_ref()
@@ -2063,7 +2285,7 @@ impl PrnsNode {
         destination: Buffer,
     ) -> CodeResult<Option<Buffer>> {
         let destination = marshal::destination_hash(&destination)?;
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         Ok(handle
             .destination_identity_hash(destination)
             .await
@@ -2088,7 +2310,7 @@ impl PrnsNode {
                 ))
             }
         };
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         Ok(handle
             .destination_identity(query)
             .await
@@ -2101,7 +2323,7 @@ impl PrnsNode {
 
     async fn drop_route_inner(&self, destination: Buffer) -> CodeResult<bool> {
         let destination = marshal::destination_hash(&destination)?;
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         RoutingControl::drop_route(&handle, destination)
             .await
             .map(|outcome| matches!(outcome, DropRouteOutcome::Dropped))
@@ -2110,7 +2332,7 @@ impl PrnsNode {
 
     async fn drop_routes_via_inner(&self, transport_id: Buffer) -> CodeResult<f64> {
         let transport = marshal::transport_id(&transport_id)?;
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         RoutingControl::drop_routes_via(&handle, transport)
             .await
             .map(|outcome| f64::from(outcome.dropped_routes))
@@ -2118,7 +2340,7 @@ impl PrnsNode {
     }
 
     async fn clear_announce_queues_inner(&self) -> CodeResult<f64> {
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         RoutingControl::clear_announce_queues(&handle)
             .await
             .map(|outcome| f64::from(outcome.dropped_announces))
@@ -2131,7 +2353,7 @@ impl PrnsNode {
         reason: Option<String>,
     ) -> CodeResult<String> {
         let identity = marshal::identity_hash(&identity)?;
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         let entry = BlackholedIdentity {
             identity,
             source: IdentityHash::new([0u8; 16]),
@@ -2152,7 +2374,7 @@ impl PrnsNode {
 
     async fn unblackhole_identity_inner(&self, identity: Buffer) -> CodeResult<String> {
         let identity = marshal::identity_hash(&identity)?;
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         IdentityBlackholeControl::unblackhole_identity(&handle, identity)
             .await
             .map(|outcome| {
@@ -2166,7 +2388,7 @@ impl PrnsNode {
     }
 
     async fn blackholed_identities_inner(&self) -> CodeResult<Vec<BlackholedIdentityInfo>> {
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         IdentityBlackholeSource::blackholed_identities(&handle)
             .await
             .map(|entries| {
@@ -2185,7 +2407,7 @@ impl PrnsNode {
 
     async fn is_blackholed_inner(&self, identity: Buffer) -> CodeResult<bool> {
         let identity = marshal::identity_hash(&identity)?;
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         IdentityBlackholeSource::is_blackholed(&handle, identity)
             .await
             .map_err(|error| code_err(ErrorCode::BlackholeFailed, format!("{error:?}")))
@@ -2193,7 +2415,7 @@ impl PrnsNode {
 
     async fn mark_destination_used_inner(&self, destination: Buffer) -> CodeResult<String> {
         let destination = marshal::destination_hash(&destination)?;
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         DestinationIdentityRetentionControl::mark_destination_used(&handle, destination)
             .await
             .map(|outcome| {
@@ -2210,7 +2432,7 @@ impl PrnsNode {
 
     async fn retain_destination_inner(&self, destination: Buffer) -> CodeResult<String> {
         let destination = marshal::destination_hash(&destination)?;
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         DestinationIdentityRetentionControl::retain_destination(&handle, destination)
             .await
             .map(|outcome| {
@@ -2226,7 +2448,7 @@ impl PrnsNode {
 
     async fn release_destination_inner(&self, destination: Buffer) -> CodeResult<String> {
         let destination = marshal::destination_hash(&destination)?;
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         DestinationIdentityRetentionControl::release_destination(&handle, destination)
             .await
             .map(|outcome| {
@@ -2243,7 +2465,7 @@ impl PrnsNode {
 
     async fn retain_identity_inner(&self, identity: Buffer) -> CodeResult<RetainIdentityResult> {
         let identity = marshal::identity_hash(&identity)?;
-        let handle = self.manager.handle()?;
+        let handle = self.handle()?;
         DestinationIdentityRetentionControl::retain_identity(&handle, identity)
             .await
             .map(|outcome| RetainIdentityResult {
@@ -2263,7 +2485,6 @@ impl PrnsNode {
             .collect();
         let plan = report.value;
         let (attachments, attached, failures) = self
-            .manager
             .on_node_runtime(move |handle| async move {
                 let mut attached = Vec::new();
                 let mut failures = Vec::new();
@@ -2284,7 +2505,10 @@ impl PrnsNode {
                 (plan_attachments, attached, failures)
             })
             .await?;
-        self.manager.store_plan_attachments(attachments);
+        self.plan_attachments
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(attachments);
         Ok(ConfigAttachResult {
             attached: attached
                 .into_iter()
@@ -2312,6 +2536,109 @@ fn connection_name(connection: ConnectionState) -> &'static str {
         ConnectionState::Disconnected => "disconnected",
         ConnectionState::Disabled => "disabled",
         ConnectionState::Unknown => "unknown",
+    }
+}
+
+fn host_snapshot_info(snapshot: prns_host::HostSnapshot) -> HostSnapshotInfo {
+    let backend = crate::BackendInfo {
+        backend: format!("{:?}", snapshot.backend.backend()),
+        capabilities: snapshot
+            .backend
+            .capabilities()
+            .map(|capability| format!("{capability:?}"))
+            .collect(),
+        interface_kinds: snapshot
+            .backend
+            .interface_kinds()
+            .map(|kind| format!("{kind:?}"))
+            .collect(),
+    };
+    let interfaces = snapshot
+        .interfaces
+        .into_iter()
+        .map(|interface| HostInterfaceSnapshotInfo {
+            interface_id: marshal::to_buffer(interface.interface_id.as_bytes()),
+            name: interface.name,
+            kind: interface.kind.map(|kind| format!("{kind:?}")),
+            health: format!("{:?}", interface.health),
+            failure_detail: interface.failure_detail,
+            rx_bytes: interface.rx_bytes as f64,
+            tx_bytes: interface.tx_bytes as f64,
+            rx_bps: interface.rx_bps.map(|value| value as f64),
+            tx_bps: interface.tx_bps.map(|value| value as f64),
+            route_count: interface.route_count,
+            link_count: interface.link_count,
+            transported_link_count: interface.transported_link_count,
+        })
+        .collect();
+    let routes = snapshot
+        .routes
+        .into_iter()
+        .map(|route| HostRouteSnapshotInfo {
+            destination: marshal::to_buffer(route.destination.as_bytes()),
+            hops: u32::from(route.hops),
+            via_identity: route
+                .via_identity
+                .map(|identity| marshal::to_buffer(identity.as_bytes())),
+            interface_id: marshal::to_buffer(route.interface_id.as_bytes()),
+            learned_at_millis: route.learned_at_millis as f64,
+            last_relayed_at_millis: route.last_relayed_at_millis as f64,
+            expires_at_millis: route.expires_at_millis as f64,
+        })
+        .collect();
+    let destination_identities = snapshot
+        .destination_identities
+        .into_iter()
+        .map(|identity| HostDestinationIdentitySnapshotInfo {
+            destination: marshal::to_buffer(identity.destination.as_bytes()),
+            identity: marshal::to_buffer(identity.identity.as_bytes()),
+        })
+        .collect();
+    HostSnapshotInfo {
+        revision: snapshot.revision as f64,
+        backend,
+        interfaces,
+        routes,
+        active_link_count: snapshot.active_link_count,
+        destination_identities,
+        runtime: HostRuntimeHealthSnapshotInfo {
+            running: snapshot.runtime.running,
+            uptime_millis: snapshot.runtime.uptime_millis as f64,
+            interface_count: snapshot.runtime.interface_count,
+            online_interface_count: snapshot.runtime.online_interface_count,
+            route_count: snapshot.runtime.route_count,
+            link_count: snapshot.runtime.link_count,
+            transported_link_count: snapshot.runtime.transported_link_count,
+            rx_bytes: snapshot.runtime.rx_bytes as f64,
+            tx_bytes: snapshot.runtime.tx_bytes as f64,
+            rx_bps: snapshot.runtime.rx_bps as f64,
+            tx_bps: snapshot.runtime.tx_bps as f64,
+        },
+        persistence: HostPersistenceSnapshotInfo {
+            persistent: snapshot.persistence.persistent,
+            restored: snapshot.persistence.restored,
+            last_flush_cause: snapshot
+                .persistence
+                .last_flush_cause
+                .map(|cause| match cause {
+                    prns_host::PersistenceFlushCause::Startup => "Startup".to_string(),
+                    prns_host::PersistenceFlushCause::Interval => "Interval".to_string(),
+                    prns_host::PersistenceFlushCause::RouteChange => "RouteChange".to_string(),
+                    prns_host::PersistenceFlushCause::RatchetRotation => {
+                        "RatchetRotation".to_string()
+                    }
+                    prns_host::PersistenceFlushCause::Shutdown => "Shutdown".to_string(),
+                }),
+            last_failure_detail: snapshot.persistence.last_failure_detail,
+        },
+    }
+}
+
+fn native_snapshot_error(error: NativeSnapshotError) -> crate::errors::CodeError {
+    match error {
+        NativeSnapshotError::Busy => code_err(ErrorCode::Busy, "snapshot queue is busy"),
+        NativeSnapshotError::Stopped => code_err(ErrorCode::NodeStopped, "node stopped"),
+        NativeSnapshotError::TimedOut => code_err(ErrorCode::Unavailable, "snapshot timed out"),
     }
 }
 

@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use std::collections::BTreeMap;
+use std::future::Future;
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -46,18 +47,19 @@ use personal_rns::{
 use prns_host::{
     ApplicationEvent, BackendInfo, BackendKind, Bitrate, Capability, ChannelMessage,
     CommandFailure, CommandOutcome, DeliveryEvidence, DestinationConfig, DestinationHash,
-    DestinationIdentityConfig, DestinationIdentitySnapshot, DiagnosticEvent, HostCommand,
-    HostConfig, HostRole, HostSnapshot, IdentityConfig, IdentityHash, InterfaceConfig,
-    InterfaceHealth, InterfaceId, InterfaceKind, InterfaceSnapshot, LinkClosedReason, LinkId,
-    PacketHash, PersistenceConfig, PersistenceFlushCause, PersistenceFlushTarget,
-    PersistenceSnapshot, RequestAvailable, RequestHandlerConfig, RequestId, RequestPathHash,
-    RequestPolicy, ResourceAvailable, ResourceCompression, ResourceHash,
-    ResourceNeedsDecompression, ResourceSegmentAvailable, ResourceStrategy, ResourceStreamId,
-    ResponseAvailable, ResponseSegmentAvailable, ResponseTimeout, RouteSnapshot,
-    RuntimeHealthSnapshot, SingleDelivery,
+    DestinationIdentityConfig, DestinationIdentitySnapshot, DestinationLinkRequestPolicy,
+    DestinationProofStrategy, DestinationRatchetPolicy, DiagnosticEvent, HostCommand, HostConfig,
+    HostRole, HostSnapshot, IdentityConfig, IdentityHash, InterfaceConfig, InterfaceHealth,
+    InterfaceId, InterfaceKind, InterfaceSnapshot, LinkClosedReason, LinkId, PacketHash,
+    PersistenceConfig, PersistenceFlushCause, PersistenceFlushTarget, PersistenceSnapshot,
+    RequestAvailable, RequestHandlerConfig, RequestId, RequestPathHash, RequestPolicy,
+    ResourceAvailable, ResourceCompression, ResourceHash, ResourceNeedsDecompression,
+    ResourceSegmentAvailable, ResourceStrategy, ResourceStreamId, ResponseAvailable,
+    ResponseSegmentAvailable, ResponseTimeout, RouteSnapshot, RuntimeHealthSnapshot,
+    SingleDelivery,
 };
 use tokio::io::{AsyncRead, ReadBuf};
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, oneshot, watch};
 
 const START_TIMEOUT: Duration = Duration::from_secs(5);
 const STOP_TIMEOUT: Duration = Duration::from_secs(5);
@@ -223,6 +225,9 @@ struct CommandJob {
     completion: Arc<CommandCompletion>,
 }
 
+pub type NativePreviewFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
+pub type NativePreviewJob = Box<dyn FnOnce(PrnsNodeHandle) -> NativePreviewFuture + Send>;
+
 impl Drop for CommandJob {
     fn drop(&mut self) {
         self.completion.finish(Err(CommandFailure::NodeStopped));
@@ -233,11 +238,13 @@ pub struct NativeHost {
     commands: mpsc::Sender<CommandJob>,
     uploads: mpsc::Sender<UploadJob>,
     snapshots: mpsc::Sender<SnapshotJob>,
+    preview: mpsc::Sender<NativePreviewJob>,
     shutdown: watch::Sender<bool>,
     join: Mutex<Option<std::thread::JoinHandle<()>>>,
     stopped: AtomicBool,
     identity_hash: IdentityHash,
     destination_hashes: Vec<DestinationHash>,
+    handle: PrnsNodeHandle,
 }
 
 impl NativeHost {
@@ -258,6 +265,7 @@ impl NativeHost {
         let (command_tx, command_rx) = mpsc::channel(pending_commands);
         let (upload_tx, upload_rx) = mpsc::channel(pending_commands);
         let (snapshot_tx, snapshot_rx) = mpsc::channel(pending_commands);
+        let (preview_tx, preview_rx) = mpsc::channel(pending_commands);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
         let persistence_snapshot = Arc::new(Mutex::new(match &config.persistence {
@@ -276,6 +284,7 @@ impl NativeHost {
                         commands: command_rx,
                         uploads: upload_rx,
                         snapshots: snapshot_rx,
+                        preview: preview_rx,
                         shutdown: shutdown_rx,
                         persistence: worker_persistence,
                     },
@@ -301,11 +310,13 @@ impl NativeHost {
             commands: command_tx,
             uploads: upload_tx,
             snapshots: snapshot_tx,
+            preview: preview_tx,
             shutdown: shutdown_tx,
             join: Mutex::new(Some(join)),
             stopped: AtomicBool::new(false),
             identity_hash: ready.identity_hash,
             destination_hashes: ready.destination_hashes,
+            handle: ready.handle,
         })
     }
 
@@ -317,6 +328,37 @@ impl NativeHost {
     #[must_use]
     pub fn destination_hashes(&self) -> &[DestinationHash] {
         &self.destination_hashes
+    }
+
+    pub fn preview_handle(&self) -> Result<PrnsNodeHandle, NativeSubmitError> {
+        if self.stopped.load(Ordering::Acquire) {
+            Err(NativeSubmitError::Stopped)
+        } else {
+            Ok(self.handle.clone())
+        }
+    }
+
+    pub async fn on_preview_runtime<T, F, Fut>(&self, run: F) -> Result<T, NativeSubmitError>
+    where
+        T: Send + 'static,
+        F: FnOnce(PrnsNodeHandle) -> Fut + Send + 'static,
+        Fut: Future<Output = T> + Send + 'static,
+    {
+        if self.stopped.load(Ordering::Acquire) {
+            return Err(NativeSubmitError::Stopped);
+        }
+        let (result_tx, result_rx) = oneshot::channel();
+        let job: NativePreviewJob = Box::new(move |handle| {
+            Box::pin(async move {
+                let value = run(handle).await;
+                let _ = result_tx.send(value);
+            })
+        });
+        self.preview.try_send(job).map_err(|error| match error {
+            mpsc::error::TrySendError::Full(_) => NativeSubmitError::Busy,
+            mpsc::error::TrySendError::Closed(_) => NativeSubmitError::Stopped,
+        })?;
+        result_rx.await.map_err(|_| NativeSubmitError::Stopped)
     }
 
     pub fn submit(&self, command: HostCommand) -> Result<CommandHandle, NativeSubmitError> {
@@ -642,11 +684,16 @@ pub fn persistent_endpoint(
 struct Ready {
     identity_hash: IdentityHash,
     destination_hashes: Vec<DestinationHash>,
+    handle: PrnsNodeHandle,
 }
 
 struct ResolvedSingle {
     identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
     announce_app_data: Vec<u8>,
+    proof: DestinationProofStrategy,
+    link_requests: DestinationLinkRequestPolicy,
+    ratchet: DestinationRatchetPolicy,
+    resource_strategy: ResourceStrategy,
     request_handlers: Vec<RequestHandlerConfig>,
 }
 
@@ -764,6 +811,10 @@ fn resolve_config(config: HostConfig) -> Result<ResolvedConfig, NativeStartError
                     single: Some(ResolvedSingle {
                         identity,
                         announce_app_data: single.announce_app_data,
+                        proof: single.proof,
+                        link_requests: single.link_requests,
+                        ratchet: single.ratchet,
+                        resource_strategy: single.resource_strategy,
                         request_handlers: single.request_handlers,
                     }),
                 });
@@ -802,10 +853,21 @@ fn build_destinations<'a>(
                 aspects,
                 identity: single.identity.clone(),
                 announce_app_data: &single.announce_app_data,
-                proof: ProofStrategy::ProveAll,
-                link_requests: LinkRequestPolicy::AcceptAll,
-                ratchet: RatchetPolicy::NoRatchets,
-                resource_strategy: EngineResourceStrategy::AcceptNone,
+                proof: match single.proof {
+                    DestinationProofStrategy::ProveAll => ProofStrategy::ProveAll,
+                    DestinationProofStrategy::ProveNone => ProofStrategy::ProveNone,
+                    DestinationProofStrategy::ProveIf => ProofStrategy::ProveIf,
+                },
+                link_requests: match single.link_requests {
+                    DestinationLinkRequestPolicy::AcceptAll => LinkRequestPolicy::AcceptAll,
+                    DestinationLinkRequestPolicy::AcceptNone => LinkRequestPolicy::AcceptNone,
+                },
+                ratchet: match single.ratchet {
+                    DestinationRatchetPolicy::NoRatchets => RatchetPolicy::NoRatchets,
+                    DestinationRatchetPolicy::Ratcheted => RatchetPolicy::Ratcheted,
+                    DestinationRatchetPolicy::RatchetsRequired => RatchetPolicy::RatchetsRequired,
+                },
+                resource_strategy: engine_resource_strategy(single.resource_strategy),
                 request_endpoints: personal_rns::runtime::ServeMyRequestEndpoints::No,
             },
         })
@@ -816,6 +878,7 @@ struct WorkerInputs {
     commands: mpsc::Receiver<CommandJob>,
     uploads: mpsc::Receiver<UploadJob>,
     snapshots: mpsc::Receiver<SnapshotJob>,
+    preview: mpsc::Receiver<NativePreviewJob>,
     shutdown: watch::Receiver<bool>,
     persistence: Arc<Mutex<PersistenceSnapshot>>,
 }
@@ -852,6 +915,7 @@ async fn run(
         commands: command_rx,
         uploads: upload_rx,
         snapshots: snapshot_rx,
+        preview: preview_rx,
         shutdown: shutdown_rx,
         persistence: persistence_snapshot,
     } = inputs;
@@ -941,6 +1005,7 @@ async fn run(
         .send(Ok(Ready {
             identity_hash,
             destination_hashes,
+            handle: handle.clone(),
         }))
         .is_err()
     {
@@ -949,6 +1014,7 @@ async fn run(
     let commands = tokio::spawn(command_loop(
         command_rx,
         snapshot_rx,
+        preview_rx,
         handle.clone(),
         shutdown_rx.clone(),
         persistence_snapshot,
@@ -995,6 +1061,7 @@ impl Attachment {
 async fn command_loop(
     mut commands: mpsc::Receiver<CommandJob>,
     mut snapshots: mpsc::Receiver<SnapshotJob>,
+    mut preview: mpsc::Receiver<NativePreviewJob>,
     handle: PrnsNodeHandle,
     mut shutdown: watch::Receiver<bool>,
     persistence: Arc<Mutex<PersistenceSnapshot>>,
@@ -1010,6 +1077,10 @@ async fn command_loop(
             },
             snapshot = snapshots.recv() => match snapshot {
                 Some(snapshot) => HostWork::Snapshot(snapshot),
+                None => break,
+            },
+            preview = preview.recv() => match preview {
+                Some(preview) => HostWork::Preview(preview),
                 None => break,
             },
             _ = shutdown.wait_for(|stopping| *stopping) => break,
@@ -1033,6 +1104,9 @@ async fn command_loop(
                     let _ = job.reply.send(snapshot);
                 }
             }
+            HostWork::Preview(job) => {
+                tokio::spawn(job(handle.clone()));
+            }
         }
     }
     for (_, attachment) in attachments {
@@ -1045,6 +1119,7 @@ async fn command_loop(
 enum HostWork {
     Command(CommandJob),
     Snapshot(SnapshotJob),
+    Preview(NativePreviewJob),
 }
 
 async fn collect_snapshot(
@@ -2428,6 +2503,10 @@ mod tests {
                     .map_err(|error| format!("{error:?}"))?,
                 identity: DestinationIdentityConfig::HostIdentity,
                 announce_app_data: Vec::new(),
+                proof: DestinationProofStrategy::ProveAll,
+                link_requests: DestinationLinkRequestPolicy::AcceptAll,
+                ratchet: DestinationRatchetPolicy::NoRatchets,
+                resource_strategy: ResourceStrategy::Refuse,
                 request_handlers: vec![RequestHandlerConfig {
                     path: "/echo".to_string(),
                     policy: RequestPolicy::AllowList,

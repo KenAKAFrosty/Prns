@@ -31,15 +31,29 @@ pub enum PersistenceConfig {
     Directory { path: String },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HostRole {
-    Endpoint,
-    Transport,
-}
-
 pub enum DestinationIdentityConfig {
     HostIdentity,
     Dedicated(IdentityConfig),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DestinationProofStrategy {
+    ProveAll,
+    ProveNone,
+    ProveIf,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DestinationLinkRequestPolicy {
+    AcceptAll,
+    AcceptNone,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DestinationRatchetPolicy {
+    NoRatchets,
+    Ratcheted,
+    RatchetsRequired,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -89,6 +103,10 @@ pub struct SingleDestinationConfig {
     pub name: DestinationName,
     pub identity: DestinationIdentityConfig,
     pub announce_app_data: Vec<u8>,
+    pub proof: DestinationProofStrategy,
+    pub link_requests: DestinationLinkRequestPolicy,
+    pub ratchet: DestinationRatchetPolicy,
+    pub resource_strategy: crate::ResourceStrategy,
     pub request_handlers: Vec<RequestHandlerConfig>,
 }
 

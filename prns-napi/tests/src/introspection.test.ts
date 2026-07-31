@@ -32,6 +32,13 @@ test('introspection, routing control, and blackhole surfaces', async () => {
     assert.ok(inventory[0].origin.length > 0);
     assert.equal(inventory[0].interface.kind, 'tcp-client');
 
+    const snapshot = await client.hostSnapshot();
+    assert.equal(snapshot.backend.backend, 'Native');
+    assert.ok(snapshot.backend.interfaceKinds.includes('TcpClient'));
+    assert.equal(snapshot.interfaces.length, 1);
+    assert.equal(snapshot.interfaces[0].kind, 'TcpClient');
+    assert.equal(snapshot.runtime.interfaceCount, 1);
+
     const routes = await client.routes();
     assert.ok(routes.some((r: any) => bufEq(r.destination, dest)));
     const route = await client.route(dest);

@@ -2,7 +2,8 @@ mod errors;
 mod events;
 mod marshal;
 mod node;
-mod runtime;
+
+pub use node::start_node;
 
 use napi::bindgen_prelude::Buffer;
 use napi::Result;

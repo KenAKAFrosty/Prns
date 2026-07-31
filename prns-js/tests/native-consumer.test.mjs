@@ -45,6 +45,11 @@ test("packaged native API starts, exposes lifecycle, and stops", async () => {
   );
   assert.equal(attached.tag, "Succeeded");
   assert.equal(attached.data.tag, "InterfaceAttached");
+  const attachedSnapshot = await created.data.snapshot();
+  assert.equal(attachedSnapshot.backend.backend, "Native");
+  assert.ok(attachedSnapshot.backend.interfaceKinds.includes("TcpClient"));
+  assert.equal(attachedSnapshot.interfaces.length, 1);
+  assert.equal(attachedSnapshot.interfaces[0].kind, "TcpClient");
   const detached = await created.data.execute(
     esm.Tag("DetachInterface", {
       interface: attached.data.data.interface,
@@ -52,6 +57,7 @@ test("packaged native API starts, exposes lifecycle, and stops", async () => {
   );
   assert.equal(detached.tag, "Succeeded");
   assert.equal(detached.data.tag, "InterfaceDetached");
+  assert.equal((await created.data.snapshot()).interfaces.length, 0);
   assert.equal((await created.data.stop()).tag, "Stopped");
   assert.equal(created.data.lifecycle.tag, "Stopped");
 });

@@ -24,9 +24,10 @@ pub use command::{
     ResourceStrategy, ResponseTimeout,
 };
 pub use config::{
-    DestinationConfig, DestinationIdentityConfig, DestinationName, DestinationNameError,
-    HostConfig, HostRole, IdentityConfig, IdentitySecret, PersistenceConfig, RequestHandlerConfig,
-    RequestPolicy, SingleDestinationConfig,
+    DestinationConfig, DestinationIdentityConfig, DestinationLinkRequestPolicy, DestinationName,
+    DestinationNameError, DestinationProofStrategy, DestinationRatchetPolicy, HostConfig, HostRole,
+    IdentityConfig, IdentitySecret, PersistenceConfig, RequestHandlerConfig, RequestPolicy,
+    SingleDestinationConfig,
 };
 pub use contract::{
     verify_host_contract, HostContract, HostContractMismatch, HOST_CONTRACT, HOST_CONTRACT_ABI,

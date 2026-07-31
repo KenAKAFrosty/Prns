@@ -909,6 +909,10 @@ unsafe fn parse_destination(value: &PrnsDestinationConfig) -> Result<Destination
                     name,
                     identity,
                     announce_app_data: unsafe { read_bytes(value.announce_app_data) }?.to_vec(),
+                    proof: prns_host_core::DestinationProofStrategy::ProveAll,
+                    link_requests: prns_host_core::DestinationLinkRequestPolicy::AcceptAll,
+                    ratchet: prns_host_core::DestinationRatchetPolicy::NoRatchets,
+                    resource_strategy: prns_host_core::ResourceStrategy::Refuse,
                     request_handlers,
                 },
             ))

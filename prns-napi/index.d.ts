@@ -94,6 +94,7 @@ export declare class PrnsNode {
   setLinkResourceStrategy(linkId: Buffer, strategy: ResourceStrategySpec): Promise<void>
   interfaces(): Array<InterfaceInfo>
   interfaceInventory(): Array<InterfaceInventoryInfo>
+  hostSnapshot(): Promise<HostSnapshotInfo>
   linkCount(): Promise<number>
   routes(): Promise<RouteInfo[]>
   route(destination: Buffer): Promise<RouteInfo | null>
@@ -205,7 +206,69 @@ export declare function generateIdentitySecret(): Buffer
 
 export declare function hostContractAbi(): number
 
+export interface HostDestinationIdentitySnapshotInfo {
+  destination: Buffer
+  identity: Buffer
+}
+
+export interface HostInterfaceSnapshotInfo {
+  interfaceId: Buffer
+  name?: string
+  kind?: string
+  health: string
+  failureDetail?: string
+  rxBytes: number
+  txBytes: number
+  rxBps?: number
+  txBps?: number
+  routeCount: number
+  linkCount: number
+  transportedLinkCount: number
+}
+
+export interface HostPersistenceSnapshotInfo {
+  persistent: boolean
+  restored: boolean
+  lastFlushCause?: string
+  lastFailureDetail?: string
+}
+
+export interface HostRouteSnapshotInfo {
+  destination: Buffer
+  hops: number
+  viaIdentity?: Buffer
+  interfaceId: Buffer
+  learnedAtMillis: number
+  lastRelayedAtMillis: number
+  expiresAtMillis: number
+}
+
+export interface HostRuntimeHealthSnapshotInfo {
+  running: boolean
+  uptimeMillis: number
+  interfaceCount: number
+  onlineInterfaceCount: number
+  routeCount: number
+  linkCount: number
+  transportedLinkCount: number
+  rxBytes: number
+  txBytes: number
+  rxBps: number
+  txBps: number
+}
+
 export declare function hostSchemaVersion(): number
+
+export interface HostSnapshotInfo {
+  revision: number
+  backend: BackendInfo
+  interfaces: Array<HostInterfaceSnapshotInfo>
+  routes: Array<HostRouteSnapshotInfo>
+  activeLinkCount: number
+  destinationIdentities: Array<HostDestinationIdentitySnapshotInfo>
+  runtime: HostRuntimeHealthSnapshotInfo
+  persistence: HostPersistenceSnapshotInfo
+}
 
 export interface IdentitySpec {
   secret?: Buffer

@@ -305,6 +305,25 @@ inputs = ["validation/hygiene/no-personal-paths.py", ".githooks/pre-push"]
 artifacts = "validation-artifacts/results/personal-path-hygiene"
 
 [[suite]]
+id = "runtime-ownership"
+domain = "hygiene"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "python"
+timeout_seconds = 600
+command = ["python3", "-m", "unittest", "tools.tests.test_runtime_ownership"]
+inputs = [
+  "tools/tests/test_runtime_ownership.py",
+  "prns-napi/Cargo.toml",
+  "prns-wasm/Cargo.toml",
+  "prns-host/abi/c/Cargo.toml",
+  "prns-host/impls/native/Cargo.toml",
+  "prns-host/impls/cooperative/Cargo.toml",
+  "prns-host/bindings",
+]
+artifacts = "validation-artifacts/results/runtime-ownership"
+
+[[suite]]
 id = "dependency-audit"
 domain = "security"
 tiers = ["release", "scheduled"]
