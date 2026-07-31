@@ -49,6 +49,8 @@ def check_rust(catalog, version):
         if package.get("include") != [
             "src/**",
             "tests/**",
+            "!tests/**/__pycache__/**",
+            "!tests/**/*.pyc",
             "examples/**",
             "Cargo.toml",
             "README.md",

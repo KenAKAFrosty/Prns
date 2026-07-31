@@ -12,7 +12,7 @@ readme = "README.md"
 keywords = ["reticulum", "mesh", "networking", "ffi"]
 categories = ["api-bindings", "network-programming"]
 publish = true
-include = ["src/**", "tests/**", "examples/**", "Cargo.toml", "README.md"]
+include = ["src/**", "tests/**", "!tests/**/__pycache__/**", "!tests/**/*.pyc", "examples/**", "Cargo.toml", "README.md"]
 
 # Standalone workspace: kept out of the root so the engine's default `--workspace`
 # build never unifies this crate's host features (tokio, CoreBluetooth) into the

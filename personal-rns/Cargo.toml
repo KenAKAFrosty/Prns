@@ -12,7 +12,7 @@ readme = "README.md"
 keywords = ["reticulum", "mesh", "networking", "embedded", "no-std"]
 categories = ["network-programming", "embedded", "no-std", "asynchronous"]
 publish = true
-include = ["src/**", "tests/**", "examples/**", "Cargo.toml", "README.md"]
+include = ["src/**", "tests/**", "!tests/**/__pycache__/**", "!tests/**/*.pyc", "examples/**", "Cargo.toml", "README.md"]
 
 [lib]
 path = "src/lib.rs"
