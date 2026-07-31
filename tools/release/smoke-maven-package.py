@@ -11,21 +11,28 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--repository", required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--repository")
+    source.add_argument("--repository-url")
     parser.add_argument("--library", required=True)
     args = parser.parse_args()
-    repository = Path(args.repository).resolve()
+    repository = (
+        Path(args.repository).resolve() if args.repository is not None else None
+    )
     library = Path(args.library).resolve()
     version = (ROOT / "VERSION").read_text().strip()
-    jar = (
-        repository
-        / "io"
-        / "reticulum"
-        / "personal-rns"
-        / version
-        / f"personal-rns-{version}.jar"
-    )
-    if not jar.is_file() or not library.is_file():
+    if repository is not None:
+        jar = (
+            repository
+            / "io"
+            / "reticulum"
+            / "personal-rns"
+            / version
+            / f"personal-rns-{version}.jar"
+        )
+    else:
+        jar = None
+    if (jar is not None and not jar.is_file()) or not library.is_file():
         raise SystemExit("staged Maven package or native library is missing")
     with tempfile.TemporaryDirectory(prefix="prns-maven-package-") as temporary:
         consumer = Path(temporary)
@@ -34,7 +41,11 @@ def main():
         (consumer / "settings.gradle.kts").write_text(
             'rootProject.name = "personal-rns-package-smoke"\n'
         )
-        repository_uri = repository.as_uri()
+        repository_uri = (
+            repository.as_uri()
+            if repository is not None
+            else args.repository_url
+        )
         library_path = str(library).replace("\\", "\\\\").replace('"', '\\"')
         (consumer / "build.gradle.kts").write_text(
             "plugins {\n"
@@ -82,16 +93,17 @@ def main():
             "    }\n"
             "}\n"
         )
+        command = [
+            str(ROOT / "prns-host" / "bindings" / "jvm" / "gradlew"),
+            "--project-dir",
+            str(consumer),
+            "--no-daemon",
+        ]
+        if repository is not None:
+            command.append("--offline")
+        command.extend(["--stacktrace", "run"])
         subprocess.run(
-            [
-                str(ROOT / "prns-host" / "bindings" / "jvm" / "gradlew"),
-                "--project-dir",
-                str(consumer),
-                "--no-daemon",
-                "--offline",
-                "--stacktrace",
-                "run",
-            ],
+            command,
             cwd=consumer,
             check=True,
         )

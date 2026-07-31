@@ -418,6 +418,12 @@ jobs:
           npm install --ignore-scripts --no-audit --no-fund \
             "$GITHUB_WORKSPACE/dist/npm/personal-rns-linux-x64-gnu-$(cat "$GITHUB_WORKSPACE/VERSION").tgz" \
             "$GITHUB_WORKSPACE/dist/npm/personal-rns-$(cat "$GITHUB_WORKSPACE/VERSION").tgz"
+          mkdir -p prns-js/tests prns-host/conformance
+          cp "$GITHUB_WORKSPACE/prns-js/tests/native-consumer.test.mjs" \
+            prns-js/tests/
+          cp "$GITHUB_WORKSPACE/prns-host/conformance/persistent-two-node-v1.json" \
+            prns-host/conformance/
+          node --test prns-js/tests/native-consumer.test.mjs
           node --input-type=module --eval \
             'import { HOST_CONTRACT_ABI, Prns, Tag } from "personal-rns"; if (HOST_CONTRACT_ABI !== 1) throw new Error("contract mismatch"); const ready = await Prns.create({ identity: Tag("GenerateEphemeral"), role: "Endpoint" }); if (ready.tag !== "Ready") throw new Error(ready.tag); const stopped = await ready.data.stop(); if (stopped.tag !== "Stopped") throw new Error(stopped.tag);'
           bun --eval \

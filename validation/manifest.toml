@@ -128,10 +128,10 @@ command = ["bash", "validation/interop/cases/host-c-contract-smoke.sh"]
 inputs = [
   "validation/interop/cases/host-c-contract-smoke.sh",
   "prns-host/abi/c",
-  "prns-host/conformance/interface-configs-v2.json",
-  "prns-host/conformance/persistent-two-node-v2.json",
+  "prns-host/conformance/interface-configs-v1.json",
+  "prns-host/conformance/persistent-two-node-v1.json",
   "prns-host/core",
-  "prns-host/schema/host-contract-v2.json",
+  "prns-host/schema/host-contract-v1.json",
 ]
 artifacts = "validation-artifacts/results/host-c-contract"
 
@@ -148,8 +148,8 @@ inputs = [
   "validation/interop/cases/host-dotnet-contract-smoke.sh",
   "prns-host/abi/c",
   "prns-host/bindings/dotnet",
-  "prns-host/conformance/interface-configs-v2.json",
-  "prns-host/conformance/persistent-two-node-v2.json",
+  "prns-host/conformance/interface-configs-v1.json",
+  "prns-host/conformance/persistent-two-node-v1.json",
   "prns-host/core",
   "prns-host/schema/host-contract-v1.json",
 ]
@@ -193,8 +193,8 @@ inputs = [
   "validation/interop/cases/host-python-contract-smoke.sh",
   "prns-host/abi/c",
   "prns-host/bindings/python",
-  "prns-host/conformance/interface-configs-v2.json",
-  "prns-host/conformance/persistent-two-node-v2.json",
+  "prns-host/conformance/interface-configs-v1.json",
+  "prns-host/conformance/persistent-two-node-v1.json",
   "prns-host/core",
   "prns-host/schema/host-contract-v1.json",
 ]
@@ -213,8 +213,8 @@ inputs = [
   "validation/interop/cases/host-go-contract-smoke.sh",
   "prns-host/abi/c",
   "prns-host/bindings/go",
-  "prns-host/conformance/interface-configs-v2.json",
-  "prns-host/conformance/persistent-two-node-v2.json",
+  "prns-host/conformance/interface-configs-v1.json",
+  "prns-host/conformance/persistent-two-node-v1.json",
   "prns-host/core",
   "prns-host/schema/host-contract-v1.json",
 ]
@@ -233,8 +233,8 @@ inputs = [
   "validation/interop/cases/host-swift-contract-smoke.sh",
   "prns-host/abi/c",
   "prns-host/bindings/swift",
-  "prns-host/conformance/interface-configs-v2.json",
-  "prns-host/conformance/persistent-two-node-v2.json",
+  "prns-host/conformance/interface-configs-v1.json",
+  "prns-host/conformance/persistent-two-node-v1.json",
   "prns-host/core",
   "prns-host/schema/host-contract-v1.json",
 ]
@@ -253,8 +253,8 @@ inputs = [
   "validation/interop/cases/host-julia-contract-smoke.sh",
   "prns-host/abi/c",
   "prns-host/bindings/julia",
-  "prns-host/conformance/interface-configs-v2.json",
-  "prns-host/conformance/persistent-two-node-v2.json",
+  "prns-host/conformance/interface-configs-v1.json",
+  "prns-host/conformance/persistent-two-node-v1.json",
   "prns-host/core",
   "prns-host/schema/host-contract-v1.json",
 ]
@@ -273,8 +273,8 @@ inputs = [
   "validation/interop/cases/host-jvm-contract-smoke.sh",
   "prns-host/abi/c",
   "prns-host/bindings/jvm",
-  "prns-host/conformance/interface-configs-v2.json",
-  "prns-host/conformance/persistent-two-node-v2.json",
+  "prns-host/conformance/interface-configs-v1.json",
+  "prns-host/conformance/persistent-two-node-v1.json",
   "prns-host/core",
   "prns-host/schema/host-contract-v1.json",
 ]

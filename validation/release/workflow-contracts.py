@@ -447,6 +447,82 @@ def validate() -> list[str]:
         if resource_gate not in hardening:
             errors.append(f"hardening.yml is missing resource gate {resource_gate!r}")
 
+    host_sdk_promotion = (
+        ROOT / ".github" / "workflows" / "host-sdk-promote.yml"
+    ).read_text(encoding="utf-8")
+    for custody_gate in (
+        "group: host-sdk-publication",
+        "cancel-in-progress: false",
+        "environment: host-sdk-release",
+        "HOST_SDK_IMMUTABLE_RELEASES",
+        "HOST_SDK_SSH_SIGNING_KEY",
+        "Require exact protected stage authority",
+        ".github/workflows/host-sdk-stage.yml",
+        "host-sdk-stage-${{ inputs.expected_sha }}",
+        "release.host-sdk.stage.verify",
+        "release.host-sdk.promotion.prepare",
+        "ssh-keygen -Y sign",
+        "git tag -s",
+        "git push --atomic",
+        "release already exists",
+        "gh release create",
+        "--verify-tag",
+        "--target \"$EXPECTED_SHA\"",
+    ):
+        if custody_gate not in host_sdk_promotion:
+            errors.append(
+                f"host-sdk-promote.yml is missing custody gate {custody_gate!r}"
+            )
+    for forbidden_trigger in ("\n  pull_request:", "\n  push:"):
+        if forbidden_trigger in host_sdk_promotion:
+            errors.append(
+                "host-sdk-promote.yml must remain manual: "
+                f"{forbidden_trigger.strip()!r}"
+            )
+
+    host_sdk_public = (
+        ROOT / ".github" / "workflows" / "host-sdk-public-qualification.yml"
+    ).read_text(encoding="utf-8")
+    for qualification_gate in (
+        "Verify every public signature, hash, tag, and source commit",
+        "sha256sum --check SHA256SUMS",
+        "ssh-keygen -Y verify",
+        "git tag -v",
+        "Install npm packages and repeat the persistent two-node journey",
+        "release.host-sdk.python.smoke",
+        "release.host-sdk.dotnet.smoke -- --public",
+        '"personal-rns@=$VERSION"',
+        "https://repo1.maven.org/maven2",
+        "persistent-two-node-smoke.c",
+        'go -C "$go_root" test ./...',
+        "prns-host/bindings/go@v$VERSION",
+        'swift test --package-path "$swift_root"',
+        '--branch \"v$VERSION\"',
+        'Pkg.add(PackageSpec(name=\"PersonalRns\"',
+    ):
+        if qualification_gate not in host_sdk_public:
+            errors.append(
+                "host-sdk-public-qualification.yml is missing public gate "
+                f"{qualification_gate!r}"
+            )
+    for forbidden_trigger in ("\n  pull_request:", "\n  push:"):
+        if forbidden_trigger in host_sdk_public:
+            errors.append(
+                "host-sdk-public-qualification.yml must remain manual: "
+                f"{forbidden_trigger.strip()!r}"
+            )
+
+    napi_release = (ROOT / ".github" / "workflows" / "napi.yml").read_text(
+        encoding="utf-8"
+    )
+    for package_gate in (
+        "smoke packed Node and Bun consumers",
+        "persistent-two-node-v1.json",
+        "node --test prns-js/tests/native-consumer.test.mjs",
+    ):
+        if package_gate not in napi_release:
+            errors.append(f"napi.yml is missing package journey gate {package_gate!r}")
+
     signing = (ROOT / ".github" / "workflows" / "flasher-sign.yml").read_text(
         encoding="utf-8"
     )

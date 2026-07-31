@@ -219,6 +219,18 @@
       "name": "PersonalRns",
       "manifest": "prns-host/bindings/julia/Project.toml",
       "tag": "PersonalRns-v{version}"
+    },
+    {
+      "ecosystem": "c",
+      "name": "personal-rns",
+      "manifest": "prns-host/abi/c/include/prns_host.h",
+      "tag": "host-sdk-v{version}"
+    },
+    {
+      "ecosystem": "cpp",
+      "name": "personal-rns",
+      "manifest": "prns-host/abi/c/include/prns_host.h",
+      "tag": "host-sdk-v{version}"
     }
   ]
 }

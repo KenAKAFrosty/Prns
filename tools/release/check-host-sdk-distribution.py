@@ -120,6 +120,26 @@ def check_packages(catalog):
     for package in packages:
         if not (ROOT / package["manifest"]).is_file():
             raise ValueError(f"missing package manifest {package['manifest']}")
+    ecosystems = {package["ecosystem"] for package in packages}
+    expected = {
+        "c",
+        "cpp",
+        "go",
+        "julia",
+        "maven",
+        "npm",
+        "nuget",
+        "pypi",
+        "swift",
+    }
+    if ecosystems != expected:
+        raise ValueError("host SDK ecosystem inventory is incomplete")
+    for package in packages:
+        if package["ecosystem"] in {"c", "cpp", "go", "julia", "swift"}:
+            if "tag" not in package:
+                raise ValueError(
+                    f"{package['ecosystem']} package lacks immutable tag custody"
+                )
     if (ROOT / "prns-js" / "PACKAGE.md").read_text() != PACKAGE_README.read_text():
         raise ValueError("prns-js/PACKAGE.md differs from the canonical package README")
 

@@ -8,8 +8,25 @@ following owner-controlled setup.
 - Create a protected `host-sdk-release` environment with required approval and
   allow deployments only from `trunk`.
 - Protect stable release tags from movement or deletion.
+- Enable immutable GitHub Releases and set the repository variable
+  `HOST_SDK_IMMUTABLE_RELEASES=enabled` only after that policy is active.
+- Create a release-only SSH signing key without a passphrase, register its
+  public half as a signing key on the release owner account, and keep the
+  private half as the protected environment secret `HOST_SDK_SSH_SIGNING_KEY`.
+  Set `HOST_SDK_SIGNING_NAME` and `HOST_SDK_SIGNING_EMAIL` as protected
+  environment variables for the same owner identity.
 - Keep fallback credentials environment-scoped. The publishing jobs request
   GitHub OIDC identities only after the package proofs pass.
+- Run `host-sdk-stage` with the exact approved `trunk` SHA. After its complete
+  stage passes, dispatch `host-sdk-promote` with that SHA and the successful
+  stage run ID. Promotion re-verifies the stage, signs every asset and all four
+  ecosystem tags, and refuses to replace an existing release.
+- After the separately approved registry jobs and Julia General registration
+  complete, dispatch `host-sdk-public-qualification` for the same SHA. It
+  verifies the public asset and tag signatures, installs each registry package
+  in clean consumers, repeats the JavaScript and .NET persistent two-node
+  journey, and exercises the released C, C++, Go, Swift, Julia, Python, Maven,
+  and Rust surfaces.
 
 ## npm
 
@@ -65,9 +82,13 @@ following owner-controlled setup.
 - Create a crates.io token scoped to publishing the nine named crates and keep
   it as `CARGO_REGISTRY_TOKEN` only in the protected release environment.
 
-## Julia, Go, and Swift
+## Julia, Go, Swift, C, and C++
 
 - Julia General registration uses the repository owner’s GitHub identity and a
   Registrator request for the package subdirectory.
 - Go and Swift require no registry accounts. Signed Git tags and immutable
   GitHub release assets are their distribution authority.
+- C and C++ use the signed `host-sdk-v<version>` release. Each target archive
+  carries the ABI header, dynamic library, static library, checksums, package
+  metadata, and licenses. Verify `SHA256SUMS` and the adjacent SSH signature
+  before installation.

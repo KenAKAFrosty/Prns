@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  existsSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -15,11 +16,13 @@ import { test } from "node:test";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const napiRoot = resolve(packageRoot, "../prns-napi");
-const bindings = readdirSync(napiRoot)
-  .filter((file) => file.endsWith(".node"))
-  .sort();
-assert.equal(bindings.length, 1, "exactly one local N-API binding is required");
-process.env.NAPI_RS_NATIVE_LIBRARY_PATH = resolve(napiRoot, bindings[0]);
+if (existsSync(napiRoot)) {
+  const bindings = readdirSync(napiRoot)
+    .filter((file) => file.endsWith(".node"))
+    .sort();
+  assert.equal(bindings.length, 1, "exactly one local N-API binding is required");
+  process.env.NAPI_RS_NATIVE_LIBRARY_PATH = resolve(napiRoot, bindings[0]);
+}
 
 const esm = await import("personal-rns");
 const require = createRequire(import.meta.url);
@@ -85,7 +88,7 @@ test("packaged native API starts, exposes lifecycle, and stops", async () => {
 
 test("packaged native API completes the persistent two-node journey", async () => {
   const fixture = JSON.parse(
-    readFileSync(resolve(packageRoot, "../prns-host/conformance/persistent-two-node-v2.json"), "utf8"),
+    readFileSync(resolve(packageRoot, "../prns-host/conformance/persistent-two-node-v1.json"), "utf8"),
   );
   assert.equal(fixture.schemaVersion, esm.HOST_SCHEMA_VERSION);
   const port = await reserveLoopbackPort();
