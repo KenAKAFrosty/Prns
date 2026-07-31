@@ -220,6 +220,7 @@ func nativeHostOptions(
     return PrnsHostOptions(
         struct_size: MemoryLayout<PrnsHostOptions>.size,
         required_abi: HostContract.abi,
+        required_schema_version: HostContract.schemaVersion,
         required_product_version: try arena.string(HostContract.productVersion),
         limits: PrnsLimits(
             struct_size: MemoryLayout<PrnsLimits>.size,

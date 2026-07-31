@@ -27,6 +27,7 @@ extern "C" {
 #define PRNS_REQUEST_PATH_HASH_LENGTH UINT32_C(16)
 #define PRNS_RESOURCE_HASH_LENGTH UINT32_C(32)
 #define PRNS_IDENTITY_SECRET_LENGTH UINT32_C(64)
+#define PRNS_SAFE_UINT_MAX UINT64_C(9007199254740991)
 #define PRNS_BALANCED_PENDING_COMMANDS UINT64_C(256)
 #define PRNS_BALANCED_APPLICATION_EVENTS UINT64_C(1024)
 #define PRNS_BALANCED_RETAINED_EVENT_BYTES UINT64_C(8388608)
@@ -220,6 +221,10 @@ typedef uint32_t PrnsCommandFailureKind;
 #define PRNS_COMMAND_FAILURE_KIND_RESOURCE_UPLOAD_CANCELLED UINT32_C(34)
 #define PRNS_COMMAND_FAILURE_KIND_RESOURCE_EARLY_EOF UINT32_C(35)
 #define PRNS_COMMAND_FAILURE_KIND_RESOURCE_LENGTH_OVERRUN UINT32_C(36)
+#define PRNS_COMMAND_FAILURE_KIND_PERMISSION_DENIED UINT32_C(37)
+#define PRNS_COMMAND_FAILURE_KIND_DEVICE_UNAVAILABLE UINT32_C(38)
+#define PRNS_COMMAND_FAILURE_KIND_CONNECT_FAILED UINT32_C(39)
+#define PRNS_COMMAND_FAILURE_KIND_BACKEND_FAILED UINT32_C(40)
 
 typedef uint32_t PrnsDeliveryEvidenceKind;
 #define PRNS_DELIVERY_EVIDENCE_KIND_EXPLICIT_PROOF UINT32_C(1)
@@ -582,6 +587,7 @@ typedef struct PrnsDestinationConfig {
 typedef struct PrnsHostOptions {
     size_t struct_size;
     uint32_t required_abi;
+    uint32_t required_schema_version;
     PrnsStringView required_product_version;
     PrnsLimits limits;
     PrnsHostRole role;
@@ -611,25 +617,56 @@ typedef struct PrnsCommandResult {
 } PrnsCommandResult;
 
 /* product_version points to process-lifetime static storage. */
-PRNS_HOST_API PrnsStatus prns_contract_info(PrnsContractInfo *out_info);
-PRNS_HOST_API PrnsStatus prns_backend_info(PrnsBackendInfo *out_info);
-PRNS_HOST_API PrnsStatus prns_host_create(const PrnsHostOptions *options, PrnsHost **out_host);
-PRNS_HOST_API void prns_host_release(PrnsHost *host);
-PRNS_HOST_API PrnsStatus prns_host_lifecycle(const PrnsHost *host, PrnsLifecycle *out_lifecycle);
-PRNS_HOST_API PrnsStatus prns_host_snapshot(const PrnsHost *host, uint32_t timeout_millis, PrnsHostInspection **out_snapshot);
-PRNS_HOST_API PrnsStatus prns_host_snapshot_read(const PrnsHostInspection *snapshot, PrnsHostSnapshot *out_snapshot);
-PRNS_HOST_API void prns_host_snapshot_release(PrnsHostInspection *snapshot);
 /* Returned host views remain valid until prns_host_release. */
-PRNS_HOST_API PrnsStatus prns_host_identity_hash(const PrnsHost *host, PrnsByteView *out_hash);
+/* Result views remain valid until prns_command_release. */
+/* Event views remain valid until prns_event_release. */
+/* A resource may be claimed once and remains owned after its event is released. */
+/* out_chunk remains valid until the next call or release on this stream. */
+
+PRNS_HOST_API PrnsStatus prns_contract_info(PrnsContractInfo *out_value);
+PRNS_HOST_API PrnsStatus prns_backend_info(PrnsBackendInfo *out_value);
+PRNS_HOST_API PrnsStatus prns_host_create(const PrnsHostOptions *options, PrnsHost **out_value);
+PRNS_HOST_API void prns_host_release(PrnsHost *host);
+PRNS_HOST_API PrnsStatus prns_host_lifecycle(const PrnsHost *host, PrnsLifecycle *out_value);
+PRNS_HOST_API PrnsStatus prns_host_snapshot(const PrnsHost *host, uint32_t timeout_millis, PrnsHostInspection **out_value);
+PRNS_HOST_API PrnsStatus prns_host_snapshot_read(const PrnsHostInspection *host_inspection, PrnsHostSnapshot *out_value);
+PRNS_HOST_API void prns_host_snapshot_release(PrnsHostInspection *host_inspection);
+PRNS_HOST_API PrnsStatus prns_host_identity_hash(const PrnsHost *host, PrnsByteView *out_value);
 PRNS_HOST_API size_t prns_host_destination_count(const PrnsHost *host);
-PRNS_HOST_API PrnsStatus prns_host_destination_hash(const PrnsHost *host, size_t index, PrnsByteView *out_hash);
+PRNS_HOST_API PrnsStatus prns_host_destination_hash(const PrnsHost *host, size_t index, PrnsByteView *out_value);
+PRNS_HOST_API PrnsStatus prns_host_begin_resource_upload(PrnsHost *host, PrnsByteView link_id, uint64_t declared_length, const PrnsByteView *packed_metadata, PrnsResourceCompressionKind compression_kind, PrnsResourceUpload **out_value);
+PRNS_HOST_API PrnsStatus prns_resource_upload_write(PrnsResourceUpload *resource_upload, PrnsByteView chunk);
+PRNS_HOST_API PrnsStatus prns_resource_upload_is_writable(const PrnsResourceUpload *resource_upload, uint8_t *out_value);
+PRNS_HOST_API PrnsStatus prns_resource_upload_finish(PrnsResourceUpload *resource_upload, PrnsIssuedCommand **out_value);
+PRNS_HOST_API void prns_resource_upload_abort(PrnsResourceUpload *resource_upload);
+PRNS_HOST_API void prns_resource_upload_release(PrnsResourceUpload *resource_upload);
+PRNS_HOST_API PrnsStatus prns_host_stop(PrnsHost *host);
+PRNS_HOST_API PrnsStatus prns_command_wait(PrnsIssuedCommand *issued_command, uint32_t timeout_millis, PrnsCommandResult *out_value);
+PRNS_HOST_API PrnsStatus prns_command_register_readiness(PrnsIssuedCommand *issued_command, PrnsReadinessCallback callback, void *context, PrnsReadinessRegistration **out_value);
+PRNS_HOST_API void prns_command_interrupt_wait(PrnsIssuedCommand *issued_command);
+PRNS_HOST_API void prns_command_release(PrnsIssuedCommand *issued_command);
+PRNS_HOST_API PrnsStatus prns_host_claim_application_events(PrnsHost *host, PrnsEventStream **out_value);
+PRNS_HOST_API PrnsStatus prns_host_claim_diagnostics(PrnsHost *host, PrnsEventStream **out_value);
+PRNS_HOST_API PrnsStatus prns_event_stream_register_readiness(PrnsEventStream *event_stream, PrnsReadinessCallback callback, void *context, PrnsReadinessRegistration **out_value);
+PRNS_HOST_API void prns_readiness_registration_release(PrnsReadinessRegistration *readiness_registration);
+PRNS_HOST_API void prns_event_stream_interrupt_wait(PrnsEventStream *event_stream);
+PRNS_HOST_API void prns_event_stream_release(PrnsEventStream *event_stream);
+PRNS_HOST_API PrnsStatus prns_event_stream_next(PrnsEventStream *event_stream, uint32_t timeout_millis, PrnsEvent **out_value);
+PRNS_HOST_API void prns_event_release(PrnsEvent *event);
+PRNS_HOST_API uint32_t prns_event_kind(const PrnsEvent *event);
+PRNS_HOST_API PrnsStatus prns_event_bytes(const PrnsEvent *event, PrnsEventField field, PrnsByteView *out_value);
+PRNS_HOST_API PrnsStatus prns_event_string(const PrnsEvent *event, PrnsEventField field, PrnsStringView *out_value);
+PRNS_HOST_API PrnsStatus prns_event_u64(const PrnsEvent *event, PrnsEventField field, uint64_t *out_value);
+PRNS_HOST_API PrnsStatus prns_event_u128(const PrnsEvent *event, PrnsEventField field, uint64_t *out_low, uint64_t *out_high);
+PRNS_HOST_API PrnsStatus prns_event_resource_stream(PrnsEvent *event, PrnsResourceStream **out_value);
+PRNS_HOST_API void prns_resource_stream_release(PrnsResourceStream *resource_stream);
+PRNS_HOST_API PrnsStatus prns_resource_stream_next(PrnsResourceStream *resource_stream, size_t maximum_bytes, PrnsByteView *out_chunk, uint8_t *out_finished);
 PRNS_HOST_API PrnsStatus prns_host_announce(PrnsHost *host, PrnsByteView destination, const PrnsByteView *interface_id, PrnsIssuedCommand **out_command);
 PRNS_HOST_API PrnsStatus prns_host_send_single_packet(PrnsHost *host, PrnsByteView destination, PrnsByteView payload, PrnsIssuedCommand **out_command);
 PRNS_HOST_API PrnsStatus prns_host_close_link(PrnsHost *host, PrnsByteView link_id, PrnsIssuedCommand **out_command);
 PRNS_HOST_API PrnsStatus prns_host_attach_tcp_server(PrnsHost *host, PrnsStringView bind, PrnsBitrateKind bitrate_kind, uint64_t bitrate_bps, PrnsIssuedCommand **out_command);
 PRNS_HOST_API PrnsStatus prns_host_attach_tcp_client(PrnsHost *host, PrnsStringView target, PrnsBitrateKind bitrate_kind, uint64_t bitrate_bps, PrnsIssuedCommand **out_command);
 PRNS_HOST_API PrnsStatus prns_host_attach_udp(PrnsHost *host, PrnsStringView local, PrnsStringView peer, PrnsBitrateKind bitrate_kind, uint64_t bitrate_bps, PrnsIssuedCommand **out_command);
-PRNS_HOST_API PrnsStatus prns_host_attach_interface(PrnsHost *host, const PrnsInterfaceConfig *config, PrnsIssuedCommand **out_command);
 PRNS_HOST_API PrnsStatus prns_host_detach_interface(PrnsHost *host, PrnsByteView interface_id, PrnsIssuedCommand **out_command);
 PRNS_HOST_API PrnsStatus prns_host_establish_link(PrnsHost *host, PrnsByteView destination, PrnsIssuedCommand **out_command);
 PRNS_HOST_API PrnsStatus prns_host_request_path(PrnsHost *host, PrnsByteView destination, PrnsIssuedCommand **out_command);
@@ -638,42 +675,11 @@ PRNS_HOST_API PrnsStatus prns_host_send_link_packet(PrnsHost *host, PrnsByteView
 PRNS_HOST_API PrnsStatus prns_host_request(PrnsHost *host, PrnsByteView link_id, PrnsByteView path_hash, PrnsByteView payload, PrnsResponseTimeoutKind timeout_kind, uint64_t timeout_millis, PrnsIssuedCommand **out_command);
 PRNS_HOST_API PrnsStatus prns_host_respond(PrnsHost *host, PrnsByteView link_id, PrnsByteView request_id, uint64_t request_rtt_millis, PrnsByteView payload, PrnsIssuedCommand **out_command);
 PRNS_HOST_API PrnsStatus prns_host_send_resource(PrnsHost *host, PrnsByteView link_id, PrnsByteView payload, const PrnsByteView *packed_metadata, PrnsResourceCompressionKind compression_kind, PrnsIssuedCommand **out_command);
-PRNS_HOST_API PrnsStatus prns_host_begin_resource_upload(PrnsHost *host, PrnsByteView link_id, uint64_t declared_length, const PrnsByteView *packed_metadata, PrnsResourceCompressionKind compression_kind, PrnsResourceUpload **out_upload);
-PRNS_HOST_API PrnsStatus prns_resource_upload_write(PrnsResourceUpload *upload, PrnsByteView chunk);
-PRNS_HOST_API PrnsStatus prns_resource_upload_is_writable(const PrnsResourceUpload *upload, uint8_t *out_writable);
-PRNS_HOST_API PrnsStatus prns_resource_upload_finish(PrnsResourceUpload *upload, PrnsIssuedCommand **out_command);
-PRNS_HOST_API void prns_resource_upload_abort(PrnsResourceUpload *upload);
-PRNS_HOST_API void prns_resource_upload_release(PrnsResourceUpload *upload);
 PRNS_HOST_API PrnsStatus prns_host_set_link_resource_strategy(PrnsHost *host, PrnsByteView link_id, PrnsResourceStrategyKind strategy_kind, uint64_t maximum_uncompressed_bytes, uint8_t accept_compressed, PrnsIssuedCommand **out_command);
 PRNS_HOST_API PrnsStatus prns_host_set_destination_resource_strategy(PrnsHost *host, PrnsByteView destination, PrnsResourceStrategyKind strategy_kind, uint64_t maximum_uncompressed_bytes, uint8_t accept_compressed, PrnsIssuedCommand **out_command);
 PRNS_HOST_API PrnsStatus prns_host_send_channel_message(PrnsHost *host, PrnsByteView link_id, uint16_t message_type, PrnsByteView payload, PrnsIssuedCommand **out_command);
 PRNS_HOST_API PrnsStatus prns_host_allow_requester(PrnsHost *host, PrnsByteView destination, PrnsByteView path_hash, PrnsByteView identity, PrnsIssuedCommand **out_command);
-PRNS_HOST_API PrnsStatus prns_host_stop(PrnsHost *host);
-/* Result views remain valid until prns_command_release. */
-PRNS_HOST_API PrnsStatus prns_command_wait(PrnsIssuedCommand *command, uint32_t timeout_millis, PrnsCommandResult *out_result);
-PRNS_HOST_API PrnsStatus prns_command_register_readiness(PrnsIssuedCommand *command, PrnsReadinessCallback callback, void *context, PrnsReadinessRegistration **out_registration);
-PRNS_HOST_API void prns_command_interrupt_wait(PrnsIssuedCommand *command);
-PRNS_HOST_API void prns_command_release(PrnsIssuedCommand *command);
-PRNS_HOST_API PrnsStatus prns_host_claim_application_events(PrnsHost *host, PrnsEventStream **out_stream);
-PRNS_HOST_API PrnsStatus prns_host_claim_diagnostics(PrnsHost *host, PrnsEventStream **out_stream);
-PRNS_HOST_API PrnsStatus prns_event_stream_register_readiness(PrnsEventStream *stream, PrnsReadinessCallback callback, void *context, PrnsReadinessRegistration **out_registration);
-PRNS_HOST_API void prns_readiness_registration_release(PrnsReadinessRegistration *registration);
-PRNS_HOST_API void prns_event_stream_interrupt_wait(PrnsEventStream *stream);
-PRNS_HOST_API void prns_event_stream_release(PrnsEventStream *stream);
-PRNS_HOST_API PrnsStatus prns_event_stream_next(PrnsEventStream *stream, uint32_t timeout_millis, PrnsEvent **out_event);
-PRNS_HOST_API void prns_event_release(PrnsEvent *event);
-PRNS_HOST_API uint32_t prns_event_kind(const PrnsEvent *event);
-/* Event views remain valid until prns_event_release. */
-PRNS_HOST_API PrnsStatus prns_event_bytes(const PrnsEvent *event, PrnsEventField field, PrnsByteView *out_value);
-PRNS_HOST_API PrnsStatus prns_event_string(const PrnsEvent *event, PrnsEventField field, PrnsStringView *out_value);
-PRNS_HOST_API PrnsStatus prns_event_u64(const PrnsEvent *event, PrnsEventField field, uint64_t *out_value);
-PRNS_HOST_API PrnsStatus prns_event_u128(const PrnsEvent *event, PrnsEventField field, uint64_t *out_low, uint64_t *out_high);
-/* A resource may be claimed once and remains owned after its event is released. */
-PRNS_HOST_API PrnsStatus prns_event_resource_stream(PrnsEvent *event, PrnsResourceStream **out_stream);
-PRNS_HOST_API void prns_resource_stream_release(PrnsResourceStream *stream);
-/* out_chunk remains valid until the next call or release on this stream. */
-PRNS_HOST_API PrnsStatus prns_resource_stream_next(PrnsResourceStream *stream, size_t maximum_bytes, PrnsByteView *out_chunk, uint8_t *out_finished);
-
+PRNS_HOST_API PrnsStatus prns_host_attach_interface(PrnsHost *host, const PrnsInterfaceConfig *config, PrnsIssuedCommand **out_command);
 #if defined(__cplusplus)
 }
 #endif

@@ -21,10 +21,11 @@ pub use interface::{
     UdpFlowPlan, WebSocketTargetPlan,
 };
 pub use node::{
-    parse_and_plan, parse_and_plan_named, BlackholeExchangePlan, BlackholePublicationPlan,
-    BlackholeSources, BlackholeUpdateInterval, DaemonPlan, LogLevel, LoggingPlan,
-    ProbeResponderPlan, ProtocolPlan, RemoteManagementAccessControlList, RemoteManagementPlan,
-    SharedInstance, SharedInstanceTransport, TransportIdentityPolicy, TransportPlan,
+    parse_and_plan, parse_and_plan_named, plan_reference_config, BlackholeExchangePlan,
+    BlackholePublicationPlan, BlackholeSources, BlackholeUpdateInterval, DaemonPlan, LogLevel,
+    LoggingPlan, ProbeResponderPlan, ProtocolPlan, RemoteManagementAccessControlList,
+    RemoteManagementPlan, SharedInstance, SharedInstanceTransport, TransportIdentityPolicy,
+    TransportPlan,
 };
 pub use rnode::{
     RNodeBleAddress, RNodeBleName, RNodeBleTarget, RNodeSerialDevice, RNodeTcpHost, RNodeTcpTarget,

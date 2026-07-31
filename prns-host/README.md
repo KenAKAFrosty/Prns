@@ -7,21 +7,28 @@ application events, diagnostics, and resource streams. Deterministic generation
 projects that vocabulary into Rust, TypeScript, C, C#, Python, Go, Swift,
 Kotlin, and Julia.
 
-The native execution path has one real implementation:
+The schema flowers into three runtime paths:
 
 ```text
-language package
-    -> idiomatic ownership and async adapter
-        -> versioned C ABI with opaque handles
-            -> native Rust host
-                -> Personal RNS engine
+host-contract-v1.json
+    -> generated Rust vocabulary -> native Rust host -> direct N-API adapter -> Node/Bun SDK
+                              |            |
+                              |            -> C capsule -> Python/.NET/Go/Swift/Kotlin/Julia/C/C++
+                              |
+                              -> cooperative Rust host -> WebAssembly adapter -> browser SDK
 ```
 
-No language binding reimplements routing, Reticulum semantics, queue policy, or
-event meaning. The C capsule is the binary lighthouse: Rust enums, allocators,
-futures, and unwinding never cross it; owned opaque handles, size-prefixed
-structures, fixed-width discriminants, borrowed views, and explicit status
-values do.
+Node does not detour through C: its N-API adapter talks directly to the same
+native Rust host used by the capsule. The browser remains cooperative because
+the browser owns time, entropy, and I/O, but it consumes the same generated
+semantic contract. No adapter reimplements routing, Reticulum semantics, queue
+policy, or event meaning.
+
+The C capsule is the native-language boundary. Rust enums, allocators, futures,
+and unwinding never cross it; owned opaque handles, size-prefixed structures,
+fixed-width discriminants, borrowed views, and explicit status values do. C
+gets one generated function for every command case and operation instead of a
+generic submit envelope.
 
 ## Ownership layers
 
@@ -66,11 +73,26 @@ python3 tools/release/check-host-sdk-versions.py
 python3 validation/run.py verify
 ```
 
-The generator rejects duplicate names or discriminants, unknown field types,
-event-union disagreement, and stale language projections. Registered native
-smokes then exercise real creation, ABI/product mismatch gates, stream
+The schema owns scalar ranges, fixed-width values, handles and release
+ownership, records, closed unions, discriminants, commands, callable operations,
+borrowed-result lifetimes, interrupt/readiness relationships, and the three
+creation gates. A typed parser rejects unknown grammar, duplicate projected
+names, recursive value types, flattened C collisions, invalid releases, broken
+lifetimes, and stale projections before rendering any language.
+
+Generated raw protocols and operation inventories give hand-written adapters a
+structural target. Those adapters own only language idiom, memory marshalling,
+cancellation, and scheduling. JavaScript maps exact `u64` values to `bigint` and
+uses safe-integer `number` only for the schema's bounded `safeUint` scalar.
+
+Registered native smokes then exercise real creation, ABI/schema/product mismatch gates, stream
 single-ownership, wait interruption, and command settlement across C, .NET,
 Python, Go, Swift, Kotlin/JVM, and Julia.
+
+Product `0.3.1`, schema 1, and C ABI 1 are the first real baseline. There is no
+schema-2 compatibility layer or legacy host-options layout. Browser persisted
+state has its own version, currently 1, and its JavaScript/WASM boundary checks
+that value independently of the host schema.
 
 ## Release assets
 

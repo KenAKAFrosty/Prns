@@ -327,8 +327,8 @@ internal fun NativeHostSnapshot.decode(): HostSnapshot {
             } else {
                 null
             },
-            value.rxBytes,
-            value.txBytes,
+            value.rxBytes.toULong(),
+            value.txBytes.toULong(),
             if (value.hasRxBps != 0.toByte()) value.rxBps else null,
             if (value.hasTxBps != 0.toByte()) value.txBps else null,
             value.routeCount.toLong(),
@@ -362,7 +362,7 @@ internal fun NativeHostSnapshot.decode(): HostSnapshot {
         )
     }
     return HostSnapshot(
-        revision,
+        revision.toULong(),
         backend.decode(),
         interfaceValues,
         routeValues,
@@ -376,8 +376,8 @@ internal fun NativeHostSnapshot.decode(): HostSnapshot {
             runtime.routeCount.toLong(),
             runtime.linkCount.toLong(),
             runtime.transportedLinkCount.toLong(),
-            runtime.rxBytes,
-            runtime.txBytes,
+            runtime.rxBytes.toULong(),
+            runtime.txBytes.toULong(),
             runtime.rxBps,
             runtime.txBps,
         ),

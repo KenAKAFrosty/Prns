@@ -2,13 +2,17 @@
 
 use std::collections::BTreeMap;
 use std::future::Future;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
+use personal_rns::config::{
+    plan_reference_config, RNodeRadio, RNodeSubinterface, ReferenceConfig, ReferenceConfigParams,
+    ReferenceInterface,
+};
 use personal_rns::engine::{
     AllowRequester, AllowRequesterFailure, AllowRequesterRejection, AnnounceAppData, AnnounceNow,
     AnnounceNowFailure, AnnounceNowRejection, AnnounceTarget,
@@ -22,7 +26,8 @@ use personal_rns::engine::{
     SendToChannelFailure, SendToChannelRejection, SendToLinkFailure, SendToLinkRejection,
     SetResourceStrategyFailure, SetResourceStrategyRejection,
 };
-use personal_rns::interfaces::{BitrateBps, ConnectionState, InterfaceKind as EngineInterfaceKind};
+use personal_rns::interfaces::bluetooth_auto::BleIdentity;
+use personal_rns::interfaces::{BitrateBps, ConnectionState};
 use personal_rns::manifold::reconnect::ReconnectPolicy;
 use personal_rns::node_introspection::logical_interface_inventory;
 use personal_rns::routing::delivery::Delivery;
@@ -39,8 +44,10 @@ use personal_rns::tcp::{TcpClientInterface, TcpServer};
 use personal_rns::udp::UdpInterface;
 use personal_rns::units::{DurationMillis, RttMillis};
 use personal_rns::{
+    attach_plan_with_context, fill_os_entropy, load_or_create_ble_identity,
     load_or_create_identity_secret, request_endpoints, try_generate_identity_secret,
-    AttachedInterface, AttachedSupervisor, IdentitySecretFileError, ManuallyAttached,
+    AttachedInterface, AttachedSupervisor, IdentitySecretFileError, LocalIdentityFileError,
+    ManuallyAttached, PlanAttachments, PlanFailure, PlanOutcome, PlanRuntimeContext,
     PreConfiguredDestination, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe, RatchetPolicy,
     ResourceStrategy as EngineResourceStrategy, SendError, Zeroizing, IDENTITY_SECRET_KEY_LEN,
 };
@@ -639,15 +646,37 @@ pub fn native_capabilities() -> &'static [Capability] {
         Capability::TcpClient,
         Capability::TcpServer,
         Capability::Udp,
+        Capability::Serial,
+        Capability::Usb,
+        Capability::Bluetooth,
+        Capability::Wifi,
+        Capability::WebSocket,
+        Capability::I2p,
+        Capability::Weave,
     ]
 }
 
 #[must_use]
 pub fn native_interface_kinds() -> &'static [InterfaceKind] {
     &[
+        InterfaceKind::AutoLan,
         InterfaceKind::TcpClient,
         InterfaceKind::TcpServer,
         InterfaceKind::Udp,
+        InterfaceKind::Serial,
+        InterfaceKind::Kiss,
+        InterfaceKind::Ax25Kiss,
+        InterfaceKind::RNode,
+        InterfaceKind::MultiRNode,
+        InterfaceKind::Pipe,
+        InterfaceKind::BackboneClient,
+        InterfaceKind::BackboneServer,
+        InterfaceKind::I2p,
+        InterfaceKind::Weave,
+        InterfaceKind::AutomaticUsb,
+        InterfaceKind::AutomaticBluetoothLe,
+        InterfaceKind::WebSocketClient,
+        InterfaceKind::WebSocketServer,
     ]
 }
 
@@ -708,6 +737,7 @@ struct ResolvedConfig {
     role: HostRole,
     destinations: Vec<ResolvedDestination>,
     persistence: ResolvedPersistence,
+    persistence_root: Option<PathBuf>,
 }
 
 enum ResolvedPersistence {
@@ -758,9 +788,9 @@ fn resolve_identity(
 
 fn resolve_persistence(
     persistence: PersistenceConfig,
-) -> Result<ResolvedPersistence, NativeStartError> {
+) -> Result<(ResolvedPersistence, Option<PathBuf>), NativeStartError> {
     match persistence {
-        PersistenceConfig::Ephemeral => Ok(ResolvedPersistence::Ephemeral),
+        PersistenceConfig::Ephemeral => Ok((ResolvedPersistence::Ephemeral, None)),
         PersistenceConfig::Directory { path } => {
             let directory = Path::new(&path);
             if directory.exists() && !directory.is_dir() {
@@ -769,7 +799,12 @@ fn resolve_persistence(
                 ));
             }
             NodePersistence::custom_dir(directory)
-                .map(ResolvedPersistence::Directory)
+                .map(|persistence| {
+                    (
+                        ResolvedPersistence::Directory(persistence),
+                        Some(directory.to_path_buf()),
+                    )
+                })
                 .map_err(|error| {
                     let failure = match error.kind() {
                         std::io::ErrorKind::PermissionDenied => {
@@ -791,7 +826,7 @@ fn resolve_persistence(
 
 fn resolve_config(config: HostConfig) -> Result<ResolvedConfig, NativeStartError> {
     let host_identity = resolve_identity(config.identity)?;
-    let persistence = resolve_persistence(config.persistence)?;
+    let (persistence, persistence_root) = resolve_persistence(config.persistence)?;
     let mut destinations = Vec::with_capacity(config.destinations.len());
     for destination in config.destinations {
         match destination {
@@ -826,7 +861,45 @@ fn resolve_config(config: HostConfig) -> Result<ResolvedConfig, NativeStartError
         role: config.role,
         destinations,
         persistence,
+        persistence_root,
     })
+}
+
+fn plan_runtime_context(
+    persistence_root: Option<&Path>,
+    identity: IdentityHash,
+) -> Result<PlanRuntimeContext, NativeStartError> {
+    match persistence_root {
+        Some(root) => {
+            let identity_path = root.join("interface-identities/bluetooth-le");
+            let ble_identity = load_or_create_ble_identity(&identity_path).map_err(|error| {
+                let path = identity_path.to_string_lossy().into_owned();
+                match error {
+                    LocalIdentityFileError::Io(error)
+                        if error.kind() == std::io::ErrorKind::PermissionDenied =>
+                    {
+                        NativeStartError::Persistence(PersistenceStartError::PermissionDenied {
+                            path,
+                        })
+                    }
+                    error => NativeStartError::Persistence(PersistenceStartError::Unavailable {
+                        path,
+                        detail: error.to_string(),
+                    }),
+                }
+            })?;
+            Ok(
+                PlanRuntimeContext::with_rns_i2p_storage(root, engine_identity(identity))
+                    .with_ble_identity(ble_identity),
+            )
+        }
+        None => {
+            let mut bytes = [0u8; 16];
+            fill_os_entropy(&mut bytes)
+                .map_err(|_| NativeStartError::Identity(IdentityStartError::EntropyUnavailable))?;
+            Ok(PlanRuntimeContext::default().with_ble_identity(BleIdentity::new(bytes)))
+        }
+    }
 }
 
 fn aspect_refs(destinations: &[ResolvedDestination]) -> Vec<Vec<&str>> {
@@ -932,12 +1005,21 @@ async fn run(
         role,
         destinations: resolved_destinations,
         persistence,
+        persistence_root,
     } = resolved;
     let identity = personal_rns::identity::PrivateIdentityMaterial::from_slice(&host_identity[..])
         .map(|material| IdentityHash::new(*material.identity_hash().as_bytes()))
         .map_err(|_| NativeStartError::Identity(IdentityStartError::InvalidMaterial));
     let identity_hash = match identity {
         Ok(identity) => identity,
+        Err(error) => {
+            let _ = ready_tx.send(Err(error.clone()));
+            sink.failed(format!("{error:?}"));
+            return;
+        }
+    };
+    let plan_context = match plan_runtime_context(persistence_root.as_deref(), identity_hash) {
+        Ok(context) => context,
         Err(error) => {
             let _ = ready_tx.send(Err(error.clone()));
             sink.failed(format!("{error:?}"));
@@ -1012,13 +1094,16 @@ async fn run(
         return;
     }
     let commands = tokio::spawn(command_loop(
-        command_rx,
-        snapshot_rx,
-        preview_rx,
         handle.clone(),
-        shutdown_rx.clone(),
-        persistence_snapshot,
-        Instant::now(),
+        CommandLoopInputs {
+            commands: command_rx,
+            snapshots: snapshot_rx,
+            preview: preview_rx,
+            plan_context,
+            shutdown: shutdown_rx.clone(),
+            persistence: persistence_snapshot,
+            started_at: Instant::now(),
+        },
     ));
     let uploads = tokio::spawn(upload_loop(upload_rx, handle, shutdown_rx.clone()));
     let exit = tokio::select! {
@@ -1045,28 +1130,67 @@ async fn shutdown_requested(mut shutdown: watch::Receiver<bool>) {
 }
 
 enum Attachment {
-    Interface(AttachedInterface),
-    Supervisor(AttachedSupervisor),
+    Interface {
+        attachment: AttachedInterface,
+        kind: InterfaceKind,
+    },
+    Supervisor {
+        attachment: AttachedSupervisor,
+        kind: InterfaceKind,
+    },
+    Plan {
+        attachments: PlanAttachments,
+        interfaces: Vec<personal_rns::interfaces::InterfaceId>,
+        kind: InterfaceKind,
+    },
 }
 
 impl Attachment {
-    fn teardown(self) {
+    fn kind(&self) -> InterfaceKind {
         match self {
-            Self::Interface(interface) => interface.teardown(),
-            Self::Supervisor(supervisor) => supervisor.teardown(),
+            Self::Interface { kind, .. }
+            | Self::Supervisor { kind, .. }
+            | Self::Plan { kind, .. } => *kind,
+        }
+    }
+
+    fn interfaces(&self) -> Vec<personal_rns::interfaces::InterfaceId> {
+        match self {
+            Self::Interface { attachment, .. } => vec![attachment.id()],
+            Self::Supervisor { attachment, .. } => vec![attachment.id()],
+            Self::Plan { interfaces, .. } => interfaces.clone(),
+        }
+    }
+
+    async fn teardown(self, handle: &PrnsNodeHandle) {
+        match self {
+            Self::Interface { attachment, .. } => attachment.teardown(),
+            Self::Supervisor { attachment, .. } => attachment.teardown(),
+            Self::Plan { attachments, .. } => attachments.detach(handle).await,
         }
     }
 }
 
-async fn command_loop(
-    mut commands: mpsc::Receiver<CommandJob>,
-    mut snapshots: mpsc::Receiver<SnapshotJob>,
-    mut preview: mpsc::Receiver<NativePreviewJob>,
-    handle: PrnsNodeHandle,
-    mut shutdown: watch::Receiver<bool>,
+struct CommandLoopInputs {
+    commands: mpsc::Receiver<CommandJob>,
+    snapshots: mpsc::Receiver<SnapshotJob>,
+    preview: mpsc::Receiver<NativePreviewJob>,
+    plan_context: PlanRuntimeContext,
+    shutdown: watch::Receiver<bool>,
     persistence: Arc<Mutex<PersistenceSnapshot>>,
     started_at: Instant,
-) {
+}
+
+async fn command_loop(handle: PrnsNodeHandle, inputs: CommandLoopInputs) {
+    let CommandLoopInputs {
+        mut commands,
+        mut snapshots,
+        mut preview,
+        plan_context,
+        mut shutdown,
+        persistence,
+        started_at,
+    } = inputs;
     let mut attachments = BTreeMap::new();
     let mut snapshot_revision = 0u64;
     loop {
@@ -1087,7 +1211,8 @@ async fn command_loop(
         };
         match work {
             HostWork::Command(job) => {
-                let result = execute_command(&handle, &mut attachments, &job.command).await;
+                let result =
+                    execute_command(&handle, &plan_context, &mut attachments, &job.command).await;
                 job.completion.finish(result);
             }
             HostWork::Snapshot(job) => {
@@ -1110,7 +1235,7 @@ async fn command_loop(
         }
     }
     for (_, attachment) in attachments {
-        attachment.teardown();
+        attachment.teardown(&handle).await;
     }
     tokio::task::yield_now().await;
     tokio::task::yield_now().await;
@@ -1130,27 +1255,59 @@ async fn collect_snapshot(
     persistence: &Mutex<PersistenceSnapshot>,
 ) -> Option<HostSnapshot> {
     let inventory = logical_interface_inventory(handle.interface_inventory());
-    let interfaces: Vec<InterfaceSnapshot> = inventory
-        .into_iter()
-        .filter(|entry| attachments.contains_key(&host_interface(entry.snapshot.id)))
-        .map(|entry| {
-            let rates = entry.snapshot.transfer_rates;
-            InterfaceSnapshot {
-                interface_id: host_interface(entry.snapshot.id),
-                name: entry.name,
-                kind: entry.snapshot.id.kind().and_then(host_interface_kind),
-                health: host_interface_health(entry.snapshot.connection),
-                failure_detail: entry.snapshot.failure_reason.map(str::to_string),
-                rx_bytes: entry.snapshot.rx_bytes,
-                tx_bytes: entry.snapshot.tx_bytes,
-                rx_bps: rates.map(|rates| u64::from(rates.rx_bps)),
-                tx_bps: rates.map(|rates| u64::from(rates.tx_bps)),
-                route_count: entry.snapshot.destinations,
-                link_count: entry.snapshot.links,
-                transported_link_count: entry.snapshot.transported_links,
+    let mut interfaces = Vec::with_capacity(attachments.len());
+    for (interface_id, attachment) in attachments {
+        let member_ids = attachment.interfaces();
+        let members = inventory
+            .iter()
+            .filter(|entry| member_ids.contains(&entry.snapshot.id))
+            .collect::<Vec<_>>();
+        let Some(first) = members.first() else {
+            continue;
+        };
+        let name = first.name.clone();
+        let mut health = host_interface_health(first.snapshot.connection);
+        let mut failure_detail = first.snapshot.failure_reason.map(str::to_string);
+        let mut rx_bytes = 0u64;
+        let mut tx_bytes = 0u64;
+        let mut rx_bps = 0u64;
+        let mut tx_bps = 0u64;
+        let mut has_rates = false;
+        let mut route_count = 0u32;
+        let mut link_count = 0u32;
+        let mut transported_link_count = 0u32;
+        for member in &members {
+            health = less_healthy(health, host_interface_health(member.snapshot.connection));
+            if failure_detail.is_none() {
+                failure_detail = member.snapshot.failure_reason.map(str::to_string);
             }
-        })
-        .collect();
+            rx_bytes = rx_bytes.saturating_add(member.snapshot.rx_bytes);
+            tx_bytes = tx_bytes.saturating_add(member.snapshot.tx_bytes);
+            if let Some(rates) = member.snapshot.transfer_rates {
+                has_rates = true;
+                rx_bps = rx_bps.saturating_add(u64::from(rates.rx_bps));
+                tx_bps = tx_bps.saturating_add(u64::from(rates.tx_bps));
+            }
+            route_count = route_count.saturating_add(member.snapshot.destinations);
+            link_count = link_count.saturating_add(member.snapshot.links);
+            transported_link_count =
+                transported_link_count.saturating_add(member.snapshot.transported_links);
+        }
+        interfaces.push(InterfaceSnapshot {
+            interface_id: *interface_id,
+            name,
+            kind: Some(attachment.kind()),
+            health,
+            failure_detail,
+            rx_bytes,
+            tx_bytes,
+            rx_bps: has_rates.then_some(rx_bps),
+            tx_bps: has_rates.then_some(tx_bps),
+            route_count,
+            link_count,
+            transported_link_count,
+        });
+    }
     let engine = handle.engine_inspection_snapshot().await?;
     let routes: Vec<RouteSnapshot> = engine
         .routes
@@ -1164,7 +1321,13 @@ async fn collect_snapshot(
                     Some(IdentityHash::new(*identity.as_bytes()))
                 }
             },
-            interface_id: host_interface(route.interface),
+            interface_id: attachments
+                .iter()
+                .find(|(_, attachment)| attachment.interfaces().contains(&route.interface))
+                .map_or_else(
+                    || host_interface(route.interface),
+                    |(interface, _)| *interface,
+                ),
             learned_at_millis: route.learned_at.0,
             last_relayed_at_millis: route.last_relayed_at.0,
             expires_at_millis: route.expires_at.0,
@@ -1239,44 +1402,23 @@ fn host_interface_health(health: ConnectionState) -> InterfaceHealth {
     }
 }
 
-fn host_interface_kind(kind: EngineInterfaceKind) -> Option<InterfaceKind> {
-    match kind {
-        EngineInterfaceKind::TcpClient => Some(InterfaceKind::TcpClient),
-        EngineInterfaceKind::TcpServer | EngineInterfaceKind::TcpServerPeer => {
-            Some(InterfaceKind::TcpServer)
+fn less_healthy(left: InterfaceHealth, right: InterfaceHealth) -> InterfaceHealth {
+    fn priority(health: InterfaceHealth) -> u8 {
+        match health {
+            InterfaceHealth::Connected => 0,
+            InterfaceHealth::Disabled => 1,
+            InterfaceHealth::Unknown => 2,
+            InterfaceHealth::Initializing => 3,
+            InterfaceHealth::Disconnected => 4,
+            InterfaceHealth::Degraded => 5,
+            InterfaceHealth::Reconnecting => 6,
+            InterfaceHealth::Failed => 7,
         }
-        EngineInterfaceKind::Udp => Some(InterfaceKind::Udp),
-        EngineInterfaceKind::Serial => Some(InterfaceKind::Serial),
-        EngineInterfaceKind::UsbAutoHost | EngineInterfaceKind::UsbAutoDevice => {
-            Some(InterfaceKind::AutomaticUsb)
-        }
-        EngineInterfaceKind::AutoWifi
-        | EngineInterfaceKind::WifiPeer
-        | EngineInterfaceKind::WifiDirect
-        | EngineInterfaceKind::WifiDirectPeer
-        | EngineInterfaceKind::WifiAware
-        | EngineInterfaceKind::WifiAwarePeer => Some(InterfaceKind::AutoLan),
-        EngineInterfaceKind::BluetoothAuto | EngineInterfaceKind::BluetoothPeer => {
-            Some(InterfaceKind::AutomaticBluetoothLe)
-        }
-        EngineInterfaceKind::Kiss => Some(InterfaceKind::Kiss),
-        EngineInterfaceKind::Ax25Kiss => Some(InterfaceKind::Ax25Kiss),
-        EngineInterfaceKind::Pipe => Some(InterfaceKind::Pipe),
-        EngineInterfaceKind::Rnode | EngineInterfaceKind::LoRa => Some(InterfaceKind::RNode),
-        EngineInterfaceKind::BackboneServer | EngineInterfaceKind::BackboneServerPeer => {
-            Some(InterfaceKind::BackboneServer)
-        }
-        EngineInterfaceKind::BackboneClient => Some(InterfaceKind::BackboneClient),
-        EngineInterfaceKind::WebSocketClient => Some(InterfaceKind::WebSocketClient),
-        EngineInterfaceKind::WebSocketServer | EngineInterfaceKind::WebSocketServerPeer => {
-            Some(InterfaceKind::WebSocketServer)
-        }
-        EngineInterfaceKind::I2p | EngineInterfaceKind::I2pPeer => Some(InterfaceKind::I2p),
-        EngineInterfaceKind::Weave | EngineInterfaceKind::WeavePeer => Some(InterfaceKind::Weave),
-        EngineInterfaceKind::Loopback
-        | EngineInterfaceKind::LocalServer
-        | EngineInterfaceKind::LocalClient
-        | EngineInterfaceKind::EspNow => None,
+    }
+    if priority(left) >= priority(right) {
+        left
+    } else {
+        right
     }
 }
 
@@ -1350,8 +1492,498 @@ async fn upload_loop(
     }
 }
 
+fn invalid_configuration(detail: impl Into<String>) -> CommandFailure {
+    CommandFailure::InvalidConfiguration {
+        detail: detail.into(),
+    }
+}
+
+fn endpoint_parts(
+    value: &str,
+    allow_unspecified_host: bool,
+) -> Result<(Option<String>, u16), CommandFailure> {
+    let (host, port) = if let Some(bracketed) = value.strip_prefix('[') {
+        let Some((host, port)) = bracketed.rsplit_once("]:") else {
+            return Err(invalid_configuration(format!(
+                "endpoint {value:?} must include a port"
+            )));
+        };
+        (host, port)
+    } else {
+        let Some((host, port)) = value.rsplit_once(':') else {
+            return Err(invalid_configuration(format!(
+                "endpoint {value:?} must include a port"
+            )));
+        };
+        (host, port)
+    };
+    if host.is_empty() && !allow_unspecified_host {
+        return Err(invalid_configuration(format!(
+            "endpoint {value:?} must include a host"
+        )));
+    }
+    let port = port
+        .parse::<u16>()
+        .ok()
+        .filter(|port| *port != 0)
+        .ok_or_else(|| invalid_configuration(format!("endpoint {value:?} has an invalid port")))?;
+    Ok(((!host.is_empty()).then(|| host.to_string()), port))
+}
+
+fn reference_bitrate(bitrate: Bitrate) -> Option<u64> {
+    match bitrate {
+        Bitrate::Auto => None,
+        Bitrate::BitsPerSecond(value) => Some(value),
+    }
+}
+
+fn reference_radio(radio: prns_host::RNodeRadioConfig) -> RNodeRadio {
+    RNodeRadio {
+        frequency: Some(radio.frequency_hz),
+        bandwidth: Some(radio.bandwidth_hz),
+        spreadingfactor: Some(radio.spreading_factor),
+        codingrate: Some(radio.coding_rate),
+        txpower: Some(radio.tx_power_dbm),
+    }
+}
+
+fn serial_data_bits(bits: prns_host::SerialDataBits) -> u8 {
+    match bits {
+        prns_host::SerialDataBits::Five => 5,
+        prns_host::SerialDataBits::Six => 6,
+        prns_host::SerialDataBits::Seven => 7,
+        prns_host::SerialDataBits::Eight => 8,
+    }
+}
+
+fn serial_parity(parity: prns_host::SerialParity) -> String {
+    match parity {
+        prns_host::SerialParity::None => "none",
+        prns_host::SerialParity::Even => "even",
+        prns_host::SerialParity::Odd => "odd",
+    }
+    .to_string()
+}
+
+fn serial_stop_bits(bits: prns_host::SerialStopBits) -> u8 {
+    match bits {
+        prns_host::SerialStopBits::One => 1,
+        prns_host::SerialStopBits::Two => 2,
+    }
+}
+
+fn shell_command(command: &[String]) -> String {
+    command
+        .iter()
+        .map(|argument| format!("'{}'", argument.replace('\'', "'\"'\"'")))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn reference_interface(config: &InterfaceConfig) -> Result<ReferenceInterface, CommandFailure> {
+    let (type_name, params, bitrate) = match config {
+        InterfaceConfig::AutoLan {
+            group_id,
+            discovery_scope,
+            discovery_port,
+            data_port,
+            devices,
+            ignored_devices,
+            multicast_address_type,
+        } => (
+            "AutoInterface",
+            ReferenceConfigParams::Auto {
+                group_id: group_id.clone(),
+                discovery_scope: discovery_scope.map(|scope| {
+                    match scope {
+                        prns_host::DiscoveryScope::Link => "link",
+                        prns_host::DiscoveryScope::Admin => "admin",
+                        prns_host::DiscoveryScope::Site => "site",
+                        prns_host::DiscoveryScope::Organization => "organisation",
+                        prns_host::DiscoveryScope::Global => "global",
+                    }
+                    .to_string()
+                }),
+                discovery_port: *discovery_port,
+                data_port: *data_port,
+                devices: Some(devices.clone()),
+                ignored_devices: Some(ignored_devices.clone()),
+                multicast_address_type: multicast_address_type.map(|address_type| {
+                    match address_type {
+                        prns_host::MulticastAddressType::Temporary => "temporary",
+                        prns_host::MulticastAddressType::Permanent => "permanent",
+                    }
+                    .to_string()
+                }),
+            },
+            None,
+        ),
+        InterfaceConfig::TcpClient { target, bitrate } => {
+            let (host, port) = endpoint_parts(target, false)?;
+            (
+                "TCPClientInterface",
+                ReferenceConfigParams::TcpClient {
+                    target_host: host,
+                    target_port: Some(port),
+                    kiss_framing: None,
+                    i2p_tunneled: None,
+                    connect_timeout: None,
+                    max_reconnect_tries: None,
+                    fixed_mtu: None,
+                },
+                reference_bitrate(*bitrate),
+            )
+        }
+        InterfaceConfig::TcpServer { bind, bitrate } => {
+            let (host, port) = endpoint_parts(bind, true)?;
+            (
+                "TCPServerInterface",
+                ReferenceConfigParams::TcpServer {
+                    listen_ip: host,
+                    listen_port: Some(port),
+                    device: None,
+                    port: None,
+                    prefer_ipv6: None,
+                    i2p_tunneled: None,
+                    kiss_framing: None,
+                    fixed_mtu: None,
+                },
+                reference_bitrate(*bitrate),
+            )
+        }
+        InterfaceConfig::Udp {
+            local,
+            peer,
+            bitrate,
+        } => {
+            let (listen_ip, listen_port) = endpoint_parts(local, true)?;
+            let (forward_ip, forward_port) = endpoint_parts(peer, false)?;
+            (
+                "UDPInterface",
+                ReferenceConfigParams::Udp {
+                    listen_ip,
+                    listen_port: Some(listen_port),
+                    forward_ip,
+                    forward_port: Some(forward_port),
+                    device: None,
+                    port: None,
+                },
+                reference_bitrate(*bitrate),
+            )
+        }
+        InterfaceConfig::Serial { port, line } => (
+            "SerialInterface",
+            ReferenceConfigParams::Serial {
+                port: Some(port.clone()),
+                speed: Some(line.baud),
+                databits: Some(serial_data_bits(line.data_bits)),
+                parity: Some(serial_parity(line.parity)),
+                stopbits: Some(serial_stop_bits(line.stop_bits)),
+            },
+            None,
+        ),
+        InterfaceConfig::Kiss {
+            port,
+            line,
+            flow_control,
+            preamble_millis,
+            transmit_tail_millis,
+            persistence,
+            slot_time_millis,
+            station_callsign,
+            station_interval_seconds,
+        } => (
+            "KISSInterface",
+            ReferenceConfigParams::Kiss {
+                port: Some(port.clone()),
+                speed: Some(line.baud),
+                databits: Some(serial_data_bits(line.data_bits)),
+                parity: Some(serial_parity(line.parity)),
+                stopbits: Some(serial_stop_bits(line.stop_bits)),
+                flow_control: Some(*flow_control),
+                preamble: Some(*preamble_millis),
+                txtail: Some(*transmit_tail_millis),
+                persistence: Some(u32::from(*persistence)),
+                slottime: Some(*slot_time_millis),
+                id_callsign: station_callsign.clone(),
+                id_interval: *station_interval_seconds,
+            },
+            None,
+        ),
+        InterfaceConfig::Ax25Kiss {
+            port,
+            line,
+            flow_control,
+            preamble_millis,
+            transmit_tail_millis,
+            persistence,
+            slot_time_millis,
+            callsign,
+            ssid,
+        } => (
+            "AX25KISSInterface",
+            ReferenceConfigParams::Ax25Kiss {
+                port: Some(port.clone()),
+                speed: Some(line.baud),
+                databits: Some(serial_data_bits(line.data_bits)),
+                parity: Some(serial_parity(line.parity)),
+                stopbits: Some(serial_stop_bits(line.stop_bits)),
+                flow_control: Some(*flow_control),
+                preamble: Some(*preamble_millis),
+                txtail: Some(*transmit_tail_millis),
+                persistence: Some(u32::from(*persistence)),
+                slottime: Some(*slot_time_millis),
+                callsign: Some(callsign.clone()),
+                ssid: Some(*ssid),
+            },
+            None,
+        ),
+        InterfaceConfig::RNode {
+            port,
+            radio,
+            flow_control,
+            station_callsign,
+            station_interval_seconds,
+            airtime_limit_short_centi_percent,
+            airtime_limit_long_centi_percent,
+        } => (
+            "RNodeInterface",
+            ReferenceConfigParams::Rnode {
+                port: Some(port.clone()),
+                radio: reference_radio(*radio),
+                flow_control: Some(*flow_control),
+                id_callsign: station_callsign.clone(),
+                id_interval: *station_interval_seconds,
+                airtime_limit_short: airtime_limit_short_centi_percent
+                    .map(|value| f64::from(value) / 100.0),
+                airtime_limit_long: airtime_limit_long_centi_percent
+                    .map(|value| f64::from(value) / 100.0),
+            },
+            None,
+        ),
+        InterfaceConfig::MultiRNode {
+            port,
+            station_callsign,
+            station_interval_seconds,
+            members,
+        } => (
+            "RNodeMultiInterface",
+            ReferenceConfigParams::RnodeMulti {
+                port: Some(port.clone()),
+                id_callsign: station_callsign.clone(),
+                id_interval: *station_interval_seconds,
+                subinterfaces: members
+                    .iter()
+                    .map(|member| RNodeSubinterface {
+                        name: member.name.clone(),
+                        vport: Some(member.virtual_port),
+                        radio: reference_radio(member.radio),
+                        flow_control: Some(member.flow_control),
+                        outgoing: Some(member.outgoing),
+                        airtime_limit_short: None,
+                        airtime_limit_long: None,
+                        extra: BTreeMap::new(),
+                    })
+                    .collect(),
+            },
+            None,
+        ),
+        InterfaceConfig::Pipe {
+            command,
+            respawn_delay_millis,
+        } => (
+            "PipeInterface",
+            ReferenceConfigParams::Pipe {
+                command: Some(shell_command(command)),
+                respawn_delay: Some(Duration::from_millis(*respawn_delay_millis).as_secs_f64()),
+            },
+            None,
+        ),
+        InterfaceConfig::BackboneClient { target, bitrate } => {
+            let (host, port) = endpoint_parts(target, false)?;
+            (
+                "BackboneClientInterface",
+                ReferenceConfigParams::Backbone {
+                    listen_ip: None,
+                    listen_port: None,
+                    target_host: host,
+                    target_port: Some(port),
+                    port: None,
+                    device: None,
+                    prefer_ipv6: None,
+                    i2p_tunneled: None,
+                    connect_timeout: None,
+                    max_reconnect_tries: None,
+                },
+                reference_bitrate(*bitrate),
+            )
+        }
+        InterfaceConfig::BackboneServer { bind, bitrate } => {
+            let (host, port) = endpoint_parts(bind, true)?;
+            (
+                "BackboneInterface",
+                ReferenceConfigParams::Backbone {
+                    listen_ip: host,
+                    listen_port: Some(port),
+                    target_host: None,
+                    target_port: None,
+                    port: None,
+                    device: None,
+                    prefer_ipv6: None,
+                    i2p_tunneled: None,
+                    connect_timeout: None,
+                    max_reconnect_tries: None,
+                },
+                reference_bitrate(*bitrate),
+            )
+        }
+        InterfaceConfig::I2p { peers, connectable } => (
+            "I2PInterface",
+            ReferenceConfigParams::I2p {
+                peers: Some(peers.clone()),
+                connectable: Some(*connectable),
+            },
+            None,
+        ),
+        InterfaceConfig::Weave { port } => (
+            "WeaveInterface",
+            ReferenceConfigParams::Weave {
+                port: Some(port.clone()),
+            },
+            None,
+        ),
+        InterfaceConfig::AutomaticUsb => ("PrnsUsbAuto", ReferenceConfigParams::PrnsUsbAuto, None),
+        InterfaceConfig::AutomaticBluetoothLe => (
+            "PrnsBluetoothAuto",
+            ReferenceConfigParams::PrnsBluetoothAuto,
+            None,
+        ),
+        InterfaceConfig::WebSocketClient { target } => (
+            "PrnsWebSocketClient",
+            ReferenceConfigParams::PrnsWebSocketClient {
+                target: Some(target.clone()),
+            },
+            None,
+        ),
+        InterfaceConfig::WebSocketServer { bind } => {
+            let (host, port) = endpoint_parts(bind, true)?;
+            (
+                "PrnsWebSocketServer",
+                ReferenceConfigParams::PrnsWebSocketServer {
+                    listen_ip: host,
+                    listen_port: Some(port),
+                    device: None,
+                    port: None,
+                    prefer_ipv6: None,
+                },
+                None,
+            )
+        }
+        InterfaceConfig::BrowserRendezvous { .. } => {
+            return Err(CommandFailure::UnsupportedByBackend)
+        }
+    };
+    let mut interface = ReferenceInterface::enabled("sdk-interface", type_name, params);
+    interface.bitrate = bitrate;
+    Ok(interface)
+}
+
+fn typed_interface_plan(
+    config: &InterfaceConfig,
+) -> Result<personal_rns::config::DaemonPlan, CommandFailure> {
+    let mut reference = ReferenceConfig::default();
+    reference.interfaces.push(reference_interface(config)?);
+    plan_reference_config(&reference).map_err(|error| invalid_configuration(error.to_string()))
+}
+
+fn plan_failure(config: &InterfaceConfig, failure: PlanFailure) -> CommandFailure {
+    let detail = failure.to_string();
+    match failure {
+        PlanFailure::InterfaceNotBuilt(_) => CommandFailure::UnsupportedByBackend,
+        PlanFailure::Network(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            CommandFailure::PermissionDenied { detail }
+        }
+        PlanFailure::Network(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound
+                    | std::io::ErrorKind::NotConnected
+                    | std::io::ErrorKind::AddrNotAvailable
+            ) =>
+        {
+            CommandFailure::DeviceUnavailable { detail }
+        }
+        PlanFailure::Network(_)
+            if matches!(
+                config.kind(),
+                InterfaceKind::TcpServer
+                    | InterfaceKind::Udp
+                    | InterfaceKind::BackboneServer
+                    | InterfaceKind::WebSocketServer
+            ) =>
+        {
+            CommandFailure::BindFailed { detail }
+        }
+        PlanFailure::Network(_) => CommandFailure::ConnectFailed { detail },
+        PlanFailure::WeaveIdentity(_) => CommandFailure::EntropyUnavailable,
+        PlanFailure::MissingIfacCredentials
+        | PlanFailure::AutoWifiSettings(_)
+        | PlanFailure::EmptyStationIdentification
+        | PlanFailure::Ax25Address(_)
+        | PlanFailure::RadioConfig(_)
+        | PlanFailure::UngroupedRNodeMultiMember
+        | PlanFailure::I2pInterfaceName(_)
+        | PlanFailure::I2pPeerAddress(_)
+        | PlanFailure::DuplicateI2pPeer(_)
+        | PlanFailure::MissingI2pStorage
+        | PlanFailure::MissingBleIdentity
+        | PlanFailure::RNodeMultiMembers(_) => invalid_configuration(detail),
+    }
+}
+
+async fn attach_typed_interface(
+    handle: &PrnsNodeHandle,
+    context: &PlanRuntimeContext,
+    config: &InterfaceConfig,
+) -> Result<Attachment, CommandFailure> {
+    let plan = typed_interface_plan(config)?;
+    let mut primary = None;
+    let mut failure = None;
+    let attachments =
+        attach_plan_with_context(handle, &plan, context, &mut |outcome| match outcome {
+            PlanOutcome::Up { id, .. } => {
+                if primary.is_none() {
+                    primary = Some(id);
+                }
+            }
+            PlanOutcome::Failed { error, .. } => {
+                if failure.is_none() {
+                    failure = Some(error);
+                }
+            }
+        })
+        .await;
+    if let Some(failure) = failure {
+        attachments.detach(handle).await;
+        return Err(plan_failure(config, failure));
+    }
+    let interfaces = attachments.interfaces().collect::<Vec<_>>();
+    if primary.is_none() || interfaces.is_empty() {
+        attachments.detach(handle).await;
+        return Err(CommandFailure::BackendFailed {
+            detail: "interface planner completed without attaching an interface".to_string(),
+        });
+    }
+    Ok(Attachment::Plan {
+        attachments,
+        interfaces,
+        kind: config.kind(),
+    })
+}
+
 async fn execute_command(
     handle: &PrnsNodeHandle,
+    plan_context: &PlanRuntimeContext,
     attachments: &mut BTreeMap<InterfaceId, Attachment>,
     command: &HostCommand,
 ) -> Result<CommandOutcome, CommandFailure> {
@@ -1411,7 +2043,13 @@ async fn execute_command(
                 })?;
             let attached = handle.supervise(server);
             let interface = host_interface(attached.id());
-            attachments.insert(interface, Attachment::Supervisor(attached));
+            attachments.insert(
+                interface,
+                Attachment::Supervisor {
+                    attachment: attached,
+                    kind: InterfaceKind::TcpServer,
+                },
+            );
             Ok(CommandOutcome::InterfaceAttached { interface })
         }
         HostCommand::AttachTcpClient { target, bitrate } => {
@@ -1422,7 +2060,13 @@ async fn execute_command(
             );
             let attached = handle.add_interface(client);
             let interface = host_interface(attached.id());
-            attachments.insert(interface, Attachment::Interface(attached));
+            attachments.insert(
+                interface,
+                Attachment::Interface {
+                    attachment: attached,
+                    kind: InterfaceKind::TcpClient,
+                },
+            );
             Ok(CommandOutcome::InterfaceAttached { interface })
         }
         HostCommand::AttachUdp {
@@ -1437,7 +2081,13 @@ async fn execute_command(
                 })?;
             let attached = handle.add_interface(udp);
             let interface = host_interface(attached.id());
-            attachments.insert(interface, Attachment::Interface(attached));
+            attachments.insert(
+                interface,
+                Attachment::Interface {
+                    attachment: attached,
+                    kind: InterfaceKind::Udp,
+                },
+            );
             Ok(CommandOutcome::InterfaceAttached { interface })
         }
         HostCommand::AttachInterface { config } => {
@@ -1446,57 +2096,23 @@ async fn execute_command(
                 .map_err(|error| CommandFailure::InvalidConfiguration {
                     detail: format!("{error:?}"),
                 })?;
-            match config {
-                InterfaceConfig::TcpServer { bind, bitrate } => {
-                    let server =
-                        TcpServer::bind_with_bitrate(bind.as_str(), engine_bitrate(*bitrate)?)
-                            .await
-                            .map_err(|error| CommandFailure::BindFailed {
-                                detail: error.to_string(),
-                            })?;
-                    let attached = handle.supervise(server);
-                    let interface = host_interface(attached.id());
-                    attachments.insert(interface, Attachment::Supervisor(attached));
-                    Ok(CommandOutcome::InterfaceAttached { interface })
-                }
-                InterfaceConfig::TcpClient { target, bitrate } => {
-                    let client = TcpClientInterface::new_with_bitrate(
-                        target.clone(),
-                        engine_bitrate(*bitrate)?,
-                        ReconnectPolicy::STANDARD,
-                    );
-                    let attached = handle.add_interface(client);
-                    let interface = host_interface(attached.id());
-                    attachments.insert(interface, Attachment::Interface(attached));
-                    Ok(CommandOutcome::InterfaceAttached { interface })
-                }
-                InterfaceConfig::Udp {
-                    local,
-                    peer,
-                    bitrate,
-                } => {
-                    let udp = UdpInterface::bind(
-                        local.as_str(),
-                        peer.as_str(),
-                        engine_bitrate(*bitrate)?,
-                    )
-                    .await
-                    .map_err(|error| CommandFailure::BindFailed {
-                        detail: error.to_string(),
-                    })?;
-                    let attached = handle.add_interface(udp);
-                    let interface = host_interface(attached.id());
-                    attachments.insert(interface, Attachment::Interface(attached));
-                    Ok(CommandOutcome::InterfaceAttached { interface })
-                }
-                _ => Err(CommandFailure::UnsupportedByBackend),
-            }
+            let attachment = attach_typed_interface(handle, plan_context, config).await?;
+            let interface = attachment
+                .interfaces()
+                .first()
+                .copied()
+                .map(host_interface)
+                .ok_or_else(|| CommandFailure::BackendFailed {
+                    detail: "interface attachment has no runtime interface".to_string(),
+                })?;
+            attachments.insert(interface, attachment);
+            Ok(CommandOutcome::InterfaceAttached { interface })
         }
         HostCommand::DetachInterface { interface } => {
             let Some(attachment) = attachments.remove(interface) else {
                 return Err(CommandFailure::UnknownInterface);
             };
-            attachment.teardown();
+            attachment.teardown(handle).await;
             Ok(CommandOutcome::InterfaceDetached {
                 interface: *interface,
             })
@@ -2373,6 +2989,158 @@ mod tests {
         persistent_endpoint(root, Vec::new(), Vec::new(), PrnsLimits::balanced())
     }
 
+    fn serial_line() -> prns_host::SerialLineConfig {
+        prns_host::SerialLineConfig {
+            baud: 115_200,
+            data_bits: prns_host::SerialDataBits::Eight,
+            parity: prns_host::SerialParity::None,
+            stop_bits: prns_host::SerialStopBits::One,
+        }
+    }
+
+    fn radio() -> prns_host::RNodeRadioConfig {
+        prns_host::RNodeRadioConfig {
+            frequency_hz: 915_000_000,
+            bandwidth_hz: 125_000,
+            tx_power_dbm: 14,
+            spreading_factor: 8,
+            coding_rate: 5,
+        }
+    }
+
+    #[test]
+    fn backend_info_reports_every_compiled_stable_interface() {
+        let backend = native_backend_info();
+        for kind in native_interface_kinds() {
+            assert!(backend.supports_interface(*kind));
+        }
+        assert!(!backend.supports_interface(InterfaceKind::BrowserRendezvous));
+        assert_eq!(native_interface_kinds().len(), 18);
+    }
+
+    #[test]
+    fn every_supported_typed_interface_uses_the_effective_planner() -> Result<(), String> {
+        let configs = vec![
+            InterfaceConfig::AutoLan {
+                group_id: Some("sdk-group".to_string()),
+                discovery_scope: Some(prns_host::DiscoveryScope::Organization),
+                discovery_port: Some(29_710),
+                data_port: Some(42_444),
+                devices: vec!["eth0".to_string()],
+                ignored_devices: vec!["lo".to_string()],
+                multicast_address_type: Some(prns_host::MulticastAddressType::Permanent),
+            },
+            InterfaceConfig::TcpClient {
+                target: "127.0.0.1:4242".to_string(),
+                bitrate: Bitrate::BitsPerSecond(1_000_000),
+            },
+            InterfaceConfig::TcpServer {
+                bind: "[::1]:4242".to_string(),
+                bitrate: Bitrate::Auto,
+            },
+            InterfaceConfig::Udp {
+                local: "0.0.0.0:4242".to_string(),
+                peer: "127.0.0.1:4243".to_string(),
+                bitrate: Bitrate::BitsPerSecond(2_000_000),
+            },
+            InterfaceConfig::Serial {
+                port: "/dev/ttyUSB0".to_string(),
+                line: serial_line(),
+            },
+            InterfaceConfig::Kiss {
+                port: "/dev/ttyUSB0".to_string(),
+                line: serial_line(),
+                flow_control: true,
+                preamble_millis: 150,
+                transmit_tail_millis: 20,
+                persistence: 64,
+                slot_time_millis: 20,
+                station_callsign: Some("N0CALL".to_string()),
+                station_interval_seconds: Some(600),
+            },
+            InterfaceConfig::Ax25Kiss {
+                port: "/dev/ttyUSB0".to_string(),
+                line: serial_line(),
+                flow_control: true,
+                preamble_millis: 150,
+                transmit_tail_millis: 20,
+                persistence: 64,
+                slot_time_millis: 20,
+                callsign: "N0CALL".to_string(),
+                ssid: 1,
+            },
+            InterfaceConfig::RNode {
+                port: "/dev/ttyUSB0".to_string(),
+                radio: radio(),
+                flow_control: true,
+                station_callsign: Some("N0CALL".to_string()),
+                station_interval_seconds: Some(600),
+                airtime_limit_short_centi_percent: Some(125),
+                airtime_limit_long_centi_percent: Some(250),
+            },
+            InterfaceConfig::MultiRNode {
+                port: "/dev/ttyUSB0".to_string(),
+                station_callsign: Some("N0CALL".to_string()),
+                station_interval_seconds: Some(600),
+                members: vec![prns_host::MultiRNodeMemberConfig {
+                    name: "uplink".to_string(),
+                    virtual_port: 1,
+                    radio: radio(),
+                    flow_control: true,
+                    outgoing: true,
+                }],
+            },
+            InterfaceConfig::Pipe {
+                command: vec![
+                    "printf".to_string(),
+                    "two words".to_string(),
+                    "single'quote".to_string(),
+                ],
+                respawn_delay_millis: 1_500,
+            },
+            InterfaceConfig::BackboneClient {
+                target: "backbone.example:4242".to_string(),
+                bitrate: Bitrate::Auto,
+            },
+            InterfaceConfig::BackboneServer {
+                bind: "0.0.0.0:4242".to_string(),
+                bitrate: Bitrate::Auto,
+            },
+            InterfaceConfig::I2p {
+                peers: vec!["example.i2p".to_string()],
+                connectable: false,
+            },
+            InterfaceConfig::Weave {
+                port: "/dev/ttyACM0".to_string(),
+            },
+            InterfaceConfig::AutomaticUsb,
+            InterfaceConfig::AutomaticBluetoothLe,
+            InterfaceConfig::WebSocketClient {
+                target: "ws://127.0.0.1:4242".to_string(),
+            },
+            InterfaceConfig::WebSocketServer {
+                bind: "127.0.0.1:4242".to_string(),
+            },
+        ];
+        for config in configs {
+            config.validate().map_err(|error| format!("{error:?}"))?;
+            let plan = typed_interface_plan(&config).map_err(|error| format!("{error:?}"))?;
+            if plan.interfaces.is_empty() {
+                return Err(format!(
+                    "{:?} produced no planned interfaces",
+                    config.kind()
+                ));
+            }
+        }
+        assert!(matches!(
+            typed_interface_plan(&InterfaceConfig::BrowserRendezvous {
+                url: "ws://127.0.0.1:4242".to_string(),
+            }),
+            Err(CommandFailure::UnsupportedByBackend)
+        ));
+        Ok(())
+    }
+
     #[test]
     fn command_completion_and_interruption_signal_readiness() {
         let readiness_count = Arc::new(AtomicUsize::new(0));
@@ -2449,9 +3217,11 @@ mod tests {
             return Err("initial snapshot was inconsistent".to_string());
         }
         let attached = host
-            .submit(HostCommand::AttachTcpClient {
-                target: "127.0.0.1:9".to_string(),
-                bitrate: Bitrate::Auto,
+            .submit(HostCommand::AttachInterface {
+                config: InterfaceConfig::TcpClient {
+                    target: "127.0.0.1:9".to_string(),
+                    bitrate: Bitrate::Auto,
+                },
             })
             .map_err(|error| format!("{error:?}"))?;
         let interface = match attached.wait(Some(Duration::from_secs(2))) {

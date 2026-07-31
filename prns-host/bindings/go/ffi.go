@@ -626,6 +626,7 @@ func marshalHostOptions(
 	return C.PrnsHostOptions{
 		struct_size:              C.size_t(C.sizeof_PrnsHostOptions),
 		required_abi:             C.uint32_t(HostContractABI),
+		required_schema_version:  C.uint32_t(HostSchemaVersion),
 		required_product_version: version,
 		limits: C.PrnsLimits{
 			struct_size:          C.size_t(C.sizeof_PrnsLimits),

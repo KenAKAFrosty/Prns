@@ -1192,6 +1192,10 @@ fn host_command_error(error: HostCommandFailure) -> crate::errors::CodeError {
         }
         HostCommandFailure::BindFailed { .. }
         | HostCommandFailure::WriteFailed { .. }
+        | HostCommandFailure::PermissionDenied { .. }
+        | HostCommandFailure::DeviceUnavailable { .. }
+        | HostCommandFailure::ConnectFailed { .. }
+        | HostCommandFailure::BackendFailed { .. }
         | HostCommandFailure::UnsupportedByBackend
         | HostCommandFailure::UnknownInterface => ErrorCode::AttachFailed,
         _ => ErrorCode::Internal,

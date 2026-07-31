@@ -231,4 +231,8 @@ private fun decodeCommandFailure(
     CommandFailureKind.RESOURCE_UPLOAD_CANCELLED -> CommandFailureResourceUploadCancelled
     CommandFailureKind.RESOURCE_EARLY_EOF -> CommandFailureResourceEarlyEof
     CommandFailureKind.RESOURCE_LENGTH_OVERRUN -> CommandFailureResourceLengthOverrun
+    CommandFailureKind.PERMISSION_DENIED -> CommandFailurePermissionDenied(detail)
+    CommandFailureKind.DEVICE_UNAVAILABLE -> CommandFailureDeviceUnavailable(detail)
+    CommandFailureKind.CONNECT_FAILED -> CommandFailureConnectFailed(detail)
+    CommandFailureKind.BACKEND_FAILED -> CommandFailureBackendFailed(detail)
 }

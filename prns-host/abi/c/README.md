@@ -28,7 +28,19 @@ Host, command, and stream operations are safe from multiple native threads. An i
 
 ## Versioning
 
-Product version and contract ABI are separate gates. A language package must require both before creating a host. Additive schema work uses unused discriminants and tail fields in size-prefixed structures. Removing a case, changing a discriminant, changing ownership, changing a field’s meaning, or reusing a reserved value requires a new contract ABI.
+Product version, schema version, and C ABI are three explicit creation gates.
+The first public baseline is product `0.3.1`, schema 1, ABI 1. The capsule has
+one `PrnsHostOptions` layout and no compatibility shim for unpublished earlier
+layouts. `struct_size` remains on public structures so every call can prove the
+memory prefix it may read or write; undersized structures are rejected and
+larger structures are accepted at their known prefix. That safety mechanism is
+not a promise to preserve pre-baseline layouts.
+
+The schema's operation IDL generates every exported declaration. Each
+`HostCommand` case becomes its own `prns_host_*` function, matching ordinary C
+calling conventions and debugger/tooling expectations. Ownership, borrowed
+lifetimes, readiness, interruption, and release relationships are validated
+before the header is rendered.
 
 `prns-host/conformance/host-contract-v1.json` is the portable oracle for fixed sizes, limits, discriminants, and mismatch behavior. Rust tests additionally exercise lifecycle terminality, pressure, exact diagnostic gaps, single ownership, event-view lifetimes, and resource transfer.
 

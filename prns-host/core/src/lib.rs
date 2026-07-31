@@ -18,15 +18,15 @@ mod queue;
 mod resource;
 mod types;
 
-pub use capability::{BackendCapabilities, BackendInfo, BackendKind, Capability};
+pub use capability::{BackendCapabilities, BackendInfo};
 pub use command::{
     Bitrate, CommandFailure, CommandOutcome, DeliveryEvidence, HostCommand, ResourceCompression,
     ResourceStrategy, ResponseTimeout,
 };
 pub use config::{
     DestinationConfig, DestinationIdentityConfig, DestinationLinkRequestPolicy, DestinationName,
-    DestinationNameError, DestinationProofStrategy, DestinationRatchetPolicy, HostConfig, HostRole,
-    IdentityConfig, IdentitySecret, PersistenceConfig, RequestHandlerConfig, RequestPolicy,
+    DestinationNameError, DestinationProofStrategy, DestinationRatchetPolicy, HostConfig,
+    IdentityConfig, IdentitySecret, PersistenceConfig, RequestHandlerConfig,
     SingleDestinationConfig,
 };
 pub use contract::{
@@ -34,32 +34,23 @@ pub use contract::{
 };
 pub use delivery::{EventDelivery, EventDeliveryAdmission, EventDeliveryQueue};
 pub use events::{
-    ApplicationEvent, ChannelMessage, DiagnosticBatch, DiagnosticEvent, LinkClosedReason,
-    PersistenceFlushCause, PersistenceFlushTarget, RequestAvailable, ResourceNeedsDecompression,
-    ResourceSegmentAvailable, ResponseAvailable, ResponseSegmentAvailable, SingleDelivery,
+    ApplicationEvent, ChannelMessage, DiagnosticBatch, DiagnosticEvent, RequestAvailable,
+    ResourceNeedsDecompression, ResourceSegmentAvailable, ResponseAvailable,
+    ResponseSegmentAvailable, SingleDelivery,
 };
 pub use generated::{
-    AbiApplicationEventKind, AbiBackendKind, AbiBitrateKind, AbiCapability, AbiCommandFailureKind,
-    AbiCommandOutcomeKind, AbiDeliveryEvidenceKind, AbiDestinationConfigKind,
-    AbiDestinationIdentityConfigKind, AbiDiagnosticEventKind, AbiDiscoveryScope, AbiEventField,
-    AbiHostRole, AbiIdentityConfigKind, AbiInterfaceHealth, AbiInterfaceKind, AbiLifecyclePhase,
-    AbiLinkClosedReason, AbiMulticastAddressType, AbiPersistenceConfigKind,
-    AbiPersistenceFlushCause, AbiPersistenceFlushTarget, AbiRequestPolicy,
-    AbiResourceCompressionKind, AbiResourceStrategyKind, AbiResponseTimeoutKind, AbiSerialDataBits,
-    AbiSerialParity, AbiSerialStopBits, AbiStatus, AbiStopReason, BALANCED_APPLICATION_EVENTS,
-    BALANCED_DIAGNOSTICS, BALANCED_PENDING_COMMANDS, BALANCED_RETAINED_EVENT_BYTES,
-    DESTINATION_HASH_LENGTH, HOST_SCHEMA_ABI, HOST_SCHEMA_PRODUCT_VERSION, HOST_SCHEMA_VERSION,
+    ApplicationEventKind, BackendKind, BitrateKind, Capability, CommandFailureKind,
+    CommandOutcomeKind, DeliveryEvidenceKind, DestinationConfigKind, DestinationIdentityConfigKind,
+    DiagnosticEventKind, DiscoveryScope, EventField, HostRole, IdentityConfigKind, InterfaceHealth,
+    InterfaceKind, LifecyclePhase, LinkClosedReason, MulticastAddressType, PersistenceConfigKind,
+    PersistenceFlushCause, PersistenceFlushTarget, RequestPolicy, ResourceCompressionKind,
+    ResourceStrategyKind, ResponseTimeoutKind, SerialDataBits, SerialParity, SerialStopBits,
+    Status, StopReason, BALANCED_APPLICATION_EVENTS, BALANCED_DIAGNOSTICS,
+    BALANCED_PENDING_COMMANDS, BALANCED_RETAINED_EVENT_BYTES, DESTINATION_HASH_LENGTH,
+    HOST_OPERATION_NAMES, HOST_SCHEMA_ABI, HOST_SCHEMA_PRODUCT_VERSION, HOST_SCHEMA_VERSION,
     IDENTITY_HASH_LENGTH, IDENTITY_SECRET_LENGTH, INTERFACE_ID_LENGTH, LINK_ID_LENGTH,
     PACKET_HASH_LENGTH, REQUEST_ID_LENGTH, REQUEST_PATH_HASH_LENGTH, RESOURCE_HASH_LENGTH,
-};
-pub use inspection::{
-    DestinationIdentitySnapshot, HostSnapshot, InterfaceHealth, InterfaceSnapshot,
-    PersistenceSnapshot, RouteSnapshot, RuntimeHealthSnapshot,
-};
-pub use interface::{
-    DiscoveryScope, InterfaceConfig, InterfaceConfigError, InterfaceKind, MultiRNodeMemberConfig,
-    MulticastAddressType, RNodeRadioConfig, SerialDataBits, SerialLineConfig, SerialParity,
-    SerialStopBits,
+    SAFE_UINT_MAX,
 };
 pub use inspection::{
     DestinationIdentitySnapshot, HostSnapshot, InterfaceSnapshot, PersistenceSnapshot,

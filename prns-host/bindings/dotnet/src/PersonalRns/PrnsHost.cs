@@ -177,6 +177,7 @@ public sealed class PrnsHost : IAsyncDisposable
             {
                 StructSize = (nuint)Marshal.SizeOf<Native.HostOptions>(),
                 RequiredAbi = HostContract.Abi,
+                RequiredSchemaVersion = HostContract.SchemaVersion,
                 RequiredProductVersion = version,
                 Limits = nativeLimits,
                 Role = options.Role,
@@ -1163,6 +1164,11 @@ public sealed class PrnsHost : IAsyncDisposable
             CommandFailureKind.ResourceEarlyEof => new CommandFailure.ResourceEarlyEof(),
             CommandFailureKind.ResourceLengthOverrun =>
                 new CommandFailure.ResourceLengthOverrun(),
+            CommandFailureKind.PermissionDenied => new CommandFailure.PermissionDenied(detail),
+            CommandFailureKind.DeviceUnavailable =>
+                new CommandFailure.DeviceUnavailable(detail),
+            CommandFailureKind.ConnectFailed => new CommandFailure.ConnectFailed(detail),
+            CommandFailureKind.BackendFailed => new CommandFailure.BackendFailed(detail),
             _ => throw new InvalidOperationException("Unknown native command failure."),
         };
     }

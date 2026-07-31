@@ -10,10 +10,70 @@ pub const REQUEST_ID_LENGTH: usize = 16;
 pub const REQUEST_PATH_HASH_LENGTH: usize = 16;
 pub const RESOURCE_HASH_LENGTH: usize = 32;
 pub const IDENTITY_SECRET_LENGTH: usize = 64;
+pub const SAFE_UINT_MAX: u64 = 9007199254740991;
 pub const BALANCED_PENDING_COMMANDS: usize = 256;
 pub const BALANCED_APPLICATION_EVENTS: usize = 1024;
 pub const BALANCED_RETAINED_EVENT_BYTES: usize = 8388608;
 pub const BALANCED_DIAGNOSTICS: usize = 1024;
+pub const HOST_OPERATION_NAMES: &[&str] = &[
+    "contractInfo",
+    "backendInfo",
+    "hostCreate",
+    "hostRelease",
+    "hostLifecycle",
+    "hostSnapshot",
+    "hostSnapshotRead",
+    "hostSnapshotRelease",
+    "hostIdentityHash",
+    "hostDestinationCount",
+    "hostDestinationHash",
+    "hostBeginResourceUpload",
+    "resourceUploadWrite",
+    "resourceUploadIsWritable",
+    "resourceUploadFinish",
+    "resourceUploadAbort",
+    "resourceUploadRelease",
+    "hostStop",
+    "commandWait",
+    "commandRegisterReadiness",
+    "commandInterruptWait",
+    "commandRelease",
+    "hostClaimApplicationEvents",
+    "hostClaimDiagnostics",
+    "eventStreamRegisterReadiness",
+    "readinessRegistrationRelease",
+    "eventStreamInterruptWait",
+    "eventStreamRelease",
+    "eventStreamNext",
+    "eventRelease",
+    "eventKind",
+    "eventBytes",
+    "eventString",
+    "eventU64",
+    "eventU128",
+    "eventResourceStream",
+    "resourceStreamRelease",
+    "resourceStreamNext",
+    "hostAnnounce",
+    "hostSendSinglePacket",
+    "hostCloseLink",
+    "hostAttachTcpServer",
+    "hostAttachTcpClient",
+    "hostAttachUdp",
+    "hostDetachInterface",
+    "hostEstablishLink",
+    "hostRequestPath",
+    "hostIdentify",
+    "hostSendLinkPacket",
+    "hostRequest",
+    "hostRespond",
+    "hostSendResource",
+    "hostSetLinkResourceStrategy",
+    "hostSetDestinationResourceStrategy",
+    "hostSendChannelMessage",
+    "hostAllowRequester",
+    "hostAttachInterface",
+];
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -179,7 +239,7 @@ impl TryFrom<u32> for Capability {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum AbiInterfaceKind {
+pub enum InterfaceKind {
     AutoLan = 1,
     TcpClient = 2,
     TcpServer = 3,
@@ -201,7 +261,34 @@ pub enum AbiInterfaceKind {
     BrowserRendezvous = 19,
 }
 
-impl TryFrom<u32> for AbiInterfaceKind {
+impl InterfaceKind {
+    #[must_use]
+    pub const fn contract_name(self) -> &'static str {
+        match self {
+            Self::AutoLan => "AutoLan",
+            Self::TcpClient => "TcpClient",
+            Self::TcpServer => "TcpServer",
+            Self::Udp => "Udp",
+            Self::Serial => "Serial",
+            Self::Kiss => "Kiss",
+            Self::Ax25Kiss => "Ax25Kiss",
+            Self::RNode => "RNode",
+            Self::MultiRNode => "MultiRNode",
+            Self::Pipe => "Pipe",
+            Self::BackboneClient => "BackboneClient",
+            Self::BackboneServer => "BackboneServer",
+            Self::I2p => "I2p",
+            Self::Weave => "Weave",
+            Self::AutomaticUsb => "AutomaticUsb",
+            Self::AutomaticBluetoothLe => "AutomaticBluetoothLe",
+            Self::WebSocketClient => "WebSocketClient",
+            Self::WebSocketServer => "WebSocketServer",
+            Self::BrowserRendezvous => "BrowserRendezvous",
+        }
+    }
+}
+
+impl TryFrom<u32> for InterfaceKind {
     type Error = ();
 
     fn try_from(value: u32) -> Result<Self, Self::Error> {
@@ -232,7 +319,7 @@ impl TryFrom<u32> for AbiInterfaceKind {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum AbiInterfaceHealth {
+pub enum InterfaceHealth {
     Initializing = 1,
     Connected = 2,
     Degraded = 3,
@@ -243,7 +330,23 @@ pub enum AbiInterfaceHealth {
     Unknown = 8,
 }
 
-impl TryFrom<u32> for AbiInterfaceHealth {
+impl InterfaceHealth {
+    #[must_use]
+    pub const fn contract_name(self) -> &'static str {
+        match self {
+            Self::Initializing => "Initializing",
+            Self::Connected => "Connected",
+            Self::Degraded => "Degraded",
+            Self::Reconnecting => "Reconnecting",
+            Self::Failed => "Failed",
+            Self::Disconnected => "Disconnected",
+            Self::Disabled => "Disabled",
+            Self::Unknown => "Unknown",
+        }
+    }
+}
+
+impl TryFrom<u32> for InterfaceHealth {
     type Error = ();
 
     fn try_from(value: u32) -> Result<Self, Self::Error> {
@@ -263,7 +366,7 @@ impl TryFrom<u32> for AbiInterfaceHealth {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum AbiDiscoveryScope {
+pub enum DiscoveryScope {
     Link = 1,
     Admin = 2,
     Site = 3,
@@ -271,7 +374,20 @@ pub enum AbiDiscoveryScope {
     Global = 5,
 }
 
-impl TryFrom<u32> for AbiDiscoveryScope {
+impl DiscoveryScope {
+    #[must_use]
+    pub const fn contract_name(self) -> &'static str {
+        match self {
+            Self::Link => "Link",
+            Self::Admin => "Admin",
+            Self::Site => "Site",
+            Self::Organization => "Organization",
+            Self::Global => "Global",
+        }
+    }
+}
+
+impl TryFrom<u32> for DiscoveryScope {
     type Error = ();
 
     fn try_from(value: u32) -> Result<Self, Self::Error> {
@@ -288,12 +404,22 @@ impl TryFrom<u32> for AbiDiscoveryScope {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum AbiMulticastAddressType {
+pub enum MulticastAddressType {
     Temporary = 1,
     Permanent = 2,
 }
 
-impl TryFrom<u32> for AbiMulticastAddressType {
+impl MulticastAddressType {
+    #[must_use]
+    pub const fn contract_name(self) -> &'static str {
+        match self {
+            Self::Temporary => "Temporary",
+            Self::Permanent => "Permanent",
+        }
+    }
+}
+
+impl TryFrom<u32> for MulticastAddressType {
     type Error = ();
 
     fn try_from(value: u32) -> Result<Self, Self::Error> {
@@ -307,14 +433,26 @@ impl TryFrom<u32> for AbiMulticastAddressType {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum AbiSerialDataBits {
+pub enum SerialDataBits {
     Five = 5,
     Six = 6,
     Seven = 7,
     Eight = 8,
 }
 
-impl TryFrom<u32> for AbiSerialDataBits {
+impl SerialDataBits {
+    #[must_use]
+    pub const fn contract_name(self) -> &'static str {
+        match self {
+            Self::Five => "Five",
+            Self::Six => "Six",
+            Self::Seven => "Seven",
+            Self::Eight => "Eight",
+        }
+    }
+}
+
+impl TryFrom<u32> for SerialDataBits {
     type Error = ();
 
     fn try_from(value: u32) -> Result<Self, Self::Error> {
@@ -330,13 +468,24 @@ impl TryFrom<u32> for AbiSerialDataBits {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum AbiSerialParity {
+pub enum SerialParity {
     None = 1,
     Even = 2,
     Odd = 3,
 }
 
-impl TryFrom<u32> for AbiSerialParity {
+impl SerialParity {
+    #[must_use]
+    pub const fn contract_name(self) -> &'static str {
+        match self {
+            Self::None => "None",
+            Self::Even => "Even",
+            Self::Odd => "Odd",
+        }
+    }
+}
+
+impl TryFrom<u32> for SerialParity {
     type Error = ();
 
     fn try_from(value: u32) -> Result<Self, Self::Error> {
@@ -351,12 +500,22 @@ impl TryFrom<u32> for AbiSerialParity {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum AbiSerialStopBits {
+pub enum SerialStopBits {
     One = 1,
     Two = 2,
 }
 
-impl TryFrom<u32> for AbiSerialStopBits {
+impl SerialStopBits {
+    #[must_use]
+    pub const fn contract_name(self) -> &'static str {
+        match self {
+            Self::One => "One",
+            Self::Two => "Two",
+        }
+    }
+}
+
+impl TryFrom<u32> for SerialStopBits {
     type Error = ();
 
     fn try_from(value: u32) -> Result<Self, Self::Error> {
@@ -370,7 +529,7 @@ impl TryFrom<u32> for AbiSerialStopBits {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum AbiHostRole {
+pub enum HostRole {
     Endpoint = 1,
     Transport = 2,
 }
@@ -431,12 +590,22 @@ impl TryFrom<u32> for IdentityConfigKind {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum AbiPersistenceConfigKind {
+pub enum PersistenceConfigKind {
     Ephemeral = 1,
     Directory = 2,
 }
 
-impl TryFrom<u32> for AbiPersistenceConfigKind {
+impl PersistenceConfigKind {
+    #[must_use]
+    pub const fn contract_name(self) -> &'static str {
+        match self {
+            Self::Ephemeral => "Ephemeral",
+            Self::Directory => "Directory",
+        }
+    }
+}
+
+impl TryFrom<u32> for PersistenceConfigKind {
     type Error = ();
 
     fn try_from(value: u32) -> Result<Self, Self::Error> {
@@ -450,7 +619,7 @@ impl TryFrom<u32> for AbiPersistenceConfigKind {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum AbiDestinationConfigKind {
+pub enum DestinationConfigKind {
     Plain = 1,
     Single = 2,
 }
@@ -755,6 +924,10 @@ pub enum CommandFailureKind {
     ResourceUploadCancelled = 34,
     ResourceEarlyEof = 35,
     ResourceLengthOverrun = 36,
+    PermissionDenied = 37,
+    DeviceUnavailable = 38,
+    ConnectFailed = 39,
+    BackendFailed = 40,
 }
 
 impl CommandFailureKind {
@@ -846,6 +1019,10 @@ impl TryFrom<u32> for CommandFailureKind {
             34 => Ok(Self::ResourceUploadCancelled),
             35 => Ok(Self::ResourceEarlyEof),
             36 => Ok(Self::ResourceLengthOverrun),
+            37 => Ok(Self::PermissionDenied),
+            38 => Ok(Self::DeviceUnavailable),
+            39 => Ok(Self::ConnectFailed),
+            40 => Ok(Self::BackendFailed),
             _ => Err(()),
         }
     }
@@ -1107,50 +1284,6 @@ impl TryFrom<u32> for DiagnosticEventKind {
             217 => Ok(Self::PersistenceRestored),
             218 => Ok(Self::PersistenceFlushed),
             219 => Ok(Self::PersistenceFlushFailed),
-            _ => Err(()),
-        }
-    }
-}
-
-#[repr(u32)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum AbiPersistenceFlushCause {
-    Startup = 1,
-    Interval = 2,
-    RouteChange = 3,
-    RatchetRotation = 4,
-    Shutdown = 5,
-}
-
-impl TryFrom<u32> for AbiPersistenceFlushCause {
-    type Error = ();
-
-    fn try_from(value: u32) -> Result<Self, Self::Error> {
-        match value {
-            1 => Ok(Self::Startup),
-            2 => Ok(Self::Interval),
-            3 => Ok(Self::RouteChange),
-            4 => Ok(Self::RatchetRotation),
-            5 => Ok(Self::Shutdown),
-            _ => Err(()),
-        }
-    }
-}
-
-#[repr(u32)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum AbiPersistenceFlushTarget {
-    RoutingState = 1,
-    Ratchets = 2,
-}
-
-impl TryFrom<u32> for AbiPersistenceFlushTarget {
-    type Error = ();
-
-    fn try_from(value: u32) -> Result<Self, Self::Error> {
-        match value {
-            1 => Ok(Self::RoutingState),
-            2 => Ok(Self::Ratchets),
             _ => Err(()),
         }
     }

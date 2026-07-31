@@ -196,4 +196,8 @@ pub enum CommandFailure {
     ResourceUploadCancelled,
     ResourceEarlyEof,
     ResourceLengthOverrun,
+    PermissionDenied { detail: String },
+    DeviceUnavailable { detail: String },
+    ConnectFailed { detail: String },
+    BackendFailed { detail: String },
 }

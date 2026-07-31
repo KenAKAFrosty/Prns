@@ -506,6 +506,14 @@ private func decodeCommandFailure(
         return .resourceEarlyEof
     case .resourceLengthOverrun:
         return .resourceLengthOverrun
+    case .permissionDenied:
+        return .permissionDenied(detail: detail)
+    case .deviceUnavailable:
+        return .deviceUnavailable(detail: detail)
+    case .connectFailed:
+        return .connectFailed(detail: detail)
+    case .backendFailed:
+        return .backendFailed(detail: detail)
     }
 }
 

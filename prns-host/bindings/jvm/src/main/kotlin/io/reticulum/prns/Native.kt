@@ -186,6 +186,7 @@ internal open class NativeDestinationConfig : Structure() {
 @Structure.FieldOrder(
     "structSize",
     "requiredAbi",
+    "requiredSchemaVersion",
     "requiredProductVersion",
     "limits",
     "role",
@@ -202,6 +203,9 @@ internal class NativeHostOptions : Structure() {
 
     @JvmField
     var requiredAbi: Int = 0
+
+    @JvmField
+    var requiredSchemaVersion: Int = 0
 
     @JvmField
     var requiredProductVersion: NativeStringView.ByValue = NativeStringView.ByValue()
@@ -673,6 +677,7 @@ internal class NativeArena : AutoCloseable {
         val result = NativeHostOptions()
         result.structSize = SizeT(result.size().toLong())
         result.requiredAbi = HostContract.ABI
+        result.requiredSchemaVersion = HostContract.SCHEMA_VERSION
         result.requiredProductVersion = string(HostContract.PRODUCT_VERSION)
         result.limits = NativeLimits.ByValue().also {
             it.structSize = SizeT(it.size().toLong())

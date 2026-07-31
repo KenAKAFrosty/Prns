@@ -14,24 +14,33 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use prns_host_core::{
-    verify_host_contract, AbiApplicationEventKind, AbiBackendKind, AbiBitrateKind, AbiCapability,
-    AbiCommandFailureKind, AbiCommandOutcomeKind, AbiDeliveryEvidenceKind,
-    AbiDestinationConfigKind, AbiDestinationIdentityConfigKind, AbiDiagnosticEventKind,
-    AbiDiscoveryScope, AbiEventField, AbiHostRole, AbiIdentityConfigKind, AbiInterfaceKind,
-    AbiLifecyclePhase, AbiLinkClosedReason, AbiMulticastAddressType, AbiPersistenceConfigKind,
-    AbiPersistenceFlushCause, AbiPersistenceFlushTarget, AbiRequestPolicy,
-    AbiResourceCompressionKind, AbiResourceStrategyKind, AbiResponseTimeoutKind, AbiSerialDataBits,
-    AbiSerialParity, AbiSerialStopBits, AbiStatus, AbiStopReason, ApplicationEvent, Bitrate,
-    BoundedHostQueue, Capability, CommandFailure, CommandOutcome, ConsumerLane, DeliveryEvidence,
-    DestinationConfig, DestinationHash, DestinationIdentityConfig, DestinationName,
-    DiagnosticEvent, DiscoveryScope, HostCommand, HostConfig, HostFailure, HostRole,
-    HostSnapshot as CoreHostSnapshot, IdentityConfig, IdentityHash, IdentitySecret,
-    InterfaceConfig, InterfaceHealth, InterfaceId, InterfaceKind, LifecycleState, LinkClosedReason,
-    LinkId, MultiRNodeMemberConfig, MulticastAddressType, PersistenceConfig, PersistenceFlushCause,
-    PersistenceFlushTarget, PrnsLimits as CoreLimits, RNodeRadioConfig, RequestHandlerConfig,
-    RequestId, RequestPathHash, RequestPolicy, ResourceAvailable, ResourceCompression,
-    ResourceStrategy, ResponseTimeout, SerialDataBits, SerialLineConfig, SerialParity,
-    SerialStopBits, StopReason, HOST_CONTRACT, HOST_SCHEMA_VERSION,
+    verify_host_contract, ApplicationEvent, ApplicationEventKind as AbiApplicationEventKind,
+    BackendKind as AbiBackendKind, Bitrate, BitrateKind as AbiBitrateKind, BoundedHostQueue,
+    Capability as AbiCapability, Capability, CommandFailure,
+    CommandFailureKind as AbiCommandFailureKind, CommandOutcome,
+    CommandOutcomeKind as AbiCommandOutcomeKind, ConsumerLane, DeliveryEvidence,
+    DeliveryEvidenceKind as AbiDeliveryEvidenceKind, DestinationConfig,
+    DestinationConfigKind as AbiDestinationConfigKind, DestinationHash, DestinationIdentityConfig,
+    DestinationIdentityConfigKind as AbiDestinationIdentityConfigKind, DestinationName,
+    DiagnosticEvent, DiagnosticEventKind as AbiDiagnosticEventKind,
+    DiscoveryScope as AbiDiscoveryScope, DiscoveryScope, EventField as AbiEventField, HostCommand,
+    HostConfig, HostFailure, HostRole as AbiHostRole, HostRole, HostSnapshot as CoreHostSnapshot,
+    IdentityConfig, IdentityConfigKind as AbiIdentityConfigKind, IdentityHash, IdentitySecret,
+    InterfaceConfig, InterfaceHealth, InterfaceId, InterfaceKind as AbiInterfaceKind,
+    InterfaceKind, LifecyclePhase as AbiLifecyclePhase, LifecycleState,
+    LinkClosedReason as AbiLinkClosedReason, LinkClosedReason, LinkId, MultiRNodeMemberConfig,
+    MulticastAddressType as AbiMulticastAddressType, MulticastAddressType, PersistenceConfig,
+    PersistenceConfigKind as AbiPersistenceConfigKind,
+    PersistenceFlushCause as AbiPersistenceFlushCause, PersistenceFlushCause,
+    PersistenceFlushTarget as AbiPersistenceFlushTarget, PersistenceFlushTarget,
+    PrnsLimits as CoreLimits, RNodeRadioConfig, RequestHandlerConfig, RequestId, RequestPathHash,
+    RequestPolicy as AbiRequestPolicy, RequestPolicy, ResourceAvailable, ResourceCompression,
+    ResourceCompressionKind as AbiResourceCompressionKind, ResourceStrategy,
+    ResourceStrategyKind as AbiResourceStrategyKind, ResponseTimeout,
+    ResponseTimeoutKind as AbiResponseTimeoutKind, SerialDataBits as AbiSerialDataBits,
+    SerialDataBits, SerialLineConfig, SerialParity as AbiSerialParity, SerialParity,
+    SerialStopBits as AbiSerialStopBits, SerialStopBits, Status as AbiStatus,
+    StopReason as AbiStopReason, StopReason, HOST_CONTRACT, HOST_SCHEMA_VERSION,
 };
 use prns_host_native::{
     CommandHandle, CommandWait, IdentityStartError, NativeEventSink, NativeHost,
@@ -319,6 +328,7 @@ pub struct PrnsDestinationConfig {
 pub struct PrnsHostOptions {
     pub struct_size: usize,
     pub required_abi: u32,
+    pub required_schema_version: u32,
     pub required_product_version: PrnsStringView,
     pub limits: PrnsLimits,
     pub role: u32,
@@ -330,23 +340,9 @@ pub struct PrnsHostOptions {
     pub persistence: PrnsPersistenceConfig,
 }
 
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct PrnsHostOptionsV1 {
-    struct_size: usize,
-    required_abi: u32,
-    required_product_version: PrnsStringView,
-    limits: PrnsLimits,
-    role: u32,
-    identity: PrnsIdentityConfig,
-    destinations: *const PrnsDestinationConfig,
-    destination_count: usize,
-    required_capabilities: *const u32,
-    required_capability_count: usize,
-}
-
 struct HostOptionsInput {
     required_abi: u32,
+    required_schema_version: u32,
     required_product_version: PrnsStringView,
     limits: PrnsLimits,
     role: u32,
@@ -355,7 +351,7 @@ struct HostOptionsInput {
     destination_count: usize,
     required_capabilities: *const u32,
     required_capability_count: usize,
-    persistence: Option<PrnsPersistenceConfig>,
+    persistence: PrnsPersistenceConfig,
 }
 
 #[repr(C)]
@@ -774,27 +770,13 @@ unsafe fn read_host_options(value: *const PrnsHostOptions) -> Result<HostOptions
         return Err(status(AbiStatus::InvalidArgument));
     }
     let struct_size = unsafe { value.cast::<usize>().read() };
-    if struct_size >= size_of::<PrnsHostOptions>() {
-        let value = unsafe { value.read() };
-        return Ok(HostOptionsInput {
-            required_abi: value.required_abi,
-            required_product_version: value.required_product_version,
-            limits: value.limits,
-            role: value.role,
-            identity: value.identity,
-            destinations: value.destinations,
-            destination_count: value.destination_count,
-            required_capabilities: value.required_capabilities,
-            required_capability_count: value.required_capability_count,
-            persistence: Some(value.persistence),
-        });
-    }
-    if struct_size != size_of::<PrnsHostOptionsV1>() {
+    if struct_size < size_of::<PrnsHostOptions>() {
         return Err(status(AbiStatus::InvalidArgument));
     }
-    let value = unsafe { value.cast::<PrnsHostOptionsV1>().read() };
+    let value = unsafe { value.read() };
     Ok(HostOptionsInput {
         required_abi: value.required_abi,
+        required_schema_version: value.required_schema_version,
         required_product_version: value.required_product_version,
         limits: value.limits,
         role: value.role,
@@ -803,7 +785,7 @@ unsafe fn read_host_options(value: *const PrnsHostOptions) -> Result<HostOptions
         destination_count: value.destination_count,
         required_capabilities: value.required_capabilities,
         required_capability_count: value.required_capability_count,
-        persistence: None,
+        persistence: value.persistence,
     })
 }
 
@@ -824,12 +806,7 @@ unsafe fn parse_identity(config: &PrnsIdentityConfig) -> Result<IdentityConfig, 
     }
 }
 
-unsafe fn parse_persistence(
-    config: Option<PrnsPersistenceConfig>,
-) -> Result<PersistenceConfig, u32> {
-    let Some(config) = config else {
-        return Ok(PersistenceConfig::Ephemeral);
-    };
+unsafe fn parse_persistence(config: PrnsPersistenceConfig) -> Result<PersistenceConfig, u32> {
     validate_size(config.struct_size, size_of::<PrnsPersistenceConfig>())?;
     match AbiPersistenceConfigKind::try_from(config.kind)
         .map_err(|_| status(AbiStatus::InvalidArgument))?
@@ -1235,7 +1212,13 @@ pub unsafe extern "C" fn prns_host_create(
             Ok(version) => version,
             Err(error) => return error,
         };
-        if verify_host_contract(options.required_abi, version).is_err() {
+        if verify_host_contract(
+            options.required_abi,
+            options.required_schema_version,
+            version,
+        )
+        .is_err()
+        {
             return status(AbiStatus::ContractMismatch);
         }
         let limits = match CoreLimits::try_new(
@@ -1532,7 +1515,7 @@ fn interface_kind_value(kind: InterfaceKind) -> u32 {
 }
 
 fn interface_health_value(health: InterfaceHealth) -> u32 {
-    use prns_host_core::AbiInterfaceHealth;
+    use prns_host_core::InterfaceHealth as AbiInterfaceHealth;
     match health {
         InterfaceHealth::Initializing => AbiInterfaceHealth::Initializing as u32,
         InterfaceHealth::Connected => AbiInterfaceHealth::Connected as u32,
@@ -2596,6 +2579,22 @@ fn cache_command_result(result: Result<CommandOutcome, CommandFailure>) -> Cache
                 CommandFailure::ResourceEarlyEof => AbiCommandFailureKind::ResourceEarlyEof as u32,
                 CommandFailure::ResourceLengthOverrun => {
                     AbiCommandFailureKind::ResourceLengthOverrun as u32
+                }
+                CommandFailure::PermissionDenied { detail } => {
+                    cached.detail = detail;
+                    AbiCommandFailureKind::PermissionDenied as u32
+                }
+                CommandFailure::DeviceUnavailable { detail } => {
+                    cached.detail = detail;
+                    AbiCommandFailureKind::DeviceUnavailable as u32
+                }
+                CommandFailure::ConnectFailed { detail } => {
+                    cached.detail = detail;
+                    AbiCommandFailureKind::ConnectFailed as u32
+                }
+                CommandFailure::BackendFailed { detail } => {
+                    cached.detail = detail;
+                    AbiCommandFailureKind::BackendFailed as u32
                 }
             };
         }
@@ -3933,6 +3932,7 @@ mod tests {
         let mut options = PrnsHostOptions {
             struct_size: size_of::<PrnsHostOptions>(),
             required_abi: HOST_CONTRACT.abi + 1,
+            required_schema_version: HOST_CONTRACT.schema_version,
             required_product_version: PrnsStringView {
                 data: version.as_ptr(),
                 length: version.len(),
@@ -3965,10 +3965,37 @@ mod tests {
             },
         };
         let mut host = ptr::null_mut();
+        options.struct_size = size_of::<PrnsHostOptions>() - 1;
+        assert_eq!(
+            unsafe { prns_host_create(&options, &mut host) },
+            status(AbiStatus::InvalidArgument)
+        );
+        options.struct_size = size_of::<PrnsHostOptions>() + 64;
         assert_eq!(
             unsafe { prns_host_create(&options, &mut host) },
             status(AbiStatus::ContractMismatch)
         );
+        options.struct_size = size_of::<PrnsHostOptions>();
+        options.required_abi = HOST_CONTRACT.abi;
+        options.required_schema_version = HOST_CONTRACT.schema_version + 1;
+        assert_eq!(
+            unsafe { prns_host_create(&options, &mut host) },
+            status(AbiStatus::ContractMismatch)
+        );
+        options.required_schema_version = HOST_CONTRACT.schema_version;
+        let incompatible_version = b"0.0.0";
+        options.required_product_version = PrnsStringView {
+            data: incompatible_version.as_ptr(),
+            length: incompatible_version.len(),
+        };
+        assert_eq!(
+            unsafe { prns_host_create(&options, &mut host) },
+            status(AbiStatus::ContractMismatch)
+        );
+        options.required_product_version = PrnsStringView {
+            data: version.as_ptr(),
+            length: version.len(),
+        };
         assert!(host.is_null());
         options.required_abi = HOST_CONTRACT.abi;
         assert_eq!(
@@ -4088,7 +4115,8 @@ mod tests {
 
         let mut generic: PrnsInterfaceConfig = unsafe { std::mem::zeroed() };
         generic.struct_size = size_of::<PrnsInterfaceConfig>();
-        generic.kind = AbiInterfaceKind::AutomaticUsb as u32;
+        generic.kind = AbiInterfaceKind::BrowserRendezvous as u32;
+        generic.url = string_view("ws://127.0.0.1:4242");
         command = ptr::null_mut();
         assert_eq!(
             unsafe { prns_host_attach_interface(host, &generic, &mut command) },
@@ -4192,55 +4220,6 @@ mod tests {
         );
         assert_eq!(lifecycle.phase, AbiLifecyclePhase::Stopped as u32);
         assert_eq!(lifecycle.reason, AbiStopReason::Requested as u32);
-        unsafe {
-            prns_host_release(host);
-        }
-    }
-
-    #[test]
-    fn schema_one_host_options_remain_ephemeral_and_accepted() {
-        let version = HOST_CONTRACT.product_version.as_bytes();
-        let selected = limits();
-        let options = PrnsHostOptionsV1 {
-            struct_size: size_of::<PrnsHostOptionsV1>(),
-            required_abi: HOST_CONTRACT.abi,
-            required_product_version: PrnsStringView {
-                data: version.as_ptr(),
-                length: version.len(),
-            },
-            limits: PrnsLimits {
-                struct_size: size_of::<PrnsLimits>(),
-                pending_commands: selected.pending_commands(),
-                application_events: selected.application_events(),
-                retained_event_bytes: selected.retained_event_bytes(),
-                diagnostics: selected.diagnostics(),
-            },
-            role: AbiHostRole::Endpoint as u32,
-            identity: PrnsIdentityConfig {
-                struct_size: size_of::<PrnsIdentityConfig>(),
-                kind: AbiIdentityConfigKind::GenerateEphemeral as u32,
-                secret: PrnsByteView {
-                    data: ptr::null(),
-                    length: 0,
-                },
-                path: PrnsStringView {
-                    data: ptr::null(),
-                    length: 0,
-                },
-            },
-            destinations: ptr::null(),
-            destination_count: 0,
-            required_capabilities: ptr::null(),
-            required_capability_count: 0,
-        };
-        let mut host = ptr::null_mut();
-        assert_eq!(
-            unsafe {
-                prns_host_create(ptr::from_ref(&options).cast::<PrnsHostOptions>(), &mut host)
-            },
-            status(AbiStatus::Ok)
-        );
-        assert_eq!(unsafe { prns_host_stop(host) }, status(AbiStatus::Ok));
         unsafe {
             prns_host_release(host);
         }

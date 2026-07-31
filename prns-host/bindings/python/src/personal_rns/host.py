@@ -842,6 +842,14 @@ def _decode_command_failure(
             return g.CommandFailureResourceEarlyEof()
         case g.CommandFailureKind.RESOURCE_LENGTH_OVERRUN:
             return g.CommandFailureResourceLengthOverrun()
+        case g.CommandFailureKind.PERMISSION_DENIED:
+            return g.CommandFailurePermissionDenied(detail)
+        case g.CommandFailureKind.DEVICE_UNAVAILABLE:
+            return g.CommandFailureDeviceUnavailable(detail)
+        case g.CommandFailureKind.CONNECT_FAILED:
+            return g.CommandFailureConnectFailed(detail)
+        case g.CommandFailureKind.BACKEND_FAILED:
+            return g.CommandFailureBackendFailed(detail)
     raise RuntimeError(f"unknown command failure {kind}")
 
 
@@ -1423,6 +1431,7 @@ class Host:
             native_options = NativeHostOptions()
             native_options.struct_size = ctypes.sizeof(NativeHostOptions)
             native_options.required_abi = g.HOST_CONTRACT_ABI
+            native_options.required_schema_version = g.SCHEMA_VERSION
             native_options.required_product_version = arena.string(
                 g.PRODUCT_VERSION
             )

@@ -945,6 +945,14 @@ function decode_command_failure(kind::CommandFailureKind, detail::String)
     kind == CommandFailureKindResourceEarlyEof && return CommandFailureResourceEarlyEof()
     kind == CommandFailureKindResourceLengthOverrun &&
         return CommandFailureResourceLengthOverrun()
+    kind == CommandFailureKindPermissionDenied &&
+        return CommandFailurePermissionDenied(detail)
+    kind == CommandFailureKindDeviceUnavailable &&
+        return CommandFailureDeviceUnavailable(detail)
+    kind == CommandFailureKindConnectFailed &&
+        return CommandFailureConnectFailed(detail)
+    kind == CommandFailureKindBackendFailed &&
+        return CommandFailureBackendFailed(detail)
     throw(StatusFailure(:decode_command_failure, StatusBackendFailed))
 end
 

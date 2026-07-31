@@ -367,6 +367,7 @@ end
 struct NativeHostOptions
     struct_size::Csize_t
     required_abi::UInt32
+    required_schema_version::UInt32
     required_product_version::NativeStringView
     limits::NativeLimits
     role::UInt32
@@ -950,6 +951,7 @@ function native_host_options(arena::NativeArena, value)
     NativeHostOptions(
         sizeof(NativeHostOptions),
         HOST_CONTRACT_ABI,
+        HOST_SCHEMA_VERSION,
         native_string_view(arena, PRODUCT_VERSION),
         NativeLimits(
             sizeof(NativeLimits),

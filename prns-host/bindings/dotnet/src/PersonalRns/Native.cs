@@ -96,6 +96,7 @@ internal static partial class Native
     {
         internal nuint StructSize;
         internal uint RequiredAbi;
+        internal uint RequiredSchemaVersion;
         internal StringView RequiredProductVersion;
         internal Limits Limits;
         internal HostRole Role;

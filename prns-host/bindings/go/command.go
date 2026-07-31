@@ -315,6 +315,14 @@ func decodeCommandFailure(kind CommandFailureKind, detail string) (CommandFailur
 		return CommandFailureResourceEarlyEof{}, nil
 	case CommandFailureKindResourceLengthOverrun:
 		return CommandFailureResourceLengthOverrun{}, nil
+	case CommandFailureKindPermissionDenied:
+		return CommandFailurePermissionDenied{Detail: detail}, nil
+	case CommandFailureKindDeviceUnavailable:
+		return CommandFailureDeviceUnavailable{Detail: detail}, nil
+	case CommandFailureKindConnectFailed:
+		return CommandFailureConnectFailed{Detail: detail}, nil
+	case CommandFailureKindBackendFailed:
+		return CommandFailureBackendFailed{Detail: detail}, nil
 	default:
 		return nil, StatusError{
 			Operation: "decode command failure",

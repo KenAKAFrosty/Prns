@@ -170,7 +170,7 @@ fun ResourceStream.chunks(maximumBytes: Int = 64 * 1024): Flow<Bytes> = flow {
 
 private class NativeResourceStream(
     pointer: Pointer,
-    override val totalBytes: Long,
+    override val totalBytes: ULong,
 ) : ResourceStream {
     private val lock = ReentrantLock()
     private var pointer: Pointer? = pointer
@@ -285,7 +285,7 @@ private class EventReader(private val pointer: Pointer) {
         )
         return NativeResourceStream(
             pointer = requireNotNull(output.value),
-            totalBytes = u64(EventField.TOTAL_BYTES),
+            totalBytes = u64(EventField.TOTAL_BYTES).toULong(),
         )
     }
 
@@ -343,7 +343,7 @@ internal fun decodeApplicationEvent(pointer: Pointer): ApplicationEvent {
                 linkId = LinkId(event.bytes(EventField.LINK_ID)),
                 hash = ResourceHash(event.bytes(EventField.HASH)),
                 stream = Bytes(event.bytes(EventField.STREAM)),
-                uncompressedDataBytes = event.u64(EventField.UNCOMPRESSED_DATA_BYTES),
+                uncompressedDataBytes = event.u64(EventField.UNCOMPRESSED_DATA_BYTES).toULong(),
             )
         ApplicationEventKind.CHANNEL_MESSAGE -> ApplicationEventChannelMessage(
             linkId = LinkId(event.bytes(EventField.LINK_ID)),
@@ -402,7 +402,7 @@ internal fun decodeDiagnosticEvent(pointer: Pointer): DiagnosticEvent {
         DiagnosticEventKind.RESOURCE_ASSEMBLED -> DiagnosticEventResourceAssembled(
             linkId = LinkId(event.bytes(EventField.LINK_ID)),
             originalHash = ResourceHash(event.bytes(EventField.ORIGINAL_HASH)),
-            totalSizeBytes = event.u64(EventField.TOTAL_SIZE_BYTES),
+            totalSizeBytes = event.u64(EventField.TOTAL_SIZE_BYTES).toULong(),
         )
         DiagnosticEventKind.RESOURCE_FAILED -> DiagnosticEventResourceFailed(
             linkId = LinkId(event.bytes(EventField.LINK_ID)),
@@ -412,11 +412,11 @@ internal fun decodeDiagnosticEvent(pointer: Pointer): DiagnosticEvent {
         DiagnosticEventKind.RESOURCE_SEND_PROGRESS ->
             DiagnosticEventResourceSendProgress(
                 linkId = LinkId(event.bytes(EventField.LINK_ID)),
-                transferredBytes = event.u64(EventField.TRANSFERRED_BYTES),
-                totalBytes = event.u64(EventField.TOTAL_BYTES),
+                transferredBytes = event.u64(EventField.TRANSFERRED_BYTES).toULong(),
+                totalBytes = event.u64(EventField.TOTAL_BYTES).toULong(),
                 physicalTransferredBytes = event.u64(
                     EventField.PHYSICAL_TRANSFERRED_BYTES,
-                ),
+                ).toULong(),
                 segmentIndex = event.u64(EventField.SEGMENT_INDEX),
                 totalSegments = event.u64(EventField.TOTAL_SEGMENTS),
             )

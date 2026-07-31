@@ -278,6 +278,7 @@ class HostOptions(ctypes.Structure):
     _fields_ = [
         ("struct_size", ctypes.c_size_t),
         ("required_abi", ctypes.c_uint32),
+        ("required_schema_version", ctypes.c_uint32),
         ("required_product_version", StringView),
         ("limits", Limits),
         ("role", ctypes.c_uint32),
