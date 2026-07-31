@@ -43,7 +43,7 @@ The Prns daemon, `prnsd`, not only runs the high-performance transport node, but
 
 - **A system tray**
 
-    When running in its default non-headless environment (usually, your own computer), the daemon also sits in the system tray with a live status readout.
+    When running in its default non-containerized environment (usually, your own computer), the daemon also sits in the system tray with a live status readout.
 
     One click each for network status, the interface editor, the configuration folder, or a terminal, and stopping the daemon is right there too.
 

@@ -1,6 +1,5 @@
 # 导航
 nav-contributing = 贡献
-nav-crates = Crates
 nav-api = API
 
 # 页脚
@@ -14,8 +13,6 @@ landing-title-lead = A high-performance port of Reticulum (RNS).
 landing-title-accent = Runs on any device.
 landing-subtitle = 一个确定性的 no_std、无分配器核心。为每个 Reticulum 节点所需的性能与稳定性而构建，从五美元的微控制器到云服务器都能覆盖。
 landing-cta-ethos = 选择一个 crate
-landing-cta-contributing = 贡献
-
 # 引文
 landing-quote-label = 我们正在构建的方向
 landing-quote-body = Reticulum 是通向一个明亮未来的基础通信设施，只要我们所有人一起构建，那个未来就可以实现。这是 Personal 团队的努力：把 RNS 交到更多 builder 手中，帮助那个未来成真。
@@ -68,17 +65,6 @@ start-daemon-headline = 我想运行一个 Reticulum 节点
 start-daemon-body = 预构建 daemon。rnsd 的 drop-in。把它放在你已有的节点旁边运行。
 start-daemon-target = prnsd
 
-start-mobile-headline = 我在构建移动 app
-start-mobile-body = Kotlin (.aar)、Swift (.xcframework) 或 Python (.whl) — 与 daemon 相同的引擎，直接嵌入你的 app。
-start-mobile-code = implementation("org.staypersonal:rns:0.1")
-    pod 'PersonalRns', '~> 0.1'
-start-mobile-target = prns-ffi
-
-start-game-headline = 我要在游戏里发布
-start-game-body = 面向 Unity、Godot 和 MonoGame 的 C# / .NET bindings。不用架服务器也能做多人。
-start-game-code = dotnet add package Personal.Rns
-start-game-target = prns-ffi
-
 start-embedded-headline = Flash a Hopspot
 start-embedded-body = Pick a supported board, compare radio and battery tradeoffs, then flash a dedicated mesh device.
 start-embedded-code = Board matrix
@@ -97,7 +83,6 @@ start-rust-headline = 我要嵌入 Rust app
 start-rust-body = 开箱即用的完整 RNS runtime，或用于围绕它构建你自己的 runtime 的纯核心。
 start-rust-target = prnsd or personal-rns
 
-
 # 平台（"Runs on"）— hero marquee 标签 + CTA，以及专门页面
 landing-platforms-label = Runs on
 landing-platforms-cta = See all →
@@ -108,27 +93,7 @@ platforms-board-support-link = View board support & bring-up →
 # Flash a Hopspot page
 flash-back = Platforms
 flash-back-boards = Boards
-flash-kicker = Supported boards
-flash-title = Flash a Hopspot
-flash-lead = Pick a specific board, compare radio and battery tradeoffs, then flash or build the dedicated Hopspot firmware path.
-flash-note = Hosted builds can download firmware artifacts directly. When this same docs site is served from a Hopspot, artifact actions should stay disabled and point back to the online flasher or local build path.
-flash-board-title = Select a board
-flash-board-lead = Choose a flashable target to load its board-specific flasher. Bring-up and roadmap boards stay visible here, but cannot be selected yet.
-flash-picker-change-title = Change board
-flash-interfaces-label = Eligible interfaces
-flash-interfaces-pending = Interfaces pending board bring-up
 flash-card-action = Flash
-flash-card-selected = Selected
-flash-ready-kicker = Ready target
-flash-ready-title = Web flashing
-flash-ready-action = Connect and flash
-flash-ready-action-pending = Firmware artifacts are not wired into this build yet.
-flash-local-title = Local build
-flash-local-body = Fully offline? Build this repo locally and flash the board-specific Hopspot target from a developer machine.
-flash-unavailable-title = Not flashable yet
-flash-unavailable-body = This target is listed for bring-up or roadmap tracking, but it does not have a public web-flash artifact yet.
-flash-missing-title = Board not found
-flash-missing-body = Pick a supported board from the catalog.
 
 # Benchmarks 页面
 benchmarks-kicker = 性能
@@ -143,22 +108,6 @@ footer-trademarks = 第三方标志和商标归各自所有者所有。它们仅
 contributing-kicker = 标准
 contributing-title = 贡献
 contributing-lead = 如何贡献 — 我们重视什么、你的代码遵循哪些约定，以及每个改动需要达到的标准。人类贡献者和自动化贡献者一视同仁。
-
-# Crates 索引
-crates-kicker = 组件
-crates-title = 选择与你正在构建的东西相匹配的部分。
-crates-lead = 每个 crate 都被设计成可以独立发挥作用，即使你不引入其余部分。引擎是底座；其他东西都叠在其上，随着 suite 成长，会有更多组件落地。
-crates-card-cta = 它做什么 →
-crates-back = 所有 crates
-crates-not-found = 没有这个名字的 crate
-
-# 每个 crate 的卡片
-crate-rns-role = 引擎
-crate-rns-blurb = 把 Reticulum 放进任何 Rust 项目。确定性、no_std、无分配器；没有全局状态，没有内置 I/O — 你自带时钟和 wire。
-crate-rnsd-role = Daemon
-crate-rnsd-blurb = 可在 macOS、Linux 和 Windows 上运行的 rnsd drop-in。与 RNS 参考实现使用同样的 wire；可以和你已有的节点并排使用，也可以替代它们。
-crate-ffi-role = 移动端 + Python bindings
-crate-ffi-blurb = 一个 uniffi interface 生成 Kotlin (.aar)、Swift (.xcframework) 和 Python (.whl)。从 Android、iOS 或 Jupyter notebook 使用 Reticulum — 相同形状，相同引擎。
 
 # 404
 not-found-title = 这里还什么都没有。

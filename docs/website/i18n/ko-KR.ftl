@@ -1,6 +1,5 @@
 # 내비게이션
 nav-contributing = 기여
-nav-crates = Crates
 nav-api = API
 
 # 푸터
@@ -14,8 +13,6 @@ landing-title-lead = A high-performance port of Reticulum (RNS).
 landing-title-accent = Runs on any device.
 landing-subtitle = 결정적이고 no_std이며 할당자가 필요 없는 코어. 5달러짜리 마이크로컨트롤러부터 클라우드 서버까지, 모든 Reticulum 노드에 필요한 성능과 안정성을 위해 만들었습니다.
 landing-cta-ethos = crate 선택하기
-landing-cta-contributing = 기여하기
-
 # 인용
 landing-quote-label = 우리가 향해 만드는 것
 landing-quote-body = Reticulum은 우리 모두가 함께 만들어 간다면 가질 수 있는 밝은 미래의 기반 통신 인프라입니다. 이것은 RNS를 더 많은 builder의 손에 쥐여 주고 그 미래를 실현하는 데 보태려는 Personal 팀의 노력입니다.
@@ -68,17 +65,6 @@ start-daemon-headline = Reticulum 노드를 실행하고 싶어요
 start-daemon-body = 미리 빌드된 daemon입니다. rnsd의 drop-in입니다. 이미 가지고 있는 노드 옆에서 실행하세요.
 start-daemon-target = prnsd
 
-start-mobile-headline = 모바일 앱을 만들고 있어요
-start-mobile-body = Kotlin(.aar), Swift(.xcframework), Python(.whl) — daemon이 쓰는 것과 같은 엔진을 앱 안에 직접 넣습니다.
-start-mobile-code = implementation("org.staypersonal:rns:0.1")
-    pod 'PersonalRns', '~> 0.1'
-start-mobile-target = prns-ffi
-
-start-game-headline = 게임에 넣어 출시하려 해요
-start-game-body = Unity, Godot, MonoGame용 C# / .NET 바인딩. 서버를 세우지 않는 멀티플레이어.
-start-game-code = dotnet add package Personal.Rns
-start-game-target = prns-ffi
-
 start-embedded-headline = Flash a Hopspot
 start-embedded-body = Pick a supported board, compare radio and battery tradeoffs, then flash a dedicated mesh device.
 start-embedded-code = Board matrix
@@ -97,7 +83,6 @@ start-rust-headline = Rust 앱에 임베드하고 싶어요
 start-rust-body = 바로 쓸 수 있는 완전한 RNS runtime, 또는 직접 runtime을 둘러 만들 수 있는 순수 코어.
 start-rust-target = prnsd or personal-rns
 
-
 # 플랫폼 ("Runs on") — hero marquee label + CTA, and the dedicated page
 landing-platforms-label = Runs on
 landing-platforms-cta = See all →
@@ -108,27 +93,7 @@ platforms-board-support-link = View board support & bring-up →
 # Flash a Hopspot page
 flash-back = Platforms
 flash-back-boards = Boards
-flash-kicker = Supported boards
-flash-title = Flash a Hopspot
-flash-lead = Pick a specific board, compare radio and battery tradeoffs, then flash or build the dedicated Hopspot firmware path.
-flash-note = Hosted builds can download firmware artifacts directly. When this same docs site is served from a Hopspot, artifact actions should stay disabled and point back to the online flasher or local build path.
-flash-board-title = Select a board
-flash-board-lead = Choose a flashable target to load its board-specific flasher. Bring-up and roadmap boards stay visible here, but cannot be selected yet.
-flash-picker-change-title = Change board
-flash-interfaces-label = Eligible interfaces
-flash-interfaces-pending = Interfaces pending board bring-up
 flash-card-action = Flash
-flash-card-selected = Selected
-flash-ready-kicker = Ready target
-flash-ready-title = Web flashing
-flash-ready-action = Connect and flash
-flash-ready-action-pending = Firmware artifacts are not wired into this build yet.
-flash-local-title = Local build
-flash-local-body = Fully offline? Build this repo locally and flash the board-specific Hopspot target from a developer machine.
-flash-unavailable-title = Not flashable yet
-flash-unavailable-body = This target is listed for bring-up or roadmap tracking, but it does not have a public web-flash artifact yet.
-flash-missing-title = Board not found
-flash-missing-body = Pick a supported board from the catalog.
 
 # 벤치마크 페이지
 benchmarks-kicker = 성능
@@ -143,22 +108,6 @@ footer-trademarks = 제3자 로고와 상표는 각 소유자에게 속합니다
 contributing-kicker = 기준선
 contributing-title = 기여
 contributing-lead = 기여하는 방법 — 우리가 중요하게 여기는 것, 코드가 따르는 관례, 모든 변경이 통과해야 하는 기준입니다. 사람 기여자와 자동화된 기여자 모두에게 적용됩니다.
-
-# Crates index
-crates-kicker = 구성 요소
-crates-title = 만들고 있는 것에 맞는 것을 고르세요.
-crates-lead = 각 crate는 나머지를 가져오지 않아도 그 자체로 유용하도록 만들었습니다. 엔진이 기반이고, 나머지는 그 위에 쌓이며, suite가 커지면서 더 많은 조각이 추가됩니다.
-crates-card-cta = 무엇을 하는지 →
-crates-back = 모든 crates
-crates-not-found = 그런 이름의 crate가 없습니다
-
-# crate별 카드
-crate-rns-role = 엔진
-crate-rns-blurb = 어떤 Rust 프로젝트에도 Reticulum을 넣으세요. 결정적이고 no_std이며 할당자가 없습니다. 전역 상태도, 내장 I/O도 없습니다 — clock과 wire는 직접 가져오면 됩니다.
-crate-rnsd-role = daemon
-crate-rnsd-blurb = macOS, Linux 및 Windows에서 실행되는 rnsd drop-in입니다. RNS 레퍼런스와 같은 wire입니다. 이미 가진 노드 옆에서 또는 대신 사용하세요.
-crate-ffi-role = 모바일 + Python 바인딩
-crate-ffi-blurb = 하나의 uniffi interface가 Kotlin(.aar), Swift(.xcframework), Python(.whl)을 생성합니다. Android, iOS, Jupyter notebook에서 Reticulum을 사용하세요 — 같은 형태, 같은 엔진입니다.
 
 # 404
 not-found-title = 아직 여기는 비어 있습니다.

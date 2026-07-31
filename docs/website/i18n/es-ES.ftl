@@ -1,6 +1,5 @@
 # Navegación
 nav-contributing = Contribuir
-nav-crates = Crates
 nav-api = API
 
 # Pie de página
@@ -14,8 +13,6 @@ landing-title-lead = A high-performance port of Reticulum (RNS).
 landing-title-accent = Runs on any device.
 landing-subtitle = Un núcleo determinista, no_std y sin asignador. Construido para el rendimiento y la estabilidad que todo nodo Reticulum necesita, desde un microcontrolador de cinco dólares hasta un servidor en la nube.
 landing-cta-ethos = Elige un crate
-landing-cta-contributing = Contribuir
-
 # Cita
 landing-quote-label = Hacia lo que estamos construyendo
 landing-quote-body = Reticulum es la infraestructura de comunicación fundacional de un futuro luminoso que podemos tener, siempre que lo construyamos entre todos. Este es el esfuerzo del equipo de Personal por poner RNS en manos de más builders y ayudar a hacer realidad ese futuro.
@@ -68,17 +65,6 @@ start-daemon-headline = Quiero un nodo Reticulum corriendo
 start-daemon-body = Daemon ya construido. Drop-in para rnsd. Ejecútalo junto a los nodos que ya tienes.
 start-daemon-target = prnsd
 
-start-mobile-headline = Estoy construyendo una app móvil
-start-mobile-body = Kotlin (.aar), Swift (.xcframework) o Python (.whl) — el mismo motor que corre tu daemon, embebido directamente dentro de tu app.
-start-mobile-code = implementation("org.staypersonal:rns:0.1")
-    pod 'PersonalRns', '~> 0.1'
-start-mobile-target = prns-ffi
-
-start-game-headline = Lo estoy integrando en un juego
-start-game-body = Bindings C# / .NET para Unity, Godot y MonoGame. Multijugador sin levantar un servidor.
-start-game-code = dotnet add package Personal.Rns
-start-game-target = prns-ffi
-
 start-embedded-headline = Flash a Hopspot
 start-embedded-body = Pick a supported board, compare radio and battery tradeoffs, then flash a dedicated mesh device.
 start-embedded-code = Board matrix
@@ -97,7 +83,6 @@ start-rust-headline = Lo embebo en una app Rust
 start-rust-body = Un runtime RNS completo de fábrica, o el núcleo puro para montar tu propio runtime alrededor.
 start-rust-target = prnsd or personal-rns
 
-
 # Plataformas ("Runs on") — etiqueta del marquee del hero + CTA y página dedicada
 landing-platforms-label = Runs on
 landing-platforms-cta = See all →
@@ -108,27 +93,7 @@ platforms-board-support-link = View board support & bring-up →
 # Flash a Hopspot page
 flash-back = Platforms
 flash-back-boards = Boards
-flash-kicker = Supported boards
-flash-title = Flash a Hopspot
-flash-lead = Pick a specific board, compare radio and battery tradeoffs, then flash or build the dedicated Hopspot firmware path.
-flash-note = Hosted builds can download firmware artifacts directly. When this same docs site is served from a Hopspot, artifact actions should stay disabled and point back to the online flasher or local build path.
-flash-board-title = Select a board
-flash-board-lead = Choose a flashable target to load its board-specific flasher. Bring-up and roadmap boards stay visible here, but cannot be selected yet.
-flash-picker-change-title = Change board
-flash-interfaces-label = Eligible interfaces
-flash-interfaces-pending = Interfaces pending board bring-up
 flash-card-action = Flash
-flash-card-selected = Selected
-flash-ready-kicker = Ready target
-flash-ready-title = Web flashing
-flash-ready-action = Connect and flash
-flash-ready-action-pending = Firmware artifacts are not wired into this build yet.
-flash-local-title = Local build
-flash-local-body = Fully offline? Build this repo locally and flash the board-specific Hopspot target from a developer machine.
-flash-unavailable-title = Not flashable yet
-flash-unavailable-body = This target is listed for bring-up or roadmap tracking, but it does not have a public web-flash artifact yet.
-flash-missing-title = Board not found
-flash-missing-body = Pick a supported board from the catalog.
 
 # Página de benchmarks
 benchmarks-kicker = Rendimiento
@@ -143,22 +108,6 @@ footer-trademarks = Los logotipos y marcas de terceros pertenecen a sus respecti
 contributing-kicker = El estándar
 contributing-title = Contribuir
 contributing-lead = Cómo contribuir — qué valoramos, las convenciones que sigue tu código y el estándar que supera cada cambio. Para contribuidores humanos y automatizados por igual.
-
-# Índice de crates
-crates-kicker = Las piezas
-crates-title = Elige el que encaje con lo que estás construyendo.
-crates-lead = Cada crate está pensado para ser útil por sí solo, aunque no traigas el resto. El motor es el sustrato; todo lo demás se apila encima, y más piezas van llegando a medida que la suite crece.
-crates-card-cta = Qué hace →
-crates-back = Todos los crates
-crates-not-found = No existe ningún crate con ese nombre
-
-# Tarjetas por crate
-crate-rns-role = El motor
-crate-rns-blurb = Mete Reticulum en cualquier proyecto Rust. Determinista, no_std, sin asignador; sin estado global, sin E/S incorporada — tú pones el reloj y el cable.
-crate-rnsd-role = El daemon
-crate-rnsd-blurb = Un drop-in para rnsd en macOS, Linux y Windows. Mismo cable que la referencia de RNS; úsalo junto a o en lugar de los nodos que ya tienes.
-crate-ffi-role = Bindings móviles y de Python
-crate-ffi-blurb = Una sola interfaz uniffi genera Kotlin (.aar), Swift (.xcframework) y Python (.whl). Usa Reticulum desde Android, iOS o un notebook Jupyter — misma forma, mismo motor.
 
 # 404
 not-found-title = Aquí todavía no hay nada.

@@ -1,6 +1,5 @@
 # ナビゲーション
 nav-contributing = 貢献
-nav-crates = Crates
 nav-api = API
 
 # フッター
@@ -14,8 +13,6 @@ landing-title-lead = A high-performance port of Reticulum (RNS).
 landing-title-accent = Runs on any device.
 landing-subtitle = 決定的で no_std、アロケータ不要のコア。5ドルのマイクロコントローラからクラウドサーバーまで、あらゆる Reticulum ノードに必要な性能と安定性のために作られています。
 landing-cta-ethos = crate を選ぶ
-landing-cta-contributing = 貢献する
-
 # 引用
 landing-quote-label = 私たちが目指しているもの
 landing-quote-body = Reticulum は、私たち全員が作り続ける限り手にできる明るい未来の、基礎となる通信インフラです。これは Personal チームが RNS をより多くのビルダーの手に届け、その未来の実現を助けるための取り組みです。
@@ -68,17 +65,6 @@ start-daemon-headline = Reticulum ノードを動かしたい
 start-daemon-body = 事前ビルド済み daemon。rnsd のドロップイン。既存のノードの横で動かせます。
 start-daemon-target = prnsd
 
-start-mobile-headline = モバイルアプリを作っている
-start-mobile-body = Kotlin (.aar)、Swift (.xcframework)、Python (.whl) — daemon と同じエンジンをアプリに直接組み込めます。
-start-mobile-code = implementation("org.staypersonal:rns:0.1")
-    pod 'PersonalRns', '~> 0.1'
-start-mobile-target = prns-ffi
-
-start-game-headline = ゲームに組み込んで出荷したい
-start-game-body = Unity、Godot、MonoGame 向けの C# / .NET バインディング。サーバーを立てずにマルチプレイヤーを実現します。
-start-game-code = dotnet add package Personal.Rns
-start-game-target = prns-ffi
-
 start-embedded-headline = Flash a Hopspot
 start-embedded-body = Pick a supported board, compare radio and battery tradeoffs, then flash a dedicated mesh device.
 start-embedded-code = Board matrix
@@ -97,7 +83,6 @@ start-rust-headline = Rust アプリに組み込みたい
 start-rust-body = そのまま使える完全な RNS runtime、または自分の runtime を組み立てるための純粋なコア。
 start-rust-target = prnsd or personal-rns
 
-
 # プラットフォーム ("Runs on") — ヒーローのマーキーラベル + CTA、専用ページ
 landing-platforms-label = Runs on
 landing-platforms-cta = See all →
@@ -108,27 +93,7 @@ platforms-board-support-link = View board support & bring-up →
 # Flash a Hopspot page
 flash-back = Platforms
 flash-back-boards = Boards
-flash-kicker = Supported boards
-flash-title = Flash a Hopspot
-flash-lead = Pick a specific board, compare radio and battery tradeoffs, then flash or build the dedicated Hopspot firmware path.
-flash-note = Hosted builds can download firmware artifacts directly. When this same docs site is served from a Hopspot, artifact actions should stay disabled and point back to the online flasher or local build path.
-flash-board-title = Select a board
-flash-board-lead = Choose a flashable target to load its board-specific flasher. Bring-up and roadmap boards stay visible here, but cannot be selected yet.
-flash-picker-change-title = Change board
-flash-interfaces-label = Eligible interfaces
-flash-interfaces-pending = Interfaces pending board bring-up
 flash-card-action = Flash
-flash-card-selected = Selected
-flash-ready-kicker = Ready target
-flash-ready-title = Web flashing
-flash-ready-action = Connect and flash
-flash-ready-action-pending = Firmware artifacts are not wired into this build yet.
-flash-local-title = Local build
-flash-local-body = Fully offline? Build this repo locally and flash the board-specific Hopspot target from a developer machine.
-flash-unavailable-title = Not flashable yet
-flash-unavailable-body = This target is listed for bring-up or roadmap tracking, but it does not have a public web-flash artifact yet.
-flash-missing-title = Board not found
-flash-missing-body = Pick a supported board from the catalog.
 
 # ベンチマークページ
 benchmarks-kicker = 性能
@@ -143,22 +108,6 @@ footer-trademarks = 第三者のロゴおよび商標は、それぞれの所有
 contributing-kicker = 基準
 contributing-title = 貢献
 contributing-lead = 貢献のしかた — 私たちが大切にしていること、コードが従う規約、そしてすべての変更が満たす基準。人間の貢献者にも自動化された貢献者にも同じです。
-
-# Crates index
-crates-kicker = 部品
-crates-title = 作っているものに合うものを選んでください。
-crates-lead = 各 crate は、残りを取り込まなくても単体で役に立つように作られています。エンジンが基盤で、その上にすべてが積み上がり、suite の成長に合わせてさらに部品が増えていきます。
-crates-card-cta = 何をするか →
-crates-back = すべての crates
-crates-not-found = その名前の crate はありません
-
-# crate ごとのカード
-crate-rns-role = エンジン
-crate-rns-blurb = どんな Rust プロジェクトにも Reticulum を入れられます。決定的、no_std、アロケータ不要。グローバル状態も組み込み I/O もありません — clock と wire はあなたが用意します。
-crate-rnsd-role = daemon
-crate-rnsd-blurb = macOS、Linux、Windows で動く rnsd のドロップイン。RNS リファレンスと同じ wire です。既存のノードの横で、または代わりに使えます。
-crate-ffi-role = モバイル + Python バインディング
-crate-ffi-blurb = 1 つの uniffi interface から Kotlin (.aar)、Swift (.xcframework)、Python (.whl) を生成します。Android、iOS、Jupyter notebook から Reticulum を使えます — 同じ形、同じエンジンです。
 
 # 404
 not-found-title = ここにはまだ何もありません。
