@@ -142,11 +142,8 @@ fn outbound_depth_can_grow_without_spending_inbound_notification_capacity() {
     static LANE: StaticManifoldLane<Mtx, 8, 1, 3> = StaticManifoldLane::new();
     let id = InterfaceId::new(*b"asym-lne");
     let mut lanes: ManifoldLaneSet<Mtx, 1, 1> = ManifoldLaneSet::new();
-    let InterfaceLane {
-        mut inbound,
-        outbound: _,
-        ..
-    } = lanes.claim_interface(&LANE, descriptor(id, 8)).unwrap();
+    let InterfaceLane { mut inbound, .. } =
+        lanes.claim_interface(&LANE, descriptor(id, 8)).unwrap();
 
     inbound
         .try_grant()
