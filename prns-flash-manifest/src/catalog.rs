@@ -8,7 +8,13 @@ use crate::{
 };
 
 const CATALOG_JSON: &str = include_str!("../../release/flash/boards.json");
-const SHIPPING_BOARD_SLUGS: [&str; 4] = ["heltec-v4", "t-beam-supreme", "xiao-esp32-c6", "t-echo"];
+const SHIPPING_BOARD_SLUGS: [&str; 5] = [
+    "heltec-v4",
+    "heltec-v4-r8",
+    "t-beam-supreme",
+    "xiao-esp32-c6",
+    "t-echo",
+];
 
 /// Complete, versioned catalog of publicly supported boards.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -383,7 +389,13 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             slugs,
-            ["heltec-v4", "t-beam-supreme", "xiao-esp32-c6", "t-echo"]
+            [
+                "heltec-v4",
+                "heltec-v4-r8",
+                "t-beam-supreme",
+                "xiao-esp32-c6",
+                "t-echo"
+            ]
         );
         Ok(())
     }
@@ -397,7 +409,7 @@ mod tests {
             .filter(|board| board.source_archive_capable)
             .map(|board| board.slug.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(capable, ["heltec-v4", "t-beam-supreme"]);
+        assert_eq!(capable, ["heltec-v4", "heltec-v4-r8", "t-beam-supreme"]);
         Ok(())
     }
 
@@ -427,6 +439,11 @@ mod tests {
                     Some(("partitions-hopspot-16mb.csv", "16mb"))
                 ),
                 (
+                    "heltec-v4-r8",
+                    Some(16_777_216),
+                    Some(("partitions-hopspot-16mb.csv", "16mb"))
+                ),
+                (
                     "t-beam-supreme",
                     Some(8_388_608),
                     Some(("partitions-hopspot-8mb.csv", "8mb"))
@@ -452,7 +469,7 @@ mod tests {
             .filter(|board| board.supports_tcp_client_provisioning())
             .map(|board| board.slug.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(capable, ["heltec-v4", "t-beam-supreme"]);
+        assert_eq!(capable, ["heltec-v4", "heltec-v4-r8", "t-beam-supreme"]);
         Ok(())
     }
 

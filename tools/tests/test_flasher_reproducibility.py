@@ -59,6 +59,7 @@ def tools() -> dict[str, str]:
 def manifest(
     *,
     heltec_size: int = 1_000_000,
+    heltec_r8_size: int = 1_000_000,
     t_beam_size: int = 1_000_000,
     xiao_size: int = 900_000,
     source_size: int | None = None,
@@ -70,6 +71,11 @@ def manifest(
                 "board_slug": "heltec-v4",
                 "transport": "esp-serial",
                 "parts": [{"size": heltec_size}],
+            },
+            {
+                "board_slug": "heltec-v4-r8",
+                "transport": "esp-serial",
+                "parts": [{"size": heltec_r8_size}],
             },
             {
                 "board_slug": "t-beam-supreme",
@@ -89,8 +95,9 @@ def manifest(
         ],
     }
     if source_size is not None:
-        for target in value["targets"][:2]:
-            target["source"] = {"size": source_size}
+        for target in value["targets"]:
+            if target["board_slug"] in {"heltec-v4", "heltec-v4-r8", "t-beam-supreme"}:
+                target["source"] = {"size": source_size}
     return value
 
 
@@ -456,7 +463,7 @@ class FlasherReproducibilityTests(unittest.TestCase):
 
     def test_sparse_report_covers_all_boards_and_enforces_sixty_percent(self) -> None:
         report = build_report(manifest())
-        self.assertEqual(len(report["targets"]), 4)
+        self.assertEqual(len(report["targets"]), 5)
         self.assertEqual(report["aggregate_esp"]["gate"], "passed")
         heltec = next(
             target for target in report["targets"] if target["board_slug"] == "heltec-v4"
@@ -471,6 +478,7 @@ class FlasherReproducibilityTests(unittest.TestCase):
             build_report(
                 manifest(
                     heltec_size=SPARSE_BASELINES["heltec-v4"] * 40 // 100,
+                    heltec_r8_size=SPARSE_BASELINES["heltec-v4-r8"] * 40 // 100,
                     t_beam_size=SPARSE_BASELINES["t-beam-supreme"] * 40 // 100,
                     xiao_size=MERGED_BASELINES["xiao-esp32-c6"],
                 )
@@ -481,6 +489,7 @@ class FlasherReproducibilityTests(unittest.TestCase):
         report = build_report(
             manifest(
                 heltec_size=6_000_000,
+                heltec_r8_size=6_000_000,
                 t_beam_size=6_000_000,
                 source_size=source_size,
             )
@@ -728,7 +737,7 @@ class FlasherReproducibilityTests(unittest.TestCase):
         first = shipping.index("release firmware build -- heltec-v4")
         ready = shipping.index("PRNS_EMBEDDED_SITE_READY=1")
         remaining = shipping.index(
-            "for board in t-beam-supreme xiao-esp32-c6 t-echo"
+            "for board in heltec-v4-r8 t-beam-supreme xiao-esp32-c6 t-echo"
         )
         self.assertLess(first, remaining)
         self.assertLess(remaining, ready)

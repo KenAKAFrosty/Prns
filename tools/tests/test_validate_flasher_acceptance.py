@@ -24,7 +24,8 @@ KEY_ID = "0123456789ABCDEF"
 PUBLISHED_AT = "2026-07-20T12:00:00Z"
 COMPLETED_AT = "2026-07-20T13:00:00Z"
 MODELS = {
-    "heltec-v4": "Heltec LoRa 32 V4",
+    "heltec-v4": "Heltec LoRa 32 V4 (S3R2)",
+    "heltec-v4-r8": "Heltec LoRa 32 V4 (S3R8)",
     "t-beam-supreme": "LilyGO T-Beam Supreme",
     "xiao-esp32-c6": "Seeed XIAO ESP32-C6",
     "t-echo": "LilyGO T-Echo",
@@ -35,7 +36,7 @@ def manifest() -> dict:
     targets = []
     for board, model in MODELS.items():
         esp = board != "t-echo"
-        chip = "esp32s3" if board in {"heltec-v4", "t-beam-supreme"} else "esp32c6"
+        chip = "esp32s3" if board in {"heltec-v4", "heltec-v4-r8", "t-beam-supreme"} else "esp32c6"
         targets.append(
             {
                 "board_slug": board,
@@ -43,7 +44,7 @@ def manifest() -> dict:
                 "transport": "esp-serial" if esp else "uf2-mass-storage",
                 "expected_chip": chip if esp else None,
                 "provisioning": {"format": "HSPCFG1"}
-                if board in {"heltec-v4", "t-beam-supreme"}
+                if board in {"heltec-v4", "heltec-v4-r8", "t-beam-supreme"}
                 else None,
             }
         )
@@ -190,6 +191,8 @@ def complete_roster() -> dict:
     hosts = {
         ("heltec-v4", "cli"): ("linux", "x86_64"),
         ("heltec-v4", "web"): ("linux", "x86_64"),
+        ("heltec-v4-r8", "cli"): ("linux", "x86_64"),
+        ("heltec-v4-r8", "web"): ("linux", "x86_64"),
         ("t-beam-supreme", "cli"): ("macos", "aarch64"),
         ("t-beam-supreme", "web"): ("macos", "aarch64"),
         ("xiao-esp32-c6", "cli"): ("windows", "x86_64"),

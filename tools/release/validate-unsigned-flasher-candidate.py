@@ -26,7 +26,8 @@ CLI_TARGETS = {
     "aarch64-unknown-linux-gnu": ".tar.gz",
     "x86_64-pc-windows-msvc": ".zip",
 }
-SHIPPING_BOARDS = {"heltec-v4", "t-beam-supreme", "xiao-esp32-c6", "t-echo"}
+SHIPPING_BOARDS = {"heltec-v4", "heltec-v4-r8", "t-beam-supreme", "xiao-esp32-c6", "t-echo"}
+S3_SOURCE_BOARDS = {"heltec-v4", "heltec-v4-r8", "t-beam-supreme"}
 ESP_PARTITION_ENTRY = struct.Struct("<HBBII16sI")
 ESP_PARTITION_MAGIC = 0x50AA
 ESP_PARTITION_MD5_MAGIC = 0xEBEB
@@ -375,7 +376,7 @@ def verify(arguments: argparse.Namespace) -> dict:
         raise ValueError("candidate manifest targets must be an array")
     boards = [target.get("board_slug") for target in targets if isinstance(target, dict)]
     if len(boards) != len(SHIPPING_BOARDS) or set(boards) != SHIPPING_BOARDS:
-        raise ValueError("candidate manifest does not contain exactly the four shipping boards")
+        raise ValueError("candidate manifest does not contain exactly the shipping board set")
     immutable_root = root / "website" / "releases" / version
     for target in targets:
         if not isinstance(target, dict):
@@ -388,7 +389,7 @@ def verify(arguments: argparse.Namespace) -> dict:
         if board_slug in {"xiao-esp32-c6", "t-echo"} and source is not None:
             raise ValueError(f"constrained target {board_slug} must not carry source metadata")
         if (
-            board_slug in {"heltec-v4", "t-beam-supreme"}
+            board_slug in S3_SOURCE_BOARDS
             and source is not None
             and source != source_identity
         ):
@@ -473,7 +474,7 @@ def verify(arguments: argparse.Namespace) -> dict:
                     raise ValueError(
                         f"target {board_slug} source page does not carry the candidate identity"
                     )
-        elif board_slug in {"heltec-v4", "t-beam-supreme"}:
+        elif board_slug in S3_SOURCE_BOARDS:
             application_part = next(
                 (
                     part
@@ -509,12 +510,12 @@ def verify(arguments: argparse.Namespace) -> dict:
         raise ValueError("source capability metadata has a malformed board set")
     target_by_board = {target["board_slug"]: target for target in targets}
     for board_slug, capability in capability_by_board.items():
-        expected_nominal = board_slug in {"heltec-v4", "t-beam-supreme"}
+        expected_nominal = board_slug in S3_SOURCE_BOARDS
         if capability.get("nominally_capable") is not expected_nominal:
             raise ValueError(
                 f"{board_slug} source capability metadata disagrees with the board catalog"
             )
-    for board_slug in {"heltec-v4", "t-beam-supreme"}:
+    for board_slug in S3_SOURCE_BOARDS:
         capability = capability_by_board[board_slug]
         status = capability.get("status")
         if status == "serving":

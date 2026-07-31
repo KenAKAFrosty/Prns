@@ -185,13 +185,13 @@ class CandidateFixture:
         targets = []
         self.firmware_paths = []
         for index, board in enumerate(
-            ("heltec-v4", "t-beam-supreme", "xiao-esp32-c6", "t-echo"), start=1
+            ("heltec-v4", "heltec-v4-r8", "t-beam-supreme", "xiao-esp32-c6", "t-echo"), start=1
         ):
             relative = f"firmware/{board}/application.bin"
             artifact = root / relative
             artifact.parent.mkdir(parents=True, exist_ok=True)
             payload = f"firmware-{index}-{board}".encode()
-            if board in {"heltec-v4", "t-beam-supreme"}:
+            if board in {"heltec-v4", "heltec-v4-r8", "t-beam-supreme"}:
                 payload = (
                     source_archive
                     + b" "
@@ -217,7 +217,7 @@ class CandidateFixture:
             if board != "t-echo":
                 application_part["offset"] = 0x10000
             parts = [application_part]
-            if board in {"heltec-v4", "t-beam-supreme"}:
+            if board in {"heltec-v4", "heltec-v4-r8", "t-beam-supreme"}:
                 partition_relative = f"firmware/{board}/partition-table.bin"
                 partition_artifact = root / partition_relative
                 partition_artifact.write_bytes(esp_partition_table(0xFF0000))
@@ -244,7 +244,7 @@ class CandidateFixture:
                 ),
                 "parts": parts,
             }
-            if board in {"heltec-v4", "t-beam-supreme"}:
+            if board in {"heltec-v4", "heltec-v4-r8", "t-beam-supreme"}:
                 target["source"] = source_identity
             targets.append(target)
         write_json(
@@ -258,25 +258,26 @@ class CandidateFixture:
                         "schema": 1,
                         "board_slug": board,
                         "nominally_capable": board
-                        in {"heltec-v4", "t-beam-supreme"},
+                        in {"heltec-v4", "heltec-v4-r8", "t-beam-supreme"},
                         "status": (
                             "serving"
-                            if board in {"heltec-v4", "t-beam-supreme"}
+                            if board in {"heltec-v4", "heltec-v4-r8", "t-beam-supreme"}
                             else "absent"
                         ),
                         "source": (
                             source_identity
-                            if board in {"heltec-v4", "t-beam-supreme"}
+                            if board in {"heltec-v4", "heltec-v4-r8", "t-beam-supreme"}
                             else None
                         ),
                         "reserve_bytes": (
                             SOURCE_APPLICATION_HEADROOM
-                            if board in {"heltec-v4", "t-beam-supreme"}
+                            if board in {"heltec-v4", "heltec-v4-r8", "t-beam-supreme"}
                             else None
                         ),
                     }
                     for board in (
                         "heltec-v4",
+                        "heltec-v4-r8",
                         "t-beam-supreme",
                         "xiao-esp32-c6",
                         "t-echo",
@@ -379,6 +380,8 @@ class CandidateFixture:
         physical_hosts = {
             ("heltec-v4", "cli"): ("linux", "x86_64"),
             ("heltec-v4", "web"): ("linux", "x86_64"),
+            ("heltec-v4-r8", "cli"): ("linux", "x86_64"),
+            ("heltec-v4-r8", "web"): ("linux", "x86_64"),
             ("t-beam-supreme", "cli"): ("macos", "aarch64"),
             ("t-beam-supreme", "web"): ("macos", "aarch64"),
             ("xiao-esp32-c6", "cli"): ("windows", "x86_64"),
