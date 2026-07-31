@@ -6,7 +6,7 @@ following owner-controlled setup.
 ## GitHub
 
 - Create a protected `host-sdk-release` environment with required approval and
-  allow deployments only from `main`.
+  allow deployments only from `trunk`.
 - Protect stable release tags from movement or deletion.
 - Keep fallback credentials environment-scoped. The publishing jobs request
   GitHub OIDC identities only after the package proofs pass.
@@ -54,8 +54,8 @@ following owner-controlled setup.
   coordinate cannot be renamed in place.
 - Create a release-only OpenPGP signing key whose public identity is published.
 - Generate a Central Portal user token. Store the token, armored private signing
-  key, and passphrase only in the protected `host-sdk-release` environment when
-  the promotion workflow is enabled.
+  key, and passphrase as `MAVEN_CENTRAL_BEARER_TOKEN`, `MAVEN_SIGNING_KEY`, and
+  `MAVEN_SIGNING_PASSWORD` only in the protected `host-sdk-release` environment.
 
 ## crates.io
 
@@ -63,7 +63,7 @@ following owner-controlled setup.
 - Confirm ownership of `personal-rns`, then reserve or publish the eight
   required `prns-*` crates in the dependency order recorded in `packages.json`.
 - Create a crates.io token scoped to publishing the nine named crates and keep
-  it only in the protected release environment.
+  it as `CARGO_REGISTRY_TOKEN` only in the protected release environment.
 
 ## Julia, Go, and Swift
 

@@ -15,6 +15,14 @@ on:
         required: false
         type: boolean
         default: false
+      publish_maven:
+        required: false
+        type: boolean
+        default: false
+      publish_crates:
+        required: false
+        type: boolean
+        default: false
   push:
     branches: [trunk]
     paths:
@@ -53,6 +61,16 @@ on:
         type: boolean
       publish_nuget:
         description: "Publish the assembled NuGet package"
+        required: false
+        default: false
+        type: boolean
+      publish_maven:
+        description: "Publish the signed JVM package to Maven Central"
+        required: false
+        default: false
+        type: boolean
+      publish_crates:
+        description: "Publish the verified Rust crate graph to crates.io"
         required: false
         default: false
         type: boolean
@@ -566,3 +584,91 @@ jobs:
           dotnet nuget push "dist/*.nupkg" \
             --source https://api.nuget.org/v3/index.json \
             --api-key "$api_key"
+
+  publish-maven:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.publish_maven &&
+      inputs.expected_sha == github.sha
+    needs: managed
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: host-sdk-release
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: assemble signed Maven Central bundle
+        env:
+          MAVEN_SIGNING_KEY: ${{ secrets.MAVEN_SIGNING_KEY }}
+          MAVEN_SIGNING_PASSWORD: ${{ secrets.MAVEN_SIGNING_PASSWORD }}
+        shell: bash
+        run: |
+          test -n "$MAVEN_SIGNING_KEY"
+          ./gradlew publishMavenPublicationToStagingRepository \
+            --no-daemon
+          version="$(<../../../VERSION)"
+          repository="$PWD/build/staging-repository"
+          release="$repository/io/reticulum/personal-rns/$version"
+          test -d "$release"
+          mapfile -d '' signable < <(
+            find "$release" -type f \
+              \( -name '*.jar' -o -name '*.pom' -o -name '*.module' \) \
+              -print0
+          )
+          test "${#signable[@]}" -ge 4
+          for file in "${signable[@]}"; do
+            test -s "$file.asc"
+          done
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          bundle="$GITHUB_WORKSPACE/dist/personal-rns-$version-maven-central.zip"
+          (
+            cd "$repository"
+            zip -q -r "$bundle" "io/reticulum/personal-rns/$version"
+          )
+        working-directory: prns-host/bindings/jvm
+      - name: publish Maven Central bundle
+        env:
+          MAVEN_CENTRAL_BEARER_TOKEN: ${{ secrets.MAVEN_CENTRAL_BEARER_TOKEN }}
+        shell: bash
+        run: |
+          test -n "$MAVEN_CENTRAL_BEARER_TOKEN"
+          version="$(<VERSION)"
+          deployment_id="$(
+            curl --fail-with-body --silent --show-error \
+              --request POST \
+              --header "Authorization: Bearer $MAVEN_CENTRAL_BEARER_TOKEN" \
+              --form "bundle=@dist/personal-rns-$version-maven-central.zip" \
+              "https://central.sonatype.com/api/v1/publisher/upload?name=personal-rns-$version&publishingType=AUTOMATIC"
+          )"
+          test -n "$deployment_id"
+          printf 'MAVEN_CENTRAL_DEPLOYMENT_ID=%s\n' "$deployment_id"
+
+  publish-crates:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.publish_crates &&
+      inputs.expected_sha == github.sha
+    needs: rust-packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: host-sdk-release
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+      - name: publish Rust crate graph
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: >-
+          python tools/prns run release.host-sdk.rust.publish --
+          --expected-sha ${{ github.sha }}

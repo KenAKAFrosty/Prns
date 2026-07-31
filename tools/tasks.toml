@@ -286,6 +286,16 @@ entrypoint = ["python", "tools/release/package-rust-crates.py"]
 requires = ["cargo", "git"]
 
 [[task]]
+id = "release.host-sdk.rust.publish"
+summary = "Publish the verified Rust crate graph to crates.io in dependency order from one approved commit."
+domain = "release"
+effect = "network-write"
+platforms = ["any"]
+audience = ["ci", "release"]
+entrypoint = ["python", "tools/release/publish-rust-crates.py"]
+requires = ["cargo", "git"]
+
+[[task]]
 id = "release.host-sdk.julia.artifacts"
 summary = "Generate Julia artifact bindings from all staged desktop native archives and their immutable hashes."
 domain = "release"
