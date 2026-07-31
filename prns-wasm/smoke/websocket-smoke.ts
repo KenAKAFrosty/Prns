@@ -136,7 +136,7 @@ class MockRuntime extends MockRuntimeBase {
       .filter(({ id }) => !removed.has(Array.from(id).join(",")));
     return {
       type: "snapshot",
-      revision: this.#revision,
+      revision: BigInt(this.#revision),
       ingestedPackets: this.ingests.length,
       ingestedCommands: 0,
       routes: this.routeSnapshots.length,
@@ -571,8 +571,8 @@ async function main(): Promise<void> {
           (entry) =>
             entry.kind === "BrowserRendezvous" &&
             equalBytes(entry.interfaceId, stableAttached.data.data.interface) &&
-            entry.rxBytes === 2 &&
-            entry.txBytes === 1,
+            entry.rxBytes === 2n &&
+            entry.txBytes === 1n,
         ),
       "stable snapshot preserves logical kind and transfer counters",
     );
@@ -744,7 +744,8 @@ function wasmModule(): PrnsWasmModule {
     UsbAutoDecoder: MockUsbAutoDecoder,
     BluetoothReassembler: MockBluetoothReassembler,
     hostContractAbi: () => 1,
-    hostSchemaVersion: () => 2,
+    hostSchemaVersion: () => 1,
+    browserPersistenceVersion: () => 1,
     productVersion: () => "0.3.1",
     identitySecretKeyLength: () => IDENTITY_LENGTH,
     bluetoothServiceUuid: () => "00000000-0000-4000-8000-000000000001",

@@ -250,6 +250,14 @@ export type StableIdentityStoreFailure =
     >
   | Tag<"StoredStableIdentityInvalid", { readonly detail: string }>;
 
+export type PersistenceStoreFailure =
+  | HostApiUnavailable<"LocalStorage" | "Base64Encoder" | "Base64Decoder">
+  | Tag<
+      "PersistenceStoreFailed",
+      { readonly operation: "Load" | "Save"; readonly detail: string }
+    >
+  | Tag<"StoredPersistenceInvalid", { readonly detail: string }>;
+
 export type StableIdentityUnavailable<
   Name extends InterfaceName = InterfaceName,
 > = Tag<
@@ -287,6 +295,7 @@ export type PrnsCreateOutcome =
       }
     >
   | IdentityStoreFailure
+  | PersistenceStoreFailure
   | EntropyFailure
   | RuntimeRejected;
 
@@ -524,6 +533,7 @@ export type PrnsWasmModule = {
   identitySecretKeyLength(): number;
   hostContractAbi(): number;
   hostSchemaVersion(): number;
+  browserPersistenceVersion(): number;
   productVersion(): string;
   bluetoothServiceUuid(): string;
   bluetoothControlUuid(): string;
@@ -578,6 +588,10 @@ export type PrnsRuntimeBinding = {
   ingest(options: RuntimeIngestOptions): void;
   drainEvents(): unknown[];
   drainOutbound(): unknown[];
+  persistedState(options: { readonly nowMs: InstantMillis }): unknown;
+  restorePersistedState(
+    options: BrowserPersistedState & { readonly nowMs: InstantMillis },
+  ): unknown;
   snapshot(): unknown;
 };
 
@@ -919,7 +933,7 @@ export type InterfaceSnapshot = {
 
 export type PrnsSnapshot = {
   type: "snapshot";
-  revision: number;
+  revision: bigint;
   ingestedPackets: number;
   ingestedCommands: number;
   routes: number;
@@ -948,6 +962,46 @@ export type StableIdentityStore = {
   load(expectedLength: number): Promise<StableIdentityLoadOutcome>;
   save(identity: Uint8Array): Promise<StableIdentitySaveOutcome>;
 };
+
+export type BrowserPersistedRatchet = {
+  readonly destination: DestinationHash;
+  readonly sealed: Uint8Array;
+};
+
+export type BrowserPersistedState = {
+  readonly type: "persistedState";
+  readonly persistenceVersion: number;
+  readonly takenAtMillis: InstantMillis;
+  readonly routingTable: Uint8Array;
+  readonly tunnels: Uint8Array;
+  readonly destinationIdentities: Uint8Array;
+  readonly ratchets: readonly BrowserPersistedRatchet[];
+};
+
+export type PersistenceLoadOutcome =
+  | Tag<"Loaded", BrowserPersistedState>
+  | Tag<"Missing">
+  | PersistenceStoreFailure;
+
+export type PersistenceSaveOutcome =
+  | Tag<"Saved">
+  | PersistenceStoreFailure;
+
+export type BrowserPersistenceStore = {
+  load(): Promise<PersistenceLoadOutcome>;
+  save(state: BrowserPersistedState): Promise<PersistenceSaveOutcome>;
+};
+
+type BrowserPersistenceRestoreReport = {
+  readonly routes: number;
+  readonly destinationIdentities: number;
+  readonly tunnels: number;
+  readonly ratchets: number;
+  readonly refused: number;
+  readonly dropped: number;
+};
+
+export const BROWSER_PERSISTENCE_VERSION = 1;
 
 type HostGlobal = typeof globalThis & {
   crypto?: {
@@ -1311,6 +1365,64 @@ export class BrowserLocalStorageBleIdentityStore implements StableIdentityStore 
   }
 }
 
+export class BrowserLocalStoragePersistenceStore
+  implements BrowserPersistenceStore
+{
+  #key: string;
+
+  constructor(key: string = "prns.state.v1") {
+    this.#key = key;
+  }
+
+  async load(): Promise<PersistenceLoadOutcome> {
+    let encoded: string | null;
+    try {
+      const storage = hostGlobal().localStorage;
+      if (!storage) {
+        return Tag("HostApiUnavailable", { api: "LocalStorage" });
+      }
+      if (!hostGlobal().atob) {
+        return Tag("HostApiUnavailable", { api: "Base64Decoder" });
+      }
+      encoded = storage.getItem(this.#key);
+    } catch (error) {
+      return Tag("PersistenceStoreFailed", {
+        operation: "Load",
+        detail: describeHostError(error),
+      });
+    }
+    if (encoded === null) {
+      return Tag("Missing");
+    }
+    try {
+      return Tag("Loaded", decodeBrowserPersistedState(encoded));
+    } catch (error) {
+      return Tag("StoredPersistenceInvalid", {
+        detail: describeHostError(error),
+      });
+    }
+  }
+
+  async save(state: BrowserPersistedState): Promise<PersistenceSaveOutcome> {
+    try {
+      const storage = hostGlobal().localStorage;
+      if (!storage) {
+        return Tag("HostApiUnavailable", { api: "LocalStorage" });
+      }
+      if (!hostGlobal().btoa) {
+        return Tag("HostApiUnavailable", { api: "Base64Encoder" });
+      }
+      storage.setItem(this.#key, encodeBrowserPersistedState(state));
+      return Tag("Saved");
+    } catch (error) {
+      return Tag("PersistenceStoreFailed", {
+        operation: "Save",
+        detail: describeHostError(error),
+      });
+    }
+  }
+}
+
 export type EntropySource = (length: number) => EntropyOutcome;
 
 export type PrnsOptions = {
@@ -1318,10 +1430,32 @@ export type PrnsOptions = {
   resourceCompressionModuleUrl?: URL;
   identityStore?: IdentityStore;
   bleIdentityStore?: StableIdentityStore;
+  persistenceStore?: BrowserPersistenceStore;
   entropy?: EntropySource;
   now?: () => InstantMillis;
   limits?: HostLimits;
 };
+
+export function persistentBrowser(root: string = "prns"): PrnsOptions {
+  const selected = root.trim();
+  if (selected.length === 0) {
+    throw new PrnsValidationError(
+      "invalid-component",
+      "browser persistence root must not be empty",
+    );
+  }
+  return {
+    identityStore: new BrowserLocalStorageIdentityStore(
+      `${selected}.identity.v1`,
+    ),
+    bleIdentityStore: new BrowserLocalStorageBleIdentityStore(
+      `${selected}.ble-identity.v1`,
+    ),
+    persistenceStore: new BrowserLocalStoragePersistenceStore(
+      `${selected}.state.v1`,
+    ),
+  };
+}
 
 export type InterfaceSession = {
   readonly name: InterfaceName;
@@ -2627,6 +2761,10 @@ export class Prns {
   #lifecycle: HostLifecycleState = Tag("Running");
   #stopCompleted = false;
   #stopPromise: Promise<StopOutcome> | undefined;
+  #persistenceStore: BrowserPersistenceStore | undefined;
+  #persistenceRestored: boolean;
+  #lastPersistenceFlushCause: "Shutdown" | undefined;
+  #persistenceFailureDetail: string | undefined;
 
   private constructor(
     wasm: PrnsWasmModule,
@@ -2636,6 +2774,9 @@ export class Prns {
     bleIdentityAvailability: BleIdentityAvailability,
     limits: HostLimits,
     resourceCompressionModuleUrl: URL,
+    persistenceStore: BrowserPersistenceStore | undefined,
+    persistenceRestored: boolean,
+    restorationReport: BrowserPersistenceRestoreReport | undefined,
   ) {
     this.#runtime = runtime;
     this.#entropy = entropy;
@@ -2644,6 +2785,8 @@ export class Prns {
     this.#limits = limits;
     this.#resourceCompressionModuleUrl =
       resourceCompressionModuleUrl.href;
+    this.#persistenceStore = persistenceStore;
+    this.#persistenceRestored = persistenceRestored;
     this.#events = new BoundedAsyncLane<PrnsApplicationEvent>({
       name: "ApplicationEvents",
       maximumValues: limits.applicationEvents,
@@ -2670,6 +2813,9 @@ export class Prns {
       () => this.#pumpEvents(),
     );
     this.interfaces = new PrnsInterfaces(this.#host);
+    if (restorationReport !== undefined) {
+      this.#diagnostics.push(Tag("PersistenceRestored", restorationReport));
+    }
   }
 
   static async create(options: PrnsOptions): Promise<PrnsCreateOutcome> {
@@ -2682,10 +2828,12 @@ export class Prns {
     const wasm = loaded.data;
     let actualAbi: number;
     let actualSchemaVersion: number;
+    let actualPersistenceVersion: number;
     let actualProductVersion: string;
     try {
       actualAbi = wasm.hostContractAbi();
       actualSchemaVersion = wasm.hostSchemaVersion();
+      actualPersistenceVersion = wasm.browserPersistenceVersion();
       actualProductVersion = wasm.productVersion();
     } catch (error) {
       return runtimeRejected("initialize", error);
@@ -2703,6 +2851,12 @@ export class Prns {
         requiredProductVersion: PRODUCT_VERSION,
         actualProductVersion,
       });
+    }
+    if (actualPersistenceVersion !== BROWSER_PERSISTENCE_VERSION) {
+      return runtimeRejected(
+        "initialize",
+        `browser persistence version ${actualPersistenceVersion} does not match ${BROWSER_PERSISTENCE_VERSION}`,
+      );
     }
     let identityLength: number;
     try {
@@ -2765,19 +2919,70 @@ export class Prns {
       bleIdentityAvailability.tag === "Available"
         ? bleIdentityAvailability.data
         : undefined;
+    const persistenceStore = options.persistenceStore;
+    let persistedState: BrowserPersistedState | undefined;
+    if (persistenceStore !== undefined) {
+      let loaded: PersistenceLoadOutcome;
+      try {
+        loaded = await persistenceStore.load();
+      } catch (error) {
+        return Tag("PersistenceStoreFailed", {
+          operation: "Load",
+          detail: describeHostError(error),
+        });
+      }
+      if (loaded.tag === "Loaded") {
+        try {
+          persistedState = parseBrowserPersistedState(loaded.data);
+        } catch (error) {
+          return Tag("StoredPersistenceInvalid", {
+            detail: describeHostError(error),
+          });
+        }
+      } else if (loaded.tag !== "Missing") {
+        return loaded;
+      }
+    }
+    let limits: HostLimits;
+    let now: () => InstantMillis;
+    let runtime: PrnsRuntimeBinding;
     try {
-      const limits = browserLimits(options.limits ?? balancedLimits());
+      limits = browserLimits(options.limits ?? balancedLimits());
+      now = options.now ?? nowMillis;
+      runtime = new wasm.PrnsRuntime(identity, bleIdentity);
+    } catch (error) {
+      return runtimeRejected("initialize", error);
+    }
+    let restorationReport: BrowserPersistenceRestoreReport | undefined;
+    if (persistedState !== undefined) {
+      try {
+        restorationReport = parsePersistenceRestoreReport(
+          runtime.restorePersistedState({
+            ...persistedState,
+            nowMs: nowMillis(Math.max(now(), persistedState.takenAtMillis)),
+          }),
+        );
+      } catch (error) {
+        return Tag("StoredPersistenceInvalid", {
+          detail: describeHostError(error),
+        });
+      }
+    }
+    try {
       return Tag(
         "Ready",
         new Prns(
           wasm,
-          new wasm.PrnsRuntime(identity, bleIdentity),
+          runtime,
           options.entropy ?? webCryptoEntropy,
-          options.now ?? nowMillis,
+          now,
           bleIdentityAvailability,
           limits,
           options.resourceCompressionModuleUrl ??
             bundledWasmModuleUrl(),
+          persistenceStore,
+          persistedState !== undefined,
+          restorationReport,
         ),
       );
     } catch (error) {
@@ -3226,8 +3431,8 @@ export class Prns {
           ...(active === undefined ? {} : { name: active.name }),
           ...(active?.kind === undefined ? {} : { kind: active.kind }),
           health,
-          rxBytes: active?.rxBytes ?? 0,
-          txBytes: active?.txBytes ?? 0,
+          rxBytes: BigInt(active?.rxBytes ?? 0),
+          txBytes: BigInt(active?.txBytes ?? 0),
           routeCount: entry.routes,
           linkCount: entry.links,
           transportedLinkCount: entry.transportedLinks,
@@ -3241,12 +3446,12 @@ export class Prns {
         0,
       );
       const rxBytes = interfaces.reduce(
-        (total, entry) => saturatingAdd(total, entry.rxBytes),
-        0,
+        (total, entry) => total + entry.rxBytes,
+        0n,
       );
       const txBytes = interfaces.reduce(
-        (total, entry) => saturatingAdd(total, entry.txBytes),
-        0,
+        (total, entry) => total + entry.txBytes,
+        0n,
       );
       return Tag("Captured", {
         revision: snapshot.revision,
@@ -3269,8 +3474,14 @@ export class Prns {
           txBps: 0,
         },
         persistence: {
-          persistent: false,
-          restored: false,
+          persistent: this.#persistenceStore !== undefined,
+          restored: this.#persistenceRestored,
+          ...(this.#lastPersistenceFlushCause === undefined
+            ? {}
+            : { lastFlushCause: this.#lastPersistenceFlushCause }),
+          ...(this.#persistenceFailureDetail === undefined
+            ? {}
+            : { lastFailureDetail: this.#persistenceFailureDetail }),
         },
       });
     } catch (error) {
@@ -3304,6 +3515,51 @@ export class Prns {
         }),
       )
     ).filter((failure): failure is string => failure !== undefined);
+    if (this.#persistenceStore !== undefined) {
+      let failure: string | undefined;
+      try {
+        const state = parseBrowserPersistedState(
+          this.#runtime.persistedState({ nowMs: this.#now() }),
+        );
+        const saved = await this.#persistenceStore.save(state);
+        if (saved.tag !== "Saved") {
+          failure = describePersistenceStoreFailure(saved);
+        }
+      } catch (error) {
+        failure = describeHostError(error);
+      }
+      if (failure === undefined) {
+        this.#lastPersistenceFlushCause = "Shutdown";
+        this.#persistenceFailureDetail = undefined;
+        this.#diagnostics.push(
+          Tag("PersistenceFlushed", {
+            cause: "Shutdown",
+            target: "RoutingState",
+          }),
+        );
+        this.#diagnostics.push(
+          Tag("PersistenceFlushed", {
+            cause: "Shutdown",
+            target: "Ratchets",
+          }),
+        );
+      } else {
+        this.#persistenceFailureDetail = failure;
+        this.#diagnostics.push(
+          Tag("PersistenceFlushFailed", {
+            cause: "Shutdown",
+            target: "RoutingState",
+          }),
+        );
+        this.#diagnostics.push(
+          Tag("PersistenceFlushFailed", {
+            cause: "Shutdown",
+            target: "Ratchets",
+          }),
+        );
+        failures.push(`flush persistence: ${failure}`);
+      }
+    }
     this.#events.finish();
     this.#diagnostics.finish();
     this.#stopCompleted = true;
@@ -4407,8 +4663,8 @@ function parseEvent(raw: unknown): ParsedPrnsEvent {
           linkId: linkId(bytesField(data, "linkId")),
           hash: resourceHash(bytesField(data, "hash")),
           stream: copyBytes(bytesField(data, "stream")),
-          uncompressedDataBytes: nonNegativeInteger(
-            numberField(data, "uncompressedDataBytes"),
+          uncompressedDataBytes: nonNegativeBigIntField(
+            data,
             "uncompressedDataBytes",
           ),
         }),
@@ -4444,10 +4700,7 @@ function parseEvent(raw: unknown): ParsedPrnsEvent {
         Tag("ResourceAssembled", {
           linkId: linkId(bytesField(data, "linkId")),
           originalHash: resourceHash(bytesField(data, "originalHash")),
-          totalSizeBytes: nonNegativeInteger(
-            numberField(data, "totalSizeBytes"),
-            "totalSizeBytes",
-          ),
+          totalSizeBytes: nonNegativeBigIntField(data, "totalSizeBytes"),
         }),
       ),
     routeExpired: (data) =>
@@ -4706,11 +4959,7 @@ function parseSnapshot(raw: unknown): PrnsSnapshot {
   );
   return {
     type: literalField(object, "type", "snapshot"),
-    revision: optionalNumber(
-      object,
-      "revision",
-      (value) => nonNegativeInteger(value, "revision"),
-    ) ?? 0,
+    revision: nonNegativeBigIntField(object, "revision"),
     ingestedPackets: nonNegativeInteger(
       numberField(object, "ingestedPackets"),
       "ingestedPackets",
@@ -4924,6 +5173,20 @@ function numberField(object: Record<string, unknown>, key: string): number {
   return value;
 }
 
+function nonNegativeBigIntField(
+  object: Record<string, unknown>,
+  key: string,
+): bigint {
+  const value = field(object, key);
+  if (typeof value !== "bigint" || value < 0n) {
+    throw new PrnsValidationError(
+      "invalid-component",
+      `${key} must be a non-negative bigint`,
+    );
+  }
+  return value;
+}
+
 function optionalNumber<T>(
   object: Record<string, unknown>,
   key: string,
@@ -5042,6 +5305,122 @@ function decodeBase64(encoded: string): Uint8Array {
     out[i] = binary.charCodeAt(i);
   }
   return out;
+}
+
+function parseBrowserPersistedState(value: unknown): BrowserPersistedState {
+  const object = record(value, "browser persisted state");
+  const persistenceVersion = nonNegativeInteger(
+    numberField(object, "persistenceVersion"),
+    "persisted state version",
+  );
+  if (persistenceVersion !== BROWSER_PERSISTENCE_VERSION) {
+    throw new PrnsValidationError(
+      "invalid-component",
+      `persisted state version ${persistenceVersion} does not match ${BROWSER_PERSISTENCE_VERSION}`,
+    );
+  }
+  const rawRatchets = field(object, "ratchets");
+  if (!Array.isArray(rawRatchets)) {
+    throw new PrnsValidationError(
+      "invalid-component",
+      "persisted state ratchets must be an array",
+    );
+  }
+  return {
+    type: literalField(object, "type", "persistedState"),
+    persistenceVersion,
+    takenAtMillis: nowMillis(
+      nonNegativeInteger(
+        numberField(object, "takenAtMillis"),
+        "persisted state timestamp",
+      ),
+    ),
+    routingTable: new Uint8Array(bytesField(object, "routingTable")),
+    tunnels: new Uint8Array(bytesField(object, "tunnels")),
+    destinationIdentities: new Uint8Array(
+      bytesField(object, "destinationIdentities"),
+    ),
+    ratchets: rawRatchets.map((raw) => {
+      const ratchet = record(raw, "persisted ratchet");
+      return {
+        destination: destinationHash(bytesField(ratchet, "destination")),
+        sealed: new Uint8Array(bytesField(ratchet, "sealed")),
+      };
+    }),
+  };
+}
+
+function encodeBrowserPersistedState(state: BrowserPersistedState): string {
+  const parsed = parseBrowserPersistedState(state);
+  return JSON.stringify({
+    type: parsed.type,
+    persistenceVersion: parsed.persistenceVersion,
+    takenAtMillis: parsed.takenAtMillis,
+    routingTable: encodeBase64(parsed.routingTable),
+    tunnels: encodeBase64(parsed.tunnels),
+    destinationIdentities: encodeBase64(parsed.destinationIdentities),
+    ratchets: parsed.ratchets.map(({ destination, sealed }) => ({
+      destination: encodeBase64(destination),
+      sealed: encodeBase64(sealed),
+    })),
+  });
+}
+
+function decodeBrowserPersistedState(encoded: string): BrowserPersistedState {
+  const stored = record(JSON.parse(encoded), "stored browser persistence");
+  const rawRatchets = field(stored, "ratchets");
+  if (!Array.isArray(rawRatchets)) {
+    throw new PrnsValidationError(
+      "invalid-component",
+      "stored persistence ratchets must be an array",
+    );
+  }
+  return parseBrowserPersistedState({
+    type: stringField(stored, "type"),
+    persistenceVersion: numberField(stored, "persistenceVersion"),
+    takenAtMillis: numberField(stored, "takenAtMillis"),
+    routingTable: decodeBase64(stringField(stored, "routingTable")),
+    tunnels: decodeBase64(stringField(stored, "tunnels")),
+    destinationIdentities: decodeBase64(
+      stringField(stored, "destinationIdentities"),
+    ),
+    ratchets: rawRatchets.map((raw) => {
+      const ratchet = record(raw, "stored persisted ratchet");
+      return {
+        destination: decodeBase64(stringField(ratchet, "destination")),
+        sealed: decodeBase64(stringField(ratchet, "sealed")),
+      };
+    }),
+  });
+}
+
+function parsePersistenceRestoreReport(
+  value: unknown,
+): BrowserPersistenceRestoreReport {
+  const report = record(value, "persistence restore report");
+  return {
+    routes: nonNegativeInteger(numberField(report, "routes"), "restored routes"),
+    destinationIdentities: nonNegativeInteger(
+      numberField(report, "destinationIdentities"),
+      "restored destination identities",
+    ),
+    tunnels: nonNegativeInteger(
+      numberField(report, "tunnels"),
+      "restored tunnels",
+    ),
+    ratchets: nonNegativeInteger(
+      numberField(report, "ratchets"),
+      "restored ratchets",
+    ),
+    refused: nonNegativeInteger(
+      numberField(report, "refused"),
+      "refused persistence records",
+    ),
+    dropped: nonNegativeInteger(
+      numberField(report, "dropped"),
+      "dropped persistence records",
+    ),
+  };
 }
 
 function requireWebUsb(): Available<BrowserUsb, "WebUSB"> {
@@ -5696,6 +6075,17 @@ function describeStableIdentityStoreFailure(
   });
 }
 
+function describePersistenceStoreFailure(
+  failure: PersistenceStoreFailure,
+): string {
+  return match_into<string>().from(failure, {
+    HostApiUnavailable: ({ api }) => `${api} is unavailable`,
+    PersistenceStoreFailed: ({ operation, detail }) =>
+      `${operation} persistence: ${detail}`,
+    StoredPersistenceInvalid: ({ detail }) => detail,
+  });
+}
+
 function unexpectedSessionFailure(error: unknown): Extract<
   InterfaceSessionFailure,
   Tag<"UnexpectedSessionFailure", unknown>
@@ -5927,12 +6317,23 @@ function retainedBrowserEventBytes(event: PrnsApplicationEvent): number {
     Response: ({ data }) => data.length,
     ResponseSegment: ({ data }) => data.length,
     ResourceAvailable: ({ resource, metadata }) =>
-      resource.totalBytes + (metadata?.length ?? 0),
+      exactBytesAsSafeNumber(resource.totalBytes, "resource.totalBytes") +
+      (metadata?.length ?? 0),
     ResourceSegment: ({ data, metadata }) =>
       data.length + (metadata?.length ?? 0),
     ResourceNeedsDecompression: ({ stream }) => stream.length,
     ChannelMessage: ({ data }) => data.length,
   });
+}
+
+function exactBytesAsSafeNumber(value: bigint, name: string): number {
+  if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new PrnsValidationError(
+      "invalid-number",
+      `${name} exceeds the JavaScript safe-integer limit`,
+    );
+  }
+  return Number(value);
 }
 
 function rawEventType(value: string): RawEventType {

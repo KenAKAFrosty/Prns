@@ -111,6 +111,9 @@ try {
     resource: "Failed:UnknownLink",
     blob: "Failed:UnknownLink",
     snapshot: "Consistent",
+    persistence: "Restored",
+    persistenceFailures: "Typed",
+    routePersistence: "Restored",
     compression: "Compressed",
     compressionDetail: "message:message",
   });

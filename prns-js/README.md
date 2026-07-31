@@ -61,7 +61,28 @@ match(settlement.data, {
 });
 ```
 
-The compiler requires every declared case. Commands settle their returned promises, expected failures are typed tagged outcomes, and public binary values are semantically branded `Uint8Array` instances. Browser backends attach `WebSocketClient` and `BrowserRendezvous` through the bounded cooperative transport and return `UnsupportedByBackend` for native-only interface kinds. Each host reports its current support through `backendInfo` and `capabilities`. The browser `hostSnapshot()` projects the generated inspection contract with revisioned routes, destination identities, logical interfaces, transfer counters, runtime health, and explicit ephemeral persistence status. A `ResourceAvailable` event owns a `ResourceStream`; its `claim()` method uses the same `Claimed | AlreadyClaimed` contract.
+The compiler requires every declared case. Commands settle their returned promises, expected failures are typed tagged outcomes, and public binary values are semantically branded `Uint8Array` instances. Browser backends attach `WebSocketClient` and `BrowserRendezvous` through the bounded cooperative transport and return `UnsupportedByBackend` for native-only interface kinds. Each host reports its current support through `backendInfo` and `capabilities`. The browser `hostSnapshot()` projects the generated inspection contract with revisioned routes, destination identities, logical interfaces, transfer counters, runtime health, and exact persistence status. A `ResourceAvailable` event owns a `ResourceStream`; its `claim()` method uses the same `Claimed | AlreadyClaimed` contract.
+
+Browser hosts are ephemeral by default. `persistentBrowser()` selects a caller-named `localStorage` root for the host identity, Bluetooth identity, routing state, destination identities, tunnels, and ratchets. Interfaces remain caller-supplied after restart. `stop()` flushes the bounded state before settling, while restoration and flush results appear on the diagnostic stream and in `hostSnapshot()`:
+
+```ts
+import { Prns, persistentBrowser } from "personal-rns/browser";
+
+const created = await Prns.create(persistentBrowser("my-app"));
+if (created.tag !== "Ready") {
+  reportCreationFailure(created);
+  return;
+}
+
+const node = created.data;
+await attachApplicationInterfaces(node);
+await runApplication(node);
+
+const stopped = await node.stop();
+if (stopped.tag !== "Stopped") {
+  reportShutdownFailure(stopped);
+}
+```
 
 Browser resource sends accept either bytes or a `Blob`. The `Blob` path slices
 the source into bounded segments instead of materializing the whole value:

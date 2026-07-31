@@ -1,4 +1,4 @@
-use js_sys::{Object, Reflect, Uint8Array};
+use js_sys::{BigInt, Object, Reflect, Uint8Array};
 use personal_rns::engine::{
     AllowRequesterFailure, AllowRequesterRejection, AnnounceNowFailure, AnnounceNowRejection,
     CloseLinkFailure, CloseLinkRejection, DeliveryEvidence, DeliveryProof, EstablishLinkFailure,
@@ -209,7 +209,7 @@ pub(crate) fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
             set_bytes(&object, "linkId", link_id.as_bytes());
             set_bytes(&object, "hash", hash.as_bytes());
             set_bytes(&object, "stream", stream);
-            set_u64(&object, "uncompressedDataBytes", uncompressed_data_bytes);
+            set_bigint(&object, "uncompressedDataBytes", uncompressed_data_bytes);
         }
         Journaled::ResourceSegmentReceived {
             link_id,
@@ -237,7 +237,7 @@ pub(crate) fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
             set_str(&object, "type", "resourceAssembled");
             set_bytes(&object, "linkId", link_id.as_bytes());
             set_bytes(&object, "originalHash", original_hash.as_bytes());
-            set_u64(&object, "totalSizeBytes", total_size_bytes);
+            set_bigint(&object, "totalSizeBytes", total_size_bytes);
         }
         Journaled::RouteRemoved { destination, cause } => {
             let kind = match cause {
@@ -722,6 +722,10 @@ pub(crate) fn set_bool(object: &Object, key: &str, value: bool) {
 
 pub(crate) fn set_u64(object: &Object, key: &str, value: u64) {
     set_value(object, key, JsValue::from_f64(value as f64));
+}
+
+pub(crate) fn set_bigint(object: &Object, key: &str, value: u64) {
+    set_value(object, key, BigInt::from(value).into());
 }
 
 pub(crate) fn set_usize(object: &Object, key: &str, value: usize) {

@@ -6,7 +6,11 @@
   </head>
   <body data-outcome="Pending">
     <script type="module">
-      import { Prns, linkId } from "/prns-js/dist/browser/index.js";
+      import {
+        Prns,
+        linkId,
+        persistentBrowser,
+      } from "/prns-js/dist/browser/index.js";
 
       async function compressionWorkerOutcome(workerUrl, moduleUrl) {
         const compressionWorker = new Worker(workerUrl, { type: "module" });
@@ -44,6 +48,75 @@
         return { compressed, detail };
       }
 
+      async function routePersistenceOutcome() {
+        try {
+          const wasm = await import("/prns-wasm/smoke/pkg/prns_wasm.js");
+          await wasm.default();
+          const identityLength = wasm.identitySecretKeyLength();
+          const first = new wasm.PrnsRuntime(
+            new Uint8Array(identityLength).fill(11),
+            new Uint8Array(16).fill(15),
+          );
+          const secondIdentity = new Uint8Array(identityLength).fill(12);
+          const second = new wasm.PrnsRuntime(
+            secondIdentity,
+            new Uint8Array(16).fill(16),
+          );
+          const baseTime = Date.now();
+          const interfaceOptions = {
+            kind: "auto-usb-host",
+            channelTag: new TextEncoder().encode("browser-smoke:usb"),
+            bitrateBps: wasm.usbAutoHostBitrateBps(),
+            hardwareMtu: wasm.usbAutoHostHardwareMtu(),
+            nowMs: baseTime,
+          };
+          first.registerInterface(interfaceOptions);
+          const secondInterface = second.registerInterface(interfaceOptions);
+          const destination = first.registerSingleDestination({
+            appName: "browser-smoke",
+            aspects: ["route-persistence"],
+            appData: new Uint8Array(),
+            requestHandlers: [],
+          });
+          first.announce({
+            destination,
+            nowMs: baseTime + 1,
+            entropy: new Uint8Array(128).fill(13),
+          });
+          const announced = first.drainOutbound()[0];
+          if (!announced) {
+            return "Failed:MissingAnnounce";
+          }
+          second.ingest({
+            interfaceId: secondInterface,
+            bytes: announced.bytes,
+            nowMs: baseTime + 2,
+            entropy: new Uint8Array(128).fill(14),
+          });
+          const before = second.snapshot();
+          const persisted = second.persistedState({ nowMs: baseTime + 3 });
+          const restored = new wasm.PrnsRuntime(
+            secondIdentity,
+            new Uint8Array(16).fill(16),
+          );
+          const report = restored.restorePersistedState({
+            ...persisted,
+            nowMs: baseTime + 4,
+          });
+          const after = restored.snapshot();
+          return before.routeSnapshots.length === 1 &&
+            before.destinationIdentities.length === 1 &&
+            report.routes === 1 &&
+            report.destinationIdentities === 1 &&
+            after.routeSnapshots.length === 1 &&
+            after.destinationIdentities.length === 1
+            ? "Restored"
+            : "Failed:Mismatch";
+        } catch (error) {
+          return `Failed:${error instanceof Error ? error.message : error}`;
+        }
+      }
+
       const [packagedCompression, docsCompression] = await Promise.all([
         compressionWorkerOutcome(
           "/prns-js/dist/browser/resource_compression_worker.js",
@@ -58,9 +131,107 @@
         packagedCompression.compressed && docsCompression.compressed;
       const compressionDetail =
         `${packagedCompression.detail}:${docsCompression.detail}`;
+      const routePersistence = await routePersistenceOutcome();
+      document.body.dataset.routePersistence = routePersistence;
       document.body.dataset.compression =
         compression ? "Compressed" : "Failed";
       document.body.dataset.compressionDetail = compressionDetail;
+      const persistenceRoot = "prns.browser-smoke";
+      localStorage.removeItem(`${persistenceRoot}.identity.v1`);
+      localStorage.removeItem(`${persistenceRoot}.ble-identity.v1`);
+      localStorage.removeItem(`${persistenceRoot}.state.v1`);
+      const persistentOptions = persistentBrowser(persistenceRoot);
+      const firstPersistent = await Prns.create(persistentOptions);
+      let persistence = "Failed";
+      if (firstPersistent.tag === "Ready") {
+        const firstDestination = firstPersistent.data.registerSingleDestination({
+          appName: "browser-smoke",
+          aspects: ["persistence"],
+          requestHandlers: [],
+        });
+        const firstStopped = await firstPersistent.data.stop();
+        const restored = await Prns.create(persistentOptions);
+        if (restored.tag === "Ready") {
+          const diagnostics = restored.data.claimDiagnostics();
+          const restoration = diagnostics.tag === "Claimed"
+            ? await diagnostics.data[Symbol.asyncIterator]().next()
+            : { done: true };
+          const secondDestination = restored.data.registerSingleDestination({
+            appName: "browser-smoke",
+            aspects: ["persistence"],
+            requestHandlers: [],
+          });
+          const restoredSnapshot = restored.data.hostSnapshot();
+          const restoredStopped = await restored.data.stop();
+          const flushedSnapshot = restored.data.hostSnapshot();
+          const sameDestination =
+            firstDestination.tag === "Registered" &&
+            secondDestination.tag === "Registered" &&
+            firstDestination.data.every(
+              (byte, index) => byte === secondDestination.data[index],
+            );
+          if (
+            firstStopped.tag === "Stopped" &&
+            restoredStopped.tag === "Stopped" &&
+            sameDestination &&
+            restoration.done === false &&
+            restoration.value.tag === "PersistenceRestored" &&
+            restoration.value.data.ratchets === 1 &&
+            restoredSnapshot.tag === "Captured" &&
+            restoredSnapshot.data.persistence.persistent &&
+            restoredSnapshot.data.persistence.restored &&
+            flushedSnapshot.tag === "Captured" &&
+            flushedSnapshot.data.persistence.lastFlushCause === "Shutdown"
+          ) {
+            persistence = "Restored";
+          }
+        }
+      }
+      document.body.dataset.persistence = persistence;
+      const corruptPersistence = await Prns.create({
+        ...persistentOptions,
+        persistenceStore: {
+          async load() {
+            return {
+              tag: "Loaded",
+              data: { type: "persistedState", persistenceVersion: 1 },
+            };
+          },
+          async save() {
+            return { tag: "Saved" };
+          },
+        },
+      });
+      const saveFailure = await Prns.create({
+        ...persistentOptions,
+        persistenceStore: {
+          async load() {
+            return { tag: "Missing" };
+          },
+          async save() {
+            return {
+              tag: "PersistenceStoreFailed",
+              data: { operation: "Save", detail: "fixture denied" },
+            };
+          },
+        },
+      });
+      let persistenceFailures = "Failed";
+      if (saveFailure.tag === "Ready") {
+        const stopped = await saveFailure.data.stop();
+        const snapshot = saveFailure.data.hostSnapshot();
+        if (
+          corruptPersistence.tag === "StoredPersistenceInvalid" &&
+          stopped.tag === "OperationFailed" &&
+          snapshot.tag === "Captured" &&
+          snapshot.data.persistence.lastFailureDetail?.includes(
+            "fixture denied",
+          )
+        ) {
+          persistenceFailures = "Typed";
+        }
+      }
+      document.body.dataset.persistenceFailures = persistenceFailures;
       const outcome = await Prns.create({});
       document.body.dataset.outcome = outcome.tag;
       if (outcome.tag !== "Ready") {
@@ -100,6 +271,9 @@
           blob.tag === "Failed" &&
           blob.data.tag === "UnknownLink" &&
           snapshotConsistent &&
+          persistence === "Restored" &&
+          persistenceFailures === "Typed" &&
+          routePersistence === "Restored" &&
           compression
             ? "PASS"
             : "FAIL";
@@ -114,6 +288,9 @@
           resource: document.body.dataset.resource,
           blob: document.body.dataset.blob,
           snapshot: document.body.dataset.snapshot,
+          persistence: document.body.dataset.persistence,
+          persistenceFailures: document.body.dataset.persistenceFailures,
+          routePersistence: document.body.dataset.routePersistence,
           compression: document.body.dataset.compression,
           compressionDetail: document.body.dataset.compressionDetail,
         }),

@@ -32,6 +32,8 @@ export declare class PrnsRuntime implements PrnsRuntimeBinding {
   ingest: PrnsRuntimeBinding["ingest"];
   drainEvents: PrnsRuntimeBinding["drainEvents"];
   drainOutbound: PrnsRuntimeBinding["drainOutbound"];
+  persistedState: PrnsRuntimeBinding["persistedState"];
+  restorePersistedState: PrnsRuntimeBinding["restorePersistedState"];
   snapshot: PrnsRuntimeBinding["snapshot"];
 }
 
@@ -49,6 +51,7 @@ export declare class BluetoothReassembler
 
 export declare function hostContractAbi(): number;
 export declare function hostSchemaVersion(): number;
+export declare function browserPersistenceVersion(): number;
 export declare function productVersion(): string;
 export declare function identitySecretKeyLength(): number;
 export declare function interfaceIdLength(): number;
