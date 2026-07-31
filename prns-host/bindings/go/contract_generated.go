@@ -15,6 +15,7 @@ const RequestIdLength = 16
 const RequestPathHashLength = 16
 const ResourceHashLength = 32
 const IdentitySecretLength = 64
+const SafeUintMax uint64 = 9007199254740991
 const BalancedPendingCommands = 256
 const BalancedApplicationEvents = 1024
 const BalancedRetainedEventBytes = 8388608
@@ -41,6 +42,9 @@ const (
 	StatusBackendFailed Status = 10
 	StatusPanic Status = 11
 	StatusInterrupted Status = 12
+	StatusUnsupported Status = 13
+	StatusPermissionDenied Status = 14
+	StatusUnavailable Status = 15
 )
 
 type BackendKind uint32
@@ -68,6 +72,84 @@ const (
 	CapabilityWeave Capability = 12
 )
 
+type InterfaceKind uint32
+
+const (
+	InterfaceKindAutoLan InterfaceKind = 1
+	InterfaceKindTcpClient InterfaceKind = 2
+	InterfaceKindTcpServer InterfaceKind = 3
+	InterfaceKindUdp InterfaceKind = 4
+	InterfaceKindSerial InterfaceKind = 5
+	InterfaceKindKiss InterfaceKind = 6
+	InterfaceKindAx25Kiss InterfaceKind = 7
+	InterfaceKindRNode InterfaceKind = 8
+	InterfaceKindMultiRNode InterfaceKind = 9
+	InterfaceKindPipe InterfaceKind = 10
+	InterfaceKindBackboneClient InterfaceKind = 11
+	InterfaceKindBackboneServer InterfaceKind = 12
+	InterfaceKindI2p InterfaceKind = 13
+	InterfaceKindWeave InterfaceKind = 14
+	InterfaceKindAutomaticUsb InterfaceKind = 15
+	InterfaceKindAutomaticBluetoothLe InterfaceKind = 16
+	InterfaceKindWebSocketClient InterfaceKind = 17
+	InterfaceKindWebSocketServer InterfaceKind = 18
+	InterfaceKindBrowserRendezvous InterfaceKind = 19
+)
+
+type InterfaceHealth uint32
+
+const (
+	InterfaceHealthInitializing InterfaceHealth = 1
+	InterfaceHealthConnected InterfaceHealth = 2
+	InterfaceHealthDegraded InterfaceHealth = 3
+	InterfaceHealthReconnecting InterfaceHealth = 4
+	InterfaceHealthFailed InterfaceHealth = 5
+	InterfaceHealthDisconnected InterfaceHealth = 6
+	InterfaceHealthDisabled InterfaceHealth = 7
+	InterfaceHealthUnknown InterfaceHealth = 8
+)
+
+type DiscoveryScope uint32
+
+const (
+	DiscoveryScopeLink DiscoveryScope = 1
+	DiscoveryScopeAdmin DiscoveryScope = 2
+	DiscoveryScopeSite DiscoveryScope = 3
+	DiscoveryScopeOrganization DiscoveryScope = 4
+	DiscoveryScopeGlobal DiscoveryScope = 5
+)
+
+type MulticastAddressType uint32
+
+const (
+	MulticastAddressTypeTemporary MulticastAddressType = 1
+	MulticastAddressTypePermanent MulticastAddressType = 2
+)
+
+type SerialDataBits uint32
+
+const (
+	SerialDataBitsFive SerialDataBits = 5
+	SerialDataBitsSix SerialDataBits = 6
+	SerialDataBitsSeven SerialDataBits = 7
+	SerialDataBitsEight SerialDataBits = 8
+)
+
+type SerialParity uint32
+
+const (
+	SerialParityNone SerialParity = 1
+	SerialParityEven SerialParity = 2
+	SerialParityOdd SerialParity = 3
+)
+
+type SerialStopBits uint32
+
+const (
+	SerialStopBitsOne SerialStopBits = 1
+	SerialStopBitsTwo SerialStopBits = 2
+)
+
 type HostRole uint32
 
 const (
@@ -81,6 +163,13 @@ const (
 	IdentityConfigKindExisting IdentityConfigKind = 1
 	IdentityConfigKindGenerateEphemeral IdentityConfigKind = 2
 	IdentityConfigKindLoadOrCreate IdentityConfigKind = 3
+)
+
+type PersistenceConfigKind uint32
+
+const (
+	PersistenceConfigKindEphemeral PersistenceConfigKind = 1
+	PersistenceConfigKindDirectory PersistenceConfigKind = 2
 )
 
 type DestinationConfigKind uint32
@@ -186,6 +275,14 @@ const (
 	CommandFailureKindChannelWindowFull CommandFailureKind = 30
 	CommandFailureKindChannelUntrackable CommandFailureKind = 31
 	CommandFailureKindInvalidChannelMessageType CommandFailureKind = 32
+	CommandFailureKindInvalidConfiguration CommandFailureKind = 33
+	CommandFailureKindResourceUploadCancelled CommandFailureKind = 34
+	CommandFailureKindResourceEarlyEof CommandFailureKind = 35
+	CommandFailureKindResourceLengthOverrun CommandFailureKind = 36
+	CommandFailureKindPermissionDenied CommandFailureKind = 37
+	CommandFailureKindDeviceUnavailable CommandFailureKind = 38
+	CommandFailureKindConnectFailed CommandFailureKind = 39
+	CommandFailureKindBackendFailed CommandFailureKind = 40
 )
 
 type DeliveryEvidenceKind uint32
@@ -254,6 +351,26 @@ const (
 	DiagnosticEventKindRouteDropped DiagnosticEventKind = 214
 	DiagnosticEventKindBackendDiagnostic DiagnosticEventKind = 215
 	DiagnosticEventKindDiagnosticsDropped DiagnosticEventKind = 216
+	DiagnosticEventKindPersistenceRestored DiagnosticEventKind = 217
+	DiagnosticEventKindPersistenceFlushed DiagnosticEventKind = 218
+	DiagnosticEventKindPersistenceFlushFailed DiagnosticEventKind = 219
+)
+
+type PersistenceFlushCause uint32
+
+const (
+	PersistenceFlushCauseStartup PersistenceFlushCause = 1
+	PersistenceFlushCauseInterval PersistenceFlushCause = 2
+	PersistenceFlushCauseRouteChange PersistenceFlushCause = 3
+	PersistenceFlushCauseRatchetRotation PersistenceFlushCause = 4
+	PersistenceFlushCauseShutdown PersistenceFlushCause = 5
+)
+
+type PersistenceFlushTarget uint32
+
+const (
+	PersistenceFlushTargetRoutingState PersistenceFlushTarget = 1
+	PersistenceFlushTargetRatchets PersistenceFlushTarget = 2
 )
 
 type EventField uint32
@@ -290,6 +407,14 @@ const (
 	EventFieldDroppedCount EventField = 29
 	EventFieldHops EventField = 30
 	EventFieldStream EventField = 31
+	EventFieldRoutes EventField = 32
+	EventFieldDestinationIdentities EventField = 33
+	EventFieldTunnels EventField = 34
+	EventFieldRatchets EventField = 35
+	EventFieldRefused EventField = 36
+	EventFieldDropped EventField = 37
+	EventFieldPersistenceCause EventField = 38
+	EventFieldPersistenceTarget EventField = 39
 )
 
 type DestinationHash [DestinationHashLength]byte
@@ -324,6 +449,97 @@ type RequestHandlerConfig struct {
 	Policy RequestPolicy
 }
 
+type SerialLineConfig struct {
+	Baud uint32
+	DataBits SerialDataBits
+	Parity SerialParity
+	StopBits SerialStopBits
+}
+
+type RNodeRadioConfig struct {
+	FrequencyHz uint64
+	BandwidthHz uint32
+	TxPowerDbm int16
+	SpreadingFactor uint8
+	CodingRate uint8
+}
+
+type MultiRNodeMemberConfig struct {
+	Name string
+	VirtualPort uint8
+	Radio RNodeRadioConfig
+	FlowControl bool
+	Outgoing bool
+}
+
+type BackendInfo struct {
+	Backend BackendKind
+	Capabilities []Capability
+	InterfaceKinds []InterfaceKind
+}
+
+type InterfaceSnapshot struct {
+	InterfaceId InterfaceId
+	Name *string
+	Kind *InterfaceKind
+	Health InterfaceHealth
+	FailureDetail *string
+	RxBytes uint64
+	TxBytes uint64
+	RxBps *uint64
+	TxBps *uint64
+	RouteCount uint32
+	LinkCount uint32
+	TransportedLinkCount uint32
+}
+
+type RouteSnapshot struct {
+	Destination DestinationHash
+	Hops uint8
+	ViaIdentity *IdentityHash
+	InterfaceId InterfaceId
+	LearnedAtMillis uint64
+	LastRelayedAtMillis uint64
+	ExpiresAtMillis uint64
+}
+
+type DestinationIdentitySnapshot struct {
+	Destination DestinationHash
+	Identity IdentityHash
+}
+
+type RuntimeHealthSnapshot struct {
+	Running bool
+	UptimeMillis uint64
+	InterfaceCount uint32
+	OnlineInterfaceCount uint32
+	RouteCount uint32
+	LinkCount uint32
+	TransportedLinkCount uint32
+	RxBytes uint64
+	TxBytes uint64
+	RxBps uint64
+	TxBps uint64
+}
+
+type PersistenceSnapshot struct {
+	Persistent bool
+	Restored bool
+	LastFlushCause *PersistenceFlushCause
+	LastFailureDetail *string
+}
+
+type HostSnapshot struct {
+	Revision uint64
+	Backend BackendInfo
+	Interfaces []InterfaceSnapshot
+	Routes []RouteSnapshot
+	ActiveLinkCount uint32
+	DestinationIdentities []DestinationIdentitySnapshot
+	Runtime RuntimeHealthSnapshot
+	Persistence PersistenceSnapshot
+}
+
 type ResourceStream interface {
 	TotalBytes() uint64
 	Next(maximumBytes int) ([]byte, bool, error)
@@ -349,6 +565,174 @@ type IdentityConfigLoadOrCreate struct {
 }
 
 func (IdentityConfigLoadOrCreate) identityConfig() {}
+
+type PersistenceConfig interface {
+	persistenceConfig()
+}
+
+type PersistenceConfigEphemeral struct{}
+
+func (PersistenceConfigEphemeral) persistenceConfig() {}
+
+type PersistenceConfigDirectory struct {
+	Path string
+}
+
+func (PersistenceConfigDirectory) persistenceConfig() {}
+
+type InterfaceConfig interface {
+	interfaceConfig()
+}
+
+type InterfaceConfigAutoLan struct {
+	GroupId *string
+	DiscoveryScope *DiscoveryScope
+	DiscoveryPort *uint16
+	DataPort *uint16
+	Devices []string
+	IgnoredDevices []string
+	MulticastAddressType *MulticastAddressType
+}
+
+func (InterfaceConfigAutoLan) interfaceConfig() {}
+
+type InterfaceConfigTcpClient struct {
+	Target string
+	Bitrate Bitrate
+}
+
+func (InterfaceConfigTcpClient) interfaceConfig() {}
+
+type InterfaceConfigTcpServer struct {
+	Bind string
+	Bitrate Bitrate
+}
+
+func (InterfaceConfigTcpServer) interfaceConfig() {}
+
+type InterfaceConfigUdp struct {
+	Local string
+	Peer string
+	Bitrate Bitrate
+}
+
+func (InterfaceConfigUdp) interfaceConfig() {}
+
+type InterfaceConfigSerial struct {
+	Port string
+	Line SerialLineConfig
+}
+
+func (InterfaceConfigSerial) interfaceConfig() {}
+
+type InterfaceConfigKiss struct {
+	Port string
+	Line SerialLineConfig
+	FlowControl bool
+	PreambleMillis uint32
+	TransmitTailMillis uint32
+	Persistence uint8
+	SlotTimeMillis uint32
+	StationCallsign *string
+	StationIntervalSeconds *uint64
+}
+
+func (InterfaceConfigKiss) interfaceConfig() {}
+
+type InterfaceConfigAx25Kiss struct {
+	Port string
+	Line SerialLineConfig
+	FlowControl bool
+	PreambleMillis uint32
+	TransmitTailMillis uint32
+	Persistence uint8
+	SlotTimeMillis uint32
+	Callsign string
+	Ssid uint8
+}
+
+func (InterfaceConfigAx25Kiss) interfaceConfig() {}
+
+type InterfaceConfigRNode struct {
+	Port string
+	Radio RNodeRadioConfig
+	FlowControl bool
+	StationCallsign *string
+	StationIntervalSeconds *uint64
+	AirtimeLimitShortCentiPercent *uint16
+	AirtimeLimitLongCentiPercent *uint16
+}
+
+func (InterfaceConfigRNode) interfaceConfig() {}
+
+type InterfaceConfigMultiRNode struct {
+	Port string
+	StationCallsign *string
+	StationIntervalSeconds *uint64
+	Members []MultiRNodeMemberConfig
+}
+
+func (InterfaceConfigMultiRNode) interfaceConfig() {}
+
+type InterfaceConfigPipe struct {
+	Command []string
+	RespawnDelayMillis uint64
+}
+
+func (InterfaceConfigPipe) interfaceConfig() {}
+
+type InterfaceConfigBackboneClient struct {
+	Target string
+	Bitrate Bitrate
+}
+
+func (InterfaceConfigBackboneClient) interfaceConfig() {}
+
+type InterfaceConfigBackboneServer struct {
+	Bind string
+	Bitrate Bitrate
+}
+
+func (InterfaceConfigBackboneServer) interfaceConfig() {}
+
+type InterfaceConfigI2p struct {
+	Peers []string
+	Connectable bool
+}
+
+func (InterfaceConfigI2p) interfaceConfig() {}
+
+type InterfaceConfigWeave struct {
+	Port string
+}
+
+func (InterfaceConfigWeave) interfaceConfig() {}
+
+type InterfaceConfigAutomaticUsb struct{}
+
+func (InterfaceConfigAutomaticUsb) interfaceConfig() {}
+
+type InterfaceConfigAutomaticBluetoothLe struct{}
+
+func (InterfaceConfigAutomaticBluetoothLe) interfaceConfig() {}
+
+type InterfaceConfigWebSocketClient struct {
+	Target string
+}
+
+func (InterfaceConfigWebSocketClient) interfaceConfig() {}
+
+type InterfaceConfigWebSocketServer struct {
+	Bind string
+}
+
+func (InterfaceConfigWebSocketServer) interfaceConfig() {}
+
+type InterfaceConfigBrowserRendezvous struct {
+	Url string
+}
+
+func (InterfaceConfigBrowserRendezvous) interfaceConfig() {}
 
 type DestinationIdentityConfig interface {
 	destinationIdentityConfig()
@@ -573,6 +957,12 @@ type HostCommandAllowRequester struct {
 
 func (HostCommandAllowRequester) hostCommand() {}
 
+type HostCommandAttachInterface struct {
+	Config InterfaceConfig
+}
+
+func (HostCommandAttachInterface) hostCommand() {}
+
 type CommandOutcome interface {
 	commandOutcome()
 }
@@ -783,6 +1173,48 @@ type CommandFailureInvalidChannelMessageType struct{}
 
 func (CommandFailureInvalidChannelMessageType) commandFailure() {}
 
+type CommandFailureInvalidConfiguration struct {
+	Detail string
+}
+
+func (CommandFailureInvalidConfiguration) commandFailure() {}
+
+type CommandFailureResourceUploadCancelled struct{}
+
+func (CommandFailureResourceUploadCancelled) commandFailure() {}
+
+type CommandFailureResourceEarlyEof struct{}
+
+func (CommandFailureResourceEarlyEof) commandFailure() {}
+
+type CommandFailureResourceLengthOverrun struct{}
+
+func (CommandFailureResourceLengthOverrun) commandFailure() {}
+
+type CommandFailurePermissionDenied struct {
+	Detail string
+}
+
+func (CommandFailurePermissionDenied) commandFailure() {}
+
+type CommandFailureDeviceUnavailable struct {
+	Detail string
+}
+
+func (CommandFailureDeviceUnavailable) commandFailure() {}
+
+type CommandFailureConnectFailed struct {
+	Detail string
+}
+
+func (CommandFailureConnectFailed) commandFailure() {}
+
+type CommandFailureBackendFailed struct {
+	Detail string
+}
+
+func (CommandFailureBackendFailed) commandFailure() {}
+
 type ApplicationEvent interface {
 	applicationEvent()
 }
@@ -986,3 +1418,172 @@ type DiagnosticEventDiagnosticsDropped struct {
 }
 
 func (DiagnosticEventDiagnosticsDropped) diagnosticEvent() {}
+
+type DiagnosticEventPersistenceRestored struct {
+	Routes uint64
+	DestinationIdentities uint64
+	Tunnels uint64
+	Ratchets uint64
+	Refused uint64
+	Dropped uint64
+}
+
+func (DiagnosticEventPersistenceRestored) diagnosticEvent() {}
+
+type DiagnosticEventPersistenceFlushed struct {
+	Cause PersistenceFlushCause
+	Target PersistenceFlushTarget
+}
+
+func (DiagnosticEventPersistenceFlushed) diagnosticEvent() {}
+
+type DiagnosticEventPersistenceFlushFailed struct {
+	Cause PersistenceFlushCause
+	Target PersistenceFlushTarget
+}
+
+func (DiagnosticEventPersistenceFlushFailed) diagnosticEvent() {}
+
+var hostOperationNames = [...]string{
+	"contractInfo",
+	"backendInfo",
+	"hostCreate",
+	"hostRelease",
+	"hostLifecycle",
+	"hostSnapshot",
+	"hostSnapshotRead",
+	"hostSnapshotRelease",
+	"hostIdentityHash",
+	"hostDestinationCount",
+	"hostDestinationHash",
+	"hostBeginResourceUpload",
+	"resourceUploadWrite",
+	"resourceUploadIsWritable",
+	"resourceUploadFinish",
+	"resourceUploadAbort",
+	"resourceUploadRelease",
+	"hostStop",
+	"commandWait",
+	"commandRegisterReadiness",
+	"commandInterruptWait",
+	"commandRelease",
+	"hostClaimApplicationEvents",
+	"hostClaimDiagnostics",
+	"eventStreamRegisterReadiness",
+	"readinessRegistrationRelease",
+	"eventStreamInterruptWait",
+	"eventStreamRelease",
+	"eventStreamNext",
+	"eventRelease",
+	"eventKind",
+	"eventBytes",
+	"eventString",
+	"eventU64",
+	"eventU128",
+	"eventResourceStream",
+	"resourceStreamRelease",
+	"resourceStreamNext",
+	"hostAnnounce",
+	"hostSendSinglePacket",
+	"hostCloseLink",
+	"hostAttachTcpServer",
+	"hostAttachTcpClient",
+	"hostAttachUdp",
+	"hostDetachInterface",
+	"hostEstablishLink",
+	"hostRequestPath",
+	"hostIdentify",
+	"hostSendLinkPacket",
+	"hostRequest",
+	"hostRespond",
+	"hostSendResource",
+	"hostSetLinkResourceStrategy",
+	"hostSetDestinationResourceStrategy",
+	"hostSendChannelMessage",
+	"hostAllowRequester",
+	"hostAttachInterface",
+}
+
+type rawUnit struct{}
+type rawOwned[T any] struct{ value T }
+type rawBorrowed[T any] struct{ value T }
+type rawCallResult[T any] interface{ rawCallResult() }
+type rawCallSuccess[T any] struct{ value T }
+type rawCallFailure[T any] struct{ error Status }
+func (rawCallSuccess[T]) rawCallResult() {}
+func (rawCallFailure[T]) rawCallResult() {}
+type rawCommandResult struct{}
+type rawContractInfo struct{}
+type rawEvent struct{}
+type rawEventStream struct{}
+type rawHost struct{}
+type rawHostInspection struct{}
+type rawHostOptions struct{}
+type rawIssuedCommand struct{}
+type rawLifecycle struct{}
+type rawReadinessCallback struct{}
+type rawReadinessRegistration struct{}
+type rawResourceChunk struct{}
+type rawResourceStream struct{}
+type rawResourceUpload struct{}
+type rawOpaquePointer struct{}
+
+type rawHostProtocol interface {
+	contractInfo() rawCallResult[rawContractInfo]
+	backendInfo() rawCallResult[BackendInfo]
+	hostCreate(options rawHostOptions) rawCallResult[rawOwned[rawHost]]
+	hostRelease(host rawHost) rawUnit
+	hostLifecycle(host rawHost) rawCallResult[rawLifecycle]
+	hostSnapshot(host rawHost, timeoutMillis uint32) rawCallResult[rawOwned[rawHostInspection]]
+	hostSnapshotRead(host_inspection rawHostInspection) rawCallResult[rawBorrowed[HostSnapshot]]
+	hostSnapshotRelease(host_inspection rawHostInspection) rawUnit
+	hostIdentityHash(host rawHost) rawCallResult[rawBorrowed[[]byte]]
+	hostDestinationCount(host rawHost) uintptr
+	hostDestinationHash(host rawHost, index uintptr) rawCallResult[rawBorrowed[[]byte]]
+	hostBeginResourceUpload(host rawHost, linkId LinkId, declaredLength uint64, packedMetadata *[]byte, compression ResourceCompression) rawCallResult[rawOwned[rawResourceUpload]]
+	resourceUploadWrite(resource_upload rawResourceUpload, chunk []byte) rawCallResult[rawUnit]
+	resourceUploadIsWritable(resource_upload rawResourceUpload) rawCallResult[bool]
+	resourceUploadFinish(resource_upload rawResourceUpload) rawCallResult[rawOwned[rawIssuedCommand]]
+	resourceUploadAbort(resource_upload rawResourceUpload) rawUnit
+	resourceUploadRelease(resource_upload rawResourceUpload) rawUnit
+	hostStop(host rawHost) rawCallResult[rawUnit]
+	commandWait(issued_command rawIssuedCommand, timeoutMillis uint32) rawCallResult[rawBorrowed[rawCommandResult]]
+	commandRegisterReadiness(issued_command rawIssuedCommand, callback rawReadinessCallback, context rawOpaquePointer) rawCallResult[rawOwned[rawReadinessRegistration]]
+	commandInterruptWait(issued_command rawIssuedCommand) rawUnit
+	commandRelease(issued_command rawIssuedCommand) rawUnit
+	hostClaimApplicationEvents(host rawHost) rawCallResult[rawOwned[rawEventStream]]
+	hostClaimDiagnostics(host rawHost) rawCallResult[rawOwned[rawEventStream]]
+	eventStreamRegisterReadiness(event_stream rawEventStream, callback rawReadinessCallback, context rawOpaquePointer) rawCallResult[rawOwned[rawReadinessRegistration]]
+	readinessRegistrationRelease(readiness_registration rawReadinessRegistration) rawUnit
+	eventStreamInterruptWait(event_stream rawEventStream) rawUnit
+	eventStreamRelease(event_stream rawEventStream) rawUnit
+	eventStreamNext(event_stream rawEventStream, timeoutMillis uint32) rawCallResult[rawOwned[rawEvent]]
+	eventRelease(eventValue rawEvent) rawUnit
+	eventKind(eventValue rawEvent) uint32
+	eventBytes(eventValue rawEvent, field EventField) rawCallResult[rawBorrowed[[]byte]]
+	eventString(eventValue rawEvent, field EventField) rawCallResult[rawBorrowed[string]]
+	eventU64(eventValue rawEvent, field EventField) rawCallResult[uint64]
+	eventU128(eventValue rawEvent, field EventField) rawCallResult[UInt128]
+	eventResourceStream(eventValue rawEvent) rawCallResult[rawOwned[rawResourceStream]]
+	resourceStreamRelease(resource_stream rawResourceStream) rawUnit
+	resourceStreamNext(resource_stream rawResourceStream, maximumBytes uintptr) rawCallResult[rawBorrowed[rawResourceChunk]]
+	hostAnnounce(host rawHost, destination DestinationHash, interfaceId *InterfaceId) rawCallResult[rawOwned[rawIssuedCommand]]
+	hostSendSinglePacket(host rawHost, destination DestinationHash, payload []byte) rawCallResult[rawOwned[rawIssuedCommand]]
+	hostCloseLink(host rawHost, linkId LinkId) rawCallResult[rawOwned[rawIssuedCommand]]
+	hostAttachTcpServer(host rawHost, bind string, bitrate Bitrate) rawCallResult[rawOwned[rawIssuedCommand]]
+	hostAttachTcpClient(host rawHost, target string, bitrate Bitrate) rawCallResult[rawOwned[rawIssuedCommand]]
+	hostAttachUdp(host rawHost, local string, peer string, bitrate Bitrate) rawCallResult[rawOwned[rawIssuedCommand]]
+	hostDetachInterface(host rawHost, interfaceId InterfaceId) rawCallResult[rawOwned[rawIssuedCommand]]
+	hostEstablishLink(host rawHost, destination DestinationHash) rawCallResult[rawOwned[rawIssuedCommand]]
+	hostRequestPath(host rawHost, destination DestinationHash) rawCallResult[rawOwned[rawIssuedCommand]]
+	hostIdentify(host rawHost, linkId LinkId, identity IdentityHash) rawCallResult[rawOwned[rawIssuedCommand]]
+	hostSendLinkPacket(host rawHost, linkId LinkId, payload []byte) rawCallResult[rawOwned[rawIssuedCommand]]
+	hostRequest(host rawHost, linkId LinkId, pathHash RequestPathHash, payload []byte, timeout ResponseTimeout) rawCallResult[rawOwned[rawIssuedCommand]]
+	hostRespond(host rawHost, linkId LinkId, requestId RequestId, requestRttMillis uint64, payload []byte) rawCallResult[rawOwned[rawIssuedCommand]]
+	hostSendResource(host rawHost, linkId LinkId, payload []byte, packedMetadata *[]byte, compression ResourceCompression) rawCallResult[rawOwned[rawIssuedCommand]]
+	hostSetLinkResourceStrategy(host rawHost, linkId LinkId, strategy ResourceStrategy) rawCallResult[rawOwned[rawIssuedCommand]]
+	hostSetDestinationResourceStrategy(host rawHost, destination DestinationHash, strategy ResourceStrategy) rawCallResult[rawOwned[rawIssuedCommand]]
+	hostSendChannelMessage(host rawHost, linkId LinkId, messageType uint16, payload []byte) rawCallResult[rawOwned[rawIssuedCommand]]
+	hostAllowRequester(host rawHost, destination DestinationHash, pathHash RequestPathHash, identity IdentityHash) rawCallResult[rawOwned[rawIssuedCommand]]
+	hostAttachInterface(host rawHost, config InterfaceConfig) rawCallResult[rawOwned[rawIssuedCommand]]
+}

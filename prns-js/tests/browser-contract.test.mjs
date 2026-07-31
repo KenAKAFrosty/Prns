@@ -4,6 +4,7 @@ import { test } from "node:test";
 
 import {
   HOST_CONTRACT_ABI,
+  HOST_SCHEMA_VERSION,
   DESTINATION_HASH_LENGTH,
   PRODUCT_VERSION,
   Prns,
@@ -14,6 +15,7 @@ import {
 
 test("browser subpath exposes the shared release contract and casework", () => {
   assert.equal(HOST_CONTRACT_ABI, 1);
+  assert.equal(HOST_SCHEMA_VERSION, 1);
   assert.equal(PRODUCT_VERSION, "0.3.1");
   assert.deepEqual(balancedLimits(), {
     pendingCommands: 256,
@@ -32,9 +34,10 @@ test("browser subpath exposes the shared release contract and casework", () => {
 
 test("generated JavaScript contract agrees with language-neutral vectors", async () => {
   const vectors = JSON.parse(
-    await readFile("../prns-host/conformance/host-contract-v1.json", "utf8"),
+    await readFile("../prns-host/conformance/host-contract-v2.json", "utf8"),
   );
   assert.equal(HOST_CONTRACT_ABI, vectors.abi);
+  assert.equal(HOST_SCHEMA_VERSION, vectors.schemaVersion);
   assert.equal(PRODUCT_VERSION, vectors.productVersion);
   assert.equal(DESTINATION_HASH_LENGTH, vectors.fixedBytes.DestinationHash);
   assert.deepEqual(balancedLimits(), vectors.limits);

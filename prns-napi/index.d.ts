@@ -194,6 +194,8 @@ export declare function generateIdentitySecret(): Buffer
 
 export declare function hostContractAbi(): number
 
+export declare function hostSchemaVersion(): number
+
 export interface IdentitySpec {
   secret?: Buffer
   path?: string

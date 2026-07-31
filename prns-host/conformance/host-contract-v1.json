@@ -241,6 +241,30 @@
     "retainedEventBytes": 8388608
   },
   "productVersion": "0.3.1",
+  "records": {
+    "DestinationName": [
+      {
+        "name": "appName",
+        "type": "string"
+      },
+      {
+        "name": "aspects",
+        "type": {
+          "array": "string"
+        }
+      }
+    ],
+    "RequestHandlerConfig": [
+      {
+        "name": "path",
+        "type": "string"
+      },
+      {
+        "name": "policy",
+        "type": "RequestPolicy"
+      }
+    ]
+  },
   "schemaVersion": 1,
   "unions": {
     "ApplicationEvent": {

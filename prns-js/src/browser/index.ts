@@ -4,6 +4,7 @@ import type { StreamClaim } from "../async_lanes.js";
 import {
   DESTINATION_HASH_LENGTH,
   HOST_CONTRACT_ABI,
+  HOST_SCHEMA_VERSION,
   INTERFACE_ID_LENGTH,
   PRODUCT_VERSION,
   RESOURCE_HASH_LENGTH,
@@ -61,6 +62,7 @@ export { Tag, from, match, match_into };
 export {
   DESTINATION_HASH_LENGTH,
   HOST_CONTRACT_ABI,
+  HOST_SCHEMA_VERSION,
   INTERFACE_ID_LENGTH,
   PRODUCT_VERSION,
   RESOURCE_HASH_LENGTH,
@@ -487,6 +489,7 @@ export type PrnsWasmModule = {
   };
   identitySecretKeyLength(): number;
   hostContractAbi(): number;
+  hostSchemaVersion(): number;
   productVersion(): string;
   bluetoothServiceUuid(): string;
   bluetoothControlUuid(): string;
@@ -2626,20 +2629,25 @@ export class Prns {
     }
     const wasm = loaded.data;
     let actualAbi: number;
+    let actualSchemaVersion: number;
     let actualProductVersion: string;
     try {
       actualAbi = wasm.hostContractAbi();
+      actualSchemaVersion = wasm.hostSchemaVersion();
       actualProductVersion = wasm.productVersion();
     } catch (error) {
       return runtimeRejected("initialize", error);
     }
     if (
       actualAbi !== HOST_CONTRACT_ABI ||
+      actualSchemaVersion !== HOST_SCHEMA_VERSION ||
       actualProductVersion !== PRODUCT_VERSION
     ) {
       return Tag("ContractMismatch", {
         requiredAbi: HOST_CONTRACT_ABI,
         actualAbi,
+        requiredSchemaVersion: HOST_SCHEMA_VERSION,
+        actualSchemaVersion,
         requiredProductVersion: PRODUCT_VERSION,
         actualProductVersion,
       });

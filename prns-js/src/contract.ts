@@ -94,6 +94,8 @@ export type ContractMismatch = Tag<
   {
     readonly requiredAbi: number;
     readonly actualAbi: number;
+    readonly requiredSchemaVersion: number;
+    readonly actualSchemaVersion: number;
     readonly requiredProductVersion: string;
     readonly actualProductVersion: string;
   }

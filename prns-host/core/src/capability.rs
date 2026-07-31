@@ -1,27 +1,6 @@
 use alloc::collections::BTreeSet;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum BackendKind {
-    Native,
-    Browser,
-    Cooperative,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Capability {
-    Loopback,
-    TcpClient,
-    TcpServer,
-    Udp,
-    Serial,
-    Usb,
-    Bluetooth,
-    Wifi,
-    WebSocket,
-    BrowserRendezvous,
-    I2p,
-    Weave,
-}
+use crate::{BackendKind, Capability, InterfaceKind};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BackendCapabilities {

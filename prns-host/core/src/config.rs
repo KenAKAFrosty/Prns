@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 
 use prns_runtime::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 
-use crate::{Capability, PrnsLimits};
+use crate::{Capability, HostRole, PrnsLimits, RequestPolicy};
 
 pub struct IdentitySecret(Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>);
 
@@ -25,10 +25,10 @@ pub enum IdentityConfig {
     LoadOrCreate { path: String },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HostRole {
-    Endpoint,
-    Transport,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PersistenceConfig {
+    Ephemeral,
+    Directory { path: String },
 }
 
 pub enum DestinationIdentityConfig {
@@ -84,13 +84,6 @@ pub struct SingleDestinationConfig {
     pub identity: DestinationIdentityConfig,
     pub announce_app_data: Vec<u8>,
     pub request_handlers: Vec<RequestHandlerConfig>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RequestPolicy {
-    AllowNone,
-    AllowAll,
-    AllowList,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

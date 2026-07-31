@@ -56,6 +56,7 @@ export type Tag<Name extends string, Data = undefined> = import("../casework.js"
 >;
 export const {
   HOST_CONTRACT_ABI,
+  HOST_SCHEMA_VERSION,
   PRODUCT_VERSION,
   DESTINATION_HASH_LENGTH,
   IDENTITY_HASH_LENGTH,
@@ -263,6 +264,7 @@ type RawInterface = {
 type NativeBinding = {
   version(): string;
   hostContractAbi(): number;
+  hostSchemaVersion(): number;
   startNode(options: RawNodeOptions, onEvent: (event: unknown) => void): RawNode;
 };
 
@@ -391,15 +393,22 @@ export class Prns {
     const validated = validateCreateOptions(options);
     const actualAbi =
       typeof addon.hostContractAbi === "function" ? addon.hostContractAbi() : 0;
+    const actualSchemaVersion =
+      typeof addon.hostSchemaVersion === "function"
+        ? addon.hostSchemaVersion()
+        : 0;
     const actualProductVersion = addon.version();
     if (
       actualAbi !== contract.HOST_CONTRACT_ABI ||
+      actualSchemaVersion !== contract.HOST_SCHEMA_VERSION ||
       actualProductVersion !== contract.PRODUCT_VERSION
     ) {
       return Promise.resolve(
         casework.Tag("ContractMismatch", {
           requiredAbi: contract.HOST_CONTRACT_ABI,
           actualAbi,
+          requiredSchemaVersion: contract.HOST_SCHEMA_VERSION,
+          actualSchemaVersion,
           requiredProductVersion: contract.PRODUCT_VERSION,
           actualProductVersion,
         }),

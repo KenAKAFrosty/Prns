@@ -2,8 +2,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::{
-    DestinationHash, IdentityHash, InterfaceId, LinkId, RequestId, RequestPathHash,
-    ResourceAvailable, ResourceHash,
+    DestinationHash, IdentityHash, InterfaceId, LinkClosedReason, LinkId, PersistenceFlushCause,
+    PersistenceFlushTarget, RequestId, RequestPathHash, ResourceAvailable, ResourceHash,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -98,13 +98,6 @@ impl ApplicationEvent {
             Self::ChannelMessage(event) => event.data.len(),
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LinkClosedReason {
-    Timeout,
-    PeerClosed,
-    MalformedRtt,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

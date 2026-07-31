@@ -48,6 +48,7 @@ export declare class BluetoothReassembler
 }
 
 export declare function hostContractAbi(): number;
+export declare function hostSchemaVersion(): number;
 export declare function productVersion(): string;
 export declare function identitySecretKeyLength(): number;
 export declare function interfaceIdLength(): number;

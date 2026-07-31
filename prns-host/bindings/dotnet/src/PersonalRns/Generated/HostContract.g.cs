@@ -18,6 +18,7 @@ public static class HostContract
     public const int RequestPathHashLength = 16;
     public const int ResourceHashLength = 32;
     public const int IdentitySecretLength = 64;
+    public const ulong SafeUintMax = 9007199254740991;
     public const int BalancedPendingCommands = 256;
     public const int BalancedApplicationEvents = 1024;
     public const int BalancedRetainedEventBytes = 8388608;
@@ -39,6 +40,9 @@ public enum Status : uint
     BackendFailed = 10,
     Panic = 11,
     Interrupted = 12,
+    Unsupported = 13,
+    PermissionDenied = 14,
+    Unavailable = 15,
 }
 
 public enum BackendKind : uint
@@ -64,6 +68,77 @@ public enum Capability : uint
     Weave = 12,
 }
 
+public enum InterfaceKind : uint
+{
+    AutoLan = 1,
+    TcpClient = 2,
+    TcpServer = 3,
+    Udp = 4,
+    Serial = 5,
+    Kiss = 6,
+    Ax25Kiss = 7,
+    RNode = 8,
+    MultiRNode = 9,
+    Pipe = 10,
+    BackboneClient = 11,
+    BackboneServer = 12,
+    I2p = 13,
+    Weave = 14,
+    AutomaticUsb = 15,
+    AutomaticBluetoothLe = 16,
+    WebSocketClient = 17,
+    WebSocketServer = 18,
+    BrowserRendezvous = 19,
+}
+
+public enum InterfaceHealth : uint
+{
+    Initializing = 1,
+    Connected = 2,
+    Degraded = 3,
+    Reconnecting = 4,
+    Failed = 5,
+    Disconnected = 6,
+    Disabled = 7,
+    Unknown = 8,
+}
+
+public enum DiscoveryScope : uint
+{
+    Link = 1,
+    Admin = 2,
+    Site = 3,
+    Organization = 4,
+    Global = 5,
+}
+
+public enum MulticastAddressType : uint
+{
+    Temporary = 1,
+    Permanent = 2,
+}
+
+public enum SerialDataBits : uint
+{
+    Five = 5,
+    Six = 6,
+    Seven = 7,
+    Eight = 8,
+}
+
+public enum SerialParity : uint
+{
+    None = 1,
+    Even = 2,
+    Odd = 3,
+}
+
+public enum SerialStopBits : uint
+{
+    One = 1,
+    Two = 2,
+}
+
 public enum HostRole : uint
 {
     Endpoint = 1,
@@ -75,6 +150,12 @@ public enum IdentityConfigKind : uint
     Existing = 1,
     GenerateEphemeral = 2,
     LoadOrCreate = 3,
+}
+
+public enum PersistenceConfigKind : uint
+{
+    Ephemeral = 1,
+    Directory = 2,
 }
 
 public enum DestinationConfigKind : uint
@@ -171,6 +252,14 @@ public enum CommandFailureKind : uint
     ChannelWindowFull = 30,
     ChannelUntrackable = 31,
     InvalidChannelMessageType = 32,
+    InvalidConfiguration = 33,
+    ResourceUploadCancelled = 34,
+    ResourceEarlyEof = 35,
+    ResourceLengthOverrun = 36,
+    PermissionDenied = 37,
+    DeviceUnavailable = 38,
+    ConnectFailed = 39,
+    BackendFailed = 40,
 }
 
 public enum DeliveryEvidenceKind : uint
@@ -233,6 +322,24 @@ public enum DiagnosticEventKind : uint
     RouteDropped = 214,
     BackendDiagnostic = 215,
     DiagnosticsDropped = 216,
+    PersistenceRestored = 217,
+    PersistenceFlushed = 218,
+    PersistenceFlushFailed = 219,
+}
+
+public enum PersistenceFlushCause : uint
+{
+    Startup = 1,
+    Interval = 2,
+    RouteChange = 3,
+    RatchetRotation = 4,
+    Shutdown = 5,
+}
+
+public enum PersistenceFlushTarget : uint
+{
+    RoutingState = 1,
+    Ratchets = 2,
 }
 
 public enum EventField : uint
@@ -268,6 +375,14 @@ public enum EventField : uint
     DroppedCount = 29,
     Hops = 30,
     Stream = 31,
+    Routes = 32,
+    DestinationIdentities = 33,
+    Tunnels = 34,
+    Ratchets = 35,
+    Refused = 36,
+    Dropped = 37,
+    PersistenceCause = 38,
+    PersistenceTarget = 39,
 }
 
 public readonly struct DestinationHash : IEquatable<DestinationHash>
@@ -604,6 +719,26 @@ public sealed record DestinationName(string AppName, ImmutableArray<string> Aspe
 
 public sealed record RequestHandlerConfig(string Path, RequestPolicy Policy);
 
+public sealed record SerialLineConfig(uint Baud, SerialDataBits DataBits, SerialParity Parity, SerialStopBits StopBits);
+
+public sealed record RNodeRadioConfig(ulong FrequencyHz, uint BandwidthHz, short TxPowerDbm, byte SpreadingFactor, byte CodingRate);
+
+public sealed record MultiRNodeMemberConfig(string Name, byte VirtualPort, RNodeRadioConfig Radio, bool FlowControl, bool Outgoing);
+
+public sealed record BackendInfo(BackendKind Backend, ImmutableArray<Capability> Capabilities, ImmutableArray<InterfaceKind> InterfaceKinds);
+
+public sealed record InterfaceSnapshot(InterfaceId InterfaceId, string? Name, InterfaceKind? Kind, InterfaceHealth Health, string? FailureDetail, ulong RxBytes, ulong TxBytes, ulong? RxBps, ulong? TxBps, uint RouteCount, uint LinkCount, uint TransportedLinkCount);
+
+public sealed record RouteSnapshot(DestinationHash Destination, byte Hops, IdentityHash? ViaIdentity, InterfaceId InterfaceId, ulong LearnedAtMillis, ulong LastRelayedAtMillis, ulong ExpiresAtMillis);
+
+public sealed record DestinationIdentitySnapshot(DestinationHash Destination, IdentityHash Identity);
+
+public sealed record RuntimeHealthSnapshot(bool Running, ulong UptimeMillis, uint InterfaceCount, uint OnlineInterfaceCount, uint RouteCount, uint LinkCount, uint TransportedLinkCount, ulong RxBytes, ulong TxBytes, ulong RxBps, ulong TxBps);
+
+public sealed record PersistenceSnapshot(bool Persistent, bool Restored, PersistenceFlushCause? LastFlushCause, string? LastFailureDetail);
+
+public sealed record HostSnapshot(ulong Revision, BackendInfo Backend, ImmutableArray<InterfaceSnapshot> Interfaces, ImmutableArray<RouteSnapshot> Routes, uint ActiveLinkCount, ImmutableArray<DestinationIdentitySnapshot> DestinationIdentities, RuntimeHealthSnapshot Runtime, PersistenceSnapshot Persistence);
+
 public abstract record IdentityConfig
 {
     private protected IdentityConfig() { }
@@ -626,6 +761,171 @@ public abstract record IdentityConfig
             Existing value => existing(value),
             GenerateEphemeral value => generateEphemeral(value),
             LoadOrCreate value => loadOrCreate(value),
+            _ => throw new InvalidOperationException("Unknown contract case."),
+        };
+}
+
+public abstract record PersistenceConfig
+{
+    private protected PersistenceConfig() { }
+
+    public sealed record Ephemeral() : PersistenceConfig;
+    public sealed record Directory(
+        string Path
+    ) : PersistenceConfig;
+
+    public TResult Match<TResult>(
+        Func<PersistenceConfig.Ephemeral, TResult> ephemeral,
+        Func<PersistenceConfig.Directory, TResult> directory
+    ) =>
+        this switch
+        {
+            Ephemeral value => ephemeral(value),
+            Directory value => directory(value),
+            _ => throw new InvalidOperationException("Unknown contract case."),
+        };
+}
+
+public abstract record InterfaceConfig
+{
+    private protected InterfaceConfig() { }
+
+    public sealed record AutoLan(
+        string? GroupId,
+        DiscoveryScope? DiscoveryScope,
+        ushort? DiscoveryPort,
+        ushort? DataPort,
+        ImmutableArray<string> Devices,
+        ImmutableArray<string> IgnoredDevices,
+        MulticastAddressType? MulticastAddressType
+    ) : InterfaceConfig;
+    public sealed record TcpClient(
+        string Target,
+        Bitrate Bitrate
+    ) : InterfaceConfig;
+    public sealed record TcpServer(
+        string Bind,
+        Bitrate Bitrate
+    ) : InterfaceConfig;
+    public sealed record Udp(
+        string Local,
+        string Peer,
+        Bitrate Bitrate
+    ) : InterfaceConfig;
+    public sealed record Serial(
+        string Port,
+        SerialLineConfig Line
+    ) : InterfaceConfig;
+    public sealed record Kiss(
+        string Port,
+        SerialLineConfig Line,
+        bool FlowControl,
+        uint PreambleMillis,
+        uint TransmitTailMillis,
+        byte Persistence,
+        uint SlotTimeMillis,
+        string? StationCallsign,
+        ulong? StationIntervalSeconds
+    ) : InterfaceConfig;
+    public sealed record Ax25Kiss(
+        string Port,
+        SerialLineConfig Line,
+        bool FlowControl,
+        uint PreambleMillis,
+        uint TransmitTailMillis,
+        byte Persistence,
+        uint SlotTimeMillis,
+        string Callsign,
+        byte Ssid
+    ) : InterfaceConfig;
+    public sealed record RNode(
+        string Port,
+        RNodeRadioConfig Radio,
+        bool FlowControl,
+        string? StationCallsign,
+        ulong? StationIntervalSeconds,
+        ushort? AirtimeLimitShortCentiPercent,
+        ushort? AirtimeLimitLongCentiPercent
+    ) : InterfaceConfig;
+    public sealed record MultiRNode(
+        string Port,
+        string? StationCallsign,
+        ulong? StationIntervalSeconds,
+        ImmutableArray<MultiRNodeMemberConfig> Members
+    ) : InterfaceConfig;
+    public sealed record Pipe(
+        ImmutableArray<string> Command,
+        ulong RespawnDelayMillis
+    ) : InterfaceConfig;
+    public sealed record BackboneClient(
+        string Target,
+        Bitrate Bitrate
+    ) : InterfaceConfig;
+    public sealed record BackboneServer(
+        string Bind,
+        Bitrate Bitrate
+    ) : InterfaceConfig;
+    public sealed record I2p(
+        ImmutableArray<string> Peers,
+        bool Connectable
+    ) : InterfaceConfig;
+    public sealed record Weave(
+        string Port
+    ) : InterfaceConfig;
+    public sealed record AutomaticUsb() : InterfaceConfig;
+    public sealed record AutomaticBluetoothLe() : InterfaceConfig;
+    public sealed record WebSocketClient(
+        string Target
+    ) : InterfaceConfig;
+    public sealed record WebSocketServer(
+        string Bind
+    ) : InterfaceConfig;
+    public sealed record BrowserRendezvous(
+        string Url
+    ) : InterfaceConfig;
+
+    public TResult Match<TResult>(
+        Func<InterfaceConfig.AutoLan, TResult> autoLan,
+        Func<InterfaceConfig.TcpClient, TResult> tcpClient,
+        Func<InterfaceConfig.TcpServer, TResult> tcpServer,
+        Func<InterfaceConfig.Udp, TResult> udp,
+        Func<InterfaceConfig.Serial, TResult> serial,
+        Func<InterfaceConfig.Kiss, TResult> kiss,
+        Func<InterfaceConfig.Ax25Kiss, TResult> ax25Kiss,
+        Func<InterfaceConfig.RNode, TResult> rNode,
+        Func<InterfaceConfig.MultiRNode, TResult> multiRNode,
+        Func<InterfaceConfig.Pipe, TResult> pipe,
+        Func<InterfaceConfig.BackboneClient, TResult> backboneClient,
+        Func<InterfaceConfig.BackboneServer, TResult> backboneServer,
+        Func<InterfaceConfig.I2p, TResult> i2p,
+        Func<InterfaceConfig.Weave, TResult> weave,
+        Func<InterfaceConfig.AutomaticUsb, TResult> automaticUsb,
+        Func<InterfaceConfig.AutomaticBluetoothLe, TResult> automaticBluetoothLe,
+        Func<InterfaceConfig.WebSocketClient, TResult> webSocketClient,
+        Func<InterfaceConfig.WebSocketServer, TResult> webSocketServer,
+        Func<InterfaceConfig.BrowserRendezvous, TResult> browserRendezvous
+    ) =>
+        this switch
+        {
+            AutoLan value => autoLan(value),
+            TcpClient value => tcpClient(value),
+            TcpServer value => tcpServer(value),
+            Udp value => udp(value),
+            Serial value => serial(value),
+            Kiss value => kiss(value),
+            Ax25Kiss value => ax25Kiss(value),
+            RNode value => rNode(value),
+            MultiRNode value => multiRNode(value),
+            Pipe value => pipe(value),
+            BackboneClient value => backboneClient(value),
+            BackboneServer value => backboneServer(value),
+            I2p value => i2p(value),
+            Weave value => weave(value),
+            AutomaticUsb value => automaticUsb(value),
+            AutomaticBluetoothLe value => automaticBluetoothLe(value),
+            WebSocketClient value => webSocketClient(value),
+            WebSocketServer value => webSocketServer(value),
+            BrowserRendezvous value => browserRendezvous(value),
             _ => throw new InvalidOperationException("Unknown contract case."),
         };
 }
@@ -841,6 +1141,9 @@ public abstract record HostCommand
         RequestPathHash PathHash,
         IdentityHash Identity
     ) : HostCommand;
+    public sealed record AttachInterface(
+        InterfaceConfig Config
+    ) : HostCommand;
 
     public TResult Match<TResult>(
         Func<HostCommand.Announce, TResult> announce,
@@ -860,7 +1163,8 @@ public abstract record HostCommand
         Func<HostCommand.SetLinkResourceStrategy, TResult> setLinkResourceStrategy,
         Func<HostCommand.SetDestinationResourceStrategy, TResult> setDestinationResourceStrategy,
         Func<HostCommand.SendChannelMessage, TResult> sendChannelMessage,
-        Func<HostCommand.AllowRequester, TResult> allowRequester
+        Func<HostCommand.AllowRequester, TResult> allowRequester,
+        Func<HostCommand.AttachInterface, TResult> attachInterface
     ) =>
         this switch
         {
@@ -882,6 +1186,7 @@ public abstract record HostCommand
             SetDestinationResourceStrategy value => setDestinationResourceStrategy(value),
             SendChannelMessage value => sendChannelMessage(value),
             AllowRequester value => allowRequester(value),
+            AttachInterface value => attachInterface(value),
             _ => throw new InvalidOperationException("Unknown contract case."),
         };
 }
@@ -996,6 +1301,24 @@ public abstract record CommandFailure
     public sealed record ChannelWindowFull() : CommandFailure;
     public sealed record ChannelUntrackable() : CommandFailure;
     public sealed record InvalidChannelMessageType() : CommandFailure;
+    public sealed record InvalidConfiguration(
+        string Detail
+    ) : CommandFailure;
+    public sealed record ResourceUploadCancelled() : CommandFailure;
+    public sealed record ResourceEarlyEof() : CommandFailure;
+    public sealed record ResourceLengthOverrun() : CommandFailure;
+    public sealed record PermissionDenied(
+        string Detail
+    ) : CommandFailure;
+    public sealed record DeviceUnavailable(
+        string Detail
+    ) : CommandFailure;
+    public sealed record ConnectFailed(
+        string Detail
+    ) : CommandFailure;
+    public sealed record BackendFailed(
+        string Detail
+    ) : CommandFailure;
 
     public TResult Match<TResult>(
         Func<CommandFailure.NodeStopped, TResult> nodeStopped,
@@ -1029,7 +1352,15 @@ public abstract record CommandFailure
         Func<CommandFailure.ResourcePredecessorFailed, TResult> resourcePredecessorFailed,
         Func<CommandFailure.ChannelWindowFull, TResult> channelWindowFull,
         Func<CommandFailure.ChannelUntrackable, TResult> channelUntrackable,
-        Func<CommandFailure.InvalidChannelMessageType, TResult> invalidChannelMessageType
+        Func<CommandFailure.InvalidChannelMessageType, TResult> invalidChannelMessageType,
+        Func<CommandFailure.InvalidConfiguration, TResult> invalidConfiguration,
+        Func<CommandFailure.ResourceUploadCancelled, TResult> resourceUploadCancelled,
+        Func<CommandFailure.ResourceEarlyEof, TResult> resourceEarlyEof,
+        Func<CommandFailure.ResourceLengthOverrun, TResult> resourceLengthOverrun,
+        Func<CommandFailure.PermissionDenied, TResult> permissionDenied,
+        Func<CommandFailure.DeviceUnavailable, TResult> deviceUnavailable,
+        Func<CommandFailure.ConnectFailed, TResult> connectFailed,
+        Func<CommandFailure.BackendFailed, TResult> backendFailed
     ) =>
         this switch
         {
@@ -1065,6 +1396,14 @@ public abstract record CommandFailure
             ChannelWindowFull value => channelWindowFull(value),
             ChannelUntrackable value => channelUntrackable(value),
             InvalidChannelMessageType value => invalidChannelMessageType(value),
+            InvalidConfiguration value => invalidConfiguration(value),
+            ResourceUploadCancelled value => resourceUploadCancelled(value),
+            ResourceEarlyEof value => resourceEarlyEof(value),
+            ResourceLengthOverrun value => resourceLengthOverrun(value),
+            PermissionDenied value => permissionDenied(value),
+            DeviceUnavailable value => deviceUnavailable(value),
+            ConnectFailed value => connectFailed(value),
+            BackendFailed value => backendFailed(value),
             _ => throw new InvalidOperationException("Unknown contract case."),
         };
 }
@@ -1223,6 +1562,22 @@ public abstract record DiagnosticEvent
     public sealed record DiagnosticsDropped(
         UInt128 Count
     ) : DiagnosticEvent;
+    public sealed record PersistenceRestored(
+        ulong Routes,
+        ulong DestinationIdentities,
+        ulong Tunnels,
+        ulong Ratchets,
+        ulong Refused,
+        ulong Dropped
+    ) : DiagnosticEvent;
+    public sealed record PersistenceFlushed(
+        PersistenceFlushCause Cause,
+        PersistenceFlushTarget Target
+    ) : DiagnosticEvent;
+    public sealed record PersistenceFlushFailed(
+        PersistenceFlushCause Cause,
+        PersistenceFlushTarget Target
+    ) : DiagnosticEvent;
 
     public TResult Match<TResult>(
         Func<DiagnosticEvent.AnnounceHeard, TResult> announceHeard,
@@ -1241,7 +1596,10 @@ public abstract record DiagnosticEvent
         Func<DiagnosticEvent.RouteInterfaceGone, TResult> routeInterfaceGone,
         Func<DiagnosticEvent.RouteDropped, TResult> routeDropped,
         Func<DiagnosticEvent.BackendDiagnostic, TResult> backendDiagnostic,
-        Func<DiagnosticEvent.DiagnosticsDropped, TResult> diagnosticsDropped
+        Func<DiagnosticEvent.DiagnosticsDropped, TResult> diagnosticsDropped,
+        Func<DiagnosticEvent.PersistenceRestored, TResult> persistenceRestored,
+        Func<DiagnosticEvent.PersistenceFlushed, TResult> persistenceFlushed,
+        Func<DiagnosticEvent.PersistenceFlushFailed, TResult> persistenceFlushFailed
     ) =>
         this switch
         {
@@ -1262,6 +1620,158 @@ public abstract record DiagnosticEvent
             RouteDropped value => routeDropped(value),
             BackendDiagnostic value => backendDiagnostic(value),
             DiagnosticsDropped value => diagnosticsDropped(value),
+            PersistenceRestored value => persistenceRestored(value),
+            PersistenceFlushed value => persistenceFlushed(value),
+            PersistenceFlushFailed value => persistenceFlushFailed(value),
             _ => throw new InvalidOperationException("Unknown contract case."),
         };
+}
+
+internal static class RawHostProtocolContract
+{
+    internal static readonly string[] OperationNames =
+    [
+        "contractInfo",
+        "backendInfo",
+        "hostCreate",
+        "hostRelease",
+        "hostLifecycle",
+        "hostSnapshot",
+        "hostSnapshotRead",
+        "hostSnapshotRelease",
+        "hostIdentityHash",
+        "hostDestinationCount",
+        "hostDestinationHash",
+        "hostBeginResourceUpload",
+        "resourceUploadWrite",
+        "resourceUploadIsWritable",
+        "resourceUploadFinish",
+        "resourceUploadAbort",
+        "resourceUploadRelease",
+        "hostStop",
+        "commandWait",
+        "commandRegisterReadiness",
+        "commandInterruptWait",
+        "commandRelease",
+        "hostClaimApplicationEvents",
+        "hostClaimDiagnostics",
+        "eventStreamRegisterReadiness",
+        "readinessRegistrationRelease",
+        "eventStreamInterruptWait",
+        "eventStreamRelease",
+        "eventStreamNext",
+        "eventRelease",
+        "eventKind",
+        "eventBytes",
+        "eventString",
+        "eventU64",
+        "eventU128",
+        "eventResourceStream",
+        "resourceStreamRelease",
+        "resourceStreamNext",
+        "hostAnnounce",
+        "hostSendSinglePacket",
+        "hostCloseLink",
+        "hostAttachTcpServer",
+        "hostAttachTcpClient",
+        "hostAttachUdp",
+        "hostDetachInterface",
+        "hostEstablishLink",
+        "hostRequestPath",
+        "hostIdentify",
+        "hostSendLinkPacket",
+        "hostRequest",
+        "hostRespond",
+        "hostSendResource",
+        "hostSetLinkResourceStrategy",
+        "hostSetDestinationResourceStrategy",
+        "hostSendChannelMessage",
+        "hostAllowRequester",
+        "hostAttachInterface",
+    ];
+}
+
+internal readonly record struct RawUnit;
+internal readonly record struct RawOwned<T>(T Value);
+internal readonly record struct RawBorrowed<T>(T Value);
+internal abstract record RawCallResult<T>
+{
+    internal sealed record Success(T Value) : RawCallResult<T>;
+    internal sealed record Failure(Status Error) : RawCallResult<T>;
+}
+internal interface IRawCommandResult { }
+internal interface IRawContractInfo { }
+internal interface IRawEvent { }
+internal interface IRawEventStream { }
+internal interface IRawHost { }
+internal interface IRawHostInspection { }
+internal interface IRawHostOptions { }
+internal interface IRawIssuedCommand { }
+internal interface IRawLifecycle { }
+internal interface IRawReadinessCallback { }
+internal interface IRawReadinessRegistration { }
+internal interface IRawResourceChunk { }
+internal interface IRawResourceStream { }
+internal interface IRawResourceUpload { }
+internal interface IRawOpaquePointer { }
+
+internal interface IRawHostProtocol
+{
+    RawCallResult<IRawContractInfo> ContractInfo();
+    RawCallResult<BackendInfo> BackendInfo();
+    RawCallResult<RawOwned<IRawHost>> HostCreate(IRawHostOptions options);
+    RawUnit HostRelease(IRawHost host);
+    RawCallResult<IRawLifecycle> HostLifecycle(IRawHost host);
+    RawCallResult<RawOwned<IRawHostInspection>> HostSnapshot(IRawHost host, uint timeoutMillis);
+    RawCallResult<RawBorrowed<HostSnapshot>> HostSnapshotRead(IRawHostInspection host_inspection);
+    RawUnit HostSnapshotRelease(IRawHostInspection host_inspection);
+    RawCallResult<RawBorrowed<ReadOnlyMemory<byte>>> HostIdentityHash(IRawHost host);
+    nuint HostDestinationCount(IRawHost host);
+    RawCallResult<RawBorrowed<ReadOnlyMemory<byte>>> HostDestinationHash(IRawHost host, nuint index);
+    RawCallResult<RawOwned<IRawResourceUpload>> HostBeginResourceUpload(IRawHost host, LinkId linkId, ulong declaredLength, ReadOnlyMemory<byte>? packedMetadata, ResourceCompression compression);
+    RawCallResult<RawUnit> ResourceUploadWrite(IRawResourceUpload resource_upload, ReadOnlyMemory<byte> chunk);
+    RawCallResult<bool> ResourceUploadIsWritable(IRawResourceUpload resource_upload);
+    RawCallResult<RawOwned<IRawIssuedCommand>> ResourceUploadFinish(IRawResourceUpload resource_upload);
+    RawUnit ResourceUploadAbort(IRawResourceUpload resource_upload);
+    RawUnit ResourceUploadRelease(IRawResourceUpload resource_upload);
+    RawCallResult<RawUnit> HostStop(IRawHost host);
+    RawCallResult<RawBorrowed<IRawCommandResult>> CommandWait(IRawIssuedCommand issued_command, uint timeoutMillis);
+    RawCallResult<RawOwned<IRawReadinessRegistration>> CommandRegisterReadiness(IRawIssuedCommand issued_command, IRawReadinessCallback callback, IRawOpaquePointer context);
+    RawUnit CommandInterruptWait(IRawIssuedCommand issued_command);
+    RawUnit CommandRelease(IRawIssuedCommand issued_command);
+    RawCallResult<RawOwned<IRawEventStream>> HostClaimApplicationEvents(IRawHost host);
+    RawCallResult<RawOwned<IRawEventStream>> HostClaimDiagnostics(IRawHost host);
+    RawCallResult<RawOwned<IRawReadinessRegistration>> EventStreamRegisterReadiness(IRawEventStream event_stream, IRawReadinessCallback callback, IRawOpaquePointer context);
+    RawUnit ReadinessRegistrationRelease(IRawReadinessRegistration readiness_registration);
+    RawUnit EventStreamInterruptWait(IRawEventStream event_stream);
+    RawUnit EventStreamRelease(IRawEventStream event_stream);
+    RawCallResult<RawOwned<IRawEvent>> EventStreamNext(IRawEventStream event_stream, uint timeoutMillis);
+    RawUnit EventRelease(IRawEvent eventValue);
+    uint EventKind(IRawEvent eventValue);
+    RawCallResult<RawBorrowed<ReadOnlyMemory<byte>>> EventBytes(IRawEvent eventValue, EventField field);
+    RawCallResult<RawBorrowed<string>> EventString(IRawEvent eventValue, EventField field);
+    RawCallResult<ulong> EventU64(IRawEvent eventValue, EventField field);
+    RawCallResult<UInt128> EventU128(IRawEvent eventValue, EventField field);
+    RawCallResult<RawOwned<IRawResourceStream>> EventResourceStream(IRawEvent eventValue);
+    RawUnit ResourceStreamRelease(IRawResourceStream resource_stream);
+    RawCallResult<RawBorrowed<IRawResourceChunk>> ResourceStreamNext(IRawResourceStream resource_stream, nuint maximumBytes);
+    RawCallResult<RawOwned<IRawIssuedCommand>> HostAnnounce(IRawHost host, DestinationHash destination, InterfaceId? interfaceId);
+    RawCallResult<RawOwned<IRawIssuedCommand>> HostSendSinglePacket(IRawHost host, DestinationHash destination, ReadOnlyMemory<byte> payload);
+    RawCallResult<RawOwned<IRawIssuedCommand>> HostCloseLink(IRawHost host, LinkId linkId);
+    RawCallResult<RawOwned<IRawIssuedCommand>> HostAttachTcpServer(IRawHost host, string bind, Bitrate bitrate);
+    RawCallResult<RawOwned<IRawIssuedCommand>> HostAttachTcpClient(IRawHost host, string target, Bitrate bitrate);
+    RawCallResult<RawOwned<IRawIssuedCommand>> HostAttachUdp(IRawHost host, string local, string peer, Bitrate bitrate);
+    RawCallResult<RawOwned<IRawIssuedCommand>> HostDetachInterface(IRawHost host, InterfaceId interfaceId);
+    RawCallResult<RawOwned<IRawIssuedCommand>> HostEstablishLink(IRawHost host, DestinationHash destination);
+    RawCallResult<RawOwned<IRawIssuedCommand>> HostRequestPath(IRawHost host, DestinationHash destination);
+    RawCallResult<RawOwned<IRawIssuedCommand>> HostIdentify(IRawHost host, LinkId linkId, IdentityHash identity);
+    RawCallResult<RawOwned<IRawIssuedCommand>> HostSendLinkPacket(IRawHost host, LinkId linkId, ReadOnlyMemory<byte> payload);
+    RawCallResult<RawOwned<IRawIssuedCommand>> HostRequest(IRawHost host, LinkId linkId, RequestPathHash pathHash, ReadOnlyMemory<byte> payload, ResponseTimeout timeout);
+    RawCallResult<RawOwned<IRawIssuedCommand>> HostRespond(IRawHost host, LinkId linkId, RequestId requestId, ulong requestRttMillis, ReadOnlyMemory<byte> payload);
+    RawCallResult<RawOwned<IRawIssuedCommand>> HostSendResource(IRawHost host, LinkId linkId, ReadOnlyMemory<byte> payload, ReadOnlyMemory<byte>? packedMetadata, ResourceCompression compression);
+    RawCallResult<RawOwned<IRawIssuedCommand>> HostSetLinkResourceStrategy(IRawHost host, LinkId linkId, ResourceStrategy strategy);
+    RawCallResult<RawOwned<IRawIssuedCommand>> HostSetDestinationResourceStrategy(IRawHost host, DestinationHash destination, ResourceStrategy strategy);
+    RawCallResult<RawOwned<IRawIssuedCommand>> HostSendChannelMessage(IRawHost host, LinkId linkId, ushort messageType, ReadOnlyMemory<byte> payload);
+    RawCallResult<RawOwned<IRawIssuedCommand>> HostAllowRequester(IRawHost host, DestinationHash destination, RequestPathHash pathHash, IdentityHash identity);
+    RawCallResult<RawOwned<IRawIssuedCommand>> HostAttachInterface(IRawHost host, InterfaceConfig config);
 }

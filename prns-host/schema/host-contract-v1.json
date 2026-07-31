@@ -13,6 +13,25 @@
     { "name": "ResourceHash", "length": 32 },
     { "name": "IdentitySecret", "length": 64, "secret": true }
   ],
+  "externalTypes": ["ResourceStream"],
+  "records": [
+    {
+      "name": "DestinationName",
+      "hashable": true,
+      "fields": [
+        { "name": "appName", "type": "string" },
+        { "name": "aspects", "type": { "array": "string" } }
+      ]
+    },
+    {
+      "name": "RequestHandlerConfig",
+      "hashable": true,
+      "fields": [
+        { "name": "path", "type": "string" },
+        { "name": "policy", "type": "RequestPolicy" }
+      ]
+    }
+  ],
   "limits": {
     "pendingCommands": 256,
     "applicationEvents": 1024,
@@ -386,7 +405,7 @@
             { "name": "name", "type": "DestinationName" },
             { "name": "identity", "type": "DestinationIdentityConfig" },
             { "name": "announceAppData", "type": "bytes", "optional": true },
-            { "name": "requestHandlers", "type": "RequestHandlers" }
+            { "name": "requestHandlers", "type": { "array": "RequestHandlerConfig" } }
           ]
         }
       ]

@@ -1,21 +1,6 @@
 use alloc::string::String;
 
-use crate::PrnsLimits;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LifecyclePhase {
-    Starting,
-    Running,
-    Stopping,
-    Stopped,
-    Failed,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum StopReason {
-    Requested,
-    BackendExited,
-}
+use crate::{LifecyclePhase, PrnsLimits, StopReason};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HostFailure {

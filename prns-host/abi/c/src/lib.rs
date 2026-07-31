@@ -14,18 +14,33 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use prns_host_core::{
-    verify_host_contract, AbiApplicationEventKind, AbiBitrateKind, AbiCapability,
-    AbiCommandFailureKind, AbiCommandOutcomeKind, AbiDeliveryEvidenceKind,
-    AbiDestinationConfigKind, AbiDestinationIdentityConfigKind, AbiDiagnosticEventKind,
-    AbiEventField, AbiHostRole, AbiIdentityConfigKind, AbiLifecyclePhase, AbiLinkClosedReason,
-    AbiRequestPolicy, AbiResourceCompressionKind, AbiResourceStrategyKind, AbiResponseTimeoutKind,
-    AbiStatus, AbiStopReason, ApplicationEvent, Bitrate, BoundedHostQueue, Capability,
-    CommandFailure, CommandOutcome, ConsumerLane, DeliveryEvidence, DestinationConfig,
-    DestinationHash, DestinationIdentityConfig, DestinationName, DiagnosticEvent, HostCommand,
-    HostConfig, HostFailure, HostRole, IdentityConfig, IdentityHash, IdentitySecret, InterfaceId,
-    LifecycleState, LinkClosedReason, LinkId, PrnsLimits as CoreLimits, RequestHandlerConfig,
-    RequestId, RequestPathHash, RequestPolicy, ResourceAvailable, ResourceCompression,
-    ResourceStrategy, ResponseTimeout, StopReason, HOST_CONTRACT, HOST_SCHEMA_VERSION,
+    verify_host_contract, ApplicationEvent, ApplicationEventKind as AbiApplicationEventKind,
+    BackendKind as AbiBackendKind, Bitrate, BitrateKind as AbiBitrateKind, BoundedHostQueue,
+    Capability as AbiCapability, Capability, CommandFailure,
+    CommandFailureKind as AbiCommandFailureKind, CommandOutcome,
+    CommandOutcomeKind as AbiCommandOutcomeKind, ConsumerLane, DeliveryEvidence,
+    DeliveryEvidenceKind as AbiDeliveryEvidenceKind, DestinationConfig,
+    DestinationConfigKind as AbiDestinationConfigKind, DestinationHash, DestinationIdentityConfig,
+    DestinationIdentityConfigKind as AbiDestinationIdentityConfigKind, DestinationName,
+    DiagnosticEvent, DiagnosticEventKind as AbiDiagnosticEventKind,
+    DiscoveryScope as AbiDiscoveryScope, DiscoveryScope, EventField as AbiEventField, HostCommand,
+    HostConfig, HostFailure, HostRole as AbiHostRole, HostRole, HostSnapshot as CoreHostSnapshot,
+    IdentityConfig, IdentityConfigKind as AbiIdentityConfigKind, IdentityHash, IdentitySecret,
+    InterfaceConfig, InterfaceHealth, InterfaceId, InterfaceKind as AbiInterfaceKind,
+    InterfaceKind, LifecyclePhase as AbiLifecyclePhase, LifecycleState,
+    LinkClosedReason as AbiLinkClosedReason, LinkClosedReason, LinkId, MultiRNodeMemberConfig,
+    MulticastAddressType as AbiMulticastAddressType, MulticastAddressType, PersistenceConfig,
+    PersistenceConfigKind as AbiPersistenceConfigKind,
+    PersistenceFlushCause as AbiPersistenceFlushCause, PersistenceFlushCause,
+    PersistenceFlushTarget as AbiPersistenceFlushTarget, PersistenceFlushTarget,
+    PrnsLimits as CoreLimits, RNodeRadioConfig, RequestHandlerConfig, RequestId, RequestPathHash,
+    RequestPolicy as AbiRequestPolicy, RequestPolicy, ResourceAvailable, ResourceCompression,
+    ResourceCompressionKind as AbiResourceCompressionKind, ResourceStrategy,
+    ResourceStrategyKind as AbiResourceStrategyKind, ResponseTimeout,
+    ResponseTimeoutKind as AbiResponseTimeoutKind, SerialDataBits as AbiSerialDataBits,
+    SerialDataBits, SerialLineConfig, SerialParity as AbiSerialParity, SerialParity,
+    SerialStopBits as AbiSerialStopBits, SerialStopBits, Status as AbiStatus,
+    StopReason as AbiStopReason, StopReason, HOST_CONTRACT, HOST_SCHEMA_VERSION,
 };
 use prns_host_native::{
     CommandHandle, CommandWait, NativeEventSink, NativeHost, NativeStartError, NativeSubmitError,
@@ -866,6 +881,231 @@ pub unsafe extern "C" fn prns_host_destination_hash(
         *out = bytes_view(hash.as_bytes());
         status(AbiStatus::Ok)
     })
+}
+
+impl PrnsHostInspection {
+    fn new(snapshot: CoreHostSnapshot) -> Box<Self> {
+        let mut inspection = Box::new(Self {
+            snapshot,
+            interfaces: Vec::new(),
+            routes: Vec::new(),
+            destination_identities: Vec::new(),
+        });
+        inspection.interfaces = inspection
+            .snapshot
+            .interfaces
+            .iter()
+            .map(|interface| PrnsInterfaceSnapshot {
+                struct_size: size_of::<PrnsInterfaceSnapshot>(),
+                interface_id: bytes_view(interface.interface_id.as_bytes()),
+                has_name: u8::from(interface.name.is_some()),
+                name: interface
+                    .name
+                    .as_deref()
+                    .map_or_else(|| string_view(""), string_view),
+                has_kind: u8::from(interface.kind.is_some()),
+                kind: interface.kind.map_or(0, interface_kind_value),
+                health: interface_health_value(interface.health),
+                has_failure_detail: u8::from(interface.failure_detail.is_some()),
+                failure_detail: interface
+                    .failure_detail
+                    .as_deref()
+                    .map_or_else(|| string_view(""), string_view),
+                rx_bytes: interface.rx_bytes,
+                tx_bytes: interface.tx_bytes,
+                has_rx_bps: u8::from(interface.rx_bps.is_some()),
+                rx_bps: interface.rx_bps.unwrap_or_default(),
+                has_tx_bps: u8::from(interface.tx_bps.is_some()),
+                tx_bps: interface.tx_bps.unwrap_or_default(),
+                route_count: interface.route_count,
+                link_count: interface.link_count,
+                transported_link_count: interface.transported_link_count,
+            })
+            .collect();
+        inspection.routes = inspection
+            .snapshot
+            .routes
+            .iter()
+            .map(|route| PrnsRouteSnapshot {
+                struct_size: size_of::<PrnsRouteSnapshot>(),
+                destination: bytes_view(route.destination.as_bytes()),
+                hops: route.hops,
+                has_via_identity: u8::from(route.via_identity.is_some()),
+                via_identity: route.via_identity.as_ref().map_or_else(
+                    || bytes_view(&[]),
+                    |identity| bytes_view(identity.as_bytes()),
+                ),
+                interface_id: bytes_view(route.interface_id.as_bytes()),
+                learned_at_millis: route.learned_at_millis,
+                last_relayed_at_millis: route.last_relayed_at_millis,
+                expires_at_millis: route.expires_at_millis,
+            })
+            .collect();
+        inspection.destination_identities = inspection
+            .snapshot
+            .destination_identities
+            .iter()
+            .map(|identity| PrnsDestinationIdentitySnapshot {
+                struct_size: size_of::<PrnsDestinationIdentitySnapshot>(),
+                destination: bytes_view(identity.destination.as_bytes()),
+                identity: bytes_view(identity.identity.as_bytes()),
+            })
+            .collect();
+        inspection
+    }
+}
+
+fn interface_kind_value(kind: InterfaceKind) -> u32 {
+    match kind {
+        InterfaceKind::AutoLan => AbiInterfaceKind::AutoLan as u32,
+        InterfaceKind::TcpClient => AbiInterfaceKind::TcpClient as u32,
+        InterfaceKind::TcpServer => AbiInterfaceKind::TcpServer as u32,
+        InterfaceKind::Udp => AbiInterfaceKind::Udp as u32,
+        InterfaceKind::Serial => AbiInterfaceKind::Serial as u32,
+        InterfaceKind::Kiss => AbiInterfaceKind::Kiss as u32,
+        InterfaceKind::Ax25Kiss => AbiInterfaceKind::Ax25Kiss as u32,
+        InterfaceKind::RNode => AbiInterfaceKind::RNode as u32,
+        InterfaceKind::MultiRNode => AbiInterfaceKind::MultiRNode as u32,
+        InterfaceKind::Pipe => AbiInterfaceKind::Pipe as u32,
+        InterfaceKind::BackboneClient => AbiInterfaceKind::BackboneClient as u32,
+        InterfaceKind::BackboneServer => AbiInterfaceKind::BackboneServer as u32,
+        InterfaceKind::I2p => AbiInterfaceKind::I2p as u32,
+        InterfaceKind::Weave => AbiInterfaceKind::Weave as u32,
+        InterfaceKind::AutomaticUsb => AbiInterfaceKind::AutomaticUsb as u32,
+        InterfaceKind::AutomaticBluetoothLe => AbiInterfaceKind::AutomaticBluetoothLe as u32,
+        InterfaceKind::WebSocketClient => AbiInterfaceKind::WebSocketClient as u32,
+        InterfaceKind::WebSocketServer => AbiInterfaceKind::WebSocketServer as u32,
+        InterfaceKind::BrowserRendezvous => AbiInterfaceKind::BrowserRendezvous as u32,
+    }
+}
+
+fn interface_health_value(health: InterfaceHealth) -> u32 {
+    use prns_host_core::InterfaceHealth as AbiInterfaceHealth;
+    match health {
+        InterfaceHealth::Initializing => AbiInterfaceHealth::Initializing as u32,
+        InterfaceHealth::Connected => AbiInterfaceHealth::Connected as u32,
+        InterfaceHealth::Degraded => AbiInterfaceHealth::Degraded as u32,
+        InterfaceHealth::Reconnecting => AbiInterfaceHealth::Reconnecting as u32,
+        InterfaceHealth::Failed => AbiInterfaceHealth::Failed as u32,
+        InterfaceHealth::Disconnected => AbiInterfaceHealth::Disconnected as u32,
+        InterfaceHealth::Disabled => AbiInterfaceHealth::Disabled as u32,
+        InterfaceHealth::Unknown => AbiInterfaceHealth::Unknown as u32,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn prns_host_snapshot(
+    host: *const PrnsHost,
+    timeout_millis: u32,
+    out_snapshot: *mut *mut PrnsHostInspection,
+) -> u32 {
+    catch_status(|| {
+        let host = match unsafe { required_ref(host) } {
+            Ok(host) => host,
+            Err(error) => return error,
+        };
+        let out = match unsafe { required_mut(out_snapshot) } {
+            Ok(out) => out,
+            Err(error) => return error,
+        };
+        *out = ptr::null_mut();
+        let native = lock(&host.native);
+        let Some(native) = native.as_ref() else {
+            return status(AbiStatus::Stopped);
+        };
+        let timeout = if timeout_millis == NEVER_TIMEOUT {
+            None
+        } else {
+            Some(Duration::from_millis(u64::from(timeout_millis)))
+        };
+        let snapshot = match native.snapshot(timeout) {
+            Ok(snapshot) => snapshot,
+            Err(NativeSnapshotError::Busy) => return status(AbiStatus::QueueFull),
+            Err(NativeSnapshotError::Stopped) => return status(AbiStatus::Stopped),
+            Err(NativeSnapshotError::TimedOut) => return status(AbiStatus::TimedOut),
+        };
+        *out = Box::into_raw(PrnsHostInspection::new(snapshot));
+        status(AbiStatus::Ok)
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn prns_host_snapshot_read(
+    snapshot: *const PrnsHostInspection,
+    out_snapshot: *mut PrnsHostSnapshot,
+) -> u32 {
+    catch_status(|| {
+        let snapshot = match unsafe { required_ref(snapshot) } {
+            Ok(snapshot) => snapshot,
+            Err(error) => return error,
+        };
+        let out = match unsafe { required_mut(out_snapshot) } {
+            Ok(out) => out,
+            Err(error) => return error,
+        };
+        if let Err(error) = validate_size(out.struct_size, size_of::<PrnsHostSnapshot>()) {
+            return error;
+        }
+        let runtime = snapshot.snapshot.runtime;
+        let persistence = &snapshot.snapshot.persistence;
+        *out = PrnsHostSnapshot {
+            struct_size: size_of::<PrnsHostSnapshot>(),
+            revision: snapshot.snapshot.revision,
+            backend: PrnsBackendInfo {
+                struct_size: size_of::<PrnsBackendInfo>(),
+                backend: AbiBackendKind::Native as u32,
+                capabilities: NATIVE_CAPABILITIES.as_ptr(),
+                capability_count: NATIVE_CAPABILITIES.len(),
+                interface_kinds: NATIVE_INTERFACE_KINDS.as_ptr(),
+                interface_kind_count: NATIVE_INTERFACE_KINDS.len(),
+            },
+            interfaces: snapshot.interfaces.as_ptr(),
+            interface_count: snapshot.interfaces.len(),
+            routes: snapshot.routes.as_ptr(),
+            route_count: snapshot.routes.len(),
+            active_link_count: snapshot.snapshot.active_link_count,
+            destination_identities: snapshot.destination_identities.as_ptr(),
+            destination_identity_count: snapshot.destination_identities.len(),
+            runtime: PrnsRuntimeHealthSnapshot {
+                struct_size: size_of::<PrnsRuntimeHealthSnapshot>(),
+                running: u8::from(runtime.running),
+                uptime_millis: runtime.uptime_millis,
+                interface_count: runtime.interface_count,
+                online_interface_count: runtime.online_interface_count,
+                route_count: runtime.route_count,
+                link_count: runtime.link_count,
+                transported_link_count: runtime.transported_link_count,
+                rx_bytes: runtime.rx_bytes,
+                tx_bytes: runtime.tx_bytes,
+                rx_bps: runtime.rx_bps,
+                tx_bps: runtime.tx_bps,
+            },
+            persistence: PrnsPersistenceSnapshot {
+                struct_size: size_of::<PrnsPersistenceSnapshot>(),
+                persistent: u8::from(persistence.persistent),
+                restored: u8::from(persistence.restored),
+                has_last_flush_cause: u8::from(persistence.last_flush_cause.is_some()),
+                last_flush_cause: persistence
+                    .last_flush_cause
+                    .map_or(0, |cause| persistence_cause(cause) as u32),
+                has_last_failure_detail: u8::from(persistence.last_failure_detail.is_some()),
+                last_failure_detail: persistence
+                    .last_failure_detail
+                    .as_deref()
+                    .map_or_else(|| string_view(""), string_view),
+            },
+        };
+        status(AbiStatus::Ok)
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn prns_host_snapshot_release(snapshot: *mut PrnsHostInspection) {
+    if !snapshot.is_null() {
+        let _ = catch_unwind(AssertUnwindSafe(|| unsafe {
+            drop(Box::from_raw(snapshot));
+        }));
+    }
 }
 
 unsafe fn submit_host_command(

@@ -11,6 +11,11 @@ pub fn host_contract_abi() -> u32 {
     prns_host::HOST_CONTRACT_ABI
 }
 
+#[wasm_bindgen(js_name = hostSchemaVersion)]
+pub fn host_schema_version() -> u32 {
+    prns_host::HOST_SCHEMA_VERSION
+}
+
 #[wasm_bindgen(js_name = productVersion)]
 pub fn product_version() -> String {
     prns_host::HOST_CONTRACT.product_version.to_string()
