@@ -244,7 +244,7 @@ jobs:
           - os: windows-2025
             target: x86_64-pc-windows-msvc
             binary: target/x86_64-pc-windows-msvc/release/hopspot-flash.exe
-            rustflags: -D warnings -C linker=rust-lld -C linker-flavor=lld-link -C link-arg=/Brepro
+            rustflags: -D warnings -C linker=rust-lld -C linker-flavor=lld-link -C link-arg=/Brepro -C link-arg=/debug:none
     runs-on: ${{ matrix.platform.os }}
     timeout-minutes: 180
     env:
@@ -257,6 +257,7 @@ jobs:
         with:
           toolchain: 1.96.0
           targets: ${{ matrix.platform.target }}
+          components: llvm-tools-preview
       - name: Expose and prove the Rust-bundled Windows linker
         if: matrix.platform.target == 'x86_64-pc-windows-msvc'
         shell: bash
@@ -279,6 +280,20 @@ jobs:
           echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$GITHUB_SHA")" >> "$GITHUB_ENV"
       - name: Build standalone CLI from locked dependencies
         run: cargo build --release --locked -p hopspot-flash --target ${{ matrix.platform.target }}
+      - name: Reject unshipped Windows PDB identity
+        if: matrix.platform.target == 'x86_64-pc-windows-msvc'
+        shell: bash
+        run: |
+          sysroot="$(cygpath --unix "$(rustc --print sysroot)")"
+          host="$(rustc --print host-tuple)"
+          llvm_readobj="${sysroot}/lib/rustlib/${host}/bin/llvm-readobj.exe"
+          test -x "$llvm_readobj"
+          debug_directory="$("$llvm_readobj" --coff-debug-directory "${{ matrix.platform.binary }}")"
+          printf '%s\n' "$debug_directory"
+          if grep -Eiq 'PDBFileName:|\.pdb([[:space:]]|$)' <<< "$debug_directory"; then
+            echo "release binary contains an unshipped PDB identity" >&2
+            exit 1
+          fi
       - name: Package deterministic archive
         run: ./tools/prns release cli package -- --binary "${{ matrix.platform.binary }}" --target "${{ matrix.platform.target }}" --out-dir target/flasher-cli
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

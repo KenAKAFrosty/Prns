@@ -707,6 +707,7 @@ class FlasherReproducibilityTests(unittest.TestCase):
             self.assertIn("linker=rust-lld", windows_matrix)
             self.assertIn("linker-flavor=lld-link", windows_matrix)
             self.assertIn("link-arg=/Brepro", windows_matrix)
+            self.assertIn("link-arg=/debug:none", windows_matrix)
             self.assertIn(
                 "Expose and prove the Rust-bundled Windows linker",
                 workflow,
@@ -716,6 +717,9 @@ class FlasherReproducibilityTests(unittest.TestCase):
                 workflow,
             )
             self.assertIn(r"grep -E '^LLD 22\.1\.2 '", workflow)
+            self.assertIn("Reject unshipped Windows PDB identity", workflow)
+            self.assertIn("--coff-debug-directory", workflow)
+            self.assertIn("PDBFileName:", workflow)
 
     def test_shipping_firmware_reuses_one_embedded_site_build(self) -> None:
         shipping = (
