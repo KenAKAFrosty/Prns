@@ -5,6 +5,7 @@ use std::fs;
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -12,6 +13,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use prnsd_control::{
     active_config_dir, start, stop, LaunchSpec, LogLane, ServicePaths, StartOutcome,
 };
+
+static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
 struct TestDirectory(PathBuf);
 
@@ -30,9 +33,10 @@ impl TestDirectory {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |duration| duration.as_nanos());
+        let sequence = NEXT_TEST_DIRECTORY.fetch_add(1, Ordering::Relaxed);
         let path = std::env::temp_dir().join(format!(
-            "prnsd-nnpages-live-{label}-{}-{nanos}",
-            std::process::id()
+            "prnsd-nnpages-live-{label}-{}-{nanos}-{sequence}",
+            std::process::id(),
         ));
         fs::create_dir_all(&path).unwrap_or_else(|error| panic!("{error}"));
         Self(path)
@@ -211,11 +215,17 @@ fn foreground_daemon_reconciles_page_paths_on_operator_request() {
     )
     .unwrap_or_else(|error| panic!("{error}"));
     let added = refresh(&directory);
-    assert!(added.contains("3 hosted route(s): 3 added, 0 removed, 0 unchanged"));
+    assert!(
+        added.contains("3 hosted route(s): 3 added, 0 removed, 0 unchanged"),
+        "{added}"
+    );
 
     fs::remove_file(pages.join("about.mu")).unwrap_or_else(|error| panic!("{error}"));
     let removed = refresh(&directory);
-    assert!(removed.contains("2 hosted route(s): 0 added, 1 removed, 2 unchanged"));
+    assert!(
+        removed.contains("2 hosted route(s): 0 added, 1 removed, 2 unchanged"),
+        "{removed}"
+    );
 
     daemon.terminate();
 }
