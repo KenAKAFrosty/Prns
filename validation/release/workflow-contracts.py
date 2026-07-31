@@ -195,6 +195,21 @@ def validate() -> list[str]:
             "prnsd-candidate.yml must resolve llvm-readobj from the pinned Rust sysroot"
         )
 
+    image_candidate = (
+        ROOT / ".github" / "workflows" / "prnsd-image-candidate.yml"
+    ).read_text(encoding="utf-8")
+    for source_gate in (
+        "./tools/prns release source package --",
+        '--commit "$GITHUB_SHA"',
+        "--output target/source-bundle/source.zip",
+        "--source-archive-checksum target/source-bundle/source.zip.sha256",
+    ):
+        if source_gate not in image_candidate:
+            errors.append(
+                "prnsd-image-candidate.yml is missing exact image source gate "
+                f"{source_gate!r}"
+            )
+
     ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     readiness = (
         ROOT / ".github" / "workflows" / "release-readiness.yml"

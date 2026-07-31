@@ -135,9 +135,14 @@ jobs:
           upload-release-assets: false
       - name: Bind the exact image candidate to this workflow run
         run: |
+          ./tools/prns release source package -- \
+            --commit "$GITHUB_SHA" \
+            --version "$(cat VERSION)" \
+            --output target/source-bundle/source.zip
           ./tools/prns release prnsd distribution -- image-candidate-index \
             --assets target/candidate \
             --source-commit "$GITHUB_SHA" \
+            --source-archive-checksum target/source-bundle/source.zip.sha256 \
             --repository "$GITHUB_REPOSITORY" \
             --workflow-run-id "$GITHUB_RUN_ID" \
             --workflow-run-attempt "$GITHUB_RUN_ATTEMPT" \
