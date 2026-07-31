@@ -43,7 +43,7 @@ jobs:
           - os: windows-2025
             target: x86_64-pc-windows-msvc
             binary: prnsd/target/x86_64-pc-windows-msvc/release/prnsd.exe
-            rustflags: -D warnings -C linker=rust-lld -C linker-flavor=lld-link -C link-arg=/Brepro
+            rustflags: -D warnings -C linker=rust-lld -C linker-flavor=lld-link -C link-arg=/Brepro -C link-arg=/debug:none
     runs-on: ${{ matrix.platform.os }}
     timeout-minutes: 180
     env:
@@ -91,6 +91,20 @@ jobs:
             --target "${{ matrix.platform.target }}" \
             --no-default-features \
             --features tokio-host,observability,tray
+      - name: Reject unshipped Windows PDB identity
+        if: matrix.platform.target == 'x86_64-pc-windows-msvc'
+        shell: bash
+        run: |
+          sysroot="$(cygpath --unix "$(rustc --print sysroot)")"
+          host="$(rustc --print host-tuple)"
+          llvm_readobj="${sysroot}/lib/rustlib/${host}/bin/llvm-readobj.exe"
+          test -x "$llvm_readobj"
+          debug_directory="$("$llvm_readobj" --coff-debug-directory "${{ matrix.platform.binary }}")"
+          printf '%s\n' "$debug_directory"
+          if grep -Eiq 'PDBFileName:|\.pdb([[:space:]]|$)' <<< "$debug_directory"; then
+            echo "release binary contains an unshipped PDB identity" >&2
+            exit 1
+          fi
       - name: Record native linkage
         shell: bash
         run: |
@@ -122,6 +136,7 @@ jobs:
                 file "${{ matrix.platform.binary }}"
                 "$rust_lld" -flavor link --version
                 "$llvm_readobj" --coff-imports "${{ matrix.platform.binary }}"
+                "$llvm_readobj" --coff-debug-directory "${{ matrix.platform.binary }}"
               } > "$evidence"
               ;;
             *)
