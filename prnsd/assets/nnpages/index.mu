@@ -38,7 +38,7 @@ Reads your existing ~/.reticulum config, and stock apps attach to the Prns daemo
 >>
 `F6eb•`f `F6eb`!Goes where Python can't`!`f
 >>>
-The same engine runs on bare-metal microcontrollers, directly inside Android and iOS apps, and in the browser.
+The same engine runs on bare-metal microcontrollers, directly inside Android and iOS apps, and in the browser. First-class SDKs and bindings cover Rust, TypeScript and JavaScript, Python, .NET and C#, Go, Swift, Kotlin and Java, Julia, and C and C++.
 
 >>
 `F6eb•`f `F6eb`!Ready-to-flash embedded nodes`!`f
