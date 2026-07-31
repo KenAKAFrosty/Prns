@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import hashlib
 import importlib.util
 import io
@@ -28,8 +29,53 @@ def load_module() -> types.ModuleType:
 distribution = load_module()
 
 
-def write_oci_layout(path: Path, platform: str, payload: bytes = b"manifest") -> str:
-    digest = f"sha256:{hashlib.sha256(payload).hexdigest()}"
+def gzip_layer(members: list[tuple[str, bytes]]) -> bytes:
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w") as layer:
+        for name, content in members:
+            info = tarfile.TarInfo(name)
+            info.size = len(content)
+            layer.addfile(info, io.BytesIO(content))
+    return gzip.compress(buffer.getvalue(), mtime=0)
+
+
+def image_members(architecture: str, source: bytes) -> list[tuple[str, bytes]]:
+    checksum = f"{hashlib.sha256(source).hexdigest()}  source.zip\n".encode()
+    return [
+        ("usr/local/bin/prnsd", architecture.encode()),
+        ("usr/share/prnsd/source.zip", source),
+        ("usr/share/prnsd/source.zip.sha256", checksum),
+    ]
+
+
+def write_oci_layout_layers(
+    path: Path, platform: str, layers_members: list[list[tuple[str, bytes]]]
+) -> str:
+    layers = [gzip_layer(members) for members in layers_members]
+    layer_digests = [f"sha256:{hashlib.sha256(layer).hexdigest()}" for layer in layers]
+    config = distribution.canonical_json(
+        {"architecture": platform.removeprefix("linux/"), "os": "linux"}
+    )
+    config_digest = f"sha256:{hashlib.sha256(config).hexdigest()}"
+    manifest = distribution.canonical_json(
+        {
+            "config": {
+                "digest": config_digest,
+                "mediaType": "application/vnd.oci.image.config.v1+json",
+                "size": len(config),
+            },
+            "layers": [
+                {
+                    "digest": layer_digest,
+                    "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+                    "size": len(layer),
+                }
+                for layer, layer_digest in zip(layers, layer_digests, strict=True)
+            ],
+            "schemaVersion": 2,
+        }
+    )
+    digest = f"sha256:{hashlib.sha256(manifest).hexdigest()}"
     index = distribution.canonical_json(
         {
             "manifests": [
@@ -40,21 +86,33 @@ def write_oci_layout(path: Path, platform: str, payload: bytes = b"manifest") ->
                         "architecture": platform.removeprefix("linux/"),
                         "os": "linux",
                     },
-                    "size": len(payload),
+                    "size": len(manifest),
                 }
             ],
             "schemaVersion": 2,
         }
     )
     with tarfile.open(path, "w") as archive:
-        for name, content in (
+        entries = [
             ("index.json", index),
-            (f"blobs/sha256/{digest.removeprefix('sha256:')}", payload),
-        ):
+            (f"blobs/sha256/{digest.removeprefix('sha256:')}", manifest),
+            (f"blobs/sha256/{config_digest.removeprefix('sha256:')}", config),
+            *[
+                (f"blobs/sha256/{layer_digest.removeprefix('sha256:')}", layer)
+                for layer, layer_digest in zip(layers, layer_digests, strict=True)
+            ],
+        ]
+        for name, content in entries:
             info = tarfile.TarInfo(name)
             info.size = len(content)
             archive.addfile(info, io.BytesIO(content))
     return digest
+
+
+def write_oci_layout(
+    path: Path, platform: str, layer_members: list[tuple[str, bytes]]
+) -> str:
+    return write_oci_layout_layers(path, platform, [layer_members])
 
 
 class PrnsdDistributionTests(unittest.TestCase):
@@ -181,12 +239,19 @@ class PrnsdDistributionTests(unittest.TestCase):
 
     def test_image_candidate_recomputes_platform_digests(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            source = b"exact source"
+            root = Path(temporary) / "assets"
+            root.mkdir()
+            checksum = Path(temporary) / "source.zip.sha256"
+            checksum.write_text(
+                f"{hashlib.sha256(source).hexdigest()}  source.zip\n",
+                encoding="utf-8",
+            )
             for architecture in ("amd64", "arm64"):
                 write_oci_layout(
                     root / f"prnsd-linux-{architecture}.oci.tar",
                     f"linux/{architecture}",
-                    architecture.encode(),
+                    image_members(architecture, source),
                 )
                 (root / f"prnsd-linux-{architecture}.spdx.json").write_text(
                     "{}\n", encoding="utf-8"
@@ -195,6 +260,7 @@ class PrnsdDistributionTests(unittest.TestCase):
             arguments = types.SimpleNamespace(
                 assets=root,
                 source_commit="b" * 40,
+                source_archive_checksum=checksum,
                 repository="KenAKAFrosty/Prns",
                 workflow_run_id=52,
                 workflow_run_attempt=1,
@@ -223,6 +289,122 @@ class PrnsdDistributionTests(unittest.TestCase):
                         workflow_run_id=52,
                     )
                 )
+
+    def test_image_candidate_requires_the_commit_source_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source = b"exact source"
+            root = Path(temporary) / "assets"
+            root.mkdir()
+            checksum = Path(temporary) / "source.zip.sha256"
+            checksum.write_text(
+                f"{hashlib.sha256(source).hexdigest()}  source.zip\n",
+                encoding="utf-8",
+            )
+            arguments = types.SimpleNamespace(
+                assets=root,
+                source_commit="b" * 40,
+                source_archive_checksum=checksum,
+                repository="KenAKAFrosty/Prns",
+                workflow_run_id=52,
+                workflow_run_attempt=1,
+                output=root / f"prnsd-image-candidate-{'b' * 40}.json",
+            )
+
+            for architecture in ("amd64", "arm64"):
+                write_oci_layout(
+                    root / f"prnsd-linux-{architecture}.oci.tar",
+                    f"linux/{architecture}",
+                    [("usr/local/bin/prnsd", architecture.encode())],
+                )
+                (root / f"prnsd-linux-{architecture}.spdx.json").write_text(
+                    "{}\n", encoding="utf-8"
+                )
+            with self.assertRaisesRegex(ValueError, "does not ship"):
+                distribution.write_image_candidate_index(arguments)
+
+            for architecture in ("amd64", "arm64"):
+                write_oci_layout(
+                    root / f"prnsd-linux-{architecture}.oci.tar",
+                    f"linux/{architecture}",
+                    image_members(architecture, b"stale source"),
+                )
+            with self.assertRaisesRegex(ValueError, "differs from the commit snapshot"):
+                distribution.write_image_candidate_index(arguments)
+
+            for architecture in ("amd64", "arm64"):
+                write_oci_layout(
+                    root / f"prnsd-linux-{architecture}.oci.tar",
+                    f"linux/{architecture}",
+                    image_members(architecture, source),
+                )
+            distribution.write_image_candidate_index(arguments)
+            index = arguments.output
+            value = json.loads(index.read_text(encoding="utf-8"))
+            value["source_archive_sha256"] = "0" * 64
+            index.write_bytes(distribution.canonical_json(value))
+            with self.assertRaisesRegex(ValueError, "recorded digest"):
+                distribution.verify_image_candidate_index(
+                    types.SimpleNamespace(
+                        assets=root,
+                        index=index,
+                        source_commit="b" * 40,
+                        repository="KenAKAFrosty/Prns",
+                        workflow_run_id=52,
+                    )
+                )
+
+    def test_image_source_parsing_applies_whiteouts_before_layer_additions(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source = b"replacement source"
+            layout = Path(temporary) / "image.oci.tar"
+            write_oci_layout_layers(
+                layout,
+                "linux/amd64",
+                [
+                    image_members("amd64", b"lower source"),
+                    [
+                        *image_members("amd64", source)[1:],
+                        ("usr/share/prnsd/.wh..wh..opq", b""),
+                    ],
+                ],
+            )
+
+            self.assertEqual(
+                distribution.oci_source_archive_sha256(layout, "linux/amd64"),
+                hashlib.sha256(source).hexdigest(),
+            )
+
+    def test_image_source_parsing_rejects_ambiguous_or_unsafe_layers(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = b"exact source"
+            duplicate = root / "duplicate.oci.tar"
+            members = image_members("amd64", source)
+            write_oci_layout(
+                duplicate,
+                "linux/amd64",
+                [*members, ("usr/share/prnsd/source.zip", source)],
+            )
+            with self.assertRaisesRegex(ValueError, "duplicate"):
+                distribution.oci_source_archive_sha256(duplicate, "linux/amd64")
+
+            unsafe = root / "unsafe.oci.tar"
+            write_oci_layout(
+                unsafe,
+                "linux/amd64",
+                [*members, ("../usr/share/prnsd/source.zip", source)],
+            )
+            with self.assertRaisesRegex(ValueError, "unsafe"):
+                distribution.oci_source_archive_sha256(unsafe, "linux/amd64")
+
+            removed = root / "removed.oci.tar"
+            write_oci_layout_layers(
+                removed,
+                "linux/amd64",
+                [members, [(".wh..wh..opq", b"")]],
+            )
+            with self.assertRaisesRegex(ValueError, "does not ship"):
+                distribution.oci_source_archive_sha256(removed, "linux/amd64")
 
     def test_railway_contract_exposes_write_once_announcement_controls(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -317,6 +499,7 @@ class PrnsdDistributionTests(unittest.TestCase):
                 distribution.canonical_json(
                     {
                         "platform_digests": platform_digests,
+                        "source_archive_sha256": "1" * 64,
                         "source_commit": commit,
                         "version": "0.3.1",
                         "workflow": {

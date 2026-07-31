@@ -9,7 +9,7 @@ import hashlib
 import io
 import json
 import os
-from pathlib import Path, PurePath
+from pathlib import Path, PurePosixPath
 import re
 import sys
 import tarfile
@@ -30,6 +30,26 @@ SHA256_PATTERN = re.compile(r"sha256:[0-9a-f]{64}\Z")
 COMMIT_PATTERN = re.compile(r"[0-9a-f]{40}\Z")
 PLATFORM_PATTERN = re.compile(r"linux/(?:amd64|arm64)\Z")
 IDENTITY_HASH_PATTERN = re.compile(r"[0-9a-f]{32}\Z")
+ARCHIVE_DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
+SOURCE_CHECKSUM_PATTERN = re.compile(r"([0-9a-f]{64})  source\.zip\n\Z")
+IMAGE_SOURCE_ARCHIVE_PATH = "usr/share/prnsd/source.zip"
+IMAGE_SOURCE_CHECKSUM_PATH = "usr/share/prnsd/source.zip.sha256"
+OCI_LAYER_MODES = {
+    "application/vnd.oci.image.layer.v1.tar": "r:",
+    "application/vnd.oci.image.layer.v1.tar+gzip": "r:gz",
+}
+MAX_IMAGE_SOURCE_ARCHIVE_BYTES = 32 * 1024 * 1024
+IMAGE_SOURCE_PATHS = frozenset(
+    {IMAGE_SOURCE_ARCHIVE_PATH, IMAGE_SOURCE_CHECKSUM_PATH}
+)
+IMAGE_SOURCE_ANCESTORS = frozenset(
+    ancestor
+    for hosted in IMAGE_SOURCE_PATHS
+    for ancestor in (
+        "/".join(PurePosixPath(hosted).parts[:depth])
+        for depth in range(1, len(PurePosixPath(hosted).parts))
+    )
+)
 
 
 def sha256(path: Path) -> str:
@@ -225,54 +245,207 @@ def parse_platform_digest(value: str) -> tuple[str, str]:
     return platform, digest
 
 
+def safe_oci_members(archive: tarfile.TarFile) -> dict[str, tarfile.TarInfo]:
+    listed = archive.getmembers()
+    if any(
+        member.issym()
+        or member.islnk()
+        or PurePosixPath(member.name).is_absolute()
+        or ".." in PurePosixPath(member.name).parts
+        for member in listed
+    ):
+        raise ValueError("OCI layout contains an unsafe archive member")
+    members = {member.name: member for member in listed}
+    if len(members) != len(listed):
+        raise ValueError("OCI layout contains duplicate archive members")
+    return members
+
+
+def oci_blob(
+    archive: tarfile.TarFile,
+    members: dict[str, tarfile.TarInfo],
+    digest: str,
+    label: str,
+) -> bytes:
+    blob = members.get(f"blobs/sha256/{digest.removeprefix('sha256:')}")
+    if blob is None or not blob.isfile():
+        raise ValueError(f"OCI {label} blob is missing")
+    extracted = archive.extractfile(blob)
+    if extracted is None:
+        raise ValueError(f"OCI {label} blob could not be read")
+    content = extracted.read()
+    if digest != f"sha256:{hashlib.sha256(content).hexdigest()}":
+        raise ValueError(f"OCI {label} digest does not match its bytes")
+    return content
+
+
+def platform_manifest_digest(
+    archive: tarfile.TarFile,
+    members: dict[str, tarfile.TarInfo],
+    platform: str,
+) -> str:
+    index_member = members.get("index.json")
+    if index_member is None or not index_member.isfile():
+        raise ValueError("OCI layout has no regular index.json")
+    extracted = archive.extractfile(index_member)
+    if extracted is None:
+        raise ValueError("OCI layout index could not be read")
+    index = json.load(extracted)
+    manifests = index.get("manifests") if isinstance(index, dict) else None
+    if not isinstance(manifests, list):
+        raise ValueError("OCI layout index has no manifest list")
+    architecture = platform.removeprefix("linux/")
+    matches = [
+        descriptor
+        for descriptor in manifests
+        if isinstance(descriptor, dict)
+        and isinstance(descriptor.get("platform"), dict)
+        and descriptor.get("platform", {}).get("os") == "linux"
+        and descriptor.get("platform", {}).get("architecture") == architecture
+        and SHA256_PATTERN.fullmatch(str(descriptor.get("digest"))) is not None
+    ]
+    if len(matches) != 1:
+        raise ValueError(f"OCI layout does not contain exactly one {platform} image")
+    return matches[0]["digest"]
+
+
 def oci_platform_digest(layout: Path, platform: str) -> str:
     if PLATFORM_PATTERN.fullmatch(platform) is None:
         raise ValueError(f"unsupported OCI platform {platform!r}")
     regular_file(layout, "OCI layout archive")
     with tarfile.open(layout, "r:*") as archive:
-        members = {member.name: member for member in archive.getmembers()}
-        if any(
-            member.issym()
-            or member.islnk()
-            or PurePath(member.name).is_absolute()
-            or ".." in PurePath(member.name).parts
-            for member in members.values()
-        ):
-            raise ValueError("OCI layout contains an unsafe archive member")
-        index_member = members.get("index.json")
-        if index_member is None or not index_member.isfile():
-            raise ValueError("OCI layout has no regular index.json")
-        extracted = archive.extractfile(index_member)
-        if extracted is None:
-            raise ValueError("OCI layout index could not be read")
-        index = json.load(extracted)
-        manifests = index.get("manifests") if isinstance(index, dict) else None
-        if not isinstance(manifests, list):
-            raise ValueError("OCI layout index has no manifest list")
-        architecture = platform.removeprefix("linux/")
-        matches = [
-            descriptor
-            for descriptor in manifests
-            if isinstance(descriptor, dict)
-            and isinstance(descriptor.get("platform"), dict)
-            and descriptor.get("platform", {}).get("os") == "linux"
-            and descriptor.get("platform", {}).get("architecture") == architecture
-            and SHA256_PATTERN.fullmatch(str(descriptor.get("digest"))) is not None
-        ]
-        if len(matches) != 1:
-            raise ValueError(f"OCI layout does not contain exactly one {platform} image")
-        digest = matches[0]["digest"]
-        blob_name = f"blobs/sha256/{digest.removeprefix('sha256:')}"
-        blob = members.get(blob_name)
-        if blob is None or not blob.isfile():
-            raise ValueError("OCI platform manifest blob is missing")
-        extracted_blob = archive.extractfile(blob)
-        if extracted_blob is None:
-            raise ValueError("OCI platform manifest blob could not be read")
-        actual = hashlib.sha256(extracted_blob.read()).hexdigest()
-        if digest != f"sha256:{actual}":
-            raise ValueError("OCI platform manifest digest does not match its bytes")
+        members = safe_oci_members(archive)
+        digest = platform_manifest_digest(archive, members, platform)
+        oci_blob(archive, members, digest, "platform manifest")
         return digest
+
+
+def oci_source_archive_sha256(layout: Path, platform: str) -> str:
+    if PLATFORM_PATTERN.fullmatch(platform) is None:
+        raise ValueError(f"unsupported OCI platform {platform!r}")
+    regular_file(layout, "OCI layout archive")
+    with tarfile.open(layout, "r:*") as archive:
+        members = safe_oci_members(archive)
+        digest = platform_manifest_digest(archive, members, platform)
+        manifest = json.loads(oci_blob(archive, members, digest, "platform manifest"))
+        layers = manifest.get("layers") if isinstance(manifest, dict) else None
+        if not isinstance(layers, list) or not layers:
+            raise ValueError(f"{platform} manifest has no layer list")
+        hosted: dict[str, bytes | None] = dict.fromkeys(IMAGE_SOURCE_PATHS)
+        for descriptor in layers:
+            if not isinstance(descriptor, dict):
+                raise ValueError(f"{platform} manifest layer descriptor is malformed")
+            mode = OCI_LAYER_MODES.get(str(descriptor.get("mediaType")))
+            layer_digest = str(descriptor.get("digest"))
+            if mode is None or SHA256_PATTERN.fullmatch(layer_digest) is None:
+                raise ValueError(f"{platform} manifest layer descriptor is malformed")
+            layer_bytes = oci_blob(archive, members, layer_digest, "layer")
+            with tarfile.open(fileobj=io.BytesIO(layer_bytes), mode=mode) as layer:
+                additions: dict[str, bytes] = {}
+                whiteouts: list[tuple[str, str]] = []
+                relevant_names: set[str] = set()
+                for member in layer.getmembers():
+                    name = member.name
+                    while name.startswith("./"):
+                        name = name[2:]
+                    path = PurePosixPath(name)
+                    if path.is_absolute() or ".." in path.parts:
+                        raise ValueError(
+                            f"{platform} image layer contains an unsafe archive member"
+                        )
+                    name = path.as_posix()
+                    directory, _, base = name.rpartition("/")
+                    if base == ".wh..wh..opq":
+                        effect = ("opaque", directory)
+                    elif base.startswith(".wh."):
+                        removed_base = base.removeprefix(".wh.")
+                        if not removed_base:
+                            raise ValueError(
+                                f"{platform} image layer contains an invalid whiteout"
+                            )
+                        removed = (
+                            f"{directory}/{removed_base}"
+                            if directory
+                            else removed_base
+                        )
+                        effect = ("remove", removed)
+                    else:
+                        effect = None
+                    if effect is None:
+                        affects_source = False
+                    elif effect[0] == "opaque":
+                        affects_source = not effect[1] or any(
+                            hosted_path.startswith(f"{effect[1]}/")
+                            for hosted_path in IMAGE_SOURCE_PATHS
+                        )
+                    else:
+                        affects_source = any(
+                            hosted_path == effect[1]
+                            or hosted_path.startswith(f"{effect[1]}/")
+                            for hosted_path in IMAGE_SOURCE_PATHS
+                        )
+                    relevant = (
+                        name in IMAGE_SOURCE_PATHS
+                        or name in IMAGE_SOURCE_ANCESTORS
+                        or affects_source
+                    )
+                    if relevant:
+                        if name in relevant_names:
+                            raise ValueError(
+                                f"{platform} image layer contains duplicate {name}"
+                            )
+                        relevant_names.add(name)
+                    if effect is not None:
+                        if affects_source:
+                            whiteouts.append(effect)
+                        continue
+                    if name in IMAGE_SOURCE_ANCESTORS:
+                        if not member.isdir():
+                            raise ValueError(
+                                f"{platform} image hosts an invalid ancestor {name}"
+                            )
+                        continue
+                    if name not in IMAGE_SOURCE_PATHS:
+                        continue
+                    if not member.isfile() or member.size > MAX_IMAGE_SOURCE_ARCHIVE_BYTES:
+                        raise ValueError(f"{platform} image hosts an invalid {name}")
+                    extracted = layer.extractfile(member)
+                    if extracted is None:
+                        raise ValueError(f"{platform} image {name} could not be read")
+                    additions[name] = extracted.read()
+                for effect, affected in whiteouts:
+                    for hosted_path in IMAGE_SOURCE_PATHS:
+                        if effect == "opaque":
+                            removes = bool(affected) and hosted_path.startswith(
+                                f"{affected}/"
+                            )
+                            if not affected:
+                                removes = True
+                        else:
+                            removes = hosted_path == affected or hosted_path.startswith(
+                                f"{affected}/"
+                            )
+                        if removes:
+                            hosted[hosted_path] = None
+                hosted.update(additions)
+        source = hosted[IMAGE_SOURCE_ARCHIVE_PATH]
+        checksum = hosted[IMAGE_SOURCE_CHECKSUM_PATH]
+        if source is None or checksum is None:
+            raise ValueError(
+                f"{platform} image does not ship {IMAGE_SOURCE_ARCHIVE_PATH}"
+            )
+        actual = hashlib.sha256(source).hexdigest()
+        if checksum != f"{actual}  source.zip\n".encode():
+            raise ValueError(f"{platform} image source checksum is malformed or stale")
+        return actual
+
+
+def parse_source_checksum(path: Path) -> str:
+    document = regular_file(path, "source archive checksum").read_text(encoding="utf-8")
+    match = SOURCE_CHECKSUM_PATTERN.fullmatch(document)
+    if match is None:
+        raise ValueError("source archive checksum sidecar is malformed")
+    return match.group(1)
 
 
 def print_oci_digest(arguments: argparse.Namespace) -> None:
@@ -424,6 +597,12 @@ def write_image_candidate_index(arguments: argparse.Namespace) -> None:
         platform: oci_platform_digest(path, platform)
         for platform, path in layouts.items()
     }
+    expected_source = parse_source_checksum(arguments.source_archive_checksum)
+    for platform, path in layouts.items():
+        if oci_source_archive_sha256(path, platform) != expected_source:
+            raise ValueError(
+                f"{platform} image source archive differs from the commit snapshot"
+            )
     sboms = sorted(root.glob("prnsd-linux-*.spdx.json"))
     if len(sboms) != 2:
         raise ValueError("image candidate requires one SPDX SBOM per platform")
@@ -436,6 +615,7 @@ def write_image_candidate_index(arguments: argparse.Namespace) -> None:
         "platform_digests": platform_digests,
         "repository": arguments.repository,
         "schema": 1,
+        "source_archive_sha256": expected_source,
         "source_commit": commit,
         "version": suite_version(),
         "workflow": {
@@ -480,7 +660,7 @@ def load_candidate_index(
         "workflow",
     }
     if "image" in workflow_path:
-        required_fields.add("platform_digests")
+        required_fields.update({"platform_digests", "source_archive_sha256"})
     workflow = value.get("workflow") if isinstance(value, dict) else None
     if (
         not isinstance(value, dict)
@@ -537,6 +717,7 @@ def verify_image_candidate_index(arguments: argparse.Namespace) -> None:
         "platform_digests",
         "repository",
         "schema",
+        "source_archive_sha256",
         "source_commit",
         "version",
         "workflow",
@@ -563,6 +744,20 @@ def verify_image_candidate_index(arguments: argparse.Namespace) -> None:
     }
     if value.get("platform_digests") != expected_digests:
         raise ValueError("image candidate platform digests differ from its OCI layouts")
+    recorded_source = value.get("source_archive_sha256")
+    if (
+        not isinstance(recorded_source, str)
+        or ARCHIVE_DIGEST_PATTERN.fullmatch(recorded_source) is None
+    ):
+        raise ValueError("image candidate records an invalid source archive digest")
+    for platform in ("linux/amd64", "linux/arm64"):
+        actual_source = oci_source_archive_sha256(
+            root / f"prnsd-{platform.replace('/', '-')}.oci.tar", platform
+        )
+        if actual_source != recorded_source:
+            raise ValueError(
+                "image candidate source archive differs from its recorded digest"
+            )
     print(f"verified exact image candidate from workflow run {arguments.workflow_run_id}")
 
 
@@ -672,11 +867,18 @@ def suite_record_value(root: Path, inventory: Path, commit: str) -> dict:
     image_candidate = json.loads(
         (root / image_candidate_name).read_text(encoding="utf-8")
     )
+    source_archive_sha256 = (
+        image_candidate.get("source_archive_sha256")
+        if isinstance(image_candidate, dict)
+        else None
+    )
     if (
         not isinstance(image_candidate, dict)
         or image_candidate.get("platform_digests") != metadata.get("platform_digests")
+        or not isinstance(source_archive_sha256, str)
+        or ARCHIVE_DIGEST_PATTERN.fullmatch(source_archive_sha256) is None
     ):
-        raise ValueError("image metadata differs from the reproduced platform digests")
+        raise ValueError("image candidate differs from the reproduced source identity")
     railway_name = f"railway-template-contract-v{version}.json"
     if railway_name not in expected:
         raise ValueError("suite inventory is missing the Railway publication contract")
@@ -723,6 +925,7 @@ def suite_record_value(root: Path, inventory: Path, commit: str) -> dict:
             "metadata": image_metadata_name,
             "manifest_digest": metadata["manifest_digest"],
             "platform_digests": metadata.get("platform_digests"),
+            "source_archive_sha256": source_archive_sha256,
         },
         "inventory": file_identity(inventory),
         "linkage": linkage,
@@ -1017,6 +1220,7 @@ def parser() -> argparse.ArgumentParser:
     image_candidate = commands.add_parser("image-candidate-index")
     image_candidate.add_argument("--assets", type=Path, required=True)
     image_candidate.add_argument("--source-commit", required=True)
+    image_candidate.add_argument("--source-archive-checksum", type=Path, required=True)
     image_candidate.add_argument("--repository", required=True)
     image_candidate.add_argument("--workflow-run-id", type=int, required=True)
     image_candidate.add_argument("--workflow-run-attempt", type=int, required=True)
