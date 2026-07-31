@@ -1,5 +1,7 @@
 package prns
 
+import "path/filepath"
+
 type Limits struct {
 	PendingCommands    int
 	ApplicationEvents  int
@@ -19,6 +21,7 @@ func BalancedLimits() Limits {
 type HostOptions struct {
 	Role                 HostRole
 	Identity             IdentityConfig
+	Persistence          PersistenceConfig
 	Destinations         []DestinationConfig
 	RequiredCapabilities []Capability
 	Limits               Limits
@@ -31,6 +34,22 @@ func EphemeralEndpoint(
 	return HostOptions{
 		Role:                 HostRoleEndpoint,
 		Identity:             IdentityConfigGenerateEphemeral{},
+		Persistence:          PersistenceConfigEphemeral{},
+		Destinations:         destinations,
+		RequiredCapabilities: requiredCapabilities,
+		Limits:               BalancedLimits(),
+	}
+}
+
+func PersistentEndpoint(
+	root string,
+	destinations []DestinationConfig,
+	requiredCapabilities []Capability,
+) HostOptions {
+	return HostOptions{
+		Role:                 HostRoleEndpoint,
+		Identity:             IdentityConfigLoadOrCreate{Path: filepath.Join(root, "identity")},
+		Persistence:          PersistenceConfigDirectory{Path: filepath.Join(root, "state")},
 		Destinations:         destinations,
 		RequiredCapabilities: requiredCapabilities,
 		Limits:               BalancedLimits(),
@@ -47,6 +66,7 @@ const (
 	ConfigInvalidLimits
 	ConfigAllocationFailed
 	ConfigInvalidRequestPolicy
+	ConfigUnknownPersistence
 )
 
 type ConfigError struct {

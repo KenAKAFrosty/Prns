@@ -1,6 +1,5 @@
 #![forbid(unsafe_code)]
 
-use personal_rns::runtime::NoPersistence;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -12,9 +11,11 @@ use personal_rns::engine::{
     AnnounceNowFailure, AnnounceNowRejection, AnnounceTarget,
     DeliveryEvidence as EngineDeliveryEvidence, DeliveryProof, EstablishLinkFailure,
     EstablishLinkRejection, IdentifyFailure, IdentifyRejection,
-    LinkClosedReason as EngineLinkClosedReason, RequestPathFailure, RequestResponseTimeout,
-    RouteRemovalCause, SendRequestFailure, SendRequestRejection, SendResourceFailure,
-    SendResourceRejection, SendSinglePacketFailure, SendSinglePacketRejection,
+    LinkClosedReason as EngineLinkClosedReason,
+    PersistenceFlushCause as EnginePersistenceFlushCause,
+    PersistenceFlushTarget as EnginePersistenceFlushTarget, RequestPathFailure,
+    RequestResponseTimeout, RouteRemovalCause, SendRequestFailure, SendRequestRejection,
+    SendResourceFailure, SendResourceRejection, SendSinglePacketFailure, SendSinglePacketRejection,
     SendToChannelFailure, SendToChannelRejection, SendToLinkFailure, SendToLinkRejection,
     SetResourceStrategyFailure, SetResourceStrategyRejection,
 };
@@ -26,7 +27,8 @@ use personal_rns::routing::request_handlers::RequestPolicy as EngineRequestPolic
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::request_endpoints::RespondToken;
 use personal_rns::runtime::{
-    Diagnostic, Message, PrnsEvent, RequestPathError, ResourceSendError, SegmentCompression,
+    Diagnostic, Message, NodePersistence, PersistenceIntent, PrnsEvent, RequestPathError,
+    ResourceSendError, SegmentCompression,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::{TcpClientInterface, TcpServer};
@@ -34,16 +36,17 @@ use personal_rns::udp::UdpInterface;
 use personal_rns::units::{DurationMillis, RttMillis};
 use personal_rns::{
     load_or_create_identity_secret, request_endpoints, try_generate_identity_secret,
-    AttachedInterface, AttachedSupervisor, ManuallyAttached, PreConfiguredDestination, PrnsNode,
-    PrnsNodeHandle, PrnsNodeRecipe, RatchetPolicy, ResourceStrategy as EngineResourceStrategy,
-    SendError, Zeroizing, IDENTITY_SECRET_KEY_LEN,
+    AttachedInterface, AttachedSupervisor, IdentitySecretFileError, ManuallyAttached,
+    PreConfiguredDestination, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe, RatchetPolicy,
+    ResourceStrategy as EngineResourceStrategy, SendError, Zeroizing, IDENTITY_SECRET_KEY_LEN,
 };
 use prns_host::{
     ApplicationEvent, Bitrate, Capability, ChannelMessage, CommandFailure, CommandOutcome,
     DeliveryEvidence, DestinationConfig, DestinationHash, DestinationIdentityConfig,
     DiagnosticEvent, HostCommand, HostConfig, HostRole, IdentityConfig, IdentityHash, InterfaceId,
-    LinkClosedReason, LinkId, PacketHash, RequestAvailable, RequestHandlerConfig, RequestId,
-    RequestPathHash, RequestPolicy, ResourceAvailable, ResourceCompression, ResourceHash,
+    LinkClosedReason, LinkId, PacketHash, PersistenceConfig, PersistenceFlushCause,
+    PersistenceFlushTarget, RequestAvailable, RequestHandlerConfig, RequestId, RequestPathHash,
+    RequestPolicy, ResourceAvailable, ResourceCompression, ResourceHash,
     ResourceNeedsDecompression, ResourceSegmentAvailable, ResourceStrategy, ResourceStreamId,
     ResponseAvailable, ResponseSegmentAvailable, ResponseTimeout, SingleDelivery,
 };
@@ -68,11 +71,28 @@ pub trait NativeEventSink: Send + Sync + 'static {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NativeStartError {
     MissingCapabilities(Vec<Capability>),
-    Identity(String),
+    Identity(IdentityStartError),
     Destination(String),
+    Persistence(PersistenceStartError),
     Runtime(String),
     Thread(String),
     TimedOut,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum IdentityStartError {
+    EntropyUnavailable,
+    PermissionDenied { path: String },
+    Malformed { path: String, length: u64 },
+    Unavailable { path: String, detail: String },
+    InvalidMaterial,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PersistenceStartError {
+    PermissionDenied { path: String },
+    NotDirectory { path: String },
+    Unavailable { path: String, detail: String },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -310,6 +330,27 @@ pub fn native_capabilities() -> &'static [Capability] {
     ]
 }
 
+#[must_use]
+pub fn persistent_endpoint(
+    root: &Path,
+    destinations: Vec<DestinationConfig>,
+    required_capabilities: Vec<Capability>,
+    limits: prns_host::PrnsLimits,
+) -> HostConfig {
+    HostConfig {
+        identity: IdentityConfig::LoadOrCreate {
+            path: root.join("identity").to_string_lossy().into_owned(),
+        },
+        persistence: PersistenceConfig::Directory {
+            path: root.join("state").to_string_lossy().into_owned(),
+        },
+        role: HostRole::Endpoint,
+        destinations,
+        required_capabilities,
+        limits,
+    }
+}
+
 struct Ready {
     identity_hash: IdentityHash,
     destination_hashes: Vec<DestinationHash>,
@@ -331,6 +372,21 @@ struct ResolvedConfig {
     host_identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
     role: HostRole,
     destinations: Vec<ResolvedDestination>,
+    persistence: ResolvedPersistence,
+}
+
+enum ResolvedPersistence {
+    Ephemeral,
+    Directory(NodePersistence),
+}
+
+impl PersistenceIntent for ResolvedPersistence {
+    fn into_node_persistence(self) -> Option<NodePersistence> {
+        match self {
+            Self::Ephemeral => None,
+            Self::Directory(persistence) => Some(persistence),
+        }
+    }
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -343,14 +399,64 @@ fn resolve_identity(
     match identity {
         IdentityConfig::Existing(secret) => Ok(Zeroizing::new(*secret.expose())),
         IdentityConfig::GenerateEphemeral => try_generate_identity_secret()
-            .map_err(|error| NativeStartError::Identity(error.to_string())),
+            .map_err(|_| NativeStartError::Identity(IdentityStartError::EntropyUnavailable)),
         IdentityConfig::LoadOrCreate { path } => load_or_create_identity_secret(Path::new(&path))
-            .map_err(|error| NativeStartError::Identity(format!("{path}: {error:?}"))),
+            .map_err(|error| {
+                let failure = match error {
+                    IdentitySecretFileError::Io(error)
+                        if error.kind() == std::io::ErrorKind::PermissionDenied =>
+                    {
+                        IdentityStartError::PermissionDenied { path }
+                    }
+                    IdentitySecretFileError::Io(error) => IdentityStartError::Unavailable {
+                        path,
+                        detail: error.to_string(),
+                    },
+                    IdentitySecretFileError::Malformed { len } => {
+                        IdentityStartError::Malformed { path, length: len }
+                    }
+                };
+                NativeStartError::Identity(failure)
+            }),
+    }
+}
+
+fn resolve_persistence(
+    persistence: PersistenceConfig,
+) -> Result<ResolvedPersistence, NativeStartError> {
+    match persistence {
+        PersistenceConfig::Ephemeral => Ok(ResolvedPersistence::Ephemeral),
+        PersistenceConfig::Directory { path } => {
+            let directory = Path::new(&path);
+            if directory.exists() && !directory.is_dir() {
+                return Err(NativeStartError::Persistence(
+                    PersistenceStartError::NotDirectory { path },
+                ));
+            }
+            NodePersistence::custom_dir(directory)
+                .map(ResolvedPersistence::Directory)
+                .map_err(|error| {
+                    let failure = match error.kind() {
+                        std::io::ErrorKind::PermissionDenied => {
+                            PersistenceStartError::PermissionDenied { path }
+                        }
+                        std::io::ErrorKind::NotADirectory => {
+                            PersistenceStartError::NotDirectory { path }
+                        }
+                        _ => PersistenceStartError::Unavailable {
+                            path,
+                            detail: error.to_string(),
+                        },
+                    };
+                    NativeStartError::Persistence(failure)
+                })
+        }
     }
 }
 
 fn resolve_config(config: HostConfig) -> Result<ResolvedConfig, NativeStartError> {
     let host_identity = resolve_identity(config.identity)?;
+    let persistence = resolve_persistence(config.persistence)?;
     let mut destinations = Vec::with_capacity(config.destinations.len());
     for destination in config.destinations {
         match destination {
@@ -380,23 +486,22 @@ fn resolve_config(config: HostConfig) -> Result<ResolvedConfig, NativeStartError
         host_identity,
         role: config.role,
         destinations,
+        persistence,
     })
 }
 
-fn aspect_refs(config: &ResolvedConfig) -> Vec<Vec<&str>> {
-    config
-        .destinations
+fn aspect_refs(destinations: &[ResolvedDestination]) -> Vec<Vec<&str>> {
+    destinations
         .iter()
         .map(|destination| destination.aspects.iter().map(String::as_str).collect())
         .collect()
 }
 
 fn build_destinations<'a>(
-    config: &'a ResolvedConfig,
+    destinations: &'a [ResolvedDestination],
     aspects: &'a [Vec<&'a str>],
 ) -> Vec<PreConfiguredDestination<'a>> {
-    config
-        .destinations
+    destinations
         .iter()
         .zip(aspects)
         .map(|(destination, aspects)| match &destination.single {
@@ -457,10 +562,15 @@ async fn run(
             return;
         }
     };
-    let identity =
-        personal_rns::identity::PrivateIdentityMaterial::from_slice(&resolved.host_identity[..])
-            .map(|material| IdentityHash::new(*material.identity_hash().as_bytes()))
-            .map_err(|error| NativeStartError::Identity(format!("{error:?}")));
+    let ResolvedConfig {
+        host_identity,
+        role,
+        destinations: resolved_destinations,
+        persistence,
+    } = resolved;
+    let identity = personal_rns::identity::PrivateIdentityMaterial::from_slice(&host_identity[..])
+        .map(|material| IdentityHash::new(*material.identity_hash().as_bytes()))
+        .map_err(|_| NativeStartError::Identity(IdentityStartError::InvalidMaterial));
     let identity_hash = match identity {
         Ok(identity) => identity,
         Err(error) => {
@@ -469,8 +579,8 @@ async fn run(
             return;
         }
     };
-    let aspects = aspect_refs(&resolved);
-    let destinations = build_destinations(&resolved, &aspects);
+    let aspects = aspect_refs(&resolved_destinations);
+    let destinations = build_destinations(&resolved_destinations, &aspects);
     let mut destination_hashes = Vec::with_capacity(destinations.len());
     for destination in &destinations {
         match destination.destination_hash() {
@@ -487,23 +597,23 @@ async fn run(
     let backpressure = Arc::new(tokio::sync::Notify::new());
     let event_backpressure = Arc::clone(&backpressure);
     let mut node = PrnsNode::new(PrnsNodeRecipe {
-        transport_identity: match resolved.role {
+        transport_identity: match role {
             HostRole::Endpoint => None,
-            HostRole::Transport => Some(resolved.host_identity.clone()),
+            HostRole::Transport => Some(host_identity.clone()),
         },
         pre_configured_destinations: destinations,
         app_state: (),
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         interfaces: ManuallyAttached,
-        persistence: NoPersistence,
+        persistence,
         on_event: move |event, _state: &()| {
             if !publish_event(event_sink.as_ref(), event) {
                 event_backpressure.notify_waiters();
             }
         },
     });
-    for (destination, hash) in resolved.destinations.iter().zip(&destination_hashes) {
+    for (destination, hash) in resolved_destinations.iter().zip(&destination_hashes) {
         let Some(single) = &destination.single else {
             continue;
         };
@@ -536,14 +646,24 @@ async fn run(
     }
     let commands = tokio::spawn(command_loop(command_rx, handle, shutdown_rx.clone()));
     let exit = tokio::select! {
-        result = node.run() => result.map_err(|error| format!("{error}")),
-        result = commands => result.map_err(|error| error.to_string()),
+        result = node.run_until(shutdown_requested(shutdown_rx)) => {
+            result.map_err(|error| format!("{error}"))
+        },
         () = backpressure.notified() => Err("application event backpressure exceeded".to_string()),
     };
+    commands.abort();
+    let _ = commands.await;
     match exit {
         Ok(()) => sink.stopped(),
         Err(detail) => sink.failed(detail),
     }
+}
+
+async fn shutdown_requested(mut shutdown: watch::Receiver<bool>) {
+    if *shutdown.borrow() {
+        return;
+    }
+    let _ = shutdown.wait_for(|stopping| *stopping).await;
 }
 
 enum Attachment {
@@ -1298,9 +1418,31 @@ fn publish_message(sink: &dyn NativeEventSink, message: Message<'_>) -> bool {
 
 fn translate_diagnostic(diagnostic: Diagnostic) -> Option<DiagnosticEvent> {
     Some(match diagnostic {
-        Diagnostic::PersistenceRestored { .. }
-        | Diagnostic::PersistenceFlushed { .. }
-        | Diagnostic::PersistenceFlushFailed { .. } => return None,
+        Diagnostic::PersistenceRestored {
+            routes,
+            destination_identities,
+            tunnels,
+            ratchets,
+            refused,
+            dropped,
+        } => DiagnosticEvent::PersistenceRestored {
+            routes: routes.into(),
+            destination_identities: destination_identities.into(),
+            tunnels: tunnels.into(),
+            ratchets: ratchets.into(),
+            refused: refused.into(),
+            dropped: dropped.into(),
+        },
+        Diagnostic::PersistenceFlushed { cause, target } => DiagnosticEvent::PersistenceFlushed {
+            cause: persistence_flush_cause(cause),
+            target: persistence_flush_target(target),
+        },
+        Diagnostic::PersistenceFlushFailed { cause, target } => {
+            DiagnosticEvent::PersistenceFlushFailed {
+                cause: persistence_flush_cause(cause),
+                target: persistence_flush_target(target),
+            }
+        }
         Diagnostic::AnnounceHeard {
             destination,
             hops,
@@ -1386,11 +1528,30 @@ fn translate_diagnostic(diagnostic: Diagnostic) -> Option<DiagnosticEvent> {
     })
 }
 
+fn persistence_flush_cause(cause: EnginePersistenceFlushCause) -> PersistenceFlushCause {
+    match cause {
+        EnginePersistenceFlushCause::Startup => PersistenceFlushCause::Startup,
+        EnginePersistenceFlushCause::Interval => PersistenceFlushCause::Interval,
+        EnginePersistenceFlushCause::RouteChange => PersistenceFlushCause::RouteChange,
+        EnginePersistenceFlushCause::RatchetRotation => PersistenceFlushCause::RatchetRotation,
+        EnginePersistenceFlushCause::Shutdown => PersistenceFlushCause::Shutdown,
+    }
+}
+
+fn persistence_flush_target(target: EnginePersistenceFlushTarget) -> PersistenceFlushTarget {
+    match target {
+        EnginePersistenceFlushTarget::RoutingState => PersistenceFlushTarget::RoutingState,
+        EnginePersistenceFlushTarget::Ratchets => PersistenceFlushTarget::Ratchets,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use prns_host::{DestinationName, PrnsLimits, SingleDestinationConfig};
+    use std::fs;
     use std::sync::atomic::AtomicUsize;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     struct Sink;
 
@@ -1412,14 +1573,80 @@ mod tests {
         fn failed(&self, _detail: String) {}
     }
 
+    struct RecordingSink {
+        diagnostics: Mutex<Vec<DiagnosticEvent>>,
+        changed: Condvar,
+    }
+
+    impl RecordingSink {
+        fn new() -> Self {
+            Self {
+                diagnostics: Mutex::new(Vec::new()),
+                changed: Condvar::new(),
+            }
+        }
+
+        fn wait_for(&self, predicate: impl Fn(&DiagnosticEvent) -> bool) -> bool {
+            let diagnostics = lock(&self.diagnostics);
+            let waited = self
+                .changed
+                .wait_timeout_while(diagnostics, Duration::from_secs(2), |events| {
+                    !events.iter().any(&predicate)
+                })
+                .unwrap_or_else(PoisonError::into_inner);
+            waited.0.iter().any(predicate)
+        }
+
+        fn diagnostics(&self) -> Vec<DiagnosticEvent> {
+            lock(&self.diagnostics).clone()
+        }
+    }
+
+    impl NativeEventSink for RecordingSink {
+        fn running(&self) {}
+
+        fn publish_application(&self, _event: ApplicationEvent) -> bool {
+            true
+        }
+
+        fn publish_resource(&self, _event: ResourceAvailable, _body: Vec<u8>) -> bool {
+            true
+        }
+
+        fn publish_diagnostic(&self, event: DiagnosticEvent) {
+            lock(&self.diagnostics).push(event);
+            self.changed.notify_all();
+        }
+
+        fn stopped(&self) {}
+
+        fn failed(&self, _detail: String) {}
+    }
+
     fn config() -> HostConfig {
         HostConfig {
             identity: IdentityConfig::GenerateEphemeral,
+            persistence: PersistenceConfig::Ephemeral,
             role: HostRole::Endpoint,
             destinations: Vec::new(),
             required_capabilities: Vec::new(),
             limits: PrnsLimits::balanced(),
         }
+    }
+
+    fn temporary_root(label: &str) -> Result<std::path::PathBuf, String> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| error.to_string())?;
+        Ok(std::env::temp_dir().join(format!(
+            "prns-host-native-{label}-{}-{}",
+            std::process::id(),
+            now.as_nanos()
+        )))
+    }
+
+    fn persistent_config(root: &Path) -> HostConfig {
+        persistent_endpoint(root, Vec::new(), Vec::new(), PrnsLimits::balanced())
     }
 
     #[test]
@@ -1515,6 +1742,64 @@ mod tests {
             return Err("requester was not admitted".to_string());
         }
         host.stop();
+        Ok(())
+    }
+
+    #[test]
+    fn persistent_host_restores_identity_and_flushes_on_shutdown() -> Result<(), String> {
+        let root = temporary_root("restart")?;
+        let first_sink = Arc::new(RecordingSink::new());
+        let first = NativeHost::start(persistent_config(&root), first_sink.clone())
+            .map_err(|error| format!("{error:?}"))?;
+        let identity = first.identity_hash();
+        if !first_sink
+            .wait_for(|event| matches!(event, DiagnosticEvent::PersistenceRestored { .. }))
+        {
+            return Err("first host did not report persistence restoration".to_string());
+        }
+        first.stop();
+        if !first_sink.diagnostics().iter().any(|event| {
+            matches!(
+                event,
+                DiagnosticEvent::PersistenceFlushed {
+                    cause: PersistenceFlushCause::Shutdown,
+                    ..
+                }
+            )
+        }) {
+            return Err("first host did not flush persistence during shutdown".to_string());
+        }
+
+        let second_sink = Arc::new(RecordingSink::new());
+        let second = NativeHost::start(persistent_config(&root), second_sink.clone())
+            .map_err(|error| format!("{error:?}"))?;
+        if second.identity_hash() != identity {
+            return Err("persistent host identity changed across restart".to_string());
+        }
+        if !second_sink
+            .wait_for(|event| matches!(event, DiagnosticEvent::PersistenceRestored { .. }))
+        {
+            return Err("second host did not report persistence restoration".to_string());
+        }
+        second.stop();
+        fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn persistence_path_must_be_a_directory() -> Result<(), String> {
+        let root = temporary_root("not-directory")?;
+        fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let state = root.join("state");
+        fs::write(&state, b"not a directory").map_err(|error| error.to_string())?;
+        let result = NativeHost::start(persistent_config(&root), Arc::new(Sink));
+        let expected = NativeStartError::Persistence(PersistenceStartError::NotDirectory {
+            path: state.to_string_lossy().into_owned(),
+        });
+        if result.err() != Some(expected) {
+            return Err("non-directory persistence path was not typed".to_string());
+        }
+        fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
         Ok(())
     }
 }

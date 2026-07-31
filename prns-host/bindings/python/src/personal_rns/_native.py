@@ -45,6 +45,14 @@ class IdentityConfig(ctypes.Structure):
     ]
 
 
+class PersistenceConfig(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("kind", ctypes.c_uint32),
+        ("path", StringView),
+    ]
+
+
 class DestinationName(ctypes.Structure):
     _fields_ = [
         ("struct_size", ctypes.c_size_t),
@@ -87,6 +95,7 @@ class HostOptions(ctypes.Structure):
         ("destination_count", ctypes.c_size_t),
         ("required_capabilities", ctypes.POINTER(ctypes.c_uint32)),
         ("required_capability_count", ctypes.c_size_t),
+        ("persistence", PersistenceConfig),
     ]
 
 

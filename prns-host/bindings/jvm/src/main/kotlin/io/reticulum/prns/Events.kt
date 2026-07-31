@@ -453,5 +453,40 @@ internal fun decodeDiagnosticEvent(pointer: Pointer): DiagnosticEvent {
         DiagnosticEventKind.DIAGNOSTICS_DROPPED -> DiagnosticEventDiagnosticsDropped(
             event.u128(EventField.DROPPED_COUNT),
         )
+        DiagnosticEventKind.PERSISTENCE_RESTORED -> DiagnosticEventPersistenceRestored(
+            routes = event.u64(EventField.ROUTES),
+            destinationIdentities = event.u64(EventField.DESTINATION_IDENTITIES),
+            tunnels = event.u64(EventField.TUNNELS),
+            ratchets = event.u64(EventField.RATCHETS),
+            refused = event.u64(EventField.REFUSED),
+            dropped = event.u64(EventField.DROPPED),
+        )
+        DiagnosticEventKind.PERSISTENCE_FLUSHED -> DiagnosticEventPersistenceFlushed(
+            cause = persistenceCause(event),
+            target = persistenceTarget(event),
+        )
+        DiagnosticEventKind.PERSISTENCE_FLUSH_FAILED ->
+            DiagnosticEventPersistenceFlushFailed(
+                cause = persistenceCause(event),
+                target = persistenceTarget(event),
+            )
     }
+}
+
+private fun persistenceCause(event: EventReader): PersistenceFlushCause {
+    val raw = event.u64(EventField.PERSISTENCE_CAUSE)
+    return if (raw in 0..Int.MAX_VALUE.toLong()) {
+        PersistenceFlushCause.fromRawValue(raw.toInt())
+    } else {
+        null
+    } ?: throw StatusException("persistenceFlushCause", Status.BACKEND_FAILED)
+}
+
+private fun persistenceTarget(event: EventReader): PersistenceFlushTarget {
+    val raw = event.u64(EventField.PERSISTENCE_TARGET)
+    return if (raw in 0..Int.MAX_VALUE.toLong()) {
+        PersistenceFlushTarget.fromRawValue(raw.toInt())
+    } else {
+        null
+    } ?: throw StatusException("persistenceFlushTarget", Status.BACKEND_FAILED)
 }

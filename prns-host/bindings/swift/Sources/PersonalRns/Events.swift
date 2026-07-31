@@ -544,5 +544,50 @@ func decodeDiagnosticEvent(_ pointer: OpaquePointer) throws -> DiagnosticEvent {
         )
     case .diagnosticsDropped:
         return .diagnosticsDropped(count: try event.u128(.droppedCount))
+    case .persistenceRestored:
+        return .persistenceRestored(
+            routes: try event.u64(.routes),
+            destinationIdentities: try event.u64(.destinationIdentities),
+            tunnels: try event.u64(.tunnels),
+            ratchets: try event.u64(.ratchets),
+            refused: try event.u64(.refused),
+            dropped: try event.u64(.dropped)
+        )
+    case .persistenceFlushed:
+        return .persistenceFlushed(
+            cause: try persistenceCause(event),
+            target: try persistenceTarget(event)
+        )
+    case .persistenceFlushFailed:
+        return .persistenceFlushFailed(
+            cause: try persistenceCause(event),
+            target: try persistenceTarget(event)
+        )
     }
+}
+
+private func persistenceCause(_ event: EventReader) throws -> PersistenceFlushCause {
+    let raw = try event.u64(.persistenceCause)
+    guard let narrowed = UInt32(exactly: raw),
+          let value = PersistenceFlushCause(rawValue: narrowed)
+    else {
+        throw StatusFailure(
+            operation: "decodePersistenceCause",
+            status: .backendFailed
+        )
+    }
+    return value
+}
+
+private func persistenceTarget(_ event: EventReader) throws -> PersistenceFlushTarget {
+    let raw = try event.u64(.persistenceTarget)
+    guard let narrowed = UInt32(exactly: raw),
+          let value = PersistenceFlushTarget(rawValue: narrowed)
+    else {
+        throw StatusFailure(
+            operation: "decodePersistenceTarget",
+            status: .backendFailed
+        )
+    }
+    return value
 }

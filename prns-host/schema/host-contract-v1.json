@@ -54,7 +54,10 @@
         { "name": "Stopped", "value": 9 },
         { "name": "BackendFailed", "value": 10 },
         { "name": "Panic", "value": 11 },
-        { "name": "Interrupted", "value": 12 }
+        { "name": "Interrupted", "value": 12 },
+        { "name": "Unsupported", "value": 13 },
+        { "name": "PermissionDenied", "value": 14 },
+        { "name": "Unavailable", "value": 15 }
       ]
     },
     {
@@ -95,6 +98,13 @@
         { "name": "Existing", "value": 1 },
         { "name": "GenerateEphemeral", "value": 2 },
         { "name": "LoadOrCreate", "value": 3 }
+      ]
+    },
+    {
+      "name": "PersistenceConfigKind",
+      "values": [
+        { "name": "Ephemeral", "value": 1 },
+        { "name": "Directory", "value": 2 }
       ]
     },
     {
@@ -267,7 +277,27 @@
         { "name": "RouteInterfaceGone", "value": 213 },
         { "name": "RouteDropped", "value": 214 },
         { "name": "BackendDiagnostic", "value": 215 },
-        { "name": "DiagnosticsDropped", "value": 216 }
+        { "name": "DiagnosticsDropped", "value": 216 },
+        { "name": "PersistenceRestored", "value": 217 },
+        { "name": "PersistenceFlushed", "value": 218 },
+        { "name": "PersistenceFlushFailed", "value": 219 }
+      ]
+    },
+    {
+      "name": "PersistenceFlushCause",
+      "values": [
+        { "name": "Startup", "value": 1 },
+        { "name": "Interval", "value": 2 },
+        { "name": "RouteChange", "value": 3 },
+        { "name": "RatchetRotation", "value": 4 },
+        { "name": "Shutdown", "value": 5 }
+      ]
+    },
+    {
+      "name": "PersistenceFlushTarget",
+      "values": [
+        { "name": "RoutingState", "value": 1 },
+        { "name": "Ratchets", "value": 2 }
       ]
     },
     {
@@ -303,7 +333,15 @@
         { "name": "Kind", "value": 28 },
         { "name": "DroppedCount", "value": 29 },
         { "name": "Hops", "value": 30 },
-        { "name": "Stream", "value": 31 }
+        { "name": "Stream", "value": 31 },
+        { "name": "Routes", "value": 32 },
+        { "name": "DestinationIdentities", "value": 33 },
+        { "name": "Tunnels", "value": 34 },
+        { "name": "Ratchets", "value": 35 },
+        { "name": "Refused", "value": 36 },
+        { "name": "Dropped", "value": 37 },
+        { "name": "PersistenceCause", "value": 38 },
+        { "name": "PersistenceTarget", "value": 39 }
       ]
     }
   ],
@@ -322,6 +360,19 @@
         {
           "name": "LoadOrCreate",
           "value": 3,
+          "fields": [
+            { "name": "path", "type": "string" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "PersistenceConfig",
+      "cases": [
+        { "name": "Ephemeral", "value": 1, "fields": [] },
+        {
+          "name": "Directory",
+          "value": 2,
           "fields": [
             { "name": "path", "type": "string" }
           ]
@@ -904,6 +955,34 @@
           "value": 216,
           "fields": [
             { "name": "count", "type": "u128" }
+          ]
+        },
+        {
+          "name": "PersistenceRestored",
+          "value": 217,
+          "fields": [
+            { "name": "routes", "type": "u64" },
+            { "name": "destinationIdentities", "type": "u64" },
+            { "name": "tunnels", "type": "u64" },
+            { "name": "ratchets", "type": "u64" },
+            { "name": "refused", "type": "u64" },
+            { "name": "dropped", "type": "u64" }
+          ]
+        },
+        {
+          "name": "PersistenceFlushed",
+          "value": 218,
+          "fields": [
+            { "name": "cause", "type": "PersistenceFlushCause" },
+            { "name": "target", "type": "PersistenceFlushTarget" }
+          ]
+        },
+        {
+          "name": "PersistenceFlushFailed",
+          "value": 219,
+          "fields": [
+            { "name": "cause", "type": "PersistenceFlushCause" },
+            { "name": "target", "type": "PersistenceFlushTarget" }
           ]
         }
       ]

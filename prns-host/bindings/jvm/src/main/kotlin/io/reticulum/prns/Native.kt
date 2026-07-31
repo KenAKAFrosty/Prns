@@ -104,6 +104,20 @@ internal open class NativeIdentityConfig : Structure() {
     class ByValue : NativeIdentityConfig(), Structure.ByValue
 }
 
+@Structure.FieldOrder("structSize", "kind", "path")
+internal open class NativePersistenceConfig : Structure() {
+    @JvmField
+    var structSize: SizeT = SizeT()
+
+    @JvmField
+    var kind: Int = 0
+
+    @JvmField
+    var path: NativeStringView.ByValue = NativeStringView.ByValue()
+
+    class ByValue : NativePersistenceConfig(), Structure.ByValue
+}
+
 @Structure.FieldOrder("structSize", "appName", "aspects", "aspectCount")
 internal open class NativeDestinationName : Structure() {
     @JvmField
@@ -180,6 +194,7 @@ internal open class NativeDestinationConfig : Structure() {
     "destinationCount",
     "requiredCapabilities",
     "requiredCapabilityCount",
+    "persistence",
 )
 internal class NativeHostOptions : Structure() {
     @JvmField
@@ -211,6 +226,9 @@ internal class NativeHostOptions : Structure() {
 
     @JvmField
     var requiredCapabilityCount: SizeT = SizeT()
+
+    @JvmField
+    var persistence: NativePersistenceConfig.ByValue = NativePersistenceConfig.ByValue()
 }
 
 @Structure.FieldOrder("structSize", "outcome", "failure", "evidence", "rttMillis", "value", "detail")
@@ -518,6 +536,22 @@ internal class NativeArena : AutoCloseable {
         return result
     }
 
+    fun persistence(value: PersistenceConfig): NativePersistenceConfig.ByValue {
+        val result = NativePersistenceConfig.ByValue()
+        result.structSize = SizeT(result.size().toLong())
+        when (value) {
+            PersistenceConfigEphemeral -> {
+                result.kind = PersistenceConfigKind.EPHEMERAL.rawValue
+            }
+            is PersistenceConfigDirectory -> {
+                result.kind = PersistenceConfigKind.DIRECTORY.rawValue
+                result.path = string(value.path)
+            }
+        }
+        result.write()
+        return result
+    }
+
     private fun destinationName(value: DestinationName): NativeDestinationName.ByValue {
         val result = NativeDestinationName.ByValue()
         result.structSize = SizeT(result.size().toLong())
@@ -634,6 +668,7 @@ internal class NativeArena : AutoCloseable {
             result.requiredCapabilities = memory
             result.requiredCapabilityCount = SizeT(capabilities.size.toLong())
         }
+        result.persistence = persistence(value.persistence)
         result.write()
         return result
     }

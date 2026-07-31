@@ -14,36 +14,24 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use prns_host_core::{
-    verify_host_contract, ApplicationEvent, ApplicationEventKind as AbiApplicationEventKind,
-    BackendKind as AbiBackendKind, Bitrate, BitrateKind as AbiBitrateKind, BoundedHostQueue,
-    Capability as AbiCapability, Capability, CommandFailure,
-    CommandFailureKind as AbiCommandFailureKind, CommandOutcome,
-    CommandOutcomeKind as AbiCommandOutcomeKind, ConsumerLane, DeliveryEvidence,
-    DeliveryEvidenceKind as AbiDeliveryEvidenceKind, DestinationConfig,
-    DestinationConfigKind as AbiDestinationConfigKind, DestinationHash, DestinationIdentityConfig,
-    DestinationIdentityConfigKind as AbiDestinationIdentityConfigKind, DestinationName,
-    DiagnosticEvent, DiagnosticEventKind as AbiDiagnosticEventKind,
-    DiscoveryScope as AbiDiscoveryScope, DiscoveryScope, EventField as AbiEventField, HostCommand,
-    HostConfig, HostFailure, HostRole as AbiHostRole, HostRole, HostSnapshot as CoreHostSnapshot,
-    IdentityConfig, IdentityConfigKind as AbiIdentityConfigKind, IdentityHash, IdentitySecret,
-    InterfaceConfig, InterfaceHealth, InterfaceId, InterfaceKind as AbiInterfaceKind,
-    InterfaceKind, LifecyclePhase as AbiLifecyclePhase, LifecycleState,
-    LinkClosedReason as AbiLinkClosedReason, LinkClosedReason, LinkId, MultiRNodeMemberConfig,
-    MulticastAddressType as AbiMulticastAddressType, MulticastAddressType, PersistenceConfig,
-    PersistenceConfigKind as AbiPersistenceConfigKind,
-    PersistenceFlushCause as AbiPersistenceFlushCause, PersistenceFlushCause,
-    PersistenceFlushTarget as AbiPersistenceFlushTarget, PersistenceFlushTarget,
-    PrnsLimits as CoreLimits, RNodeRadioConfig, RequestHandlerConfig, RequestId, RequestPathHash,
-    RequestPolicy as AbiRequestPolicy, RequestPolicy, ResourceAvailable, ResourceCompression,
-    ResourceCompressionKind as AbiResourceCompressionKind, ResourceStrategy,
-    ResourceStrategyKind as AbiResourceStrategyKind, ResponseTimeout,
-    ResponseTimeoutKind as AbiResponseTimeoutKind, SerialDataBits as AbiSerialDataBits,
-    SerialDataBits, SerialLineConfig, SerialParity as AbiSerialParity, SerialParity,
-    SerialStopBits as AbiSerialStopBits, SerialStopBits, Status as AbiStatus,
-    StopReason as AbiStopReason, StopReason, HOST_CONTRACT, HOST_SCHEMA_VERSION,
+    verify_host_contract, AbiApplicationEventKind, AbiBitrateKind, AbiCapability,
+    AbiCommandFailureKind, AbiCommandOutcomeKind, AbiDeliveryEvidenceKind,
+    AbiDestinationConfigKind, AbiDestinationIdentityConfigKind, AbiDiagnosticEventKind,
+    AbiEventField, AbiHostRole, AbiIdentityConfigKind, AbiLifecyclePhase, AbiLinkClosedReason,
+    AbiPersistenceConfigKind, AbiPersistenceFlushCause, AbiPersistenceFlushTarget,
+    AbiRequestPolicy, AbiResourceCompressionKind, AbiResourceStrategyKind, AbiResponseTimeoutKind,
+    AbiStatus, AbiStopReason, ApplicationEvent, Bitrate, BoundedHostQueue, Capability,
+    CommandFailure, CommandOutcome, ConsumerLane, DeliveryEvidence, DestinationConfig,
+    DestinationHash, DestinationIdentityConfig, DestinationName, DiagnosticEvent, HostCommand,
+    HostConfig, HostFailure, HostRole, IdentityConfig, IdentityHash, IdentitySecret, InterfaceId,
+    LifecycleState, LinkClosedReason, LinkId, PersistenceConfig, PersistenceFlushCause,
+    PersistenceFlushTarget, PrnsLimits as CoreLimits, RequestHandlerConfig, RequestId,
+    RequestPathHash, RequestPolicy, ResourceAvailable, ResourceCompression, ResourceStrategy,
+    ResponseTimeout, StopReason, HOST_CONTRACT, HOST_SCHEMA_VERSION,
 };
 use prns_host_native::{
-    CommandHandle, CommandWait, NativeEventSink, NativeHost, NativeStartError, NativeSubmitError,
+    CommandHandle, CommandWait, IdentityStartError, NativeEventSink, NativeHost, NativeStartError,
+    NativeSubmitError, PersistenceStartError,
 };
 use readiness::{Readiness, ReadinessCallback, RegisteredReadiness};
 
@@ -92,6 +80,14 @@ pub struct PrnsIdentityConfig {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+pub struct PrnsPersistenceConfig {
+    pub struct_size: usize,
+    pub kind: u32,
+    pub path: PrnsStringView,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
 pub struct PrnsDestinationName {
     pub struct_size: usize,
     pub app_name: PrnsStringView,
@@ -121,6 +117,7 @@ pub struct PrnsDestinationConfig {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct PrnsHostOptions {
     pub struct_size: usize,
     pub required_abi: u32,
@@ -132,6 +129,35 @@ pub struct PrnsHostOptions {
     pub destination_count: usize,
     pub required_capabilities: *const u32,
     pub required_capability_count: usize,
+    pub persistence: PrnsPersistenceConfig,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct PrnsHostOptionsV1 {
+    struct_size: usize,
+    required_abi: u32,
+    required_product_version: PrnsStringView,
+    limits: PrnsLimits,
+    role: u32,
+    identity: PrnsIdentityConfig,
+    destinations: *const PrnsDestinationConfig,
+    destination_count: usize,
+    required_capabilities: *const u32,
+    required_capability_count: usize,
+}
+
+struct HostOptionsInput {
+    required_abi: u32,
+    required_product_version: PrnsStringView,
+    limits: PrnsLimits,
+    role: u32,
+    identity: PrnsIdentityConfig,
+    destinations: *const PrnsDestinationConfig,
+    destination_count: usize,
+    required_capabilities: *const u32,
+    required_capability_count: usize,
+    persistence: Option<PrnsPersistenceConfig>,
 }
 
 #[repr(C)]
@@ -533,6 +559,44 @@ fn validate_size(actual: usize, required: usize) -> Result<(), u32> {
     }
 }
 
+unsafe fn read_host_options(value: *const PrnsHostOptions) -> Result<HostOptionsInput, u32> {
+    if value.is_null() {
+        return Err(status(AbiStatus::InvalidArgument));
+    }
+    let struct_size = unsafe { value.cast::<usize>().read() };
+    if struct_size >= size_of::<PrnsHostOptions>() {
+        let value = unsafe { value.read() };
+        return Ok(HostOptionsInput {
+            required_abi: value.required_abi,
+            required_product_version: value.required_product_version,
+            limits: value.limits,
+            role: value.role,
+            identity: value.identity,
+            destinations: value.destinations,
+            destination_count: value.destination_count,
+            required_capabilities: value.required_capabilities,
+            required_capability_count: value.required_capability_count,
+            persistence: Some(value.persistence),
+        });
+    }
+    if struct_size != size_of::<PrnsHostOptionsV1>() {
+        return Err(status(AbiStatus::InvalidArgument));
+    }
+    let value = unsafe { value.cast::<PrnsHostOptionsV1>().read() };
+    Ok(HostOptionsInput {
+        required_abi: value.required_abi,
+        required_product_version: value.required_product_version,
+        limits: value.limits,
+        role: value.role,
+        identity: value.identity,
+        destinations: value.destinations,
+        destination_count: value.destination_count,
+        required_capabilities: value.required_capabilities,
+        required_capability_count: value.required_capability_count,
+        persistence: None,
+    })
+}
+
 unsafe fn parse_identity(config: &PrnsIdentityConfig) -> Result<IdentityConfig, u32> {
     validate_size(config.struct_size, size_of::<PrnsIdentityConfig>())?;
     match AbiIdentityConfigKind::try_from(config.kind)
@@ -545,6 +609,23 @@ unsafe fn parse_identity(config: &PrnsIdentityConfig) -> Result<IdentityConfig, 
         }
         AbiIdentityConfigKind::GenerateEphemeral => Ok(IdentityConfig::GenerateEphemeral),
         AbiIdentityConfigKind::LoadOrCreate => Ok(IdentityConfig::LoadOrCreate {
+            path: unsafe { read_string(config.path) }?.to_string(),
+        }),
+    }
+}
+
+unsafe fn parse_persistence(
+    config: Option<PrnsPersistenceConfig>,
+) -> Result<PersistenceConfig, u32> {
+    let Some(config) = config else {
+        return Ok(PersistenceConfig::Ephemeral);
+    };
+    validate_size(config.struct_size, size_of::<PrnsPersistenceConfig>())?;
+    match AbiPersistenceConfigKind::try_from(config.kind)
+        .map_err(|_| status(AbiStatus::InvalidArgument))?
+    {
+        AbiPersistenceConfigKind::Ephemeral => Ok(PersistenceConfig::Ephemeral),
+        AbiPersistenceConfigKind::Directory => Ok(PersistenceConfig::Directory {
             path: unsafe { read_string(config.path) }?.to_string(),
         }),
     }
@@ -691,7 +772,7 @@ pub unsafe extern "C" fn prns_host_create(
     out_host: *mut *mut PrnsHost,
 ) -> u32 {
     catch_status(|| {
-        let options = match unsafe { required_ref(options) } {
+        let options = match unsafe { read_host_options(options) } {
             Ok(options) => options,
             Err(error) => return error,
         };
@@ -700,9 +781,6 @@ pub unsafe extern "C" fn prns_host_create(
             Err(error) => return error,
         };
         *out = ptr::null_mut();
-        if let Err(error) = validate_size(options.struct_size, size_of::<PrnsHostOptions>()) {
-            return error;
-        }
         if let Err(error) = validate_size(options.limits.struct_size, size_of::<PrnsLimits>()) {
             return error;
         }
@@ -729,6 +807,10 @@ pub unsafe extern "C" fn prns_host_create(
         };
         let identity = match unsafe { parse_identity(&options.identity) } {
             Ok(identity) => identity,
+            Err(error) => return error,
+        };
+        let persistence = match unsafe { parse_persistence(options.persistence) } {
+            Ok(persistence) => persistence,
             Err(error) => return error,
         };
         let destination_values =
@@ -766,6 +848,7 @@ pub unsafe extern "C" fn prns_host_create(
         let native = match NativeHost::start(
             HostConfig {
                 identity,
+                persistence,
                 role,
                 destinations,
                 required_capabilities,
@@ -774,10 +857,7 @@ pub unsafe extern "C" fn prns_host_create(
             Arc::new(publisher),
         ) {
             Ok(native) => native,
-            Err(NativeStartError::MissingCapabilities(_)) => {
-                return status(AbiStatus::InvalidArgument)
-            }
-            Err(_) => return status(AbiStatus::BackendFailed),
+            Err(error) => return native_start_status(error),
         };
         host.identity_hash = native.identity_hash();
         host.destination_hashes = native.destination_hashes().to_vec();
@@ -785,6 +865,31 @@ pub unsafe extern "C" fn prns_host_create(
         *out = Box::into_raw(Box::new(host));
         status(AbiStatus::Ok)
     })
+}
+
+fn native_start_status(error: NativeStartError) -> u32 {
+    match error {
+        NativeStartError::MissingCapabilities(_) => status(AbiStatus::Unsupported),
+        NativeStartError::Identity(IdentityStartError::PermissionDenied { .. })
+        | NativeStartError::Persistence(PersistenceStartError::PermissionDenied { .. }) => {
+            status(AbiStatus::PermissionDenied)
+        }
+        NativeStartError::Identity(IdentityStartError::Unavailable { .. })
+        | NativeStartError::Persistence(PersistenceStartError::Unavailable { .. }) => {
+            status(AbiStatus::Unavailable)
+        }
+        NativeStartError::Identity(
+            IdentityStartError::Malformed { .. } | IdentityStartError::InvalidMaterial,
+        )
+        | NativeStartError::Destination(_)
+        | NativeStartError::Persistence(PersistenceStartError::NotDirectory { .. }) => {
+            status(AbiStatus::InvalidArgument)
+        }
+        NativeStartError::TimedOut => status(AbiStatus::TimedOut),
+        NativeStartError::Identity(IdentityStartError::EntropyUnavailable)
+        | NativeStartError::Runtime(_)
+        | NativeStartError::Thread(_) => status(AbiStatus::BackendFailed),
+    }
 }
 
 #[no_mangle]
@@ -2238,6 +2343,15 @@ fn diagnostic_kind(event: &DiagnosticEvent) -> u32 {
         DiagnosticEvent::BackendDiagnostic { .. } => {
             AbiDiagnosticEventKind::BackendDiagnostic as u32
         }
+        DiagnosticEvent::PersistenceRestored { .. } => {
+            AbiDiagnosticEventKind::PersistenceRestored as u32
+        }
+        DiagnosticEvent::PersistenceFlushed { .. } => {
+            AbiDiagnosticEventKind::PersistenceFlushed as u32
+        }
+        DiagnosticEvent::PersistenceFlushFailed { .. } => {
+            AbiDiagnosticEventKind::PersistenceFlushFailed as u32
+        }
     }
 }
 
@@ -2543,6 +2657,23 @@ fn link_reason(reason: LinkClosedReason) -> u64 {
     }
 }
 
+fn persistence_cause(cause: PersistenceFlushCause) -> u64 {
+    match cause {
+        PersistenceFlushCause::Startup => AbiPersistenceFlushCause::Startup as u64,
+        PersistenceFlushCause::Interval => AbiPersistenceFlushCause::Interval as u64,
+        PersistenceFlushCause::RouteChange => AbiPersistenceFlushCause::RouteChange as u64,
+        PersistenceFlushCause::RatchetRotation => AbiPersistenceFlushCause::RatchetRotation as u64,
+        PersistenceFlushCause::Shutdown => AbiPersistenceFlushCause::Shutdown as u64,
+    }
+}
+
+fn persistence_target(target: PersistenceFlushTarget) -> u64 {
+    match target {
+        PersistenceFlushTarget::RoutingState => AbiPersistenceFlushTarget::RoutingState as u64,
+        PersistenceFlushTarget::Ratchets => AbiPersistenceFlushTarget::Ratchets as u64,
+    }
+}
+
 fn event_u64(event: &PrnsEvent, field: AbiEventField) -> Option<u64> {
     match (&event.value, field) {
         (
@@ -2625,6 +2756,47 @@ fn event_u64(event: &PrnsEvent, field: AbiEventField) -> Option<u64> {
             }),
             AbiEventField::TotalSegments,
         ) => Some(*total_segments),
+        (
+            EventValue::Diagnostic(DiagnosticEvent::PersistenceRestored { routes, .. }),
+            AbiEventField::Routes,
+        ) => Some(*routes),
+        (
+            EventValue::Diagnostic(DiagnosticEvent::PersistenceRestored {
+                destination_identities,
+                ..
+            }),
+            AbiEventField::DestinationIdentities,
+        ) => Some(*destination_identities),
+        (
+            EventValue::Diagnostic(DiagnosticEvent::PersistenceRestored { tunnels, .. }),
+            AbiEventField::Tunnels,
+        ) => Some(*tunnels),
+        (
+            EventValue::Diagnostic(DiagnosticEvent::PersistenceRestored { ratchets, .. }),
+            AbiEventField::Ratchets,
+        ) => Some(*ratchets),
+        (
+            EventValue::Diagnostic(DiagnosticEvent::PersistenceRestored { refused, .. }),
+            AbiEventField::Refused,
+        ) => Some(*refused),
+        (
+            EventValue::Diagnostic(DiagnosticEvent::PersistenceRestored { dropped, .. }),
+            AbiEventField::Dropped,
+        ) => Some(*dropped),
+        (
+            EventValue::Diagnostic(
+                DiagnosticEvent::PersistenceFlushed { cause, .. }
+                | DiagnosticEvent::PersistenceFlushFailed { cause, .. },
+            ),
+            AbiEventField::PersistenceCause,
+        ) => Some(persistence_cause(*cause)),
+        (
+            EventValue::Diagnostic(
+                DiagnosticEvent::PersistenceFlushed { target, .. }
+                | DiagnosticEvent::PersistenceFlushFailed { target, .. },
+            ),
+            AbiEventField::PersistenceTarget,
+        ) => Some(persistence_target(*target)),
         _ => None,
     }
 }
@@ -3137,6 +3309,14 @@ mod tests {
             destination_count: 0,
             required_capabilities: ptr::null(),
             required_capability_count: 0,
+            persistence: PrnsPersistenceConfig {
+                struct_size: size_of::<PrnsPersistenceConfig>(),
+                kind: AbiPersistenceConfigKind::Ephemeral as u32,
+                path: PrnsStringView {
+                    data: ptr::null(),
+                    length: 0,
+                },
+            },
         };
         let mut host = ptr::null_mut();
         assert_eq!(
@@ -3208,6 +3388,55 @@ mod tests {
         );
         assert_eq!(lifecycle.phase, AbiLifecyclePhase::Stopped as u32);
         assert_eq!(lifecycle.reason, AbiStopReason::Requested as u32);
+        unsafe {
+            prns_host_release(host);
+        }
+    }
+
+    #[test]
+    fn schema_one_host_options_remain_ephemeral_and_accepted() {
+        let version = HOST_CONTRACT.product_version.as_bytes();
+        let selected = limits();
+        let options = PrnsHostOptionsV1 {
+            struct_size: size_of::<PrnsHostOptionsV1>(),
+            required_abi: HOST_CONTRACT.abi,
+            required_product_version: PrnsStringView {
+                data: version.as_ptr(),
+                length: version.len(),
+            },
+            limits: PrnsLimits {
+                struct_size: size_of::<PrnsLimits>(),
+                pending_commands: selected.pending_commands(),
+                application_events: selected.application_events(),
+                retained_event_bytes: selected.retained_event_bytes(),
+                diagnostics: selected.diagnostics(),
+            },
+            role: AbiHostRole::Endpoint as u32,
+            identity: PrnsIdentityConfig {
+                struct_size: size_of::<PrnsIdentityConfig>(),
+                kind: AbiIdentityConfigKind::GenerateEphemeral as u32,
+                secret: PrnsByteView {
+                    data: ptr::null(),
+                    length: 0,
+                },
+                path: PrnsStringView {
+                    data: ptr::null(),
+                    length: 0,
+                },
+            },
+            destinations: ptr::null(),
+            destination_count: 0,
+            required_capabilities: ptr::null(),
+            required_capability_count: 0,
+        };
+        let mut host = ptr::null_mut();
+        assert_eq!(
+            unsafe {
+                prns_host_create(ptr::from_ref(&options).cast::<PrnsHostOptions>(), &mut host)
+            },
+            status(AbiStatus::Ok)
+        );
+        assert_eq!(unsafe { prns_host_stop(host) }, status(AbiStatus::Ok));
         unsafe {
             prns_host_release(host);
         }

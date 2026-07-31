@@ -54,6 +54,14 @@ internal static class Native
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    internal struct PersistenceConfig
+    {
+        internal nuint StructSize;
+        internal PersistenceConfigKind Kind;
+        internal StringView Path;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     internal struct DestinationName
     {
         internal nuint StructSize;
@@ -96,6 +104,7 @@ internal static class Native
         internal nuint DestinationCount;
         internal nint RequiredCapabilities;
         internal nuint RequiredCapabilityCount;
+        internal PersistenceConfig Persistence;
     }
 
     [StructLayout(LayoutKind.Sequential)]

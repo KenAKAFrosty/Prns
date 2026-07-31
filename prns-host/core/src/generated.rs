@@ -31,6 +31,9 @@ pub enum Status {
     BackendFailed = 10,
     Panic = 11,
     Interrupted = 12,
+    Unsupported = 13,
+    PermissionDenied = 14,
+    Unavailable = 15,
 }
 
 impl Status {
@@ -75,6 +78,9 @@ impl TryFrom<u32> for Status {
             10 => Ok(Self::BackendFailed),
             11 => Ok(Self::Panic),
             12 => Ok(Self::Interrupted),
+            13 => Ok(Self::Unsupported),
+            14 => Ok(Self::PermissionDenied),
+            15 => Ok(Self::Unavailable),
             _ => Err(()),
         }
     }
@@ -524,22 +530,12 @@ impl TryFrom<u32> for IdentityConfigKind {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum PersistenceConfigKind {
+pub enum AbiPersistenceConfigKind {
     Ephemeral = 1,
     Directory = 2,
 }
 
-impl PersistenceConfigKind {
-    #[must_use]
-    pub const fn contract_name(self) -> &'static str {
-        match self {
-            Self::Ephemeral => "Ephemeral",
-            Self::Directory => "Directory",
-        }
-    }
-}
-
-impl TryFrom<u32> for PersistenceConfigKind {
+impl TryFrom<u32> for AbiPersistenceConfigKind {
     type Error = ();
 
     fn try_from(value: u32) -> Result<Self, Self::Error> {
@@ -553,7 +549,7 @@ impl TryFrom<u32> for PersistenceConfigKind {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum DestinationConfigKind {
+pub enum AbiDestinationConfigKind {
     Plain = 1,
     Single = 2,
 }
@@ -1144,6 +1140,9 @@ pub enum DiagnosticEventKind {
     RouteDropped = 214,
     BackendDiagnostic = 215,
     DiagnosticsDropped = 216,
+    PersistenceRestored = 217,
+    PersistenceFlushed = 218,
+    PersistenceFlushFailed = 219,
 }
 
 impl DiagnosticEventKind {
@@ -1199,6 +1198,50 @@ impl TryFrom<u32> for DiagnosticEventKind {
             217 => Ok(Self::PersistenceRestored),
             218 => Ok(Self::PersistenceFlushed),
             219 => Ok(Self::PersistenceFlushFailed),
+            _ => Err(()),
+        }
+    }
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AbiPersistenceFlushCause {
+    Startup = 1,
+    Interval = 2,
+    RouteChange = 3,
+    RatchetRotation = 4,
+    Shutdown = 5,
+}
+
+impl TryFrom<u32> for AbiPersistenceFlushCause {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::Startup),
+            2 => Ok(Self::Interval),
+            3 => Ok(Self::RouteChange),
+            4 => Ok(Self::RatchetRotation),
+            5 => Ok(Self::Shutdown),
+            _ => Err(()),
+        }
+    }
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AbiPersistenceFlushTarget {
+    RoutingState = 1,
+    Ratchets = 2,
+}
+
+impl TryFrom<u32> for AbiPersistenceFlushTarget {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::RoutingState),
+            2 => Ok(Self::Ratchets),
             _ => Err(()),
         }
     }
@@ -1305,6 +1348,14 @@ pub enum EventField {
     DroppedCount = 29,
     Hops = 30,
     Stream = 31,
+    Routes = 32,
+    DestinationIdentities = 33,
+    Tunnels = 34,
+    Ratchets = 35,
+    Refused = 36,
+    Dropped = 37,
+    PersistenceCause = 38,
+    PersistenceTarget = 39,
 }
 
 impl EventField {
@@ -1390,6 +1441,14 @@ impl TryFrom<u32> for EventField {
             29 => Ok(Self::DroppedCount),
             30 => Ok(Self::Hops),
             31 => Ok(Self::Stream),
+            32 => Ok(Self::Routes),
+            33 => Ok(Self::DestinationIdentities),
+            34 => Ok(Self::Tunnels),
+            35 => Ok(Self::Ratchets),
+            36 => Ok(Self::Refused),
+            37 => Ok(Self::Dropped),
+            38 => Ok(Self::PersistenceCause),
+            39 => Ok(Self::PersistenceTarget),
             _ => Err(()),
         }
     }

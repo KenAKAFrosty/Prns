@@ -169,6 +169,22 @@ pub enum DiagnosticEvent {
         kind: String,
         detail: String,
     },
+    PersistenceRestored {
+        routes: u64,
+        destination_identities: u64,
+        tunnels: u64,
+        ratchets: u64,
+        refused: u64,
+        dropped: u64,
+    },
+    PersistenceFlushed {
+        cause: PersistenceFlushCause,
+        target: PersistenceFlushTarget,
+    },
+    PersistenceFlushFailed {
+        cause: PersistenceFlushCause,
+        target: PersistenceFlushTarget,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

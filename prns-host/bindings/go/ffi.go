@@ -122,6 +122,31 @@ func marshalIdentity(
 	return result, nil
 }
 
+func marshalPersistence(
+	arena *nativeArena,
+	value PersistenceConfig,
+) (C.PrnsPersistenceConfig, error) {
+	result := C.PrnsPersistenceConfig{
+		struct_size: C.size_t(C.sizeof_PrnsPersistenceConfig),
+	}
+	switch persistence := value.(type) {
+	case PersistenceConfigEphemeral:
+		result.kind = C.PRNS_PERSISTENCE_CONFIG_KIND_EPHEMERAL
+	case PersistenceConfigDirectory:
+		path, err := arena.stringView(persistence.Path)
+		if err != nil {
+			return result, err
+		}
+		result.kind = C.PRNS_PERSISTENCE_CONFIG_KIND_DIRECTORY
+		result.path = path
+	case nil:
+		result.kind = C.PRNS_PERSISTENCE_CONFIG_KIND_EPHEMERAL
+	default:
+		return result, ConfigError{Kind: ConfigUnknownPersistence, Field: "persistence"}
+	}
+	return result, nil
+}
+
 func marshalDestinationName(
 	arena *nativeArena,
 	value DestinationName,
@@ -274,6 +299,10 @@ func marshalHostOptions(
 	if err != nil {
 		return C.PrnsHostOptions{}, err
 	}
+	persistence, err := marshalPersistence(arena, options.Persistence)
+	if err != nil {
+		return C.PrnsHostOptions{}, err
+	}
 	destinationsPointer, err := arena.allocate(
 		len(options.Destinations),
 		C.sizeof_PrnsDestinationConfig,
@@ -340,6 +369,7 @@ func marshalHostOptions(
 		destination_count:         C.size_t(len(options.Destinations)),
 		required_capabilities:     (*C.PrnsCapability)(capabilitiesPointer),
 		required_capability_count: C.size_t(len(options.RequiredCapabilities)),
+		persistence:               persistence,
 	}, nil
 }
 

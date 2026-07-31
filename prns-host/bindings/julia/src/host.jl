@@ -35,7 +35,18 @@ struct HostOptions
     destinations::Vector{DestinationConfig}
     required_capabilities::Vector{Capability}
     limits::Limits
+    persistence::PersistenceConfig
 end
+
+HostOptions(role, identity, destinations, required_capabilities, limits) =
+    HostOptions(
+        role,
+        identity,
+        destinations,
+        required_capabilities,
+        limits,
+        PersistenceConfigEphemeral(),
+    )
 
 function ephemeral_endpoint(
     destinations::Vector{DestinationConfig}=DestinationConfig[];
@@ -47,6 +58,21 @@ function ephemeral_endpoint(
         destinations,
         required_capabilities,
         balanced_limits(),
+    )
+end
+
+function persistent_endpoint(
+    root::AbstractString,
+    destinations::Vector{DestinationConfig}=DestinationConfig[];
+    required_capabilities::Vector{Capability}=Capability[],
+)
+    HostOptions(
+        HostRoleEndpoint,
+        IdentityConfigLoadOrCreate(joinpath(root, "identity")),
+        destinations,
+        required_capabilities,
+        balanced_limits(),
+        PersistenceConfigDirectory(joinpath(root, "state")),
     )
 end
 

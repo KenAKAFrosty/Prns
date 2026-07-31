@@ -73,6 +73,12 @@ struct NativeIdentityConfig
     path::NativeStringView
 end
 
+struct NativePersistenceConfig
+    struct_size::Csize_t
+    kind::UInt32
+    path::NativeStringView
+end
+
 struct NativeDestinationName
     struct_size::Csize_t
     app_name::NativeStringView
@@ -108,6 +114,7 @@ struct NativeHostOptions
     destination_count::Csize_t
     required_capabilities::Ptr{UInt32}
     required_capability_count::Csize_t
+    persistence::NativePersistenceConfig
 end
 
 struct NativeCommandResult
@@ -254,6 +261,24 @@ function native_identity(arena::NativeArena, value::IdentityConfig)
     throw(ArgumentError("unknown identity configuration"))
 end
 
+function native_persistence(arena::NativeArena, value::PersistenceConfig)
+    if value isa PersistenceConfigEphemeral
+        return NativePersistenceConfig(
+            sizeof(NativePersistenceConfig),
+            UInt32(PersistenceConfigKindEphemeral),
+            NativeStringView(C_NULL, 0),
+        )
+    end
+    if value isa PersistenceConfigDirectory
+        return NativePersistenceConfig(
+            sizeof(NativePersistenceConfig),
+            UInt32(PersistenceConfigKindDirectory),
+            native_string_view(arena, value.path),
+        )
+    end
+    throw(ArgumentError("unknown persistence configuration"))
+end
+
 function native_destination_name(arena::NativeArena, value::DestinationName)
     aspects = NativeStringView[
         native_string_view(arena, aspect) for aspect in value.aspects
@@ -362,6 +387,7 @@ function native_host_options(arena::NativeArena, value)
         length(destinations),
         isempty(capabilities) ? C_NULL : pointer(capabilities),
         length(capabilities),
+        native_persistence(arena, value.persistence),
     ), destinations, capabilities
 end
 

@@ -158,8 +158,45 @@ internal static class EventDecoder
                 ),
             DiagnosticEventKind.DiagnosticsDropped =>
                 new DiagnosticEvent.DiagnosticsDropped(U128(@event, EventField.DroppedCount)),
+            DiagnosticEventKind.PersistenceRestored =>
+                new DiagnosticEvent.PersistenceRestored(
+                    U64(@event, EventField.Routes),
+                    U64(@event, EventField.DestinationIdentities),
+                    U64(@event, EventField.Tunnels),
+                    U64(@event, EventField.Ratchets),
+                    U64(@event, EventField.Refused),
+                    U64(@event, EventField.Dropped)
+                ),
+            DiagnosticEventKind.PersistenceFlushed =>
+                new DiagnosticEvent.PersistenceFlushed(
+                    PersistenceCause(@event),
+                    PersistenceTarget(@event)
+                ),
+            DiagnosticEventKind.PersistenceFlushFailed =>
+                new DiagnosticEvent.PersistenceFlushFailed(
+                    PersistenceCause(@event),
+                    PersistenceTarget(@event)
+                ),
             var kind => throw new InvalidDataException($"Unknown diagnostic event kind {kind}."),
         };
+    }
+
+    private static PersistenceFlushCause PersistenceCause(EventHandle @event)
+    {
+        var raw = checked((uint)U64(@event, EventField.PersistenceCause));
+        var cause = (PersistenceFlushCause)raw;
+        return Enum.IsDefined(cause)
+            ? cause
+            : throw new InvalidDataException($"Unknown persistence flush cause {raw}.");
+    }
+
+    private static PersistenceFlushTarget PersistenceTarget(EventHandle @event)
+    {
+        var raw = checked((uint)U64(@event, EventField.PersistenceTarget));
+        var target = (PersistenceFlushTarget)raw;
+        return Enum.IsDefined(target)
+            ? target
+            : throw new InvalidDataException($"Unknown persistence flush target {raw}.");
     }
 
     private static LinkClosedReason LinkReason(EventHandle @event)

@@ -567,12 +567,68 @@ func decodeDiagnosticEvent(event nativeEvent) (DiagnosticEvent, error) {
 			}
 		}
 		return DiagnosticEventDiagnosticsDropped{Count: count}, nil
+	case DiagnosticEventKindPersistenceRestored:
+		return decodePersistenceRestored(event)
+	case DiagnosticEventKindPersistenceFlushed,
+		DiagnosticEventKindPersistenceFlushFailed:
+		return decodePersistenceFlush(event)
 	default:
 		return nil, StatusError{
 			Operation: "decode diagnostic event kind",
 			Status:    StatusBackendFailed,
 		}
 	}
+}
+
+func decodePersistenceRestored(event nativeEvent) (DiagnosticEvent, error) {
+	fields := [...]EventField{
+		EventFieldRoutes,
+		EventFieldDestinationIdentities,
+		EventFieldTunnels,
+		EventFieldRatchets,
+		EventFieldRefused,
+		EventFieldDropped,
+	}
+	values := [len(fields)]uint64{}
+	for index, field := range fields {
+		value, err := requiredU64(event, field)
+		if err != nil {
+			return nil, err
+		}
+		values[index] = value
+	}
+	return DiagnosticEventPersistenceRestored{
+		Routes:                values[0],
+		DestinationIdentities: values[1],
+		Tunnels:               values[2],
+		Ratchets:              values[3],
+		Refused:               values[4],
+		Dropped:               values[5],
+	}, nil
+}
+
+func decodePersistenceFlush(event nativeEvent) (DiagnosticEvent, error) {
+	rawCause, err := requiredU64(event, EventFieldPersistenceCause)
+	if err != nil {
+		return nil, err
+	}
+	rawTarget, err := requiredU64(event, EventFieldPersistenceTarget)
+	if err != nil {
+		return nil, err
+	}
+	cause := PersistenceFlushCause(rawCause)
+	target := PersistenceFlushTarget(rawTarget)
+	if cause < PersistenceFlushCauseStartup || cause > PersistenceFlushCauseShutdown ||
+		target < PersistenceFlushTargetRoutingState || target > PersistenceFlushTargetRatchets {
+		return nil, StatusError{
+			Operation: "decode persistence diagnostic",
+			Status:    StatusBackendFailed,
+		}
+	}
+	if DiagnosticEventKind(ffiEventKind(event)) == DiagnosticEventKindPersistenceFlushed {
+		return DiagnosticEventPersistenceFlushed{Cause: cause, Target: target}, nil
+	}
+	return DiagnosticEventPersistenceFlushFailed{Cause: cause, Target: target}, nil
 }
 
 func decodeAnnounceHeard(event nativeEvent) (DiagnosticEvent, error) {

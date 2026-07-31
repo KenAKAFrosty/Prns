@@ -20,6 +20,7 @@ from ._native import (
     Lifecycle,
     Limits as NativeLimits,
     NativeLibrary,
+    PersistenceConfig as NativePersistenceConfig,
     ReadinessCallback,
     RequestHandlerConfig as NativeRequestHandlerConfig,
     StringView,
@@ -294,6 +295,7 @@ class HostOptions:
         g.BALANCED_RETAINED_EVENT_BYTES,
         g.BALANCED_DIAGNOSTICS,
     )
+    persistence: g.PersistenceConfig = g.PersistenceConfigEphemeral()
 
     @classmethod
     def endpoint(
@@ -325,6 +327,24 @@ class HostOptions:
             destinations,
             required_capabilities,
             limits or HostLimits.balanced(),
+        )
+
+    @classmethod
+    def persistent_endpoint(
+        cls,
+        root: os.PathLike[str] | str,
+        destinations: tuple[g.DestinationConfig, ...] = (),
+        required_capabilities: tuple[g.Capability, ...] = (),
+        limits: HostLimits | None = None,
+    ) -> HostOptions:
+        root_path = os.fspath(root)
+        return cls(
+            g.IdentityConfigLoadOrCreate(os.path.join(root_path, "identity")),
+            g.HostRole.ENDPOINT,
+            destinations,
+            required_capabilities,
+            limits or HostLimits.balanced(),
+            g.PersistenceConfigDirectory(os.path.join(root_path, "state")),
         )
 
 
@@ -394,6 +414,25 @@ def _marshal_identity(identity: g.IdentityConfig, arena: _Arena) -> NativeIdenti
             arena.string(identity.path),
         )
     raise TypeError(f"unknown identity config {type(identity)!r}")
+
+
+def _marshal_persistence(
+    persistence: g.PersistenceConfig,
+    arena: _Arena,
+) -> NativePersistenceConfig:
+    if isinstance(persistence, g.PersistenceConfigEphemeral):
+        return NativePersistenceConfig(
+            ctypes.sizeof(NativePersistenceConfig),
+            g.PersistenceConfigKind.EPHEMERAL,
+            StringView(),
+        )
+    if isinstance(persistence, g.PersistenceConfigDirectory):
+        return NativePersistenceConfig(
+            ctypes.sizeof(NativePersistenceConfig),
+            g.PersistenceConfigKind.DIRECTORY,
+            arena.string(persistence.path),
+        )
+    raise TypeError(f"unknown persistence config {type(persistence)!r}")
 
 
 def _marshal_name(
@@ -981,6 +1020,28 @@ def _decode_diagnostic(
         return g.DiagnosticEventDiagnosticsDropped(
             _event_u128(native, event, f.DROPPED_COUNT)
         )
+    if diagnostic is g.DiagnosticEventKind.PERSISTENCE_RESTORED:
+        return g.DiagnosticEventPersistenceRestored(
+            _event_u64(native, event, f.ROUTES),
+            _event_u64(native, event, f.DESTINATION_IDENTITIES),
+            _event_u64(native, event, f.TUNNELS),
+            _event_u64(native, event, f.RATCHETS),
+            _event_u64(native, event, f.REFUSED),
+            _event_u64(native, event, f.DROPPED),
+        )
+    if diagnostic in (
+        g.DiagnosticEventKind.PERSISTENCE_FLUSHED,
+        g.DiagnosticEventKind.PERSISTENCE_FLUSH_FAILED,
+    ):
+        cause = g.PersistenceFlushCause(
+            _event_u64(native, event, f.PERSISTENCE_CAUSE)
+        )
+        target = g.PersistenceFlushTarget(
+            _event_u64(native, event, f.PERSISTENCE_TARGET)
+        )
+        if diagnostic is g.DiagnosticEventKind.PERSISTENCE_FLUSHED:
+            return g.DiagnosticEventPersistenceFlushed(cause, target)
+        return g.DiagnosticEventPersistenceFlushFailed(cause, target)
     raise RuntimeError(f"unknown diagnostic event {diagnostic}")
 
 
@@ -1042,6 +1103,10 @@ class Host:
                 capabilities,
             )
             native_options.required_capability_count = len(capabilities)
+            native_options.persistence = _marshal_persistence(
+                options.persistence,
+                arena,
+            )
             handle = ctypes.c_void_p()
             _check(
                 native.library.prns_host_create(

@@ -22,33 +22,31 @@ pub use command::{
     ResourceStrategy, ResponseTimeout,
 };
 pub use config::{
-    DestinationConfig, DestinationIdentityConfig, DestinationLinkRequestPolicy, DestinationName,
-    DestinationNameError, DestinationProofStrategy, DestinationRatchetPolicy, HostConfig,
-    IdentityConfig, IdentitySecret, PersistenceConfig, RequestHandlerConfig,
-    SingleDestinationConfig,
+    DestinationConfig, DestinationIdentityConfig, DestinationName, DestinationNameError,
+    HostConfig, HostRole, IdentityConfig, IdentitySecret, PersistenceConfig, RequestHandlerConfig,
+    RequestPolicy, SingleDestinationConfig,
 };
 pub use contract::{
     verify_host_contract, HostContract, HostContractMismatch, HOST_CONTRACT, HOST_CONTRACT_ABI,
 };
 pub use delivery::{EventDelivery, EventDeliveryAdmission, EventDeliveryQueue};
 pub use events::{
-    ApplicationEvent, ChannelMessage, DiagnosticBatch, DiagnosticEvent, RequestAvailable,
-    ResourceNeedsDecompression, ResourceSegmentAvailable, ResponseAvailable,
-    ResponseSegmentAvailable, SingleDelivery,
+    ApplicationEvent, ChannelMessage, DiagnosticBatch, DiagnosticEvent, LinkClosedReason,
+    PersistenceFlushCause, PersistenceFlushTarget, RequestAvailable, ResourceNeedsDecompression,
+    ResourceSegmentAvailable, ResponseAvailable, ResponseSegmentAvailable, SingleDelivery,
 };
 pub use generated::{
-    ApplicationEventKind, BackendKind, BitrateKind, Capability, CommandFailureKind,
-    CommandOutcomeKind, DeliveryEvidenceKind, DestinationConfigKind, DestinationIdentityConfigKind,
-    DiagnosticEventKind, DiscoveryScope, EventField, HostRole, IdentityConfigKind, InterfaceHealth,
-    InterfaceKind, LifecyclePhase, LinkClosedReason, MulticastAddressType, PersistenceConfigKind,
-    PersistenceFlushCause, PersistenceFlushTarget, RequestPolicy, ResourceCompressionKind,
-    ResourceStrategyKind, ResponseTimeoutKind, SerialDataBits, SerialParity, SerialStopBits,
-    Status, StopReason, BALANCED_APPLICATION_EVENTS, BALANCED_DIAGNOSTICS,
-    BALANCED_PENDING_COMMANDS, BALANCED_RETAINED_EVENT_BYTES, DESTINATION_HASH_LENGTH,
-    HOST_OPERATION_NAMES, HOST_SCHEMA_ABI, HOST_SCHEMA_PRODUCT_VERSION, HOST_SCHEMA_VERSION,
-    IDENTITY_HASH_LENGTH, IDENTITY_SECRET_LENGTH, INTERFACE_ID_LENGTH, LINK_ID_LENGTH,
-    PACKET_HASH_LENGTH, REQUEST_ID_LENGTH, REQUEST_PATH_HASH_LENGTH, RESOURCE_HASH_LENGTH,
-    SAFE_UINT_MAX,
+    AbiApplicationEventKind, AbiBackendKind, AbiBitrateKind, AbiCapability, AbiCommandFailureKind,
+    AbiCommandOutcomeKind, AbiDeliveryEvidenceKind, AbiDestinationConfigKind,
+    AbiDestinationIdentityConfigKind, AbiDiagnosticEventKind, AbiEventField, AbiHostRole,
+    AbiIdentityConfigKind, AbiLifecyclePhase, AbiLinkClosedReason, AbiPersistenceConfigKind,
+    AbiPersistenceFlushCause, AbiPersistenceFlushTarget, AbiRequestPolicy,
+    AbiResourceCompressionKind, AbiResourceStrategyKind, AbiResponseTimeoutKind, AbiStatus,
+    AbiStopReason, BALANCED_APPLICATION_EVENTS, BALANCED_DIAGNOSTICS, BALANCED_PENDING_COMMANDS,
+    BALANCED_RETAINED_EVENT_BYTES, DESTINATION_HASH_LENGTH, HOST_SCHEMA_ABI,
+    HOST_SCHEMA_PRODUCT_VERSION, HOST_SCHEMA_VERSION, IDENTITY_HASH_LENGTH, IDENTITY_SECRET_LENGTH,
+    INTERFACE_ID_LENGTH, LINK_ID_LENGTH, PACKET_HASH_LENGTH, REQUEST_ID_LENGTH,
+    REQUEST_PATH_HASH_LENGTH, RESOURCE_HASH_LENGTH,
 };
 pub use inspection::{
     DestinationIdentitySnapshot, HostSnapshot, InterfaceSnapshot, PersistenceSnapshot,

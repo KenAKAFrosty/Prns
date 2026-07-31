@@ -1,3 +1,5 @@
+import Foundation
+
 public struct Limits: Hashable, Sendable {
     public let pendingCommands: Int
     public let applicationEvents: Int
@@ -41,19 +43,22 @@ public struct HostOptions: Sendable {
     public let destinations: [DestinationConfig]
     public let requiredCapabilities: [Capability]
     public let limits: Limits
+    public let persistence: PersistenceConfig
 
     public init(
         role: HostRole,
         identity: IdentityConfig,
         destinations: [DestinationConfig],
         requiredCapabilities: [Capability],
-        limits: Limits
+        limits: Limits,
+        persistence: PersistenceConfig = .ephemeral
     ) {
         self.role = role
         self.identity = identity
         self.destinations = destinations
         self.requiredCapabilities = requiredCapabilities
         self.limits = limits
+        self.persistence = persistence
     }
 
     public static func ephemeralEndpoint(
@@ -66,6 +71,26 @@ public struct HostOptions: Sendable {
             destinations: destinations,
             requiredCapabilities: requiredCapabilities,
             limits: try .balanced
+        )
+    }
+
+    public static func persistentEndpoint(
+        root: String,
+        destinations: [DestinationConfig] = [],
+        requiredCapabilities: [Capability] = []
+    ) throws -> Self {
+        let rootURL = URL(fileURLWithPath: root, isDirectory: true)
+        return Self(
+            role: .endpoint,
+            identity: .loadOrCreate(
+                path: rootURL.appendingPathComponent("identity").path
+            ),
+            destinations: destinations,
+            requiredCapabilities: requiredCapabilities,
+            limits: try .balanced,
+            persistence: .directory(
+                path: rootURL.appendingPathComponent("state").path
+            )
         )
     }
 }

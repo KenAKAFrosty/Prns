@@ -31,6 +31,12 @@ pub enum PersistenceConfig {
     Directory { path: String },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostRole {
+    Endpoint,
+    Transport,
+}
+
 pub enum DestinationIdentityConfig {
     HostIdentity,
     Dedicated(IdentityConfig),
@@ -99,6 +105,7 @@ pub enum DestinationConfig {
 
 pub struct HostConfig {
     pub identity: IdentityConfig,
+    pub persistence: PersistenceConfig,
     pub role: HostRole,
     pub destinations: Vec<DestinationConfig>,
     pub required_capabilities: Vec<Capability>,

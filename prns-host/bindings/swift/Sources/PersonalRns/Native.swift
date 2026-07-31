@@ -133,6 +133,26 @@ func emptyNativeIdentity() -> PrnsIdentityConfig {
     )
 }
 
+func nativePersistence(
+    _ value: PersistenceConfig,
+    arena: NativeArena
+) throws -> PrnsPersistenceConfig {
+    switch value {
+    case .ephemeral:
+        return PrnsPersistenceConfig(
+            struct_size: MemoryLayout<PrnsPersistenceConfig>.size,
+            kind: PersistenceConfigKind.ephemeral.rawValue,
+            path: PrnsStringView(data: nil, length: 0)
+        )
+    case .directory(let path):
+        return PrnsPersistenceConfig(
+            struct_size: MemoryLayout<PrnsPersistenceConfig>.size,
+            kind: PersistenceConfigKind.directory.rawValue,
+            path: try arena.string(path)
+        )
+    }
+}
+
 func nativeDestinationIdentity(
     _ value: DestinationIdentityConfig,
     arena: NativeArena
@@ -213,7 +233,8 @@ func nativeHostOptions(
         destinations: try arena.array(destinations).map { UnsafePointer($0) },
         destination_count: destinations.count,
         required_capabilities: try arena.array(capabilities).map { UnsafePointer($0) },
-        required_capability_count: capabilities.count
+        required_capability_count: capabilities.count,
+        persistence: try nativePersistence(value.persistence, arena: arena)
     )
 }
 

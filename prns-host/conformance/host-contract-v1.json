@@ -123,6 +123,9 @@
       "LinkEstablished": 201,
       "LinkInterfaceMismatch": 204,
       "PeerIdentified": 202,
+      "PersistenceFlushFailed": 219,
+      "PersistenceFlushed": 218,
+      "PersistenceRestored": 217,
       "ResourceAssembled": 205,
       "ResourceFailed": 206,
       "ResourceSendProgress": 207,
@@ -138,7 +141,9 @@
       "Cause": 24,
       "Data": 9,
       "Destination": 1,
+      "DestinationIdentities": 33,
       "Detail": 27,
+      "Dropped": 37,
       "DroppedCount": 29,
       "Hash": 12,
       "Hops": 30,
@@ -149,11 +154,16 @@
       "Metadata": 14,
       "OriginalHash": 13,
       "PathHash": 7,
+      "PersistenceCause": 38,
+      "PersistenceTarget": 39,
       "PhysicalTransferredBytes": 26,
       "Plaintext": 3,
+      "Ratchets": 35,
       "Reason": 20,
+      "Refused": 36,
       "RequestId": 5,
       "Requester": 6,
+      "Routes": 32,
       "RttMillis": 8,
       "SegmentIndex": 10,
       "SourceInterface": 2,
@@ -163,6 +173,7 @@
       "TotalSegments": 11,
       "TotalSizeBytes": 23,
       "TransferredBytes": 25,
+      "Tunnels": 34,
       "UncompressedDataBytes": 17
     },
     "HostRole": {
@@ -185,6 +196,21 @@
       "MalformedRtt": 3,
       "PeerClosed": 2,
       "Timeout": 1
+    },
+    "PersistenceConfigKind": {
+      "Directory": 2,
+      "Ephemeral": 1
+    },
+    "PersistenceFlushCause": {
+      "Interval": 2,
+      "RatchetRotation": 4,
+      "RouteChange": 3,
+      "Shutdown": 5,
+      "Startup": 1
+    },
+    "PersistenceFlushTarget": {
+      "Ratchets": 2,
+      "RoutingState": 1
     },
     "RequestPolicy": {
       "AllowAll": 2,
@@ -213,9 +239,12 @@
       "NotReady": 4,
       "Ok": 0,
       "Panic": 11,
+      "PermissionDenied": 14,
       "QueueFull": 8,
       "Stopped": 9,
       "TimedOut": 7,
+      "Unavailable": 15,
+      "Unsupported": 13,
       "WouldBlock": 6
     },
     "StopReason": {
@@ -348,6 +377,9 @@
       "LinkEstablished": 201,
       "LinkInterfaceMismatch": 204,
       "PeerIdentified": 202,
+      "PersistenceFlushFailed": 219,
+      "PersistenceFlushed": 218,
+      "PersistenceRestored": 217,
       "ResourceAssembled": 205,
       "ResourceFailed": 206,
       "ResourceSendProgress": 207,
@@ -381,6 +413,10 @@
       "Existing": 1,
       "GenerateEphemeral": 2,
       "LoadOrCreate": 3
+    },
+    "PersistenceConfig": {
+      "Directory": 2,
+      "Ephemeral": 1
     },
     "ResourceCompression": {
       "Auto": 1,

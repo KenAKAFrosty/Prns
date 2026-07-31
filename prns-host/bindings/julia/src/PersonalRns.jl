@@ -101,6 +101,9 @@ export DiagnosticEventRouteEvicted
 export DiagnosticEventRouteExpired
 export DiagnosticEventRouteInterfaceGone
 export DiagnosticEventSelfRatchetRotated
+export DiagnosticEventPersistenceRestored
+export DiagnosticEventPersistenceFlushed
+export DiagnosticEventPersistenceFlushFailed
 export DiagnosticEventStream
 export Host
 export HostCommand
@@ -130,10 +133,14 @@ export IdentityConfigGenerateEphemeral
 export IdentityConfigLoadOrCreate
 export IdentityHash
 export IdentitySecret
+export PersistenceConfig
+export PersistenceConfigDirectory
+export PersistenceConfigEphemeral
 export InterfaceId
 export LinkClosedReason
 export LinkId
 export Limits
+export persistent_endpoint
 export PacketHash
 export RequestHandlerConfig
 export RequestId

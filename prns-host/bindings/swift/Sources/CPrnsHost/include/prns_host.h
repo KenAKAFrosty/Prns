@@ -46,6 +46,9 @@ typedef uint32_t PrnsStatus;
 #define PRNS_STATUS_BACKEND_FAILED UINT32_C(10)
 #define PRNS_STATUS_PANIC UINT32_C(11)
 #define PRNS_STATUS_INTERRUPTED UINT32_C(12)
+#define PRNS_STATUS_UNSUPPORTED UINT32_C(13)
+#define PRNS_STATUS_PERMISSION_DENIED UINT32_C(14)
+#define PRNS_STATUS_UNAVAILABLE UINT32_C(15)
 
 typedef uint32_t PrnsBackendKind;
 #define PRNS_BACKEND_KIND_NATIVE UINT32_C(1)
@@ -74,6 +77,10 @@ typedef uint32_t PrnsIdentityConfigKind;
 #define PRNS_IDENTITY_CONFIG_KIND_EXISTING UINT32_C(1)
 #define PRNS_IDENTITY_CONFIG_KIND_GENERATE_EPHEMERAL UINT32_C(2)
 #define PRNS_IDENTITY_CONFIG_KIND_LOAD_OR_CREATE UINT32_C(3)
+
+typedef uint32_t PrnsPersistenceConfigKind;
+#define PRNS_PERSISTENCE_CONFIG_KIND_EPHEMERAL UINT32_C(1)
+#define PRNS_PERSISTENCE_CONFIG_KIND_DIRECTORY UINT32_C(2)
 
 typedef uint32_t PrnsDestinationConfigKind;
 #define PRNS_DESTINATION_CONFIG_KIND_PLAIN UINT32_C(1)
@@ -202,6 +209,20 @@ typedef uint32_t PrnsDiagnosticEventKind;
 #define PRNS_DIAGNOSTIC_EVENT_KIND_ROUTE_DROPPED UINT32_C(214)
 #define PRNS_DIAGNOSTIC_EVENT_KIND_BACKEND_DIAGNOSTIC UINT32_C(215)
 #define PRNS_DIAGNOSTIC_EVENT_KIND_DIAGNOSTICS_DROPPED UINT32_C(216)
+#define PRNS_DIAGNOSTIC_EVENT_KIND_PERSISTENCE_RESTORED UINT32_C(217)
+#define PRNS_DIAGNOSTIC_EVENT_KIND_PERSISTENCE_FLUSHED UINT32_C(218)
+#define PRNS_DIAGNOSTIC_EVENT_KIND_PERSISTENCE_FLUSH_FAILED UINT32_C(219)
+
+typedef uint32_t PrnsPersistenceFlushCause;
+#define PRNS_PERSISTENCE_FLUSH_CAUSE_STARTUP UINT32_C(1)
+#define PRNS_PERSISTENCE_FLUSH_CAUSE_INTERVAL UINT32_C(2)
+#define PRNS_PERSISTENCE_FLUSH_CAUSE_ROUTE_CHANGE UINT32_C(3)
+#define PRNS_PERSISTENCE_FLUSH_CAUSE_RATCHET_ROTATION UINT32_C(4)
+#define PRNS_PERSISTENCE_FLUSH_CAUSE_SHUTDOWN UINT32_C(5)
+
+typedef uint32_t PrnsPersistenceFlushTarget;
+#define PRNS_PERSISTENCE_FLUSH_TARGET_ROUTING_STATE UINT32_C(1)
+#define PRNS_PERSISTENCE_FLUSH_TARGET_RATCHETS UINT32_C(2)
 
 typedef uint32_t PrnsEventField;
 #define PRNS_EVENT_FIELD_DESTINATION UINT32_C(1)
@@ -235,6 +256,14 @@ typedef uint32_t PrnsEventField;
 #define PRNS_EVENT_FIELD_DROPPED_COUNT UINT32_C(29)
 #define PRNS_EVENT_FIELD_HOPS UINT32_C(30)
 #define PRNS_EVENT_FIELD_STREAM UINT32_C(31)
+#define PRNS_EVENT_FIELD_ROUTES UINT32_C(32)
+#define PRNS_EVENT_FIELD_DESTINATION_IDENTITIES UINT32_C(33)
+#define PRNS_EVENT_FIELD_TUNNELS UINT32_C(34)
+#define PRNS_EVENT_FIELD_RATCHETS UINT32_C(35)
+#define PRNS_EVENT_FIELD_REFUSED UINT32_C(36)
+#define PRNS_EVENT_FIELD_DROPPED UINT32_C(37)
+#define PRNS_EVENT_FIELD_PERSISTENCE_CAUSE UINT32_C(38)
+#define PRNS_EVENT_FIELD_PERSISTENCE_TARGET UINT32_C(39)
 
 /*
  * Ownership and lifetime contract:
@@ -291,6 +320,12 @@ typedef struct PrnsIdentityConfig {
     PrnsStringView path;
 } PrnsIdentityConfig;
 
+typedef struct PrnsPersistenceConfig {
+    size_t struct_size;
+    PrnsPersistenceConfigKind kind;
+    PrnsStringView path;
+} PrnsPersistenceConfig;
+
 typedef struct PrnsDestinationName {
     size_t struct_size;
     PrnsStringView app_name;
@@ -326,6 +361,7 @@ typedef struct PrnsHostOptions {
     size_t destination_count;
     const PrnsCapability *required_capabilities;
     size_t required_capability_count;
+    PrnsPersistenceConfig persistence;
 } PrnsHostOptions;
 
 typedef struct PrnsLifecycle {

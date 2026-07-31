@@ -50,7 +50,8 @@ public sealed record HostOptions(
     HostRole Role,
     ImmutableArray<DestinationConfig> Destinations,
     ImmutableArray<Capability> RequiredCapabilities,
-    HostLimits Limits
+    HostLimits Limits,
+    PersistenceConfig? Persistence = null
 )
 {
     public static HostOptions EphemeralEndpoint =>
@@ -59,7 +60,18 @@ public sealed record HostOptions(
             HostRole.Endpoint,
             [],
             [],
-            HostLimits.Balanced
+            HostLimits.Balanced,
+            new PersistenceConfig.Ephemeral()
+        );
+
+    public static HostOptions PersistentEndpoint(string root) =>
+        new(
+            new IdentityConfig.LoadOrCreate(Path.Combine(root, "identity")),
+            HostRole.Endpoint,
+            [],
+            [],
+            HostLimits.Balanced,
+            new PersistenceConfig.Directory(Path.Combine(root, "state"))
         );
 }
 
@@ -173,6 +185,7 @@ public sealed class PrnsHost : IAsyncDisposable
                 DestinationCount = (nuint)destinations.Length,
                 RequiredCapabilities = arena.Array<Capability>(requiredCapabilities.AsSpan()),
                 RequiredCapabilityCount = (nuint)requiredCapabilities.Length,
+                Persistence = MarshalPersistence(options.Persistence, arena),
             };
             var status = Native.prns_host_create(in nativeOptions, out var handle);
             if (status == Status.Ok)
@@ -229,6 +242,29 @@ public sealed class PrnsHost : IAsyncDisposable
                     StructSize = (nuint)Marshal.SizeOf<Native.IdentityConfig>(),
                     Kind = IdentityConfigKind.LoadOrCreate,
                     Path = arena.String(loadOrCreate.Path),
+                }
+        );
+    }
+
+    private static Native.PersistenceConfig MarshalPersistence(
+        PersistenceConfig? persistence,
+        NativeArena arena
+    )
+    {
+        persistence ??= new PersistenceConfig.Ephemeral();
+        return persistence.Match(
+            _ =>
+                new Native.PersistenceConfig
+                {
+                    StructSize = (nuint)Marshal.SizeOf<Native.PersistenceConfig>(),
+                    Kind = PersistenceConfigKind.Ephemeral,
+                },
+            directory =>
+                new Native.PersistenceConfig
+                {
+                    StructSize = (nuint)Marshal.SizeOf<Native.PersistenceConfig>(),
+                    Kind = PersistenceConfigKind.Directory,
+                    Path = arena.String(directory.Path),
                 }
         );
     }
