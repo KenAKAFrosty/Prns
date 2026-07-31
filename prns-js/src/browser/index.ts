@@ -20,6 +20,9 @@ import {
 } from "../contract.js";
 import type {
   ApplicationEvent as HostApplicationEvent,
+  BackendCapabilities,
+  BackendInfo,
+  CapabilityName,
   CommandFailure,
   CommandOutcome,
   CommandSettlement,
@@ -31,6 +34,7 @@ import type {
   IdentityHash,
   InterfaceConfig,
   InterfaceId,
+  InterfaceKind,
   LifecycleState as HostLifecycleState,
   LinkId,
   PrnsLimits as HostLimits,
@@ -80,7 +84,10 @@ export {
 export type { DataFrom, TagFrom } from "../casework.js";
 export type { StreamClaim } from "../async_lanes.js";
 export type {
+  BackendCapabilities,
+  BackendInfo,
   Bitrate,
+  CapabilityName,
   CommandFailure,
   CommandOutcome,
   CommandSettlement,
@@ -91,6 +98,7 @@ export type {
   IdentityHash,
   InterfaceConfig,
   InterfaceId,
+  InterfaceKind,
   LinkId,
   RequestId,
   RequestHandlerConfig,
@@ -3138,6 +3146,18 @@ export class Prns {
     return this.#lifecycle;
   }
 
+  get backendInfo(): BackendInfo {
+    return cooperativeBackendInfo();
+  }
+
+  get capabilities(): BackendCapabilities {
+    const info = this.backendInfo;
+    return Tag("Cooperative", {
+      available: new Set(info.capabilities),
+      interfaceKinds: new Set(info.interfaceKinds),
+    });
+  }
+
   stop(): Promise<StopOutcome> {
     if (this.#stopCompleted) {
       return Promise.resolve(Tag("AlreadyStopped"));
@@ -5533,6 +5553,21 @@ function webSocketCommandFailure(
     ConnectionFailed: ({ detail }) => Tag("ConnectFailed", { detail }),
     RuntimeRejected: ({ operation, detail }) =>
       Tag("BackendFailed", { detail: `${operation}: ${detail}` }),
+  });
+}
+
+function cooperativeBackendInfo(): BackendInfo {
+  const webSocketAvailable = typeof globalThis.WebSocket === "function";
+  const capabilities: CapabilityName[] = webSocketAvailable
+    ? ["WebSocket", "BrowserRendezvous"]
+    : [];
+  const interfaceKinds: InterfaceKind[] = webSocketAvailable
+    ? ["WebSocketClient", "BrowserRendezvous"]
+    : [];
+  return Object.freeze({
+    backend: "Cooperative",
+    capabilities: Object.freeze(capabilities),
+    interfaceKinds: Object.freeze(interfaceKinds),
   });
 }
 

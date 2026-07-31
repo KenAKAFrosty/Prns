@@ -299,7 +299,7 @@ type RawNode = {
 };
 
 type RawHostSnapshot = {
-  revision: number;
+  revision: bigint;
   backend: {
     backend: string;
     capabilities: string[];
@@ -311,8 +311,8 @@ type RawHostSnapshot = {
     kind?: string;
     health: string;
     failureDetail?: string;
-    rxBytes: number;
-    txBytes: number;
+    rxBytes: bigint;
+    txBytes: bigint;
     rxBps?: number;
     txBps?: number;
     routeCount: number;
@@ -475,25 +475,42 @@ export function persistentEndpoint(
 }
 
 const RAW_BACKEND_INFO = addon.backendInfo();
+const NATIVE_BACKEND_INFO: BackendInfo = Object.freeze({
+  backend: contract.contractValue("backend", RAW_BACKEND_INFO.backend, contract.isBackendKind),
+  capabilities: Object.freeze(
+    RAW_BACKEND_INFO.capabilities.map((value) =>
+      contract.contractValue("capabilities", value, contract.isCapabilityName),
+    ),
+  ),
+  interfaceKinds: Object.freeze(
+    RAW_BACKEND_INFO.interfaceKinds.map((value) =>
+      contract.contractValue("interfaceKinds", value, contract.isInterfaceKind),
+    ),
+  ),
+});
 const NATIVE_CAPABILITIES: ReadonlySet<CapabilityName> = new Set(
-  RAW_BACKEND_INFO.capabilities as CapabilityName[],
+  NATIVE_BACKEND_INFO.capabilities,
 );
 const NATIVE_INTERFACE_KINDS: ReadonlySet<InterfaceKind> = new Set(
-  RAW_BACKEND_INFO.interfaceKinds as InterfaceKind[],
+  NATIVE_BACKEND_INFO.interfaceKinds,
 );
 
 function decodeHostSnapshot(raw: RawHostSnapshot): HostSnapshot {
   const backend: BackendInfo = {
-    backend: raw.backend.backend as BackendKind,
-    capabilities: raw.backend.capabilities as CapabilityName[],
-    interfaceKinds: raw.backend.interfaceKinds as InterfaceKind[],
+    backend: contract.contractValue("snapshot backend", raw.backend.backend, contract.isBackendKind),
+    capabilities: raw.backend.capabilities.map((value) =>
+      contract.contractValue("snapshot capabilities", value, contract.isCapabilityName),
+    ),
+    interfaceKinds: raw.backend.interfaceKinds.map((value) =>
+      contract.contractValue("snapshot interface kinds", value, contract.isInterfaceKind),
+    ),
   };
   return {
     revision: raw.revision,
     backend,
     interfaces: raw.interfaces.map((entry) => ({
       interfaceId: contract.interfaceId(entry.interfaceId),
-      health: entry.health as InterfaceHealth,
+      health: contract.contractValue("snapshot interface health", entry.health, contract.isInterfaceHealth),
       rxBytes: entry.rxBytes,
       txBytes: entry.txBytes,
       routeCount: entry.routeCount,
@@ -502,7 +519,13 @@ function decodeHostSnapshot(raw: RawHostSnapshot): HostSnapshot {
       ...(entry.name === undefined ? {} : { name: entry.name }),
       ...(entry.kind === undefined
         ? {}
-        : { kind: entry.kind as InterfaceKind }),
+        : {
+            kind: contract.contractValue(
+              "snapshot interface kind",
+              entry.kind,
+              contract.isInterfaceKind,
+            ),
+          }),
       ...(entry.failureDetail === undefined
         ? {}
         : { failureDetail: entry.failureDetail }),
@@ -561,6 +584,7 @@ export class NativeInterface {
 }
 
 export class Prns {
+  readonly backendInfo: BackendInfo = NATIVE_BACKEND_INFO;
   readonly capabilities: BackendCapabilities = casework.Tag("Native", {
     available: NATIVE_CAPABILITIES,
     interfaceKinds: NATIVE_INTERFACE_KINDS,
@@ -790,7 +814,7 @@ export class Prns {
             );
             return casework.Tag("LinkEstablished", {
               linkId: contract.linkId(established.linkId),
-              rttMillis: finiteNonNegative(
+              rttMillis: rawSafeUint(
                 "rttMillis",
                 established.rttMillis,
               ),
@@ -801,7 +825,7 @@ export class Prns {
               Buffer.from(destination),
             );
             return casework.Tag("PathDiscovered", {
-              hops: finiteNonNegative("hops", path.hops),
+              hops: rawSafeUint("hops", path.hops),
             });
           },
           Identify: async ({ linkId, identity }) => {
@@ -827,7 +851,7 @@ export class Prns {
             );
             return casework.Tag("ResponseReceived", {
               data: bytes("response data", response.data).slice(),
-              rttMillis: finiteNonNegative(
+              rttMillis: rawSafeUint(
                 "rttMillis",
                 response.rttMillis,
               ),
@@ -843,7 +867,7 @@ export class Prns {
               {
                 linkId: Buffer.from(linkId),
                 requestId: Buffer.from(requestId),
-                rttMillis: finiteNonNegative(
+                rttMillis: rawSafeUint(
                   "requestRttMillis",
                   requestRttMillis,
                 ),
@@ -851,7 +875,7 @@ export class Prns {
               Buffer.from(bytes("payload", payload)),
             );
             return casework.Tag("ResponseSent", {
-              rttMillis: finiteNonNegative("rttMillis", rttMillis),
+              rttMillis: rawSafeUint("rttMillis", rttMillis),
             });
           },
           SendResource: async ({
@@ -1363,7 +1387,7 @@ function parseRawEvent(raw: unknown): ParsedRawEvent {
         pathHash: contract.requestPathHash(
           bytes("pathHash", rawRequest.pathHash),
         ),
-        rttMillis: finiteNonNegative("rttMillis", rawRequest.rttMillis),
+        rttMillis: rawSafeUint("rttMillis", rawRequest.rttMillis),
         data: bytes("data", rawRequest.data).slice(),
       };
       const requester = optionalBytes(rawRequest.requester);
@@ -1392,8 +1416,8 @@ function parseRawEvent(raw: unknown): ParsedRawEvent {
         casework.Tag("ResponseSegment", {
           linkId: contract.linkId(bytes("linkId", data.linkId)),
           requestId: contract.requestId(bytes("requestId", data.requestId)),
-          segmentIndex: finiteNonNegative("segmentIndex", data.segmentIndex),
-          totalSegments: finiteNonNegative("totalSegments", data.totalSegments),
+          segmentIndex: rawSafeUint("segmentIndex", data.segmentIndex),
+          totalSegments: rawSafeUint("totalSegments", data.totalSegments),
           data: bytes("data", data.data).slice(),
         }),
       ),
@@ -1418,8 +1442,8 @@ function parseRawEvent(raw: unknown): ParsedRawEvent {
         originalHash: contract.resourceHash(
           bytes("originalHash", data.originalHash),
         ),
-        segmentIndex: finiteNonNegative("segmentIndex", data.segmentIndex),
-        totalSegments: finiteNonNegative("totalSegments", data.totalSegments),
+        segmentIndex: rawSafeUint("segmentIndex", data.segmentIndex),
+        totalSegments: rawSafeUint("totalSegments", data.totalSegments),
         data: bytes("data", data.data).slice(),
       };
       const metadata = optionalBytes(data.metadata);
@@ -1438,7 +1462,7 @@ function parseRawEvent(raw: unknown): ParsedRawEvent {
           linkId: contract.linkId(bytes("linkId", data.linkId)),
           hash: contract.resourceHash(bytes("hash", data.hash)),
           stream: bytes("stream", data.stream).slice(),
-          uncompressedDataBytes: finiteNonNegative(
+          uncompressedDataBytes: nonNegativeBigInt(
             "uncompressedDataBytes",
             data.uncompressedDataBytes,
           ),
@@ -1449,7 +1473,7 @@ function parseRawEvent(raw: unknown): ParsedRawEvent {
         "Application",
         casework.Tag("ChannelMessage", {
           linkId: contract.linkId(bytes("linkId", data.linkId)),
-          messageType: finiteNonNegative("messageType", data.messageType),
+          messageType: rawSafeUint("messageType", data.messageType),
           data: bytes("data", data.data).slice(),
         }),
       ),
@@ -1460,7 +1484,7 @@ function parseRawEvent(raw: unknown): ParsedRawEvent {
           destination: contract.destinationHash(
             bytes("destination", data.destination),
           ),
-          hops: finiteNonNegative("hops", data.hops),
+          hops: rawSafeUint("hops", data.hops),
           sourceInterface: contract.interfaceId(
             bytes("sourceInterface", data.sourceInterface),
           ),
@@ -1471,7 +1495,7 @@ function parseRawEvent(raw: unknown): ParsedRawEvent {
         "Diagnostic",
         casework.Tag("LinkEstablished", {
           linkId: contract.linkId(bytes("linkId", data.linkId)),
-          rttMillis: finiteNonNegative("rttMillis", data.rttMillis),
+          rttMillis: rawSafeUint("rttMillis", data.rttMillis),
         }),
       ),
     peerIdentified: (data) =>
@@ -1509,7 +1533,7 @@ function parseRawEvent(raw: unknown): ParsedRawEvent {
           originalHash: contract.resourceHash(
             bytes("originalHash", data.originalHash),
           ),
-          totalSizeBytes: finiteNonNegative(
+          totalSizeBytes: nonNegativeBigInt(
             "totalSizeBytes",
             data.totalSizeBytes,
           ),
@@ -1529,17 +1553,17 @@ function parseRawEvent(raw: unknown): ParsedRawEvent {
         "Diagnostic",
         casework.Tag("ResourceSendProgress", {
           linkId: contract.linkId(bytes("linkId", data.linkId)),
-          transferredBytes: finiteNonNegative(
+          transferredBytes: nonNegativeBigInt(
             "transferredBytes",
             data.transferredBytes,
           ),
-          totalBytes: finiteNonNegative("totalBytes", data.totalBytes),
-          physicalTransferredBytes: finiteNonNegative(
+          totalBytes: nonNegativeBigInt("totalBytes", data.totalBytes),
+          physicalTransferredBytes: nonNegativeBigInt(
             "physicalTransferredBytes",
             data.physicalTransferredBytes,
           ),
-          segmentIndex: finiteNonNegative("segmentIndex", data.segmentIndex),
-          totalSegments: finiteNonNegative(
+          segmentIndex: rawSafeUint("segmentIndex", data.segmentIndex),
+          totalSegments: rawSafeUint(
             "totalSegments",
             data.totalSegments,
           ),
@@ -1583,15 +1607,15 @@ function parseRawEvent(raw: unknown): ParsedRawEvent {
       casework.Tag(
         "Diagnostic",
         casework.Tag("PersistenceRestored", {
-          routes: finiteNonNegative("routes", data.routes),
-          destinationIdentities: finiteNonNegative(
+          routes: rawSafeUint("routes", data.routes),
+          destinationIdentities: rawSafeUint(
             "destinationIdentities",
             data.destinationIdentities,
           ),
-          tunnels: finiteNonNegative("tunnels", data.tunnels),
-          ratchets: finiteNonNegative("ratchets", data.ratchets),
-          refused: finiteNonNegative("refused", data.refused),
-          dropped: finiteNonNegative("dropped", data.dropped),
+          tunnels: rawSafeUint("tunnels", data.tunnels),
+          ratchets: rawSafeUint("ratchets", data.ratchets),
+          refused: rawSafeUint("refused", data.refused),
+          dropped: rawSafeUint("dropped", data.dropped),
         }),
       ),
     persistenceFlushed: (data) =>
@@ -1613,7 +1637,7 @@ function parseRawEvent(raw: unknown): ParsedRawEvent {
     commandSettled: () => casework.Tag("CommandSettled"),
     eventBackpressureExceeded: (data) =>
       casework.Tag("BackpressureExceeded", {
-        rejectedEventBytes: finiteNonNegative(
+        rejectedEventBytes: rawSafeUint(
           "rejectedEventBytes",
           data.rejectedEventBytes,
         ),
@@ -1627,7 +1651,7 @@ function parseRawEvent(raw: unknown): ParsedRawEvent {
         "Diagnostic",
         casework.Tag("DiagnosticsDropped", {
           count: BigInt(
-            finiteNonNegative(
+            rawSafeUint(
               "droppedDiagnostics",
               data.droppedDiagnostics,
             ),
@@ -1813,7 +1837,8 @@ function retainedEventBytes(event: ApplicationEvent): number {
     Response: ({ data }) => data.length,
     ResponseSegment: ({ data }) => data.length,
     ResourceAvailable: ({ resource, metadata }) =>
-      resource.totalBytes + (metadata?.length ?? 0),
+      exactBytesAsSafeNumber("resource.totalBytes", resource.totalBytes) +
+      (metadata?.length ?? 0),
     ResourceSegment: ({ data, metadata }) =>
       data.length + (metadata?.length ?? 0),
     ResourceNeedsDecompression: ({ stream }) => stream.length,
@@ -1958,7 +1983,7 @@ function commandFailure(error: unknown): CommandFailure {
 
 function packetDelivered(receipt: RawPacketReceipt): CommandOutcome {
   const delivered = {
-    rttMillis: finiteNonNegative("rttMillis", receipt.rttMillis),
+    rttMillis: rawSafeUint("rttMillis", receipt.rttMillis),
     evidence: deliveryEvidence(receipt.evidence),
   };
   return casework.Tag(
@@ -2484,18 +2509,34 @@ function nonNegativeInteger(name: string, value: number): number {
   return value;
 }
 
-function finiteNonNegative(name: string, value: unknown): number {
-  if (
-    typeof value !== "number" ||
-    !Number.isFinite(value) ||
-    value < 0
-  ) {
+function rawSafeUint(name: string, value: unknown): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
     throw new contract.PrnsValidationError(
       "InvalidNumber",
-      `${name} must be a finite non-negative number`,
+      `${name} must be a non-negative safe integer`,
     );
   }
   return value;
+}
+
+function nonNegativeBigInt(name: string, value: unknown): bigint {
+  if (typeof value !== "bigint" || value < 0n) {
+    throw new contract.PrnsValidationError(
+      "InvalidNumber",
+      `${name} must be a non-negative bigint`,
+    );
+  }
+  return value;
+}
+
+function exactBytesAsSafeNumber(name: string, value: bigint): number {
+  if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new contract.PrnsValidationError(
+      "InvalidNumber",
+      `${name} exceeds the JavaScript safe-integer limit`,
+    );
+  }
+  return Number(value);
 }
 
 function optionalBitrate<Value extends object>(

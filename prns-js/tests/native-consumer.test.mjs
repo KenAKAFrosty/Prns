@@ -54,6 +54,8 @@ test("packaged native API starts, exposes lifecycle, and stops", async () => {
     );
     assert.equal(attached.tag, "Succeeded");
     assert.equal(attached.data.tag, "InterfaceAttached");
+    assert.equal(created.data.backendInfo.backend, "Native");
+    assert.ok(created.data.backendInfo.interfaceKinds.includes("TcpClient"));
     const attachedSnapshot = await created.data.snapshot();
     assert.equal(attachedSnapshot.backend.backend, "Native");
     assert.ok(attachedSnapshot.backend.interfaceKinds.includes("TcpClient"));

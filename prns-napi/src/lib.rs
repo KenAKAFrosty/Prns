@@ -37,14 +37,14 @@ pub fn host_schema_version() -> u32 {
 pub fn backend_info() -> BackendInfo {
     let info = prns_host_native::native_backend_info();
     BackendInfo {
-        backend: format!("{:?}", info.backend()),
+        backend: info.backend().contract_name().to_string(),
         capabilities: info
             .capabilities()
-            .map(|capability| format!("{capability:?}"))
+            .map(|capability| capability.contract_name().to_string())
             .collect(),
         interface_kinds: info
             .interface_kinds()
-            .map(|kind| format!("{kind:?}"))
+            .map(|kind| kind.contract_name().to_string())
             .collect(),
     }
 }
@@ -68,4 +68,53 @@ pub fn request_path_hash(path: String) -> Buffer {
             .as_bytes()
             .to_vec(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::backend_info;
+
+    #[test]
+    fn backend_info_uses_exact_contract_names() {
+        let info = backend_info();
+        assert_eq!(info.backend, "Native");
+        assert_eq!(
+            info.capabilities,
+            [
+                "TcpClient",
+                "TcpServer",
+                "Udp",
+                "Serial",
+                "Usb",
+                "Bluetooth",
+                "Wifi",
+                "WebSocket",
+                "I2p",
+                "Weave",
+            ]
+        );
+        assert_eq!(
+            info.interface_kinds,
+            [
+                "AutoLan",
+                "TcpClient",
+                "TcpServer",
+                "Udp",
+                "Serial",
+                "Kiss",
+                "Ax25Kiss",
+                "RNode",
+                "MultiRNode",
+                "Pipe",
+                "BackboneClient",
+                "BackboneServer",
+                "I2p",
+                "Weave",
+                "AutomaticUsb",
+                "AutomaticBluetoothLe",
+                "WebSocketClient",
+                "WebSocketServer",
+            ]
+        );
+    }
 }

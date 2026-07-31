@@ -2,7 +2,7 @@ use std::future::Future;
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use napi::bindgen_prelude::{Buffer, Function};
+use napi::bindgen_prelude::{BigInt, Buffer, Function};
 use napi::threadsafe_function::ThreadsafeCallContext;
 use napi::Result;
 use napi_derive::napi;
@@ -85,8 +85,6 @@ pub struct ResourceStrategySpec {
     pub accept: String,
     /// Maximum accepted uncompressed payload size in bytes.
     pub max_uncompressed_bytes: Option<f64>,
-    /// Deprecated compatibility alias for `maxUncompressedBytes`.
-    pub max_uncompressed_len: Option<f64>,
     pub accept_compressed: Option<bool>,
 }
 
@@ -120,12 +118,6 @@ pub struct NodeOptions {
     pub retained_event_bytes_limit: Option<u32>,
     pub diagnostic_event_queue_limit: Option<u32>,
     pub persistence_path: Option<String>,
-}
-
-#[napi(object)]
-pub struct AutoBleOptions {
-    pub identity_path: Option<String>,
-    pub identity_secret: Option<Buffer>,
 }
 
 #[napi(object)]
@@ -174,8 +166,6 @@ pub struct RespondTokenSpec {
 pub struct RequestOptions {
     /// Request timeout in milliseconds.
     pub timeout_millis: Option<f64>,
-    /// Deprecated compatibility alias for `timeoutMillis`.
-    pub timeout_ms: Option<f64>,
 }
 
 #[napi(object)]
@@ -304,18 +294,14 @@ pub struct ResourceData {
     pub data: Buffer,
     pub metadata: Option<Buffer>,
     pub original_hash: Buffer,
-    pub total_size_bytes: f64,
-    /// Deprecated compatibility alias for `totalSizeBytes`.
-    pub total_size: f64,
+    pub total_size_bytes: BigInt,
 }
 
 #[napi(object)]
 pub struct ResourceFileReceipt {
     pub metadata: Option<Buffer>,
     pub original_hash: Buffer,
-    pub total_size_bytes: f64,
-    /// Deprecated compatibility alias for `totalSizeBytes`.
-    pub total_size: f64,
+    pub total_size_bytes: BigInt,
 }
 
 #[napi(object)]
@@ -326,8 +312,8 @@ pub struct InterfaceInfo {
     #[napi(ts_type = "ConnectionStateName")]
     pub connection: String,
     pub failure_reason: Option<String>,
-    pub rx_bytes: f64,
-    pub tx_bytes: f64,
+    pub rx_bytes: BigInt,
+    pub tx_bytes: BigInt,
     pub rx_bps: Option<f64>,
     pub tx_bps: Option<f64>,
     pub destinations: u32,
@@ -350,8 +336,8 @@ pub struct HostInterfaceSnapshotInfo {
     pub kind: Option<String>,
     pub health: String,
     pub failure_detail: Option<String>,
-    pub rx_bytes: f64,
-    pub tx_bytes: f64,
+    pub rx_bytes: BigInt,
+    pub tx_bytes: BigInt,
     pub rx_bps: Option<f64>,
     pub tx_bps: Option<f64>,
     pub route_count: u32,
@@ -385,8 +371,8 @@ pub struct HostRuntimeHealthSnapshotInfo {
     pub route_count: u32,
     pub link_count: u32,
     pub transported_link_count: u32,
-    pub rx_bytes: f64,
-    pub tx_bytes: f64,
+    pub rx_bytes: BigInt,
+    pub tx_bytes: BigInt,
     pub rx_bps: f64,
     pub tx_bps: f64,
 }
@@ -401,7 +387,7 @@ pub struct HostPersistenceSnapshotInfo {
 
 #[napi(object)]
 pub struct HostSnapshotInfo {
-    pub revision: f64,
+    pub revision: BigInt,
     pub backend: crate::BackendInfo,
     pub interfaces: Vec<HostInterfaceSnapshotInfo>,
     pub routes: Vec<HostRouteSnapshotInfo>,
@@ -420,12 +406,6 @@ pub struct RouteInfo {
     pub learned_at_millis: f64,
     pub last_relayed_at_millis: f64,
     pub expires_at_millis: f64,
-    /// Deprecated compatibility alias for `learnedAtMillis`.
-    pub learned_at: f64,
-    /// Deprecated compatibility alias for `lastRelayedAtMillis`.
-    pub last_relayed_at: f64,
-    /// Deprecated compatibility alias for `expiresAtMillis`.
-    pub expires_at: f64,
 }
 
 #[napi(object)]
@@ -434,13 +414,7 @@ pub struct AnnounceRateInfo {
     pub last_allowed_announce_at_millis: f64,
     pub blocked_until_millis: f64,
     pub observed_at_millis: Vec<f64>,
-    /// Deprecated compatibility alias for `lastAllowedAnnounceAtMillis`.
-    pub last_allowed_announce_at: f64,
-    /// Deprecated compatibility alias for `blockedUntilMillis`.
-    pub blocked_until: f64,
     pub rate_violations: u32,
-    /// Deprecated compatibility alias for `observedAtMillis`.
-    pub observed_at: Vec<f64>,
 }
 
 #[napi(object)]
@@ -828,43 +802,13 @@ fn resource_strategy_error(
 
 const DEFAULT_ACCEPT_MAX_UNCOMPRESSED_BYTES: u64 = 64 * 1024 * 1024;
 
-fn compatible_numeric_alias(
-    canonical: Option<f64>,
-    legacy: Option<f64>,
-    canonical_name: &str,
-    legacy_name: &str,
-) -> CodeResult<Option<f64>> {
-    match (canonical, legacy) {
-        (Some(canonical), Some(legacy)) if canonical.to_bits() != legacy.to_bits() => {
-            Err(code_err(
-                ErrorCode::InvalidArgument,
-                format!("{canonical_name} conflicts with legacy {legacy_name}"),
-            ))
-        }
-        (Some(value), _) | (_, Some(value)) => Ok(Some(value)),
-        (None, None) => Ok(None),
-    }
-}
-
 fn parse_resource_strategy(spec: &ResourceStrategySpec) -> CodeResult<ResourceStrategy> {
     match spec.accept.as_str() {
         "none" => Ok(ResourceStrategy::AcceptNone),
         "all" => {
-            let configured_maximum = compatible_numeric_alias(
-                spec.max_uncompressed_bytes,
-                spec.max_uncompressed_len,
-                "maxUncompressedBytes",
-                "maxUncompressedLen",
-            )?;
-            let max_uncompressed_bytes = match configured_maximum {
+            let max_uncompressed_bytes = match spec.max_uncompressed_bytes {
                 None => DEFAULT_ACCEPT_MAX_UNCOMPRESSED_BYTES,
-                Some(len) if len.is_finite() && len >= 0.0 => len as u64,
-                Some(_) => {
-                    return Err(code_err(
-                        ErrorCode::InvalidArgument,
-                        "maxUncompressedBytes must be a non-negative finite number",
-                    ))
-                }
+                Some(len) => safe_u64_argument(len, "maxUncompressedBytes")?,
             };
             Ok(ResourceStrategy::Accept {
                 max_uncompressed_bytes,
@@ -876,6 +820,21 @@ fn parse_resource_strategy(spec: &ResourceStrategySpec) -> CodeResult<ResourceSt
             ErrorCode::InvalidArgument,
             format!("unknown resource strategy {other:?}; expected none, all, or if"),
         )),
+    }
+}
+
+fn safe_u64_argument(value: f64, name: &str) -> CodeResult<u64> {
+    if value.is_finite()
+        && value >= 0.0
+        && value.fract() == 0.0
+        && value <= prns_host::SAFE_UINT_MAX as f64
+    {
+        Ok(value as u64)
+    } else {
+        Err(code_err(
+            ErrorCode::InvalidArgument,
+            format!("{name} must be a non-negative safe integer"),
+        ))
     }
 }
 
@@ -893,13 +852,16 @@ fn parse_compression(value: Option<&str>) -> CodeResult<SegmentCompression> {
 fn parse_host_bitrate(value: Option<f64>) -> CodeResult<HostBitrate> {
     match value {
         None => Ok(HostBitrate::Auto),
-        Some(bps) if bps.is_finite() && bps >= BitrateBps::MINIMUM as f64 => {
-            Ok(HostBitrate::BitsPerSecond(bps as u64))
+        Some(bps) => {
+            let bps = safe_u64_argument(bps, "bitrateBps")?;
+            if bps < BitrateBps::MINIMUM {
+                return Err(code_err(
+                    ErrorCode::InvalidArgument,
+                    "bitrateBps is below the protocol minimum",
+                ));
+            }
+            Ok(HostBitrate::BitsPerSecond(bps))
         }
-        Some(_) => Err(code_err(
-            ErrorCode::InvalidArgument,
-            "bitrateBps must be a finite number at or above the protocol minimum",
-        )),
     }
 }
 
@@ -912,7 +874,10 @@ fn required_interface_field<T>(value: Option<T>, name: &str) -> CodeResult<T> {
 }
 
 fn interface_u64(value: f64, name: &str) -> CodeResult<u64> {
-    if value.is_finite() && value >= 0.0 && value.fract() == 0.0 && value <= 9_007_199_254_740_991.0
+    if value.is_finite()
+        && value >= 0.0
+        && value.fract() == 0.0
+        && value <= prns_host::SAFE_UINT_MAX as f64
     {
         Ok(value as u64)
     } else {
@@ -1776,16 +1741,6 @@ impl PrnsNode {
         )
     }
 
-    /// Deprecated compatibility alias for `attachAutoBluetoothLe`.
-    #[napi]
-    pub fn attach_auto_ble(&self, options: AutoBleOptions) -> Result<InterfaceHandle, ErrorCode> {
-        self.attach_auto_bluetooth_le_inner(
-            options.identity_path.as_deref(),
-            options.identity_secret.as_deref(),
-            "autoBle",
-        )
-    }
-
     #[napi(ts_return_type = "Promise<void>")]
     pub async fn send_resource(
         &self,
@@ -1929,11 +1884,8 @@ impl PrnsNode {
                         destination: marshal::to_buffer(rate.destination.as_bytes()),
                         last_allowed_announce_at_millis,
                         blocked_until_millis,
-                        observed_at_millis: observed_at_millis.clone(),
-                        last_allowed_announce_at: last_allowed_announce_at_millis,
-                        blocked_until: blocked_until_millis,
+                        observed_at_millis,
                         rate_violations: u32::from(rate.rate_violations),
-                        observed_at: observed_at_millis,
                     }
                 })
                 .collect()),
@@ -2128,25 +2080,12 @@ impl PrnsNode {
     ) -> CodeResult<RequestResult> {
         let link_id = marshal::link_id(&link_id)?;
         let path_hash = marshal::request_path_hash(&path_hash)?;
-        let configured_timeout = match options {
-            Some(options) => compatible_numeric_alias(
-                options.timeout_millis,
-                options.timeout_ms,
-                "timeoutMillis",
-                "timeoutMs",
-            )?,
-            None => None,
-        };
+        let configured_timeout = options.and_then(|value| value.timeout_millis);
         let timeout = match configured_timeout {
-            Some(ms) if ms.is_finite() && ms >= 0.0 => {
-                RequestResponseTimeout::Exact(DurationMillis(ms as u64))
-            }
-            Some(_) => {
-                return Err(code_err(
-                    ErrorCode::InvalidArgument,
-                    "timeoutMillis must be a non-negative finite number",
-                ))
-            }
+            Some(ms) => RequestResponseTimeout::Exact(DurationMillis(safe_u64_argument(
+                ms,
+                "timeoutMillis",
+            )?)),
             None => RequestResponseTimeout::LinkDefault,
         };
         let handle = self.handle()?;
@@ -2169,7 +2108,7 @@ impl PrnsNode {
         Ok(RespondToken {
             link_id: marshal::link_id(&token.link_id)?,
             request_id: marshal::request_id(&token.request_id)?,
-            rtt: RttMillis::new(token.rtt_millis as u64),
+            rtt: RttMillis::new(safe_u64_argument(token.rtt_millis, "rttMillis")?),
         })
     }
 
@@ -2594,8 +2533,7 @@ impl PrnsNode {
             data: Buffer::from(collected),
             metadata: receipt.metadata.map(Buffer::from),
             original_hash: marshal::to_buffer(receipt.original_hash.as_bytes()),
-            total_size_bytes: receipt.total_size_bytes as f64,
-            total_size: receipt.total_size_bytes as f64,
+            total_size_bytes: BigInt::from(receipt.total_size_bytes),
         })
     }
 
@@ -2619,8 +2557,7 @@ impl PrnsNode {
         Ok(ResourceFileReceipt {
             metadata: receipt.metadata.map(Buffer::from),
             original_hash: marshal::to_buffer(receipt.original_hash.as_bytes()),
-            total_size_bytes: receipt.total_size_bytes as f64,
-            total_size: receipt.total_size_bytes as f64,
+            total_size_bytes: BigInt::from(receipt.total_size_bytes),
         })
     }
 
@@ -2919,16 +2856,16 @@ fn connection_name(connection: ConnectionState) -> &'static str {
 
 fn host_snapshot_info(snapshot: prns_host::HostSnapshot) -> HostSnapshotInfo {
     let backend = crate::BackendInfo {
-        backend: format!("{:?}", snapshot.backend.backend()),
+        backend: snapshot.backend.backend().contract_name().to_string(),
         capabilities: snapshot
             .backend
             .capabilities()
-            .map(|capability| format!("{capability:?}"))
+            .map(|capability| capability.contract_name().to_string())
             .collect(),
         interface_kinds: snapshot
             .backend
             .interface_kinds()
-            .map(|kind| format!("{kind:?}"))
+            .map(|kind| kind.contract_name().to_string())
             .collect(),
     };
     let interfaces = snapshot
@@ -2937,11 +2874,11 @@ fn host_snapshot_info(snapshot: prns_host::HostSnapshot) -> HostSnapshotInfo {
         .map(|interface| HostInterfaceSnapshotInfo {
             interface_id: marshal::to_buffer(interface.interface_id.as_bytes()),
             name: interface.name,
-            kind: interface.kind.map(|kind| format!("{kind:?}")),
-            health: format!("{:?}", interface.health),
+            kind: interface.kind.map(|kind| kind.contract_name().to_string()),
+            health: interface.health.contract_name().to_string(),
             failure_detail: interface.failure_detail,
-            rx_bytes: interface.rx_bytes as f64,
-            tx_bytes: interface.tx_bytes as f64,
+            rx_bytes: BigInt::from(interface.rx_bytes),
+            tx_bytes: BigInt::from(interface.tx_bytes),
             rx_bps: interface.rx_bps.map(|value| value as f64),
             tx_bps: interface.tx_bps.map(|value| value as f64),
             route_count: interface.route_count,
@@ -2973,7 +2910,7 @@ fn host_snapshot_info(snapshot: prns_host::HostSnapshot) -> HostSnapshotInfo {
         })
         .collect();
     HostSnapshotInfo {
-        revision: snapshot.revision as f64,
+        revision: BigInt::from(snapshot.revision),
         backend,
         interfaces,
         routes,
@@ -2987,8 +2924,8 @@ fn host_snapshot_info(snapshot: prns_host::HostSnapshot) -> HostSnapshotInfo {
             route_count: snapshot.runtime.route_count,
             link_count: snapshot.runtime.link_count,
             transported_link_count: snapshot.runtime.transported_link_count,
-            rx_bytes: snapshot.runtime.rx_bytes as f64,
-            tx_bytes: snapshot.runtime.tx_bytes as f64,
+            rx_bytes: BigInt::from(snapshot.runtime.rx_bytes),
+            tx_bytes: BigInt::from(snapshot.runtime.tx_bytes),
             rx_bps: snapshot.runtime.rx_bps as f64,
             tx_bps: snapshot.runtime.tx_bps as f64,
         },
@@ -2998,15 +2935,7 @@ fn host_snapshot_info(snapshot: prns_host::HostSnapshot) -> HostSnapshotInfo {
             last_flush_cause: snapshot
                 .persistence
                 .last_flush_cause
-                .map(|cause| match cause {
-                    prns_host::PersistenceFlushCause::Startup => "Startup".to_string(),
-                    prns_host::PersistenceFlushCause::Interval => "Interval".to_string(),
-                    prns_host::PersistenceFlushCause::RouteChange => "RouteChange".to_string(),
-                    prns_host::PersistenceFlushCause::RatchetRotation => {
-                        "RatchetRotation".to_string()
-                    }
-                    prns_host::PersistenceFlushCause::Shutdown => "Shutdown".to_string(),
-                }),
+                .map(|cause| cause.contract_name().to_string()),
             last_failure_detail: snapshot.persistence.last_failure_detail,
         },
     }
@@ -3026,8 +2955,8 @@ fn interface_info(snapshot: &InterfaceSnapshot) -> InterfaceInfo {
         kind: snapshot.id.kind().map(|kind| kind.name().to_string()),
         connection: connection_name(snapshot.connection).to_string(),
         failure_reason: snapshot.failure_reason.map(str::to_string),
-        rx_bytes: snapshot.rx_bytes as f64,
-        tx_bytes: snapshot.tx_bytes as f64,
+        rx_bytes: BigInt::from(snapshot.rx_bytes),
+        tx_bytes: BigInt::from(snapshot.tx_bytes),
         rx_bps: snapshot.transfer_rates.map(|rates| f64::from(rates.rx_bps)),
         tx_bps: snapshot.transfer_rates.map(|rates| f64::from(rates.tx_bps)),
         destinations: snapshot.destinations,
@@ -3057,9 +2986,6 @@ fn route_info(route: &RouteSnapshot) -> RouteInfo {
         learned_at_millis,
         last_relayed_at_millis,
         expires_at_millis,
-        learned_at: learned_at_millis,
-        last_relayed_at: last_relayed_at_millis,
-        expires_at: expires_at_millis,
     }
 }
 
@@ -3089,21 +3015,21 @@ fn packet_receipt(receipt: PacketReceiptDelivered) -> PacketReceipt {
 
 #[cfg(test)]
 mod tests {
-    use super::{compatible_numeric_alias, parse_resource_strategy, ResourceStrategySpec};
+    use super::{
+        host_snapshot_info, parse_resource_strategy, safe_u64_argument, ResourceStrategySpec,
+    };
     use personal_rns::routing::links::resources::ResourceStrategy;
+    use prns_host::{
+        BackendInfo, BackendKind, Capability, HostSnapshot, InterfaceHealth, InterfaceId,
+        InterfaceKind, InterfaceSnapshot, PersistenceFlushCause, PersistenceSnapshot,
+        RuntimeHealthSnapshot,
+    };
 
     #[test]
-    fn unit_bearing_resource_limit_accepts_the_legacy_alias() {
-        let canonical = ResourceStrategySpec {
+    fn unit_bearing_resource_limit_is_accepted() {
+        let strategy = ResourceStrategySpec {
             accept: "all".to_string(),
             max_uncompressed_bytes: Some(4_096.0),
-            max_uncompressed_len: None,
-            accept_compressed: None,
-        };
-        let legacy = ResourceStrategySpec {
-            accept: "all".to_string(),
-            max_uncompressed_bytes: None,
-            max_uncompressed_len: Some(4_096.0),
             accept_compressed: None,
         };
         let expected = ResourceStrategy::Accept {
@@ -3111,18 +3037,75 @@ mod tests {
             accept_compressed: true,
         };
 
-        assert_eq!(parse_resource_strategy(&canonical).ok(), Some(expected));
-        assert_eq!(parse_resource_strategy(&legacy).ok(), Some(expected));
+        assert_eq!(parse_resource_strategy(&strategy).ok(), Some(expected));
     }
 
     #[test]
-    fn conflicting_quantity_aliases_are_rejected() {
-        assert!(compatible_numeric_alias(
-            Some(1_000.0),
-            Some(2_000.0),
-            "timeoutMillis",
-            "timeoutMs",
-        )
-        .is_err());
+    fn safe_integer_boundary_is_enforced() {
+        assert_eq!(
+            safe_u64_argument(prns_host::SAFE_UINT_MAX as f64, "value").ok(),
+            Some(prns_host::SAFE_UINT_MAX)
+        );
+        assert!(safe_u64_argument(9_007_199_254_740_992.0, "value").is_err());
+        assert!(safe_u64_argument(1.5, "value").is_err());
+    }
+
+    #[test]
+    fn snapshot_uses_exact_contract_names() {
+        let snapshot = HostSnapshot {
+            revision: 1,
+            backend: BackendInfo::new(
+                BackendKind::Native,
+                [Capability::TcpClient],
+                [InterfaceKind::TcpClient],
+            ),
+            interfaces: vec![InterfaceSnapshot {
+                interface_id: InterfaceId::new([0; 8]),
+                name: None,
+                kind: Some(InterfaceKind::TcpClient),
+                health: InterfaceHealth::Reconnecting,
+                failure_detail: None,
+                rx_bytes: 0,
+                tx_bytes: 0,
+                rx_bps: None,
+                tx_bps: None,
+                route_count: 0,
+                link_count: 0,
+                transported_link_count: 0,
+            }],
+            routes: Vec::new(),
+            active_link_count: 0,
+            destination_identities: Vec::new(),
+            runtime: RuntimeHealthSnapshot {
+                running: true,
+                uptime_millis: 0,
+                interface_count: 1,
+                online_interface_count: 0,
+                route_count: 0,
+                link_count: 0,
+                transported_link_count: 0,
+                rx_bytes: 0,
+                tx_bytes: 0,
+                rx_bps: 0,
+                tx_bps: 0,
+            },
+            persistence: PersistenceSnapshot {
+                persistent: true,
+                restored: true,
+                last_flush_cause: Some(PersistenceFlushCause::RatchetRotation),
+                last_failure_detail: None,
+            },
+        };
+
+        let projected = host_snapshot_info(snapshot);
+        assert_eq!(projected.backend.backend, "Native");
+        assert_eq!(projected.backend.capabilities, ["TcpClient"]);
+        assert_eq!(projected.backend.interface_kinds, ["TcpClient"]);
+        assert_eq!(projected.interfaces[0].kind.as_deref(), Some("TcpClient"));
+        assert_eq!(projected.interfaces[0].health, "Reconnecting");
+        assert_eq!(
+            projected.persistence.last_flush_cause.as_deref(),
+            Some("RatchetRotation")
+        );
     }
 }

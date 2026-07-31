@@ -250,6 +250,17 @@ async function main(): Promise<void> {
     const customTag = channelTag(new TextEncoder().encode("websocket-smoke"));
     const customBitrate = bitrateBps(250_000);
     const customMtu = hardwareMtu(1200);
+    assert(prns.backendInfo.backend === "Cooperative", "backend kind is exact");
+    assert(
+      prns.backendInfo.capabilities.join(",") ===
+        "WebSocket,BrowserRendezvous",
+      "available browser capabilities are reported",
+    );
+    assert(
+      prns.backendInfo.interfaceKinds.join(",") ===
+        "WebSocketClient,BrowserRendezvous",
+      "available stable browser interfaces are reported",
+    );
     const invalidTarget = await prns.interfaces.webSocket.connect(
       "https://127.0.0.1:9876/not-websocket",
     );
@@ -548,6 +559,11 @@ async function main(): Promise<void> {
     );
 
     delete host.WebSocket;
+    assert(
+      prns.backendInfo.capabilities.length === 0 &&
+        prns.backendInfo.interfaceKinds.length === 0,
+      "runtime backend info follows browser API availability",
+    );
     const unavailable = await prns.interfaces.webSocket.connect(
       "ws://127.0.0.1:9876/unavailable",
     );

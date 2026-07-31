@@ -54,11 +54,11 @@ test('typed interface attachment uses the canonical host and preserves failure k
 test('every shared typed interface fixture marshals without touching hardware', async () => {
   const fixture = JSON.parse(
     readFileSync(
-      resolve(process.cwd(), '../prns-host/conformance/interface-configs-v2.json'),
+      resolve(process.cwd(), '../prns-host/conformance/interface-configs-v1.json'),
       'utf8'
     )
   ) as InterfaceFixture;
-  assert.equal(fixture.schemaVersion, 2);
+  assert.equal(fixture.schemaVersion, 1);
   assert.equal(fixture.interfaces.length, 19);
 
   const node = startNode({}, () => {});

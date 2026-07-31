@@ -41,9 +41,9 @@ export type PrnsNodeEvent =
   | { type: 'selfRatchetRotated'; destination: Buffer }
   | { type: 'announceHeldDropped'; destination: Buffer; sourceInterface: Buffer; cause: string }
   | { type: 'linkInterfaceMismatch'; linkId: Buffer; attachedInterface: Buffer; arrivedOn: Buffer }
-  | { type: 'resourceAssembled'; linkId: Buffer; originalHash: Buffer; totalSizeBytes: number; totalSize: number }
+  | { type: 'resourceAssembled'; linkId: Buffer; originalHash: Buffer; totalSizeBytes: bigint }
   | { type: 'resourceFailed'; linkId: Buffer; hash: Buffer; cause: string }
-  | { type: 'resourceSendProgress'; linkId: Buffer; transferredBytes: number; totalBytes: number; physicalTransferredBytes: number; transferred: number; total: number; physicalTransferred: number; segmentIndex: number; totalSegments: number }
+  | { type: 'resourceSendProgress'; linkId: Buffer; transferredBytes: bigint; totalBytes: bigint; physicalTransferredBytes: bigint; segmentIndex: number; totalSegments: number }
   | { type: 'routeExpired' | 'routeEvicted' | 'routeInterfaceGone' | 'routeDropped'; destination: Buffer }
   | { type: 'persistenceRestored'; routes: number; destinationIdentities: number; tunnels: number; ratchets: number; refused: number; dropped: number }
   | { type: 'persistenceFlushed'; cause: 'startup' | 'interval' | 'routeChange' | 'ratchetRotation' | 'shutdown'; target: 'routingState' | 'ratchets' }
@@ -87,8 +87,6 @@ export declare class PrnsNode {
   attachAutoWifi(): InterfaceHandle
   attachAutoUsb(options?: AutoUsbOptions | undefined | null): InterfaceHandle
   attachAutoBluetoothLe(options: AutoBluetoothLeOptions): InterfaceHandle
-  /** Deprecated compatibility alias for `attachAutoBluetoothLe`. */
-  attachAutoBle(options: AutoBleOptions): InterfaceHandle
   sendResource(linkId: Buffer, data: Buffer, options?: SendResourceOptions | undefined | null): Promise<void>
   sendResourceFile(linkId: Buffer, path: string, options?: SendResourceOptions | undefined | null): Promise<void>
   receiveResource(linkId: Buffer): Promise<ResourceData>
@@ -126,18 +124,7 @@ export interface AnnounceRateInfo {
   lastAllowedAnnounceAtMillis: number
   blockedUntilMillis: number
   observedAtMillis: Array<number>
-  /** Deprecated compatibility alias for `lastAllowedAnnounceAtMillis`. */
-  lastAllowedAnnounceAt: number
-  /** Deprecated compatibility alias for `blockedUntilMillis`. */
-  blockedUntil: number
   rateViolations: number
-  /** Deprecated compatibility alias for `observedAtMillis`. */
-  observedAt: Array<number>
-}
-
-export interface AutoBleOptions {
-  identityPath?: string
-  identitySecret?: Buffer
 }
 
 export interface AutoBluetoothLeOptions {
@@ -220,8 +207,8 @@ export interface HostInterfaceSnapshotInfo {
   kind?: string
   health: string
   failureDetail?: string
-  rxBytes: number
-  txBytes: number
+  rxBytes: bigint
+  txBytes: bigint
   rxBps?: number
   txBps?: number
   routeCount: number
@@ -254,8 +241,8 @@ export interface HostRuntimeHealthSnapshotInfo {
   routeCount: number
   linkCount: number
   transportedLinkCount: number
-  rxBytes: number
-  txBytes: number
+  rxBytes: bigint
+  txBytes: bigint
   rxBps: number
   txBps: number
 }
@@ -263,7 +250,7 @@ export interface HostRuntimeHealthSnapshotInfo {
 export declare function hostSchemaVersion(): number
 
 export interface HostSnapshotInfo {
-  revision: number
+  revision: bigint
   backend: BackendInfo
   interfaces: Array<HostInterfaceSnapshotInfo>
   routes: Array<HostRouteSnapshotInfo>
@@ -319,8 +306,8 @@ export interface InterfaceInfo {
   kind?: InterfaceKindName
   connection: ConnectionStateName
   failureReason?: string
-  rxBytes: number
-  txBytes: number
+  rxBytes: bigint
+  txBytes: bigint
   rxBps?: number
   txBps?: number
   destinations: number
@@ -372,8 +359,6 @@ export interface PathInfo {
 export interface RequestOptions {
   /** Request timeout in milliseconds. */
   timeoutMillis?: number
-  /** Deprecated compatibility alias for `timeoutMillis`. */
-  timeoutMs?: number
 }
 
 export declare function requestPathHash(path: string): Buffer
@@ -393,25 +378,19 @@ export interface ResourceData {
   data: Buffer
   metadata?: Buffer
   originalHash: Buffer
-  totalSizeBytes: number
-  /** Deprecated compatibility alias for `totalSizeBytes`. */
-  totalSize: number
+  totalSizeBytes: bigint
 }
 
 export interface ResourceFileReceipt {
   metadata?: Buffer
   originalHash: Buffer
-  totalSizeBytes: number
-  /** Deprecated compatibility alias for `totalSizeBytes`. */
-  totalSize: number
+  totalSizeBytes: bigint
 }
 
 export interface ResourceStrategySpec {
   accept: ResourceAcceptName
   /** Maximum accepted uncompressed payload size in bytes. */
   maxUncompressedBytes?: number
-  /** Deprecated compatibility alias for `maxUncompressedBytes`. */
-  maxUncompressedLen?: number
   acceptCompressed?: boolean
 }
 
@@ -442,12 +421,6 @@ export interface RouteInfo {
   learnedAtMillis: number
   lastRelayedAtMillis: number
   expiresAtMillis: number
-  /** Deprecated compatibility alias for `learnedAtMillis`. */
-  learnedAt: number
-  /** Deprecated compatibility alias for `lastRelayedAtMillis`. */
-  lastRelayedAt: number
-  /** Deprecated compatibility alias for `expiresAtMillis`. */
-  expiresAt: number
 }
 
 export interface SendResourceOptions {
