@@ -159,6 +159,15 @@ jobs:
           cmp "$bundle" "${RUNNER_TEMP}/repacked-flasher.tar.gz"
           echo "bundle_sha256=$(sha256sum "$bundle" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
           echo "manifest_sha256=$(sha256sum target/flasher/candidate/flash-manifest.json | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+      - name: Require stable flasher release input
+        run: |
+          channel="$(jq -er '.release.channel' target/flasher/candidate/flash-manifest.json)"
+          if [[ "$channel" != stable ]]; then
+            echo "suite signing requires a stable flasher candidate; got ${channel}" >&2
+            exit 4
+          fi
+          test -f target/flasher/candidate/channels/stable.json
+          test -f target/flasher/candidate/channels/stable.json.minisig
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
         with:
           version: v0.35.0
@@ -238,8 +247,14 @@ jobs:
           stage() {
             source="$1"
             destination="target/assets/$(basename "$source")"
-            test -f "$source"
-            test ! -e "$destination"
+            if [[ ! -f "$source" ]]; then
+              echo "required suite asset is missing: ${source}" >&2
+              return 1
+            fi
+            if [[ -e "$destination" ]]; then
+              echo "duplicate suite asset basename: ${source} conflicts with ${destination}" >&2
+              return 1
+            fi
             cp "$source" "$destination"
           }
           for source in target/daemon/*; do stage "$source"; done
