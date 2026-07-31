@@ -170,6 +170,7 @@ type RawNodeOptions = {
 };
 
 type RawNode = {
+  readonly identityHash: Buffer;
   readonly destinationHashes: Buffer[];
   ready(): Promise<void>;
   stop(): Promise<void>;
@@ -573,6 +574,10 @@ export class Prns {
     return this.#raw.destinationHashes.map((hash) =>
       contract.destinationHash(hash),
     );
+  }
+
+  get identityHash(): IdentityHash {
+    return contract.identityHash(this.#raw.identityHash);
   }
 
   get lifecycle(): LifecycleState {
@@ -1643,14 +1648,17 @@ function routeDiagnostic(
 
 function persistenceCause(value: unknown): PersistenceFlushCause {
   const cause = text("persistence cause", value);
-  if (
-    cause === "Startup" ||
-    cause === "Interval" ||
-    cause === "RouteChange" ||
-    cause === "RatchetRotation" ||
-    cause === "Shutdown"
-  ) {
-    return cause;
+  switch (cause) {
+    case "startup":
+      return "Startup";
+    case "interval":
+      return "Interval";
+    case "routeChange":
+      return "RouteChange";
+    case "ratchetRotation":
+      return "RatchetRotation";
+    case "shutdown":
+      return "Shutdown";
   }
   throw new contract.PrnsValidationError(
     "InvalidEnum",
@@ -1660,8 +1668,11 @@ function persistenceCause(value: unknown): PersistenceFlushCause {
 
 function persistenceTarget(value: unknown): PersistenceFlushTarget {
   const target = text("persistence target", value);
-  if (target === "RoutingState" || target === "Ratchets") {
-    return target;
+  if (target === "routingState") {
+    return "RoutingState";
+  }
+  if (target === "ratchets") {
+    return "Ratchets";
   }
   throw new contract.PrnsValidationError(
     "InvalidEnum",

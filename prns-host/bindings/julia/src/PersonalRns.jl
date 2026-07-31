@@ -218,6 +218,7 @@ export balanced_limits
 export claim_application_events
 export claim_diagnostics
 export diagnostics
+export destination_hashes
 export ephemeral_endpoint
 export execute
 export finish!

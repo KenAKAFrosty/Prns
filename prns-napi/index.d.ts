@@ -59,6 +59,7 @@ export declare class InterfaceHandle {
 }
 
 export declare class PrnsNode {
+  get identityHash(): Buffer
   get destinationHashes(): Array<Buffer>
   ready(): Promise<void>
   stop(): Promise<void>

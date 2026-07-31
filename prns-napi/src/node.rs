@@ -1206,6 +1206,11 @@ fn host_command_error(error: HostCommandFailure) -> crate::errors::CodeError {
 #[napi]
 impl PrnsNode {
     #[napi(getter)]
+    pub fn identity_hash(&self) -> Buffer {
+        marshal::to_buffer(self.host.identity_hash().as_bytes())
+    }
+
+    #[napi(getter)]
     pub fn destination_hashes(&self) -> Vec<Buffer> {
         self.hashes
             .iter()

@@ -25,9 +25,17 @@ system.
    the source handle only after any active drain returns.
 8. Decode every generated event case. Unknown discriminants fail loudly instead
    of becoming lossy maps.
-9. Run a live smoke that creates a real ephemeral host, rejects a second stream
-   claim, cancels an infinite event wait, and attaches/detaches an interface.
-10. Package the adapter with an exact compatible native target or an explicit,
+9. Run the shared `../conformance/persistent-two-node-v2.json` journey over a
+   real loopback TCP connection: persist two hosts, attach, announce and
+   discover, establish a link, request and respond, transfer the resource from
+   its listed chunks through the bounded upload path, stop, restart, and verify
+   restored identities, destination, route, and persistence status.
+10. Keep the lifecycle, exclusive-stream-claim, cancellation, and generic
+    interface attach/detach checks alongside that journey.
+11. Report platform support from the host's runtime `BackendInfo`. Static
+    package documentation may explain how to query it, but must not substitute
+    a hard-coded capability matrix for the runtime result.
+12. Package the adapter with an exact compatible native target or an explicit,
     documented native archive dependency.
 
 ## Next low-friction ecosystems

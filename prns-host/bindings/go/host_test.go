@@ -3,10 +3,92 @@ package prns
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"net"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
+
+type journeyFixture struct {
+	SchemaVersion uint32 `json:"schemaVersion"`
+	Destination   struct {
+		AppName            string   `json:"appName"`
+		Aspects            []string `json:"aspects"`
+		AnnounceAppDataHex string   `json:"announceAppDataHex"`
+	} `json:"destination"`
+	Request struct {
+		Path          string `json:"path"`
+		PathHashHex   string `json:"pathHashHex"`
+		PayloadHex    string `json:"payloadHex"`
+		ResponseHex   string `json:"responseHex"`
+		TimeoutMillis uint64 `json:"timeoutMillis"`
+	} `json:"request"`
+	Resource struct {
+		ChunksHex                []string `json:"chunksHex"`
+		MetadataHex              string   `json:"metadataHex"`
+		MaximumUncompressedBytes uint64   `json:"maximumUncompressedBytes"`
+		AcceptCompressed         bool     `json:"acceptCompressed"`
+		Compression              string   `json:"compression"`
+	} `json:"resource"`
+}
+
+func fixtureBytes(t *testing.T, value string) []byte {
+	t.Helper()
+	decoded, err := hex.DecodeString(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return decoded
+}
+
+func loadJourneyFixture(t *testing.T) journeyFixture {
+	t.Helper()
+	value, err := os.ReadFile(filepath.Join(
+		"..", "..", "conformance", "persistent-two-node-v2.json",
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture journeyFixture
+	if err := json.Unmarshal(value, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.SchemaVersion != HostSchemaVersion {
+		t.Fatalf("journey schema %d does not match host schema", fixture.SchemaVersion)
+	}
+	return fixture
+}
+
+func settledCommand(t *testing.T, host *Host, value HostCommand) CommandSettlement {
+	t.Helper()
+	command, err := host.Execute(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer command.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	settlement, err := command.Wait(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return settlement
+}
+
+func successfulOutcome(t *testing.T, settlement CommandSettlement) CommandOutcome {
+	t.Helper()
+	succeeded, ok := settlement.(CommandSucceeded)
+	if !ok {
+		t.Fatalf("command returned %T", settlement)
+	}
+	return succeeded.Outcome
+}
 
 func TestNativeHostContract(t *testing.T) {
 	host, err := NewHost(EphemeralEndpoint(nil, []Capability{
@@ -133,5 +215,273 @@ func TestNativeHostContract(t *testing.T) {
 	}
 	if _, ok := succeeded.Outcome.(CommandOutcomeInterfaceDetached); !ok {
 		t.Fatalf("detach command produced %T", succeeded.Outcome)
+	}
+}
+
+func TestPersistentTwoNodeJourney(t *testing.T) {
+	fixture := loadJourneyFixture(t)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	announceData := fixtureBytes(t, fixture.Destination.AnnounceAppDataHex)
+	destination := DestinationConfigSingle{
+		Name: DestinationName{
+			AppName: fixture.Destination.AppName,
+			Aspects: fixture.Destination.Aspects,
+		},
+		Identity:        DestinationIdentityConfigHostIdentity{},
+		AnnounceAppData: &announceData,
+		RequestHandlers: []RequestHandlerConfig{{
+			Path:   fixture.Request.Path,
+			Policy: RequestPolicyAllowAll,
+		}},
+	}
+	root := t.TempDir()
+	serverOptions := PersistentEndpoint(
+		filepath.Join(root, "server"),
+		[]DestinationConfig{destination},
+		[]Capability{CapabilityTcpServer},
+	)
+	clientOptions := PersistentEndpoint(
+		filepath.Join(root, "client"),
+		nil,
+		[]Capability{CapabilityTcpClient},
+	)
+	server, err := NewHost(serverOptions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := NewHost(clientOptions)
+	if err != nil {
+		server.Close()
+		t.Fatal(err)
+	}
+	serverIdentity := server.IdentityHash()
+	clientIdentity := client.IdentityHash()
+	destinationHash := server.DestinationHashes()[0]
+	claim, err := server.ClaimApplicationEvents()
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := claim.(StreamClaimed[*ApplicationEventStream]).Stream
+	serverAttach := successfulOutcome(t, settledCommand(t, server, HostCommandAttachInterface{
+		Config: InterfaceConfigTcpServer{
+			Bind:    net.JoinHostPort("127.0.0.1", fmt.Sprint(port)),
+			Bitrate: BitrateAuto{},
+		},
+	}))
+	if _, ok := serverAttach.(CommandOutcomeInterfaceAttached); !ok {
+		t.Fatalf("server attach produced %T", serverAttach)
+	}
+	clientAttach := successfulOutcome(t, settledCommand(t, client, HostCommandAttachInterface{
+		Config: InterfaceConfigTcpClient{
+			Target:  net.JoinHostPort("127.0.0.1", fmt.Sprint(port)),
+			Bitrate: BitrateAuto{},
+		},
+	}))
+	if _, ok := clientAttach.(CommandOutcomeInterfaceAttached); !ok {
+		t.Fatalf("client attach produced %T", clientAttach)
+	}
+	routed := false
+	for attempt := 0; attempt < 50; attempt++ {
+		snapshot, snapshotErr := client.Snapshot(2 * time.Second)
+		if snapshotErr != nil {
+			t.Fatal(snapshotErr)
+		}
+		for _, route := range snapshot.Routes {
+			if route.Destination == destinationHash {
+				routed = true
+				break
+			}
+		}
+		if routed {
+			break
+		}
+		successfulOutcome(t, settledCommand(t, server, HostCommandAnnounce{
+			Destination: destinationHash,
+		}))
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !routed {
+		t.Fatal("announced destination did not become routable")
+	}
+	link := successfulOutcome(t, settledCommand(t, client, HostCommandEstablishLink{
+		Destination: destinationHash,
+	})).(CommandOutcomeLinkEstablished)
+	var pathHash RequestPathHash
+	copy(pathHash[:], fixtureBytes(t, fixture.Request.PathHashHex))
+	requestPayload := fixtureBytes(t, fixture.Request.PayloadHex)
+	responsePayload := fixtureBytes(t, fixture.Request.ResponseHex)
+	requestCommand, err := client.Execute(HostCommandRequest{
+		LinkId:   link.LinkId,
+		PathHash: pathHash,
+		Payload:  requestPayload,
+		Timeout:  ResponseTimeoutExact{Millis: fixture.Request.TimeoutMillis},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestResult := make(chan CommandSettlement, 1)
+	requestFailure := make(chan error, 1)
+	requestContext, cancelRequest := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelRequest()
+	go func() {
+		settlement, waitError := requestCommand.Wait(requestContext)
+		if waitError != nil {
+			requestFailure <- waitError
+			return
+		}
+		requestResult <- settlement
+	}()
+	eventContext, cancelEvent := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelEvent()
+	var request ApplicationEventRequest
+	for {
+		event, nextError := events.Next(eventContext)
+		if nextError != nil {
+			t.Fatal(nextError)
+		}
+		if value, ok := event.(ApplicationEventRequest); ok {
+			request = value
+			break
+		}
+	}
+	cancelEvent()
+	if !bytes.Equal(request.Data, requestPayload) {
+		t.Fatalf("request payload was %q", request.Data)
+	}
+	successfulOutcome(t, settledCommand(t, server, HostCommandRespond{
+		LinkId:           request.LinkId,
+		RequestId:        request.RequestId,
+		RequestRttMillis: request.RttMillis,
+		Payload:          responsePayload,
+	}))
+	select {
+	case failure := <-requestFailure:
+		t.Fatal(failure)
+	case settlement := <-requestResult:
+		response := successfulOutcome(t, settlement).(CommandOutcomeResponseReceived)
+		if !bytes.Equal(response.Data, responsePayload) {
+			t.Fatalf("response payload was %q", response.Data)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("request did not settle")
+	}
+	requestCommand.Close()
+	successfulOutcome(t, settledCommand(t, server, HostCommandSetLinkResourceStrategy{
+		LinkId: request.LinkId,
+		Strategy: ResourceStrategyAccept{
+			MaximumUncompressedBytes: fixture.Resource.MaximumUncompressedBytes,
+			AcceptCompressed:         fixture.Resource.AcceptCompressed,
+		},
+	}))
+	readers := make([]io.Reader, 0, len(fixture.Resource.ChunksHex))
+	resourcePayload := make([]byte, 0)
+	for _, encoded := range fixture.Resource.ChunksHex {
+		chunk := fixtureBytes(t, encoded)
+		resourcePayload = append(resourcePayload, chunk...)
+		readers = append(readers, bytes.NewReader(chunk))
+	}
+	metadata := fixtureBytes(t, fixture.Resource.MetadataHex)
+	resourceContext, cancelResource := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelResource()
+	resourceSettlement, err := client.SendResource(
+		resourceContext,
+		link.LinkId,
+		uint64(len(resourcePayload)),
+		io.MultiReader(readers...),
+		&metadata,
+		ResourceCompressionNever{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := successfulOutcome(t, resourceSettlement).(CommandOutcomeResourceSent); !ok {
+		t.Fatalf("resource send produced %T", resourceSettlement)
+	}
+	resourceEventContext, cancelResourceEvent := context.WithTimeout(
+		context.Background(),
+		5*time.Second,
+	)
+	defer cancelResourceEvent()
+	var resource ApplicationEventResourceAvailable
+	for {
+		event, nextError := events.Next(resourceEventContext)
+		if nextError != nil {
+			t.Fatal(nextError)
+		}
+		if value, ok := event.(ApplicationEventResourceAvailable); ok {
+			resource = value
+			break
+		}
+	}
+	if resource.Metadata == nil || !bytes.Equal(*resource.Metadata, metadata) {
+		t.Fatalf("resource metadata was %v", resource.Metadata)
+	}
+	received := make([]byte, 0, int(resource.Resource.TotalBytes()))
+	for {
+		chunk, finished, nextError := resource.Resource.Next(4)
+		if nextError != nil {
+			t.Fatal(nextError)
+		}
+		if finished {
+			break
+		}
+		received = append(received, chunk...)
+	}
+	resource.Resource.Close()
+	if !bytes.Equal(received, resourcePayload) {
+		t.Fatalf("resource payload was %q", received)
+	}
+	events.Close()
+	if err := client.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	client.Close()
+	server.Close()
+
+	restoredServer, err := NewHost(serverOptions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restoredServer.Close()
+	restoredClient, err := NewHost(clientOptions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restoredClient.Close()
+	if restoredServer.IdentityHash() != serverIdentity || restoredClient.IdentityHash() != clientIdentity {
+		t.Fatal("persistent identities changed across restart")
+	}
+	if restoredServer.DestinationHashes()[0] != destinationHash {
+		t.Fatal("persistent destination changed across restart")
+	}
+	serverSnapshot, err := restoredServer.Snapshot(2 * time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientSnapshot, err := restoredClient.Snapshot(2 * time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !serverSnapshot.Persistence.Restored || !clientSnapshot.Persistence.Restored {
+		t.Fatal("persistence did not report restoration")
+	}
+	restoredRoute := false
+	for _, route := range clientSnapshot.Routes {
+		if route.Destination == destinationHash {
+			restoredRoute = true
+		}
+	}
+	if !restoredRoute {
+		t.Fatal("client route was not restored")
 	}
 }
