@@ -496,6 +496,11 @@ def validate() -> list[str]:
         "Require exact protected release authority",
         "Verify all three producer workflow runs",
         "Verify flasher signing was deferred to suite custody",
+        "Require stable flasher release input",
+        "suite signing requires a stable flasher candidate; got ${channel}",
+        "target/flasher/candidate/channels/stable.json.minisig",
+        "required suite asset is missing: ${source}",
+        "duplicate suite asset basename: ${source} conflicts with ${destination}",
         "/attempts/${run_attempt}/jobs?per_page=100",
         "Publish immutable signed candidate as a prerelease",
         "candidate-${GITHUB_SHA}",
@@ -511,6 +516,12 @@ def validate() -> list[str]:
     if ".inputs.suite_input" in suite_signing:
         errors.append(
             "suite-sign.yml relies on workflow inputs absent from GitHub's run API"
+        )
+    stable_gate = suite_signing.find("- name: Require stable flasher release input")
+    registry_login = suite_signing.find("docker/login-action@")
+    if stable_gate < 0 or registry_login < 0 or stable_gate > registry_login:
+        errors.append(
+            "suite-sign.yml must reject non-stable flasher input before registry login"
         )
 
     suite_promotion = (
