@@ -29,10 +29,13 @@ import type {
   CommandSettlementFor,
   DeliveryEvidenceKind,
   DestinationHash,
+  DestinationIdentitySnapshot as StableDestinationIdentitySnapshot,
   DiagnosticEvent as HostDiagnosticEvent,
   HostCommand,
+  HostSnapshot as StableHostSnapshot,
   IdentityHash,
   InterfaceConfig,
+  InterfaceHealth,
   InterfaceId,
   InterfaceKind,
   LifecycleState as HostLifecycleState,
@@ -46,6 +49,7 @@ import type {
   ResourceStrategy,
   ResourceStream,
   ResponseTimeout,
+  RouteSnapshot as StableRouteSnapshot,
 } from "../contract.js";
 import { MemoryResourceStream } from "../memory_resource.js";
 import { AutoWifiInterface } from "./auto_wifi.js";
@@ -93,10 +97,13 @@ export type {
   CommandSettlement,
   CommandSettlementFor,
   DestinationHash,
+  DestinationIdentitySnapshot,
   DeliveryEvidenceKind,
   HostCommand,
+  HostSnapshot,
   IdentityHash,
   InterfaceConfig,
+  InterfaceHealth,
   InterfaceId,
   InterfaceKind,
   LinkId,
@@ -109,6 +116,7 @@ export type {
   ResourceStrategy,
   ResourceStream,
   ResponseTimeout,
+  RouteSnapshot,
 } from "../contract.js";
 export {
   AutoWifiController,
@@ -495,6 +503,9 @@ export type AllowRequesterOutcome = CommandSettlementFor<
 
 export type SnapshotOutcome =
   | Tag<"Captured", PrnsSnapshot>
+  | RuntimeRejected;
+export type HostSnapshotOutcome =
+  | Tag<"Captured", StableHostSnapshot>
   | RuntimeRejected;
 
 export type PrnsWasmModule = {
@@ -903,15 +914,20 @@ export type InterfaceSnapshot = {
   hardwareMtu?: HardwareMtu;
   routes: number;
   links: number;
+  transportedLinks: number;
 };
 
 export type PrnsSnapshot = {
   type: "snapshot";
+  revision: number;
   ingestedPackets: number;
   ingestedCommands: number;
   routes: number;
   scheduledAnnounces: number;
   interfaces: InterfaceSnapshot[];
+  activeLinkCount: number;
+  routeSnapshots: StableRouteSnapshot[];
+  destinationIdentities: StableDestinationIdentitySnapshot[];
 };
 
 export type IdentityStore = {
@@ -1098,7 +1114,15 @@ type HostedInterfaceRegistration<Name extends InterfaceName> =
   RuntimeRegisterInterfaceOptions & {
     readonly interfaceName: Name;
     readonly supervisorKind?: RuntimeInterfaceKind;
+    readonly contractKind?: InterfaceKind;
   };
+type RuntimeInterfaceInspection = {
+  readonly id: InterfaceId;
+  readonly name: InterfaceName;
+  readonly kind?: InterfaceKind;
+  readonly rxBytes: number;
+  readonly txBytes: number;
+};
 type InterfaceDetachOutcome = Tag<"Detached"> | RuntimeRejected;
 type RuntimeReadyOutcome = Tag<"Ready"> | RuntimeRejected;
 type RuntimeIngestOutcome = Tag<"Accepted"> | EntropyFailure | RuntimeRejected;
@@ -2583,8 +2607,10 @@ class BrowserBluetoothSession implements BluetoothSession {
 export class Prns {
   readonly interfaces: PrnsInterfaces;
   #runtime: PrnsRuntimeBinding;
+  #host: RuntimeHost;
   #entropy: EntropySource;
   #now: () => InstantMillis;
+  #startedAtMillis: number;
   #limits: HostLimits;
   #resourceCompressionModuleUrl: string;
   #events: BoundedAsyncLane<PrnsApplicationEvent>;
@@ -2614,6 +2640,7 @@ export class Prns {
     this.#runtime = runtime;
     this.#entropy = entropy;
     this.#now = now;
+    this.#startedAtMillis = now();
     this.#limits = limits;
     this.#resourceCompressionModuleUrl =
       resourceCompressionModuleUrl.href;
@@ -2634,16 +2661,15 @@ export class Prns {
       gap: (count) => Tag("DiagnosticsDropped", { count }),
       onBeforeNext: () => this.#pumpEvents(),
     });
-    this.interfaces = new PrnsInterfaces(
-      new RuntimeHost(
-        wasm,
-        runtime,
-        entropy,
-        now,
-        bleIdentityAvailability,
-        () => this.#pumpEvents(),
-      ),
+    this.#host = new RuntimeHost(
+      wasm,
+      runtime,
+      entropy,
+      now,
+      bleIdentityAvailability,
+      () => this.#pumpEvents(),
     );
+    this.interfaces = new PrnsInterfaces(this.#host);
   }
 
   static async create(options: PrnsOptions): Promise<PrnsCreateOutcome> {
@@ -3187,6 +3213,71 @@ export class Prns {
     }
   }
 
+  hostSnapshot(): HostSnapshotOutcome {
+    try {
+      const snapshot = parseSnapshot(this.#runtime.snapshot());
+      const inspection = this.#host.interfaceInspection();
+      const running = this.#lifecycle.tag === "Running";
+      const health: InterfaceHealth = running ? "Connected" : "Disabled";
+      const interfaces = snapshot.interfaces.map((entry) => {
+        const active = inspection.get(byteKey(entry.id));
+        return {
+          interfaceId: entry.id,
+          ...(active === undefined ? {} : { name: active.name }),
+          ...(active?.kind === undefined ? {} : { kind: active.kind }),
+          health,
+          rxBytes: active?.rxBytes ?? 0,
+          txBytes: active?.txBytes ?? 0,
+          routeCount: entry.routes,
+          linkCount: entry.links,
+          transportedLinkCount: entry.transportedLinks,
+        };
+      });
+      const interfaceCount = interfaces.length;
+      const onlineInterfaceCount = running ? interfaceCount : 0;
+      const transportedLinkCount = interfaces.reduce(
+        (total, entry) =>
+          saturatingAdd(total, entry.transportedLinkCount),
+        0,
+      );
+      const rxBytes = interfaces.reduce(
+        (total, entry) => saturatingAdd(total, entry.rxBytes),
+        0,
+      );
+      const txBytes = interfaces.reduce(
+        (total, entry) => saturatingAdd(total, entry.txBytes),
+        0,
+      );
+      return Tag("Captured", {
+        revision: snapshot.revision,
+        backend: this.backendInfo,
+        interfaces,
+        routes: snapshot.routeSnapshots,
+        activeLinkCount: snapshot.activeLinkCount,
+        destinationIdentities: snapshot.destinationIdentities,
+        runtime: {
+          running,
+          uptimeMillis: Math.max(0, this.#now() - this.#startedAtMillis),
+          interfaceCount,
+          onlineInterfaceCount,
+          routeCount: snapshot.routeSnapshots.length,
+          linkCount: snapshot.activeLinkCount,
+          transportedLinkCount,
+          rxBytes,
+          txBytes,
+          rxBps: 0,
+          txBps: 0,
+        },
+        persistence: {
+          persistent: false,
+          restored: false,
+        },
+      });
+    } catch (error) {
+      return runtimeRejected("snapshot", error);
+    }
+  }
+
   async #performStop(): Promise<StopOutcome> {
     const preserveFailure = this.#lifecycle.tag === "Failed";
     if (!preserveFailure) {
@@ -3247,13 +3338,18 @@ export class Prns {
       Weave: unsupported,
       AutomaticUsb: unsupported,
       AutomaticBluetoothLe: unsupported,
-      WebSocketClient: ({ target }) => this.#attachWebSocket(target),
+      WebSocketClient: ({ target }) =>
+        this.#attachWebSocket(target, "WebSocketClient"),
       WebSocketServer: unsupported,
-      BrowserRendezvous: ({ url }) => this.#attachWebSocket(url),
+      BrowserRendezvous: ({ url }) =>
+        this.#attachWebSocket(url, "BrowserRendezvous"),
     });
   }
 
-  async #attachWebSocket(target: string): Promise<CommandSettlement> {
+  async #attachWebSocket(
+    target: string,
+    kind: InterfaceKind,
+  ): Promise<CommandSettlement> {
     const connected = await this.interfaces.webSocket.connect(target);
     if (connected.tag !== "Connected") {
       return commandFailed(webSocketCommandFailure(connected));
@@ -3268,6 +3364,7 @@ export class Prns {
         }),
       );
     }
+    this.#host.setContractKind(session.interfaceId, kind);
     this.#attachedInterfaces.set(key, session);
     return Tag(
       "Succeeded",
@@ -3535,8 +3632,12 @@ class RuntimeHost {
     string,
     {
       id: InterfaceId;
+      name: InterfaceName;
+      contractKind?: InterfaceKind;
       registrationKey: string;
       supervisorKind: RuntimeInterfaceKind;
+      rxBytes: number;
+      txBytes: number;
     }
   >();
   #activeRegistrationKeys = new Set<string>();
@@ -3574,6 +3675,7 @@ class RuntimeHost {
     const {
       interfaceName,
       supervisorKind = registration.kind,
+      contractKind = stableInterfaceKind(registration.kind),
       ...options
     } = registration;
     const registrationKey = `${options.kind}:${byteKey(options.channelTag)}`;
@@ -3599,7 +3701,15 @@ class RuntimeHost {
       });
     }
     this.#activeRegistrationKeys.add(registrationKey);
-    this.#activeInterfaces.set(key, { id, registrationKey, supervisorKind });
+    this.#activeInterfaces.set(key, {
+      id,
+      name: interfaceName,
+      ...(contractKind === undefined ? {} : { contractKind }),
+      registrationKey,
+      supervisorKind,
+      rxBytes: 0,
+      txBytes: 0,
+    });
     this.#outboundQueues.set(key, []);
     return Tag("Registered", id);
   }
@@ -3631,6 +3741,30 @@ class RuntimeHost {
     return Tag("Detached");
   }
 
+  setContractKind(id: InterfaceId, kind: InterfaceKind): void {
+    const active = this.#activeInterfaces.get(byteKey(id));
+    if (active !== undefined) {
+      active.contractKind = kind;
+    }
+  }
+
+  interfaceInspection(): ReadonlyMap<string, RuntimeInterfaceInspection> {
+    return new Map(
+      [...this.#activeInterfaces].map(([key, active]) => [
+        key,
+        {
+          id: active.id,
+          name: active.name,
+          ...(active.contractKind === undefined
+            ? {}
+            : { kind: active.contractKind }),
+          rxBytes: active.rxBytes,
+          txBytes: active.txBytes,
+        },
+      ]),
+    );
+  }
+
   ingest(interfaceId: InterfaceId, bytes: PacketFrame): RuntimeIngestOutcome {
     const entropy = this.entropy();
     if (entropy.tag !== "Filled") {
@@ -3643,6 +3777,10 @@ class RuntimeHost {
         nowMs: this.#now(),
         entropy: entropy.data,
       });
+      const active = this.#activeInterfaces.get(byteKey(interfaceId));
+      if (active !== undefined) {
+        active.rxBytes = saturatingAdd(active.rxBytes, bytes.length);
+      }
       this.#onRuntimeActivity();
       return Tag("Accepted");
     } catch (error) {
@@ -3689,7 +3827,15 @@ class RuntimeHost {
     }
     const queued = this.#outboundQueues.get(interfaceKey) ?? [];
     this.#outboundQueues.set(interfaceKey, []);
-    return Tag("Outbound", queued.concat(direct));
+    const outbound = queued.concat(direct);
+    const active = this.#activeInterfaces.get(interfaceKey);
+    if (active !== undefined) {
+      active.txBytes = outbound.reduce(
+        (total, frame) => saturatingAdd(total, frame.bytes.length),
+        active.txBytes,
+      );
+    }
+    return Tag("Outbound", outbound);
   }
 
   createUsbAutoDecoder(): UsbAutoDecoderBinding {
@@ -4553,8 +4699,18 @@ function parseSnapshot(raw: unknown): PrnsSnapshot {
       "snapshot interfaces must be an array",
     );
   }
+  const routeSnapshotsRaw = optionalArrayField(object, "routeSnapshots");
+  const destinationIdentitiesRaw = optionalArrayField(
+    object,
+    "destinationIdentities",
+  );
   return {
     type: literalField(object, "type", "snapshot"),
+    revision: optionalNumber(
+      object,
+      "revision",
+      (value) => nonNegativeInteger(value, "revision"),
+    ) ?? 0,
     ingestedPackets: nonNegativeInteger(
       numberField(object, "ingestedPackets"),
       "ingestedPackets",
@@ -4569,6 +4725,15 @@ function parseSnapshot(raw: unknown): PrnsSnapshot {
       "scheduledAnnounces",
     ),
     interfaces: interfacesRaw.map(parseInterfaceSnapshot),
+    activeLinkCount: optionalNumber(
+      object,
+      "activeLinkCount",
+      (value) => nonNegativeInteger(value, "activeLinkCount"),
+    ) ?? 0,
+    routeSnapshots: routeSnapshotsRaw.map(parseStableRouteSnapshot),
+    destinationIdentities: destinationIdentitiesRaw.map(
+      parseStableDestinationIdentitySnapshot,
+    ),
   };
 }
 
@@ -4579,6 +4744,11 @@ function parseInterfaceSnapshot(raw: unknown): InterfaceSnapshot {
     kind: stringField(object, "kind"),
     routes: nonNegativeInteger(numberField(object, "routes"), "routes"),
     links: nonNegativeInteger(numberField(object, "links"), "links"),
+    transportedLinks: optionalNumber(
+      object,
+      "transportedLinks",
+      (value) => nonNegativeInteger(value, "transportedLinks"),
+    ) ?? 0,
   };
   const bitrate = optionalNumber(object, "bitrateBps", bitrateBps);
   if (bitrate !== undefined) {
@@ -4589,6 +4759,41 @@ function parseInterfaceSnapshot(raw: unknown): InterfaceSnapshot {
     snapshot.hardwareMtu = mtu;
   }
   return snapshot;
+}
+
+function parseStableRouteSnapshot(raw: unknown): StableRouteSnapshot {
+  const object = record(raw, "RouteSnapshot");
+  const viaIdentity = optionalBytesField(object, "viaIdentity");
+  return {
+    destination: destinationHash(bytesField(object, "destination")),
+    hops: nonNegativeInteger(numberField(object, "hops"), "hops"),
+    ...(viaIdentity === undefined
+      ? {}
+      : { viaIdentity: identityHash(viaIdentity) }),
+    interfaceId: interfaceId(bytesField(object, "interfaceId")),
+    learnedAtMillis: nonNegativeInteger(
+      numberField(object, "learnedAtMillis"),
+      "learnedAtMillis",
+    ),
+    lastRelayedAtMillis: nonNegativeInteger(
+      numberField(object, "lastRelayedAtMillis"),
+      "lastRelayedAtMillis",
+    ),
+    expiresAtMillis: nonNegativeInteger(
+      numberField(object, "expiresAtMillis"),
+      "expiresAtMillis",
+    ),
+  };
+}
+
+function parseStableDestinationIdentitySnapshot(
+  raw: unknown,
+): StableDestinationIdentitySnapshot {
+  const object = record(raw, "DestinationIdentitySnapshot");
+  return {
+    destination: destinationHash(bytesField(object, "destination")),
+    identity: identityHash(bytesField(object, "identity")),
+  };
 }
 
 function parseRuntimeInterfaceKind(value: string): RuntimeInterfaceKind {
@@ -4735,6 +4940,23 @@ function optionalBytesField(
   key: string,
 ): Uint8Array | undefined {
   return key in object ? bytesField(object, key) : undefined;
+}
+
+function optionalArrayField(
+  object: Record<string, unknown>,
+  key: string,
+): unknown[] {
+  if (!(key in object)) {
+    return [];
+  }
+  const value = field(object, key);
+  if (!Array.isArray(value)) {
+    throw new PrnsValidationError(
+      "invalid-component",
+      `${key} must be an array`,
+    );
+  }
+  return value;
 }
 
 function bigintField(object: Record<string, unknown>, key: string): bigint {
@@ -5569,6 +5791,29 @@ function cooperativeBackendInfo(): BackendInfo {
     capabilities: Object.freeze(capabilities),
     interfaceKinds: Object.freeze(interfaceKinds),
   });
+}
+
+function stableInterfaceKind(
+  kind: RuntimeInterfaceKind,
+): InterfaceKind | undefined {
+  return ({
+    "auto-usb-host": "AutomaticUsb",
+    "auto-usb-device": "AutomaticUsb",
+    rnode: "RNode",
+    "bluetooth-auto": "AutomaticBluetoothLe",
+    "bluetooth-peer": "AutomaticBluetoothLe",
+    "auto-wifi": "BrowserRendezvous",
+    "websocket-client": "WebSocketClient",
+    "websocket-server": "WebSocketServer",
+    "websocket-server-peer": "WebSocketServer",
+    serial: "Serial",
+    kiss: "Kiss",
+    pipe: "Pipe",
+  } satisfies Record<RuntimeInterfaceKind, InterfaceKind | undefined>)[kind];
+}
+
+function saturatingAdd(left: number, right: number): number {
+  return Math.min(Number.MAX_SAFE_INTEGER, left + right);
 }
 
 function describeInterfaceSessionFailure(

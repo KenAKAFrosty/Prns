@@ -110,6 +110,7 @@ try {
     command: "Failed:UnknownLink",
     resource: "Failed:UnknownLink",
     blob: "Failed:UnknownLink",
+    snapshot: "Consistent",
     compression: "Compressed",
     compressionDetail: "message:message",
   });

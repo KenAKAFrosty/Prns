@@ -22,6 +22,7 @@ use personal_rns::routing::links::resources::{
 };
 use personal_rns::routing::links::LinkId;
 use personal_rns::routing::request_handlers::{RequestPathHash, RequestPolicy};
+use personal_rns::routing::routes::NextHop;
 use personal_rns::routing::upstream_app_destinations::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::routing::warmth::Departure;
 use personal_rns::storage::GrowableHeap;
@@ -76,6 +77,7 @@ pub struct PrnsRuntime {
     events: Vec<JsValue>,
     outbound: Vec<OutboundFrame>,
     next_command_id: u64,
+    revision: u64,
     ble_identity: Option<bluetooth_contract::BleIdentity>,
     node_page: bool,
     host: CooperativeHost<()>,
@@ -103,6 +105,7 @@ impl PrnsRuntime {
             events: Vec::new(),
             outbound: Vec::new(),
             next_command_id: 0,
+            revision: 0,
             ble_identity,
             node_page: false,
             host: CooperativeHost::new(PrnsLimits::balanced()),
@@ -149,6 +152,7 @@ impl PrnsRuntime {
             self.interfaces.push(descriptor);
         }
         self.engine.interface_attached(id, InstantMillis(now_ms));
+        self.bump_revision();
         Ok(id.as_bytes().to_vec())
     }
 
@@ -166,6 +170,7 @@ impl PrnsRuntime {
         if removed {
             self.engine
                 .interface_departed(id, Departure::MayReturn, InstantMillis(now_ms));
+            self.bump_revision();
         }
         Ok(removed)
     }
@@ -205,6 +210,7 @@ impl PrnsRuntime {
             .map_err(|error| {
                 JsValue::from_str(&format!("destination registration failed: {error:?}"))
             })?;
+        self.bump_revision();
         if let Some(handlers) = optional_array(&options, "requestHandlers")? {
             for handler in handlers.iter() {
                 let path = required_string(&handler, "path")?;
@@ -261,6 +267,7 @@ impl PrnsRuntime {
             .map_err(|error| {
                 JsValue::from_str(&format!("node page registration failed: {error:?}"))
             })?;
+        self.bump_revision();
         for (path, policy) in <personal_hopspot_core::node_pages::NodePageRoutes as personal_rns::runtime::request_endpoints::RequestEndpointSet<()>>::REGISTRATIONS {
             self.engine
                 .register_request_handler(&destination, path, policy.engine_policy())
@@ -591,9 +598,13 @@ impl PrnsRuntime {
     pub fn set_destination_resource_strategy(&mut self, options: JsValue) -> Result<bool, JsValue> {
         let destination = destination_hash_from_vec(required_bytes(&options, "destination")?)?;
         let strategy = resource_strategy(&options)?;
-        Ok(self
+        let changed = self
             .engine
-            .set_default_resource_strategy(&destination, strategy))
+            .set_default_resource_strategy(&destination, strategy);
+        if changed {
+            self.bump_revision();
+        }
+        Ok(changed)
     }
 
     #[wasm_bindgen(js_name = sendChannelMessage)]
@@ -720,6 +731,7 @@ impl PrnsRuntime {
                 },
             },
         );
+        self.bump_revision();
         self.apply_captured(reactions);
         for (link_id, request_id, response) in page_requests {
             let id = self.mint_command_id();
@@ -782,6 +794,7 @@ impl PrnsRuntime {
     pub fn snapshot(&self) -> JsValue {
         let object = Object::new();
         set_str(&object, "type", "snapshot");
+        set_u64(&object, "revision", self.revision);
         set_u64(
             &object,
             "ingestedPackets",
@@ -809,9 +822,45 @@ impl PrnsRuntime {
             }
             set_usize(&row, "routes", self.engine.route_count_via(interface.id));
             set_usize(&row, "links", self.engine.link_count_via(interface.id));
+            set_usize(
+                &row,
+                "transportedLinks",
+                self.engine.transported_link_count_via(interface.id),
+            );
             interfaces.push(&row);
         }
         set_value(&object, "interfaces", interfaces.into());
+        set_u32(&object, "activeLinkCount", self.engine.link_count());
+        let route_snapshots = Array::new();
+        self.engine.visit_route_snapshots(
+            personal_rns::interfaces::AttachedInterfaces::new(&self.interfaces),
+            |route| {
+                let row = Object::new();
+                set_bytes(&row, "destination", route.destination.as_bytes());
+                set_u32(&row, "hops", u32::from(route.hops));
+                if let NextHop::Via(identity) = route.via {
+                    set_bytes(&row, "viaIdentity", identity.as_bytes());
+                }
+                set_bytes(&row, "interfaceId", route.interface.as_bytes());
+                set_u64(&row, "learnedAtMillis", route.learned_at.0);
+                set_u64(&row, "lastRelayedAtMillis", route.last_relayed_at.0);
+                set_u64(&row, "expiresAtMillis", route.expires_at.0);
+                route_snapshots.push(&row);
+            },
+        );
+        set_value(&object, "routeSnapshots", route_snapshots.into());
+        let destination_identities = Array::new();
+        for identity in self.engine.destination_identities() {
+            let row = Object::new();
+            set_bytes(&row, "destination", identity.destination.as_bytes());
+            set_bytes(&row, "identity", identity.identity.as_bytes());
+            destination_identities.push(&row);
+        }
+        set_value(
+            &object,
+            "destinationIdentities",
+            destination_identities.into(),
+        );
         object.into()
     }
 }
@@ -851,7 +900,12 @@ impl PrnsRuntime {
             &mut |out| entropy.fill(out),
             &mut |reaction| reactions.push(capture_reaction(reaction)),
         );
+        self.bump_revision();
         self.apply_captured(reactions);
+    }
+
+    fn bump_revision(&mut self) {
+        self.revision = self.revision.saturating_add(1);
     }
 
     fn apply_captured(&mut self, reactions: Vec<CapturedReaction>) {

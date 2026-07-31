@@ -80,6 +80,18 @@
           new Blob([new Uint8Array(1024).fill(9)]),
         );
         document.body.dataset.blob = `${blob.tag}:${blob.data.tag}`;
+        const snapshot = outcome.data.hostSnapshot();
+        const snapshotConsistent =
+          snapshot.tag === "Captured" &&
+          snapshot.data.backend.backend === "Cooperative" &&
+          snapshot.data.interfaces.length ===
+            snapshot.data.runtime.interfaceCount &&
+          snapshot.data.routes.length === snapshot.data.runtime.routeCount &&
+          snapshot.data.activeLinkCount === snapshot.data.runtime.linkCount &&
+          !snapshot.data.persistence.persistent;
+        document.body.dataset.snapshot = snapshotConsistent
+          ? "Consistent"
+          : "Inconsistent";
         document.title =
           closed.tag === "Failed" &&
           closed.data.tag === "UnknownLink" &&
@@ -87,6 +99,7 @@
           resource.data.tag === "UnknownLink" &&
           blob.tag === "Failed" &&
           blob.data.tag === "UnknownLink" &&
+          snapshotConsistent &&
           compression
             ? "PASS"
             : "FAIL";
@@ -100,6 +113,7 @@
           command: document.body.dataset.command,
           resource: document.body.dataset.resource,
           blob: document.body.dataset.blob,
+          snapshot: document.body.dataset.snapshot,
           compression: document.body.dataset.compression,
           compressionDetail: document.body.dataset.compressionDetail,
         }),
