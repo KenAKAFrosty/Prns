@@ -84,8 +84,28 @@ jobs:
           verify_run "$FLASHER_RUN_ID" ".github/workflows/flasher-sign.yml"
           verify_run "$DAEMON_RUN_ID" ".github/workflows/prnsd-candidate.yml"
           verify_run "$IMAGE_RUN_ID" ".github/workflows/prnsd-image-candidate.yml"
-          test "$(jq -r '.inputs.suite_input' "${RUNNER_TEMP}/run-${FLASHER_RUN_ID}.json")" = \
-            "true"
+      - name: Verify flasher signing was deferred to suite custody
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flasher_run="${RUNNER_TEMP}/run-${FLASHER_RUN_ID}.json"
+          run_attempt="$(jq -r '.run_attempt' "$flasher_run")"
+          [[ "$run_attempt" =~ ^[1-9][0-9]*$ ]]
+          jobs="${RUNNER_TEMP}/flasher-sign-jobs.jsonl"
+          gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${FLASHER_RUN_ID}/attempts/${run_attempt}/jobs?per_page=100" \
+            --jq '.jobs[]' \
+            > "$jobs"
+          test "$(jq -s '[.[] | .steps[]? | select(
+            .name == "Publish immutable signed candidate as a prerelease" and
+            .status == "completed" and
+            .conclusion == "skipped"
+          )] | length' "$jobs")" -eq 1
+          test "$(jq -s '[.[] | select(
+            .name == "Approve protected public release" and
+            .status == "completed" and
+            .conclusion == "skipped"
+          )] | length' "$jobs")" -eq 1
       - name: Download exact signed flasher evidence
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:

@@ -480,6 +480,9 @@ def validate() -> list[str]:
     for suite_gate in (
         "Require exact protected release authority",
         "Verify all three producer workflow runs",
+        "Verify flasher signing was deferred to suite custody",
+        "/attempts/${run_attempt}/jobs?per_page=100",
+        "Publish immutable signed candidate as a prerelease",
         "candidate-${GITHUB_SHA}",
         "inventory create",
         "suite-record",
@@ -490,6 +493,10 @@ def validate() -> list[str]:
     ):
         if suite_gate not in suite_signing:
             errors.append(f"suite-sign.yml is missing custody gate {suite_gate!r}")
+    if ".inputs.suite_input" in suite_signing:
+        errors.append(
+            "suite-sign.yml relies on workflow inputs absent from GitHub's run API"
+        )
 
     suite_promotion = (
         ROOT / ".github" / "workflows" / "suite-promote.yml"
