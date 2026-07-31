@@ -434,6 +434,15 @@ export type DestinationRegistrationOutcome =
   | Tag<"Registered", DestinationHash>
   | RuntimeRejected;
 
+export type OperationFailed = Tag<
+  "OperationFailed",
+  { readonly operation: string; readonly detail: string; readonly code?: string }
+>;
+export type StopOutcome =
+  | Tag<"Stopped">
+  | Tag<"AlreadyStopped">
+  | OperationFailed;
+
 type CommandCase<Name extends HostCommand["tag"]> = Extract<
   HostCommand,
   { readonly tag: Name }
@@ -444,6 +453,9 @@ export type SendSinglePacketOutcome = CommandSettlementFor<
 >;
 export type CloseLinkOutcome = CommandSettlementFor<CommandCase<"CloseLink">>;
 export type AttachOutcome = CommandSettlementFor<CommandCase<"AttachInterface">>;
+export type DetachInterfaceOutcome = CommandSettlementFor<
+  CommandCase<"DetachInterface">
+>;
 export type EstablishLinkOutcome = CommandSettlementFor<
   CommandCase<"EstablishLink">
 >;
@@ -2577,7 +2589,10 @@ export class Prns {
     }
   >();
   #responseParts = new Map<bigint, Uint8Array[]>();
+  #attachedInterfaces = new Map<string, InterfaceSession>();
   #lifecycle: HostLifecycleState = Tag("Running");
+  #stopCompleted = false;
+  #stopPromise: Promise<StopOutcome> | undefined;
 
   private constructor(
     wasm: PrnsWasmModule,
@@ -2803,10 +2818,9 @@ export class Prns {
         commandFailed(Tag("UnsupportedByBackend")),
       AttachUdp: async () =>
         commandFailed(Tag("UnsupportedByBackend")),
-      AttachInterface: async () =>
-        commandFailed(Tag("UnsupportedByBackend")),
-      DetachInterface: async () =>
-        commandFailed(Tag("UnsupportedByBackend")),
+      AttachInterface: ({ config }) => this.#attachInterface(config),
+      DetachInterface: ({ interface: interfaceId }) =>
+        this.#detachInterface(interfaceId),
       EstablishLink: ({ destination }) =>
         this.#issueCommand("establish-link", command, (entropy) =>
           this.#runtime.establishLink({
@@ -2983,6 +2997,10 @@ export class Prns {
     return this.execute(Tag("AttachInterface", { config }));
   }
 
+  detachInterface(interfaceId: InterfaceId): Promise<DetachInterfaceOutcome> {
+    return this.execute(Tag("DetachInterface", { interface: interfaceId }));
+  }
+
   establishLink(
     destination: DestinationHash,
   ): Promise<EstablishLinkOutcome> {
@@ -3120,6 +3138,17 @@ export class Prns {
     return this.#lifecycle;
   }
 
+  stop(): Promise<StopOutcome> {
+    if (this.#stopCompleted) {
+      return Promise.resolve(Tag("AlreadyStopped"));
+    }
+    if (this.#stopPromise !== undefined) {
+      return this.#stopPromise;
+    }
+    this.#stopPromise = this.#performStop();
+    return this.#stopPromise;
+  }
+
   claimEvents(): StreamClaim<PrnsApplicationEvent> {
     this.#pumpEvents();
     return this.#events.claim();
@@ -3136,6 +3165,112 @@ export class Prns {
     } catch (error) {
       return runtimeRejected("snapshot", error);
     }
+  }
+
+  async #performStop(): Promise<StopOutcome> {
+    const preserveFailure = this.#lifecycle.tag === "Failed";
+    if (!preserveFailure) {
+      this.#lifecycle = Tag("Stopping");
+    }
+    for (const pending of this.#pendingCommands.values()) {
+      pending.settle(commandFailed(Tag("NodeStopped")));
+    }
+    this.#pendingCommands.clear();
+    this.#responseParts.clear();
+    const sessions = [...this.#attachedInterfaces.values()];
+    this.#attachedInterfaces.clear();
+    const failures = (
+      await Promise.all(
+        sessions.map(async (session): Promise<string | undefined> => {
+          try {
+            const closed = await session.close();
+            return closed.tag === "Closed"
+              ? undefined
+              : describeInterfaceSessionFailure(closed);
+          } catch (error) {
+            return describeHostError(error);
+          }
+        }),
+      )
+    ).filter((failure): failure is string => failure !== undefined);
+    this.#events.finish();
+    this.#diagnostics.finish();
+    this.#stopCompleted = true;
+    if (failures.length > 0) {
+      const detail = failures.join("; ");
+      this.#lifecycle = Tag("Failed", { cause: "BackendFailed", detail });
+      return Tag("OperationFailed", { operation: "stop", detail });
+    }
+    if (!preserveFailure) {
+      this.#lifecycle = Tag("Stopped", { reason: "Requested" });
+    }
+    return Tag("Stopped");
+  }
+
+  #attachInterface(config: InterfaceConfig): Promise<CommandSettlement> {
+    const unsupported = async (): Promise<CommandSettlement> =>
+      commandFailed(Tag("UnsupportedByBackend"));
+    return match_into<Promise<CommandSettlement>>().from(config, {
+      AutoLan: unsupported,
+      TcpClient: unsupported,
+      TcpServer: unsupported,
+      Udp: unsupported,
+      Serial: unsupported,
+      Kiss: unsupported,
+      Ax25Kiss: unsupported,
+      RNode: unsupported,
+      MultiRNode: unsupported,
+      Pipe: unsupported,
+      BackboneClient: unsupported,
+      BackboneServer: unsupported,
+      I2p: unsupported,
+      Weave: unsupported,
+      AutomaticUsb: unsupported,
+      AutomaticBluetoothLe: unsupported,
+      WebSocketClient: ({ target }) => this.#attachWebSocket(target),
+      WebSocketServer: unsupported,
+      BrowserRendezvous: ({ url }) => this.#attachWebSocket(url),
+    });
+  }
+
+  async #attachWebSocket(target: string): Promise<CommandSettlement> {
+    const connected = await this.interfaces.webSocket.connect(target);
+    if (connected.tag !== "Connected") {
+      return commandFailed(webSocketCommandFailure(connected));
+    }
+    const session = connected.data;
+    const key = byteKey(session.interfaceId);
+    if (this.#attachedInterfaces.has(key)) {
+      await session.close();
+      return commandFailed(
+        Tag("BackendFailed", {
+          detail: `runtime reused active interface identifier ${key}`,
+        }),
+      );
+    }
+    this.#attachedInterfaces.set(key, session);
+    return Tag(
+      "Succeeded",
+      Tag("InterfaceAttached", { interface: session.interfaceId }),
+    );
+  }
+
+  async #detachInterface(interfaceId: InterfaceId): Promise<CommandSettlement> {
+    const key = byteKey(interfaceId);
+    const session = this.#attachedInterfaces.get(key);
+    if (session === undefined) {
+      return commandFailed(Tag("UnknownInterface"));
+    }
+    this.#attachedInterfaces.delete(key);
+    const closed = await session.close();
+    if (closed.tag !== "Closed") {
+      return commandFailed(
+        Tag("BackendFailed", {
+          detail: describeInterfaceSessionFailure(closed),
+        }),
+      );
+    }
+    return Tag("Succeeded", Tag("InterfaceDetached", { interface: interfaceId }));
   }
 
   #entropyBytes(): EntropyOutcome {
@@ -5376,6 +5511,28 @@ function describeBluetoothConnectFailure(
     AlreadyActive: ({ target }) => `${target} is already active`,
     StableIdentityUnavailable: ({ detail }) => detail,
     RuntimeRejected: ({ operation, detail }) => `${operation}: ${detail}`,
+  });
+}
+
+function webSocketCommandFailure(
+  failure: Exclude<WebSocketConnectOutcome, Tag<"Connected", unknown>>,
+): CommandFailure {
+  return match_into<CommandFailure>().from(failure, {
+    HostApiUnavailable: ({ api }) =>
+      Tag("DeviceUnavailable", { detail: `${api} is unavailable` }),
+    PermissionDenied: ({ detail }) => Tag("PermissionDenied", { detail }),
+    Cancelled: ({ stage }) =>
+      Tag("ConnectFailed", { detail: `WebSocket ${stage} was cancelled` }),
+    AlreadyActive: ({ target }) =>
+      Tag("BackendFailed", { detail: `${target} is already active` }),
+    InvalidTarget: ({ detail }) => Tag("InvalidConfiguration", { detail }),
+    TimedOut: ({ stage, timeoutMs }) =>
+      Tag("ConnectFailed", {
+        detail: `WebSocket ${stage} timed out after ${timeoutMs}ms`,
+      }),
+    ConnectionFailed: ({ detail }) => Tag("ConnectFailed", { detail }),
+    RuntimeRejected: ({ operation, detail }) =>
+      Tag("BackendFailed", { detail: `${operation}: ${detail}` }),
   });
 }
 

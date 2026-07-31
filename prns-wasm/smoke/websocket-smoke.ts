@@ -465,6 +465,88 @@ async function main(): Promise<void> {
       "oversized frame is bounded",
     );
 
+    const unsupportedStable = await prns.attachInterface(Tag("AutomaticUsb"));
+    assert(
+      unsupportedStable.tag === "Failed" &&
+        unsupportedStable.data.tag === "UnsupportedByBackend",
+      "stable attach preserves typed browser unsupported outcomes",
+    );
+    const invalidStable = await prns.attachInterface(
+      Tag("BrowserRendezvous", {
+        url: "https://127.0.0.1:9876/not-websocket",
+      }),
+    );
+    assert(
+      invalidStable.tag === "Failed" &&
+        invalidStable.data.tag === "InvalidConfiguration",
+      "stable rendezvous rejects invalid configuration",
+    );
+
+    const stableSocketIndex = FakeWebSocket.instances.length;
+    const stableAttached = await prns.attachInterface(
+      Tag("BrowserRendezvous", {
+        url: "ws://127.0.0.1:9876/stable-rendezvous",
+      }),
+    );
+    assert(
+      stableAttached.tag === "Succeeded" &&
+        stableAttached.data.tag === "InterfaceAttached",
+      "stable browser rendezvous attaches",
+    );
+    const stableInterfaceId = stableAttached.data.data.interface;
+    const duplicateStable = await prns.attachInterface(
+      Tag("BrowserRendezvous", {
+        url: "ws://127.0.0.1:9876/stable-rendezvous",
+      }),
+    );
+    assert(
+      duplicateStable.tag === "Failed" &&
+        duplicateStable.data.tag === "BackendFailed",
+      "stable duplicate attach has a typed backend failure",
+    );
+    assert(
+      FakeWebSocket.instances.length === stableSocketIndex + 1,
+      "stable duplicate attach is rejected before opening a socket",
+    );
+    const stableDetached = await prns.detachInterface(stableInterfaceId);
+    assert(
+      stableDetached.tag === "Succeeded" &&
+        stableDetached.data.tag === "InterfaceDetached",
+      "stable browser rendezvous detaches",
+    );
+    assert(
+      assertDefined(
+        FakeWebSocket.instances[stableSocketIndex],
+        "stable rendezvous socket exists",
+      ).closeCalls === 1,
+      "stable detach closes its transport",
+    );
+    const unknownStable = await prns.detachInterface(stableInterfaceId);
+    assert(
+      unknownStable.tag === "Failed" &&
+        unknownStable.data.tag === "UnknownInterface",
+      "stable detach rejects unknown interfaces",
+    );
+
+    const stableClient = await prns.attachInterface(
+      Tag("WebSocketClient", {
+        target: "ws://127.0.0.1:9876/stable-client",
+      }),
+    );
+    assert(
+      stableClient.tag === "Succeeded" &&
+        stableClient.data.tag === "InterfaceAttached",
+      "stable WebSocket client attaches",
+    );
+    const stableClientDetached = await prns.detachInterface(
+      stableClient.data.data.interface,
+    );
+    assert(
+      stableClientDetached.tag === "Succeeded" &&
+        stableClientDetached.data.tag === "InterfaceDetached",
+      "stable WebSocket client detaches",
+    );
+
     delete host.WebSocket;
     const unavailable = await prns.interfaces.webSocket.connect(
       "ws://127.0.0.1:9876/unavailable",
@@ -473,7 +555,56 @@ async function main(): Promise<void> {
       unavailable.tag === "HostApiUnavailable",
       "missing WebSocket API is semantically tagged",
     );
+    const unavailableStable = await prns.attachInterface(
+      Tag("BrowserRendezvous", {
+        url: "ws://127.0.0.1:9876/unavailable-stable",
+      }),
+    );
+    assert(
+      unavailableStable.tag === "Failed" &&
+        unavailableStable.data.tag === "DeviceUnavailable",
+      "stable attach preserves missing browser API detail",
+    );
     host.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
+
+    const stopSocketIndex = FakeWebSocket.instances.length;
+    const stopAttached = await prns.attachInterface(
+      Tag("WebSocketClient", {
+        target: "ws://127.0.0.1:9876/stop-cleanup",
+      }),
+    );
+    assert(
+      stopAttached.tag === "Succeeded" &&
+        stopAttached.data.tag === "InterfaceAttached",
+      "stable WebSocket client attaches before shutdown",
+    );
+    const stopped = await prns.stop();
+    assert(stopped.tag === "Stopped", "browser host stops orderly");
+    assert(
+      prns.lifecycle.tag === "Stopped" &&
+        prns.lifecycle.data.reason === "Requested",
+      "browser lifecycle records requested shutdown",
+    );
+    assert(
+      assertDefined(
+        FakeWebSocket.instances[stopSocketIndex],
+        "shutdown WebSocket exists",
+      ).closeCalls === 1,
+      "browser shutdown closes stable transports",
+    );
+    const stoppedAttach = await prns.attachInterface(
+      Tag("BrowserRendezvous", {
+        url: "ws://127.0.0.1:9876/after-stop",
+      }),
+    );
+    assert(
+      stoppedAttach.tag === "Failed" && stoppedAttach.data.tag === "NodeStopped",
+      "stable commands reject after browser shutdown",
+    );
+    assert(
+      (await prns.stop()).tag === "AlreadyStopped",
+      "browser shutdown is idempotent",
+    );
 
     console.log("websocket smoke passed");
   } finally {
@@ -491,6 +622,7 @@ function wasmModule(): PrnsWasmModule {
     UsbAutoDecoder: MockUsbAutoDecoder,
     BluetoothReassembler: MockBluetoothReassembler,
     hostContractAbi: () => 1,
+    hostSchemaVersion: () => 2,
     productVersion: () => "0.3.1",
     identitySecretKeyLength: () => IDENTITY_LENGTH,
     bluetoothServiceUuid: () => "00000000-0000-4000-8000-000000000001",

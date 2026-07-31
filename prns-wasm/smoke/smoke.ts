@@ -12,6 +12,7 @@ import init, {
   bluetoothServiceUuid,
   compressResourceCandidate,
   hostContractAbi,
+  hostSchemaVersion,
   identitySecretKeyLength,
   productVersion,
   websocketBitrateBps,
@@ -228,6 +229,7 @@ function wasmModule(): PrnsWasmModule {
     BluetoothReassembler:
       BluetoothReassembler as PrnsWasmModule["BluetoothReassembler"],
     hostContractAbi,
+    hostSchemaVersion,
     productVersion,
     identitySecretKeyLength,
     bluetoothServiceUuid,
@@ -437,6 +439,19 @@ function describeEvent(event: PrnsEvent): string {
       `RouteDropped destination=${hex(destination)}`,
     DiagnosticsDropped: ({ count }) =>
       `diagnostics dropped=${count.toString()}`,
+    PersistenceRestored: ({
+      routes,
+      destinationIdentities,
+      tunnels,
+      ratchets,
+      refused,
+      dropped,
+    }) =>
+      `persistence restored routes=${routes} identities=${destinationIdentities} tunnels=${tunnels} ratchets=${ratchets} refused=${refused} dropped=${dropped}`,
+    PersistenceFlushed: ({ cause, target }) =>
+      `persistence flushed cause=${cause} target=${target}`,
+    PersistenceFlushFailed: ({ cause, target }) =>
+      `persistence flush failed cause=${cause} target=${target}`,
   });
 }
 
