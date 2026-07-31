@@ -7,9 +7,13 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-import tomllib
 import unittest
 from unittest import mock
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
 
 
 ROOT = Path(__file__).resolve().parents[2]
