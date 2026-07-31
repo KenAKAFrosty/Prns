@@ -9,11 +9,56 @@ use esp_hal::rom::spiflash::{
     esp_rom_spiflash_erase_sector, esp_rom_spiflash_read, esp_rom_spiflash_write,
     ESP_ROM_SPIFLASH_RESULT_OK,
 };
+#[cfg(target_arch = "xtensa")]
+use esp_hal::{
+    peripherals::CPU_CTRL,
+    system::{is_running, Cpu, CpuControl},
+};
 
 const WORD_LEN: usize = 4;
 const SECTOR_LEN: usize = 4096;
 const BOUNCE_WORDS: usize = 64;
 const ATTEMPTS: usize = 3;
+
+#[cfg(target_arch = "xtensa")]
+struct OtherCorePark(Option<Cpu>);
+
+#[cfg(target_arch = "xtensa")]
+impl OtherCorePark {
+    #[expect(
+        clippy::undocumented_unsafe_blocks,
+        reason = "the flash operation requires exclusive access while the other CPU is running"
+    )]
+    fn acquire() -> Self {
+        let core = Cpu::other().find(|core| is_running(*core));
+        if let Some(core) = core {
+            let mut control = CpuControl::new(unsafe { CPU_CTRL::steal() });
+            unsafe {
+                control.park_core(core);
+            }
+        }
+        Self(core)
+    }
+}
+
+#[cfg(target_arch = "xtensa")]
+impl Drop for OtherCorePark {
+    fn drop(&mut self) {
+        if let Some(core) = self.0 {
+            unpark_core(core);
+        }
+    }
+}
+
+#[cfg(target_arch = "xtensa")]
+#[expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "the flash operation temporarily borrows the CPU control peripheral"
+)]
+fn unpark_core(core: Cpu) {
+    let mut control = CpuControl::new(unsafe { CPU_CTRL::steal() });
+    control.unpark_core(core);
+}
 
 pub struct EspRomFlash<const CAPACITY: usize>;
 
@@ -73,7 +118,10 @@ impl<const CAPACITY: usize> NorFlash for EspRomFlash<CAPACITY> {
     fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
         check_erase(self, from, to).map_err(EspRomFlashError::Contract)?;
         for sector in from as usize / SECTOR_LEN..to as usize / SECTOR_LEN {
-            erase_sector(sector as u32)?;
+            let sector = sector as u32;
+            if !sector_is_erased(sector)? {
+                erase_sector(sector)?;
+            }
         }
         Ok(())
     }
@@ -118,17 +166,13 @@ impl<const CAPACITY: usize> AsyncNorFlash for EspRomFlash<CAPACITY> {
     }
 }
 
-#[expect(
-    clippy::undocumented_unsafe_blocks,
-    reason = "the ROM receives an aligned writable word buffer for the exact byte length"
-)]
 fn read_words(
     offset: u32,
     words: &mut [u32; BOUNCE_WORDS],
     len: usize,
 ) -> Result<(), EspRomFlashError> {
     for attempt in 0..ATTEMPTS {
-        let result = unsafe { esp_rom_spiflash_read(offset, words.as_mut_ptr(), len as u32) };
+        let result = critical_section::with(|_| rom_read(offset, words.as_mut_ptr(), len as u32));
         if result == ESP_ROM_SPIFLASH_RESULT_OK {
             return Ok(());
         }
@@ -139,17 +183,17 @@ fn read_words(
     Ok(())
 }
 
-#[expect(
-    clippy::undocumented_unsafe_blocks,
-    reason = "the ROM receives an aligned readable word buffer for the exact byte length"
-)]
 fn write_words(
     offset: u32,
     words: &[u32; BOUNCE_WORDS],
     len: usize,
 ) -> Result<(), EspRomFlashError> {
     for attempt in 0..ATTEMPTS {
-        let result = unsafe { esp_rom_spiflash_write(offset, words.as_ptr(), len as u32) };
+        let result = critical_section::with(|_| {
+            #[cfg(target_arch = "xtensa")]
+            let _park = OtherCorePark::acquire();
+            rom_write(offset, words.as_ptr(), len as u32)
+        });
         if result == ESP_ROM_SPIFLASH_RESULT_OK {
             return Ok(());
         }
@@ -160,13 +204,13 @@ fn write_words(
     Ok(())
 }
 
-#[expect(
-    clippy::undocumented_unsafe_blocks,
-    reason = "the validated sector number is inside the configured flash capacity"
-)]
 fn erase_sector(sector: u32) -> Result<(), EspRomFlashError> {
     for attempt in 0..ATTEMPTS {
-        let result = unsafe { esp_rom_spiflash_erase_sector(sector) };
+        let result = critical_section::with(|_| {
+            #[cfg(target_arch = "xtensa")]
+            let _park = OtherCorePark::acquire();
+            rom_erase_sector(sector)
+        });
         if result == ESP_ROM_SPIFLASH_RESULT_OK {
             return Ok(());
         }
@@ -175,6 +219,45 @@ fn erase_sector(sector: u32) -> Result<(), EspRomFlashError> {
         }
     }
     Ok(())
+}
+
+fn sector_is_erased(sector: u32) -> Result<bool, EspRomFlashError> {
+    let base = sector * SECTOR_LEN as u32;
+    for offset in (0..SECTOR_LEN).step_by(BOUNCE_WORDS * WORD_LEN) {
+        let mut bounce = [0u32; BOUNCE_WORDS];
+        read_words(base + offset as u32, &mut bounce, BOUNCE_WORDS * WORD_LEN)?;
+        if bounce.iter().any(|word| *word != u32::MAX) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+#[cfg_attr(target_arch = "xtensa", esp_hal::ram)]
+#[expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "the ROM receives an aligned writable word buffer for the exact byte length"
+)]
+fn rom_read(offset: u32, words: *mut u32, len: u32) -> i32 {
+    unsafe { esp_rom_spiflash_read(offset, words, len) }
+}
+
+#[cfg_attr(target_arch = "xtensa", esp_hal::ram)]
+#[expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "the ROM receives an aligned readable word buffer for the exact byte length"
+)]
+fn rom_write(offset: u32, words: *const u32, len: u32) -> i32 {
+    unsafe { esp_rom_spiflash_write(offset, words, len) }
+}
+
+#[cfg_attr(target_arch = "xtensa", esp_hal::ram)]
+#[expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "the validated sector number is inside the configured flash capacity"
+)]
+fn rom_erase_sector(sector: u32) -> i32 {
+    unsafe { esp_rom_spiflash_erase_sector(sector) }
 }
 
 impl core::fmt::Display for EspRomFlashError {

@@ -132,6 +132,7 @@ pub(super) enum BridgePhase {
     RequestingPort,
     Connecting,
     VerifyingTarget,
+    Erasing,
     Writing,
     VerifyingFlash,
     Resetting,
@@ -142,7 +143,7 @@ pub(super) enum BridgePhase {
 }
 
 impl BridgePhase {
-    const ALL: [Self; 15] = [
+    const ALL: [Self; 16] = [
         Self::Idle,
         Self::ValidatingManifest,
         Self::Downloading,
@@ -151,6 +152,7 @@ impl BridgePhase {
         Self::RequestingPort,
         Self::Connecting,
         Self::VerifyingTarget,
+        Self::Erasing,
         Self::Writing,
         Self::VerifyingFlash,
         Self::Resetting,
@@ -170,6 +172,7 @@ impl BridgePhase {
             Self::RequestingPort => "requesting_port",
             Self::Connecting => "connecting",
             Self::VerifyingTarget => "verifying_target",
+            Self::Erasing => "erasing",
             Self::Writing => "writing",
             Self::VerifyingFlash => "verifying_flash",
             Self::Resetting => "resetting",
@@ -199,6 +202,7 @@ pub(super) enum BridgeErrorCode {
     ConnectionFailure,
     WrongChip,
     WrongFlashSize,
+    EraseFailure,
     ArtifactFetch,
     ArtifactSizeMismatch,
     ArtifactHashMismatch,
@@ -213,7 +217,7 @@ pub(super) enum BridgeErrorCode {
 }
 
 impl BridgeErrorCode {
-    const ALL: [Self; 19] = [
+    const ALL: [Self; 20] = [
         Self::InvalidRequest,
         Self::InvalidConfig,
         Self::UnsupportedBrowser,
@@ -222,6 +226,7 @@ impl BridgeErrorCode {
         Self::ConnectionFailure,
         Self::WrongChip,
         Self::WrongFlashSize,
+        Self::EraseFailure,
         Self::ArtifactFetch,
         Self::ArtifactSizeMismatch,
         Self::ArtifactHashMismatch,
@@ -245,6 +250,7 @@ impl BridgeErrorCode {
             Self::ConnectionFailure => "connection_failure",
             Self::WrongChip => "wrong_chip",
             Self::WrongFlashSize => "wrong_flash_size",
+            Self::EraseFailure => "erase_failure",
             Self::ArtifactFetch => "artifact_fetch",
             Self::ArtifactSizeMismatch => "artifact_size_mismatch",
             Self::ArtifactHashMismatch => "artifact_hash_mismatch",
@@ -257,6 +263,10 @@ impl BridgeErrorCode {
             Self::Busy => "busy",
             Self::FlashFailed => "flash_failed",
         }
+    }
+
+    pub(super) const fn retains_prepared_plan(self) -> bool {
+        matches!(self, Self::PermissionDenied)
     }
 }
 
@@ -494,5 +504,14 @@ mod tests {
                 format!("\"{}\"", code.wire())
             );
         }
+    }
+
+    #[test]
+    fn only_device_picker_denial_retains_the_prepared_plan() {
+        let retaining = BridgeErrorCode::ALL
+            .into_iter()
+            .filter(|code| code.retains_prepared_plan())
+            .collect::<Vec<_>>();
+        assert_eq!(retaining, vec![BridgeErrorCode::PermissionDenied]);
     }
 }

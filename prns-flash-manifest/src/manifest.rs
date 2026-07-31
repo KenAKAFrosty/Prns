@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -111,6 +113,56 @@ pub struct TargetManifest {
     pub source: Option<SourceArchiveIdentity>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ManifestTargetSetPolicy {
+    expected: BTreeSet<String>,
+}
+
+impl ManifestTargetSetPolicy {
+    pub fn all_shipping_targets(catalog: &BoardCatalog) -> Self {
+        Self {
+            expected: catalog
+                .boards
+                .iter()
+                .map(|board| board.slug.clone())
+                .collect(),
+        }
+    }
+
+    pub fn local_development(
+        catalog: &BoardCatalog,
+        board_slugs: &[&str],
+    ) -> Result<Self, ManifestError> {
+        if board_slugs.is_empty() {
+            return Err(ManifestError::TargetSet(
+                "local development target set must not be empty".to_string(),
+            ));
+        }
+        let expected = board_slugs
+            .iter()
+            .map(|slug| (*slug).to_string())
+            .collect::<BTreeSet<_>>();
+        if expected.len() != board_slugs.len() {
+            return Err(ManifestError::TargetSet(
+                "local development target set contains a duplicate board slug".to_string(),
+            ));
+        }
+        if let Some(slug) = expected
+            .iter()
+            .find(|slug| catalog.board(slug.as_str()).is_none())
+        {
+            return Err(ManifestError::TargetSet(format!(
+                "local development target set contains unknown board {slug:?}"
+            )));
+        }
+        Ok(Self { expected })
+    }
+
+    pub fn expected_board_slugs(&self) -> impl Iterator<Item = &str> {
+        self.expected.iter().map(String::as_str)
+    }
+}
+
 /// Identity of one commit-bound archive embedded in a source-capable target.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -193,8 +245,17 @@ pub enum ManifestError {
 impl FlashManifest {
     /// Parse and validate a signed manifest's JSON bytes against the catalog.
     pub fn from_json(bytes: &[u8], catalog: &BoardCatalog) -> Result<Self, ManifestError> {
+        let policy = ManifestTargetSetPolicy::all_shipping_targets(catalog);
+        Self::from_json_with_target_set(bytes, catalog, &policy)
+    }
+
+    pub fn from_json_with_target_set(
+        bytes: &[u8],
+        catalog: &BoardCatalog,
+        policy: &ManifestTargetSetPolicy,
+    ) -> Result<Self, ManifestError> {
         let manifest: Self = serde_json::from_slice(bytes)?;
-        manifest.validate(catalog)?;
+        manifest.validate_with_target_set(catalog, policy)?;
         // Every accepted wire document must also admit the transport-specific
         // domain conversion. Compatibility callers may retain the DTO, but no
         // signed parse can bypass this trust-boundary proof.
@@ -207,7 +268,16 @@ impl FlashManifest {
         self,
         catalog: &BoardCatalog,
     ) -> Result<ValidatedFlashManifest, ManifestError> {
-        self.validate(catalog)?;
+        let policy = ManifestTargetSetPolicy::all_shipping_targets(catalog);
+        self.into_validated_with_target_set(catalog, &policy)
+    }
+
+    pub fn into_validated_with_target_set(
+        self,
+        catalog: &BoardCatalog,
+        policy: &ManifestTargetSetPolicy,
+    ) -> Result<ValidatedFlashManifest, ManifestError> {
+        self.validate_with_target_set(catalog, policy)?;
         convert_manifest(self, catalog)
     }
 
@@ -219,13 +289,30 @@ impl FlashManifest {
         self.clone().into_validated(catalog)
     }
 
+    pub fn to_validated_with_target_set(
+        &self,
+        catalog: &BoardCatalog,
+        policy: &ManifestTargetSetPolicy,
+    ) -> Result<ValidatedFlashManifest, ManifestError> {
+        self.clone().into_validated_with_target_set(catalog, policy)
+    }
+
     /// Validate release, target, and flash-layout invariants.
     pub fn validate(&self, catalog: &BoardCatalog) -> Result<(), ManifestError> {
+        let policy = ManifestTargetSetPolicy::all_shipping_targets(catalog);
+        self.validate_with_target_set(catalog, &policy)
+    }
+
+    pub fn validate_with_target_set(
+        &self,
+        catalog: &BoardCatalog,
+        policy: &ManifestTargetSetPolicy,
+    ) -> Result<(), ManifestError> {
         if self.schema != FLASH_MANIFEST_SCHEMA {
             return Err(ManifestError::Schema(self.schema));
         }
         validate_release(self)?;
-        validate_target_set(self, catalog)?;
+        validate_target_set(self, policy)?;
         for target in &self.targets {
             let board = catalog.board(&target.board_slug).ok_or_else(|| {
                 ManifestError::TargetSet(format!("unknown board {:?}", target.board_slug))
@@ -381,6 +468,62 @@ mod tests {
     fn valid_manifest_matches_catalog() -> Result<(), Box<dyn std::error::Error>> {
         let catalog = board_catalog()?;
         valid_manifest()?.validate(&catalog)?;
+        Ok(())
+    }
+
+    #[test]
+    fn production_and_local_target_set_policies_remain_distinct(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let catalog = board_catalog()?;
+        let mut manifest = valid_manifest()?;
+        manifest
+            .targets
+            .retain(|target| matches!(target.board_slug.as_str(), "heltec-v4" | "t-echo"));
+        let selected = ["heltec-v4", "t-echo"];
+        let policy = ManifestTargetSetPolicy::local_development(&catalog, &selected)?;
+
+        assert!(manifest.validate(&catalog).is_err());
+        manifest.validate_with_target_set(&catalog, &policy)?;
+        let encoded = serde_json::to_vec(&manifest)?;
+        ValidatedFlashManifest::from_json_with_target_set(&encoded, &catalog, &policy)?;
+        assert!(ValidatedFlashManifest::from_json(&encoded, &catalog).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn local_target_set_policy_rejects_invalid_requests_and_manifest_sets(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let catalog = board_catalog()?;
+        assert!(ManifestTargetSetPolicy::local_development(&catalog, &[]).is_err());
+        assert!(
+            ManifestTargetSetPolicy::local_development(&catalog, &["heltec-v4", "heltec-v4"])
+                .is_err()
+        );
+        assert!(ManifestTargetSetPolicy::local_development(&catalog, &["unknown-board"]).is_err());
+
+        let selected = ["heltec-v4", "t-echo"];
+        let policy = ManifestTargetSetPolicy::local_development(&catalog, &selected)?;
+        let mut exact = valid_manifest()?;
+        exact
+            .targets
+            .retain(|target| matches!(target.board_slug.as_str(), "heltec-v4" | "t-echo"));
+
+        let mut missing = exact.clone();
+        missing.targets.pop();
+        assert!(missing.validate_with_target_set(&catalog, &policy).is_err());
+
+        let mut duplicate = exact.clone();
+        duplicate.targets.push(duplicate.targets[0].clone());
+        assert!(duplicate
+            .validate_with_target_set(&catalog, &policy)
+            .is_err());
+
+        let mut unknown = exact.clone();
+        unknown.targets[0].board_slug = "unknown-board".to_string();
+        assert!(unknown.validate_with_target_set(&catalog, &policy).is_err());
+
+        let extra = valid_manifest()?;
+        assert!(extra.validate_with_target_set(&catalog, &policy).is_err());
         Ok(())
     }
 

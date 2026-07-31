@@ -1,4 +1,5 @@
 use embassy_futures::select::{select6, Either6};
+use embassy_futures::yield_now;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::Receiver;
 use heapless::Vec as HeaplessVec;
@@ -270,6 +271,7 @@ pub(crate) async fn run_pooled<
                     }
                     #[cfg(feature = "log")]
                     log::info!(
+                        target: "personal_hopspot_esp32",
                         "manifold: Add kind={:?} present={present} descriptors={}",
                         id.kind(),
                         descriptors.len()
@@ -286,6 +288,7 @@ pub(crate) async fn run_pooled<
                     }
                     #[cfg(feature = "log")]
                     log::info!(
+                        target: "personal_hopspot_esp32",
                         "manifold: Remove kind={:?} found={} descriptors={}",
                         id.kind(),
                         found.is_some(),
@@ -364,6 +367,7 @@ pub(crate) async fn run_pooled<
             .is_some_and(|deadline| deadline.0 <= now.0)
         {
             persistence.progress(engine, now).await;
+            yield_now().await;
         }
         if Store::RETAINS_COUNTS {
             let mut dirty = engine.take_dirty_interfaces();

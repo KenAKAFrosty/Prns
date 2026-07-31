@@ -6,6 +6,7 @@ use std::sync::{
 use dioxus::prelude::*;
 
 use crate::components::PlatformChip;
+use crate::local_development;
 use crate::platforms::{BoardFlashTarget, BoardTarget, PreparationProfile, Tier};
 use crate::routes::Route;
 use crate::site_mode::embedded_docs_mode;
@@ -13,8 +14,9 @@ use crate::site_mode::embedded_docs_mode;
 use super::bridge;
 use super::contract::BridgePhase;
 use super::model::{
-    guided_steps, initial_status, preparation_guide, shares_serial_chip_identity, FlasherState,
-    ReleaseDetails, WebSerialCapability, WifiAction,
+    guided_steps, initial_status, preparation_guide, shares_serial_chip_identity,
+    DestructiveConfirmation, FlasherState, InstallMode, ReleaseDetails, WebSerialCapability,
+    WifiAction,
 };
 use super::release;
 use super::trust;
@@ -31,6 +33,8 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
     let supports_tcp_client = flash_target.supports_tcp_client_provisioning();
 
     let mut confirmed = use_signal(|| false);
+    let mut install_mode = use_signal(|| InstallMode::PreserveData);
+    let mut destructive_confirmation = use_signal(|| DestructiveConfirmation::Unconfirmed);
     let mut wifi_action = use_signal(|| WifiAction::Preserve);
     let mut ssid = use_signal(String::new);
     let mut password = use_signal(String::new);
@@ -55,10 +59,8 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
         preparation_generation: Arc::clone(&preparation_generation),
         prepared,
         release: release_details,
-        ssid,
-        password,
-        tcp_enabled,
-        tcp_target,
+        install_mode,
+        destructive_confirmation,
     };
 
     let drop_generation = Arc::clone(&preparation_generation);
@@ -88,21 +90,44 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
     let browser_ready = !is_esp || web_serial().permits_esp_flash();
     let browser_checking = is_esp && web_serial() == WebSerialCapability::Checking;
     let browser_blocked = is_esp && web_serial() == WebSerialCapability::Unavailable;
+    let destructive_action_permitted = destructive_confirmation().permits(install_mode());
     let can_prepare = confirmed()
+        && destructive_action_permitted
         && !busy
         && !embedded
         && key_ready
         && browser_ready
         && (!tcp_enabled() || !tcp_target().trim().is_empty());
     let can_flash = prepared() && !busy && browser_ready;
-    let action_label = match flash_target {
-        BoardFlashTarget::EspSerial { .. } => "Connect and flash",
-        BoardFlashTarget::Uf2MassStorage { .. } => "Download verified UF2",
+    let action_label = match (flash_target, install_mode()) {
+        (BoardFlashTarget::EspSerial { .. }, InstallMode::PreserveData) => "Connect and flash",
+        (BoardFlashTarget::EspSerial { .. }, InstallMode::EraseAll) => {
+            "Connect, erase, and install"
+        }
+        (BoardFlashTarget::Uf2MassStorage { .. }, _) => "Download verified UF2",
+    };
+    let cancellation_available = preparation_active()
+        || install_mode() == InstallMode::PreserveData
+        || matches!(
+            phase(),
+            BridgePhase::RequestingPort | BridgePhase::Connecting | BridgePhase::VerifyingTarget
+        );
+    let wifi_choices = match install_mode() {
+        InstallMode::PreserveData => [
+            Some((WifiAction::Preserve, "Preserve existing configuration")),
+            Some((WifiAction::Configure, "Configure a network locally")),
+            Some((WifiAction::Clear, "Clear configuration explicitly")),
+        ],
+        InstallMode::EraseAll => [
+            Some((WifiAction::Clear, "Leave Wi-Fi and TCP blank")),
+            Some((WifiAction::Configure, "Configure new values locally")),
+            None,
+        ],
     };
 
     rsx! {
         section { class: "flash-flasher-panel",
-            BrowserTestFixtureMarker {}
+            BuildTrustMarker {}
             div { class: "flash-flasher-panel__main",
                 p { class: "text-xs font-semibold tracking-[0.2em] uppercase text-accent",
                     "Selected target"
@@ -149,7 +174,6 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                                     } else {
                                         "Board confirmation changed. Confirm the exact board before preparing."
                                     },
-                                    true,
                                 );
                             }
                         },
@@ -165,6 +189,92 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                     }
                 }
 
+                if is_esp {
+                    fieldset { class: "flash-wifi-config mt-5",
+                        legend { class: "font-semibold text-paper", "Installation mode" }
+                        div { class: "mt-3 grid gap-3 text-sm text-soft",
+                            for (value, label, detail) in [
+                                (
+                                    InstallMode::PreserveData,
+                                    "Update firmware and preserve device data",
+                                    "Writes only the verified sparse firmware parts. Node identity, BLE identity, routes, ratchets, NVS, PHY calibration, and existing Wi-Fi/TCP state remain untouched.",
+                                ),
+                                (
+                                    InstallMode::EraseAll,
+                                    "Fresh install — erase all device data",
+                                    "Erases the entire flash before reinstalling the verified firmware.",
+                                ),
+                            ] {
+                                label { class: "flex cursor-pointer items-start gap-3 rounded-lg border border-line/60 bg-surface/40 p-4",
+                                    input {
+                                        r#type: "radio",
+                                        name: "install-mode",
+                                        value: value.wire(),
+                                        checked: install_mode() == value,
+                                        disabled: device_operation_active,
+                                        onchange: {
+                                            let event_state = state.clone();
+                                            move |_| {
+                                                install_mode.set(value);
+                                                destructive_confirmation
+                                                    .set(DestructiveConfirmation::Unconfirmed);
+                                                wifi_action
+                                                    .set(WifiAction::for_install_mode(value));
+                                                tcp_enabled.set(false);
+                                                invalidate_preparation(
+                                                    event_state.clone(),
+                                                    "Installation mode changed. Review the plan and prepare the signed release again.",
+                                                );
+                                            }
+                                        },
+                                    }
+                                    span {
+                                        strong { class: "block text-paper", "{label}" }
+                                        span { class: "mt-1 block text-xs text-mid", "{detail}" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if install_mode() == InstallMode::EraseAll {
+                    div {
+                        class: "mt-4 rounded-lg border border-red-300/50 bg-red-300/10 p-4 text-sm text-soft",
+                        role: "alert",
+                        p { class: "font-semibold text-red-100",
+                            "Fresh install permanently erases all mutable flash state."
+                        }
+                        p { class: "mt-2",
+                            "Node identity, BLE identity, routes, ratchets, Wi-Fi/TCP configuration, NVS, and PHY calibration will be erased. eFuses and the factory MAC are unaffected."
+                        }
+                        label { class: "mt-3 flex cursor-pointer items-start gap-3 font-semibold text-paper",
+                            input {
+                                r#type: "checkbox",
+                                checked: destructive_confirmation().is_confirmed(),
+                                disabled: device_operation_active,
+                                onchange: {
+                                    let event_state = state.clone();
+                                    move |event| {
+                                        destructive_confirmation.set(if event.checked() {
+                                            DestructiveConfirmation::Confirmed
+                                        } else {
+                                            DestructiveConfirmation::Unconfirmed
+                                        });
+                                        invalidate_preparation(
+                                            event_state.clone(),
+                                            "Destructive confirmation changed. Confirm the full-chip erase before preparing again.",
+                                        );
+                                    }
+                                },
+                            }
+                            span {
+                                "I understand that Fresh install erases all device data and requires a complete reinstall."
+                            }
+                        }
+                    }
+                }
+
                 if let Some(profile) = target.preparation_profile {
                     PreparationInstructions { profile, flash_target }
                 }
@@ -173,36 +283,36 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                     fieldset { class: "flash-wifi-config mt-5",
                         legend { class: "font-semibold text-paper", "Wi-Fi configuration" }
                         p { class: "flash-wifi-note mt-2",
-                            "Credentials remain in this browser and are never sent to a server. Preserve is the default."
+                            if install_mode() == InstallMode::EraseAll {
+                                "Credentials remain in this browser and are never sent to a server. Fresh install leaves Wi-Fi and TCP blank unless you explicitly configure new values."
+                            } else {
+                                "Credentials remain in this browser and are never sent to a server. Preserve is the default."
+                            }
                         }
                         div { class: "grid gap-2 text-sm text-soft",
-                            for (value, label) in [
-                                (WifiAction::Preserve, "Preserve existing configuration"),
-                                (WifiAction::Configure, "Configure a network locally"),
-                                (WifiAction::Clear, "Clear configuration explicitly"),
-                            ] {
-                                label { class: "flex items-center gap-2",
-                                    input {
-                                        r#type: "radio",
-                                        name: "wifi-action",
-                                        value: value.wire(),
-                                        checked: wifi_action() == value,
-                                        disabled: device_operation_active,
-                                        onchange: {
-                                            let event_state = state.clone();
-                                            move |_| {
-                                                wifi_action.set(value);
-                                                tcp_enabled.set(false);
-                                                tcp_target.set(String::new());
-                                                invalidate_preparation(
-                                                    event_state.clone(),
-                                                    "Configuration choice changed. Prepare and verify the release again.",
-                                                    true,
-                                                );
-                                            }
-                                        },
+                            for choice in wifi_choices {
+                                if let Some((value, label)) = choice {
+                                    label { class: "flex items-center gap-2",
+                                        input {
+                                            r#type: "radio",
+                                            name: "wifi-action",
+                                            value: value.wire(),
+                                            checked: wifi_action() == value,
+                                            disabled: device_operation_active,
+                                            onchange: {
+                                                let event_state = state.clone();
+                                                move |_| {
+                                                    wifi_action.set(value);
+                                                    tcp_enabled.set(false);
+                                                    invalidate_preparation(
+                                                        event_state.clone(),
+                                                        "Configuration choice changed. Prepare and verify the release again.",
+                                                    );
+                                                }
+                                            },
+                                        }
+                                        "{label}"
                                     }
-                                    "{label}"
                                 }
                             }
                         }
@@ -213,7 +323,10 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                                     input {
                                         value: ssid(),
                                         maxlength: "32",
-                                        autocomplete: "off",
+                                        name: "username",
+                                        autocomplete: "username",
+                                        autocapitalize: "none",
+                                        spellcheck: "false",
                                         disabled: device_operation_active,
                                         oninput: {
                                             let event_state = state.clone();
@@ -222,7 +335,6 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                                                 invalidate_preparation(
                                                     event_state.clone(),
                                                     "Configuration changed. Prepare and verify the release again.",
-                                                    false,
                                                 );
                                             }
                                         },
@@ -234,7 +346,8 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                                         r#type: "password",
                                         value: password(),
                                         maxlength: "64",
-                                        autocomplete: "new-password",
+                                        name: "password",
+                                        autocomplete: "current-password",
                                         disabled: device_operation_active,
                                         oninput: {
                                             let event_state = state.clone();
@@ -243,7 +356,6 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                                                 invalidate_preparation(
                                                     event_state.clone(),
                                                     "Configuration changed. Prepare and verify the release again.",
-                                                    false,
                                                 );
                                             }
                                         },
@@ -261,13 +373,9 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                                             move |event| {
                                                 let enabled = event.checked();
                                                 tcp_enabled.set(enabled);
-                                                if !enabled {
-                                                    tcp_target.set(String::new());
-                                                }
                                                 invalidate_preparation(
                                                     event_state.clone(),
                                                     "TCP client configuration changed. Prepare and verify the release again.",
-                                                    false,
                                                 );
                                             }
                                         },
@@ -285,6 +393,7 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                                         input {
                                             value: tcp_target(),
                                             maxlength: "512",
+                                            name: "tcp-target",
                                             autocomplete: "off",
                                             placeholder: "node.example:4242",
                                             disabled: device_operation_active,
@@ -295,7 +404,6 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                                                     invalidate_preparation(
                                                         event_state.clone(),
                                                         "TCP client configuration changed. Prepare and verify the release again.",
-                                                        false,
                                                     );
                                                 }
                                             },
@@ -316,7 +424,7 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                         span { class: bridge::status_class(phase()), "{bridge::phase_label(phase())}" }
                     }
                     ol { class: "flash-step-list mt-4",
-                        for (index, step) in guided_steps(flash_target).iter().enumerate() {
+                        for (index, step) in guided_steps(flash_target, install_mode()).iter().enumerate() {
                             li {
                                 span { class: "flash-step-list__index", "{index + 1}" }
                                 span { "{step}" }
@@ -324,7 +432,11 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                         }
                     }
                     p { class: "mt-4 text-sm font-semibold text-accent",
-                        "No full-chip erase. Every published byte is signature- and hash-verified before device access."
+                        if install_mode() == InstallMode::EraseAll {
+                            "Full-chip erase starts only after signed-artifact, chip-family, and flash-capacity verification."
+                        } else {
+                            "No full-chip erase. Every published byte is signature- and hash-verified before device access."
+                        }
                     }
                 }
 
@@ -407,6 +519,8 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                         let event_state = state.clone();
                         move |_| {
                             let target_slug = target.slug.to_string();
+                            let selected_install_mode = install_mode();
+                            let selected_destructive_confirmation = destructive_confirmation();
                             let selected_action = wifi_action();
                             let selected_ssid = ssid();
                             let selected_password = password();
@@ -421,11 +535,16 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                             release_details.set(None);
                             spawn(async move {
                                 release::prepare_release(
-                                    target_slug,
-                                    selected_action,
-                                    selected_ssid,
-                                    selected_password,
-                                    selected_tcp_target,
+                                    release::ReleaseSelection {
+                                        board_slug: target_slug,
+                                        install_mode: selected_install_mode,
+                                        destructive_confirmation:
+                                            selected_destructive_confirmation,
+                                        wifi_action: selected_action,
+                                        ssid: selected_ssid,
+                                        password: selected_password,
+                                        tcp_target: selected_tcp_target,
+                                    },
                                     preparation_state,
                                     generation,
                                 )
@@ -454,10 +573,15 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                     button {
                         r#type: "button",
                         class: "rounded-lg border border-line px-4 py-3 text-sm font-semibold text-soft",
+                        disabled: !cancellation_available,
                         onclick: {
                             let event_state = state.clone();
                             move |_| {
                                 let was_preparing = preparation_active();
+                                if install_mode() == InstallMode::EraseAll {
+                                    destructive_confirmation
+                                        .set(DestructiveConfirmation::Unconfirmed);
+                                }
                                 invalidate_preparation(
                                     event_state.clone(),
                                     if was_preparing {
@@ -465,7 +589,6 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                                     } else {
                                         "Cancellation requested; an active write will finish its safe operation before stopping."
                                     },
-                                    true,
                                 );
                                 if !was_preparing {
                                     status.set("Cancellation requested; an active write will finish its safe operation before stopping.".to_string());
@@ -473,7 +596,11 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                                 bridge::focus_status();
                             }
                         },
-                        "Cancel safely"
+                        if cancellation_available {
+                            "Cancel safely"
+                        } else {
+                            "Cancellation unavailable after erase begins"
+                        }
                     }
                 }
             }
@@ -481,7 +608,7 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
     }
 }
 
-fn invalidate_preparation(mut state: FlasherState, message: &str, clear_credentials: bool) {
+fn invalidate_preparation(mut state: FlasherState, message: &str) {
     let was_preparing = (state.preparation_active)();
     state.invalidate_preparation();
     state.prepared.set(false);
@@ -492,18 +619,12 @@ fn invalidate_preparation(mut state: FlasherState, message: &str, clear_credenti
         state.phase.set(BridgePhase::Idle);
     }
     state.status.set(message.to_string());
-    if clear_credentials {
-        state.ssid.set(String::new());
-        state.password.set(String::new());
-        state.tcp_enabled.set(false);
-        state.tcp_target.set(String::new());
-    }
     bridge::clear_prepared();
 }
 
-#[cfg(feature = "browser-test-fixture")]
+#[cfg(all(feature = "browser-test-fixture", not(feature = "local-dev-flasher")))]
 #[component]
-fn BrowserTestFixtureMarker() -> Element {
+fn BuildTrustMarker() -> Element {
     rsx! {
         span {
             hidden: true,
@@ -512,9 +633,20 @@ fn BrowserTestFixtureMarker() -> Element {
     }
 }
 
-#[cfg(not(feature = "browser-test-fixture"))]
+#[cfg(all(feature = "local-dev-flasher", not(feature = "browser-test-fixture")))]
 #[component]
-fn BrowserTestFixtureMarker() -> Element {
+fn BuildTrustMarker() -> Element {
+    rsx! {
+        span {
+            hidden: true,
+            "data-prns-local-dev-flasher": local_development::TRUST_MARKER,
+        }
+    }
+}
+
+#[cfg(not(any(feature = "browser-test-fixture", feature = "local-dev-flasher")))]
+#[component]
+fn BuildTrustMarker() -> Element {
     rsx! {}
 }
 
@@ -542,6 +674,7 @@ fn PreparationInstructions(profile: PreparationProfile, flash_target: BoardFlash
 
 #[component]
 pub(super) fn BoardTargetCard(board: &'static BoardTarget, selected: bool) -> Element {
+    let included = local_development::board_is_included(board.slug);
     rsx! {
         div { class: board_card_class(board, selected),
             div { class: "flex flex-wrap items-start gap-3",
@@ -561,7 +694,7 @@ pub(super) fn BoardTargetCard(board: &'static BoardTarget, selected: bool) -> El
                 }
                 p { class: "flash-board-silicon font-mono text-xs", "{board.silicon}" }
             }
-            if board.is_flashable() {
+            if board.is_flashable() && included {
                 div { class: "mt-5 flex justify-end",
                     if selected {
                         span { class: "py-2.5 text-xs font-bold uppercase tracking-wider text-accent", "Selected" }
@@ -573,6 +706,10 @@ pub(super) fn BoardTargetCard(board: &'static BoardTarget, selected: bool) -> El
                             span { class: "flash-card-action__arrow", "→" }
                         }
                     }
+                }
+            } else if board.is_flashable() {
+                p { class: "flash-interfaces-pending mt-4",
+                    "Not included in this local build"
                 }
             } else {
                 p { class: "flash-interfaces-pending mt-4",
@@ -606,6 +743,16 @@ pub(super) fn UnavailablePanel() -> Element {
         section { class: "rounded-card border border-line/60 bg-layer/40 p-5",
             h2 { class: "text-xl font-semibold text-paper", "Not flashable yet" }
             p { class: "mt-3 text-soft", "This target is still in bring-up or roadmap tracking." }
+        }
+    }
+}
+
+#[component]
+pub(super) fn LocalBuildUnavailablePanel() -> Element {
+    rsx! {
+        section { class: "rounded-card border border-amber-300/40 bg-amber-300/10 p-5",
+            h2 { class: "text-xl font-semibold text-amber-100", "Not included in this local build" }
+            p { class: "mt-3 text-soft", "Restart the developer flasher task with this board selected to build and sign it from the current working tree." }
         }
     }
 }

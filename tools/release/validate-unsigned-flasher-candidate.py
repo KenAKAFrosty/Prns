@@ -229,6 +229,7 @@ def verify_production_website(root: Path) -> None:
     leaks = find_browser_test_trust_leaks(
         (root / "website",),
         fixture_key_path,
+        root / "minisign.pub",
         source_archive_path,
     )
     if leaks:

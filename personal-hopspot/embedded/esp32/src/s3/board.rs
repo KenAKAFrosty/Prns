@@ -33,7 +33,7 @@ pub(crate) struct S3ManifoldHardware {
     pub(crate) cpu_control: esp_hal::peripherals::CPU_CTRL<'static>,
     pub(crate) software_interrupt: esp_hal::interrupt::software::SoftwareInterrupt<'static, 1>,
     pub(crate) timebase: EmbassyTimebase,
-    pub(crate) _rtc: esp_hal::rtc_cntl::Rtc<'static>,
+    pub(crate) rtc: esp_hal::rtc_cntl::Rtc<'static>,
 }
 
 pub(crate) struct S3BoardHardware<D, B> {

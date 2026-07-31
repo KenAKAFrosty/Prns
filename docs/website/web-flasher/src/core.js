@@ -17,10 +17,11 @@ const VERSION_PATTERN = /^[A-Za-z0-9.+-]+$/;
 const PATH_COMPONENT_PATTERN = /^[A-Za-z0-9._+-]+$/;
 const MOUNT_LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/;
 const ESP_PARTS = ["bootloader", "partition-table", "application"];
-const FLASH_SIZE_VALUES = new Map([
-  [4 * 1024 * 1024, "4 MiB"],
-  [8 * 1024 * 1024, "8 MiB"],
-  [16 * 1024 * 1024, "16 MiB"],
+const INSTALL_MODES = new Set(["preserve-data", "erase-all"]);
+const FLASH_SIZE_PROFILES = new Map([
+  [4 * 1024 * 1024, Object.freeze({ label: "4 MiB", esptool: "4MB" })],
+  [8 * 1024 * 1024, Object.freeze({ label: "8 MiB", esptool: "8MB" })],
+  [16 * 1024 * 1024, Object.freeze({ label: "16 MiB", esptool: "16MB" })],
 ]);
 const JEDEC_FLASH_CAPACITIES = new Map([
   [0x16, 4 * 1024 * 1024],
@@ -40,13 +41,14 @@ const RECOVERY_GUIDANCE = Object.freeze({
   connection_failure: "Disconnect the board, follow its BOOT/RESET preparation steps, reconnect it, and restart the complete operation.",
   wrong_chip: "Re-check the printed board label, select the matching board and serial port, then prepare the release again.",
   wrong_flash_size: "Re-check the printed board label and serial port; do not write this plan to a device with a different flash capacity.",
+  erase_failure: "The device may be blank. Reconnect it, re-enter BOOT mode, select Fresh install, confirm the destructive action again, and retry the complete fresh-install plan from the beginning.",
   artifact_fetch: "Do not connect the device. Check the network, reload this page, and prepare the signed release again.",
   artifact_size_mismatch: "Do not connect the device. Reload this page and prepare again; if it repeats, use the CLI and report the release version.",
   artifact_hash_mismatch: "Do not connect the device. Reload this page and prepare again; if it repeats, use the CLI and report the release version.",
   device_lost: "Reconnect the board, follow its BOOT/RESET preparation steps, and restart the complete sparse plan from the beginning.",
   write_failure: "Re-enter BOOT mode, press RESET as instructed for this board, and restart the complete sparse plan.",
   verification_failure: "Do not boot the partial image. Re-enter BOOT mode and restart the complete sparse plan from the beginning.",
-  reset_failure: "Press RESET and check the next boot; if firmware does not start, re-enter BOOT mode and repeat the complete plan.",
+  reset_failure: "The firmware bytes are verified, but automatic reboot was not confirmed. Press RESET and check the next boot; if firmware does not start, re-enter BOOT mode and repeat the complete plan.",
   cancelled: "Review the current board state, re-enter bootloader mode if writing began, and restart the complete plan when ready.",
   not_prepared: "Prepare and verify the signed release again before requesting device access.",
   busy: "Finish or safely cancel the active operation before starting another one.",
@@ -218,7 +220,10 @@ export function validateRequest(request) {
     if (
       !request.expectedChip
       || !Number.isSafeInteger(request.flashSize)
-      || !FLASH_SIZE_VALUES.has(request.flashSize)
+      || !FLASH_SIZE_PROFILES.has(request.flashSize)
+      || !INSTALL_MODES.has(request.installMode)
+      || typeof request.eraseConfirmed !== "boolean"
+      || request.eraseConfirmed !== (request.installMode === "erase-all")
       || request.flashMode !== "dio"
       || request.flashFrequency !== "40m"
       || !["default-reset", "usb-reset"].includes(request.beforeReset)
@@ -233,6 +238,17 @@ export function validateRequest(request) {
       }
     }
     const config = request.provisioning;
+    if (
+      request.installMode === "erase-all"
+      && config !== null
+      && config !== undefined
+      && config.action !== "configure"
+    ) {
+      throw new FlashBridgeError(
+        "invalid_request",
+        "A fresh install may only add explicitly configured new provisioning.",
+      );
+    }
     if (config) {
       if (config.offset !== CONFIG_OFFSET || config.size !== CONFIG_SIZE) {
         throw new FlashBridgeError("invalid_request", "The provisioning slot disagrees with the firmware contract.");
@@ -249,6 +265,8 @@ export function validateRequest(request) {
       || request.beforeReset !== null
       || request.afterReset !== null
       || request.provisioning !== null
+      || request.installMode !== undefined
+      || request.eraseConfirmed !== undefined
     ) {
       throw new FlashBridgeError("invalid_request", "The UF2 target identity is incomplete.");
     }
@@ -416,12 +434,20 @@ export function normalizeChipName(name) {
     .replace(/[^a-z0-9]/g, "");
 }
 
-export function flashSizeValue(bytes) {
-  const value = FLASH_SIZE_VALUES.get(bytes);
-  if (!value) {
+function flashSizeProfile(bytes) {
+  const profile = FLASH_SIZE_PROFILES.get(bytes);
+  if (!profile) {
     throw new FlashBridgeError("invalid_request", "The target flash capacity is unsupported.");
   }
-  return value;
+  return profile;
+}
+
+export function flashSizeLabel(bytes) {
+  return flashSizeProfile(bytes).label;
+}
+
+export function esptoolFlashSizeValue(bytes) {
+  return flashSizeProfile(bytes).esptool;
 }
 
 export function jedecFlashSizeBytes(flashId) {
@@ -436,12 +462,16 @@ export function recoveryGuidance(code) {
   return RECOVERY_GUIDANCE[code] ?? RECOVERY_GUIDANCE.flash_failed;
 }
 
-export function safeFailure(error, deviceLost = false) {
+export function safeFailure(error, deviceLost = false, completeFreshInstallRequired = false) {
   if (deviceLost) {
-    return recoverableFailure("device_lost", "The USB device disconnected.");
+    return recoverableFailure(
+      "device_lost",
+      "The USB device disconnected.",
+      completeFreshInstallRequired,
+    );
   }
   if (error instanceof FlashBridgeError) {
-    return recoverableFailure(error.code, error.message);
+    return recoverableFailure(error.code, error.message, completeFreshInstallRequired);
   }
   if (error?.name === "NotFoundError") {
     return recoverableFailure("permission_denied", "No serial port was selected.");
@@ -455,6 +485,9 @@ export function safeFailure(error, deviceLost = false) {
   return recoverableFailure("flash_failed", "The device operation failed.");
 }
 
-function recoverableFailure(code, message) {
-  return { code, message: `${message} ${recoveryGuidance(code)}` };
+function recoverableFailure(code, message, completeFreshInstallRequired = false) {
+  const guidance = completeFreshInstallRequired
+    ? RECOVERY_GUIDANCE.erase_failure
+    : recoveryGuidance(code);
+  return { code, message: `${message} ${guidance}` };
 }

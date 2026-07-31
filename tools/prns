@@ -491,7 +491,10 @@ def run_task(task: dict, arguments: list[str]) -> int:
     print(f"[tool] command: {shlex.join(display_command)}", file=sys.stderr)
     environment = os.environ.copy()
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
-    return subprocess.run(command, cwd=ROOT, env=environment, check=False).returncode
+    try:
+        return subprocess.run(command, cwd=ROOT, env=environment, check=False).returncode
+    except KeyboardInterrupt:
+        return 130
 
 
 def resolve_hierarchical(tasks: dict[str, dict], arguments: list[str]) -> tuple[dict, list[str]]:

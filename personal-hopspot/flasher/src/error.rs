@@ -194,7 +194,7 @@ impl DeveloperBuildError {
                 "Remove only the failed developer output, then rebuild the complete target artifact."
             }
             Self::Manifest(_) => {
-                "Rebuild all four target records, then assemble and validate the manifest again."
+                "Rebuild every selected target record, then assemble and validate the manifest again."
             }
         }
     }

@@ -36,8 +36,21 @@ impl HopspotWifiConfig {
 }
 
 #[cfg(feature = "wifi-auto")]
-pub(super) fn hopspot_wifi_config() -> HopspotWifiConfig {
-    read_hopspot_config_slot().unwrap_or_else(HopspotWifiConfig::from_build_env)
+#[derive(Clone, Copy, Debug)]
+pub(super) enum HopspotWifiConfigSource {
+    Provisioning,
+    BuildEnvironment,
+}
+
+#[cfg(feature = "wifi-auto")]
+pub(super) fn hopspot_wifi_config() -> (HopspotWifiConfig, HopspotWifiConfigSource) {
+    match read_hopspot_config_slot() {
+        Some(config) => (config, HopspotWifiConfigSource::Provisioning),
+        None => (
+            HopspotWifiConfig::from_build_env(),
+            HopspotWifiConfigSource::BuildEnvironment,
+        ),
+    }
 }
 
 #[cfg(feature = "wifi-auto")]
