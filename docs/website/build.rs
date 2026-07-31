@@ -13,6 +13,7 @@ use prns_flash_manifest::{
 const REPO_VERSION_PATH: &str = "../../VERSION";
 const EMBEDDED_SITE_ENV: &str = "PRNS_EMBEDDED_SITE";
 const SOURCE_ARCHIVE_ENV: &str = "PRNS_SOURCE_ARCHIVE";
+const API_DOCS_ENV: &str = "PRNS_API_DOCS_STAGED";
 const LOCAL_DEV_PUBLIC_KEY_ENV: &str = "PRNS_LOCAL_DEV_PUBLIC_KEY";
 const LOCAL_DEV_BOARDS_ENV: &str = "PRNS_LOCAL_DEV_BOARDS";
 const LOCAL_DEV_SOURCE_DIGEST_ENV: &str = "PRNS_LOCAL_DEV_SOURCE_DIGEST";
@@ -47,12 +48,17 @@ fn main() {
         "cargo:rustc-env=PRNS_SOURCE_ARCHIVE_AVAILABLE={}",
         staged_source_available()
     );
+    println!(
+        "cargo:rustc-env=PRNS_API_DOCS_AVAILABLE={}",
+        api_docs_staged()
+    );
     println!("cargo:rerun-if-env-changed=PRNS_BUILD_VERSION");
     println!("cargo:rerun-if-env-changed=PRNS_BUILD_COMMIT");
     println!("cargo:rerun-if-env-changed=PRNS_BUILD_COMMIT_SHORT");
     println!("cargo:rerun-if-env-changed=PRNS_BUILD_CHANNEL");
     println!("cargo:rerun-if-env-changed={EMBEDDED_SITE_ENV}");
     println!("cargo:rerun-if-env-changed={SOURCE_ARCHIVE_ENV}");
+    println!("cargo:rerun-if-env-changed={API_DOCS_ENV}");
     println!("cargo:rerun-if-env-changed={LOCAL_DEV_PUBLIC_KEY_ENV}");
     println!("cargo:rerun-if-env-changed={LOCAL_DEV_BOARDS_ENV}");
     println!("cargo:rerun-if-env-changed={LOCAL_DEV_SOURCE_DIGEST_ENV}");
@@ -157,6 +163,10 @@ fn required_environment(name: &str) -> String {
 
 fn required_environment_path(name: &str) -> PathBuf {
     PathBuf::from(required_environment(name))
+}
+
+fn api_docs_staged() -> bool {
+    env::var(API_DOCS_ENV).is_ok_and(|value| value == "1")
 }
 
 fn staged_source_available() -> bool {
