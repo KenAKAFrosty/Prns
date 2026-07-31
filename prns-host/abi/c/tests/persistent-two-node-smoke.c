@@ -246,6 +246,59 @@ static int load_fixture(const char *path, JourneyFixture *fixture) {
     return 1;
 }
 
+static int validate_interface_fixture(const char *path) {
+    static const char *names[19] = {
+        "AutoLan", "TcpClient", "TcpServer", "Udp", "Serial", "Kiss",
+        "Ax25Kiss", "RNode", "MultiRNode", "Pipe", "BackboneClient",
+        "BackboneServer", "I2p", "Weave", "AutomaticUsb",
+        "AutomaticBluetoothLe", "WebSocketClient", "WebSocketServer",
+        "BrowserRendezvous"
+    };
+    char *text = read_text(path);
+    const char *cursor;
+    size_t count = 0;
+    PrnsInterfaceConfig configs[19] = PRNS_ZERO;
+    size_t index;
+    if (text == NULL) {
+        return 0;
+    }
+    cursor = text;
+    while ((cursor = strstr(cursor, "\"kind\"")) != NULL) {
+        const char *colon = strchr(cursor, ':');
+        const char *start = colon == NULL ? NULL : strchr(colon, '"');
+        const char *end = start == NULL ? NULL : strchr(start + 1, '"');
+        size_t length;
+        if (start == NULL || end == NULL) {
+            free(text);
+            return 0;
+        }
+        length = (size_t)(end - start - 1);
+        if (!((length == 4 && strncmp(start + 1, "Auto", 4) == 0) ||
+              (length == 13 && strncmp(start + 1, "BitsPerSecond", 13) == 0))) {
+            if (count >= 19 || strlen(names[count]) != length ||
+                strncmp(start + 1, names[count], length) != 0) {
+                free(text);
+                return 0;
+            }
+            count += 1;
+        }
+        cursor = end + 1;
+    }
+    free(text);
+    if (count != 19) {
+        return 0;
+    }
+    for (index = 0; index < count; index += 1) {
+        configs[index].struct_size = sizeof(configs[index]);
+        configs[index].kind = (PrnsInterfaceKind)(index + 1);
+        if (configs[index].struct_size != sizeof(PrnsInterfaceConfig) ||
+            configs[index].kind != (PrnsInterfaceKind)(index + 1)) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 static int hex_bytes(
     const char *hex,
     uint8_t *output,
@@ -487,8 +540,9 @@ int main(int argc, char **argv) {
         } \
     } while (0)
 
-    REQUIRE(argc == 3, "expected fixture and persistence root arguments");
+    REQUIRE(argc == 4, "expected journey fixture, interface fixture, and persistence root arguments");
     REQUIRE(load_fixture(argv[1], &fixture), "could not load fixture");
+    REQUIRE(validate_interface_fixture(argv[2]), "interface fixture does not match the C contract");
     REQUIRE(fixture.schema_version == PRNS_HOST_SCHEMA_VERSION, "schema mismatch");
     contract.struct_size = sizeof(contract);
     REQUIRE(prns_contract_info(&contract) == PRNS_STATUS_OK, "contract info failed");
@@ -508,8 +562,8 @@ int main(int argc, char **argv) {
     }
     REQUIRE(reserve_loopback_port(&port), "could not reserve loopback port");
     REQUIRE(snprintf(server_address, sizeof(server_address), "127.0.0.1:%u", (unsigned int)port) > 0, "could not format address");
-    REQUIRE(snprintf(server_root, sizeof(server_root), "%s/server", argv[2]) > 0, "could not format server root");
-    REQUIRE(snprintf(client_root, sizeof(client_root), "%s/client", argv[2]) > 0, "could not format client root");
+    REQUIRE(snprintf(server_root, sizeof(server_root), "%s/server", argv[3]) > 0, "could not format server root");
+    REQUIRE(snprintf(client_root, sizeof(client_root), "%s/client", argv[3]) > 0, "could not format client root");
     REQUIRE(create_host(server_root, 1, &fixture, announce_data, announce_data_length, &server), "server creation failed");
     REQUIRE(create_host(client_root, 0, &fixture, announce_data, announce_data_length, &client), "client creation failed");
     REQUIRE(prns_host_identity_hash(server, &view) == PRNS_STATUS_OK && view.length == sizeof(server_identity), "server identity unavailable");

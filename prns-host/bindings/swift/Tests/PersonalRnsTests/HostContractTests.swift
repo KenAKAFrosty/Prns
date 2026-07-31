@@ -1,11 +1,135 @@
 import Foundation
-import PersonalRns
+@testable import PersonalRns
 import Testing
 #if canImport(Glibc)
 import Glibc
 #else
 import Darwin
 #endif
+
+@Test
+func everySharedInterfaceFixtureMarshals() throws {
+    let fixture = try loadInterfaceFixture()
+    let line = SerialLineConfig(
+        baud: 115_200,
+        dataBits: .eight,
+        parity: .none,
+        stopBits: .one
+    )
+    let ax25Line = SerialLineConfig(
+        baud: 9_600,
+        dataBits: .eight,
+        parity: .none,
+        stopBits: .one
+    )
+    let radio = RNodeRadioConfig(
+        frequencyHz: 915_000_000,
+        bandwidthHz: 125_000,
+        txPowerDbm: 14,
+        spreadingFactor: 8,
+        codingRate: 5
+    )
+    let configs: [InterfaceConfig] = [
+        .autoLan(
+            groupId: "sdk-fixture",
+            discoveryScope: .organization,
+            discoveryPort: 29_710,
+            dataPort: 42_444,
+            devices: ["eth0"],
+            ignoredDevices: ["lo"],
+            multicastAddressType: .permanent
+        ),
+        .tcpClient(target: "127.0.0.1:4242", bitrate: .bitsPerSecond(value: 1_000_000)),
+        .tcpServer(bind: "127.0.0.1:4242", bitrate: .auto),
+        .udp(
+            local: "127.0.0.1:4242",
+            peer: "127.0.0.1:4243",
+            bitrate: .bitsPerSecond(value: 2_000_000)
+        ),
+        .serial(port: "/dev/ttyUSB0", line: line),
+        .kiss(
+            port: "/dev/ttyUSB1",
+            line: line,
+            flowControl: true,
+            preambleMillis: 150,
+            transmitTailMillis: 50,
+            persistence: 64,
+            slotTimeMillis: 20,
+            stationCallsign: "PRNS",
+            stationIntervalSeconds: 300
+        ),
+        .ax25Kiss(
+            port: "/dev/ttyUSB2",
+            line: ax25Line,
+            flowControl: false,
+            preambleMillis: 100,
+            transmitTailMillis: 25,
+            persistence: 32,
+            slotTimeMillis: 10,
+            callsign: "PRNS",
+            ssid: 1
+        ),
+        .rNode(
+            port: "/dev/ttyACM0",
+            radio: radio,
+            flowControl: true,
+            stationCallsign: "PRNS",
+            stationIntervalSeconds: 300,
+            airtimeLimitShortCentiPercent: 1_000,
+            airtimeLimitLongCentiPercent: 500
+        ),
+        .multiRNode(
+            port: "/dev/ttyACM1",
+            stationCallsign: "PRNS",
+            stationIntervalSeconds: 300,
+            members: [
+                MultiRNodeMemberConfig(
+                    name: "primary",
+                    virtualPort: 1,
+                    radio: radio,
+                    flowControl: true,
+                    outgoing: true
+                )
+            ]
+        ),
+        .pipe(command: ["fixture-command", "--fixture"], respawnDelayMillis: 1_000),
+        .backboneClient(target: "127.0.0.1:4244", bitrate: .auto),
+        .backboneServer(bind: "127.0.0.1:4245", bitrate: .bitsPerSecond(value: 4_000_000)),
+        .i2p(peers: ["fixture.b32.i2p"], connectable: true),
+        .weave(port: "/dev/ttyWEAVE0"),
+        .automaticUsb,
+        .automaticBluetoothLe,
+        .webSocketClient(target: "ws://fixture.invalid/client"),
+        .webSocketServer(bind: "127.0.0.1:4246"),
+        .browserRendezvous(url: "ws://fixture.invalid/rendezvous"),
+    ]
+    #expect(fixture.schemaVersion == HostContract.schemaVersion)
+    #expect(fixture.interfaces.count == configs.count)
+    #expect(fixture.interfaces.map(\.kind) == [
+        "AutoLan",
+        "TcpClient",
+        "TcpServer",
+        "Udp",
+        "Serial",
+        "Kiss",
+        "Ax25Kiss",
+        "RNode",
+        "MultiRNode",
+        "Pipe",
+        "BackboneClient",
+        "BackboneServer",
+        "I2p",
+        "Weave",
+        "AutomaticUsb",
+        "AutomaticBluetoothLe",
+        "WebSocketClient",
+        "WebSocketServer",
+        "BrowserRendezvous",
+    ])
+    let arena = NativeArena()
+    let kinds = try configs.map { try nativeInterfaceConfig($0, arena: arena).kind }
+    #expect(kinds == (1...UInt32(configs.count)).map { $0 })
+}
 
 @Test
 func nativeHostContract() async throws {
@@ -274,6 +398,15 @@ private struct JourneyFixture: Decodable {
     let resource: JourneyResource
 }
 
+private struct InterfaceFixture: Decodable {
+    let schemaVersion: UInt32
+    let interfaces: [InterfaceFixtureCase]
+}
+
+private struct InterfaceFixtureCase: Decodable {
+    let kind: String
+}
+
 private struct JourneyDestination: Decodable {
     let appName: String
     let aspects: [String]
@@ -373,6 +506,17 @@ private func loadJourneyFixture() throws -> JourneyFixture {
     return try JSONDecoder().decode(
         JourneyFixture.self,
         from: Data(contentsOf: url.appendingPathComponent("conformance/persistent-two-node-v2.json"))
+    )
+}
+
+private func loadInterfaceFixture() throws -> InterfaceFixture {
+    var url = URL(fileURLWithPath: #filePath)
+    for _ in 0..<5 {
+        url.deleteLastPathComponent()
+    }
+    return try JSONDecoder().decode(
+        InterfaceFixture.self,
+        from: Data(contentsOf: url.appendingPathComponent("conformance/interface-configs-v2.json"))
     )
 }
 

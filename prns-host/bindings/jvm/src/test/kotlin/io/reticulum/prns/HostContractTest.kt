@@ -37,6 +37,102 @@ class HostContractTest {
     }
 
     @Test
+    fun everySharedInterfaceFixtureMarshals() {
+        val text = Files.readString(
+            Path.of("..", "..", "conformance", "interface-configs-v2.json"),
+        )
+        val line = SerialLineConfig(115_200, SerialDataBits.EIGHT, SerialParity.NONE, SerialStopBits.ONE)
+        val ax25Line = line.copy(baud = 9_600)
+        val radio = RNodeRadioConfig(915_000_000, 125_000, 14, 8, 5)
+        val configs = listOf<InterfaceConfig>(
+            InterfaceConfigAutoLan(
+                "sdk-fixture",
+                DiscoveryScope.ORGANIZATION,
+                29_710,
+                42_444,
+                listOf("eth0"),
+                listOf("lo"),
+                MulticastAddressType.PERMANENT,
+            ),
+            InterfaceConfigTcpClient("127.0.0.1:4242", BitrateBitsPerSecond(1_000_000)),
+            InterfaceConfigTcpServer("127.0.0.1:4242", BitrateAuto),
+            InterfaceConfigUdp(
+                "127.0.0.1:4242",
+                "127.0.0.1:4243",
+                BitrateBitsPerSecond(2_000_000),
+            ),
+            InterfaceConfigSerial("/dev/ttyUSB0", line),
+            InterfaceConfigKiss(
+                "/dev/ttyUSB1",
+                line,
+                true,
+                150,
+                50,
+                64,
+                20,
+                "PRNS",
+                300,
+            ),
+            InterfaceConfigAx25Kiss(
+                "/dev/ttyUSB2",
+                ax25Line,
+                false,
+                100,
+                25,
+                32,
+                10,
+                "PRNS",
+                1,
+            ),
+            InterfaceConfigRNode(
+                "/dev/ttyACM0",
+                radio,
+                true,
+                "PRNS",
+                300,
+                1_000,
+                500,
+            ),
+            InterfaceConfigMultiRNode(
+                "/dev/ttyACM1",
+                "PRNS",
+                300,
+                listOf(MultiRNodeMemberConfig("primary", 1, radio, true, true)),
+            ),
+            InterfaceConfigPipe(listOf("fixture-command", "--fixture"), 1_000),
+            InterfaceConfigBackboneClient("127.0.0.1:4244", BitrateAuto),
+            InterfaceConfigBackboneServer(
+                "127.0.0.1:4245",
+                BitrateBitsPerSecond(4_000_000),
+            ),
+            InterfaceConfigI2p(listOf("fixture.b32.i2p"), true),
+            InterfaceConfigWeave("/dev/ttyWEAVE0"),
+            InterfaceConfigAutomaticUsb,
+            InterfaceConfigAutomaticBluetoothLe,
+            InterfaceConfigWebSocketClient("ws://fixture.invalid/client"),
+            InterfaceConfigWebSocketServer("127.0.0.1:4246"),
+            InterfaceConfigBrowserRendezvous("ws://fixture.invalid/rendezvous"),
+        )
+        val fixtureKinds = Regex("\\\"kind\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"")
+            .findAll(text)
+            .map { it.groupValues[1] }
+            .filter { it != "Auto" && it != "BitsPerSecond" }
+            .toList()
+        assertEquals(HostContract.SCHEMA_VERSION.toLong(), text.jsonLong("schemaVersion"))
+        assertEquals(configs.size, fixtureKinds.size)
+        assertEquals(
+            fixtureKinds,
+            configs.map { requireNotNull(it::class.simpleName).removePrefix("InterfaceConfig") },
+        )
+        NativeArena().use { arena ->
+            assertEquals(
+                (1..configs.size).toList(),
+                configs.map { arena.interfaceConfig(it).kind },
+            )
+        }
+    }
+
+    @Test
     fun nativeHostContract(): Unit = runBlocking {
         Host(
             HostOptions(

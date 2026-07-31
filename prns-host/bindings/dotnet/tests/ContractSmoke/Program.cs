@@ -172,7 +172,124 @@ await using (host)
     }
 }
 
+MarshalInterfaceFixtures();
 await PersistentTwoNodeJourneyAsync();
+
+static void MarshalInterfaceFixtures()
+{
+    var fixturePath = Path.Combine(
+        "prns-host",
+        "conformance",
+        "interface-configs-v2.json"
+    );
+    var fixture = JsonSerializer.Deserialize<InterfaceFixture>(
+        File.ReadAllText(fixturePath),
+        new JsonSerializerOptions { PropertyNameCaseInsensitive = true }
+    ) ?? throw new InvalidOperationException("The interface fixture is empty.");
+    var line = new SerialLineConfig(
+        115_200,
+        SerialDataBits.Eight,
+        SerialParity.None,
+        SerialStopBits.One
+    );
+    var ax25Line = line with { Baud = 9_600 };
+    var radio = new RNodeRadioConfig(915_000_000, 125_000, 14, 8, 5);
+    var configs = ImmutableArray.Create<InterfaceConfig>(
+        new InterfaceConfig.AutoLan(
+            "sdk-fixture",
+            DiscoveryScope.Organization,
+            29_710,
+            42_444,
+            ImmutableArray.Create("eth0"),
+            ImmutableArray.Create("lo"),
+            MulticastAddressType.Permanent
+        ),
+        new InterfaceConfig.TcpClient(
+            "127.0.0.1:4242",
+            new Bitrate.BitsPerSecond(1_000_000)
+        ),
+        new InterfaceConfig.TcpServer("127.0.0.1:4242", new Bitrate.Auto()),
+        new InterfaceConfig.Udp(
+            "127.0.0.1:4242",
+            "127.0.0.1:4243",
+            new Bitrate.BitsPerSecond(2_000_000)
+        ),
+        new InterfaceConfig.Serial("/dev/ttyUSB0", line),
+        new InterfaceConfig.Kiss(
+            "/dev/ttyUSB1",
+            line,
+            true,
+            150,
+            50,
+            64,
+            20,
+            "PRNS",
+            300
+        ),
+        new InterfaceConfig.Ax25Kiss(
+            "/dev/ttyUSB2",
+            ax25Line,
+            false,
+            100,
+            25,
+            32,
+            10,
+            "PRNS",
+            1
+        ),
+        new InterfaceConfig.RNode(
+            "/dev/ttyACM0",
+            radio,
+            true,
+            "PRNS",
+            300,
+            1_000,
+            500
+        ),
+        new InterfaceConfig.MultiRNode(
+            "/dev/ttyACM1",
+            "PRNS",
+            300,
+            ImmutableArray.Create(
+                new MultiRNodeMemberConfig("primary", 1, radio, true, true)
+            )
+        ),
+        new InterfaceConfig.Pipe(
+            ImmutableArray.Create("fixture-command", "--fixture"),
+            1_000
+        ),
+        new InterfaceConfig.BackboneClient("127.0.0.1:4244", new Bitrate.Auto()),
+        new InterfaceConfig.BackboneServer(
+            "127.0.0.1:4245",
+            new Bitrate.BitsPerSecond(4_000_000)
+        ),
+        new InterfaceConfig.I2p(ImmutableArray.Create("fixture.b32.i2p"), true),
+        new InterfaceConfig.Weave("/dev/ttyWEAVE0"),
+        new InterfaceConfig.AutomaticUsb(),
+        new InterfaceConfig.AutomaticBluetoothLe(),
+        new InterfaceConfig.WebSocketClient("ws://fixture.invalid/client"),
+        new InterfaceConfig.WebSocketServer("127.0.0.1:4246"),
+        new InterfaceConfig.BrowserRendezvous("ws://fixture.invalid/rendezvous")
+    );
+    if (fixture.SchemaVersion != HostContract.SchemaVersion || fixture.Interfaces.Length != configs.Length)
+    {
+        throw new InvalidOperationException("The interface fixture does not match the host contract.");
+    }
+    using var arena = new NativeArena();
+    for (var index = 0; index < configs.Length; index++)
+    {
+        var native = InterfaceConfigMarshaller.Marshal(configs[index], arena);
+        if (
+            native.Kind != (InterfaceKind)(index + 1)
+            || native.Kind.ToString() != fixture.Interfaces[index].Kind
+        )
+        {
+            throw new InvalidOperationException(
+                $"{fixture.Interfaces[index].Kind} marshalled as {native.Kind}."
+            );
+        }
+    }
+}
 
 static async Task PersistentTwoNodeJourneyAsync()
 {
@@ -438,6 +555,13 @@ internal sealed record JourneyFixture(
     JourneyRequest Request,
     JourneyResource Resource
 );
+
+internal sealed record InterfaceFixture(
+    uint SchemaVersion,
+    InterfaceFixtureCase[] Interfaces
+);
+
+internal sealed record InterfaceFixtureCase(string Kind);
 
 internal sealed record JourneyDestination(
     string AppName,

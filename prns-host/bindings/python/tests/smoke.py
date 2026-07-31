@@ -6,12 +6,94 @@ import threading
 from pathlib import Path
 
 import personal_rns as prns
+from personal_rns.host import _Arena, _marshal_interface
 
 
 JOURNEY = json.loads(
     (Path(__file__).parents[3] / "conformance/persistent-two-node-v2.json")
     .read_text()
 )
+INTERFACES = json.loads(
+    (Path(__file__).parents[3] / "conformance/interface-configs-v2.json")
+    .read_text()
+)
+
+
+def marshal_interface_fixtures():
+    line = prns.SerialLineConfig(
+        115200,
+        prns.SerialDataBits.EIGHT,
+        prns.SerialParity.NONE,
+        prns.SerialStopBits.ONE,
+    )
+    ax25_line = prns.SerialLineConfig(
+        9600,
+        prns.SerialDataBits.EIGHT,
+        prns.SerialParity.NONE,
+        prns.SerialStopBits.ONE,
+    )
+    radio = prns.RNodeRadioConfig(915000000, 125000, 14, 8, 5)
+    configs = (
+        prns.InterfaceConfigAutoLan(
+            "sdk-fixture",
+            prns.DiscoveryScope.ORGANIZATION,
+            29710,
+            42444,
+            ("eth0",),
+            ("lo",),
+            prns.MulticastAddressType.PERMANENT,
+        ),
+        prns.InterfaceConfigTcpClient(
+            "127.0.0.1:4242", prns.BitrateBitsPerSecond(1000000)
+        ),
+        prns.InterfaceConfigTcpServer("127.0.0.1:4242", prns.BitrateAuto()),
+        prns.InterfaceConfigUdp(
+            "127.0.0.1:4242",
+            "127.0.0.1:4243",
+            prns.BitrateBitsPerSecond(2000000),
+        ),
+        prns.InterfaceConfigSerial("/dev/ttyUSB0", line),
+        prns.InterfaceConfigKiss(
+            "/dev/ttyUSB1", line, True, 150, 50, 64, 20, "PRNS", 300
+        ),
+        prns.InterfaceConfigAx25Kiss(
+            "/dev/ttyUSB2", ax25_line, False, 100, 25, 32, 10, "PRNS", 1
+        ),
+        prns.InterfaceConfigRNode(
+            "/dev/ttyACM0", radio, True, "PRNS", 300, 1000, 500
+        ),
+        prns.InterfaceConfigMultiRNode(
+            "/dev/ttyACM1",
+            "PRNS",
+            300,
+            (prns.MultiRNodeMemberConfig("primary", 1, radio, True, True),),
+        ),
+        prns.InterfaceConfigPipe(("fixture-command", "--fixture"), 1000),
+        prns.InterfaceConfigBackboneClient(
+            "127.0.0.1:4244", prns.BitrateAuto()
+        ),
+        prns.InterfaceConfigBackboneServer(
+            "127.0.0.1:4245", prns.BitrateBitsPerSecond(4000000)
+        ),
+        prns.InterfaceConfigI2p(("fixture.b32.i2p",), True),
+        prns.InterfaceConfigWeave("/dev/ttyWEAVE0"),
+        prns.InterfaceConfigAutomaticUsb(),
+        prns.InterfaceConfigAutomaticBluetoothLe(),
+        prns.InterfaceConfigWebSocketClient("ws://fixture.invalid/client"),
+        prns.InterfaceConfigWebSocketServer("127.0.0.1:4246"),
+        prns.InterfaceConfigBrowserRendezvous(
+            "ws://fixture.invalid/rendezvous"
+        ),
+    )
+    assert INTERFACES["schemaVersion"] == prns.SCHEMA_VERSION
+    assert len(INTERFACES["interfaces"]) == len(configs)
+    assert [entry["kind"] for entry in INTERFACES["interfaces"]] == [
+        type(config).__name__.removeprefix("InterfaceConfig") for config in configs
+    ]
+    with _Arena() as arena:
+        assert [
+            _marshal_interface(config, arena).kind for config in configs
+        ] == list(range(1, len(configs) + 1))
 
 
 async def next_matching(stream, event_type, timeout=5):
@@ -201,6 +283,7 @@ async def persistent_two_node_journey():
 
 
 async def main():
+    marshal_interface_fixtures()
     host = prns.Host.create(
         prns.HostOptions.endpoint(prns.IdentityConfigGenerateEphemeral())
     )

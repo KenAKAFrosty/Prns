@@ -11,6 +11,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -38,6 +40,13 @@ type journeyFixture struct {
 	} `json:"resource"`
 }
 
+type interfaceFixture struct {
+	SchemaVersion uint32 `json:"schemaVersion"`
+	Interfaces    []struct {
+		Kind string `json:"kind"`
+	} `json:"interfaces"`
+}
+
 func fixtureBytes(t *testing.T, value string) []byte {
 	t.Helper()
 	decoded, err := hex.DecodeString(value)
@@ -63,6 +72,70 @@ func loadJourneyFixture(t *testing.T) journeyFixture {
 		t.Fatalf("journey schema %d does not match host schema", fixture.SchemaVersion)
 	}
 	return fixture
+}
+
+func TestMarshalEveryInterfaceFixture(t *testing.T) {
+	value, err := os.ReadFile(filepath.Join(
+		"..", "..", "conformance", "interface-configs-v2.json",
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture interfaceFixture
+	if err := json.Unmarshal(value, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	line := SerialLineConfig{115200, SerialDataBitsEight, SerialParityNone, SerialStopBitsOne}
+	ax25Line := SerialLineConfig{9600, SerialDataBitsEight, SerialParityNone, SerialStopBitsOne}
+	radio := RNodeRadioConfig{915000000, 125000, 14, 8, 5}
+	groupID := "sdk-fixture"
+	discoveryScope := DiscoveryScopeOrganization
+	discoveryPort := uint16(29710)
+	dataPort := uint16(42444)
+	multicastAddressType := MulticastAddressTypePermanent
+	stationCallsign := "PRNS"
+	stationInterval := uint64(300)
+	shortAirtime := uint16(1000)
+	longAirtime := uint16(500)
+	configs := []InterfaceConfig{
+		InterfaceConfigAutoLan{&groupID, &discoveryScope, &discoveryPort, &dataPort, []string{"eth0"}, []string{"lo"}, &multicastAddressType},
+		InterfaceConfigTcpClient{"127.0.0.1:4242", BitrateBitsPerSecond{1000000}},
+		InterfaceConfigTcpServer{"127.0.0.1:4242", BitrateAuto{}},
+		InterfaceConfigUdp{"127.0.0.1:4242", "127.0.0.1:4243", BitrateBitsPerSecond{2000000}},
+		InterfaceConfigSerial{"/dev/ttyUSB0", line},
+		InterfaceConfigKiss{"/dev/ttyUSB1", line, true, 150, 50, 64, 20, &stationCallsign, &stationInterval},
+		InterfaceConfigAx25Kiss{"/dev/ttyUSB2", ax25Line, false, 100, 25, 32, 10, "PRNS", 1},
+		InterfaceConfigRNode{"/dev/ttyACM0", radio, true, &stationCallsign, &stationInterval, &shortAirtime, &longAirtime},
+		InterfaceConfigMultiRNode{"/dev/ttyACM1", &stationCallsign, &stationInterval, []MultiRNodeMemberConfig{{"primary", 1, radio, true, true}}},
+		InterfaceConfigPipe{[]string{"fixture-command", "--fixture"}, 1000},
+		InterfaceConfigBackboneClient{"127.0.0.1:4244", BitrateAuto{}},
+		InterfaceConfigBackboneServer{"127.0.0.1:4245", BitrateBitsPerSecond{4000000}},
+		InterfaceConfigI2p{[]string{"fixture.b32.i2p"}, true},
+		InterfaceConfigWeave{"/dev/ttyWEAVE0"},
+		InterfaceConfigAutomaticUsb{},
+		InterfaceConfigAutomaticBluetoothLe{},
+		InterfaceConfigWebSocketClient{"ws://fixture.invalid/client"},
+		InterfaceConfigWebSocketServer{"127.0.0.1:4246"},
+		InterfaceConfigBrowserRendezvous{"ws://fixture.invalid/rendezvous"},
+	}
+	if fixture.SchemaVersion != HostSchemaVersion || len(fixture.Interfaces) != len(configs) {
+		t.Fatal("shared interface fixture does not match the generated host contract")
+	}
+	var arena nativeArena
+	defer arena.close()
+	for index, config := range configs {
+		name := strings.TrimPrefix(reflect.TypeOf(config).Name(), "InterfaceConfig")
+		if fixture.Interfaces[index].Kind != name {
+			t.Fatalf("fixture kind %s does not match %s", fixture.Interfaces[index].Kind, name)
+		}
+		native, err := marshalInterface(&arena, config)
+		if err != nil {
+			t.Fatalf("%s: %v", fixture.Interfaces[index].Kind, err)
+		}
+		if uint32(native.kind) != uint32(index+1) {
+			t.Fatalf("%s marshalled as kind %d", fixture.Interfaces[index].Kind, native.kind)
+		}
+	}
 }
 
 func settledCommand(t *testing.T, host *Host, value HostCommand) CommandSettlement {

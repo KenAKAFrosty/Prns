@@ -95,6 +95,108 @@ function json_boolean(text, key)
     matched.captures[1] == "true"
 end
 
+interface_fixture_path = normpath(
+    @__DIR__,
+    "..",
+    "..",
+    "..",
+    "conformance",
+    "interface-configs-v2.json",
+)
+interface_fixture = read(interface_fixture_path, String)
+line = SerialLineConfig(
+    UInt32(115_200),
+    PersonalRns.SerialDataBitsEight,
+    PersonalRns.SerialParityNone,
+    PersonalRns.SerialStopBitsOne,
+)
+ax25_line = SerialLineConfig(
+    UInt32(9_600),
+    PersonalRns.SerialDataBitsEight,
+    PersonalRns.SerialParityNone,
+    PersonalRns.SerialStopBitsOne,
+)
+radio = PersonalRns.RNodeRadioConfig(
+    UInt64(915_000_000),
+    UInt32(125_000),
+    Int16(14),
+    UInt8(8),
+    UInt8(5),
+)
+interface_configs = InterfaceConfig[
+    InterfaceConfigAutoLan(
+        "sdk-fixture",
+        PersonalRns.DiscoveryScopeOrganization,
+        UInt16(29_710),
+        UInt16(42_444),
+        ["eth0"],
+        ["lo"],
+        PersonalRns.MulticastAddressTypePermanent,
+    ),
+    InterfaceConfigTcpClient(
+        "127.0.0.1:4242",
+        BitrateBitsPerSecond(UInt64(1_000_000)),
+    ),
+    InterfaceConfigTcpServer("127.0.0.1:4242", BitrateAuto()),
+    InterfaceConfigUdp(
+        "127.0.0.1:4242",
+        "127.0.0.1:4243",
+        BitrateBitsPerSecond(UInt64(2_000_000)),
+    ),
+    InterfaceConfigSerial("/dev/ttyUSB0", line),
+    InterfaceConfigKiss(
+        "/dev/ttyUSB1", line, true, UInt32(150), UInt32(50), UInt8(64),
+        UInt32(20), "PRNS", UInt64(300),
+    ),
+    InterfaceConfigAx25Kiss(
+        "/dev/ttyUSB2", ax25_line, false, UInt32(100), UInt32(25), UInt8(32),
+        UInt32(10), "PRNS", UInt8(1),
+    ),
+    InterfaceConfigRNode(
+        "/dev/ttyACM0", radio, true, "PRNS", UInt64(300), UInt16(1_000),
+        UInt16(500),
+    ),
+    InterfaceConfigMultiRNode(
+        "/dev/ttyACM1",
+        "PRNS",
+        UInt64(300),
+        [PersonalRns.MultiRNodeMemberConfig("primary", UInt8(1), radio, true, true)],
+    ),
+    InterfaceConfigPipe(["fixture-command", "--fixture"], UInt64(1_000)),
+    InterfaceConfigBackboneClient("127.0.0.1:4244", BitrateAuto()),
+    InterfaceConfigBackboneServer(
+        "127.0.0.1:4245",
+        BitrateBitsPerSecond(UInt64(4_000_000)),
+    ),
+    InterfaceConfigI2p(["fixture.b32.i2p"], true),
+    InterfaceConfigWeave("/dev/ttyWEAVE0"),
+    InterfaceConfigAutomaticUsb(),
+    InterfaceConfigAutomaticBluetoothLe(),
+    InterfaceConfigWebSocketClient("ws://fixture.invalid/client"),
+    InterfaceConfigWebSocketServer("127.0.0.1:4246"),
+    InterfaceConfigBrowserRendezvous("ws://fixture.invalid/rendezvous"),
+]
+interface_kinds = [
+    matched.captures[1]
+    for matched in eachmatch(r"\"kind\"\s*:\s*\"([^\"]+)\"", interface_fixture)
+    if matched.captures[1] ∉ ("Auto", "BitsPerSecond")
+]
+@test json_integer(interface_fixture, "schemaVersion") == PersonalRns.HOST_SCHEMA_VERSION
+@test length(interface_kinds) == length(interface_configs)
+@test interface_kinds == [
+    replace(String(nameof(typeof(config))), "InterfaceConfig" => "")
+    for config in interface_configs
+]
+interface_arena = PersonalRns.NativeArena()
+try
+    @test [
+        UInt32(PersonalRns.native_interface(interface_arena, config).kind)
+        for config in interface_configs
+    ] == UInt32.(1:length(interface_configs))
+finally
+    close(interface_arena)
+end
+
 function successful_outcome(host, value)
     command = execute(host, value)
     try
