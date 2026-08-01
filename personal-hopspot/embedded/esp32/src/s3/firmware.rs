@@ -80,6 +80,10 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     );
     let lora_spectrum: &'static LoRaSpectrumStatus =
         mk_static!(LoRaSpectrumStatus, LoRaSpectrumStatus::new());
+    // Reclaim the private R8 probe allocation before placing the live LoRa queue in PSRAM.
+    // This is a no-op on boards whose PSRAM belongs to the global heap.
+    #[cfg(feature = "lora")]
+    crate::storage::reinit_private_psram_heap();
     #[cfg(feature = "lora")]
     let lora_tx_queue = crate::storage::allocate_lora_tx_queue();
     #[cfg(feature = "lora")]
@@ -100,27 +104,23 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     // The Wi-Fi stack carries both the Wi-Fi Auto UDP and the TCP client, so it stands up before the
     // node moves to core 1 — activating the TCP slot is a core-0-only act.
     #[cfg(feature = "wifi-auto")]
-    let (wifi, tcp_stack, esp_now) = if B::BRING_UP_WIFI {
-        boot_stage(BootPhase::WifiBegin);
-        let built = build_wifi(
-            &spawner,
-            wifi_hardware,
-            mac_octets,
-            &wifi_config,
-            radio_mode == RadioMode::AccessPoint,
-        );
-        boot_stage(BootPhase::WifiReady);
-        log::info!(
-            "Wi-Fi initialized station={} network_stack={}",
-            built.0.is_some(),
-            built.1.is_some()
-        );
-        built
-    } else {
-        log::info!("Wi-Fi bring-up skipped for this board");
-        let _ = wifi_hardware;
-        (None, None, None)
-    };
+    boot_stage(BootPhase::WifiBegin);
+    #[cfg(feature = "wifi-auto")]
+    let (wifi, tcp_stack, esp_now) = build_wifi(
+        &spawner,
+        wifi_hardware,
+        mac_octets,
+        &wifi_config,
+        radio_mode == RadioMode::AccessPoint,
+    );
+    #[cfg(feature = "wifi-auto")]
+    boot_stage(BootPhase::WifiReady);
+    #[cfg(feature = "wifi-auto")]
+    log::info!(
+        "Wi-Fi initialized station={} network_stack={}",
+        wifi.is_some(),
+        tcp_stack.is_some()
+    );
     #[cfg(not(feature = "wifi-auto"))]
     let wifi: Option<AutoWifi<'static, MEMBERS>> = None;
     #[cfg(not(feature = "wifi-auto"))]
@@ -238,42 +238,25 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     );
     let host = EmbassyHost::new_with_timebase(timebase, hardware_entropy as fn(&mut [u8]));
 
-    // Private PSRAM bump: deallocate is a no-op, so reset after the boot probe before engine init.
-    crate::storage::reinit_private_psram_heap();
-
-    if B::BRING_UP_WIFI {
-        let core1_stack = mk_static!(CpuStack<CORE1_STACK_BYTES>, CpuStack::new());
-        boot_stage(BootPhase::CoreOneStartBegin);
-        esp_rtos::start_second_core(cpu_control, software_interrupt, core1_stack, move || {
-            static NODE: StaticCell<S3Node> = StaticCell::new();
-            let (node, persistence) =
-                PrnsNode::init_static_with_persistence(&NODE, recipe, manifold_wiring, host);
-            static PERSISTENCE: StaticCell<crate::persistence::S3Persistence> = StaticCell::new();
-            let persistence = PERSISTENCE.init(persistence);
-
-            static EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
-            boot_stage(BootPhase::CoreOneExecutorReady);
-            EXECUTOR
-                .init(esp_rtos::embassy::Executor::new())
-                .run(|spawner| {
-                    spawner.spawn(manifold_task(node, persistence).expect("manifold task fits"));
-                    spawner.spawn(core_one_liveness_task().expect("core-one liveness task fits"));
-                })
-        });
-        boot_stage(BootPhase::CoreOneStartReady);
-    } else {
-        // Optional single-core bring-up when a board sets `BRING_UP_WIFI = false`.
-        let _ = (cpu_control, software_interrupt);
+    let core1_stack = mk_static!(CpuStack<CORE1_STACK_BYTES>, CpuStack::new());
+    boot_stage(BootPhase::CoreOneStartBegin);
+    esp_rtos::start_second_core(cpu_control, software_interrupt, core1_stack, move || {
         static NODE: StaticCell<S3Node> = StaticCell::new();
         let (node, persistence) =
             PrnsNode::init_static_with_persistence(&NODE, recipe, manifold_wiring, host);
         static PERSISTENCE: StaticCell<crate::persistence::S3Persistence> = StaticCell::new();
         let persistence = PERSISTENCE.init(persistence);
-        // Single-core path: the RWDT is fed from CORE_ONE_HEARTBEAT. With no core 1, run the
-        // liveness ticker here or the board resets ~15s after boot.
-        spawner.spawn(core_one_liveness_task().expect("core-one liveness task fits"));
-        spawner.spawn(manifold_task(node, persistence).expect("manifold task fits"));
-    }
+
+        static EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
+        boot_stage(BootPhase::CoreOneExecutorReady);
+        EXECUTOR
+            .init(esp_rtos::embassy::Executor::new())
+            .run(|spawner| {
+                spawner.spawn(manifold_task(node, persistence).expect("manifold task fits"));
+                spawner.spawn(core_one_liveness_task().expect("core-one liveness task fits"));
+            })
+    });
+    boot_stage(BootPhase::CoreOneStartReady);
 
     let (usb_rx, usb_tx) = UsbSerialJtag::new(usb_device).into_async().split();
     let usb_seam = usb_lane.into_seam(NOTIFY.sender(), hardware_entropy);
@@ -335,7 +318,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
 
     let render = async move {
         boot_stage(BootPhase::DisplayRuntimeBegin);
-        let access_point = if !cfg!(feature = "wifi-auto") || !B::BRING_UP_WIFI {
+        let access_point = if !cfg!(feature = "wifi-auto") {
             screen::AccessPointState::Unsupported
         } else if radio_mode == RadioMode::AccessPoint {
             screen::AccessPointState::Active
@@ -737,25 +720,20 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         }
         match radio_mode {
             RadioMode::Ble => {
-                if B::BRING_UP_WIFI {
-                    boot_stage(BootPhase::BluetoothBegin);
-                    let ble_connector = esp_radio::ble::controller::BleConnector::new(
-                        bluetooth,
-                        esp_radio::ble::Config::default()
-                            .with_task_stack_size(4096)
-                            .with_max_connections(BLE_PEER_CAPACITY as u8),
-                    )
-                    .expect("ble connector");
-                    boot_stage(BootPhase::BluetoothReady);
-                    if let Some((identity, fleet)) = ble {
-                        spawner.spawn(
-                            ble_task(spawner, ble_connector, mac_octets, identity, fleet)
-                                .expect("Bluetooth task fits"),
-                        );
-                    }
-                } else {
-                    let _ = (bluetooth, ble);
-                    log::info!("Bluetooth bring-up skipped with Wi-Fi");
+                boot_stage(BootPhase::BluetoothBegin);
+                let ble_connector = esp_radio::ble::controller::BleConnector::new(
+                    bluetooth,
+                    esp_radio::ble::Config::default()
+                        .with_task_stack_size(4096)
+                        .with_max_connections(BLE_PEER_CAPACITY as u8),
+                )
+                .expect("ble connector");
+                boot_stage(BootPhase::BluetoothReady);
+                if let Some((identity, fleet)) = ble {
+                    spawner.spawn(
+                        ble_task(spawner, ble_connector, mac_octets, identity, fleet)
+                            .expect("Bluetooth task fits"),
+                    );
                 }
             }
             RadioMode::AccessPoint => {

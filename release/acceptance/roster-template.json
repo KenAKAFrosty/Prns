@@ -11,10 +11,7 @@
       "surface": "web",
       "os": "linux",
       "architecture": "x86_64",
-      "browser": {
-        "name": "chrome",
-        "channel": "stable"
-      },
+      "browser": {"name": "chrome", "channel": "stable"},
       "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
       "cables_ready": true,
       "device_permissions_ready": true,
@@ -35,10 +32,7 @@
       "surface": "web",
       "os": "linux",
       "architecture": "x86_64",
-      "browser": {
-        "name": "chrome",
-        "channel": "stable"
-      },
+      "browser": {"name": "chrome", "channel": "stable"},
       "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
       "cables_ready": true,
       "device_permissions_ready": true,
@@ -59,10 +53,7 @@
       "surface": "web",
       "os": "macos",
       "architecture": "aarch64",
-      "browser": {
-        "name": "chrome",
-        "channel": "stable"
-      },
+      "browser": {"name": "chrome", "channel": "stable"},
       "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
       "cables_ready": true,
       "device_permissions_ready": true,
@@ -83,10 +74,7 @@
       "surface": "web",
       "os": "windows",
       "architecture": "x86_64",
-      "browser": {
-        "name": "edge",
-        "channel": "stable"
-      },
+      "browser": {"name": "edge", "channel": "stable"},
       "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
       "cables_ready": true,
       "device_permissions_ready": true,
@@ -107,10 +95,7 @@
       "surface": "web",
       "os": "macos",
       "architecture": "x86_64",
-      "browser": {
-        "name": "chrome",
-        "channel": "stable"
-      },
+      "browser": {"name": "chrome", "channel": "stable"},
       "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
       "cables_ready": true,
       "device_permissions_ready": true,
@@ -129,40 +114,28 @@
   ],
   "fallback_assignments": [
     {
-      "browser": {
-        "name": "firefox",
-        "channel": "stable"
-      },
+      "browser": {"name": "firefox", "channel": "stable"},
       "os": "linux",
       "architecture": "x86_64",
       "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
       "browser_ready": true
     },
     {
-      "browser": {
-        "name": "firefox",
-        "channel": "stable"
-      },
+      "browser": {"name": "firefox", "channel": "stable"},
       "os": "macos",
       "architecture": "x86_64",
       "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
       "browser_ready": true
     },
     {
-      "browser": {
-        "name": "firefox",
-        "channel": "stable"
-      },
+      "browser": {"name": "firefox", "channel": "stable"},
       "os": "windows",
       "architecture": "x86_64",
       "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
       "browser_ready": true
     },
     {
-      "browser": {
-        "name": "safari",
-        "channel": "stable"
-      },
+      "browser": {"name": "safari", "channel": "stable"},
       "os": "macos",
       "architecture": "aarch64",
       "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",

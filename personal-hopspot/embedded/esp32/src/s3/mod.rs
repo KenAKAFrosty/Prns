@@ -475,21 +475,21 @@ async fn usb_device_task(
 ///
 /// Heap region order is load-bearing for Wi-Fi boards: PSRAM must register first so capability-free
 /// boot allocations land externally and leave the small internal regions for the radio. Heltec V4-R8
-/// (Octal private bump) passes a custom `PsramConfig` and uses `internal_first` so boot/log allocs
-/// cannot share a freelist with engine construction.
+/// (Octal private bump) passes a custom `PsramConfig` and uses `private_psram_bump` so boot/log
+/// allocations cannot share a freelist with engine construction.
 macro_rules! boot_common {
     ($p:ident, $banner:expr) => {
         $crate::s3::boot_common!(
             $p,
             $banner,
             ::esp_hal::psram::PsramConfig::default(),
-            psram_first
+            global_psram_heap
         )
     };
     ($p:ident, $banner:expr, $psram_config:expr) => {
-        $crate::s3::boot_common!($p, $banner, $psram_config, internal_first)
+        $crate::s3::boot_common!($p, $banner, $psram_config, private_psram_bump)
     };
-    ($p:ident, $banner:expr, $psram_config:expr, psram_first) => {{
+    ($p:ident, $banner:expr, $psram_config:expr, global_psram_heap) => {{
         ::esp_println::logger::init_logger_from_env();
         $crate::s3::boot_add_psram_global!($p, $psram_config);
         ::esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 43 * 1024);
@@ -497,7 +497,7 @@ macro_rules! boot_common {
         $crate::s3::boot_psram_probe!();
         $crate::s3::boot_rtos_tail!($p, $banner)
     }};
-    ($p:ident, $banner:expr, $psram_config:expr, internal_first) => {{
+    ($p:ident, $banner:expr, $psram_config:expr, private_psram_bump) => {{
         ::esp_println::logger::init_logger_from_env();
         // Heltec V4-R8: keep Octal PSRAM out of the global heap so boot/log allocs cannot spill into it.
         ::esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 43 * 1024);
@@ -522,7 +522,6 @@ macro_rules! boot_add_psram_global {
                 ::esp_alloc::MemoryCapability::External.into(),
             ));
         }
-        ::core::mem::forget(psram);
     }};
 }
 pub(crate) use boot_add_psram_global;
@@ -534,7 +533,6 @@ macro_rules! boot_add_psram_private {
         ::esp_println::println!("PSRAM mapped start={start:?} size={size} (private)");
         // SAFETY: exclusive mapped window for PsramAlloc; not registered with esp_alloc.
         unsafe { $crate::storage::init_private_psram_heap(start, size) };
-        ::core::mem::forget(psram);
     }};
 }
 pub(crate) use boot_add_psram_private;
@@ -545,17 +543,17 @@ macro_rules! boot_psram_probe {
         // (deallocate is a no-op), and large probes would permanently consume the window
         // until the pre-engine reinit.
         let layout = ::core::alloc::Layout::from_size_align(4, 4).expect("u32 layout");
-        match ::allocator_api2::alloc::Allocator::allocate(&$crate::storage::PsramAlloc, layout) {
-            Ok(ptr) => {
-                // SAFETY: exclusive PsramAlloc allocation; write/read (leak is fine — bump).
-                unsafe {
-                    let p = ptr.cast::<u32>().as_ptr();
-                    p.write_volatile(0xA5A5_5A5A);
-                    let read = p.read_volatile();
-                    ::esp_println::println!("PSRAM probe ok read=0x{read:08X}");
-                }
-            }
-            Err(_) => ::esp_println::println!("PSRAM probe alloc failed"),
+        let ptr =
+            ::allocator_api2::alloc::Allocator::allocate(&$crate::storage::PsramAlloc, layout)
+                .expect("PSRAM probe allocation failed");
+        // SAFETY: exclusive PsramAlloc allocation; write/read (leak is fine — bump).
+        unsafe {
+            const PATTERN: u32 = 0xA5A5_5A5A;
+            let p = ptr.cast::<u32>().as_ptr();
+            p.write_volatile(PATTERN);
+            let read = p.read_volatile();
+            assert_eq!(read, PATTERN, "PSRAM probe readback mismatch");
+            ::esp_println::println!("PSRAM probe ok read=0x{read:08X}");
         }
     }};
 }
