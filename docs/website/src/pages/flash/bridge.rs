@@ -588,7 +588,6 @@ pub(super) fn phase_label(phase: BridgePhase) -> &'static str {
 mod tests {
     use super::*;
     use crate::platforms::{board_target_by_slug, BoardFlashTarget};
-    use prns_flash_manifest::{board_catalog, ValidatedFlashManifest};
     use std::collections::BTreeSet;
 
     const EVENT_FIELDS: [&str; 11] = [
@@ -692,9 +691,6 @@ mod tests {
     #[test]
     fn typed_targets_preserve_the_javascript_request_shape(
     ) -> Result<(), Box<dyn std::error::Error>> {
-        const MANIFEST: &[u8] = include_bytes!(
-            "../../../web-flasher/browser/fixtures/signed-candidate/releases/0.2.6/flash-manifest.json"
-        );
         const UF2_REQUEST_FIELDS: [&str; 13] = [
             "schema",
             "boardSlug",
@@ -729,8 +725,7 @@ mod tests {
         ];
         const PART_FIELDS: [&str; 6] = ["kind", "path", "url", "offset", "size", "sha256"];
 
-        let catalog = board_catalog()?;
-        let manifest = ValidatedFlashManifest::from_json(MANIFEST, &catalog)?;
+        let manifest = super::super::release_0_2_6_fixture()?;
         for target in manifest.targets() {
             let manifest_url = "https://reticulum.rs/releases/0.2.6/flash-manifest.json";
             let catalog_target = board_target_by_slug(target.board_id().as_str())
