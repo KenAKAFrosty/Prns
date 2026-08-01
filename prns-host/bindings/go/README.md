@@ -20,16 +20,11 @@ if err != nil {
 }
 defer host.Close()
 
-command, err := host.Execute(prns.HostCommandAttachTcpClient{
-    Target: "127.0.0.1:4242",
-    Bitrate: prns.BitrateAuto{},
-})
-if err != nil {
-    return err
-}
-defer command.Close()
-
-settlement, err := command.Wait(ctx)
+settlement, err := host.AttachTCPClient(
+    ctx,
+    "127.0.0.1:4242",
+    prns.BitrateAuto{},
+)
 if err != nil {
     return err
 }

@@ -20,10 +20,10 @@ func run(_ host: Host) async throws {
         }
     }
 
-    let command = try host.execute(
-        .attachTcpClient(target: "127.0.0.1:4242", bitrate: .auto)
-    )
-    switch try await command.value() {
+    switch try await host.attachTcpClient(
+        target: "127.0.0.1:4242",
+        bitrate: .auto
+    ) {
     case .succeeded(let outcome):
         handle(outcome)
     case .failed(let failure):

@@ -2,6 +2,7 @@ package io.reticulum.prns
 
 import com.sun.jna.Pointer
 import com.sun.jna.ptr.PointerByReference
+import java.util.concurrent.CompletionStage
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
@@ -246,6 +247,271 @@ class Host(options: HostOptions) : AutoCloseable {
         }
     }
 
+    fun executeAsync(command: HostCommand): CompletionStage<CommandSettlement> =
+        javaFuture { settle(command) }
+
+    private suspend fun settle(command: HostCommand): CommandSettlement =
+        execute(command).use { it.await() }
+
+    suspend fun announce(
+        destination: DestinationHash,
+        interfaceId: InterfaceId? = null,
+    ): CommandSettlement = settle(
+        HostCommandAnnounce(destination = destination, `interface` = interfaceId),
+    )
+
+    fun announceAsync(
+        destination: DestinationHash,
+        interfaceId: InterfaceId?,
+    ): CompletionStage<CommandSettlement> = javaFuture {
+        announce(destination, interfaceId)
+    }
+
+    suspend fun sendSinglePacket(
+        destination: DestinationHash,
+        payload: Bytes,
+    ): CommandSettlement = settle(
+        HostCommandSendSinglePacket(destination = destination, payload = payload),
+    )
+
+    fun sendSinglePacketAsync(
+        destination: DestinationHash,
+        payload: Bytes,
+    ): CompletionStage<CommandSettlement> = javaFuture {
+        sendSinglePacket(destination, payload)
+    }
+
+    suspend fun closeLink(linkId: LinkId): CommandSettlement =
+        settle(HostCommandCloseLink(linkId = linkId))
+
+    fun closeLinkAsync(linkId: LinkId): CompletionStage<CommandSettlement> =
+        javaFuture { closeLink(linkId) }
+
+    suspend fun attachTcpServer(
+        bind: String,
+        bitrate: Bitrate,
+    ): CommandSettlement = settle(
+        HostCommandAttachTcpServer(bind = bind, bitrate = bitrate),
+    )
+
+    fun attachTcpServerAsync(
+        bind: String,
+        bitrate: Bitrate,
+    ): CompletionStage<CommandSettlement> = javaFuture {
+        attachTcpServer(bind, bitrate)
+    }
+
+    suspend fun attachTcpClient(
+        target: String,
+        bitrate: Bitrate,
+    ): CommandSettlement = settle(
+        HostCommandAttachTcpClient(target = target, bitrate = bitrate),
+    )
+
+    fun attachTcpClientAsync(
+        target: String,
+        bitrate: Bitrate,
+    ): CompletionStage<CommandSettlement> = javaFuture {
+        attachTcpClient(target, bitrate)
+    }
+
+    suspend fun attachUdp(
+        local: String,
+        peer: String,
+        bitrate: Bitrate,
+    ): CommandSettlement = settle(
+        HostCommandAttachUdp(local = local, peer = peer, bitrate = bitrate),
+    )
+
+    fun attachUdpAsync(
+        local: String,
+        peer: String,
+        bitrate: Bitrate,
+    ): CompletionStage<CommandSettlement> = javaFuture {
+        attachUdp(local, peer, bitrate)
+    }
+
+    suspend fun attachInterface(config: InterfaceConfig): CommandSettlement =
+        settle(HostCommandAttachInterface(config = config))
+
+    fun attachInterfaceAsync(
+        config: InterfaceConfig,
+    ): CompletionStage<CommandSettlement> = javaFuture {
+        attachInterface(config)
+    }
+
+    suspend fun detachInterface(interfaceId: InterfaceId): CommandSettlement =
+        settle(HostCommandDetachInterface(`interface` = interfaceId))
+
+    fun detachInterfaceAsync(
+        interfaceId: InterfaceId,
+    ): CompletionStage<CommandSettlement> = javaFuture {
+        detachInterface(interfaceId)
+    }
+
+    suspend fun establishLink(destination: DestinationHash): CommandSettlement =
+        settle(HostCommandEstablishLink(destination = destination))
+
+    fun establishLinkAsync(
+        destination: DestinationHash,
+    ): CompletionStage<CommandSettlement> = javaFuture {
+        establishLink(destination)
+    }
+
+    suspend fun requestPath(destination: DestinationHash): CommandSettlement =
+        settle(HostCommandRequestPath(destination = destination))
+
+    fun requestPathAsync(
+        destination: DestinationHash,
+    ): CompletionStage<CommandSettlement> = javaFuture {
+        requestPath(destination)
+    }
+
+    suspend fun identify(
+        linkId: LinkId,
+        identity: IdentityHash,
+    ): CommandSettlement = settle(
+        HostCommandIdentify(linkId = linkId, identity = identity),
+    )
+
+    fun identifyAsync(
+        linkId: LinkId,
+        identity: IdentityHash,
+    ): CompletionStage<CommandSettlement> = javaFuture {
+        identify(linkId, identity)
+    }
+
+    suspend fun sendLinkPacket(
+        linkId: LinkId,
+        payload: Bytes,
+    ): CommandSettlement = settle(
+        HostCommandSendLinkPacket(linkId = linkId, payload = payload),
+    )
+
+    fun sendLinkPacketAsync(
+        linkId: LinkId,
+        payload: Bytes,
+    ): CompletionStage<CommandSettlement> = javaFuture {
+        sendLinkPacket(linkId, payload)
+    }
+
+    suspend fun request(
+        linkId: LinkId,
+        pathHash: RequestPathHash,
+        payload: Bytes,
+        timeout: ResponseTimeout,
+    ): CommandSettlement = settle(
+        HostCommandRequest(
+            linkId = linkId,
+            pathHash = pathHash,
+            payload = payload,
+            timeout = timeout,
+        ),
+    )
+
+    fun requestAsync(
+        linkId: LinkId,
+        pathHash: RequestPathHash,
+        payload: Bytes,
+        timeout: ResponseTimeout,
+    ): CompletionStage<CommandSettlement> = javaFuture {
+        request(linkId, pathHash, payload, timeout)
+    }
+
+    suspend fun respond(
+        linkId: LinkId,
+        requestId: RequestId,
+        requestRttMillis: Long,
+        payload: Bytes,
+    ): CommandSettlement = settle(
+        HostCommandRespond(
+            linkId = linkId,
+            requestId = requestId,
+            requestRttMillis = requestRttMillis,
+            payload = payload,
+        ),
+    )
+
+    fun respondAsync(
+        linkId: LinkId,
+        requestId: RequestId,
+        requestRttMillis: Long,
+        payload: Bytes,
+    ): CompletionStage<CommandSettlement> = javaFuture {
+        respond(linkId, requestId, requestRttMillis, payload)
+    }
+
+    suspend fun setLinkResourceStrategy(
+        linkId: LinkId,
+        strategy: ResourceStrategy,
+    ): CommandSettlement = settle(
+        HostCommandSetLinkResourceStrategy(linkId = linkId, strategy = strategy),
+    )
+
+    fun setLinkResourceStrategyAsync(
+        linkId: LinkId,
+        strategy: ResourceStrategy,
+    ): CompletionStage<CommandSettlement> = javaFuture {
+        setLinkResourceStrategy(linkId, strategy)
+    }
+
+    suspend fun setDestinationResourceStrategy(
+        destination: DestinationHash,
+        strategy: ResourceStrategy,
+    ): CommandSettlement = settle(
+        HostCommandSetDestinationResourceStrategy(
+            destination = destination,
+            strategy = strategy,
+        ),
+    )
+
+    fun setDestinationResourceStrategyAsync(
+        destination: DestinationHash,
+        strategy: ResourceStrategy,
+    ): CompletionStage<CommandSettlement> = javaFuture {
+        setDestinationResourceStrategy(destination, strategy)
+    }
+
+    suspend fun sendChannelMessage(
+        linkId: LinkId,
+        messageType: Int,
+        payload: Bytes,
+    ): CommandSettlement = settle(
+        HostCommandSendChannelMessage(
+            linkId = linkId,
+            messageType = messageType,
+            payload = payload,
+        ),
+    )
+
+    fun sendChannelMessageAsync(
+        linkId: LinkId,
+        messageType: Int,
+        payload: Bytes,
+    ): CompletionStage<CommandSettlement> = javaFuture {
+        sendChannelMessage(linkId, messageType, payload)
+    }
+
+    suspend fun allowRequester(
+        destination: DestinationHash,
+        pathHash: RequestPathHash,
+        identity: IdentityHash,
+    ): CommandSettlement = settle(
+        HostCommandAllowRequester(
+            destination = destination,
+            pathHash = pathHash,
+            identity = identity,
+        ),
+    )
+
+    fun allowRequesterAsync(
+        destination: DestinationHash,
+        pathHash: RequestPathHash,
+        identity: IdentityHash,
+    ): CompletionStage<CommandSettlement> = javaFuture {
+        allowRequester(destination, pathHash, identity)
+    }
+
     fun snapshot(timeoutMillis: Long = 5_000): HostSnapshot = withPointer { host ->
         require(timeoutMillis in 0..0xffff_ffffL) {
             "timeoutMillis must fit in 32 bits"
@@ -318,6 +584,15 @@ class Host(options: HostOptions) : AutoCloseable {
             upload.close()
             throw failure
         }
+    }
+
+    fun sendResourceAsync(
+        linkId: LinkId,
+        payload: Bytes,
+        packedMetadata: Bytes?,
+        compression: ResourceCompression,
+    ): CompletionStage<CommandSettlement> = javaFuture {
+        sendResource(linkId, payload, packedMetadata, compression)
     }
 
     fun claimApplicationEvents(): StreamClaim<EventFlow<ApplicationEvent>> =

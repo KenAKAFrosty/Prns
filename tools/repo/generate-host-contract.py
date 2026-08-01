@@ -42,6 +42,22 @@ JULIA_PATH = (
     / "prns-host/bindings/julia/src/HostContract.generated.jl"
 )
 VECTORS_PATH = ROOT / "prns-host/conformance/host-contract-v1.json"
+GO_HOST_PATH = ROOT / "prns-host/bindings/go/convenience.go"
+SWIFT_HOST_PATH = ROOT / "prns-host/bindings/swift/Sources/PersonalRns/Host.swift"
+KOTLIN_HOST_PATH = (
+    ROOT / "prns-host/bindings/jvm/src/main/kotlin/io/reticulum/prns/Host.kt"
+)
+KOTLIN_EVENTS_PATH = (
+    ROOT / "prns-host/bindings/jvm/src/main/kotlin/io/reticulum/prns/Events.kt"
+)
+KOTLIN_UPLOAD_PATH = (
+    ROOT / "prns-host/bindings/jvm/src/main/kotlin/io/reticulum/prns/ResourceUpload.kt"
+)
+KOTLIN_COMMAND_PATH = (
+    ROOT / "prns-host/bindings/jvm/src/main/kotlin/io/reticulum/prns/Command.kt"
+)
+JULIA_COMMAND_PATH = ROOT / "prns-host/bindings/julia/src/command.jl"
+JULIA_MODULE_PATH = ROOT / "prns-host/bindings/julia/src/PersonalRns.jl"
 
 
 def snake(name):
@@ -2053,6 +2069,74 @@ def write_or_check(path, content, check):
     temporary.replace(path)
 
 
+def require_functions(path, names, prefix=""):
+    content = path.read_text()
+    missing = [
+        name
+        for name in names
+        if re.search(rf"\b{re.escape(prefix + name)}\s*\(", content) is None
+    ]
+    if missing:
+        joined = ", ".join(missing)
+        raise ValueError(
+            f"host SDK high-level surface is stale: {path.relative_to(ROOT)}: {joined}"
+        )
+
+
+def verify_high_level_surfaces(schema):
+    union_name = schema["commandProjection"]["union"]
+    command = next(item for item in schema["unions"] if item["name"] == union_name)
+    cases = [case["name"] for case in command["cases"]]
+    kotlin_names = [lower_first(name) for name in cases]
+    swift_names = list(kotlin_names)
+    go_names = [name.replace("Tcp", "TCP").replace("Udp", "UDP") for name in cases]
+    julia_names = [snake(name) for name in cases]
+
+    require_functions(KOTLIN_HOST_PATH, kotlin_names, "suspend fun ")
+    kotlin_host = KOTLIN_HOST_PATH.read_text()
+    missing_async = [
+        name
+        for name in kotlin_names
+        if re.search(rf"\bfun\s+{re.escape(name)}Async\s*\(", kotlin_host) is None
+    ]
+    if missing_async:
+        joined = ", ".join(missing_async)
+        raise ValueError(f"JVM async host surface is stale: {joined}")
+
+    require_functions(SWIFT_HOST_PATH, swift_names, "public func ")
+    require_functions(GO_HOST_PATH, go_names, "Host) ")
+    require_functions(JULIA_COMMAND_PATH, julia_names)
+    julia_module = JULIA_MODULE_PATH.read_text()
+    missing_exports = [
+        name
+        for name in julia_names
+        if re.search(rf"^export\s+{re.escape(name)}$", julia_module, re.MULTILINE)
+        is None
+    ]
+    if missing_exports:
+        joined = ", ".join(missing_exports)
+        raise ValueError(f"Julia high-level exports are stale: {joined}")
+
+    jvm_sources = "\n".join(
+        path.read_text()
+        for path in (KOTLIN_HOST_PATH, KOTLIN_EVENTS_PATH, KOTLIN_UPLOAD_PATH)
+    )
+    for required in (
+        "executeAsync(",
+        "nextAsync(",
+        "writeAsync(",
+        "finishAsync(",
+    ):
+        if required not in jvm_sources:
+            raise ValueError(f"JVM async bridge is stale: missing {required}")
+    blocking_sources = "\n".join(
+        path.read_text() for path in (KOTLIN_COMMAND_PATH, KOTLIN_EVENTS_PATH)
+    )
+    for forbidden in ("awaitBlocking(", "nextBlocking("):
+        if forbidden in blocking_sources:
+            raise ValueError(f"JVM blocking bridge remains public: {forbidden}")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true")
@@ -2074,6 +2158,8 @@ def main():
     }
     for path, content in outputs.items():
         write_or_check(path, content, args.check)
+    if args.check:
+        verify_high_level_surfaces(schema)
 
 
 if __name__ == "__main__":

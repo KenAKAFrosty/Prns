@@ -796,6 +796,173 @@ function execute(host::Host, value::HostCommandAllowRequester)
     end
 end
 
+function execute_settled(host::Host, value::HostCommand)
+    command = execute(host, value)
+    try
+        wait(command)
+    finally
+        close(command)
+    end
+end
+
+function announce(
+    host::Host,
+    destination::DestinationHash;
+    interface::Union{Nothing,InterfaceId}=nothing,
+)
+    execute_settled(host, HostCommandAnnounce(destination, interface))
+end
+
+function send_single_packet(
+    host::Host,
+    destination::DestinationHash,
+    payload::AbstractVector{UInt8},
+)
+    execute_settled(
+        host,
+        HostCommandSendSinglePacket(destination, Vector{UInt8}(payload)),
+    )
+end
+
+close_link(host::Host, link_id::LinkId) =
+    execute_settled(host, HostCommandCloseLink(link_id))
+
+function attach_tcp_server(
+    host::Host,
+    bind::String;
+    bitrate::Bitrate=BitrateAuto(),
+)
+    execute_settled(host, HostCommandAttachTcpServer(bind, bitrate))
+end
+
+function attach_tcp_client(
+    host::Host,
+    target::String;
+    bitrate::Bitrate=BitrateAuto(),
+)
+    execute_settled(host, HostCommandAttachTcpClient(target, bitrate))
+end
+
+function attach_udp(
+    host::Host,
+    local_address::String,
+    peer::String;
+    bitrate::Bitrate=BitrateAuto(),
+)
+    execute_settled(
+        host,
+        HostCommandAttachUdp(local_address, peer, bitrate),
+    )
+end
+
+attach_interface(host::Host, config::InterfaceConfig) =
+    execute_settled(host, HostCommandAttachInterface(config))
+
+detach_interface(host::Host, interface::InterfaceId) =
+    execute_settled(host, HostCommandDetachInterface(interface))
+
+establish_link(host::Host, destination::DestinationHash) =
+    execute_settled(host, HostCommandEstablishLink(destination))
+
+request_path(host::Host, destination::DestinationHash) =
+    execute_settled(host, HostCommandRequestPath(destination))
+
+identify(host::Host, link_id::LinkId, identity::IdentityHash) =
+    execute_settled(host, HostCommandIdentify(link_id, identity))
+
+function send_link_packet(
+    host::Host,
+    link_id::LinkId,
+    payload::AbstractVector{UInt8},
+)
+    execute_settled(
+        host,
+        HostCommandSendLinkPacket(link_id, Vector{UInt8}(payload)),
+    )
+end
+
+function request(
+    host::Host,
+    link_id::LinkId,
+    path_hash::RequestPathHash,
+    payload::AbstractVector{UInt8};
+    timeout::ResponseTimeout=ResponseTimeoutLinkDefault(),
+)
+    execute_settled(
+        host,
+        HostCommandRequest(
+            link_id,
+            path_hash,
+            Vector{UInt8}(payload),
+            timeout,
+        ),
+    )
+end
+
+function respond(
+    host::Host,
+    link_id::LinkId,
+    request_id::RequestId,
+    request_rtt_millis::UInt64,
+    payload::AbstractVector{UInt8},
+)
+    execute_settled(
+        host,
+        HostCommandRespond(
+            link_id,
+            request_id,
+            request_rtt_millis,
+            Vector{UInt8}(payload),
+        ),
+    )
+end
+
+set_link_resource_strategy(
+    host::Host,
+    link_id::LinkId,
+    strategy::ResourceStrategy,
+) = execute_settled(
+    host,
+    HostCommandSetLinkResourceStrategy(link_id, strategy),
+)
+
+set_destination_resource_strategy(
+    host::Host,
+    destination::DestinationHash,
+    strategy::ResourceStrategy,
+) = execute_settled(
+    host,
+    HostCommandSetDestinationResourceStrategy(destination, strategy),
+)
+
+function send_channel_message(
+    host::Host,
+    link_id::LinkId,
+    message_type::UInt16,
+    payload::AbstractVector{UInt8},
+)
+    execute_settled(
+        host,
+        HostCommandSendChannelMessage(
+            link_id,
+            message_type,
+            Vector{UInt8}(payload),
+        ),
+    )
+end
+
+function allow_requester(
+    host::Host,
+    destination::DestinationHash,
+    path_hash::RequestPathHash,
+    identity::IdentityHash,
+)
+    execute_settled(
+        host,
+        HostCommandAllowRequester(destination, path_hash, identity),
+    )
+end
+
 function decode_settlement(value::NativeCommandResult)
     value.failure != 0 && return CommandFailed(
         decode_command_failure(

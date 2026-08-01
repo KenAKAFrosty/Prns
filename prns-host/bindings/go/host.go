@@ -174,7 +174,7 @@ func (host *Host) BeginResourceUpload(
 	return &ResourceUpload{native: native}, nil
 }
 
-func (host *Host) SendResource(
+func (host *Host) SendResourceStream(
 	ctx context.Context,
 	linkID LinkId,
 	declaredLength uint64,

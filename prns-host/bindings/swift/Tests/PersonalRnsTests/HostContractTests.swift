@@ -169,13 +169,9 @@ func nativeHostContract() async throws {
     } catch is CancellationError {
     }
 
-    let attach = try host.execute(
-        .attachInterface(
-            config: .tcpClient(target: "127.0.0.1:9", bitrate: .auto)
-        )
+    let attached = try await host.attachInterface(
+        config: .tcpClient(target: "127.0.0.1:9", bitrate: .auto)
     )
-    defer { attach.close() }
-    let attached = try await attach.value()
     guard case .succeeded(.interfaceAttached(let interface)) = attached else {
         Issue.record("attach command did not return an interface")
         return
@@ -193,9 +189,7 @@ func nativeHostContract() async throws {
         return
     }
 
-    let detach = try host.execute(.detachInterface(interface: interface))
-    defer { detach.close() }
-    let detached = try await detach.value()
+    let detached = try await host.detachInterface(interface: interface)
     guard case .succeeded(.interfaceDetached) = detached else {
         Issue.record("detach command did not settle successfully")
         return

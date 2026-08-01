@@ -84,6 +84,169 @@ public final class Host: @unchecked Sendable {
         }
     }
 
+    private func settle(_ command: HostCommand) async throws -> CommandSettlement {
+        let issued = try execute(command)
+        defer { issued.close() }
+        return try await issued.value()
+    }
+
+    public func announce(
+        destination: DestinationHash,
+        interface interfaceId: InterfaceId? = nil
+    ) async throws -> CommandSettlement {
+        try await settle(.announce(destination: destination, interface: interfaceId))
+    }
+
+    public func sendSinglePacket(
+        destination: DestinationHash,
+        payload: [UInt8]
+    ) async throws -> CommandSettlement {
+        try await settle(.sendSinglePacket(destination: destination, payload: payload))
+    }
+
+    public func closeLink(linkId: LinkId) async throws -> CommandSettlement {
+        try await settle(.closeLink(linkId: linkId))
+    }
+
+    public func attachTcpServer(
+        bind: String,
+        bitrate: Bitrate
+    ) async throws -> CommandSettlement {
+        try await settle(.attachTcpServer(bind: bind, bitrate: bitrate))
+    }
+
+    public func attachTcpClient(
+        target: String,
+        bitrate: Bitrate
+    ) async throws -> CommandSettlement {
+        try await settle(.attachTcpClient(target: target, bitrate: bitrate))
+    }
+
+    public func attachUdp(
+        local: String,
+        peer: String,
+        bitrate: Bitrate
+    ) async throws -> CommandSettlement {
+        try await settle(.attachUdp(local: local, peer: peer, bitrate: bitrate))
+    }
+
+    public func attachInterface(
+        config: InterfaceConfig
+    ) async throws -> CommandSettlement {
+        try await settle(.attachInterface(config: config))
+    }
+
+    public func detachInterface(
+        interface interfaceId: InterfaceId
+    ) async throws -> CommandSettlement {
+        try await settle(.detachInterface(interface: interfaceId))
+    }
+
+    public func establishLink(
+        destination: DestinationHash
+    ) async throws -> CommandSettlement {
+        try await settle(.establishLink(destination: destination))
+    }
+
+    public func requestPath(
+        destination: DestinationHash
+    ) async throws -> CommandSettlement {
+        try await settle(.requestPath(destination: destination))
+    }
+
+    public func identify(
+        linkId: LinkId,
+        identity: IdentityHash
+    ) async throws -> CommandSettlement {
+        try await settle(.identify(linkId: linkId, identity: identity))
+    }
+
+    public func sendLinkPacket(
+        linkId: LinkId,
+        payload: [UInt8]
+    ) async throws -> CommandSettlement {
+        try await settle(.sendLinkPacket(linkId: linkId, payload: payload))
+    }
+
+    public func request(
+        linkId: LinkId,
+        pathHash: RequestPathHash,
+        payload: [UInt8],
+        timeout: ResponseTimeout
+    ) async throws -> CommandSettlement {
+        try await settle(
+            .request(
+                linkId: linkId,
+                pathHash: pathHash,
+                payload: payload,
+                timeout: timeout
+            )
+        )
+    }
+
+    public func respond(
+        linkId: LinkId,
+        requestId: RequestId,
+        requestRttMillis: UInt64,
+        payload: [UInt8]
+    ) async throws -> CommandSettlement {
+        try await settle(
+            .respond(
+                linkId: linkId,
+                requestId: requestId,
+                requestRttMillis: requestRttMillis,
+                payload: payload
+            )
+        )
+    }
+
+    public func setLinkResourceStrategy(
+        linkId: LinkId,
+        strategy: ResourceStrategy
+    ) async throws -> CommandSettlement {
+        try await settle(.setLinkResourceStrategy(linkId: linkId, strategy: strategy))
+    }
+
+    public func setDestinationResourceStrategy(
+        destination: DestinationHash,
+        strategy: ResourceStrategy
+    ) async throws -> CommandSettlement {
+        try await settle(
+            .setDestinationResourceStrategy(
+                destination: destination,
+                strategy: strategy
+            )
+        )
+    }
+
+    public func sendChannelMessage(
+        linkId: LinkId,
+        messageType: UInt16,
+        payload: [UInt8]
+    ) async throws -> CommandSettlement {
+        try await settle(
+            .sendChannelMessage(
+                linkId: linkId,
+                messageType: messageType,
+                payload: payload
+            )
+        )
+    }
+
+    public func allowRequester(
+        destination: DestinationHash,
+        pathHash: RequestPathHash,
+        identity: IdentityHash
+    ) async throws -> CommandSettlement {
+        try await settle(
+            .allowRequester(
+                destination: destination,
+                pathHash: pathHash,
+                identity: identity
+            )
+        )
+    }
+
     public var backendInfo: BackendInfo {
         get throws {
             try withPointer { _ in

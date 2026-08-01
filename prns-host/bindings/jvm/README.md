@@ -8,9 +8,9 @@
 The JVM SDK is a thin, typed adapter over the versioned Personal RNS C host
 contract. Kotlin callers receive sealed command outcomes and cold
 single-consumer `Flow` event streams. Java callers use the same classes and
-`AutoCloseable` ownership with direct blocking bridges. Native readiness wakes
-Kotlin coroutines through a conflated channel without occupying
-`Dispatchers.IO`.
+`AutoCloseable` ownership with cancellable `CompletionStage` operations. Native
+readiness wakes Kotlin coroutines through a conflated channel without occupying
+a waiting worker thread.
 
 ```kotlin
 Host(
@@ -21,42 +21,34 @@ Host(
         requiredCapabilities = setOf(Capability.TCP_CLIENT),
     ),
 ).use { host ->
-    val command = host.execute(
-        HostCommandAttachTcpClient("127.0.0.1:4242", BitrateAuto),
-    )
-    command.use {
-        when (val settlement = command.await()) {
-            is CommandSucceeded -> when (val outcome = settlement.outcome) {
-                is CommandOutcomeInterfaceAttached -> println(outcome.`interface`)
-                else -> Unit
-            }
-            is CommandFailed -> handleFailure(settlement.failure)
+    when (val settlement = host.attachTcpClient("127.0.0.1:4242", BitrateAuto)) {
+        is CommandSucceeded -> when (val outcome = settlement.outcome) {
+            is CommandOutcomeInterfaceAttached -> println(outcome.`interface`)
+            else -> Unit
         }
+        is CommandFailed -> handleFailure(settlement.failure)
     }
 }
 ```
 
 ```java
-try (Host host = new Host(new HostOptions(
+Host host = new Host(new HostOptions(
         HostRole.ENDPOINT,
         IdentityConfigGenerateEphemeral.INSTANCE,
         java.util.Collections.emptyList(),
         java.util.Collections.emptySet(),
         Limits.Balanced
-))) {
-    try (Command command = host.execute(
-            new HostCommandAttachTcpClient("127.0.0.1:4242", BitrateAuto.INSTANCE)
-    )) {
-        CommandSettlement settlement = command.awaitBlocking();
-    }
-}
+));
+host.attachTcpClientAsync("127.0.0.1:4242", BitrateAuto.INSTANCE)
+    .whenComplete((settlement, failure) -> host.close());
 ```
 
-Cancellation interrupts the native wait immediately. Each application or
-diagnostic stream can be claimed once, and each claimed `EventFlow` can be
-either collected once as a Kotlin `Flow` or read through Java's
-`nextBlocking()`. Closing a host, command, event flow, or resource stream
-releases the corresponding native handle deterministically.
+Cancelling the `CompletableFuture` returned by `toCompletableFuture()` interrupts
+the native wait immediately. Each application or diagnostic stream can be
+claimed once, and each claimed `EventFlow` can either be collected once as a
+Kotlin `Flow` or consumed through Java's `nextAsync()`. Closing a host, command,
+event flow, or resource stream releases the corresponding native handle
+deterministically.
 
 Contract `safeUint` fields use JVM `long`; their schema bound keeps every value
 non-negative and exactly representable for JavaScript interop. Exact contract
@@ -83,6 +75,9 @@ implementation("net.java.dev.jna:jna:5.19.1@aar")
 src/main/jniLibs/arm64-v8a/libprns_host.so
 src/main/jniLibs/armeabi-v7a/libprns_host.so
 ```
+
+`CompletionStage` requires Android API 24 or core library desugaring on older
+Android versions.
 
 The Gradle wrapper is pinned to 9.6.1 with distribution checksum verification.
 `./gradlew test` compiles with warnings as errors and runs the adapter against a

@@ -43,26 +43,17 @@ try
     @test resource isa CommandFailed
     @test resource.failure isa PersonalRns.CommandFailureUnknownLink
 
-    attach = execute(
+    attached = attach_interface(
         host,
-        HostCommandAttachInterface(
-            InterfaceConfigTcpClient("127.0.0.1:9", BitrateAuto()),
-        ),
+        InterfaceConfigTcpClient("127.0.0.1:9", BitrateAuto()),
     )
-    attached = wait(attach)
-    close(attach)
     @test attached isa CommandSucceeded
     @test attached.outcome isa PersonalRns.CommandOutcomeInterfaceAttached
     attached_snapshot = snapshot(host)
     @test attached_snapshot.runtime.interface_count == 1
     @test attached_snapshot.interfaces[1].interface_id == attached.outcome.interface
 
-    detach = execute(
-        host,
-        HostCommandDetachInterface(attached.outcome.interface),
-    )
-    detached = wait(detach)
-    close(detach)
+    detached = detach_interface(host, attached.outcome.interface)
     @test detached isa CommandSucceeded
     @test detached.outcome isa PersonalRns.CommandOutcomeInterfaceDetached
 finally

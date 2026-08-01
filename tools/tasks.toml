@@ -217,7 +217,7 @@ requires = ["python3"]
 
 [[task]]
 id = "repo.host-contract.check"
-summary = "Verify host-contract language artifacts exactly match the canonical schema."
+summary = "Verify generated host-contract artifacts and required high-level SDK projections match the canonical schema."
 domain = "repo"
 effect = "read-only"
 platforms = ["any"]

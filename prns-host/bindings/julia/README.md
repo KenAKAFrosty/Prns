@@ -24,11 +24,10 @@ claim isa StreamAlreadyClaimed && error("application events already have a consu
     handle(event)
 end
 
-command = execute(
+settlement = attach_tcp_client(
     host,
-    HostCommandAttachTcpClient("127.0.0.1:4242", BitrateAuto()),
+    "127.0.0.1:4242",
 )
-settlement = wait(command)
 ```
 
 Release automation binds every platform artifact to its immutable archive URL,
