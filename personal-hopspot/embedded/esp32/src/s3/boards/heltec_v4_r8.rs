@@ -114,7 +114,7 @@ impl Esp32S3Board for HeltecV4R8Board {
         p: esp_hal::peripherals::Peripherals,
     ) -> S3BoardHardware<Self::Display, Self::Battery> {
         // Octal 8MB @ 40MHz on a private bump (not global esp_alloc). Vext is GPIO40 — GPIO36 is
-        // FSPICLK/SPIIO7 on the R8 SiP; driving it as GPIO kills PSRAM after early probes.
+        // FSPICLK/SPIIO7 on the R8 SiP; driving it as GPIO disrupts PSRAM access after early probes.
         let (sw_int1, timebase, rtc) = s3::boot_common!(
             p,
             Self::BOOT_BANNER,
@@ -190,7 +190,6 @@ impl Esp32S3Board for HeltecV4R8Board {
             let lora_is_kct8103l = lora_csd.is_high();
             lora_csd.set_output_enable(true);
             lora_csd.set_high();
-            // R8 breaks PA_CTX out on GPIO5; KCT8103L boards use that path. GC1109 still uses GPIO46.
             let _lora_fem_switch = if lora_is_kct8103l {
                 Output::new(p.GPIO5, Level::High, OutputConfig::default())
             } else {

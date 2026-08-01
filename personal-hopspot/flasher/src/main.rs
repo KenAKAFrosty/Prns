@@ -690,7 +690,7 @@ fn print_board(board: &BoardCatalogEntry) {
     ui::print_key_value("interfaces", &board.interfaces.join(", "));
     if board.slug == "heltec-v4" || board.slug == "heltec-v4-r8" {
         ui::print_note(
-            "Heltec V4 S3R2 and S3R8 share the same chip and 16MB flash; pick the matching firmware (wrong pinout can kill Octal PSRAM).",
+            "Heltec V4 S3R2 and S3R8 share the same chip and 16MB flash; pick the matching firmware because the S3R2 pinout prevents Octal PSRAM from operating on the S3R8.",
         );
     }
 }

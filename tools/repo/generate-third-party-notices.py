@@ -48,6 +48,11 @@ GRAPHS = (
         "xtensa-esp32s3-none-elf",
     ),
     (
+        "ESP32-S3 Heltec R8",
+        "personal-hopspot/embedded/esp32/boards/heltec-v4-r8/Cargo.toml",
+        "xtensa-esp32s3-none-elf",
+    ),
+    (
         "ESP32-S3 T-Beam",
         "personal-hopspot/embedded/esp32/boards/t-beam-supreme/Cargo.toml",
         "xtensa-esp32s3-none-elf",
