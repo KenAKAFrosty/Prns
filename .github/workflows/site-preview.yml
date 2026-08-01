@@ -86,6 +86,12 @@ jobs:
           cp "$PRNS_SOURCE_ARCHIVE.sha256" "$dist/source.zip.sha256"
           cp docs/website/target/hosted-assets/prns-flash.js "$dist/assets/flasher/prns-flash.js"
           cp THIRD_PARTY_NOTICES.md "$dist/THIRD_PARTY_NOTICES.md"
+          export PRNS_SOURCE_VERSION="$(cat VERSION)"
+          export PRNS_SOURCE_COMMIT="$GITHUB_SHA"
+          PRNS_SOURCE_SIZE="$(wc -c < "$PRNS_SOURCE_ARCHIVE" | tr -d '[:space:]')"
+          export PRNS_SOURCE_SIZE
+          PRNS_SOURCE_SHA256="$(cut -d ' ' -f 1 "$PRNS_SOURCE_ARCHIVE.sha256")"
+          export PRNS_SOURCE_SHA256
           npm --prefix prns-wasm ci --ignore-scripts --no-audit --no-fund
           ./tools/prns build wasm-docs stage -- \
             "$GITHUB_WORKSPACE/$dist/browser-node-playground-console"
