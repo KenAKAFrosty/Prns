@@ -53,10 +53,10 @@ either collected once as a Kotlin `Flow` or read through Java's
 `nextBlocking()`. Closing a host, command, event flow, or resource stream
 releases the corresponding native handle deterministically.
 
-Contract `u64` fields use JVM `long` so constructors and getters remain ordinary
-Java methods. The full 64-bit ABI representation is preserved; Java callers
-that operate near the high bit can use `Long.compareUnsigned` and
-`Long.toUnsignedString`.
+Contract `safeUint` fields use JVM `long`; their schema bound keeps every value
+non-negative and exactly representable for JavaScript interop. Exact contract
+`u64` fields use Kotlin `ULong`; the JNA boundary preserves all 64 bits while
+the generated Kotlin surface makes unsigned intent explicit.
 
 Desktop applications provide `libprns_host` through the dynamic loader, the
 `PRNS_HOST_LIBRARY` environment variable, or the `personal.rns.library` system
@@ -68,7 +68,7 @@ exclude the desktop JNA runtime selected by the Maven POM, and place the Persona
 RNS libraries from the Android release artifact in the normal ABI directories:
 
 ```kotlin
-implementation("io.reticulum:personal-rns:0.3.1") {
+implementation("io.reticulum:personal-rns:0.3.2") {
     exclude(group = "net.java.dev.jna", module = "jna")
 }
 implementation("net.java.dev.jna:jna:5.19.1@aar")

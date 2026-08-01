@@ -2,8 +2,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::{
-    DestinationHash, IdentityHash, InterfaceId, LinkId, RequestId, RequestPathHash,
-    ResourceAvailable, ResourceHash,
+    DestinationHash, IdentityHash, InterfaceId, LinkClosedReason, LinkId, PersistenceFlushCause,
+    PersistenceFlushTarget, RequestId, RequestPathHash, ResourceAvailable, ResourceHash,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -100,13 +100,6 @@ impl ApplicationEvent {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LinkClosedReason {
-    Timeout,
-    PeerClosed,
-    MalformedRtt,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DiagnosticEvent {
     AnnounceHeard {
@@ -175,6 +168,22 @@ pub enum DiagnosticEvent {
     BackendDiagnostic {
         kind: String,
         detail: String,
+    },
+    PersistenceRestored {
+        routes: u64,
+        destination_identities: u64,
+        tunnels: u64,
+        ratchets: u64,
+        refused: u64,
+        dropped: u64,
+    },
+    PersistenceFlushed {
+        cause: PersistenceFlushCause,
+        target: PersistenceFlushTarget,
+    },
+    PersistenceFlushFailed {
+        cause: PersistenceFlushCause,
+        target: PersistenceFlushTarget,
     },
 }
 

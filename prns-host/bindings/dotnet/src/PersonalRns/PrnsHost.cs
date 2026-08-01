@@ -50,7 +50,8 @@ public sealed record HostOptions(
     HostRole Role,
     ImmutableArray<DestinationConfig> Destinations,
     ImmutableArray<Capability> RequiredCapabilities,
-    HostLimits Limits
+    HostLimits Limits,
+    PersistenceConfig? Persistence = null
 )
 {
     public static HostOptions EphemeralEndpoint =>
@@ -59,7 +60,18 @@ public sealed record HostOptions(
             HostRole.Endpoint,
             [],
             [],
-            HostLimits.Balanced
+            HostLimits.Balanced,
+            new PersistenceConfig.Ephemeral()
+        );
+
+    public static HostOptions PersistentEndpoint(string root) =>
+        new(
+            new IdentityConfig.LoadOrCreate(Path.Combine(root, "identity")),
+            HostRole.Endpoint,
+            [],
+            [],
+            HostLimits.Balanced,
+            new PersistenceConfig.Directory(Path.Combine(root, "state"))
         );
 }
 
@@ -165,6 +177,7 @@ public sealed class PrnsHost : IAsyncDisposable
             {
                 StructSize = (nuint)Marshal.SizeOf<Native.HostOptions>(),
                 RequiredAbi = HostContract.Abi,
+                RequiredSchemaVersion = HostContract.SchemaVersion,
                 RequiredProductVersion = version,
                 Limits = nativeLimits,
                 Role = options.Role,
@@ -173,6 +186,7 @@ public sealed class PrnsHost : IAsyncDisposable
                 DestinationCount = (nuint)destinations.Length,
                 RequiredCapabilities = arena.Array<Capability>(requiredCapabilities.AsSpan()),
                 RequiredCapabilityCount = (nuint)requiredCapabilities.Length,
+                Persistence = MarshalPersistence(options.Persistence, arena),
             };
             var status = Native.prns_host_create(in nativeOptions, out var handle);
             if (status == Status.Ok)
@@ -229,6 +243,29 @@ public sealed class PrnsHost : IAsyncDisposable
                     StructSize = (nuint)Marshal.SizeOf<Native.IdentityConfig>(),
                     Kind = IdentityConfigKind.LoadOrCreate,
                     Path = arena.String(loadOrCreate.Path),
+                }
+        );
+    }
+
+    private static Native.PersistenceConfig MarshalPersistence(
+        PersistenceConfig? persistence,
+        NativeArena arena
+    )
+    {
+        persistence ??= new PersistenceConfig.Ephemeral();
+        return persistence.Match(
+            _ =>
+                new Native.PersistenceConfig
+                {
+                    StructSize = (nuint)Marshal.SizeOf<Native.PersistenceConfig>(),
+                    Kind = PersistenceConfigKind.Ephemeral,
+                },
+            directory =>
+                new Native.PersistenceConfig
+                {
+                    StructSize = (nuint)Marshal.SizeOf<Native.PersistenceConfig>(),
+                    Kind = PersistenceConfigKind.Directory,
+                    Path = arena.String(directory.Path),
                 }
         );
     }
@@ -398,6 +435,43 @@ public sealed class PrnsHost : IAsyncDisposable
         }
     }
 
+    public BackendInfo BackendInfo
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(_disposed != 0, this);
+            var value = new Native.BackendInfo
+            {
+                StructSize = (nuint)Marshal.SizeOf<Native.BackendInfo>(),
+            };
+            PrnsException.ThrowIfError(Native.prns_backend_info(ref value));
+            return InspectionMarshaller.Decode(value);
+        }
+    }
+
+    public HostSnapshot CaptureSnapshot(uint timeoutMillis = 5_000)
+    {
+        ObjectDisposedException.ThrowIf(_disposed != 0, this);
+        PrnsException.ThrowIfError(
+            Native.prns_host_snapshot(_handle, timeoutMillis, out var inspection)
+        );
+        try
+        {
+            var value = new Native.HostSnapshot
+            {
+                StructSize = (nuint)Marshal.SizeOf<Native.HostSnapshot>(),
+            };
+            PrnsException.ThrowIfError(
+                Native.prns_host_snapshot_read(inspection, ref value)
+            );
+            return InspectionMarshaller.Decode(value);
+        }
+        finally
+        {
+            Native.prns_host_snapshot_release(inspection);
+        }
+    }
+
     public async ValueTask<CommandSettlement> ExecuteAsync(
         HostCommand command,
         CancellationToken cancellationToken = default
@@ -426,9 +500,19 @@ public sealed class PrnsHost : IAsyncDisposable
                 linkStrategy => Submit(linkStrategy, arena),
                 destinationStrategy => Submit(destinationStrategy, arena),
                 channel => Submit(channel, arena),
-                allow => Submit(allow, arena)
+                allow => Submit(allow, arena),
+                attachInterface => Submit(attachInterface, arena)
             );
         }
+        return await AwaitNativeCommandAsync(nativeCommand, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    internal async ValueTask<CommandSettlement> AwaitNativeCommandAsync(
+        CommandHandle nativeCommand,
+        CancellationToken cancellationToken
+    )
+    {
         using (nativeCommand)
         using (var readiness = NativeReadiness.ForCommand(nativeCommand))
         {
@@ -485,6 +569,11 @@ public sealed class PrnsHost : IAsyncDisposable
         CancellationToken cancellationToken = default
     ) => ExecuteAsync(new HostCommand.AttachUdp(local, peer, bitrate), cancellationToken);
 
+    public ValueTask<CommandSettlement> AttachInterfaceAsync(
+        InterfaceConfig config,
+        CancellationToken cancellationToken = default
+    ) => ExecuteAsync(new HostCommand.AttachInterface(config), cancellationToken);
+
     public ValueTask<CommandSettlement> DetachInterfaceAsync(
         InterfaceId interfaceId,
         CancellationToken cancellationToken = default
@@ -532,17 +621,71 @@ public sealed class PrnsHost : IAsyncDisposable
             cancellationToken
         );
 
-    public ValueTask<CommandSettlement> SendResourceAsync(
+    public async ValueTask<CommandSettlement> SendResourceAsync(
         LinkId linkId,
         ReadOnlyMemory<byte> payload,
         ReadOnlyMemory<byte>? packedMetadata,
         ResourceCompression compression,
         CancellationToken cancellationToken = default
-    ) =>
-        ExecuteAsync(
-            new HostCommand.SendResource(linkId, payload, packedMetadata, compression),
-            cancellationToken
+    )
+    {
+        await using var upload = BeginResourceUpload(
+            linkId,
+            (ulong)payload.Length,
+            packedMetadata,
+            compression
         );
+        try
+        {
+            await upload.WriteAsync(payload, cancellationToken).ConfigureAwait(false);
+            return await upload.FinishAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            upload.Abort();
+            throw;
+        }
+    }
+
+    public unsafe ResourceUpload BeginResourceUpload(
+        LinkId linkId,
+        ulong declaredLength,
+        ReadOnlyMemory<byte>? packedMetadata,
+        ResourceCompression compression
+    )
+    {
+        ObjectDisposedException.ThrowIf(_disposed != 0, this);
+        using var arena = new NativeArena();
+        var nativeLink = arena.Bytes(linkId.Span);
+        var compressionKind = MarshalResourceCompression(compression);
+        Status status;
+        nint upload;
+        if (packedMetadata is { } metadata)
+        {
+            var nativeMetadata = arena.Bytes(metadata.Span);
+            status = Native.prns_host_begin_resource_upload(
+                _handle,
+                nativeLink,
+                declaredLength,
+                &nativeMetadata,
+                compressionKind,
+                out upload
+            );
+        }
+        else
+        {
+            status = Native.prns_host_begin_resource_upload(
+                _handle,
+                nativeLink,
+                declaredLength,
+                null,
+                compressionKind,
+                out upload
+            );
+        }
+        PrnsException.ThrowIfError(status);
+        return new ResourceUpload(this, upload);
+    }
 
     public ValueTask<CommandSettlement> SetLinkResourceStrategyAsync(
         LinkId linkId,
@@ -664,6 +807,17 @@ public sealed class PrnsHost : IAsyncDisposable
             arena.String(command.Peer),
             bitrate.Kind,
             bitrate.Value,
+            out var nativeCommand
+        );
+        return Submitted(status, nativeCommand);
+    }
+
+    private CommandHandle Submit(HostCommand.AttachInterface command, NativeArena arena)
+    {
+        var config = InterfaceConfigMarshaller.Marshal(command.Config, arena);
+        var status = Native.prns_host_attach_interface(
+            _handle,
+            in config,
             out var nativeCommand
         );
         return Submitted(status, nativeCommand);
@@ -1003,6 +1157,18 @@ public sealed class PrnsHost : IAsyncDisposable
             CommandFailureKind.ChannelUntrackable => new CommandFailure.ChannelUntrackable(),
             CommandFailureKind.InvalidChannelMessageType =>
                 new CommandFailure.InvalidChannelMessageType(),
+            CommandFailureKind.InvalidConfiguration =>
+                new CommandFailure.InvalidConfiguration(detail),
+            CommandFailureKind.ResourceUploadCancelled =>
+                new CommandFailure.ResourceUploadCancelled(),
+            CommandFailureKind.ResourceEarlyEof => new CommandFailure.ResourceEarlyEof(),
+            CommandFailureKind.ResourceLengthOverrun =>
+                new CommandFailure.ResourceLengthOverrun(),
+            CommandFailureKind.PermissionDenied => new CommandFailure.PermissionDenied(detail),
+            CommandFailureKind.DeviceUnavailable =>
+                new CommandFailure.DeviceUnavailable(detail),
+            CommandFailureKind.ConnectFailed => new CommandFailure.ConnectFailed(detail),
+            CommandFailureKind.BackendFailed => new CommandFailure.BackendFailed(detail),
             _ => throw new InvalidOperationException("Unknown native command failure."),
         };
     }

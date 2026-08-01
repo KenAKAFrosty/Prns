@@ -1,8 +1,7 @@
 use dioxus::prelude::*;
 use prns_flash_manifest::{
-    board_catalog, provisioning_image, sha256_hex, verify_minisign, ProvisioningAction,
-    ReleaseChannel, ReleaseTarget, TcpClientEndpoint, TcpClientHost, ValidatedChannelDescriptor,
-    ValidatedFlashManifest, WifiCredentials,
+    provisioning_image, sha256_hex, verify_minisign, ProvisioningAction, ReleaseChannel,
+    ReleaseTarget, TcpClientEndpoint, TcpClientHost, ValidatedChannelDescriptor, WifiCredentials,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -240,21 +239,30 @@ async fn acquire_release(
         trust::PUBLIC_KEY,
     )
     .map_err(|error| error.to_string())?;
-    let catalog = board_catalog().map_err(|error| error.to_string())?;
+    #[cfg(feature = "browser-test-fixture")]
+    let manifest = super::validate_release_0_2_6_fixture(documents.document.as_bytes())
+        .map_err(|error| error.to_string())?;
     #[cfg(feature = "local-dev-flasher")]
     let manifest = {
+        let catalog = prns_flash_manifest::board_catalog().map_err(|error| error.to_string())?;
         let policy = crate::local_development::manifest_target_set_policy(&catalog)
             .map_err(|error| error.to_string())?;
-        ValidatedFlashManifest::from_json_with_target_set(
+        prns_flash_manifest::ValidatedFlashManifest::from_json_with_target_set(
             documents.document.as_bytes(),
             &catalog,
             &policy,
         )
         .map_err(|error| error.to_string())?
     };
-    #[cfg(not(feature = "local-dev-flasher"))]
-    let manifest = ValidatedFlashManifest::from_json(documents.document.as_bytes(), &catalog)
-        .map_err(|error| error.to_string())?;
+    #[cfg(not(any(feature = "browser-test-fixture", feature = "local-dev-flasher")))]
+    let manifest = {
+        let catalog = prns_flash_manifest::board_catalog().map_err(|error| error.to_string())?;
+        prns_flash_manifest::ValidatedFlashManifest::from_json(
+            documents.document.as_bytes(),
+            &catalog,
+        )
+        .map_err(|error| error.to_string())?
+    };
     let expected_key_id = trust::key_id()
         .ok_or_else(|| "The pinned release key has no canonical key ID.".to_string())?;
     if !manifest
@@ -468,7 +476,6 @@ mod tests {
         FETCH_SIGNED_DOCUMENTS_SCRIPT,
     };
     use crate::pages::flash::model::{InstallMode, WifiAction};
-    use prns_flash_manifest::{board_catalog, ValidatedFlashManifest};
 
     #[test]
     fn manifest_url_must_be_exact_and_normalized() {
@@ -490,11 +497,7 @@ mod tests {
     #[test]
     fn unsupported_provisioning_is_rejected_instead_of_discarded(
     ) -> Result<(), Box<dyn std::error::Error>> {
-        const MANIFEST: &[u8] = include_bytes!(
-            "../../../web-flasher/browser/fixtures/signed-candidate/releases/0.2.6/flash-manifest.json"
-        );
-        let catalog = board_catalog()?;
-        let manifest = ValidatedFlashManifest::from_json(MANIFEST, &catalog)?;
+        let manifest = super::super::release_0_2_6_fixture()?;
         let target = manifest
             .targets()
             .iter()

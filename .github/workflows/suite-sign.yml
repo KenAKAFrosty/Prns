@@ -54,14 +54,15 @@ jobs:
         env:
           REF_PROTECTED: ${{ github.ref_protected }}
         run: |
-          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_REF" = "refs/heads/trunk"
           test "$REF_PROTECTED" = "true"
           test "$GITHUB_SHA" = "$GITHUB_WORKFLOW_SHA"
           [[ "$FLASHER_RUN_ID" =~ ^[1-9][0-9]*$ ]]
           [[ "$DAEMON_RUN_ID" =~ ^[1-9][0-9]*$ ]]
           [[ "$IMAGE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
           version="$(cat VERSION)"
-          test "$version" = "0.3.1"
+          manifest_version="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' prnsd/Cargo.toml | head -n 1)"
+          test "$manifest_version" = "$version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "source_commit=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
       - name: Verify all three producer workflow runs
@@ -295,10 +296,11 @@ jobs:
             --assets target/assets
       - name: Build daemon and flasher provenance subjects
         run: |
+          version="$(cat VERSION)"
           : > target/custody/native-subjects.sha256
           for path in \
-            target/assets/prnsd-0.3.1-* \
-            target/assets/prns-flasher-candidate-v0.3.1-signed.tar.gz
+            target/assets/prnsd-${version}-* \
+            target/assets/prns-flasher-candidate-v${version}-signed.tar.gz
           do
             case "$path" in
               *.tar.gz|*.zip)
@@ -327,8 +329,9 @@ jobs:
           IMAGE_ATTESTATION: ${{ steps.image_attestation.outputs.bundle-path }}
           NATIVE_ATTESTATION: ${{ steps.native_attestation.outputs.bundle-path }}
         run: |
-          cp "$NATIVE_ATTESTATION" target/assets/prnsd-native-attestation-v0.3.1.json
-          cp "$IMAGE_ATTESTATION" target/assets/prnsd-image-attestation-v0.3.1.json
+          version="$(cat VERSION)"
+          cp "$NATIVE_ATTESTATION" "target/assets/prnsd-native-attestation-v${version}.json"
+          cp "$IMAGE_ATTESTATION" "target/assets/prnsd-image-attestation-v${version}.json"
           rm target/custody/native-subjects.sha256
       - name: Build and sign exact suite custody
         env:
@@ -463,7 +466,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_REF" = "refs/heads/trunk"
           test "$GITHUB_SHA" = "$SOURCE_COMMIT"
           test "$GITHUB_WORKFLOW_SHA" = "$SOURCE_COMMIT"
           test "$(cat VERSION)" = "$RELEASE_VERSION"

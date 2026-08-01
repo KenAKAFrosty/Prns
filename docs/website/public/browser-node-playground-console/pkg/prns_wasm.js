@@ -155,6 +155,17 @@ export class PrnsRuntime {
     }
     /**
      * @param {any} options
+     * @returns {any}
+     */
+    persistedState(options) {
+        const ret = wasm.prnsruntime_persistedState(this.__wbg_ptr, options);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
+     * @param {any} options
      * @returns {Uint8Array}
      */
     registerInterface(options) {
@@ -246,6 +257,17 @@ export class PrnsRuntime {
             throw takeFromExternrefTable0(ret[1]);
         }
         return BigInt.asUintN(64, ret[0]);
+    }
+    /**
+     * @param {any} options
+     * @returns {any}
+     */
+    restorePersistedState(options) {
+        const ret = wasm.prnsruntime_restorePersistedState(this.__wbg_ptr, options);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
      * @param {any} options
@@ -459,6 +481,14 @@ export function bluetoothServiceUuid() {
 }
 
 /**
+ * @returns {number}
+ */
+export function browserPersistenceVersion() {
+    const ret = wasm.browserPersistenceVersion();
+    return ret >>> 0;
+}
+
+/**
  * @param {any} options
  * @returns {Uint8Array | undefined}
  */
@@ -488,6 +518,14 @@ export function destinationHashLength() {
  */
 export function hostContractAbi() {
     const ret = wasm.hostContractAbi();
+    return ret >>> 0;
+}
+
+/**
+ * @returns {number}
+ */
+export function hostSchemaVersion() {
+    const ret = wasm.hostSchemaVersion();
     return ret >>> 0;
 }
 
@@ -737,6 +775,11 @@ function __wbg_get_imports() {
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
             // Cast intrinsic for `Ref(String) -> Externref`.
             const ret = getStringFromWasm0(arg0, arg1);
+            return ret;
+        },
+        __wbindgen_cast_0000000000000003: function(arg0) {
+            // Cast intrinsic for `U64 -> Externref`.
+            const ret = BigInt.asUintN(64, arg0);
             return ret;
         },
         __wbindgen_init_externref_table: function() {

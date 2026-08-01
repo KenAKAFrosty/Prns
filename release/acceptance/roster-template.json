@@ -28,6 +28,27 @@
       "recovery_instructions_reviewed": true
     },
     {
+      "board": "heltec-v4-r8",
+      "surface": "web",
+      "os": "linux",
+      "architecture": "x86_64",
+      "browser": {"name": "chrome", "channel": "stable"},
+      "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "heltec-v4-r8",
+      "surface": "cli",
+      "os": "linux",
+      "architecture": "x86_64",
+      "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
       "board": "t-beam-supreme",
       "surface": "web",
       "os": "macos",

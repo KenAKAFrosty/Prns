@@ -3,7 +3,7 @@ import Foundation
 public enum HostContract {
     public static let abi: UInt32 = 1
     public static let schemaVersion: UInt32 = 1
-    public static let productVersion = "0.3.1"
+    public static let productVersion = "0.3.2"
     public static let destinationHashLength = 16
     public static let identityHashLength = 16
     public static let interfaceIdLength = 8
@@ -13,6 +13,7 @@ public enum HostContract {
     public static let requestPathHashLength = 16
     public static let resourceHashLength = 32
     public static let identitySecretLength = 64
+    public static let safeUintMax: UInt64 = 9007199254740991
     public static let balancedPendingCommands = 256
     public static let balancedApplicationEvents = 1024
     public static let balancedRetainedEventBytes = 8388608
@@ -33,6 +34,9 @@ public enum Status: UInt32, Sendable {
     case backendFailed = 10
     case panic = 11
     case interrupted = 12
+    case unsupported = 13
+    case permissionDenied = 14
+    case unavailable = 15
 }
 
 public enum BackendKind: UInt32, Sendable {
@@ -56,6 +60,70 @@ public enum Capability: UInt32, Sendable {
     case weave = 12
 }
 
+public enum InterfaceKind: UInt32, Sendable {
+    case autoLan = 1
+    case tcpClient = 2
+    case tcpServer = 3
+    case udp = 4
+    case serial = 5
+    case kiss = 6
+    case ax25Kiss = 7
+    case rNode = 8
+    case multiRNode = 9
+    case pipe = 10
+    case backboneClient = 11
+    case backboneServer = 12
+    case i2p = 13
+    case weave = 14
+    case automaticUsb = 15
+    case automaticBluetoothLe = 16
+    case webSocketClient = 17
+    case webSocketServer = 18
+    case browserRendezvous = 19
+}
+
+public enum InterfaceHealth: UInt32, Sendable {
+    case initializing = 1
+    case connected = 2
+    case degraded = 3
+    case reconnecting = 4
+    case failed = 5
+    case disconnected = 6
+    case disabled = 7
+    case unknown = 8
+}
+
+public enum DiscoveryScope: UInt32, Sendable {
+    case link = 1
+    case admin = 2
+    case site = 3
+    case organization = 4
+    case global = 5
+}
+
+public enum MulticastAddressType: UInt32, Sendable {
+    case temporary = 1
+    case permanent = 2
+}
+
+public enum SerialDataBits: UInt32, Sendable {
+    case five = 5
+    case six = 6
+    case seven = 7
+    case eight = 8
+}
+
+public enum SerialParity: UInt32, Sendable {
+    case none = 1
+    case even = 2
+    case odd = 3
+}
+
+public enum SerialStopBits: UInt32, Sendable {
+    case one = 1
+    case two = 2
+}
+
 public enum HostRole: UInt32, Sendable {
     case endpoint = 1
     case transport = 2
@@ -65,6 +133,11 @@ public enum IdentityConfigKind: UInt32, Sendable {
     case existing = 1
     case generateEphemeral = 2
     case loadOrCreate = 3
+}
+
+public enum PersistenceConfigKind: UInt32, Sendable {
+    case ephemeral = 1
+    case directory = 2
 }
 
 public enum DestinationConfigKind: UInt32, Sendable {
@@ -152,6 +225,14 @@ public enum CommandFailureKind: UInt32, Sendable {
     case channelWindowFull = 30
     case channelUntrackable = 31
     case invalidChannelMessageType = 32
+    case invalidConfiguration = 33
+    case resourceUploadCancelled = 34
+    case resourceEarlyEof = 35
+    case resourceLengthOverrun = 36
+    case permissionDenied = 37
+    case deviceUnavailable = 38
+    case connectFailed = 39
+    case backendFailed = 40
 }
 
 public enum DeliveryEvidenceKind: UInt32, Sendable {
@@ -208,6 +289,22 @@ public enum DiagnosticEventKind: UInt32, Sendable {
     case routeDropped = 214
     case backendDiagnostic = 215
     case diagnosticsDropped = 216
+    case persistenceRestored = 217
+    case persistenceFlushed = 218
+    case persistenceFlushFailed = 219
+}
+
+public enum PersistenceFlushCause: UInt32, Sendable {
+    case startup = 1
+    case interval = 2
+    case routeChange = 3
+    case ratchetRotation = 4
+    case shutdown = 5
+}
+
+public enum PersistenceFlushTarget: UInt32, Sendable {
+    case routingState = 1
+    case ratchets = 2
 }
 
 public enum EventField: UInt32, Sendable {
@@ -242,6 +339,14 @@ public enum EventField: UInt32, Sendable {
     case droppedCount = 29
     case hops = 30
     case stream = 31
+    case routes = 32
+    case destinationIdentities = 33
+    case tunnels = 34
+    case ratchets = 35
+    case refused = 36
+    case dropped = 37
+    case persistenceCause = 38
+    case persistenceTarget = 39
 }
 
 public struct DestinationHash: Hashable, Sendable {
@@ -383,6 +488,188 @@ public struct RequestHandlerConfig: Hashable, Sendable {
     }
 }
 
+public struct SerialLineConfig: Hashable, Sendable {
+    public let baud: UInt32
+    public let dataBits: SerialDataBits
+    public let parity: SerialParity
+    public let stopBits: SerialStopBits
+
+    public init(baud: UInt32, dataBits: SerialDataBits, parity: SerialParity, stopBits: SerialStopBits) {
+        self.baud = baud
+        self.dataBits = dataBits
+        self.parity = parity
+        self.stopBits = stopBits
+    }
+}
+
+public struct RNodeRadioConfig: Hashable, Sendable {
+    public let frequencyHz: UInt64
+    public let bandwidthHz: UInt32
+    public let txPowerDbm: Int16
+    public let spreadingFactor: UInt8
+    public let codingRate: UInt8
+
+    public init(frequencyHz: UInt64, bandwidthHz: UInt32, txPowerDbm: Int16, spreadingFactor: UInt8, codingRate: UInt8) {
+        self.frequencyHz = frequencyHz
+        self.bandwidthHz = bandwidthHz
+        self.txPowerDbm = txPowerDbm
+        self.spreadingFactor = spreadingFactor
+        self.codingRate = codingRate
+    }
+}
+
+public struct MultiRNodeMemberConfig: Hashable, Sendable {
+    public let name: String
+    public let virtualPort: UInt8
+    public let radio: RNodeRadioConfig
+    public let flowControl: Bool
+    public let outgoing: Bool
+
+    public init(name: String, virtualPort: UInt8, radio: RNodeRadioConfig, flowControl: Bool, outgoing: Bool) {
+        self.name = name
+        self.virtualPort = virtualPort
+        self.radio = radio
+        self.flowControl = flowControl
+        self.outgoing = outgoing
+    }
+}
+
+public struct BackendInfo: Hashable, Sendable {
+    public let backend: BackendKind
+    public let capabilities: [Capability]
+    public let interfaceKinds: [InterfaceKind]
+
+    public init(backend: BackendKind, capabilities: [Capability], interfaceKinds: [InterfaceKind]) {
+        self.backend = backend
+        self.capabilities = capabilities
+        self.interfaceKinds = interfaceKinds
+    }
+}
+
+public struct InterfaceSnapshot: Sendable {
+    public let interfaceId: InterfaceId
+    public let name: String?
+    public let kind: InterfaceKind?
+    public let health: InterfaceHealth
+    public let failureDetail: String?
+    public let rxBytes: UInt64
+    public let txBytes: UInt64
+    public let rxBps: UInt64?
+    public let txBps: UInt64?
+    public let routeCount: UInt32
+    public let linkCount: UInt32
+    public let transportedLinkCount: UInt32
+
+    public init(interfaceId: InterfaceId, name: String?, kind: InterfaceKind?, health: InterfaceHealth, failureDetail: String?, rxBytes: UInt64, txBytes: UInt64, rxBps: UInt64?, txBps: UInt64?, routeCount: UInt32, linkCount: UInt32, transportedLinkCount: UInt32) {
+        self.interfaceId = interfaceId
+        self.name = name
+        self.kind = kind
+        self.health = health
+        self.failureDetail = failureDetail
+        self.rxBytes = rxBytes
+        self.txBytes = txBytes
+        self.rxBps = rxBps
+        self.txBps = txBps
+        self.routeCount = routeCount
+        self.linkCount = linkCount
+        self.transportedLinkCount = transportedLinkCount
+    }
+}
+
+public struct RouteSnapshot: Sendable {
+    public let destination: DestinationHash
+    public let hops: UInt8
+    public let viaIdentity: IdentityHash?
+    public let interfaceId: InterfaceId
+    public let learnedAtMillis: UInt64
+    public let lastRelayedAtMillis: UInt64
+    public let expiresAtMillis: UInt64
+
+    public init(destination: DestinationHash, hops: UInt8, viaIdentity: IdentityHash?, interfaceId: InterfaceId, learnedAtMillis: UInt64, lastRelayedAtMillis: UInt64, expiresAtMillis: UInt64) {
+        self.destination = destination
+        self.hops = hops
+        self.viaIdentity = viaIdentity
+        self.interfaceId = interfaceId
+        self.learnedAtMillis = learnedAtMillis
+        self.lastRelayedAtMillis = lastRelayedAtMillis
+        self.expiresAtMillis = expiresAtMillis
+    }
+}
+
+public struct DestinationIdentitySnapshot: Sendable {
+    public let destination: DestinationHash
+    public let identity: IdentityHash
+
+    public init(destination: DestinationHash, identity: IdentityHash) {
+        self.destination = destination
+        self.identity = identity
+    }
+}
+
+public struct RuntimeHealthSnapshot: Sendable {
+    public let running: Bool
+    public let uptimeMillis: UInt64
+    public let interfaceCount: UInt32
+    public let onlineInterfaceCount: UInt32
+    public let routeCount: UInt32
+    public let linkCount: UInt32
+    public let transportedLinkCount: UInt32
+    public let rxBytes: UInt64
+    public let txBytes: UInt64
+    public let rxBps: UInt64
+    public let txBps: UInt64
+
+    public init(running: Bool, uptimeMillis: UInt64, interfaceCount: UInt32, onlineInterfaceCount: UInt32, routeCount: UInt32, linkCount: UInt32, transportedLinkCount: UInt32, rxBytes: UInt64, txBytes: UInt64, rxBps: UInt64, txBps: UInt64) {
+        self.running = running
+        self.uptimeMillis = uptimeMillis
+        self.interfaceCount = interfaceCount
+        self.onlineInterfaceCount = onlineInterfaceCount
+        self.routeCount = routeCount
+        self.linkCount = linkCount
+        self.transportedLinkCount = transportedLinkCount
+        self.rxBytes = rxBytes
+        self.txBytes = txBytes
+        self.rxBps = rxBps
+        self.txBps = txBps
+    }
+}
+
+public struct PersistenceSnapshot: Sendable {
+    public let persistent: Bool
+    public let restored: Bool
+    public let lastFlushCause: PersistenceFlushCause?
+    public let lastFailureDetail: String?
+
+    public init(persistent: Bool, restored: Bool, lastFlushCause: PersistenceFlushCause?, lastFailureDetail: String?) {
+        self.persistent = persistent
+        self.restored = restored
+        self.lastFlushCause = lastFlushCause
+        self.lastFailureDetail = lastFailureDetail
+    }
+}
+
+public struct HostSnapshot: Sendable {
+    public let revision: UInt64
+    public let backend: BackendInfo
+    public let interfaces: [InterfaceSnapshot]
+    public let routes: [RouteSnapshot]
+    public let activeLinkCount: UInt32
+    public let destinationIdentities: [DestinationIdentitySnapshot]
+    public let runtime: RuntimeHealthSnapshot
+    public let persistence: PersistenceSnapshot
+
+    public init(revision: UInt64, backend: BackendInfo, interfaces: [InterfaceSnapshot], routes: [RouteSnapshot], activeLinkCount: UInt32, destinationIdentities: [DestinationIdentitySnapshot], runtime: RuntimeHealthSnapshot, persistence: PersistenceSnapshot) {
+        self.revision = revision
+        self.backend = backend
+        self.interfaces = interfaces
+        self.routes = routes
+        self.activeLinkCount = activeLinkCount
+        self.destinationIdentities = destinationIdentities
+        self.runtime = runtime
+        self.persistence = persistence
+    }
+}
+
 public protocol ResourceStream: AnyObject, AsyncSequence, Sendable
 where Element == [UInt8] {
     var totalBytes: UInt64 { get }
@@ -393,6 +680,33 @@ public enum IdentityConfig: Sendable {
     case existing(secret: IdentitySecret)
     case generateEphemeral
     case loadOrCreate(path: String)
+}
+
+public enum PersistenceConfig: Sendable {
+    case ephemeral
+    case directory(path: String)
+}
+
+public enum InterfaceConfig: Sendable {
+    case autoLan(groupId: String?, discoveryScope: DiscoveryScope?, discoveryPort: UInt16?, dataPort: UInt16?, devices: [String], ignoredDevices: [String], multicastAddressType: MulticastAddressType?)
+    case tcpClient(target: String, bitrate: Bitrate)
+    case tcpServer(bind: String, bitrate: Bitrate)
+    case udp(local: String, peer: String, bitrate: Bitrate)
+    case serial(port: String, line: SerialLineConfig)
+    case kiss(port: String, line: SerialLineConfig, flowControl: Bool, preambleMillis: UInt32, transmitTailMillis: UInt32, persistence: UInt8, slotTimeMillis: UInt32, stationCallsign: String?, stationIntervalSeconds: UInt64?)
+    case ax25Kiss(port: String, line: SerialLineConfig, flowControl: Bool, preambleMillis: UInt32, transmitTailMillis: UInt32, persistence: UInt8, slotTimeMillis: UInt32, callsign: String, ssid: UInt8)
+    case rNode(port: String, radio: RNodeRadioConfig, flowControl: Bool, stationCallsign: String?, stationIntervalSeconds: UInt64?, airtimeLimitShortCentiPercent: UInt16?, airtimeLimitLongCentiPercent: UInt16?)
+    case multiRNode(port: String, stationCallsign: String?, stationIntervalSeconds: UInt64?, members: [MultiRNodeMemberConfig])
+    case pipe(command: [String], respawnDelayMillis: UInt64)
+    case backboneClient(target: String, bitrate: Bitrate)
+    case backboneServer(bind: String, bitrate: Bitrate)
+    case i2p(peers: [String], connectable: Bool)
+    case weave(port: String)
+    case automaticUsb
+    case automaticBluetoothLe
+    case webSocketClient(target: String)
+    case webSocketServer(bind: String)
+    case browserRendezvous(url: String)
 }
 
 public enum DestinationIdentityConfig: Sendable {
@@ -444,6 +758,7 @@ public enum HostCommand: Sendable {
     case setDestinationResourceStrategy(destination: DestinationHash, strategy: ResourceStrategy)
     case sendChannelMessage(linkId: LinkId, messageType: UInt16, payload: [UInt8])
     case allowRequester(destination: DestinationHash, pathHash: RequestPathHash, identity: IdentityHash)
+    case attachInterface(config: InterfaceConfig)
 }
 
 public enum CommandOutcome: Sendable {
@@ -495,6 +810,14 @@ public enum CommandFailure: Sendable {
     case channelWindowFull
     case channelUntrackable
     case invalidChannelMessageType
+    case invalidConfiguration(detail: String)
+    case resourceUploadCancelled
+    case resourceEarlyEof
+    case resourceLengthOverrun
+    case permissionDenied(detail: String)
+    case deviceUnavailable(detail: String)
+    case connectFailed(detail: String)
+    case backendFailed(detail: String)
 }
 
 public enum ApplicationEvent: Sendable {
@@ -526,4 +849,150 @@ public enum DiagnosticEvent: Sendable {
     case routeDropped(destination: DestinationHash)
     case backendDiagnostic(kind: String, detail: String)
     case diagnosticsDropped(count: UInt128)
+    case persistenceRestored(routes: UInt64, destinationIdentities: UInt64, tunnels: UInt64, ratchets: UInt64, refused: UInt64, dropped: UInt64)
+    case persistenceFlushed(cause: PersistenceFlushCause, target: PersistenceFlushTarget)
+    case persistenceFlushFailed(cause: PersistenceFlushCause, target: PersistenceFlushTarget)
+}
+
+let hostOperationNames = [
+    "contractInfo",
+    "backendInfo",
+    "hostCreate",
+    "hostRelease",
+    "hostLifecycle",
+    "hostSnapshot",
+    "hostSnapshotRead",
+    "hostSnapshotRelease",
+    "hostIdentityHash",
+    "hostDestinationCount",
+    "hostDestinationHash",
+    "hostBeginResourceUpload",
+    "resourceUploadWrite",
+    "resourceUploadIsWritable",
+    "resourceUploadFinish",
+    "resourceUploadAbort",
+    "resourceUploadRelease",
+    "hostStop",
+    "commandWait",
+    "commandRegisterReadiness",
+    "commandInterruptWait",
+    "commandRelease",
+    "hostClaimApplicationEvents",
+    "hostClaimDiagnostics",
+    "eventStreamRegisterReadiness",
+    "readinessRegistrationRelease",
+    "eventStreamInterruptWait",
+    "eventStreamRelease",
+    "eventStreamNext",
+    "eventRelease",
+    "eventKind",
+    "eventBytes",
+    "eventString",
+    "eventU64",
+    "eventU128",
+    "eventResourceStream",
+    "resourceStreamRelease",
+    "resourceStreamNext",
+    "hostAnnounce",
+    "hostSendSinglePacket",
+    "hostCloseLink",
+    "hostAttachTcpServer",
+    "hostAttachTcpClient",
+    "hostAttachUdp",
+    "hostDetachInterface",
+    "hostEstablishLink",
+    "hostRequestPath",
+    "hostIdentify",
+    "hostSendLinkPacket",
+    "hostRequest",
+    "hostRespond",
+    "hostSendResource",
+    "hostSetLinkResourceStrategy",
+    "hostSetDestinationResourceStrategy",
+    "hostSendChannelMessage",
+    "hostAllowRequester",
+    "hostAttachInterface",
+]
+
+struct RawUnit {}
+struct RawOwned<Value> { let value: Value }
+struct RawBorrowed<Value> { let value: Value }
+enum RawCallResult<Value> {
+    case success(Value)
+    case failure(Status)
+}
+struct RawCommandResult {}
+struct RawContractInfo {}
+struct RawEvent {}
+struct RawEventStream {}
+struct RawHost {}
+struct RawHostInspection {}
+struct RawHostOptions {}
+struct RawIssuedCommand {}
+struct RawLifecycle {}
+struct RawReadinessCallback {}
+struct RawReadinessRegistration {}
+struct RawResourceChunk {}
+struct RawResourceStream {}
+struct RawResourceUpload {}
+struct RawOpaquePointer {}
+
+protocol RawHostProtocol {
+    func contractInfo() -> RawCallResult<RawContractInfo>
+    func backendInfo() -> RawCallResult<BackendInfo>
+    func hostCreate(_ options: RawHostOptions) -> RawCallResult<RawOwned<RawHost>>
+    func hostRelease(_ host: RawHost) -> RawUnit
+    func hostLifecycle(_ host: RawHost) -> RawCallResult<RawLifecycle>
+    func hostSnapshot(_ host: RawHost, _ timeoutMillis: UInt32) -> RawCallResult<RawOwned<RawHostInspection>>
+    func hostSnapshotRead(_ host_inspection: RawHostInspection) -> RawCallResult<RawBorrowed<HostSnapshot>>
+    func hostSnapshotRelease(_ host_inspection: RawHostInspection) -> RawUnit
+    func hostIdentityHash(_ host: RawHost) -> RawCallResult<RawBorrowed<[UInt8]>>
+    func hostDestinationCount(_ host: RawHost) -> Int
+    func hostDestinationHash(_ host: RawHost, _ index: Int) -> RawCallResult<RawBorrowed<[UInt8]>>
+    func hostBeginResourceUpload(_ host: RawHost, _ linkId: LinkId, _ declaredLength: UInt64, _ packedMetadata: [UInt8]?, _ compression: ResourceCompression) -> RawCallResult<RawOwned<RawResourceUpload>>
+    func resourceUploadWrite(_ resource_upload: RawResourceUpload, _ chunk: [UInt8]) -> RawCallResult<RawUnit>
+    func resourceUploadIsWritable(_ resource_upload: RawResourceUpload) -> RawCallResult<Bool>
+    func resourceUploadFinish(_ resource_upload: RawResourceUpload) -> RawCallResult<RawOwned<RawIssuedCommand>>
+    func resourceUploadAbort(_ resource_upload: RawResourceUpload) -> RawUnit
+    func resourceUploadRelease(_ resource_upload: RawResourceUpload) -> RawUnit
+    func hostStop(_ host: RawHost) -> RawCallResult<RawUnit>
+    func commandWait(_ issued_command: RawIssuedCommand, _ timeoutMillis: UInt32) -> RawCallResult<RawBorrowed<RawCommandResult>>
+    func commandRegisterReadiness(_ issued_command: RawIssuedCommand, _ callback: RawReadinessCallback, _ context: RawOpaquePointer) -> RawCallResult<RawOwned<RawReadinessRegistration>>
+    func commandInterruptWait(_ issued_command: RawIssuedCommand) -> RawUnit
+    func commandRelease(_ issued_command: RawIssuedCommand) -> RawUnit
+    func hostClaimApplicationEvents(_ host: RawHost) -> RawCallResult<RawOwned<RawEventStream>>
+    func hostClaimDiagnostics(_ host: RawHost) -> RawCallResult<RawOwned<RawEventStream>>
+    func eventStreamRegisterReadiness(_ event_stream: RawEventStream, _ callback: RawReadinessCallback, _ context: RawOpaquePointer) -> RawCallResult<RawOwned<RawReadinessRegistration>>
+    func readinessRegistrationRelease(_ readiness_registration: RawReadinessRegistration) -> RawUnit
+    func eventStreamInterruptWait(_ event_stream: RawEventStream) -> RawUnit
+    func eventStreamRelease(_ event_stream: RawEventStream) -> RawUnit
+    func eventStreamNext(_ event_stream: RawEventStream, _ timeoutMillis: UInt32) -> RawCallResult<RawOwned<RawEvent>>
+    func eventRelease(_ eventValue: RawEvent) -> RawUnit
+    func eventKind(_ eventValue: RawEvent) -> UInt32
+    func eventBytes(_ eventValue: RawEvent, _ field: EventField) -> RawCallResult<RawBorrowed<[UInt8]>>
+    func eventString(_ eventValue: RawEvent, _ field: EventField) -> RawCallResult<RawBorrowed<String>>
+    func eventU64(_ eventValue: RawEvent, _ field: EventField) -> RawCallResult<UInt64>
+    func eventU128(_ eventValue: RawEvent, _ field: EventField) -> RawCallResult<UInt128>
+    func eventResourceStream(_ eventValue: RawEvent) -> RawCallResult<RawOwned<RawResourceStream>>
+    func resourceStreamRelease(_ resource_stream: RawResourceStream) -> RawUnit
+    func resourceStreamNext(_ resource_stream: RawResourceStream, _ maximumBytes: Int) -> RawCallResult<RawBorrowed<RawResourceChunk>>
+    func hostAnnounce(_ host: RawHost, _ destination: DestinationHash, _ interfaceId: InterfaceId?) -> RawCallResult<RawOwned<RawIssuedCommand>>
+    func hostSendSinglePacket(_ host: RawHost, _ destination: DestinationHash, _ payload: [UInt8]) -> RawCallResult<RawOwned<RawIssuedCommand>>
+    func hostCloseLink(_ host: RawHost, _ linkId: LinkId) -> RawCallResult<RawOwned<RawIssuedCommand>>
+    func hostAttachTcpServer(_ host: RawHost, _ bind: String, _ bitrate: Bitrate) -> RawCallResult<RawOwned<RawIssuedCommand>>
+    func hostAttachTcpClient(_ host: RawHost, _ target: String, _ bitrate: Bitrate) -> RawCallResult<RawOwned<RawIssuedCommand>>
+    func hostAttachUdp(_ host: RawHost, _ local: String, _ peer: String, _ bitrate: Bitrate) -> RawCallResult<RawOwned<RawIssuedCommand>>
+    func hostDetachInterface(_ host: RawHost, _ interfaceId: InterfaceId) -> RawCallResult<RawOwned<RawIssuedCommand>>
+    func hostEstablishLink(_ host: RawHost, _ destination: DestinationHash) -> RawCallResult<RawOwned<RawIssuedCommand>>
+    func hostRequestPath(_ host: RawHost, _ destination: DestinationHash) -> RawCallResult<RawOwned<RawIssuedCommand>>
+    func hostIdentify(_ host: RawHost, _ linkId: LinkId, _ identity: IdentityHash) -> RawCallResult<RawOwned<RawIssuedCommand>>
+    func hostSendLinkPacket(_ host: RawHost, _ linkId: LinkId, _ payload: [UInt8]) -> RawCallResult<RawOwned<RawIssuedCommand>>
+    func hostRequest(_ host: RawHost, _ linkId: LinkId, _ pathHash: RequestPathHash, _ payload: [UInt8], _ timeout: ResponseTimeout) -> RawCallResult<RawOwned<RawIssuedCommand>>
+    func hostRespond(_ host: RawHost, _ linkId: LinkId, _ requestId: RequestId, _ requestRttMillis: UInt64, _ payload: [UInt8]) -> RawCallResult<RawOwned<RawIssuedCommand>>
+    func hostSendResource(_ host: RawHost, _ linkId: LinkId, _ payload: [UInt8], _ packedMetadata: [UInt8]?, _ compression: ResourceCompression) -> RawCallResult<RawOwned<RawIssuedCommand>>
+    func hostSetLinkResourceStrategy(_ host: RawHost, _ linkId: LinkId, _ strategy: ResourceStrategy) -> RawCallResult<RawOwned<RawIssuedCommand>>
+    func hostSetDestinationResourceStrategy(_ host: RawHost, _ destination: DestinationHash, _ strategy: ResourceStrategy) -> RawCallResult<RawOwned<RawIssuedCommand>>
+    func hostSendChannelMessage(_ host: RawHost, _ linkId: LinkId, _ messageType: UInt16, _ payload: [UInt8]) -> RawCallResult<RawOwned<RawIssuedCommand>>
+    func hostAllowRequester(_ host: RawHost, _ destination: DestinationHash, _ pathHash: RequestPathHash, _ identity: IdentityHash) -> RawCallResult<RawOwned<RawIssuedCommand>>
+    func hostAttachInterface(_ host: RawHost, _ config: InterfaceConfig) -> RawCallResult<RawOwned<RawIssuedCommand>>
 }

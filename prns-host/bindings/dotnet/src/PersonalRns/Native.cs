@@ -3,7 +3,7 @@ using Microsoft.Win32.SafeHandles;
 
 namespace PersonalRns;
 
-internal static class Native
+internal static partial class Native
 {
     internal const string Library = "prns_host";
     internal const uint NeverTimeout = uint.MaxValue;
@@ -54,6 +54,14 @@ internal static class Native
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    internal struct PersistenceConfig
+    {
+        internal nuint StructSize;
+        internal PersistenceConfigKind Kind;
+        internal StringView Path;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     internal struct DestinationName
     {
         internal nuint StructSize;
@@ -88,6 +96,7 @@ internal static class Native
     {
         internal nuint StructSize;
         internal uint RequiredAbi;
+        internal uint RequiredSchemaVersion;
         internal StringView RequiredProductVersion;
         internal Limits Limits;
         internal HostRole Role;
@@ -96,6 +105,7 @@ internal static class Native
         internal nuint DestinationCount;
         internal nint RequiredCapabilities;
         internal nuint RequiredCapabilityCount;
+        internal PersistenceConfig Persistence;
     }
 
     [StructLayout(LayoutKind.Sequential)]

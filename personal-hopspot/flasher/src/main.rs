@@ -688,9 +688,9 @@ fn print_board(board: &BoardCatalogEntry) {
     ui::print_key_value("silicon", &board.silicon);
     ui::print_key_value("transport", transport_label(board.transport));
     ui::print_key_value("interfaces", &board.interfaces.join(", "));
-    if board.slug == "heltec-v4" || board.slug == "t-beam-supreme" {
+    if board.slug == "heltec-v4" || board.slug == "heltec-v4-r8" {
         ui::print_note(
-            "This board shares ESP32-S3 silicon with another target; its exact model cannot be detected automatically.",
+            "Heltec V4 S3R2 and S3R8 share the same chip and 16MB flash; pick the matching firmware because the S3R2 pinout prevents Octal PSRAM from operating on the S3R8.",
         );
     }
 }
@@ -745,7 +745,7 @@ mod doctor_tests {
             check: Some(DoctorCheck::EspSerial {
                 port: "fake-port".to_string(),
                 detected_chip: "esp32s3".to_string(),
-                flash_size: 8 * 1024 * 1024,
+                flash_size: 16 * 1024 * 1024,
                 same_chip_board_ambiguity: true,
                 note: Some("cannot distinguish these two board models".to_string()),
             }),
@@ -753,16 +753,25 @@ mod doctor_tests {
         .expect("doctor output serializes");
         assert_eq!(
             encoded,
-            r#"{"schema":1,"event":"doctor","phase":"complete","board":"heltec-v4","requested_port":"fake-port","serial_ports":[{"name":"fake-port","kind":"usb"}],"techo_mounts":[],"check":{"transport":"esp-serial","port":"fake-port","detected_chip":"esp32s3","flash_size":8388608,"same_chip_board_ambiguity":true,"note":"cannot distinguish these two board models"}}"#
+            r#"{"schema":1,"event":"doctor","phase":"complete","board":"heltec-v4","requested_port":"fake-port","serial_ports":[{"name":"fake-port","kind":"usb"}],"techo_mounts":[],"check":{"transport":"esp-serial","port":"fake-port","detected_chip":"esp32s3","flash_size":16777216,"same_chip_board_ambiguity":true,"note":"cannot distinguish these two board models"}}"#
         );
     }
 
     #[test]
     fn catalog_capacities_distinguish_shipping_esp_identities() {
         let catalog = board_catalog().expect("catalog");
-        assert!(
+        assert_eq!(
             ambiguous_esp_identity_peer(&catalog, catalog.board("heltec-v4").expect("Heltec"))
-                .is_none()
+                .map(|board| board.slug.as_str()),
+            Some("heltec-v4-r8")
+        );
+        assert_eq!(
+            ambiguous_esp_identity_peer(
+                &catalog,
+                catalog.board("heltec-v4-r8").expect("Heltec R8")
+            )
+            .map(|board| board.slug.as_str()),
+            Some("heltec-v4")
         );
         assert!(ambiguous_esp_identity_peer(
             &catalog,

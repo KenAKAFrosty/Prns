@@ -7,7 +7,8 @@ type Brand<Name extends string> = { readonly [brand]: Name };
 type BrandedBytes<Name extends string> = Uint8Array & Brand<Name>;
 
 export const HOST_CONTRACT_ABI = 1;
-export const PRODUCT_VERSION = "0.3.1";
+export const HOST_SCHEMA_VERSION = 1;
+export const PRODUCT_VERSION = "0.3.2";
 export const DESTINATION_HASH_LENGTH = 16;
 export const IDENTITY_HASH_LENGTH = 16;
 export const INTERFACE_ID_LENGTH = 8;
@@ -17,6 +18,7 @@ export const REQUEST_ID_LENGTH = 16;
 export const REQUEST_PATH_HASH_LENGTH = 16;
 export const RESOURCE_HASH_LENGTH = 32;
 export const IDENTITY_SECRET_LENGTH = 64;
+export const SAFE_UINT_MAX = 9007199254740991;
 
 export type DestinationHash = BrandedBytes<"DestinationHash">;
 export type IdentityHash = BrandedBytes<"IdentityHash">;
@@ -42,24 +44,114 @@ export type CapabilityName =
   | "I2p"
   | "Weave";
 
+export const CAPABILITY_NAME_VALUES: readonly CapabilityName[] = Object.freeze([
+  "Loopback",
+  "TcpClient",
+  "TcpServer",
+  "Udp",
+  "Serial",
+  "Usb",
+  "Bluetooth",
+  "Wifi",
+  "WebSocket",
+  "BrowserRendezvous",
+  "I2p",
+  "Weave",
+]);
+
+export function isCapabilityName(value: unknown): value is CapabilityName {
+  return typeof value === "string" && (CAPABILITY_NAME_VALUES as readonly string[]).includes(value);
+}
+
 export type LinkClosedReason =
   | "Timeout"
   | "PeerClosed"
   | "MalformedRtt";
 
+export const LINK_CLOSED_REASON_VALUES: readonly LinkClosedReason[] = Object.freeze([
+  "Timeout",
+  "PeerClosed",
+  "MalformedRtt",
+]);
+
+export function isLinkClosedReason(value: unknown): value is LinkClosedReason {
+  return typeof value === "string" && (LINK_CLOSED_REASON_VALUES as readonly string[]).includes(value);
+}
+
 export type HostRoleName =
   | "Endpoint"
   | "Transport";
+
+export const HOST_ROLE_NAME_VALUES: readonly HostRoleName[] = Object.freeze([
+  "Endpoint",
+  "Transport",
+]);
+
+export function isHostRoleName(value: unknown): value is HostRoleName {
+  return typeof value === "string" && (HOST_ROLE_NAME_VALUES as readonly string[]).includes(value);
+}
 
 export type DeliveryEvidenceKind =
   | "ExplicitProof"
   | "ImplicitProof"
   | "Response";
 
+export const DELIVERY_EVIDENCE_KIND_VALUES: readonly DeliveryEvidenceKind[] = Object.freeze([
+  "ExplicitProof",
+  "ImplicitProof",
+  "Response",
+]);
+
+export function isDeliveryEvidenceKind(value: unknown): value is DeliveryEvidenceKind {
+  return typeof value === "string" && (DELIVERY_EVIDENCE_KIND_VALUES as readonly string[]).includes(value);
+}
+
 export type RequestPolicy =
   | "AllowNone"
   | "AllowAll"
   | "AllowList";
+
+export const REQUEST_POLICY_VALUES: readonly RequestPolicy[] = Object.freeze([
+  "AllowNone",
+  "AllowAll",
+  "AllowList",
+]);
+
+export function isRequestPolicy(value: unknown): value is RequestPolicy {
+  return typeof value === "string" && (REQUEST_POLICY_VALUES as readonly string[]).includes(value);
+}
+
+export type PersistenceFlushCause =
+  | "Startup"
+  | "Interval"
+  | "RouteChange"
+  | "RatchetRotation"
+  | "Shutdown";
+
+export const PERSISTENCE_FLUSH_CAUSE_VALUES: readonly PersistenceFlushCause[] = Object.freeze([
+  "Startup",
+  "Interval",
+  "RouteChange",
+  "RatchetRotation",
+  "Shutdown",
+]);
+
+export function isPersistenceFlushCause(value: unknown): value is PersistenceFlushCause {
+  return typeof value === "string" && (PERSISTENCE_FLUSH_CAUSE_VALUES as readonly string[]).includes(value);
+}
+
+export type PersistenceFlushTarget =
+  | "RoutingState"
+  | "Ratchets";
+
+export const PERSISTENCE_FLUSH_TARGET_VALUES: readonly PersistenceFlushTarget[] = Object.freeze([
+  "RoutingState",
+  "Ratchets",
+]);
+
+export function isPersistenceFlushTarget(value: unknown): value is PersistenceFlushTarget {
+  return typeof value === "string" && (PERSISTENCE_FLUSH_TARGET_VALUES as readonly string[]).includes(value);
+}
 
 export type PrnsLimits = {
   readonly pendingCommands: number;
@@ -77,6 +169,170 @@ export function balancedLimits(): PrnsLimits {
   };
 }
 
+export type BackendKind =
+  | "Native"
+  | "Browser"
+  | "Cooperative";
+
+export const BACKEND_KIND_VALUES: readonly BackendKind[] = Object.freeze([
+  "Native",
+  "Browser",
+  "Cooperative",
+]);
+
+export function isBackendKind(value: unknown): value is BackendKind {
+  return typeof value === "string" && (BACKEND_KIND_VALUES as readonly string[]).includes(value);
+}
+
+export type InterfaceKind =
+  | "AutoLan"
+  | "TcpClient"
+  | "TcpServer"
+  | "Udp"
+  | "Serial"
+  | "Kiss"
+  | "Ax25Kiss"
+  | "RNode"
+  | "MultiRNode"
+  | "Pipe"
+  | "BackboneClient"
+  | "BackboneServer"
+  | "I2p"
+  | "Weave"
+  | "AutomaticUsb"
+  | "AutomaticBluetoothLe"
+  | "WebSocketClient"
+  | "WebSocketServer"
+  | "BrowserRendezvous";
+
+export const INTERFACE_KIND_VALUES: readonly InterfaceKind[] = Object.freeze([
+  "AutoLan",
+  "TcpClient",
+  "TcpServer",
+  "Udp",
+  "Serial",
+  "Kiss",
+  "Ax25Kiss",
+  "RNode",
+  "MultiRNode",
+  "Pipe",
+  "BackboneClient",
+  "BackboneServer",
+  "I2p",
+  "Weave",
+  "AutomaticUsb",
+  "AutomaticBluetoothLe",
+  "WebSocketClient",
+  "WebSocketServer",
+  "BrowserRendezvous",
+]);
+
+export function isInterfaceKind(value: unknown): value is InterfaceKind {
+  return typeof value === "string" && (INTERFACE_KIND_VALUES as readonly string[]).includes(value);
+}
+
+export type InterfaceHealth =
+  | "Initializing"
+  | "Connected"
+  | "Degraded"
+  | "Reconnecting"
+  | "Failed"
+  | "Disconnected"
+  | "Disabled"
+  | "Unknown";
+
+export const INTERFACE_HEALTH_VALUES: readonly InterfaceHealth[] = Object.freeze([
+  "Initializing",
+  "Connected",
+  "Degraded",
+  "Reconnecting",
+  "Failed",
+  "Disconnected",
+  "Disabled",
+  "Unknown",
+]);
+
+export function isInterfaceHealth(value: unknown): value is InterfaceHealth {
+  return typeof value === "string" && (INTERFACE_HEALTH_VALUES as readonly string[]).includes(value);
+}
+
+export type DiscoveryScope =
+  | "Link"
+  | "Admin"
+  | "Site"
+  | "Organization"
+  | "Global";
+
+export const DISCOVERY_SCOPE_VALUES: readonly DiscoveryScope[] = Object.freeze([
+  "Link",
+  "Admin",
+  "Site",
+  "Organization",
+  "Global",
+]);
+
+export function isDiscoveryScope(value: unknown): value is DiscoveryScope {
+  return typeof value === "string" && (DISCOVERY_SCOPE_VALUES as readonly string[]).includes(value);
+}
+
+export type MulticastAddressType =
+  | "Temporary"
+  | "Permanent";
+
+export const MULTICAST_ADDRESS_TYPE_VALUES: readonly MulticastAddressType[] = Object.freeze([
+  "Temporary",
+  "Permanent",
+]);
+
+export function isMulticastAddressType(value: unknown): value is MulticastAddressType {
+  return typeof value === "string" && (MULTICAST_ADDRESS_TYPE_VALUES as readonly string[]).includes(value);
+}
+
+export type SerialDataBits =
+  | "Five"
+  | "Six"
+  | "Seven"
+  | "Eight";
+
+export const SERIAL_DATA_BITS_VALUES: readonly SerialDataBits[] = Object.freeze([
+  "Five",
+  "Six",
+  "Seven",
+  "Eight",
+]);
+
+export function isSerialDataBits(value: unknown): value is SerialDataBits {
+  return typeof value === "string" && (SERIAL_DATA_BITS_VALUES as readonly string[]).includes(value);
+}
+
+export type SerialParity =
+  | "None"
+  | "Even"
+  | "Odd";
+
+export const SERIAL_PARITY_VALUES: readonly SerialParity[] = Object.freeze([
+  "None",
+  "Even",
+  "Odd",
+]);
+
+export function isSerialParity(value: unknown): value is SerialParity {
+  return typeof value === "string" && (SERIAL_PARITY_VALUES as readonly string[]).includes(value);
+}
+
+export type SerialStopBits =
+  | "One"
+  | "Two";
+
+export const SERIAL_STOP_BITS_VALUES: readonly SerialStopBits[] = Object.freeze([
+  "One",
+  "Two",
+]);
+
+export function isSerialStopBits(value: unknown): value is SerialStopBits {
+  return typeof value === "string" && (SERIAL_STOP_BITS_VALUES as readonly string[]).includes(value);
+}
+
 export type DestinationName = {
   readonly appName: string;
   readonly aspects: readonly string[];
@@ -87,8 +343,99 @@ export type RequestHandlerConfig = {
   readonly policy: RequestPolicy;
 };
 
+export type SerialLineConfig = {
+  readonly baud: number;
+  readonly dataBits: SerialDataBits;
+  readonly parity: SerialParity;
+  readonly stopBits: SerialStopBits;
+};
+
+export type RNodeRadioConfig = {
+  readonly frequencyHz: number;
+  readonly bandwidthHz: number;
+  readonly txPowerDbm: number;
+  readonly spreadingFactor: number;
+  readonly codingRate: number;
+};
+
+export type MultiRNodeMemberConfig = {
+  readonly name: string;
+  readonly virtualPort: number;
+  readonly radio: RNodeRadioConfig;
+  readonly flowControl: boolean;
+  readonly outgoing: boolean;
+};
+
+export type BackendInfo = {
+  readonly backend: BackendKind;
+  readonly capabilities: readonly CapabilityName[];
+  readonly interfaceKinds: readonly InterfaceKind[];
+};
+
+export type InterfaceSnapshot = {
+  readonly interfaceId: InterfaceId;
+  readonly name?: string;
+  readonly kind?: InterfaceKind;
+  readonly health: InterfaceHealth;
+  readonly failureDetail?: string;
+  readonly rxBytes: bigint;
+  readonly txBytes: bigint;
+  readonly rxBps?: number;
+  readonly txBps?: number;
+  readonly routeCount: number;
+  readonly linkCount: number;
+  readonly transportedLinkCount: number;
+};
+
+export type RouteSnapshot = {
+  readonly destination: DestinationHash;
+  readonly hops: number;
+  readonly viaIdentity?: IdentityHash;
+  readonly interfaceId: InterfaceId;
+  readonly learnedAtMillis: number;
+  readonly lastRelayedAtMillis: number;
+  readonly expiresAtMillis: number;
+};
+
+export type DestinationIdentitySnapshot = {
+  readonly destination: DestinationHash;
+  readonly identity: IdentityHash;
+};
+
+export type RuntimeHealthSnapshot = {
+  readonly running: boolean;
+  readonly uptimeMillis: number;
+  readonly interfaceCount: number;
+  readonly onlineInterfaceCount: number;
+  readonly routeCount: number;
+  readonly linkCount: number;
+  readonly transportedLinkCount: number;
+  readonly rxBytes: bigint;
+  readonly txBytes: bigint;
+  readonly rxBps: number;
+  readonly txBps: number;
+};
+
+export type PersistenceSnapshot = {
+  readonly persistent: boolean;
+  readonly restored: boolean;
+  readonly lastFlushCause?: PersistenceFlushCause;
+  readonly lastFailureDetail?: string;
+};
+
+export type HostSnapshot = {
+  readonly revision: bigint;
+  readonly backend: BackendInfo;
+  readonly interfaces: readonly InterfaceSnapshot[];
+  readonly routes: readonly RouteSnapshot[];
+  readonly activeLinkCount: number;
+  readonly destinationIdentities: readonly DestinationIdentitySnapshot[];
+  readonly runtime: RuntimeHealthSnapshot;
+  readonly persistence: PersistenceSnapshot;
+};
+
 export type ResourceStream = {
-  readonly totalBytes: number;
+  readonly totalBytes: bigint;
   claim(): StreamClaim<Uint8Array>;
 };
 
@@ -104,6 +451,161 @@ export type IdentityConfig =
       "LoadOrCreate",
       {
         readonly path: string;
+      }
+    >;
+
+export type PersistenceConfig =
+  | Tag<"Ephemeral">
+  | Tag<
+      "Directory",
+      {
+        readonly path: string;
+      }
+    >;
+
+export type InterfaceConfig =
+  | Tag<
+      "AutoLan",
+      {
+        readonly groupId?: string;
+        readonly discoveryScope?: DiscoveryScope;
+        readonly discoveryPort?: number;
+        readonly dataPort?: number;
+        readonly devices: readonly string[];
+        readonly ignoredDevices: readonly string[];
+        readonly multicastAddressType?: MulticastAddressType;
+      }
+    >
+  | Tag<
+      "TcpClient",
+      {
+        readonly target: string;
+        readonly bitrate: Bitrate;
+      }
+    >
+  | Tag<
+      "TcpServer",
+      {
+        readonly bind: string;
+        readonly bitrate: Bitrate;
+      }
+    >
+  | Tag<
+      "Udp",
+      {
+        readonly local: string;
+        readonly peer: string;
+        readonly bitrate: Bitrate;
+      }
+    >
+  | Tag<
+      "Serial",
+      {
+        readonly port: string;
+        readonly line: SerialLineConfig;
+      }
+    >
+  | Tag<
+      "Kiss",
+      {
+        readonly port: string;
+        readonly line: SerialLineConfig;
+        readonly flowControl: boolean;
+        readonly preambleMillis: number;
+        readonly transmitTailMillis: number;
+        readonly persistence: number;
+        readonly slotTimeMillis: number;
+        readonly stationCallsign?: string;
+        readonly stationIntervalSeconds?: number;
+      }
+    >
+  | Tag<
+      "Ax25Kiss",
+      {
+        readonly port: string;
+        readonly line: SerialLineConfig;
+        readonly flowControl: boolean;
+        readonly preambleMillis: number;
+        readonly transmitTailMillis: number;
+        readonly persistence: number;
+        readonly slotTimeMillis: number;
+        readonly callsign: string;
+        readonly ssid: number;
+      }
+    >
+  | Tag<
+      "RNode",
+      {
+        readonly port: string;
+        readonly radio: RNodeRadioConfig;
+        readonly flowControl: boolean;
+        readonly stationCallsign?: string;
+        readonly stationIntervalSeconds?: number;
+        readonly airtimeLimitShortCentiPercent?: number;
+        readonly airtimeLimitLongCentiPercent?: number;
+      }
+    >
+  | Tag<
+      "MultiRNode",
+      {
+        readonly port: string;
+        readonly stationCallsign?: string;
+        readonly stationIntervalSeconds?: number;
+        readonly members: readonly MultiRNodeMemberConfig[];
+      }
+    >
+  | Tag<
+      "Pipe",
+      {
+        readonly command: readonly string[];
+        readonly respawnDelayMillis: number;
+      }
+    >
+  | Tag<
+      "BackboneClient",
+      {
+        readonly target: string;
+        readonly bitrate: Bitrate;
+      }
+    >
+  | Tag<
+      "BackboneServer",
+      {
+        readonly bind: string;
+        readonly bitrate: Bitrate;
+      }
+    >
+  | Tag<
+      "I2p",
+      {
+        readonly peers: readonly string[];
+        readonly connectable: boolean;
+      }
+    >
+  | Tag<
+      "Weave",
+      {
+        readonly port: string;
+      }
+    >
+  | Tag<"AutomaticUsb">
+  | Tag<"AutomaticBluetoothLe">
+  | Tag<
+      "WebSocketClient",
+      {
+        readonly target: string;
+      }
+    >
+  | Tag<
+      "WebSocketServer",
+      {
+        readonly bind: string;
+      }
+    >
+  | Tag<
+      "BrowserRendezvous",
+      {
+        readonly url: string;
       }
     >;
 
@@ -296,6 +798,12 @@ export type HostCommand =
         readonly pathHash: RequestPathHash;
         readonly identity: IdentityHash;
       }
+    >
+  | Tag<
+      "AttachInterface",
+      {
+        readonly config: InterfaceConfig;
+      }
     >;
 
 export type CommandOutcome =
@@ -394,7 +902,40 @@ export type CommandFailure =
   | Tag<"ResourcePredecessorFailed">
   | Tag<"ChannelWindowFull">
   | Tag<"ChannelUntrackable">
-  | Tag<"InvalidChannelMessageType">;
+  | Tag<"InvalidChannelMessageType">
+  | Tag<
+      "InvalidConfiguration",
+      {
+        readonly detail: string;
+      }
+    >
+  | Tag<"ResourceUploadCancelled">
+  | Tag<"ResourceEarlyEof">
+  | Tag<"ResourceLengthOverrun">
+  | Tag<
+      "PermissionDenied",
+      {
+        readonly detail: string;
+      }
+    >
+  | Tag<
+      "DeviceUnavailable",
+      {
+        readonly detail: string;
+      }
+    >
+  | Tag<
+      "ConnectFailed",
+      {
+        readonly detail: string;
+      }
+    >
+  | Tag<
+      "BackendFailed",
+      {
+        readonly detail: string;
+      }
+    >;
 
 export type ApplicationEvent =
   | Tag<
@@ -461,7 +1002,7 @@ export type ApplicationEvent =
         readonly linkId: LinkId;
         readonly hash: ResourceHash;
         readonly stream: Uint8Array;
-        readonly uncompressedDataBytes: number;
+        readonly uncompressedDataBytes: bigint;
       }
     >
   | Tag<
@@ -516,7 +1057,7 @@ export type DiagnosticEvent =
       {
         readonly linkId: LinkId;
         readonly originalHash: ResourceHash;
-        readonly totalSizeBytes: number;
+        readonly totalSizeBytes: bigint;
       }
     >
   | Tag<
@@ -531,9 +1072,9 @@ export type DiagnosticEvent =
       "ResourceSendProgress",
       {
         readonly linkId: LinkId;
-        readonly transferredBytes: number;
-        readonly totalBytes: number;
-        readonly physicalTransferredBytes: number;
+        readonly transferredBytes: bigint;
+        readonly totalBytes: bigint;
+        readonly physicalTransferredBytes: bigint;
         readonly segmentIndex: number;
         readonly totalSegments: number;
       }
@@ -594,4 +1135,175 @@ export type DiagnosticEvent =
       {
         readonly count: bigint;
       }
+    >
+  | Tag<
+      "PersistenceRestored",
+      {
+        readonly routes: number;
+        readonly destinationIdentities: number;
+        readonly tunnels: number;
+        readonly ratchets: number;
+        readonly refused: number;
+        readonly dropped: number;
+      }
+    >
+  | Tag<
+      "PersistenceFlushed",
+      {
+        readonly cause: PersistenceFlushCause;
+        readonly target: PersistenceFlushTarget;
+      }
+    >
+  | Tag<
+      "PersistenceFlushFailed",
+      {
+        readonly cause: PersistenceFlushCause;
+        readonly target: PersistenceFlushTarget;
+      }
     >;
+
+const HOST_OPERATION_NAMES = [
+  "contractInfo",
+  "backendInfo",
+  "hostCreate",
+  "hostRelease",
+  "hostLifecycle",
+  "hostSnapshot",
+  "hostSnapshotRead",
+  "hostSnapshotRelease",
+  "hostIdentityHash",
+  "hostDestinationCount",
+  "hostDestinationHash",
+  "hostBeginResourceUpload",
+  "resourceUploadWrite",
+  "resourceUploadIsWritable",
+  "resourceUploadFinish",
+  "resourceUploadAbort",
+  "resourceUploadRelease",
+  "hostStop",
+  "commandWait",
+  "commandRegisterReadiness",
+  "commandInterruptWait",
+  "commandRelease",
+  "hostClaimApplicationEvents",
+  "hostClaimDiagnostics",
+  "eventStreamRegisterReadiness",
+  "readinessRegistrationRelease",
+  "eventStreamInterruptWait",
+  "eventStreamRelease",
+  "eventStreamNext",
+  "eventRelease",
+  "eventKind",
+  "eventBytes",
+  "eventString",
+  "eventU64",
+  "eventU128",
+  "eventResourceStream",
+  "resourceStreamRelease",
+  "resourceStreamNext",
+  "hostAnnounce",
+  "hostSendSinglePacket",
+  "hostCloseLink",
+  "hostAttachTcpServer",
+  "hostAttachTcpClient",
+  "hostAttachUdp",
+  "hostDetachInterface",
+  "hostEstablishLink",
+  "hostRequestPath",
+  "hostIdentify",
+  "hostSendLinkPacket",
+  "hostRequest",
+  "hostRespond",
+  "hostSendResource",
+  "hostSetLinkResourceStrategy",
+  "hostSetDestinationResourceStrategy",
+  "hostSendChannelMessage",
+  "hostAllowRequester",
+  "hostAttachInterface",
+] as const;
+
+type HostOperationName = (typeof HOST_OPERATION_NAMES)[number];
+
+type RawUnit = undefined;
+type RawOwned<Value> = { readonly value: Value; readonly ownership: "owned" };
+type RawBorrowed<Value> = { readonly value: Value; readonly ownership: "borrowed" };
+type RawCallResult<Value> =
+  | Tag<"Succeeded", Value>
+  | Tag<"Failed", RawStatus>;
+type RawCommandResult = { readonly rawType: "CommandResult" };
+type RawContractInfo = { readonly rawType: "ContractInfo" };
+type RawEvent = { readonly rawType: "Event" };
+type RawEventField = { readonly rawType: "EventField" };
+type RawEventStream = { readonly rawType: "EventStream" };
+type RawHost = { readonly rawType: "Host" };
+type RawHostInspection = { readonly rawType: "HostInspection" };
+type RawHostOptions = { readonly rawType: "HostOptions" };
+type RawIssuedCommand = { readonly rawType: "IssuedCommand" };
+type RawLifecycle = { readonly rawType: "Lifecycle" };
+type RawReadinessCallback = { readonly rawType: "ReadinessCallback" };
+type RawReadinessRegistration = { readonly rawType: "ReadinessRegistration" };
+type RawResourceChunk = { readonly rawType: "ResourceChunk" };
+type RawResourceStream = { readonly rawType: "ResourceStream" };
+type RawResourceUpload = { readonly rawType: "ResourceUpload" };
+type RawStatus = { readonly rawType: "Status" };
+type RawOpaquePointer = { readonly rawType: "opaquePointer" };
+
+interface RawHostProtocol {
+  readonly contractInfo: () => RawCallResult<RawContractInfo>;
+  readonly backendInfo: () => RawCallResult<BackendInfo>;
+  readonly hostCreate: (options: RawHostOptions) => RawCallResult<RawOwned<RawHost>>;
+  readonly hostRelease: (host: RawHost) => RawUnit;
+  readonly hostLifecycle: (host: RawHost) => RawCallResult<RawLifecycle>;
+  readonly hostSnapshot: (host: RawHost, timeoutMillis: number) => RawCallResult<RawOwned<RawHostInspection>>;
+  readonly hostSnapshotRead: (host_inspection: RawHostInspection) => RawCallResult<RawBorrowed<HostSnapshot>>;
+  readonly hostSnapshotRelease: (host_inspection: RawHostInspection) => RawUnit;
+  readonly hostIdentityHash: (host: RawHost) => RawCallResult<RawBorrowed<Uint8Array>>;
+  readonly hostDestinationCount: (host: RawHost) => number;
+  readonly hostDestinationHash: (host: RawHost, index: number) => RawCallResult<RawBorrowed<Uint8Array>>;
+  readonly hostBeginResourceUpload: (host: RawHost, linkId: LinkId, declaredLength: bigint, packedMetadata: Uint8Array | undefined, compression: ResourceCompression) => RawCallResult<RawOwned<RawResourceUpload>>;
+  readonly resourceUploadWrite: (resource_upload: RawResourceUpload, chunk: Uint8Array) => RawCallResult<RawUnit>;
+  readonly resourceUploadIsWritable: (resource_upload: RawResourceUpload) => RawCallResult<boolean>;
+  readonly resourceUploadFinish: (resource_upload: RawResourceUpload) => RawCallResult<RawOwned<RawIssuedCommand>>;
+  readonly resourceUploadAbort: (resource_upload: RawResourceUpload) => RawUnit;
+  readonly resourceUploadRelease: (resource_upload: RawResourceUpload) => RawUnit;
+  readonly hostStop: (host: RawHost) => RawCallResult<RawUnit>;
+  readonly commandWait: (issued_command: RawIssuedCommand, timeoutMillis: number) => RawCallResult<RawBorrowed<RawCommandResult>>;
+  readonly commandRegisterReadiness: (issued_command: RawIssuedCommand, callback: RawReadinessCallback, context: RawOpaquePointer) => RawCallResult<RawOwned<RawReadinessRegistration>>;
+  readonly commandInterruptWait: (issued_command: RawIssuedCommand) => RawUnit;
+  readonly commandRelease: (issued_command: RawIssuedCommand) => RawUnit;
+  readonly hostClaimApplicationEvents: (host: RawHost) => RawCallResult<RawOwned<RawEventStream>>;
+  readonly hostClaimDiagnostics: (host: RawHost) => RawCallResult<RawOwned<RawEventStream>>;
+  readonly eventStreamRegisterReadiness: (event_stream: RawEventStream, callback: RawReadinessCallback, context: RawOpaquePointer) => RawCallResult<RawOwned<RawReadinessRegistration>>;
+  readonly readinessRegistrationRelease: (readiness_registration: RawReadinessRegistration) => RawUnit;
+  readonly eventStreamInterruptWait: (event_stream: RawEventStream) => RawUnit;
+  readonly eventStreamRelease: (event_stream: RawEventStream) => RawUnit;
+  readonly eventStreamNext: (event_stream: RawEventStream, timeoutMillis: number) => RawCallResult<RawOwned<RawEvent>>;
+  readonly eventRelease: (eventValue: RawEvent) => RawUnit;
+  readonly eventKind: (eventValue: RawEvent) => number;
+  readonly eventBytes: (eventValue: RawEvent, field: RawEventField) => RawCallResult<RawBorrowed<Uint8Array>>;
+  readonly eventString: (eventValue: RawEvent, field: RawEventField) => RawCallResult<RawBorrowed<string>>;
+  readonly eventU64: (eventValue: RawEvent, field: RawEventField) => RawCallResult<bigint>;
+  readonly eventU128: (eventValue: RawEvent, field: RawEventField) => RawCallResult<bigint>;
+  readonly eventResourceStream: (eventValue: RawEvent) => RawCallResult<RawOwned<RawResourceStream>>;
+  readonly resourceStreamRelease: (resource_stream: RawResourceStream) => RawUnit;
+  readonly resourceStreamNext: (resource_stream: RawResourceStream, maximumBytes: number) => RawCallResult<RawBorrowed<RawResourceChunk>>;
+  readonly hostAnnounce: (host: RawHost, destination: DestinationHash, interfaceId: InterfaceId | undefined) => RawCallResult<RawOwned<RawIssuedCommand>>;
+  readonly hostSendSinglePacket: (host: RawHost, destination: DestinationHash, payload: Uint8Array) => RawCallResult<RawOwned<RawIssuedCommand>>;
+  readonly hostCloseLink: (host: RawHost, linkId: LinkId) => RawCallResult<RawOwned<RawIssuedCommand>>;
+  readonly hostAttachTcpServer: (host: RawHost, bind: string, bitrate: Bitrate) => RawCallResult<RawOwned<RawIssuedCommand>>;
+  readonly hostAttachTcpClient: (host: RawHost, target: string, bitrate: Bitrate) => RawCallResult<RawOwned<RawIssuedCommand>>;
+  readonly hostAttachUdp: (host: RawHost, local: string, peer: string, bitrate: Bitrate) => RawCallResult<RawOwned<RawIssuedCommand>>;
+  readonly hostDetachInterface: (host: RawHost, interfaceId: InterfaceId) => RawCallResult<RawOwned<RawIssuedCommand>>;
+  readonly hostEstablishLink: (host: RawHost, destination: DestinationHash) => RawCallResult<RawOwned<RawIssuedCommand>>;
+  readonly hostRequestPath: (host: RawHost, destination: DestinationHash) => RawCallResult<RawOwned<RawIssuedCommand>>;
+  readonly hostIdentify: (host: RawHost, linkId: LinkId, identity: IdentityHash) => RawCallResult<RawOwned<RawIssuedCommand>>;
+  readonly hostSendLinkPacket: (host: RawHost, linkId: LinkId, payload: Uint8Array) => RawCallResult<RawOwned<RawIssuedCommand>>;
+  readonly hostRequest: (host: RawHost, linkId: LinkId, pathHash: RequestPathHash, payload: Uint8Array, timeout: ResponseTimeout) => RawCallResult<RawOwned<RawIssuedCommand>>;
+  readonly hostRespond: (host: RawHost, linkId: LinkId, requestId: RequestId, requestRttMillis: number, payload: Uint8Array) => RawCallResult<RawOwned<RawIssuedCommand>>;
+  readonly hostSendResource: (host: RawHost, linkId: LinkId, payload: Uint8Array, packedMetadata: Uint8Array | undefined, compression: ResourceCompression) => RawCallResult<RawOwned<RawIssuedCommand>>;
+  readonly hostSetLinkResourceStrategy: (host: RawHost, linkId: LinkId, strategy: ResourceStrategy) => RawCallResult<RawOwned<RawIssuedCommand>>;
+  readonly hostSetDestinationResourceStrategy: (host: RawHost, destination: DestinationHash, strategy: ResourceStrategy) => RawCallResult<RawOwned<RawIssuedCommand>>;
+  readonly hostSendChannelMessage: (host: RawHost, linkId: LinkId, messageType: number, payload: Uint8Array) => RawCallResult<RawOwned<RawIssuedCommand>>;
+  readonly hostAllowRequester: (host: RawHost, destination: DestinationHash, pathHash: RequestPathHash, identity: IdentityHash) => RawCallResult<RawOwned<RawIssuedCommand>>;
+  readonly hostAttachInterface: (host: RawHost, config: InterfaceConfig) => RawCallResult<RawOwned<RawIssuedCommand>>;
+}

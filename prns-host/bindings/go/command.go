@@ -3,7 +3,76 @@ package prns
 import (
 	"context"
 	"sync"
+	"time"
 )
+
+type ResourceUpload struct {
+	mutex    sync.Mutex
+	native   nativeResourceUpload
+	finished bool
+}
+
+func (upload *ResourceUpload) Write(ctx context.Context, chunk []byte) error {
+	for {
+		upload.mutex.Lock()
+		if upload.native.pointer == nil || upload.finished {
+			upload.mutex.Unlock()
+			return StatusError{Operation: "write resource upload", Status: StatusStopped}
+		}
+		status := ffiResourceUploadWrite(upload.native, chunk)
+		upload.mutex.Unlock()
+		switch status {
+		case StatusOk:
+			return nil
+		case StatusWouldBlock:
+			select {
+			case <-ctx.Done():
+				upload.Abort()
+				return ctx.Err()
+			case <-time.After(time.Millisecond):
+			}
+		default:
+			return StatusError{Operation: "write resource upload", Status: status}
+		}
+	}
+}
+
+func (upload *ResourceUpload) Finish() (*Command, error) {
+	upload.mutex.Lock()
+	defer upload.mutex.Unlock()
+	if upload.native.pointer == nil || upload.finished {
+		return nil, StatusError{Operation: "finish resource upload", Status: StatusStopped}
+	}
+	command, status := ffiResourceUploadFinish(upload.native)
+	if status != StatusOk {
+		return nil, StatusError{Operation: "finish resource upload", Status: status}
+	}
+	upload.finished = true
+	return &Command{native: command}, nil
+}
+
+func (upload *ResourceUpload) Abort() {
+	upload.mutex.Lock()
+	defer upload.mutex.Unlock()
+	if upload.native.pointer != nil && !upload.finished {
+		ffiResourceUploadAbort(upload.native)
+		upload.finished = true
+	}
+}
+
+func (upload *ResourceUpload) Close() error {
+	upload.mutex.Lock()
+	defer upload.mutex.Unlock()
+	if upload.native.pointer == nil {
+		return nil
+	}
+	if !upload.finished {
+		ffiResourceUploadAbort(upload.native)
+	}
+	ffiResourceUploadClose(upload.native)
+	upload.native = nativeResourceUpload{}
+	return nil
+}
 
 type CommandSettlement interface {
 	commandSettlement()
@@ -238,6 +307,22 @@ func decodeCommandFailure(kind CommandFailureKind, detail string) (CommandFailur
 		return CommandFailureChannelUntrackable{}, nil
 	case CommandFailureKindInvalidChannelMessageType:
 		return CommandFailureInvalidChannelMessageType{}, nil
+	case CommandFailureKindInvalidConfiguration:
+		return CommandFailureInvalidConfiguration{Detail: detail}, nil
+	case CommandFailureKindResourceUploadCancelled:
+		return CommandFailureResourceUploadCancelled{}, nil
+	case CommandFailureKindResourceEarlyEof:
+		return CommandFailureResourceEarlyEof{}, nil
+	case CommandFailureKindResourceLengthOverrun:
+		return CommandFailureResourceLengthOverrun{}, nil
+	case CommandFailureKindPermissionDenied:
+		return CommandFailurePermissionDenied{Detail: detail}, nil
+	case CommandFailureKindDeviceUnavailable:
+		return CommandFailureDeviceUnavailable{Detail: detail}, nil
+	case CommandFailureKindConnectFailed:
+		return CommandFailureConnectFailed{Detail: detail}, nil
+	case CommandFailureKindBackendFailed:
+		return CommandFailureBackendFailed{Detail: detail}, nil
 	default:
 		return nil, StatusError{
 			Operation: "decode command failure",

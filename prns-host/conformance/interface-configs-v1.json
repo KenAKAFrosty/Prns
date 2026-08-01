@@ -1,0 +1,123 @@
+{
+  "schemaVersion": 1,
+  "interfaces": [
+    {
+      "kind": "AutoLan",
+      "groupId": "sdk-fixture",
+      "discoveryScope": "Organization",
+      "discoveryPort": 29710,
+      "dataPort": 42444,
+      "devices": ["eth0"],
+      "ignoredDevices": ["lo"],
+      "multicastAddressType": "Permanent"
+    },
+    {
+      "kind": "TcpClient",
+      "target": "127.0.0.1:4242",
+      "bitrate": { "kind": "BitsPerSecond", "value": 1000000 }
+    },
+    {
+      "kind": "TcpServer",
+      "bind": "127.0.0.1:4242",
+      "bitrate": { "kind": "Auto" }
+    },
+    {
+      "kind": "Udp",
+      "local": "127.0.0.1:4242",
+      "peer": "127.0.0.1:4243",
+      "bitrate": { "kind": "BitsPerSecond", "value": 2000000 }
+    },
+    {
+      "kind": "Serial",
+      "port": "/dev/ttyUSB0",
+      "line": { "baud": 115200, "dataBits": "Eight", "parity": "None", "stopBits": "One" }
+    },
+    {
+      "kind": "Kiss",
+      "port": "/dev/ttyUSB1",
+      "line": { "baud": 115200, "dataBits": "Eight", "parity": "None", "stopBits": "One" },
+      "flowControl": true,
+      "preambleMillis": 150,
+      "transmitTailMillis": 50,
+      "persistence": 64,
+      "slotTimeMillis": 20,
+      "stationCallsign": "PRNS",
+      "stationIntervalSeconds": 300
+    },
+    {
+      "kind": "Ax25Kiss",
+      "port": "/dev/ttyUSB2",
+      "line": { "baud": 9600, "dataBits": "Eight", "parity": "None", "stopBits": "One" },
+      "flowControl": false,
+      "preambleMillis": 100,
+      "transmitTailMillis": 25,
+      "persistence": 32,
+      "slotTimeMillis": 10,
+      "callsign": "PRNS",
+      "ssid": 1
+    },
+    {
+      "kind": "RNode",
+      "port": "/dev/ttyACM0",
+      "radio": { "frequencyHz": 915000000, "bandwidthHz": 125000, "txPowerDbm": 14, "spreadingFactor": 8, "codingRate": 5 },
+      "flowControl": true,
+      "stationCallsign": "PRNS",
+      "stationIntervalSeconds": 300,
+      "airtimeLimitShortCentiPercent": 1000,
+      "airtimeLimitLongCentiPercent": 500
+    },
+    {
+      "kind": "MultiRNode",
+      "port": "/dev/ttyACM1",
+      "stationCallsign": "PRNS",
+      "stationIntervalSeconds": 300,
+      "members": [
+        {
+          "name": "primary",
+          "virtualPort": 1,
+          "radio": { "frequencyHz": 915000000, "bandwidthHz": 125000, "txPowerDbm": 14, "spreadingFactor": 8, "codingRate": 5 },
+          "flowControl": true,
+          "outgoing": true
+        }
+      ]
+    },
+    {
+      "kind": "Pipe",
+      "command": ["fixture-command", "--fixture"],
+      "respawnDelayMillis": 1000
+    },
+    {
+      "kind": "BackboneClient",
+      "target": "127.0.0.1:4244",
+      "bitrate": { "kind": "Auto" }
+    },
+    {
+      "kind": "BackboneServer",
+      "bind": "127.0.0.1:4245",
+      "bitrate": { "kind": "BitsPerSecond", "value": 4000000 }
+    },
+    {
+      "kind": "I2p",
+      "peers": ["fixture.b32.i2p"],
+      "connectable": true
+    },
+    {
+      "kind": "Weave",
+      "port": "/dev/ttyWEAVE0"
+    },
+    { "kind": "AutomaticUsb" },
+    { "kind": "AutomaticBluetoothLe" },
+    {
+      "kind": "WebSocketClient",
+      "target": "ws://fixture.invalid/client"
+    },
+    {
+      "kind": "WebSocketServer",
+      "bind": "127.0.0.1:4246"
+    },
+    {
+      "kind": "BrowserRendezvous",
+      "url": "ws://fixture.invalid/rendezvous"
+    }
+  ]
+}

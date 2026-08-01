@@ -1,11 +1,13 @@
 import {
   Prns,
+  PRODUCT_VERSION,
   Tag,
   bitrateBps,
   channelTag,
   destinationHash,
   entropyBytes,
   hardwareMtu,
+  identityHash,
   identitySecretKey,
   interfaceId,
   nowMillis,
@@ -47,7 +49,10 @@ class MockRuntime extends MockRuntimeBase {
   readonly ingests: RuntimeIngestOptions[] = [];
   readonly destinations: RuntimeRegisterSingleDestinationOptions[] = [];
   outbound: unknown[] = [];
+  routeSnapshots: unknown[] = [];
+  destinationIdentities: unknown[] = [];
   registerFailure: Error | undefined;
+  #revision = 0;
 
   constructor(identity: IdentitySecretKey) {
     super();
@@ -60,6 +65,7 @@ class MockRuntime extends MockRuntimeBase {
       throw this.registerFailure;
     }
     this.registered.push(options);
+    this.#revision += 1;
     return interfaceId(
       new Uint8Array([0, 0, 0, 0, 0, 0, 0, this.registered.length]),
     );
@@ -67,6 +73,7 @@ class MockRuntime extends MockRuntimeBase {
 
   removeInterface(options: RuntimeRemoveInterfaceInput): boolean {
     this.removed.push(options);
+    this.#revision += 1;
     return true;
   }
 
@@ -103,6 +110,7 @@ class MockRuntime extends MockRuntimeBase {
 
   ingest(options: RuntimeIngestOptions): void {
     this.ingests.push(options);
+    this.#revision += 1;
   }
 
   drainEvents(): unknown[] {
@@ -116,20 +124,36 @@ class MockRuntime extends MockRuntimeBase {
   }
 
   snapshot(): unknown {
+    const removed = new Set(
+      this.removed.map((entry) => Array.from(entry.interfaceId).join(",")),
+    );
+    const interfaces = this.registered
+      .map((options, index) => ({
+        options,
+        id: interfaceId(
+          new Uint8Array([0, 0, 0, 0, 0, 0, 0, index + 1]),
+        ),
+      }))
+      .filter(({ id }) => !removed.has(Array.from(id).join(",")));
     return {
       type: "snapshot",
+      revision: BigInt(this.#revision),
       ingestedPackets: this.ingests.length,
       ingestedCommands: 0,
-      routes: 0,
+      routes: this.routeSnapshots.length,
       scheduledAnnounces: 0,
-      interfaces: this.registered.map((options, index) => ({
-        id: interfaceId(new Uint8Array([0, 0, 0, 0, 0, 0, 0, index + 1])),
+      interfaces: interfaces.map(({ options, id }) => ({
+        id,
         kind: options.kind,
         bitrateBps: options.bitrateBps,
         hardwareMtu: options.hardwareMtu,
         routes: 0,
         links: 0,
+        transportedLinks: 0,
       })),
+      activeLinkCount: 0,
+      routeSnapshots: this.routeSnapshots,
+      destinationIdentities: this.destinationIdentities,
     };
   }
 }
@@ -250,6 +274,17 @@ async function main(): Promise<void> {
     const customTag = channelTag(new TextEncoder().encode("websocket-smoke"));
     const customBitrate = bitrateBps(250_000);
     const customMtu = hardwareMtu(1200);
+    assert(prns.backendInfo.backend === "Cooperative", "backend kind is exact");
+    assert(
+      prns.backendInfo.capabilities.join(",") ===
+        "WebSocket,BrowserRendezvous",
+      "available browser capabilities are reported",
+    );
+    assert(
+      prns.backendInfo.interfaceKinds.join(",") ===
+        "WebSocketClient,BrowserRendezvous",
+      "available stable browser interfaces are reported",
+    );
     const invalidTarget = await prns.interfaces.webSocket.connect(
       "https://127.0.0.1:9876/not-websocket",
     );
@@ -465,7 +500,158 @@ async function main(): Promise<void> {
       "oversized frame is bounded",
     );
 
+    const unsupportedStable = await prns.attachInterface(Tag("AutomaticUsb"));
+    assert(
+      unsupportedStable.tag === "Failed" &&
+        unsupportedStable.data.tag === "UnsupportedByBackend",
+      "stable attach preserves typed browser unsupported outcomes",
+    );
+    const invalidStable = await prns.attachInterface(
+      Tag("BrowserRendezvous", {
+        url: "https://127.0.0.1:9876/not-websocket",
+      }),
+    );
+    assert(
+      invalidStable.tag === "Failed" &&
+        invalidStable.data.tag === "InvalidConfiguration",
+      "stable rendezvous rejects invalid configuration",
+    );
+
+    const stableSocketIndex = FakeWebSocket.instances.length;
+    const stableAttached = await prns.attachInterface(
+      Tag("BrowserRendezvous", {
+        url: "ws://127.0.0.1:9876/stable-rendezvous",
+      }),
+    );
+    assert(
+      stableAttached.tag === "Succeeded" &&
+        stableAttached.data.tag === "InterfaceAttached",
+      "stable browser rendezvous attaches",
+    );
+    const stableRendezvousSocket = assertDefined(
+      FakeWebSocket.instances[stableSocketIndex],
+      "stable rendezvous socket exists",
+    );
+    stableRendezvousSocket.emitMessage(arrayBuffer([21, 22]));
+    await settle();
+    runtime.outbound.push({
+      type: "frame",
+      target: {
+        type: "interface",
+        interfaceId: stableAttached.data.data.interface,
+      },
+      bytes: packetFrame(new Uint8Array([23])),
+    });
+    await waitFor(
+      () => stableRendezvousSocket.sent.length === 1,
+      "stable rendezvous drains outbound data",
+    );
+    const inspectedDestination = destinationHash(new Uint8Array(16).fill(31));
+    const inspectedIdentity = identityHash(new Uint8Array(16).fill(32));
+    runtime.routeSnapshots = [
+      {
+        destination: inspectedDestination,
+        hops: 2,
+        viaIdentity: inspectedIdentity,
+        interfaceId: stableAttached.data.data.interface,
+        learnedAtMillis: 10,
+        lastRelayedAtMillis: 20,
+        expiresAtMillis: 30,
+      },
+    ];
+    runtime.destinationIdentities = [
+      {
+        destination: inspectedDestination,
+        identity: inspectedIdentity,
+      },
+    ];
+    const stableRendezvousSnapshot = prns.hostSnapshot();
+    assert(
+      stableRendezvousSnapshot.tag === "Captured" &&
+        stableRendezvousSnapshot.data.interfaces.some(
+          (entry) =>
+            entry.kind === "BrowserRendezvous" &&
+            equalBytes(entry.interfaceId, stableAttached.data.data.interface) &&
+            entry.rxBytes === 2n &&
+            entry.txBytes === 1n,
+        ),
+      "stable snapshot preserves logical kind and transfer counters",
+    );
+    assert(
+      stableRendezvousSnapshot.data.routes.length === 1 &&
+        equalBytes(
+          stableRendezvousSnapshot.data.routes[0]?.destination ??
+            new Uint8Array(),
+          inspectedDestination,
+        ) &&
+        stableRendezvousSnapshot.data.routes[0]?.hops === 2 &&
+        stableRendezvousSnapshot.data.destinationIdentities.length === 1 &&
+        equalBytes(
+          stableRendezvousSnapshot.data.destinationIdentities[0]?.identity ??
+            new Uint8Array(),
+          inspectedIdentity,
+        ),
+      "stable snapshot preserves routes and destination identities",
+    );
+    runtime.routeSnapshots = [];
+    runtime.destinationIdentities = [];
+    const stableInterfaceId = stableAttached.data.data.interface;
+    const duplicateStable = await prns.attachInterface(
+      Tag("BrowserRendezvous", {
+        url: "ws://127.0.0.1:9876/stable-rendezvous",
+      }),
+    );
+    assert(
+      duplicateStable.tag === "Failed" &&
+        duplicateStable.data.tag === "BackendFailed",
+      "stable duplicate attach has a typed backend failure",
+    );
+    assert(
+      FakeWebSocket.instances.length === stableSocketIndex + 1,
+      "stable duplicate attach is rejected before opening a socket",
+    );
+    const stableDetached = await prns.detachInterface(stableInterfaceId);
+    assert(
+      stableDetached.tag === "Succeeded" &&
+        stableDetached.data.tag === "InterfaceDetached",
+      "stable browser rendezvous detaches",
+    );
+    assert(
+      stableRendezvousSocket.closeCalls === 1,
+      "stable detach closes its transport",
+    );
+    const unknownStable = await prns.detachInterface(stableInterfaceId);
+    assert(
+      unknownStable.tag === "Failed" &&
+        unknownStable.data.tag === "UnknownInterface",
+      "stable detach rejects unknown interfaces",
+    );
+
+    const stableClient = await prns.attachInterface(
+      Tag("WebSocketClient", {
+        target: "ws://127.0.0.1:9876/stable-client",
+      }),
+    );
+    assert(
+      stableClient.tag === "Succeeded" &&
+        stableClient.data.tag === "InterfaceAttached",
+      "stable WebSocket client attaches",
+    );
+    const stableClientDetached = await prns.detachInterface(
+      stableClient.data.data.interface,
+    );
+    assert(
+      stableClientDetached.tag === "Succeeded" &&
+        stableClientDetached.data.tag === "InterfaceDetached",
+      "stable WebSocket client detaches",
+    );
+
     delete host.WebSocket;
+    assert(
+      prns.backendInfo.capabilities.length === 0 &&
+        prns.backendInfo.interfaceKinds.length === 0,
+      "runtime backend info follows browser API availability",
+    );
     const unavailable = await prns.interfaces.webSocket.connect(
       "ws://127.0.0.1:9876/unavailable",
     );
@@ -473,7 +659,75 @@ async function main(): Promise<void> {
       unavailable.tag === "HostApiUnavailable",
       "missing WebSocket API is semantically tagged",
     );
+    const unavailableStable = await prns.attachInterface(
+      Tag("BrowserRendezvous", {
+        url: "ws://127.0.0.1:9876/unavailable-stable",
+      }),
+    );
+    assert(
+      unavailableStable.tag === "Failed" &&
+        unavailableStable.data.tag === "DeviceUnavailable",
+      "stable attach preserves missing browser API detail",
+    );
     host.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
+
+    const stopSocketIndex = FakeWebSocket.instances.length;
+    const stopAttached = await prns.attachInterface(
+      Tag("WebSocketClient", {
+        target: "ws://127.0.0.1:9876/stop-cleanup",
+      }),
+    );
+    assert(
+      stopAttached.tag === "Succeeded" &&
+        stopAttached.data.tag === "InterfaceAttached",
+      "stable WebSocket client attaches before shutdown",
+    );
+    const runningSnapshot = prns.hostSnapshot();
+    assert(runningSnapshot.tag === "Captured", "stable host snapshot is captured");
+    assert(
+      runningSnapshot.data.backend.backend === "Cooperative" &&
+        runningSnapshot.data.interfaces.length === 1 &&
+        runningSnapshot.data.interfaces[0]?.kind === "WebSocketClient" &&
+        runningSnapshot.data.interfaces[0]?.health === "Connected" &&
+        runningSnapshot.data.runtime.running &&
+        runningSnapshot.data.runtime.interfaceCount === 1 &&
+        !runningSnapshot.data.persistence.persistent,
+      "stable host snapshot is internally consistent",
+    );
+    const stopped = await prns.stop();
+    assert(stopped.tag === "Stopped", "browser host stops orderly");
+    assert(
+      prns.lifecycle.tag === "Stopped" &&
+        prns.lifecycle.data.reason === "Requested",
+      "browser lifecycle records requested shutdown",
+    );
+    assert(
+      assertDefined(
+        FakeWebSocket.instances[stopSocketIndex],
+        "shutdown WebSocket exists",
+      ).closeCalls === 1,
+      "browser shutdown closes stable transports",
+    );
+    const stoppedSnapshot = prns.hostSnapshot();
+    assert(
+      stoppedSnapshot.tag === "Captured" &&
+        !stoppedSnapshot.data.runtime.running &&
+        stoppedSnapshot.data.interfaces.length === 0,
+      "stable snapshot records stopped runtime health",
+    );
+    const stoppedAttach = await prns.attachInterface(
+      Tag("BrowserRendezvous", {
+        url: "ws://127.0.0.1:9876/after-stop",
+      }),
+    );
+    assert(
+      stoppedAttach.tag === "Failed" && stoppedAttach.data.tag === "NodeStopped",
+      "stable commands reject after browser shutdown",
+    );
+    assert(
+      (await prns.stop()).tag === "AlreadyStopped",
+      "browser shutdown is idempotent",
+    );
 
     console.log("websocket smoke passed");
   } finally {
@@ -491,7 +745,9 @@ function wasmModule(): PrnsWasmModule {
     UsbAutoDecoder: MockUsbAutoDecoder,
     BluetoothReassembler: MockBluetoothReassembler,
     hostContractAbi: () => 1,
-    productVersion: () => "0.3.1",
+    hostSchemaVersion: () => 1,
+    browserPersistenceVersion: () => 1,
+    productVersion: () => PRODUCT_VERSION,
     identitySecretKeyLength: () => IDENTITY_LENGTH,
     bluetoothServiceUuid: () => "00000000-0000-4000-8000-000000000001",
     bluetoothControlUuid: () => "00000000-0000-4000-8000-000000000002",

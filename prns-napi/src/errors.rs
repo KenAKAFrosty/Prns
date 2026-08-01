@@ -30,6 +30,12 @@ pub enum ErrorCode {
     IdentityNotHeld,
     AnnounceFailed,
     AttachFailed,
+    BindFailed,
+    Unsupported,
+    UnknownInterface,
+    DeviceUnavailable,
+    ConnectFailed,
+    BackendFailed,
     RequestFailed,
     RespondFailed,
     AllowFailed,
@@ -52,6 +58,8 @@ pub enum ErrorCode {
     RoutingControlFailed,
     BlackholeFailed,
     RetentionFailed,
+    PermissionDenied,
+    Unavailable,
     Internal,
 }
 
@@ -84,6 +92,12 @@ impl AsRef<str> for ErrorCode {
             Self::IdentityNotHeld => "PRNS_IDENTITY_NOT_HELD",
             Self::AnnounceFailed => "PRNS_ANNOUNCE_FAILED",
             Self::AttachFailed => "PRNS_ATTACH_FAILED",
+            Self::BindFailed => "PRNS_BIND_FAILED",
+            Self::Unsupported => "PRNS_UNSUPPORTED",
+            Self::UnknownInterface => "PRNS_UNKNOWN_INTERFACE",
+            Self::DeviceUnavailable => "PRNS_DEVICE_UNAVAILABLE",
+            Self::ConnectFailed => "PRNS_CONNECT_FAILED",
+            Self::BackendFailed => "PRNS_BACKEND_FAILED",
             Self::RequestFailed => "PRNS_REQUEST_FAILED",
             Self::RespondFailed => "PRNS_RESPOND_FAILED",
             Self::AllowFailed => "PRNS_ALLOW_FAILED",
@@ -106,6 +120,8 @@ impl AsRef<str> for ErrorCode {
             Self::RoutingControlFailed => "PRNS_ROUTING_CONTROL_FAILED",
             Self::BlackholeFailed => "PRNS_BLACKHOLE_FAILED",
             Self::RetentionFailed => "PRNS_RETENTION_FAILED",
+            Self::PermissionDenied => "PRNS_PERMISSION_DENIED",
+            Self::Unavailable => "PRNS_UNAVAILABLE",
             Self::Internal => "PRNS_INTERNAL",
         }
     }

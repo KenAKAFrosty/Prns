@@ -25,12 +25,19 @@ test('introspection, routing control, and blackhole surfaces', async () => {
     assert.equal(interfaces.length, 1);
     assert.equal(interfaces[0].kind, 'tcp-client');
     assert.equal(interfaces[0].connection, 'connected');
-    assert.ok(interfaces[0].rxBytes > 0);
+    assert.ok(interfaces[0].rxBytes > 0n);
 
     const inventory = client.interfaceInventory();
     assert.equal(inventory.length, 1);
     assert.ok(inventory[0].origin.length > 0);
     assert.equal(inventory[0].interface.kind, 'tcp-client');
+
+    const snapshot = await client.hostSnapshot();
+    assert.equal(snapshot.backend.backend, 'Native');
+    assert.ok(snapshot.backend.interfaceKinds.includes('TcpClient'));
+    assert.equal(snapshot.interfaces.length, 1);
+    assert.equal(snapshot.interfaces[0].kind, 'TcpClient');
+    assert.equal(snapshot.runtime.interfaceCount, 1);
 
     const routes = await client.routes();
     assert.ok(routes.some((r: any) => bufEq(r.destination, dest)));
@@ -41,9 +48,6 @@ test('introspection, routing control, and blackhole surfaces', async () => {
     assert.equal(typeof route.learnedAtMillis, 'number');
     assert.equal(typeof route.lastRelayedAtMillis, 'number');
     assert.equal(typeof route.expiresAtMillis, 'number');
-    assert.equal(route.learnedAt, route.learnedAtMillis);
-    assert.equal(route.lastRelayedAt, route.lastRelayedAtMillis);
-    assert.equal(route.expiresAt, route.expiresAtMillis);
 
     const identityHash = await client.destinationIdentityHash(dest);
     assert.ok(identityHash);

@@ -344,7 +344,7 @@ def manifest_targets(manifest: dict, errors: list[str]) -> dict[str, dict]:
             errors.append(f"candidate manifest duplicates board {board}")
         targets[board] = target
     if set(targets) != set(SHIPPING_BOARDS):
-        errors.append("candidate manifest does not contain exactly the four shipping boards")
+        errors.append("candidate manifest does not contain exactly the shipping board set")
     return targets
 
 

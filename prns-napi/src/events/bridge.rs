@@ -3,11 +3,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use napi::bindgen_prelude::Object;
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi::Status;
-use personal_rns::runtime::PrnsEvent;
 use prns_host::{
     EventDeliveryAdmission as Admission, EventDeliveryQueue as QueueState, PrnsLimits,
 };
-use tokio::sync::Notify;
 
 use super::owned::OwnedEvent;
 
@@ -57,7 +55,6 @@ impl EventQueue {
 pub struct EventSink {
     tsfn: Arc<EventTsfn>,
     queue: EventQueue,
-    failed: Arc<Notify>,
 }
 
 impl EventSink {
@@ -65,7 +62,6 @@ impl EventSink {
         Self {
             tsfn: Arc::new(tsfn),
             queue,
-            failed: Arc::new(Notify::new()),
         }
     }
 
@@ -78,12 +74,6 @@ impl EventSink {
             != Status::Ok
         {
             self.queue.complete_parts(application_bytes, terminal);
-        }
-    }
-
-    pub fn dispatch(&self, event: PrnsEvent<'_>) {
-        if let Some(owned) = OwnedEvent::capture(event) {
-            self.emit(owned);
         }
     }
 
@@ -107,7 +97,6 @@ impl EventSink {
                         self.call(event);
                     }
                 }
-                self.failed.notify_waiters();
             }
             Admission::DroppedDiagnostic | Admission::Ignored => {}
         }
@@ -119,13 +108,35 @@ impl EventSink {
         });
     }
 
-    pub async fn wait_failed(&self) {
-        loop {
-            let failed = self.failed.notified();
-            if self.queue.failed() {
-                return;
-            }
-            failed.await;
+    pub fn failed(&self) -> bool {
+        self.queue.failed()
+    }
+}
+
+impl prns_host_native::NativeEventSink for EventSink {
+    fn running(&self) {}
+
+    fn publish_application(&self, event: prns_host::ApplicationEvent) -> bool {
+        if let Some(event) = OwnedEvent::capture_host_application(event) {
+            self.emit(event);
         }
+        !self.failed()
+    }
+
+    fn publish_resource(&self, event: prns_host::ResourceAvailable, body: Vec<u8>) -> bool {
+        self.emit(OwnedEvent::capture_host_resource(event, body));
+        !self.failed()
+    }
+
+    fn publish_diagnostic(&self, event: prns_host::DiagnosticEvent) {
+        self.emit(OwnedEvent::capture_host_diagnostic(event));
+    }
+
+    fn stopped(&self) {
+        self.node_stopped("stopped");
+    }
+
+    fn failed(&self, detail: String) {
+        self.node_stopped(&detail);
     }
 }

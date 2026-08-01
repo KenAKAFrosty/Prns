@@ -5,6 +5,11 @@ import json
 import re
 from pathlib import Path
 
+try:
+    from host_contract import validate_contract
+except ModuleNotFoundError:
+    from tools.repo.host_contract import validate_contract
+
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_PATH = ROOT / "prns-host/schema/host-contract-v1.json"
@@ -51,79 +56,299 @@ def lower_first(name):
     return name[0].lower() + name[1:]
 
 
-def validate(schema):
-    if schema["schemaVersion"] != 1:
-        raise ValueError("unsupported host contract schema version")
-    fixed_names = set()
-    for item in schema["fixedBytes"]:
-        if item["name"] in fixed_names or item["length"] < 1:
-            raise ValueError(f"invalid fixed byte type {item['name']}")
-        fixed_names.add(item["name"])
-    enum_names = set()
-    for enum in schema["enums"]:
-        if enum["name"] in enum_names:
-            raise ValueError(f"duplicate enum {enum['name']}")
-        enum_names.add(enum["name"])
-        names = set()
-        values = set()
-        for value in enum["values"]:
-            if value["name"] in names or value["value"] in values:
-                raise ValueError(f"duplicate value in {enum['name']}")
-            names.add(value["name"])
-            values.add(value["value"])
-    union_names = set()
-    known_types = fixed_names | enum_names | {
-        "bytes",
-        "bool",
-        "string",
-        "u8",
-        "u16",
-        "u64",
-        "u128",
-        "DestinationName",
-        "RequestHandlers",
-        "ResourceStream",
+def raw_operations(schema):
+    operations = [dict(operation) for operation in schema["operations"]]
+    union_name = schema["commandProjection"]["union"]
+    command = next(item for item in schema["unions"] if item["name"] == union_name)
+    for case in command["cases"]:
+        operations.append(
+            {
+                "name": f"host{case['name']}",
+                "kind": "create",
+                "receiver": {
+                    "type": schema["commandProjection"]["receiver"],
+                    "mutable": True,
+                },
+                "parameters": [
+                    {
+                        "name": field["name"],
+                        "type": field["type"],
+                        "passing": "optionalBorrow" if field.get("optional") else "borrow",
+                    }
+                    for field in case["fields"]
+                ],
+                "result": {
+                    "type": schema["commandProjection"]["result"],
+                    "ownership": "owned",
+                },
+                "status": True,
+            }
+        )
+    names = [operation["name"] for operation in operations]
+    if len(names) != len(set(names)):
+        raise ValueError("duplicate raw host operation")
+    return operations
+
+
+def raw_operation_parameters(operation):
+    parameters = []
+    receiver = operation.get("receiver")
+    if receiver is not None:
+        parameters.append(
+            {"name": snake(receiver["type"]), "type": receiver["type"], "receiver": True}
+        )
+    parameters.extend(operation["parameters"])
+    return parameters
+
+
+def raw_parameter_name(name):
+    return {"interface": "interfaceId", "event": "eventValue"}.get(name, name)
+
+
+def raw_result_type(operation, render_type, generic):
+    result = operation.get("result")
+    value = render_type("RawUnit") if result is None else render_type(result["type"])
+    if result is not None and result["ownership"] == "owned":
+        value = generic("RawOwned", value)
+    elif result is not None and result["ownership"] == "borrowed":
+        value = generic("RawBorrowed", value)
+    return generic("RawCallResult", value) if operation["status"] else value
+
+
+def rust_operation_inventory(schema):
+    lines = ["pub const HOST_OPERATION_NAMES: &[&str] = &["]
+    for operation in raw_operations(schema):
+        lines.append(f'    "{operation["name"]}",')
+    lines.append("];")
+    return lines
+
+
+def ts_raw_protocol(schema):
+    operations = raw_operations(schema)
+    lines = ["const HOST_OPERATION_NAMES = ["]
+    for operation in operations:
+        lines.append(f'  "{operation["name"]}",')
+    lines.extend(
+        [
+            "] as const;",
+            "",
+            "type HostOperationName = (typeof HOST_OPERATION_NAMES)[number];",
+            "",
+            "type RawUnit = undefined;",
+            "type RawOwned<Value> = { readonly value: Value; readonly ownership: \"owned\" };",
+            "type RawBorrowed<Value> = { readonly value: Value; readonly ownership: \"borrowed\" };",
+            "type RawCallResult<Value> =",
+            '  | Tag<"Succeeded", Value>',
+            '  | Tag<"Failed", RawStatus>;',
+        ]
+    )
+    raw_names = {item["name"] for item in schema["handles"]} | {
+        "ContractInfo", "HostOptions", "Lifecycle", "CommandResult", "ResourceChunk",
+        "ReadinessCallback", "opaquePointer", "Status", "EventField",
     }
-    for union in schema["unions"]:
-        if union["name"] in union_names:
-            raise ValueError(f"duplicate union {union['name']}")
-        union_names.add(union["name"])
-        names = set()
-        values = set()
-        for case in union["cases"]:
-            if case["name"] in names or case["value"] in values:
-                raise ValueError(f"duplicate case in {union['name']}")
-            names.add(case["name"])
-            values.add(case["value"])
-            field_names = set()
-            for field in case["fields"]:
-                if field["name"] in field_names:
-                    raise ValueError(
-                        f"duplicate field {field['name']} in {union['name']}.{case['name']}"
-                    )
-                if field["type"] not in known_types | union_names | {
-                    item["name"] for item in schema["unions"]
-                }:
-                    raise ValueError(
-                        f"unknown type {field['type']} in {union['name']}.{case['name']}"
-                    )
-                field_names.add(field["name"])
-    for union_name, enum_name in (
-        ("CommandOutcome", "CommandOutcomeKind"),
-        ("CommandFailure", "CommandFailureKind"),
-        ("ApplicationEvent", "ApplicationEventKind"),
-        ("DiagnosticEvent", "DiagnosticEventKind"),
-    ):
-        union = next(item for item in schema["unions"] if item["name"] == union_name)
-        enum = next(item for item in schema["enums"] if item["name"] == enum_name)
-        union_cases = {
-            item["name"]: item["value"] for item in union["cases"]
-        }
-        enum_values = {
-            item["name"]: item["value"] for item in enum["values"]
-        }
-        if union_cases != enum_values:
-            raise ValueError(f"{union_name} and {enum_name} disagree")
+    for name in sorted(raw_names):
+        lines.append(f'type Raw{name[0].upper() + name[1:]} = {{ readonly rawType: "{name}" }};')
+    lines.extend(["", "interface RawHostProtocol {"])
+    for operation in operations:
+        def render(value):
+            if value == "RawUnit":
+                return "RawUnit"
+            if value == "size":
+                return "number"
+            if value in raw_names:
+                return f"Raw{value[0].upper() + value[1:]}"
+            return ts_type(value)
+        parameters = []
+        for parameter in raw_operation_parameters(operation):
+            value = render(parameter["type"])
+            if parameter.get("passing") == "optionalBorrow":
+                value += " | undefined"
+            parameters.append(f"{raw_parameter_name(parameter['name'])}: {value}")
+        result = raw_result_type(operation, render, lambda owner, value: f"{owner}<{value}>")
+        lines.append(f"  readonly {operation['name']}: ({', '.join(parameters)}) => {result};")
+    lines.extend(["}", ""])
+    return lines
+
+
+def python_raw_protocol(schema):
+    operations = raw_operations(schema)
+    lines = ["HOST_OPERATION_NAMES: tuple[str, ...] = ("]
+    for operation in operations:
+        lines.append(f'    "{operation["name"]}",')
+    lines.extend([")", "", "RawValue = TypeVar(\"RawValue\")", "", "@dataclass(frozen=True, slots=True)", "class _RawOwned(Generic[RawValue]):", "    value: RawValue", "", "@dataclass(frozen=True, slots=True)", "class _RawBorrowed(Generic[RawValue]):", "    value: RawValue", "", "@dataclass(frozen=True, slots=True)", "class _RawCallSuccess(Generic[RawValue]):", "    value: RawValue", "", "@dataclass(frozen=True, slots=True)", "class _RawCallFailure:", "    error: Status", "", "_RawCallResult: TypeAlias = _RawCallSuccess[RawValue] | _RawCallFailure", "", "class _RawUnit: pass"])
+    raw_names = {item["name"] for item in schema["handles"]} | {"ContractInfo", "HostOptions", "Lifecycle", "CommandResult", "ResourceChunk", "ReadinessCallback", "opaquePointer"}
+    for name in sorted(raw_names):
+        lines.extend(["", f"class _Raw{name[0].upper() + name[1:]}: pass"])
+    lines.extend(["", "class _RawHostProtocol(Protocol):"])
+    for operation in operations:
+        def render(value):
+            if value == "RawUnit":
+                return "_RawUnit"
+            if value == "size":
+                return "int"
+            if value in raw_names:
+                return f"_Raw{value[0].upper() + value[1:]}"
+            return python_type(value)
+        arguments = ""
+        for parameter in raw_operation_parameters(operation):
+            value = render(parameter["type"])
+            if parameter.get("passing") == "optionalBorrow":
+                value += " | None"
+            arguments += f", {snake(parameter['name'])}: {value}"
+        result = raw_result_type(operation, render, lambda owner, value: f"_{owner}[{value}]")
+        lines.append(f"    def {snake(operation['name'])}(self{arguments}) -> {result}: ...")
+    lines.append("")
+    return lines
+
+
+def dotnet_raw_protocol(schema):
+    operations = raw_operations(schema)
+    lines = ["internal static class RawHostProtocolContract", "{", "    internal static readonly string[] OperationNames =", "    ["]
+    for operation in operations:
+        lines.append(f'        "{operation["name"]}",')
+    lines.extend(["    ];", "}", "", "internal readonly record struct RawUnit;", "internal readonly record struct RawOwned<T>(T Value);", "internal readonly record struct RawBorrowed<T>(T Value);", "internal abstract record RawCallResult<T>", "{", "    internal sealed record Success(T Value) : RawCallResult<T>;", "    internal sealed record Failure(Status Error) : RawCallResult<T>;", "}"])
+    raw_names = {item["name"] for item in schema["handles"]} | {"ContractInfo", "HostOptions", "Lifecycle", "CommandResult", "ResourceChunk", "ReadinessCallback", "opaquePointer"}
+    for name in sorted(raw_names):
+        lines.append(f"internal interface IRaw{name[0].upper() + name[1:]} {{ }}")
+    lines.extend(["", "internal interface IRawHostProtocol", "{"])
+    for operation in operations:
+        def render(value):
+            if value == "size":
+                return "nuint"
+            if value in raw_names:
+                return f"IRaw{value[0].upper() + value[1:]}"
+            return dotnet_type(value)
+        parameters = []
+        for parameter in raw_operation_parameters(operation):
+            value = render(parameter["type"])
+            if parameter.get("passing") == "optionalBorrow":
+                value += "?"
+            parameters.append(f"{value} {raw_parameter_name(parameter['name'])}")
+        result = raw_result_type(operation, render, lambda owner, value: f"{owner}<{value}>")
+        lines.append(f"    {result} {operation['name'][0].upper() + operation['name'][1:]}({', '.join(parameters)});")
+    lines.extend(["}", ""])
+    return lines
+
+
+def go_raw_protocol(schema):
+    operations = raw_operations(schema)
+    lines = ["var hostOperationNames = [...]string{"]
+    for operation in operations:
+        lines.append(f'\t"{operation["name"]}",')
+    lines.extend(["}", "", "type rawUnit struct{}", "type rawOwned[T any] struct{ value T }", "type rawBorrowed[T any] struct{ value T }", "type rawCallResult[T any] interface{ rawCallResult() }", "type rawCallSuccess[T any] struct{ value T }", "type rawCallFailure[T any] struct{ error Status }", "func (rawCallSuccess[T]) rawCallResult() {}", "func (rawCallFailure[T]) rawCallResult() {}"])
+    raw_names = {item["name"] for item in schema["handles"]} | {"ContractInfo", "HostOptions", "Lifecycle", "CommandResult", "ResourceChunk", "ReadinessCallback", "opaquePointer"}
+    for name in sorted(raw_names):
+        lines.append(f"type raw{name[0].upper() + name[1:]} struct{{}}")
+    lines.extend(["", "type rawHostProtocol interface {"])
+    for operation in operations:
+        def render(value):
+            if value == "RawUnit":
+                return "rawUnit"
+            if value == "size":
+                return "uintptr"
+            if value in raw_names:
+                return f"raw{value[0].upper() + value[1:]}"
+            return go_type(value)
+        parameters = []
+        for parameter in raw_operation_parameters(operation):
+            value = render(parameter["type"])
+            if parameter.get("passing") == "optionalBorrow":
+                value = f"*{value}"
+            parameters.append(f"{raw_parameter_name(parameter['name'])} {value}")
+        result = raw_result_type(operation, render, lambda owner, value: f"{lower_first(owner)}[{value}]")
+        lines.append(f"\t{operation['name']}({', '.join(parameters)}) {result}")
+    lines.extend(["}", ""])
+    return lines
+
+
+def swift_raw_protocol(schema):
+    operations = raw_operations(schema)
+    lines = ["let hostOperationNames = ["]
+    for operation in operations:
+        lines.append(f'    "{operation["name"]}",')
+    lines.extend(["]", "", "struct RawUnit {}", "struct RawOwned<Value> { let value: Value }", "struct RawBorrowed<Value> { let value: Value }", "enum RawCallResult<Value> {", "    case success(Value)", "    case failure(Status)", "}"])
+    raw_names = {item["name"] for item in schema["handles"]} | {"ContractInfo", "HostOptions", "Lifecycle", "CommandResult", "ResourceChunk", "ReadinessCallback", "opaquePointer"}
+    for name in sorted(raw_names):
+        lines.append(f"struct Raw{name[0].upper() + name[1:]} {{}}")
+    lines.extend(["", "protocol RawHostProtocol {"])
+    for operation in operations:
+        def render(value):
+            if value == "size":
+                return "Int"
+            if value in raw_names:
+                return f"Raw{value[0].upper() + value[1:]}"
+            return swift_type(value)
+        parameters = []
+        for parameter in raw_operation_parameters(operation):
+            value = render(parameter["type"])
+            if parameter.get("passing") == "optionalBorrow":
+                value += "?"
+            parameters.append(f"_ {raw_parameter_name(parameter['name'])}: {value}")
+        result = raw_result_type(operation, render, lambda owner, value: f"{owner}<{value}>")
+        lines.append(f"    func {operation['name']}({', '.join(parameters)}) -> {result}")
+    lines.extend(["}", ""])
+    return lines
+
+
+def kotlin_raw_protocol(schema):
+    operations = raw_operations(schema)
+    lines = ["internal val HOST_OPERATION_NAMES = listOf("]
+    for operation in operations:
+        lines.append(f'    "{operation["name"]}",')
+    lines.extend([")", "", "internal data object RawUnit", "internal data class RawOwned<Value>(val value: Value)", "internal data class RawBorrowed<Value>(val value: Value)", "internal sealed interface RawCallResult<out Value>", "internal data class RawCallSuccess<Value>(val value: Value) : RawCallResult<Value>", "internal data class RawCallFailure(val error: Status) : RawCallResult<Nothing>"])
+    raw_names = {item["name"] for item in schema["handles"]} | {"ContractInfo", "HostOptions", "Lifecycle", "CommandResult", "ResourceChunk", "ReadinessCallback", "opaquePointer"}
+    for name in sorted(raw_names):
+        lines.append(f"internal class Raw{name[0].upper() + name[1:]}")
+    lines.extend(["", "internal interface RawHostProtocol {"])
+    for operation in operations:
+        def render(value):
+            if value == "size":
+                return "Long"
+            if value in raw_names:
+                return f"Raw{value[0].upper() + value[1:]}"
+            return kotlin_type(value)
+        parameters = []
+        for parameter in raw_operation_parameters(operation):
+            value = render(parameter["type"])
+            if parameter.get("passing") == "optionalBorrow":
+                value += "?"
+            parameters.append(f"{kotlin_name(parameter['name'])}: {value}")
+        result = raw_result_type(operation, render, lambda owner, value: f"{owner}<{value}>")
+        lines.append(f"    fun {operation['name']}({', '.join(parameters)}): {result}")
+    lines.extend(["}", ""])
+    return lines
+
+
+def julia_raw_protocol(schema):
+    operations = raw_operations(schema)
+    lines = ["const HOST_OPERATION_NAMES = ("]
+    for operation in operations:
+        lines.append(f"    :{snake(operation['name'])},")
+    lines.extend([")", "", "struct RawUnit end", "struct RawOwned{Value}; value::Value; end", "struct RawBorrowed{Value}; value::Value; end", "abstract type RawCallResult{Value} end", "struct RawCallSuccess{Value} <: RawCallResult{Value}; value::Value; end", "struct RawCallFailure{Value} <: RawCallResult{Value}; error::Status; end"])
+    raw_names = {item["name"] for item in schema["handles"]} | {"ContractInfo", "HostOptions", "Lifecycle", "CommandResult", "ResourceChunk", "ReadinessCallback", "opaquePointer"}
+    for name in sorted(raw_names):
+        lines.append(f"struct Raw{name[0].upper() + name[1:]} end")
+    lines.extend(["", "abstract type RawHostProtocol end", ""])
+    for operation in operations:
+        def render(value):
+            if value == "size":
+                return "UInt"
+            if value in raw_names:
+                return f"Raw{value[0].upper() + value[1:]}"
+            return julia_type(value)
+        parameters = ["protocol::RawHostProtocol"]
+        for parameter in raw_operation_parameters(operation):
+            value = render(parameter["type"])
+            if parameter.get("passing") == "optionalBorrow":
+                value = f"Union{{Nothing,{value}}}"
+            parameters.append(f"{julia_name(parameter['name'])}::{value}")
+        result = raw_result_type(operation, render, lambda owner, value: f"{owner}{{{value}}}")
+        lines.extend([f"function {snake(operation['name'])}({', '.join(parameters)})::{result}", "    throw(MethodError(" + snake(operation['name']) + ", (protocol,)))", "end", ""])
+    return lines
+
+
+def validate(schema):
+    model = validate_contract(schema)
     expected_version = schema["productVersion"]
     version_sources = (
         ROOT / "prns-host/core/Cargo.toml",
@@ -138,6 +363,7 @@ def validate(schema):
             raise ValueError(
                 f"host contract product version disagrees with {source.relative_to(ROOT)}"
             )
+    return model
 
 
 def rust_output(schema):
@@ -150,10 +376,15 @@ def rust_output(schema):
         lines.append(
             f"pub const {screaming(item['name'])}_LENGTH: usize = {item['length']};"
         )
+    for scalar in schema["scalars"]:
+        lines.append(
+            f"pub const {screaming(scalar['name'])}_MAX: u64 = {scalar['maximum']};"
+        )
     for key, value in schema["limits"].items():
         lines.append(f"pub const BALANCED_{screaming(key)}: usize = {value};")
+    lines.extend(rust_operation_inventory(schema))
     for enum in schema["enums"]:
-        name = f"Abi{enum['name']}"
+        name = enum["name"]
         lines.extend(
             [
                 "",
@@ -168,6 +399,22 @@ def rust_output(schema):
             [
                 "}",
                 "",
+                f"impl {name} {{",
+                "    #[must_use]",
+                "    pub const fn contract_name(self) -> &'static str {",
+                "        match self {",
+            ]
+        )
+        for value in enum["values"]:
+            lines.append(
+                f'            Self::{value["name"]} => "{value["name"]}",'
+            )
+        lines.extend(
+            [
+                "        }",
+                "    }",
+                "}",
+                "",
                 f"impl TryFrom<u32> for {name} {{",
                 "    type Error = ();",
                 "",
@@ -180,20 +427,73 @@ def rust_output(schema):
                 f"            {value['value']} => Ok(Self::{value['name']}),"
             )
         lines.extend(["            _ => Err(()),", "        }", "    }", "}"])
+    lines.extend(
+        [
+            "",
+            "#[cfg(test)]",
+            "mod tests {",
+            "    use super::*;",
+            "",
+            "    macro_rules! assert_contract_enum {",
+            "        ($enum:ty, [$(($variant:path, $value:literal, $name:literal)),+ $(,)?]) => {{",
+            "            $(",
+            "                assert_eq!($variant as u32, $value);",
+            "                assert_eq!($variant.contract_name(), $name);",
+            "                assert_eq!(<$enum>::try_from($value), Ok($variant));",
+            "            )+",
+            "            assert_eq!(<$enum>::try_from(u32::MAX), Err(()));",
+            "        }};",
+            "    }",
+        ]
+    )
+    for enum in schema["enums"]:
+        name = enum["name"]
+        lines.extend(
+            [
+                "",
+                "    #[rustfmt::skip]",
+                "    #[test]",
+                f"    fn {snake(name)}_values_match_the_contract() {{",
+            ]
+        )
+        lines.append(f"        assert_contract_enum!({name}, [")
+        for value in enum["values"]:
+            lines.append(
+                f'            ({name}::{value["name"]}, {value["value"]}, "{value["name"]}"),'
+            )
+        lines.extend(["        ]);", "    }"])
+    lines.append("}")
     return "\n".join(lines) + "\n"
 
 
 def ts_type(value):
+    if isinstance(value, dict):
+        return f"readonly {ts_type(value['array'])}[]"
     return {
         "bytes": "Uint8Array",
         "bool": "boolean",
         "string": "string",
+        "i16": "number",
         "u8": "number",
         "u16": "number",
-        "u64": "number",
+        "u32": "number",
+        "safeUint": "number",
+        "u64": "bigint",
         "u128": "bigint",
-        "RequestHandlers": "readonly RequestHandlerConfig[]",
+        "Capability": "CapabilityName",
+        "HostRole": "HostRoleName",
     }.get(value, value)
+
+
+def ts_record(record):
+    lines = [f"export type {record['name']} = {{"]
+    for field in record["fields"]:
+        optional = "?" if field.get("optional", False) else ""
+        lines.append(
+            f"  readonly {field['name']}{optional}: {ts_type(field['type'])};"
+        )
+    lines.extend(["};", ""])
+    return lines
 
 
 def ts_union(union):
@@ -221,6 +521,24 @@ def ts_string_union(name, values):
     for index, value in enumerate(values):
         terminal = ";" if index == last_index else ""
         lines.append(f'  | "{value["name"]}"{terminal}')
+    inventory = f"{screaming(name)}_VALUES"
+    lines.extend(
+        [
+            "",
+            f"export const {inventory}: readonly {name}[] = Object.freeze([",
+        ]
+    )
+    for value in values:
+        lines.append(f'  "{value["name"]}",')
+    lines.extend(
+        [
+            "]);",
+            "",
+            f"export function is{name}(value: unknown): value is {name} {{",
+            f"  return typeof value === \"string\" && ({inventory} as readonly string[]).includes(value);",
+            "}",
+        ]
+    )
     return lines
 
 
@@ -236,11 +554,16 @@ def ts_output(schema):
         "type BrandedBytes<Name extends string> = Uint8Array & Brand<Name>;",
         "",
         f"export const HOST_CONTRACT_ABI = {schema['abi']};",
+        f"export const HOST_SCHEMA_VERSION = {schema['schemaVersion']};",
         f'export const PRODUCT_VERSION = "{schema["productVersion"]}";',
     ]
     for item in fixed:
         lines.append(
             f"export const {screaming(item['name'])}_LENGTH = {item['length']};"
+        )
+    for scalar in schema["scalars"]:
+        lines.append(
+            f"export const {screaming(scalar['name'])}_MAX = {scalar['maximum']};"
         )
     lines.append("")
     for item in fixed:
@@ -258,6 +581,29 @@ def ts_output(schema):
     request_policy = next(
         item for item in schema["enums"] if item["name"] == "RequestPolicy"
     )
+    persistence_flush_cause = next(
+        item
+        for item in schema["enums"]
+        if item["name"] == "PersistenceFlushCause"
+    )
+    persistence_flush_target = next(
+        item
+        for item in schema["enums"]
+        if item["name"] == "PersistenceFlushTarget"
+    )
+    additional_ts_enums = [
+        next(item for item in schema["enums"] if item["name"] == name)
+        for name in (
+            "BackendKind",
+            "InterfaceKind",
+            "InterfaceHealth",
+            "DiscoveryScope",
+            "MulticastAddressType",
+            "SerialDataBits",
+            "SerialParity",
+            "SerialStopBits",
+        )
+    ]
     lines.extend(
         [
             "",
@@ -270,6 +616,14 @@ def ts_output(schema):
             *ts_string_union("DeliveryEvidenceKind", delivery_evidence["values"]),
             "",
             *ts_string_union("RequestPolicy", request_policy["values"]),
+            "",
+            *ts_string_union(
+                "PersistenceFlushCause", persistence_flush_cause["values"]
+            ),
+            "",
+            *ts_string_union(
+                "PersistenceFlushTarget", persistence_flush_target["values"]
+            ),
             "",
             "export type PrnsLimits = {",
             "  readonly pendingCommands: number;",
@@ -287,18 +641,16 @@ def ts_output(schema):
             "  };",
             "}",
             "",
-            "export type DestinationName = {",
-            "  readonly appName: string;",
-            "  readonly aspects: readonly string[];",
-            "};",
-            "",
-            "export type RequestHandlerConfig = {",
-            "  readonly path: string;",
-            "  readonly policy: RequestPolicy;",
-            "};",
-            "",
+        ]
+    )
+    for enum in additional_ts_enums:
+        lines.extend([*ts_string_union(enum["name"], enum["values"]), ""])
+    for record in schema.get("records", []):
+        lines.extend(ts_record(record))
+    lines.extend(
+        [
             "export type ResourceStream = {",
-            "  readonly totalBytes: number;",
+            "  readonly totalBytes: bigint;",
             "  claim(): StreamClaim<Uint8Array>;",
             "};",
             "",
@@ -306,7 +658,179 @@ def ts_output(schema):
     )
     for union in schema["unions"]:
         lines.append(ts_union(union))
+    lines.extend(ts_raw_protocol(schema))
     return "\n".join(lines)
+
+
+def c_type(value, fixed_types=frozenset()):
+    if value in fixed_types:
+        return "PrnsByteView"
+    return {
+        "bytes": "PrnsByteView",
+        "bool": "uint8_t",
+        "string": "PrnsStringView",
+        "i16": "int16_t",
+        "u8": "uint8_t",
+        "u16": "uint16_t",
+        "u32": "uint32_t",
+        "safeUint": "uint64_t",
+        "u64": "uint64_t",
+        "u128": "PrnsUInt128",
+    }.get(value, f"Prns{value}")
+
+
+def c_record(record, fixed_types):
+    lines = [f"typedef struct Prns{record['name']} {{", "    size_t struct_size;"]
+    for field in record["fields"]:
+        field_name = snake(field["name"])
+        if field.get("optional", False):
+            lines.append(f"    uint8_t has_{field_name};")
+        if isinstance(field["type"], dict):
+            item_type = c_type(field["type"]["array"], fixed_types)
+            if field_name.endswith("ies"):
+                count_name = f"{field_name[:-3]}y"
+            elif field_name.endswith("s"):
+                count_name = field_name[:-1]
+            else:
+                count_name = field_name
+            lines.append(f"    const {item_type} *{field_name};")
+            lines.append(f"    size_t {count_name}_count;")
+        else:
+            lines.append(f"    {c_type(field['type'], fixed_types)} {field_name};")
+    lines.extend([f"}} Prns{record['name']};", ""])
+    return lines
+
+
+def c_command_parameters(field, schema, fixed_types):
+    name = snake(field["name"])
+    type_name = field["type"]
+    if name == "interface" and type_name == "InterfaceId":
+        name = "interface_id"
+    optional = field.get("optional", False)
+    if type_name == "Bitrate":
+        return [
+            f"PrnsBitrateKind {name}_kind",
+            f"uint64_t {name}_bps",
+        ]
+    if type_name == "ResponseTimeout":
+        return [
+            f"PrnsResponseTimeoutKind {name}_kind",
+            f"uint64_t {name}_millis",
+        ]
+    if type_name == "ResourceCompression":
+        return [f"PrnsResourceCompressionKind {name}_kind"]
+    if type_name == "ResourceStrategy":
+        return [
+            f"PrnsResourceStrategyKind {name}_kind",
+            "uint64_t maximum_uncompressed_bytes",
+            "uint8_t accept_compressed",
+        ]
+    if type_name == "InterfaceConfig":
+        return [f"const PrnsInterfaceConfig *{name}"]
+    c_name = c_type(type_name, fixed_types)
+    if optional:
+        return [f"const {c_name} *{name}"]
+    return [f"{c_name} {name}"]
+
+
+def c_command_declarations(schema):
+    fixed_types = {item["name"] for item in schema["fixedBytes"]}
+    union_name = schema["commandProjection"]["union"]
+    command = next(item for item in schema["unions"] if item["name"] == union_name)
+    prefix = schema["commandProjection"]["cPrefix"]
+    lines = []
+    for case in command["cases"]:
+        parameters = ["PrnsHost *host"]
+        for field in case["fields"]:
+            parameters.extend(c_command_parameters(field, schema, fixed_types))
+        parameters.append("PrnsIssuedCommand **out_command")
+        lines.append(
+            f"PRNS_HOST_API PrnsStatus {prefix}{snake(case['name'])}({', '.join(parameters)});"
+        )
+    return lines
+
+
+def c_operation_parameter(parameter, fixed_types):
+    type_name = parameter["type"]
+    name = snake(parameter["name"])
+    passing = parameter["passing"]
+    if type_name == "HostOptions":
+        return [f"const PrnsHostOptions *{name}"]
+    if type_name == "ReadinessCallback":
+        return [f"PrnsReadinessCallback {name}"]
+    if type_name == "opaquePointer":
+        return [f"void *{name}"]
+    if type_name == "size":
+        return [f"size_t {name}"]
+    if type_name == "ResourceCompression":
+        return [f"PrnsResourceCompressionKind {name}_kind"]
+    c_name = c_type(type_name, fixed_types)
+    if passing == "optionalBorrow":
+        return [f"const {c_name} *{name}"]
+    return [f"{c_name} {name}"]
+
+
+def c_operation_result(result):
+    if result is None:
+        return []
+    type_name = result["type"]
+    ownership = result["ownership"]
+    if ownership == "owned":
+        return [f"Prns{type_name} **out_value"]
+    if type_name == "u128":
+        return ["uint64_t *out_low", "uint64_t *out_high"]
+    if type_name == "ResourceChunk":
+        return ["PrnsByteView *out_chunk", "uint8_t *out_finished"]
+    mapping = {
+        "ContractInfo": "PrnsContractInfo",
+        "BackendInfo": "PrnsBackendInfo",
+        "Lifecycle": "PrnsLifecycle",
+        "HostSnapshot": "PrnsHostSnapshot",
+        "CommandResult": "PrnsCommandResult",
+        "bytes": "PrnsByteView",
+        "string": "PrnsStringView",
+        "bool": "uint8_t",
+        "u64": "uint64_t",
+    }
+    return [f"{mapping[type_name]} *out_value"]
+
+
+def c_operation_declaration(operation, handles, fixed_types):
+    receiver = operation.get("receiver")
+    parameters = []
+    if receiver is not None:
+        qualifier = "" if receiver["mutable"] else "const "
+        parameters.append(
+            f"{qualifier}Prns{receiver['type']} *{snake(receiver['type'])}"
+        )
+    for parameter in operation["parameters"]:
+        parameters.extend(c_operation_parameter(parameter, fixed_types))
+    if operation["status"]:
+        parameters.extend(c_operation_result(operation.get("result")))
+    if not parameters:
+        parameters = ["void"]
+    if operation["status"]:
+        return_type = "PrnsStatus"
+    elif operation.get("result") is None:
+        return_type = "void"
+    else:
+        return_type = {
+            "size": "size_t",
+            "u32": "uint32_t",
+        }[operation["result"]["type"]]
+    return (
+        f"PRNS_HOST_API {return_type} prns_{snake(operation['name'])}"
+        f"({', '.join(parameters)});"
+    )
+
+
+def c_operation_declarations(schema):
+    handles = {item["name"] for item in schema["handles"]}
+    fixed_types = {item["name"] for item in schema["fixedBytes"]}
+    return [
+        c_operation_declaration(operation, handles, fixed_types)
+        for operation in schema["operations"]
+    ]
 
 
 def c_output(schema):
@@ -336,6 +860,10 @@ def c_output(schema):
         lines.append(
             f"#define PRNS_{screaming(item['name'])}_LENGTH UINT32_C({item['length']})"
         )
+    for scalar in schema["scalars"]:
+        lines.append(
+            f"#define PRNS_{screaming(scalar['name'])}_MAX UINT64_C({scalar['maximum']})"
+        )
     for key, value in schema["limits"].items():
         lines.append(f"#define PRNS_BALANCED_{screaming(key)} UINT64_C({value})")
     lines.append("")
@@ -364,12 +892,12 @@ def c_output(schema):
             " *   the function has a status result; no Rust unwinding crosses this ABI.",
             " */",
             "",
-            "typedef struct PrnsHost PrnsHost;",
-            "typedef struct PrnsIssuedCommand PrnsIssuedCommand;",
-            "typedef struct PrnsEventStream PrnsEventStream;",
-            "typedef struct PrnsReadinessRegistration PrnsReadinessRegistration;",
-            "typedef struct PrnsEvent PrnsEvent;",
-            "typedef struct PrnsResourceStream PrnsResourceStream;",
+        ]
+    )
+    for handle in schema["handles"]:
+        lines.append(f"typedef struct Prns{handle['name']} Prns{handle['name']};")
+    lines.extend(
+        [
             "typedef void (*PrnsReadinessCallback)(void *context);",
             "",
             "typedef struct PrnsByteView {",
@@ -404,18 +932,70 @@ def c_output(schema):
             "    PrnsStringView path;",
             "} PrnsIdentityConfig;",
             "",
-            "typedef struct PrnsDestinationName {",
+            "typedef struct PrnsPersistenceConfig {",
             "    size_t struct_size;",
-            "    PrnsStringView app_name;",
-            "    const PrnsStringView *aspects;",
-            "    size_t aspect_count;",
-            "} PrnsDestinationName;",
-            "",
-            "typedef struct PrnsRequestHandlerConfig {",
-            "    size_t struct_size;",
+            "    PrnsPersistenceConfigKind kind;",
             "    PrnsStringView path;",
-            "    PrnsRequestPolicy policy;",
-            "} PrnsRequestHandlerConfig;",
+            "} PrnsPersistenceConfig;",
+            "",
+        ]
+    )
+    fixed_types = {item["name"] for item in schema["fixedBytes"]}
+    for record in schema.get("records", []):
+        lines.extend(c_record(record, fixed_types))
+    lines.extend(
+        [
+            "typedef struct PrnsInterfaceConfig {",
+            "    size_t struct_size;",
+            "    PrnsInterfaceKind kind;",
+            "    uint8_t has_group_id;",
+            "    PrnsStringView group_id;",
+            "    uint8_t has_discovery_scope;",
+            "    PrnsDiscoveryScope discovery_scope;",
+            "    uint8_t has_discovery_port;",
+            "    uint16_t discovery_port;",
+            "    uint8_t has_data_port;",
+            "    uint16_t data_port;",
+            "    const PrnsStringView *devices;",
+            "    size_t device_count;",
+            "    const PrnsStringView *ignored_devices;",
+            "    size_t ignored_device_count;",
+            "    uint8_t has_multicast_address_type;",
+            "    PrnsMulticastAddressType multicast_address_type;",
+            "    PrnsStringView target;",
+            "    PrnsStringView bind;",
+            "    PrnsStringView local;",
+            "    PrnsStringView peer;",
+            "    PrnsBitrateKind bitrate_kind;",
+            "    uint64_t bitrate_bps;",
+            "    PrnsStringView port;",
+            "    PrnsSerialLineConfig line;",
+            "    uint8_t flow_control;",
+            "    uint32_t preamble_millis;",
+            "    uint32_t transmit_tail_millis;",
+            "    uint8_t persistence;",
+            "    uint32_t slot_time_millis;",
+            "    uint8_t has_station_callsign;",
+            "    PrnsStringView station_callsign;",
+            "    uint8_t has_station_interval_seconds;",
+            "    uint64_t station_interval_seconds;",
+            "    PrnsStringView callsign;",
+            "    uint8_t ssid;",
+            "    PrnsRNodeRadioConfig radio;",
+            "    uint8_t has_airtime_limit_short_centi_percent;",
+            "    uint16_t airtime_limit_short_centi_percent;",
+            "    uint8_t has_airtime_limit_long_centi_percent;",
+            "    uint16_t airtime_limit_long_centi_percent;",
+            "    const PrnsMultiRNodeMemberConfig *members;",
+            "    size_t member_count;",
+            "    const PrnsStringView *command;",
+            "    size_t command_count;",
+            "    uint64_t respawn_delay_millis;",
+            "    const PrnsStringView *peers;",
+            "    size_t peer_count;",
+            "    uint8_t connectable;",
+            "    PrnsStringView url;",
+            "} PrnsInterfaceConfig;",
             "",
             "typedef struct PrnsDestinationConfig {",
             "    size_t struct_size;",
@@ -431,6 +1011,7 @@ def c_output(schema):
             "typedef struct PrnsHostOptions {",
             "    size_t struct_size;",
             "    uint32_t required_abi;",
+            "    uint32_t required_schema_version;",
             "    PrnsStringView required_product_version;",
             "    PrnsLimits limits;",
             "    PrnsHostRole role;",
@@ -439,6 +1020,7 @@ def c_output(schema):
             "    size_t destination_count;",
             "    const PrnsCapability *required_capabilities;",
             "    size_t required_capability_count;",
+            "    PrnsPersistenceConfig persistence;",
             "} PrnsHostOptions;",
             "",
             "typedef struct PrnsLifecycle {",
@@ -459,58 +1041,18 @@ def c_output(schema):
             "} PrnsCommandResult;",
             "",
             "/* product_version points to process-lifetime static storage. */",
-            "PRNS_HOST_API PrnsStatus prns_contract_info(PrnsContractInfo *out_info);",
-            "PRNS_HOST_API PrnsStatus prns_host_create(const PrnsHostOptions *options, PrnsHost **out_host);",
-            "PRNS_HOST_API void prns_host_release(PrnsHost *host);",
-            "PRNS_HOST_API PrnsStatus prns_host_lifecycle(const PrnsHost *host, PrnsLifecycle *out_lifecycle);",
             "/* Returned host views remain valid until prns_host_release. */",
-            "PRNS_HOST_API PrnsStatus prns_host_identity_hash(const PrnsHost *host, PrnsByteView *out_hash);",
-            "PRNS_HOST_API size_t prns_host_destination_count(const PrnsHost *host);",
-            "PRNS_HOST_API PrnsStatus prns_host_destination_hash(const PrnsHost *host, size_t index, PrnsByteView *out_hash);",
-            "PRNS_HOST_API PrnsStatus prns_host_announce(PrnsHost *host, PrnsByteView destination, const PrnsByteView *interface_id, PrnsIssuedCommand **out_command);",
-            "PRNS_HOST_API PrnsStatus prns_host_send_single_packet(PrnsHost *host, PrnsByteView destination, PrnsByteView payload, PrnsIssuedCommand **out_command);",
-            "PRNS_HOST_API PrnsStatus prns_host_close_link(PrnsHost *host, PrnsByteView link_id, PrnsIssuedCommand **out_command);",
-            "PRNS_HOST_API PrnsStatus prns_host_attach_tcp_server(PrnsHost *host, PrnsStringView bind, PrnsBitrateKind bitrate_kind, uint64_t bitrate_bps, PrnsIssuedCommand **out_command);",
-            "PRNS_HOST_API PrnsStatus prns_host_attach_tcp_client(PrnsHost *host, PrnsStringView target, PrnsBitrateKind bitrate_kind, uint64_t bitrate_bps, PrnsIssuedCommand **out_command);",
-            "PRNS_HOST_API PrnsStatus prns_host_attach_udp(PrnsHost *host, PrnsStringView local, PrnsStringView peer, PrnsBitrateKind bitrate_kind, uint64_t bitrate_bps, PrnsIssuedCommand **out_command);",
-            "PRNS_HOST_API PrnsStatus prns_host_detach_interface(PrnsHost *host, PrnsByteView interface_id, PrnsIssuedCommand **out_command);",
-            "PRNS_HOST_API PrnsStatus prns_host_establish_link(PrnsHost *host, PrnsByteView destination, PrnsIssuedCommand **out_command);",
-            "PRNS_HOST_API PrnsStatus prns_host_request_path(PrnsHost *host, PrnsByteView destination, PrnsIssuedCommand **out_command);",
-            "PRNS_HOST_API PrnsStatus prns_host_identify(PrnsHost *host, PrnsByteView link_id, PrnsByteView identity, PrnsIssuedCommand **out_command);",
-            "PRNS_HOST_API PrnsStatus prns_host_send_link_packet(PrnsHost *host, PrnsByteView link_id, PrnsByteView payload, PrnsIssuedCommand **out_command);",
-            "PRNS_HOST_API PrnsStatus prns_host_request(PrnsHost *host, PrnsByteView link_id, PrnsByteView path_hash, PrnsByteView payload, PrnsResponseTimeoutKind timeout_kind, uint64_t timeout_millis, PrnsIssuedCommand **out_command);",
-            "PRNS_HOST_API PrnsStatus prns_host_respond(PrnsHost *host, PrnsByteView link_id, PrnsByteView request_id, uint64_t request_rtt_millis, PrnsByteView payload, PrnsIssuedCommand **out_command);",
-            "PRNS_HOST_API PrnsStatus prns_host_send_resource(PrnsHost *host, PrnsByteView link_id, PrnsByteView payload, const PrnsByteView *packed_metadata, PrnsResourceCompressionKind compression_kind, PrnsIssuedCommand **out_command);",
-            "PRNS_HOST_API PrnsStatus prns_host_set_link_resource_strategy(PrnsHost *host, PrnsByteView link_id, PrnsResourceStrategyKind strategy_kind, uint64_t maximum_uncompressed_bytes, uint8_t accept_compressed, PrnsIssuedCommand **out_command);",
-            "PRNS_HOST_API PrnsStatus prns_host_set_destination_resource_strategy(PrnsHost *host, PrnsByteView destination, PrnsResourceStrategyKind strategy_kind, uint64_t maximum_uncompressed_bytes, uint8_t accept_compressed, PrnsIssuedCommand **out_command);",
-            "PRNS_HOST_API PrnsStatus prns_host_send_channel_message(PrnsHost *host, PrnsByteView link_id, uint16_t message_type, PrnsByteView payload, PrnsIssuedCommand **out_command);",
-            "PRNS_HOST_API PrnsStatus prns_host_allow_requester(PrnsHost *host, PrnsByteView destination, PrnsByteView path_hash, PrnsByteView identity, PrnsIssuedCommand **out_command);",
-            "PRNS_HOST_API PrnsStatus prns_host_stop(PrnsHost *host);",
             "/* Result views remain valid until prns_command_release. */",
-            "PRNS_HOST_API PrnsStatus prns_command_wait(PrnsIssuedCommand *command, uint32_t timeout_millis, PrnsCommandResult *out_result);",
-            "PRNS_HOST_API PrnsStatus prns_command_register_readiness(PrnsIssuedCommand *command, PrnsReadinessCallback callback, void *context, PrnsReadinessRegistration **out_registration);",
-            "PRNS_HOST_API void prns_command_interrupt_wait(PrnsIssuedCommand *command);",
-            "PRNS_HOST_API void prns_command_release(PrnsIssuedCommand *command);",
-            "PRNS_HOST_API PrnsStatus prns_host_claim_application_events(PrnsHost *host, PrnsEventStream **out_stream);",
-            "PRNS_HOST_API PrnsStatus prns_host_claim_diagnostics(PrnsHost *host, PrnsEventStream **out_stream);",
-            "PRNS_HOST_API PrnsStatus prns_event_stream_register_readiness(PrnsEventStream *stream, PrnsReadinessCallback callback, void *context, PrnsReadinessRegistration **out_registration);",
-            "PRNS_HOST_API void prns_readiness_registration_release(PrnsReadinessRegistration *registration);",
-            "PRNS_HOST_API void prns_event_stream_interrupt_wait(PrnsEventStream *stream);",
-            "PRNS_HOST_API void prns_event_stream_release(PrnsEventStream *stream);",
-            "PRNS_HOST_API PrnsStatus prns_event_stream_next(PrnsEventStream *stream, uint32_t timeout_millis, PrnsEvent **out_event);",
-            "PRNS_HOST_API void prns_event_release(PrnsEvent *event);",
-            "PRNS_HOST_API uint32_t prns_event_kind(const PrnsEvent *event);",
             "/* Event views remain valid until prns_event_release. */",
-            "PRNS_HOST_API PrnsStatus prns_event_bytes(const PrnsEvent *event, PrnsEventField field, PrnsByteView *out_value);",
-            "PRNS_HOST_API PrnsStatus prns_event_string(const PrnsEvent *event, PrnsEventField field, PrnsStringView *out_value);",
-            "PRNS_HOST_API PrnsStatus prns_event_u64(const PrnsEvent *event, PrnsEventField field, uint64_t *out_value);",
-            "PRNS_HOST_API PrnsStatus prns_event_u128(const PrnsEvent *event, PrnsEventField field, uint64_t *out_low, uint64_t *out_high);",
             "/* A resource may be claimed once and remains owned after its event is released. */",
-            "PRNS_HOST_API PrnsStatus prns_event_resource_stream(PrnsEvent *event, PrnsResourceStream **out_stream);",
-            "PRNS_HOST_API void prns_resource_stream_release(PrnsResourceStream *stream);",
             "/* out_chunk remains valid until the next call or release on this stream. */",
-            "PRNS_HOST_API PrnsStatus prns_resource_stream_next(PrnsResourceStream *stream, size_t maximum_bytes, PrnsByteView *out_chunk, uint8_t *out_finished);",
             "",
+        ]
+    )
+    lines.extend(c_operation_declarations(schema))
+    lines.extend(c_command_declarations(schema))
+    lines.extend(
+        [
             "#if defined(__cplusplus)",
             "}",
             "#endif",
@@ -523,17 +1065,43 @@ def c_output(schema):
 
 
 def python_type(value):
+    if isinstance(value, dict):
+        return f"tuple[{python_type(value['array'])}, ...]"
     return {
         "bytes": "bytes",
         "bool": "bool",
         "string": "str",
+        "i16": "int",
         "u8": "int",
         "u16": "int",
+        "u32": "int",
+        "safeUint": "int",
         "u64": "int",
         "u128": "int",
         "ResourceStream": "Any",
-        "RequestHandlers": "tuple[RequestHandlerConfig, ...]",
     }.get(value, value)
+
+
+def python_record(record):
+    lines = ["@dataclass(frozen=True, slots=True)", f"class {record['name']}:"]
+    if not record["fields"]:
+        lines.append("    pass")
+    for field in record["fields"]:
+        field_type = python_type(field["type"])
+        if field.get("optional", False):
+            field_type = f"{field_type} | None"
+        lines.append(f"    {snake(field['name'])}: {field_type}")
+    if record["name"] == "DestinationName":
+        lines.extend(
+            [
+                "",
+                "    def __post_init__(self):",
+                "        if not self.app_name or not self.aspects or any(not value for value in self.aspects):",
+                '            raise ValueError("a destination requires a non-empty app name and aspects")',
+            ]
+        )
+    lines.append("")
+    return lines
 
 
 def python_output(schema):
@@ -542,7 +1110,7 @@ def python_output(schema):
         "",
         "from dataclasses import dataclass",
         "from enum import IntEnum",
-        "from typing import Any, TypeAlias",
+        "from typing import Any, Generic, Protocol, TypeAlias, TypeVar",
         "",
         f"HOST_CONTRACT_ABI = {schema['abi']}",
         f"SCHEMA_VERSION = {schema['schemaVersion']}",
@@ -550,6 +1118,8 @@ def python_output(schema):
     ]
     for item in schema["fixedBytes"]:
         lines.append(f"{screaming(item['name'])}_LENGTH = {item['length']}")
+    for scalar in schema["scalars"]:
+        lines.append(f"{screaming(scalar['name'])}_MAX = {scalar['maximum']}")
     for key, value in schema["limits"].items():
         lines.append(f"BALANCED_{screaming(key)} = {value}")
     lines.append("")
@@ -608,24 +1178,8 @@ def python_output(schema):
                     "",
                 ]
             )
-    lines.extend(
-        [
-            "@dataclass(frozen=True, slots=True)",
-            "class DestinationName:",
-            "    app_name: str",
-            "    aspects: tuple[str, ...]",
-            "",
-            "    def __post_init__(self):",
-            "        if not self.app_name or not self.aspects or any(not value for value in self.aspects):",
-            '            raise ValueError("a destination requires a non-empty app name and aspects")',
-            "",
-            "@dataclass(frozen=True, slots=True)",
-            "class RequestHandlerConfig:",
-            "    path: str",
-            "    policy: RequestPolicy",
-            "",
-        ]
-    )
+    for record in schema.get("records", []):
+        lines.extend(python_record(record))
     aliases = []
     for union in schema["unions"]:
         case_names = []
@@ -646,21 +1200,37 @@ def python_output(schema):
         aliases.append(f"{union['name']}: TypeAlias = {' | '.join(case_names)}")
     lines.extend(aliases)
     lines.append("")
+    lines.extend(python_raw_protocol(schema))
     return "\n".join(lines)
 
 
 def dotnet_type(value):
+    if isinstance(value, dict):
+        return f"ImmutableArray<{dotnet_type(value['array'])}>"
     return {
         "bytes": "ReadOnlyMemory<byte>",
         "bool": "bool",
         "string": "string",
+        "i16": "short",
         "u8": "byte",
         "u16": "ushort",
+        "u32": "uint",
+        "safeUint": "ulong",
         "u64": "ulong",
         "u128": "UInt128",
         "ResourceStream": "ResourceStream",
-        "RequestHandlers": "ImmutableArray<RequestHandlerConfig>",
     }.get(value, value)
+
+
+def dotnet_record(record):
+    parameters = []
+    for field in record["fields"]:
+        field_type = dotnet_type(field["type"])
+        if field.get("optional", False):
+            field_type += "?"
+        field_name = field["name"][0].upper() + field["name"][1:]
+        parameters.append(f"{field_type} {field_name}")
+    return f"public sealed record {record['name']}({', '.join(parameters)});"
 
 
 def dotnet_output(schema):
@@ -680,6 +1250,10 @@ def dotnet_output(schema):
     for item in schema["fixedBytes"]:
         lines.append(
             f"    public const int {item['name']}Length = {item['length']};"
+        )
+    for scalar in schema["scalars"]:
+        lines.append(
+            f"    public const ulong {scalar['name'][0].upper() + scalar['name'][1:]}Max = {scalar['maximum']};"
         )
     for key, value in schema["limits"].items():
         lines.append(
@@ -774,14 +1348,8 @@ def dotnet_output(schema):
                     "",
                 ]
             )
-    lines.extend(
-        [
-            "public sealed record DestinationName(string AppName, ImmutableArray<string> Aspects);",
-            "",
-            "public sealed record RequestHandlerConfig(string Path, RequestPolicy Policy);",
-            "",
-        ]
-    )
+    for record in schema.get("records", []):
+        lines.extend([dotnet_record(record), ""])
     for union in schema["unions"]:
         name = union["name"]
         lines.append(f"public abstract record {name}")
@@ -824,20 +1392,37 @@ def dotnet_output(schema):
             )
         lines.append('            _ => throw new InvalidOperationException("Unknown contract case."),')
         lines.extend(["        };", "}", ""])
+    lines.extend(dotnet_raw_protocol(schema))
     return "\n".join(lines)
 
 
 def go_type(value):
+    if isinstance(value, dict):
+        return f"[]{go_type(value['array'])}"
     return {
         "bytes": "[]byte",
         "bool": "bool",
         "string": "string",
+        "i16": "int16",
         "u8": "uint8",
         "u16": "uint16",
+        "u32": "uint32",
+        "safeUint": "uint64",
         "u64": "uint64",
         "u128": "UInt128",
-        "RequestHandlers": "[]RequestHandlerConfig",
     }.get(value, value)
+
+
+def go_record(record):
+    lines = [f"type {record['name']} struct {{"]
+    for field in record["fields"]:
+        field_type = go_type(field["type"])
+        if field.get("optional", False):
+            field_type = f"*{field_type}"
+        field_name = field["name"][0].upper() + field["name"][1:]
+        lines.append(f"\t{field_name} {field_type}")
+    lines.extend(["}", ""])
+    return lines
 
 
 def go_output(schema):
@@ -853,6 +1438,10 @@ def go_output(schema):
     ]
     for item in schema["fixedBytes"]:
         lines.append(f"const {item['name']}Length = {item['length']}")
+    for scalar in schema["scalars"]:
+        lines.append(
+            f"const {scalar['name'][0].upper() + scalar['name'][1:]}Max uint64 = {scalar['maximum']}"
+        )
     for key, value in schema["limits"].items():
         lines.append(f"const Balanced{key[0].upper() + key[1:]} = {value}")
     lines.extend(
@@ -890,18 +1479,10 @@ def go_output(schema):
                 ]
             )
         lines.append("")
+    for record in schema.get("records", []):
+        lines.extend(go_record(record))
     lines.extend(
         [
-            "type DestinationName struct {",
-            "\tAppName string",
-            "\tAspects []string",
-            "}",
-            "",
-            "type RequestHandlerConfig struct {",
-            "\tPath string",
-            "\tPolicy RequestPolicy",
-            "}",
-            "",
             "type ResourceStream interface {",
             "\tTotalBytes() uint64",
             "\tNext(maximumBytes int) ([]byte, bool, error)",
@@ -942,21 +1523,47 @@ def go_output(schema):
                     "",
                 ]
             )
+    lines.extend(go_raw_protocol(schema))
     return "\n".join(lines)
 
 
 def swift_type(value):
+    if isinstance(value, dict):
+        return f"[{swift_type(value['array'])}]"
     return {
         "bytes": "[UInt8]",
         "bool": "Bool",
         "string": "String",
+        "i16": "Int16",
         "u8": "UInt8",
         "u16": "UInt16",
+        "u32": "UInt32",
+        "safeUint": "UInt64",
         "u64": "UInt64",
         "u128": "UInt128",
         "ResourceStream": "any ResourceStream",
-        "RequestHandlers": "[RequestHandlerConfig]",
     }.get(value, value)
+
+
+def swift_record(record):
+    conformances = "Hashable, Sendable" if record.get("hashable", False) else "Sendable"
+    lines = [f"public struct {record['name']}: {conformances} {{"]
+    for field in record["fields"]:
+        field_type = swift_type(field["type"])
+        if field.get("optional", False):
+            field_type += "?"
+        lines.append(f"    public let {field['name']}: {field_type}")
+    parameters = []
+    for field in record["fields"]:
+        field_type = swift_type(field["type"])
+        if field.get("optional", False):
+            field_type += "?"
+        parameters.append(f"{field['name']}: {field_type}")
+    lines.extend(["", f"    public init({', '.join(parameters)}) {{"])
+    for field in record["fields"]:
+        lines.append(f"        self.{field['name']} = {field['name']}")
+    lines.extend(["    }", "}", ""])
+    return lines
 
 
 def swift_output(schema):
@@ -971,6 +1578,10 @@ def swift_output(schema):
     for item in schema["fixedBytes"]:
         lines.append(
             f"    public static let {lower_first(item['name'])}Length = {item['length']}"
+        )
+    for scalar in schema["scalars"]:
+        lines.append(
+            f"    public static let {lower_first(scalar['name'])}Max: UInt64 = {scalar['maximum']}"
         )
     for key, value in schema["limits"].items():
         lines.append(f"    public static let balanced{key[0].upper() + key[1:]} = {value}")
@@ -1035,26 +1646,6 @@ def swift_output(schema):
             "    case invalidLength(type: String, actual: Int)",
             "}",
             "",
-            "public struct DestinationName: Hashable, Sendable {",
-            "    public let appName: String",
-            "    public let aspects: [String]",
-            "",
-            "    public init(appName: String, aspects: [String]) {",
-            "        self.appName = appName",
-            "        self.aspects = aspects",
-            "    }",
-            "}",
-            "",
-            "public struct RequestHandlerConfig: Hashable, Sendable {",
-            "    public let path: String",
-            "    public let policy: RequestPolicy",
-            "",
-            "    public init(path: String, policy: RequestPolicy) {",
-            "        self.path = path",
-            "        self.policy = policy",
-            "    }",
-            "}",
-            "",
             "public protocol ResourceStream: AnyObject, AsyncSequence, Sendable",
             "where Element == [UInt8] {",
             "    var totalBytes: UInt64 { get }",
@@ -1063,6 +1654,11 @@ def swift_output(schema):
             "",
         ]
     )
+    record_index = lines.index("public protocol ResourceStream: AnyObject, AsyncSequence, Sendable")
+    record_lines = []
+    for record in schema.get("records", []):
+        record_lines.extend(swift_record(record))
+    lines[record_index:record_index] = record_lines
     for union in schema["unions"]:
         lines.append(f"public enum {union['name']}: Sendable {{")
         for case in union["cases"]:
@@ -1078,23 +1674,28 @@ def swift_output(schema):
             else:
                 lines.append(f"    case {case_name}")
         lines.extend(["}", ""])
+    lines.extend(swift_raw_protocol(schema))
     return "\n".join(lines)
 
 
 def kotlin_type(value):
+    if isinstance(value, dict):
+        return f"List<{kotlin_type(value['array'])}>"
     return {
         "bytes": "Bytes",
         "bool": "Boolean",
         "string": "String",
+        "i16": "Int",
         # Kotlin unsigned values compile to name-mangled JVM methods and
         # synthetic constructors, which makes an otherwise shared Kotlin/Java
         # SDK unusable from Java. Int and Long preserve every ABI bit while
         # producing an ordinary, stable JVM surface for both languages.
         "u8": "Int",
         "u16": "Int",
-        "u64": "Long",
+        "u32": "Long",
+        "safeUint": "Long",
+        "u64": "ULong",
         "u128": "BigInteger",
-        "RequestHandlers": "List<RequestHandlerConfig>",
     }.get(value, value)
 
 
@@ -1102,6 +1703,17 @@ def kotlin_name(name):
     if name == "interface":
         return "`interface`"
     return lower_first(name)
+
+
+def kotlin_record(record):
+    lines = [f"data class {record['name']}("]
+    for field in record["fields"]:
+        field_type = kotlin_type(field["type"])
+        if field.get("optional", False):
+            field_type += "?"
+        lines.append(f"    val {kotlin_name(field['name'])}: {field_type},")
+    lines.extend([")", ""])
+    return lines
 
 
 def kotlin_output(schema):
@@ -1117,6 +1729,8 @@ def kotlin_output(schema):
     ]
     for item in schema["fixedBytes"]:
         lines.append(f"    const val {screaming(item['name'])}_LENGTH = {item['length']}")
+    for scalar in schema["scalars"]:
+        lines.append(f"    const val {screaming(scalar['name'])}_MAX = {scalar['maximum']}L")
     for key, value in schema["limits"].items():
         lines.append(f"    const val BALANCED_{screaming(key)} = {value}")
     lines.extend(["}", ""])
@@ -1189,18 +1803,8 @@ def kotlin_output(schema):
             '    override fun toString(): String = "Bytes(size=$size)"',
             "}",
             "",
-            "data class DestinationName(",
-            "    val appName: String,",
-            "    val aspects: List<String>,",
-            ")",
-            "",
-            "data class RequestHandlerConfig(",
-            "    val path: String,",
-            "    val policy: RequestPolicy,",
-            ")",
-            "",
             "interface ResourceStream : AutoCloseable {",
-            "    val totalBytes: Long",
+            "    val totalBytes: ULong",
             "    fun next(maximumBytes: Int): ResourceChunk",
             "}",
             "",
@@ -1208,6 +1812,11 @@ def kotlin_output(schema):
             "",
         ]
     )
+    record_index = lines.index("interface ResourceStream : AutoCloseable {")
+    record_lines = []
+    for record in schema.get("records", []):
+        record_lines.extend(kotlin_record(record))
+    lines[record_index:record_index] = record_lines
     for union in schema["unions"]:
         name = union["name"]
         lines.extend([f"sealed interface {name}", ""])
@@ -1227,19 +1836,24 @@ def kotlin_output(schema):
                     )
                 lines.append(f") : {name}")
             lines.append("")
+    lines.extend(kotlin_raw_protocol(schema))
     return "\n".join(lines)
 
 
 def julia_type(value):
+    if isinstance(value, dict):
+        return f"Vector{{{julia_type(value['array'])}}}"
     return {
         "bytes": "Vector{UInt8}",
         "bool": "Bool",
         "string": "String",
+        "i16": "Int16",
         "u8": "UInt8",
         "u16": "UInt16",
+        "u32": "UInt32",
+        "safeUint": "UInt64",
         "u64": "UInt64",
         "u128": "UInt128",
-        "RequestHandlers": "Vector{RequestHandlerConfig}",
     }.get(value, value)
 
 
@@ -1253,6 +1867,17 @@ def julia_name(name):
     return result
 
 
+def julia_record(record):
+    lines = [f"struct {record['name']}"]
+    for field in record["fields"]:
+        field_type = julia_type(field["type"])
+        if field.get("optional", False):
+            field_type = f"Union{{Nothing,{field_type}}}"
+        lines.append(f"    {julia_name(field['name'])}::{field_type}")
+    lines.extend(["end", ""])
+    return lines
+
+
 def julia_output(schema):
     lines = [
         f"const HOST_CONTRACT_ABI = UInt32({schema['abi']})",
@@ -1261,6 +1886,10 @@ def julia_output(schema):
     ]
     for item in schema["fixedBytes"]:
         lines.append(f"const {screaming(item['name'])}_LENGTH = {item['length']}")
+    for scalar in schema["scalars"]:
+        lines.append(
+            f"const {screaming(scalar['name'])}_MAX = UInt64({scalar['maximum']})"
+        )
     for key, value in schema["limits"].items():
         lines.append(f"const BALANCED_{screaming(key)} = {value}")
     lines.append("")
@@ -1307,24 +1936,12 @@ def julia_output(schema):
                     "",
                 ]
             )
-    lines.extend(
-        [
-            "struct DestinationName",
-            "    app_name::String",
-            "    aspects::Vector{String}",
-            "end",
-            "",
-            "struct RequestHandlerConfig",
-            "    path::String",
-            "    policy::RequestPolicy",
-            "end",
-            "",
-            "abstract type ResourceStream end",
-            "",
-        ]
-    )
+    for record in schema.get("records", []):
+        lines.extend(julia_record(record))
+    lines.extend(["abstract type ResourceStream end", ""])
     for union in schema["unions"]:
         lines.extend([f"abstract type {union['name']} end", ""])
+    for union in schema["unions"]:
         for case in union["cases"]:
             case_name = f"{union['name']}{case['name']}"
             lines.append(f"struct {case_name} <: {union['name']}")
@@ -1338,6 +1955,7 @@ def julia_output(schema):
                     lines.append(f"    {julia_name(field['name'])}::{field_type}")
                 lines.append("end")
             lines.append("")
+    lines.extend(julia_raw_protocol(schema))
     return "\n".join(lines)
 
 
@@ -1348,6 +1966,25 @@ def vectors_output(schema):
                 "schemaVersion": schema["schemaVersion"],
                 "abi": schema["abi"],
                 "productVersion": schema["productVersion"],
+                "scalars": {
+                    scalar["name"]: {
+                        "storage": scalar["storage"],
+                        "minimum": str(scalar["minimum"]),
+                        "maximum": str(scalar["maximum"]),
+                    }
+                    for scalar in schema["scalars"]
+                },
+                "integerChecks": {
+                    "safeUint": {
+                        "typescript": "number",
+                        "accepted": ["0", "9007199254740991"],
+                        "rejected": ["-1", "9007199254740992"],
+                    },
+                    "u64": {
+                        "typescript": "bigint",
+                        "accepted": ["0", "9007199254740992", "18446744073709551615"],
+                    },
+                },
                 "fixedBytes": {
                     item["name"]: item["length"] for item in schema["fixedBytes"]
                 },
@@ -1358,25 +1995,41 @@ def vectors_output(schema):
                     }
                     for enum in schema["enums"]
                 },
+                "records": {
+                    record["name"]: record["fields"]
+                    for record in schema.get("records", [])
+                },
                 "unions": {
                     union["name"]: {
                         case["name"]: case["value"] for case in union["cases"]
                     }
                     for union in schema["unions"]
                 },
+                "handles": schema["handles"],
+                "commandProjection": schema["commandProjection"],
+                "operations": schema["operations"],
                 "contractChecks": [
                     {
                         "requiredAbi": schema["abi"],
+                        "requiredSchemaVersion": schema["schemaVersion"],
                         "requiredProductVersion": schema["productVersion"],
                         "outcome": "Compatible",
                     },
                     {
                         "requiredAbi": schema["abi"] + 1,
+                        "requiredSchemaVersion": schema["schemaVersion"],
                         "requiredProductVersion": schema["productVersion"],
                         "outcome": "ContractMismatch",
                     },
                     {
                         "requiredAbi": schema["abi"],
+                        "requiredSchemaVersion": schema["schemaVersion"] + 1,
+                        "requiredProductVersion": schema["productVersion"],
+                        "outcome": "ContractMismatch",
+                    },
+                    {
+                        "requiredAbi": schema["abi"],
+                        "requiredSchemaVersion": schema["schemaVersion"],
                         "requiredProductVersion": "0.0.0",
                         "outcome": "ContractMismatch",
                     },

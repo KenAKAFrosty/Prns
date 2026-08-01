@@ -17,6 +17,16 @@ class Host(options: HostOptions) : AutoCloseable {
     val identityHash: IdentityHash
     val destinationHashes: List<DestinationHash>
 
+    val backendInfo: BackendInfo
+        get() = withPointer {
+            val value = NativeBackendInfo()
+            value.structSize = SizeT(value.size().toLong())
+            value.write()
+            checkedStatus(NativeApi.library.prns_backend_info(value), "backendInfo")
+            value.read()
+            value.decode()
+        }
+
     init {
         verifyNativeContract()
         val nativePointer = NativeArena().use { arena ->
@@ -105,6 +115,13 @@ class Host(options: HostOptions) : AutoCloseable {
                         arena.string(command.peer),
                         bitrate.first,
                         bitrate.second,
+                        output,
+                    )
+                }
+                is HostCommandAttachInterface -> {
+                    NativeApi.library.prns_host_attach_interface(
+                        host,
+                        arena.interfaceConfig(command.config),
                         output,
                     )
                 }
@@ -229,6 +246,80 @@ class Host(options: HostOptions) : AutoCloseable {
         }
     }
 
+    fun snapshot(timeoutMillis: Long = 5_000): HostSnapshot = withPointer { host ->
+        require(timeoutMillis in 0..0xffff_ffffL) {
+            "timeoutMillis must fit in 32 bits"
+        }
+        val inspection = PointerByReference()
+        checkedStatus(
+            NativeApi.library.prns_host_snapshot(host, timeoutMillis.toInt(), inspection),
+            "captureSnapshot",
+        )
+        val pointer = requireNotNull(inspection.value)
+        try {
+            val value = NativeHostSnapshot()
+            value.structSize = SizeT(value.size().toLong())
+            value.write()
+            checkedStatus(
+                NativeApi.library.prns_host_snapshot_read(pointer, value),
+                "readSnapshot",
+            )
+            value.read()
+            value.decode()
+        } finally {
+            NativeApi.library.prns_host_snapshot_release(pointer)
+        }
+    }
+
+    fun beginResourceUpload(
+        linkId: LinkId,
+        declaredLength: Long,
+        packedMetadata: Bytes?,
+        compression: ResourceCompression,
+    ): ResourceUpload = withPointer { host ->
+        require(declaredLength >= 0) { "declaredLength must be non-negative" }
+        NativeArena().use { arena ->
+            val output = PointerByReference()
+            val metadata = packedMetadata?.let {
+                arena.bytesReference(it.copyBytes())
+            }
+            checkedStatus(
+                NativeApi.library.prns_host_begin_resource_upload(
+                    host,
+                    arena.bytes(linkId.copyBytes()),
+                    declaredLength,
+                    metadata,
+                    compression.native(),
+                    output,
+                ),
+                "beginResourceUpload",
+            )
+            ResourceUpload(requireNotNull(output.value))
+        }
+    }
+
+    suspend fun sendResource(
+        linkId: LinkId,
+        payload: Bytes,
+        packedMetadata: Bytes?,
+        compression: ResourceCompression,
+    ): CommandSettlement {
+        val upload = beginResourceUpload(
+            linkId,
+            payload.size.toLong(),
+            packedMetadata,
+            compression,
+        )
+        return try {
+            upload.write(payload)
+            upload.finish()
+        } catch (failure: Throwable) {
+            upload.abort()
+            upload.close()
+            throw failure
+        }
+    }
+
     fun claimApplicationEvents(): StreamClaim<EventFlow<ApplicationEvent>> =
         claimEvents("claimApplicationEvents") { host, output ->
             NativeApi.library.prns_host_claim_application_events(host, output)
@@ -303,7 +394,7 @@ class Host(options: HostOptions) : AutoCloseable {
     }
 }
 
-private fun Bitrate.native(): Pair<Int, Long> = when (this) {
+internal fun Bitrate.native(): Pair<Int, Long> = when (this) {
     BitrateAuto -> BitrateKind.AUTO.rawValue to 0L
     is BitrateBitsPerSecond -> BitrateKind.BITS_PER_SECOND.rawValue to value
 }
@@ -313,7 +404,7 @@ private fun ResponseTimeout.native(): Pair<Int, Long> = when (this) {
     is ResponseTimeoutExact -> ResponseTimeoutKind.EXACT.rawValue to millis
 }
 
-private fun ResourceCompression.native(): Int = when (this) {
+internal fun ResourceCompression.native(): Int = when (this) {
     ResourceCompressionAuto -> ResourceCompressionKind.AUTO.rawValue
     ResourceCompressionNever -> ResourceCompressionKind.NEVER.rawValue
 }

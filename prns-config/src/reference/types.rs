@@ -241,6 +241,46 @@ pub struct ReferenceInterface {
 }
 
 impl ReferenceInterface {
+    pub fn enabled(
+        name: impl Into<String>,
+        type_name: impl Into<String>,
+        params: ReferenceConfigParams,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            type_name: type_name.into(),
+            enabled: Some(true),
+            mode: None,
+            outgoing: None,
+            bootstrap_only: None,
+            bitrate: None,
+            announce_cap: None,
+            announce_rate_target: None,
+            announce_rate_grace: None,
+            announce_rate_penalty: None,
+            ingress_control: None,
+            egress_control: None,
+            recursive_prs: None,
+            announces_from_internal: None,
+            ic_max_held_announces: None,
+            ic_new_time: None,
+            ic_burst_hold: None,
+            ic_burst_freq_new: None,
+            ic_burst_freq: None,
+            ic_pr_burst_freq_new: None,
+            ic_pr_burst_freq: None,
+            ic_burst_penalty: None,
+            ic_held_release_interval: None,
+            ec_pr_freq: None,
+            network_name: None,
+            passphrase: None,
+            ifac_size_bits: None,
+            discovery: ReferenceInterfaceDiscovery::default(),
+            params,
+            extra: BTreeMap::new(),
+        }
+    }
+
     pub fn is_known(&self) -> bool {
         !matches!(self.params, ReferenceConfigParams::Unknown)
     }

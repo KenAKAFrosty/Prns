@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       commit_sha:
-        description: Protected main commit to build
+        description: Protected trunk commit to build
         required: true
         type: string
 
@@ -60,11 +60,13 @@ jobs:
           EXPECTED_COMMIT: ${{ inputs.commit_sha }}
           REF_PROTECTED: ${{ github.ref_protected }}
         run: |
-          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_REF" = "refs/heads/trunk"
           test "$REF_PROTECTED" = "true"
           test "$GITHUB_SHA" = "$EXPECTED_COMMIT"
           test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
-          test "$(cat VERSION)" = "0.3.1"
+          version="$(cat VERSION)"
+          manifest_version="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' prnsd/Cargo.toml | head -n 1)"
+          test "$manifest_version" = "$version"
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: 1.96.0
@@ -151,7 +153,7 @@ jobs:
             --commit "$GITHUB_SHA" \
             --version "$(cat VERSION)" \
             --output "target/prnsd-release/${{ matrix.pass }}/source.zip"
-          archive="prnsd-0.3.1-${{ matrix.platform.target }}"
+          archive="prnsd-$(cat VERSION)-${{ matrix.platform.target }}"
           if [[ "${{ matrix.platform.target }}" == *windows-msvc ]]; then
             archive="${archive}.zip"
           else
@@ -190,9 +192,13 @@ jobs:
         with:
           pattern: prnsd-native-*-${{ github.run_id }}
           path: target/downloads
+      - name: Resolve candidate version
+        id: identity
+        run: echo "version=$(cat VERSION)" >> "$GITHUB_OUTPUT"
       - name: Compare every reproduction and stage primary evidence
         run: |
           mkdir -p target/candidate
+          version="$(cat VERSION)"
           for target in \
             aarch64-apple-darwin \
             x86_64-apple-darwin \
@@ -204,7 +210,7 @@ jobs:
             if [[ "$target" == *windows-msvc ]]; then
               extension=.zip
             fi
-            name="prnsd-0.3.1-${target}${extension}"
+            name="prnsd-${version}-${target}${extension}"
             primary="target/downloads/prnsd-native-${target}-primary-${GITHUB_RUN_ID}/${name}"
             reproduction="target/downloads/prnsd-native-${target}-reproduction-${GITHUB_RUN_ID}/${name}"
             ./tools/prns release prnsd distribution -- compare \
@@ -220,8 +226,8 @@ jobs:
         with:
           path: .
           format: spdx-json
-          output-file: target/candidate/prnsd-0.3.1-source.spdx.json
-          artifact-name: prnsd-0.3.1-source.spdx.json
+          output-file: target/candidate/prnsd-${{ steps.identity.outputs.version }}-source.spdx.json
+          artifact-name: prnsd-${{ steps.identity.outputs.version }}-source.spdx.json
           syft-version: v1.50.0
           dependency-snapshot: false
           upload-artifact: false

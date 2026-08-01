@@ -3,13 +3,13 @@ import type { StreamClaim } from "./async_lanes.js";
 import type { ResourceStream } from "./contract.js";
 
 export class MemoryResourceStream implements ResourceStream {
-  readonly totalBytes: number;
+  readonly totalBytes: bigint;
   readonly #data: Uint8Array;
   #claimed = false;
 
   constructor(data: Uint8Array) {
     this.#data = data.slice();
-    this.totalBytes = data.length;
+    this.totalBytes = BigInt(data.length);
   }
 
   claim(): StreamClaim<Uint8Array> {

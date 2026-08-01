@@ -163,6 +163,11 @@ def main():
     catalog = json.loads(
         (ROOT / "prns-host" / "distribution" / "packages.json").read_text()
     )
+    schema = json.loads((ROOT / catalog["contractSource"]).read_text())
+    if release_index["contractAbi"] != schema["abi"]:
+        raise SystemExit("release index contract ABI differs from the host schema")
+    if release_index["schemaVersion"] != schema["schemaVersion"]:
+        raise SystemExit("release index schema version differs from the host schema")
     artifacts = stage / "artifacts"
     actual_files = {
         path.relative_to(stage).as_posix()

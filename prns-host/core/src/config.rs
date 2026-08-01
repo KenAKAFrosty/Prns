@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 
 use prns_runtime::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 
-use crate::{Capability, PrnsLimits};
+use crate::{Capability, HostRole, PrnsLimits, RequestPolicy};
 
 pub struct IdentitySecret(Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>);
 
@@ -25,15 +25,35 @@ pub enum IdentityConfig {
     LoadOrCreate { path: String },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HostRole {
-    Endpoint,
-    Transport,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PersistenceConfig {
+    Ephemeral,
+    Directory { path: String },
 }
 
 pub enum DestinationIdentityConfig {
     HostIdentity,
     Dedicated(IdentityConfig),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DestinationProofStrategy {
+    ProveAll,
+    ProveNone,
+    ProveIf,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DestinationLinkRequestPolicy {
+    AcceptAll,
+    AcceptNone,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DestinationRatchetPolicy {
+    NoRatchets,
+    Ratcheted,
+    RatchetsRequired,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -83,14 +103,11 @@ pub struct SingleDestinationConfig {
     pub name: DestinationName,
     pub identity: DestinationIdentityConfig,
     pub announce_app_data: Vec<u8>,
+    pub proof: DestinationProofStrategy,
+    pub link_requests: DestinationLinkRequestPolicy,
+    pub ratchet: DestinationRatchetPolicy,
+    pub resource_strategy: crate::ResourceStrategy,
     pub request_handlers: Vec<RequestHandlerConfig>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RequestPolicy {
-    AllowNone,
-    AllowAll,
-    AllowList,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -106,6 +123,7 @@ pub enum DestinationConfig {
 
 pub struct HostConfig {
     pub identity: IdentityConfig,
+    pub persistence: PersistenceConfig,
     pub role: HostRole,
     pub destinations: Vec<DestinationConfig>,
     pub required_capabilities: Vec<Capability>,

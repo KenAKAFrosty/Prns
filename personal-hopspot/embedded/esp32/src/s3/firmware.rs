@@ -53,13 +53,12 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         wifi_config.tcp_client.is_some()
     );
 
+    // Defer claiming USB-JTAG until after Wi-Fi bring-up so boot logs stay visible through radio init.
     let usb_status: &'static EmbassyInterfaceStatus = mk_static!(
         EmbassyInterfaceStatus,
         EmbassyInterfaceStatus::new(B::USB_INTERFACE_ID, ConnectionState::Initializing)
     );
     let usb_id = usb_status.id();
-    let (usb_rx, usb_tx) = UsbSerialJtag::new(usb_device).into_async().split();
-
     let mac = base_mac_address();
     let mut mac_octets = [0u8; 6];
     mac_octets.copy_from_slice(&mac.as_bytes()[..6]);
@@ -81,6 +80,10 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     );
     let lora_spectrum: &'static LoRaSpectrumStatus =
         mk_static!(LoRaSpectrumStatus, LoRaSpectrumStatus::new());
+    // Reclaim the private R8 probe allocation before placing the live LoRa queue in PSRAM.
+    // This is a no-op on boards whose PSRAM belongs to the global heap.
+    #[cfg(feature = "lora")]
+    crate::storage::reinit_private_psram_heap();
     #[cfg(feature = "lora")]
     let lora_tx_queue = crate::storage::allocate_lora_tx_queue();
     #[cfg(feature = "lora")]
@@ -255,6 +258,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     });
     boot_stage(BootPhase::CoreOneStartReady);
 
+    let (usb_rx, usb_tx) = UsbSerialJtag::new(usb_device).into_async().split();
     let usb_seam = usb_lane.into_seam(NOTIFY.sender(), hardware_entropy);
     spawner.spawn(usb_device_task(usb_rx, usb_tx, usb_seam, usb_status).expect("usb task fits"));
 

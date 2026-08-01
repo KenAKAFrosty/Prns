@@ -20,7 +20,7 @@ The full prnsd README also covers interface inspection, logs, reattachment, and 
 
 >>`!Build with Rust`!
 
-`F999cargo tools guide rust`f
+`F999cargo tools guide rust-basics`f
 
 This checked example creates two fresh nodes on localhost. Node A announces over an explicit TCP server; Node B receives the real Reticulum announce over its TCP client and exits.
 

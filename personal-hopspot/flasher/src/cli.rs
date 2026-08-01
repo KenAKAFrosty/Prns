@@ -108,7 +108,7 @@ pub(crate) enum CommandMode {
         #[arg(long, value_name = "VERSION", hide = true)]
         developer_version: Option<String>,
     },
-    /// Assemble manifest v2 after all four developer artifacts have been built.
+    /// Assemble manifest v2 after all shipping developer artifacts have been built.
     #[command(hide = true)]
     AssembleManifest {
         #[arg(long, value_name = "DIR")]
@@ -235,8 +235,9 @@ mod tests {
             "--key-id",
             "1FB2CA18B2C25E1F",
         ];
+        let expected_developer_version = format!("{}-dev.clean.abc", env!("CARGO_PKG_VERSION"));
         let mut version_only = base.to_vec();
-        version_only.extend(["--developer-version", "0.3.1-dev.clean.abc"]);
+        version_only.extend(["--developer-version", expected_developer_version.as_str()]);
         assert!(Cli::try_parse_from(version_only).is_err());
 
         let mut board_only = base.to_vec();
@@ -246,7 +247,7 @@ mod tests {
         let mut complete = base.to_vec();
         complete.extend([
             "--developer-version",
-            "0.3.1-dev.clean.abc",
+            expected_developer_version.as_str(),
             "--board",
             "heltec-v4",
             "--board",
@@ -264,7 +265,7 @@ mod tests {
         assert_eq!(
             (developer_version.as_deref(), boards.as_slice()),
             (
-                Some("0.3.1-dev.clean.abc"),
+                Some(expected_developer_version.as_str()),
                 ["heltec-v4".to_string(), "t-echo".to_string()].as_slice()
             )
         );

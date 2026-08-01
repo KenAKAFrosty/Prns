@@ -1,13 +1,14 @@
 use core::convert::TryFrom;
 
 use js_sys::{Array, Object};
+use personal_rns::crypto::ratchets::SeedSelfRatchetsOutcome;
 use personal_rns::engine::{
-    AllowRequester, AnnounceAppData, AnnounceNow, AnnounceTarget, CloseLink, CommandId, Directive,
-    EngineReaction, EngineState, EstablishLink, FanTarget, Identify, InstantMillis, IssuedCommand,
-    Journaled, PathRequestId, PrnsCommand, RatchetPolicy, RequestPath, RequestResponseTimeout,
-    Respond, RespondData, RespondPayload, SendRequest, SendRequestData, SendSinglePacket,
-    SendSinglePacketPayload, SendToChannel, SendToChannelBody, SendToLink, SendToLinkPayload,
-    SetResourceStrategy,
+    AllowRequester, AnnounceAppData, AnnounceNow, AnnounceTarget, CloseLink, CommandId,
+    DestinationIdentitySeedOutcome, Directive, EngineReaction, EngineState, EstablishLink,
+    FanTarget, Identify, InstantMillis, IssuedCommand, Journaled, PathRequestId, PrnsCommand,
+    RatchetPolicy, RequestPath, RequestResponseTimeout, Respond, RespondData, RespondPayload,
+    RouteSeedOutcome, SendRequest, SendRequestData, SendSinglePacket, SendSinglePacketPayload,
+    SendToChannel, SendToChannelBody, SendToLink, SendToLinkPayload, SetResourceStrategy,
 };
 use personal_rns::interfaces::bluetooth_auto as bluetooth_contract;
 use personal_rns::interfaces::{
@@ -22,12 +23,17 @@ use personal_rns::routing::links::resources::{
 };
 use personal_rns::routing::links::LinkId;
 use personal_rns::routing::request_handlers::{RequestPathHash, RequestPolicy};
+use personal_rns::routing::routes::NextHop;
+use personal_rns::routing::tunnel::SeedTunnelOutcome;
 use personal_rns::routing::upstream_app_destinations::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::routing::warmth::Departure;
 use personal_rns::storage::GrowableHeap;
 use personal_rns::units::DurationMillis;
 use prns_host::PrnsLimits;
 use prns_host_cooperative::{CooperativeHost, Entropy, MonotonicMillis};
+use prns_runtime::runtime::persistence_snapshots::{
+    snapshot_persisted_state, snapshot_self_ratchets,
+};
 use wasm_bindgen::prelude::*;
 
 use crate::input::{
@@ -37,10 +43,10 @@ use crate::input::{
     required_bool, required_bytes, required_string, required_u64, secret_key_from_vec,
 };
 use crate::js_translation::{
-    interface_kind_name, journaled_to_js, outbound_to_js, set_bytes, set_str, set_u32, set_u64,
-    set_usize, set_value,
+    interface_kind_name, journaled_to_js, outbound_to_js, set_bigint, set_bytes, set_str, set_u32,
+    set_u64, set_usize, set_value,
 };
-use crate::parameters::bitrate_bps_u32;
+use crate::parameters::{bitrate_bps_u32, BROWSER_PERSISTENCE_VERSION};
 
 #[derive(Clone, Copy)]
 enum NodeResponse {
@@ -52,6 +58,8 @@ enum NodeResponse {
     SourceChecksum,
 }
 
+const MAX_PERSISTED_STATE_BYTES: usize = 64 * 1024 * 1024;
+const MAX_PERSISTED_RATCHETS: usize = 4_096;
 #[derive(Clone)]
 pub(crate) struct OutboundFrame {
     pub(crate) target: OutboundTarget,
@@ -76,9 +84,12 @@ pub struct PrnsRuntime {
     events: Vec<JsValue>,
     outbound: Vec<OutboundFrame>,
     next_command_id: u64,
+    revision: u64,
     ble_identity: Option<bluetooth_contract::BleIdentity>,
     node_page: bool,
     host: CooperativeHost<()>,
+    pending_ratchets: Vec<(personal_rns::wire::DestinationHash, Vec<u8>)>,
+    persistence_restored: bool,
 }
 
 #[wasm_bindgen]
@@ -103,9 +114,12 @@ impl PrnsRuntime {
             events: Vec::new(),
             outbound: Vec::new(),
             next_command_id: 0,
+            revision: 0,
             ble_identity,
             node_page: false,
             host: CooperativeHost::new(PrnsLimits::balanced()),
+            pending_ratchets: Vec::new(),
+            persistence_restored: false,
         })
     }
 
@@ -149,6 +163,7 @@ impl PrnsRuntime {
             self.interfaces.push(descriptor);
         }
         self.engine.interface_attached(id, InstantMillis(now_ms));
+        self.bump_revision();
         Ok(id.as_bytes().to_vec())
     }
 
@@ -166,6 +181,7 @@ impl PrnsRuntime {
         if removed {
             self.engine
                 .interface_departed(id, Departure::MayReturn, InstantMillis(now_ms));
+            self.bump_revision();
         }
         Ok(removed)
     }
@@ -205,6 +221,7 @@ impl PrnsRuntime {
             .map_err(|error| {
                 JsValue::from_str(&format!("destination registration failed: {error:?}"))
             })?;
+        self.bump_revision();
         if let Some(handlers) = optional_array(&options, "requestHandlers")? {
             for handler in handlers.iter() {
                 let path = required_string(&handler, "path")?;
@@ -227,6 +244,7 @@ impl PrnsRuntime {
                     })?;
             }
         }
+        self.restore_pending_ratchet(destination)?;
         Ok(destination.as_bytes().to_vec())
     }
 
@@ -261,6 +279,7 @@ impl PrnsRuntime {
             .map_err(|error| {
                 JsValue::from_str(&format!("node page registration failed: {error:?}"))
             })?;
+        self.bump_revision();
         for (path, policy) in <personal_hopspot_core::node_pages::NodePageRoutes as personal_rns::runtime::request_endpoints::RequestEndpointSet<()>>::REGISTRATIONS {
             self.engine
                 .register_request_handler(&destination, path, policy.engine_policy())
@@ -591,9 +610,13 @@ impl PrnsRuntime {
     pub fn set_destination_resource_strategy(&mut self, options: JsValue) -> Result<bool, JsValue> {
         let destination = destination_hash_from_vec(required_bytes(&options, "destination")?)?;
         let strategy = resource_strategy(&options)?;
-        Ok(self
+        let changed = self
             .engine
-            .set_default_resource_strategy(&destination, strategy))
+            .set_default_resource_strategy(&destination, strategy);
+        if changed {
+            self.bump_revision();
+        }
+        Ok(changed)
     }
 
     #[wasm_bindgen(js_name = sendChannelMessage)]
@@ -720,6 +743,7 @@ impl PrnsRuntime {
                 },
             },
         );
+        self.bump_revision();
         self.apply_captured(reactions);
         for (link_id, request_id, response) in page_requests {
             let id = self.mint_command_id();
@@ -778,10 +802,148 @@ impl PrnsRuntime {
         drained
     }
 
+    #[wasm_bindgen(js_name = persistedState)]
+    pub fn persisted_state(&self, options: JsValue) -> Result<JsValue, JsValue> {
+        let now_ms = required_u64(&options, "nowMs")?;
+        let snapshot = snapshot_persisted_state(&self.engine, InstantMillis(now_ms))
+            .ok_or_else(|| JsValue::from_str("runtime persistence snapshot exceeded its bounds"))?;
+        let ratchet_snapshot = snapshot_self_ratchets(&self.engine);
+        let ratchet_count = ratchet_snapshot
+            .blobs
+            .len()
+            .checked_add(self.pending_ratchets.len())
+            .ok_or_else(|| JsValue::from_str("persisted ratchet count is unsupported"))?;
+        if ratchet_count > MAX_PERSISTED_RATCHETS {
+            return Err(JsValue::from_str(
+                "persisted ratchet count exceeds the runtime limit",
+            ));
+        }
+        let mut persisted_bytes = 0;
+        account_persisted_bytes(&mut persisted_bytes, snapshot.routing_table.len())?;
+        account_persisted_bytes(&mut persisted_bytes, snapshot.tunnels.len())?;
+        account_persisted_bytes(&mut persisted_bytes, snapshot.destination_identities.len())?;
+        for (destination, sealed) in &ratchet_snapshot.blobs {
+            account_persisted_bytes(&mut persisted_bytes, destination.as_bytes().len())?;
+            account_persisted_bytes(&mut persisted_bytes, sealed.len())?;
+        }
+        for (destination, sealed) in &self.pending_ratchets {
+            account_persisted_bytes(&mut persisted_bytes, destination.as_bytes().len())?;
+            account_persisted_bytes(&mut persisted_bytes, sealed.len())?;
+        }
+        let object = Object::new();
+        set_str(&object, "type", "persistedState");
+        set_u32(&object, "persistenceVersion", BROWSER_PERSISTENCE_VERSION);
+        set_u64(&object, "takenAtMillis", snapshot.taken_at.0);
+        set_bytes(&object, "routingTable", &snapshot.routing_table);
+        set_bytes(&object, "tunnels", &snapshot.tunnels);
+        set_bytes(
+            &object,
+            "destinationIdentities",
+            &snapshot.destination_identities,
+        );
+        let ratchets = Array::new();
+        for (destination, sealed) in ratchet_snapshot.blobs {
+            let row = Object::new();
+            set_bytes(&row, "destination", destination.as_bytes());
+            set_bytes(&row, "sealed", &sealed);
+            ratchets.push(&row);
+        }
+        for (destination, sealed) in &self.pending_ratchets {
+            let row = Object::new();
+            set_bytes(&row, "destination", destination.as_bytes());
+            set_bytes(&row, "sealed", sealed);
+            ratchets.push(&row);
+        }
+        set_value(&object, "ratchets", ratchets.into());
+        Ok(object.into())
+    }
+
+    #[wasm_bindgen(js_name = restorePersistedState)]
+    pub fn restore_persisted_state(&mut self, options: JsValue) -> Result<JsValue, JsValue> {
+        if self.persistence_restored {
+            return Err(JsValue::from_str(
+                "runtime persistence was already restored",
+            ));
+        }
+        let persistence_version = required_u64(&options, "persistenceVersion")?;
+        if persistence_version != u64::from(BROWSER_PERSISTENCE_VERSION) {
+            return Err(JsValue::from_str("persisted state version is unsupported"));
+        }
+        let now_ms = required_u64(&options, "nowMs")?;
+        let routing_table = bounded_persisted_region(&options, "routingTable")?;
+        let tunnels = bounded_persisted_region(&options, "tunnels")?;
+        let destination_identities = bounded_persisted_region(&options, "destinationIdentities")?;
+        let mut persisted_bytes = 0;
+        account_persisted_bytes(&mut persisted_bytes, routing_table.len())?;
+        account_persisted_bytes(&mut persisted_bytes, tunnels.len())?;
+        account_persisted_bytes(&mut persisted_bytes, destination_identities.len())?;
+        validate_route_snapshot(&routing_table)?;
+        validate_destination_identity_snapshot(&destination_identities)?;
+        personal_rns::persistence::read_tunnels_snapshot(&tunnels)
+            .map_err(|error| persisted_state_error("tunnels", error))?;
+        let ratchet_values = required_array(&options, "ratchets")?;
+        let ratchet_count = usize::try_from(ratchet_values.length())
+            .map_err(|_| JsValue::from_str("persisted ratchet count is unsupported"))?;
+        if ratchet_count > MAX_PERSISTED_RATCHETS {
+            return Err(JsValue::from_str(
+                "persisted ratchet count exceeds the runtime limit",
+            ));
+        }
+        let mut pending_ratchets = Vec::with_capacity(ratchet_count);
+        for value in ratchet_values.iter() {
+            let destination = destination_hash_from_vec(required_bytes(&value, "destination")?)?;
+            let sealed = bounded_persisted_region(&value, "sealed")?;
+            account_persisted_bytes(&mut persisted_bytes, destination.as_bytes().len())?;
+            account_persisted_bytes(&mut persisted_bytes, sealed.len())?;
+            personal_rns::persistence::read_self_ratchets_snapshot(&sealed)
+                .map_err(|error| persisted_state_error("ratchets", error))?;
+            if pending_ratchets
+                .iter()
+                .any(|(existing, _)| *existing == destination)
+            {
+                return Err(JsValue::from_str(
+                    "persisted state contains duplicate destination ratchets",
+                ));
+            }
+            pending_ratchets.push((destination, sealed));
+        }
+
+        let now = InstantMillis(now_ms);
+        let mut report = PersistenceRestoreCounts::default();
+        let routes = personal_rns::persistence::read_routing_table_snapshot(&routing_table)
+            .map_err(|error| persisted_state_error("routing table", error))?;
+        for row in routes {
+            let row = row.map_err(|error| persisted_state_error("routing table", error))?;
+            report.record_route(self.engine.seed_route(&row, now));
+        }
+        let identities = personal_rns::persistence::read_destination_identities_snapshot(
+            &destination_identities,
+        )
+        .map_err(|error| persisted_state_error("destination identities", error))?;
+        for row in identities {
+            let row =
+                row.map_err(|error| persisted_state_error("destination identities", error))?;
+            report.record_destination_identity(self.engine.seed_destination_identity(row, now));
+        }
+        let tunnel_rows = personal_rns::persistence::read_tunnels_snapshot(&tunnels)
+            .map_err(|error| persisted_state_error("tunnels", error))?;
+        for row in tunnel_rows {
+            report.record_tunnel(self.engine.seed_tunnel(row));
+        }
+        report.ratchets = u32::try_from(pending_ratchets.len()).unwrap_or(u32::MAX);
+        self.pending_ratchets = pending_ratchets;
+        self.persistence_restored = true;
+        if report.total_restored() > 0 {
+            self.bump_revision();
+        }
+        Ok(report.into_js())
+    }
+
     #[wasm_bindgen(js_name = snapshot)]
     pub fn snapshot(&self) -> JsValue {
         let object = Object::new();
         set_str(&object, "type", "snapshot");
+        set_bigint(&object, "revision", self.revision);
         set_u64(
             &object,
             "ingestedPackets",
@@ -809,14 +971,77 @@ impl PrnsRuntime {
             }
             set_usize(&row, "routes", self.engine.route_count_via(interface.id));
             set_usize(&row, "links", self.engine.link_count_via(interface.id));
+            set_usize(
+                &row,
+                "transportedLinks",
+                self.engine.transported_link_count_via(interface.id),
+            );
             interfaces.push(&row);
         }
         set_value(&object, "interfaces", interfaces.into());
+        set_u32(&object, "activeLinkCount", self.engine.link_count());
+        let route_snapshots = Array::new();
+        self.engine.visit_route_snapshots(
+            personal_rns::interfaces::AttachedInterfaces::new(&self.interfaces),
+            |route| {
+                let row = Object::new();
+                set_bytes(&row, "destination", route.destination.as_bytes());
+                set_u32(&row, "hops", u32::from(route.hops));
+                if let NextHop::Via(identity) = route.via {
+                    set_bytes(&row, "viaIdentity", identity.as_bytes());
+                }
+                set_bytes(&row, "interfaceId", route.interface.as_bytes());
+                set_u64(&row, "learnedAtMillis", route.learned_at.0);
+                set_u64(&row, "lastRelayedAtMillis", route.last_relayed_at.0);
+                set_u64(&row, "expiresAtMillis", route.expires_at.0);
+                route_snapshots.push(&row);
+            },
+        );
+        set_value(&object, "routeSnapshots", route_snapshots.into());
+        let destination_identities = Array::new();
+        for identity in self.engine.destination_identities() {
+            let row = Object::new();
+            set_bytes(&row, "destination", identity.destination.as_bytes());
+            set_bytes(&row, "identity", identity.identity.as_bytes());
+            destination_identities.push(&row);
+        }
+        set_value(
+            &object,
+            "destinationIdentities",
+            destination_identities.into(),
+        );
         object.into()
     }
 }
 
 impl PrnsRuntime {
+    fn restore_pending_ratchet(
+        &mut self,
+        destination: personal_rns::wire::DestinationHash,
+    ) -> Result<(), JsValue> {
+        let Some(index) = self
+            .pending_ratchets
+            .iter()
+            .position(|(stored, _)| *stored == destination)
+        else {
+            return Ok(());
+        };
+        let (_, sealed) = self.pending_ratchets.remove(index);
+        let record = personal_rns::persistence::read_self_ratchets_snapshot(&sealed)
+            .map_err(|error| persisted_state_error("ratchets", error))?;
+        let last_rotated = record.last_rotated;
+        let secrets = record.secrets_newest_first().collect::<Vec<_>>();
+        match self
+            .engine
+            .seed_self_ratchets(&destination, last_rotated, secrets.into_iter())
+        {
+            SeedSelfRatchetsOutcome::Seeded | SeedSelfRatchetsOutcome::AlreadyMinted => Ok(()),
+            SeedSelfRatchetsOutcome::Untracked => Err(JsValue::from_str(
+                "persisted ratchet destination is not tracked",
+            )),
+        }
+    }
+
     fn command_context(&mut self, options: &JsValue) -> Result<(u64, Vec<u8>), JsValue> {
         let now_ms = required_u64(options, "nowMs")?;
         let entropy = Entropy::try_new(required_bytes(options, "entropy")?)
@@ -851,7 +1076,12 @@ impl PrnsRuntime {
             &mut |out| entropy.fill(out),
             &mut |reaction| reactions.push(capture_reaction(reaction)),
         );
+        self.bump_revision();
         self.apply_captured(reactions);
+    }
+
+    fn bump_revision(&mut self) {
+        self.revision = self.revision.saturating_add(1);
     }
 
     fn apply_captured(&mut self, reactions: Vec<CapturedReaction>) {
@@ -862,6 +1092,125 @@ impl PrnsRuntime {
             }
         }
     }
+}
+
+#[derive(Default)]
+struct PersistenceRestoreCounts {
+    routes: u32,
+    destination_identities: u32,
+    tunnels: u32,
+    ratchets: u32,
+    refused: u32,
+    dropped: u32,
+}
+
+impl PersistenceRestoreCounts {
+    fn record_route(&mut self, outcome: RouteSeedOutcome) {
+        match outcome {
+            RouteSeedOutcome::Seeded => self.routes = self.routes.saturating_add(1),
+            RouteSeedOutcome::RefusedDestinationMismatch
+            | RouteSeedOutcome::RefusedBlackholedIdentity
+            | RouteSeedOutcome::RefusedInvalidSignature => {
+                self.refused = self.refused.saturating_add(1);
+            }
+            RouteSeedOutcome::AlreadyPresent
+            | RouteSeedOutcome::TableFull
+            | RouteSeedOutcome::AppDataArenaFull => {
+                self.dropped = self.dropped.saturating_add(1);
+            }
+        }
+    }
+
+    fn record_destination_identity(&mut self, outcome: DestinationIdentitySeedOutcome) {
+        match outcome {
+            DestinationIdentitySeedOutcome::Seeded => {
+                self.destination_identities = self.destination_identities.saturating_add(1);
+            }
+            DestinationIdentitySeedOutcome::RefusedPublicKeyChanged => {
+                self.refused = self.refused.saturating_add(1);
+            }
+            DestinationIdentitySeedOutcome::Replaced
+            | DestinationIdentitySeedOutcome::Expired
+            | DestinationIdentitySeedOutcome::CapacityExhausted => {
+                self.dropped = self.dropped.saturating_add(1);
+            }
+        }
+    }
+
+    fn record_tunnel(&mut self, outcome: SeedTunnelOutcome) {
+        match outcome {
+            SeedTunnelOutcome::Seeded => self.tunnels = self.tunnels.saturating_add(1),
+            SeedTunnelOutcome::AlreadyPresent | SeedTunnelOutcome::TableFull => {
+                self.dropped = self.dropped.saturating_add(1);
+            }
+        }
+    }
+
+    fn total_restored(&self) -> u32 {
+        self.routes
+            .saturating_add(self.destination_identities)
+            .saturating_add(self.tunnels)
+            .saturating_add(self.ratchets)
+    }
+
+    fn into_js(self) -> JsValue {
+        let object = Object::new();
+        set_u32(&object, "routes", self.routes);
+        set_u32(
+            &object,
+            "destinationIdentities",
+            self.destination_identities,
+        );
+        set_u32(&object, "tunnels", self.tunnels);
+        set_u32(&object, "ratchets", self.ratchets);
+        set_u32(&object, "refused", self.refused);
+        set_u32(&object, "dropped", self.dropped);
+        object.into()
+    }
+}
+
+fn bounded_persisted_region(options: &JsValue, field: &str) -> Result<Vec<u8>, JsValue> {
+    let bytes = required_bytes(options, field)?;
+    if bytes.len() > MAX_PERSISTED_STATE_BYTES {
+        return Err(JsValue::from_str(
+            "persisted state region exceeds the runtime limit",
+        ));
+    }
+    Ok(bytes)
+}
+
+fn account_persisted_bytes(total: &mut usize, additional: usize) -> Result<(), JsValue> {
+    *total = total
+        .checked_add(additional)
+        .ok_or_else(|| JsValue::from_str("persisted state size is unsupported"))?;
+    if *total > MAX_PERSISTED_STATE_BYTES {
+        return Err(JsValue::from_str(
+            "persisted state exceeds the runtime limit",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_route_snapshot(bytes: &[u8]) -> Result<(), JsValue> {
+    let rows = personal_rns::persistence::read_routing_table_snapshot(bytes)
+        .map_err(|error| persisted_state_error("routing table", error))?;
+    for row in rows {
+        row.map_err(|error| persisted_state_error("routing table", error))?;
+    }
+    Ok(())
+}
+
+fn validate_destination_identity_snapshot(bytes: &[u8]) -> Result<(), JsValue> {
+    let rows = personal_rns::persistence::read_destination_identities_snapshot(bytes)
+        .map_err(|error| persisted_state_error("destination identities", error))?;
+    for row in rows {
+        row.map_err(|error| persisted_state_error("destination identities", error))?;
+    }
+    Ok(())
+}
+
+fn persisted_state_error(region: &str, error: impl core::fmt::Debug) -> JsValue {
+    JsValue::from_str(&format!("persisted {region} is invalid: {error:?}"))
 }
 
 fn resource_strategy(options: &JsValue) -> Result<ResourceStrategy, JsValue> {

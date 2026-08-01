@@ -39,6 +39,8 @@ test('destination hashes are deterministic for a fixed identity', async () => {
   const first = make();
   const second = make();
   try {
+    assert.equal(first.identityHash.length, 16);
+    assert.equal(second.identityHash.length, 16);
     assert.equal(Buffer.compare(first.destinationHashes[0], second.destinationHashes[0]), 0);
     await first.ready();
     await second.ready();

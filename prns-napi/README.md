@@ -86,10 +86,8 @@ Programmatic constructors cover the common families:
 - **Backpressure**: a slow event handler can never stall the engine — past `eventQueueLimit` the node sheds diagnostic events and reports the gap with a single `eventOverflow` event, while data-plane events always deliver.
 
 Public quantities carry their unit in the property name: byte counts use `*Bytes`,
-and durations or timestamps use `*Millis`. The older unsuffixed and `*Ms`
-properties remain accepted or emitted as compatibility aliases throughout the
-0.2.x series; new code should use the unit-bearing names. `attachAutoBle` is
-likewise retained as an alias for the canonical `attachAutoBluetoothLe` name.
+and durations or timestamps use `*Millis`. Exact 64-bit counters are JavaScript
+`bigint` values; bounded control values remain safe-integer `number` values.
 
 ## License
 

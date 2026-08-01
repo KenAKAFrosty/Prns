@@ -31,6 +31,11 @@ GRAPHS = (
     ("Node addon Linux", "prns-napi/Cargo.toml", "x86_64-unknown-linux-gnu"),
     ("Node addon macOS", "prns-napi/Cargo.toml", "aarch64-apple-darwin"),
     ("Node addon Windows", "prns-napi/Cargo.toml", "x86_64-pc-windows-msvc"),
+    (
+        "Host SDK native",
+        "prns-host/impls/native/Cargo.toml",
+        "x86_64-unknown-linux-gnu",
+    ),
     ("nRF52840", "personal-hopspot/embedded/nrf52840/Cargo.toml", "thumbv7em-none-eabihf"),
     (
         "ESP32-C6",
@@ -40,6 +45,11 @@ GRAPHS = (
     (
         "ESP32-S3 Heltec",
         "personal-hopspot/embedded/esp32/boards/heltec-v4/Cargo.toml",
+        "xtensa-esp32s3-none-elf",
+    ),
+    (
+        "ESP32-S3 Heltec R8",
+        "personal-hopspot/embedded/esp32/boards/heltec-v4-r8/Cargo.toml",
         "xtensa-esp32s3-none-elf",
     ),
     (

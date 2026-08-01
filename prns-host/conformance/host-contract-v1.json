@@ -1,20 +1,35 @@
 {
   "abi": 1,
+  "commandProjection": {
+    "cPrefix": "prns_host_",
+    "receiver": "Host",
+    "result": "IssuedCommand",
+    "union": "HostCommand"
+  },
   "contractChecks": [
     {
       "outcome": "Compatible",
       "requiredAbi": 1,
-      "requiredProductVersion": "0.3.1"
+      "requiredProductVersion": "0.3.2",
+      "requiredSchemaVersion": 1
     },
     {
       "outcome": "ContractMismatch",
       "requiredAbi": 2,
-      "requiredProductVersion": "0.3.1"
+      "requiredProductVersion": "0.3.2",
+      "requiredSchemaVersion": 1
     },
     {
       "outcome": "ContractMismatch",
       "requiredAbi": 1,
-      "requiredProductVersion": "0.0.0"
+      "requiredProductVersion": "0.3.2",
+      "requiredSchemaVersion": 2
+    },
+    {
+      "outcome": "ContractMismatch",
+      "requiredAbi": 1,
+      "requiredProductVersion": "0.0.0",
+      "requiredSchemaVersion": 1
     }
   ],
   "enums": {
@@ -53,15 +68,19 @@
     },
     "CommandFailureKind": {
       "AnnounceAppDataTooLong": 6,
+      "BackendFailed": 40,
       "BindFailed": 13,
       "Busy": 2,
       "ChannelUntrackable": 31,
       "ChannelWindowFull": 30,
+      "ConnectFailed": 39,
       "DeliveryTimedOut": 11,
+      "DeviceUnavailable": 38,
       "EntropyUnavailable": 18,
       "IdentityNotHeld": 20,
       "InvalidBitrate": 12,
       "InvalidChannelMessageType": 32,
+      "InvalidConfiguration": 33,
       "LinkBusy": 24,
       "LinkNotActive": 17,
       "NoRouteToDestination": 8,
@@ -71,13 +90,17 @@
       "NotSingleDestination": 5,
       "PacketCulled": 10,
       "PayloadTooLarge": 3,
+      "PermissionDenied": 37,
       "RequestAllowListFull": 23,
       "RequestPolicyNotAllowList": 22,
+      "ResourceEarlyEof": 35,
+      "ResourceLengthOverrun": 36,
       "ResourceMetadataTooLarge": 26,
       "ResourcePredecessorFailed": 29,
       "ResourceRejectedByPeer": 27,
       "ResourceSequencingFailed": 28,
       "ResourceTableFull": 25,
+      "ResourceUploadCancelled": 34,
       "UnknownDestination": 4,
       "UnknownInterface": 7,
       "UnknownLink": 16,
@@ -123,6 +146,9 @@
       "LinkEstablished": 201,
       "LinkInterfaceMismatch": 204,
       "PeerIdentified": 202,
+      "PersistenceFlushFailed": 219,
+      "PersistenceFlushed": 218,
+      "PersistenceRestored": 217,
       "ResourceAssembled": 205,
       "ResourceFailed": 206,
       "ResourceSendProgress": 207,
@@ -132,13 +158,22 @@
       "RouteInterfaceGone": 213,
       "SelfRatchetRotated": 208
     },
+    "DiscoveryScope": {
+      "Admin": 2,
+      "Global": 5,
+      "Link": 1,
+      "Organization": 4,
+      "Site": 3
+    },
     "EventField": {
       "ArrivedOn": 22,
       "AttachedInterface": 21,
       "Cause": 24,
       "Data": 9,
       "Destination": 1,
+      "DestinationIdentities": 33,
       "Detail": 27,
+      "Dropped": 37,
       "DroppedCount": 29,
       "Hash": 12,
       "Hops": 30,
@@ -149,11 +184,16 @@
       "Metadata": 14,
       "OriginalHash": 13,
       "PathHash": 7,
+      "PersistenceCause": 38,
+      "PersistenceTarget": 39,
       "PhysicalTransferredBytes": 26,
       "Plaintext": 3,
+      "Ratchets": 35,
       "Reason": 20,
+      "Refused": 36,
       "RequestId": 5,
       "Requester": 6,
+      "Routes": 32,
       "RttMillis": 8,
       "SegmentIndex": 10,
       "SourceInterface": 2,
@@ -163,6 +203,7 @@
       "TotalSegments": 11,
       "TotalSizeBytes": 23,
       "TransferredBytes": 25,
+      "Tunnels": 34,
       "UncompressedDataBytes": 17
     },
     "HostRole": {
@@ -173,6 +214,37 @@
       "Existing": 1,
       "GenerateEphemeral": 2,
       "LoadOrCreate": 3
+    },
+    "InterfaceHealth": {
+      "Connected": 2,
+      "Degraded": 3,
+      "Disabled": 7,
+      "Disconnected": 6,
+      "Failed": 5,
+      "Initializing": 1,
+      "Reconnecting": 4,
+      "Unknown": 8
+    },
+    "InterfaceKind": {
+      "AutoLan": 1,
+      "AutomaticBluetoothLe": 16,
+      "AutomaticUsb": 15,
+      "Ax25Kiss": 7,
+      "BackboneClient": 11,
+      "BackboneServer": 12,
+      "BrowserRendezvous": 19,
+      "I2p": 13,
+      "Kiss": 6,
+      "MultiRNode": 9,
+      "Pipe": 10,
+      "RNode": 8,
+      "Serial": 5,
+      "TcpClient": 2,
+      "TcpServer": 3,
+      "Udp": 4,
+      "Weave": 14,
+      "WebSocketClient": 17,
+      "WebSocketServer": 18
     },
     "LifecyclePhase": {
       "Failed": 5,
@@ -185,6 +257,25 @@
       "MalformedRtt": 3,
       "PeerClosed": 2,
       "Timeout": 1
+    },
+    "MulticastAddressType": {
+      "Permanent": 2,
+      "Temporary": 1
+    },
+    "PersistenceConfigKind": {
+      "Directory": 2,
+      "Ephemeral": 1
+    },
+    "PersistenceFlushCause": {
+      "Interval": 2,
+      "RatchetRotation": 4,
+      "RouteChange": 3,
+      "Shutdown": 5,
+      "Startup": 1
+    },
+    "PersistenceFlushTarget": {
+      "Ratchets": 2,
+      "RoutingState": 1
     },
     "RequestPolicy": {
       "AllowAll": 2,
@@ -203,6 +294,21 @@
       "Exact": 2,
       "LinkDefault": 1
     },
+    "SerialDataBits": {
+      "Eight": 8,
+      "Five": 5,
+      "Seven": 7,
+      "Six": 6
+    },
+    "SerialParity": {
+      "Even": 2,
+      "None": 1,
+      "Odd": 3
+    },
+    "SerialStopBits": {
+      "One": 1,
+      "Two": 2
+    },
     "Status": {
       "AlreadyClaimed": 5,
       "BackendFailed": 10,
@@ -213,9 +319,12 @@
       "NotReady": 4,
       "Ok": 0,
       "Panic": 11,
+      "PermissionDenied": 14,
       "QueueFull": 8,
       "Stopped": 9,
       "TimedOut": 7,
+      "Unavailable": 15,
+      "Unsupported": 13,
       "WouldBlock": 6
     },
     "StopReason": {
@@ -234,13 +343,990 @@
     "RequestPathHash": 16,
     "ResourceHash": 32
   },
+  "handles": [
+    {
+      "name": "Host",
+      "release": "hostRelease",
+      "threadSafe": true
+    },
+    {
+      "name": "HostInspection",
+      "release": "hostSnapshotRelease",
+      "threadSafe": false
+    },
+    {
+      "name": "IssuedCommand",
+      "release": "commandRelease",
+      "threadSafe": true
+    },
+    {
+      "name": "ResourceUpload",
+      "release": "resourceUploadRelease",
+      "threadSafe": false
+    },
+    {
+      "name": "EventStream",
+      "release": "eventStreamRelease",
+      "threadSafe": true
+    },
+    {
+      "name": "ReadinessRegistration",
+      "release": "readinessRegistrationRelease",
+      "threadSafe": true
+    },
+    {
+      "name": "Event",
+      "release": "eventRelease",
+      "threadSafe": false
+    },
+    {
+      "name": "ResourceStream",
+      "release": "resourceStreamRelease",
+      "threadSafe": false
+    }
+  ],
+  "integerChecks": {
+    "safeUint": {
+      "accepted": [
+        "0",
+        "9007199254740991"
+      ],
+      "rejected": [
+        "-1",
+        "9007199254740992"
+      ],
+      "typescript": "number"
+    },
+    "u64": {
+      "accepted": [
+        "0",
+        "9007199254740992",
+        "18446744073709551615"
+      ],
+      "typescript": "bigint"
+    }
+  },
   "limits": {
     "applicationEvents": 1024,
     "diagnostics": 1024,
     "pendingCommands": 256,
     "retainedEventBytes": 8388608
   },
-  "productVersion": "0.3.1",
+  "operations": [
+    {
+      "kind": "query",
+      "name": "contractInfo",
+      "parameters": [],
+      "result": {
+        "ownership": "copied",
+        "type": "ContractInfo"
+      },
+      "status": true
+    },
+    {
+      "kind": "query",
+      "name": "backendInfo",
+      "parameters": [],
+      "result": {
+        "ownership": "copied",
+        "type": "BackendInfo"
+      },
+      "status": true
+    },
+    {
+      "kind": "create",
+      "name": "hostCreate",
+      "parameters": [
+        {
+          "name": "options",
+          "passing": "borrow",
+          "type": "HostOptions"
+        }
+      ],
+      "result": {
+        "ownership": "owned",
+        "type": "Host"
+      },
+      "status": true
+    },
+    {
+      "kind": "release",
+      "name": "hostRelease",
+      "parameters": [],
+      "receiver": {
+        "consumed": true,
+        "mutable": true,
+        "type": "Host"
+      },
+      "status": false
+    },
+    {
+      "kind": "query",
+      "name": "hostLifecycle",
+      "parameters": [],
+      "receiver": {
+        "mutable": false,
+        "type": "Host"
+      },
+      "result": {
+        "ownership": "copied",
+        "type": "Lifecycle"
+      },
+      "status": true
+    },
+    {
+      "kind": "blocking",
+      "name": "hostSnapshot",
+      "parameters": [
+        {
+          "name": "timeoutMillis",
+          "passing": "value",
+          "type": "u32"
+        }
+      ],
+      "receiver": {
+        "mutable": false,
+        "type": "Host"
+      },
+      "result": {
+        "ownership": "owned",
+        "type": "HostInspection"
+      },
+      "status": true
+    },
+    {
+      "kind": "query",
+      "name": "hostSnapshotRead",
+      "parameters": [],
+      "receiver": {
+        "mutable": false,
+        "type": "HostInspection"
+      },
+      "result": {
+        "ownership": "borrowed",
+        "type": "HostSnapshot",
+        "validUntil": "hostSnapshotRelease"
+      },
+      "status": true
+    },
+    {
+      "kind": "release",
+      "name": "hostSnapshotRelease",
+      "parameters": [],
+      "receiver": {
+        "consumed": true,
+        "mutable": true,
+        "type": "HostInspection"
+      },
+      "status": false
+    },
+    {
+      "kind": "query",
+      "name": "hostIdentityHash",
+      "parameters": [],
+      "receiver": {
+        "mutable": false,
+        "type": "Host"
+      },
+      "result": {
+        "ownership": "borrowed",
+        "type": "bytes",
+        "validUntil": "hostRelease"
+      },
+      "status": true
+    },
+    {
+      "kind": "query",
+      "name": "hostDestinationCount",
+      "parameters": [],
+      "receiver": {
+        "mutable": false,
+        "type": "Host"
+      },
+      "result": {
+        "ownership": "copied",
+        "type": "size"
+      },
+      "status": false
+    },
+    {
+      "kind": "query",
+      "name": "hostDestinationHash",
+      "parameters": [
+        {
+          "name": "index",
+          "passing": "value",
+          "type": "size"
+        }
+      ],
+      "receiver": {
+        "mutable": false,
+        "type": "Host"
+      },
+      "result": {
+        "ownership": "borrowed",
+        "type": "bytes",
+        "validUntil": "hostRelease"
+      },
+      "status": true
+    },
+    {
+      "kind": "create",
+      "name": "hostBeginResourceUpload",
+      "parameters": [
+        {
+          "name": "linkId",
+          "passing": "borrow",
+          "type": "LinkId"
+        },
+        {
+          "name": "declaredLength",
+          "passing": "value",
+          "type": "u64"
+        },
+        {
+          "name": "packedMetadata",
+          "passing": "optionalBorrow",
+          "type": "bytes"
+        },
+        {
+          "name": "compression",
+          "passing": "value",
+          "type": "ResourceCompression"
+        }
+      ],
+      "receiver": {
+        "mutable": true,
+        "type": "Host"
+      },
+      "result": {
+        "ownership": "owned",
+        "type": "ResourceUpload"
+      },
+      "status": true
+    },
+    {
+      "kind": "write",
+      "name": "resourceUploadWrite",
+      "parameters": [
+        {
+          "name": "chunk",
+          "passing": "borrow",
+          "type": "bytes"
+        }
+      ],
+      "receiver": {
+        "mutable": true,
+        "type": "ResourceUpload"
+      },
+      "status": true
+    },
+    {
+      "kind": "query",
+      "name": "resourceUploadIsWritable",
+      "parameters": [],
+      "receiver": {
+        "mutable": false,
+        "type": "ResourceUpload"
+      },
+      "result": {
+        "ownership": "copied",
+        "type": "bool"
+      },
+      "status": true
+    },
+    {
+      "kind": "finish",
+      "name": "resourceUploadFinish",
+      "parameters": [],
+      "receiver": {
+        "mutable": true,
+        "type": "ResourceUpload"
+      },
+      "result": {
+        "ownership": "owned",
+        "type": "IssuedCommand"
+      },
+      "status": true
+    },
+    {
+      "kind": "interrupt",
+      "name": "resourceUploadAbort",
+      "parameters": [],
+      "receiver": {
+        "mutable": true,
+        "type": "ResourceUpload"
+      },
+      "status": false
+    },
+    {
+      "kind": "release",
+      "name": "resourceUploadRelease",
+      "parameters": [],
+      "receiver": {
+        "consumed": true,
+        "mutable": true,
+        "type": "ResourceUpload"
+      },
+      "status": false
+    },
+    {
+      "kind": "stop",
+      "name": "hostStop",
+      "parameters": [],
+      "receiver": {
+        "mutable": true,
+        "type": "Host"
+      },
+      "status": true
+    },
+    {
+      "interrupt": "commandInterruptWait",
+      "kind": "blocking",
+      "name": "commandWait",
+      "parameters": [
+        {
+          "name": "timeoutMillis",
+          "passing": "value",
+          "type": "u32"
+        }
+      ],
+      "readiness": "commandRegisterReadiness",
+      "receiver": {
+        "mutable": true,
+        "type": "IssuedCommand"
+      },
+      "result": {
+        "ownership": "borrowed",
+        "type": "CommandResult",
+        "validUntil": "commandRelease"
+      },
+      "status": true
+    },
+    {
+      "kind": "readiness",
+      "name": "commandRegisterReadiness",
+      "parameters": [
+        {
+          "name": "callback",
+          "passing": "value",
+          "type": "ReadinessCallback"
+        },
+        {
+          "name": "context",
+          "passing": "value",
+          "type": "opaquePointer"
+        }
+      ],
+      "receiver": {
+        "mutable": true,
+        "type": "IssuedCommand"
+      },
+      "result": {
+        "ownership": "owned",
+        "type": "ReadinessRegistration"
+      },
+      "status": true
+    },
+    {
+      "kind": "interrupt",
+      "name": "commandInterruptWait",
+      "parameters": [],
+      "receiver": {
+        "mutable": true,
+        "type": "IssuedCommand"
+      },
+      "status": false
+    },
+    {
+      "kind": "release",
+      "name": "commandRelease",
+      "parameters": [],
+      "receiver": {
+        "consumed": true,
+        "mutable": true,
+        "type": "IssuedCommand"
+      },
+      "status": false
+    },
+    {
+      "kind": "claim",
+      "name": "hostClaimApplicationEvents",
+      "parameters": [],
+      "receiver": {
+        "mutable": true,
+        "type": "Host"
+      },
+      "result": {
+        "exclusive": true,
+        "ownership": "owned",
+        "type": "EventStream"
+      },
+      "status": true
+    },
+    {
+      "kind": "claim",
+      "name": "hostClaimDiagnostics",
+      "parameters": [],
+      "receiver": {
+        "mutable": true,
+        "type": "Host"
+      },
+      "result": {
+        "exclusive": true,
+        "ownership": "owned",
+        "type": "EventStream"
+      },
+      "status": true
+    },
+    {
+      "kind": "readiness",
+      "name": "eventStreamRegisterReadiness",
+      "parameters": [
+        {
+          "name": "callback",
+          "passing": "value",
+          "type": "ReadinessCallback"
+        },
+        {
+          "name": "context",
+          "passing": "value",
+          "type": "opaquePointer"
+        }
+      ],
+      "receiver": {
+        "mutable": true,
+        "type": "EventStream"
+      },
+      "result": {
+        "ownership": "owned",
+        "type": "ReadinessRegistration"
+      },
+      "status": true
+    },
+    {
+      "kind": "release",
+      "name": "readinessRegistrationRelease",
+      "parameters": [],
+      "receiver": {
+        "consumed": true,
+        "mutable": true,
+        "type": "ReadinessRegistration"
+      },
+      "status": false
+    },
+    {
+      "kind": "interrupt",
+      "name": "eventStreamInterruptWait",
+      "parameters": [],
+      "receiver": {
+        "mutable": true,
+        "type": "EventStream"
+      },
+      "status": false
+    },
+    {
+      "kind": "release",
+      "name": "eventStreamRelease",
+      "parameters": [],
+      "receiver": {
+        "consumed": true,
+        "mutable": true,
+        "type": "EventStream"
+      },
+      "status": false
+    },
+    {
+      "interrupt": "eventStreamInterruptWait",
+      "kind": "blocking",
+      "name": "eventStreamNext",
+      "parameters": [
+        {
+          "name": "timeoutMillis",
+          "passing": "value",
+          "type": "u32"
+        }
+      ],
+      "readiness": "eventStreamRegisterReadiness",
+      "receiver": {
+        "mutable": true,
+        "type": "EventStream"
+      },
+      "result": {
+        "ownership": "owned",
+        "type": "Event"
+      },
+      "status": true
+    },
+    {
+      "kind": "release",
+      "name": "eventRelease",
+      "parameters": [],
+      "receiver": {
+        "consumed": true,
+        "mutable": true,
+        "type": "Event"
+      },
+      "status": false
+    },
+    {
+      "kind": "query",
+      "name": "eventKind",
+      "parameters": [],
+      "receiver": {
+        "mutable": false,
+        "type": "Event"
+      },
+      "result": {
+        "ownership": "copied",
+        "type": "u32"
+      },
+      "status": false
+    },
+    {
+      "kind": "query",
+      "name": "eventBytes",
+      "parameters": [
+        {
+          "name": "field",
+          "passing": "value",
+          "type": "EventField"
+        }
+      ],
+      "receiver": {
+        "mutable": false,
+        "type": "Event"
+      },
+      "result": {
+        "ownership": "borrowed",
+        "type": "bytes",
+        "validUntil": "eventRelease"
+      },
+      "status": true
+    },
+    {
+      "kind": "query",
+      "name": "eventString",
+      "parameters": [
+        {
+          "name": "field",
+          "passing": "value",
+          "type": "EventField"
+        }
+      ],
+      "receiver": {
+        "mutable": false,
+        "type": "Event"
+      },
+      "result": {
+        "ownership": "borrowed",
+        "type": "string",
+        "validUntil": "eventRelease"
+      },
+      "status": true
+    },
+    {
+      "kind": "query",
+      "name": "eventU64",
+      "parameters": [
+        {
+          "name": "field",
+          "passing": "value",
+          "type": "EventField"
+        }
+      ],
+      "receiver": {
+        "mutable": false,
+        "type": "Event"
+      },
+      "result": {
+        "ownership": "copied",
+        "type": "u64"
+      },
+      "status": true
+    },
+    {
+      "kind": "query",
+      "name": "eventU128",
+      "parameters": [
+        {
+          "name": "field",
+          "passing": "value",
+          "type": "EventField"
+        }
+      ],
+      "receiver": {
+        "mutable": false,
+        "type": "Event"
+      },
+      "result": {
+        "ownership": "copied",
+        "type": "u128"
+      },
+      "status": true
+    },
+    {
+      "kind": "claim",
+      "name": "eventResourceStream",
+      "parameters": [],
+      "receiver": {
+        "mutable": true,
+        "type": "Event"
+      },
+      "result": {
+        "exclusive": true,
+        "ownership": "owned",
+        "type": "ResourceStream"
+      },
+      "status": true
+    },
+    {
+      "kind": "release",
+      "name": "resourceStreamRelease",
+      "parameters": [],
+      "receiver": {
+        "consumed": true,
+        "mutable": true,
+        "type": "ResourceStream"
+      },
+      "status": false
+    },
+    {
+      "kind": "pull",
+      "name": "resourceStreamNext",
+      "parameters": [
+        {
+          "name": "maximumBytes",
+          "passing": "value",
+          "type": "size"
+        }
+      ],
+      "receiver": {
+        "mutable": true,
+        "type": "ResourceStream"
+      },
+      "result": {
+        "ownership": "borrowed",
+        "type": "ResourceChunk",
+        "validUntil": "resourceStreamNextOrRelease"
+      },
+      "status": true
+    }
+  ],
+  "productVersion": "0.3.2",
+  "records": {
+    "BackendInfo": [
+      {
+        "name": "backend",
+        "type": "BackendKind"
+      },
+      {
+        "name": "capabilities",
+        "type": {
+          "array": "Capability"
+        }
+      },
+      {
+        "name": "interfaceKinds",
+        "type": {
+          "array": "InterfaceKind"
+        }
+      }
+    ],
+    "DestinationIdentitySnapshot": [
+      {
+        "name": "destination",
+        "type": "DestinationHash"
+      },
+      {
+        "name": "identity",
+        "type": "IdentityHash"
+      }
+    ],
+    "DestinationName": [
+      {
+        "name": "appName",
+        "type": "string"
+      },
+      {
+        "name": "aspects",
+        "type": {
+          "array": "string"
+        }
+      }
+    ],
+    "HostSnapshot": [
+      {
+        "name": "revision",
+        "type": "u64"
+      },
+      {
+        "name": "backend",
+        "type": "BackendInfo"
+      },
+      {
+        "name": "interfaces",
+        "type": {
+          "array": "InterfaceSnapshot"
+        }
+      },
+      {
+        "name": "routes",
+        "type": {
+          "array": "RouteSnapshot"
+        }
+      },
+      {
+        "name": "activeLinkCount",
+        "type": "u32"
+      },
+      {
+        "name": "destinationIdentities",
+        "type": {
+          "array": "DestinationIdentitySnapshot"
+        }
+      },
+      {
+        "name": "runtime",
+        "type": "RuntimeHealthSnapshot"
+      },
+      {
+        "name": "persistence",
+        "type": "PersistenceSnapshot"
+      }
+    ],
+    "InterfaceSnapshot": [
+      {
+        "name": "interfaceId",
+        "type": "InterfaceId"
+      },
+      {
+        "name": "name",
+        "optional": true,
+        "type": "string"
+      },
+      {
+        "name": "kind",
+        "optional": true,
+        "type": "InterfaceKind"
+      },
+      {
+        "name": "health",
+        "type": "InterfaceHealth"
+      },
+      {
+        "name": "failureDetail",
+        "optional": true,
+        "type": "string"
+      },
+      {
+        "name": "rxBytes",
+        "type": "u64"
+      },
+      {
+        "name": "txBytes",
+        "type": "u64"
+      },
+      {
+        "name": "rxBps",
+        "optional": true,
+        "type": "safeUint"
+      },
+      {
+        "name": "txBps",
+        "optional": true,
+        "type": "safeUint"
+      },
+      {
+        "name": "routeCount",
+        "type": "u32"
+      },
+      {
+        "name": "linkCount",
+        "type": "u32"
+      },
+      {
+        "name": "transportedLinkCount",
+        "type": "u32"
+      }
+    ],
+    "MultiRNodeMemberConfig": [
+      {
+        "name": "name",
+        "type": "string"
+      },
+      {
+        "name": "virtualPort",
+        "type": "u8"
+      },
+      {
+        "name": "radio",
+        "type": "RNodeRadioConfig"
+      },
+      {
+        "name": "flowControl",
+        "type": "bool"
+      },
+      {
+        "name": "outgoing",
+        "type": "bool"
+      }
+    ],
+    "PersistenceSnapshot": [
+      {
+        "name": "persistent",
+        "type": "bool"
+      },
+      {
+        "name": "restored",
+        "type": "bool"
+      },
+      {
+        "name": "lastFlushCause",
+        "optional": true,
+        "type": "PersistenceFlushCause"
+      },
+      {
+        "name": "lastFailureDetail",
+        "optional": true,
+        "type": "string"
+      }
+    ],
+    "RNodeRadioConfig": [
+      {
+        "name": "frequencyHz",
+        "type": "safeUint"
+      },
+      {
+        "name": "bandwidthHz",
+        "type": "u32"
+      },
+      {
+        "name": "txPowerDbm",
+        "type": "i16"
+      },
+      {
+        "name": "spreadingFactor",
+        "type": "u8"
+      },
+      {
+        "name": "codingRate",
+        "type": "u8"
+      }
+    ],
+    "RequestHandlerConfig": [
+      {
+        "name": "path",
+        "type": "string"
+      },
+      {
+        "name": "policy",
+        "type": "RequestPolicy"
+      }
+    ],
+    "RouteSnapshot": [
+      {
+        "name": "destination",
+        "type": "DestinationHash"
+      },
+      {
+        "name": "hops",
+        "type": "u8"
+      },
+      {
+        "name": "viaIdentity",
+        "optional": true,
+        "type": "IdentityHash"
+      },
+      {
+        "name": "interfaceId",
+        "type": "InterfaceId"
+      },
+      {
+        "name": "learnedAtMillis",
+        "type": "safeUint"
+      },
+      {
+        "name": "lastRelayedAtMillis",
+        "type": "safeUint"
+      },
+      {
+        "name": "expiresAtMillis",
+        "type": "safeUint"
+      }
+    ],
+    "RuntimeHealthSnapshot": [
+      {
+        "name": "running",
+        "type": "bool"
+      },
+      {
+        "name": "uptimeMillis",
+        "type": "safeUint"
+      },
+      {
+        "name": "interfaceCount",
+        "type": "u32"
+      },
+      {
+        "name": "onlineInterfaceCount",
+        "type": "u32"
+      },
+      {
+        "name": "routeCount",
+        "type": "u32"
+      },
+      {
+        "name": "linkCount",
+        "type": "u32"
+      },
+      {
+        "name": "transportedLinkCount",
+        "type": "u32"
+      },
+      {
+        "name": "rxBytes",
+        "type": "u64"
+      },
+      {
+        "name": "txBytes",
+        "type": "u64"
+      },
+      {
+        "name": "rxBps",
+        "type": "safeUint"
+      },
+      {
+        "name": "txBps",
+        "type": "safeUint"
+      }
+    ],
+    "SerialLineConfig": [
+      {
+        "name": "baud",
+        "type": "u32"
+      },
+      {
+        "name": "dataBits",
+        "type": "SerialDataBits"
+      },
+      {
+        "name": "parity",
+        "type": "SerialParity"
+      },
+      {
+        "name": "stopBits",
+        "type": "SerialStopBits"
+      }
+    ]
+  },
+  "scalars": {
+    "safeUint": {
+      "maximum": "9007199254740991",
+      "minimum": "0",
+      "storage": "u64"
+    }
+  },
   "schemaVersion": 1,
   "unions": {
     "ApplicationEvent": {
@@ -259,15 +1345,19 @@
     },
     "CommandFailure": {
       "AnnounceAppDataTooLong": 6,
+      "BackendFailed": 40,
       "BindFailed": 13,
       "Busy": 2,
       "ChannelUntrackable": 31,
       "ChannelWindowFull": 30,
+      "ConnectFailed": 39,
       "DeliveryTimedOut": 11,
+      "DeviceUnavailable": 38,
       "EntropyUnavailable": 18,
       "IdentityNotHeld": 20,
       "InvalidBitrate": 12,
       "InvalidChannelMessageType": 32,
+      "InvalidConfiguration": 33,
       "LinkBusy": 24,
       "LinkNotActive": 17,
       "NoRouteToDestination": 8,
@@ -277,13 +1367,17 @@
       "NotSingleDestination": 5,
       "PacketCulled": 10,
       "PayloadTooLarge": 3,
+      "PermissionDenied": 37,
       "RequestAllowListFull": 23,
       "RequestPolicyNotAllowList": 22,
+      "ResourceEarlyEof": 35,
+      "ResourceLengthOverrun": 36,
       "ResourceMetadataTooLarge": 26,
       "ResourcePredecessorFailed": 29,
       "ResourceRejectedByPeer": 27,
       "ResourceSequencingFailed": 28,
       "ResourceTableFull": 25,
+      "ResourceUploadCancelled": 34,
       "UnknownDestination": 4,
       "UnknownInterface": 7,
       "UnknownLink": 16,
@@ -324,6 +1418,9 @@
       "LinkEstablished": 201,
       "LinkInterfaceMismatch": 204,
       "PeerIdentified": 202,
+      "PersistenceFlushFailed": 219,
+      "PersistenceFlushed": 218,
+      "PersistenceRestored": 217,
       "ResourceAssembled": 205,
       "ResourceFailed": 206,
       "ResourceSendProgress": 207,
@@ -336,6 +1433,7 @@
     "HostCommand": {
       "AllowRequester": 18,
       "Announce": 1,
+      "AttachInterface": 19,
       "AttachTcpClient": 5,
       "AttachTcpServer": 4,
       "AttachUdp": 6,
@@ -357,6 +1455,31 @@
       "Existing": 1,
       "GenerateEphemeral": 2,
       "LoadOrCreate": 3
+    },
+    "InterfaceConfig": {
+      "AutoLan": 1,
+      "AutomaticBluetoothLe": 16,
+      "AutomaticUsb": 15,
+      "Ax25Kiss": 7,
+      "BackboneClient": 11,
+      "BackboneServer": 12,
+      "BrowserRendezvous": 19,
+      "I2p": 13,
+      "Kiss": 6,
+      "MultiRNode": 9,
+      "Pipe": 10,
+      "RNode": 8,
+      "Serial": 5,
+      "TcpClient": 2,
+      "TcpServer": 3,
+      "Udp": 4,
+      "Weave": 14,
+      "WebSocketClient": 17,
+      "WebSocketServer": 18
+    },
+    "PersistenceConfig": {
+      "Directory": 2,
+      "Ephemeral": 1
     },
     "ResourceCompression": {
       "Auto": 1,

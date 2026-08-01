@@ -61,6 +61,10 @@ export function describeStartupFailure(outcome: StartupFailure): string {
     IdentityStoreFailed: ({ operation, detail }) =>
       `${operation} identity: ${detail}`,
     StoredIdentityInvalid: ({ detail }) => `Stored identity: ${detail}`,
+    PersistenceStoreFailed: ({ operation, detail }) =>
+      `${operation} persistence: ${detail}`,
+    StoredPersistenceInvalid: ({ detail }) =>
+      `Stored persistence: ${detail}`,
     EntropySourceFailed: ({ detail }) => detail,
     InsufficientEntropy: ({ actual, minimum }) =>
       `${actual} bytes received; ${minimum} required`,
@@ -141,6 +145,14 @@ export function describeCommandFailure(outcome: CommandFailure): string {
     ChannelWindowFull: () => "The channel send window is full",
     ChannelUntrackable: () => "The channel message cannot be tracked",
     InvalidChannelMessageType: () => "The channel message type is invalid",
+    InvalidConfiguration: ({ detail }) => `Invalid configuration: ${detail}`,
+    ResourceUploadCancelled: () => "The resource upload was cancelled",
+    ResourceEarlyEof: () => "The resource upload ended before its declared length",
+    ResourceLengthOverrun: () => "The resource upload exceeded its declared length",
+    PermissionDenied: ({ detail }) => `Permission denied: ${detail}`,
+    DeviceUnavailable: ({ detail }) => `Device unavailable: ${detail}`,
+    ConnectFailed: ({ detail }) => `Connection failed: ${detail}`,
+    BackendFailed: ({ detail }) => `Backend failed: ${detail}`,
   });
 }
 

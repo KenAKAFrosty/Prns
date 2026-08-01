@@ -260,6 +260,18 @@ pub fn parse_and_plan_named(
     }
 }
 
+pub fn plan_reference_config(config: &ReferenceConfig) -> Result<DaemonPlan, ConfigErrors> {
+    build_plan(config).map_err(|errors| {
+        let locations = SourceLocations::default();
+        ConfigErrors::new(
+            errors
+                .iter()
+                .map(|error| planning_diagnostic("typed config", &locations, error))
+                .collect(),
+        )
+    })
+}
+
 pub(super) fn build_plan(config: &ReferenceConfig) -> Result<DaemonPlan, Vec<PlanningError>> {
     let mut interfaces = Vec::new();
     let mut errors = Vec::new();

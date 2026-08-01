@@ -6,9 +6,21 @@ use personal_rns::interfaces::{BitrateBps, INTERFACE_ID_LEN};
 use personal_rns::wire::TRUNCATED_HASH_BYTE_LEN;
 use wasm_bindgen::prelude::*;
 
+pub const BROWSER_PERSISTENCE_VERSION: u32 = 1;
+
 #[wasm_bindgen(js_name = hostContractAbi)]
 pub fn host_contract_abi() -> u32 {
     prns_host::HOST_CONTRACT_ABI
+}
+
+#[wasm_bindgen(js_name = hostSchemaVersion)]
+pub fn host_schema_version() -> u32 {
+    prns_host::HOST_SCHEMA_VERSION
+}
+
+#[wasm_bindgen(js_name = browserPersistenceVersion)]
+pub fn browser_persistence_version() -> u32 {
+    BROWSER_PERSISTENCE_VERSION
 }
 
 #[wasm_bindgen(js_name = productVersion)]

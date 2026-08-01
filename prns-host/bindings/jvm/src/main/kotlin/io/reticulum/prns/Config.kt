@@ -1,5 +1,7 @@
 package io.reticulum.prns
 
+import java.nio.file.Path
+
 data class Limits(
     val pendingCommands: Long,
     val applicationEvents: Long,
@@ -17,10 +19,21 @@ data class Limits(
     }
 }
 
-data class HostOptions(
+data class HostOptions @JvmOverloads constructor(
     val role: HostRole,
     val identity: IdentityConfig,
     val destinations: List<DestinationConfig>,
     val requiredCapabilities: Set<Capability> = emptySet(),
     val limits: Limits = Limits.Balanced,
-)
+    val persistence: PersistenceConfig = PersistenceConfigEphemeral,
+) {
+    companion object {
+        @JvmStatic
+        fun persistentEndpoint(root: Path): HostOptions = HostOptions(
+            role = HostRole.ENDPOINT,
+            identity = IdentityConfigLoadOrCreate(root.resolve("identity").toString()),
+            destinations = emptyList(),
+            persistence = PersistenceConfigDirectory(root.resolve("state").toString()),
+        )
+    }
+}

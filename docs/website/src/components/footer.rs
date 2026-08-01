@@ -6,7 +6,9 @@ use crate::links::{
     source_zip_sha256_download_name, API_DOCS_HREF, BUILD_COMMIT, BUILD_COMMIT_SHORT,
     BUILD_VERSION, SOURCE_ZIP_HREF, SOURCE_ZIP_SHA256_HREF,
 };
+use crate::repository_docs::REPOSITORY_BLOB_BASE;
 use crate::routes::Route;
+use crate::site_mode::embedded_docs_mode;
 
 use super::PrnsMark;
 
@@ -15,6 +17,7 @@ pub fn Footer() -> Element {
     let source_zip_download = source_zip_download_name();
     let source_zip_sha256_download = source_zip_sha256_download_name();
     let source_archive_available = source_archive_available();
+    let embedded_docs = embedded_docs_mode();
 
     rsx! {
         footer { class: "mt-auto border-t border-line/60 bg-surface/35",
@@ -57,12 +60,23 @@ pub fn Footer() -> Element {
                     div { class: "flex flex-col gap-4 md:items-end md:pt-1",
                         nav { class: "grid grid-cols-2 gap-x-10 gap-y-3 text-sm text-soft sm:flex sm:items-center sm:justify-end sm:gap-8",
                             Link {
-                                to: Route::GuidesIndex {},
+                                to: Route::FlashPage {},
                                 class: "hover:text-accent transition-colors",
-                                "Guides"
+                                "Flash a Hopspot"
                             }
-                            Link {
-                                to: Route::ContributingPage {},
+                            if !embedded_docs {
+                                a {
+                                    href: "/browser-node-playground-console/",
+                                    target: "_blank",
+                                    rel: "noopener",
+                                    class: "hover:text-accent transition-colors",
+                                    "Browser playground"
+                                }
+                            }
+                            a {
+                                href: format!("{REPOSITORY_BLOB_BASE}/CONTRIBUTING.md"),
+                                target: "_blank",
+                                rel: "noopener",
                                 class: "hover:text-accent transition-colors",
                                 {t!("nav-contributing")}
                             }

@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Any, TypeAlias
+from typing import Any, Generic, Protocol, TypeAlias, TypeVar
 
 HOST_CONTRACT_ABI = 1
 SCHEMA_VERSION = 1
-PRODUCT_VERSION = "0.3.1"
+PRODUCT_VERSION = "0.3.2"
 DESTINATION_HASH_LENGTH = 16
 IDENTITY_HASH_LENGTH = 16
 INTERFACE_ID_LENGTH = 8
@@ -16,6 +16,7 @@ REQUEST_ID_LENGTH = 16
 REQUEST_PATH_HASH_LENGTH = 16
 RESOURCE_HASH_LENGTH = 32
 IDENTITY_SECRET_LENGTH = 64
+SAFE_UINT_MAX = 9007199254740991
 BALANCED_PENDING_COMMANDS = 256
 BALANCED_APPLICATION_EVENTS = 1024
 BALANCED_RETAINED_EVENT_BYTES = 8388608
@@ -35,6 +36,9 @@ class Status(IntEnum):
     BACKEND_FAILED = 10
     PANIC = 11
     INTERRUPTED = 12
+    UNSUPPORTED = 13
+    PERMISSION_DENIED = 14
+    UNAVAILABLE = 15
 
 class BackendKind(IntEnum):
     NATIVE = 1
@@ -55,6 +59,63 @@ class Capability(IntEnum):
     I2P = 11
     WEAVE = 12
 
+class InterfaceKind(IntEnum):
+    AUTO_LAN = 1
+    TCP_CLIENT = 2
+    TCP_SERVER = 3
+    UDP = 4
+    SERIAL = 5
+    KISS = 6
+    AX25_KISS = 7
+    R_NODE = 8
+    MULTI_R_NODE = 9
+    PIPE = 10
+    BACKBONE_CLIENT = 11
+    BACKBONE_SERVER = 12
+    I2P = 13
+    WEAVE = 14
+    AUTOMATIC_USB = 15
+    AUTOMATIC_BLUETOOTH_LE = 16
+    WEB_SOCKET_CLIENT = 17
+    WEB_SOCKET_SERVER = 18
+    BROWSER_RENDEZVOUS = 19
+
+class InterfaceHealth(IntEnum):
+    INITIALIZING = 1
+    CONNECTED = 2
+    DEGRADED = 3
+    RECONNECTING = 4
+    FAILED = 5
+    DISCONNECTED = 6
+    DISABLED = 7
+    UNKNOWN = 8
+
+class DiscoveryScope(IntEnum):
+    LINK = 1
+    ADMIN = 2
+    SITE = 3
+    ORGANIZATION = 4
+    GLOBAL = 5
+
+class MulticastAddressType(IntEnum):
+    TEMPORARY = 1
+    PERMANENT = 2
+
+class SerialDataBits(IntEnum):
+    FIVE = 5
+    SIX = 6
+    SEVEN = 7
+    EIGHT = 8
+
+class SerialParity(IntEnum):
+    NONE = 1
+    EVEN = 2
+    ODD = 3
+
+class SerialStopBits(IntEnum):
+    ONE = 1
+    TWO = 2
+
 class HostRole(IntEnum):
     ENDPOINT = 1
     TRANSPORT = 2
@@ -63,6 +124,10 @@ class IdentityConfigKind(IntEnum):
     EXISTING = 1
     GENERATE_EPHEMERAL = 2
     LOAD_OR_CREATE = 3
+
+class PersistenceConfigKind(IntEnum):
+    EPHEMERAL = 1
+    DIRECTORY = 2
 
 class DestinationConfigKind(IntEnum):
     PLAIN = 1
@@ -141,6 +206,14 @@ class CommandFailureKind(IntEnum):
     CHANNEL_WINDOW_FULL = 30
     CHANNEL_UNTRACKABLE = 31
     INVALID_CHANNEL_MESSAGE_TYPE = 32
+    INVALID_CONFIGURATION = 33
+    RESOURCE_UPLOAD_CANCELLED = 34
+    RESOURCE_EARLY_EOF = 35
+    RESOURCE_LENGTH_OVERRUN = 36
+    PERMISSION_DENIED = 37
+    DEVICE_UNAVAILABLE = 38
+    CONNECT_FAILED = 39
+    BACKEND_FAILED = 40
 
 class DeliveryEvidenceKind(IntEnum):
     EXPLICIT_PROOF = 1
@@ -191,6 +264,20 @@ class DiagnosticEventKind(IntEnum):
     ROUTE_DROPPED = 214
     BACKEND_DIAGNOSTIC = 215
     DIAGNOSTICS_DROPPED = 216
+    PERSISTENCE_RESTORED = 217
+    PERSISTENCE_FLUSHED = 218
+    PERSISTENCE_FLUSH_FAILED = 219
+
+class PersistenceFlushCause(IntEnum):
+    STARTUP = 1
+    INTERVAL = 2
+    ROUTE_CHANGE = 3
+    RATCHET_ROTATION = 4
+    SHUTDOWN = 5
+
+class PersistenceFlushTarget(IntEnum):
+    ROUTING_STATE = 1
+    RATCHETS = 2
 
 class EventField(IntEnum):
     DESTINATION = 1
@@ -224,6 +311,14 @@ class EventField(IntEnum):
     DROPPED_COUNT = 29
     HOPS = 30
     STREAM = 31
+    ROUTES = 32
+    DESTINATION_IDENTITIES = 33
+    TUNNELS = 34
+    RATCHETS = 35
+    REFUSED = 36
+    DROPPED = 37
+    PERSISTENCE_CAUSE = 38
+    PERSISTENCE_TARGET = 39
 
 @dataclass(frozen=True, slots=True)
 class DestinationHash:
@@ -349,6 +444,97 @@ class RequestHandlerConfig:
     policy: RequestPolicy
 
 @dataclass(frozen=True, slots=True)
+class SerialLineConfig:
+    baud: int
+    data_bits: SerialDataBits
+    parity: SerialParity
+    stop_bits: SerialStopBits
+
+@dataclass(frozen=True, slots=True)
+class RNodeRadioConfig:
+    frequency_hz: int
+    bandwidth_hz: int
+    tx_power_dbm: int
+    spreading_factor: int
+    coding_rate: int
+
+@dataclass(frozen=True, slots=True)
+class MultiRNodeMemberConfig:
+    name: str
+    virtual_port: int
+    radio: RNodeRadioConfig
+    flow_control: bool
+    outgoing: bool
+
+@dataclass(frozen=True, slots=True)
+class BackendInfo:
+    backend: BackendKind
+    capabilities: tuple[Capability, ...]
+    interface_kinds: tuple[InterfaceKind, ...]
+
+@dataclass(frozen=True, slots=True)
+class InterfaceSnapshot:
+    interface_id: InterfaceId
+    name: str | None
+    kind: InterfaceKind | None
+    health: InterfaceHealth
+    failure_detail: str | None
+    rx_bytes: int
+    tx_bytes: int
+    rx_bps: int | None
+    tx_bps: int | None
+    route_count: int
+    link_count: int
+    transported_link_count: int
+
+@dataclass(frozen=True, slots=True)
+class RouteSnapshot:
+    destination: DestinationHash
+    hops: int
+    via_identity: IdentityHash | None
+    interface_id: InterfaceId
+    learned_at_millis: int
+    last_relayed_at_millis: int
+    expires_at_millis: int
+
+@dataclass(frozen=True, slots=True)
+class DestinationIdentitySnapshot:
+    destination: DestinationHash
+    identity: IdentityHash
+
+@dataclass(frozen=True, slots=True)
+class RuntimeHealthSnapshot:
+    running: bool
+    uptime_millis: int
+    interface_count: int
+    online_interface_count: int
+    route_count: int
+    link_count: int
+    transported_link_count: int
+    rx_bytes: int
+    tx_bytes: int
+    rx_bps: int
+    tx_bps: int
+
+@dataclass(frozen=True, slots=True)
+class PersistenceSnapshot:
+    persistent: bool
+    restored: bool
+    last_flush_cause: PersistenceFlushCause | None
+    last_failure_detail: str | None
+
+@dataclass(frozen=True, slots=True)
+class HostSnapshot:
+    revision: int
+    backend: BackendInfo
+    interfaces: tuple[InterfaceSnapshot, ...]
+    routes: tuple[RouteSnapshot, ...]
+    active_link_count: int
+    destination_identities: tuple[DestinationIdentitySnapshot, ...]
+    runtime: RuntimeHealthSnapshot
+    persistence: PersistenceSnapshot
+
+@dataclass(frozen=True, slots=True)
 class IdentityConfigExisting:
     secret: IdentitySecret
 
@@ -359,6 +545,130 @@ class IdentityConfigGenerateEphemeral:
 @dataclass(frozen=True, slots=True)
 class IdentityConfigLoadOrCreate:
     path: str
+
+@dataclass(frozen=True, slots=True)
+class PersistenceConfigEphemeral:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class PersistenceConfigDirectory:
+    path: str
+
+@dataclass(frozen=True, slots=True)
+class InterfaceConfigAutoLan:
+    group_id: str | None
+    discovery_scope: DiscoveryScope | None
+    discovery_port: int | None
+    data_port: int | None
+    devices: tuple[str, ...]
+    ignored_devices: tuple[str, ...]
+    multicast_address_type: MulticastAddressType | None
+
+@dataclass(frozen=True, slots=True)
+class InterfaceConfigTcpClient:
+    target: str
+    bitrate: Bitrate
+
+@dataclass(frozen=True, slots=True)
+class InterfaceConfigTcpServer:
+    bind: str
+    bitrate: Bitrate
+
+@dataclass(frozen=True, slots=True)
+class InterfaceConfigUdp:
+    local: str
+    peer: str
+    bitrate: Bitrate
+
+@dataclass(frozen=True, slots=True)
+class InterfaceConfigSerial:
+    port: str
+    line: SerialLineConfig
+
+@dataclass(frozen=True, slots=True)
+class InterfaceConfigKiss:
+    port: str
+    line: SerialLineConfig
+    flow_control: bool
+    preamble_millis: int
+    transmit_tail_millis: int
+    persistence: int
+    slot_time_millis: int
+    station_callsign: str | None
+    station_interval_seconds: int | None
+
+@dataclass(frozen=True, slots=True)
+class InterfaceConfigAx25Kiss:
+    port: str
+    line: SerialLineConfig
+    flow_control: bool
+    preamble_millis: int
+    transmit_tail_millis: int
+    persistence: int
+    slot_time_millis: int
+    callsign: str
+    ssid: int
+
+@dataclass(frozen=True, slots=True)
+class InterfaceConfigRNode:
+    port: str
+    radio: RNodeRadioConfig
+    flow_control: bool
+    station_callsign: str | None
+    station_interval_seconds: int | None
+    airtime_limit_short_centi_percent: int | None
+    airtime_limit_long_centi_percent: int | None
+
+@dataclass(frozen=True, slots=True)
+class InterfaceConfigMultiRNode:
+    port: str
+    station_callsign: str | None
+    station_interval_seconds: int | None
+    members: tuple[MultiRNodeMemberConfig, ...]
+
+@dataclass(frozen=True, slots=True)
+class InterfaceConfigPipe:
+    command: tuple[str, ...]
+    respawn_delay_millis: int
+
+@dataclass(frozen=True, slots=True)
+class InterfaceConfigBackboneClient:
+    target: str
+    bitrate: Bitrate
+
+@dataclass(frozen=True, slots=True)
+class InterfaceConfigBackboneServer:
+    bind: str
+    bitrate: Bitrate
+
+@dataclass(frozen=True, slots=True)
+class InterfaceConfigI2p:
+    peers: tuple[str, ...]
+    connectable: bool
+
+@dataclass(frozen=True, slots=True)
+class InterfaceConfigWeave:
+    port: str
+
+@dataclass(frozen=True, slots=True)
+class InterfaceConfigAutomaticUsb:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class InterfaceConfigAutomaticBluetoothLe:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class InterfaceConfigWebSocketClient:
+    target: str
+
+@dataclass(frozen=True, slots=True)
+class InterfaceConfigWebSocketServer:
+    bind: str
+
+@dataclass(frozen=True, slots=True)
+class InterfaceConfigBrowserRendezvous:
+    url: str
 
 @dataclass(frozen=True, slots=True)
 class DestinationIdentityConfigHostIdentity:
@@ -506,6 +816,10 @@ class HostCommandAllowRequester:
     destination: DestinationHash
     path_hash: RequestPathHash
     identity: IdentityHash
+
+@dataclass(frozen=True, slots=True)
+class HostCommandAttachInterface:
+    config: InterfaceConfig
 
 @dataclass(frozen=True, slots=True)
 class CommandOutcomeAnnounced:
@@ -692,6 +1006,38 @@ class CommandFailureInvalidChannelMessageType:
     pass
 
 @dataclass(frozen=True, slots=True)
+class CommandFailureInvalidConfiguration:
+    detail: str
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureResourceUploadCancelled:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureResourceEarlyEof:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureResourceLengthOverrun:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailurePermissionDenied:
+    detail: str
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureDeviceUnavailable:
+    detail: str
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureConnectFailed:
+    detail: str
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureBackendFailed:
+    detail: str
+
+@dataclass(frozen=True, slots=True)
 class ApplicationEventSingleDelivery:
     destination: DestinationHash
     source_interface: InterfaceId
@@ -837,15 +1183,207 @@ class DiagnosticEventBackendDiagnostic:
 class DiagnosticEventDiagnosticsDropped:
     count: int
 
+@dataclass(frozen=True, slots=True)
+class DiagnosticEventPersistenceRestored:
+    routes: int
+    destination_identities: int
+    tunnels: int
+    ratchets: int
+    refused: int
+    dropped: int
+
+@dataclass(frozen=True, slots=True)
+class DiagnosticEventPersistenceFlushed:
+    cause: PersistenceFlushCause
+    target: PersistenceFlushTarget
+
+@dataclass(frozen=True, slots=True)
+class DiagnosticEventPersistenceFlushFailed:
+    cause: PersistenceFlushCause
+    target: PersistenceFlushTarget
+
 IdentityConfig: TypeAlias = IdentityConfigExisting | IdentityConfigGenerateEphemeral | IdentityConfigLoadOrCreate
+PersistenceConfig: TypeAlias = PersistenceConfigEphemeral | PersistenceConfigDirectory
+InterfaceConfig: TypeAlias = InterfaceConfigAutoLan | InterfaceConfigTcpClient | InterfaceConfigTcpServer | InterfaceConfigUdp | InterfaceConfigSerial | InterfaceConfigKiss | InterfaceConfigAx25Kiss | InterfaceConfigRNode | InterfaceConfigMultiRNode | InterfaceConfigPipe | InterfaceConfigBackboneClient | InterfaceConfigBackboneServer | InterfaceConfigI2p | InterfaceConfigWeave | InterfaceConfigAutomaticUsb | InterfaceConfigAutomaticBluetoothLe | InterfaceConfigWebSocketClient | InterfaceConfigWebSocketServer | InterfaceConfigBrowserRendezvous
 DestinationIdentityConfig: TypeAlias = DestinationIdentityConfigHostIdentity | DestinationIdentityConfigDedicatedIdentity
 Bitrate: TypeAlias = BitrateAuto | BitrateBitsPerSecond
 ResponseTimeout: TypeAlias = ResponseTimeoutLinkDefault | ResponseTimeoutExact
 ResourceCompression: TypeAlias = ResourceCompressionAuto | ResourceCompressionNever
 ResourceStrategy: TypeAlias = ResourceStrategyRefuse | ResourceStrategyAccept
 DestinationConfig: TypeAlias = DestinationConfigPlain | DestinationConfigSingle
-HostCommand: TypeAlias = HostCommandAnnounce | HostCommandSendSinglePacket | HostCommandCloseLink | HostCommandAttachTcpServer | HostCommandAttachTcpClient | HostCommandAttachUdp | HostCommandDetachInterface | HostCommandEstablishLink | HostCommandRequestPath | HostCommandIdentify | HostCommandSendLinkPacket | HostCommandRequest | HostCommandRespond | HostCommandSendResource | HostCommandSetLinkResourceStrategy | HostCommandSetDestinationResourceStrategy | HostCommandSendChannelMessage | HostCommandAllowRequester
+HostCommand: TypeAlias = HostCommandAnnounce | HostCommandSendSinglePacket | HostCommandCloseLink | HostCommandAttachTcpServer | HostCommandAttachTcpClient | HostCommandAttachUdp | HostCommandDetachInterface | HostCommandEstablishLink | HostCommandRequestPath | HostCommandIdentify | HostCommandSendLinkPacket | HostCommandRequest | HostCommandRespond | HostCommandSendResource | HostCommandSetLinkResourceStrategy | HostCommandSetDestinationResourceStrategy | HostCommandSendChannelMessage | HostCommandAllowRequester | HostCommandAttachInterface
 CommandOutcome: TypeAlias = CommandOutcomeAnnounced | CommandOutcomePacketDelivered | CommandOutcomeLinkCloseQueued | CommandOutcomeInterfaceAttached | CommandOutcomeInterfaceDetached | CommandOutcomeLinkEstablished | CommandOutcomePathDiscovered | CommandOutcomeIdentified | CommandOutcomeResponseReceived | CommandOutcomeResponseSent | CommandOutcomeResourceSent | CommandOutcomeResourceStrategySet | CommandOutcomeRequesterAllowed
-CommandFailure: TypeAlias = CommandFailureNodeStopped | CommandFailureBusy | CommandFailurePayloadTooLarge | CommandFailureUnknownDestination | CommandFailureNotSingleDestination | CommandFailureAnnounceAppDataTooLong | CommandFailureUnknownInterface | CommandFailureNoRouteToDestination | CommandFailureNotDirectlyReachable | CommandFailurePacketCulled | CommandFailureDeliveryTimedOut | CommandFailureInvalidBitrate | CommandFailureBindFailed | CommandFailureWriteFailed | CommandFailureUnsupportedByBackend | CommandFailureUnknownLink | CommandFailureLinkNotActive | CommandFailureEntropyUnavailable | CommandFailureNotLinkInitiator | CommandFailureIdentityNotHeld | CommandFailureUnknownRequestHandler | CommandFailureRequestPolicyNotAllowList | CommandFailureRequestAllowListFull | CommandFailureLinkBusy | CommandFailureResourceTableFull | CommandFailureResourceMetadataTooLarge | CommandFailureResourceRejectedByPeer | CommandFailureResourceSequencingFailed | CommandFailureResourcePredecessorFailed | CommandFailureChannelWindowFull | CommandFailureChannelUntrackable | CommandFailureInvalidChannelMessageType
+CommandFailure: TypeAlias = CommandFailureNodeStopped | CommandFailureBusy | CommandFailurePayloadTooLarge | CommandFailureUnknownDestination | CommandFailureNotSingleDestination | CommandFailureAnnounceAppDataTooLong | CommandFailureUnknownInterface | CommandFailureNoRouteToDestination | CommandFailureNotDirectlyReachable | CommandFailurePacketCulled | CommandFailureDeliveryTimedOut | CommandFailureInvalidBitrate | CommandFailureBindFailed | CommandFailureWriteFailed | CommandFailureUnsupportedByBackend | CommandFailureUnknownLink | CommandFailureLinkNotActive | CommandFailureEntropyUnavailable | CommandFailureNotLinkInitiator | CommandFailureIdentityNotHeld | CommandFailureUnknownRequestHandler | CommandFailureRequestPolicyNotAllowList | CommandFailureRequestAllowListFull | CommandFailureLinkBusy | CommandFailureResourceTableFull | CommandFailureResourceMetadataTooLarge | CommandFailureResourceRejectedByPeer | CommandFailureResourceSequencingFailed | CommandFailureResourcePredecessorFailed | CommandFailureChannelWindowFull | CommandFailureChannelUntrackable | CommandFailureInvalidChannelMessageType | CommandFailureInvalidConfiguration | CommandFailureResourceUploadCancelled | CommandFailureResourceEarlyEof | CommandFailureResourceLengthOverrun | CommandFailurePermissionDenied | CommandFailureDeviceUnavailable | CommandFailureConnectFailed | CommandFailureBackendFailed
 ApplicationEvent: TypeAlias = ApplicationEventSingleDelivery | ApplicationEventRequest | ApplicationEventResponse | ApplicationEventResponseSegment | ApplicationEventResourceAvailable | ApplicationEventResourceSegment | ApplicationEventResourceNeedsDecompression | ApplicationEventChannelMessage
-DiagnosticEvent: TypeAlias = DiagnosticEventAnnounceHeard | DiagnosticEventLinkEstablished | DiagnosticEventPeerIdentified | DiagnosticEventLinkClosed | DiagnosticEventLinkInterfaceMismatch | DiagnosticEventResourceAssembled | DiagnosticEventResourceFailed | DiagnosticEventResourceSendProgress | DiagnosticEventSelfRatchetRotated | DiagnosticEventAnnounceHeldDropped | DiagnosticEventDelivered | DiagnosticEventRouteExpired | DiagnosticEventRouteEvicted | DiagnosticEventRouteInterfaceGone | DiagnosticEventRouteDropped | DiagnosticEventBackendDiagnostic | DiagnosticEventDiagnosticsDropped
+DiagnosticEvent: TypeAlias = DiagnosticEventAnnounceHeard | DiagnosticEventLinkEstablished | DiagnosticEventPeerIdentified | DiagnosticEventLinkClosed | DiagnosticEventLinkInterfaceMismatch | DiagnosticEventResourceAssembled | DiagnosticEventResourceFailed | DiagnosticEventResourceSendProgress | DiagnosticEventSelfRatchetRotated | DiagnosticEventAnnounceHeldDropped | DiagnosticEventDelivered | DiagnosticEventRouteExpired | DiagnosticEventRouteEvicted | DiagnosticEventRouteInterfaceGone | DiagnosticEventRouteDropped | DiagnosticEventBackendDiagnostic | DiagnosticEventDiagnosticsDropped | DiagnosticEventPersistenceRestored | DiagnosticEventPersistenceFlushed | DiagnosticEventPersistenceFlushFailed
+
+HOST_OPERATION_NAMES: tuple[str, ...] = (
+    "contractInfo",
+    "backendInfo",
+    "hostCreate",
+    "hostRelease",
+    "hostLifecycle",
+    "hostSnapshot",
+    "hostSnapshotRead",
+    "hostSnapshotRelease",
+    "hostIdentityHash",
+    "hostDestinationCount",
+    "hostDestinationHash",
+    "hostBeginResourceUpload",
+    "resourceUploadWrite",
+    "resourceUploadIsWritable",
+    "resourceUploadFinish",
+    "resourceUploadAbort",
+    "resourceUploadRelease",
+    "hostStop",
+    "commandWait",
+    "commandRegisterReadiness",
+    "commandInterruptWait",
+    "commandRelease",
+    "hostClaimApplicationEvents",
+    "hostClaimDiagnostics",
+    "eventStreamRegisterReadiness",
+    "readinessRegistrationRelease",
+    "eventStreamInterruptWait",
+    "eventStreamRelease",
+    "eventStreamNext",
+    "eventRelease",
+    "eventKind",
+    "eventBytes",
+    "eventString",
+    "eventU64",
+    "eventU128",
+    "eventResourceStream",
+    "resourceStreamRelease",
+    "resourceStreamNext",
+    "hostAnnounce",
+    "hostSendSinglePacket",
+    "hostCloseLink",
+    "hostAttachTcpServer",
+    "hostAttachTcpClient",
+    "hostAttachUdp",
+    "hostDetachInterface",
+    "hostEstablishLink",
+    "hostRequestPath",
+    "hostIdentify",
+    "hostSendLinkPacket",
+    "hostRequest",
+    "hostRespond",
+    "hostSendResource",
+    "hostSetLinkResourceStrategy",
+    "hostSetDestinationResourceStrategy",
+    "hostSendChannelMessage",
+    "hostAllowRequester",
+    "hostAttachInterface",
+)
+
+RawValue = TypeVar("RawValue")
+
+@dataclass(frozen=True, slots=True)
+class _RawOwned(Generic[RawValue]):
+    value: RawValue
+
+@dataclass(frozen=True, slots=True)
+class _RawBorrowed(Generic[RawValue]):
+    value: RawValue
+
+@dataclass(frozen=True, slots=True)
+class _RawCallSuccess(Generic[RawValue]):
+    value: RawValue
+
+@dataclass(frozen=True, slots=True)
+class _RawCallFailure:
+    error: Status
+
+_RawCallResult: TypeAlias = _RawCallSuccess[RawValue] | _RawCallFailure
+
+class _RawUnit: pass
+
+class _RawCommandResult: pass
+
+class _RawContractInfo: pass
+
+class _RawEvent: pass
+
+class _RawEventStream: pass
+
+class _RawHost: pass
+
+class _RawHostInspection: pass
+
+class _RawHostOptions: pass
+
+class _RawIssuedCommand: pass
+
+class _RawLifecycle: pass
+
+class _RawReadinessCallback: pass
+
+class _RawReadinessRegistration: pass
+
+class _RawResourceChunk: pass
+
+class _RawResourceStream: pass
+
+class _RawResourceUpload: pass
+
+class _RawOpaquePointer: pass
+
+class _RawHostProtocol(Protocol):
+    def contract_info(self) -> _RawCallResult[_RawContractInfo]: ...
+    def backend_info(self) -> _RawCallResult[BackendInfo]: ...
+    def host_create(self, options: _RawHostOptions) -> _RawCallResult[_RawOwned[_RawHost]]: ...
+    def host_release(self, host: _RawHost) -> _RawUnit: ...
+    def host_lifecycle(self, host: _RawHost) -> _RawCallResult[_RawLifecycle]: ...
+    def host_snapshot(self, host: _RawHost, timeout_millis: int) -> _RawCallResult[_RawOwned[_RawHostInspection]]: ...
+    def host_snapshot_read(self, host_inspection: _RawHostInspection) -> _RawCallResult[_RawBorrowed[HostSnapshot]]: ...
+    def host_snapshot_release(self, host_inspection: _RawHostInspection) -> _RawUnit: ...
+    def host_identity_hash(self, host: _RawHost) -> _RawCallResult[_RawBorrowed[bytes]]: ...
+    def host_destination_count(self, host: _RawHost) -> int: ...
+    def host_destination_hash(self, host: _RawHost, index: int) -> _RawCallResult[_RawBorrowed[bytes]]: ...
+    def host_begin_resource_upload(self, host: _RawHost, link_id: LinkId, declared_length: int, packed_metadata: bytes | None, compression: ResourceCompression) -> _RawCallResult[_RawOwned[_RawResourceUpload]]: ...
+    def resource_upload_write(self, resource_upload: _RawResourceUpload, chunk: bytes) -> _RawCallResult[_RawUnit]: ...
+    def resource_upload_is_writable(self, resource_upload: _RawResourceUpload) -> _RawCallResult[bool]: ...
+    def resource_upload_finish(self, resource_upload: _RawResourceUpload) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
+    def resource_upload_abort(self, resource_upload: _RawResourceUpload) -> _RawUnit: ...
+    def resource_upload_release(self, resource_upload: _RawResourceUpload) -> _RawUnit: ...
+    def host_stop(self, host: _RawHost) -> _RawCallResult[_RawUnit]: ...
+    def command_wait(self, issued_command: _RawIssuedCommand, timeout_millis: int) -> _RawCallResult[_RawBorrowed[_RawCommandResult]]: ...
+    def command_register_readiness(self, issued_command: _RawIssuedCommand, callback: _RawReadinessCallback, context: _RawOpaquePointer) -> _RawCallResult[_RawOwned[_RawReadinessRegistration]]: ...
+    def command_interrupt_wait(self, issued_command: _RawIssuedCommand) -> _RawUnit: ...
+    def command_release(self, issued_command: _RawIssuedCommand) -> _RawUnit: ...
+    def host_claim_application_events(self, host: _RawHost) -> _RawCallResult[_RawOwned[_RawEventStream]]: ...
+    def host_claim_diagnostics(self, host: _RawHost) -> _RawCallResult[_RawOwned[_RawEventStream]]: ...
+    def event_stream_register_readiness(self, event_stream: _RawEventStream, callback: _RawReadinessCallback, context: _RawOpaquePointer) -> _RawCallResult[_RawOwned[_RawReadinessRegistration]]: ...
+    def readiness_registration_release(self, readiness_registration: _RawReadinessRegistration) -> _RawUnit: ...
+    def event_stream_interrupt_wait(self, event_stream: _RawEventStream) -> _RawUnit: ...
+    def event_stream_release(self, event_stream: _RawEventStream) -> _RawUnit: ...
+    def event_stream_next(self, event_stream: _RawEventStream, timeout_millis: int) -> _RawCallResult[_RawOwned[_RawEvent]]: ...
+    def event_release(self, event: _RawEvent) -> _RawUnit: ...
+    def event_kind(self, event: _RawEvent) -> int: ...
+    def event_bytes(self, event: _RawEvent, field: EventField) -> _RawCallResult[_RawBorrowed[bytes]]: ...
+    def event_string(self, event: _RawEvent, field: EventField) -> _RawCallResult[_RawBorrowed[str]]: ...
+    def event_u64(self, event: _RawEvent, field: EventField) -> _RawCallResult[int]: ...
+    def event_u128(self, event: _RawEvent, field: EventField) -> _RawCallResult[int]: ...
+    def event_resource_stream(self, event: _RawEvent) -> _RawCallResult[_RawOwned[_RawResourceStream]]: ...
+    def resource_stream_release(self, resource_stream: _RawResourceStream) -> _RawUnit: ...
+    def resource_stream_next(self, resource_stream: _RawResourceStream, maximum_bytes: int) -> _RawCallResult[_RawBorrowed[_RawResourceChunk]]: ...
+    def host_announce(self, host: _RawHost, destination: DestinationHash, interface: InterfaceId | None) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
+    def host_send_single_packet(self, host: _RawHost, destination: DestinationHash, payload: bytes) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
+    def host_close_link(self, host: _RawHost, link_id: LinkId) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
+    def host_attach_tcp_server(self, host: _RawHost, bind: str, bitrate: Bitrate) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
+    def host_attach_tcp_client(self, host: _RawHost, target: str, bitrate: Bitrate) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
+    def host_attach_udp(self, host: _RawHost, local: str, peer: str, bitrate: Bitrate) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
+    def host_detach_interface(self, host: _RawHost, interface: InterfaceId) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
+    def host_establish_link(self, host: _RawHost, destination: DestinationHash) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
+    def host_request_path(self, host: _RawHost, destination: DestinationHash) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
+    def host_identify(self, host: _RawHost, link_id: LinkId, identity: IdentityHash) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
+    def host_send_link_packet(self, host: _RawHost, link_id: LinkId, payload: bytes) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
+    def host_request(self, host: _RawHost, link_id: LinkId, path_hash: RequestPathHash, payload: bytes, timeout: ResponseTimeout) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
+    def host_respond(self, host: _RawHost, link_id: LinkId, request_id: RequestId, request_rtt_millis: int, payload: bytes) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
+    def host_send_resource(self, host: _RawHost, link_id: LinkId, payload: bytes, packed_metadata: bytes | None, compression: ResourceCompression) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
+    def host_set_link_resource_strategy(self, host: _RawHost, link_id: LinkId, strategy: ResourceStrategy) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
+    def host_set_destination_resource_strategy(self, host: _RawHost, destination: DestinationHash, strategy: ResourceStrategy) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
+    def host_send_channel_message(self, host: _RawHost, link_id: LinkId, message_type: int, payload: bytes) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
+    def host_allow_requester(self, host: _RawHost, destination: DestinationHash, path_hash: RequestPathHash, identity: IdentityHash) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
+    def host_attach_interface(self, host: _RawHost, config: InterfaceConfig) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...

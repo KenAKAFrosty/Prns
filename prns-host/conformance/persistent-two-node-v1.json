@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "destination": {
+    "appName": "sdk-smoke",
+    "aspects": ["echo"],
+    "announceAppDataHex": "73646b2d736d6f6b65"
+  },
+  "request": {
+    "path": "/echo",
+    "pathHashHex": "cb9c1f54d8102d68b7a40c2376e1f0e8",
+    "payloadHex": "72657175657374",
+    "responseHex": "726573706f6e7365",
+    "timeoutMillis": 5000
+  },
+  "resource": {
+    "chunksHex": ["73747265616d656420", "7265736f75726365"],
+    "metadataHex": "6d65746164617461",
+    "maximumUncompressedBytes": 1048576,
+    "acceptCompressed": true,
+    "compression": "Never"
+  }
+}

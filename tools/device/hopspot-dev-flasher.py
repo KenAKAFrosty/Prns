@@ -381,7 +381,7 @@ def build_firmware(
     selection: Selection,
     key_id: str,
 ) -> Path:
-    needs_embedded = any(board in {"heltec-v4", "t-beam-supreme"} for board in selection.boards)
+    needs_embedded = any(board in {"heltec-v4", "heltec-v4-r8", "t-beam-supreme"} for board in selection.boards)
     if needs_embedded:
         build_embedded_site(identity)
     environment = clean_build_environment()

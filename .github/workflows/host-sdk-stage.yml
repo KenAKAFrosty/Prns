@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       expected_sha:
-        description: "Full main-branch commit SHA to stage"
+        description: "Full trunk commit SHA to stage"
         required: true
         type: string
 
@@ -24,7 +24,7 @@ jobs:
         with:
           submodules: false
       - run: test "${{ inputs.expected_sha }}" = "${{ github.sha }}"
-      - run: test "${{ github.ref }}" = "refs/heads/main"
+      - run: test "${{ github.ref }}" = "refs/heads/trunk"
 
   host:
     needs: custody

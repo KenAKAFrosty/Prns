@@ -84,6 +84,107 @@ public final class Host: @unchecked Sendable {
         }
     }
 
+    public var backendInfo: BackendInfo {
+        get throws {
+            try withPointer { _ in
+                var value = PrnsBackendInfo()
+                value.struct_size = MemoryLayout<PrnsBackendInfo>.size
+                try checkedStatus(
+                    prns_backend_info(&value),
+                    operation: "backendInfo"
+                )
+                return try decodeBackendInfo(value)
+            }
+        }
+    }
+
+    public func snapshot(timeoutMillis: UInt32 = 5_000) throws -> HostSnapshot {
+        try withPointer { pointer in
+            var inspection: OpaquePointer?
+            try checkedStatus(
+                prns_host_snapshot(pointer, timeoutMillis, &inspection),
+                operation: "captureSnapshot"
+            )
+            guard let inspection else {
+                throw StatusFailure(
+                    operation: "captureSnapshot",
+                    status: .backendFailed
+                )
+            }
+            defer { prns_host_snapshot_release(inspection) }
+            var value = PrnsHostSnapshot()
+            value.struct_size = MemoryLayout<PrnsHostSnapshot>.size
+            try checkedStatus(
+                prns_host_snapshot_read(inspection, &value),
+                operation: "readSnapshot"
+            )
+            return try decodeHostSnapshot(value)
+        }
+    }
+
+    public func beginResourceUpload(
+        linkId: LinkId,
+        declaredLength: UInt64,
+        packedMetadata: [UInt8]? = nil,
+        compression: ResourceCompression = .auto
+    ) throws -> ResourceUpload {
+        try withPointer { pointer in
+            let arena = NativeArena()
+            var output: OpaquePointer?
+            let status: UInt32
+            if let packedMetadata {
+                var metadata = try arena.bytes(packedMetadata)
+                status = prns_host_begin_resource_upload(
+                    pointer,
+                    try arena.bytes(linkId.bytes),
+                    declaredLength,
+                    &metadata,
+                    compression.native,
+                    &output
+                )
+            } else {
+                status = prns_host_begin_resource_upload(
+                    pointer,
+                    try arena.bytes(linkId.bytes),
+                    declaredLength,
+                    nil,
+                    compression.native,
+                    &output
+                )
+            }
+            try checkedStatus(status, operation: "beginResourceUpload")
+            guard let output else {
+                throw StatusFailure(
+                    operation: "beginResourceUpload",
+                    status: .backendFailed
+                )
+            }
+            return ResourceUpload(pointer: output)
+        }
+    }
+
+    public func sendResource(
+        linkId: LinkId,
+        payload: [UInt8],
+        packedMetadata: [UInt8]? = nil,
+        compression: ResourceCompression = .auto
+    ) async throws -> CommandSettlement {
+        let upload = try beginResourceUpload(
+            linkId: linkId,
+            declaredLength: UInt64(payload.count),
+            packedMetadata: packedMetadata,
+            compression: compression
+        )
+        do {
+            try await upload.write(payload)
+            return try await upload.finish()
+        } catch {
+            upload.abort()
+            upload.close()
+            throw error
+        }
+    }
+
     public func claimApplicationEvents() throws -> StreamClaim<EventSequence<ApplicationEvent>> {
         try withPointer { pointer in
             var stream: OpaquePointer?

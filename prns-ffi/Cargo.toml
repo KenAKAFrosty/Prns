@@ -1,6 +1,6 @@
 [package]
 name = "prns-ffi"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/KenAKAFrosty/Prns"
@@ -12,7 +12,7 @@ readme = "README.md"
 keywords = ["reticulum", "mesh", "networking", "ffi"]
 categories = ["api-bindings", "network-programming"]
 publish = true
-include = ["src/**", "tests/**", "examples/**", "Cargo.toml", "README.md"]
+include = ["src/**", "tests/**", "!tests/**/__pycache__/**", "!tests/**/*.pyc", "examples/**", "Cargo.toml", "README.md"]
 
 # Standalone workspace: kept out of the root so the engine's default `--workspace`
 # build never unifies this crate's host features (tokio, CoreBluetooth) into the
@@ -32,7 +32,7 @@ cfg-if = "1.0"
 # The pure engine. We implement its public interface seams (`BleBackend`, …) here and
 # feed them to its generic supervisors (`BluetoothAuto<B>`). tokio-host pulls the std
 # runtime seam the host backends bridge into.
-prns-core = { version = "=0.3.1", path = "../prns-core", default-features = false, features = ["tokio-host"] }
+prns-core = { version = "=0.3.2", path = "../prns-core", default-features = false, features = ["tokio-host"] }
 # The async runtime the host backends bridge into: channels carry events from the
 # platform's callback world (a GCD queue, a JNI thread) to the manifold; the deadline
 # timer bounds power-on/connect waits.

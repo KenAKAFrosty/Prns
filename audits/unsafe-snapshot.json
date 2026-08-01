@@ -7,6 +7,21 @@
       "target": "x86_64-unknown-linux-gnu"
     },
     {
+      "manifest": "prns-host/abi/c/Cargo.toml",
+      "name": "host-c-linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "manifest": "prns-host/abi/c/Cargo.toml",
+      "name": "host-c-macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "manifest": "prns-host/abi/c/Cargo.toml",
+      "name": "host-c-windows",
+      "target": "x86_64-pc-windows-msvc"
+    },
+    {
       "manifest": "prnsd/Cargo.toml",
       "name": "daemon-linux",
       "target": "x86_64-unknown-linux-gnu"
@@ -62,6 +77,11 @@
       "target": "xtensa-esp32s3-none-elf"
     },
     {
+      "manifest": "personal-hopspot/embedded/esp32/boards/heltec-v4-r8/Cargo.toml",
+      "name": "esp32-s3-heltec-r8",
+      "target": "xtensa-esp32s3-none-elf"
+    },
+    {
       "manifest": "personal-hopspot/embedded/esp32/boards/t-beam-supreme/Cargo.toml",
       "name": "esp32-s3-tbeam",
       "target": "xtensa-esp32s3-none-elf"
@@ -96,6 +116,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "adler2",
@@ -121,7 +142,11 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -220,6 +245,9 @@
           "alloc"
         ],
         "esp32-s3-heltec": [
+          "alloc"
+        ],
+        "esp32-s3-heltec-r8": [
           "alloc"
         ],
         "esp32-s3-tbeam": [
@@ -434,7 +462,10 @@
     },
     {
       "graphs": {
-        "desktop-linux": []
+        "desktop-linux": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": []
       },
       "name": "async-trait",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -459,7 +490,11 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -484,6 +519,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "ios": [],
         "nrf52840": [],
@@ -524,6 +560,10 @@
           "std"
         ],
         "esp32-s3-heltec": [
+          "default",
+          "std"
+        ],
+        "esp32-s3-heltec-r8": [
           "default",
           "std"
         ],
@@ -571,6 +611,21 @@
           "std"
         ],
         "desktop-windows": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "host-c-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "host-c-macos": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "host-c-windows": [
           "alloc",
           "default",
           "std"
@@ -672,6 +727,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "bitfield",
@@ -689,6 +745,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "bitfield-macros",
@@ -725,7 +782,11 @@
         ],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": []
       },
       "name": "bitflags",
@@ -779,6 +840,9 @@
           "std"
         ],
         "esp32-s3-heltec": [
+          "std"
+        ],
+        "esp32-s3-heltec-r8": [
           "std"
         ],
         "esp32-s3-tbeam": [
@@ -836,6 +900,29 @@
     },
     {
       "graphs": {
+        "host-c-linux": [
+          "std"
+        ],
+        "host-c-macos": [
+          "std"
+        ],
+        "host-c-windows": [
+          "std"
+        ]
+      },
+      "name": "bitflags",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 2,
+        "tokens": 2
+      },
+      "version": "2.13.1"
+    },
+    {
+      "graphs": {
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -846,7 +933,11 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -874,7 +965,11 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -902,7 +997,11 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -923,6 +1022,10 @@
         "daemon-macos": [
           "alloc",
           "default",
+          "std"
+        ],
+        "host-c-macos": [
+          "alloc",
           "std"
         ]
       },
@@ -945,6 +1048,11 @@
           "std"
         ],
         "desktop-macos": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "host-c-macos": [
           "alloc",
           "default",
           "std"
@@ -993,6 +1101,19 @@
           "lazy_static",
           "pin-project",
           "tokio-stream"
+        ],
+        "host-c-linux": [
+          "bluetoothd",
+          "custom_debug",
+          "dbus",
+          "dbus-crossroads",
+          "dbus-tokio",
+          "default",
+          "displaydoc",
+          "l2cap",
+          "lazy_static",
+          "pin-project",
+          "tokio-stream"
         ]
       },
       "name": "bluer",
@@ -1008,7 +1129,8 @@
     },
     {
       "graphs": {
-        "daemon-linux": []
+        "daemon-linux": [],
+        "host-c-linux": []
       },
       "name": "bluez-async",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -1023,7 +1145,8 @@
     },
     {
       "graphs": {
-        "daemon-linux": []
+        "daemon-linux": [],
+        "host-c-linux": []
       },
       "name": "bluez-generated",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -1065,6 +1188,9 @@
         "esp32-s3-heltec": [
           "uuid"
         ],
+        "esp32-s3-heltec-r8": [
+          "uuid"
+        ],
         "esp32-s3-tbeam": [
           "uuid"
         ]
@@ -1084,7 +1210,10 @@
       "graphs": {
         "daemon-linux": [],
         "daemon-macos": [],
-        "daemon-windows": []
+        "daemon-windows": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": []
       },
       "name": "btleplug",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -1126,6 +1255,9 @@
         "esp32-s3-heltec": [
           "uuid"
         ],
+        "esp32-s3-heltec-r8": [
+          "uuid"
+        ],
         "esp32-s3-tbeam": [
           "uuid"
         ]
@@ -1161,6 +1293,7 @@
     {
       "graphs": {
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "byte-slice-cast",
@@ -1187,6 +1320,7 @@
         ],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "nrf52840": []
       },
@@ -1234,7 +1368,11 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -1332,6 +1470,10 @@
           "default",
           "std"
         ],
+        "esp32-s3-heltec-r8": [
+          "default",
+          "std"
+        ],
         "esp32-s3-tbeam": [
           "default",
           "std"
@@ -1351,6 +1493,32 @@
         "tokens": 156
       },
       "version": "1.12.0"
+    },
+    {
+      "graphs": {
+        "host-c-linux": [
+          "default",
+          "std"
+        ],
+        "host-c-macos": [
+          "default",
+          "std"
+        ],
+        "host-c-windows": [
+          "default",
+          "std"
+        ]
+      },
+      "name": "bytes",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 74,
+        "externs": 0,
+        "functions": 68,
+        "impls": 15,
+        "tokens": 158
+      },
+      "version": "1.12.1"
     },
     {
       "graphs": {
@@ -1381,7 +1549,19 @@
         "esp32-s3-heltec": [
           "default"
         ],
+        "esp32-s3-heltec-r8": [
+          "default"
+        ],
         "esp32-s3-tbeam": [
+          "default"
+        ],
+        "host-c-linux": [
+          "default"
+        ],
+        "host-c-macos": [
+          "default"
+        ],
+        "host-c-windows": [
           "default"
         ],
         "ios": [
@@ -1437,7 +1617,19 @@
         "esp32-s3-heltec": [
           "block-padding"
         ],
+        "esp32-s3-heltec-r8": [
+          "block-padding"
+        ],
         "esp32-s3-tbeam": [
+          "block-padding"
+        ],
+        "host-c-linux": [
+          "block-padding"
+        ],
+        "host-c-macos": [
+          "block-padding"
+        ],
+        "host-c-windows": [
           "block-padding"
         ],
         "ios": [
@@ -1497,6 +1689,21 @@
     },
     {
       "graphs": {
+        "host-c-linux": []
+      },
+      "name": "cc",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 13,
+        "externs": 0,
+        "functions": 2,
+        "impls": 2,
+        "tokens": 17
+      },
+      "version": "1.4.0"
+    },
+    {
+      "graphs": {
         "android": []
       },
       "name": "cesu8",
@@ -1522,7 +1729,11 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -1558,6 +1769,21 @@
     },
     {
       "graphs": {
+        "host-c-linux": []
+      },
+      "name": "cfg_aliases",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.2.2"
+    },
+    {
+      "graphs": {
         "android": [
           "block-padding"
         ],
@@ -1588,7 +1814,19 @@
         "esp32-s3-heltec": [
           "block-padding"
         ],
+        "esp32-s3-heltec-r8": [
+          "block-padding"
+        ],
         "esp32-s3-tbeam": [
+          "block-padding"
+        ],
+        "host-c-linux": [
+          "block-padding"
+        ],
+        "host-c-macos": [
+          "block-padding"
+        ],
+        "host-c-windows": [
           "block-padding"
         ],
         "ios": [
@@ -1763,7 +2001,11 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -1841,6 +2083,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "const-default",
@@ -1880,6 +2123,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "convert_case",
@@ -1900,6 +2144,10 @@
           "no-cache-pad"
         ],
         "esp32-s3-heltec": [
+          "default",
+          "no-cache-pad"
+        ],
+        "esp32-s3-heltec-r8": [
           "default",
           "no-cache-pad"
         ],
@@ -2074,6 +2322,9 @@
         "desktop-macos": [],
         "desktop-windows": [],
         "engine": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": []
       },
       "name": "cpufeatures",
@@ -2097,6 +2348,9 @@
         "desktop-macos": [],
         "desktop-windows": [],
         "engine": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": []
       },
       "name": "cpufeatures",
@@ -2152,7 +2406,23 @@
           "default",
           "std"
         ],
+        "esp32-s3-heltec-r8": [
+          "default",
+          "std"
+        ],
         "esp32-s3-tbeam": [
+          "default",
+          "std"
+        ],
+        "host-c-linux": [
+          "default",
+          "std"
+        ],
+        "host-c-macos": [
+          "default",
+          "std"
+        ],
+        "host-c-windows": [
           "default",
           "std"
         ],
@@ -2195,9 +2465,15 @@
         "esp32-s3-heltec": [
           "restore-state-u32"
         ],
+        "esp32-s3-heltec-r8": [
+          "restore-state-u32"
+        ],
         "esp32-s3-tbeam": [
           "restore-state-u32"
         ],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": [
           "restore-state-bool"
@@ -2288,6 +2564,18 @@
           "default",
           "std"
         ],
+        "host-c-linux": [
+          "default",
+          "std"
+        ],
+        "host-c-macos": [
+          "default",
+          "std"
+        ],
+        "host-c-windows": [
+          "default",
+          "std"
+        ],
         "ios": [
           "default",
           "std"
@@ -2331,6 +2619,18 @@
           "std"
         ],
         "desktop-windows": [
+          "alloc",
+          "std"
+        ],
+        "host-c-linux": [
+          "alloc",
+          "std"
+        ],
+        "host-c-macos": [
+          "alloc",
+          "std"
+        ],
+        "host-c-windows": [
           "alloc",
           "std"
         ],
@@ -2394,6 +2694,18 @@
           "default",
           "std"
         ],
+        "host-c-linux": [
+          "default",
+          "std"
+        ],
+        "host-c-macos": [
+          "default",
+          "std"
+        ],
+        "host-c-windows": [
+          "default",
+          "std"
+        ],
         "ios": [
           "default",
           "std"
@@ -2432,7 +2744,17 @@
         ],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [
+          "std"
+        ],
+        "host-c-macos": [
+          "std"
+        ],
+        "host-c-windows": [
+          "std"
+        ],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -2460,7 +2782,11 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -2488,7 +2814,11 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -2580,7 +2910,27 @@
           "precomputed-tables",
           "zeroize"
         ],
+        "esp32-s3-heltec-r8": [
+          "digest",
+          "precomputed-tables",
+          "zeroize"
+        ],
         "esp32-s3-tbeam": [
+          "digest",
+          "precomputed-tables",
+          "zeroize"
+        ],
+        "host-c-linux": [
+          "digest",
+          "precomputed-tables",
+          "zeroize"
+        ],
+        "host-c-macos": [
+          "digest",
+          "precomputed-tables",
+          "zeroize"
+        ],
+        "host-c-windows": [
           "digest",
           "precomputed-tables",
           "zeroize"
@@ -2618,7 +2968,9 @@
         "daemon-windows": [],
         "desktop-linux": [],
         "desktop-windows": [],
-        "engine": []
+        "engine": [],
+        "host-c-linux": [],
+        "host-c-windows": []
       },
       "name": "curve25519-dalek-derive",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -2634,7 +2986,8 @@
     {
       "graphs": {
         "daemon-linux": [],
-        "desktop-linux": []
+        "desktop-linux": [],
+        "host-c-linux": []
       },
       "name": "custom_debug",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -2650,7 +3003,8 @@
     {
       "graphs": {
         "daemon-linux": [],
-        "desktop-linux": []
+        "desktop-linux": [],
+        "host-c-linux": []
       },
       "name": "custom_debug_derive",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -2719,7 +3073,15 @@
           "default",
           "suggestions"
         ],
+        "esp32-s3-heltec-r8": [
+          "default",
+          "suggestions"
+        ],
         "esp32-s3-tbeam": [
+          "default",
+          "suggestions"
+        ],
+        "host-c-linux": [
           "default",
           "suggestions"
         ],
@@ -2743,6 +3105,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "darling",
@@ -2763,6 +3126,10 @@
           "suggestions"
         ],
         "esp32-s3-heltec": [
+          "default",
+          "suggestions"
+        ],
+        "esp32-s3-heltec-r8": [
           "default",
           "suggestions"
         ],
@@ -2838,7 +3205,15 @@
           "strsim",
           "suggestions"
         ],
+        "esp32-s3-heltec-r8": [
+          "strsim",
+          "suggestions"
+        ],
         "esp32-s3-tbeam": [
+          "strsim",
+          "suggestions"
+        ],
+        "host-c-linux": [
           "strsim",
           "suggestions"
         ],
@@ -2862,6 +3237,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "darling_core",
@@ -2882,6 +3258,10 @@
           "suggestions"
         ],
         "esp32-s3-heltec": [
+          "strsim",
+          "suggestions"
+        ],
+        "esp32-s3-heltec-r8": [
           "strsim",
           "suggestions"
         ],
@@ -2927,7 +3307,9 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
         "nrf52840": []
       },
       "name": "darling_macro",
@@ -2945,6 +3327,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "darling_macro",
@@ -2962,6 +3345,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "darling_macro",
@@ -2979,7 +3363,10 @@
       "graphs": {
         "daemon-linux": [],
         "daemon-macos": [],
-        "daemon-windows": []
+        "daemon-windows": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": []
       },
       "name": "dashmap",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -3005,6 +3392,21 @@
           "std"
         ],
         "daemon-windows": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "host-c-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "host-c-macos": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "host-c-windows": [
           "alloc",
           "default",
           "std"
@@ -3048,8 +3450,29 @@
     },
     {
       "graphs": {
+        "host-c-linux": [
+          "futures",
+          "futures-channel",
+          "futures-util",
+          "vendored"
+        ]
+      },
+      "name": "dbus",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 153,
+        "externs": 0,
+        "functions": 5,
+        "impls": 9,
+        "tokens": 168
+      },
+      "version": "0.9.12"
+    },
+    {
+      "graphs": {
         "daemon-linux": [],
-        "desktop-linux": []
+        "desktop-linux": [],
+        "host-c-linux": []
       },
       "name": "dbus-crossroads",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -3065,7 +3488,8 @@
     {
       "graphs": {
         "daemon-linux": [],
-        "desktop-linux": []
+        "desktop-linux": [],
+        "host-c-linux": []
       },
       "name": "dbus-tokio",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -3082,6 +3506,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "delegate",
@@ -3107,6 +3532,9 @@
           "default"
         ],
         "desktop-macos": [
+          "default"
+        ],
+        "host-c-macos": [
           "default"
         ]
       },
@@ -3183,10 +3611,36 @@
           "core-api",
           "default"
         ],
+        "esp32-s3-heltec-r8": [
+          "block-buffer",
+          "core-api",
+          "default"
+        ],
         "esp32-s3-tbeam": [
           "block-buffer",
           "core-api",
           "default"
+        ],
+        "host-c-linux": [
+          "alloc",
+          "block-buffer",
+          "core-api",
+          "default",
+          "std"
+        ],
+        "host-c-macos": [
+          "alloc",
+          "block-buffer",
+          "core-api",
+          "default",
+          "std"
+        ],
+        "host-c-windows": [
+          "alloc",
+          "block-buffer",
+          "core-api",
+          "default",
+          "std"
         ],
         "ios": [
           "block-buffer",
@@ -3269,7 +3723,27 @@
           "default",
           "mac"
         ],
+        "esp32-s3-heltec-r8": [
+          "block-api",
+          "default",
+          "mac"
+        ],
         "esp32-s3-tbeam": [
+          "block-api",
+          "default",
+          "mac"
+        ],
+        "host-c-linux": [
+          "block-api",
+          "default",
+          "mac"
+        ],
+        "host-c-macos": [
+          "block-api",
+          "default",
+          "mac"
+        ],
+        "host-c-windows": [
           "block-api",
           "default",
           "mac"
@@ -3334,6 +3808,14 @@
           "objc2",
           "std"
         ],
+        "host-c-macos": [
+          "alloc",
+          "block2",
+          "default",
+          "libc",
+          "objc2",
+          "std"
+        ],
         "ios": [
           "alloc",
           "block2",
@@ -3359,6 +3841,9 @@
         "esp32-s3-heltec": [
           "default"
         ],
+        "esp32-s3-heltec-r8": [
+          "default"
+        ],
         "esp32-s3-tbeam": [
           "default"
         ]
@@ -3377,6 +3862,7 @@
     {
       "graphs": {
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "display-interface-i2c",
@@ -3393,6 +3879,7 @@
     {
       "graphs": {
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "display-interface-spi",
@@ -3438,6 +3925,24 @@
     },
     {
       "graphs": {
+        "host-c-linux": [
+          "default",
+          "std"
+        ]
+      },
+      "name": "displaydoc",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.2.7"
+    },
+    {
+      "graphs": {
         "android": []
       },
       "name": "dlopen2",
@@ -3455,6 +3960,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "docsplay",
@@ -3472,6 +3978,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "docsplay-macros",
@@ -3514,7 +4021,19 @@
         "esp32-s3-heltec": [
           "default"
         ],
+        "esp32-s3-heltec-r8": [
+          "default"
+        ],
         "esp32-s3-tbeam": [
+          "default"
+        ],
+        "host-c-linux": [
+          "default"
+        ],
+        "host-c-macos": [
+          "default"
+        ],
+        "host-c-windows": [
           "default"
         ],
         "ios": [
@@ -3577,7 +4096,11 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -3635,7 +4158,23 @@
           "fast",
           "zeroize"
         ],
+        "esp32-s3-heltec-r8": [
+          "fast",
+          "zeroize"
+        ],
         "esp32-s3-tbeam": [
+          "fast",
+          "zeroize"
+        ],
+        "host-c-linux": [
+          "fast",
+          "zeroize"
+        ],
+        "host-c-macos": [
+          "fast",
+          "zeroize"
+        ],
+        "host-c-windows": [
           "fast",
           "zeroize"
         ],
@@ -3696,8 +4235,35 @@
     },
     {
       "graphs": {
+        "host-c-linux": [
+          "std",
+          "use_std"
+        ],
+        "host-c-macos": [
+          "std",
+          "use_std"
+        ],
+        "host-c-windows": [
+          "std",
+          "use_std"
+        ]
+      },
+      "name": "either",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 2,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 2
+      },
+      "version": "1.17.0"
+    },
+    {
+      "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "nrf52840": [
           "time"
@@ -3718,6 +4284,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "nrf52840": [
           "_platform",
@@ -3740,6 +4307,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "nrf52840": []
       },
@@ -3760,6 +4328,9 @@
           "timer-item-size-6-words"
         ],
         "esp32-s3-heltec": [
+          "timer-item-size-6-words"
+        ],
+        "esp32-s3-heltec-r8": [
           "timer-item-size-6-words"
         ],
         "esp32-s3-tbeam": [
@@ -3792,7 +4363,11 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": []
       },
@@ -3811,6 +4386,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "nrf52840": []
       },
@@ -3914,12 +4490,43 @@
           "tcp",
           "udp"
         ],
+        "esp32-s3-heltec-r8": [
+          "dhcpv4",
+          "dns",
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv4",
+          "proto-ipv6",
+          "tcp",
+          "udp"
+        ],
         "esp32-s3-tbeam": [
           "dhcpv4",
           "dns",
           "medium-ethernet",
           "multicast",
           "proto-ipv4",
+          "proto-ipv6",
+          "tcp",
+          "udp"
+        ],
+        "host-c-linux": [
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv6",
+          "tcp",
+          "udp"
+        ],
+        "host-c-macos": [
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv6",
+          "tcp",
+          "udp"
+        ],
+        "host-c-windows": [
+          "medium-ethernet",
+          "multicast",
           "proto-ipv6",
           "tcp",
           "udp"
@@ -3954,7 +4561,11 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": []
       },
@@ -3980,7 +4591,11 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "nrf52840": []
       },
       "name": "embassy-net-driver-channel",
@@ -4023,6 +4638,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "embassy-sync",
@@ -4047,6 +4663,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "embassy-sync",
@@ -4071,7 +4688,11 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": []
       },
@@ -4097,7 +4718,11 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": []
       },
@@ -4127,9 +4752,15 @@
         "esp32-s3-heltec": [
           "tick-hz-1_000_000"
         ],
+        "esp32-s3-heltec-r8": [
+          "tick-hz-1_000_000"
+        ],
         "esp32-s3-tbeam": [
           "tick-hz-1_000_000"
         ],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": [
           "tick-hz-32_768"
@@ -4150,6 +4781,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "nrf52840": []
       },
@@ -4175,7 +4807,11 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "nrf52840": [
           "default",
           "usbd-hid"
@@ -4203,7 +4839,11 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "nrf52840": []
       },
       "name": "embassy-usb-driver",
@@ -4225,6 +4865,9 @@
         "esp32-s3-heltec": [
           "default"
         ],
+        "esp32-s3-heltec-r8": [
+          "default"
+        ],
         "esp32-s3-tbeam": [
           "default"
         ]
@@ -4244,6 +4887,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "embedded-can",
@@ -4278,6 +4922,9 @@
           "default"
         ],
         "esp32-s3-heltec": [
+          "default"
+        ],
+        "esp32-s3-heltec-r8": [
           "default"
         ],
         "esp32-s3-tbeam": [
@@ -4325,6 +4972,9 @@
           "default"
         ],
         "esp32-s3-heltec": [
+          "default"
+        ],
+        "esp32-s3-heltec-r8": [
           "default"
         ],
         "esp32-s3-tbeam": [
@@ -4398,9 +5048,15 @@
         "esp32-s3-heltec": [
           "unproven"
         ],
+        "esp32-s3-heltec-r8": [
+          "unproven"
+        ],
         "esp32-s3-tbeam": [
           "unproven"
         ],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": [
           "unproven"
@@ -4428,7 +5084,11 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": []
       },
@@ -4454,7 +5114,11 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": []
       },
@@ -4472,6 +5136,9 @@
     {
       "graphs": {
         "esp32-s3-heltec": [
+          "async"
+        ],
+        "esp32-s3-heltec-r8": [
           "async"
         ],
         "esp32-s3-tbeam": [
@@ -4503,7 +5170,11 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "nrf52840": []
       },
       "name": "embedded-io",
@@ -4528,7 +5199,11 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": []
       },
@@ -4554,7 +5229,11 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "nrf52840": []
       },
       "name": "embedded-io-async",
@@ -4579,7 +5258,11 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": []
       },
@@ -4605,7 +5288,11 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": []
       },
       "name": "embedded-nal",
@@ -4630,7 +5317,11 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": []
       },
       "name": "embedded-nal-async",
@@ -4656,7 +5347,11 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -4684,7 +5379,11 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -4777,6 +5476,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "enumset",
@@ -4794,6 +5494,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "enumset_derive",
@@ -4852,7 +5553,9 @@
         "desktop-macos": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
-        "esp32-s3-tbeam": []
+        "esp32-s3-heltec-r8": [],
+        "esp32-s3-tbeam": [],
+        "host-c-macos": []
       },
       "name": "equivalent",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -4890,6 +5593,14 @@
         "engine": [
           "std"
         ],
+        "host-c-linux": [
+          "default",
+          "std"
+        ],
+        "host-c-macos": [
+          "default",
+          "std"
+        ],
         "ios": [
           "std"
         ]
@@ -4914,6 +5625,12 @@
           "internal-heap-stats"
         ],
         "esp32-s3-heltec": [
+          "compat",
+          "default",
+          "global-allocator",
+          "internal-heap-stats"
+        ],
+        "esp32-s3-heltec-r8": [
           "compat",
           "default",
           "global-allocator",
@@ -4947,6 +5664,13 @@
           "println"
         ],
         "esp32-s3-heltec": [
+          "esp32c6",
+          "esp32s3",
+          "panic-handler",
+          "print-float-registers",
+          "println"
+        ],
+        "esp32-s3-heltec-r8": [
           "esp32c6",
           "esp32s3",
           "panic-handler",
@@ -4988,6 +5712,13 @@
           "esp32s3",
           "validation"
         ],
+        "esp32-s3-heltec-r8": [
+          "default",
+          "esp-rom-sys",
+          "esp32c6",
+          "esp32s3",
+          "validation"
+        ],
         "esp32-s3-tbeam": [
           "default",
           "esp-rom-sys",
@@ -5013,6 +5744,9 @@
           "build"
         ],
         "esp32-s3-heltec": [
+          "build"
+        ],
+        "esp32-s3-heltec-r8": [
           "build"
         ],
         "esp32-s3-tbeam": [
@@ -5046,6 +5780,19 @@
           "unstable"
         ],
         "esp32-s3-heltec": [
+          "__bluetooth",
+          "__usb_otg",
+          "critical-section",
+          "default",
+          "esp32c6",
+          "esp32s3",
+          "exception-handler",
+          "float-save-restore",
+          "requires-unstable",
+          "rt",
+          "unstable"
+        ],
+        "esp32-s3-heltec-r8": [
           "__bluetooth",
           "__usb_otg",
           "critical-section",
@@ -5099,6 +5846,13 @@
           "rtc-fast",
           "rtc-slow"
         ],
+        "esp32-s3-heltec-r8": [
+          "__esp_idf_bootloader",
+          "has-lp-core",
+          "has-ulp-core",
+          "rtc-fast",
+          "rtc-slow"
+        ],
         "esp32-s3-tbeam": [
           "__esp_idf_bootloader",
           "has-lp-core",
@@ -5132,6 +5886,12 @@
           "esp32c6",
           "esp32s3"
         ],
+        "esp32-s3-heltec-r8": [
+          "_device-selected",
+          "build-script",
+          "esp32c6",
+          "esp32s3"
+        ],
         "esp32-s3-tbeam": [
           "_device-selected",
           "build-script",
@@ -5160,6 +5920,10 @@
           "esp32c6",
           "esp32s3"
         ],
+        "esp32-s3-heltec-r8": [
+          "esp32c6",
+          "esp32s3"
+        ],
         "esp32-s3-tbeam": [
           "esp32c6",
           "esp32s3"
@@ -5185,6 +5949,12 @@
           "log-04"
         ],
         "esp32-s3-heltec": [
+          "esp32c6",
+          "esp32s3",
+          "jtag-serial",
+          "log-04"
+        ],
+        "esp32-s3-heltec-r8": [
           "esp32c6",
           "esp32s3",
           "jtag-serial",
@@ -5234,6 +6004,18 @@
           "wifi",
           "xtensa-lx-rt"
         ],
+        "esp32-s3-heltec-r8": [
+          "__has_unstable_feature_enabled",
+          "ble",
+          "coex",
+          "esp-alloc",
+          "esp-now",
+          "esp32c6",
+          "esp32s3",
+          "unstable",
+          "wifi",
+          "xtensa-lx-rt"
+        ],
         "esp32-s3-tbeam": [
           "__has_unstable_feature_enabled",
           "ble",
@@ -5267,6 +6049,12 @@
           "ipc-implementations"
         ],
         "esp32-s3-heltec": [
+          "esp-sync",
+          "esp32c6",
+          "esp32s3",
+          "ipc-implementations"
+        ],
+        "esp32-s3-heltec-r8": [
           "esp-sync",
           "esp32c6",
           "esp32s3",
@@ -5317,6 +6105,10 @@
           "esp32c6",
           "esp32s3"
         ],
+        "esp32-s3-heltec-r8": [
+          "esp32c6",
+          "esp32s3"
+        ],
         "esp32-s3-tbeam": [
           "esp32c6",
           "esp32s3"
@@ -5344,6 +6136,14 @@
           "esp32s3"
         ],
         "esp32-s3-heltec": [
+          "alloc",
+          "default",
+          "embassy",
+          "esp-radio",
+          "esp32c6",
+          "esp32s3"
+        ],
+        "esp32-s3-heltec-r8": [
           "alloc",
           "default",
           "embassy",
@@ -5381,6 +6181,10 @@
           "esp32c6",
           "esp32s3"
         ],
+        "esp32-s3-heltec-r8": [
+          "esp32c6",
+          "esp32s3"
+        ],
         "esp32-s3-tbeam": [
           "esp32c6",
           "esp32s3"
@@ -5404,6 +6208,10 @@
           "fs"
         ],
         "esp32-s3-heltec": [
+          "esp32sx",
+          "fs"
+        ],
+        "esp32-s3-heltec-r8": [
           "esp32sx",
           "fs"
         ],
@@ -5431,6 +6239,9 @@
         "esp32-s3-heltec": [
           "default"
         ],
+        "esp32-s3-heltec-r8": [
+          "default"
+        ],
         "esp32-s3-tbeam": [
           "default"
         ]
@@ -5452,6 +6263,9 @@
           "default"
         ],
         "esp32-s3-heltec": [
+          "default"
+        ],
+        "esp32-s3-heltec-r8": [
           "default"
         ],
         "esp32-s3-tbeam": [
@@ -5477,6 +6291,11 @@
           "rt"
         ],
         "esp32-s3-heltec": [
+          "critical-section",
+          "default",
+          "rt"
+        ],
+        "esp32-s3-heltec-r8": [
           "critical-section",
           "default",
           "rt"
@@ -5510,6 +6329,11 @@
           "default",
           "rt"
         ],
+        "esp32-s3-heltec-r8": [
+          "critical-section",
+          "default",
+          "rt"
+        ],
         "esp32-s3-tbeam": [
           "critical-section",
           "default",
@@ -5535,6 +6359,11 @@
           "rt"
         ],
         "esp32-s3-heltec": [
+          "critical-section",
+          "default",
+          "rt"
+        ],
+        "esp32-s3-heltec-r8": [
           "critical-section",
           "default",
           "rt"
@@ -5568,6 +6397,11 @@
           "default",
           "rt"
         ],
+        "esp32-s3-heltec-r8": [
+          "critical-section",
+          "default",
+          "rt"
+        ],
         "esp32-s3-tbeam": [
           "critical-section",
           "default",
@@ -5593,6 +6427,11 @@
           "rt"
         ],
         "esp32-s3-heltec": [
+          "critical-section",
+          "default",
+          "rt"
+        ],
+        "esp32-s3-heltec-r8": [
           "critical-section",
           "default",
           "rt"
@@ -5626,6 +6465,11 @@
           "default",
           "rt"
         ],
+        "esp32-s3-heltec-r8": [
+          "critical-section",
+          "default",
+          "rt"
+        ],
         "esp32-s3-tbeam": [
           "critical-section",
           "default",
@@ -5651,6 +6495,11 @@
           "rt"
         ],
         "esp32-s3-heltec": [
+          "critical-section",
+          "default",
+          "rt"
+        ],
+        "esp32-s3-heltec-r8": [
           "critical-section",
           "default",
           "rt"
@@ -5759,6 +6608,21 @@
           "default",
           "std"
         ],
+        "host-c-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "host-c-macos": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "host-c-windows": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "ios": [
           "alloc",
           "default",
@@ -5799,7 +6663,8 @@
         "daemon-linux": [],
         "desktop-linux": [],
         "desktop-macos": [],
-        "desktop-windows": []
+        "desktop-windows": [],
+        "host-c-linux": []
       },
       "name": "find-msvc-tools",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -5863,6 +6728,11 @@
           "miniz_oxide",
           "rust_backend"
         ],
+        "esp32-s3-heltec-r8": [
+          "any_impl",
+          "miniz_oxide",
+          "rust_backend"
+        ],
         "esp32-s3-tbeam": [
           "any_impl",
           "miniz_oxide",
@@ -5913,6 +6783,11 @@
           "ratio"
         ],
         "esp32-s3-heltec": [
+          "default",
+          "num-traits",
+          "ratio"
+        ],
+        "esp32-s3-heltec-r8": [
           "default",
           "num-traits",
           "ratio"
@@ -6020,7 +6895,15 @@
           "default",
           "std"
         ],
+        "esp32-s3-heltec-r8": [
+          "default",
+          "std"
+        ],
         "esp32-s3-tbeam": [
+          "default",
+          "std"
+        ],
+        "host-c-linux": [
           "default",
           "std"
         ],
@@ -6124,6 +7007,9 @@
         "esp32-s3-heltec": [
           "default"
         ],
+        "esp32-s3-heltec-r8": [
+          "default"
+        ],
         "esp32-s3-tbeam": [
           "default"
         ]
@@ -6213,6 +7099,14 @@
           "futures-executor",
           "std"
         ],
+        "esp32-s3-heltec-r8": [
+          "alloc",
+          "async-await",
+          "default",
+          "executor",
+          "futures-executor",
+          "std"
+        ],
         "esp32-s3-tbeam": [
           "alloc",
           "async-await",
@@ -6240,6 +7134,44 @@
         "tokens": 0
       },
       "version": "0.3.32"
+    },
+    {
+      "graphs": {
+        "host-c-linux": [
+          "alloc",
+          "async-await",
+          "default",
+          "executor",
+          "futures-executor",
+          "std"
+        ],
+        "host-c-macos": [
+          "alloc",
+          "async-await",
+          "default",
+          "executor",
+          "futures-executor",
+          "std"
+        ],
+        "host-c-windows": [
+          "alloc",
+          "async-await",
+          "default",
+          "executor",
+          "futures-executor",
+          "std"
+        ]
+      },
+      "name": "futures",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.3.33"
     },
     {
       "graphs": {
@@ -6300,6 +7232,13 @@
           "std"
         ],
         "esp32-s3-heltec": [
+          "alloc",
+          "default",
+          "futures-sink",
+          "sink",
+          "std"
+        ],
+        "esp32-s3-heltec-r8": [
           "alloc",
           "default",
           "futures-sink",
@@ -6341,6 +7280,41 @@
     },
     {
       "graphs": {
+        "host-c-linux": [
+          "alloc",
+          "default",
+          "futures-sink",
+          "sink",
+          "std"
+        ],
+        "host-c-macos": [
+          "alloc",
+          "default",
+          "futures-sink",
+          "sink",
+          "std"
+        ],
+        "host-c-windows": [
+          "alloc",
+          "default",
+          "futures-sink",
+          "sink",
+          "std"
+        ]
+      },
+      "name": "futures-channel",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 11,
+        "externs": 0,
+        "functions": 3,
+        "impls": 8,
+        "tokens": 22
+      },
+      "version": "0.3.33"
+    },
+    {
+      "graphs": {
         "android": [
           "alloc",
           "default",
@@ -6386,6 +7360,11 @@
           "std"
         ],
         "esp32-s3-heltec": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "esp32-s3-heltec-r8": [
           "alloc",
           "default",
           "std"
@@ -6423,6 +7402,35 @@
     },
     {
       "graphs": {
+        "host-c-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "host-c-macos": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "host-c-windows": [
+          "alloc",
+          "default",
+          "std"
+        ]
+      },
+      "name": "futures-core",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 3,
+        "externs": 0,
+        "functions": 0,
+        "impls": 2,
+        "tokens": 5
+      },
+      "version": "0.3.33"
+    },
+    {
+      "graphs": {
         "android": [
           "std"
         ],
@@ -6454,6 +7462,9 @@
         "esp32-s3-heltec": [
           "std"
         ],
+        "esp32-s3-heltec-r8": [
+          "std"
+        ],
         "esp32-s3-tbeam": [
           "std"
         ],
@@ -6474,6 +7485,29 @@
     },
     {
       "graphs": {
+        "host-c-linux": [
+          "std"
+        ],
+        "host-c-macos": [
+          "std"
+        ],
+        "host-c-windows": [
+          "std"
+        ]
+      },
+      "name": "futures-executor",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 4,
+        "externs": 0,
+        "functions": 3,
+        "impls": 2,
+        "tokens": 9
+      },
+      "version": "0.3.33"
+    },
+    {
+      "graphs": {
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -6483,6 +7517,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "futures-intrusive",
@@ -6535,6 +7570,9 @@
         "esp32-s3-heltec": [
           "std"
         ],
+        "esp32-s3-heltec-r8": [
+          "std"
+        ],
         "esp32-s3-tbeam": [
           "std"
         ],
@@ -6555,6 +7593,29 @@
         "tokens": 0
       },
       "version": "0.3.32"
+    },
+    {
+      "graphs": {
+        "host-c-linux": [
+          "std"
+        ],
+        "host-c-macos": [
+          "std"
+        ],
+        "host-c-windows": [
+          "std"
+        ]
+      },
+      "name": "futures-io",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.3.33"
     },
     {
       "graphs": {
@@ -6596,6 +7657,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "ios": [],
         "nrf52840": []
@@ -6610,6 +7672,23 @@
         "tokens": 2
       },
       "version": "0.3.32"
+    },
+    {
+      "graphs": {
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": []
+      },
+      "name": "futures-macro",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 2,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 2
+      },
+      "version": "0.3.33"
     },
     {
       "graphs": {
@@ -6654,6 +7733,10 @@
           "alloc",
           "std"
         ],
+        "esp32-s3-heltec-r8": [
+          "alloc",
+          "std"
+        ],
         "esp32-s3-tbeam": [
           "alloc",
           "std"
@@ -6677,6 +7760,35 @@
         "tokens": 2
       },
       "version": "0.3.32"
+    },
+    {
+      "graphs": {
+        "host-c-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "host-c-macos": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "host-c-windows": [
+          "alloc",
+          "default",
+          "std"
+        ]
+      },
+      "name": "futures-sink",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 2,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 2
+      },
+      "version": "0.3.33"
     },
     {
       "graphs": {
@@ -6720,6 +7832,10 @@
           "alloc",
           "std"
         ],
+        "esp32-s3-heltec-r8": [
+          "alloc",
+          "std"
+        ],
         "esp32-s3-tbeam": [
           "alloc",
           "std"
@@ -6747,6 +7863,32 @@
         "tokens": 64
       },
       "version": "0.3.32"
+    },
+    {
+      "graphs": {
+        "host-c-linux": [
+          "alloc",
+          "std"
+        ],
+        "host-c-macos": [
+          "alloc",
+          "std"
+        ],
+        "host-c-windows": [
+          "alloc",
+          "std"
+        ]
+      },
+      "name": "futures-task",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 27,
+        "externs": 0,
+        "functions": 24,
+        "impls": 12,
+        "tokens": 64
+      },
+      "version": "0.3.33"
     },
     {
       "graphs": {
@@ -6917,6 +8059,21 @@
           "slab",
           "std"
         ],
+        "esp32-s3-heltec-r8": [
+          "alloc",
+          "async-await",
+          "async-await-macro",
+          "channel",
+          "futures-channel",
+          "futures-io",
+          "futures-macro",
+          "futures-sink",
+          "io",
+          "memchr",
+          "sink",
+          "slab",
+          "std"
+        ],
         "esp32-s3-tbeam": [
           "alloc",
           "async-await",
@@ -6981,8 +8138,68 @@
     },
     {
       "graphs": {
+        "host-c-linux": [
+          "alloc",
+          "async-await",
+          "async-await-macro",
+          "channel",
+          "futures-channel",
+          "futures-io",
+          "futures-macro",
+          "futures-sink",
+          "io",
+          "memchr",
+          "sink",
+          "slab",
+          "std"
+        ],
+        "host-c-macos": [
+          "alloc",
+          "async-await",
+          "async-await-macro",
+          "channel",
+          "futures-channel",
+          "futures-io",
+          "futures-macro",
+          "futures-sink",
+          "io",
+          "memchr",
+          "sink",
+          "slab",
+          "std"
+        ],
+        "host-c-windows": [
+          "alloc",
+          "async-await",
+          "async-await-macro",
+          "channel",
+          "futures-channel",
+          "futures-io",
+          "futures-macro",
+          "futures-sink",
+          "io",
+          "memchr",
+          "sink",
+          "slab",
+          "std"
+        ]
+      },
+      "name": "futures-util",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 84,
+        "externs": 0,
+        "functions": 20,
+        "impls": 32,
+        "tokens": 136
+      },
+      "version": "0.3.33"
+    },
+    {
+      "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "gcd",
@@ -7028,7 +8245,19 @@
         "esp32-s3-heltec": [
           "more_lengths"
         ],
+        "esp32-s3-heltec-r8": [
+          "more_lengths"
+        ],
         "esp32-s3-tbeam": [
+          "more_lengths"
+        ],
+        "host-c-linux": [
+          "more_lengths"
+        ],
+        "host-c-macos": [
+          "more_lengths"
+        ],
+        "host-c-windows": [
           "more_lengths"
         ],
         "ios": [
@@ -7077,7 +8306,11 @@
         ],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": []
       },
@@ -7104,6 +8337,15 @@
           "std"
         ],
         "engine": [
+          "std"
+        ],
+        "host-c-linux": [
+          "std"
+        ],
+        "host-c-macos": [
+          "std"
+        ],
+        "host-c-windows": [
           "std"
         ]
       },
@@ -7150,7 +8392,11 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": []
       },
@@ -7192,7 +8438,11 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -7237,6 +8487,15 @@
         ],
         "daemon-windows": [
           "raw"
+        ],
+        "host-c-linux": [
+          "raw"
+        ],
+        "host-c-macos": [
+          "raw"
+        ],
+        "host-c-windows": [
+          "raw"
         ]
       },
       "name": "hashbrown",
@@ -7259,7 +8518,9 @@
         "desktop-macos": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
-        "esp32-s3-tbeam": []
+        "esp32-s3-heltec-r8": [],
+        "esp32-s3-tbeam": [],
+        "host-c-macos": []
       },
       "name": "hashbrown",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -7284,7 +8545,11 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -7311,7 +8576,11 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": []
       },
@@ -7357,7 +8626,9 @@
         "desktop-linux": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
-        "esp32-s3-tbeam": []
+        "esp32-s3-heltec-r8": [],
+        "esp32-s3-tbeam": [],
+        "host-c-linux": []
       },
       "name": "heck",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -7378,6 +8649,11 @@
           "std"
         ],
         "desktop-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "host-c-linux": [
           "alloc",
           "default",
           "std"
@@ -7406,7 +8682,11 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -7434,7 +8714,11 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -7454,7 +8738,10 @@
       "graphs": {
         "daemon-linux": [],
         "daemon-macos": [],
-        "daemon-windows": []
+        "daemon-windows": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": []
       },
       "name": "home",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -7475,6 +8762,23 @@
       },
       "name": "hopspot-heltec-v4",
       "source": "personal-hopspot/embedded/esp32/boards/heltec-v4",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.0"
+    },
+    {
+      "graphs": {
+        "esp32-s3-heltec-r8": [
+          "default"
+        ]
+      },
+      "name": "hopspot-heltec-v4-r8",
+      "source": "personal-hopspot/embedded/esp32/boards/heltec-v4-r8",
       "unsafe": {
         "blocks": 0,
         "externs": 0,
@@ -7544,6 +8848,32 @@
     },
     {
       "graphs": {
+        "host-c-linux": [
+          "default",
+          "std"
+        ],
+        "host-c-macos": [
+          "default",
+          "std"
+        ],
+        "host-c-windows": [
+          "default",
+          "std"
+        ]
+      },
+      "name": "http",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 52,
+        "externs": 0,
+        "functions": 3,
+        "impls": 10,
+        "tokens": 65
+      },
+      "version": "1.5.0"
+    },
+    {
+      "graphs": {
         "daemon-linux": [
           "default",
           "std"
@@ -7553,6 +8883,18 @@
           "std"
         ],
         "daemon-windows": [
+          "default",
+          "std"
+        ],
+        "host-c-linux": [
+          "default",
+          "std"
+        ],
+        "host-c-macos": [
+          "default",
+          "std"
+        ],
+        "host-c-windows": [
           "default",
           "std"
         ]
@@ -7577,6 +8919,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "ios": [],
         "nrf52840": []
@@ -7597,6 +8940,9 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "wasm": []
       },
       "name": "hybrid-array",
@@ -7764,7 +9110,9 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
         "nrf52840": []
       },
       "name": "ident_case",
@@ -7841,7 +9189,11 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": []
       },
       "name": "if-addrs",
@@ -7931,7 +9283,15 @@
           "default",
           "std"
         ],
+        "esp32-s3-heltec-r8": [
+          "default",
+          "std"
+        ],
         "esp32-s3-tbeam": [
+          "default",
+          "std"
+        ],
+        "host-c-macos": [
           "default",
           "std"
         ]
@@ -7951,6 +9311,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "indoc",
@@ -7996,7 +9357,19 @@
         "esp32-s3-heltec": [
           "block-padding"
         ],
+        "esp32-s3-heltec-r8": [
+          "block-padding"
+        ],
         "esp32-s3-tbeam": [
+          "block-padding"
+        ],
+        "host-c-linux": [
+          "block-padding"
+        ],
+        "host-c-macos": [
+          "block-padding"
+        ],
+        "host-c-windows": [
           "block-padding"
         ],
         "ios": [
@@ -8024,6 +9397,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "instability",
@@ -8090,7 +9464,23 @@
           "default",
           "std"
         ],
+        "esp32-s3-heltec-r8": [
+          "default",
+          "std"
+        ],
         "esp32-s3-tbeam": [
+          "default",
+          "std"
+        ],
+        "host-c-linux": [
+          "default",
+          "std"
+        ],
+        "host-c-macos": [
+          "default",
+          "std"
+        ],
+        "host-c-windows": [
           "default",
           "std"
         ]
@@ -8156,6 +9546,11 @@
           "default",
           "use_alloc",
           "use_std"
+        ],
+        "host-c-linux": [
+          "default",
+          "use_alloc",
+          "use_std"
         ]
       },
       "name": "itertools",
@@ -8178,7 +9573,11 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
-        "esp32-s3-tbeam": []
+        "esp32-s3-heltec-r8": [],
+        "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": []
       },
       "name": "itoa",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -8198,6 +9597,10 @@
           "std"
         ],
         "esp32-s3-heltec": [
+          "alloc",
+          "std"
+        ],
+        "esp32-s3-heltec-r8": [
           "alloc",
           "std"
         ],
@@ -8381,7 +9784,8 @@
         "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
-        "desktop-windows": []
+        "desktop-windows": [],
+        "host-c-linux": []
       },
       "name": "lazy_static",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -8423,7 +9827,19 @@
         "esp32-s3-heltec": [
           "rust-allocator"
         ],
+        "esp32-s3-heltec-r8": [
+          "rust-allocator"
+        ],
         "esp32-s3-tbeam": [
+          "rust-allocator"
+        ],
+        "host-c-linux": [
+          "rust-allocator"
+        ],
+        "host-c-macos": [
+          "rust-allocator"
+        ],
+        "host-c-windows": [
           "rust-allocator"
         ],
         "ios": [
@@ -8494,6 +9910,11 @@
           "extra_traits",
           "std"
         ],
+        "esp32-s3-heltec-r8": [
+          "default",
+          "extra_traits",
+          "std"
+        ],
         "esp32-s3-tbeam": [
           "default",
           "extra_traits",
@@ -8518,6 +9939,30 @@
     },
     {
       "graphs": {
+        "host-c-linux": [
+          "default",
+          "extra_traits",
+          "std"
+        ],
+        "host-c-macos": [
+          "default",
+          "extra_traits",
+          "std"
+        ]
+      },
+      "name": "libc",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 96,
+        "externs": 196,
+        "functions": 365,
+        "impls": 10,
+        "tokens": 667
+      },
+      "version": "0.2.189"
+    },
+    {
+      "graphs": {
         "daemon-linux": [
           "cc",
           "default",
@@ -8527,6 +9972,12 @@
         "desktop-linux": [
           "default",
           "pkg-config"
+        ],
+        "host-c-linux": [
+          "cc",
+          "default",
+          "pkg-config",
+          "vendored"
         ]
       },
       "name": "libdbus-sys",
@@ -8561,6 +10012,9 @@
           "const_mut_refs"
         ],
         "esp32-s3-heltec": [
+          "const_mut_refs"
+        ],
+        "esp32-s3-heltec-r8": [
           "const_mut_refs"
         ],
         "esp32-s3-tbeam": [
@@ -8615,6 +10069,14 @@
           "general",
           "ioctl",
           "no_std"
+        ],
+        "host-c-linux": [
+          "auxvec",
+          "elf",
+          "errno",
+          "general",
+          "ioctl",
+          "no_std"
         ]
       },
       "name": "linux-raw-sys",
@@ -8656,7 +10118,11 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": []
       },
@@ -8709,7 +10175,23 @@
           "atomic_usize",
           "default"
         ],
+        "esp32-s3-heltec-r8": [
+          "atomic_usize",
+          "default"
+        ],
         "esp32-s3-tbeam": [
+          "atomic_usize",
+          "default"
+        ],
+        "host-c-linux": [
+          "atomic_usize",
+          "default"
+        ],
+        "host-c-macos": [
+          "atomic_usize",
+          "default"
+        ],
+        "host-c-windows": [
           "atomic_usize",
           "default"
         ]
@@ -8732,6 +10214,10 @@
           "std"
         ],
         "esp32-s3-heltec": [
+          "release_max_level_info",
+          "std"
+        ],
+        "esp32-s3-heltec-r8": [
           "release_max_level_info",
           "std"
         ],
@@ -8790,6 +10276,15 @@
         ],
         "desktop-windows": [
           "std"
+        ],
+        "host-c-linux": [
+          "std"
+        ],
+        "host-c-macos": [
+          "std"
+        ],
+        "host-c-windows": [
+          "std"
         ]
       },
       "name": "log",
@@ -8841,7 +10336,23 @@
           "default",
           "std"
         ],
+        "esp32-s3-heltec-r8": [
+          "default",
+          "std"
+        ],
         "esp32-s3-tbeam": [
+          "default",
+          "std"
+        ],
+        "host-c-linux": [
+          "default",
+          "std"
+        ],
+        "host-c-macos": [
+          "default",
+          "std"
+        ],
+        "host-c-windows": [
           "default",
           "std"
         ]
@@ -8864,6 +10375,10 @@
           "std"
         ],
         "desktop-linux": [
+          "default",
+          "std"
+        ],
+        "host-c-linux": [
           "default",
           "std"
         ]
@@ -8925,7 +10440,19 @@
         "esp32-s3-heltec": [
           "map"
         ],
+        "esp32-s3-heltec-r8": [
+          "map"
+        ],
         "esp32-s3-tbeam": [
+          "map"
+        ],
+        "host-c-linux": [
+          "map"
+        ],
+        "host-c-macos": [
+          "map"
+        ],
+        "host-c-windows": [
           "map"
         ],
         "ios": [
@@ -8946,6 +10473,13 @@
     {
       "graphs": {
         "esp32-s3-heltec": [
+          "default",
+          "macros",
+          "syn",
+          "syn1",
+          "syn2"
+        ],
+        "esp32-s3-heltec-r8": [
           "default",
           "macros",
           "syn",
@@ -8974,6 +10508,7 @@
     {
       "graphs": {
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "manyhow-macros",
@@ -9010,6 +10545,11 @@
     {
       "graphs": {
         "esp32-s3-heltec": [
+          "default",
+          "doctests",
+          "pulldown-cmark"
+        ],
+        "esp32-s3-heltec-r8": [
           "default",
           "doctests",
           "pulldown-cmark"
@@ -9135,6 +10675,11 @@
           "default",
           "std"
         ],
+        "esp32-s3-heltec-r8": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "esp32-s3-tbeam": [
           "alloc",
           "default",
@@ -9193,6 +10738,35 @@
     },
     {
       "graphs": {
+        "host-c-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "host-c-macos": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "host-c-windows": [
+          "alloc",
+          "default",
+          "std"
+        ]
+      },
+      "name": "memchr",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 113,
+        "externs": 0,
+        "functions": 218,
+        "impls": 2,
+        "tokens": 333
+      },
+      "version": "2.8.3"
+    },
+    {
+      "graphs": {
         "android": [],
         "desktop-linux": [],
         "desktop-macos": [],
@@ -9200,6 +10774,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "ios": [],
         "nrf52840": [],
@@ -9248,6 +10823,11 @@
           "with-alloc"
         ],
         "esp32-s3-heltec": [
+          "simd",
+          "simd-adler32",
+          "with-alloc"
+        ],
+        "esp32-s3-heltec-r8": [
           "simd",
           "simd-adler32",
           "with-alloc"
@@ -9322,6 +10902,11 @@
           "os-ext",
           "os-poll"
         ],
+        "esp32-s3-heltec-r8": [
+          "net",
+          "os-ext",
+          "os-poll"
+        ],
         "esp32-s3-tbeam": [
           "net",
           "os-ext",
@@ -9348,6 +10933,35 @@
         "tokens": 146
       },
       "version": "1.2.1"
+    },
+    {
+      "graphs": {
+        "host-c-linux": [
+          "net",
+          "os-ext",
+          "os-poll"
+        ],
+        "host-c-macos": [
+          "net",
+          "os-ext",
+          "os-poll"
+        ],
+        "host-c-windows": [
+          "net",
+          "os-ext",
+          "os-poll"
+        ]
+      },
+      "name": "mio",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 105,
+        "externs": 0,
+        "functions": 28,
+        "impls": 21,
+        "tokens": 154
+      },
+      "version": "1.2.2"
     },
     {
       "graphs": {
@@ -9444,9 +11058,15 @@
         "esp32-s3-heltec": [
           "unstable"
         ],
+        "esp32-s3-heltec-r8": [
+          "unstable"
+        ],
         "esp32-s3-tbeam": [
           "unstable"
         ],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": [
           "unstable"
@@ -9474,7 +11094,11 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": []
       },
@@ -9560,7 +11184,31 @@
           "default",
           "gateway"
         ],
+        "esp32-s3-heltec-r8": [
+          "android-extra",
+          "apple-system-configuration-extra",
+          "default",
+          "gateway"
+        ],
         "esp32-s3-tbeam": [
+          "android-extra",
+          "apple-system-configuration-extra",
+          "default",
+          "gateway"
+        ],
+        "host-c-linux": [
+          "android-extra",
+          "apple-system-configuration-extra",
+          "default",
+          "gateway"
+        ],
+        "host-c-macos": [
+          "android-extra",
+          "apple-system-configuration-extra",
+          "default",
+          "gateway"
+        ],
+        "host-c-windows": [
           "android-extra",
           "apple-system-configuration-extra",
           "default",
@@ -9582,7 +11230,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
-        "desktop-linux": []
+        "desktop-linux": [],
+        "host-c-linux": []
       },
       "name": "netlink-packet-core",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -9599,7 +11248,8 @@
       "graphs": {
         "android": [],
         "daemon-linux": [],
-        "desktop-linux": []
+        "desktop-linux": [],
+        "host-c-linux": []
       },
       "name": "netlink-packet-route",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -9622,6 +11272,9 @@
         ],
         "desktop-linux": [
           "default"
+        ],
+        "host-c-linux": [
+          "default"
         ]
       },
       "name": "netlink-sys",
@@ -9641,6 +11294,9 @@
           "ioctl"
         ],
         "desktop-linux": [
+          "ioctl"
+        ],
+        "host-c-linux": [
           "ioctl"
         ]
       },
@@ -9842,7 +11498,8 @@
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
-        "desktop-macos": []
+        "desktop-macos": [],
+        "host-c-macos": []
       },
       "name": "num-conv",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -9861,7 +11518,9 @@
         "desktop-linux": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
-        "esp32-s3-tbeam": []
+        "esp32-s3-heltec-r8": [],
+        "esp32-s3-tbeam": [],
+        "host-c-linux": []
       },
       "name": "num-derive",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -9965,7 +11624,23 @@
           "default",
           "std"
         ],
+        "esp32-s3-heltec-r8": [
+          "default",
+          "std"
+        ],
         "esp32-s3-tbeam": [
+          "default",
+          "std"
+        ],
+        "host-c-linux": [
+          "default",
+          "std"
+        ],
+        "host-c-macos": [
+          "default",
+          "std"
+        ],
+        "host-c-windows": [
           "default",
           "std"
         ],
@@ -10064,6 +11739,10 @@
         "daemon-macos": [
           "alloc",
           "std"
+        ],
+        "host-c-macos": [
+          "alloc",
+          "std"
         ]
       },
       "name": "objc-sys",
@@ -10083,6 +11762,11 @@
           "alloc",
           "default",
           "relax-sign-encoding",
+          "std"
+        ],
+        "host-c-macos": [
+          "alloc",
+          "default",
           "std"
         ]
       },
@@ -10105,6 +11789,11 @@
           "std"
         ],
         "desktop-macos": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "host-c-macos": [
           "alloc",
           "default",
           "std"
@@ -10247,6 +11936,22 @@
           "alloc",
           "bitflags",
           "std"
+        ],
+        "host-c-macos": [
+          "CBAdvertisementData",
+          "CBAttribute",
+          "CBCentralManager",
+          "CBCentralManagerConstants",
+          "CBCharacteristic",
+          "CBDescriptor",
+          "CBManager",
+          "CBPeer",
+          "CBPeripheral",
+          "CBService",
+          "CBUUID",
+          "alloc",
+          "bitflags",
+          "std"
         ]
       },
       "name": "objc2-core-bluetooth",
@@ -10289,6 +11994,32 @@
           "std"
         ],
         "desktop-macos": [
+          "CBATTRequest",
+          "CBAdvertisementData",
+          "CBAttribute",
+          "CBCentral",
+          "CBCentralManager",
+          "CBCentralManagerConstants",
+          "CBCharacteristic",
+          "CBDefines",
+          "CBDescriptor",
+          "CBError",
+          "CBL2CAPChannel",
+          "CBManager",
+          "CBPeer",
+          "CBPeripheral",
+          "CBPeripheralManager",
+          "CBPeripheralManagerConstants",
+          "CBService",
+          "CBUUID",
+          "alloc",
+          "bitflags",
+          "default",
+          "dispatch2",
+          "objc2-core-foundation",
+          "std"
+        ],
+        "host-c-macos": [
           "CBATTRequest",
           "CBAdvertisementData",
           "CBAttribute",
@@ -10429,6 +12160,61 @@
           "std"
         ],
         "desktop-macos": [
+          "CFArray",
+          "CFAttributedString",
+          "CFAvailability",
+          "CFBag",
+          "CFBinaryHeap",
+          "CFBitVector",
+          "CFBundle",
+          "CFByteOrder",
+          "CFCGTypes",
+          "CFCalendar",
+          "CFCharacterSet",
+          "CFData",
+          "CFDate",
+          "CFDateFormatter",
+          "CFDictionary",
+          "CFError",
+          "CFFileDescriptor",
+          "CFFileSecurity",
+          "CFLocale",
+          "CFMachPort",
+          "CFMessagePort",
+          "CFNotificationCenter",
+          "CFNumber",
+          "CFNumberFormatter",
+          "CFPlugIn",
+          "CFPlugInCOM",
+          "CFPreferences",
+          "CFPropertyList",
+          "CFRunLoop",
+          "CFSet",
+          "CFSocket",
+          "CFStream",
+          "CFString",
+          "CFStringEncodingExt",
+          "CFStringTokenizer",
+          "CFTimeZone",
+          "CFTree",
+          "CFURL",
+          "CFURLAccess",
+          "CFURLEnumerator",
+          "CFUUID",
+          "CFUserNotification",
+          "CFUtilities",
+          "CFXMLNode",
+          "CFXMLParser",
+          "alloc",
+          "bitflags",
+          "block2",
+          "default",
+          "dispatch2",
+          "libc",
+          "objc2",
+          "std"
+        ],
+        "host-c-macos": [
           "CFArray",
           "CFAttributedString",
           "CFAvailability",
@@ -10634,6 +12420,24 @@
           "objc2-security",
           "objc2-security-foundation",
           "std"
+        ],
+        "host-c-macos": [
+          "CWChannel",
+          "CWConfiguration",
+          "CWInterface",
+          "CWNetwork",
+          "CWNetworkProfile",
+          "CWWiFiClient",
+          "CoreWLANConstants",
+          "CoreWLANTypes",
+          "CoreWLANUtil",
+          "alloc",
+          "bitflags",
+          "default",
+          "objc2-core-foundation",
+          "objc2-security",
+          "objc2-security-foundation",
+          "std"
         ]
       },
       "name": "objc2-core-wlan",
@@ -10654,6 +12458,10 @@
           "std"
         ],
         "desktop-macos": [
+          "alloc",
+          "std"
+        ],
+        "host-c-macos": [
           "alloc",
           "std"
         ],
@@ -10720,6 +12528,21 @@
           "block2",
           "default",
           "dispatch",
+          "std"
+        ],
+        "host-c-macos": [
+          "NSArray",
+          "NSData",
+          "NSDictionary",
+          "NSEnumerator",
+          "NSError",
+          "NSObject",
+          "NSString",
+          "NSUUID",
+          "NSValue",
+          "alloc",
+          "bitflags",
+          "block2",
           "std"
         ]
       },
@@ -10916,6 +12739,185 @@
           "std"
         ],
         "desktop-macos": [
+          "FoundationErrors",
+          "FoundationLegacySwiftCompatibility",
+          "NSAffineTransform",
+          "NSAppleEventDescriptor",
+          "NSAppleEventManager",
+          "NSAppleScript",
+          "NSArchiver",
+          "NSArray",
+          "NSAttributedString",
+          "NSAutoreleasePool",
+          "NSBackgroundActivityScheduler",
+          "NSBundle",
+          "NSByteCountFormatter",
+          "NSByteOrder",
+          "NSCache",
+          "NSCalendar",
+          "NSCalendarDate",
+          "NSCharacterSet",
+          "NSClassDescription",
+          "NSCoder",
+          "NSComparisonPredicate",
+          "NSCompoundPredicate",
+          "NSConnection",
+          "NSData",
+          "NSDate",
+          "NSDateComponentsFormatter",
+          "NSDateFormatter",
+          "NSDateInterval",
+          "NSDateIntervalFormatter",
+          "NSDebug",
+          "NSDecimal",
+          "NSDecimalNumber",
+          "NSDictionary",
+          "NSDistantObject",
+          "NSDistributedLock",
+          "NSDistributedNotificationCenter",
+          "NSEnergyFormatter",
+          "NSEnumerator",
+          "NSError",
+          "NSException",
+          "NSExpression",
+          "NSExtensionContext",
+          "NSExtensionItem",
+          "NSExtensionRequestHandling",
+          "NSFileCoordinator",
+          "NSFileHandle",
+          "NSFileManager",
+          "NSFilePresenter",
+          "NSFileVersion",
+          "NSFileWrapper",
+          "NSFormatter",
+          "NSGarbageCollector",
+          "NSGeometry",
+          "NSHFSFileTypes",
+          "NSHTTPCookie",
+          "NSHTTPCookieStorage",
+          "NSHashTable",
+          "NSHost",
+          "NSISO8601DateFormatter",
+          "NSIndexPath",
+          "NSIndexSet",
+          "NSInflectionRule",
+          "NSInvocation",
+          "NSItemProvider",
+          "NSJSONSerialization",
+          "NSKeyValueCoding",
+          "NSKeyValueObserving",
+          "NSKeyValueSharedObservers",
+          "NSKeyedArchiver",
+          "NSLengthFormatter",
+          "NSLinguisticTagger",
+          "NSListFormatter",
+          "NSLocale",
+          "NSLocalizedNumberFormatRule",
+          "NSLock",
+          "NSMapTable",
+          "NSMassFormatter",
+          "NSMeasurement",
+          "NSMeasurementFormatter",
+          "NSMetadata",
+          "NSMetadataAttributes",
+          "NSMethodSignature",
+          "NSMorphology",
+          "NSNetServices",
+          "NSNotification",
+          "NSNotificationQueue",
+          "NSNull",
+          "NSNumberFormatter",
+          "NSObjCRuntime",
+          "NSObject",
+          "NSObjectScripting",
+          "NSOperation",
+          "NSOrderedCollectionChange",
+          "NSOrderedCollectionDifference",
+          "NSOrderedSet",
+          "NSOrthography",
+          "NSPathUtilities",
+          "NSPersonNameComponents",
+          "NSPersonNameComponentsFormatter",
+          "NSPointerArray",
+          "NSPointerFunctions",
+          "NSPort",
+          "NSPortCoder",
+          "NSPortMessage",
+          "NSPortNameServer",
+          "NSPredicate",
+          "NSProcessInfo",
+          "NSProgress",
+          "NSPropertyList",
+          "NSProtocolChecker",
+          "NSProxy",
+          "NSRange",
+          "NSRegularExpression",
+          "NSRelativeDateTimeFormatter",
+          "NSRunLoop",
+          "NSScanner",
+          "NSScriptClassDescription",
+          "NSScriptCoercionHandler",
+          "NSScriptCommand",
+          "NSScriptCommandDescription",
+          "NSScriptExecutionContext",
+          "NSScriptKeyValueCoding",
+          "NSScriptObjectSpecifiers",
+          "NSScriptStandardSuiteCommands",
+          "NSScriptSuiteRegistry",
+          "NSScriptWhoseTests",
+          "NSSet",
+          "NSSortDescriptor",
+          "NSSpellServer",
+          "NSStream",
+          "NSString",
+          "NSTask",
+          "NSTermOfAddress",
+          "NSTextCheckingResult",
+          "NSThread",
+          "NSTimeZone",
+          "NSTimer",
+          "NSURL",
+          "NSURLAuthenticationChallenge",
+          "NSURLCache",
+          "NSURLConnection",
+          "NSURLCredential",
+          "NSURLCredentialStorage",
+          "NSURLDownload",
+          "NSURLError",
+          "NSURLHandle",
+          "NSURLProtectionSpace",
+          "NSURLProtocol",
+          "NSURLRequest",
+          "NSURLResponse",
+          "NSURLSession",
+          "NSUUID",
+          "NSUbiquitousKeyValueStore",
+          "NSUndoManager",
+          "NSUnit",
+          "NSUserActivity",
+          "NSUserDefaults",
+          "NSUserNotification",
+          "NSUserScriptTask",
+          "NSValue",
+          "NSValueTransformer",
+          "NSXMLDTD",
+          "NSXMLDTDNode",
+          "NSXMLDocument",
+          "NSXMLElement",
+          "NSXMLNode",
+          "NSXMLNodeOptions",
+          "NSXMLParser",
+          "NSXPCConnection",
+          "NSZone",
+          "alloc",
+          "bitflags",
+          "block2",
+          "default",
+          "libc",
+          "objc2-core-foundation",
+          "std"
+        ],
+        "host-c-macos": [
           "FoundationErrors",
           "FoundationLegacySwiftCompatibility",
           "NSAffineTransform",
@@ -11299,6 +13301,12 @@
           "serial",
           "std"
         ],
+        "host-c-macos": [
+          "alloc",
+          "libc",
+          "serial",
+          "std"
+        ],
         "ios": [
           "alloc",
           "libc",
@@ -11371,6 +13379,10 @@
         "desktop-macos": [
           "SecBase",
           "objc2"
+        ],
+        "host-c-macos": [
+          "SecBase",
+          "objc2"
         ]
       },
       "name": "objc2-security",
@@ -11390,6 +13402,9 @@
           "SFAuthorization"
         ],
         "desktop-macos": [
+          "SFAuthorization"
+        ],
+        "host-c-macos": [
           "SFAuthorization"
         ]
       },
@@ -11421,6 +13436,14 @@
           "SCPreferences",
           "SCSchemaDefinitions",
           "bitflags"
+        ],
+        "host-c-macos": [
+          "SCDynamicStore",
+          "SCDynamicStoreKey",
+          "SCNetworkConfiguration",
+          "SCPreferences",
+          "SCSchemaDefinitions",
+          "bitflags"
         ]
       },
       "name": "objc2-system-configuration",
@@ -11441,6 +13464,10 @@
           "read_core"
         ],
         "esp32-s3-heltec": [
+          "elf",
+          "read_core"
+        ],
+        "esp32-s3-heltec-r8": [
           "elf",
           "read_core"
         ],
@@ -11505,6 +13532,24 @@
           "std"
         ],
         "engine": [
+          "alloc",
+          "default",
+          "race",
+          "std"
+        ],
+        "host-c-linux": [
+          "alloc",
+          "default",
+          "race",
+          "std"
+        ],
+        "host-c-macos": [
+          "alloc",
+          "default",
+          "race",
+          "std"
+        ],
+        "host-c-windows": [
           "alloc",
           "default",
           "race",
@@ -11646,7 +13691,10 @@
       "graphs": {
         "daemon-linux": [],
         "daemon-macos": [],
-        "daemon-windows": []
+        "daemon-windows": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": []
       },
       "name": "parking_lot_core",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -11666,7 +13714,9 @@
         "desktop-linux": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
-        "esp32-s3-tbeam": []
+        "esp32-s3-heltec-r8": [],
+        "esp32-s3-tbeam": [],
+        "host-c-linux": []
       },
       "name": "paste",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -11757,6 +13807,7 @@
         ],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "ios": [
           "host"
@@ -11818,6 +13869,15 @@
           "usb",
           "wifi-auto"
         ],
+        "esp32-s3-heltec-r8": [
+          "bluetooth-auto",
+          "default",
+          "esp-now",
+          "lora",
+          "tcp",
+          "usb",
+          "wifi-auto"
+        ],
         "esp32-s3-tbeam": [
           "bluetooth-auto",
           "default",
@@ -11831,11 +13891,11 @@
       "name": "personal-hopspot-esp32",
       "source": "personal-hopspot/embedded/esp32",
       "unsafe": {
-        "blocks": 14,
+        "blocks": 18,
         "externs": 0,
-        "functions": 1,
-        "impls": 1,
-        "tokens": 16
+        "functions": 2,
+        "impls": 2,
+        "tokens": 22
       },
       "version": "0.1.0"
     },
@@ -12046,6 +14106,20 @@
           "usb",
           "wifi-auto"
         ],
+        "esp32-s3-heltec-r8": [
+          "alloc",
+          "bluetooth-auto",
+          "embassy-host",
+          "esp-now",
+          "external-alloc",
+          "flash",
+          "log",
+          "lora",
+          "tcp",
+          "tcp-dns",
+          "usb",
+          "wifi-auto"
+        ],
         "esp32-s3-tbeam": [
           "alloc",
           "bluetooth-auto",
@@ -12058,6 +14132,75 @@
           "tcp",
           "tcp-dns",
           "usb",
+          "wifi-auto"
+        ],
+        "host-c-linux": [
+          "alloc",
+          "ax25",
+          "backbone",
+          "bluetooth-auto",
+          "config",
+          "i2p",
+          "interface-discovery",
+          "kiss",
+          "parallel-persistence",
+          "parallel-resource-hash",
+          "pipe",
+          "rnode",
+          "serial",
+          "std",
+          "tcp",
+          "tokio-host",
+          "udp",
+          "usb",
+          "weave",
+          "websocket",
+          "wifi-auto"
+        ],
+        "host-c-macos": [
+          "alloc",
+          "ax25",
+          "backbone",
+          "bluetooth-auto",
+          "config",
+          "i2p",
+          "interface-discovery",
+          "kiss",
+          "parallel-persistence",
+          "parallel-resource-hash",
+          "pipe",
+          "rnode",
+          "serial",
+          "std",
+          "tcp",
+          "tokio-host",
+          "udp",
+          "usb",
+          "weave",
+          "websocket",
+          "wifi-auto"
+        ],
+        "host-c-windows": [
+          "alloc",
+          "ax25",
+          "backbone",
+          "bluetooth-auto",
+          "config",
+          "i2p",
+          "interface-discovery",
+          "kiss",
+          "parallel-persistence",
+          "parallel-resource-hash",
+          "pipe",
+          "rnode",
+          "serial",
+          "std",
+          "tcp",
+          "tokio-host",
+          "udp",
+          "usb",
+          "weave",
+          "websocket",
           "wifi-auto"
         ],
         "ios": [
@@ -12092,13 +14235,14 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.3.1"
+      "version": "0.3.2"
     },
     {
       "graphs": {
         "daemon-linux": [],
         "desktop-linux": [],
-        "engine": []
+        "engine": [],
+        "host-c-linux": []
       },
       "name": "pin-project",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -12115,7 +14259,8 @@
       "graphs": {
         "daemon-linux": [],
         "desktop-linux": [],
-        "engine": []
+        "engine": [],
+        "host-c-linux": []
       },
       "name": "pin-project-internal",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -12140,7 +14285,11 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -12161,7 +14310,8 @@
         "daemon-linux": [],
         "desktop-linux": [],
         "desktop-macos": [],
-        "desktop-windows": []
+        "desktop-windows": [],
+        "host-c-linux": []
       },
       "name": "pkg-config",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -12181,6 +14331,10 @@
           "serde"
         ],
         "desktop-macos": [
+          "default",
+          "serde"
+        ],
+        "host-c-macos": [
           "default",
           "serde"
         ]
@@ -12265,6 +14419,13 @@
           "require-cas",
           "unsafe-assume-single-core"
         ],
+        "esp32-s3-heltec-r8": [
+          "critical-section",
+          "default",
+          "fallback",
+          "require-cas",
+          "unsafe-assume-single-core"
+        ],
         "esp32-s3-tbeam": [
           "critical-section",
           "default",
@@ -12296,10 +14457,42 @@
     },
     {
       "graphs": {
+        "host-c-linux": [
+          "critical-section",
+          "default",
+          "fallback"
+        ],
+        "host-c-macos": [
+          "critical-section",
+          "default",
+          "fallback"
+        ],
+        "host-c-windows": [
+          "critical-section",
+          "default",
+          "fallback"
+        ]
+      },
+      "name": "portable-atomic",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 323,
+        "externs": 2,
+        "functions": 301,
+        "impls": 16,
+        "tokens": 642
+      },
+      "version": "1.14.0"
+    },
+    {
+      "graphs": {
         "esp32-c6": [
           "portable-atomic"
         ],
         "esp32-s3-heltec": [
+          "portable-atomic"
+        ],
+        "esp32-s3-heltec-r8": [
           "portable-atomic"
         ],
         "esp32-s3-tbeam": [
@@ -12321,6 +14514,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "portable_atomic_enum_macros",
@@ -12362,7 +14556,8 @@
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
-        "desktop-macos": []
+        "desktop-macos": [],
+        "host-c-macos": []
       },
       "name": "powerfmt",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -12392,6 +14587,18 @@
         "engine": [
           "simd",
           "std"
+        ],
+        "host-c-linux": [
+          "simd",
+          "std"
+        ],
+        "host-c-macos": [
+          "simd",
+          "std"
+        ],
+        "host-c-windows": [
+          "simd",
+          "std"
         ]
       },
       "name": "ppv-lite86",
@@ -12409,7 +14616,10 @@
       "graphs": {
         "daemon-linux": [],
         "daemon-macos": [],
-        "daemon-windows": []
+        "daemon-windows": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": []
       },
       "name": "prns-config",
       "source": "prns-config",
@@ -12420,7 +14630,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.3.1"
+      "version": "0.3.2"
     },
     {
       "graphs": {
@@ -12533,11 +14743,52 @@
           "std",
           "tokio-host"
         ],
+        "esp32-s3-heltec-r8": [
+          "alloc",
+          "embassy-host",
+          "external-alloc",
+          "flash",
+          "std",
+          "tokio-host"
+        ],
         "esp32-s3-tbeam": [
           "alloc",
           "embassy-host",
           "external-alloc",
           "flash",
+          "std",
+          "tokio-host"
+        ],
+        "host-c-linux": [
+          "alloc",
+          "embassy-host",
+          "flash",
+          "i2p",
+          "interface-discovery",
+          "parallel-persistence",
+          "parallel-resource-hash",
+          "std",
+          "tokio-host"
+        ],
+        "host-c-macos": [
+          "alloc",
+          "embassy-host",
+          "flash",
+          "i2p",
+          "interface-discovery",
+          "parallel-persistence",
+          "parallel-resource-hash",
+          "std",
+          "tokio-host"
+        ],
+        "host-c-windows": [
+          "alloc",
+          "embassy-host",
+          "flash",
+          "i2p",
+          "interface-discovery",
+          "parallel-persistence",
+          "parallel-resource-hash",
           "std",
           "tokio-host"
         ],
@@ -12572,7 +14823,7 @@
         "impls": 0,
         "tokens": 1
       },
-      "version": "0.3.1"
+      "version": "0.3.2"
     },
     {
       "graphs": {
@@ -12591,6 +14842,8 @@
         "desktop-windows": [
           "log"
         ],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [
           "default"
         ]
@@ -12604,10 +14857,13 @@
         "impls": 22,
         "tokens": 163
       },
-      "version": "0.3.1"
+      "version": "0.3.2"
     },
     {
       "graphs": {
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "wasm": []
       },
       "name": "prns-host",
@@ -12619,7 +14875,24 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.3.1"
+      "version": "0.3.2"
+    },
+    {
+      "graphs": {
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": []
+      },
+      "name": "prns-host-c",
+      "source": "prns-host/abi/c",
+      "unsafe": {
+        "blocks": 242,
+        "externs": 60,
+        "functions": 17,
+        "impls": 2,
+        "tokens": 321
+      },
+      "version": "0.3.2"
     },
     {
       "graphs": {
@@ -12634,7 +14907,24 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.3.1"
+      "version": "0.3.2"
+    },
+    {
+      "graphs": {
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": []
+      },
+      "name": "prns-host-native",
+      "source": "prns-host/impls/native",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.3.2"
     },
     {
       "graphs": {
@@ -12708,6 +14998,17 @@
           "usb",
           "wifi-auto"
         ],
+        "esp32-s3-heltec-r8": [
+          "bluetooth-auto",
+          "bluetooth-auto-trouble",
+          "esp-now",
+          "log",
+          "lora",
+          "tcp",
+          "tcp-dns",
+          "usb",
+          "wifi-auto"
+        ],
         "esp32-s3-tbeam": [
           "bluetooth-auto",
           "bluetooth-auto-trouble",
@@ -12716,6 +15017,24 @@
           "lora",
           "tcp",
           "tcp-dns",
+          "usb",
+          "wifi-auto"
+        ],
+        "host-c-linux": [
+          "bluetooth-auto",
+          "tcp",
+          "usb",
+          "wifi-auto"
+        ],
+        "host-c-macos": [
+          "bluetooth-auto",
+          "tcp",
+          "usb",
+          "wifi-auto"
+        ],
+        "host-c-windows": [
+          "bluetooth-auto",
+          "tcp",
           "usb",
           "wifi-auto"
         ],
@@ -12739,7 +15058,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.3.1"
+      "version": "0.3.2"
     },
     {
       "graphs": {
@@ -12875,6 +15194,15 @@
           "usb",
           "wifi-auto"
         ],
+        "esp32-s3-heltec-r8": [
+          "bluetooth-auto",
+          "log",
+          "network-device-selection",
+          "serial",
+          "tcp",
+          "usb",
+          "wifi-auto"
+        ],
         "esp32-s3-tbeam": [
           "bluetooth-auto",
           "log",
@@ -12882,6 +15210,63 @@
           "serial",
           "tcp",
           "usb",
+          "wifi-auto"
+        ],
+        "host-c-linux": [
+          "ax25",
+          "backbone",
+          "bluetooth-auto",
+          "config",
+          "i2p",
+          "interface-discovery",
+          "kiss",
+          "network-device-selection",
+          "pipe",
+          "rnode",
+          "serial",
+          "tcp",
+          "udp",
+          "usb",
+          "weave",
+          "websocket",
+          "wifi-auto"
+        ],
+        "host-c-macos": [
+          "ax25",
+          "backbone",
+          "bluetooth-auto",
+          "config",
+          "i2p",
+          "interface-discovery",
+          "kiss",
+          "network-device-selection",
+          "pipe",
+          "rnode",
+          "serial",
+          "tcp",
+          "udp",
+          "usb",
+          "weave",
+          "websocket",
+          "wifi-auto"
+        ],
+        "host-c-windows": [
+          "ax25",
+          "backbone",
+          "bluetooth-auto",
+          "config",
+          "i2p",
+          "interface-discovery",
+          "kiss",
+          "network-device-selection",
+          "pipe",
+          "rnode",
+          "serial",
+          "tcp",
+          "udp",
+          "usb",
+          "weave",
+          "websocket",
           "wifi-auto"
         ],
         "ios": [
@@ -12905,7 +15290,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.3.1"
+      "version": "0.3.2"
     },
     {
       "graphs": {
@@ -12977,9 +15362,33 @@
           "resource-bzip2",
           "std"
         ],
+        "esp32-s3-heltec-r8": [
+          "alloc",
+          "external-alloc",
+          "resource-bzip2",
+          "std"
+        ],
         "esp32-s3-tbeam": [
           "alloc",
           "external-alloc",
+          "resource-bzip2",
+          "std"
+        ],
+        "host-c-linux": [
+          "alloc",
+          "interface-discovery",
+          "resource-bzip2",
+          "std"
+        ],
+        "host-c-macos": [
+          "alloc",
+          "interface-discovery",
+          "resource-bzip2",
+          "std"
+        ],
+        "host-c-windows": [
+          "alloc",
+          "interface-discovery",
           "resource-bzip2",
           "std"
         ],
@@ -13008,7 +15417,7 @@
         "impls": 0,
         "tokens": 2
       },
-      "version": "0.3.1"
+      "version": "0.3.2"
     },
     {
       "graphs": {
@@ -13047,10 +15456,17 @@
           "alloc",
           "log"
         ],
+        "esp32-s3-heltec-r8": [
+          "alloc",
+          "log"
+        ],
         "esp32-s3-tbeam": [
           "alloc",
           "log"
         ],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": []
       },
@@ -13063,7 +15479,7 @@
         "impls": 0,
         "tokens": 2
       },
-      "version": "0.3.1"
+      "version": "0.3.2"
     },
     {
       "graphs": {
@@ -13109,7 +15525,20 @@
         ],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [
+          "interface-discovery",
+          "parallel-persistence"
+        ],
+        "host-c-macos": [
+          "interface-discovery",
+          "parallel-persistence"
+        ],
+        "host-c-windows": [
+          "interface-discovery",
+          "parallel-persistence"
+        ],
         "ios": [
           "parallel-persistence"
         ],
@@ -13124,7 +15553,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.3.1"
+      "version": "0.3.2"
     },
     {
       "graphs": {
@@ -13141,7 +15570,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.3.1"
+      "version": "0.3.2"
     },
     {
       "graphs": {
@@ -13182,7 +15611,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.3.1"
+      "version": "0.3.2"
     },
     {
       "graphs": {
@@ -13207,6 +15636,7 @@
         "desktop-linux": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "proc-macro-crate",
@@ -13223,6 +15653,14 @@
     {
       "graphs": {
         "esp32-s3-heltec": [
+          "default",
+          "parser",
+          "proc-macro",
+          "proc-macro2",
+          "quote",
+          "smallvec"
+        ],
+        "esp32-s3-heltec-r8": [
           "default",
           "parser",
           "proc-macro",
@@ -13292,6 +15730,10 @@
           "default",
           "proc-macro"
         ],
+        "esp32-s3-heltec-r8": [
+          "default",
+          "proc-macro"
+        ],
         "esp32-s3-tbeam": [
           "default",
           "proc-macro"
@@ -13319,6 +15761,32 @@
         "tokens": 6
       },
       "version": "1.0.106"
+    },
+    {
+      "graphs": {
+        "host-c-linux": [
+          "default",
+          "proc-macro"
+        ],
+        "host-c-macos": [
+          "default",
+          "proc-macro"
+        ],
+        "host-c-windows": [
+          "default",
+          "proc-macro"
+        ]
+      },
+      "name": "proc-macro2",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 3,
+        "externs": 0,
+        "functions": 3,
+        "impls": 0,
+        "tokens": 6
+      },
+      "version": "1.0.107"
     },
     {
       "graphs": {
@@ -13376,6 +15844,7 @@
     {
       "graphs": {
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "pulldown-cmark",
@@ -13428,6 +15897,9 @@
         ],
         "desktop-macos": [
           "default"
+        ],
+        "host-c-macos": [
+          "default"
         ]
       },
       "name": "quick-xml",
@@ -13468,6 +15940,10 @@
           "proc-macro"
         ],
         "esp32-s3-heltec": [
+          "default",
+          "proc-macro"
+        ],
+        "esp32-s3-heltec-r8": [
           "default",
           "proc-macro"
         ],
@@ -13527,8 +16003,35 @@
     },
     {
       "graphs": {
+        "host-c-linux": [
+          "default",
+          "proc-macro"
+        ],
+        "host-c-macos": [
+          "default",
+          "proc-macro"
+        ],
+        "host-c-windows": [
+          "default",
+          "proc-macro"
+        ]
+      },
+      "name": "quote",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "1.0.47"
+    },
+    {
+      "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "ral-registers",
@@ -13589,6 +16092,33 @@
           "std",
           "std_rng",
           "thread_rng"
+        ],
+        "host-c-linux": [
+          "alloc",
+          "default",
+          "os_rng",
+          "small_rng",
+          "std",
+          "std_rng",
+          "thread_rng"
+        ],
+        "host-c-macos": [
+          "alloc",
+          "default",
+          "os_rng",
+          "small_rng",
+          "std",
+          "std_rng",
+          "thread_rng"
+        ],
+        "host-c-windows": [
+          "alloc",
+          "default",
+          "os_rng",
+          "small_rng",
+          "std",
+          "std_rng",
+          "thread_rng"
         ]
       },
       "name": "rand",
@@ -13615,6 +16145,15 @@
         ],
         "engine": [
           "std"
+        ],
+        "host-c-linux": [
+          "std"
+        ],
+        "host-c-macos": [
+          "std"
+        ],
+        "host-c-windows": [
+          "std"
         ]
       },
       "name": "rand_chacha",
@@ -13632,6 +16171,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "rand_core",
@@ -13661,7 +16201,11 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -13697,7 +16241,20 @@
         ],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [
+          "os_rng",
+          "std"
+        ],
+        "host-c-macos": [
+          "os_rng",
+          "std"
+        ],
+        "host-c-windows": [
+          "os_rng",
+          "std"
+        ],
         "nrf52840": []
       },
       "name": "rand_core",
@@ -13735,6 +16292,9 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": []
       },
       "name": "rayon",
@@ -13757,6 +16317,9 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": []
       },
       "name": "rayon-core",
@@ -14057,6 +16620,9 @@
         "esp32-s3-heltec": [
           "unstable"
         ],
+        "esp32-s3-heltec-r8": [
+          "unstable"
+        ],
         "esp32-s3-tbeam": [
           "unstable"
         ]
@@ -14084,7 +16650,10 @@
         "engine": [
           "default",
           "std"
-        ]
+        ],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": []
       },
       "name": "rmp",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -14124,7 +16693,11 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -14151,7 +16724,11 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": []
       },
@@ -14193,7 +16770,11 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -14250,6 +16831,18 @@
           "fs",
           "std"
         ],
+        "host-c-linux": [
+          "alloc",
+          "default",
+          "fs",
+          "std"
+        ],
+        "host-c-macos": [
+          "alloc",
+          "default",
+          "fs",
+          "std"
+        ],
         "ios": [
           "alloc",
           "default",
@@ -14273,6 +16866,7 @@
         "desktop-linux": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "nrf52840": [],
         "wasm": []
@@ -14290,7 +16884,8 @@
     },
     {
       "graphs": {
-        "daemon-linux": []
+        "daemon-linux": [],
+        "host-c-linux": []
       },
       "name": "rustversion",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -14325,6 +16920,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "ryu",
@@ -14364,7 +16960,11 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
-        "esp32-s3-tbeam": []
+        "esp32-s3-heltec-r8": [],
+        "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": []
       },
       "name": "scopeguard",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -14455,6 +17055,9 @@
         "esp32-s3-heltec": [
           "openocd-semihosting"
         ],
+        "esp32-s3-heltec-r8": [
+          "openocd-semihosting"
+        ],
         "esp32-s3-tbeam": [
           "openocd-semihosting"
         ]
@@ -14529,7 +17132,23 @@
           "default",
           "std"
         ],
+        "esp32-s3-heltec-r8": [
+          "default",
+          "std"
+        ],
         "esp32-s3-tbeam": [
+          "default",
+          "std"
+        ],
+        "host-c-linux": [
+          "default",
+          "std"
+        ],
+        "host-c-macos": [
+          "default",
+          "std"
+        ],
+        "host-c-windows": [
           "default",
           "std"
         ],
@@ -14628,6 +17247,12 @@
           "serde_derive",
           "std"
         ],
+        "esp32-s3-heltec-r8": [
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
         "esp32-s3-tbeam": [
           "default",
           "derive",
@@ -14654,6 +17279,32 @@
     },
     {
       "graphs": {
+        "host-c-linux": [
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
+        "host-c-macos": [
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ]
+      },
+      "name": "serde",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 2,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 2
+      },
+      "version": "1.0.229"
+    },
+    {
+      "graphs": {
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -14675,7 +17326,8 @@
     },
     {
       "graphs": {
-        "daemon-linux": []
+        "daemon-linux": [],
+        "host-c-linux": []
       },
       "name": "serde-xml-rs",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -14741,6 +17393,11 @@
           "result",
           "std"
         ],
+        "esp32-s3-heltec-r8": [
+          "alloc",
+          "result",
+          "std"
+        ],
         "esp32-s3-tbeam": [
           "alloc",
           "result",
@@ -14761,6 +17418,30 @@
         "tokens": 2
       },
       "version": "1.0.228"
+    },
+    {
+      "graphs": {
+        "host-c-linux": [
+          "alloc",
+          "result",
+          "std"
+        ],
+        "host-c-macos": [
+          "alloc",
+          "result",
+          "std"
+        ]
+      },
+      "name": "serde_core",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 2,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 2
+      },
+      "version": "1.0.229"
     },
     {
       "graphs": {
@@ -14791,6 +17472,9 @@
         "esp32-s3-heltec": [
           "default"
         ],
+        "esp32-s3-heltec-r8": [
+          "default"
+        ],
         "esp32-s3-tbeam": [
           "default"
         ],
@@ -14808,6 +17492,26 @@
         "tokens": 0
       },
       "version": "1.0.228"
+    },
+    {
+      "graphs": {
+        "host-c-linux": [
+          "default"
+        ],
+        "host-c-macos": [
+          "default"
+        ]
+      },
+      "name": "serde_derive",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "1.0.229"
     },
     {
       "graphs": {
@@ -14842,6 +17546,24 @@
         "tokens": 12
       },
       "version": "1.0.150"
+    },
+    {
+      "graphs": {
+        "host-c-linux": [
+          "default",
+          "std"
+        ]
+      },
+      "name": "serde_json",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 16,
+        "externs": 0,
+        "functions": 1,
+        "impls": 0,
+        "tokens": 17
+      },
+      "version": "1.0.151"
     },
     {
       "graphs": {
@@ -14892,6 +17614,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "serde_yaml",
@@ -14916,7 +17639,11 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "nrf52840": []
       },
       "name": "serial2",
@@ -14941,7 +17668,11 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "nrf52840": []
       },
       "name": "serial2-tokio",
@@ -14966,6 +17697,18 @@
           "std"
         ],
         "daemon-windows": [
+          "default",
+          "std"
+        ],
+        "host-c-linux": [
+          "default",
+          "std"
+        ],
+        "host-c-macos": [
+          "default",
+          "std"
+        ],
+        "host-c-windows": [
           "default",
           "std"
         ]
@@ -15005,7 +17748,11 @@
         ],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -15037,7 +17784,11 @@
         ],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -15086,6 +17837,18 @@
         "daemon-windows": [
           "default",
           "std"
+        ],
+        "host-c-linux": [
+          "default",
+          "std"
+        ],
+        "host-c-macos": [
+          "default",
+          "std"
+        ],
+        "host-c-windows": [
+          "default",
+          "std"
         ]
       },
       "name": "shlex",
@@ -15116,6 +17879,10 @@
         "desktop-windows": [
           "default",
           "std"
+        ],
+        "host-c-linux": [
+          "default",
+          "std"
         ]
       },
       "name": "shlex",
@@ -15135,7 +17902,9 @@
         "daemon-linux": [],
         "daemon-macos": [],
         "desktop-linux": [],
-        "desktop-macos": []
+        "desktop-macos": [],
+        "host-c-linux": [],
+        "host-c-macos": []
       },
       "name": "signal-hook-registry",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -15160,7 +17929,11 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -15214,6 +17987,7 @@
         ],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "simd-adler32",
@@ -15266,7 +18040,19 @@
         "esp32-s3-heltec": [
           "std"
         ],
+        "esp32-s3-heltec-r8": [
+          "std"
+        ],
         "esp32-s3-tbeam": [
+          "std"
+        ],
+        "host-c-linux": [
+          "std"
+        ],
+        "host-c-macos": [
+          "std"
+        ],
+        "host-c-windows": [
           "std"
         ],
         "ios": [
@@ -15295,6 +18081,9 @@
         "esp32-s3-heltec": [
           "const_generics"
         ],
+        "esp32-s3-heltec-r8": [
+          "const_generics"
+        ],
         "esp32-s3-tbeam": [
           "const_generics"
         ]
@@ -15320,7 +18109,10 @@
         ],
         "daemon-windows": [
           "const_generics"
-        ]
+        ],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": []
       },
       "name": "smallvec",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -15448,6 +18240,20 @@
           "socket-tcp",
           "socket-udp"
         ],
+        "esp32-s3-heltec-r8": [
+          "async",
+          "medium-ethernet",
+          "multicast",
+          "proto-dhcpv4",
+          "proto-dns",
+          "proto-ipv4",
+          "proto-ipv6",
+          "socket",
+          "socket-dhcpv4",
+          "socket-dns",
+          "socket-tcp",
+          "socket-udp"
+        ],
         "esp32-s3-tbeam": [
           "async",
           "medium-ethernet",
@@ -15459,6 +18265,33 @@
           "socket",
           "socket-dhcpv4",
           "socket-dns",
+          "socket-tcp",
+          "socket-udp"
+        ],
+        "host-c-linux": [
+          "async",
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv6",
+          "socket",
+          "socket-tcp",
+          "socket-udp"
+        ],
+        "host-c-macos": [
+          "async",
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv6",
+          "socket",
+          "socket-tcp",
+          "socket-udp"
+        ],
+        "host-c-windows": [
+          "async",
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv6",
+          "socket",
           "socket-tcp",
           "socket-udp"
         ],
@@ -15529,6 +18362,9 @@
         "esp32-s3-heltec": [
           "all"
         ],
+        "esp32-s3-heltec-r8": [
+          "all"
+        ],
         "esp32-s3-tbeam": [
           "all"
         ],
@@ -15552,8 +18388,32 @@
     },
     {
       "graphs": {
+        "host-c-linux": [
+          "all"
+        ],
+        "host-c-macos": [
+          "all"
+        ],
+        "host-c-windows": [
+          "all"
+        ]
+      },
+      "name": "socket2",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 210,
+        "externs": 0,
+        "functions": 14,
+        "impls": 6,
+        "tokens": 230
+      },
+      "version": "0.6.5"
+    },
+    {
+      "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "somni-expr",
@@ -15571,6 +18431,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "somni-parser",
@@ -15638,6 +18499,11 @@
           "embedded-graphics-core",
           "graphics"
         ],
+        "esp32-s3-heltec-r8": [
+          "default",
+          "embedded-graphics-core",
+          "graphics"
+        ],
         "esp32-s3-tbeam": [
           "default",
           "embedded-graphics-core",
@@ -15685,7 +18551,11 @@
         ],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -15708,7 +18578,10 @@
         "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
-        "desktop-windows": []
+        "desktop-windows": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": []
       },
       "name": "static_assertions",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -15732,7 +18605,11 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": []
       },
@@ -15773,7 +18650,9 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
         "nrf52840": []
       },
       "name": "strsim",
@@ -15796,6 +18675,12 @@
           "strum_macros"
         ],
         "desktop-linux": [
+          "default",
+          "derive",
+          "std",
+          "strum_macros"
+        ],
+        "host-c-linux": [
           "default",
           "derive",
           "std",
@@ -15823,6 +18708,10 @@
           "derive",
           "strum_macros"
         ],
+        "esp32-s3-heltec-r8": [
+          "derive",
+          "strum_macros"
+        ],
         "esp32-s3-tbeam": [
           "derive",
           "strum_macros"
@@ -15842,7 +18731,8 @@
     {
       "graphs": {
         "daemon-linux": [],
-        "desktop-linux": []
+        "desktop-linux": [],
+        "host-c-linux": []
       },
       "name": "strum_macros",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -15859,6 +18749,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "strum_macros",
@@ -15884,7 +18775,11 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -15906,6 +18801,9 @@
           "default"
         ],
         "esp32-s3-heltec": [
+          "default"
+        ],
+        "esp32-s3-heltec-r8": [
           "default"
         ],
         "esp32-s3-tbeam": [
@@ -15938,6 +18836,18 @@
           "visit-mut"
         ],
         "esp32-s3-heltec": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "quote",
+          "visit-mut"
+        ],
+        "esp32-s3-heltec-r8": [
           "clone-impls",
           "default",
           "derive",
@@ -16075,6 +18985,18 @@
           "visit",
           "visit-mut"
         ],
+        "esp32-s3-heltec-r8": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
         "esp32-s3-tbeam": [
           "clone-impls",
           "default",
@@ -16190,6 +19112,56 @@
     },
     {
       "graphs": {
+        "host-c-linux": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
+        "host-c-macos": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
+        "host-c-windows": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ]
+      },
+      "name": "syn",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 36,
+        "externs": 0,
+        "functions": 2,
+        "impls": 4,
+        "tokens": 69
+      },
+      "version": "2.0.119"
+    },
+    {
+      "graphs": {
         "desktop-linux": [
           "clone-impls",
           "default",
@@ -16231,6 +19203,36 @@
           "parsing",
           "printing",
           "proc-macro"
+        ],
+        "host-c-linux": [
+          "clone-impls",
+          "default",
+          "derive",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit-mut"
+        ],
+        "host-c-macos": [
+          "clone-impls",
+          "default",
+          "derive",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit-mut"
+        ],
+        "host-c-windows": [
+          "clone-impls",
+          "default",
+          "derive",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit-mut"
         ]
       },
       "name": "syn",
@@ -16259,6 +19261,10 @@
           "proc-macro"
         ],
         "desktop-linux": [
+          "default",
+          "proc-macro"
+        ],
+        "host-c-linux": [
           "default",
           "proc-macro"
         ]
@@ -16307,6 +19313,18 @@
           "default",
           "getrandom"
         ],
+        "host-c-linux": [
+          "default",
+          "getrandom"
+        ],
+        "host-c-macos": [
+          "default",
+          "getrandom"
+        ],
+        "host-c-windows": [
+          "default",
+          "getrandom"
+        ],
         "ios": [
           "default",
           "getrandom"
@@ -16327,6 +19345,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "termcolor",
@@ -16391,6 +19410,32 @@
     },
     {
       "graphs": {
+        "host-c-linux": [
+          "default",
+          "std"
+        ],
+        "host-c-macos": [
+          "default",
+          "std"
+        ],
+        "host-c-windows": [
+          "default",
+          "std"
+        ]
+      },
+      "name": "thiserror",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "2.0.19"
+    },
+    {
+      "graphs": {
         "android": []
       },
       "name": "thiserror-impl",
@@ -16422,6 +19467,23 @@
         "tokens": 0
       },
       "version": "2.0.18"
+    },
+    {
+      "graphs": {
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": []
+      },
+      "name": "thiserror-impl",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "2.0.19"
     },
     {
       "graphs": {
@@ -16504,10 +19566,32 @@
     },
     {
       "graphs": {
+        "host-c-macos": [
+          "alloc",
+          "default",
+          "formatting",
+          "parsing",
+          "std"
+        ]
+      },
+      "name": "time",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 250,
+        "externs": 2,
+        "functions": 19,
+        "impls": 0,
+        "tokens": 271
+      },
+      "version": "0.3.54"
+    },
+    {
+      "graphs": {
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
-        "desktop-macos": []
+        "desktop-macos": [],
+        "host-c-macos": []
       },
       "name": "time-core",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -16563,6 +19647,24 @@
         "tokens": 7
       },
       "version": "0.2.31"
+    },
+    {
+      "graphs": {
+        "host-c-macos": [
+          "formatting",
+          "parsing"
+        ]
+      },
+      "name": "time-macros",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 7,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 7
+      },
+      "version": "0.2.32"
     },
     {
       "graphs": {
@@ -16775,6 +19877,22 @@
           "tokio-macros",
           "windows-sys"
         ],
+        "esp32-s3-heltec-r8": [
+          "bytes",
+          "default",
+          "fs",
+          "io-util",
+          "libc",
+          "macros",
+          "mio",
+          "net",
+          "rt",
+          "socket2",
+          "sync",
+          "time",
+          "tokio-macros",
+          "windows-sys"
+        ],
         "esp32-s3-tbeam": [
           "bytes",
           "default",
@@ -16838,6 +19956,77 @@
     },
     {
       "graphs": {
+        "host-c-linux": [
+          "bytes",
+          "default",
+          "fs",
+          "io-util",
+          "libc",
+          "macros",
+          "mio",
+          "net",
+          "process",
+          "rt",
+          "rt-multi-thread",
+          "signal-hook-registry",
+          "socket2",
+          "sync",
+          "time",
+          "tokio-macros",
+          "windows-sys"
+        ],
+        "host-c-macos": [
+          "bytes",
+          "default",
+          "fs",
+          "io-util",
+          "libc",
+          "macros",
+          "mio",
+          "net",
+          "process",
+          "rt",
+          "rt-multi-thread",
+          "signal-hook-registry",
+          "socket2",
+          "sync",
+          "time",
+          "tokio-macros",
+          "windows-sys"
+        ],
+        "host-c-windows": [
+          "bytes",
+          "default",
+          "fs",
+          "io-util",
+          "libc",
+          "macros",
+          "mio",
+          "net",
+          "process",
+          "rt",
+          "rt-multi-thread",
+          "signal-hook-registry",
+          "socket2",
+          "sync",
+          "time",
+          "tokio-macros",
+          "windows-sys"
+        ]
+      },
+      "name": "tokio",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 764,
+        "externs": 2,
+        "functions": 209,
+        "impls": 121,
+        "tokens": 1099
+      },
+      "version": "1.53.1"
+    },
+    {
+      "graphs": {
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -16848,6 +20037,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "ios": [],
         "nrf52840": []
@@ -16862,6 +20052,23 @@
         "tokens": 0
       },
       "version": "2.7.0"
+    },
+    {
+      "graphs": {
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": []
+      },
+      "name": "tokio-macros",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "2.7.1"
     },
     {
       "graphs": {
@@ -16901,6 +20108,38 @@
     },
     {
       "graphs": {
+        "host-c-linux": [
+          "default",
+          "sync",
+          "time",
+          "tokio-util"
+        ],
+        "host-c-macos": [
+          "default",
+          "sync",
+          "time",
+          "tokio-util"
+        ],
+        "host-c-windows": [
+          "default",
+          "sync",
+          "time",
+          "tokio-util"
+        ]
+      },
+      "name": "tokio-stream",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 4,
+        "tokens": 4
+      },
+      "version": "0.1.19"
+    },
+    {
+      "graphs": {
         "daemon-linux": [
           "connect",
           "handshake",
@@ -16912,6 +20151,21 @@
           "stream"
         ],
         "daemon-windows": [
+          "connect",
+          "handshake",
+          "stream"
+        ],
+        "host-c-linux": [
+          "connect",
+          "handshake",
+          "stream"
+        ],
+        "host-c-macos": [
+          "connect",
+          "handshake",
+          "stream"
+        ],
+        "host-c-windows": [
           "connect",
           "handshake",
           "stream"
@@ -16965,6 +20219,29 @@
         "tokens": 24
       },
       "version": "0.7.18"
+    },
+    {
+      "graphs": {
+        "host-c-linux": [
+          "default"
+        ],
+        "host-c-macos": [
+          "default"
+        ],
+        "host-c-windows": [
+          "default"
+        ]
+      },
+      "name": "tokio-util",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 27,
+        "externs": 0,
+        "functions": 1,
+        "impls": 1,
+        "tokens": 29
+      },
+      "version": "0.7.19"
     },
     {
       "graphs": {
@@ -17036,6 +20313,11 @@
           "default",
           "std"
         ],
+        "esp32-s3-heltec-r8": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "esp32-s3-tbeam": [
           "alloc",
           "default",
@@ -17059,6 +20341,9 @@
           "parse"
         ],
         "esp32-s3-heltec": [
+          "parse"
+        ],
+        "esp32-s3-heltec-r8": [
           "parse"
         ],
         "esp32-s3-tbeam": [
@@ -17109,6 +20394,11 @@
           "std"
         ],
         "esp32-s3-heltec": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "esp32-s3-heltec-r8": [
           "alloc",
           "default",
           "std"
@@ -17593,6 +20883,19 @@
           "scan",
           "trouble-host-macros"
         ],
+        "esp32-s3-heltec-r8": [
+          "central",
+          "default-packet-pool",
+          "default-packet-pool-mtu-255",
+          "default-packet-pool-size-32",
+          "default-packet-pool-size-8",
+          "derive",
+          "gatt",
+          "log",
+          "peripheral",
+          "scan",
+          "trouble-host-macros"
+        ],
         "esp32-s3-tbeam": [
           "central",
           "default-packet-pool",
@@ -17629,6 +20932,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "trouble-host-macros",
@@ -17659,6 +20963,27 @@
           "sha1"
         ],
         "daemon-windows": [
+          "data-encoding",
+          "handshake",
+          "http",
+          "httparse",
+          "sha1"
+        ],
+        "host-c-linux": [
+          "data-encoding",
+          "handshake",
+          "http",
+          "httparse",
+          "sha1"
+        ],
+        "host-c-macos": [
+          "data-encoding",
+          "handshake",
+          "http",
+          "httparse",
+          "sha1"
+        ],
+        "host-c-windows": [
           "data-encoding",
           "handshake",
           "http",
@@ -17723,7 +21048,19 @@
         "esp32-s3-heltec": [
           "const-generics"
         ],
+        "esp32-s3-heltec-r8": [
+          "const-generics"
+        ],
         "esp32-s3-tbeam": [
+          "const-generics"
+        ],
+        "host-c-linux": [
+          "const-generics"
+        ],
+        "host-c-macos": [
+          "const-generics"
+        ],
+        "host-c-windows": [
           "const-generics"
         ],
         "ios": [
@@ -17766,6 +21103,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "ufmt-write",
@@ -17797,6 +21135,7 @@
     {
       "graphs": {
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "unicase",
@@ -17822,7 +21161,11 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -17849,6 +21192,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "unicode-segmentation",
@@ -17872,6 +21216,10 @@
           "cjk",
           "default"
         ],
+        "esp32-s3-heltec-r8": [
+          "cjk",
+          "default"
+        ],
         "esp32-s3-tbeam": [
           "cjk",
           "default"
@@ -17892,6 +21240,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "unsafe-libyaml",
@@ -17935,6 +21284,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "nrf52840": []
       },
@@ -17998,7 +21348,10 @@
       "graphs": {
         "daemon-linux": [],
         "daemon-macos": [],
-        "daemon-windows": []
+        "daemon-windows": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": []
       },
       "name": "utf-8",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -18060,6 +21413,12 @@
           "v4"
         ],
         "esp32-s3-heltec": [
+          "default",
+          "rng",
+          "std",
+          "v4"
+        ],
+        "esp32-s3-heltec-r8": [
           "default",
           "rng",
           "std",
@@ -18167,8 +21526,41 @@
     },
     {
       "graphs": {
+        "host-c-linux": [
+          "default",
+          "rng",
+          "std",
+          "v4"
+        ],
+        "host-c-macos": [
+          "default",
+          "rng",
+          "std",
+          "v4"
+        ],
+        "host-c-windows": [
+          "default",
+          "rng",
+          "std",
+          "v4"
+        ]
+      },
+      "name": "uuid",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 13,
+        "externs": 0,
+        "functions": 2,
+        "impls": 0,
+        "tokens": 15
+      },
+      "version": "1.24.0"
+    },
+    {
+      "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "nrf52840": []
       },
@@ -18212,7 +21604,11 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -18239,7 +21635,11 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "ios": [],
         "nrf52840": []
       },
@@ -18411,6 +21811,30 @@
           "Win32_System_Com",
           "default",
           "std"
+        ],
+        "host-c-windows": [
+          "Devices",
+          "Devices_Bluetooth",
+          "Devices_Bluetooth_Advertisement",
+          "Devices_Bluetooth_GenericAttributeProfile",
+          "Devices_Enumeration",
+          "Devices_Radios",
+          "Devices_WiFiDirect",
+          "Foundation",
+          "Foundation_Collections",
+          "Security",
+          "Security_Credentials",
+          "Storage",
+          "Storage_Streams",
+          "Win32",
+          "Win32_Devices",
+          "Win32_Devices_Communication",
+          "Win32_Devices_DeviceAndDriverInstallation",
+          "Win32_Foundation",
+          "Win32_System",
+          "Win32_System_Com",
+          "default",
+          "std"
         ]
       },
       "name": "windows",
@@ -18427,6 +21851,19 @@
     {
       "graphs": {
         "daemon-windows": [
+          "Devices",
+          "Devices_Bluetooth",
+          "Devices_Bluetooth_Advertisement",
+          "Devices_Bluetooth_GenericAttributeProfile",
+          "Devices_Radios",
+          "Foundation",
+          "Foundation_Collections",
+          "Storage",
+          "Storage_Streams",
+          "default",
+          "std"
+        ],
+        "host-c-windows": [
           "Devices",
           "Devices_Bluetooth",
           "Devices_Bluetooth_Advertisement",
@@ -18455,6 +21892,9 @@
       "graphs": {
         "daemon-windows": [
           "std"
+        ],
+        "host-c-windows": [
+          "std"
         ]
       },
       "name": "windows-collections",
@@ -18477,6 +21917,10 @@
         "desktop-windows": [
           "default",
           "std"
+        ],
+        "host-c-windows": [
+          "default",
+          "std"
         ]
       },
       "name": "windows-core",
@@ -18493,6 +21937,9 @@
     {
       "graphs": {
         "daemon-windows": [
+          "std"
+        ],
+        "host-c-windows": [
           "std"
         ]
       },
@@ -18512,6 +21959,10 @@
         "daemon-windows": [
           "default",
           "std"
+        ],
+        "host-c-windows": [
+          "default",
+          "std"
         ]
       },
       "name": "windows-future",
@@ -18528,7 +21979,8 @@
     {
       "graphs": {
         "daemon-windows": [],
-        "desktop-windows": []
+        "desktop-windows": [],
+        "host-c-windows": []
       },
       "name": "windows-implement",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -18543,7 +21995,8 @@
     },
     {
       "graphs": {
-        "daemon-windows": []
+        "daemon-windows": [],
+        "host-c-windows": []
       },
       "name": "windows-implement",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -18559,7 +22012,8 @@
     {
       "graphs": {
         "daemon-windows": [],
-        "desktop-windows": []
+        "desktop-windows": [],
+        "host-c-windows": []
       },
       "name": "windows-interface",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -18574,7 +22028,8 @@
     },
     {
       "graphs": {
-        "daemon-windows": []
+        "daemon-windows": [],
+        "host-c-windows": []
       },
       "name": "windows-interface",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -18590,7 +22045,8 @@
     {
       "graphs": {
         "daemon-windows": [],
-        "desktop-windows": []
+        "desktop-windows": [],
+        "host-c-windows": []
       },
       "name": "windows-link",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -18606,6 +22062,9 @@
     {
       "graphs": {
         "daemon-windows": [
+          "std"
+        ],
+        "host-c-windows": [
           "std"
         ]
       },
@@ -18629,6 +22088,10 @@
         "desktop-windows": [
           "default",
           "std"
+        ],
+        "host-c-windows": [
+          "default",
+          "std"
         ]
       },
       "name": "windows-result",
@@ -18645,6 +22108,9 @@
     {
       "graphs": {
         "daemon-windows": [
+          "std"
+        ],
+        "host-c-windows": [
           "std"
         ]
       },
@@ -18668,6 +22134,10 @@
         "desktop-windows": [
           "default",
           "std"
+        ],
+        "host-c-windows": [
+          "default",
+          "std"
         ]
       },
       "name": "windows-strings",
@@ -18684,6 +22154,9 @@
     {
       "graphs": {
         "daemon-windows": [
+          "std"
+        ],
+        "host-c-windows": [
           "std"
         ]
       },
@@ -18763,6 +22236,20 @@
           "default"
         ],
         "desktop-windows": [
+          "Win32",
+          "Win32_Foundation",
+          "Win32_NetworkManagement",
+          "Win32_NetworkManagement_IpHelper",
+          "Win32_NetworkManagement_Ndis",
+          "Win32_Networking",
+          "Win32_Networking_WinSock",
+          "Win32_System",
+          "Win32_System_IO",
+          "Win32_System_Memory",
+          "Win32_System_Threading",
+          "default"
+        ],
+        "host-c-windows": [
           "Win32",
           "Win32_Foundation",
           "Win32_NetworkManagement",
@@ -18886,6 +22373,41 @@
           "Win32_UI_Shell",
           "Win32_UI_WindowsAndMessaging",
           "default"
+        ],
+        "host-c-windows": [
+          "Wdk",
+          "Wdk_Foundation",
+          "Wdk_Storage",
+          "Wdk_Storage_FileSystem",
+          "Wdk_System",
+          "Wdk_System_IO",
+          "Win32",
+          "Win32_Devices",
+          "Win32_Devices_Communication",
+          "Win32_Foundation",
+          "Win32_NetworkManagement",
+          "Win32_NetworkManagement_IpHelper",
+          "Win32_NetworkManagement_Ndis",
+          "Win32_Networking",
+          "Win32_Networking_WinSock",
+          "Win32_Security",
+          "Win32_Storage",
+          "Win32_Storage_FileSystem",
+          "Win32_System",
+          "Win32_System_Com",
+          "Win32_System_Console",
+          "Win32_System_Diagnostics",
+          "Win32_System_Diagnostics_Debug",
+          "Win32_System_IO",
+          "Win32_System_Pipes",
+          "Win32_System_Registry",
+          "Win32_System_SystemInformation",
+          "Win32_System_SystemServices",
+          "Win32_System_Threading",
+          "Win32_System_WindowsProgramming",
+          "Win32_UI",
+          "Win32_UI_Shell",
+          "default"
         ]
       },
       "name": "windows-sys",
@@ -18902,7 +22424,8 @@
     {
       "graphs": {
         "daemon-windows": [],
-        "desktop-windows": []
+        "desktop-windows": [],
+        "host-c-windows": []
       },
       "name": "windows-targets",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -18917,7 +22440,8 @@
     },
     {
       "graphs": {
-        "daemon-windows": []
+        "daemon-windows": [],
+        "host-c-windows": []
       },
       "name": "windows-threading",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -18933,7 +22457,8 @@
     {
       "graphs": {
         "daemon-windows": [],
-        "desktop-windows": []
+        "desktop-windows": [],
+        "host-c-windows": []
       },
       "name": "windows_x86_64_msvc",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -18973,6 +22498,14 @@
           "std"
         ],
         "esp32-s3-heltec": [
+          "alloc",
+          "ascii",
+          "binary",
+          "default",
+          "parser",
+          "std"
+        ],
+        "esp32-s3-heltec-r8": [
           "alloc",
           "ascii",
           "binary",
@@ -19105,7 +22638,23 @@
           "precomputed-tables",
           "static_secrets"
         ],
+        "esp32-s3-heltec-r8": [
+          "precomputed-tables",
+          "static_secrets"
+        ],
         "esp32-s3-tbeam": [
+          "precomputed-tables",
+          "static_secrets"
+        ],
+        "host-c-linux": [
+          "precomputed-tables",
+          "static_secrets"
+        ],
+        "host-c-macos": [
+          "precomputed-tables",
+          "static_secrets"
+        ],
+        "host-c-windows": [
           "precomputed-tables",
           "static_secrets"
         ],
@@ -19135,7 +22684,8 @@
     },
     {
       "graphs": {
-        "daemon-linux": []
+        "daemon-linux": [],
+        "host-c-linux": []
       },
       "name": "xml",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -19152,6 +22702,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "xtensa-lx",
@@ -19173,6 +22724,9 @@
         "esp32-s3-heltec": [
           "float-save-restore"
         ],
+        "esp32-s3-heltec-r8": [
+          "float-save-restore"
+        ],
         "esp32-s3-tbeam": [
           "float-save-restore"
         ]
@@ -19192,6 +22746,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "xtensa-lx-rt-proc-macros",
@@ -19362,6 +22917,7 @@
         ],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
       "name": "zerocopy",
@@ -19400,6 +22956,29 @@
         "tokens": 564
       },
       "version": "0.8.54"
+    },
+    {
+      "graphs": {
+        "host-c-linux": [
+          "simd"
+        ],
+        "host-c-macos": [
+          "simd"
+        ],
+        "host-c-windows": [
+          "simd"
+        ]
+      },
+      "name": "zerocopy",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 299,
+        "externs": 1,
+        "functions": 58,
+        "impls": 107,
+        "tokens": 564
+      },
+      "version": "0.8.55"
     },
     {
       "graphs": {
@@ -19494,6 +23073,11 @@
           "derive",
           "zeroize_derive"
         ],
+        "esp32-s3-heltec-r8": [
+          "alloc",
+          "derive",
+          "zeroize_derive"
+        ],
         "esp32-s3-tbeam": [
           "alloc",
           "derive",
@@ -19538,6 +23122,21 @@
           "derive",
           "zeroize_derive"
         ],
+        "host-c-linux": [
+          "alloc",
+          "derive",
+          "zeroize_derive"
+        ],
+        "host-c-macos": [
+          "alloc",
+          "derive",
+          "zeroize_derive"
+        ],
+        "host-c-windows": [
+          "alloc",
+          "derive",
+          "zeroize_derive"
+        ],
         "wasm": [
           "alloc",
           "derive",
@@ -19564,6 +23163,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "ios": [],
         "nrf52840": []
@@ -19584,6 +23184,9 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
         "wasm": []
       },
       "name": "zeroize_derive",
@@ -19686,7 +23289,8 @@
       "graphs": {
         "daemon-linux": [],
         "daemon-macos": [],
-        "daemon-windows": []
+        "daemon-windows": [],
+        "host-c-linux": []
       },
       "name": "zmij",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -19763,12 +23367,16 @@
     }
   ],
   "schema": 1,
+  "undocumented_unsafe_policy_exceptions": [
+    "prns-host-c"
+  ],
   "unsafe_exceptions": [
     "personal-hopspot-android",
     "personal-hopspot-esp32",
     "personal-hopspot-ios",
     "prns-core",
     "prns-ffi",
+    "prns-host-c",
     "prns-runtime",
     "prns-runtime-embassy",
     "t-echo"

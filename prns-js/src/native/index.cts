@@ -1,6 +1,8 @@
 import type {
   ApplicationEvent,
   BackendCapabilities,
+  BackendInfo,
+  BackendKind,
   BackendStartFailed,
   Bitrate,
   CapabilityName,
@@ -14,13 +16,19 @@ import type {
   DestinationHash,
   DiagnosticEvent,
   HostCommand,
+  HostSnapshot,
   IdentityConfig,
   IdentityHash,
+  InterfaceConfig,
   InterfaceId,
+  InterfaceHealth,
+  InterfaceKind,
   LifecycleState,
   LinkId,
   PrnsCreateOptions,
   PrnsLimits,
+  PersistenceFlushCause,
+  PersistenceFlushTarget,
   RequestId,
   RequestPathHash,
   ResourceCompression,
@@ -56,6 +64,7 @@ export type Tag<Name extends string, Data = undefined> = import("../casework.js"
 >;
 export const {
   HOST_CONTRACT_ABI,
+  HOST_SCHEMA_VERSION,
   PRODUCT_VERSION,
   DESTINATION_HASH_LENGTH,
   IDENTITY_HASH_LENGTH,
@@ -81,6 +90,8 @@ export const {
 export type {
   ApplicationEvent,
   BackendCapabilities,
+  BackendInfo,
+  BackendKind,
   BackendStartFailed,
   Bitrate,
   CapabilityName,
@@ -96,16 +107,21 @@ export type {
   DestinationName,
   DiagnosticEvent,
   HostCommand,
+  HostSnapshot,
   HostRoleName,
   IdentityConfig,
   IdentityHash,
   IdentitySecret,
+  InterfaceConfig,
+  InterfaceHealth,
   InterfaceId,
+  InterfaceKind,
   LifecycleState,
   LinkId,
   PacketHash,
   PrnsCreateOptions,
   PrnsLimits,
+  PersistenceConfig,
   PrnsValidationCode,
   RequestId,
   RequestHandlerConfig,
@@ -150,9 +166,70 @@ type RawNodeOptions = {
   applicationEventQueueLimit?: number;
   retainedEventBytesLimit?: number;
   diagnosticEventQueueLimit?: number;
+  persistencePath?: string;
+};
+
+type RawSerialLine = {
+  baud: number;
+  dataBits: string;
+  parity: string;
+  stopBits: string;
+};
+
+type RawRNodeRadio = {
+  frequencyHz: number;
+  bandwidthHz: number;
+  txPowerDbm: number;
+  spreadingFactor: number;
+  codingRate: number;
+};
+
+type RawMultiRNodeMember = {
+  name: string;
+  virtualPort: number;
+  radio: RawRNodeRadio;
+  flowControl: boolean;
+  outgoing: boolean;
+};
+
+type RawInterfaceConfig = {
+  kind: InterfaceKind;
+  groupId?: string | undefined;
+  discoveryScope?: string | undefined;
+  discoveryPort?: number | undefined;
+  dataPort?: number | undefined;
+  devices?: string[];
+  ignoredDevices?: string[];
+  multicastAddressType?: string | undefined;
+  target?: string;
+  bind?: string;
+  local?: string;
+  peer?: string;
+  bitrateBps?: number | undefined;
+  port?: string;
+  line?: RawSerialLine;
+  flowControl?: boolean;
+  preambleMillis?: number;
+  transmitTailMillis?: number;
+  persistence?: number;
+  slotTimeMillis?: number;
+  stationCallsign?: string | undefined;
+  stationIntervalSeconds?: number | undefined;
+  callsign?: string;
+  ssid?: number;
+  radio?: RawRNodeRadio;
+  airtimeLimitShortCentiPercent?: number | undefined;
+  airtimeLimitLongCentiPercent?: number | undefined;
+  members?: RawMultiRNodeMember[];
+  command?: string[];
+  respawnDelayMillis?: number;
+  peers?: string[];
+  connectable?: boolean;
+  url?: string;
 };
 
 type RawNode = {
+  readonly identityHash: Buffer;
   readonly destinationHashes: Buffer[];
   ready(): Promise<void>;
   stop(): Promise<void>;
@@ -178,6 +255,11 @@ type RawNode = {
   sendResource(
     linkId: Buffer,
     data: Buffer,
+    options: RawSendResourceOptions,
+  ): Promise<void>;
+  sendResourceFile(
+    linkId: Buffer,
+    path: string,
     options: RawSendResourceOptions,
   ): Promise<void>;
   setLinkResourceStrategy(
@@ -212,6 +294,52 @@ type RawNode = {
     peer: string;
     bitrateBps?: number;
   }): Promise<RawInterface>;
+  attachInterface(config: RawInterfaceConfig): Promise<RawInterface>;
+  hostSnapshot(): Promise<RawHostSnapshot>;
+};
+
+type RawHostSnapshot = {
+  revision: bigint;
+  backend: {
+    backend: string;
+    capabilities: string[];
+    interfaceKinds: string[];
+  };
+  interfaces: Array<{
+    interfaceId: Buffer;
+    name?: string;
+    kind?: string;
+    health: string;
+    failureDetail?: string;
+    rxBytes: bigint;
+    txBytes: bigint;
+    rxBps?: number;
+    txBps?: number;
+    routeCount: number;
+    linkCount: number;
+    transportedLinkCount: number;
+  }>;
+  routes: Array<{
+    destination: Buffer;
+    hops: number;
+    viaIdentity?: Buffer;
+    interfaceId: Buffer;
+    learnedAtMillis: number;
+    lastRelayedAtMillis: number;
+    expiresAtMillis: number;
+  }>;
+  activeLinkCount: number;
+  destinationIdentities: Array<{
+    destination: Buffer;
+    identity: Buffer;
+  }>;
+  runtime: HostSnapshot["runtime"];
+  persistence: {
+    persistent: boolean;
+    restored: boolean;
+    lastFlushCause?: string;
+    lastFailureDetail?: string;
+  };
 };
 
 type RawPacketReceipt = {
@@ -263,6 +391,12 @@ type RawInterface = {
 type NativeBinding = {
   version(): string;
   hostContractAbi(): number;
+  hostSchemaVersion(): number;
+  backendInfo(): {
+    backend: string;
+    capabilities: string[];
+    interfaceKinds: string[];
+  };
   startNode(options: RawNodeOptions, onEvent: (event: unknown) => void): RawNode;
 };
 
@@ -284,7 +418,7 @@ export type SendSinglePacketOutcome = CommandSettlementFor<
 >;
 export type CloseLinkOutcome = CommandSettlementFor<CommandCase<"CloseLink">>;
 export type AttachOutcome = CommandSettlementFor<
-  CommandCase<"AttachTcpServer" | "AttachTcpClient" | "AttachUdp">
+  CommandCase<"AttachTcpServer" | "AttachTcpClient" | "AttachUdp" | "AttachInterface">
 >;
 export type DetachInterfaceOutcome = CommandSettlementFor<
   CommandCase<"DetachInterface">
@@ -322,20 +456,114 @@ export type PrnsCreateOutcome =
   | ContractMismatch
   | BackendStartFailed;
 
-const NATIVE_CAPABILITIES: ReadonlySet<CapabilityName> = new Set([
-  "Loopback",
-  "TcpClient",
-  "TcpServer",
-  "Udp",
-  "Serial",
-  "Usb",
-  "Bluetooth",
-  "Wifi",
-  "WebSocket",
-  "BrowserRendezvous",
-  "I2p",
-  "Weave",
-]);
+export function persistentEndpoint(
+  root: string,
+  destinations: readonly DestinationConfig[] = [],
+): PrnsCreateOptions {
+  const selected = nonEmpty("persistence root", root);
+  const separator = selected.endsWith("/") || selected.endsWith("\\") ? "" : "/";
+  return {
+    identity: casework.Tag("LoadOrCreate", {
+      path: `${selected}${separator}identity`,
+    }),
+    persistence: casework.Tag("Directory", {
+      path: `${selected}${separator}state`,
+    }),
+    role: "Endpoint",
+    destinations,
+  };
+}
+
+const RAW_BACKEND_INFO = addon.backendInfo();
+const NATIVE_BACKEND_INFO: BackendInfo = Object.freeze({
+  backend: contract.contractValue("backend", RAW_BACKEND_INFO.backend, contract.isBackendKind),
+  capabilities: Object.freeze(
+    RAW_BACKEND_INFO.capabilities.map((value) =>
+      contract.contractValue("capabilities", value, contract.isCapabilityName),
+    ),
+  ),
+  interfaceKinds: Object.freeze(
+    RAW_BACKEND_INFO.interfaceKinds.map((value) =>
+      contract.contractValue("interfaceKinds", value, contract.isInterfaceKind),
+    ),
+  ),
+});
+const NATIVE_CAPABILITIES: ReadonlySet<CapabilityName> = new Set(
+  NATIVE_BACKEND_INFO.capabilities,
+);
+const NATIVE_INTERFACE_KINDS: ReadonlySet<InterfaceKind> = new Set(
+  NATIVE_BACKEND_INFO.interfaceKinds,
+);
+
+function decodeHostSnapshot(raw: RawHostSnapshot): HostSnapshot {
+  const backend: BackendInfo = {
+    backend: contract.contractValue("snapshot backend", raw.backend.backend, contract.isBackendKind),
+    capabilities: raw.backend.capabilities.map((value) =>
+      contract.contractValue("snapshot capabilities", value, contract.isCapabilityName),
+    ),
+    interfaceKinds: raw.backend.interfaceKinds.map((value) =>
+      contract.contractValue("snapshot interface kinds", value, contract.isInterfaceKind),
+    ),
+  };
+  return {
+    revision: raw.revision,
+    backend,
+    interfaces: raw.interfaces.map((entry) => ({
+      interfaceId: contract.interfaceId(entry.interfaceId),
+      health: contract.contractValue("snapshot interface health", entry.health, contract.isInterfaceHealth),
+      rxBytes: entry.rxBytes,
+      txBytes: entry.txBytes,
+      routeCount: entry.routeCount,
+      linkCount: entry.linkCount,
+      transportedLinkCount: entry.transportedLinkCount,
+      ...(entry.name === undefined ? {} : { name: entry.name }),
+      ...(entry.kind === undefined
+        ? {}
+        : {
+            kind: contract.contractValue(
+              "snapshot interface kind",
+              entry.kind,
+              contract.isInterfaceKind,
+            ),
+          }),
+      ...(entry.failureDetail === undefined
+        ? {}
+        : { failureDetail: entry.failureDetail }),
+      ...(entry.rxBps === undefined ? {} : { rxBps: entry.rxBps }),
+      ...(entry.txBps === undefined ? {} : { txBps: entry.txBps }),
+    })),
+    routes: raw.routes.map((entry) => ({
+      destination: contract.destinationHash(entry.destination),
+      hops: entry.hops,
+      interfaceId: contract.interfaceId(entry.interfaceId),
+      learnedAtMillis: entry.learnedAtMillis,
+      lastRelayedAtMillis: entry.lastRelayedAtMillis,
+      expiresAtMillis: entry.expiresAtMillis,
+      ...(entry.viaIdentity === undefined
+        ? {}
+        : { viaIdentity: contract.identityHash(entry.viaIdentity) }),
+    })),
+    activeLinkCount: raw.activeLinkCount,
+    destinationIdentities: raw.destinationIdentities.map((entry) => ({
+      destination: contract.destinationHash(entry.destination),
+      identity: contract.identityHash(entry.identity),
+    })),
+    runtime: raw.runtime,
+    persistence: {
+      persistent: raw.persistence.persistent,
+      restored: raw.persistence.restored,
+      ...(raw.persistence.lastFlushCause === undefined
+        ? {}
+        : {
+            lastFlushCause: raw.persistence
+              .lastFlushCause as PersistenceFlushCause,
+          }),
+      ...(raw.persistence.lastFailureDetail === undefined
+        ? {}
+        : { lastFailureDetail: raw.persistence.lastFailureDetail }),
+    },
+  };
+}
 
 export class NativeInterface {
   readonly id: InterfaceId;
@@ -356,8 +584,10 @@ export class NativeInterface {
 }
 
 export class Prns {
+  readonly backendInfo: BackendInfo = NATIVE_BACKEND_INFO;
   readonly capabilities: BackendCapabilities = casework.Tag("Native", {
     available: NATIVE_CAPABILITIES,
+    interfaceKinds: NATIVE_INTERFACE_KINDS,
   });
   readonly #limits: PrnsLimits;
   readonly #events: import("../async_lanes.js").BoundedAsyncLane<ApplicationEvent>;
@@ -391,15 +621,22 @@ export class Prns {
     const validated = validateCreateOptions(options);
     const actualAbi =
       typeof addon.hostContractAbi === "function" ? addon.hostContractAbi() : 0;
+    const actualSchemaVersion =
+      typeof addon.hostSchemaVersion === "function"
+        ? addon.hostSchemaVersion()
+        : 0;
     const actualProductVersion = addon.version();
     if (
       actualAbi !== contract.HOST_CONTRACT_ABI ||
+      actualSchemaVersion !== contract.HOST_SCHEMA_VERSION ||
       actualProductVersion !== contract.PRODUCT_VERSION
     ) {
       return Promise.resolve(
         casework.Tag("ContractMismatch", {
           requiredAbi: contract.HOST_CONTRACT_ABI,
           actualAbi,
+          requiredSchemaVersion: contract.HOST_SCHEMA_VERSION,
+          actualSchemaVersion,
           requiredProductVersion: contract.PRODUCT_VERSION,
           actualProductVersion,
         }),
@@ -423,8 +660,16 @@ export class Prns {
     );
   }
 
+  get identityHash(): IdentityHash {
+    return contract.identityHash(this.#raw.identityHash);
+  }
+
   get lifecycle(): LifecycleState {
     return this.#lifecycle;
+  }
+
+  async snapshot(): Promise<HostSnapshot> {
+    return decodeHostSnapshot(await this.#raw.hostSnapshot());
   }
 
   claimEvents(): StreamClaim<ApplicationEvent> {
@@ -542,6 +787,15 @@ export class Prns {
               interface: attached.id,
             });
           },
+          AttachInterface: async ({ config }) => {
+            validateInterfaceConfig(config);
+            const raw = await this.#raw.attachInterface(rawInterfaceConfig(config));
+            const attached = new NativeInterface(raw);
+            this.#interfaces.set(interfaceKey(attached.id), attached);
+            return casework.Tag("InterfaceAttached", {
+              interface: attached.id,
+            });
+          },
           DetachInterface: async ({ interface: interfaceId }) => {
             const key = interfaceKey(interfaceId);
             const attached = this.#interfaces.get(key);
@@ -560,7 +814,7 @@ export class Prns {
             );
             return casework.Tag("LinkEstablished", {
               linkId: contract.linkId(established.linkId),
-              rttMillis: finiteNonNegative(
+              rttMillis: rawSafeUint(
                 "rttMillis",
                 established.rttMillis,
               ),
@@ -571,7 +825,7 @@ export class Prns {
               Buffer.from(destination),
             );
             return casework.Tag("PathDiscovered", {
-              hops: finiteNonNegative("hops", path.hops),
+              hops: rawSafeUint("hops", path.hops),
             });
           },
           Identify: async ({ linkId, identity }) => {
@@ -597,7 +851,7 @@ export class Prns {
             );
             return casework.Tag("ResponseReceived", {
               data: bytes("response data", response.data).slice(),
-              rttMillis: finiteNonNegative(
+              rttMillis: rawSafeUint(
                 "rttMillis",
                 response.rttMillis,
               ),
@@ -613,7 +867,7 @@ export class Prns {
               {
                 linkId: Buffer.from(linkId),
                 requestId: Buffer.from(requestId),
-                rttMillis: finiteNonNegative(
+                rttMillis: rawSafeUint(
                   "requestRttMillis",
                   requestRttMillis,
                 ),
@@ -621,7 +875,7 @@ export class Prns {
               Buffer.from(bytes("payload", payload)),
             );
             return casework.Tag("ResponseSent", {
-              rttMillis: finiteNonNegative("rttMillis", rttMillis),
+              rttMillis: rawSafeUint("rttMillis", rttMillis),
             });
           },
           SendResource: async ({
@@ -705,7 +959,7 @@ export class Prns {
       );
       return casework.Tag("Succeeded", outcome);
     } catch (error) {
-      return commandFailed(commandFailure(error));
+      return commandFailed(commandFailure(error)) as SendResourceOutcome;
     } finally {
       this.#pendingCommands -= 1;
     }
@@ -774,6 +1028,10 @@ export class Prns {
         bitrate: commandBitrate(options.bitrateBps),
       }),
     );
+  }
+
+  attachInterface(config: InterfaceConfig): Promise<AttachOutcome> {
+    return this.execute(casework.Tag("AttachInterface", { config }));
   }
 
   detachInterface(interfaceId: InterfaceId): Promise<DetachInterfaceOutcome> {
@@ -850,6 +1108,42 @@ export class Prns {
           : { packedMetadata: options.packedMetadata }),
       }),
     );
+  }
+
+  async sendResourceFile(
+    linkId: LinkId,
+    path: string,
+    options: SendResourceOptions = {},
+  ): Promise<SendResourceOutcome> {
+    if (isStopped(this.#lifecycle)) {
+      return commandFailed(casework.Tag("NodeStopped")) as SendResourceOutcome;
+    }
+    if (this.#pendingCommands >= this.#limits.pendingCommands) {
+      return commandFailed(casework.Tag("Busy")) as SendResourceOutcome;
+    }
+    this.#pendingCommands += 1;
+    try {
+      const rawOptions: RawSendResourceOptions = {
+        compression: rawResourceCompression(
+          options.compression ?? casework.Tag("Auto"),
+        ),
+      };
+      if (options.packedMetadata !== undefined) {
+        rawOptions.metadata = Buffer.from(
+          bytes("packedMetadata", options.packedMetadata),
+        );
+      }
+      await this.#raw.sendResourceFile(
+        Buffer.from(linkId),
+        nonEmpty("resource path", path),
+        rawOptions,
+      );
+      return casework.Tag("Succeeded", casework.Tag("ResourceSent"));
+    } catch (error) {
+      return commandFailed(commandFailure(error)) as SendResourceOutcome;
+    } finally {
+      this.#pendingCommands -= 1;
+    }
   }
 
   setLinkResourceStrategy(
@@ -1007,6 +1301,9 @@ type RawNativeEventType =
   | "routeEvicted"
   | "routeInterfaceGone"
   | "routeDropped"
+  | "persistenceRestored"
+  | "persistenceFlushed"
+  | "persistenceFlushFailed"
   | "commandSettled"
   | "eventBackpressureExceeded"
   | "nodeStopped"
@@ -1042,6 +1339,9 @@ const RAW_NATIVE_EVENT_TYPES: ReadonlySet<string> =
     "routeEvicted",
     "routeInterfaceGone",
     "routeDropped",
+    "persistenceRestored",
+    "persistenceFlushed",
+    "persistenceFlushFailed",
     "commandSettled",
     "eventBackpressureExceeded",
     "nodeStopped",
@@ -1087,7 +1387,7 @@ function parseRawEvent(raw: unknown): ParsedRawEvent {
         pathHash: contract.requestPathHash(
           bytes("pathHash", rawRequest.pathHash),
         ),
-        rttMillis: finiteNonNegative("rttMillis", rawRequest.rttMillis),
+        rttMillis: rawSafeUint("rttMillis", rawRequest.rttMillis),
         data: bytes("data", rawRequest.data).slice(),
       };
       const requester = optionalBytes(rawRequest.requester);
@@ -1116,8 +1416,8 @@ function parseRawEvent(raw: unknown): ParsedRawEvent {
         casework.Tag("ResponseSegment", {
           linkId: contract.linkId(bytes("linkId", data.linkId)),
           requestId: contract.requestId(bytes("requestId", data.requestId)),
-          segmentIndex: finiteNonNegative("segmentIndex", data.segmentIndex),
-          totalSegments: finiteNonNegative("totalSegments", data.totalSegments),
+          segmentIndex: rawSafeUint("segmentIndex", data.segmentIndex),
+          totalSegments: rawSafeUint("totalSegments", data.totalSegments),
           data: bytes("data", data.data).slice(),
         }),
       ),
@@ -1142,8 +1442,8 @@ function parseRawEvent(raw: unknown): ParsedRawEvent {
         originalHash: contract.resourceHash(
           bytes("originalHash", data.originalHash),
         ),
-        segmentIndex: finiteNonNegative("segmentIndex", data.segmentIndex),
-        totalSegments: finiteNonNegative("totalSegments", data.totalSegments),
+        segmentIndex: rawSafeUint("segmentIndex", data.segmentIndex),
+        totalSegments: rawSafeUint("totalSegments", data.totalSegments),
         data: bytes("data", data.data).slice(),
       };
       const metadata = optionalBytes(data.metadata);
@@ -1162,7 +1462,7 @@ function parseRawEvent(raw: unknown): ParsedRawEvent {
           linkId: contract.linkId(bytes("linkId", data.linkId)),
           hash: contract.resourceHash(bytes("hash", data.hash)),
           stream: bytes("stream", data.stream).slice(),
-          uncompressedDataBytes: finiteNonNegative(
+          uncompressedDataBytes: nonNegativeBigInt(
             "uncompressedDataBytes",
             data.uncompressedDataBytes,
           ),
@@ -1173,7 +1473,7 @@ function parseRawEvent(raw: unknown): ParsedRawEvent {
         "Application",
         casework.Tag("ChannelMessage", {
           linkId: contract.linkId(bytes("linkId", data.linkId)),
-          messageType: finiteNonNegative("messageType", data.messageType),
+          messageType: rawSafeUint("messageType", data.messageType),
           data: bytes("data", data.data).slice(),
         }),
       ),
@@ -1184,7 +1484,7 @@ function parseRawEvent(raw: unknown): ParsedRawEvent {
           destination: contract.destinationHash(
             bytes("destination", data.destination),
           ),
-          hops: finiteNonNegative("hops", data.hops),
+          hops: rawSafeUint("hops", data.hops),
           sourceInterface: contract.interfaceId(
             bytes("sourceInterface", data.sourceInterface),
           ),
@@ -1195,7 +1495,7 @@ function parseRawEvent(raw: unknown): ParsedRawEvent {
         "Diagnostic",
         casework.Tag("LinkEstablished", {
           linkId: contract.linkId(bytes("linkId", data.linkId)),
-          rttMillis: finiteNonNegative("rttMillis", data.rttMillis),
+          rttMillis: rawSafeUint("rttMillis", data.rttMillis),
         }),
       ),
     peerIdentified: (data) =>
@@ -1233,7 +1533,7 @@ function parseRawEvent(raw: unknown): ParsedRawEvent {
           originalHash: contract.resourceHash(
             bytes("originalHash", data.originalHash),
           ),
-          totalSizeBytes: finiteNonNegative(
+          totalSizeBytes: nonNegativeBigInt(
             "totalSizeBytes",
             data.totalSizeBytes,
           ),
@@ -1253,17 +1553,17 @@ function parseRawEvent(raw: unknown): ParsedRawEvent {
         "Diagnostic",
         casework.Tag("ResourceSendProgress", {
           linkId: contract.linkId(bytes("linkId", data.linkId)),
-          transferredBytes: finiteNonNegative(
+          transferredBytes: nonNegativeBigInt(
             "transferredBytes",
             data.transferredBytes,
           ),
-          totalBytes: finiteNonNegative("totalBytes", data.totalBytes),
-          physicalTransferredBytes: finiteNonNegative(
+          totalBytes: nonNegativeBigInt("totalBytes", data.totalBytes),
+          physicalTransferredBytes: nonNegativeBigInt(
             "physicalTransferredBytes",
             data.physicalTransferredBytes,
           ),
-          segmentIndex: finiteNonNegative("segmentIndex", data.segmentIndex),
-          totalSegments: finiteNonNegative(
+          segmentIndex: rawSafeUint("segmentIndex", data.segmentIndex),
+          totalSegments: rawSafeUint(
             "totalSegments",
             data.totalSegments,
           ),
@@ -1303,10 +1603,41 @@ function parseRawEvent(raw: unknown): ParsedRawEvent {
     routeInterfaceGone: (data) =>
       routeDiagnostic("RouteInterfaceGone", data),
     routeDropped: (data) => routeDiagnostic("RouteDropped", data),
+    persistenceRestored: (data) =>
+      casework.Tag(
+        "Diagnostic",
+        casework.Tag("PersistenceRestored", {
+          routes: rawSafeUint("routes", data.routes),
+          destinationIdentities: rawSafeUint(
+            "destinationIdentities",
+            data.destinationIdentities,
+          ),
+          tunnels: rawSafeUint("tunnels", data.tunnels),
+          ratchets: rawSafeUint("ratchets", data.ratchets),
+          refused: rawSafeUint("refused", data.refused),
+          dropped: rawSafeUint("dropped", data.dropped),
+        }),
+      ),
+    persistenceFlushed: (data) =>
+      casework.Tag(
+        "Diagnostic",
+        casework.Tag("PersistenceFlushed", {
+          cause: persistenceCause(data.cause),
+          target: persistenceTarget(data.target),
+        }),
+      ),
+    persistenceFlushFailed: (data) =>
+      casework.Tag(
+        "Diagnostic",
+        casework.Tag("PersistenceFlushFailed", {
+          cause: persistenceCause(data.cause),
+          target: persistenceTarget(data.target),
+        }),
+      ),
     commandSettled: () => casework.Tag("CommandSettled"),
     eventBackpressureExceeded: (data) =>
       casework.Tag("BackpressureExceeded", {
-        rejectedEventBytes: finiteNonNegative(
+        rejectedEventBytes: rawSafeUint(
           "rejectedEventBytes",
           data.rejectedEventBytes,
         ),
@@ -1320,7 +1651,7 @@ function parseRawEvent(raw: unknown): ParsedRawEvent {
         "Diagnostic",
         casework.Tag("DiagnosticsDropped", {
           count: BigInt(
-            finiteNonNegative(
+            rawSafeUint(
               "droppedDiagnostics",
               data.droppedDiagnostics,
             ),
@@ -1358,6 +1689,40 @@ function routeDiagnostic(
   );
 }
 
+function persistenceCause(value: unknown): PersistenceFlushCause {
+  const cause = text("persistence cause", value);
+  switch (cause) {
+    case "startup":
+      return "Startup";
+    case "interval":
+      return "Interval";
+    case "routeChange":
+      return "RouteChange";
+    case "ratchetRotation":
+      return "RatchetRotation";
+    case "shutdown":
+      return "Shutdown";
+  }
+  throw new contract.PrnsValidationError(
+    "InvalidEnum",
+    `unknown persistence cause ${cause}`,
+  );
+}
+
+function persistenceTarget(value: unknown): PersistenceFlushTarget {
+  const target = text("persistence target", value);
+  if (target === "routingState") {
+    return "RoutingState";
+  }
+  if (target === "ratchets") {
+    return "Ratchets";
+  }
+  throw new contract.PrnsValidationError(
+    "InvalidEnum",
+    `unknown persistence target ${target}`,
+  );
+}
+
 function validateCreateOptions(options: PrnsCreateOptions): {
   readonly raw: RawNodeOptions;
   readonly limits: PrnsLimits;
@@ -1379,6 +1744,14 @@ function validateCreateOptions(options: PrnsCreateOptions): {
   });
   if (options.destinations !== undefined) {
     raw.destinations = options.destinations.map(rawDestination);
+  }
+  if (options.persistence !== undefined) {
+    casework.match(options.persistence, {
+      Ephemeral: () => undefined,
+      Directory: ({ path }) => {
+        raw.persistencePath = nonEmpty("persistence path", path);
+      },
+    });
   }
   return { raw, limits };
 }
@@ -1464,7 +1837,8 @@ function retainedEventBytes(event: ApplicationEvent): number {
     Response: ({ data }) => data.length,
     ResponseSegment: ({ data }) => data.length,
     ResourceAvailable: ({ resource, metadata }) =>
-      resource.totalBytes + (metadata?.length ?? 0),
+      exactBytesAsSafeNumber("resource.totalBytes", resource.totalBytes) +
+      (metadata?.length ?? 0),
     ResourceSegment: ({ data, metadata }) =>
       data.length + (metadata?.length ?? 0),
     ResourceNeedsDecompression: ({ stream }) => stream.length,
@@ -1491,6 +1865,9 @@ function commandFailed(failure: CommandFailure): CommandSettlement {
 function commandFailure(error: unknown): CommandFailure {
   if (error instanceof CommandRejected) {
     return error.failure;
+  }
+  if (error instanceof contract.PrnsValidationError) {
+    return casework.Tag("InvalidConfiguration", { detail: error.message });
   }
   const details = errorDetails(error);
   if (details.code === "PRNS_NODE_STOPPED") {
@@ -1568,15 +1945,45 @@ function commandFailure(error: unknown): CommandFailure {
   if (details.code === "PRNS_INVALID_CHANNEL_MESSAGE_TYPE") {
     return casework.Tag("InvalidChannelMessageType");
   }
-  if (details.code === "PRNS_ATTACH_FAILED") {
+  if (
+    details.code === "PRNS_CONFIG_INVALID" ||
+    details.code === "PRNS_INVALID_ARGUMENT"
+  ) {
+    return casework.Tag("InvalidConfiguration", { detail: details.detail });
+  }
+  if (
+    details.code === "PRNS_BIND_FAILED" ||
+    details.code === "PRNS_ATTACH_FAILED"
+  ) {
     return casework.Tag("BindFailed", { detail: details.detail });
+  }
+  if (details.code === "PRNS_UNSUPPORTED") {
+    return casework.Tag("UnsupportedByBackend");
+  }
+  if (details.code === "PRNS_UNKNOWN_INTERFACE") {
+    return casework.Tag("UnknownInterface");
+  }
+  if (details.code === "PRNS_PERMISSION_DENIED") {
+    return casework.Tag("PermissionDenied", { detail: details.detail });
+  }
+  if (
+    details.code === "PRNS_DEVICE_UNAVAILABLE" ||
+    details.code === "PRNS_UNAVAILABLE"
+  ) {
+    return casework.Tag("DeviceUnavailable", { detail: details.detail });
+  }
+  if (details.code === "PRNS_CONNECT_FAILED") {
+    return casework.Tag("ConnectFailed", { detail: details.detail });
+  }
+  if (details.code === "PRNS_BACKEND_FAILED") {
+    return casework.Tag("BackendFailed", { detail: details.detail });
   }
   return casework.Tag("WriteFailed", { detail: details.detail });
 }
 
 function packetDelivered(receipt: RawPacketReceipt): CommandOutcome {
   const delivered = {
-    rttMillis: finiteNonNegative("rttMillis", receipt.rttMillis),
+    rttMillis: rawSafeUint("rttMillis", receipt.rttMillis),
     evidence: deliveryEvidence(receipt.evidence),
   };
   return casework.Tag(
@@ -1656,8 +2063,390 @@ function commandBitrate(value: number | undefined): Bitrate {
 function bitrateBitsPerSecond(bitrate: Bitrate): number | undefined {
   return casework.match(bitrate, {
     Auto: () => undefined,
-    BitsPerSecond: ({ value }) => positiveInteger("bitrate", value),
+    BitsPerSecond: ({ value }) => {
+      const selected = positiveInteger("bitrate", value);
+      if (selected < 5) {
+        throw new contract.PrnsValidationError(
+          "InvalidNumber",
+          "bitrate must be at least 5 bits per second",
+        );
+      }
+      return selected;
+    },
   });
+}
+
+function rawInterfaceConfig(config: InterfaceConfig): RawInterfaceConfig {
+  return casework.match_into<RawInterfaceConfig>().from(config, {
+    AutoLan: ({
+      groupId,
+      discoveryScope,
+      discoveryPort,
+      dataPort,
+      devices,
+      ignoredDevices,
+      multicastAddressType,
+    }) => ({
+      kind: "AutoLan",
+      groupId,
+      discoveryScope,
+      discoveryPort,
+      dataPort,
+      devices: Array.from(devices),
+      ignoredDevices: Array.from(ignoredDevices),
+      multicastAddressType,
+    }),
+    TcpClient: ({ target, bitrate }) => ({
+      kind: "TcpClient",
+      target,
+      bitrateBps: bitrateBitsPerSecond(bitrate),
+    }),
+    TcpServer: ({ bind, bitrate }) => ({
+      kind: "TcpServer",
+      bind,
+      bitrateBps: bitrateBitsPerSecond(bitrate),
+    }),
+    Udp: ({ local, peer, bitrate }) => ({
+      kind: "Udp",
+      local,
+      peer,
+      bitrateBps: bitrateBitsPerSecond(bitrate),
+    }),
+    Serial: ({ port, line }) => ({
+      kind: "Serial",
+      port,
+      line: rawSerialLine(line),
+    }),
+    Kiss: ({
+      port,
+      line,
+      flowControl,
+      preambleMillis,
+      transmitTailMillis,
+      persistence,
+      slotTimeMillis,
+      stationCallsign,
+      stationIntervalSeconds,
+    }) => ({
+      kind: "Kiss",
+      port,
+      line: rawSerialLine(line),
+      flowControl,
+      preambleMillis,
+      transmitTailMillis,
+      persistence,
+      slotTimeMillis,
+      stationCallsign,
+      stationIntervalSeconds,
+    }),
+    Ax25Kiss: ({
+      port,
+      line,
+      flowControl,
+      preambleMillis,
+      transmitTailMillis,
+      persistence,
+      slotTimeMillis,
+      callsign,
+      ssid,
+    }) => ({
+      kind: "Ax25Kiss",
+      port,
+      line: rawSerialLine(line),
+      flowControl,
+      preambleMillis,
+      transmitTailMillis,
+      persistence,
+      slotTimeMillis,
+      callsign,
+      ssid,
+    }),
+    RNode: ({
+      port,
+      radio,
+      flowControl,
+      stationCallsign,
+      stationIntervalSeconds,
+      airtimeLimitShortCentiPercent,
+      airtimeLimitLongCentiPercent,
+    }) => ({
+      kind: "RNode",
+      port,
+      radio: rawRNodeRadio(radio),
+      flowControl,
+      stationCallsign,
+      stationIntervalSeconds,
+      airtimeLimitShortCentiPercent,
+      airtimeLimitLongCentiPercent,
+    }),
+    MultiRNode: ({
+      port,
+      stationCallsign,
+      stationIntervalSeconds,
+      members,
+    }) => ({
+      kind: "MultiRNode",
+      port,
+      stationCallsign,
+      stationIntervalSeconds,
+      members: members.map((member) => ({
+        name: member.name,
+        virtualPort: member.virtualPort,
+        radio: rawRNodeRadio(member.radio),
+        flowControl: member.flowControl,
+        outgoing: member.outgoing,
+      })),
+    }),
+    Pipe: ({ command, respawnDelayMillis }) => ({
+      kind: "Pipe",
+      command: Array.from(command),
+      respawnDelayMillis,
+    }),
+    BackboneClient: ({ target, bitrate }) => ({
+      kind: "BackboneClient",
+      target,
+      bitrateBps: bitrateBitsPerSecond(bitrate),
+    }),
+    BackboneServer: ({ bind, bitrate }) => ({
+      kind: "BackboneServer",
+      bind,
+      bitrateBps: bitrateBitsPerSecond(bitrate),
+    }),
+    I2p: ({ peers, connectable }) => ({
+      kind: "I2p",
+      peers: Array.from(peers),
+      connectable,
+    }),
+    Weave: ({ port }) => ({ kind: "Weave", port }),
+    AutomaticUsb: () => ({ kind: "AutomaticUsb" }),
+    AutomaticBluetoothLe: () => ({ kind: "AutomaticBluetoothLe" }),
+    WebSocketClient: ({ target }) => ({ kind: "WebSocketClient", target }),
+    WebSocketServer: ({ bind }) => ({ kind: "WebSocketServer", bind }),
+    BrowserRendezvous: ({ url }) => ({ kind: "BrowserRendezvous", url }),
+  });
+}
+
+function rawSerialLine(
+  line: import("../contract.js").SerialLineConfig,
+): RawSerialLine {
+  return {
+    baud: line.baud,
+    dataBits: line.dataBits,
+    parity: line.parity,
+    stopBits: line.stopBits,
+  };
+}
+
+function rawRNodeRadio(
+  radio: import("../contract.js").RNodeRadioConfig,
+): RawRNodeRadio {
+  return {
+    frequencyHz: radio.frequencyHz,
+    bandwidthHz: radio.bandwidthHz,
+    txPowerDbm: radio.txPowerDbm,
+    spreadingFactor: radio.spreadingFactor,
+    codingRate: radio.codingRate,
+  };
+}
+
+function validateInterfaceConfig(config: InterfaceConfig): void {
+  casework.match(config, {
+    AutoLan: ({
+      groupId,
+      discoveryPort,
+      dataPort,
+      devices,
+      ignoredDevices,
+    }) => {
+      if (groupId !== undefined) nonEmpty("groupId", groupId);
+      if (discoveryPort !== undefined) {
+        boundedInteger("discoveryPort", discoveryPort, 1, 65_534);
+      }
+      if (dataPort !== undefined) {
+        boundedInteger("dataPort", dataPort, 1, 65_535);
+      }
+      stringArray("devices", devices);
+      stringArray("ignoredDevices", ignoredDevices);
+    },
+    TcpClient: ({ target, bitrate }) => {
+      nonEmpty("target", target);
+      bitrateBitsPerSecond(bitrate);
+    },
+    TcpServer: ({ bind, bitrate }) => {
+      nonEmpty("bind", bind);
+      bitrateBitsPerSecond(bitrate);
+    },
+    Udp: ({ local, peer, bitrate }) => {
+      nonEmpty("local", local);
+      nonEmpty("peer", peer);
+      bitrateBitsPerSecond(bitrate);
+    },
+    Serial: ({ port, line }) => {
+      nonEmpty("port", port);
+      validateSerialLine(line);
+    },
+    Kiss: ({
+      port,
+      line,
+      preambleMillis,
+      transmitTailMillis,
+      persistence,
+      slotTimeMillis,
+      stationCallsign,
+      stationIntervalSeconds,
+    }) => {
+      nonEmpty("port", port);
+      validateSerialLine(line);
+      boundedInteger("preambleMillis", preambleMillis, 0, 0xffff_ffff);
+      boundedInteger("transmitTailMillis", transmitTailMillis, 0, 0xffff_ffff);
+      boundedInteger("persistence", persistence, 0, 255);
+      boundedInteger("slotTimeMillis", slotTimeMillis, 0, 0xffff_ffff);
+      if (stationCallsign !== undefined) validateCallsign(stationCallsign);
+      if (stationIntervalSeconds !== undefined) {
+        nonNegativeInteger("stationIntervalSeconds", stationIntervalSeconds);
+      }
+    },
+    Ax25Kiss: ({
+      port,
+      line,
+      preambleMillis,
+      transmitTailMillis,
+      persistence,
+      slotTimeMillis,
+      callsign,
+      ssid,
+    }) => {
+      nonEmpty("port", port);
+      validateSerialLine(line);
+      boundedInteger("preambleMillis", preambleMillis, 0, 0xffff_ffff);
+      boundedInteger("transmitTailMillis", transmitTailMillis, 0, 0xffff_ffff);
+      boundedInteger("persistence", persistence, 0, 255);
+      boundedInteger("slotTimeMillis", slotTimeMillis, 0, 0xffff_ffff);
+      validateCallsign(callsign);
+      boundedInteger("ssid", ssid, 0, 15);
+    },
+    RNode: ({
+      port,
+      radio,
+      stationCallsign,
+      stationIntervalSeconds,
+      airtimeLimitShortCentiPercent,
+      airtimeLimitLongCentiPercent,
+    }) => {
+      nonEmpty("port", port);
+      validateRadio(radio);
+      if (stationCallsign !== undefined) validateCallsign(stationCallsign);
+      if (stationIntervalSeconds !== undefined) {
+        nonNegativeInteger("stationIntervalSeconds", stationIntervalSeconds);
+      }
+      if (airtimeLimitShortCentiPercent !== undefined) {
+        boundedInteger(
+          "airtimeLimitShortCentiPercent",
+          airtimeLimitShortCentiPercent,
+          0,
+          65_535,
+        );
+      }
+      if (airtimeLimitLongCentiPercent !== undefined) {
+        boundedInteger(
+          "airtimeLimitLongCentiPercent",
+          airtimeLimitLongCentiPercent,
+          0,
+          65_535,
+        );
+      }
+    },
+    MultiRNode: ({
+      port,
+      stationCallsign,
+      stationIntervalSeconds,
+      members,
+    }) => {
+      nonEmpty("port", port);
+      if (stationCallsign !== undefined) validateCallsign(stationCallsign);
+      if (stationIntervalSeconds !== undefined) {
+        nonNegativeInteger("stationIntervalSeconds", stationIntervalSeconds);
+      }
+      if (members.length === 0) invalidConfiguration("members must not be empty");
+      for (const member of members) {
+        nonEmpty("member name", member.name);
+        boundedInteger("virtualPort", member.virtualPort, 0, 255);
+        validateRadio(member.radio);
+      }
+    },
+    Pipe: ({ command, respawnDelayMillis }) => {
+      if (command.length === 0) invalidConfiguration("command must not be empty");
+      stringArray("command", command);
+      nonNegativeInteger("respawnDelayMillis", respawnDelayMillis);
+    },
+    BackboneClient: ({ target, bitrate }) => {
+      nonEmpty("target", target);
+      bitrateBitsPerSecond(bitrate);
+    },
+    BackboneServer: ({ bind, bitrate }) => {
+      nonEmpty("bind", bind);
+      bitrateBitsPerSecond(bitrate);
+    },
+    I2p: ({ peers }) => stringArray("peers", peers),
+    Weave: ({ port }) => {
+      nonEmpty("port", port);
+    },
+    AutomaticUsb: () => undefined,
+    AutomaticBluetoothLe: () => undefined,
+    WebSocketClient: ({ target }) => validateWebSocket("target", target),
+    WebSocketServer: ({ bind }) => {
+      nonEmpty("bind", bind);
+    },
+    BrowserRendezvous: ({ url }) => validateWebSocket("url", url),
+  });
+}
+
+function validateSerialLine(line: import("../contract.js").SerialLineConfig): void {
+  boundedInteger("baud", line.baud, 1, 0xffff_ffff);
+  if (!["Five", "Six", "Seven", "Eight"].includes(line.dataBits)) {
+    invalidConfiguration("dataBits is invalid");
+  }
+  if (!["None", "Even", "Odd"].includes(line.parity)) {
+    invalidConfiguration("parity is invalid");
+  }
+  if (!["One", "Two"].includes(line.stopBits)) {
+    invalidConfiguration("stopBits is invalid");
+  }
+}
+
+function validateRadio(radio: import("../contract.js").RNodeRadioConfig): void {
+  positiveInteger("frequencyHz", radio.frequencyHz);
+  boundedInteger("bandwidthHz", radio.bandwidthHz, 1, 0xffff_ffff);
+  boundedInteger("txPowerDbm", radio.txPowerDbm, -32_768, 32_767);
+  boundedInteger("spreadingFactor", radio.spreadingFactor, 5, 12);
+  boundedInteger("codingRate", radio.codingRate, 5, 8);
+}
+
+function validateCallsign(value: string): void {
+  if (!/^[A-Za-z0-9]{1,6}$/.test(value)) {
+    invalidConfiguration("callsign must contain 1 to 6 ASCII alphanumeric characters");
+  }
+}
+
+function validateWebSocket(name: string, value: string): void {
+  if (!value.startsWith("ws://")) {
+    invalidConfiguration(`${name} must use ws://`);
+  }
+}
+
+function stringArray(name: string, values: readonly string[]): void {
+  for (const value of values) nonEmpty(name, value);
+}
+
+function boundedInteger(name: string, value: number, minimum: number, maximum: number): number {
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    invalidConfiguration(`${name} must be an integer from ${minimum} through ${maximum}`);
+  }
+  return value;
+}
+
+function invalidConfiguration(detail: string): never {
+  throw new contract.PrnsValidationError("InvalidNumber", detail);
 }
 
 function interfaceKey(interfaceId: InterfaceId): string {
@@ -1720,18 +2509,34 @@ function nonNegativeInteger(name: string, value: number): number {
   return value;
 }
 
-function finiteNonNegative(name: string, value: unknown): number {
-  if (
-    typeof value !== "number" ||
-    !Number.isFinite(value) ||
-    value < 0
-  ) {
+function rawSafeUint(name: string, value: unknown): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
     throw new contract.PrnsValidationError(
       "InvalidNumber",
-      `${name} must be a finite non-negative number`,
+      `${name} must be a non-negative safe integer`,
     );
   }
   return value;
+}
+
+function nonNegativeBigInt(name: string, value: unknown): bigint {
+  if (typeof value !== "bigint" || value < 0n) {
+    throw new contract.PrnsValidationError(
+      "InvalidNumber",
+      `${name} must be a non-negative bigint`,
+    );
+  }
+  return value;
+}
+
+function exactBytesAsSafeNumber(name: string, value: bigint): number {
+  if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new contract.PrnsValidationError(
+      "InvalidNumber",
+      `${name} exceeds the JavaScript safe-integer limit`,
+    );
+  }
+  return Number(value);
 }
 
 function optionalBitrate<Value extends object>(

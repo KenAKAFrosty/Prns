@@ -540,7 +540,7 @@ mod tests {
         let validated = ValidatedFlashManifest::from_json(&encoded, &catalog)?;
         assert_eq!(validated.schema(), FLASH_MANIFEST_SCHEMA);
         assert_eq!(validated.release().version().as_str(), "0.2.6");
-        assert_eq!(validated.targets().len(), 4);
+        assert_eq!(validated.targets().len(), 5);
         assert_eq!(
             validated
                 .targets()
@@ -555,7 +555,7 @@ mod tests {
                 .iter()
                 .filter(|target| matches!(target, ReleaseTarget::EspSerial(_)))
                 .count(),
-            3
+            4
         );
         let t_echo = validated
             .targets()

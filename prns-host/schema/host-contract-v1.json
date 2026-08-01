@@ -1,7 +1,15 @@
 {
   "schemaVersion": 1,
   "abi": 1,
-  "productVersion": "0.3.1",
+  "productVersion": "0.3.2",
+  "scalars": [
+    {
+      "name": "safeUint",
+      "storage": "u64",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    }
+  ],
   "fixedBytes": [
     { "name": "DestinationHash", "length": 16 },
     { "name": "IdentityHash", "length": 16 },
@@ -12,6 +20,149 @@
     { "name": "RequestPathHash", "length": 16 },
     { "name": "ResourceHash", "length": 32 },
     { "name": "IdentitySecret", "length": 64, "secret": true }
+  ],
+  "handles": [
+    { "name": "Host", "release": "hostRelease", "threadSafe": true },
+    { "name": "HostInspection", "release": "hostSnapshotRelease", "threadSafe": false },
+    { "name": "IssuedCommand", "release": "commandRelease", "threadSafe": true },
+    { "name": "ResourceUpload", "release": "resourceUploadRelease", "threadSafe": false },
+    { "name": "EventStream", "release": "eventStreamRelease", "threadSafe": true },
+    { "name": "ReadinessRegistration", "release": "readinessRegistrationRelease", "threadSafe": true },
+    { "name": "Event", "release": "eventRelease", "threadSafe": false },
+    { "name": "ResourceStream", "release": "resourceStreamRelease", "threadSafe": false }
+  ],
+  "records": [
+    {
+      "name": "DestinationName",
+      "hashable": true,
+      "fields": [
+        { "name": "appName", "type": "string" },
+        { "name": "aspects", "type": { "array": "string" } }
+      ]
+    },
+    {
+      "name": "RequestHandlerConfig",
+      "hashable": true,
+      "fields": [
+        { "name": "path", "type": "string" },
+        { "name": "policy", "type": "RequestPolicy" }
+      ]
+    },
+    {
+      "name": "SerialLineConfig",
+      "hashable": true,
+      "fields": [
+        { "name": "baud", "type": "u32" },
+        { "name": "dataBits", "type": "SerialDataBits" },
+        { "name": "parity", "type": "SerialParity" },
+        { "name": "stopBits", "type": "SerialStopBits" }
+      ]
+    },
+    {
+      "name": "RNodeRadioConfig",
+      "hashable": true,
+      "fields": [
+        { "name": "frequencyHz", "type": "safeUint" },
+        { "name": "bandwidthHz", "type": "u32" },
+        { "name": "txPowerDbm", "type": "i16" },
+        { "name": "spreadingFactor", "type": "u8" },
+        { "name": "codingRate", "type": "u8" }
+      ]
+    },
+    {
+      "name": "MultiRNodeMemberConfig",
+      "hashable": true,
+      "fields": [
+        { "name": "name", "type": "string" },
+        { "name": "virtualPort", "type": "u8" },
+        { "name": "radio", "type": "RNodeRadioConfig" },
+        { "name": "flowControl", "type": "bool" },
+        { "name": "outgoing", "type": "bool" }
+      ]
+    },
+    {
+      "name": "BackendInfo",
+      "hashable": true,
+      "fields": [
+        { "name": "backend", "type": "BackendKind" },
+        { "name": "capabilities", "type": { "array": "Capability" } },
+        { "name": "interfaceKinds", "type": { "array": "InterfaceKind" } }
+      ]
+    },
+    {
+      "name": "InterfaceSnapshot",
+      "fields": [
+        { "name": "interfaceId", "type": "InterfaceId" },
+        { "name": "name", "type": "string", "optional": true },
+        { "name": "kind", "type": "InterfaceKind", "optional": true },
+        { "name": "health", "type": "InterfaceHealth" },
+        { "name": "failureDetail", "type": "string", "optional": true },
+        { "name": "rxBytes", "type": "u64" },
+        { "name": "txBytes", "type": "u64" },
+        { "name": "rxBps", "type": "safeUint", "optional": true },
+        { "name": "txBps", "type": "safeUint", "optional": true },
+        { "name": "routeCount", "type": "u32" },
+        { "name": "linkCount", "type": "u32" },
+        { "name": "transportedLinkCount", "type": "u32" }
+      ]
+    },
+    {
+      "name": "RouteSnapshot",
+      "fields": [
+        { "name": "destination", "type": "DestinationHash" },
+        { "name": "hops", "type": "u8" },
+        { "name": "viaIdentity", "type": "IdentityHash", "optional": true },
+        { "name": "interfaceId", "type": "InterfaceId" },
+        { "name": "learnedAtMillis", "type": "safeUint" },
+        { "name": "lastRelayedAtMillis", "type": "safeUint" },
+        { "name": "expiresAtMillis", "type": "safeUint" }
+      ]
+    },
+    {
+      "name": "DestinationIdentitySnapshot",
+      "fields": [
+        { "name": "destination", "type": "DestinationHash" },
+        { "name": "identity", "type": "IdentityHash" }
+      ]
+    },
+    {
+      "name": "RuntimeHealthSnapshot",
+      "fields": [
+        { "name": "running", "type": "bool" },
+        { "name": "uptimeMillis", "type": "safeUint" },
+        { "name": "interfaceCount", "type": "u32" },
+        { "name": "onlineInterfaceCount", "type": "u32" },
+        { "name": "routeCount", "type": "u32" },
+        { "name": "linkCount", "type": "u32" },
+        { "name": "transportedLinkCount", "type": "u32" },
+        { "name": "rxBytes", "type": "u64" },
+        { "name": "txBytes", "type": "u64" },
+        { "name": "rxBps", "type": "safeUint" },
+        { "name": "txBps", "type": "safeUint" }
+      ]
+    },
+    {
+      "name": "PersistenceSnapshot",
+      "fields": [
+        { "name": "persistent", "type": "bool" },
+        { "name": "restored", "type": "bool" },
+        { "name": "lastFlushCause", "type": "PersistenceFlushCause", "optional": true },
+        { "name": "lastFailureDetail", "type": "string", "optional": true }
+      ]
+    },
+    {
+      "name": "HostSnapshot",
+      "fields": [
+        { "name": "revision", "type": "u64" },
+        { "name": "backend", "type": "BackendInfo" },
+        { "name": "interfaces", "type": { "array": "InterfaceSnapshot" } },
+        { "name": "routes", "type": { "array": "RouteSnapshot" } },
+        { "name": "activeLinkCount", "type": "u32" },
+        { "name": "destinationIdentities", "type": { "array": "DestinationIdentitySnapshot" } },
+        { "name": "runtime", "type": "RuntimeHealthSnapshot" },
+        { "name": "persistence", "type": "PersistenceSnapshot" }
+      ]
+    }
   ],
   "limits": {
     "pendingCommands": 256,
@@ -35,7 +186,10 @@
         { "name": "Stopped", "value": 9 },
         { "name": "BackendFailed", "value": 10 },
         { "name": "Panic", "value": 11 },
-        { "name": "Interrupted", "value": 12 }
+        { "name": "Interrupted", "value": 12 },
+        { "name": "Unsupported", "value": 13 },
+        { "name": "PermissionDenied", "value": 14 },
+        { "name": "Unavailable", "value": 15 }
       ]
     },
     {
@@ -64,6 +218,84 @@
       ]
     },
     {
+      "name": "InterfaceKind",
+      "values": [
+        { "name": "AutoLan", "value": 1 },
+        { "name": "TcpClient", "value": 2 },
+        { "name": "TcpServer", "value": 3 },
+        { "name": "Udp", "value": 4 },
+        { "name": "Serial", "value": 5 },
+        { "name": "Kiss", "value": 6 },
+        { "name": "Ax25Kiss", "value": 7 },
+        { "name": "RNode", "value": 8 },
+        { "name": "MultiRNode", "value": 9 },
+        { "name": "Pipe", "value": 10 },
+        { "name": "BackboneClient", "value": 11 },
+        { "name": "BackboneServer", "value": 12 },
+        { "name": "I2p", "value": 13 },
+        { "name": "Weave", "value": 14 },
+        { "name": "AutomaticUsb", "value": 15 },
+        { "name": "AutomaticBluetoothLe", "value": 16 },
+        { "name": "WebSocketClient", "value": 17 },
+        { "name": "WebSocketServer", "value": 18 },
+        { "name": "BrowserRendezvous", "value": 19 }
+      ]
+    },
+    {
+      "name": "InterfaceHealth",
+      "values": [
+        { "name": "Initializing", "value": 1 },
+        { "name": "Connected", "value": 2 },
+        { "name": "Degraded", "value": 3 },
+        { "name": "Reconnecting", "value": 4 },
+        { "name": "Failed", "value": 5 },
+        { "name": "Disconnected", "value": 6 },
+        { "name": "Disabled", "value": 7 },
+        { "name": "Unknown", "value": 8 }
+      ]
+    },
+    {
+      "name": "DiscoveryScope",
+      "values": [
+        { "name": "Link", "value": 1 },
+        { "name": "Admin", "value": 2 },
+        { "name": "Site", "value": 3 },
+        { "name": "Organization", "value": 4 },
+        { "name": "Global", "value": 5 }
+      ]
+    },
+    {
+      "name": "MulticastAddressType",
+      "values": [
+        { "name": "Temporary", "value": 1 },
+        { "name": "Permanent", "value": 2 }
+      ]
+    },
+    {
+      "name": "SerialDataBits",
+      "values": [
+        { "name": "Five", "value": 5 },
+        { "name": "Six", "value": 6 },
+        { "name": "Seven", "value": 7 },
+        { "name": "Eight", "value": 8 }
+      ]
+    },
+    {
+      "name": "SerialParity",
+      "values": [
+        { "name": "None", "value": 1 },
+        { "name": "Even", "value": 2 },
+        { "name": "Odd", "value": 3 }
+      ]
+    },
+    {
+      "name": "SerialStopBits",
+      "values": [
+        { "name": "One", "value": 1 },
+        { "name": "Two", "value": 2 }
+      ]
+    },
+    {
       "name": "HostRole",
       "values": [
         { "name": "Endpoint", "value": 1 },
@@ -76,6 +308,13 @@
         { "name": "Existing", "value": 1 },
         { "name": "GenerateEphemeral", "value": 2 },
         { "name": "LoadOrCreate", "value": 3 }
+      ]
+    },
+    {
+      "name": "PersistenceConfigKind",
+      "values": [
+        { "name": "Ephemeral", "value": 1 },
+        { "name": "Directory", "value": 2 }
       ]
     },
     {
@@ -180,7 +419,15 @@
         { "name": "ResourcePredecessorFailed", "value": 29 },
         { "name": "ChannelWindowFull", "value": 30 },
         { "name": "ChannelUntrackable", "value": 31 },
-        { "name": "InvalidChannelMessageType", "value": 32 }
+        { "name": "InvalidChannelMessageType", "value": 32 },
+        { "name": "InvalidConfiguration", "value": 33 },
+        { "name": "ResourceUploadCancelled", "value": 34 },
+        { "name": "ResourceEarlyEof", "value": 35 },
+        { "name": "ResourceLengthOverrun", "value": 36 },
+        { "name": "PermissionDenied", "value": 37 },
+        { "name": "DeviceUnavailable", "value": 38 },
+        { "name": "ConnectFailed", "value": 39 },
+        { "name": "BackendFailed", "value": 40 }
       ]
     },
     {
@@ -248,7 +495,27 @@
         { "name": "RouteInterfaceGone", "value": 213 },
         { "name": "RouteDropped", "value": 214 },
         { "name": "BackendDiagnostic", "value": 215 },
-        { "name": "DiagnosticsDropped", "value": 216 }
+        { "name": "DiagnosticsDropped", "value": 216 },
+        { "name": "PersistenceRestored", "value": 217 },
+        { "name": "PersistenceFlushed", "value": 218 },
+        { "name": "PersistenceFlushFailed", "value": 219 }
+      ]
+    },
+    {
+      "name": "PersistenceFlushCause",
+      "values": [
+        { "name": "Startup", "value": 1 },
+        { "name": "Interval", "value": 2 },
+        { "name": "RouteChange", "value": 3 },
+        { "name": "RatchetRotation", "value": 4 },
+        { "name": "Shutdown", "value": 5 }
+      ]
+    },
+    {
+      "name": "PersistenceFlushTarget",
+      "values": [
+        { "name": "RoutingState", "value": 1 },
+        { "name": "Ratchets", "value": 2 }
       ]
     },
     {
@@ -284,7 +551,15 @@
         { "name": "Kind", "value": 28 },
         { "name": "DroppedCount", "value": 29 },
         { "name": "Hops", "value": 30 },
-        { "name": "Stream", "value": 31 }
+        { "name": "Stream", "value": 31 },
+        { "name": "Routes", "value": 32 },
+        { "name": "DestinationIdentities", "value": 33 },
+        { "name": "Tunnels", "value": 34 },
+        { "name": "Ratchets", "value": 35 },
+        { "name": "Refused", "value": 36 },
+        { "name": "Dropped", "value": 37 },
+        { "name": "PersistenceCause", "value": 38 },
+        { "name": "PersistenceTarget", "value": 39 }
       ]
     }
   ],
@@ -310,6 +585,121 @@
       ]
     },
     {
+      "name": "PersistenceConfig",
+      "cases": [
+        { "name": "Ephemeral", "value": 1, "fields": [] },
+        {
+          "name": "Directory",
+          "value": 2,
+          "fields": [
+            { "name": "path", "type": "string" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "InterfaceConfig",
+      "cases": [
+        {
+          "name": "AutoLan",
+          "value": 1,
+          "fields": [
+            { "name": "groupId", "type": "string", "optional": true },
+            { "name": "discoveryScope", "type": "DiscoveryScope", "optional": true },
+            { "name": "discoveryPort", "type": "u16", "optional": true },
+            { "name": "dataPort", "type": "u16", "optional": true },
+            { "name": "devices", "type": { "array": "string" } },
+            { "name": "ignoredDevices", "type": { "array": "string" } },
+            { "name": "multicastAddressType", "type": "MulticastAddressType", "optional": true }
+          ]
+        },
+        { "name": "TcpClient", "value": 2, "fields": [
+          { "name": "target", "type": "string" },
+          { "name": "bitrate", "type": "Bitrate" }
+        ] },
+        { "name": "TcpServer", "value": 3, "fields": [
+          { "name": "bind", "type": "string" },
+          { "name": "bitrate", "type": "Bitrate" }
+        ] },
+        { "name": "Udp", "value": 4, "fields": [
+          { "name": "local", "type": "string" },
+          { "name": "peer", "type": "string" },
+          { "name": "bitrate", "type": "Bitrate" }
+        ] },
+        { "name": "Serial", "value": 5, "fields": [
+          { "name": "port", "type": "string" },
+          { "name": "line", "type": "SerialLineConfig" }
+        ] },
+        { "name": "Kiss", "value": 6, "fields": [
+          { "name": "port", "type": "string" },
+          { "name": "line", "type": "SerialLineConfig" },
+          { "name": "flowControl", "type": "bool" },
+          { "name": "preambleMillis", "type": "u32" },
+          { "name": "transmitTailMillis", "type": "u32" },
+          { "name": "persistence", "type": "u8" },
+          { "name": "slotTimeMillis", "type": "u32" },
+          { "name": "stationCallsign", "type": "string", "optional": true },
+          { "name": "stationIntervalSeconds", "type": "safeUint", "optional": true }
+        ] },
+        { "name": "Ax25Kiss", "value": 7, "fields": [
+          { "name": "port", "type": "string" },
+          { "name": "line", "type": "SerialLineConfig" },
+          { "name": "flowControl", "type": "bool" },
+          { "name": "preambleMillis", "type": "u32" },
+          { "name": "transmitTailMillis", "type": "u32" },
+          { "name": "persistence", "type": "u8" },
+          { "name": "slotTimeMillis", "type": "u32" },
+          { "name": "callsign", "type": "string" },
+          { "name": "ssid", "type": "u8" }
+        ] },
+        { "name": "RNode", "value": 8, "fields": [
+          { "name": "port", "type": "string" },
+          { "name": "radio", "type": "RNodeRadioConfig" },
+          { "name": "flowControl", "type": "bool" },
+          { "name": "stationCallsign", "type": "string", "optional": true },
+          { "name": "stationIntervalSeconds", "type": "safeUint", "optional": true },
+          { "name": "airtimeLimitShortCentiPercent", "type": "u16", "optional": true },
+          { "name": "airtimeLimitLongCentiPercent", "type": "u16", "optional": true }
+        ] },
+        { "name": "MultiRNode", "value": 9, "fields": [
+          { "name": "port", "type": "string" },
+          { "name": "stationCallsign", "type": "string", "optional": true },
+          { "name": "stationIntervalSeconds", "type": "safeUint", "optional": true },
+          { "name": "members", "type": { "array": "MultiRNodeMemberConfig" } }
+        ] },
+        { "name": "Pipe", "value": 10, "fields": [
+          { "name": "command", "type": { "array": "string" } },
+          { "name": "respawnDelayMillis", "type": "safeUint" }
+        ] },
+        { "name": "BackboneClient", "value": 11, "fields": [
+          { "name": "target", "type": "string" },
+          { "name": "bitrate", "type": "Bitrate" }
+        ] },
+        { "name": "BackboneServer", "value": 12, "fields": [
+          { "name": "bind", "type": "string" },
+          { "name": "bitrate", "type": "Bitrate" }
+        ] },
+        { "name": "I2p", "value": 13, "fields": [
+          { "name": "peers", "type": { "array": "string" } },
+          { "name": "connectable", "type": "bool" }
+        ] },
+        { "name": "Weave", "value": 14, "fields": [
+          { "name": "port", "type": "string" }
+        ] },
+        { "name": "AutomaticUsb", "value": 15, "fields": [] },
+        { "name": "AutomaticBluetoothLe", "value": 16, "fields": [] },
+        { "name": "WebSocketClient", "value": 17, "fields": [
+          { "name": "target", "type": "string" }
+        ] },
+        { "name": "WebSocketServer", "value": 18, "fields": [
+          { "name": "bind", "type": "string" }
+        ] },
+        { "name": "BrowserRendezvous", "value": 19, "fields": [
+          { "name": "url", "type": "string" }
+        ] }
+      ]
+    },
+    {
       "name": "DestinationIdentityConfig",
       "cases": [
         { "name": "HostIdentity", "value": 1, "fields": [] },
@@ -330,7 +720,7 @@
           "name": "BitsPerSecond",
           "value": 2,
           "fields": [
-            { "name": "value", "type": "u64" }
+            { "name": "value", "type": "safeUint" }
           ]
         }
       ]
@@ -343,7 +733,7 @@
           "name": "Exact",
           "value": 2,
           "fields": [
-            { "name": "millis", "type": "u64" }
+            { "name": "millis", "type": "safeUint" }
           ]
         }
       ]
@@ -363,7 +753,7 @@
           "name": "Accept",
           "value": 2,
           "fields": [
-            { "name": "maximumUncompressedBytes", "type": "u64" },
+            { "name": "maximumUncompressedBytes", "type": "safeUint" },
             { "name": "acceptCompressed", "type": "bool" }
           ]
         }
@@ -386,7 +776,7 @@
             { "name": "name", "type": "DestinationName" },
             { "name": "identity", "type": "DestinationIdentityConfig" },
             { "name": "announceAppData", "type": "bytes", "optional": true },
-            { "name": "requestHandlers", "type": "RequestHandlers" }
+            { "name": "requestHandlers", "type": { "array": "RequestHandlerConfig" } }
           ]
         }
       ]
@@ -495,7 +885,7 @@
           "fields": [
             { "name": "linkId", "type": "LinkId" },
             { "name": "requestId", "type": "RequestId" },
-            { "name": "requestRttMillis", "type": "u64" },
+            { "name": "requestRttMillis", "type": "safeUint" },
             { "name": "payload", "type": "bytes" }
           ]
         },
@@ -542,6 +932,13 @@
             { "name": "pathHash", "type": "RequestPathHash" },
             { "name": "identity", "type": "IdentityHash" }
           ]
+        },
+        {
+          "name": "AttachInterface",
+          "value": 19,
+          "fields": [
+            { "name": "config", "type": "InterfaceConfig" }
+          ]
         }
       ]
     },
@@ -553,7 +950,7 @@
           "name": "PacketDelivered",
           "value": 2,
           "fields": [
-            { "name": "rttMillis", "type": "u64" },
+            { "name": "rttMillis", "type": "safeUint" },
             { "name": "evidence", "type": "DeliveryEvidenceKind" },
             { "name": "packetHash", "type": "PacketHash", "optional": true }
           ]
@@ -578,7 +975,7 @@
           "value": 6,
           "fields": [
             { "name": "linkId", "type": "LinkId" },
-            { "name": "rttMillis", "type": "u64" }
+            { "name": "rttMillis", "type": "safeUint" }
           ]
         },
         {
@@ -594,14 +991,14 @@
           "value": 9,
           "fields": [
             { "name": "data", "type": "bytes" },
-            { "name": "rttMillis", "type": "u64" }
+            { "name": "rttMillis", "type": "safeUint" }
           ]
         },
         {
           "name": "ResponseSent",
           "value": 10,
           "fields": [
-            { "name": "rttMillis", "type": "u64" }
+            { "name": "rttMillis", "type": "safeUint" }
           ]
         },
         { "name": "ResourceSent", "value": 11, "fields": [] },
@@ -655,7 +1052,25 @@
         { "name": "ResourcePredecessorFailed", "value": 29, "fields": [] },
         { "name": "ChannelWindowFull", "value": 30, "fields": [] },
         { "name": "ChannelUntrackable", "value": 31, "fields": [] },
-        { "name": "InvalidChannelMessageType", "value": 32, "fields": [] }
+        { "name": "InvalidChannelMessageType", "value": 32, "fields": [] },
+        { "name": "InvalidConfiguration", "value": 33, "fields": [
+          { "name": "detail", "type": "string" }
+        ] },
+        { "name": "ResourceUploadCancelled", "value": 34, "fields": [] },
+        { "name": "ResourceEarlyEof", "value": 35, "fields": [] },
+        { "name": "ResourceLengthOverrun", "value": 36, "fields": [] },
+        { "name": "PermissionDenied", "value": 37, "fields": [
+          { "name": "detail", "type": "string" }
+        ] },
+        { "name": "DeviceUnavailable", "value": 38, "fields": [
+          { "name": "detail", "type": "string" }
+        ] },
+        { "name": "ConnectFailed", "value": 39, "fields": [
+          { "name": "detail", "type": "string" }
+        ] },
+        { "name": "BackendFailed", "value": 40, "fields": [
+          { "name": "detail", "type": "string" }
+        ] }
       ]
     },
     {
@@ -679,7 +1094,7 @@
             { "name": "requestId", "type": "RequestId" },
             { "name": "requester", "type": "IdentityHash", "optional": true },
             { "name": "pathHash", "type": "RequestPathHash" },
-            { "name": "rttMillis", "type": "u64" },
+            { "name": "rttMillis", "type": "safeUint" },
             { "name": "data", "type": "bytes" }
           ]
         },
@@ -698,8 +1113,8 @@
           "fields": [
             { "name": "linkId", "type": "LinkId" },
             { "name": "requestId", "type": "RequestId" },
-            { "name": "segmentIndex", "type": "u64" },
-            { "name": "totalSegments", "type": "u64" },
+            { "name": "segmentIndex", "type": "safeUint" },
+            { "name": "totalSegments", "type": "safeUint" },
             { "name": "data", "type": "bytes" }
           ]
         },
@@ -719,8 +1134,8 @@
           "fields": [
             { "name": "linkId", "type": "LinkId" },
             { "name": "originalHash", "type": "ResourceHash" },
-            { "name": "segmentIndex", "type": "u64" },
-            { "name": "totalSegments", "type": "u64" },
+            { "name": "segmentIndex", "type": "safeUint" },
+            { "name": "totalSegments", "type": "safeUint" },
             { "name": "metadata", "type": "bytes", "optional": true },
             { "name": "data", "type": "bytes" }
           ]
@@ -763,7 +1178,7 @@
           "value": 201,
           "fields": [
             { "name": "linkId", "type": "LinkId" },
-            { "name": "rttMillis", "type": "u64" }
+            { "name": "rttMillis", "type": "safeUint" }
           ]
         },
         {
@@ -817,8 +1232,8 @@
             { "name": "transferredBytes", "type": "u64" },
             { "name": "totalBytes", "type": "u64" },
             { "name": "physicalTransferredBytes", "type": "u64" },
-            { "name": "segmentIndex", "type": "u64" },
-            { "name": "totalSegments", "type": "u64" }
+            { "name": "segmentIndex", "type": "safeUint" },
+            { "name": "totalSegments", "type": "safeUint" }
           ]
         },
         {
@@ -886,8 +1301,82 @@
           "fields": [
             { "name": "count", "type": "u128" }
           ]
+        },
+        {
+          "name": "PersistenceRestored",
+          "value": 217,
+          "fields": [
+            { "name": "routes", "type": "safeUint" },
+            { "name": "destinationIdentities", "type": "safeUint" },
+            { "name": "tunnels", "type": "safeUint" },
+            { "name": "ratchets", "type": "safeUint" },
+            { "name": "refused", "type": "safeUint" },
+            { "name": "dropped", "type": "safeUint" }
+          ]
+        },
+        {
+          "name": "PersistenceFlushed",
+          "value": 218,
+          "fields": [
+            { "name": "cause", "type": "PersistenceFlushCause" },
+            { "name": "target", "type": "PersistenceFlushTarget" }
+          ]
+        },
+        {
+          "name": "PersistenceFlushFailed",
+          "value": 219,
+          "fields": [
+            { "name": "cause", "type": "PersistenceFlushCause" },
+            { "name": "target", "type": "PersistenceFlushTarget" }
+          ]
         }
       ]
     }
+  ],
+  "commandProjection": {
+    "union": "HostCommand",
+    "receiver": "Host",
+    "result": "IssuedCommand",
+    "cPrefix": "prns_host_"
+  },
+  "operations": [
+    { "name": "contractInfo", "kind": "query", "parameters": [], "result": { "type": "ContractInfo", "ownership": "copied" }, "status": true },
+    { "name": "backendInfo", "kind": "query", "parameters": [], "result": { "type": "BackendInfo", "ownership": "copied" }, "status": true },
+    { "name": "hostCreate", "kind": "create", "parameters": [{ "name": "options", "type": "HostOptions", "passing": "borrow" }], "result": { "type": "Host", "ownership": "owned" }, "status": true },
+    { "name": "hostRelease", "kind": "release", "receiver": { "type": "Host", "mutable": true, "consumed": true }, "parameters": [], "status": false },
+    { "name": "hostLifecycle", "kind": "query", "receiver": { "type": "Host", "mutable": false }, "parameters": [], "result": { "type": "Lifecycle", "ownership": "copied" }, "status": true },
+    { "name": "hostSnapshot", "kind": "blocking", "receiver": { "type": "Host", "mutable": false }, "parameters": [{ "name": "timeoutMillis", "type": "u32", "passing": "value" }], "result": { "type": "HostInspection", "ownership": "owned" }, "status": true },
+    { "name": "hostSnapshotRead", "kind": "query", "receiver": { "type": "HostInspection", "mutable": false }, "parameters": [], "result": { "type": "HostSnapshot", "ownership": "borrowed", "validUntil": "hostSnapshotRelease" }, "status": true },
+    { "name": "hostSnapshotRelease", "kind": "release", "receiver": { "type": "HostInspection", "mutable": true, "consumed": true }, "parameters": [], "status": false },
+    { "name": "hostIdentityHash", "kind": "query", "receiver": { "type": "Host", "mutable": false }, "parameters": [], "result": { "type": "bytes", "ownership": "borrowed", "validUntil": "hostRelease" }, "status": true },
+    { "name": "hostDestinationCount", "kind": "query", "receiver": { "type": "Host", "mutable": false }, "parameters": [], "result": { "type": "size", "ownership": "copied" }, "status": false },
+    { "name": "hostDestinationHash", "kind": "query", "receiver": { "type": "Host", "mutable": false }, "parameters": [{ "name": "index", "type": "size", "passing": "value" }], "result": { "type": "bytes", "ownership": "borrowed", "validUntil": "hostRelease" }, "status": true },
+    { "name": "hostBeginResourceUpload", "kind": "create", "receiver": { "type": "Host", "mutable": true }, "parameters": [{ "name": "linkId", "type": "LinkId", "passing": "borrow" }, { "name": "declaredLength", "type": "u64", "passing": "value" }, { "name": "packedMetadata", "type": "bytes", "passing": "optionalBorrow" }, { "name": "compression", "type": "ResourceCompression", "passing": "value" }], "result": { "type": "ResourceUpload", "ownership": "owned" }, "status": true },
+    { "name": "resourceUploadWrite", "kind": "write", "receiver": { "type": "ResourceUpload", "mutable": true }, "parameters": [{ "name": "chunk", "type": "bytes", "passing": "borrow" }], "status": true },
+    { "name": "resourceUploadIsWritable", "kind": "query", "receiver": { "type": "ResourceUpload", "mutable": false }, "parameters": [], "result": { "type": "bool", "ownership": "copied" }, "status": true },
+    { "name": "resourceUploadFinish", "kind": "finish", "receiver": { "type": "ResourceUpload", "mutable": true }, "parameters": [], "result": { "type": "IssuedCommand", "ownership": "owned" }, "status": true },
+    { "name": "resourceUploadAbort", "kind": "interrupt", "receiver": { "type": "ResourceUpload", "mutable": true }, "parameters": [], "status": false },
+    { "name": "resourceUploadRelease", "kind": "release", "receiver": { "type": "ResourceUpload", "mutable": true, "consumed": true }, "parameters": [], "status": false },
+    { "name": "hostStop", "kind": "stop", "receiver": { "type": "Host", "mutable": true }, "parameters": [], "status": true },
+    { "name": "commandWait", "kind": "blocking", "receiver": { "type": "IssuedCommand", "mutable": true }, "parameters": [{ "name": "timeoutMillis", "type": "u32", "passing": "value" }], "result": { "type": "CommandResult", "ownership": "borrowed", "validUntil": "commandRelease" }, "interrupt": "commandInterruptWait", "readiness": "commandRegisterReadiness", "status": true },
+    { "name": "commandRegisterReadiness", "kind": "readiness", "receiver": { "type": "IssuedCommand", "mutable": true }, "parameters": [{ "name": "callback", "type": "ReadinessCallback", "passing": "value" }, { "name": "context", "type": "opaquePointer", "passing": "value" }], "result": { "type": "ReadinessRegistration", "ownership": "owned" }, "status": true },
+    { "name": "commandInterruptWait", "kind": "interrupt", "receiver": { "type": "IssuedCommand", "mutable": true }, "parameters": [], "status": false },
+    { "name": "commandRelease", "kind": "release", "receiver": { "type": "IssuedCommand", "mutable": true, "consumed": true }, "parameters": [], "status": false },
+    { "name": "hostClaimApplicationEvents", "kind": "claim", "receiver": { "type": "Host", "mutable": true }, "parameters": [], "result": { "type": "EventStream", "ownership": "owned", "exclusive": true }, "status": true },
+    { "name": "hostClaimDiagnostics", "kind": "claim", "receiver": { "type": "Host", "mutable": true }, "parameters": [], "result": { "type": "EventStream", "ownership": "owned", "exclusive": true }, "status": true },
+    { "name": "eventStreamRegisterReadiness", "kind": "readiness", "receiver": { "type": "EventStream", "mutable": true }, "parameters": [{ "name": "callback", "type": "ReadinessCallback", "passing": "value" }, { "name": "context", "type": "opaquePointer", "passing": "value" }], "result": { "type": "ReadinessRegistration", "ownership": "owned" }, "status": true },
+    { "name": "readinessRegistrationRelease", "kind": "release", "receiver": { "type": "ReadinessRegistration", "mutable": true, "consumed": true }, "parameters": [], "status": false },
+    { "name": "eventStreamInterruptWait", "kind": "interrupt", "receiver": { "type": "EventStream", "mutable": true }, "parameters": [], "status": false },
+    { "name": "eventStreamRelease", "kind": "release", "receiver": { "type": "EventStream", "mutable": true, "consumed": true }, "parameters": [], "status": false },
+    { "name": "eventStreamNext", "kind": "blocking", "receiver": { "type": "EventStream", "mutable": true }, "parameters": [{ "name": "timeoutMillis", "type": "u32", "passing": "value" }], "result": { "type": "Event", "ownership": "owned" }, "interrupt": "eventStreamInterruptWait", "readiness": "eventStreamRegisterReadiness", "status": true },
+    { "name": "eventRelease", "kind": "release", "receiver": { "type": "Event", "mutable": true, "consumed": true }, "parameters": [], "status": false },
+    { "name": "eventKind", "kind": "query", "receiver": { "type": "Event", "mutable": false }, "parameters": [], "result": { "type": "u32", "ownership": "copied" }, "status": false },
+    { "name": "eventBytes", "kind": "query", "receiver": { "type": "Event", "mutable": false }, "parameters": [{ "name": "field", "type": "EventField", "passing": "value" }], "result": { "type": "bytes", "ownership": "borrowed", "validUntil": "eventRelease" }, "status": true },
+    { "name": "eventString", "kind": "query", "receiver": { "type": "Event", "mutable": false }, "parameters": [{ "name": "field", "type": "EventField", "passing": "value" }], "result": { "type": "string", "ownership": "borrowed", "validUntil": "eventRelease" }, "status": true },
+    { "name": "eventU64", "kind": "query", "receiver": { "type": "Event", "mutable": false }, "parameters": [{ "name": "field", "type": "EventField", "passing": "value" }], "result": { "type": "u64", "ownership": "copied" }, "status": true },
+    { "name": "eventU128", "kind": "query", "receiver": { "type": "Event", "mutable": false }, "parameters": [{ "name": "field", "type": "EventField", "passing": "value" }], "result": { "type": "u128", "ownership": "copied" }, "status": true },
+    { "name": "eventResourceStream", "kind": "claim", "receiver": { "type": "Event", "mutable": true }, "parameters": [], "result": { "type": "ResourceStream", "ownership": "owned", "exclusive": true }, "status": true },
+    { "name": "resourceStreamRelease", "kind": "release", "receiver": { "type": "ResourceStream", "mutable": true, "consumed": true }, "parameters": [], "status": false },
+    { "name": "resourceStreamNext", "kind": "pull", "receiver": { "type": "ResourceStream", "mutable": true }, "parameters": [{ "name": "maximumBytes", "type": "size", "passing": "value" }], "result": { "type": "ResourceChunk", "ownership": "borrowed", "validUntil": "resourceStreamNextOrRelease" }, "status": true }
   ]
 }

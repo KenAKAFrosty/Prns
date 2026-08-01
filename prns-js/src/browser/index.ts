@@ -4,6 +4,7 @@ import type { StreamClaim } from "../async_lanes.js";
 import {
   DESTINATION_HASH_LENGTH,
   HOST_CONTRACT_ABI,
+  HOST_SCHEMA_VERSION,
   INTERFACE_ID_LENGTH,
   PRODUCT_VERSION,
   RESOURCE_HASH_LENGTH,
@@ -19,16 +20,24 @@ import {
 } from "../contract.js";
 import type {
   ApplicationEvent as HostApplicationEvent,
+  BackendCapabilities,
+  BackendInfo,
+  CapabilityName,
   CommandFailure,
   CommandOutcome,
   CommandSettlement,
   CommandSettlementFor,
   DeliveryEvidenceKind,
   DestinationHash,
+  DestinationIdentitySnapshot as StableDestinationIdentitySnapshot,
   DiagnosticEvent as HostDiagnosticEvent,
   HostCommand,
+  HostSnapshot as StableHostSnapshot,
   IdentityHash,
+  InterfaceConfig,
+  InterfaceHealth,
   InterfaceId,
+  InterfaceKind,
   LifecycleState as HostLifecycleState,
   LinkId,
   PrnsLimits as HostLimits,
@@ -40,6 +49,7 @@ import type {
   ResourceStrategy,
   ResourceStream,
   ResponseTimeout,
+  RouteSnapshot as StableRouteSnapshot,
 } from "../contract.js";
 import { MemoryResourceStream } from "../memory_resource.js";
 import { AutoWifiInterface } from "./auto_wifi.js";
@@ -61,6 +71,7 @@ export { Tag, from, match, match_into };
 export {
   DESTINATION_HASH_LENGTH,
   HOST_CONTRACT_ABI,
+  HOST_SCHEMA_VERSION,
   INTERFACE_ID_LENGTH,
   PRODUCT_VERSION,
   RESOURCE_HASH_LENGTH,
@@ -77,16 +88,24 @@ export {
 export type { DataFrom, TagFrom } from "../casework.js";
 export type { StreamClaim } from "../async_lanes.js";
 export type {
+  BackendCapabilities,
+  BackendInfo,
   Bitrate,
+  CapabilityName,
   CommandFailure,
   CommandOutcome,
   CommandSettlement,
   CommandSettlementFor,
   DestinationHash,
+  DestinationIdentitySnapshot,
   DeliveryEvidenceKind,
   HostCommand,
+  HostSnapshot,
   IdentityHash,
+  InterfaceConfig,
+  InterfaceHealth,
   InterfaceId,
+  InterfaceKind,
   LinkId,
   RequestId,
   RequestHandlerConfig,
@@ -97,6 +116,7 @@ export type {
   ResourceStrategy,
   ResourceStream,
   ResponseTimeout,
+  RouteSnapshot,
 } from "../contract.js";
 export {
   AutoWifiController,
@@ -230,6 +250,14 @@ export type StableIdentityStoreFailure =
     >
   | Tag<"StoredStableIdentityInvalid", { readonly detail: string }>;
 
+export type PersistenceStoreFailure =
+  | HostApiUnavailable<"LocalStorage" | "Base64Encoder" | "Base64Decoder">
+  | Tag<
+      "PersistenceStoreFailed",
+      { readonly operation: "Load" | "Save"; readonly detail: string }
+    >
+  | Tag<"StoredPersistenceInvalid", { readonly detail: string }>;
+
 export type StableIdentityUnavailable<
   Name extends InterfaceName = InterfaceName,
 > = Tag<
@@ -267,6 +295,7 @@ export type PrnsCreateOutcome =
       }
     >
   | IdentityStoreFailure
+  | PersistenceStoreFailure
   | EntropyFailure
   | RuntimeRejected;
 
@@ -430,6 +459,15 @@ export type DestinationRegistrationOutcome =
   | Tag<"Registered", DestinationHash>
   | RuntimeRejected;
 
+export type OperationFailed = Tag<
+  "OperationFailed",
+  { readonly operation: string; readonly detail: string; readonly code?: string }
+>;
+export type StopOutcome =
+  | Tag<"Stopped">
+  | Tag<"AlreadyStopped">
+  | OperationFailed;
+
 type CommandCase<Name extends HostCommand["tag"]> = Extract<
   HostCommand,
   { readonly tag: Name }
@@ -439,6 +477,10 @@ export type SendSinglePacketOutcome = CommandSettlementFor<
   CommandCase<"SendSinglePacket">
 >;
 export type CloseLinkOutcome = CommandSettlementFor<CommandCase<"CloseLink">>;
+export type AttachOutcome = CommandSettlementFor<CommandCase<"AttachInterface">>;
+export type DetachInterfaceOutcome = CommandSettlementFor<
+  CommandCase<"DetachInterface">
+>;
 export type EstablishLinkOutcome = CommandSettlementFor<
   CommandCase<"EstablishLink">
 >;
@@ -471,6 +513,9 @@ export type AllowRequesterOutcome = CommandSettlementFor<
 export type SnapshotOutcome =
   | Tag<"Captured", PrnsSnapshot>
   | RuntimeRejected;
+export type HostSnapshotOutcome =
+  | Tag<"Captured", StableHostSnapshot>
+  | RuntimeRejected;
 
 export type PrnsWasmModule = {
   PrnsRuntime: {
@@ -487,6 +532,8 @@ export type PrnsWasmModule = {
   };
   identitySecretKeyLength(): number;
   hostContractAbi(): number;
+  hostSchemaVersion(): number;
+  browserPersistenceVersion(): number;
   productVersion(): string;
   bluetoothServiceUuid(): string;
   bluetoothControlUuid(): string;
@@ -541,6 +588,10 @@ export type PrnsRuntimeBinding = {
   ingest(options: RuntimeIngestOptions): void;
   drainEvents(): unknown[];
   drainOutbound(): unknown[];
+  persistedState(options: { readonly nowMs: InstantMillis }): unknown;
+  restorePersistedState(
+    options: BrowserPersistedState & { readonly nowMs: InstantMillis },
+  ): unknown;
   snapshot(): unknown;
 };
 
@@ -877,15 +928,20 @@ export type InterfaceSnapshot = {
   hardwareMtu?: HardwareMtu;
   routes: number;
   links: number;
+  transportedLinks: number;
 };
 
 export type PrnsSnapshot = {
   type: "snapshot";
+  revision: bigint;
   ingestedPackets: number;
   ingestedCommands: number;
   routes: number;
   scheduledAnnounces: number;
   interfaces: InterfaceSnapshot[];
+  activeLinkCount: number;
+  routeSnapshots: StableRouteSnapshot[];
+  destinationIdentities: StableDestinationIdentitySnapshot[];
 };
 
 export type IdentityStore = {
@@ -906,6 +962,46 @@ export type StableIdentityStore = {
   load(expectedLength: number): Promise<StableIdentityLoadOutcome>;
   save(identity: Uint8Array): Promise<StableIdentitySaveOutcome>;
 };
+
+export type BrowserPersistedRatchet = {
+  readonly destination: DestinationHash;
+  readonly sealed: Uint8Array;
+};
+
+export type BrowserPersistedState = {
+  readonly type: "persistedState";
+  readonly persistenceVersion: number;
+  readonly takenAtMillis: InstantMillis;
+  readonly routingTable: Uint8Array;
+  readonly tunnels: Uint8Array;
+  readonly destinationIdentities: Uint8Array;
+  readonly ratchets: readonly BrowserPersistedRatchet[];
+};
+
+export type PersistenceLoadOutcome =
+  | Tag<"Loaded", BrowserPersistedState>
+  | Tag<"Missing">
+  | PersistenceStoreFailure;
+
+export type PersistenceSaveOutcome =
+  | Tag<"Saved">
+  | PersistenceStoreFailure;
+
+export type BrowserPersistenceStore = {
+  load(): Promise<PersistenceLoadOutcome>;
+  save(state: BrowserPersistedState): Promise<PersistenceSaveOutcome>;
+};
+
+type BrowserPersistenceRestoreReport = {
+  readonly routes: number;
+  readonly destinationIdentities: number;
+  readonly tunnels: number;
+  readonly ratchets: number;
+  readonly refused: number;
+  readonly dropped: number;
+};
+
+export const BROWSER_PERSISTENCE_VERSION = 1;
 
 type HostGlobal = typeof globalThis & {
   crypto?: {
@@ -1072,7 +1168,15 @@ type HostedInterfaceRegistration<Name extends InterfaceName> =
   RuntimeRegisterInterfaceOptions & {
     readonly interfaceName: Name;
     readonly supervisorKind?: RuntimeInterfaceKind;
+    readonly contractKind?: InterfaceKind;
   };
+type RuntimeInterfaceInspection = {
+  readonly id: InterfaceId;
+  readonly name: InterfaceName;
+  readonly kind?: InterfaceKind;
+  readonly rxBytes: number;
+  readonly txBytes: number;
+};
 type InterfaceDetachOutcome = Tag<"Detached"> | RuntimeRejected;
 type RuntimeReadyOutcome = Tag<"Ready"> | RuntimeRejected;
 type RuntimeIngestOutcome = Tag<"Accepted"> | EntropyFailure | RuntimeRejected;
@@ -1261,6 +1365,64 @@ export class BrowserLocalStorageBleIdentityStore implements StableIdentityStore 
   }
 }
 
+export class BrowserLocalStoragePersistenceStore
+  implements BrowserPersistenceStore
+{
+  #key: string;
+
+  constructor(key: string = "prns.state.v1") {
+    this.#key = key;
+  }
+
+  async load(): Promise<PersistenceLoadOutcome> {
+    let encoded: string | null;
+    try {
+      const storage = hostGlobal().localStorage;
+      if (!storage) {
+        return Tag("HostApiUnavailable", { api: "LocalStorage" });
+      }
+      if (!hostGlobal().atob) {
+        return Tag("HostApiUnavailable", { api: "Base64Decoder" });
+      }
+      encoded = storage.getItem(this.#key);
+    } catch (error) {
+      return Tag("PersistenceStoreFailed", {
+        operation: "Load",
+        detail: describeHostError(error),
+      });
+    }
+    if (encoded === null) {
+      return Tag("Missing");
+    }
+    try {
+      return Tag("Loaded", decodeBrowserPersistedState(encoded));
+    } catch (error) {
+      return Tag("StoredPersistenceInvalid", {
+        detail: describeHostError(error),
+      });
+    }
+  }
+
+  async save(state: BrowserPersistedState): Promise<PersistenceSaveOutcome> {
+    try {
+      const storage = hostGlobal().localStorage;
+      if (!storage) {
+        return Tag("HostApiUnavailable", { api: "LocalStorage" });
+      }
+      if (!hostGlobal().btoa) {
+        return Tag("HostApiUnavailable", { api: "Base64Encoder" });
+      }
+      storage.setItem(this.#key, encodeBrowserPersistedState(state));
+      return Tag("Saved");
+    } catch (error) {
+      return Tag("PersistenceStoreFailed", {
+        operation: "Save",
+        detail: describeHostError(error),
+      });
+    }
+  }
+}
+
 export type EntropySource = (length: number) => EntropyOutcome;
 
 export type PrnsOptions = {
@@ -1268,10 +1430,32 @@ export type PrnsOptions = {
   resourceCompressionModuleUrl?: URL;
   identityStore?: IdentityStore;
   bleIdentityStore?: StableIdentityStore;
+  persistenceStore?: BrowserPersistenceStore;
   entropy?: EntropySource;
   now?: () => InstantMillis;
   limits?: HostLimits;
 };
+
+export function persistentBrowser(root: string = "prns"): PrnsOptions {
+  const selected = root.trim();
+  if (selected.length === 0) {
+    throw new PrnsValidationError(
+      "invalid-component",
+      "browser persistence root must not be empty",
+    );
+  }
+  return {
+    identityStore: new BrowserLocalStorageIdentityStore(
+      `${selected}.identity.v1`,
+    ),
+    bleIdentityStore: new BrowserLocalStorageBleIdentityStore(
+      `${selected}.ble-identity.v1`,
+    ),
+    persistenceStore: new BrowserLocalStoragePersistenceStore(
+      `${selected}.state.v1`,
+    ),
+  };
+}
 
 export type InterfaceSession = {
   readonly name: InterfaceName;
@@ -2557,8 +2741,10 @@ class BrowserBluetoothSession implements BluetoothSession {
 export class Prns {
   readonly interfaces: PrnsInterfaces;
   #runtime: PrnsRuntimeBinding;
+  #host: RuntimeHost;
   #entropy: EntropySource;
   #now: () => InstantMillis;
+  #startedAtMillis: number;
   #limits: HostLimits;
   #resourceCompressionModuleUrl: string;
   #events: BoundedAsyncLane<PrnsApplicationEvent>;
@@ -2571,7 +2757,14 @@ export class Prns {
     }
   >();
   #responseParts = new Map<bigint, Uint8Array[]>();
+  #attachedInterfaces = new Map<string, InterfaceSession>();
   #lifecycle: HostLifecycleState = Tag("Running");
+  #stopCompleted = false;
+  #stopPromise: Promise<StopOutcome> | undefined;
+  #persistenceStore: BrowserPersistenceStore | undefined;
+  #persistenceRestored: boolean;
+  #lastPersistenceFlushCause: "Shutdown" | undefined;
+  #persistenceFailureDetail: string | undefined;
 
   private constructor(
     wasm: PrnsWasmModule,
@@ -2581,13 +2774,19 @@ export class Prns {
     bleIdentityAvailability: BleIdentityAvailability,
     limits: HostLimits,
     resourceCompressionModuleUrl: URL,
+    persistenceStore: BrowserPersistenceStore | undefined,
+    persistenceRestored: boolean,
+    restorationReport: BrowserPersistenceRestoreReport | undefined,
   ) {
     this.#runtime = runtime;
     this.#entropy = entropy;
     this.#now = now;
+    this.#startedAtMillis = now();
     this.#limits = limits;
     this.#resourceCompressionModuleUrl =
       resourceCompressionModuleUrl.href;
+    this.#persistenceStore = persistenceStore;
+    this.#persistenceRestored = persistenceRestored;
     this.#events = new BoundedAsyncLane<PrnsApplicationEvent>({
       name: "ApplicationEvents",
       maximumValues: limits.applicationEvents,
@@ -2605,16 +2804,18 @@ export class Prns {
       gap: (count) => Tag("DiagnosticsDropped", { count }),
       onBeforeNext: () => this.#pumpEvents(),
     });
-    this.interfaces = new PrnsInterfaces(
-      new RuntimeHost(
-        wasm,
-        runtime,
-        entropy,
-        now,
-        bleIdentityAvailability,
-        () => this.#pumpEvents(),
-      ),
+    this.#host = new RuntimeHost(
+      wasm,
+      runtime,
+      entropy,
+      now,
+      bleIdentityAvailability,
+      () => this.#pumpEvents(),
     );
+    this.interfaces = new PrnsInterfaces(this.#host);
+    if (restorationReport !== undefined) {
+      this.#diagnostics.push(Tag("PersistenceRestored", restorationReport));
+    }
   }
 
   static async create(options: PrnsOptions): Promise<PrnsCreateOutcome> {
@@ -2626,23 +2827,36 @@ export class Prns {
     }
     const wasm = loaded.data;
     let actualAbi: number;
+    let actualSchemaVersion: number;
+    let actualPersistenceVersion: number;
     let actualProductVersion: string;
     try {
       actualAbi = wasm.hostContractAbi();
+      actualSchemaVersion = wasm.hostSchemaVersion();
+      actualPersistenceVersion = wasm.browserPersistenceVersion();
       actualProductVersion = wasm.productVersion();
     } catch (error) {
       return runtimeRejected("initialize", error);
     }
     if (
       actualAbi !== HOST_CONTRACT_ABI ||
+      actualSchemaVersion !== HOST_SCHEMA_VERSION ||
       actualProductVersion !== PRODUCT_VERSION
     ) {
       return Tag("ContractMismatch", {
         requiredAbi: HOST_CONTRACT_ABI,
         actualAbi,
+        requiredSchemaVersion: HOST_SCHEMA_VERSION,
+        actualSchemaVersion,
         requiredProductVersion: PRODUCT_VERSION,
         actualProductVersion,
       });
+    }
+    if (actualPersistenceVersion !== BROWSER_PERSISTENCE_VERSION) {
+      return runtimeRejected(
+        "initialize",
+        `browser persistence version ${actualPersistenceVersion} does not match ${BROWSER_PERSISTENCE_VERSION}`,
+      );
     }
     let identityLength: number;
     try {
@@ -2705,19 +2919,70 @@ export class Prns {
       bleIdentityAvailability.tag === "Available"
         ? bleIdentityAvailability.data
         : undefined;
+    const persistenceStore = options.persistenceStore;
+    let persistedState: BrowserPersistedState | undefined;
+    if (persistenceStore !== undefined) {
+      let loaded: PersistenceLoadOutcome;
+      try {
+        loaded = await persistenceStore.load();
+      } catch (error) {
+        return Tag("PersistenceStoreFailed", {
+          operation: "Load",
+          detail: describeHostError(error),
+        });
+      }
+      if (loaded.tag === "Loaded") {
+        try {
+          persistedState = parseBrowserPersistedState(loaded.data);
+        } catch (error) {
+          return Tag("StoredPersistenceInvalid", {
+            detail: describeHostError(error),
+          });
+        }
+      } else if (loaded.tag !== "Missing") {
+        return loaded;
+      }
+    }
+    let limits: HostLimits;
+    let now: () => InstantMillis;
+    let runtime: PrnsRuntimeBinding;
     try {
-      const limits = browserLimits(options.limits ?? balancedLimits());
+      limits = browserLimits(options.limits ?? balancedLimits());
+      now = options.now ?? nowMillis;
+      runtime = new wasm.PrnsRuntime(identity, bleIdentity);
+    } catch (error) {
+      return runtimeRejected("initialize", error);
+    }
+    let restorationReport: BrowserPersistenceRestoreReport | undefined;
+    if (persistedState !== undefined) {
+      try {
+        restorationReport = parsePersistenceRestoreReport(
+          runtime.restorePersistedState({
+            ...persistedState,
+            nowMs: nowMillis(Math.max(now(), persistedState.takenAtMillis)),
+          }),
+        );
+      } catch (error) {
+        return Tag("StoredPersistenceInvalid", {
+          detail: describeHostError(error),
+        });
+      }
+    }
+    try {
       return Tag(
         "Ready",
         new Prns(
           wasm,
-          new wasm.PrnsRuntime(identity, bleIdentity),
+          runtime,
           options.entropy ?? webCryptoEntropy,
-          options.now ?? nowMillis,
+          now,
           bleIdentityAvailability,
           limits,
           options.resourceCompressionModuleUrl ??
             bundledWasmModuleUrl(),
+          persistenceStore,
+          persistedState !== undefined,
+          restorationReport,
         ),
       );
     } catch (error) {
@@ -2792,8 +3057,9 @@ export class Prns {
         commandFailed(Tag("UnsupportedByBackend")),
       AttachUdp: async () =>
         commandFailed(Tag("UnsupportedByBackend")),
-      DetachInterface: async () =>
-        commandFailed(Tag("UnsupportedByBackend")),
+      AttachInterface: ({ config }) => this.#attachInterface(config),
+      DetachInterface: ({ interface: interfaceId }) =>
+        this.#detachInterface(interfaceId),
       EstablishLink: ({ destination }) =>
         this.#issueCommand("establish-link", command, (entropy) =>
           this.#runtime.establishLink({
@@ -2966,6 +3232,14 @@ export class Prns {
     return this.execute(Tag("CloseLink", { linkId: value }));
   }
 
+  attachInterface(config: InterfaceConfig): Promise<AttachOutcome> {
+    return this.execute(Tag("AttachInterface", { config }));
+  }
+
+  detachInterface(interfaceId: InterfaceId): Promise<DetachInterfaceOutcome> {
+    return this.execute(Tag("DetachInterface", { interface: interfaceId }));
+  }
+
   establishLink(
     destination: DestinationHash,
   ): Promise<EstablishLinkOutcome> {
@@ -3103,6 +3377,29 @@ export class Prns {
     return this.#lifecycle;
   }
 
+  get backendInfo(): BackendInfo {
+    return cooperativeBackendInfo();
+  }
+
+  get capabilities(): BackendCapabilities {
+    const info = this.backendInfo;
+    return Tag("Cooperative", {
+      available: new Set(info.capabilities),
+      interfaceKinds: new Set(info.interfaceKinds),
+    });
+  }
+
+  stop(): Promise<StopOutcome> {
+    if (this.#stopCompleted) {
+      return Promise.resolve(Tag("AlreadyStopped"));
+    }
+    if (this.#stopPromise !== undefined) {
+      return this.#stopPromise;
+    }
+    this.#stopPromise = this.#performStop();
+    return this.#stopPromise;
+  }
+
   claimEvents(): StreamClaim<PrnsApplicationEvent> {
     this.#pumpEvents();
     return this.#events.claim();
@@ -3119,6 +3416,234 @@ export class Prns {
     } catch (error) {
       return runtimeRejected("snapshot", error);
     }
+  }
+
+  hostSnapshot(): HostSnapshotOutcome {
+    try {
+      const snapshot = parseSnapshot(this.#runtime.snapshot());
+      const inspection = this.#host.interfaceInspection();
+      const running = this.#lifecycle.tag === "Running";
+      const health: InterfaceHealth = running ? "Connected" : "Disabled";
+      const interfaces = snapshot.interfaces.map((entry) => {
+        const active = inspection.get(byteKey(entry.id));
+        return {
+          interfaceId: entry.id,
+          ...(active === undefined ? {} : { name: active.name }),
+          ...(active?.kind === undefined ? {} : { kind: active.kind }),
+          health,
+          rxBytes: BigInt(active?.rxBytes ?? 0),
+          txBytes: BigInt(active?.txBytes ?? 0),
+          routeCount: entry.routes,
+          linkCount: entry.links,
+          transportedLinkCount: entry.transportedLinks,
+        };
+      });
+      const interfaceCount = interfaces.length;
+      const onlineInterfaceCount = running ? interfaceCount : 0;
+      const transportedLinkCount = interfaces.reduce(
+        (total, entry) =>
+          saturatingAdd(total, entry.transportedLinkCount),
+        0,
+      );
+      const rxBytes = interfaces.reduce(
+        (total, entry) => total + entry.rxBytes,
+        0n,
+      );
+      const txBytes = interfaces.reduce(
+        (total, entry) => total + entry.txBytes,
+        0n,
+      );
+      return Tag("Captured", {
+        revision: snapshot.revision,
+        backend: this.backendInfo,
+        interfaces,
+        routes: snapshot.routeSnapshots,
+        activeLinkCount: snapshot.activeLinkCount,
+        destinationIdentities: snapshot.destinationIdentities,
+        runtime: {
+          running,
+          uptimeMillis: Math.max(0, this.#now() - this.#startedAtMillis),
+          interfaceCount,
+          onlineInterfaceCount,
+          routeCount: snapshot.routeSnapshots.length,
+          linkCount: snapshot.activeLinkCount,
+          transportedLinkCount,
+          rxBytes,
+          txBytes,
+          rxBps: 0,
+          txBps: 0,
+        },
+        persistence: {
+          persistent: this.#persistenceStore !== undefined,
+          restored: this.#persistenceRestored,
+          ...(this.#lastPersistenceFlushCause === undefined
+            ? {}
+            : { lastFlushCause: this.#lastPersistenceFlushCause }),
+          ...(this.#persistenceFailureDetail === undefined
+            ? {}
+            : { lastFailureDetail: this.#persistenceFailureDetail }),
+        },
+      });
+    } catch (error) {
+      return runtimeRejected("snapshot", error);
+    }
+  }
+
+  async #performStop(): Promise<StopOutcome> {
+    const preserveFailure = this.#lifecycle.tag === "Failed";
+    if (!preserveFailure) {
+      this.#lifecycle = Tag("Stopping");
+    }
+    for (const pending of this.#pendingCommands.values()) {
+      pending.settle(commandFailed(Tag("NodeStopped")));
+    }
+    this.#pendingCommands.clear();
+    this.#responseParts.clear();
+    const sessions = [...this.#attachedInterfaces.values()];
+    this.#attachedInterfaces.clear();
+    const failures = (
+      await Promise.all(
+        sessions.map(async (session): Promise<string | undefined> => {
+          try {
+            const closed = await session.close();
+            return closed.tag === "Closed"
+              ? undefined
+              : describeInterfaceSessionFailure(closed);
+          } catch (error) {
+            return describeHostError(error);
+          }
+        }),
+      )
+    ).filter((failure): failure is string => failure !== undefined);
+    if (this.#persistenceStore !== undefined) {
+      let failure: string | undefined;
+      try {
+        const state = parseBrowserPersistedState(
+          this.#runtime.persistedState({ nowMs: this.#now() }),
+        );
+        const saved = await this.#persistenceStore.save(state);
+        if (saved.tag !== "Saved") {
+          failure = describePersistenceStoreFailure(saved);
+        }
+      } catch (error) {
+        failure = describeHostError(error);
+      }
+      if (failure === undefined) {
+        this.#lastPersistenceFlushCause = "Shutdown";
+        this.#persistenceFailureDetail = undefined;
+        this.#diagnostics.push(
+          Tag("PersistenceFlushed", {
+            cause: "Shutdown",
+            target: "RoutingState",
+          }),
+        );
+        this.#diagnostics.push(
+          Tag("PersistenceFlushed", {
+            cause: "Shutdown",
+            target: "Ratchets",
+          }),
+        );
+      } else {
+        this.#persistenceFailureDetail = failure;
+        this.#diagnostics.push(
+          Tag("PersistenceFlushFailed", {
+            cause: "Shutdown",
+            target: "RoutingState",
+          }),
+        );
+        this.#diagnostics.push(
+          Tag("PersistenceFlushFailed", {
+            cause: "Shutdown",
+            target: "Ratchets",
+          }),
+        );
+        failures.push(`flush persistence: ${failure}`);
+      }
+    }
+    this.#events.finish();
+    this.#diagnostics.finish();
+    this.#stopCompleted = true;
+    if (failures.length > 0) {
+      const detail = failures.join("; ");
+      this.#lifecycle = Tag("Failed", { cause: "BackendFailed", detail });
+      return Tag("OperationFailed", { operation: "stop", detail });
+    }
+    if (!preserveFailure) {
+      this.#lifecycle = Tag("Stopped", { reason: "Requested" });
+    }
+    return Tag("Stopped");
+  }
+
+  #attachInterface(config: InterfaceConfig): Promise<CommandSettlement> {
+    const unsupported = async (): Promise<CommandSettlement> =>
+      commandFailed(Tag("UnsupportedByBackend"));
+    return match_into<Promise<CommandSettlement>>().from(config, {
+      AutoLan: unsupported,
+      TcpClient: unsupported,
+      TcpServer: unsupported,
+      Udp: unsupported,
+      Serial: unsupported,
+      Kiss: unsupported,
+      Ax25Kiss: unsupported,
+      RNode: unsupported,
+      MultiRNode: unsupported,
+      Pipe: unsupported,
+      BackboneClient: unsupported,
+      BackboneServer: unsupported,
+      I2p: unsupported,
+      Weave: unsupported,
+      AutomaticUsb: unsupported,
+      AutomaticBluetoothLe: unsupported,
+      WebSocketClient: ({ target }) =>
+        this.#attachWebSocket(target, "WebSocketClient"),
+      WebSocketServer: unsupported,
+      BrowserRendezvous: ({ url }) =>
+        this.#attachWebSocket(url, "BrowserRendezvous"),
+    });
+  }
+
+  async #attachWebSocket(
+    target: string,
+    kind: InterfaceKind,
+  ): Promise<CommandSettlement> {
+    const connected = await this.interfaces.webSocket.connect(target);
+    if (connected.tag !== "Connected") {
+      return commandFailed(webSocketCommandFailure(connected));
+    }
+    const session = connected.data;
+    const key = byteKey(session.interfaceId);
+    if (this.#attachedInterfaces.has(key)) {
+      await session.close();
+      return commandFailed(
+        Tag("BackendFailed", {
+          detail: `runtime reused active interface identifier ${key}`,
+        }),
+      );
+    }
+    this.#host.setContractKind(session.interfaceId, kind);
+    this.#attachedInterfaces.set(key, session);
+    return Tag(
+      "Succeeded",
+      Tag("InterfaceAttached", { interface: session.interfaceId }),
+    );
+  }
+
+  async #detachInterface(interfaceId: InterfaceId): Promise<CommandSettlement> {
+    const key = byteKey(interfaceId);
+    const session = this.#attachedInterfaces.get(key);
+    if (session === undefined) {
+      return commandFailed(Tag("UnknownInterface"));
+    }
+    this.#attachedInterfaces.delete(key);
+    const closed = await session.close();
+    if (closed.tag !== "Closed") {
+      return commandFailed(
+        Tag("BackendFailed", {
+          detail: describeInterfaceSessionFailure(closed),
+        }),
+      );
+    }
+    return Tag("Succeeded", Tag("InterfaceDetached", { interface: interfaceId }));
   }
 
   #entropyBytes(): EntropyOutcome {
@@ -3363,8 +3888,12 @@ class RuntimeHost {
     string,
     {
       id: InterfaceId;
+      name: InterfaceName;
+      contractKind?: InterfaceKind;
       registrationKey: string;
       supervisorKind: RuntimeInterfaceKind;
+      rxBytes: number;
+      txBytes: number;
     }
   >();
   #activeRegistrationKeys = new Set<string>();
@@ -3402,6 +3931,7 @@ class RuntimeHost {
     const {
       interfaceName,
       supervisorKind = registration.kind,
+      contractKind = stableInterfaceKind(registration.kind),
       ...options
     } = registration;
     const registrationKey = `${options.kind}:${byteKey(options.channelTag)}`;
@@ -3427,7 +3957,15 @@ class RuntimeHost {
       });
     }
     this.#activeRegistrationKeys.add(registrationKey);
-    this.#activeInterfaces.set(key, { id, registrationKey, supervisorKind });
+    this.#activeInterfaces.set(key, {
+      id,
+      name: interfaceName,
+      ...(contractKind === undefined ? {} : { contractKind }),
+      registrationKey,
+      supervisorKind,
+      rxBytes: 0,
+      txBytes: 0,
+    });
     this.#outboundQueues.set(key, []);
     return Tag("Registered", id);
   }
@@ -3459,6 +3997,30 @@ class RuntimeHost {
     return Tag("Detached");
   }
 
+  setContractKind(id: InterfaceId, kind: InterfaceKind): void {
+    const active = this.#activeInterfaces.get(byteKey(id));
+    if (active !== undefined) {
+      active.contractKind = kind;
+    }
+  }
+
+  interfaceInspection(): ReadonlyMap<string, RuntimeInterfaceInspection> {
+    return new Map(
+      [...this.#activeInterfaces].map(([key, active]) => [
+        key,
+        {
+          id: active.id,
+          name: active.name,
+          ...(active.contractKind === undefined
+            ? {}
+            : { kind: active.contractKind }),
+          rxBytes: active.rxBytes,
+          txBytes: active.txBytes,
+        },
+      ]),
+    );
+  }
+
   ingest(interfaceId: InterfaceId, bytes: PacketFrame): RuntimeIngestOutcome {
     const entropy = this.entropy();
     if (entropy.tag !== "Filled") {
@@ -3471,6 +4033,10 @@ class RuntimeHost {
         nowMs: this.#now(),
         entropy: entropy.data,
       });
+      const active = this.#activeInterfaces.get(byteKey(interfaceId));
+      if (active !== undefined) {
+        active.rxBytes = saturatingAdd(active.rxBytes, bytes.length);
+      }
       this.#onRuntimeActivity();
       return Tag("Accepted");
     } catch (error) {
@@ -3517,7 +4083,15 @@ class RuntimeHost {
     }
     const queued = this.#outboundQueues.get(interfaceKey) ?? [];
     this.#outboundQueues.set(interfaceKey, []);
-    return Tag("Outbound", queued.concat(direct));
+    const outbound = queued.concat(direct);
+    const active = this.#activeInterfaces.get(interfaceKey);
+    if (active !== undefined) {
+      active.txBytes = outbound.reduce(
+        (total, frame) => saturatingAdd(total, frame.bytes.length),
+        active.txBytes,
+      );
+    }
+    return Tag("Outbound", outbound);
   }
 
   createUsbAutoDecoder(): UsbAutoDecoderBinding {
@@ -4089,8 +4663,8 @@ function parseEvent(raw: unknown): ParsedPrnsEvent {
           linkId: linkId(bytesField(data, "linkId")),
           hash: resourceHash(bytesField(data, "hash")),
           stream: copyBytes(bytesField(data, "stream")),
-          uncompressedDataBytes: nonNegativeInteger(
-            numberField(data, "uncompressedDataBytes"),
+          uncompressedDataBytes: nonNegativeBigIntField(
+            data,
             "uncompressedDataBytes",
           ),
         }),
@@ -4126,10 +4700,7 @@ function parseEvent(raw: unknown): ParsedPrnsEvent {
         Tag("ResourceAssembled", {
           linkId: linkId(bytesField(data, "linkId")),
           originalHash: resourceHash(bytesField(data, "originalHash")),
-          totalSizeBytes: nonNegativeInteger(
-            numberField(data, "totalSizeBytes"),
-            "totalSizeBytes",
-          ),
+          totalSizeBytes: nonNegativeBigIntField(data, "totalSizeBytes"),
         }),
       ),
     routeExpired: (data) =>
@@ -4381,8 +4952,14 @@ function parseSnapshot(raw: unknown): PrnsSnapshot {
       "snapshot interfaces must be an array",
     );
   }
+  const routeSnapshotsRaw = optionalArrayField(object, "routeSnapshots");
+  const destinationIdentitiesRaw = optionalArrayField(
+    object,
+    "destinationIdentities",
+  );
   return {
     type: literalField(object, "type", "snapshot"),
+    revision: nonNegativeBigIntField(object, "revision"),
     ingestedPackets: nonNegativeInteger(
       numberField(object, "ingestedPackets"),
       "ingestedPackets",
@@ -4397,6 +4974,15 @@ function parseSnapshot(raw: unknown): PrnsSnapshot {
       "scheduledAnnounces",
     ),
     interfaces: interfacesRaw.map(parseInterfaceSnapshot),
+    activeLinkCount: optionalNumber(
+      object,
+      "activeLinkCount",
+      (value) => nonNegativeInteger(value, "activeLinkCount"),
+    ) ?? 0,
+    routeSnapshots: routeSnapshotsRaw.map(parseStableRouteSnapshot),
+    destinationIdentities: destinationIdentitiesRaw.map(
+      parseStableDestinationIdentitySnapshot,
+    ),
   };
 }
 
@@ -4407,6 +4993,11 @@ function parseInterfaceSnapshot(raw: unknown): InterfaceSnapshot {
     kind: stringField(object, "kind"),
     routes: nonNegativeInteger(numberField(object, "routes"), "routes"),
     links: nonNegativeInteger(numberField(object, "links"), "links"),
+    transportedLinks: optionalNumber(
+      object,
+      "transportedLinks",
+      (value) => nonNegativeInteger(value, "transportedLinks"),
+    ) ?? 0,
   };
   const bitrate = optionalNumber(object, "bitrateBps", bitrateBps);
   if (bitrate !== undefined) {
@@ -4417,6 +5008,41 @@ function parseInterfaceSnapshot(raw: unknown): InterfaceSnapshot {
     snapshot.hardwareMtu = mtu;
   }
   return snapshot;
+}
+
+function parseStableRouteSnapshot(raw: unknown): StableRouteSnapshot {
+  const object = record(raw, "RouteSnapshot");
+  const viaIdentity = optionalBytesField(object, "viaIdentity");
+  return {
+    destination: destinationHash(bytesField(object, "destination")),
+    hops: nonNegativeInteger(numberField(object, "hops"), "hops"),
+    ...(viaIdentity === undefined
+      ? {}
+      : { viaIdentity: identityHash(viaIdentity) }),
+    interfaceId: interfaceId(bytesField(object, "interfaceId")),
+    learnedAtMillis: nonNegativeInteger(
+      numberField(object, "learnedAtMillis"),
+      "learnedAtMillis",
+    ),
+    lastRelayedAtMillis: nonNegativeInteger(
+      numberField(object, "lastRelayedAtMillis"),
+      "lastRelayedAtMillis",
+    ),
+    expiresAtMillis: nonNegativeInteger(
+      numberField(object, "expiresAtMillis"),
+      "expiresAtMillis",
+    ),
+  };
+}
+
+function parseStableDestinationIdentitySnapshot(
+  raw: unknown,
+): StableDestinationIdentitySnapshot {
+  const object = record(raw, "DestinationIdentitySnapshot");
+  return {
+    destination: destinationHash(bytesField(object, "destination")),
+    identity: identityHash(bytesField(object, "identity")),
+  };
 }
 
 function parseRuntimeInterfaceKind(value: string): RuntimeInterfaceKind {
@@ -4547,6 +5173,20 @@ function numberField(object: Record<string, unknown>, key: string): number {
   return value;
 }
 
+function nonNegativeBigIntField(
+  object: Record<string, unknown>,
+  key: string,
+): bigint {
+  const value = field(object, key);
+  if (typeof value !== "bigint" || value < 0n) {
+    throw new PrnsValidationError(
+      "invalid-component",
+      `${key} must be a non-negative bigint`,
+    );
+  }
+  return value;
+}
+
 function optionalNumber<T>(
   object: Record<string, unknown>,
   key: string,
@@ -4563,6 +5203,23 @@ function optionalBytesField(
   key: string,
 ): Uint8Array | undefined {
   return key in object ? bytesField(object, key) : undefined;
+}
+
+function optionalArrayField(
+  object: Record<string, unknown>,
+  key: string,
+): unknown[] {
+  if (!(key in object)) {
+    return [];
+  }
+  const value = field(object, key);
+  if (!Array.isArray(value)) {
+    throw new PrnsValidationError(
+      "invalid-component",
+      `${key} must be an array`,
+    );
+  }
+  return value;
 }
 
 function bigintField(object: Record<string, unknown>, key: string): bigint {
@@ -4648,6 +5305,122 @@ function decodeBase64(encoded: string): Uint8Array {
     out[i] = binary.charCodeAt(i);
   }
   return out;
+}
+
+function parseBrowserPersistedState(value: unknown): BrowserPersistedState {
+  const object = record(value, "browser persisted state");
+  const persistenceVersion = nonNegativeInteger(
+    numberField(object, "persistenceVersion"),
+    "persisted state version",
+  );
+  if (persistenceVersion !== BROWSER_PERSISTENCE_VERSION) {
+    throw new PrnsValidationError(
+      "invalid-component",
+      `persisted state version ${persistenceVersion} does not match ${BROWSER_PERSISTENCE_VERSION}`,
+    );
+  }
+  const rawRatchets = field(object, "ratchets");
+  if (!Array.isArray(rawRatchets)) {
+    throw new PrnsValidationError(
+      "invalid-component",
+      "persisted state ratchets must be an array",
+    );
+  }
+  return {
+    type: literalField(object, "type", "persistedState"),
+    persistenceVersion,
+    takenAtMillis: nowMillis(
+      nonNegativeInteger(
+        numberField(object, "takenAtMillis"),
+        "persisted state timestamp",
+      ),
+    ),
+    routingTable: new Uint8Array(bytesField(object, "routingTable")),
+    tunnels: new Uint8Array(bytesField(object, "tunnels")),
+    destinationIdentities: new Uint8Array(
+      bytesField(object, "destinationIdentities"),
+    ),
+    ratchets: rawRatchets.map((raw) => {
+      const ratchet = record(raw, "persisted ratchet");
+      return {
+        destination: destinationHash(bytesField(ratchet, "destination")),
+        sealed: new Uint8Array(bytesField(ratchet, "sealed")),
+      };
+    }),
+  };
+}
+
+function encodeBrowserPersistedState(state: BrowserPersistedState): string {
+  const parsed = parseBrowserPersistedState(state);
+  return JSON.stringify({
+    type: parsed.type,
+    persistenceVersion: parsed.persistenceVersion,
+    takenAtMillis: parsed.takenAtMillis,
+    routingTable: encodeBase64(parsed.routingTable),
+    tunnels: encodeBase64(parsed.tunnels),
+    destinationIdentities: encodeBase64(parsed.destinationIdentities),
+    ratchets: parsed.ratchets.map(({ destination, sealed }) => ({
+      destination: encodeBase64(destination),
+      sealed: encodeBase64(sealed),
+    })),
+  });
+}
+
+function decodeBrowserPersistedState(encoded: string): BrowserPersistedState {
+  const stored = record(JSON.parse(encoded), "stored browser persistence");
+  const rawRatchets = field(stored, "ratchets");
+  if (!Array.isArray(rawRatchets)) {
+    throw new PrnsValidationError(
+      "invalid-component",
+      "stored persistence ratchets must be an array",
+    );
+  }
+  return parseBrowserPersistedState({
+    type: stringField(stored, "type"),
+    persistenceVersion: numberField(stored, "persistenceVersion"),
+    takenAtMillis: numberField(stored, "takenAtMillis"),
+    routingTable: decodeBase64(stringField(stored, "routingTable")),
+    tunnels: decodeBase64(stringField(stored, "tunnels")),
+    destinationIdentities: decodeBase64(
+      stringField(stored, "destinationIdentities"),
+    ),
+    ratchets: rawRatchets.map((raw) => {
+      const ratchet = record(raw, "stored persisted ratchet");
+      return {
+        destination: decodeBase64(stringField(ratchet, "destination")),
+        sealed: decodeBase64(stringField(ratchet, "sealed")),
+      };
+    }),
+  });
+}
+
+function parsePersistenceRestoreReport(
+  value: unknown,
+): BrowserPersistenceRestoreReport {
+  const report = record(value, "persistence restore report");
+  return {
+    routes: nonNegativeInteger(numberField(report, "routes"), "restored routes"),
+    destinationIdentities: nonNegativeInteger(
+      numberField(report, "destinationIdentities"),
+      "restored destination identities",
+    ),
+    tunnels: nonNegativeInteger(
+      numberField(report, "tunnels"),
+      "restored tunnels",
+    ),
+    ratchets: nonNegativeInteger(
+      numberField(report, "ratchets"),
+      "restored ratchets",
+    ),
+    refused: nonNegativeInteger(
+      numberField(report, "refused"),
+      "refused persistence records",
+    ),
+    dropped: nonNegativeInteger(
+      numberField(report, "dropped"),
+      "dropped persistence records",
+    ),
+  };
 }
 
 function requireWebUsb(): Available<BrowserUsb, "WebUSB"> {
@@ -5302,6 +6075,17 @@ function describeStableIdentityStoreFailure(
   });
 }
 
+function describePersistenceStoreFailure(
+  failure: PersistenceStoreFailure,
+): string {
+  return match_into<string>().from(failure, {
+    HostApiUnavailable: ({ api }) => `${api} is unavailable`,
+    PersistenceStoreFailed: ({ operation, detail }) =>
+      `${operation} persistence: ${detail}`,
+    StoredPersistenceInvalid: ({ detail }) => detail,
+  });
+}
+
 function unexpectedSessionFailure(error: unknown): Extract<
   InterfaceSessionFailure,
   Tag<"UnexpectedSessionFailure", unknown>
@@ -5360,6 +6144,66 @@ function describeBluetoothConnectFailure(
     StableIdentityUnavailable: ({ detail }) => detail,
     RuntimeRejected: ({ operation, detail }) => `${operation}: ${detail}`,
   });
+}
+
+function webSocketCommandFailure(
+  failure: Exclude<WebSocketConnectOutcome, Tag<"Connected", unknown>>,
+): CommandFailure {
+  return match_into<CommandFailure>().from(failure, {
+    HostApiUnavailable: ({ api }) =>
+      Tag("DeviceUnavailable", { detail: `${api} is unavailable` }),
+    PermissionDenied: ({ detail }) => Tag("PermissionDenied", { detail }),
+    Cancelled: ({ stage }) =>
+      Tag("ConnectFailed", { detail: `WebSocket ${stage} was cancelled` }),
+    AlreadyActive: ({ target }) =>
+      Tag("BackendFailed", { detail: `${target} is already active` }),
+    InvalidTarget: ({ detail }) => Tag("InvalidConfiguration", { detail }),
+    TimedOut: ({ stage, timeoutMs }) =>
+      Tag("ConnectFailed", {
+        detail: `WebSocket ${stage} timed out after ${timeoutMs}ms`,
+      }),
+    ConnectionFailed: ({ detail }) => Tag("ConnectFailed", { detail }),
+    RuntimeRejected: ({ operation, detail }) =>
+      Tag("BackendFailed", { detail: `${operation}: ${detail}` }),
+  });
+}
+
+function cooperativeBackendInfo(): BackendInfo {
+  const webSocketAvailable = typeof globalThis.WebSocket === "function";
+  const capabilities: CapabilityName[] = webSocketAvailable
+    ? ["WebSocket", "BrowserRendezvous"]
+    : [];
+  const interfaceKinds: InterfaceKind[] = webSocketAvailable
+    ? ["WebSocketClient", "BrowserRendezvous"]
+    : [];
+  return Object.freeze({
+    backend: "Cooperative",
+    capabilities: Object.freeze(capabilities),
+    interfaceKinds: Object.freeze(interfaceKinds),
+  });
+}
+
+function stableInterfaceKind(
+  kind: RuntimeInterfaceKind,
+): InterfaceKind | undefined {
+  return ({
+    "auto-usb-host": "AutomaticUsb",
+    "auto-usb-device": "AutomaticUsb",
+    rnode: "RNode",
+    "bluetooth-auto": "AutomaticBluetoothLe",
+    "bluetooth-peer": "AutomaticBluetoothLe",
+    "auto-wifi": "BrowserRendezvous",
+    "websocket-client": "WebSocketClient",
+    "websocket-server": "WebSocketServer",
+    "websocket-server-peer": "WebSocketServer",
+    serial: "Serial",
+    kiss: "Kiss",
+    pipe: "Pipe",
+  } satisfies Record<RuntimeInterfaceKind, InterfaceKind | undefined>)[kind];
+}
+
+function saturatingAdd(left: number, right: number): number {
+  return Math.min(Number.MAX_SAFE_INTEGER, left + right);
 }
 
 function describeInterfaceSessionFailure(
@@ -5473,12 +6317,23 @@ function retainedBrowserEventBytes(event: PrnsApplicationEvent): number {
     Response: ({ data }) => data.length,
     ResponseSegment: ({ data }) => data.length,
     ResourceAvailable: ({ resource, metadata }) =>
-      resource.totalBytes + (metadata?.length ?? 0),
+      exactBytesAsSafeNumber(resource.totalBytes, "resource.totalBytes") +
+      (metadata?.length ?? 0),
     ResourceSegment: ({ data, metadata }) =>
       data.length + (metadata?.length ?? 0),
     ResourceNeedsDecompression: ({ stream }) => stream.length,
     ChannelMessage: ({ data }) => data.length,
   });
+}
+
+function exactBytesAsSafeNumber(value: bigint, name: string): number {
+  if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new PrnsValidationError(
+      "invalid-number",
+      `${name} exceeds the JavaScript safe-integer limit`,
+    );
+  }
+  return Number(value);
 }
 
 function rawEventType(value: string): RawEventType {

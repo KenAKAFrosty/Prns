@@ -1,0 +1,139 @@
+name: host-sdk-promote
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: "Full staged trunk commit SHA to promote"
+        required: true
+        type: string
+      stage_run_id:
+        description: "Successful host-sdk-stage workflow run ID"
+        required: true
+        type: string
+
+concurrency:
+  group: host-sdk-publication
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: host-sdk-release
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.expected_sha }}
+          fetch-depth: 0
+          submodules: false
+      - name: Require exact protected stage authority
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          STAGE_RUN_ID: ${{ inputs.stage_run_id }}
+        shell: bash
+        run: |
+          test "$GITHUB_REF" = "refs/heads/trunk"
+          test "$GITHUB_SHA" = "$EXPECTED_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "${{ vars.HOST_SDK_IMMUTABLE_RELEASES }}" = "enabled"
+          mapfile -t run < <(
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$STAGE_RUN_ID" \
+              --jq '[.head_sha, .head_branch, .event, .conclusion, .path] | .[]'
+          )
+          test "${#run[@]}" -eq 5
+          test "${run[0]}" = "$EXPECTED_SHA"
+          test "${run[1]}" = "trunk"
+          test "${run[2]}" = "workflow_dispatch"
+          test "${run[3]}" = "success"
+          test "${run[4]}" = ".github/workflows/host-sdk-stage.yml"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: host-sdk-stage-${{ inputs.expected_sha }}
+          path: dist/stage
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.stage_run_id }}
+      - name: Verify and select exact promotion assets
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        shell: bash
+        run: |
+          python tools/prns run release.host-sdk.stage.verify -- \
+            --stage dist/stage \
+            --expected-sha "$EXPECTED_SHA"
+          python tools/prns run release.host-sdk.promotion.prepare -- \
+            --stage dist/stage \
+            --output dist/promotion \
+            --expected-sha "$EXPECTED_SHA"
+      - name: Sign release assets and immutable ecosystem tags
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          GH_TOKEN: ${{ github.token }}
+          HOST_SDK_SIGNING_EMAIL: ${{ vars.HOST_SDK_SIGNING_EMAIL }}
+          HOST_SDK_SIGNING_NAME: ${{ vars.HOST_SDK_SIGNING_NAME }}
+          HOST_SDK_SSH_SIGNING_KEY: ${{ secrets.HOST_SDK_SSH_SIGNING_KEY }}
+        shell: bash
+        run: |
+          test -n "$HOST_SDK_SIGNING_EMAIL"
+          test -n "$HOST_SDK_SIGNING_NAME"
+          test -n "$HOST_SDK_SSH_SIGNING_KEY"
+          key="$RUNNER_TEMP/host-sdk-signing-key"
+          install -m 600 /dev/null "$key"
+          printf '%s\n' "$HOST_SDK_SSH_SIGNING_KEY" > "$key"
+          ssh-keygen -y -f "$key" > dist/promotion/host-sdk-signing-key.pub
+          allowed_signers="$RUNNER_TEMP/host-sdk-allowed-signers"
+          printf '%s %s\n' \
+            "$HOST_SDK_SIGNING_EMAIL" \
+            "$(<dist/promotion/host-sdk-signing-key.pub)" \
+            > "$allowed_signers"
+          for asset in dist/promotion/*; do
+            ssh-keygen -Y sign -f "$key" -n file "$asset"
+          done
+          git config user.name "$HOST_SDK_SIGNING_NAME"
+          git config user.email "$HOST_SDK_SIGNING_EMAIL"
+          git config gpg.format ssh
+          git config user.signingkey "$key"
+          git config gpg.ssh.allowedSignersFile "$allowed_signers"
+          release_tag="$(jq -r .releaseTag dist/promotion/promotion.json)"
+          if gh release view "$release_tag" >/dev/null 2>&1; then
+            printf 'release already exists: %s\n' "$release_tag" >&2
+            exit 1
+          fi
+          mapfile -t tags < <(jq -r '.tags[]' dist/promotion/promotion.json)
+          refspecs=()
+          for tag in "${tags[@]}"; do
+            if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+              git fetch --force origin "refs/tags/$tag:refs/tags/$tag"
+              test "$(git rev-list -n 1 "$tag")" = "$EXPECTED_SHA"
+              git tag -v "$tag"
+            else
+              git tag -s "$tag" "$EXPECTED_SHA" \
+                -m "Personal RNS host SDK $(<VERSION)"
+              refspecs+=("refs/tags/$tag:refs/tags/$tag")
+            fi
+          done
+          if [[ "${#refspecs[@]}" -gt 0 ]]; then
+            git push --atomic origin "${refspecs[@]}"
+          fi
+      - name: Publish signed immutable GitHub assets
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          release_tag="$(jq -r .releaseTag dist/promotion/promotion.json)"
+          version="$(jq -r .version dist/promotion/promotion.json)"
+          contract_abi="$(jq -r .contractAbi dist/promotion/release-index.json)"
+          schema_version="$(jq -r .schemaVersion dist/promotion/release-index.json)"
+          gh release create "$release_tag" dist/promotion/* \
+            --verify-tag \
+            --target "$EXPECTED_SHA" \
+            --title "Personal RNS host SDK $version" \
+            --notes "Signed ABI $contract_abi, schema $schema_version host SDK artifacts for Personal RNS $version." \
+            --latest=false
+          test "$(gh release view "$release_tag" --json targetCommitish --jq .targetCommitish)" = "$EXPECTED_SHA"

@@ -1,12 +1,12 @@
 import { Tag, from, match, match_into } from "../casework.js";
 import { BoundedAsyncLane } from "../async_lanes.js";
-import { DESTINATION_HASH_LENGTH, HOST_CONTRACT_ABI, INTERFACE_ID_LENGTH, PRODUCT_VERSION, RESOURCE_HASH_LENGTH, balancedLimits, destinationHash, identityHash, interfaceId, linkId, packetHash, requestId, requestPathHash, resourceHash, } from "../contract.js";
+import { DESTINATION_HASH_LENGTH, HOST_CONTRACT_ABI, HOST_SCHEMA_VERSION, INTERFACE_ID_LENGTH, PRODUCT_VERSION, RESOURCE_HASH_LENGTH, balancedLimits, destinationHash, identityHash, interfaceId, linkId, packetHash, requestId, requestPathHash, resourceHash, } from "../contract.js";
 import { MemoryResourceStream } from "../memory_resource.js";
 import { AutoWifiInterface } from "./auto_wifi.js";
 import { blobResourceSource, byteResourceSource, sendResourceFromSource, } from "./resource_send.js";
 import { browserResourceCompressor } from "./resource_compressor.js";
 export { Tag, from, match, match_into };
-export { DESTINATION_HASH_LENGTH, HOST_CONTRACT_ABI, INTERFACE_ID_LENGTH, PRODUCT_VERSION, RESOURCE_HASH_LENGTH, balancedLimits, destinationHash, identityHash, interfaceId, linkId, packetHash, requestId, requestPathHash, resourceHash, };
+export { DESTINATION_HASH_LENGTH, HOST_CONTRACT_ABI, HOST_SCHEMA_VERSION, INTERFACE_ID_LENGTH, PRODUCT_VERSION, RESOURCE_HASH_LENGTH, balancedLimits, destinationHash, identityHash, interfaceId, linkId, packetHash, requestId, requestPathHash, resourceHash, };
 export { AutoWifiController, AutoWifiInterface, parseBrowserGatewayCatalog, validateBrowserGatewayUrl, } from "./auto_wifi.js";
 export const MIN_ENTROPY_BYTES = 128;
 export const BLE_IDENTITY_LENGTH = 16;
@@ -43,6 +43,7 @@ const RAW_EVENT_TYPES = new Set([
     "routeInterfaceGone",
     "routeDropped",
 ]);
+export const BROWSER_PERSISTENCE_VERSION = 1;
 const USB_AUTO_PROBE_INTERVAL_MS = 500;
 const USB_AUTO_OUTBOUND_POLL_MS = 25;
 const WEBUSB_MIN_TRANSFER_BYTES = 512;
@@ -166,6 +167,72 @@ export class BrowserLocalStorageBleIdentityStore {
             });
         }
     }
+}
+export class BrowserLocalStoragePersistenceStore {
+    #key;
+    constructor(key = "prns.state.v1") {
+        this.#key = key;
+    }
+    async load() {
+        let encoded;
+        try {
+            const storage = hostGlobal().localStorage;
+            if (!storage) {
+                return Tag("HostApiUnavailable", { api: "LocalStorage" });
+            }
+            if (!hostGlobal().atob) {
+                return Tag("HostApiUnavailable", { api: "Base64Decoder" });
+            }
+            encoded = storage.getItem(this.#key);
+        }
+        catch (error) {
+            return Tag("PersistenceStoreFailed", {
+                operation: "Load",
+                detail: describeHostError(error),
+            });
+        }
+        if (encoded === null) {
+            return Tag("Missing");
+        }
+        try {
+            return Tag("Loaded", decodeBrowserPersistedState(encoded));
+        }
+        catch (error) {
+            return Tag("StoredPersistenceInvalid", {
+                detail: describeHostError(error),
+            });
+        }
+    }
+    async save(state) {
+        try {
+            const storage = hostGlobal().localStorage;
+            if (!storage) {
+                return Tag("HostApiUnavailable", { api: "LocalStorage" });
+            }
+            if (!hostGlobal().btoa) {
+                return Tag("HostApiUnavailable", { api: "Base64Encoder" });
+            }
+            storage.setItem(this.#key, encodeBrowserPersistedState(state));
+            return Tag("Saved");
+        }
+        catch (error) {
+            return Tag("PersistenceStoreFailed", {
+                operation: "Save",
+                detail: describeHostError(error),
+            });
+        }
+    }
+}
+export function persistentBrowser(root = "prns") {
+    const selected = root.trim();
+    if (selected.length === 0) {
+        throw new PrnsValidationError("invalid-component", "browser persistence root must not be empty");
+    }
+    return {
+        identityStore: new BrowserLocalStorageIdentityStore(`${selected}.identity.v1`),
+        bleIdentityStore: new BrowserLocalStorageBleIdentityStore(`${selected}.ble-identity.v1`),
+        persistenceStore: new BrowserLocalStoragePersistenceStore(`${selected}.state.v1`),
+    };
 }
 export class PrnsInterfaces {
     usbAuto;
@@ -1220,22 +1287,34 @@ class BrowserBluetoothSession {
 export class Prns {
     interfaces;
     #runtime;
+    #host;
     #entropy;
     #now;
+    #startedAtMillis;
     #limits;
     #resourceCompressionModuleUrl;
     #events;
     #diagnostics;
     #pendingCommands = new Map();
     #responseParts = new Map();
+    #attachedInterfaces = new Map();
     #lifecycle = Tag("Running");
-    constructor(wasm, runtime, entropy, now, bleIdentityAvailability, limits, resourceCompressionModuleUrl) {
+    #stopCompleted = false;
+    #stopPromise;
+    #persistenceStore;
+    #persistenceRestored;
+    #lastPersistenceFlushCause;
+    #persistenceFailureDetail;
+    constructor(wasm, runtime, entropy, now, bleIdentityAvailability, limits, resourceCompressionModuleUrl, persistenceStore, persistenceRestored, restorationReport) {
         this.#runtime = runtime;
         this.#entropy = entropy;
         this.#now = now;
+        this.#startedAtMillis = now();
         this.#limits = limits;
         this.#resourceCompressionModuleUrl =
             resourceCompressionModuleUrl.href;
+        this.#persistenceStore = persistenceStore;
+        this.#persistenceRestored = persistenceRestored;
         this.#events = new BoundedAsyncLane({
             name: "ApplicationEvents",
             maximumValues: limits.applicationEvents,
@@ -1252,7 +1331,11 @@ export class Prns {
             gap: (count) => Tag("DiagnosticsDropped", { count }),
             onBeforeNext: () => this.#pumpEvents(),
         });
-        this.interfaces = new PrnsInterfaces(new RuntimeHost(wasm, runtime, entropy, now, bleIdentityAvailability, () => this.#pumpEvents()));
+        this.#host = new RuntimeHost(wasm, runtime, entropy, now, bleIdentityAvailability, () => this.#pumpEvents());
+        this.interfaces = new PrnsInterfaces(this.#host);
+        if (restorationReport !== undefined) {
+            this.#diagnostics.push(Tag("PersistenceRestored", restorationReport));
+        }
     }
     static async create(options) {
         const loaded = options.wasm
@@ -1263,22 +1346,32 @@ export class Prns {
         }
         const wasm = loaded.data;
         let actualAbi;
+        let actualSchemaVersion;
+        let actualPersistenceVersion;
         let actualProductVersion;
         try {
             actualAbi = wasm.hostContractAbi();
+            actualSchemaVersion = wasm.hostSchemaVersion();
+            actualPersistenceVersion = wasm.browserPersistenceVersion();
             actualProductVersion = wasm.productVersion();
         }
         catch (error) {
             return runtimeRejected("initialize", error);
         }
         if (actualAbi !== HOST_CONTRACT_ABI ||
+            actualSchemaVersion !== HOST_SCHEMA_VERSION ||
             actualProductVersion !== PRODUCT_VERSION) {
             return Tag("ContractMismatch", {
                 requiredAbi: HOST_CONTRACT_ABI,
                 actualAbi,
+                requiredSchemaVersion: HOST_SCHEMA_VERSION,
+                actualSchemaVersion,
                 requiredProductVersion: PRODUCT_VERSION,
                 actualProductVersion,
             });
+        }
+        if (actualPersistenceVersion !== BROWSER_PERSISTENCE_VERSION) {
+            return runtimeRejected("initialize", `browser persistence version ${actualPersistenceVersion} does not match ${BROWSER_PERSISTENCE_VERSION}`);
         }
         let identityLength;
         try {
@@ -1340,10 +1433,61 @@ export class Prns {
         const bleIdentity = bleIdentityAvailability.tag === "Available"
             ? bleIdentityAvailability.data
             : undefined;
+        const persistenceStore = options.persistenceStore;
+        let persistedState;
+        if (persistenceStore !== undefined) {
+            let loaded;
+            try {
+                loaded = await persistenceStore.load();
+            }
+            catch (error) {
+                return Tag("PersistenceStoreFailed", {
+                    operation: "Load",
+                    detail: describeHostError(error),
+                });
+            }
+            if (loaded.tag === "Loaded") {
+                try {
+                    persistedState = parseBrowserPersistedState(loaded.data);
+                }
+                catch (error) {
+                    return Tag("StoredPersistenceInvalid", {
+                        detail: describeHostError(error),
+                    });
+                }
+            }
+            else if (loaded.tag !== "Missing") {
+                return loaded;
+            }
+        }
+        let limits;
+        let now;
+        let runtime;
         try {
-            const limits = browserLimits(options.limits ?? balancedLimits());
-            return Tag("Ready", new Prns(wasm, new wasm.PrnsRuntime(identity, bleIdentity), options.entropy ?? webCryptoEntropy, options.now ?? nowMillis, bleIdentityAvailability, limits, options.resourceCompressionModuleUrl ??
-                bundledWasmModuleUrl()));
+            limits = browserLimits(options.limits ?? balancedLimits());
+            now = options.now ?? nowMillis;
+            runtime = new wasm.PrnsRuntime(identity, bleIdentity);
+        }
+        catch (error) {
+            return runtimeRejected("initialize", error);
+        }
+        let restorationReport;
+        if (persistedState !== undefined) {
+            try {
+                restorationReport = parsePersistenceRestoreReport(runtime.restorePersistedState({
+                    ...persistedState,
+                    nowMs: nowMillis(Math.max(now(), persistedState.takenAtMillis)),
+                }));
+            }
+            catch (error) {
+                return Tag("StoredPersistenceInvalid", {
+                    detail: describeHostError(error),
+                });
+            }
+        }
+        try {
+            return Tag("Ready", new Prns(wasm, runtime, options.entropy ?? webCryptoEntropy, now, bleIdentityAvailability, limits, options.resourceCompressionModuleUrl ??
+                bundledWasmModuleUrl(), persistenceStore, persistedState !== undefined, restorationReport));
         }
         catch (error) {
             return runtimeRejected("initialize", error);
@@ -1393,7 +1537,8 @@ export class Prns {
             AttachTcpServer: async () => commandFailed(Tag("UnsupportedByBackend")),
             AttachTcpClient: async () => commandFailed(Tag("UnsupportedByBackend")),
             AttachUdp: async () => commandFailed(Tag("UnsupportedByBackend")),
-            DetachInterface: async () => commandFailed(Tag("UnsupportedByBackend")),
+            AttachInterface: ({ config }) => this.#attachInterface(config),
+            DetachInterface: ({ interface: interfaceId }) => this.#detachInterface(interfaceId),
             EstablishLink: ({ destination }) => this.#issueCommand("establish-link", command, (entropy) => this.#runtime.establishLink({
                 destination,
                 nowMs: this.#now(),
@@ -1487,6 +1632,12 @@ export class Prns {
     closeLink(value) {
         return this.execute(Tag("CloseLink", { linkId: value }));
     }
+    attachInterface(config) {
+        return this.execute(Tag("AttachInterface", { config }));
+    }
+    detachInterface(interfaceId) {
+        return this.execute(Tag("DetachInterface", { interface: interfaceId }));
+    }
     establishLink(destination) {
         return this.execute(Tag("EstablishLink", { destination }));
     }
@@ -1550,6 +1701,26 @@ export class Prns {
     get lifecycle() {
         return this.#lifecycle;
     }
+    get backendInfo() {
+        return cooperativeBackendInfo();
+    }
+    get capabilities() {
+        const info = this.backendInfo;
+        return Tag("Cooperative", {
+            available: new Set(info.capabilities),
+            interfaceKinds: new Set(info.interfaceKinds),
+        });
+    }
+    stop() {
+        if (this.#stopCompleted) {
+            return Promise.resolve(Tag("AlreadyStopped"));
+        }
+        if (this.#stopPromise !== undefined) {
+            return this.#stopPromise;
+        }
+        this.#stopPromise = this.#performStop();
+        return this.#stopPromise;
+    }
     claimEvents() {
         this.#pumpEvents();
         return this.#events.claim();
@@ -1565,6 +1736,196 @@ export class Prns {
         catch (error) {
             return runtimeRejected("snapshot", error);
         }
+    }
+    hostSnapshot() {
+        try {
+            const snapshot = parseSnapshot(this.#runtime.snapshot());
+            const inspection = this.#host.interfaceInspection();
+            const running = this.#lifecycle.tag === "Running";
+            const health = running ? "Connected" : "Disabled";
+            const interfaces = snapshot.interfaces.map((entry) => {
+                const active = inspection.get(byteKey(entry.id));
+                return {
+                    interfaceId: entry.id,
+                    ...(active === undefined ? {} : { name: active.name }),
+                    ...(active?.kind === undefined ? {} : { kind: active.kind }),
+                    health,
+                    rxBytes: BigInt(active?.rxBytes ?? 0),
+                    txBytes: BigInt(active?.txBytes ?? 0),
+                    routeCount: entry.routes,
+                    linkCount: entry.links,
+                    transportedLinkCount: entry.transportedLinks,
+                };
+            });
+            const interfaceCount = interfaces.length;
+            const onlineInterfaceCount = running ? interfaceCount : 0;
+            const transportedLinkCount = interfaces.reduce((total, entry) => saturatingAdd(total, entry.transportedLinkCount), 0);
+            const rxBytes = interfaces.reduce((total, entry) => total + entry.rxBytes, 0n);
+            const txBytes = interfaces.reduce((total, entry) => total + entry.txBytes, 0n);
+            return Tag("Captured", {
+                revision: snapshot.revision,
+                backend: this.backendInfo,
+                interfaces,
+                routes: snapshot.routeSnapshots,
+                activeLinkCount: snapshot.activeLinkCount,
+                destinationIdentities: snapshot.destinationIdentities,
+                runtime: {
+                    running,
+                    uptimeMillis: Math.max(0, this.#now() - this.#startedAtMillis),
+                    interfaceCount,
+                    onlineInterfaceCount,
+                    routeCount: snapshot.routeSnapshots.length,
+                    linkCount: snapshot.activeLinkCount,
+                    transportedLinkCount,
+                    rxBytes,
+                    txBytes,
+                    rxBps: 0,
+                    txBps: 0,
+                },
+                persistence: {
+                    persistent: this.#persistenceStore !== undefined,
+                    restored: this.#persistenceRestored,
+                    ...(this.#lastPersistenceFlushCause === undefined
+                        ? {}
+                        : { lastFlushCause: this.#lastPersistenceFlushCause }),
+                    ...(this.#persistenceFailureDetail === undefined
+                        ? {}
+                        : { lastFailureDetail: this.#persistenceFailureDetail }),
+                },
+            });
+        }
+        catch (error) {
+            return runtimeRejected("snapshot", error);
+        }
+    }
+    async #performStop() {
+        const preserveFailure = this.#lifecycle.tag === "Failed";
+        if (!preserveFailure) {
+            this.#lifecycle = Tag("Stopping");
+        }
+        for (const pending of this.#pendingCommands.values()) {
+            pending.settle(commandFailed(Tag("NodeStopped")));
+        }
+        this.#pendingCommands.clear();
+        this.#responseParts.clear();
+        const sessions = [...this.#attachedInterfaces.values()];
+        this.#attachedInterfaces.clear();
+        const failures = (await Promise.all(sessions.map(async (session) => {
+            try {
+                const closed = await session.close();
+                return closed.tag === "Closed"
+                    ? undefined
+                    : describeInterfaceSessionFailure(closed);
+            }
+            catch (error) {
+                return describeHostError(error);
+            }
+        }))).filter((failure) => failure !== undefined);
+        if (this.#persistenceStore !== undefined) {
+            let failure;
+            try {
+                const state = parseBrowserPersistedState(this.#runtime.persistedState({ nowMs: this.#now() }));
+                const saved = await this.#persistenceStore.save(state);
+                if (saved.tag !== "Saved") {
+                    failure = describePersistenceStoreFailure(saved);
+                }
+            }
+            catch (error) {
+                failure = describeHostError(error);
+            }
+            if (failure === undefined) {
+                this.#lastPersistenceFlushCause = "Shutdown";
+                this.#persistenceFailureDetail = undefined;
+                this.#diagnostics.push(Tag("PersistenceFlushed", {
+                    cause: "Shutdown",
+                    target: "RoutingState",
+                }));
+                this.#diagnostics.push(Tag("PersistenceFlushed", {
+                    cause: "Shutdown",
+                    target: "Ratchets",
+                }));
+            }
+            else {
+                this.#persistenceFailureDetail = failure;
+                this.#diagnostics.push(Tag("PersistenceFlushFailed", {
+                    cause: "Shutdown",
+                    target: "RoutingState",
+                }));
+                this.#diagnostics.push(Tag("PersistenceFlushFailed", {
+                    cause: "Shutdown",
+                    target: "Ratchets",
+                }));
+                failures.push(`flush persistence: ${failure}`);
+            }
+        }
+        this.#events.finish();
+        this.#diagnostics.finish();
+        this.#stopCompleted = true;
+        if (failures.length > 0) {
+            const detail = failures.join("; ");
+            this.#lifecycle = Tag("Failed", { cause: "BackendFailed", detail });
+            return Tag("OperationFailed", { operation: "stop", detail });
+        }
+        if (!preserveFailure) {
+            this.#lifecycle = Tag("Stopped", { reason: "Requested" });
+        }
+        return Tag("Stopped");
+    }
+    #attachInterface(config) {
+        const unsupported = async () => commandFailed(Tag("UnsupportedByBackend"));
+        return match_into().from(config, {
+            AutoLan: unsupported,
+            TcpClient: unsupported,
+            TcpServer: unsupported,
+            Udp: unsupported,
+            Serial: unsupported,
+            Kiss: unsupported,
+            Ax25Kiss: unsupported,
+            RNode: unsupported,
+            MultiRNode: unsupported,
+            Pipe: unsupported,
+            BackboneClient: unsupported,
+            BackboneServer: unsupported,
+            I2p: unsupported,
+            Weave: unsupported,
+            AutomaticUsb: unsupported,
+            AutomaticBluetoothLe: unsupported,
+            WebSocketClient: ({ target }) => this.#attachWebSocket(target, "WebSocketClient"),
+            WebSocketServer: unsupported,
+            BrowserRendezvous: ({ url }) => this.#attachWebSocket(url, "BrowserRendezvous"),
+        });
+    }
+    async #attachWebSocket(target, kind) {
+        const connected = await this.interfaces.webSocket.connect(target);
+        if (connected.tag !== "Connected") {
+            return commandFailed(webSocketCommandFailure(connected));
+        }
+        const session = connected.data;
+        const key = byteKey(session.interfaceId);
+        if (this.#attachedInterfaces.has(key)) {
+            await session.close();
+            return commandFailed(Tag("BackendFailed", {
+                detail: `runtime reused active interface identifier ${key}`,
+            }));
+        }
+        this.#host.setContractKind(session.interfaceId, kind);
+        this.#attachedInterfaces.set(key, session);
+        return Tag("Succeeded", Tag("InterfaceAttached", { interface: session.interfaceId }));
+    }
+    async #detachInterface(interfaceId) {
+        const key = byteKey(interfaceId);
+        const session = this.#attachedInterfaces.get(key);
+        if (session === undefined) {
+            return commandFailed(Tag("UnknownInterface"));
+        }
+        this.#attachedInterfaces.delete(key);
+        const closed = await session.close();
+        if (closed.tag !== "Closed") {
+            return commandFailed(Tag("BackendFailed", {
+                detail: describeInterfaceSessionFailure(closed),
+            }));
+        }
+        return Tag("Succeeded", Tag("InterfaceDetached", { interface: interfaceId }));
     }
     #entropyBytes() {
         return fillEntropy(this.#entropy, MIN_ENTROPY_BYTES);
@@ -1753,7 +2114,7 @@ class RuntimeHost {
         }
     }
     registerInterface(registration) {
-        const { interfaceName, supervisorKind = registration.kind, ...options } = registration;
+        const { interfaceName, supervisorKind = registration.kind, contractKind = stableInterfaceKind(registration.kind), ...options } = registration;
         const registrationKey = `${options.kind}:${byteKey(options.channelTag)}`;
         if (this.#activeRegistrationKeys.has(registrationKey)) {
             return Tag("AlreadyActive", {
@@ -1776,7 +2137,15 @@ class RuntimeHost {
             });
         }
         this.#activeRegistrationKeys.add(registrationKey);
-        this.#activeInterfaces.set(key, { id, registrationKey, supervisorKind });
+        this.#activeInterfaces.set(key, {
+            id,
+            name: interfaceName,
+            ...(contractKind === undefined ? {} : { contractKind }),
+            registrationKey,
+            supervisorKind,
+            rxBytes: 0,
+            txBytes: 0,
+        });
         this.#outboundQueues.set(key, []);
         return Tag("Registered", id);
     }
@@ -1804,6 +2173,26 @@ class RuntimeHost {
         this.#overflowedOutbound.delete(key);
         return Tag("Detached");
     }
+    setContractKind(id, kind) {
+        const active = this.#activeInterfaces.get(byteKey(id));
+        if (active !== undefined) {
+            active.contractKind = kind;
+        }
+    }
+    interfaceInspection() {
+        return new Map([...this.#activeInterfaces].map(([key, active]) => [
+            key,
+            {
+                id: active.id,
+                name: active.name,
+                ...(active.contractKind === undefined
+                    ? {}
+                    : { kind: active.contractKind }),
+                rxBytes: active.rxBytes,
+                txBytes: active.txBytes,
+            },
+        ]));
+    }
     ingest(interfaceId, bytes) {
         const entropy = this.entropy();
         if (entropy.tag !== "Filled") {
@@ -1816,6 +2205,10 @@ class RuntimeHost {
                 nowMs: this.#now(),
                 entropy: entropy.data,
             });
+            const active = this.#activeInterfaces.get(byteKey(interfaceId));
+            if (active !== undefined) {
+                active.rxBytes = saturatingAdd(active.rxBytes, bytes.length);
+            }
             this.#onRuntimeActivity();
             return Tag("Accepted");
         }
@@ -1863,7 +2256,12 @@ class RuntimeHost {
         }
         const queued = this.#outboundQueues.get(interfaceKey) ?? [];
         this.#outboundQueues.set(interfaceKey, []);
-        return Tag("Outbound", queued.concat(direct));
+        const outbound = queued.concat(direct);
+        const active = this.#activeInterfaces.get(interfaceKey);
+        if (active !== undefined) {
+            active.txBytes = outbound.reduce((total, frame) => saturatingAdd(total, frame.bytes.length), active.txBytes);
+        }
+        return Tag("Outbound", outbound);
     }
     createUsbAutoDecoder() {
         return new this.#wasm.UsbAutoDecoder();
@@ -2242,7 +2640,7 @@ function parseEvent(raw) {
             linkId: linkId(bytesField(data, "linkId")),
             hash: resourceHash(bytesField(data, "hash")),
             stream: copyBytes(bytesField(data, "stream")),
-            uncompressedDataBytes: nonNegativeInteger(numberField(data, "uncompressedDataBytes"), "uncompressedDataBytes"),
+            uncompressedDataBytes: nonNegativeBigIntField(data, "uncompressedDataBytes"),
         })),
         resourceSegment: (data) => {
             const details = {
@@ -2260,7 +2658,7 @@ function parseEvent(raw) {
         resourceAssembled: (data) => Tag("Diagnostic", Tag("ResourceAssembled", {
             linkId: linkId(bytesField(data, "linkId")),
             originalHash: resourceHash(bytesField(data, "originalHash")),
-            totalSizeBytes: nonNegativeInteger(numberField(data, "totalSizeBytes"), "totalSizeBytes"),
+            totalSizeBytes: nonNegativeBigIntField(data, "totalSizeBytes"),
         })),
         routeExpired: (data) => Tag("Diagnostic", Tag("RouteExpired", {
             destination: destinationHash(bytesField(data, "destination")),
@@ -2448,13 +2846,19 @@ function parseSnapshot(raw) {
     if (!Array.isArray(interfacesRaw)) {
         throw new PrnsValidationError("invalid-component", "snapshot interfaces must be an array");
     }
+    const routeSnapshotsRaw = optionalArrayField(object, "routeSnapshots");
+    const destinationIdentitiesRaw = optionalArrayField(object, "destinationIdentities");
     return {
         type: literalField(object, "type", "snapshot"),
+        revision: nonNegativeBigIntField(object, "revision"),
         ingestedPackets: nonNegativeInteger(numberField(object, "ingestedPackets"), "ingestedPackets"),
         ingestedCommands: nonNegativeInteger(numberField(object, "ingestedCommands"), "ingestedCommands"),
         routes: nonNegativeInteger(numberField(object, "routes"), "routes"),
         scheduledAnnounces: nonNegativeInteger(numberField(object, "scheduledAnnounces"), "scheduledAnnounces"),
         interfaces: interfacesRaw.map(parseInterfaceSnapshot),
+        activeLinkCount: optionalNumber(object, "activeLinkCount", (value) => nonNegativeInteger(value, "activeLinkCount")) ?? 0,
+        routeSnapshots: routeSnapshotsRaw.map(parseStableRouteSnapshot),
+        destinationIdentities: destinationIdentitiesRaw.map(parseStableDestinationIdentitySnapshot),
     };
 }
 function parseInterfaceSnapshot(raw) {
@@ -2464,6 +2868,7 @@ function parseInterfaceSnapshot(raw) {
         kind: stringField(object, "kind"),
         routes: nonNegativeInteger(numberField(object, "routes"), "routes"),
         links: nonNegativeInteger(numberField(object, "links"), "links"),
+        transportedLinks: optionalNumber(object, "transportedLinks", (value) => nonNegativeInteger(value, "transportedLinks")) ?? 0,
     };
     const bitrate = optionalNumber(object, "bitrateBps", bitrateBps);
     if (bitrate !== undefined) {
@@ -2474,6 +2879,28 @@ function parseInterfaceSnapshot(raw) {
         snapshot.hardwareMtu = mtu;
     }
     return snapshot;
+}
+function parseStableRouteSnapshot(raw) {
+    const object = record(raw, "RouteSnapshot");
+    const viaIdentity = optionalBytesField(object, "viaIdentity");
+    return {
+        destination: destinationHash(bytesField(object, "destination")),
+        hops: nonNegativeInteger(numberField(object, "hops"), "hops"),
+        ...(viaIdentity === undefined
+            ? {}
+            : { viaIdentity: identityHash(viaIdentity) }),
+        interfaceId: interfaceId(bytesField(object, "interfaceId")),
+        learnedAtMillis: nonNegativeInteger(numberField(object, "learnedAtMillis"), "learnedAtMillis"),
+        lastRelayedAtMillis: nonNegativeInteger(numberField(object, "lastRelayedAtMillis"), "lastRelayedAtMillis"),
+        expiresAtMillis: nonNegativeInteger(numberField(object, "expiresAtMillis"), "expiresAtMillis"),
+    };
+}
+function parseStableDestinationIdentitySnapshot(raw) {
+    const object = record(raw, "DestinationIdentitySnapshot");
+    return {
+        destination: destinationHash(bytesField(object, "destination")),
+        identity: identityHash(bytesField(object, "identity")),
+    };
 }
 function parseRuntimeInterfaceKind(value) {
     if (value === "auto-usb-host" ||
@@ -2555,6 +2982,13 @@ function numberField(object, key) {
     }
     return value;
 }
+function nonNegativeBigIntField(object, key) {
+    const value = field(object, key);
+    if (typeof value !== "bigint" || value < 0n) {
+        throw new PrnsValidationError("invalid-component", `${key} must be a non-negative bigint`);
+    }
+    return value;
+}
 function optionalNumber(object, key, parse) {
     if (!(key in object)) {
         return undefined;
@@ -2563,6 +2997,16 @@ function optionalNumber(object, key, parse) {
 }
 function optionalBytesField(object, key) {
     return key in object ? bytesField(object, key) : undefined;
+}
+function optionalArrayField(object, key) {
+    if (!(key in object)) {
+        return [];
+    }
+    const value = field(object, key);
+    if (!Array.isArray(value)) {
+        throw new PrnsValidationError("invalid-component", `${key} must be an array`);
+    }
+    return value;
 }
 function bigintField(object, key) {
     const value = field(object, key);
@@ -2621,6 +3065,80 @@ function decodeBase64(encoded) {
         out[i] = binary.charCodeAt(i);
     }
     return out;
+}
+function parseBrowserPersistedState(value) {
+    const object = record(value, "browser persisted state");
+    const persistenceVersion = nonNegativeInteger(numberField(object, "persistenceVersion"), "persisted state version");
+    if (persistenceVersion !== BROWSER_PERSISTENCE_VERSION) {
+        throw new PrnsValidationError("invalid-component", `persisted state version ${persistenceVersion} does not match ${BROWSER_PERSISTENCE_VERSION}`);
+    }
+    const rawRatchets = field(object, "ratchets");
+    if (!Array.isArray(rawRatchets)) {
+        throw new PrnsValidationError("invalid-component", "persisted state ratchets must be an array");
+    }
+    return {
+        type: literalField(object, "type", "persistedState"),
+        persistenceVersion,
+        takenAtMillis: nowMillis(nonNegativeInteger(numberField(object, "takenAtMillis"), "persisted state timestamp")),
+        routingTable: new Uint8Array(bytesField(object, "routingTable")),
+        tunnels: new Uint8Array(bytesField(object, "tunnels")),
+        destinationIdentities: new Uint8Array(bytesField(object, "destinationIdentities")),
+        ratchets: rawRatchets.map((raw) => {
+            const ratchet = record(raw, "persisted ratchet");
+            return {
+                destination: destinationHash(bytesField(ratchet, "destination")),
+                sealed: new Uint8Array(bytesField(ratchet, "sealed")),
+            };
+        }),
+    };
+}
+function encodeBrowserPersistedState(state) {
+    const parsed = parseBrowserPersistedState(state);
+    return JSON.stringify({
+        type: parsed.type,
+        persistenceVersion: parsed.persistenceVersion,
+        takenAtMillis: parsed.takenAtMillis,
+        routingTable: encodeBase64(parsed.routingTable),
+        tunnels: encodeBase64(parsed.tunnels),
+        destinationIdentities: encodeBase64(parsed.destinationIdentities),
+        ratchets: parsed.ratchets.map(({ destination, sealed }) => ({
+            destination: encodeBase64(destination),
+            sealed: encodeBase64(sealed),
+        })),
+    });
+}
+function decodeBrowserPersistedState(encoded) {
+    const stored = record(JSON.parse(encoded), "stored browser persistence");
+    const rawRatchets = field(stored, "ratchets");
+    if (!Array.isArray(rawRatchets)) {
+        throw new PrnsValidationError("invalid-component", "stored persistence ratchets must be an array");
+    }
+    return parseBrowserPersistedState({
+        type: stringField(stored, "type"),
+        persistenceVersion: numberField(stored, "persistenceVersion"),
+        takenAtMillis: numberField(stored, "takenAtMillis"),
+        routingTable: decodeBase64(stringField(stored, "routingTable")),
+        tunnels: decodeBase64(stringField(stored, "tunnels")),
+        destinationIdentities: decodeBase64(stringField(stored, "destinationIdentities")),
+        ratchets: rawRatchets.map((raw) => {
+            const ratchet = record(raw, "stored persisted ratchet");
+            return {
+                destination: decodeBase64(stringField(ratchet, "destination")),
+                sealed: decodeBase64(stringField(ratchet, "sealed")),
+            };
+        }),
+    });
+}
+function parsePersistenceRestoreReport(value) {
+    const report = record(value, "persistence restore report");
+    return {
+        routes: nonNegativeInteger(numberField(report, "routes"), "restored routes"),
+        destinationIdentities: nonNegativeInteger(numberField(report, "destinationIdentities"), "restored destination identities"),
+        tunnels: nonNegativeInteger(numberField(report, "tunnels"), "restored tunnels"),
+        ratchets: nonNegativeInteger(numberField(report, "ratchets"), "restored ratchets"),
+        refused: nonNegativeInteger(numberField(report, "refused"), "refused persistence records"),
+        dropped: nonNegativeInteger(numberField(report, "dropped"), "dropped persistence records"),
+    };
 }
 function requireWebUsb() {
     try {
@@ -3166,6 +3684,13 @@ function describeStableIdentityStoreFailure(failure) {
         StoredStableIdentityInvalid: ({ detail }) => detail,
     });
 }
+function describePersistenceStoreFailure(failure) {
+    return match_into().from(failure, {
+        HostApiUnavailable: ({ api }) => `${api} is unavailable`,
+        PersistenceStoreFailed: ({ operation, detail }) => `${operation} persistence: ${detail}`,
+        StoredPersistenceInvalid: ({ detail }) => detail,
+    });
+}
 function unexpectedSessionFailure(error) {
     return Tag("UnexpectedSessionFailure", { detail: describeHostError(error) });
 }
@@ -3202,6 +3727,53 @@ function describeBluetoothConnectFailure(failure) {
         StableIdentityUnavailable: ({ detail }) => detail,
         RuntimeRejected: ({ operation, detail }) => `${operation}: ${detail}`,
     });
+}
+function webSocketCommandFailure(failure) {
+    return match_into().from(failure, {
+        HostApiUnavailable: ({ api }) => Tag("DeviceUnavailable", { detail: `${api} is unavailable` }),
+        PermissionDenied: ({ detail }) => Tag("PermissionDenied", { detail }),
+        Cancelled: ({ stage }) => Tag("ConnectFailed", { detail: `WebSocket ${stage} was cancelled` }),
+        AlreadyActive: ({ target }) => Tag("BackendFailed", { detail: `${target} is already active` }),
+        InvalidTarget: ({ detail }) => Tag("InvalidConfiguration", { detail }),
+        TimedOut: ({ stage, timeoutMs }) => Tag("ConnectFailed", {
+            detail: `WebSocket ${stage} timed out after ${timeoutMs}ms`,
+        }),
+        ConnectionFailed: ({ detail }) => Tag("ConnectFailed", { detail }),
+        RuntimeRejected: ({ operation, detail }) => Tag("BackendFailed", { detail: `${operation}: ${detail}` }),
+    });
+}
+function cooperativeBackendInfo() {
+    const webSocketAvailable = typeof globalThis.WebSocket === "function";
+    const capabilities = webSocketAvailable
+        ? ["WebSocket", "BrowserRendezvous"]
+        : [];
+    const interfaceKinds = webSocketAvailable
+        ? ["WebSocketClient", "BrowserRendezvous"]
+        : [];
+    return Object.freeze({
+        backend: "Cooperative",
+        capabilities: Object.freeze(capabilities),
+        interfaceKinds: Object.freeze(interfaceKinds),
+    });
+}
+function stableInterfaceKind(kind) {
+    return {
+        "auto-usb-host": "AutomaticUsb",
+        "auto-usb-device": "AutomaticUsb",
+        rnode: "RNode",
+        "bluetooth-auto": "AutomaticBluetoothLe",
+        "bluetooth-peer": "AutomaticBluetoothLe",
+        "auto-wifi": "BrowserRendezvous",
+        "websocket-client": "WebSocketClient",
+        "websocket-server": "WebSocketServer",
+        "websocket-server-peer": "WebSocketServer",
+        serial: "Serial",
+        kiss: "Kiss",
+        pipe: "Pipe",
+    }[kind];
+}
+function saturatingAdd(left, right) {
+    return Math.min(Number.MAX_SAFE_INTEGER, left + right);
 }
 function describeInterfaceSessionFailure(failure) {
     return match_into().from(failure, {
@@ -3278,11 +3850,18 @@ function retainedBrowserEventBytes(event) {
         Request: ({ data }) => data.length,
         Response: ({ data }) => data.length,
         ResponseSegment: ({ data }) => data.length,
-        ResourceAvailable: ({ resource, metadata }) => resource.totalBytes + (metadata?.length ?? 0),
+        ResourceAvailable: ({ resource, metadata }) => exactBytesAsSafeNumber(resource.totalBytes, "resource.totalBytes") +
+            (metadata?.length ?? 0),
         ResourceSegment: ({ data, metadata }) => data.length + (metadata?.length ?? 0),
         ResourceNeedsDecompression: ({ stream }) => stream.length,
         ChannelMessage: ({ data }) => data.length,
     });
+}
+function exactBytesAsSafeNumber(value, name) {
+    if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+        throw new PrnsValidationError("invalid-number", `${name} exceeds the JavaScript safe-integer limit`);
+    }
+    return Number(value);
 }
 function rawEventType(value) {
     if (!RAW_EVENT_TYPES.has(value)) {

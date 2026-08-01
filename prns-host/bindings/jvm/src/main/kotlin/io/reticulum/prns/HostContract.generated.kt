@@ -5,7 +5,7 @@ import java.math.BigInteger
 object HostContract {
     const val ABI: Int = 1
     const val SCHEMA_VERSION: Int = 1
-    const val PRODUCT_VERSION = "0.3.1"
+    const val PRODUCT_VERSION = "0.3.2"
     const val DESTINATION_HASH_LENGTH = 16
     const val IDENTITY_HASH_LENGTH = 16
     const val INTERFACE_ID_LENGTH = 8
@@ -15,6 +15,7 @@ object HostContract {
     const val REQUEST_PATH_HASH_LENGTH = 16
     const val RESOURCE_HASH_LENGTH = 32
     const val IDENTITY_SECRET_LENGTH = 64
+    const val SAFE_UINT_MAX = 9007199254740991L
     const val BALANCED_PENDING_COMMANDS = 256
     const val BALANCED_APPLICATION_EVENTS = 1024
     const val BALANCED_RETAINED_EVENT_BYTES = 8388608
@@ -34,7 +35,10 @@ enum class Status(val rawValue: Int) {
     STOPPED(9),
     BACKEND_FAILED(10),
     PANIC(11),
-    INTERRUPTED(12);
+    INTERRUPTED(12),
+    UNSUPPORTED(13),
+    PERMISSION_DENIED(14),
+    UNAVAILABLE(15);
 
     companion object {
         fun fromRawValue(value: Int): Status? = entries.firstOrNull { it.rawValue == value }
@@ -70,6 +74,98 @@ enum class Capability(val rawValue: Int) {
     }
 }
 
+enum class InterfaceKind(val rawValue: Int) {
+    AUTO_LAN(1),
+    TCP_CLIENT(2),
+    TCP_SERVER(3),
+    UDP(4),
+    SERIAL(5),
+    KISS(6),
+    AX25_KISS(7),
+    R_NODE(8),
+    MULTI_R_NODE(9),
+    PIPE(10),
+    BACKBONE_CLIENT(11),
+    BACKBONE_SERVER(12),
+    I2P(13),
+    WEAVE(14),
+    AUTOMATIC_USB(15),
+    AUTOMATIC_BLUETOOTH_LE(16),
+    WEB_SOCKET_CLIENT(17),
+    WEB_SOCKET_SERVER(18),
+    BROWSER_RENDEZVOUS(19);
+
+    companion object {
+        fun fromRawValue(value: Int): InterfaceKind? = entries.firstOrNull { it.rawValue == value }
+    }
+}
+
+enum class InterfaceHealth(val rawValue: Int) {
+    INITIALIZING(1),
+    CONNECTED(2),
+    DEGRADED(3),
+    RECONNECTING(4),
+    FAILED(5),
+    DISCONNECTED(6),
+    DISABLED(7),
+    UNKNOWN(8);
+
+    companion object {
+        fun fromRawValue(value: Int): InterfaceHealth? = entries.firstOrNull { it.rawValue == value }
+    }
+}
+
+enum class DiscoveryScope(val rawValue: Int) {
+    LINK(1),
+    ADMIN(2),
+    SITE(3),
+    ORGANIZATION(4),
+    GLOBAL(5);
+
+    companion object {
+        fun fromRawValue(value: Int): DiscoveryScope? = entries.firstOrNull { it.rawValue == value }
+    }
+}
+
+enum class MulticastAddressType(val rawValue: Int) {
+    TEMPORARY(1),
+    PERMANENT(2);
+
+    companion object {
+        fun fromRawValue(value: Int): MulticastAddressType? = entries.firstOrNull { it.rawValue == value }
+    }
+}
+
+enum class SerialDataBits(val rawValue: Int) {
+    FIVE(5),
+    SIX(6),
+    SEVEN(7),
+    EIGHT(8);
+
+    companion object {
+        fun fromRawValue(value: Int): SerialDataBits? = entries.firstOrNull { it.rawValue == value }
+    }
+}
+
+enum class SerialParity(val rawValue: Int) {
+    NONE(1),
+    EVEN(2),
+    ODD(3);
+
+    companion object {
+        fun fromRawValue(value: Int): SerialParity? = entries.firstOrNull { it.rawValue == value }
+    }
+}
+
+enum class SerialStopBits(val rawValue: Int) {
+    ONE(1),
+    TWO(2);
+
+    companion object {
+        fun fromRawValue(value: Int): SerialStopBits? = entries.firstOrNull { it.rawValue == value }
+    }
+}
+
 enum class HostRole(val rawValue: Int) {
     ENDPOINT(1),
     TRANSPORT(2);
@@ -86,6 +182,15 @@ enum class IdentityConfigKind(val rawValue: Int) {
 
     companion object {
         fun fromRawValue(value: Int): IdentityConfigKind? = entries.firstOrNull { it.rawValue == value }
+    }
+}
+
+enum class PersistenceConfigKind(val rawValue: Int) {
+    EPHEMERAL(1),
+    DIRECTORY(2);
+
+    companion object {
+        fun fromRawValue(value: Int): PersistenceConfigKind? = entries.firstOrNull { it.rawValue == value }
     }
 }
 
@@ -205,7 +310,15 @@ enum class CommandFailureKind(val rawValue: Int) {
     RESOURCE_PREDECESSOR_FAILED(29),
     CHANNEL_WINDOW_FULL(30),
     CHANNEL_UNTRACKABLE(31),
-    INVALID_CHANNEL_MESSAGE_TYPE(32);
+    INVALID_CHANNEL_MESSAGE_TYPE(32),
+    INVALID_CONFIGURATION(33),
+    RESOURCE_UPLOAD_CANCELLED(34),
+    RESOURCE_EARLY_EOF(35),
+    RESOURCE_LENGTH_OVERRUN(36),
+    PERMISSION_DENIED(37),
+    DEVICE_UNAVAILABLE(38),
+    CONNECT_FAILED(39),
+    BACKEND_FAILED(40);
 
     companion object {
         fun fromRawValue(value: Int): CommandFailureKind? = entries.firstOrNull { it.rawValue == value }
@@ -285,10 +398,34 @@ enum class DiagnosticEventKind(val rawValue: Int) {
     ROUTE_INTERFACE_GONE(213),
     ROUTE_DROPPED(214),
     BACKEND_DIAGNOSTIC(215),
-    DIAGNOSTICS_DROPPED(216);
+    DIAGNOSTICS_DROPPED(216),
+    PERSISTENCE_RESTORED(217),
+    PERSISTENCE_FLUSHED(218),
+    PERSISTENCE_FLUSH_FAILED(219);
 
     companion object {
         fun fromRawValue(value: Int): DiagnosticEventKind? = entries.firstOrNull { it.rawValue == value }
+    }
+}
+
+enum class PersistenceFlushCause(val rawValue: Int) {
+    STARTUP(1),
+    INTERVAL(2),
+    ROUTE_CHANGE(3),
+    RATCHET_ROTATION(4),
+    SHUTDOWN(5);
+
+    companion object {
+        fun fromRawValue(value: Int): PersistenceFlushCause? = entries.firstOrNull { it.rawValue == value }
+    }
+}
+
+enum class PersistenceFlushTarget(val rawValue: Int) {
+    ROUTING_STATE(1),
+    RATCHETS(2);
+
+    companion object {
+        fun fromRawValue(value: Int): PersistenceFlushTarget? = entries.firstOrNull { it.rawValue == value }
     }
 }
 
@@ -323,7 +460,15 @@ enum class EventField(val rawValue: Int) {
     KIND(28),
     DROPPED_COUNT(29),
     HOPS(30),
-    STREAM(31);
+    STREAM(31),
+    ROUTES(32),
+    DESTINATION_IDENTITIES(33),
+    TUNNELS(34),
+    RATCHETS(35),
+    REFUSED(36),
+    DROPPED(37),
+    PERSISTENCE_CAUSE(38),
+    PERSISTENCE_TARGET(39);
 
     companion object {
         fun fromRawValue(value: Int): EventField? = entries.firstOrNull { it.rawValue == value }
@@ -471,8 +616,99 @@ data class RequestHandlerConfig(
     val policy: RequestPolicy,
 )
 
+data class SerialLineConfig(
+    val baud: Long,
+    val dataBits: SerialDataBits,
+    val parity: SerialParity,
+    val stopBits: SerialStopBits,
+)
+
+data class RNodeRadioConfig(
+    val frequencyHz: Long,
+    val bandwidthHz: Long,
+    val txPowerDbm: Int,
+    val spreadingFactor: Int,
+    val codingRate: Int,
+)
+
+data class MultiRNodeMemberConfig(
+    val name: String,
+    val virtualPort: Int,
+    val radio: RNodeRadioConfig,
+    val flowControl: Boolean,
+    val outgoing: Boolean,
+)
+
+data class BackendInfo(
+    val backend: BackendKind,
+    val capabilities: List<Capability>,
+    val interfaceKinds: List<InterfaceKind>,
+)
+
+data class InterfaceSnapshot(
+    val interfaceId: InterfaceId,
+    val name: String?,
+    val kind: InterfaceKind?,
+    val health: InterfaceHealth,
+    val failureDetail: String?,
+    val rxBytes: ULong,
+    val txBytes: ULong,
+    val rxBps: Long?,
+    val txBps: Long?,
+    val routeCount: Long,
+    val linkCount: Long,
+    val transportedLinkCount: Long,
+)
+
+data class RouteSnapshot(
+    val destination: DestinationHash,
+    val hops: Int,
+    val viaIdentity: IdentityHash?,
+    val interfaceId: InterfaceId,
+    val learnedAtMillis: Long,
+    val lastRelayedAtMillis: Long,
+    val expiresAtMillis: Long,
+)
+
+data class DestinationIdentitySnapshot(
+    val destination: DestinationHash,
+    val identity: IdentityHash,
+)
+
+data class RuntimeHealthSnapshot(
+    val running: Boolean,
+    val uptimeMillis: Long,
+    val interfaceCount: Long,
+    val onlineInterfaceCount: Long,
+    val routeCount: Long,
+    val linkCount: Long,
+    val transportedLinkCount: Long,
+    val rxBytes: ULong,
+    val txBytes: ULong,
+    val rxBps: Long,
+    val txBps: Long,
+)
+
+data class PersistenceSnapshot(
+    val persistent: Boolean,
+    val restored: Boolean,
+    val lastFlushCause: PersistenceFlushCause?,
+    val lastFailureDetail: String?,
+)
+
+data class HostSnapshot(
+    val revision: ULong,
+    val backend: BackendInfo,
+    val interfaces: List<InterfaceSnapshot>,
+    val routes: List<RouteSnapshot>,
+    val activeLinkCount: Long,
+    val destinationIdentities: List<DestinationIdentitySnapshot>,
+    val runtime: RuntimeHealthSnapshot,
+    val persistence: PersistenceSnapshot,
+)
+
 interface ResourceStream : AutoCloseable {
-    val totalBytes: Long
+    val totalBytes: ULong
     fun next(maximumBytes: Int): ResourceChunk
 }
 
@@ -489,6 +725,128 @@ data object IdentityConfigGenerateEphemeral : IdentityConfig
 data class IdentityConfigLoadOrCreate(
     val path: String
 ) : IdentityConfig
+
+sealed interface PersistenceConfig
+
+data object PersistenceConfigEphemeral : PersistenceConfig
+
+data class PersistenceConfigDirectory(
+    val path: String
+) : PersistenceConfig
+
+sealed interface InterfaceConfig
+
+data class InterfaceConfigAutoLan(
+    val groupId: String?,
+    val discoveryScope: DiscoveryScope?,
+    val discoveryPort: Int?,
+    val dataPort: Int?,
+    val devices: List<String>,
+    val ignoredDevices: List<String>,
+    val multicastAddressType: MulticastAddressType?
+) : InterfaceConfig
+
+data class InterfaceConfigTcpClient(
+    val target: String,
+    val bitrate: Bitrate
+) : InterfaceConfig
+
+data class InterfaceConfigTcpServer(
+    val bind: String,
+    val bitrate: Bitrate
+) : InterfaceConfig
+
+data class InterfaceConfigUdp(
+    val local: String,
+    val peer: String,
+    val bitrate: Bitrate
+) : InterfaceConfig
+
+data class InterfaceConfigSerial(
+    val port: String,
+    val line: SerialLineConfig
+) : InterfaceConfig
+
+data class InterfaceConfigKiss(
+    val port: String,
+    val line: SerialLineConfig,
+    val flowControl: Boolean,
+    val preambleMillis: Long,
+    val transmitTailMillis: Long,
+    val persistence: Int,
+    val slotTimeMillis: Long,
+    val stationCallsign: String?,
+    val stationIntervalSeconds: Long?
+) : InterfaceConfig
+
+data class InterfaceConfigAx25Kiss(
+    val port: String,
+    val line: SerialLineConfig,
+    val flowControl: Boolean,
+    val preambleMillis: Long,
+    val transmitTailMillis: Long,
+    val persistence: Int,
+    val slotTimeMillis: Long,
+    val callsign: String,
+    val ssid: Int
+) : InterfaceConfig
+
+data class InterfaceConfigRNode(
+    val port: String,
+    val radio: RNodeRadioConfig,
+    val flowControl: Boolean,
+    val stationCallsign: String?,
+    val stationIntervalSeconds: Long?,
+    val airtimeLimitShortCentiPercent: Int?,
+    val airtimeLimitLongCentiPercent: Int?
+) : InterfaceConfig
+
+data class InterfaceConfigMultiRNode(
+    val port: String,
+    val stationCallsign: String?,
+    val stationIntervalSeconds: Long?,
+    val members: List<MultiRNodeMemberConfig>
+) : InterfaceConfig
+
+data class InterfaceConfigPipe(
+    val command: List<String>,
+    val respawnDelayMillis: Long
+) : InterfaceConfig
+
+data class InterfaceConfigBackboneClient(
+    val target: String,
+    val bitrate: Bitrate
+) : InterfaceConfig
+
+data class InterfaceConfigBackboneServer(
+    val bind: String,
+    val bitrate: Bitrate
+) : InterfaceConfig
+
+data class InterfaceConfigI2p(
+    val peers: List<String>,
+    val connectable: Boolean
+) : InterfaceConfig
+
+data class InterfaceConfigWeave(
+    val port: String
+) : InterfaceConfig
+
+data object InterfaceConfigAutomaticUsb : InterfaceConfig
+
+data object InterfaceConfigAutomaticBluetoothLe : InterfaceConfig
+
+data class InterfaceConfigWebSocketClient(
+    val target: String
+) : InterfaceConfig
+
+data class InterfaceConfigWebSocketServer(
+    val bind: String
+) : InterfaceConfig
+
+data class InterfaceConfigBrowserRendezvous(
+    val url: String
+) : InterfaceConfig
 
 sealed interface DestinationIdentityConfig
 
@@ -639,6 +997,10 @@ data class HostCommandAllowRequester(
     val identity: IdentityHash
 ) : HostCommand
 
+data class HostCommandAttachInterface(
+    val config: InterfaceConfig
+) : HostCommand
+
 sealed interface CommandOutcome
 
 data object CommandOutcomeAnnounced : CommandOutcome
@@ -755,6 +1117,32 @@ data object CommandFailureChannelUntrackable : CommandFailure
 
 data object CommandFailureInvalidChannelMessageType : CommandFailure
 
+data class CommandFailureInvalidConfiguration(
+    val detail: String
+) : CommandFailure
+
+data object CommandFailureResourceUploadCancelled : CommandFailure
+
+data object CommandFailureResourceEarlyEof : CommandFailure
+
+data object CommandFailureResourceLengthOverrun : CommandFailure
+
+data class CommandFailurePermissionDenied(
+    val detail: String
+) : CommandFailure
+
+data class CommandFailureDeviceUnavailable(
+    val detail: String
+) : CommandFailure
+
+data class CommandFailureConnectFailed(
+    val detail: String
+) : CommandFailure
+
+data class CommandFailureBackendFailed(
+    val detail: String
+) : CommandFailure
+
 sealed interface ApplicationEvent
 
 data class ApplicationEventSingleDelivery(
@@ -807,7 +1195,7 @@ data class ApplicationEventResourceNeedsDecompression(
     val linkId: LinkId,
     val hash: ResourceHash,
     val stream: Bytes,
-    val uncompressedDataBytes: Long
+    val uncompressedDataBytes: ULong
 ) : ApplicationEvent
 
 data class ApplicationEventChannelMessage(
@@ -848,7 +1236,7 @@ data class DiagnosticEventLinkInterfaceMismatch(
 data class DiagnosticEventResourceAssembled(
     val linkId: LinkId,
     val originalHash: ResourceHash,
-    val totalSizeBytes: Long
+    val totalSizeBytes: ULong
 ) : DiagnosticEvent
 
 data class DiagnosticEventResourceFailed(
@@ -859,9 +1247,9 @@ data class DiagnosticEventResourceFailed(
 
 data class DiagnosticEventResourceSendProgress(
     val linkId: LinkId,
-    val transferredBytes: Long,
-    val totalBytes: Long,
-    val physicalTransferredBytes: Long,
+    val transferredBytes: ULong,
+    val totalBytes: ULong,
+    val physicalTransferredBytes: ULong,
     val segmentIndex: Long,
     val totalSegments: Long
 ) : DiagnosticEvent
@@ -904,3 +1292,164 @@ data class DiagnosticEventBackendDiagnostic(
 data class DiagnosticEventDiagnosticsDropped(
     val count: BigInteger
 ) : DiagnosticEvent
+
+data class DiagnosticEventPersistenceRestored(
+    val routes: Long,
+    val destinationIdentities: Long,
+    val tunnels: Long,
+    val ratchets: Long,
+    val refused: Long,
+    val dropped: Long
+) : DiagnosticEvent
+
+data class DiagnosticEventPersistenceFlushed(
+    val cause: PersistenceFlushCause,
+    val target: PersistenceFlushTarget
+) : DiagnosticEvent
+
+data class DiagnosticEventPersistenceFlushFailed(
+    val cause: PersistenceFlushCause,
+    val target: PersistenceFlushTarget
+) : DiagnosticEvent
+
+internal val HOST_OPERATION_NAMES = listOf(
+    "contractInfo",
+    "backendInfo",
+    "hostCreate",
+    "hostRelease",
+    "hostLifecycle",
+    "hostSnapshot",
+    "hostSnapshotRead",
+    "hostSnapshotRelease",
+    "hostIdentityHash",
+    "hostDestinationCount",
+    "hostDestinationHash",
+    "hostBeginResourceUpload",
+    "resourceUploadWrite",
+    "resourceUploadIsWritable",
+    "resourceUploadFinish",
+    "resourceUploadAbort",
+    "resourceUploadRelease",
+    "hostStop",
+    "commandWait",
+    "commandRegisterReadiness",
+    "commandInterruptWait",
+    "commandRelease",
+    "hostClaimApplicationEvents",
+    "hostClaimDiagnostics",
+    "eventStreamRegisterReadiness",
+    "readinessRegistrationRelease",
+    "eventStreamInterruptWait",
+    "eventStreamRelease",
+    "eventStreamNext",
+    "eventRelease",
+    "eventKind",
+    "eventBytes",
+    "eventString",
+    "eventU64",
+    "eventU128",
+    "eventResourceStream",
+    "resourceStreamRelease",
+    "resourceStreamNext",
+    "hostAnnounce",
+    "hostSendSinglePacket",
+    "hostCloseLink",
+    "hostAttachTcpServer",
+    "hostAttachTcpClient",
+    "hostAttachUdp",
+    "hostDetachInterface",
+    "hostEstablishLink",
+    "hostRequestPath",
+    "hostIdentify",
+    "hostSendLinkPacket",
+    "hostRequest",
+    "hostRespond",
+    "hostSendResource",
+    "hostSetLinkResourceStrategy",
+    "hostSetDestinationResourceStrategy",
+    "hostSendChannelMessage",
+    "hostAllowRequester",
+    "hostAttachInterface",
+)
+
+internal data object RawUnit
+internal data class RawOwned<Value>(val value: Value)
+internal data class RawBorrowed<Value>(val value: Value)
+internal sealed interface RawCallResult<out Value>
+internal data class RawCallSuccess<Value>(val value: Value) : RawCallResult<Value>
+internal data class RawCallFailure(val error: Status) : RawCallResult<Nothing>
+internal class RawCommandResult
+internal class RawContractInfo
+internal class RawEvent
+internal class RawEventStream
+internal class RawHost
+internal class RawHostInspection
+internal class RawHostOptions
+internal class RawIssuedCommand
+internal class RawLifecycle
+internal class RawReadinessCallback
+internal class RawReadinessRegistration
+internal class RawResourceChunk
+internal class RawResourceStream
+internal class RawResourceUpload
+internal class RawOpaquePointer
+
+internal interface RawHostProtocol {
+    fun contractInfo(): RawCallResult<RawContractInfo>
+    fun backendInfo(): RawCallResult<BackendInfo>
+    fun hostCreate(options: RawHostOptions): RawCallResult<RawOwned<RawHost>>
+    fun hostRelease(host: RawHost): RawUnit
+    fun hostLifecycle(host: RawHost): RawCallResult<RawLifecycle>
+    fun hostSnapshot(host: RawHost, timeoutMillis: Long): RawCallResult<RawOwned<RawHostInspection>>
+    fun hostSnapshotRead(host_inspection: RawHostInspection): RawCallResult<RawBorrowed<HostSnapshot>>
+    fun hostSnapshotRelease(host_inspection: RawHostInspection): RawUnit
+    fun hostIdentityHash(host: RawHost): RawCallResult<RawBorrowed<Bytes>>
+    fun hostDestinationCount(host: RawHost): Long
+    fun hostDestinationHash(host: RawHost, index: Long): RawCallResult<RawBorrowed<Bytes>>
+    fun hostBeginResourceUpload(host: RawHost, linkId: LinkId, declaredLength: ULong, packedMetadata: Bytes?, compression: ResourceCompression): RawCallResult<RawOwned<RawResourceUpload>>
+    fun resourceUploadWrite(resource_upload: RawResourceUpload, chunk: Bytes): RawCallResult<RawUnit>
+    fun resourceUploadIsWritable(resource_upload: RawResourceUpload): RawCallResult<Boolean>
+    fun resourceUploadFinish(resource_upload: RawResourceUpload): RawCallResult<RawOwned<RawIssuedCommand>>
+    fun resourceUploadAbort(resource_upload: RawResourceUpload): RawUnit
+    fun resourceUploadRelease(resource_upload: RawResourceUpload): RawUnit
+    fun hostStop(host: RawHost): RawCallResult<RawUnit>
+    fun commandWait(issued_command: RawIssuedCommand, timeoutMillis: Long): RawCallResult<RawBorrowed<RawCommandResult>>
+    fun commandRegisterReadiness(issued_command: RawIssuedCommand, callback: RawReadinessCallback, context: RawOpaquePointer): RawCallResult<RawOwned<RawReadinessRegistration>>
+    fun commandInterruptWait(issued_command: RawIssuedCommand): RawUnit
+    fun commandRelease(issued_command: RawIssuedCommand): RawUnit
+    fun hostClaimApplicationEvents(host: RawHost): RawCallResult<RawOwned<RawEventStream>>
+    fun hostClaimDiagnostics(host: RawHost): RawCallResult<RawOwned<RawEventStream>>
+    fun eventStreamRegisterReadiness(event_stream: RawEventStream, callback: RawReadinessCallback, context: RawOpaquePointer): RawCallResult<RawOwned<RawReadinessRegistration>>
+    fun readinessRegistrationRelease(readiness_registration: RawReadinessRegistration): RawUnit
+    fun eventStreamInterruptWait(event_stream: RawEventStream): RawUnit
+    fun eventStreamRelease(event_stream: RawEventStream): RawUnit
+    fun eventStreamNext(event_stream: RawEventStream, timeoutMillis: Long): RawCallResult<RawOwned<RawEvent>>
+    fun eventRelease(event: RawEvent): RawUnit
+    fun eventKind(event: RawEvent): Long
+    fun eventBytes(event: RawEvent, field: EventField): RawCallResult<RawBorrowed<Bytes>>
+    fun eventString(event: RawEvent, field: EventField): RawCallResult<RawBorrowed<String>>
+    fun eventU64(event: RawEvent, field: EventField): RawCallResult<ULong>
+    fun eventU128(event: RawEvent, field: EventField): RawCallResult<BigInteger>
+    fun eventResourceStream(event: RawEvent): RawCallResult<RawOwned<RawResourceStream>>
+    fun resourceStreamRelease(resource_stream: RawResourceStream): RawUnit
+    fun resourceStreamNext(resource_stream: RawResourceStream, maximumBytes: Long): RawCallResult<RawBorrowed<RawResourceChunk>>
+    fun hostAnnounce(host: RawHost, destination: DestinationHash, `interface`: InterfaceId?): RawCallResult<RawOwned<RawIssuedCommand>>
+    fun hostSendSinglePacket(host: RawHost, destination: DestinationHash, payload: Bytes): RawCallResult<RawOwned<RawIssuedCommand>>
+    fun hostCloseLink(host: RawHost, linkId: LinkId): RawCallResult<RawOwned<RawIssuedCommand>>
+    fun hostAttachTcpServer(host: RawHost, bind: String, bitrate: Bitrate): RawCallResult<RawOwned<RawIssuedCommand>>
+    fun hostAttachTcpClient(host: RawHost, target: String, bitrate: Bitrate): RawCallResult<RawOwned<RawIssuedCommand>>
+    fun hostAttachUdp(host: RawHost, local: String, peer: String, bitrate: Bitrate): RawCallResult<RawOwned<RawIssuedCommand>>
+    fun hostDetachInterface(host: RawHost, `interface`: InterfaceId): RawCallResult<RawOwned<RawIssuedCommand>>
+    fun hostEstablishLink(host: RawHost, destination: DestinationHash): RawCallResult<RawOwned<RawIssuedCommand>>
+    fun hostRequestPath(host: RawHost, destination: DestinationHash): RawCallResult<RawOwned<RawIssuedCommand>>
+    fun hostIdentify(host: RawHost, linkId: LinkId, identity: IdentityHash): RawCallResult<RawOwned<RawIssuedCommand>>
+    fun hostSendLinkPacket(host: RawHost, linkId: LinkId, payload: Bytes): RawCallResult<RawOwned<RawIssuedCommand>>
+    fun hostRequest(host: RawHost, linkId: LinkId, pathHash: RequestPathHash, payload: Bytes, timeout: ResponseTimeout): RawCallResult<RawOwned<RawIssuedCommand>>
+    fun hostRespond(host: RawHost, linkId: LinkId, requestId: RequestId, requestRttMillis: Long, payload: Bytes): RawCallResult<RawOwned<RawIssuedCommand>>
+    fun hostSendResource(host: RawHost, linkId: LinkId, payload: Bytes, packedMetadata: Bytes?, compression: ResourceCompression): RawCallResult<RawOwned<RawIssuedCommand>>
+    fun hostSetLinkResourceStrategy(host: RawHost, linkId: LinkId, strategy: ResourceStrategy): RawCallResult<RawOwned<RawIssuedCommand>>
+    fun hostSetDestinationResourceStrategy(host: RawHost, destination: DestinationHash, strategy: ResourceStrategy): RawCallResult<RawOwned<RawIssuedCommand>>
+    fun hostSendChannelMessage(host: RawHost, linkId: LinkId, messageType: Int, payload: Bytes): RawCallResult<RawOwned<RawIssuedCommand>>
+    fun hostAllowRequester(host: RawHost, destination: DestinationHash, pathHash: RequestPathHash, identity: IdentityHash): RawCallResult<RawOwned<RawIssuedCommand>>
+    fun hostAttachInterface(host: RawHost, config: InterfaceConfig): RawCallResult<RawOwned<RawIssuedCommand>>
+}

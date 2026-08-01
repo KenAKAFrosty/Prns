@@ -785,6 +785,7 @@ fn report_sparse_size(
 fn sparse_size_gate(board_slug: &str) -> Option<(u64, u64)> {
     match board_slug {
         "heltec-v4" => Some((7_643_152, 3_057_260)),
+        "heltec-v4-r8" => Some((7_643_152, 3_057_260)),
         "t-beam-supreme" => Some((7_639_296, 3_055_718)),
         _ => None,
     }
@@ -890,16 +891,17 @@ mod tests {
     #[test]
     fn developer_source_digest_comes_from_the_immutable_version() {
         let digest = "e3ffc728180a8194c2efb55f90b0285f093db6e53e6dc800d4b229426e966399";
-        let version = format!("0.3.1-dev.dirty.{digest}");
+        let version = format!("{}-dev.dirty.{digest}", env!("CARGO_PKG_VERSION"));
+        let short = format!("{}-dev.dirty.short", env!("CARGO_PKG_VERSION"));
         assert_eq!(developer_source_digest(&version), Some(digest));
-        assert_eq!(developer_source_digest("0.3.1"), None);
-        assert_eq!(developer_source_digest("0.3.1-dev.dirty.short"), None);
+        assert_eq!(developer_source_digest(env!("CARGO_PKG_VERSION")), None);
+        assert_eq!(developer_source_digest(&short), None);
     }
 
     #[test]
     fn all_catalog_boards_have_a_build_recipe() -> Result<(), Box<dyn std::error::Error>> {
         let catalog = prns_flash_manifest::board_catalog()?;
-        assert_eq!(catalog.boards.len(), 4);
+        assert_eq!(catalog.boards.len(), 5);
         assert!(catalog.boards.iter().all(|board| {
             matches!(
                 (&board.transport, &board.build),
@@ -913,6 +915,10 @@ mod tests {
     #[test]
     fn s3_size_gates_are_board_specific_and_at_least_sixty_percent() {
         assert_eq!(sparse_size_gate("heltec-v4"), Some((7_643_152, 3_057_260)));
+        assert_eq!(
+            sparse_size_gate("heltec-v4-r8"),
+            Some((7_643_152, 3_057_260))
+        );
         assert_eq!(
             sparse_size_gate("t-beam-supreme"),
             Some((7_639_296, 3_055_718))

@@ -450,6 +450,15 @@ class BrowserPlayground {
             DiagnosticsDropped: ({ count }) => {
                 this.#view.record("Runtime", `${count.toString()} diagnostic event${count === 1n ? "" : "s"} dropped`, null);
             },
+            PersistenceRestored: ({ routes, destinationIdentities, tunnels, ratchets }) => {
+                this.#view.record("Runtime", "Persistent state restored", `${routes} routes · ${destinationIdentities} identities · ${tunnels} tunnels · ${ratchets} ratchets`);
+            },
+            PersistenceFlushed: ({ cause, target }) => {
+                this.#view.record("Runtime", "Persistent state flushed", `${target} · ${cause}`);
+            },
+            PersistenceFlushFailed: ({ cause, target }) => {
+                this.#view.record("Failure", "Persistent state flush failed", `${target} · ${cause}`);
+            },
             RouteExpired: ({ destination }) => {
                 this.#view.record("Route", "Route expired", hex(destination));
             },
@@ -534,6 +543,8 @@ function wasmModule() {
         UsbAutoDecoder: wasm.UsbAutoDecoder,
         BluetoothReassembler: wasm.BluetoothReassembler,
         hostContractAbi: wasm.hostContractAbi,
+        hostSchemaVersion: wasm.hostSchemaVersion,
+        browserPersistenceVersion: wasm.browserPersistenceVersion,
         productVersion: wasm.productVersion,
         identitySecretKeyLength: wasm.identitySecretKeyLength,
         bluetoothServiceUuid: wasm.bluetoothServiceUuid,

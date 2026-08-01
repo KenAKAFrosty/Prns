@@ -104,6 +104,20 @@ internal open class NativeIdentityConfig : Structure() {
     class ByValue : NativeIdentityConfig(), Structure.ByValue
 }
 
+@Structure.FieldOrder("structSize", "kind", "path")
+internal open class NativePersistenceConfig : Structure() {
+    @JvmField
+    var structSize: SizeT = SizeT()
+
+    @JvmField
+    var kind: Int = 0
+
+    @JvmField
+    var path: NativeStringView.ByValue = NativeStringView.ByValue()
+
+    class ByValue : NativePersistenceConfig(), Structure.ByValue
+}
+
 @Structure.FieldOrder("structSize", "appName", "aspects", "aspectCount")
 internal open class NativeDestinationName : Structure() {
     @JvmField
@@ -172,6 +186,7 @@ internal open class NativeDestinationConfig : Structure() {
 @Structure.FieldOrder(
     "structSize",
     "requiredAbi",
+    "requiredSchemaVersion",
     "requiredProductVersion",
     "limits",
     "role",
@@ -180,6 +195,7 @@ internal open class NativeDestinationConfig : Structure() {
     "destinationCount",
     "requiredCapabilities",
     "requiredCapabilityCount",
+    "persistence",
 )
 internal class NativeHostOptions : Structure() {
     @JvmField
@@ -187,6 +203,9 @@ internal class NativeHostOptions : Structure() {
 
     @JvmField
     var requiredAbi: Int = 0
+
+    @JvmField
+    var requiredSchemaVersion: Int = 0
 
     @JvmField
     var requiredProductVersion: NativeStringView.ByValue = NativeStringView.ByValue()
@@ -211,6 +230,9 @@ internal class NativeHostOptions : Structure() {
 
     @JvmField
     var requiredCapabilityCount: SizeT = SizeT()
+
+    @JvmField
+    var persistence: NativePersistenceConfig.ByValue = NativePersistenceConfig.ByValue()
 }
 
 @Structure.FieldOrder("structSize", "outcome", "failure", "evidence", "rttMillis", "value", "detail")
@@ -241,6 +263,14 @@ internal interface PrnsNative : Library {
     fun prns_contract_info(info: NativeContractInfo): Int
     fun prns_host_create(options: NativeHostOptions, host: PointerByReference): Int
     fun prns_host_release(host: Pointer)
+    fun prns_backend_info(info: NativeBackendInfo): Int
+    fun prns_host_snapshot(
+        host: Pointer,
+        timeoutMillis: Int,
+        snapshot: PointerByReference,
+    ): Int
+    fun prns_host_snapshot_read(snapshot: Pointer, value: NativeHostSnapshot): Int
+    fun prns_host_snapshot_release(snapshot: Pointer)
     fun prns_host_identity_hash(host: Pointer, hash: NativeByteView): Int
     fun prns_host_destination_count(host: Pointer): SizeT
     fun prns_host_destination_hash(host: Pointer, index: SizeT, hash: NativeByteView): Int
@@ -281,6 +311,11 @@ internal interface PrnsNative : Library {
         peer: NativeStringView.ByValue,
         bitrateKind: Int,
         bitrateBps: Long,
+        command: PointerByReference,
+    ): Int
+    fun prns_host_attach_interface(
+        host: Pointer,
+        config: NativeInterfaceConfig,
         command: PointerByReference,
     ): Int
     fun prns_host_detach_interface(
@@ -335,6 +370,22 @@ internal interface PrnsNative : Library {
         compressionKind: Int,
         command: PointerByReference,
     ): Int
+    fun prns_host_begin_resource_upload(
+        host: Pointer,
+        linkId: NativeByteView.ByValue,
+        declaredLength: Long,
+        packedMetadata: NativeByteView.ByReference?,
+        compressionKind: Int,
+        upload: PointerByReference,
+    ): Int
+    fun prns_resource_upload_write(
+        upload: Pointer,
+        chunk: NativeByteView.ByValue,
+    ): Int
+    fun prns_resource_upload_is_writable(upload: Pointer, writable: ByteByReference): Int
+    fun prns_resource_upload_finish(upload: Pointer, command: PointerByReference): Int
+    fun prns_resource_upload_abort(upload: Pointer)
+    fun prns_resource_upload_release(upload: Pointer)
     fun prns_host_set_link_resource_strategy(
         host: Pointer,
         linkId: NativeByteView.ByValue,
@@ -493,6 +544,24 @@ internal class NativeArena : AutoCloseable {
         return result
     }
 
+    fun <Value : Structure> structureArray(
+        prototype: Value,
+        count: Int,
+        initialize: (Value, Int) -> Unit,
+    ): Pointer? {
+        if (count == 0) {
+            return null
+        }
+        prototype.toArray(count).forEachIndexed { index, rawValue ->
+            @Suppress("UNCHECKED_CAST")
+            val value = rawValue as Value
+            initialize(value, index)
+            value.write()
+            structures += value
+        }
+        return prototype.pointer
+    }
+
     fun identity(value: IdentityConfig): NativeIdentityConfig.ByValue {
         val result = NativeIdentityConfig.ByValue()
         result.structSize = SizeT(result.size().toLong())
@@ -511,6 +580,22 @@ internal class NativeArena : AutoCloseable {
             }
             is IdentityConfigLoadOrCreate -> {
                 result.kind = IdentityConfigKind.LOAD_OR_CREATE.rawValue
+                result.path = string(value.path)
+            }
+        }
+        result.write()
+        return result
+    }
+
+    fun persistence(value: PersistenceConfig): NativePersistenceConfig.ByValue {
+        val result = NativePersistenceConfig.ByValue()
+        result.structSize = SizeT(result.size().toLong())
+        when (value) {
+            PersistenceConfigEphemeral -> {
+                result.kind = PersistenceConfigKind.EPHEMERAL.rawValue
+            }
+            is PersistenceConfigDirectory -> {
+                result.kind = PersistenceConfigKind.DIRECTORY.rawValue
                 result.path = string(value.path)
             }
         }
@@ -592,6 +677,7 @@ internal class NativeArena : AutoCloseable {
         val result = NativeHostOptions()
         result.structSize = SizeT(result.size().toLong())
         result.requiredAbi = HostContract.ABI
+        result.requiredSchemaVersion = HostContract.SCHEMA_VERSION
         result.requiredProductVersion = string(HostContract.PRODUCT_VERSION)
         result.limits = NativeLimits.ByValue().also {
             it.structSize = SizeT(it.size().toLong())
@@ -634,6 +720,7 @@ internal class NativeArena : AutoCloseable {
             result.requiredCapabilities = memory
             result.requiredCapabilityCount = SizeT(capabilities.size.toLong())
         }
+        result.persistence = persistence(value.persistence)
         result.write()
         return result
     }

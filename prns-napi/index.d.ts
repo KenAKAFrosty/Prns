@@ -41,10 +41,13 @@ export type PrnsNodeEvent =
   | { type: 'selfRatchetRotated'; destination: Buffer }
   | { type: 'announceHeldDropped'; destination: Buffer; sourceInterface: Buffer; cause: string }
   | { type: 'linkInterfaceMismatch'; linkId: Buffer; attachedInterface: Buffer; arrivedOn: Buffer }
-  | { type: 'resourceAssembled'; linkId: Buffer; originalHash: Buffer; totalSizeBytes: number; totalSize: number }
+  | { type: 'resourceAssembled'; linkId: Buffer; originalHash: Buffer; totalSizeBytes: bigint }
   | { type: 'resourceFailed'; linkId: Buffer; hash: Buffer; cause: string }
-  | { type: 'resourceSendProgress'; linkId: Buffer; transferredBytes: number; totalBytes: number; physicalTransferredBytes: number; transferred: number; total: number; physicalTransferred: number; segmentIndex: number; totalSegments: number }
+  | { type: 'resourceSendProgress'; linkId: Buffer; transferredBytes: bigint; totalBytes: bigint; physicalTransferredBytes: bigint; segmentIndex: number; totalSegments: number }
   | { type: 'routeExpired' | 'routeEvicted' | 'routeInterfaceGone' | 'routeDropped'; destination: Buffer }
+  | { type: 'persistenceRestored'; routes: number; destinationIdentities: number; tunnels: number; ratchets: number; refused: number; dropped: number }
+  | { type: 'persistenceFlushed'; cause: 'startup' | 'interval' | 'routeChange' | 'ratchetRotation' | 'shutdown'; target: 'routingState' | 'ratchets' }
+  | { type: 'persistenceFlushFailed'; cause: 'startup' | 'interval' | 'routeChange' | 'ratchetRotation' | 'shutdown'; target: 'routingState' | 'ratchets' }
   | { type: 'delivered' | 'message'; detail: string }
   | { type: 'eventOverflow'; droppedDiagnostics: number }
   | { type: 'eventBackpressureExceeded'; rejectedEventBytes: number }
@@ -56,6 +59,7 @@ export declare class InterfaceHandle {
 }
 
 export declare class PrnsNode {
+  get identityHash(): Buffer
   get destinationHashes(): Array<Buffer>
   ready(): Promise<void>
   stop(): Promise<void>
@@ -75,14 +79,14 @@ export declare class PrnsNode {
   attachTcpServer(options: TcpServerOptions): Promise<InterfaceHandle>
   attachTcpClient(options: TcpClientOptions): Promise<InterfaceHandle>
   attachUdp(options: UdpOptions): Promise<InterfaceHandle>
+  attachInterface(config: InterfaceConfigSpec): Promise<InterfaceHandle>
+  previewValidateInterfaceConfig(spec: InterfaceConfigSpec): string
   attachSharedInstanceServer(options?: SharedInstanceOptions | undefined | null): Promise<InterfaceHandle>
   attachSharedInstanceClient(options?: SharedInstanceOptions | undefined | null): Promise<InterfaceHandle>
   attachConfig(configText: string): Promise<ConfigAttachResult>
   attachAutoWifi(): InterfaceHandle
   attachAutoUsb(options?: AutoUsbOptions | undefined | null): InterfaceHandle
   attachAutoBluetoothLe(options: AutoBluetoothLeOptions): InterfaceHandle
-  /** Deprecated compatibility alias for `attachAutoBluetoothLe`. */
-  attachAutoBle(options: AutoBleOptions): InterfaceHandle
   sendResource(linkId: Buffer, data: Buffer, options?: SendResourceOptions | undefined | null): Promise<void>
   sendResourceFile(linkId: Buffer, path: string, options?: SendResourceOptions | undefined | null): Promise<void>
   receiveResource(linkId: Buffer): Promise<ResourceData>
@@ -91,6 +95,7 @@ export declare class PrnsNode {
   setLinkResourceStrategy(linkId: Buffer, strategy: ResourceStrategySpec): Promise<void>
   interfaces(): Array<InterfaceInfo>
   interfaceInventory(): Array<InterfaceInventoryInfo>
+  hostSnapshot(): Promise<HostSnapshotInfo>
   linkCount(): Promise<number>
   routes(): Promise<RouteInfo[]>
   route(destination: Buffer): Promise<RouteInfo | null>
@@ -119,18 +124,7 @@ export interface AnnounceRateInfo {
   lastAllowedAnnounceAtMillis: number
   blockedUntilMillis: number
   observedAtMillis: Array<number>
-  /** Deprecated compatibility alias for `lastAllowedAnnounceAtMillis`. */
-  lastAllowedAnnounceAt: number
-  /** Deprecated compatibility alias for `blockedUntilMillis`. */
-  blockedUntil: number
   rateViolations: number
-  /** Deprecated compatibility alias for `observedAtMillis`. */
-  observedAt: Array<number>
-}
-
-export interface AutoBleOptions {
-  identityPath?: string
-  identitySecret?: Buffer
 }
 
 export interface AutoBluetoothLeOptions {
@@ -140,6 +134,14 @@ export interface AutoBluetoothLeOptions {
 
 export interface AutoUsbOptions {
   baud?: number
+}
+
+export declare function backendInfo(): BackendInfo
+
+export interface BackendInfo {
+  backend: string
+  capabilities: Array<string>
+  interfaceKinds: Array<string>
 }
 
 export interface BlackholedIdentityInfo {
@@ -194,9 +196,109 @@ export declare function generateIdentitySecret(): Buffer
 
 export declare function hostContractAbi(): number
 
+export interface HostDestinationIdentitySnapshotInfo {
+  destination: Buffer
+  identity: Buffer
+}
+
+export interface HostInterfaceSnapshotInfo {
+  interfaceId: Buffer
+  name?: string
+  kind?: string
+  health: string
+  failureDetail?: string
+  rxBytes: bigint
+  txBytes: bigint
+  rxBps?: number
+  txBps?: number
+  routeCount: number
+  linkCount: number
+  transportedLinkCount: number
+}
+
+export interface HostPersistenceSnapshotInfo {
+  persistent: boolean
+  restored: boolean
+  lastFlushCause?: string
+  lastFailureDetail?: string
+}
+
+export interface HostRouteSnapshotInfo {
+  destination: Buffer
+  hops: number
+  viaIdentity?: Buffer
+  interfaceId: Buffer
+  learnedAtMillis: number
+  lastRelayedAtMillis: number
+  expiresAtMillis: number
+}
+
+export interface HostRuntimeHealthSnapshotInfo {
+  running: boolean
+  uptimeMillis: number
+  interfaceCount: number
+  onlineInterfaceCount: number
+  routeCount: number
+  linkCount: number
+  transportedLinkCount: number
+  rxBytes: bigint
+  txBytes: bigint
+  rxBps: number
+  txBps: number
+}
+
+export declare function hostSchemaVersion(): number
+
+export interface HostSnapshotInfo {
+  revision: bigint
+  backend: BackendInfo
+  interfaces: Array<HostInterfaceSnapshotInfo>
+  routes: Array<HostRouteSnapshotInfo>
+  activeLinkCount: number
+  destinationIdentities: Array<HostDestinationIdentitySnapshotInfo>
+  runtime: HostRuntimeHealthSnapshotInfo
+  persistence: HostPersistenceSnapshotInfo
+}
+
 export interface IdentitySpec {
   secret?: Buffer
   path?: string
+}
+
+export interface InterfaceConfigSpec {
+  kind: string
+  groupId?: string
+  discoveryScope?: string
+  discoveryPort?: number
+  dataPort?: number
+  devices?: Array<string>
+  ignoredDevices?: Array<string>
+  multicastAddressType?: string
+  target?: string
+  bind?: string
+  local?: string
+  peer?: string
+  bitrateBps?: number
+  port?: string
+  line?: SerialLineSpec
+  flowControl?: boolean
+  preambleMillis?: number
+  transmitTailMillis?: number
+  persistence?: number
+  slotTimeMillis?: number
+  stationCallsign?: string
+  stationIntervalSeconds?: number
+  callsign?: string
+  ssid?: number
+  radio?: RNodeRadioSpec
+  airtimeLimitShortCentiPercent?: number
+  airtimeLimitLongCentiPercent?: number
+  members?: Array<MultiRNodeMemberSpec>
+  command?: Array<string>
+  respawnDelayMillis?: number
+  peers?: Array<string>
+  connectable?: boolean
+  url?: string
 }
 
 export interface InterfaceInfo {
@@ -204,8 +306,8 @@ export interface InterfaceInfo {
   kind?: InterfaceKindName
   connection: ConnectionStateName
   failureReason?: string
-  rxBytes: number
-  txBytes: number
+  rxBytes: bigint
+  txBytes: bigint
   rxBps?: number
   txBps?: number
   destinations: number
@@ -225,6 +327,14 @@ export interface LinkInfo {
   rttMillis: number
 }
 
+export interface MultiRNodeMemberSpec {
+  name: string
+  virtualPort: number
+  radio: RNodeRadioSpec
+  flowControl: boolean
+  outgoing: boolean
+}
+
 export interface NodeOptions {
   identity?: IdentitySpec
   role?: 'endpoint' | 'transport'
@@ -233,6 +343,7 @@ export interface NodeOptions {
   applicationEventQueueLimit?: number
   retainedEventBytesLimit?: number
   diagnosticEventQueueLimit?: number
+  persistencePath?: string
 }
 
 export interface PacketReceipt {
@@ -248,8 +359,6 @@ export interface PathInfo {
 export interface RequestOptions {
   /** Request timeout in milliseconds. */
   timeoutMillis?: number
-  /** Deprecated compatibility alias for `timeoutMillis`. */
-  timeoutMs?: number
 }
 
 export declare function requestPathHash(path: string): Buffer
@@ -269,25 +378,19 @@ export interface ResourceData {
   data: Buffer
   metadata?: Buffer
   originalHash: Buffer
-  totalSizeBytes: number
-  /** Deprecated compatibility alias for `totalSizeBytes`. */
-  totalSize: number
+  totalSizeBytes: bigint
 }
 
 export interface ResourceFileReceipt {
   metadata?: Buffer
   originalHash: Buffer
-  totalSizeBytes: number
-  /** Deprecated compatibility alias for `totalSizeBytes`. */
-  totalSize: number
+  totalSizeBytes: bigint
 }
 
 export interface ResourceStrategySpec {
   accept: ResourceAcceptName
   /** Maximum accepted uncompressed payload size in bytes. */
   maxUncompressedBytes?: number
-  /** Deprecated compatibility alias for `maxUncompressedBytes`. */
-  maxUncompressedLen?: number
   acceptCompressed?: boolean
 }
 
@@ -302,6 +405,14 @@ export interface RetainIdentityResult {
   alreadyRetainedDestinationCount: number
 }
 
+export interface RNodeRadioSpec {
+  frequencyHz: number
+  bandwidthHz: number
+  txPowerDbm: number
+  spreadingFactor: number
+  codingRate: number
+}
+
 export interface RouteInfo {
   destination: Buffer
   hops: number
@@ -310,18 +421,19 @@ export interface RouteInfo {
   learnedAtMillis: number
   lastRelayedAtMillis: number
   expiresAtMillis: number
-  /** Deprecated compatibility alias for `learnedAtMillis`. */
-  learnedAt: number
-  /** Deprecated compatibility alias for `lastRelayedAtMillis`. */
-  lastRelayedAt: number
-  /** Deprecated compatibility alias for `expiresAtMillis`. */
-  expiresAt: number
 }
 
 export interface SendResourceOptions {
   metadata?: Buffer
   compression?: CompressionName
   progress?: boolean
+}
+
+export interface SerialLineSpec {
+  baud: number
+  dataBits: string
+  parity: string
+  stopBits: string
 }
 
 export interface SharedInstanceOptions {

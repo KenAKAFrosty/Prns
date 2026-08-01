@@ -141,6 +141,18 @@ export class MockRuntimeBase implements PrnsRuntimeBinding {
     return unexpectedRuntimeCall("drainOutbound");
   }
 
+  persistedState(
+    _options: Parameters<PrnsRuntimeBinding["persistedState"]>[0],
+  ): ReturnType<PrnsRuntimeBinding["persistedState"]> {
+    return unexpectedRuntimeCall("persistedState");
+  }
+
+  restorePersistedState(
+    _options: Parameters<PrnsRuntimeBinding["restorePersistedState"]>[0],
+  ): ReturnType<PrnsRuntimeBinding["restorePersistedState"]> {
+    return unexpectedRuntimeCall("restorePersistedState");
+  }
+
   snapshot(): ReturnType<PrnsRuntimeBinding["snapshot"]> {
     return unexpectedRuntimeCall("snapshot");
   }

@@ -79,7 +79,7 @@ const expectedBoards = [
 ];
 const actualBoards = manifest.targets.map((target) => target.board_slug).sort();
 if (JSON.stringify(actualBoards) !== JSON.stringify([...expectedBoards].sort())) {
-  throw new Error("the browser fixture must contain all four shipping boards exactly once");
+  throw new Error("the browser fixture must contain its historical board set exactly once");
 }
 
 const immutableReleaseRoot = path.join(

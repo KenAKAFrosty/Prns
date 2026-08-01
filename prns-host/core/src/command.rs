@@ -2,7 +2,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::{
-    DestinationHash, IdentityHash, InterfaceId, LinkId, PacketHash, RequestId, RequestPathHash,
+    DestinationHash, IdentityHash, InterfaceConfig, InterfaceId, LinkId, PacketHash, RequestId,
+    RequestPathHash,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,6 +58,9 @@ pub enum HostCommand {
         local: String,
         peer: String,
         bitrate: Bitrate,
+    },
+    AttachInterface {
+        config: InterfaceConfig,
     },
     DetachInterface {
         interface: InterfaceId,
@@ -188,4 +192,12 @@ pub enum CommandFailure {
     ChannelWindowFull,
     ChannelUntrackable,
     InvalidChannelMessageType,
+    InvalidConfiguration { detail: String },
+    ResourceUploadCancelled,
+    ResourceEarlyEof,
+    ResourceLengthOverrun,
+    PermissionDenied { detail: String },
+    DeviceUnavailable { detail: String },
+    ConnectFailed { detail: String },
+    BackendFailed { detail: String },
 }

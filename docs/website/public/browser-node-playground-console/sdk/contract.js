@@ -8,6 +8,12 @@ export class PrnsValidationError extends Error {
         this.code = code;
     }
 }
+export function contractValue(field, value, guard) {
+    if (!guard(value)) {
+        throw new PrnsValidationError("InvalidEnum", `${field} contains an unknown host contract value`);
+    }
+    return value;
+}
 export function destinationHash(bytes) {
     return fixedBytes("destination hash", bytes, DESTINATION_HASH_LENGTH);
 }

@@ -286,6 +286,16 @@ entrypoint = ["python", "tools/release/package-rust-crates.py"]
 requires = ["cargo", "git"]
 
 [[task]]
+id = "release.host-sdk.rust.publish"
+summary = "Publish the verified Rust crate graph to crates.io in dependency order from one approved commit."
+domain = "release"
+effect = "external-write"
+platforms = ["any"]
+audience = ["ci", "release"]
+entrypoint = ["python", "tools/release/publish-rust-crates.py"]
+requires = ["cargo", "git"]
+
+[[task]]
 id = "release.host-sdk.julia.artifacts"
 summary = "Generate Julia artifact bindings from all staged desktop native archives and their immutable hashes."
 domain = "release"
@@ -294,6 +304,16 @@ platforms = ["any"]
 audience = ["developer", "ci", "release"]
 entrypoint = ["python", "tools/release/generate-julia-artifacts.py"]
 requires = ["git"]
+
+[[task]]
+id = "release.host-sdk.javascript.stage"
+summary = "Stage canonical package documents into every generated N-API platform package allowlist."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci", "release"]
+entrypoint = ["python", "tools/release/stage-napi-platform-packages.py"]
+requires = []
 
 [[task]]
 id = "release.host-sdk.sources.package"
@@ -323,6 +343,16 @@ effect = "read-only"
 platforms = ["any"]
 audience = ["developer", "ci", "release"]
 entrypoint = ["python", "tools/release/verify-host-sdk-stage.py"]
+requires = []
+
+[[task]]
+id = "release.host-sdk.promotion.prepare"
+summary = "Select and hash the signed-tag and immutable-release assets from one verified SHA-bound host SDK stage."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["ci", "release"]
+entrypoint = ["python", "tools/release/prepare-host-sdk-promotion.py"]
 requires = []
 
 [[task]]
@@ -820,6 +850,14 @@ reason = "Shared tester roster schema and coverage implementation."
 [[internal]]
 path = "tools/release/flasher_website_history.py"
 reason = "Shared signed website history implementation."
+
+[[internal]]
+path = "tools/repo/host_contract/__init__.py"
+reason = "Internal host-contract generator validation package."
+
+[[internal]]
+path = "tools/repo/host_contract/model.py"
+reason = "Internal host-contract generator schema model."
 
 [[internal]]
 path = "tools/repo/cargo-tools-command/Cargo.toml"

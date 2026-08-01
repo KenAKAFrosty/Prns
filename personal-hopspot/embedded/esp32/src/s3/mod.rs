@@ -472,16 +472,95 @@ async fn usb_device_task(
 /// internal + the reclaimed D-cache region), the RTOS timer, and the RTC with its watchdogs disabled
 /// for the slow PSRAM-backed engine construction. A block expression (so its bindings escape
 /// macro hygiene) owning `$p`'s early peripherals, yielding `(software_interrupt1, timebase, rtc)`.
-/// PSRAM registers first and that order is load-bearing: the allocator serves a capability-free
-/// allocation from the first region with space, so external must lead or ordinary boot
-/// allocations bleed the two small internal regions dry and the radio bring-up — whose
-/// allocations genuinely require internal SRAM — finds crumbs and dies on core 0.
+///
+/// Heap region order is load-bearing for Wi-Fi boards: PSRAM must register first so capability-free
+/// boot allocations land externally and leave the small internal regions for the radio. Heltec V4-R8
+/// (Octal private bump) passes a custom `PsramConfig` and uses `private_psram_bump` so boot/log
+/// allocations cannot share a freelist with engine construction.
 macro_rules! boot_common {
-    ($p:ident, $banner:expr) => {{
+    ($p:ident, $banner:expr) => {
+        $crate::s3::boot_common!(
+            $p,
+            $banner,
+            ::esp_hal::psram::PsramConfig::default(),
+            global_psram_heap
+        )
+    };
+    ($p:ident, $banner:expr, $psram_config:expr) => {
+        $crate::s3::boot_common!($p, $banner, $psram_config, private_psram_bump)
+    };
+    ($p:ident, $banner:expr, $psram_config:expr, global_psram_heap) => {{
         ::esp_println::logger::init_logger_from_env();
-        ::esp_alloc::psram_allocator!($p.PSRAM, ::esp_hal::psram);
+        $crate::s3::boot_add_psram_global!($p, $psram_config);
         ::esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 43 * 1024);
         $crate::s3::reclaim_dcache_region();
+        $crate::s3::boot_psram_probe!();
+        $crate::s3::boot_rtos_tail!($p, $banner)
+    }};
+    ($p:ident, $banner:expr, $psram_config:expr, private_psram_bump) => {{
+        ::esp_println::logger::init_logger_from_env();
+        // Heltec V4-R8: keep Octal PSRAM out of the global heap so boot/log allocs cannot spill into it.
+        ::esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 43 * 1024);
+        $crate::s3::reclaim_dcache_region();
+        $crate::s3::boot_add_psram_private!($p, $psram_config);
+        $crate::s3::boot_psram_probe!();
+        $crate::s3::boot_rtos_tail!($p, $banner)
+    }};
+}
+pub(crate) use boot_common;
+
+macro_rules! boot_add_psram_global {
+    ($p:ident, $psram_config:expr) => {{
+        let psram = ::esp_hal::psram::Psram::new($p.PSRAM, $psram_config);
+        let (start, size) = psram.raw_parts();
+        ::esp_println::println!("PSRAM mapped start={start:?} size={size} (global)");
+        // SAFETY: region comes from esp-hal's PSRAM mapper; added once at boot.
+        unsafe {
+            ::esp_alloc::HEAP.add_region(::esp_alloc::HeapRegion::new(
+                start,
+                size,
+                ::esp_alloc::MemoryCapability::External.into(),
+            ));
+        }
+    }};
+}
+pub(crate) use boot_add_psram_global;
+
+macro_rules! boot_add_psram_private {
+    ($p:ident, $psram_config:expr) => {{
+        let psram = ::esp_hal::psram::Psram::new($p.PSRAM, $psram_config);
+        let (start, size) = psram.raw_parts();
+        ::esp_println::println!("PSRAM mapped start={start:?} size={size} (private)");
+        // SAFETY: exclusive mapped window for PsramAlloc; not registered with esp_alloc.
+        unsafe { $crate::storage::init_private_psram_heap(start, size) };
+    }};
+}
+pub(crate) use boot_add_psram_private;
+
+macro_rules! boot_psram_probe {
+    () => {{
+        // Keep the smoke test tiny: Heltec's private PSRAM path is a bump allocator
+        // (deallocate is a no-op), and large probes would permanently consume the window
+        // until the pre-engine reinit.
+        let layout = ::core::alloc::Layout::from_size_align(4, 4).expect("u32 layout");
+        let ptr =
+            ::allocator_api2::alloc::Allocator::allocate(&$crate::storage::PsramAlloc, layout)
+                .expect("PSRAM probe allocation failed");
+        // SAFETY: exclusive PsramAlloc allocation; write/read (leak is fine — bump).
+        unsafe {
+            const PATTERN: u32 = 0xA5A5_5A5A;
+            let p = ptr.cast::<u32>().as_ptr();
+            p.write_volatile(PATTERN);
+            let read = p.read_volatile();
+            assert_eq!(read, PATTERN, "PSRAM probe readback mismatch");
+            ::esp_println::println!("PSRAM probe ok read=0x{read:08X}");
+        }
+    }};
+}
+pub(crate) use boot_psram_probe;
+
+macro_rules! boot_rtos_tail {
+    ($p:ident, $banner:expr) => {{
         let timg0 = ::esp_hal::timer::timg::TimerGroup::new($p.TIMG0);
         let sw_int =
             ::esp_hal::interrupt::software::SoftwareInterruptControl::new($p.SW_INTERRUPT);
@@ -505,7 +584,7 @@ macro_rules! boot_common {
         (sw_int.software_interrupt1, timebase, rtc)
     }};
 }
-pub(crate) use boot_common;
+pub(crate) use boot_rtos_tail;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(not(feature = "wifi-auto"), allow(dead_code))]

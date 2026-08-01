@@ -23,6 +23,7 @@ import type {
   InterfaceId,
   LinkId,
   PrnsLimits,
+  PersistenceConfig,
   PacketHash,
   RequestId,
   RequestPathHash,
@@ -50,11 +51,26 @@ export class PrnsValidationError extends Error {
   }
 }
 
+export function contractValue<Value extends string>(
+  field: string,
+  value: unknown,
+  guard: (candidate: unknown) => candidate is Value,
+): Value {
+  if (!guard(value)) {
+    throw new PrnsValidationError(
+      "InvalidEnum",
+      `${field} contains an unknown host contract value`,
+    );
+  }
+  return value;
+}
+
 export type PrnsCreateOptions = {
   readonly identity: IdentityConfig;
   readonly role: HostRoleName;
   readonly destinations?: readonly DestinationConfig[];
   readonly limits?: PrnsLimits;
+  readonly persistence?: PersistenceConfig;
 };
 
 export type LifecycleState =
@@ -80,12 +96,21 @@ export type BackendCapabilities =
       "Native",
       {
         readonly available: ReadonlySet<CapabilityName>;
+        readonly interfaceKinds: ReadonlySet<import("./contract.generated.js").InterfaceKind>;
       }
     >
   | Tag<
       "Browser",
       {
         readonly available: ReadonlySet<CapabilityName>;
+        readonly interfaceKinds: ReadonlySet<import("./contract.generated.js").InterfaceKind>;
+      }
+    >
+  | Tag<
+      "Cooperative",
+      {
+        readonly available: ReadonlySet<CapabilityName>;
+        readonly interfaceKinds: ReadonlySet<import("./contract.generated.js").InterfaceKind>;
       }
     >;
 
@@ -94,6 +119,8 @@ export type ContractMismatch = Tag<
   {
     readonly requiredAbi: number;
     readonly actualAbi: number;
+    readonly requiredSchemaVersion: number;
+    readonly actualSchemaVersion: number;
     readonly requiredProductVersion: string;
     readonly actualProductVersion: string;
   }
@@ -124,6 +151,7 @@ export type CommandOutcomeFor<Command extends HostCommand> =
               | Tag<"AttachTcpServer", unknown>
               | Tag<"AttachTcpClient", unknown>
               | Tag<"AttachUdp", unknown>
+              | Tag<"AttachInterface", unknown>
           ? Extract<CommandOutcome, { readonly tag: "InterfaceAttached" }>
           : Command extends Tag<"DetachInterface", unknown>
             ? Extract<CommandOutcome, { readonly tag: "InterfaceDetached" }>

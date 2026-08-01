@@ -1,0 +1,301 @@
+name: host-sdk-public-qualification
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: "Full promoted trunk commit SHA"
+        required: true
+        type: string
+
+concurrency:
+  group: host-sdk-public-qualification-${{ inputs.expected_sha }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  custody:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      release_tag: ${{ steps.release.outputs.release_tag }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.expected_sha }}
+          fetch-depth: 0
+          submodules: false
+      - id: release
+        name: Verify every public signature, hash, tag, and source commit
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          GH_TOKEN: ${{ github.token }}
+          HOST_SDK_SIGNING_EMAIL: ${{ vars.HOST_SDK_SIGNING_EMAIL }}
+        shell: bash
+        run: |
+          test "$GITHUB_REF" = "refs/heads/trunk"
+          test "$GITHUB_SHA" = "$EXPECTED_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          version="$(<VERSION)"
+          release_tag="host-sdk-v$version"
+          mkdir -p dist/public
+          gh release download "$release_tag" --dir dist/public
+          test "$(jq -r .commit dist/public/promotion.json)" = "$EXPECTED_SHA"
+          test "$(jq -r .version dist/public/promotion.json)" = "$version"
+          test "$(jq -r .releaseTag dist/public/promotion.json)" = "$release_tag"
+          test "$(gh release view "$release_tag" --json targetCommitish --jq .targetCommitish)" = "$EXPECTED_SHA"
+          (
+            cd dist/public
+            sha256sum --check SHA256SUMS
+          )
+          test -n "$HOST_SDK_SIGNING_EMAIL"
+          allowed_signers="$RUNNER_TEMP/host-sdk-allowed-signers"
+          printf '%s %s\n' \
+            "$HOST_SDK_SIGNING_EMAIL" \
+            "$(<dist/public/host-sdk-signing-key.pub)" \
+            > "$allowed_signers"
+          for signature in dist/public/*.sig; do
+            asset="${signature%.sig}"
+            test -f "$asset"
+            ssh-keygen -Y verify \
+              -f "$allowed_signers" \
+              -I "$HOST_SDK_SIGNING_EMAIL" \
+              -n file \
+              -s "$signature" \
+              < "$asset"
+          done
+          git config gpg.format ssh
+          git config gpg.ssh.allowedSignersFile "$allowed_signers"
+          while IFS= read -r tag; do
+            git fetch --force origin "refs/tags/$tag:refs/tags/$tag"
+            test "$(git rev-list -n 1 "$tag")" = "$EXPECTED_SHA"
+            git tag -v "$tag"
+          done < <(jq -r '.tags[]' dist/public/promotion.json)
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+          printf 'release_tag=%s\n' "$release_tag" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: host-sdk-public-${{ inputs.expected_sha }}
+          path: dist/public
+          if-no-files-found: error
+          retention-days: 7
+
+  javascript:
+    needs: custody
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.expected_sha }}
+          submodules: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: Install npm packages and repeat the persistent two-node journey
+        env:
+          VERSION: ${{ needs.custody.outputs.version }}
+        shell: bash
+        run: |
+          scratch="$(mktemp -d)"
+          mkdir -p "$scratch/prns-js/tests" "$scratch/prns-host/conformance"
+          cp VERSION "$scratch/VERSION"
+          cp prns-js/tests/native-consumer.test.mjs "$scratch/prns-js/tests/"
+          cp prns-host/conformance/persistent-two-node-v1.json \
+            "$scratch/prns-host/conformance/"
+          npm install --prefix "$scratch" --save-exact "personal-rns@$VERSION"
+          node --test "$scratch/prns-js/tests/native-consumer.test.mjs"
+
+  python:
+    needs: custody
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.expected_sha }}
+          submodules: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.14"
+      - name: Install the public wheel and exercise host lifecycle
+        env:
+          VERSION: ${{ needs.custody.outputs.version }}
+        shell: bash
+        run: |
+          mkdir -p dist/python
+          python -m pip download \
+            --dest dist/python \
+            --no-deps \
+            --only-binary=:all: \
+            "personal-rns==$VERSION"
+          python tools/prns run release.host-sdk.python.smoke -- \
+            --wheel-dir dist/python
+
+  dotnet:
+    needs: custody
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.expected_sha }}
+          submodules: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+        with:
+          dotnet-version: 8.0.x
+      - name: Restore NuGet and repeat the persistent two-node journey
+        run: python tools/prns run release.host-sdk.dotnet.smoke -- --public
+
+  rust:
+    needs: custody
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.expected_sha }}
+          submodules: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+      - name: Resolve the public Rust crate graph in a clean consumer
+        env:
+          VERSION: ${{ needs.custody.outputs.version }}
+        shell: bash
+        run: |
+          scratch="$(mktemp -d)"
+          cargo new --quiet --bin "$scratch/consumer"
+          cargo add \
+            --manifest-path "$scratch/consumer/Cargo.toml" \
+            "personal-rns@=$VERSION"
+          cargo check --manifest-path "$scratch/consumer/Cargo.toml" --locked
+
+  maven:
+    needs: custody
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.expected_sha }}
+          submodules: false
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: host-sdk-public-${{ inputs.expected_sha }}
+          path: dist/public
+      - name: Resolve Maven Central and exercise host lifecycle
+        env:
+          VERSION: ${{ needs.custody.outputs.version }}
+        shell: bash
+        run: |
+          mkdir -p dist/native
+          tar -xzf \
+            "dist/public/personal-rns-$VERSION-x86_64-unknown-linux-gnu.tar.gz" \
+            -C dist/native
+          library="$(find dist/native -type f -name libprns_host.so -print -quit)"
+          test -n "$library"
+          python tools/prns run release.host-sdk.maven.smoke -- \
+            --repository-url https://repo1.maven.org/maven2 \
+            --library "$library"
+
+  source-sdks:
+    needs: custody
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.expected_sha }}
+          submodules: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: 1.26.5
+          cache: false
+      - uses: swift-actions/setup-swift@364295d9c23900ce04d4e5cc708387921b4e50f9
+        with:
+          swift-version: "6.3.3"
+      - uses: julia-actions/setup-julia@4c0cb0fce8556fdb04a90347310e5db8b1f98fb9
+        with:
+          version: "1.12.6"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: host-sdk-public-${{ inputs.expected_sha }}
+          path: dist/public
+      - name: Exercise signed C, C++, Go, Swift, and Julia assets
+        env:
+          VERSION: ${{ needs.custody.outputs.version }}
+        shell: bash
+        run: |
+          for package in native go swift julia; do
+            mkdir -p "dist/$package"
+          done
+          tar -xzf \
+            "dist/public/personal-rns-$VERSION-x86_64-unknown-linux-gnu.tar.gz" \
+            -C dist/native
+          tar -xzf "dist/public/personal-rns-$VERSION-go.tar.gz" -C dist/go
+          tar -xzf "dist/public/personal-rns-$VERSION-swift.tar.gz" -C dist/swift
+          tar -xzf "dist/public/personal-rns-$VERSION-julia.tar.gz" -C dist/julia
+          include="$(dirname "$(find dist/native -type f -name prns_host.h -print -quit)")"
+          library="$(find dist/native -type f -name libprns_host.so -print -quit)"
+          native_root="$(dirname "$(dirname "$library")")"
+          test -n "$include"
+          test -n "$library"
+          for compiler in cc c++; do
+            standard=c11
+            if [[ "$compiler" == "c++" ]]; then
+              standard=c++17
+            fi
+            "$compiler" \
+              "-std=$standard" \
+              -Wall -Wextra -Werror \
+              -I"$include" \
+              prns-host/abi/c/tests/persistent-two-node-smoke.c \
+              -L"$native_root/lib" \
+              -lprns_host -lpthread -ldl -lm \
+              -o "dist/journey-$standard"
+            mkdir -p "dist/state-$standard"
+            LD_LIBRARY_PATH="$native_root/lib" \
+              "dist/journey-$standard" \
+              prns-host/conformance/persistent-two-node-v1.json \
+              prns-host/conformance/interface-configs-v1.json \
+              "dist/state-$standard" \
+              "$VERSION"
+          done
+          go_root="$(dirname "$(find dist/go -type f -name go.mod -print -quit)")"
+          swift_root="$(dirname "$(find dist/swift -type f -name Package.swift | sort | head -1)")"
+          julia_root="$(dirname "$(find dist/julia -type f -name Project.toml -print -quit)")"
+          PKG_CONFIG_PATH="$native_root/lib/pkgconfig" \
+            LD_LIBRARY_PATH="$native_root/lib" \
+            go -C "$go_root" test ./...
+          go_consumer="$(mktemp -d)"
+          go -C "$go_consumer" mod init public-consumer
+          go -C "$go_consumer" get \
+            "github.com/KenAKAFrosty/Prns/prns-host/bindings/go@v$VERSION"
+          PKG_CONFIG_PATH="$native_root/lib/pkgconfig" \
+            LD_LIBRARY_PATH="$native_root/lib" \
+            go -C "$go_consumer" test \
+              github.com/KenAKAFrosty/Prns/prns-host/bindings/go \
+              -run '^$'
+          PKG_CONFIG_PATH="$native_root/lib/pkgconfig" \
+            LD_LIBRARY_PATH="$native_root/lib" \
+            swift test --package-path "$swift_root"
+          git clone \
+            --branch "v$VERSION" \
+            --depth 1 \
+            https://github.com/KenAKAFrosty/Prns.git \
+            dist/swift-tag
+          PKG_CONFIG_PATH="$native_root/lib/pkgconfig" \
+            LD_LIBRARY_PATH="$native_root/lib" \
+            swift test --package-path dist/swift-tag
+          PRNS_HOST_LIBRARY="$library" \
+            julia --project="$julia_root" \
+              -e 'using PersonalRns; include(joinpath(dirname(Base.active_project()), "test", "runtests.jl"))'
+          JULIA_DEPOT_PATH="$(mktemp -d)" \
+            julia -e 'using Pkg; Pkg.add(PackageSpec(name="PersonalRns", version=ENV["VERSION"])); using PersonalRns'

@@ -2,7 +2,9 @@ use super::*;
 use crate::plan::error::{GlobalPlanError, PlanningError};
 use crate::plan::node::{build_plan, planning_diagnostic};
 use crate::reference::keys::{common as common_key, global as global_key};
-use crate::reference::{ReferenceConfig, ReferenceValue};
+use crate::reference::{
+    ReferenceConfig, ReferenceConfigParams, ReferenceInterface, ReferenceValue,
+};
 use crate::SourceLocations;
 
 #[test]
@@ -32,6 +34,30 @@ fn global_flags_follow_the_reticulum_section() {
             penalty_ms: 0,
         })
     );
+}
+
+#[test]
+fn typed_reference_interfaces_use_the_same_effective_planner() {
+    let mut interface = ReferenceInterface::enabled(
+        "Typed",
+        "TCPClientInterface",
+        ReferenceConfigParams::TcpClient {
+            target_host: Some("127.0.0.1".to_string()),
+            target_port: Some(4242),
+            kiss_framing: None,
+            i2p_tunneled: None,
+            connect_timeout: None,
+            max_reconnect_tries: None,
+            fixed_mtu: None,
+        },
+    );
+    interface.bitrate = Some(1_000_000);
+    let mut config = ReferenceConfig::default();
+    config.interfaces.push(interface);
+    let plan = plan_reference_config(&config).unwrap();
+    let planned = named(&plan, "Typed");
+    assert_eq!(planned.policy.bitrate.get(), 1_000_000);
+    assert!(matches!(planned.medium, PlannedMedium::TcpClient { .. }));
 }
 
 #[test]

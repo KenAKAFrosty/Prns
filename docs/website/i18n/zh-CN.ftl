@@ -63,6 +63,10 @@ start-section-lead = 选择与你正在构建的东西相匹配的路径。现�
 
 start-daemon-headline = 我想运行一个 Reticulum 节点
 start-daemon-body = 预构建 daemon。rnsd 的 drop-in。把它放在你已有的节点旁边运行。
+start-daemon-code = Drop-in for stock apps
+    Reads ~/.reticulum
+    Live interface edits
+    Built-in metrics
 start-daemon-target = prnsd
 
 start-embedded-headline = Flash a Hopspot
@@ -79,9 +83,10 @@ start-web-code = WebAssembly 运行时
     TypeScript 示例
 start-web-target = 打开演示平台
 
-start-rust-headline = 我要嵌入 Rust app
-start-rust-body = 开箱即用的完整 RNS runtime，或用于围绕它构建你自己的 runtime 的纯核心。
-start-rust-target = prnsd or personal-rns
+start-rust-headline = 在 Reticulum 上构建
+start-rust-body = 用引擎和绑定，为 app、工具、服务或游戏加入 mesh 网络。
+start-rust-target = 阅读 README
+start-rust-target-source = 下载源码
 
 # 平台（"Runs on"）— hero marquee 标签 + CTA，以及专门页面
 landing-platforms-label = Runs on

@@ -2,3 +2,4 @@
 **/obj/
 .dotnet-cli/
 .nuget-packages/
+/src/PersonalRns/runtimes/

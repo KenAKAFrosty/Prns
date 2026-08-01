@@ -465,6 +465,27 @@ function decode_diagnostic_event(event::Ptr{Cvoid})
         return DiagnosticEventDiagnosticsDropped(
             event_u128(event, EventFieldDroppedCount),
         )
+    kind == DiagnosticEventKindPersistenceRestored &&
+        return DiagnosticEventPersistenceRestored(
+            event_u64(event, EventFieldRoutes),
+            event_u64(event, EventFieldDestinationIdentities),
+            event_u64(event, EventFieldTunnels),
+            event_u64(event, EventFieldRatchets),
+            event_u64(event, EventFieldRefused),
+            event_u64(event, EventFieldDropped),
+        )
+    if kind == DiagnosticEventKindPersistenceFlushed ||
+       kind == DiagnosticEventKindPersistenceFlushFailed
+        cause = PersistenceFlushCause(
+            UInt32(event_u64(event, EventFieldPersistenceCause)),
+        )
+        target = PersistenceFlushTarget(
+            UInt32(event_u64(event, EventFieldPersistenceTarget)),
+        )
+        kind == DiagnosticEventKindPersistenceFlushed &&
+            return DiagnosticEventPersistenceFlushed(cause, target)
+        return DiagnosticEventPersistenceFlushFailed(cause, target)
+    end
     throw(StatusFailure(:decode_diagnostic_event, StatusBackendFailed))
 end
 

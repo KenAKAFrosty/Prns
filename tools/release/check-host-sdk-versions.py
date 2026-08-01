@@ -40,6 +40,10 @@ def assignment_version(path):
     return match.group(1)
 
 
+def package_json(path):
+    return json.loads(path.read_text())
+
+
 def main():
     expected = (ROOT / "VERSION").read_text().strip()
     catalog = json.loads(
@@ -48,12 +52,44 @@ def main():
     schema = json.loads(
         (ROOT / "prns-host/schema/host-contract-v1.json").read_text()
     )
+    javascript = package_json(ROOT / "prns-js/package.json")
+    napi = package_json(ROOT / "prns-napi/package.json")
+    wasm = package_json(ROOT / "prns-wasm/package.json")
+    expected_npm_packages = {
+        target["npmPackage"]
+        for target in catalog["nativeTargets"]
+        if "npmPackage" in target
+    }
+    generated_platform_packages = {
+        package["name"]: package
+        for package in (
+            package_json(path)
+            for path in sorted((ROOT / "prns-napi/npm").glob("*/package.json"))
+        )
+    }
+    if generated_platform_packages and (
+        set(generated_platform_packages) != expected_npm_packages
+    ):
+        raise SystemExit(
+            "N-API platform package inventory differs from packages.json"
+        )
+    optional_dependencies = javascript.get("optionalDependencies", {})
+    if set(optional_dependencies) != expected_npm_packages:
+        raise SystemExit(
+            "JavaScript optional dependency inventory differs from packages.json"
+        )
     versions = {
         "schema": schema["productVersion"],
         "host-core": cargo_version(ROOT / "prns-host/core/Cargo.toml"),
         "host-c": cargo_version(ROOT / "prns-host/abi/c/Cargo.toml"),
         "host-native": cargo_version(
             ROOT / "prns-host/impls/native/Cargo.toml"
+        ),
+        "host-cooperative": cargo_version(
+            ROOT / "prns-host/impls/cooperative/Cargo.toml"
+        ),
+        "host-tokio": cargo_version(
+            ROOT / "prns-host/impls/tokio/Cargo.toml"
         ),
         "dotnet": project_version(
             ROOT
@@ -68,9 +104,11 @@ def main():
         "julia": assignment_version(
             ROOT / "prns-host/bindings/julia/Project.toml"
         ),
-        "npm": json.loads((ROOT / "prns-js/package.json").read_text())[
-            "version"
-        ],
+        "javascript": javascript["version"],
+        "napi-cargo": cargo_version(ROOT / "prns-napi/Cargo.toml"),
+        "napi-package": napi["version"],
+        "wasm-cargo": cargo_version(ROOT / "prns-wasm/Cargo.toml"),
+        "wasm-package": wasm["version"],
     }
     versions.update(
         {
@@ -78,6 +116,35 @@ def main():
             for crate in catalog["rustCrates"]
         }
     )
+    versions.update(
+        {
+            f"napi:{name}": napi["version"]
+            for name in expected_npm_packages
+        }
+    )
+    versions.update(
+        {
+            f"generated-napi:{name}": package["version"]
+            for name, package in generated_platform_packages.items()
+        }
+    )
+    versions.update(
+        {
+            f"javascript-optional:{name}": version
+            for name, version in optional_dependencies.items()
+        }
+    )
+    binding_versions = set(
+        re.findall(
+            r"bindingPackageVersion !== '([^']+)'",
+            (ROOT / "prns-napi/index.js").read_text(),
+        )
+    )
+    if binding_versions != {expected}:
+        raise SystemExit(
+            "generated N-API loader versions disagree with VERSION="
+            f"{expected}: {sorted(binding_versions)}"
+        )
     disagreements = {
         name: version for name, version in versions.items() if version != expected
     }

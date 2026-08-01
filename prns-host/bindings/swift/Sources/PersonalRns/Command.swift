@@ -93,6 +93,13 @@ public final class Command: @unchecked Sendable {
                 nativeBitrate.bitsPerSecond,
                 &output
             )
+        case .attachInterface(let config):
+            var nativeConfig = try nativeInterfaceConfig(config, arena: arena)
+            status = prns_host_attach_interface(
+                host,
+                &nativeConfig,
+                &output
+            )
         case .detachInterface(let interface):
             status = prns_host_detach_interface(
                 host,
@@ -406,7 +413,7 @@ public final class Command: @unchecked Sendable {
     }
 }
 
-private extension Bitrate {
+extension Bitrate {
     var native: (
         kind: UInt32,
         bitsPerSecond: UInt64
@@ -491,6 +498,22 @@ private func decodeCommandFailure(
         return .channelUntrackable
     case .invalidChannelMessageType:
         return .invalidChannelMessageType
+    case .invalidConfiguration:
+        return .invalidConfiguration(detail: detail)
+    case .resourceUploadCancelled:
+        return .resourceUploadCancelled
+    case .resourceEarlyEof:
+        return .resourceEarlyEof
+    case .resourceLengthOverrun:
+        return .resourceLengthOverrun
+    case .permissionDenied:
+        return .permissionDenied(detail: detail)
+    case .deviceUnavailable:
+        return .deviceUnavailable(detail: detail)
+    case .connectFailed:
+        return .connectFailed(detail: detail)
+    case .backendFailed:
+        return .backendFailed(detail: detail)
     }
 }
 
@@ -505,7 +528,7 @@ private extension ResponseTimeout {
     }
 }
 
-private extension ResourceCompression {
+extension ResourceCompression {
     var native: UInt32 {
         switch self {
         case .auto:

@@ -32,6 +32,9 @@ ROOT = Path(__file__).resolve().parents[2]
 BASELINE = ROOT / "audits" / "unsafe-snapshot.json"
 GRAPHS = (
     ("engine", "Cargo.toml", "x86_64-unknown-linux-gnu"),
+    ("host-c-linux", "prns-host/abi/c/Cargo.toml", "x86_64-unknown-linux-gnu"),
+    ("host-c-macos", "prns-host/abi/c/Cargo.toml", "aarch64-apple-darwin"),
+    ("host-c-windows", "prns-host/abi/c/Cargo.toml", "x86_64-pc-windows-msvc"),
     ("daemon-linux", "prnsd/Cargo.toml", "x86_64-unknown-linux-gnu"),
     ("daemon-macos", "prnsd/Cargo.toml", "aarch64-apple-darwin"),
     ("daemon-windows", "prnsd/Cargo.toml", "x86_64-pc-windows-msvc"),
@@ -52,6 +55,11 @@ GRAPHS = (
         "xtensa-esp32s3-none-elf",
     ),
     (
+        "esp32-s3-heltec-r8",
+        "personal-hopspot/embedded/esp32/boards/heltec-v4-r8/Cargo.toml",
+        "xtensa-esp32s3-none-elf",
+    ),
+    (
         "esp32-s3-tbeam",
         "personal-hopspot/embedded/esp32/boards/t-beam-supreme/Cargo.toml",
         "xtensa-esp32s3-none-elf",
@@ -63,11 +71,13 @@ UNSAFE_EXCEPTIONS = {
     "prns-ffi",
     "prns-runtime",
     "prns-runtime-embassy",
+    "prns-host-c",
     "personal-hopspot-android",
     "personal-hopspot-ios",
     "t-echo",
     "personal-hopspot-esp32",
 }
+UNDOCUMENTED_UNSAFE_POLICY_EXCEPTIONS = {"prns-host-c"}
 
 
 def run_metadata(manifest: str, target: str) -> dict:
@@ -217,7 +227,9 @@ def assert_first_party_policy(package: dict, manifest_path: Path) -> None:
     if name in UNSAFE_EXCEPTIONS:
         if not lint_policy_declared(manifest_path, "rust", "unsafe_op_in_unsafe_fn"):
             raise RuntimeError(f"unsafe exception {name} does not deny unsafe_op_in_unsafe_fn")
-        if not lint_policy_declared(manifest_path, "clippy", "undocumented_unsafe_blocks"):
+        if name not in UNDOCUMENTED_UNSAFE_POLICY_EXCEPTIONS and not lint_policy_declared(
+            manifest_path, "clippy", "undocumented_unsafe_blocks"
+        ):
             raise RuntimeError(f"unsafe exception {name} does not deny undocumented unsafe blocks")
         return
     for target in targets:
@@ -291,6 +303,7 @@ def build_snapshot() -> dict:
             for name, manifest, target in GRAPHS
         ],
         "unsafe_exceptions": sorted(UNSAFE_EXCEPTIONS),
+        "undocumented_unsafe_policy_exceptions": sorted(UNDOCUMENTED_UNSAFE_POLICY_EXCEPTIONS),
         "packages": ordered,
     }
 

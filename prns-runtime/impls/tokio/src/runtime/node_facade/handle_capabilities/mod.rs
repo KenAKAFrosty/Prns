@@ -7,7 +7,8 @@ use crate::interfaces::PacketPhyStats;
 use crate::manifold::driver::HostCommand;
 use crate::node_introspection::{
     AnnounceRateSnapshot, DestinationIdentityQuery, DestinationIdentitySnapshot,
-    InterfaceInventoryEntry, NodeIntrospection, NodeIntrospectionRequest, RouteSnapshot,
+    EngineInspectionSnapshot, InterfaceInventoryEntry, NodeIntrospection, NodeIntrospectionRequest,
+    RouteSnapshot,
 };
 use crate::routing::dedup::PacketHash;
 use crate::routing::BlackholedIdentity;
@@ -70,6 +71,17 @@ impl PrnsNodeHandle {
         self.introspect(|reply| NodeIntrospectionRequest::DestinationIdentity { query, reply })
             .await
             .flatten()
+    }
+
+    pub async fn destination_identities(&self) -> std::vec::Vec<DestinationIdentitySnapshot> {
+        self.introspect(|reply| NodeIntrospectionRequest::DestinationIdentities { reply })
+            .await
+            .unwrap_or_default()
+    }
+
+    pub async fn engine_inspection_snapshot(&self) -> Option<EngineInspectionSnapshot> {
+        self.introspect(|reply| NodeIntrospectionRequest::EngineSnapshot { reply })
+            .await
     }
 }
 

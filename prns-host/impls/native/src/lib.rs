@@ -1,57 +1,78 @@
 #![forbid(unsafe_code)]
 
-use personal_rns::runtime::NoPersistence;
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::future::Future;
+use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
-use std::time::Duration;
+use std::task::{Context, Poll};
+use std::time::{Duration, Instant};
 
+use personal_rns::config::{
+    plan_reference_config, RNodeRadio, RNodeSubinterface, ReferenceConfig, ReferenceConfigParams,
+    ReferenceInterface,
+};
 use personal_rns::engine::{
     AllowRequester, AllowRequesterFailure, AllowRequesterRejection, AnnounceAppData, AnnounceNow,
     AnnounceNowFailure, AnnounceNowRejection, AnnounceTarget,
     DeliveryEvidence as EngineDeliveryEvidence, DeliveryProof, EstablishLinkFailure,
     EstablishLinkRejection, IdentifyFailure, IdentifyRejection,
-    LinkClosedReason as EngineLinkClosedReason, RequestPathFailure, RequestResponseTimeout,
-    RouteRemovalCause, SendRequestFailure, SendRequestRejection, SendResourceFailure,
-    SendResourceRejection, SendSinglePacketFailure, SendSinglePacketRejection,
+    LinkClosedReason as EngineLinkClosedReason,
+    PersistenceFlushCause as EnginePersistenceFlushCause,
+    PersistenceFlushTarget as EnginePersistenceFlushTarget, RequestPathFailure,
+    RequestResponseTimeout, RouteRemovalCause, SendRequestFailure, SendRequestRejection,
+    SendResourceFailure, SendResourceRejection, SendSinglePacketFailure, SendSinglePacketRejection,
     SendToChannelFailure, SendToChannelRejection, SendToLinkFailure, SendToLinkRejection,
     SetResourceStrategyFailure, SetResourceStrategyRejection,
 };
-use personal_rns::interfaces::BitrateBps;
+use personal_rns::interfaces::bluetooth_auto::BleIdentity;
+use personal_rns::interfaces::{BitrateBps, ConnectionState};
 use personal_rns::manifold::reconnect::ReconnectPolicy;
+use personal_rns::node_introspection::logical_interface_inventory;
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::links::channel::MessageType;
 use personal_rns::routing::request_handlers::RequestPolicy as EngineRequestPolicy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::request_endpoints::RespondToken;
 use personal_rns::runtime::{
-    Diagnostic, Message, PrnsEvent, RequestPathError, ResourceSendError, SegmentCompression,
+    Diagnostic, Message, NodePersistence, PersistenceIntent, PrnsEvent, RequestPathError,
+    ResourceSendError, SegmentCompression,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::{TcpClientInterface, TcpServer};
 use personal_rns::udp::UdpInterface;
 use personal_rns::units::{DurationMillis, RttMillis};
 use personal_rns::{
+    attach_plan_with_context, fill_os_entropy, load_or_create_ble_identity,
     load_or_create_identity_secret, request_endpoints, try_generate_identity_secret,
-    AttachedInterface, AttachedSupervisor, ManuallyAttached, PreConfiguredDestination, PrnsNode,
-    PrnsNodeHandle, PrnsNodeRecipe, RatchetPolicy, ResourceStrategy as EngineResourceStrategy,
-    SendError, Zeroizing, IDENTITY_SECRET_KEY_LEN,
+    AttachedInterface, AttachedSupervisor, IdentitySecretFileError, LocalIdentityFileError,
+    ManuallyAttached, PlanAttachments, PlanFailure, PlanOutcome, PlanRuntimeContext,
+    PreConfiguredDestination, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe, RatchetPolicy,
+    ResourceStrategy as EngineResourceStrategy, SendError, Zeroizing, IDENTITY_SECRET_KEY_LEN,
 };
 use prns_host::{
-    ApplicationEvent, Bitrate, Capability, ChannelMessage, CommandFailure, CommandOutcome,
-    DeliveryEvidence, DestinationConfig, DestinationHash, DestinationIdentityConfig,
-    DiagnosticEvent, HostCommand, HostConfig, HostRole, IdentityConfig, IdentityHash, InterfaceId,
-    LinkClosedReason, LinkId, PacketHash, RequestAvailable, RequestHandlerConfig, RequestId,
-    RequestPathHash, RequestPolicy, ResourceAvailable, ResourceCompression, ResourceHash,
-    ResourceNeedsDecompression, ResourceSegmentAvailable, ResourceStrategy, ResourceStreamId,
-    ResponseAvailable, ResponseSegmentAvailable, ResponseTimeout, SingleDelivery,
+    ApplicationEvent, BackendInfo, BackendKind, Bitrate, Capability, ChannelMessage,
+    CommandFailure, CommandOutcome, DeliveryEvidence, DestinationConfig, DestinationHash,
+    DestinationIdentityConfig, DestinationIdentitySnapshot, DestinationLinkRequestPolicy,
+    DestinationProofStrategy, DestinationRatchetPolicy, DiagnosticEvent, HostCommand, HostConfig,
+    HostRole, HostSnapshot, IdentityConfig, IdentityHash, InterfaceConfig, InterfaceHealth,
+    InterfaceId, InterfaceKind, InterfaceSnapshot, LinkClosedReason, LinkId, PacketHash,
+    PersistenceConfig, PersistenceFlushCause, PersistenceFlushTarget, PersistenceSnapshot,
+    RequestAvailable, RequestHandlerConfig, RequestId, RequestPathHash, RequestPolicy,
+    ResourceAvailable, ResourceCompression, ResourceHash, ResourceNeedsDecompression,
+    ResourceSegmentAvailable, ResourceStrategy, ResourceStreamId, ResponseAvailable,
+    ResponseSegmentAvailable, ResponseTimeout, RouteSnapshot, RuntimeHealthSnapshot,
+    SingleDelivery,
 };
-use tokio::sync::{mpsc, watch};
+use tokio::io::{AsyncRead, ReadBuf};
+use tokio::sync::{mpsc, oneshot, watch};
 
 const START_TIMEOUT: Duration = Duration::from_secs(5);
 const STOP_TIMEOUT: Duration = Duration::from_secs(5);
 const AUTO_BITRATE_BPS: u64 = 65_000_000;
+const UPLOAD_CHUNK_CAPACITY: usize = 4;
+const MAX_UPLOAD_CHUNK_BYTES: usize = 256 * 1024;
 
 static THREAD_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static RESOURCE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -68,17 +89,41 @@ pub trait NativeEventSink: Send + Sync + 'static {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NativeStartError {
     MissingCapabilities(Vec<Capability>),
-    Identity(String),
+    Identity(IdentityStartError),
     Destination(String),
+    Persistence(PersistenceStartError),
     Runtime(String),
     Thread(String),
     TimedOut,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum IdentityStartError {
+    EntropyUnavailable,
+    PermissionDenied { path: String },
+    Malformed { path: String, length: u64 },
+    Unavailable { path: String, detail: String },
+    InvalidMaterial,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PersistenceStartError {
+    PermissionDenied { path: String },
+    NotDirectory { path: String },
+    Unavailable { path: String, detail: String },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NativeSubmitError {
     Busy,
     Stopped,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NativeSnapshotError {
+    Busy,
+    Stopped,
+    TimedOut,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -187,6 +232,9 @@ struct CommandJob {
     completion: Arc<CommandCompletion>,
 }
 
+pub type NativePreviewFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
+pub type NativePreviewJob = Box<dyn FnOnce(PrnsNodeHandle) -> NativePreviewFuture + Send>;
+
 impl Drop for CommandJob {
     fn drop(&mut self) {
         self.completion.finish(Err(CommandFailure::NodeStopped));
@@ -195,11 +243,15 @@ impl Drop for CommandJob {
 
 pub struct NativeHost {
     commands: mpsc::Sender<CommandJob>,
+    uploads: mpsc::Sender<UploadJob>,
+    snapshots: mpsc::Sender<SnapshotJob>,
+    preview: mpsc::Sender<NativePreviewJob>,
     shutdown: watch::Sender<bool>,
     join: Mutex<Option<std::thread::JoinHandle<()>>>,
     stopped: AtomicBool,
     identity_hash: IdentityHash,
     destination_hashes: Vec<DestinationHash>,
+    handle: PrnsNodeHandle,
 }
 
 impl NativeHost {
@@ -218,12 +270,34 @@ impl NativeHost {
         }
         let pending_commands = config.limits.pending_commands();
         let (command_tx, command_rx) = mpsc::channel(pending_commands);
+        let (upload_tx, upload_rx) = mpsc::channel(pending_commands);
+        let (snapshot_tx, snapshot_rx) = mpsc::channel(pending_commands);
+        let (preview_tx, preview_rx) = mpsc::channel(pending_commands);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
+        let persistence_snapshot = Arc::new(Mutex::new(match &config.persistence {
+            PersistenceConfig::Ephemeral => PersistenceSnapshot::ephemeral(),
+            PersistenceConfig::Directory { .. } => PersistenceSnapshot::persistent(),
+        }));
         let sequence = THREAD_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let worker_persistence = Arc::clone(&persistence_snapshot);
         let join = std::thread::Builder::new()
             .name(format!("prns-host-{sequence}"))
-            .spawn(move || worker(config, sink, command_rx, shutdown_rx, ready_tx))
+            .spawn(move || {
+                worker(
+                    config,
+                    sink,
+                    WorkerInputs {
+                        commands: command_rx,
+                        uploads: upload_rx,
+                        snapshots: snapshot_rx,
+                        preview: preview_rx,
+                        shutdown: shutdown_rx,
+                        persistence: worker_persistence,
+                    },
+                    ready_tx,
+                )
+            })
             .map_err(|error| NativeStartError::Thread(error.to_string()))?;
         let ready = match ready_rx.recv_timeout(START_TIMEOUT) {
             Ok(ready) => ready,
@@ -241,11 +315,15 @@ impl NativeHost {
         }?;
         Ok(Self {
             commands: command_tx,
+            uploads: upload_tx,
+            snapshots: snapshot_tx,
+            preview: preview_tx,
             shutdown: shutdown_tx,
             join: Mutex::new(Some(join)),
             stopped: AtomicBool::new(false),
             identity_hash: ready.identity_hash,
             destination_hashes: ready.destination_hashes,
+            handle: ready.handle,
         })
     }
 
@@ -257,6 +335,37 @@ impl NativeHost {
     #[must_use]
     pub fn destination_hashes(&self) -> &[DestinationHash] {
         &self.destination_hashes
+    }
+
+    pub fn preview_handle(&self) -> Result<PrnsNodeHandle, NativeSubmitError> {
+        if self.stopped.load(Ordering::Acquire) {
+            Err(NativeSubmitError::Stopped)
+        } else {
+            Ok(self.handle.clone())
+        }
+    }
+
+    pub async fn on_preview_runtime<T, F, Fut>(&self, run: F) -> Result<T, NativeSubmitError>
+    where
+        T: Send + 'static,
+        F: FnOnce(PrnsNodeHandle) -> Fut + Send + 'static,
+        Fut: Future<Output = T> + Send + 'static,
+    {
+        if self.stopped.load(Ordering::Acquire) {
+            return Err(NativeSubmitError::Stopped);
+        }
+        let (result_tx, result_rx) = oneshot::channel();
+        let job: NativePreviewJob = Box::new(move |handle| {
+            Box::pin(async move {
+                let value = run(handle).await;
+                let _ = result_tx.send(value);
+            })
+        });
+        self.preview.try_send(job).map_err(|error| match error {
+            mpsc::error::TrySendError::Full(_) => NativeSubmitError::Busy,
+            mpsc::error::TrySendError::Closed(_) => NativeSubmitError::Stopped,
+        })?;
+        result_rx.await.map_err(|_| NativeSubmitError::Stopped)
     }
 
     pub fn submit(&self, command: HostCommand) -> Result<CommandHandle, NativeSubmitError> {
@@ -283,6 +392,80 @@ impl NativeHost {
         Ok(CommandHandle { completion })
     }
 
+    pub fn begin_resource_upload(
+        &self,
+        link_id: LinkId,
+        declared_length: u64,
+        packed_metadata: Option<Vec<u8>>,
+        compression: ResourceCompression,
+    ) -> Result<NativeUpload, NativeSubmitError> {
+        self.begin_resource_upload_with_readiness(
+            link_id,
+            declared_length,
+            packed_metadata,
+            compression,
+            None,
+        )
+    }
+
+    pub fn begin_resource_upload_with_readiness(
+        &self,
+        link_id: LinkId,
+        declared_length: u64,
+        packed_metadata: Option<Vec<u8>>,
+        compression: ResourceCompression,
+        readiness: Option<CommandReadiness>,
+    ) -> Result<NativeUpload, NativeSubmitError> {
+        if self.stopped.load(Ordering::Acquire) {
+            return Err(NativeSubmitError::Stopped);
+        }
+        let completion = Arc::new(CommandCompletion::new(readiness));
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let (chunks, source) = mpsc::channel(UPLOAD_CHUNK_CAPACITY);
+        self.uploads
+            .try_send(UploadJob {
+                link_id,
+                declared_length,
+                packed_metadata,
+                compression,
+                source: UploadSource::new(source),
+                completion: PendingCompletion(Arc::clone(&completion)),
+                cancelled: Arc::clone(&cancelled),
+            })
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => NativeSubmitError::Busy,
+                mpsc::error::TrySendError::Closed(_) => NativeSubmitError::Stopped,
+            })?;
+        Ok(NativeUpload {
+            chunks: Mutex::new(Some(chunks)),
+            completion,
+            cancelled,
+            declared_length,
+            written: AtomicU64::new(0),
+            finished: AtomicBool::new(false),
+        })
+    }
+
+    pub fn snapshot(&self, timeout: Option<Duration>) -> Result<HostSnapshot, NativeSnapshotError> {
+        if self.stopped.load(Ordering::Acquire) {
+            return Err(NativeSnapshotError::Stopped);
+        }
+        let (reply, result) = std::sync::mpsc::sync_channel(1);
+        self.snapshots
+            .try_send(SnapshotJob { reply })
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => NativeSnapshotError::Busy,
+                mpsc::error::TrySendError::Closed(_) => NativeSnapshotError::Stopped,
+            })?;
+        match timeout {
+            Some(timeout) => result.recv_timeout(timeout).map_err(|error| match error {
+                std::sync::mpsc::RecvTimeoutError::Timeout => NativeSnapshotError::TimedOut,
+                std::sync::mpsc::RecvTimeoutError::Disconnected => NativeSnapshotError::Stopped,
+            }),
+            None => result.recv().map_err(|_| NativeSnapshotError::Stopped),
+        }
+    }
+
     pub fn stop(&self) {
         if self.stopped.swap(true, Ordering::AcqRel) {
             return;
@@ -291,6 +474,162 @@ impl NativeHost {
         let join = lock(&self.join).take();
         if let Some(join) = join {
             let _ = join.join();
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UploadWriteError {
+    WouldBlock,
+    ChunkTooLarge,
+    LengthOverrun,
+    Finished,
+    Stopped,
+}
+
+pub struct NativeUpload {
+    chunks: Mutex<Option<mpsc::Sender<Vec<u8>>>>,
+    completion: Arc<CommandCompletion>,
+    cancelled: Arc<AtomicBool>,
+    declared_length: u64,
+    written: AtomicU64,
+    finished: AtomicBool,
+}
+
+impl NativeUpload {
+    pub fn write(&self, chunk: &[u8]) -> Result<(), UploadWriteError> {
+        if self.finished.load(Ordering::Acquire) {
+            return Err(UploadWriteError::Finished);
+        }
+        if chunk.len() > MAX_UPLOAD_CHUNK_BYTES {
+            return Err(UploadWriteError::ChunkTooLarge);
+        }
+        let length = u64::try_from(chunk.len()).map_err(|_| UploadWriteError::LengthOverrun)?;
+        let mut chunks = lock(&self.chunks);
+        let written = self.written.load(Ordering::Acquire);
+        if written.saturating_add(length) > self.declared_length {
+            self.finished.store(true, Ordering::Release);
+            self.cancelled.store(true, Ordering::Release);
+            chunks.take();
+            self.completion
+                .finish(Err(CommandFailure::ResourceLengthOverrun));
+            return Err(UploadWriteError::LengthOverrun);
+        }
+        let sender = chunks.as_ref().ok_or(UploadWriteError::Finished)?;
+        sender
+            .try_send(chunk.to_vec())
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => UploadWriteError::WouldBlock,
+                mpsc::error::TrySendError::Closed(_) => UploadWriteError::Stopped,
+            })?;
+        self.written.store(written + length, Ordering::Release);
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn is_writable(&self) -> bool {
+        lock(&self.chunks)
+            .as_ref()
+            .is_some_and(|sender| sender.capacity() > 0 && !sender.is_closed())
+    }
+
+    pub fn finish(&self) -> CommandHandle {
+        if !self.finished.swap(true, Ordering::AcqRel) {
+            lock(&self.chunks).take();
+            let written = self.written.load(Ordering::Acquire);
+            if written != self.declared_length {
+                self.cancelled.store(true, Ordering::Release);
+                self.completion
+                    .finish(Err(CommandFailure::ResourceEarlyEof));
+            }
+        }
+        CommandHandle {
+            completion: Arc::clone(&self.completion),
+        }
+    }
+
+    pub fn abort(&self) {
+        if !self.finished.swap(true, Ordering::AcqRel) {
+            self.cancelled.store(true, Ordering::Release);
+            lock(&self.chunks).take();
+            self.completion
+                .finish(Err(CommandFailure::ResourceUploadCancelled));
+        }
+    }
+}
+
+impl Drop for NativeUpload {
+    fn drop(&mut self) {
+        self.abort();
+    }
+}
+
+struct UploadJob {
+    link_id: LinkId,
+    declared_length: u64,
+    packed_metadata: Option<Vec<u8>>,
+    compression: ResourceCompression,
+    source: UploadSource,
+    completion: PendingCompletion,
+    cancelled: Arc<AtomicBool>,
+}
+
+struct SnapshotJob {
+    reply: std::sync::mpsc::SyncSender<HostSnapshot>,
+}
+
+struct PendingCompletion(Arc<CommandCompletion>);
+
+impl PendingCompletion {
+    fn finish(&self, result: Result<CommandOutcome, CommandFailure>) {
+        self.0.finish(result);
+    }
+}
+
+impl Drop for PendingCompletion {
+    fn drop(&mut self) {
+        self.0.finish(Err(CommandFailure::NodeStopped));
+    }
+}
+
+struct UploadSource {
+    chunks: mpsc::Receiver<Vec<u8>>,
+    active: Vec<u8>,
+    offset: usize,
+}
+
+impl UploadSource {
+    fn new(chunks: mpsc::Receiver<Vec<u8>>) -> Self {
+        Self {
+            chunks,
+            active: Vec::new(),
+            offset: 0,
+        }
+    }
+}
+
+impl AsyncRead for UploadSource {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        output: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        loop {
+            if self.offset < self.active.len() {
+                let available = &self.active[self.offset..];
+                let take = available.len().min(output.remaining());
+                output.put_slice(&available[..take]);
+                self.offset += take;
+                return Poll::Ready(Ok(()));
+            }
+            match Pin::new(&mut self.chunks).poll_recv(context) {
+                Poll::Ready(Some(chunk)) => {
+                    self.active = chunk;
+                    self.offset = 0;
+                }
+                Poll::Ready(None) => return Poll::Ready(Ok(())),
+                Poll::Pending => return Poll::Pending,
+            }
         }
     }
 }
@@ -307,17 +646,83 @@ pub fn native_capabilities() -> &'static [Capability] {
         Capability::TcpClient,
         Capability::TcpServer,
         Capability::Udp,
+        Capability::Serial,
+        Capability::Usb,
+        Capability::Bluetooth,
+        Capability::Wifi,
+        Capability::WebSocket,
+        Capability::I2p,
+        Capability::Weave,
     ]
+}
+
+#[must_use]
+pub fn native_interface_kinds() -> &'static [InterfaceKind] {
+    &[
+        InterfaceKind::AutoLan,
+        InterfaceKind::TcpClient,
+        InterfaceKind::TcpServer,
+        InterfaceKind::Udp,
+        InterfaceKind::Serial,
+        InterfaceKind::Kiss,
+        InterfaceKind::Ax25Kiss,
+        InterfaceKind::RNode,
+        InterfaceKind::MultiRNode,
+        InterfaceKind::Pipe,
+        InterfaceKind::BackboneClient,
+        InterfaceKind::BackboneServer,
+        InterfaceKind::I2p,
+        InterfaceKind::Weave,
+        InterfaceKind::AutomaticUsb,
+        InterfaceKind::AutomaticBluetoothLe,
+        InterfaceKind::WebSocketClient,
+        InterfaceKind::WebSocketServer,
+    ]
+}
+
+#[must_use]
+pub fn native_backend_info() -> BackendInfo {
+    BackendInfo::new(
+        BackendKind::Native,
+        native_capabilities().iter().copied(),
+        native_interface_kinds().iter().copied(),
+    )
+}
+
+#[must_use]
+pub fn persistent_endpoint(
+    root: &Path,
+    destinations: Vec<DestinationConfig>,
+    required_capabilities: Vec<Capability>,
+    limits: prns_host::PrnsLimits,
+) -> HostConfig {
+    HostConfig {
+        identity: IdentityConfig::LoadOrCreate {
+            path: root.join("identity").to_string_lossy().into_owned(),
+        },
+        persistence: PersistenceConfig::Directory {
+            path: root.join("state").to_string_lossy().into_owned(),
+        },
+        role: HostRole::Endpoint,
+        destinations,
+        required_capabilities,
+        limits,
+    }
 }
 
 struct Ready {
     identity_hash: IdentityHash,
     destination_hashes: Vec<DestinationHash>,
+    handle: PrnsNodeHandle,
 }
 
 struct ResolvedSingle {
     identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
     announce_app_data: Vec<u8>,
+    proof: DestinationProofStrategy,
+    link_requests: DestinationLinkRequestPolicy,
+    ratchet: DestinationRatchetPolicy,
+    resource_strategy: ResourceStrategy,
     request_handlers: Vec<RequestHandlerConfig>,
 }
 
@@ -331,6 +736,22 @@ struct ResolvedConfig {
     host_identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
     role: HostRole,
     destinations: Vec<ResolvedDestination>,
+    persistence: ResolvedPersistence,
+    persistence_root: Option<PathBuf>,
+}
+
+enum ResolvedPersistence {
+    Ephemeral,
+    Directory(NodePersistence),
+}
+
+impl PersistenceIntent for ResolvedPersistence {
+    fn into_node_persistence(self) -> Option<NodePersistence> {
+        match self {
+            Self::Ephemeral => None,
+            Self::Directory(persistence) => Some(persistence),
+        }
+    }
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -343,14 +764,69 @@ fn resolve_identity(
     match identity {
         IdentityConfig::Existing(secret) => Ok(Zeroizing::new(*secret.expose())),
         IdentityConfig::GenerateEphemeral => try_generate_identity_secret()
-            .map_err(|error| NativeStartError::Identity(error.to_string())),
+            .map_err(|_| NativeStartError::Identity(IdentityStartError::EntropyUnavailable)),
         IdentityConfig::LoadOrCreate { path } => load_or_create_identity_secret(Path::new(&path))
-            .map_err(|error| NativeStartError::Identity(format!("{path}: {error:?}"))),
+            .map_err(|error| {
+                let failure = match error {
+                    IdentitySecretFileError::Io(error)
+                        if error.kind() == std::io::ErrorKind::PermissionDenied =>
+                    {
+                        IdentityStartError::PermissionDenied { path }
+                    }
+                    IdentitySecretFileError::Io(error) => IdentityStartError::Unavailable {
+                        path,
+                        detail: error.to_string(),
+                    },
+                    IdentitySecretFileError::Malformed { len } => {
+                        IdentityStartError::Malformed { path, length: len }
+                    }
+                };
+                NativeStartError::Identity(failure)
+            }),
+    }
+}
+
+fn resolve_persistence(
+    persistence: PersistenceConfig,
+) -> Result<(ResolvedPersistence, Option<PathBuf>), NativeStartError> {
+    match persistence {
+        PersistenceConfig::Ephemeral => Ok((ResolvedPersistence::Ephemeral, None)),
+        PersistenceConfig::Directory { path } => {
+            let directory = Path::new(&path);
+            if directory.exists() && !directory.is_dir() {
+                return Err(NativeStartError::Persistence(
+                    PersistenceStartError::NotDirectory { path },
+                ));
+            }
+            NodePersistence::custom_dir(directory)
+                .map(|persistence| {
+                    (
+                        ResolvedPersistence::Directory(persistence),
+                        Some(directory.to_path_buf()),
+                    )
+                })
+                .map_err(|error| {
+                    let failure = match error.kind() {
+                        std::io::ErrorKind::PermissionDenied => {
+                            PersistenceStartError::PermissionDenied { path }
+                        }
+                        std::io::ErrorKind::NotADirectory => {
+                            PersistenceStartError::NotDirectory { path }
+                        }
+                        _ => PersistenceStartError::Unavailable {
+                            path,
+                            detail: error.to_string(),
+                        },
+                    };
+                    NativeStartError::Persistence(failure)
+                })
+        }
     }
 }
 
 fn resolve_config(config: HostConfig) -> Result<ResolvedConfig, NativeStartError> {
     let host_identity = resolve_identity(config.identity)?;
+    let (persistence, persistence_root) = resolve_persistence(config.persistence)?;
     let mut destinations = Vec::with_capacity(config.destinations.len());
     for destination in config.destinations {
         match destination {
@@ -370,6 +846,10 @@ fn resolve_config(config: HostConfig) -> Result<ResolvedConfig, NativeStartError
                     single: Some(ResolvedSingle {
                         identity,
                         announce_app_data: single.announce_app_data,
+                        proof: single.proof,
+                        link_requests: single.link_requests,
+                        ratchet: single.ratchet,
+                        resource_strategy: single.resource_strategy,
                         request_handlers: single.request_handlers,
                     }),
                 });
@@ -380,23 +860,60 @@ fn resolve_config(config: HostConfig) -> Result<ResolvedConfig, NativeStartError
         host_identity,
         role: config.role,
         destinations,
+        persistence,
+        persistence_root,
     })
 }
 
-fn aspect_refs(config: &ResolvedConfig) -> Vec<Vec<&str>> {
-    config
-        .destinations
+fn plan_runtime_context(
+    persistence_root: Option<&Path>,
+    identity: IdentityHash,
+) -> Result<PlanRuntimeContext, NativeStartError> {
+    match persistence_root {
+        Some(root) => {
+            let identity_path = root.join("interface-identities/bluetooth-le");
+            let ble_identity = load_or_create_ble_identity(&identity_path).map_err(|error| {
+                let path = identity_path.to_string_lossy().into_owned();
+                match error {
+                    LocalIdentityFileError::Io(error)
+                        if error.kind() == std::io::ErrorKind::PermissionDenied =>
+                    {
+                        NativeStartError::Persistence(PersistenceStartError::PermissionDenied {
+                            path,
+                        })
+                    }
+                    error => NativeStartError::Persistence(PersistenceStartError::Unavailable {
+                        path,
+                        detail: error.to_string(),
+                    }),
+                }
+            })?;
+            Ok(
+                PlanRuntimeContext::with_rns_i2p_storage(root, engine_identity(identity))
+                    .with_ble_identity(ble_identity),
+            )
+        }
+        None => {
+            let mut bytes = [0u8; 16];
+            fill_os_entropy(&mut bytes)
+                .map_err(|_| NativeStartError::Identity(IdentityStartError::EntropyUnavailable))?;
+            Ok(PlanRuntimeContext::default().with_ble_identity(BleIdentity::new(bytes)))
+        }
+    }
+}
+
+fn aspect_refs(destinations: &[ResolvedDestination]) -> Vec<Vec<&str>> {
+    destinations
         .iter()
         .map(|destination| destination.aspects.iter().map(String::as_str).collect())
         .collect()
 }
 
 fn build_destinations<'a>(
-    config: &'a ResolvedConfig,
+    destinations: &'a [ResolvedDestination],
     aspects: &'a [Vec<&'a str>],
 ) -> Vec<PreConfiguredDestination<'a>> {
-    config
-        .destinations
+    destinations
         .iter()
         .zip(aspects)
         .map(|(destination, aspects)| match &destination.single {
@@ -409,21 +926,40 @@ fn build_destinations<'a>(
                 aspects,
                 identity: single.identity.clone(),
                 announce_app_data: &single.announce_app_data,
-                proof: ProofStrategy::ProveAll,
-                link_requests: LinkRequestPolicy::AcceptAll,
-                ratchet: RatchetPolicy::NoRatchets,
-                resource_strategy: EngineResourceStrategy::AcceptNone,
+                proof: match single.proof {
+                    DestinationProofStrategy::ProveAll => ProofStrategy::ProveAll,
+                    DestinationProofStrategy::ProveNone => ProofStrategy::ProveNone,
+                    DestinationProofStrategy::ProveIf => ProofStrategy::ProveIf,
+                },
+                link_requests: match single.link_requests {
+                    DestinationLinkRequestPolicy::AcceptAll => LinkRequestPolicy::AcceptAll,
+                    DestinationLinkRequestPolicy::AcceptNone => LinkRequestPolicy::AcceptNone,
+                },
+                ratchet: match single.ratchet {
+                    DestinationRatchetPolicy::NoRatchets => RatchetPolicy::NoRatchets,
+                    DestinationRatchetPolicy::Ratcheted => RatchetPolicy::Ratcheted,
+                    DestinationRatchetPolicy::RatchetsRequired => RatchetPolicy::RatchetsRequired,
+                },
+                resource_strategy: engine_resource_strategy(single.resource_strategy),
                 request_endpoints: personal_rns::runtime::ServeMyRequestEndpoints::No,
             },
         })
         .collect()
 }
 
+struct WorkerInputs {
+    commands: mpsc::Receiver<CommandJob>,
+    uploads: mpsc::Receiver<UploadJob>,
+    snapshots: mpsc::Receiver<SnapshotJob>,
+    preview: mpsc::Receiver<NativePreviewJob>,
+    shutdown: watch::Receiver<bool>,
+    persistence: Arc<Mutex<PersistenceSnapshot>>,
+}
+
 fn worker(
     config: HostConfig,
     sink: Arc<dyn NativeEventSink>,
-    command_rx: mpsc::Receiver<CommandJob>,
-    shutdown_rx: watch::Receiver<bool>,
+    inputs: WorkerInputs,
     ready_tx: std::sync::mpsc::SyncSender<Result<Ready, NativeStartError>>,
 ) {
     let runtime = match tokio::runtime::Builder::new_multi_thread()
@@ -438,17 +974,24 @@ fn worker(
             return;
         }
     };
-    runtime.block_on(run(config, sink, command_rx, shutdown_rx, ready_tx));
+    runtime.block_on(run(config, sink, inputs, ready_tx));
     runtime.shutdown_timeout(STOP_TIMEOUT);
 }
 
 async fn run(
     config: HostConfig,
     sink: Arc<dyn NativeEventSink>,
-    command_rx: mpsc::Receiver<CommandJob>,
-    shutdown_rx: watch::Receiver<bool>,
+    inputs: WorkerInputs,
     ready_tx: std::sync::mpsc::SyncSender<Result<Ready, NativeStartError>>,
 ) {
+    let WorkerInputs {
+        commands: command_rx,
+        uploads: upload_rx,
+        snapshots: snapshot_rx,
+        preview: preview_rx,
+        shutdown: shutdown_rx,
+        persistence: persistence_snapshot,
+    } = inputs;
     let resolved = match resolve_config(config) {
         Ok(config) => config,
         Err(error) => {
@@ -457,10 +1000,16 @@ async fn run(
             return;
         }
     };
-    let identity =
-        personal_rns::identity::PrivateIdentityMaterial::from_slice(&resolved.host_identity[..])
-            .map(|material| IdentityHash::new(*material.identity_hash().as_bytes()))
-            .map_err(|error| NativeStartError::Identity(format!("{error:?}")));
+    let ResolvedConfig {
+        host_identity,
+        role,
+        destinations: resolved_destinations,
+        persistence,
+        persistence_root,
+    } = resolved;
+    let identity = personal_rns::identity::PrivateIdentityMaterial::from_slice(&host_identity[..])
+        .map(|material| IdentityHash::new(*material.identity_hash().as_bytes()))
+        .map_err(|_| NativeStartError::Identity(IdentityStartError::InvalidMaterial));
     let identity_hash = match identity {
         Ok(identity) => identity,
         Err(error) => {
@@ -469,8 +1018,16 @@ async fn run(
             return;
         }
     };
-    let aspects = aspect_refs(&resolved);
-    let destinations = build_destinations(&resolved, &aspects);
+    let plan_context = match plan_runtime_context(persistence_root.as_deref(), identity_hash) {
+        Ok(context) => context,
+        Err(error) => {
+            let _ = ready_tx.send(Err(error.clone()));
+            sink.failed(format!("{error:?}"));
+            return;
+        }
+    };
+    let aspects = aspect_refs(&resolved_destinations);
+    let destinations = build_destinations(&resolved_destinations, &aspects);
     let mut destination_hashes = Vec::with_capacity(destinations.len());
     for destination in &destinations {
         match destination.destination_hash() {
@@ -486,24 +1043,25 @@ async fn run(
     let event_sink = Arc::clone(&sink);
     let backpressure = Arc::new(tokio::sync::Notify::new());
     let event_backpressure = Arc::clone(&backpressure);
+    let event_persistence = Arc::clone(&persistence_snapshot);
     let mut node = PrnsNode::new(PrnsNodeRecipe {
-        transport_identity: match resolved.role {
+        transport_identity: match role {
             HostRole::Endpoint => None,
-            HostRole::Transport => Some(resolved.host_identity.clone()),
+            HostRole::Transport => Some(host_identity.clone()),
         },
         pre_configured_destinations: destinations,
         app_state: (),
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         interfaces: ManuallyAttached,
-        persistence: NoPersistence,
+        persistence,
         on_event: move |event, _state: &()| {
-            if !publish_event(event_sink.as_ref(), event) {
+            if !publish_event(event_sink.as_ref(), event, &event_persistence) {
                 event_backpressure.notify_waiters();
             }
         },
     });
-    for (destination, hash) in resolved.destinations.iter().zip(&destination_hashes) {
+    for (destination, hash) in resolved_destinations.iter().zip(&destination_hashes) {
         let Some(single) = &destination.single else {
             continue;
         };
@@ -529,63 +1087,903 @@ async fn run(
         .send(Ok(Ready {
             identity_hash,
             destination_hashes,
+            handle: handle.clone(),
         }))
         .is_err()
     {
         return;
     }
-    let commands = tokio::spawn(command_loop(command_rx, handle, shutdown_rx.clone()));
+    let commands = tokio::spawn(command_loop(
+        handle.clone(),
+        CommandLoopInputs {
+            commands: command_rx,
+            snapshots: snapshot_rx,
+            preview: preview_rx,
+            plan_context,
+            shutdown: shutdown_rx.clone(),
+            persistence: persistence_snapshot,
+            started_at: Instant::now(),
+        },
+    ));
+    let uploads = tokio::spawn(upload_loop(upload_rx, handle, shutdown_rx.clone()));
     let exit = tokio::select! {
-        result = node.run() => result.map_err(|error| format!("{error}")),
-        result = commands => result.map_err(|error| error.to_string()),
+        result = node.run_until(shutdown_requested(shutdown_rx)) => {
+            result.map_err(|error| format!("{error}"))
+        },
         () = backpressure.notified() => Err("application event backpressure exceeded".to_string()),
     };
+    commands.abort();
+    let _ = commands.await;
+    uploads.abort();
+    let _ = uploads.await;
     match exit {
         Ok(()) => sink.stopped(),
         Err(detail) => sink.failed(detail),
     }
 }
 
+async fn shutdown_requested(mut shutdown: watch::Receiver<bool>) {
+    if *shutdown.borrow() {
+        return;
+    }
+    let _ = shutdown.wait_for(|stopping| *stopping).await;
+}
+
 enum Attachment {
-    Interface(AttachedInterface),
-    Supervisor(AttachedSupervisor),
+    Interface {
+        attachment: AttachedInterface,
+        kind: InterfaceKind,
+    },
+    Supervisor {
+        attachment: AttachedSupervisor,
+        kind: InterfaceKind,
+    },
+    Plan {
+        attachments: PlanAttachments,
+        interfaces: Vec<personal_rns::interfaces::InterfaceId>,
+        kind: InterfaceKind,
+    },
 }
 
 impl Attachment {
-    fn teardown(self) {
+    fn kind(&self) -> InterfaceKind {
         match self {
-            Self::Interface(interface) => interface.teardown(),
-            Self::Supervisor(supervisor) => supervisor.teardown(),
+            Self::Interface { kind, .. }
+            | Self::Supervisor { kind, .. }
+            | Self::Plan { kind, .. } => *kind,
+        }
+    }
+
+    fn interfaces(&self) -> Vec<personal_rns::interfaces::InterfaceId> {
+        match self {
+            Self::Interface { attachment, .. } => vec![attachment.id()],
+            Self::Supervisor { attachment, .. } => vec![attachment.id()],
+            Self::Plan { interfaces, .. } => interfaces.clone(),
+        }
+    }
+
+    async fn teardown(self, handle: &PrnsNodeHandle) {
+        match self {
+            Self::Interface { attachment, .. } => attachment.teardown(),
+            Self::Supervisor { attachment, .. } => attachment.teardown(),
+            Self::Plan { attachments, .. } => attachments.detach(handle).await,
         }
     }
 }
 
-async fn command_loop(
-    mut commands: mpsc::Receiver<CommandJob>,
+struct CommandLoopInputs {
+    commands: mpsc::Receiver<CommandJob>,
+    snapshots: mpsc::Receiver<SnapshotJob>,
+    preview: mpsc::Receiver<NativePreviewJob>,
+    plan_context: PlanRuntimeContext,
+    shutdown: watch::Receiver<bool>,
+    persistence: Arc<Mutex<PersistenceSnapshot>>,
+    started_at: Instant,
+}
+
+async fn command_loop(handle: PrnsNodeHandle, inputs: CommandLoopInputs) {
+    let CommandLoopInputs {
+        mut commands,
+        mut snapshots,
+        mut preview,
+        plan_context,
+        mut shutdown,
+        persistence,
+        started_at,
+    } = inputs;
+    let mut attachments = BTreeMap::new();
+    let mut snapshot_revision = 0u64;
+    loop {
+        let work = tokio::select! {
+            command = commands.recv() => match command {
+                Some(command) => HostWork::Command(command),
+                None => break,
+            },
+            snapshot = snapshots.recv() => match snapshot {
+                Some(snapshot) => HostWork::Snapshot(snapshot),
+                None => break,
+            },
+            preview = preview.recv() => match preview {
+                Some(preview) => HostWork::Preview(preview),
+                None => break,
+            },
+            _ = shutdown.wait_for(|stopping| *stopping) => break,
+        };
+        match work {
+            HostWork::Command(job) => {
+                let result =
+                    execute_command(&handle, &plan_context, &mut attachments, &job.command).await;
+                job.completion.finish(result);
+            }
+            HostWork::Snapshot(job) => {
+                snapshot_revision = snapshot_revision.saturating_add(1);
+                if let Some(snapshot) = collect_snapshot(
+                    &handle,
+                    &attachments,
+                    snapshot_revision,
+                    started_at,
+                    &persistence,
+                )
+                .await
+                {
+                    let _ = job.reply.send(snapshot);
+                }
+            }
+            HostWork::Preview(job) => {
+                tokio::spawn(job(handle.clone()));
+            }
+        }
+    }
+    for (_, attachment) in attachments {
+        attachment.teardown(&handle).await;
+    }
+    tokio::task::yield_now().await;
+    tokio::task::yield_now().await;
+}
+
+enum HostWork {
+    Command(CommandJob),
+    Snapshot(SnapshotJob),
+    Preview(NativePreviewJob),
+}
+
+async fn collect_snapshot(
+    handle: &PrnsNodeHandle,
+    attachments: &BTreeMap<InterfaceId, Attachment>,
+    revision: u64,
+    started_at: Instant,
+    persistence: &Mutex<PersistenceSnapshot>,
+) -> Option<HostSnapshot> {
+    let inventory = logical_interface_inventory(handle.interface_inventory());
+    let mut interfaces = Vec::with_capacity(attachments.len());
+    for (interface_id, attachment) in attachments {
+        let member_ids = attachment.interfaces();
+        let members = inventory
+            .iter()
+            .filter(|entry| member_ids.contains(&entry.snapshot.id))
+            .collect::<Vec<_>>();
+        let Some(first) = members.first() else {
+            continue;
+        };
+        let name = first.name.clone();
+        let mut health = host_interface_health(first.snapshot.connection);
+        let mut failure_detail = first.snapshot.failure_reason.map(str::to_string);
+        let mut rx_bytes = 0u64;
+        let mut tx_bytes = 0u64;
+        let mut rx_bps = 0u64;
+        let mut tx_bps = 0u64;
+        let mut has_rates = false;
+        let mut route_count = 0u32;
+        let mut link_count = 0u32;
+        let mut transported_link_count = 0u32;
+        for member in &members {
+            health = less_healthy(health, host_interface_health(member.snapshot.connection));
+            if failure_detail.is_none() {
+                failure_detail = member.snapshot.failure_reason.map(str::to_string);
+            }
+            rx_bytes = rx_bytes.saturating_add(member.snapshot.rx_bytes);
+            tx_bytes = tx_bytes.saturating_add(member.snapshot.tx_bytes);
+            if let Some(rates) = member.snapshot.transfer_rates {
+                has_rates = true;
+                rx_bps = rx_bps.saturating_add(u64::from(rates.rx_bps));
+                tx_bps = tx_bps.saturating_add(u64::from(rates.tx_bps));
+            }
+            route_count = route_count.saturating_add(member.snapshot.destinations);
+            link_count = link_count.saturating_add(member.snapshot.links);
+            transported_link_count =
+                transported_link_count.saturating_add(member.snapshot.transported_links);
+        }
+        interfaces.push(InterfaceSnapshot {
+            interface_id: *interface_id,
+            name,
+            kind: Some(attachment.kind()),
+            health,
+            failure_detail,
+            rx_bytes,
+            tx_bytes,
+            rx_bps: has_rates.then_some(rx_bps),
+            tx_bps: has_rates.then_some(tx_bps),
+            route_count,
+            link_count,
+            transported_link_count,
+        });
+    }
+    let engine = handle.engine_inspection_snapshot().await?;
+    let routes: Vec<RouteSnapshot> = engine
+        .routes
+        .into_iter()
+        .map(|route| RouteSnapshot {
+            destination: host_destination(route.destination),
+            hops: route.hops,
+            via_identity: match route.via {
+                personal_rns::routing::routes::NextHop::Direct => None,
+                personal_rns::routing::routes::NextHop::Via(identity) => {
+                    Some(IdentityHash::new(*identity.as_bytes()))
+                }
+            },
+            interface_id: attachments
+                .iter()
+                .find(|(_, attachment)| attachment.interfaces().contains(&route.interface))
+                .map_or_else(
+                    || host_interface(route.interface),
+                    |(interface, _)| *interface,
+                ),
+            learned_at_millis: route.learned_at.0,
+            last_relayed_at_millis: route.last_relayed_at.0,
+            expires_at_millis: route.expires_at.0,
+        })
+        .collect();
+    let destination_identities = engine
+        .destination_identities
+        .into_iter()
+        .map(|identity| DestinationIdentitySnapshot {
+            destination: host_destination(identity.destination),
+            identity: IdentityHash::new(*identity.identity.as_bytes()),
+        })
+        .collect();
+    let interface_count = u32::try_from(interfaces.len()).unwrap_or(u32::MAX);
+    let online_interface_count = u32::try_from(
+        interfaces
+            .iter()
+            .filter(|interface| {
+                matches!(
+                    interface.health,
+                    InterfaceHealth::Connected | InterfaceHealth::Degraded
+                )
+            })
+            .count(),
+    )
+    .unwrap_or(u32::MAX);
+    let runtime = RuntimeHealthSnapshot {
+        running: true,
+        uptime_millis: u64::try_from(started_at.elapsed().as_millis()).unwrap_or(u64::MAX),
+        interface_count,
+        online_interface_count,
+        route_count: u32::try_from(routes.len()).unwrap_or(u32::MAX),
+        link_count: engine.link_count,
+        transported_link_count: interfaces.iter().fold(0u32, |sum, entry| {
+            sum.saturating_add(entry.transported_link_count)
+        }),
+        rx_bytes: interfaces
+            .iter()
+            .fold(0u64, |sum, entry| sum.saturating_add(entry.rx_bytes)),
+        tx_bytes: interfaces
+            .iter()
+            .fold(0u64, |sum, entry| sum.saturating_add(entry.tx_bytes)),
+        rx_bps: interfaces.iter().fold(0u64, |sum, entry| {
+            sum.saturating_add(entry.rx_bps.unwrap_or_default())
+        }),
+        tx_bps: interfaces.iter().fold(0u64, |sum, entry| {
+            sum.saturating_add(entry.tx_bps.unwrap_or_default())
+        }),
+    };
+    Some(HostSnapshot {
+        revision,
+        backend: native_backend_info(),
+        interfaces,
+        routes,
+        active_link_count: engine.link_count,
+        destination_identities,
+        runtime,
+        persistence: lock(persistence).clone(),
+    })
+}
+
+fn host_interface_health(health: ConnectionState) -> InterfaceHealth {
+    match health {
+        ConnectionState::Initializing => InterfaceHealth::Initializing,
+        ConnectionState::Connected => InterfaceHealth::Connected,
+        ConnectionState::Degraded => InterfaceHealth::Degraded,
+        ConnectionState::Reconnecting => InterfaceHealth::Reconnecting,
+        ConnectionState::Failed => InterfaceHealth::Failed,
+        ConnectionState::Disconnected => InterfaceHealth::Disconnected,
+        ConnectionState::Disabled => InterfaceHealth::Disabled,
+        ConnectionState::Unknown => InterfaceHealth::Unknown,
+    }
+}
+
+fn less_healthy(left: InterfaceHealth, right: InterfaceHealth) -> InterfaceHealth {
+    fn priority(health: InterfaceHealth) -> u8 {
+        match health {
+            InterfaceHealth::Connected => 0,
+            InterfaceHealth::Disabled => 1,
+            InterfaceHealth::Unknown => 2,
+            InterfaceHealth::Initializing => 3,
+            InterfaceHealth::Disconnected => 4,
+            InterfaceHealth::Degraded => 5,
+            InterfaceHealth::Reconnecting => 6,
+            InterfaceHealth::Failed => 7,
+        }
+    }
+    if priority(left) >= priority(right) {
+        left
+    } else {
+        right
+    }
+}
+
+async fn upload_loop(
+    mut uploads: mpsc::Receiver<UploadJob>,
     handle: PrnsNodeHandle,
     mut shutdown: watch::Receiver<bool>,
 ) {
-    let mut attachments = BTreeMap::new();
     loop {
         let job = tokio::select! {
-            job = commands.recv() => match job {
+            job = uploads.recv() => match job {
                 Some(job) => job,
                 None => break,
             },
             _ = shutdown.wait_for(|stopping| *stopping) => break,
         };
-        let result = execute_command(&handle, &mut attachments, &job.command).await;
-        job.completion.finish(result);
+        let UploadJob {
+            link_id,
+            declared_length,
+            packed_metadata,
+            compression,
+            source,
+            completion,
+            cancelled,
+        } = job;
+        let compression = match compression {
+            ResourceCompression::Auto => SegmentCompression::AUTO,
+            ResourceCompression::Never => SegmentCompression::Never,
+        };
+        let result = match packed_metadata {
+            Some(metadata) => {
+                let (progress, _) = mpsc::unbounded_channel();
+                handle
+                    .send_resource_with_options(
+                        engine_link(link_id),
+                        declared_length,
+                        source,
+                        &metadata,
+                        compression,
+                        progress,
+                    )
+                    .await
+            }
+            None => {
+                handle
+                    .send_resource_with_compression(
+                        engine_link(link_id),
+                        declared_length,
+                        source,
+                        compression,
+                    )
+                    .await
+            }
+        };
+        let result = match result {
+            Ok(()) => Ok(CommandOutcome::ResourceSent),
+            Err(ResourceSendError::Source(error))
+                if cancelled.load(Ordering::Acquire)
+                    && error.kind() == std::io::ErrorKind::UnexpectedEof =>
+            {
+                Err(CommandFailure::ResourceUploadCancelled)
+            }
+            Err(ResourceSendError::Source(error))
+                if error.kind() == std::io::ErrorKind::UnexpectedEof =>
+            {
+                Err(CommandFailure::ResourceEarlyEof)
+            }
+            Err(error) => Err(resource_send_failure(error)),
+        };
+        completion.finish(result);
     }
-    for (_, attachment) in attachments {
-        attachment.teardown();
+}
+
+fn invalid_configuration(detail: impl Into<String>) -> CommandFailure {
+    CommandFailure::InvalidConfiguration {
+        detail: detail.into(),
     }
-    tokio::task::yield_now().await;
-    tokio::task::yield_now().await;
+}
+
+fn endpoint_parts(
+    value: &str,
+    allow_unspecified_host: bool,
+) -> Result<(Option<String>, u16), CommandFailure> {
+    let (host, port) = if let Some(bracketed) = value.strip_prefix('[') {
+        let Some((host, port)) = bracketed.rsplit_once("]:") else {
+            return Err(invalid_configuration(format!(
+                "endpoint {value:?} must include a port"
+            )));
+        };
+        (host, port)
+    } else {
+        let Some((host, port)) = value.rsplit_once(':') else {
+            return Err(invalid_configuration(format!(
+                "endpoint {value:?} must include a port"
+            )));
+        };
+        (host, port)
+    };
+    if host.is_empty() && !allow_unspecified_host {
+        return Err(invalid_configuration(format!(
+            "endpoint {value:?} must include a host"
+        )));
+    }
+    let port = port
+        .parse::<u16>()
+        .ok()
+        .filter(|port| *port != 0)
+        .ok_or_else(|| invalid_configuration(format!("endpoint {value:?} has an invalid port")))?;
+    Ok(((!host.is_empty()).then(|| host.to_string()), port))
+}
+
+fn reference_bitrate(bitrate: Bitrate) -> Option<u64> {
+    match bitrate {
+        Bitrate::Auto => None,
+        Bitrate::BitsPerSecond(value) => Some(value),
+    }
+}
+
+fn reference_radio(radio: prns_host::RNodeRadioConfig) -> RNodeRadio {
+    RNodeRadio {
+        frequency: Some(radio.frequency_hz),
+        bandwidth: Some(radio.bandwidth_hz),
+        spreadingfactor: Some(radio.spreading_factor),
+        codingrate: Some(radio.coding_rate),
+        txpower: Some(radio.tx_power_dbm),
+    }
+}
+
+fn serial_data_bits(bits: prns_host::SerialDataBits) -> u8 {
+    match bits {
+        prns_host::SerialDataBits::Five => 5,
+        prns_host::SerialDataBits::Six => 6,
+        prns_host::SerialDataBits::Seven => 7,
+        prns_host::SerialDataBits::Eight => 8,
+    }
+}
+
+fn serial_parity(parity: prns_host::SerialParity) -> String {
+    match parity {
+        prns_host::SerialParity::None => "none",
+        prns_host::SerialParity::Even => "even",
+        prns_host::SerialParity::Odd => "odd",
+    }
+    .to_string()
+}
+
+fn serial_stop_bits(bits: prns_host::SerialStopBits) -> u8 {
+    match bits {
+        prns_host::SerialStopBits::One => 1,
+        prns_host::SerialStopBits::Two => 2,
+    }
+}
+
+fn shell_command(command: &[String]) -> String {
+    command
+        .iter()
+        .map(|argument| format!("'{}'", argument.replace('\'', "'\"'\"'")))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn reference_interface(config: &InterfaceConfig) -> Result<ReferenceInterface, CommandFailure> {
+    let (type_name, params, bitrate) = match config {
+        InterfaceConfig::AutoLan {
+            group_id,
+            discovery_scope,
+            discovery_port,
+            data_port,
+            devices,
+            ignored_devices,
+            multicast_address_type,
+        } => (
+            "AutoInterface",
+            ReferenceConfigParams::Auto {
+                group_id: group_id.clone(),
+                discovery_scope: discovery_scope.map(|scope| {
+                    match scope {
+                        prns_host::DiscoveryScope::Link => "link",
+                        prns_host::DiscoveryScope::Admin => "admin",
+                        prns_host::DiscoveryScope::Site => "site",
+                        prns_host::DiscoveryScope::Organization => "organisation",
+                        prns_host::DiscoveryScope::Global => "global",
+                    }
+                    .to_string()
+                }),
+                discovery_port: *discovery_port,
+                data_port: *data_port,
+                devices: Some(devices.clone()),
+                ignored_devices: Some(ignored_devices.clone()),
+                multicast_address_type: multicast_address_type.map(|address_type| {
+                    match address_type {
+                        prns_host::MulticastAddressType::Temporary => "temporary",
+                        prns_host::MulticastAddressType::Permanent => "permanent",
+                    }
+                    .to_string()
+                }),
+            },
+            None,
+        ),
+        InterfaceConfig::TcpClient { target, bitrate } => {
+            let (host, port) = endpoint_parts(target, false)?;
+            (
+                "TCPClientInterface",
+                ReferenceConfigParams::TcpClient {
+                    target_host: host,
+                    target_port: Some(port),
+                    kiss_framing: None,
+                    i2p_tunneled: None,
+                    connect_timeout: None,
+                    max_reconnect_tries: None,
+                    fixed_mtu: None,
+                },
+                reference_bitrate(*bitrate),
+            )
+        }
+        InterfaceConfig::TcpServer { bind, bitrate } => {
+            let (host, port) = endpoint_parts(bind, true)?;
+            (
+                "TCPServerInterface",
+                ReferenceConfigParams::TcpServer {
+                    listen_ip: host,
+                    listen_port: Some(port),
+                    device: None,
+                    port: None,
+                    prefer_ipv6: None,
+                    i2p_tunneled: None,
+                    kiss_framing: None,
+                    fixed_mtu: None,
+                },
+                reference_bitrate(*bitrate),
+            )
+        }
+        InterfaceConfig::Udp {
+            local,
+            peer,
+            bitrate,
+        } => {
+            let (listen_ip, listen_port) = endpoint_parts(local, true)?;
+            let (forward_ip, forward_port) = endpoint_parts(peer, false)?;
+            (
+                "UDPInterface",
+                ReferenceConfigParams::Udp {
+                    listen_ip,
+                    listen_port: Some(listen_port),
+                    forward_ip,
+                    forward_port: Some(forward_port),
+                    device: None,
+                    port: None,
+                },
+                reference_bitrate(*bitrate),
+            )
+        }
+        InterfaceConfig::Serial { port, line } => (
+            "SerialInterface",
+            ReferenceConfigParams::Serial {
+                port: Some(port.clone()),
+                speed: Some(line.baud),
+                databits: Some(serial_data_bits(line.data_bits)),
+                parity: Some(serial_parity(line.parity)),
+                stopbits: Some(serial_stop_bits(line.stop_bits)),
+            },
+            None,
+        ),
+        InterfaceConfig::Kiss {
+            port,
+            line,
+            flow_control,
+            preamble_millis,
+            transmit_tail_millis,
+            persistence,
+            slot_time_millis,
+            station_callsign,
+            station_interval_seconds,
+        } => (
+            "KISSInterface",
+            ReferenceConfigParams::Kiss {
+                port: Some(port.clone()),
+                speed: Some(line.baud),
+                databits: Some(serial_data_bits(line.data_bits)),
+                parity: Some(serial_parity(line.parity)),
+                stopbits: Some(serial_stop_bits(line.stop_bits)),
+                flow_control: Some(*flow_control),
+                preamble: Some(*preamble_millis),
+                txtail: Some(*transmit_tail_millis),
+                persistence: Some(u32::from(*persistence)),
+                slottime: Some(*slot_time_millis),
+                id_callsign: station_callsign.clone(),
+                id_interval: *station_interval_seconds,
+            },
+            None,
+        ),
+        InterfaceConfig::Ax25Kiss {
+            port,
+            line,
+            flow_control,
+            preamble_millis,
+            transmit_tail_millis,
+            persistence,
+            slot_time_millis,
+            callsign,
+            ssid,
+        } => (
+            "AX25KISSInterface",
+            ReferenceConfigParams::Ax25Kiss {
+                port: Some(port.clone()),
+                speed: Some(line.baud),
+                databits: Some(serial_data_bits(line.data_bits)),
+                parity: Some(serial_parity(line.parity)),
+                stopbits: Some(serial_stop_bits(line.stop_bits)),
+                flow_control: Some(*flow_control),
+                preamble: Some(*preamble_millis),
+                txtail: Some(*transmit_tail_millis),
+                persistence: Some(u32::from(*persistence)),
+                slottime: Some(*slot_time_millis),
+                callsign: Some(callsign.clone()),
+                ssid: Some(*ssid),
+            },
+            None,
+        ),
+        InterfaceConfig::RNode {
+            port,
+            radio,
+            flow_control,
+            station_callsign,
+            station_interval_seconds,
+            airtime_limit_short_centi_percent,
+            airtime_limit_long_centi_percent,
+        } => (
+            "RNodeInterface",
+            ReferenceConfigParams::Rnode {
+                port: Some(port.clone()),
+                radio: reference_radio(*radio),
+                flow_control: Some(*flow_control),
+                id_callsign: station_callsign.clone(),
+                id_interval: *station_interval_seconds,
+                airtime_limit_short: airtime_limit_short_centi_percent
+                    .map(|value| f64::from(value) / 100.0),
+                airtime_limit_long: airtime_limit_long_centi_percent
+                    .map(|value| f64::from(value) / 100.0),
+            },
+            None,
+        ),
+        InterfaceConfig::MultiRNode {
+            port,
+            station_callsign,
+            station_interval_seconds,
+            members,
+        } => (
+            "RNodeMultiInterface",
+            ReferenceConfigParams::RnodeMulti {
+                port: Some(port.clone()),
+                id_callsign: station_callsign.clone(),
+                id_interval: *station_interval_seconds,
+                subinterfaces: members
+                    .iter()
+                    .map(|member| RNodeSubinterface {
+                        name: member.name.clone(),
+                        vport: Some(member.virtual_port),
+                        radio: reference_radio(member.radio),
+                        flow_control: Some(member.flow_control),
+                        outgoing: Some(member.outgoing),
+                        airtime_limit_short: None,
+                        airtime_limit_long: None,
+                        extra: BTreeMap::new(),
+                    })
+                    .collect(),
+            },
+            None,
+        ),
+        InterfaceConfig::Pipe {
+            command,
+            respawn_delay_millis,
+        } => (
+            "PipeInterface",
+            ReferenceConfigParams::Pipe {
+                command: Some(shell_command(command)),
+                respawn_delay: Some(Duration::from_millis(*respawn_delay_millis).as_secs_f64()),
+            },
+            None,
+        ),
+        InterfaceConfig::BackboneClient { target, bitrate } => {
+            let (host, port) = endpoint_parts(target, false)?;
+            (
+                "BackboneClientInterface",
+                ReferenceConfigParams::Backbone {
+                    listen_ip: None,
+                    listen_port: None,
+                    target_host: host,
+                    target_port: Some(port),
+                    port: None,
+                    device: None,
+                    prefer_ipv6: None,
+                    i2p_tunneled: None,
+                    connect_timeout: None,
+                    max_reconnect_tries: None,
+                },
+                reference_bitrate(*bitrate),
+            )
+        }
+        InterfaceConfig::BackboneServer { bind, bitrate } => {
+            let (host, port) = endpoint_parts(bind, true)?;
+            (
+                "BackboneInterface",
+                ReferenceConfigParams::Backbone {
+                    listen_ip: host,
+                    listen_port: Some(port),
+                    target_host: None,
+                    target_port: None,
+                    port: None,
+                    device: None,
+                    prefer_ipv6: None,
+                    i2p_tunneled: None,
+                    connect_timeout: None,
+                    max_reconnect_tries: None,
+                },
+                reference_bitrate(*bitrate),
+            )
+        }
+        InterfaceConfig::I2p { peers, connectable } => (
+            "I2PInterface",
+            ReferenceConfigParams::I2p {
+                peers: Some(peers.clone()),
+                connectable: Some(*connectable),
+            },
+            None,
+        ),
+        InterfaceConfig::Weave { port } => (
+            "WeaveInterface",
+            ReferenceConfigParams::Weave {
+                port: Some(port.clone()),
+            },
+            None,
+        ),
+        InterfaceConfig::AutomaticUsb => ("PrnsUsbAuto", ReferenceConfigParams::PrnsUsbAuto, None),
+        InterfaceConfig::AutomaticBluetoothLe => (
+            "PrnsBluetoothAuto",
+            ReferenceConfigParams::PrnsBluetoothAuto,
+            None,
+        ),
+        InterfaceConfig::WebSocketClient { target } => (
+            "PrnsWebSocketClient",
+            ReferenceConfigParams::PrnsWebSocketClient {
+                target: Some(target.clone()),
+            },
+            None,
+        ),
+        InterfaceConfig::WebSocketServer { bind } => {
+            let (host, port) = endpoint_parts(bind, true)?;
+            (
+                "PrnsWebSocketServer",
+                ReferenceConfigParams::PrnsWebSocketServer {
+                    listen_ip: host,
+                    listen_port: Some(port),
+                    device: None,
+                    port: None,
+                    prefer_ipv6: None,
+                },
+                None,
+            )
+        }
+        InterfaceConfig::BrowserRendezvous { .. } => {
+            return Err(CommandFailure::UnsupportedByBackend)
+        }
+    };
+    let mut interface = ReferenceInterface::enabled("sdk-interface", type_name, params);
+    interface.bitrate = bitrate;
+    Ok(interface)
+}
+
+fn typed_interface_plan(
+    config: &InterfaceConfig,
+) -> Result<personal_rns::config::DaemonPlan, CommandFailure> {
+    let mut reference = ReferenceConfig::default();
+    reference.interfaces.push(reference_interface(config)?);
+    plan_reference_config(&reference).map_err(|error| invalid_configuration(error.to_string()))
+}
+
+fn plan_failure(config: &InterfaceConfig, failure: PlanFailure) -> CommandFailure {
+    let detail = failure.to_string();
+    match failure {
+        PlanFailure::InterfaceNotBuilt(_) => CommandFailure::UnsupportedByBackend,
+        PlanFailure::Network(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            CommandFailure::PermissionDenied { detail }
+        }
+        PlanFailure::Network(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound
+                    | std::io::ErrorKind::NotConnected
+                    | std::io::ErrorKind::AddrNotAvailable
+            ) =>
+        {
+            CommandFailure::DeviceUnavailable { detail }
+        }
+        PlanFailure::Network(_)
+            if matches!(
+                config.kind(),
+                InterfaceKind::TcpServer
+                    | InterfaceKind::Udp
+                    | InterfaceKind::BackboneServer
+                    | InterfaceKind::WebSocketServer
+            ) =>
+        {
+            CommandFailure::BindFailed { detail }
+        }
+        PlanFailure::Network(_) => CommandFailure::ConnectFailed { detail },
+        PlanFailure::WeaveIdentity(_) => CommandFailure::EntropyUnavailable,
+        PlanFailure::MissingIfacCredentials
+        | PlanFailure::AutoWifiSettings(_)
+        | PlanFailure::EmptyStationIdentification
+        | PlanFailure::Ax25Address(_)
+        | PlanFailure::RadioConfig(_)
+        | PlanFailure::UngroupedRNodeMultiMember
+        | PlanFailure::I2pInterfaceName(_)
+        | PlanFailure::I2pPeerAddress(_)
+        | PlanFailure::DuplicateI2pPeer(_)
+        | PlanFailure::MissingI2pStorage
+        | PlanFailure::MissingBleIdentity
+        | PlanFailure::RNodeMultiMembers(_) => invalid_configuration(detail),
+    }
+}
+
+async fn attach_typed_interface(
+    handle: &PrnsNodeHandle,
+    context: &PlanRuntimeContext,
+    config: &InterfaceConfig,
+) -> Result<Attachment, CommandFailure> {
+    let plan = typed_interface_plan(config)?;
+    let mut primary = None;
+    let mut failure = None;
+    let attachments =
+        attach_plan_with_context(handle, &plan, context, &mut |outcome| match outcome {
+            PlanOutcome::Up { id, .. } => {
+                if primary.is_none() {
+                    primary = Some(id);
+                }
+            }
+            PlanOutcome::Failed { error, .. } => {
+                if failure.is_none() {
+                    failure = Some(error);
+                }
+            }
+        })
+        .await;
+    if let Some(failure) = failure {
+        attachments.detach(handle).await;
+        return Err(plan_failure(config, failure));
+    }
+    let interfaces = attachments.interfaces().collect::<Vec<_>>();
+    if primary.is_none() || interfaces.is_empty() {
+        attachments.detach(handle).await;
+        return Err(CommandFailure::BackendFailed {
+            detail: "interface planner completed without attaching an interface".to_string(),
+        });
+    }
+    Ok(Attachment::Plan {
+        attachments,
+        interfaces,
+        kind: config.kind(),
+    })
 }
 
 async fn execute_command(
     handle: &PrnsNodeHandle,
+    plan_context: &PlanRuntimeContext,
     attachments: &mut BTreeMap<InterfaceId, Attachment>,
     command: &HostCommand,
 ) -> Result<CommandOutcome, CommandFailure> {
@@ -645,7 +2043,13 @@ async fn execute_command(
                 })?;
             let attached = handle.supervise(server);
             let interface = host_interface(attached.id());
-            attachments.insert(interface, Attachment::Supervisor(attached));
+            attachments.insert(
+                interface,
+                Attachment::Supervisor {
+                    attachment: attached,
+                    kind: InterfaceKind::TcpServer,
+                },
+            );
             Ok(CommandOutcome::InterfaceAttached { interface })
         }
         HostCommand::AttachTcpClient { target, bitrate } => {
@@ -656,7 +2060,13 @@ async fn execute_command(
             );
             let attached = handle.add_interface(client);
             let interface = host_interface(attached.id());
-            attachments.insert(interface, Attachment::Interface(attached));
+            attachments.insert(
+                interface,
+                Attachment::Interface {
+                    attachment: attached,
+                    kind: InterfaceKind::TcpClient,
+                },
+            );
             Ok(CommandOutcome::InterfaceAttached { interface })
         }
         HostCommand::AttachUdp {
@@ -671,14 +2081,38 @@ async fn execute_command(
                 })?;
             let attached = handle.add_interface(udp);
             let interface = host_interface(attached.id());
-            attachments.insert(interface, Attachment::Interface(attached));
+            attachments.insert(
+                interface,
+                Attachment::Interface {
+                    attachment: attached,
+                    kind: InterfaceKind::Udp,
+                },
+            );
+            Ok(CommandOutcome::InterfaceAttached { interface })
+        }
+        HostCommand::AttachInterface { config } => {
+            config
+                .validate()
+                .map_err(|error| CommandFailure::InvalidConfiguration {
+                    detail: format!("{error:?}"),
+                })?;
+            let attachment = attach_typed_interface(handle, plan_context, config).await?;
+            let interface = attachment
+                .interfaces()
+                .first()
+                .copied()
+                .map(host_interface)
+                .ok_or_else(|| CommandFailure::BackendFailed {
+                    detail: "interface attachment has no runtime interface".to_string(),
+                })?;
+            attachments.insert(interface, attachment);
             Ok(CommandOutcome::InterfaceAttached { interface })
         }
         HostCommand::DetachInterface { interface } => {
             let Some(attachment) = attachments.remove(interface) else {
                 return Err(CommandFailure::UnknownInterface);
             };
-            attachment.teardown();
+            attachment.teardown(handle).await;
             Ok(CommandOutcome::InterfaceDetached {
                 interface: *interface,
             })
@@ -1171,15 +2605,41 @@ fn host_resource_hash(
     ResourceHash::new(*value.as_bytes())
 }
 
-fn publish_event(sink: &dyn NativeEventSink, event: PrnsEvent<'_>) -> bool {
+fn publish_event(
+    sink: &dyn NativeEventSink,
+    event: PrnsEvent<'_>,
+    persistence: &Mutex<PersistenceSnapshot>,
+) -> bool {
     match event {
         PrnsEvent::Message(message) => publish_message(sink, message),
         PrnsEvent::Diagnostic(diagnostic) => {
             if let Some(diagnostic) = translate_diagnostic(diagnostic) {
+                update_persistence_snapshot(persistence, &diagnostic);
                 sink.publish_diagnostic(diagnostic);
             }
             true
         }
+    }
+}
+
+fn update_persistence_snapshot(
+    persistence: &Mutex<PersistenceSnapshot>,
+    diagnostic: &DiagnosticEvent,
+) {
+    let mut persistence = lock(persistence);
+    match diagnostic {
+        DiagnosticEvent::PersistenceRestored { .. } => {
+            persistence.restored = true;
+            persistence.last_failure_detail = None;
+        }
+        DiagnosticEvent::PersistenceFlushed { cause, .. } => {
+            persistence.last_flush_cause = Some(*cause);
+            persistence.last_failure_detail = None;
+        }
+        DiagnosticEvent::PersistenceFlushFailed { cause, target } => {
+            persistence.last_failure_detail = Some(format!("{cause:?}:{target:?}"));
+        }
+        _ => {}
     }
 }
 
@@ -1298,9 +2758,31 @@ fn publish_message(sink: &dyn NativeEventSink, message: Message<'_>) -> bool {
 
 fn translate_diagnostic(diagnostic: Diagnostic) -> Option<DiagnosticEvent> {
     Some(match diagnostic {
-        Diagnostic::PersistenceRestored { .. }
-        | Diagnostic::PersistenceFlushed { .. }
-        | Diagnostic::PersistenceFlushFailed { .. } => return None,
+        Diagnostic::PersistenceRestored {
+            routes,
+            destination_identities,
+            tunnels,
+            ratchets,
+            refused,
+            dropped,
+        } => DiagnosticEvent::PersistenceRestored {
+            routes: routes.into(),
+            destination_identities: destination_identities.into(),
+            tunnels: tunnels.into(),
+            ratchets: ratchets.into(),
+            refused: refused.into(),
+            dropped: dropped.into(),
+        },
+        Diagnostic::PersistenceFlushed { cause, target } => DiagnosticEvent::PersistenceFlushed {
+            cause: persistence_flush_cause(cause),
+            target: persistence_flush_target(target),
+        },
+        Diagnostic::PersistenceFlushFailed { cause, target } => {
+            DiagnosticEvent::PersistenceFlushFailed {
+                cause: persistence_flush_cause(cause),
+                target: persistence_flush_target(target),
+            }
+        }
         Diagnostic::AnnounceHeard {
             destination,
             hops,
@@ -1386,11 +2868,30 @@ fn translate_diagnostic(diagnostic: Diagnostic) -> Option<DiagnosticEvent> {
     })
 }
 
+fn persistence_flush_cause(cause: EnginePersistenceFlushCause) -> PersistenceFlushCause {
+    match cause {
+        EnginePersistenceFlushCause::Startup => PersistenceFlushCause::Startup,
+        EnginePersistenceFlushCause::Interval => PersistenceFlushCause::Interval,
+        EnginePersistenceFlushCause::RouteChange => PersistenceFlushCause::RouteChange,
+        EnginePersistenceFlushCause::RatchetRotation => PersistenceFlushCause::RatchetRotation,
+        EnginePersistenceFlushCause::Shutdown => PersistenceFlushCause::Shutdown,
+    }
+}
+
+fn persistence_flush_target(target: EnginePersistenceFlushTarget) -> PersistenceFlushTarget {
+    match target {
+        EnginePersistenceFlushTarget::RoutingState => PersistenceFlushTarget::RoutingState,
+        EnginePersistenceFlushTarget::Ratchets => PersistenceFlushTarget::Ratchets,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use prns_host::{DestinationName, PrnsLimits, SingleDestinationConfig};
+    use std::fs;
     use std::sync::atomic::AtomicUsize;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     struct Sink;
 
@@ -1412,14 +2913,232 @@ mod tests {
         fn failed(&self, _detail: String) {}
     }
 
+    struct RecordingSink {
+        diagnostics: Mutex<Vec<DiagnosticEvent>>,
+        changed: Condvar,
+    }
+
+    impl RecordingSink {
+        fn new() -> Self {
+            Self {
+                diagnostics: Mutex::new(Vec::new()),
+                changed: Condvar::new(),
+            }
+        }
+
+        fn wait_for(&self, predicate: impl Fn(&DiagnosticEvent) -> bool) -> bool {
+            let diagnostics = lock(&self.diagnostics);
+            let waited = self
+                .changed
+                .wait_timeout_while(diagnostics, Duration::from_secs(2), |events| {
+                    !events.iter().any(&predicate)
+                })
+                .unwrap_or_else(PoisonError::into_inner);
+            waited.0.iter().any(predicate)
+        }
+
+        fn diagnostics(&self) -> Vec<DiagnosticEvent> {
+            lock(&self.diagnostics).clone()
+        }
+    }
+
+    impl NativeEventSink for RecordingSink {
+        fn running(&self) {}
+
+        fn publish_application(&self, _event: ApplicationEvent) -> bool {
+            true
+        }
+
+        fn publish_resource(&self, _event: ResourceAvailable, _body: Vec<u8>) -> bool {
+            true
+        }
+
+        fn publish_diagnostic(&self, event: DiagnosticEvent) {
+            lock(&self.diagnostics).push(event);
+            self.changed.notify_all();
+        }
+
+        fn stopped(&self) {}
+
+        fn failed(&self, _detail: String) {}
+    }
+
     fn config() -> HostConfig {
         HostConfig {
             identity: IdentityConfig::GenerateEphemeral,
+            persistence: PersistenceConfig::Ephemeral,
             role: HostRole::Endpoint,
             destinations: Vec::new(),
             required_capabilities: Vec::new(),
             limits: PrnsLimits::balanced(),
         }
+    }
+
+    fn temporary_root(label: &str) -> Result<std::path::PathBuf, String> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| error.to_string())?;
+        Ok(std::env::temp_dir().join(format!(
+            "prns-host-native-{label}-{}-{}",
+            std::process::id(),
+            now.as_nanos()
+        )))
+    }
+
+    fn persistent_config(root: &Path) -> HostConfig {
+        persistent_endpoint(root, Vec::new(), Vec::new(), PrnsLimits::balanced())
+    }
+
+    fn serial_line() -> prns_host::SerialLineConfig {
+        prns_host::SerialLineConfig {
+            baud: 115_200,
+            data_bits: prns_host::SerialDataBits::Eight,
+            parity: prns_host::SerialParity::None,
+            stop_bits: prns_host::SerialStopBits::One,
+        }
+    }
+
+    fn radio() -> prns_host::RNodeRadioConfig {
+        prns_host::RNodeRadioConfig {
+            frequency_hz: 915_000_000,
+            bandwidth_hz: 125_000,
+            tx_power_dbm: 14,
+            spreading_factor: 8,
+            coding_rate: 5,
+        }
+    }
+
+    #[test]
+    fn backend_info_reports_every_compiled_stable_interface() {
+        let backend = native_backend_info();
+        for kind in native_interface_kinds() {
+            assert!(backend.supports_interface(*kind));
+        }
+        assert!(!backend.supports_interface(InterfaceKind::BrowserRendezvous));
+        assert_eq!(native_interface_kinds().len(), 18);
+    }
+
+    #[test]
+    fn every_supported_typed_interface_uses_the_effective_planner() -> Result<(), String> {
+        let configs = vec![
+            InterfaceConfig::AutoLan {
+                group_id: Some("sdk-group".to_string()),
+                discovery_scope: Some(prns_host::DiscoveryScope::Organization),
+                discovery_port: Some(29_710),
+                data_port: Some(42_444),
+                devices: vec!["eth0".to_string()],
+                ignored_devices: vec!["lo".to_string()],
+                multicast_address_type: Some(prns_host::MulticastAddressType::Permanent),
+            },
+            InterfaceConfig::TcpClient {
+                target: "127.0.0.1:4242".to_string(),
+                bitrate: Bitrate::BitsPerSecond(1_000_000),
+            },
+            InterfaceConfig::TcpServer {
+                bind: "[::1]:4242".to_string(),
+                bitrate: Bitrate::Auto,
+            },
+            InterfaceConfig::Udp {
+                local: "0.0.0.0:4242".to_string(),
+                peer: "127.0.0.1:4243".to_string(),
+                bitrate: Bitrate::BitsPerSecond(2_000_000),
+            },
+            InterfaceConfig::Serial {
+                port: "/dev/ttyUSB0".to_string(),
+                line: serial_line(),
+            },
+            InterfaceConfig::Kiss {
+                port: "/dev/ttyUSB0".to_string(),
+                line: serial_line(),
+                flow_control: true,
+                preamble_millis: 150,
+                transmit_tail_millis: 20,
+                persistence: 64,
+                slot_time_millis: 20,
+                station_callsign: Some("N0CALL".to_string()),
+                station_interval_seconds: Some(600),
+            },
+            InterfaceConfig::Ax25Kiss {
+                port: "/dev/ttyUSB0".to_string(),
+                line: serial_line(),
+                flow_control: true,
+                preamble_millis: 150,
+                transmit_tail_millis: 20,
+                persistence: 64,
+                slot_time_millis: 20,
+                callsign: "N0CALL".to_string(),
+                ssid: 1,
+            },
+            InterfaceConfig::RNode {
+                port: "/dev/ttyUSB0".to_string(),
+                radio: radio(),
+                flow_control: true,
+                station_callsign: Some("N0CALL".to_string()),
+                station_interval_seconds: Some(600),
+                airtime_limit_short_centi_percent: Some(125),
+                airtime_limit_long_centi_percent: Some(250),
+            },
+            InterfaceConfig::MultiRNode {
+                port: "/dev/ttyUSB0".to_string(),
+                station_callsign: Some("N0CALL".to_string()),
+                station_interval_seconds: Some(600),
+                members: vec![prns_host::MultiRNodeMemberConfig {
+                    name: "uplink".to_string(),
+                    virtual_port: 1,
+                    radio: radio(),
+                    flow_control: true,
+                    outgoing: true,
+                }],
+            },
+            InterfaceConfig::Pipe {
+                command: vec![
+                    "printf".to_string(),
+                    "two words".to_string(),
+                    "single'quote".to_string(),
+                ],
+                respawn_delay_millis: 1_500,
+            },
+            InterfaceConfig::BackboneClient {
+                target: "backbone.example:4242".to_string(),
+                bitrate: Bitrate::Auto,
+            },
+            InterfaceConfig::BackboneServer {
+                bind: "0.0.0.0:4242".to_string(),
+                bitrate: Bitrate::Auto,
+            },
+            InterfaceConfig::I2p {
+                peers: vec!["example.i2p".to_string()],
+                connectable: false,
+            },
+            InterfaceConfig::Weave {
+                port: "/dev/ttyACM0".to_string(),
+            },
+            InterfaceConfig::AutomaticUsb,
+            InterfaceConfig::AutomaticBluetoothLe,
+            InterfaceConfig::WebSocketClient {
+                target: "ws://127.0.0.1:4242".to_string(),
+            },
+            InterfaceConfig::WebSocketServer {
+                bind: "127.0.0.1:4242".to_string(),
+            },
+        ];
+        for config in configs {
+            config.validate().map_err(|error| format!("{error:?}"))?;
+            let plan = typed_interface_plan(&config).map_err(|error| format!("{error:?}"))?;
+            if plan.interfaces.is_empty() {
+                return Err(format!(
+                    "{:?} produced no planned interfaces",
+                    config.kind()
+                ));
+            }
+        }
+        assert!(matches!(
+            typed_interface_plan(&InterfaceConfig::BrowserRendezvous {
+                url: "ws://127.0.0.1:4242".to_string(),
+            }),
+            Err(CommandFailure::UnsupportedByBackend)
+        ));
+        Ok(())
     }
 
     #[test]
@@ -1483,6 +3202,68 @@ mod tests {
     }
 
     #[test]
+    fn snapshots_track_interface_changes_consistently() -> Result<(), String> {
+        let host =
+            NativeHost::start(config(), Arc::new(Sink)).map_err(|error| format!("{error:?}"))?;
+        let initial = host
+            .snapshot(Some(Duration::from_secs(2)))
+            .map_err(|error| format!("{error:?}"))?;
+        if initial.revision != 1
+            || !initial.interfaces.is_empty()
+            || !initial.routes.is_empty()
+            || initial.active_link_count != 0
+            || initial.runtime.interface_count != 0
+        {
+            return Err("initial snapshot was inconsistent".to_string());
+        }
+        let attached = host
+            .submit(HostCommand::AttachInterface {
+                config: InterfaceConfig::TcpClient {
+                    target: "127.0.0.1:9".to_string(),
+                    bitrate: Bitrate::Auto,
+                },
+            })
+            .map_err(|error| format!("{error:?}"))?;
+        let interface = match attached.wait(Some(Duration::from_secs(2))) {
+            CommandWait::Completed(Ok(CommandOutcome::InterfaceAttached { interface })) => {
+                interface
+            }
+            other => return Err(format!("{other:?}")),
+        };
+        let attached_snapshot = host
+            .snapshot(Some(Duration::from_secs(2)))
+            .map_err(|error| format!("{error:?}"))?;
+        if attached_snapshot.revision != 2
+            || attached_snapshot.interfaces.len() != 1
+            || attached_snapshot.interfaces[0].interface_id != interface
+            || attached_snapshot.interfaces[0].kind != Some(InterfaceKind::TcpClient)
+            || attached_snapshot.runtime.interface_count != 1
+        {
+            return Err("attached interface snapshot was inconsistent".to_string());
+        }
+        let detached = host
+            .submit(HostCommand::DetachInterface { interface })
+            .map_err(|error| format!("{error:?}"))?;
+        if !matches!(
+            detached.wait(Some(Duration::from_secs(2))),
+            CommandWait::Completed(Ok(CommandOutcome::InterfaceDetached { .. }))
+        ) {
+            return Err("interface did not detach".to_string());
+        }
+        let detached_snapshot = host
+            .snapshot(Some(Duration::from_secs(2)))
+            .map_err(|error| format!("{error:?}"))?;
+        if detached_snapshot.revision != 3
+            || !detached_snapshot.interfaces.is_empty()
+            || detached_snapshot.runtime.interface_count != 0
+        {
+            return Err("detached interface snapshot was inconsistent".to_string());
+        }
+        host.stop();
+        Ok(())
+    }
+
+    #[test]
     fn configured_host_registers_request_handlers() -> Result<(), String> {
         let mut config = config();
         config
@@ -1492,6 +3273,10 @@ mod tests {
                     .map_err(|error| format!("{error:?}"))?,
                 identity: DestinationIdentityConfig::HostIdentity,
                 announce_app_data: Vec::new(),
+                proof: DestinationProofStrategy::ProveAll,
+                link_requests: DestinationLinkRequestPolicy::AcceptAll,
+                ratchet: DestinationRatchetPolicy::NoRatchets,
+                resource_strategy: ResourceStrategy::Refuse,
                 request_handlers: vec![RequestHandlerConfig {
                     path: "/echo".to_string(),
                     policy: RequestPolicy::AllowList,
@@ -1516,5 +3301,121 @@ mod tests {
         }
         host.stop();
         Ok(())
+    }
+
+    #[test]
+    fn persistent_host_restores_identity_and_flushes_on_shutdown() -> Result<(), String> {
+        let root = temporary_root("restart")?;
+        let first_sink = Arc::new(RecordingSink::new());
+        let first = NativeHost::start(persistent_config(&root), first_sink.clone())
+            .map_err(|error| format!("{error:?}"))?;
+        let identity = first.identity_hash();
+        if !first_sink
+            .wait_for(|event| matches!(event, DiagnosticEvent::PersistenceRestored { .. }))
+        {
+            return Err("first host did not report persistence restoration".to_string());
+        }
+        first.stop();
+        if !first_sink.diagnostics().iter().any(|event| {
+            matches!(
+                event,
+                DiagnosticEvent::PersistenceFlushed {
+                    cause: PersistenceFlushCause::Shutdown,
+                    ..
+                }
+            )
+        }) {
+            return Err("first host did not flush persistence during shutdown".to_string());
+        }
+
+        let second_sink = Arc::new(RecordingSink::new());
+        let second = NativeHost::start(persistent_config(&root), second_sink.clone())
+            .map_err(|error| format!("{error:?}"))?;
+        if second.identity_hash() != identity {
+            return Err("persistent host identity changed across restart".to_string());
+        }
+        if !second_sink
+            .wait_for(|event| matches!(event, DiagnosticEvent::PersistenceRestored { .. }))
+        {
+            return Err("second host did not report persistence restoration".to_string());
+        }
+        second.stop();
+        fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn persistence_path_must_be_a_directory() -> Result<(), String> {
+        let root = temporary_root("not-directory")?;
+        fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let state = root.join("state");
+        fs::write(&state, b"not a directory").map_err(|error| error.to_string())?;
+        let result = NativeHost::start(persistent_config(&root), Arc::new(Sink));
+        let expected = NativeStartError::Persistence(PersistenceStartError::NotDirectory {
+            path: state.to_string_lossy().into_owned(),
+        });
+        if result.err() != Some(expected) {
+            return Err("non-directory persistence path was not typed".to_string());
+        }
+        fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    fn isolated_upload(declared_length: u64) -> (NativeUpload, UploadSource) {
+        let completion = Arc::new(CommandCompletion::new(None));
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let (chunks, source) = mpsc::channel(UPLOAD_CHUNK_CAPACITY);
+        (
+            NativeUpload {
+                chunks: Mutex::new(Some(chunks)),
+                completion,
+                cancelled,
+                declared_length,
+                written: AtomicU64::new(0),
+                finished: AtomicBool::new(false),
+            },
+            UploadSource::new(source),
+        )
+    }
+
+    #[test]
+    fn upload_reports_overrun_and_early_eof() {
+        let (overrun, _source) = isolated_upload(1);
+        assert_eq!(overrun.write(&[1, 2]), Err(UploadWriteError::LengthOverrun));
+        assert!(matches!(
+            overrun.finish().wait(Some(Duration::ZERO)),
+            CommandWait::Completed(Err(CommandFailure::ResourceLengthOverrun))
+        ));
+
+        let (early, _source) = isolated_upload(2);
+        assert_eq!(early.write(&[1]), Ok(()));
+        assert!(matches!(
+            early.finish().wait(Some(Duration::ZERO)),
+            CommandWait::Completed(Err(CommandFailure::ResourceEarlyEof))
+        ));
+    }
+
+    #[test]
+    fn upload_is_bounded_and_release_cancels() {
+        let (upload, _source) = isolated_upload(16);
+        for _ in 0..UPLOAD_CHUNK_CAPACITY {
+            assert_eq!(upload.write(&[1]), Ok(()));
+        }
+        assert_eq!(upload.write(&[1]), Err(UploadWriteError::WouldBlock));
+        let command = CommandHandle {
+            completion: Arc::clone(&upload.completion),
+        };
+        drop(upload);
+        assert!(matches!(
+            command.wait(Some(Duration::ZERO)),
+            CommandWait::Completed(Err(CommandFailure::ResourceUploadCancelled))
+        ));
+    }
+
+    #[test]
+    fn upload_rejects_oversized_chunks() {
+        let (upload, _source) = isolated_upload((MAX_UPLOAD_CHUNK_BYTES + 1) as u64);
+        let chunk = vec![0; MAX_UPLOAD_CHUNK_BYTES + 1];
+        assert_eq!(upload.write(&chunk), Err(UploadWriteError::ChunkTooLarge));
     }
 }

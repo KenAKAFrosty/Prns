@@ -17,6 +17,60 @@ use crate::routes::Route;
 
 use view::{BoardTargetCard, GuidedFlasher, LocalBuildUnavailablePanel, UnavailablePanel};
 
+#[cfg(any(test, feature = "browser-test-fixture"))]
+fn validate_release_0_2_6_fixture(
+    manifest: &[u8],
+) -> Result<prns_flash_manifest::ValidatedFlashManifest, Box<dyn std::error::Error>> {
+    let mut catalog = prns_flash_manifest::board_catalog()?;
+    let historical_heltec = catalog
+        .boards
+        .iter_mut()
+        .find(|board| board.slug == "heltec-v4")
+        .ok_or("0.2.6 fixture board is missing from the current catalog")?;
+    historical_heltec.display_name = "Heltec LoRa 32 V4".to_string();
+    historical_heltec.silicon = "ESP32-S3 + SX1262".to_string();
+    let historical_targets = prns_flash_manifest::ManifestTargetSetPolicy::local_development(
+        &catalog,
+        &["heltec-v4", "t-beam-supreme", "t-echo", "xiao-esp32-c6"],
+    )?;
+
+    Ok(
+        prns_flash_manifest::ValidatedFlashManifest::from_json_with_target_set(
+            manifest,
+            &catalog,
+            &historical_targets,
+        )?,
+    )
+}
+
+#[cfg(test)]
+fn release_0_2_6_fixture(
+) -> Result<prns_flash_manifest::ValidatedFlashManifest, Box<dyn std::error::Error>> {
+    const MANIFEST: &[u8] = include_bytes!(
+        "../../../web-flasher/browser/fixtures/signed-candidate/releases/0.2.6/flash-manifest.json"
+    );
+
+    validate_release_0_2_6_fixture(MANIFEST)
+}
+
+#[cfg(test)]
+#[test]
+fn release_0_2_6_fixture_retains_its_historical_board_set() -> Result<(), Box<dyn std::error::Error>>
+{
+    let manifest = release_0_2_6_fixture()?;
+    let boards = manifest
+        .targets()
+        .iter()
+        .map(|target| target.board_id().as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        boards,
+        ["heltec-v4", "t-beam-supreme", "xiao-esp32-c6", "t-echo"]
+    );
+    Ok(())
+}
+
 #[component]
 pub fn FlashPage() -> Element {
     rsx! { FlashExperience { selected_slug: None } }
@@ -71,7 +125,7 @@ fn FlashExperience(selected_slug: Option<String>) -> Element {
                 if selected_target.is_some() { "Change board" } else { "Select the exact board" }
             }
             p { class: "mt-3 max-w-3xl leading-relaxed text-soft",
-                "The four shipping targets are first. Hardware still in bring-up remains visible, but cannot be flashed from a public release."
+                "The five shipping targets are first. Hardware still in bring-up remains visible, but cannot be flashed from a public release."
             }
             div { class: "mt-6 grid gap-4 md:grid-cols-2",
                 for board in SHIPPING_BOARD_TARGETS.iter() {

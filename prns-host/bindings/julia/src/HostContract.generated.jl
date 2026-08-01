@@ -1,6 +1,6 @@
 const HOST_CONTRACT_ABI = UInt32(1)
 const HOST_SCHEMA_VERSION = UInt32(1)
-const PRODUCT_VERSION = "0.3.1"
+const PRODUCT_VERSION = "0.3.2"
 const DESTINATION_HASH_LENGTH = 16
 const IDENTITY_HASH_LENGTH = 16
 const INTERFACE_ID_LENGTH = 8
@@ -10,6 +10,7 @@ const REQUEST_ID_LENGTH = 16
 const REQUEST_PATH_HASH_LENGTH = 16
 const RESOURCE_HASH_LENGTH = 32
 const IDENTITY_SECRET_LENGTH = 64
+const SAFE_UINT_MAX = UInt64(9007199254740991)
 const BALANCED_PENDING_COMMANDS = 256
 const BALANCED_APPLICATION_EVENTS = 1024
 const BALANCED_RETAINED_EVENT_BYTES = 8388608
@@ -29,6 +30,9 @@ const BALANCED_DIAGNOSTICS = 1024
     StatusBackendFailed = 10
     StatusPanic = 11
     StatusInterrupted = 12
+    StatusUnsupported = 13
+    StatusPermissionDenied = 14
+    StatusUnavailable = 15
 end
 
 @enum BackendKind::UInt32 begin
@@ -52,6 +56,70 @@ end
     CapabilityWeave = 12
 end
 
+@enum InterfaceKind::UInt32 begin
+    InterfaceKindAutoLan = 1
+    InterfaceKindTcpClient = 2
+    InterfaceKindTcpServer = 3
+    InterfaceKindUdp = 4
+    InterfaceKindSerial = 5
+    InterfaceKindKiss = 6
+    InterfaceKindAx25Kiss = 7
+    InterfaceKindRNode = 8
+    InterfaceKindMultiRNode = 9
+    InterfaceKindPipe = 10
+    InterfaceKindBackboneClient = 11
+    InterfaceKindBackboneServer = 12
+    InterfaceKindI2p = 13
+    InterfaceKindWeave = 14
+    InterfaceKindAutomaticUsb = 15
+    InterfaceKindAutomaticBluetoothLe = 16
+    InterfaceKindWebSocketClient = 17
+    InterfaceKindWebSocketServer = 18
+    InterfaceKindBrowserRendezvous = 19
+end
+
+@enum InterfaceHealth::UInt32 begin
+    InterfaceHealthInitializing = 1
+    InterfaceHealthConnected = 2
+    InterfaceHealthDegraded = 3
+    InterfaceHealthReconnecting = 4
+    InterfaceHealthFailed = 5
+    InterfaceHealthDisconnected = 6
+    InterfaceHealthDisabled = 7
+    InterfaceHealthUnknown = 8
+end
+
+@enum DiscoveryScope::UInt32 begin
+    DiscoveryScopeLink = 1
+    DiscoveryScopeAdmin = 2
+    DiscoveryScopeSite = 3
+    DiscoveryScopeOrganization = 4
+    DiscoveryScopeGlobal = 5
+end
+
+@enum MulticastAddressType::UInt32 begin
+    MulticastAddressTypeTemporary = 1
+    MulticastAddressTypePermanent = 2
+end
+
+@enum SerialDataBits::UInt32 begin
+    SerialDataBitsFive = 5
+    SerialDataBitsSix = 6
+    SerialDataBitsSeven = 7
+    SerialDataBitsEight = 8
+end
+
+@enum SerialParity::UInt32 begin
+    SerialParityNone = 1
+    SerialParityEven = 2
+    SerialParityOdd = 3
+end
+
+@enum SerialStopBits::UInt32 begin
+    SerialStopBitsOne = 1
+    SerialStopBitsTwo = 2
+end
+
 @enum HostRole::UInt32 begin
     HostRoleEndpoint = 1
     HostRoleTransport = 2
@@ -61,6 +129,11 @@ end
     IdentityConfigKindExisting = 1
     IdentityConfigKindGenerateEphemeral = 2
     IdentityConfigKindLoadOrCreate = 3
+end
+
+@enum PersistenceConfigKind::UInt32 begin
+    PersistenceConfigKindEphemeral = 1
+    PersistenceConfigKindDirectory = 2
 end
 
 @enum DestinationConfigKind::UInt32 begin
@@ -148,6 +221,14 @@ end
     CommandFailureKindChannelWindowFull = 30
     CommandFailureKindChannelUntrackable = 31
     CommandFailureKindInvalidChannelMessageType = 32
+    CommandFailureKindInvalidConfiguration = 33
+    CommandFailureKindResourceUploadCancelled = 34
+    CommandFailureKindResourceEarlyEof = 35
+    CommandFailureKindResourceLengthOverrun = 36
+    CommandFailureKindPermissionDenied = 37
+    CommandFailureKindDeviceUnavailable = 38
+    CommandFailureKindConnectFailed = 39
+    CommandFailureKindBackendFailed = 40
 end
 
 @enum DeliveryEvidenceKind::UInt32 begin
@@ -204,6 +285,22 @@ end
     DiagnosticEventKindRouteDropped = 214
     DiagnosticEventKindBackendDiagnostic = 215
     DiagnosticEventKindDiagnosticsDropped = 216
+    DiagnosticEventKindPersistenceRestored = 217
+    DiagnosticEventKindPersistenceFlushed = 218
+    DiagnosticEventKindPersistenceFlushFailed = 219
+end
+
+@enum PersistenceFlushCause::UInt32 begin
+    PersistenceFlushCauseStartup = 1
+    PersistenceFlushCauseInterval = 2
+    PersistenceFlushCauseRouteChange = 3
+    PersistenceFlushCauseRatchetRotation = 4
+    PersistenceFlushCauseShutdown = 5
+end
+
+@enum PersistenceFlushTarget::UInt32 begin
+    PersistenceFlushTargetRoutingState = 1
+    PersistenceFlushTargetRatchets = 2
 end
 
 @enum EventField::UInt32 begin
@@ -238,6 +335,14 @@ end
     EventFieldDroppedCount = 29
     EventFieldHops = 30
     EventFieldStream = 31
+    EventFieldRoutes = 32
+    EventFieldDestinationIdentities = 33
+    EventFieldTunnels = 34
+    EventFieldRatchets = 35
+    EventFieldRefused = 36
+    EventFieldDropped = 37
+    EventFieldPersistenceCause = 38
+    EventFieldPersistenceTarget = 39
 end
 
 struct DestinationHash
@@ -338,9 +443,126 @@ struct RequestHandlerConfig
     policy::RequestPolicy
 end
 
+struct SerialLineConfig
+    baud::UInt32
+    data_bits::SerialDataBits
+    parity::SerialParity
+    stop_bits::SerialStopBits
+end
+
+struct RNodeRadioConfig
+    frequency_hz::UInt64
+    bandwidth_hz::UInt32
+    tx_power_dbm::Int16
+    spreading_factor::UInt8
+    coding_rate::UInt8
+end
+
+struct MultiRNodeMemberConfig
+    name::String
+    virtual_port::UInt8
+    radio::RNodeRadioConfig
+    flow_control::Bool
+    outgoing::Bool
+end
+
+struct BackendInfo
+    backend::BackendKind
+    capabilities::Vector{Capability}
+    interface_kinds::Vector{InterfaceKind}
+end
+
+struct InterfaceSnapshot
+    interface_id::InterfaceId
+    name::Union{Nothing,String}
+    kind::Union{Nothing,InterfaceKind}
+    health::InterfaceHealth
+    failure_detail::Union{Nothing,String}
+    rx_bytes::UInt64
+    tx_bytes::UInt64
+    rx_bps::Union{Nothing,UInt64}
+    tx_bps::Union{Nothing,UInt64}
+    route_count::UInt32
+    link_count::UInt32
+    transported_link_count::UInt32
+end
+
+struct RouteSnapshot
+    destination::DestinationHash
+    hops::UInt8
+    via_identity::Union{Nothing,IdentityHash}
+    interface_id::InterfaceId
+    learned_at_millis::UInt64
+    last_relayed_at_millis::UInt64
+    expires_at_millis::UInt64
+end
+
+struct DestinationIdentitySnapshot
+    destination::DestinationHash
+    identity::IdentityHash
+end
+
+struct RuntimeHealthSnapshot
+    running::Bool
+    uptime_millis::UInt64
+    interface_count::UInt32
+    online_interface_count::UInt32
+    route_count::UInt32
+    link_count::UInt32
+    transported_link_count::UInt32
+    rx_bytes::UInt64
+    tx_bytes::UInt64
+    rx_bps::UInt64
+    tx_bps::UInt64
+end
+
+struct PersistenceSnapshot
+    persistent::Bool
+    restored::Bool
+    last_flush_cause::Union{Nothing,PersistenceFlushCause}
+    last_failure_detail::Union{Nothing,String}
+end
+
+struct HostSnapshot
+    revision::UInt64
+    backend::BackendInfo
+    interfaces::Vector{InterfaceSnapshot}
+    routes::Vector{RouteSnapshot}
+    active_link_count::UInt32
+    destination_identities::Vector{DestinationIdentitySnapshot}
+    runtime::RuntimeHealthSnapshot
+    persistence::PersistenceSnapshot
+end
+
 abstract type ResourceStream end
 
 abstract type IdentityConfig end
+
+abstract type PersistenceConfig end
+
+abstract type InterfaceConfig end
+
+abstract type DestinationIdentityConfig end
+
+abstract type Bitrate end
+
+abstract type ResponseTimeout end
+
+abstract type ResourceCompression end
+
+abstract type ResourceStrategy end
+
+abstract type DestinationConfig end
+
+abstract type HostCommand end
+
+abstract type CommandOutcome end
+
+abstract type CommandFailure end
+
+abstract type ApplicationEvent end
+
+abstract type DiagnosticEvent end
 
 struct IdentityConfigExisting <: IdentityConfig
     secret::IdentitySecret
@@ -353,7 +575,126 @@ struct IdentityConfigLoadOrCreate <: IdentityConfig
     path::String
 end
 
-abstract type DestinationIdentityConfig end
+struct PersistenceConfigEphemeral <: PersistenceConfig
+end
+
+struct PersistenceConfigDirectory <: PersistenceConfig
+    path::String
+end
+
+struct InterfaceConfigAutoLan <: InterfaceConfig
+    group_id::Union{Nothing,String}
+    discovery_scope::Union{Nothing,DiscoveryScope}
+    discovery_port::Union{Nothing,UInt16}
+    data_port::Union{Nothing,UInt16}
+    devices::Vector{String}
+    ignored_devices::Vector{String}
+    multicast_address_type::Union{Nothing,MulticastAddressType}
+end
+
+struct InterfaceConfigTcpClient <: InterfaceConfig
+    target::String
+    bitrate::Bitrate
+end
+
+struct InterfaceConfigTcpServer <: InterfaceConfig
+    bind::String
+    bitrate::Bitrate
+end
+
+struct InterfaceConfigUdp <: InterfaceConfig
+    var"local"::String
+    peer::String
+    bitrate::Bitrate
+end
+
+struct InterfaceConfigSerial <: InterfaceConfig
+    port::String
+    line::SerialLineConfig
+end
+
+struct InterfaceConfigKiss <: InterfaceConfig
+    port::String
+    line::SerialLineConfig
+    flow_control::Bool
+    preamble_millis::UInt32
+    transmit_tail_millis::UInt32
+    persistence::UInt8
+    slot_time_millis::UInt32
+    station_callsign::Union{Nothing,String}
+    station_interval_seconds::Union{Nothing,UInt64}
+end
+
+struct InterfaceConfigAx25Kiss <: InterfaceConfig
+    port::String
+    line::SerialLineConfig
+    flow_control::Bool
+    preamble_millis::UInt32
+    transmit_tail_millis::UInt32
+    persistence::UInt8
+    slot_time_millis::UInt32
+    callsign::String
+    ssid::UInt8
+end
+
+struct InterfaceConfigRNode <: InterfaceConfig
+    port::String
+    radio::RNodeRadioConfig
+    flow_control::Bool
+    station_callsign::Union{Nothing,String}
+    station_interval_seconds::Union{Nothing,UInt64}
+    airtime_limit_short_centi_percent::Union{Nothing,UInt16}
+    airtime_limit_long_centi_percent::Union{Nothing,UInt16}
+end
+
+struct InterfaceConfigMultiRNode <: InterfaceConfig
+    port::String
+    station_callsign::Union{Nothing,String}
+    station_interval_seconds::Union{Nothing,UInt64}
+    members::Vector{MultiRNodeMemberConfig}
+end
+
+struct InterfaceConfigPipe <: InterfaceConfig
+    command::Vector{String}
+    respawn_delay_millis::UInt64
+end
+
+struct InterfaceConfigBackboneClient <: InterfaceConfig
+    target::String
+    bitrate::Bitrate
+end
+
+struct InterfaceConfigBackboneServer <: InterfaceConfig
+    bind::String
+    bitrate::Bitrate
+end
+
+struct InterfaceConfigI2p <: InterfaceConfig
+    peers::Vector{String}
+    connectable::Bool
+end
+
+struct InterfaceConfigWeave <: InterfaceConfig
+    port::String
+end
+
+struct InterfaceConfigAutomaticUsb <: InterfaceConfig
+end
+
+struct InterfaceConfigAutomaticBluetoothLe <: InterfaceConfig
+end
+
+struct InterfaceConfigWebSocketClient <: InterfaceConfig
+    target::String
+end
+
+struct InterfaceConfigWebSocketServer <: InterfaceConfig
+    bind::String
+end
+
+struct InterfaceConfigBrowserRendezvous <: InterfaceConfig
+    url::String
+end
 
 struct DestinationIdentityConfigHostIdentity <: DestinationIdentityConfig
 end
@@ -362,16 +703,12 @@ struct DestinationIdentityConfigDedicatedIdentity <: DestinationIdentityConfig
     identity::IdentityConfig
 end
 
-abstract type Bitrate end
-
 struct BitrateAuto <: Bitrate
 end
 
 struct BitrateBitsPerSecond <: Bitrate
     value::UInt64
 end
-
-abstract type ResponseTimeout end
 
 struct ResponseTimeoutLinkDefault <: ResponseTimeout
 end
@@ -380,15 +717,11 @@ struct ResponseTimeoutExact <: ResponseTimeout
     millis::UInt64
 end
 
-abstract type ResourceCompression end
-
 struct ResourceCompressionAuto <: ResourceCompression
 end
 
 struct ResourceCompressionNever <: ResourceCompression
 end
-
-abstract type ResourceStrategy end
 
 struct ResourceStrategyRefuse <: ResourceStrategy
 end
@@ -397,8 +730,6 @@ struct ResourceStrategyAccept <: ResourceStrategy
     maximum_uncompressed_bytes::UInt64
     accept_compressed::Bool
 end
-
-abstract type DestinationConfig end
 
 struct DestinationConfigPlain <: DestinationConfig
     name::DestinationName
@@ -410,8 +741,6 @@ struct DestinationConfigSingle <: DestinationConfig
     announce_app_data::Union{Nothing,Vector{UInt8}}
     request_handlers::Vector{RequestHandlerConfig}
 end
-
-abstract type HostCommand end
 
 struct HostCommandAnnounce <: HostCommand
     destination::DestinationHash
@@ -508,7 +837,9 @@ struct HostCommandAllowRequester <: HostCommand
     identity::IdentityHash
 end
 
-abstract type CommandOutcome end
+struct HostCommandAttachInterface <: HostCommand
+    config::InterfaceConfig
+end
 
 struct CommandOutcomeAnnounced <: CommandOutcome
 end
@@ -559,8 +890,6 @@ end
 
 struct CommandOutcomeRequesterAllowed <: CommandOutcome
 end
-
-abstract type CommandFailure end
 
 struct CommandFailureNodeStopped <: CommandFailure
 end
@@ -660,7 +989,34 @@ end
 struct CommandFailureInvalidChannelMessageType <: CommandFailure
 end
 
-abstract type ApplicationEvent end
+struct CommandFailureInvalidConfiguration <: CommandFailure
+    detail::String
+end
+
+struct CommandFailureResourceUploadCancelled <: CommandFailure
+end
+
+struct CommandFailureResourceEarlyEof <: CommandFailure
+end
+
+struct CommandFailureResourceLengthOverrun <: CommandFailure
+end
+
+struct CommandFailurePermissionDenied <: CommandFailure
+    detail::String
+end
+
+struct CommandFailureDeviceUnavailable <: CommandFailure
+    detail::String
+end
+
+struct CommandFailureConnectFailed <: CommandFailure
+    detail::String
+end
+
+struct CommandFailureBackendFailed <: CommandFailure
+    detail::String
+end
 
 struct ApplicationEventSingleDelivery <: ApplicationEvent
     destination::DestinationHash
@@ -720,8 +1076,6 @@ struct ApplicationEventChannelMessage <: ApplicationEvent
     message_type::UInt16
     data::Vector{UInt8}
 end
-
-abstract type DiagnosticEvent end
 
 struct DiagnosticEventAnnounceHeard <: DiagnosticEvent
     destination::DestinationHash
@@ -808,4 +1162,335 @@ end
 
 struct DiagnosticEventDiagnosticsDropped <: DiagnosticEvent
     count::UInt128
+end
+
+struct DiagnosticEventPersistenceRestored <: DiagnosticEvent
+    routes::UInt64
+    destination_identities::UInt64
+    tunnels::UInt64
+    ratchets::UInt64
+    refused::UInt64
+    dropped::UInt64
+end
+
+struct DiagnosticEventPersistenceFlushed <: DiagnosticEvent
+    cause::PersistenceFlushCause
+    target::PersistenceFlushTarget
+end
+
+struct DiagnosticEventPersistenceFlushFailed <: DiagnosticEvent
+    cause::PersistenceFlushCause
+    target::PersistenceFlushTarget
+end
+
+const HOST_OPERATION_NAMES = (
+    :contract_info,
+    :backend_info,
+    :host_create,
+    :host_release,
+    :host_lifecycle,
+    :host_snapshot,
+    :host_snapshot_read,
+    :host_snapshot_release,
+    :host_identity_hash,
+    :host_destination_count,
+    :host_destination_hash,
+    :host_begin_resource_upload,
+    :resource_upload_write,
+    :resource_upload_is_writable,
+    :resource_upload_finish,
+    :resource_upload_abort,
+    :resource_upload_release,
+    :host_stop,
+    :command_wait,
+    :command_register_readiness,
+    :command_interrupt_wait,
+    :command_release,
+    :host_claim_application_events,
+    :host_claim_diagnostics,
+    :event_stream_register_readiness,
+    :readiness_registration_release,
+    :event_stream_interrupt_wait,
+    :event_stream_release,
+    :event_stream_next,
+    :event_release,
+    :event_kind,
+    :event_bytes,
+    :event_string,
+    :event_u64,
+    :event_u128,
+    :event_resource_stream,
+    :resource_stream_release,
+    :resource_stream_next,
+    :host_announce,
+    :host_send_single_packet,
+    :host_close_link,
+    :host_attach_tcp_server,
+    :host_attach_tcp_client,
+    :host_attach_udp,
+    :host_detach_interface,
+    :host_establish_link,
+    :host_request_path,
+    :host_identify,
+    :host_send_link_packet,
+    :host_request,
+    :host_respond,
+    :host_send_resource,
+    :host_set_link_resource_strategy,
+    :host_set_destination_resource_strategy,
+    :host_send_channel_message,
+    :host_allow_requester,
+    :host_attach_interface,
+)
+
+struct RawUnit end
+struct RawOwned{Value}; value::Value; end
+struct RawBorrowed{Value}; value::Value; end
+abstract type RawCallResult{Value} end
+struct RawCallSuccess{Value} <: RawCallResult{Value}; value::Value; end
+struct RawCallFailure{Value} <: RawCallResult{Value}; error::Status; end
+struct RawCommandResult end
+struct RawContractInfo end
+struct RawEvent end
+struct RawEventStream end
+struct RawHost end
+struct RawHostInspection end
+struct RawHostOptions end
+struct RawIssuedCommand end
+struct RawLifecycle end
+struct RawReadinessCallback end
+struct RawReadinessRegistration end
+struct RawResourceChunk end
+struct RawResourceStream end
+struct RawResourceUpload end
+struct RawOpaquePointer end
+
+abstract type RawHostProtocol end
+
+function contract_info(protocol::RawHostProtocol)::RawCallResult{RawContractInfo}
+    throw(MethodError(contract_info, (protocol,)))
+end
+
+function backend_info(protocol::RawHostProtocol)::RawCallResult{BackendInfo}
+    throw(MethodError(backend_info, (protocol,)))
+end
+
+function host_create(protocol::RawHostProtocol, options::RawHostOptions)::RawCallResult{RawOwned{RawHost}}
+    throw(MethodError(host_create, (protocol,)))
+end
+
+function host_release(protocol::RawHostProtocol, host::RawHost)::RawUnit
+    throw(MethodError(host_release, (protocol,)))
+end
+
+function host_lifecycle(protocol::RawHostProtocol, host::RawHost)::RawCallResult{RawLifecycle}
+    throw(MethodError(host_lifecycle, (protocol,)))
+end
+
+function host_snapshot(protocol::RawHostProtocol, host::RawHost, timeout_millis::UInt32)::RawCallResult{RawOwned{RawHostInspection}}
+    throw(MethodError(host_snapshot, (protocol,)))
+end
+
+function host_snapshot_read(protocol::RawHostProtocol, host_inspection::RawHostInspection)::RawCallResult{RawBorrowed{HostSnapshot}}
+    throw(MethodError(host_snapshot_read, (protocol,)))
+end
+
+function host_snapshot_release(protocol::RawHostProtocol, host_inspection::RawHostInspection)::RawUnit
+    throw(MethodError(host_snapshot_release, (protocol,)))
+end
+
+function host_identity_hash(protocol::RawHostProtocol, host::RawHost)::RawCallResult{RawBorrowed{Vector{UInt8}}}
+    throw(MethodError(host_identity_hash, (protocol,)))
+end
+
+function host_destination_count(protocol::RawHostProtocol, host::RawHost)::UInt
+    throw(MethodError(host_destination_count, (protocol,)))
+end
+
+function host_destination_hash(protocol::RawHostProtocol, host::RawHost, index::UInt)::RawCallResult{RawBorrowed{Vector{UInt8}}}
+    throw(MethodError(host_destination_hash, (protocol,)))
+end
+
+function host_begin_resource_upload(protocol::RawHostProtocol, host::RawHost, link_id::LinkId, declared_length::UInt64, packed_metadata::Union{Nothing,Vector{UInt8}}, compression::ResourceCompression)::RawCallResult{RawOwned{RawResourceUpload}}
+    throw(MethodError(host_begin_resource_upload, (protocol,)))
+end
+
+function resource_upload_write(protocol::RawHostProtocol, resource_upload::RawResourceUpload, chunk::Vector{UInt8})::RawCallResult{RawUnit}
+    throw(MethodError(resource_upload_write, (protocol,)))
+end
+
+function resource_upload_is_writable(protocol::RawHostProtocol, resource_upload::RawResourceUpload)::RawCallResult{Bool}
+    throw(MethodError(resource_upload_is_writable, (protocol,)))
+end
+
+function resource_upload_finish(protocol::RawHostProtocol, resource_upload::RawResourceUpload)::RawCallResult{RawOwned{RawIssuedCommand}}
+    throw(MethodError(resource_upload_finish, (protocol,)))
+end
+
+function resource_upload_abort(protocol::RawHostProtocol, resource_upload::RawResourceUpload)::RawUnit
+    throw(MethodError(resource_upload_abort, (protocol,)))
+end
+
+function resource_upload_release(protocol::RawHostProtocol, resource_upload::RawResourceUpload)::RawUnit
+    throw(MethodError(resource_upload_release, (protocol,)))
+end
+
+function host_stop(protocol::RawHostProtocol, host::RawHost)::RawCallResult{RawUnit}
+    throw(MethodError(host_stop, (protocol,)))
+end
+
+function command_wait(protocol::RawHostProtocol, issued_command::RawIssuedCommand, timeout_millis::UInt32)::RawCallResult{RawBorrowed{RawCommandResult}}
+    throw(MethodError(command_wait, (protocol,)))
+end
+
+function command_register_readiness(protocol::RawHostProtocol, issued_command::RawIssuedCommand, callback::RawReadinessCallback, context::RawOpaquePointer)::RawCallResult{RawOwned{RawReadinessRegistration}}
+    throw(MethodError(command_register_readiness, (protocol,)))
+end
+
+function command_interrupt_wait(protocol::RawHostProtocol, issued_command::RawIssuedCommand)::RawUnit
+    throw(MethodError(command_interrupt_wait, (protocol,)))
+end
+
+function command_release(protocol::RawHostProtocol, issued_command::RawIssuedCommand)::RawUnit
+    throw(MethodError(command_release, (protocol,)))
+end
+
+function host_claim_application_events(protocol::RawHostProtocol, host::RawHost)::RawCallResult{RawOwned{RawEventStream}}
+    throw(MethodError(host_claim_application_events, (protocol,)))
+end
+
+function host_claim_diagnostics(protocol::RawHostProtocol, host::RawHost)::RawCallResult{RawOwned{RawEventStream}}
+    throw(MethodError(host_claim_diagnostics, (protocol,)))
+end
+
+function event_stream_register_readiness(protocol::RawHostProtocol, event_stream::RawEventStream, callback::RawReadinessCallback, context::RawOpaquePointer)::RawCallResult{RawOwned{RawReadinessRegistration}}
+    throw(MethodError(event_stream_register_readiness, (protocol,)))
+end
+
+function readiness_registration_release(protocol::RawHostProtocol, readiness_registration::RawReadinessRegistration)::RawUnit
+    throw(MethodError(readiness_registration_release, (protocol,)))
+end
+
+function event_stream_interrupt_wait(protocol::RawHostProtocol, event_stream::RawEventStream)::RawUnit
+    throw(MethodError(event_stream_interrupt_wait, (protocol,)))
+end
+
+function event_stream_release(protocol::RawHostProtocol, event_stream::RawEventStream)::RawUnit
+    throw(MethodError(event_stream_release, (protocol,)))
+end
+
+function event_stream_next(protocol::RawHostProtocol, event_stream::RawEventStream, timeout_millis::UInt32)::RawCallResult{RawOwned{RawEvent}}
+    throw(MethodError(event_stream_next, (protocol,)))
+end
+
+function event_release(protocol::RawHostProtocol, event::RawEvent)::RawUnit
+    throw(MethodError(event_release, (protocol,)))
+end
+
+function event_kind(protocol::RawHostProtocol, event::RawEvent)::UInt32
+    throw(MethodError(event_kind, (protocol,)))
+end
+
+function event_bytes(protocol::RawHostProtocol, event::RawEvent, field::EventField)::RawCallResult{RawBorrowed{Vector{UInt8}}}
+    throw(MethodError(event_bytes, (protocol,)))
+end
+
+function event_string(protocol::RawHostProtocol, event::RawEvent, field::EventField)::RawCallResult{RawBorrowed{String}}
+    throw(MethodError(event_string, (protocol,)))
+end
+
+function event_u64(protocol::RawHostProtocol, event::RawEvent, field::EventField)::RawCallResult{UInt64}
+    throw(MethodError(event_u64, (protocol,)))
+end
+
+function event_u128(protocol::RawHostProtocol, event::RawEvent, field::EventField)::RawCallResult{UInt128}
+    throw(MethodError(event_u128, (protocol,)))
+end
+
+function event_resource_stream(protocol::RawHostProtocol, event::RawEvent)::RawCallResult{RawOwned{RawResourceStream}}
+    throw(MethodError(event_resource_stream, (protocol,)))
+end
+
+function resource_stream_release(protocol::RawHostProtocol, resource_stream::RawResourceStream)::RawUnit
+    throw(MethodError(resource_stream_release, (protocol,)))
+end
+
+function resource_stream_next(protocol::RawHostProtocol, resource_stream::RawResourceStream, maximum_bytes::UInt)::RawCallResult{RawBorrowed{RawResourceChunk}}
+    throw(MethodError(resource_stream_next, (protocol,)))
+end
+
+function host_announce(protocol::RawHostProtocol, host::RawHost, destination::DestinationHash, interface::Union{Nothing,InterfaceId})::RawCallResult{RawOwned{RawIssuedCommand}}
+    throw(MethodError(host_announce, (protocol,)))
+end
+
+function host_send_single_packet(protocol::RawHostProtocol, host::RawHost, destination::DestinationHash, payload::Vector{UInt8})::RawCallResult{RawOwned{RawIssuedCommand}}
+    throw(MethodError(host_send_single_packet, (protocol,)))
+end
+
+function host_close_link(protocol::RawHostProtocol, host::RawHost, link_id::LinkId)::RawCallResult{RawOwned{RawIssuedCommand}}
+    throw(MethodError(host_close_link, (protocol,)))
+end
+
+function host_attach_tcp_server(protocol::RawHostProtocol, host::RawHost, bind::String, bitrate::Bitrate)::RawCallResult{RawOwned{RawIssuedCommand}}
+    throw(MethodError(host_attach_tcp_server, (protocol,)))
+end
+
+function host_attach_tcp_client(protocol::RawHostProtocol, host::RawHost, target::String, bitrate::Bitrate)::RawCallResult{RawOwned{RawIssuedCommand}}
+    throw(MethodError(host_attach_tcp_client, (protocol,)))
+end
+
+function host_attach_udp(protocol::RawHostProtocol, host::RawHost, var"local"::String, peer::String, bitrate::Bitrate)::RawCallResult{RawOwned{RawIssuedCommand}}
+    throw(MethodError(host_attach_udp, (protocol,)))
+end
+
+function host_detach_interface(protocol::RawHostProtocol, host::RawHost, interface::InterfaceId)::RawCallResult{RawOwned{RawIssuedCommand}}
+    throw(MethodError(host_detach_interface, (protocol,)))
+end
+
+function host_establish_link(protocol::RawHostProtocol, host::RawHost, destination::DestinationHash)::RawCallResult{RawOwned{RawIssuedCommand}}
+    throw(MethodError(host_establish_link, (protocol,)))
+end
+
+function host_request_path(protocol::RawHostProtocol, host::RawHost, destination::DestinationHash)::RawCallResult{RawOwned{RawIssuedCommand}}
+    throw(MethodError(host_request_path, (protocol,)))
+end
+
+function host_identify(protocol::RawHostProtocol, host::RawHost, link_id::LinkId, identity::IdentityHash)::RawCallResult{RawOwned{RawIssuedCommand}}
+    throw(MethodError(host_identify, (protocol,)))
+end
+
+function host_send_link_packet(protocol::RawHostProtocol, host::RawHost, link_id::LinkId, payload::Vector{UInt8})::RawCallResult{RawOwned{RawIssuedCommand}}
+    throw(MethodError(host_send_link_packet, (protocol,)))
+end
+
+function host_request(protocol::RawHostProtocol, host::RawHost, link_id::LinkId, path_hash::RequestPathHash, payload::Vector{UInt8}, timeout::ResponseTimeout)::RawCallResult{RawOwned{RawIssuedCommand}}
+    throw(MethodError(host_request, (protocol,)))
+end
+
+function host_respond(protocol::RawHostProtocol, host::RawHost, link_id::LinkId, request_id::RequestId, request_rtt_millis::UInt64, payload::Vector{UInt8})::RawCallResult{RawOwned{RawIssuedCommand}}
+    throw(MethodError(host_respond, (protocol,)))
+end
+
+function host_send_resource(protocol::RawHostProtocol, host::RawHost, link_id::LinkId, payload::Vector{UInt8}, packed_metadata::Union{Nothing,Vector{UInt8}}, compression::ResourceCompression)::RawCallResult{RawOwned{RawIssuedCommand}}
+    throw(MethodError(host_send_resource, (protocol,)))
+end
+
+function host_set_link_resource_strategy(protocol::RawHostProtocol, host::RawHost, link_id::LinkId, strategy::ResourceStrategy)::RawCallResult{RawOwned{RawIssuedCommand}}
+    throw(MethodError(host_set_link_resource_strategy, (protocol,)))
+end
+
+function host_set_destination_resource_strategy(protocol::RawHostProtocol, host::RawHost, destination::DestinationHash, strategy::ResourceStrategy)::RawCallResult{RawOwned{RawIssuedCommand}}
+    throw(MethodError(host_set_destination_resource_strategy, (protocol,)))
+end
+
+function host_send_channel_message(protocol::RawHostProtocol, host::RawHost, link_id::LinkId, message_type::UInt16, payload::Vector{UInt8})::RawCallResult{RawOwned{RawIssuedCommand}}
+    throw(MethodError(host_send_channel_message, (protocol,)))
+end
+
+function host_allow_requester(protocol::RawHostProtocol, host::RawHost, destination::DestinationHash, path_hash::RequestPathHash, identity::IdentityHash)::RawCallResult{RawOwned{RawIssuedCommand}}
+    throw(MethodError(host_allow_requester, (protocol,)))
+end
+
+function host_attach_interface(protocol::RawHostProtocol, host::RawHost, config::InterfaceConfig)::RawCallResult{RawOwned{RawIssuedCommand}}
+    throw(MethodError(host_attach_interface, (protocol,)))
 end

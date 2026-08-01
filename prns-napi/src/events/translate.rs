@@ -1,4 +1,4 @@
-use napi::bindgen_prelude::{Buffer, Object};
+use napi::bindgen_prelude::{BigInt, Buffer, Object};
 use napi::Env;
 
 use super::owned::OwnedEvent;
@@ -176,8 +176,7 @@ pub fn event_to_object(env: &Env, event: OwnedEvent) -> napi::Result<Object<'sta
             object.set("type", "resourceAssembled")?;
             object.set("linkId", bytes(&link_id))?;
             object.set("originalHash", Buffer::from(original_hash))?;
-            object.set("totalSizeBytes", total_size_bytes as f64)?;
-            object.set("totalSize", total_size_bytes as f64)?;
+            object.set("totalSizeBytes", BigInt::from(total_size_bytes))?;
         }
         OwnedEvent::ResourceFailed {
             link_id,
@@ -203,17 +202,40 @@ pub fn event_to_object(env: &Env, event: OwnedEvent) -> napi::Result<Object<'sta
         } => {
             object.set("type", "resourceSendProgress")?;
             object.set("linkId", bytes(&link_id))?;
-            object.set("transferredBytes", transferred_bytes as f64)?;
-            object.set("totalBytes", total_bytes as f64)?;
+            object.set("transferredBytes", BigInt::from(transferred_bytes))?;
+            object.set("totalBytes", BigInt::from(total_bytes))?;
             object.set(
                 "physicalTransferredBytes",
-                physical_transferred_bytes as f64,
+                BigInt::from(physical_transferred_bytes),
             )?;
-            object.set("transferred", transferred_bytes as f64)?;
-            object.set("total", total_bytes as f64)?;
-            object.set("physicalTransferred", physical_transferred_bytes as f64)?;
             object.set("segmentIndex", segment_index as f64)?;
             object.set("totalSegments", total_segments as f64)?;
+        }
+        OwnedEvent::PersistenceRestored {
+            routes,
+            destination_identities,
+            tunnels,
+            ratchets,
+            refused,
+            dropped,
+        } => {
+            object.set("type", "persistenceRestored")?;
+            object.set("routes", routes as f64)?;
+            object.set("destinationIdentities", destination_identities as f64)?;
+            object.set("tunnels", tunnels as f64)?;
+            object.set("ratchets", ratchets as f64)?;
+            object.set("refused", refused as f64)?;
+            object.set("dropped", dropped as f64)?;
+        }
+        OwnedEvent::PersistenceFlushed { cause, target } => {
+            object.set("type", "persistenceFlushed")?;
+            object.set("cause", cause)?;
+            object.set("target", target)?;
+        }
+        OwnedEvent::PersistenceFlushFailed { cause, target } => {
+            object.set("type", "persistenceFlushFailed")?;
+            object.set("cause", cause)?;
+            object.set("target", target)?;
         }
         OwnedEvent::Uncategorized { kind, detail } => {
             object.set("type", kind)?;
