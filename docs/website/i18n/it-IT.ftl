@@ -63,6 +63,10 @@ start-section-lead = Scegli il percorso che corrisponde a ciò che stai costruen
 
 start-daemon-headline = Voglio un nodo Reticulum in esecuzione
 start-daemon-body = Daemon precompilato. Drop-in per rnsd. Eseguilo accanto ai nodi che hai già.
+start-daemon-code = Drop-in for stock apps
+    Reads ~/.reticulum
+    Live interface edits
+    Built-in metrics
 start-daemon-target = prnsd
 
 start-embedded-headline = Flash a Hopspot
@@ -79,9 +83,10 @@ start-web-code = Runtime WebAssembly
     Esempio TypeScript
 start-web-target = Apri il playground
 
-start-rust-headline = Lo incorporo in un'app Rust
-start-rust-body = Un runtime RNS completo pronto all'uso, oppure il core puro per costruirci intorno il tuo runtime.
-start-rust-target = prnsd or personal-rns
+start-rust-headline = Costruisci su Reticulum
+start-rust-body = Usa il motore e i binding per aggiungere reti mesh ad app, strumenti, servizi o giochi.
+start-rust-target = Leggi il README
+start-rust-target-source = Scarica il sorgente
 
 # Piattaforme ("Runs on") — etichetta marquee dell'hero + CTA e pagina dedicata
 landing-platforms-label = Runs on

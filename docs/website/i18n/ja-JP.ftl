@@ -63,6 +63,10 @@ start-section-lead = 作っているものに合う道を選んでください�
 
 start-daemon-headline = Reticulum ノードを動かしたい
 start-daemon-body = 事前ビルド済み daemon。rnsd のドロップイン。既存のノードの横で動かせます。
+start-daemon-code = Drop-in for stock apps
+    Reads ~/.reticulum
+    Live interface edits
+    Built-in metrics
 start-daemon-target = prnsd
 
 start-embedded-headline = Flash a Hopspot
@@ -79,9 +83,10 @@ start-web-code = WebAssembly runtime
     TypeScript サンプル
 start-web-target = プレイグラウンドを開く
 
-start-rust-headline = Rust アプリに組み込みたい
-start-rust-body = そのまま使える完全な RNS runtime、または自分の runtime を組み立てるための純粋なコア。
-start-rust-target = prnsd or personal-rns
+start-rust-headline = Reticulum の上に構築する
+start-rust-body = エンジンとバインディングで、アプリ、ツール、サービス、ゲームにメッシュネットワークを組み込めます。
+start-rust-target = README を読む
+start-rust-target-source = ソースをダウンロード
 
 # プラットフォーム ("Runs on") — ヒーローのマーキーラベル + CTA、専用ページ
 landing-platforms-label = Runs on

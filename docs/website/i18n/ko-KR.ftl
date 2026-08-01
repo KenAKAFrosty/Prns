@@ -63,6 +63,10 @@ start-section-lead = 만들고 있는 것에 맞는 경로를 고르세요. 지�
 
 start-daemon-headline = Reticulum 노드를 실행하고 싶어요
 start-daemon-body = 미리 빌드된 daemon입니다. rnsd의 drop-in입니다. 이미 가지고 있는 노드 옆에서 실행하세요.
+start-daemon-code = Drop-in for stock apps
+    Reads ~/.reticulum
+    Live interface edits
+    Built-in metrics
 start-daemon-target = prnsd
 
 start-embedded-headline = Flash a Hopspot
@@ -79,9 +83,10 @@ start-web-code = WebAssembly 런타임
     TypeScript 예제
 start-web-target = 플레이그라운드 열기
 
-start-rust-headline = Rust 앱에 임베드하고 싶어요
-start-rust-body = 바로 쓸 수 있는 완전한 RNS runtime, 또는 직접 runtime을 둘러 만들 수 있는 순수 코어.
-start-rust-target = prnsd or personal-rns
+start-rust-headline = Reticulum 위에 구축하기
+start-rust-body = 엔진과 바인딩으로 앱, 도구, 서비스, 게임에 메시 네트워킹을 더하세요.
+start-rust-target = README 읽기
+start-rust-target-source = 소스 다운로드
 
 # 플랫폼 ("Runs on") — hero marquee label + CTA, and the dedicated page
 landing-platforms-label = Runs on

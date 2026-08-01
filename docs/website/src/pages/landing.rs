@@ -4,6 +4,10 @@ use dioxus_i18n::t;
 use unic_langid::langid;
 
 use crate::components::PlatformChip;
+use crate::links::{
+    source_archive_available, source_zip_download_name, BUILD_COMMIT_SHORT, BUILD_VERSION,
+    SOURCE_ZIP_HREF,
+};
 use crate::platforms::LANDING_PLATFORM_CHIPS;
 use crate::repository_docs::REPOSITORY_BLOB_BASE;
 use crate::routes::Route;
@@ -28,6 +32,21 @@ const KICKER_WORDS: &[&str] = &[
     "off-grid",
     "private",
     "yours",
+];
+
+const SDK_LANGUAGES: &[&str] = &[
+    "Rust",
+    "TypeScript",
+    "JavaScript",
+    "Python",
+    "C#",
+    "Go",
+    "Swift",
+    "Kotlin",
+    "Java",
+    "Julia",
+    "C",
+    "C++",
 ];
 
 #[component]
@@ -245,18 +264,20 @@ pub fn Landing() -> Element {
                         headline: t!("start-embedded-headline"),
                         body: t!("start-embedded-body"),
                         chips: t!("start-embedded-code"),
-                        target_label: t!("start-embedded-target"),
-                        target: UseCaseTarget::Route(Route::FlashPage {}),
+                        target: UseCaseTarget::Route {
+                            label: t!("start-embedded-target"),
+                            to: Route::FlashPage {},
+                        },
                     }
                     UseCaseCard {
                         glyph: UseGlyph::Daemon,
                         headline: t!("start-daemon-headline"),
                         body: t!("start-daemon-body"),
-                        chips: "cargo prnsd --detach".to_string(),
-                        target_label: t!("start-daemon-target"),
-                        target: UseCaseTarget::NewTab(format!(
-                            "{REPOSITORY_BLOB_BASE}/prnsd/README.md"
-                        )),
+                        chips: t!("start-daemon-code"),
+                        target: UseCaseTarget::NewTab {
+                            label: t!("start-daemon-target"),
+                            href: format!("{REPOSITORY_BLOB_BASE}/prnsd/README.md"),
+                        },
                     }
                     if !embedded_docs {
                         UseCaseCard {
@@ -264,21 +285,21 @@ pub fn Landing() -> Element {
                             headline: t!("start-web-headline"),
                             body: t!("start-web-body"),
                             chips: t!("start-web-code"),
-                            target_label: t!("start-web-target"),
-                            target: UseCaseTarget::NewTab(
-                                "/browser-node-playground-console/".to_string(),
-                            ),
+                            target: UseCaseTarget::NewTab {
+                                label: t!("start-web-target"),
+                                href: "/browser-node-playground-console/".to_string(),
+                            },
                         }
                     }
                     UseCaseCard {
                         glyph: UseGlyph::Build,
                         headline: t!("start-rust-headline"),
                         body: t!("start-rust-body"),
-                        chips: "cargo tools guide rust".to_string(),
-                        target_label: t!("start-rust-target"),
-                        target: UseCaseTarget::NewTab(format!(
-                            "{REPOSITORY_BLOB_BASE}/README.md"
-                        )),
+                        chips: SDK_LANGUAGES.join("\n"),
+                        target: UseCaseTarget::ReadmeAndSource {
+                            readme_label: t!("start-rust-target"),
+                            source_label: t!("start-rust-target-source"),
+                        },
                     }
                 }
             }
@@ -344,7 +365,6 @@ fn UseCaseCard(
     headline: String,
     body: String,
     chips: String,
-    target_label: String,
     target: UseCaseTarget,
 ) -> Element {
     let chip_items: Vec<String> = chips
@@ -354,7 +374,7 @@ fn UseCaseCard(
         .map(ToString::to_string)
         .collect();
 
-    let contents = rsx! {
+    let overview = rsx! {
         div { class: "route-header flex items-center gap-2.5",
             UseCaseGlyph { kind: glyph }
             span { class: "text-base font-semibold text-paper leading-snug",
@@ -375,28 +395,62 @@ fn UseCaseCard(
                 }
             }
         }
-        div { class: "route-cta mt-auto pt-5 flex items-center gap-1.5 font-mono text-xs transition-colors",
-            span { "{target_label}" }
-            span { class: "route-arrow", "→" }
-        }
     };
     match target {
-        UseCaseTarget::Route(to) => rsx! {
+        UseCaseTarget::Route { label, to } => rsx! {
             Link {
                 to,
                 style: "--route: {glyph.accent()}",
                 class: "route-card spotlight group flex flex-col rounded-card border border-line/60 bg-layer/40 p-5 shadow-card hover:-translate-y-px transition-all",
-                {contents}
+                {overview}
+                div { class: "route-cta mt-auto pt-5 flex items-center gap-1.5 font-mono text-xs transition-colors",
+                    span { "{label}" }
+                    span { class: "route-arrow", "→" }
+                }
             }
         },
-        UseCaseTarget::NewTab(href) => rsx! {
+        UseCaseTarget::NewTab { label, href } => rsx! {
             a {
                 href,
                 target: "_blank",
                 rel: "noopener",
                 style: "--route: {glyph.accent()}",
                 class: "route-card spotlight group flex flex-col rounded-card border border-line/60 bg-layer/40 p-5 shadow-card hover:-translate-y-px transition-all",
-                {contents}
+                {overview}
+                div { class: "route-cta mt-auto pt-5 flex items-center gap-1.5 font-mono text-xs transition-colors",
+                    span { "{label}" }
+                    span { class: "route-arrow", "→" }
+                }
+            }
+        },
+        UseCaseTarget::ReadmeAndSource {
+            readme_label,
+            source_label,
+        } => rsx! {
+            div {
+                style: "--route: {glyph.accent()}",
+                class: "route-card spotlight flex flex-col rounded-card border border-line/60 bg-layer/40 p-5 shadow-card transition-all",
+                {overview}
+                div { class: "route-cta mt-auto pt-5 flex flex-col items-start gap-2 font-mono text-xs transition-colors",
+                    a {
+                        href: format!("{REPOSITORY_BLOB_BASE}/README.md"),
+                        target: "_blank",
+                        rel: "noopener",
+                        class: "inline-flex items-center gap-1.5 hover:underline underline-offset-2",
+                        span { "{readme_label}" }
+                        span { class: "route-arrow", "→" }
+                    }
+                    if source_archive_available() {
+                        a {
+                            href: SOURCE_ZIP_HREF,
+                            download: source_zip_download_name(),
+                            title: "Download Prns {BUILD_VERSION} source snapshot {BUILD_COMMIT_SHORT}",
+                            class: "inline-flex items-center gap-1.5 hover:underline underline-offset-2",
+                            span { "{source_label}" }
+                            span { "↓" }
+                        }
+                    }
+                }
             }
         },
     }
@@ -404,8 +458,18 @@ fn UseCaseCard(
 
 #[derive(Clone, PartialEq)]
 enum UseCaseTarget {
-    Route(Route),
-    NewTab(String),
+    Route {
+        label: String,
+        to: Route,
+    },
+    NewTab {
+        label: String,
+        href: String,
+    },
+    ReadmeAndSource {
+        readme_label: String,
+        source_label: String,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq)]
