@@ -1,0 +1,116 @@
+name: website preview deploy
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prns-site-preview
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUSTUP_TOOLCHAIN: 1.96.0
+  WRANGLER_VERSION: 4.118.0
+  PREVIEW_PAGES_PROJECT: prns-site-preview
+
+jobs:
+  deploy:
+    name: Build the hosted site and deploy the Cloudflare Pages preview
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      PRNS_BUILD_COMMIT: ${{ github.sha }}
+      PRNS_BUILD_CHANNEL: preview
+      PRNS_API_DOCS_STAGED: "1"
+      PRNS_SOURCE_ARCHIVE: ${{ github.workspace }}/target/site-preview/source-bundle/source.zip
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.96.0
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: site-preview
+          cache-targets: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.18.0"
+          cache: npm
+          cache-dependency-path: docs/website/package-lock.json
+      - uses: cargo-bins/cargo-binstall@57726869e28f4038a847ec56e5fdd9142fded110
+        with:
+          version: "1.21.0"
+      - name: Install exact Dioxus CLI
+        run: cargo binstall --locked --no-confirm --force dioxus-cli@0.7.5
+      - name: Install exact WASM binding CLI
+        run: cargo install wasm-bindgen-cli --version 0.2.126 --locked
+      - name: Prove exact build tools
+        run: |
+          rustc --version | grep -E '^rustc 1\.96\.0 '
+          cargo --version | grep -E '^cargo 1\.96\.0 '
+          test "$(node --version)" = "v24.18.0"
+          cargo-binstall -V | grep -E '(^| )1\.21\.0($| )'
+          dx --version | grep -E '(^| )0\.7\.5($| )'
+          wasm-bindgen --version | grep -E '^wasm-bindgen 0\.2\.126$'
+      - name: Package the commit-bound source snapshot
+        run: |
+          ./tools/prns release source package -- \
+            --commit "$GITHUB_SHA" \
+            --version "$(cat VERSION)" \
+            --output "$PRNS_SOURCE_ARCHIVE"
+      - name: Build the hosted website
+        run: |
+          cd docs/website
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run test:flasher
+          npm run build:css
+          npm run build:flasher
+          git -C "$GITHUB_WORKSPACE" diff --exit-code -- docs/website/public/assets/tailwind.css
+          PRNS_BUILD_VERSION="$(cat "$GITHUB_WORKSPACE/VERSION")" \
+          dx build --platform web --debug-symbols false --release --locked
+      - name: Assemble the preview site
+        run: |
+          dist=target/site-preview/website
+          hosted=docs/website/target/dx/reticulum-site/release/web/public
+          test -f "$hosted/index.html"
+          mkdir -p "$dist/assets/flasher"
+          cp -R "$hosted/." "$dist/"
+          cp "$PRNS_SOURCE_ARCHIVE" "$dist/source.zip"
+          cp "$PRNS_SOURCE_ARCHIVE.sha256" "$dist/source.zip.sha256"
+          cp docs/website/target/hosted-assets/prns-flash.js "$dist/assets/flasher/prns-flash.js"
+          cp THIRD_PARTY_NOTICES.md "$dist/THIRD_PARTY_NOTICES.md"
+          npm --prefix prns-wasm ci --ignore-scripts --no-audit --no-fund
+          ./tools/prns build wasm-docs stage -- \
+            "$GITHUB_WORKSPACE/$dist/browser-node-playground-console"
+          printf '/*\n  X-Robots-Tag: noindex\n' > "$dist/_headers"
+      - name: Stage the API reference
+        run: |
+          cargo doc --locked --no-deps --workspace --jobs 1
+          mkdir -p target/site-preview/website/api
+          cp -R target/doc/. target/site-preview/website/api/
+          cp release/website/api-index.html target/site-preview/website/api/index.html
+      - name: Audit production npm dependencies
+        run: python3 validation/security/npm-production-audit.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: site-preview-${{ github.sha }}-${{ github.run_id }}
+          path: target/site-preview/website
+          retention-days: 7
+          if-no-files-found: error
+      - name: Deploy to the dedicated Cloudflare Pages preview project
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx --yes "wrangler@${WRANGLER_VERSION}" pages deploy target/site-preview/website \
+            --project-name "$PREVIEW_PAGES_PROJECT" \
+            --branch main \
+            --commit-hash "$GITHUB_SHA" \
+            --commit-dirty=false
