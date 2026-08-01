@@ -53,6 +53,24 @@ fn release_0_2_6_fixture(
     validate_release_0_2_6_fixture(MANIFEST)
 }
 
+#[cfg(test)]
+#[test]
+fn release_0_2_6_fixture_retains_its_historical_board_set() -> Result<(), Box<dyn std::error::Error>>
+{
+    let manifest = release_0_2_6_fixture()?;
+    let boards = manifest
+        .targets()
+        .iter()
+        .map(|target| target.board_id().as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        boards,
+        ["heltec-v4", "t-beam-supreme", "xiao-esp32-c6", "t-echo"]
+    );
+    Ok(())
+}
+
 #[component]
 pub fn FlashPage() -> Element {
     rsx! { FlashExperience { selected_slug: None } }
