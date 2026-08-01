@@ -1,18 +1,21 @@
 # Navigation
 nav-contributing = Mitwirken
-nav-api = API
+nav-api = API-Referenz
 
 # Footer
-footer-tagline = Präsentiert vom Personal-Team.
+footer-tagline = Präsentiert von KenAKAFrosty und dem Personal/Prns-Team.
+footer-flash = Hopspot flashen (nur Englisch)
+footer-playground = Browser-Playground (nur Englisch)
 
 # Landing
-landing-kicker = Unaufhaltsame Mesh-Netzwerke für die Menschen
-landing-kicker-prefix = Unaufhaltsame Mesh-Netzwerke für die
-landing-title = Eine leistungsstarke Portierung von Reticulum (RNS), geschrieben in sicherem Rust.
-landing-title-lead = A high-performance port of Reticulum (RNS).
-landing-title-accent = Runs on any device.
-landing-subtitle = Ein deterministischer no_std-Kern ohne Allocator. Gebaut für die Performance und Stabilität, die jeder Reticulum-Knoten braucht, vom Fünf-Dollar-Mikrocontroller bis zum Cloud-Server.
-landing-cta-ethos = Wähle eine Crate
+landing-kicker = Mesh-Netzwerke, die dir gehören
+landing-kicker-prefix = Mesh-Netzwerke, die dir
+landing-title = Hochperformantes Reticulum (RNS), gebaut für jedes Gerät.
+landing-title-lead = Hochperformantes Reticulum (RNS),
+landing-title-accent = gebaut für jedes Gerät.
+landing-subtitle = Gebaut für die Performance, Stabilität und Energieeffizienz, die jeder Reticulum-Knoten braucht, vom Fünf-Dollar-Mikrocontroller bis zum Cloud-Server-Cluster. Eine Engine und eine API, identisch auf Embedded, Desktop, Mobile, in Spielen und im Web.
+landing-cta-ethos = Finde deinen Weg in Prns
+landing-cta-standards = Unsere Standards
 # Pull quote
 landing-quote-label = Worauf wir hinarbeiten
 landing-quote-body = Reticulum ist die grundlegende Kommunikationsinfrastruktur einer hellen Zukunft, die wir haben können, solange wir sie alle mitbauen. Dies ist der Beitrag des Personal-Teams, RNS in die Hände von mehr Buildern zu legen und diese Zukunft möglich zu machen.
@@ -37,7 +40,7 @@ interfaces-cable-body = USB Auto-interface, serielles Framing, KISS, AX.25 und R
 
 interfaces-host-label = Geroutetes IP
 interfaces-host-headline = Internet-, WAN- und Backbone-Links
-interfaces-host-body = TCP Client/Server, UDP und Backbone lassen entfernte Peers über private WANs, VPNs und öffentliche Internet-Relays am Mesh teilnehmen.
+interfaces-host-body = TCP Client/Server, UDP, WebSocket und Backbone lassen entfernte Peers über private WANs, VPNs, öffentliche Internet-Relays und Browser-Integrationen am Mesh teilnehmen.
 
 # What you can count on (standards callout)
 standards-section-label = Unsere Standards
@@ -50,7 +53,7 @@ standards-safety-headline = Erzwungen, dann auditiert
 standards-safety-body = In der Engine kompilieren Panics, Unwraps und unbegründetes unsafe nie. Was sich nicht verbieten lässt, wird auditiert: unsafe in Abhängigkeiten mit cargo-geiger, Undefined Behavior unter Miri, Advisories mit cargo-deny.
 standards-correctness-label = Korrektheit
 standards-correctness-headline = Gegen RNS diff-getestet
-standards-correctness-body = Jede Änderung wird gegen die Referenz geprüft und dann durch Property-, Fuzz- und Mutationstests geschickt, mit Kani-Beweisen dort, wo sie zählen.
+standards-correctness-body = Jede Änderung wird gegen die Referenz geprüft und dann durch Unit-, Property-, Fuzz- und Mutationstests geschickt, mit Kani-Beweisen dort, wo sie zählen.
 standards-benchmarked-label = Performance
 standards-benchmarked-headline = Gemessen, nicht nur behauptet
 standards-benchmarked-body = Performance wird offen verfolgt, gemessen mit einem Harness, den du selbst ausführen kannst.
@@ -58,30 +61,30 @@ standards-benchmarked-cta = Benchmarks ansehen →
 
 # Where do I start? (use-case cards on landing)
 start-section-label = Wege hinein
-start-section-title = Wo fange ich an?
-start-section-lead = Wähle den Weg, der zu dem passt, was du baust. Jeder landet heute bei einer einzelnen Crate; weitere Guides kommen daneben hinzu.
+start-section-title = Was willst du hier tun?
+start-section-lead = Wähle den Weg, der dazu passt, wie Prns in deine Arbeit kommt: Hardware, die du flashst, Infrastruktur, die du betreibst, oder Software, die du baust.
 
-start-daemon-headline = Ich will einen Reticulum-Knoten betreiben
-start-daemon-body = Vorgefertigter Daemon. Drop-in für rnsd. Lass ihn neben den Knoten laufen, die du schon hast.
-start-daemon-code = Drop-in for stock apps
-    Reads ~/.reticulum
-    Live interface edits
-    Built-in metrics
-start-daemon-target = prnsd
+start-daemon-headline = Einen Daemon betreiben
+start-daemon-body = Installiere einen schnellen Reticulum-Daemon für Desktops, LXMF-Apps, Backbone-VPS und mehr.
+start-daemon-code = Drop-in für Stock-Apps
+    Liest ~/.reticulum
+    Interface-Änderungen live
+    Metriken eingebaut
+start-daemon-target = Prnsd starten
 
-start-embedded-headline = Flash a Hopspot
-start-embedded-body = Pick a supported board, compare radio and battery tradeoffs, then flash a dedicated mesh device.
-start-embedded-code = Board matrix
-    Web flasher
-    Local flash
-start-embedded-target = Flash a Hopspot
+start-embedded-headline = Einen Hopspot flashen
+start-embedded-body = Wähle ein unterstütztes Board, vergleiche Funk- und Akku-Kompromisse und flashe dann ein dediziertes Mesh-Gerät.
+start-embedded-code = Board-Matrix
+    Web-Flasher
+    Lokales Flashen
+start-embedded-target = Hopspot flashen (nur Englisch)
 
 start-web-headline = Browser-Node-Playground verwenden
 start-web-body = Teste die TypeScript-API mit der gemeinsamen Rust-Engine in WebAssembly, verbinde dich über Auto Wi-Fi oder USB Auto und beobachte die lokale Node-Aktivität live.
 start-web-code = WebAssembly-Runtime
     Auto Wi-Fi + USB Auto
     TypeScript-Beispiel
-start-web-target = Playground öffnen
+start-web-target = Playground öffnen (nur Englisch)
 
 start-rust-headline = Auf Reticulum bauen
 start-rust-body = Nutze Engine und Bindings, um Mesh-Netzwerke in Apps, Tools, Dienste oder Spiele einzubauen.
@@ -89,16 +92,16 @@ start-rust-target = README lesen
 start-rust-target-source = Quellcode herunterladen
 
 # Platforms ("Runs on") - hero marquee label + CTA, and the dedicated page
-landing-platforms-label = Runs on
-landing-platforms-cta = See all →
-platforms-title = Where Prns runs
-platforms-lead = One engine, many homes. This quick view separates runtime platform support from specific Hopspot board support.
-platforms-board-support-link = View board support & bring-up →
+landing-platforms-label = Läuft auf
+landing-platforms-cta = Alle ansehen →
+platforms-title = Wo Prns läuft
+platforms-lead = Eine Engine, viele Zuhause. Diese Schnellübersicht trennt die Runtime-Plattformunterstützung von der Unterstützung konkreter Hopspot-Boards.
+platforms-board-support-link = Board-Unterstützung & Bring-up ansehen →
 
 # Flash a Hopspot page
-flash-back = Platforms
+flash-back = Plattformen
 flash-back-boards = Boards
-flash-card-action = Flash
+flash-card-action = Flashen
 
 # Benchmarks page
 benchmarks-kicker = Performance

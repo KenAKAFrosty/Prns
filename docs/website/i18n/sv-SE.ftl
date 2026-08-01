@@ -1,18 +1,21 @@
 # Navigering
 nav-contributing = Bidra
-nav-api = API
+nav-api = API-referens
 
 # Sidfot
-footer-tagline = Levererat av Personal-teamet.
+footer-tagline = Levererat av KenAKAFrosty och Personal/Prns-teamet.
+footer-flash = Flasha en Hopspot (endast på engelska)
+footer-playground = Webbläsarlekplats (endast på engelska)
 
 # Landing
-landing-kicker = Ostoppbara mesh-nätverk för människor
-landing-kicker-prefix = Ostoppbara mesh-nätverk för
-landing-title = En högpresterande port av Reticulum (RNS) skriven i säker Rust.
-landing-title-lead = A high-performance port of Reticulum (RNS).
-landing-title-accent = Runs on any device.
-landing-subtitle = En deterministisk, no_std, allokeringsfri kärna. Byggd för den prestanda och stabilitet varje Reticulum-nod behöver, från en femdollars mikrokontroller till en molnserver.
-landing-cta-ethos = Välj en crate
+landing-kicker = Mesh-nätverk som är ditt
+landing-kicker-prefix = Mesh-nätverk som är
+landing-title = Högpresterande Reticulum (RNS), byggt för att köras på vilken enhet som helst.
+landing-title-lead = Högpresterande Reticulum (RNS),
+landing-title-accent = byggt för att köras på vilken enhet som helst.
+landing-subtitle = Byggt för den prestanda, stabilitet och energieffektivitet varje Reticulum-nod behöver, från en femdollars mikrokontroller till ett molnserverkluster. En motor och ett API, samma på embedded, desktop, mobil, i spel och på webben.
+landing-cta-ethos = Hitta din väg i Prns
+landing-cta-standards = Våra standarder
 # Citat
 landing-quote-label = Det vi bygger mot
 landing-quote-body = Reticulum är den grundläggande kommunikationsinfrastrukturen för en ljus framtid vi kan få, så länge vi alla bygger den. Det här är Personal-teamets arbete för att lägga RNS i händerna på fler byggare och hjälpa den framtiden att bli verklig.
@@ -37,7 +40,7 @@ interfaces-cable-body = USB Auto-interface, seriell framing, KISS, AX.25 och RNo
 
 interfaces-host-label = Routad IP
 interfaces-host-headline = Internet-, WAN- och backbone-länkar
-interfaces-host-body = TCP-klient/server, UDP och Backbone låter avlägsna peers delta i meshet över privata WAN, VPN och reläer på det öppna internet.
+interfaces-host-body = TCP-klient/server, UDP, WebSocket och Backbone låter avlägsna peers delta i meshet över privata WAN, VPN, reläer på det öppna internet och webbläsarintegrationer.
 
 # Det du kan räkna med
 standards-section-label = Våra standarder
@@ -50,7 +53,7 @@ standards-safety-headline = Framtvingat, sedan granskat
 standards-safety-body = I motorn kompilerar panics, unwraps och ogrundad unsafe aldrig. Det som inte kan förbjudas granskas: unsafe i beroenden med cargo-geiger, odefinierat beteende under Miri, säkerhetsvarningar med cargo-deny.
 standards-correctness-label = Korrekthet
 standards-correctness-headline = Diff-testat mot RNS
-standards-correctness-body = Varje ändring kontrolleras mot referensen och körs sedan genom property-, fuzz- och mutationstester, med Kani-bevis där de spelar roll.
+standards-correctness-body = Varje ändring kontrolleras mot referensen och körs sedan genom unit-, property-, fuzz- och mutationstester, med Kani-bevis där de spelar roll.
 standards-benchmarked-label = Prestanda
 standards-benchmarked-headline = Mätt, inte bara påstådd
 standards-benchmarked-body = Prestanda följs öppet, mätt av ett harness som du kan köra själv.
@@ -58,30 +61,30 @@ standards-benchmarked-cta = Se benchmarks →
 
 # Var börjar jag?
 start-section-label = Vägar in
-start-section-title = Var börjar jag?
-start-section-lead = Välj den väg som matchar det du bygger. Varje väg landar på en enda crate idag; fler guider kommer bredvid dem.
+start-section-title = Vad är du här för att göra?
+start-section-lead = Välj den väg som matchar hur Prns passar in i ditt arbete: hårdvara du flashar, infrastruktur du kör eller mjukvara du bygger.
 
-start-daemon-headline = Jag vill köra en Reticulum-nod
-start-daemon-body = Färdigbyggd daemon. Drop-in för rnsd. Kör den bredvid noderna du redan har.
-start-daemon-code = Drop-in for stock apps
-    Reads ~/.reticulum
-    Live interface edits
-    Built-in metrics
-start-daemon-target = prnsd
+start-daemon-headline = Kör en daemon
+start-daemon-body = Installera en snabb Reticulum-daemon för desktops, LXMF-appar, backbone-VPS:er med mera.
+start-daemon-code = Drop-in för standardappar
+    Läser ~/.reticulum
+    Live-redigering av interfaces
+    Inbyggda mätvärden
+start-daemon-target = Kör Prnsd
 
-start-embedded-headline = Flash a Hopspot
-start-embedded-body = Pick a supported board, compare radio and battery tradeoffs, then flash a dedicated mesh device.
-start-embedded-code = Board matrix
-    Web flasher
-    Local flash
-start-embedded-target = Flash a Hopspot
+start-embedded-headline = Flasha en Hopspot
+start-embedded-body = Välj ett kort som stöds, jämför radio- och batteriavvägningar och flasha sedan en dedikerad mesh-enhet.
+start-embedded-code = Kortmatris
+    Webbflashare
+    Lokal flash
+start-embedded-target = Flasha en Hopspot (endast på engelska)
 
 start-web-headline = Använd lekplatsen för webbläsarnoder
 start-web-body = Prova TypeScript-API:t med den delade Rust-motorn i WebAssembly, anslut via Auto Wi-Fi eller USB Auto och följ lokal nodaktivitet live.
 start-web-code = WebAssembly-körning
     Auto Wi-Fi + USB Auto
     TypeScript-exempel
-start-web-target = Öppna lekplatsen
+start-web-target = Öppna lekplatsen (endast på engelska)
 
 start-rust-headline = Bygg på Reticulum
 start-rust-body = Använd motorn och bindningarna för att lägga till mesh-nätverk i appar, verktyg, tjänster eller spel.
@@ -89,16 +92,16 @@ start-rust-target = Läs README:n
 start-rust-target-source = Ladda ner källkoden
 
 # Plattformar ("Runs on") — hero marquee label + CTA och dedikerad sida
-landing-platforms-label = Runs on
-landing-platforms-cta = See all →
-platforms-title = Where Prns runs
-platforms-lead = One engine, many homes. This quick view separates runtime platform support from specific Hopspot board support.
-platforms-board-support-link = View board support & bring-up →
+landing-platforms-label = Körs på
+landing-platforms-cta = Se alla →
+platforms-title = Där Prns körs
+platforms-lead = En motor, många hem. Den här snabbvyn skiljer runtime-plattformsstöd från stöd för specifika Hopspot-kort.
+platforms-board-support-link = Se kortstöd & bring-up →
 
-# Flash a Hopspot page
-flash-back = Platforms
-flash-back-boards = Boards
-flash-card-action = Flash
+# Flasha en Hopspot-sida
+flash-back = Plattformar
+flash-back-boards = Kort
+flash-card-action = Flasha
 
 # Benchmarksida
 benchmarks-kicker = Prestanda

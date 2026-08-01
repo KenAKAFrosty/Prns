@@ -62,7 +62,7 @@ pub fn Footer() -> Element {
                             Link {
                                 to: Route::FlashPage {},
                                 class: "hover:text-accent transition-colors",
-                                "Flash a Hopspot"
+                                {t!("footer-flash")}
                             }
                             if !embedded_docs {
                                 a {
@@ -70,7 +70,7 @@ pub fn Footer() -> Element {
                                     target: "_blank",
                                     rel: "noopener",
                                     class: "hover:text-accent transition-colors",
-                                    "Browser playground"
+                                    {t!("footer-playground")}
                                 }
                             }
                             a {

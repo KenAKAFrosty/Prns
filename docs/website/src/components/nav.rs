@@ -2,8 +2,8 @@ use dioxus::prelude::*;
 use dioxus_i18n::t;
 
 use crate::links::{
-    api_docs_available, source_archive_available, source_zip_download_name, API_DOCS_HREF,
-    BUILD_COMMIT_SHORT, BUILD_VERSION, SOURCE_ZIP_HREF,
+    source_archive_available, source_zip_download_name, BUILD_COMMIT_SHORT, BUILD_VERSION,
+    SOURCE_ZIP_HREF,
 };
 use crate::repository_docs::REPOSITORY_BLOB_BASE;
 use crate::routes::Route;
@@ -28,11 +28,6 @@ pub fn TopNav() -> Element {
                     }
                 }
                 nav { class: "hidden items-center gap-6 text-sm text-soft sm:flex",
-                    Link {
-                        to: Route::GuidesIndex {},
-                        class: "hover:text-accent transition-colors",
-                        "Guides"
-                    }
                     a {
                         href: format!("{REPOSITORY_BLOB_BASE}/CONTRIBUTING.md"),
                         target: "_blank",
@@ -40,21 +35,13 @@ pub fn TopNav() -> Element {
                         class: "hover:text-accent transition-colors",
                         {t!("nav-contributing")}
                     }
-                    if api_docs_available() {
-                        a {
-                            href: API_DOCS_HREF,
-                            class: "hover:text-accent transition-colors",
-                            {t!("nav-api")}
-                        }
-                    }
                     if source_archive_available {
                         a {
                             href: SOURCE_ZIP_HREF,
                             download: "{source_zip_download}",
                             title: "Download Prns {BUILD_VERSION} source snapshot {BUILD_COMMIT_SHORT}",
-                            class: "inline-flex items-center gap-1.5 rounded-full border border-accent/45 px-3 py-1.5 text-accent hover:bg-accent/10 transition-colors",
+                            class: "hover:text-accent transition-colors",
                             "Source ZIP"
-                            span { "↓" }
                         }
                     }
                     a {

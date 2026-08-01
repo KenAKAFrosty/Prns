@@ -4,6 +4,8 @@ nav-api = API Reference
 
 # Footer
 footer-tagline = Brought to you by KenAKAFrosty and the Personal/Prns team.
+footer-flash = Flash a Hopspot
+footer-playground = Browser playground
 
 # Landing
 # `landing-kicker` is the full eyebrow, used as-is by every non-English locale.
@@ -20,6 +22,7 @@ landing-title-lead = High-performance Reticulum (RNS),
 landing-title-accent = built to run on any device.
 landing-subtitle = Built for the performance, stability, and energy efficiency every Reticulum node needs, from a five-dollar microcontroller to a cloud server cluster. One engine and one API, the same on embedded, desktop, mobile, games, and the web.
 landing-cta-ethos = Find your path in Prns
+landing-cta-standards = Our Standards
 # Pull quote
 landing-quote-label = What we're building toward
 landing-quote-body = Reticulum is the foundational communication infrastructure of a bright future we can have, as long as we all build it. This is the Personal team's effort to put RNS into the hands of more builders, to help realize that future.

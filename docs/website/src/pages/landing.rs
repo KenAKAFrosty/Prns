@@ -108,7 +108,7 @@ pub fn Landing() -> Element {
                 a {
                     href: "#standards",
                     class: "inline-flex items-center gap-2 rounded-full border border-line/80 bg-layer/40 px-5 py-2.5 text-paper hover:border-accent/40 hover:text-accent transition-colors",
-                    "Our Standards"
+                    {t!("landing-cta-standards")}
                 }
             }
 

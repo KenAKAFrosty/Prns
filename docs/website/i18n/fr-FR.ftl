@@ -1,18 +1,21 @@
 # Navigation
 nav-contributing = Contribuer
-nav-api = API
+nav-api = Référence de l'API
 
 # Pied de page
-footer-tagline = Proposé par l'équipe Personal.
+footer-tagline = Proposé par KenAKAFrosty et l'équipe Personal/Prns.
+footer-flash = Flasher un Hopspot (en anglais uniquement)
+footer-playground = Playground navigateur (en anglais uniquement)
 
 # Accueil
-landing-kicker = Des réseaux mesh inarrêtables pour tous
-landing-kicker-prefix = Des réseaux mesh inarrêtables pour
-landing-title = Un port haute performance de Reticulum (RNS), écrit en Rust sûr.
-landing-title-lead = A high-performance port of Reticulum (RNS).
-landing-title-accent = Runs on any device.
-landing-subtitle = Un cœur déterministe, no_std et sans allocateur. Conçu pour les performances et la stabilité dont chaque nœud Reticulum a besoin, du microcontrôleur à cinq dollars au serveur cloud.
-landing-cta-ethos = Choisir une crate
+landing-kicker = Des réseaux mesh qui vous appartiennent
+landing-kicker-prefix = Des réseaux mesh qui vous
+landing-title = Reticulum (RNS) haute performance, conçu pour tourner sur n'importe quel appareil.
+landing-title-lead = Reticulum (RNS) haute performance,
+landing-title-accent = conçu pour tourner sur n'importe quel appareil.
+landing-subtitle = Conçu pour les performances, la stabilité et l'efficacité énergétique dont chaque nœud Reticulum a besoin, du microcontrôleur à cinq dollars au cluster de serveurs cloud. Un seul moteur et une seule API, identiques en embarqué, sur desktop, mobile, dans les jeux et sur le web.
+landing-cta-ethos = Trouvez votre chemin dans Prns
+landing-cta-standards = Nos standards
 # Citation
 landing-quote-label = Ce vers quoi nous construisons
 landing-quote-body = Reticulum est l'infrastructure de communication fondatrice d'un avenir lumineux que nous pouvons avoir, tant que nous le construisons tous ensemble. C'est l'effort de l'équipe Personal pour mettre RNS entre les mains de plus de builders et aider cet avenir à prendre forme.
@@ -37,7 +40,7 @@ interfaces-cable-body = USB Auto-interface, le framing série, KISS, AX.25 et RN
 
 interfaces-host-label = IP routée
 interfaces-host-headline = Internet, WAN et liens backbone
-interfaces-host-body = TCP client/serveur, UDP et Backbone permettent aux pairs distants de participer au mesh via des WAN privés, des VPN et des relais Internet publics.
+interfaces-host-body = TCP client/serveur, UDP, WebSocket et Backbone permettent aux pairs distants de participer au mesh via des WAN privés, des VPN, des relais Internet publics et des intégrations navigateur.
 
 # Ce sur quoi vous pouvez compter
 standards-section-label = Nos standards
@@ -50,7 +53,7 @@ standards-safety-headline = Imposé, puis audité
 standards-safety-body = Dans le moteur, les panics, les unwraps et le unsafe injustifié ne compilent jamais. Ce qui ne peut pas être interdit est audité : le unsafe des dépendances avec cargo-geiger, le comportement indéfini sous Miri, les avis de sécurité avec cargo-deny.
 standards-correctness-label = Correction
 standards-correctness-headline = Diff-testé contre RNS
-standards-correctness-body = Chaque changement est vérifié contre la référence, puis passe par des tests de propriétés, de fuzzing et de mutation, avec des preuves Kani là où elles comptent.
+standards-correctness-body = Chaque changement est vérifié contre la référence, puis passe par des tests unitaires, de propriétés, de fuzzing et de mutation, avec des preuves Kani là où elles comptent.
 standards-benchmarked-label = Performance
 standards-benchmarked-headline = Mesurée, pas seulement affirmée
 standards-benchmarked-body = Les performances sont suivies au grand jour, mesurées par un harness que vous pouvez exécuter vous-même.
@@ -58,30 +61,30 @@ standards-benchmarked-cta = Voir les benchmarks →
 
 # Par où commencer ?
 start-section-label = Chemins d'entrée
-start-section-title = Par où commencer ?
-start-section-lead = Choisissez le chemin qui correspond à ce que vous construisez. Chacun mène aujourd'hui à une seule crate ; d'autres guides arriveront à leurs côtés.
+start-section-title = Que venez-vous faire ici ?
+start-section-lead = Choisissez le chemin qui correspond à la place de Prns dans votre travail : du matériel à flasher, de l'infrastructure à faire tourner, ou du logiciel à construire.
 
-start-daemon-headline = Je veux lancer un nœud Reticulum
-start-daemon-body = Daemon précompilé. Drop-in pour rnsd. Faites-le tourner à côté des nœuds que vous avez déjà.
-start-daemon-code = Drop-in for stock apps
-    Reads ~/.reticulum
-    Live interface edits
-    Built-in metrics
-start-daemon-target = prnsd
+start-daemon-headline = Lancer un daemon
+start-daemon-body = Installez un daemon Reticulum rapide pour desktops, apps LXMF, VPS backbone, etc.
+start-daemon-code = Drop-in pour les apps standard
+    Lit ~/.reticulum
+    Interfaces modifiables à chaud
+    Métriques intégrées
+start-daemon-target = Lancer Prnsd
 
-start-embedded-headline = Flash a Hopspot
-start-embedded-body = Pick a supported board, compare radio and battery tradeoffs, then flash a dedicated mesh device.
-start-embedded-code = Board matrix
-    Web flasher
-    Local flash
-start-embedded-target = Flash a Hopspot
+start-embedded-headline = Flasher un Hopspot
+start-embedded-body = Choisissez une carte prise en charge, comparez les compromis radio et batterie, puis flashez un appareil mesh dédié.
+start-embedded-code = Matrice des cartes
+    Flasher web
+    Flash local
+start-embedded-target = Flasher un Hopspot (en anglais uniquement)
 
 start-web-headline = Utiliser le playground du nœud navigateur
 start-web-body = Essayez l’API TypeScript avec le moteur Rust partagé en WebAssembly, connectez-vous via Auto Wi-Fi ou USB Auto et suivez en direct l’activité locale du nœud.
 start-web-code = Runtime WebAssembly
     Auto Wi-Fi + USB Auto
     Exemple TypeScript
-start-web-target = Ouvrir le playground
+start-web-target = Ouvrir le playground (en anglais uniquement)
 
 start-rust-headline = Construisez sur Reticulum
 start-rust-body = Utilisez le moteur et les bindings pour ajouter du réseau mesh à des apps, outils, services ou jeux.
@@ -89,16 +92,16 @@ start-rust-target = Lire le README
 start-rust-target-source = Télécharger le code source
 
 # Plateformes ("Runs on") — libellé du marquee hero + CTA et page dédiée
-landing-platforms-label = Runs on
-landing-platforms-cta = See all →
-platforms-title = Where Prns runs
-platforms-lead = One engine, many homes. This quick view separates runtime platform support from specific Hopspot board support.
-platforms-board-support-link = View board support & bring-up →
+landing-platforms-label = Tourne sur
+landing-platforms-cta = Tout voir →
+platforms-title = Où tourne Prns
+platforms-lead = Un moteur, de nombreux foyers. Cette vue rapide sépare la prise en charge des plateformes runtime de celle des cartes Hopspot spécifiques.
+platforms-board-support-link = Voir la prise en charge des cartes et le bring-up →
 
-# Flash a Hopspot page
-flash-back = Platforms
-flash-back-boards = Boards
-flash-card-action = Flash
+# Page Flasher un Hopspot
+flash-back = Plateformes
+flash-back-boards = Cartes
+flash-card-action = Flasher
 
 # Page benchmarks
 benchmarks-kicker = Performance

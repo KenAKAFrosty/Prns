@@ -1,18 +1,21 @@
 # ナビゲーション
 nav-contributing = 貢献
-nav-api = API
+nav-api = API リファレンス
 
 # フッター
-footer-tagline = Personal チームがお届けします。
+footer-tagline = KenAKAFrosty と Personal/Prns チームがお届けします。
+footer-flash = Hopspot をフラッシュ（英語のみ）
+footer-playground = ブラウザプレイグラウンド（英語のみ）
 
 # ランディング
-landing-kicker = 人々のための止まらないメッシュネットワーク
-landing-kicker-prefix = 人々のための止まらないメッシュネットワーク
-landing-title = 安全な Rust で書かれた、高性能な Reticulum (RNS) ポート。
-landing-title-lead = A high-performance port of Reticulum (RNS).
-landing-title-accent = Runs on any device.
-landing-subtitle = 決定的で no_std、アロケータ不要のコア。5ドルのマイクロコントローラからクラウドサーバーまで、あらゆる Reticulum ノードに必要な性能と安定性のために作られています。
-landing-cta-ethos = crate を選ぶ
+landing-kicker = あなたのものになるメッシュネットワーク
+landing-kicker-prefix = あなたのものになるメッシュネットワーク
+landing-title = あらゆるデバイスで動くように作られた、高性能な Reticulum (RNS)。
+landing-title-lead = 高性能な Reticulum (RNS)、
+landing-title-accent = あらゆるデバイスで動くように。
+landing-subtitle = 5ドルのマイクロコントローラからクラウドサーバークラスタまで、あらゆる Reticulum ノードに必要な性能、安定性、エネルギー効率のために作られています。ひとつのエンジンとひとつの API が、組み込み、デスクトップ、モバイル、ゲーム、Web で同じように動きます。
+landing-cta-ethos = Prns で自分の道を見つける
+landing-cta-standards = 私たちの基準
 # 引用
 landing-quote-label = 私たちが目指しているもの
 landing-quote-body = Reticulum は、私たち全員が作り続ける限り手にできる明るい未来の、基礎となる通信インフラです。これは Personal チームが RNS をより多くのビルダーの手に届け、その未来の実現を助けるための取り組みです。
@@ -37,7 +40,7 @@ interfaces-cable-body = USB Auto-interface、シリアルフレーミング、KI
 
 interfaces-host-label = ルーティングされた IP
 interfaces-host-headline = Internet、WAN、backbone リンク
-interfaces-host-body = TCP client/server、UDP、Backbone により、遠くの peer も private WAN、VPN、public Internet relay 越しにメッシュへ参加できます。
+interfaces-host-body = TCP client/server、UDP、WebSocket、Backbone により、遠くの peer も private WAN、VPN、public Internet relay、ブラウザ統合を通じてメッシュへ参加できます。
 
 # 信頼できる基準
 standards-section-label = 私たちの基準
@@ -50,7 +53,7 @@ standards-safety-headline = 強制、そして監査
 standards-safety-body = エンジンでは panic、unwrap、根拠のない unsafe は決してコンパイルされません。禁止できないものは監査します。依存関係内の unsafe は cargo-geiger で、未定義動作は Miri で、セキュリティ勧告は cargo-deny で確認します。
 standards-correctness-label = 正しさ
 standards-correctness-headline = RNS との差分テスト済み
-standards-correctness-body = すべての変更をリファレンスと照合し、そのうえでプロパティテスト、ファズテスト、ミューテーションテストにかけ、重要な箇所では Kani の証明も使います。
+standards-correctness-body = すべての変更をリファレンスと照合し、そのうえでユニットテスト、プロパティテスト、ファズテスト、ミューテーションテストにかけ、重要な箇所では Kani の証明も使います。
 standards-benchmarked-label = 性能
 standards-benchmarked-headline = 主張ではなく測定
 standards-benchmarked-body = 性能は公開された形で追跡され、自分でも実行できるハーネスで測定されます。
@@ -58,30 +61,30 @@ standards-benchmarked-cta = ベンチマークを見る →
 
 # どこから始める？
 start-section-label = 入り口
-start-section-title = どこから始める？
-start-section-lead = 作っているものに合う道を選んでください。今はそれぞれ 1 つの crate に着地しますが、今後さらにガイドを並べていきます。
+start-section-title = ここで何をしますか？
+start-section-lead = Prns が自分の仕事にどう入るかに合わせて道を選んでください。フラッシュするハードウェア、動かすインフラ、作るソフトウェアのどれかです。
 
-start-daemon-headline = Reticulum ノードを動かしたい
-start-daemon-body = 事前ビルド済み daemon。rnsd のドロップイン。既存のノードの横で動かせます。
-start-daemon-code = Drop-in for stock apps
-    Reads ~/.reticulum
-    Live interface edits
-    Built-in metrics
-start-daemon-target = prnsd
+start-daemon-headline = daemon を動かす
+start-daemon-body = デスクトップ、LXMF アプリ、backbone VPS などのための高速な Reticulum daemon をインストールします。
+start-daemon-code = 既存アプリにドロップイン
+    ~/.reticulum を読み込み
+    インターフェースをライブ編集
+    メトリクス内蔵
+start-daemon-target = Prnsd を実行
 
-start-embedded-headline = Flash a Hopspot
-start-embedded-body = Pick a supported board, compare radio and battery tradeoffs, then flash a dedicated mesh device.
-start-embedded-code = Board matrix
-    Web flasher
-    Local flash
-start-embedded-target = Flash a Hopspot
+start-embedded-headline = Hopspot をフラッシュする
+start-embedded-body = 対応ボードを選び、無線とバッテリーのトレードオフを比較して、専用メッシュデバイスをフラッシュします。
+start-embedded-code = ボードマトリクス
+    Web フラッシャー
+    ローカルフラッシュ
+start-embedded-target = Hopspot をフラッシュ（英語のみ）
 
 start-web-headline = ブラウザノードのプレイグラウンドを使う
 start-web-body = 共有 Rust エンジンを WebAssembly で動かす TypeScript API を試し、Auto Wi-Fi または USB Auto で接続して、ローカルノードの動作をリアルタイムに確認できます。
 start-web-code = WebAssembly runtime
     Auto Wi-Fi + USB Auto
     TypeScript サンプル
-start-web-target = プレイグラウンドを開く
+start-web-target = プレイグラウンドを開く（英語のみ）
 
 start-rust-headline = Reticulum の上に構築する
 start-rust-body = エンジンとバインディングで、アプリ、ツール、サービス、ゲームにメッシュネットワークを組み込めます。
@@ -89,16 +92,16 @@ start-rust-target = README を読む
 start-rust-target-source = ソースをダウンロード
 
 # プラットフォーム ("Runs on") — ヒーローのマーキーラベル + CTA、専用ページ
-landing-platforms-label = Runs on
-landing-platforms-cta = See all →
-platforms-title = Where Prns runs
-platforms-lead = One engine, many homes. This quick view separates runtime platform support from specific Hopspot board support.
-platforms-board-support-link = View board support & bring-up →
+landing-platforms-label = 動作環境
+landing-platforms-cta = すべて見る →
+platforms-title = Prns が動く場所
+platforms-lead = ひとつのエンジン、たくさんの居場所。このクイックビューは、ランタイムのプラットフォーム対応と、個々の Hopspot ボード対応を分けて示します。
+platforms-board-support-link = ボード対応と bring-up を見る →
 
-# Flash a Hopspot page
-flash-back = Platforms
-flash-back-boards = Boards
-flash-card-action = Flash
+# Hopspot フラッシュページ
+flash-back = プラットフォーム
+flash-back-boards = ボード
+flash-card-action = フラッシュ
 
 # ベンチマークページ
 benchmarks-kicker = 性能
