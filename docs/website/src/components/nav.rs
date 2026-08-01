@@ -5,6 +5,7 @@ use crate::links::{
     api_docs_available, source_archive_available, source_zip_download_name, API_DOCS_HREF,
     BUILD_COMMIT_SHORT, BUILD_VERSION, SOURCE_ZIP_HREF,
 };
+use crate::repository_docs::REPOSITORY_BLOB_BASE;
 use crate::routes::Route;
 
 use super::{LanguageSwitcher, PrnsMark};
@@ -32,8 +33,10 @@ pub fn TopNav() -> Element {
                         class: "hover:text-accent transition-colors",
                         "Guides"
                     }
-                    Link {
-                        to: Route::ContributingPage {},
+                    a {
+                        href: format!("{REPOSITORY_BLOB_BASE}/CONTRIBUTING.md"),
+                        target: "_blank",
+                        rel: "noopener",
                         class: "hover:text-accent transition-colors",
                         {t!("nav-contributing")}
                     }
