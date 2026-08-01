@@ -16,6 +16,7 @@ import { test } from "node:test";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const napiRoot = resolve(packageRoot, "../prns-napi");
+const productVersion = readFileSync(resolve(packageRoot, "../VERSION"), "utf8").trim();
 if (existsSync(napiRoot)) {
   const bindings = readdirSync(napiRoot)
     .filter((file) => file.endsWith(".node"))
@@ -30,7 +31,7 @@ const commonjs = require("personal-rns");
 
 test("root export selects one native API for ESM and CommonJS", () => {
   assert.equal(esm.HOST_CONTRACT_ABI, 1);
-  assert.equal(esm.PRODUCT_VERSION, "0.3.1");
+  assert.equal(esm.PRODUCT_VERSION, productVersion);
   assert.equal(commonjs.HOST_CONTRACT_ABI, esm.HOST_CONTRACT_ABI);
   assert.equal(commonjs.Prns, esm.Prns);
 });

@@ -14,10 +14,12 @@ import {
   match,
 } from "personal-rns/browser";
 
+const productVersion = (await readFile("../VERSION", "utf8")).trim();
+
 test("browser subpath exposes the shared release contract and casework", () => {
   assert.equal(HOST_CONTRACT_ABI, 1);
   assert.equal(HOST_SCHEMA_VERSION, 1);
-  assert.equal(PRODUCT_VERSION, "0.3.1");
+  assert.equal(PRODUCT_VERSION, productVersion);
   assert.deepEqual(balancedLimits(), {
     pendingCommands: 256,
     applicationEvents: 1_024,

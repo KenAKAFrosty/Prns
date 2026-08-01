@@ -479,6 +479,69 @@ def validate() -> list[str]:
                 "host-sdk-promote.yml must remain manual: "
                 f"{forbidden_trigger.strip()!r}"
             )
+    for release_notes_gate in (
+        'contract_abi="$(jq -r .contractAbi dist/promotion/release-index.json)"',
+        'schema_version="$(jq -r .schemaVersion dist/promotion/release-index.json)"',
+        "Signed ABI $contract_abi, schema $schema_version host SDK artifacts",
+    ):
+        if release_notes_gate not in host_sdk_promotion:
+            errors.append(
+                "host-sdk-promote.yml is missing staged contract release notes gate "
+                f"{release_notes_gate!r}"
+            )
+    if "schema 2 host SDK artifacts" in host_sdk_promotion:
+        errors.append("host-sdk-promote.yml hardcodes a stale host schema version")
+
+    host_sdks = (
+        ROOT / ".github" / "workflows" / "host-sdks.yml"
+    ).read_text(encoding="utf-8")
+    for target, zig_target, wheel in (
+        (
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu.2.34",
+            "manylinux_2_34_x86_64",
+        ),
+        (
+            "aarch64-unknown-linux-gnu",
+            "aarch64-unknown-linux-gnu.2.34",
+            "manylinux_2_34_aarch64",
+        ),
+    ):
+        matrix_entry = re.compile(
+            rf"target: {re.escape(target)}\n"
+            rf"\s+zigTarget: {re.escape(zig_target)}\n"
+            rf"(?:(?!\n\s+- host:).)*\n\s+audit: {re.escape(wheel)}\n",
+            re.DOTALL,
+        )
+        if matrix_entry.search(host_sdks) is None:
+            errors.append(
+                "host-sdks.yml does not bind the GNU target, glibc floor, and "
+                f"repaired wheel tag for {target}"
+            )
+    for gnu_gate in (
+        "version: 0.14.1",
+        "tool: cargo-zigbuild@0.23.0",
+        "--target ${{ matrix.settings.zigTarget }}",
+        "auditwheel repair",
+        "release.host-sdk.python.smoke --",
+    ):
+        if gnu_gate not in host_sdks:
+            errors.append(f"host-sdks.yml is missing GNU capsule gate {gnu_gate!r}")
+    if host_sdks.index("auditwheel repair") > host_sdks.index(
+        "release.host-sdk.python.smoke --"
+    ):
+        errors.append("host-sdks.yml smokes repaired GNU wheels before repair")
+    for workflow_name in (
+        "prnsd-candidate.yml",
+        "prnsd-image-candidate.yml",
+        "suite-sign.yml",
+        "suite-promote.yml",
+    ):
+        current_workflow = (
+            ROOT / ".github" / "workflows" / workflow_name
+        ).read_text(encoding="utf-8")
+        if "0.3.1" in current_workflow:
+            errors.append(f"{workflow_name} hardcodes the previous product version")
 
     host_sdk_public = (
         ROOT / ".github" / "workflows" / "host-sdk-public-qualification.yml"

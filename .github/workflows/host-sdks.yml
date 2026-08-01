@@ -160,6 +160,7 @@ jobs:
         settings:
           - host: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            zigTarget: x86_64-unknown-linux-gnu.2.34
             archive: tar.gz
             library: libprns_host.so
             static: libprns_host.a
@@ -169,6 +170,7 @@ jobs:
             upload: repaired/*.whl
           - host: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
+            zigTarget: aarch64-unknown-linux-gnu.2.34
             archive: tar.gz
             library: libprns_host.so
             static: libprns_host.a
@@ -178,6 +180,7 @@ jobs:
             upload: repaired/*.whl
           - host: ubuntu-latest
             target: x86_64-unknown-linux-musl
+            zigTarget: x86_64-unknown-linux-musl
             archive: tar.gz
             library: libprns_host.so
             static: libprns_host.a
@@ -187,6 +190,7 @@ jobs:
             upload: "*.whl"
           - host: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
+            zigTarget: aarch64-unknown-linux-musl
             archive: tar.gz
             library: libprns_host.so
             static: libprns_host.a
@@ -196,6 +200,7 @@ jobs:
             upload: "*.whl"
           - host: macos-15-intel
             target: x86_64-apple-darwin
+            zigTarget: ""
             archive: tar.gz
             library: libprns_host.dylib
             static: libprns_host.a
@@ -205,6 +210,7 @@ jobs:
             upload: "*.whl"
           - host: macos-latest
             target: aarch64-apple-darwin
+            zigTarget: ""
             archive: tar.gz
             library: libprns_host.dylib
             static: libprns_host.a
@@ -214,6 +220,7 @@ jobs:
             upload: "*.whl"
           - host: windows-latest
             target: x86_64-pc-windows-msvc
+            zigTarget: ""
             archive: zip
             library: prns_host.dll
             static: prns_host.lib
@@ -223,6 +230,7 @@ jobs:
             upload: "*.whl"
           - host: windows-11-arm
             target: aarch64-pc-windows-msvc
+            zigTarget: ""
             archive: zip
             library: prns_host.dll
             static: prns_host.lib
@@ -251,18 +259,20 @@ jobs:
           workspaces: prns-host/abi/c
           key: host-sdk-${{ matrix.settings.target }}
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29
-        if: contains(matrix.settings.target, 'musl')
+        if: matrix.settings.zigTarget != ''
         with:
           version: 0.14.1
       - uses: taiki-e/install-action@7572810d7dd469b651bb7793945692cf78da5dd7
-        if: contains(matrix.settings.target, 'musl')
+        if: matrix.settings.zigTarget != ''
         with:
           tool: cargo-zigbuild@0.23.0
       - shell: bash
         run: |
           if [[ "${{ matrix.settings.target }}" == *-musl ]]; then
             export RUSTFLAGS="$RUSTFLAGS -C target-feature=-crt-static"
-            cargo zigbuild --manifest-path prns-host/abi/c/Cargo.toml --locked --release --target ${{ matrix.settings.target }}
+          fi
+          if [[ -n "${{ matrix.settings.zigTarget }}" ]]; then
+            cargo zigbuild --manifest-path prns-host/abi/c/Cargo.toml --locked --release --target ${{ matrix.settings.zigTarget }}
           else
             cargo build --manifest-path prns-host/abi/c/Cargo.toml --locked --release --target ${{ matrix.settings.target }}
           fi

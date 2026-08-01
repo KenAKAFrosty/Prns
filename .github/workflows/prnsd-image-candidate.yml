@@ -46,7 +46,9 @@ jobs:
           test "$REF_PROTECTED" = "true"
           test "$GITHUB_SHA" = "$EXPECTED_COMMIT"
           test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
-          test "$(cat VERSION)" = "0.3.1"
+          version="$(cat VERSION)"
+          manifest_version="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' prnsd/Cargo.toml | head -n 1)"
+          test "$manifest_version" = "$version"
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
         with:
           version: v0.35.0

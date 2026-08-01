@@ -1,6 +1,7 @@
 import {
   BLE_IDENTITY_LENGTH,
   Prns,
+  PRODUCT_VERSION,
   Tag,
   destinationHash,
   entropyBytes,
@@ -366,7 +367,7 @@ function wasmModule(): PrnsWasmModule {
     hostContractAbi: () => 1,
     hostSchemaVersion: () => 1,
     browserPersistenceVersion: () => 1,
-    productVersion: () => "0.3.1",
+    productVersion: () => PRODUCT_VERSION,
     identitySecretKeyLength: () => IDENTITY_LENGTH,
     bluetoothServiceUuid: () => "service",
     bluetoothControlUuid: () => "control",

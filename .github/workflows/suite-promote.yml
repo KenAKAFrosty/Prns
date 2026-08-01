@@ -267,19 +267,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           signer="${GITHUB_REPOSITORY}/.github/workflows/suite-sign.yml"
-          for archive in target/release-assets/prnsd-0.3.1-*.tar.gz \
-            target/release-assets/prnsd-0.3.1-*.zip
+          version="$(cat VERSION)"
+          for archive in target/release-assets/prnsd-${version}-*.tar.gz \
+            target/release-assets/prnsd-${version}-*.zip
           do
             gh attestation verify "$archive" \
               --repo "$GITHUB_REPOSITORY" \
-              --bundle target/release-assets/prnsd-native-attestation-v0.3.1.json \
+              --bundle "target/release-assets/prnsd-native-attestation-v${version}.json" \
               --signer-workflow "$signer" \
               --deny-self-hosted-runners
           done
           gh attestation verify \
             "oci://ghcr.io/kenakafrosty/prnsd@${{ inputs.image_digest }}" \
             --repo "$GITHUB_REPOSITORY" \
-            --bundle target/release-assets/prnsd-image-attestation-v0.3.1.json \
+            --bundle "target/release-assets/prnsd-image-attestation-v${version}.json" \
             --signer-workflow "$signer" \
             --deny-self-hosted-runners
       - name: Prove public anonymous pulls on both architectures

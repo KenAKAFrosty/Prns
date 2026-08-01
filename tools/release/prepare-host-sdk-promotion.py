@@ -44,10 +44,17 @@ def prepare(stage, output, expected_sha, root=ROOT):
     catalog = json.loads((root / "prns-host/distribution/packages.json").read_text())
     version = (root / "VERSION").read_text().strip()
     index = json.loads((stage / "release-index.json").read_text())
+    schema = json.loads(
+        (root / catalog["contractSource"]).read_text()
+    )
     if index["commit"] != expected_sha:
         raise ValueError("release stage commit differs from --expected-sha")
     if index["version"] != version:
         raise ValueError("release stage version differs from VERSION")
+    if index["contractAbi"] != schema["abi"]:
+        raise ValueError("release stage contract ABI differs from the host schema")
+    if index["schemaVersion"] != schema["schemaVersion"]:
+        raise ValueError("release stage schema version differs from the host schema")
     resolved_packages = []
     for package in catalog["packages"]:
         resolved = dict(package)
@@ -122,6 +129,8 @@ def prepare(stage, output, expected_sha, root=ROOT):
         "product": index["product"],
         "version": version,
         "commit": expected_sha,
+        "contractAbi": index["contractAbi"],
+        "schemaVersion": index["schemaVersion"],
         "releaseTag": release_tag,
         "tags": tags,
         "assets": [

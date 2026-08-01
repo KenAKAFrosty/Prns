@@ -264,7 +264,8 @@ jobs:
               "dist/journey-$standard" \
               prns-host/conformance/persistent-two-node-v1.json \
               prns-host/conformance/interface-configs-v1.json \
-              "dist/state-$standard"
+              "dist/state-$standard" \
+              "$VERSION"
           done
           go_root="$(dirname "$(find dist/go -type f -name go.mod -print -quit)")"
           swift_root="$(dirname "$(find dist/swift -type f -name Package.swift | sort | head -1)")"

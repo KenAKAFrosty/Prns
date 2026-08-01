@@ -5,7 +5,7 @@ export class MemoryResourceStream {
     #claimed = false;
     constructor(data) {
         this.#data = data.slice();
-        this.totalBytes = data.length;
+        this.totalBytes = BigInt(data.length);
     }
     claim() {
         if (this.#claimed) {

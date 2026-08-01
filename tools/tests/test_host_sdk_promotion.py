@@ -17,6 +17,7 @@ SPEC.loader.exec_module(PROMOTION)
 
 class HostSdkPromotionTests(unittest.TestCase):
     commit = "1" * 40
+    version = (ROOT / "VERSION").read_text().strip()
 
     def create_stage(self, root):
         stage = root / "stage"
@@ -25,7 +26,10 @@ class HostSdkPromotionTests(unittest.TestCase):
         catalog = json.loads(
             (ROOT / "prns-host/distribution/packages.json").read_text()
         )
-        version = (ROOT / "VERSION").read_text().strip()
+        version = self.version
+        schema = json.loads(
+            (ROOT / catalog["contractSource"]).read_text()
+        )
         names = [
             f"personal-rns-{version}-{target['rust']}.{target['archive']}"
             for target in catalog["nativeTargets"]
@@ -81,6 +85,8 @@ class HostSdkPromotionTests(unittest.TestCase):
             "product": catalog["product"],
             "version": version,
             "commit": self.commit,
+            "contractAbi": schema["abi"],
+            "schemaVersion": schema["schemaVersion"],
             "packages": packages,
             "files": entries,
         }
@@ -97,16 +103,20 @@ class HostSdkPromotionTests(unittest.TestCase):
             stage = self.create_stage(root)
             output = root / "promotion"
             promotion = PROMOTION.prepare(stage, output, self.commit)
-            self.assertEqual(promotion["releaseTag"], "host-sdk-v0.3.1")
+            self.assertEqual(
+                promotion["releaseTag"], f"host-sdk-v{self.version}"
+            )
             self.assertEqual(
                 set(promotion["tags"]),
                 {
-                    "PersonalRns-v0.3.1",
-                    "host-sdk-v0.3.1",
-                    "prns-host/bindings/go/v0.3.1",
-                    "v0.3.1",
+                    f"PersonalRns-v{self.version}",
+                    f"host-sdk-v{self.version}",
+                    f"prns-host/bindings/go/v{self.version}",
+                    f"v{self.version}",
                 },
             )
+            self.assertEqual(promotion["contractAbi"], 1)
+            self.assertEqual(promotion["schemaVersion"], 1)
             self.assertEqual(len(promotion["assets"]), 20)
             self.assertTrue((output / "SHA256SUMS").is_file())
             self.assertTrue((output / "promotion.json").is_file())

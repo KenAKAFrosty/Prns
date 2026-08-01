@@ -890,10 +890,11 @@ mod tests {
     #[test]
     fn developer_source_digest_comes_from_the_immutable_version() {
         let digest = "e3ffc728180a8194c2efb55f90b0285f093db6e53e6dc800d4b229426e966399";
-        let version = format!("0.3.1-dev.dirty.{digest}");
+        let version = format!("{}-dev.dirty.{digest}", env!("CARGO_PKG_VERSION"));
+        let short = format!("{}-dev.dirty.short", env!("CARGO_PKG_VERSION"));
         assert_eq!(developer_source_digest(&version), Some(digest));
-        assert_eq!(developer_source_digest("0.3.1"), None);
-        assert_eq!(developer_source_digest("0.3.1-dev.dirty.short"), None);
+        assert_eq!(developer_source_digest(env!("CARGO_PKG_VERSION")), None);
+        assert_eq!(developer_source_digest(&short), None);
     }
 
     #[test]

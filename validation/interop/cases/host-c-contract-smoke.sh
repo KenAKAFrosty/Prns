@@ -32,7 +32,8 @@ for compiler in cc c++; do
         "$scratch/journey-$name" \
         prns-host/conformance/persistent-two-node-v1.json \
         prns-host/conformance/interface-configs-v1.json \
-        "$scratch/state-$name"
+        "$scratch/state-$name" \
+        "$(cat VERSION)"
 done
 
 echo "HOST_C_CONTRACT_SMOKE_OK"

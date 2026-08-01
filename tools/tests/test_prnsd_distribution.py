@@ -15,6 +15,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "tools" / "release" / "prnsd-distribution.py"
+VERSION = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
 
 
 def load_module() -> types.ModuleType:
@@ -136,7 +137,7 @@ class PrnsdDistributionTests(unittest.TestCase):
                 f"{hashlib.sha256(source.read_bytes()).hexdigest()}  source.zip\n",
                 encoding="utf-8",
             )
-            first = root / "first" / "prnsd-0.3.1-x86_64-unknown-linux-gnu.tar.gz"
+            first = root / "first" / f"prnsd-{VERSION}-x86_64-unknown-linux-gnu.tar.gz"
             second = root / "second" / first.name
             common = {
                 "binary": binary,
@@ -157,15 +158,15 @@ class PrnsdDistributionTests(unittest.TestCase):
                 names = archive.getnames()
                 identity = json.load(
                     archive.extractfile(
-                        "prnsd-0.3.1-x86_64-unknown-linux-gnu/build-identity.json"
+                        f"prnsd-{VERSION}-x86_64-unknown-linux-gnu/build-identity.json"
                     )
                 )
             self.assertIn(
-                "prnsd-0.3.1-x86_64-unknown-linux-gnu/THIRD_PARTY_NOTICES.md",
+                f"prnsd-{VERSION}-x86_64-unknown-linux-gnu/THIRD_PARTY_NOTICES.md",
                 names,
             )
             self.assertIn(
-                "prnsd-0.3.1-x86_64-unknown-linux-gnu/source.zip",
+                f"prnsd-{VERSION}-x86_64-unknown-linux-gnu/source.zip",
                 names,
             )
             self.assertEqual(identity["source_commit"], "a" * 40)
@@ -206,7 +207,7 @@ class PrnsdDistributionTests(unittest.TestCase):
                 ("heltec-v4", b"heltec application"),
                 ("t-beam-supreme", b"t-beam application"),
             ):
-                relative = f"firmware/hopspot/{board}/0.3.1/application.bin"
+                relative = f"firmware/hopspot/{board}/{VERSION}/application.bin"
                 payload = candidate / relative
                 payload.parent.mkdir(parents=True)
                 payload.write_bytes(content)
@@ -225,7 +226,7 @@ class PrnsdDistributionTests(unittest.TestCase):
             (candidate / "flash-manifest.json").write_bytes(
                 distribution.canonical_json(
                     {
-                        "release": {"channel": "stable", "version": "0.3.1"},
+                        "release": {"channel": "stable", "version": VERSION},
                         "targets": targets,
                     }
                 )
@@ -234,12 +235,12 @@ class PrnsdDistributionTests(unittest.TestCase):
                 types.SimpleNamespace(candidate=candidate, assets=assets)
             )
             self.assertEqual(
-                (assets / "prns-hopspot-0.3.1-heltec-v4-application.bin").read_bytes(),
+                (assets / f"prns-hopspot-{VERSION}-heltec-v4-application.bin").read_bytes(),
                 b"heltec application",
             )
             self.assertEqual(
                 (
-                    assets / "prns-hopspot-0.3.1-t-beam-supreme-application.bin"
+                    assets / f"prns-hopspot-{VERSION}-t-beam-supreme-application.bin"
                 ).read_bytes(),
                 b"t-beam application",
             )
@@ -270,13 +271,15 @@ class PrnsdDistributionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             for target in distribution.TARGETS:
-                (root / distribution.archive_name("0.3.1", target)).write_bytes(
+                (root / distribution.archive_name(VERSION, target)).write_bytes(
                     target.encode()
                 )
                 (root / f"{target}-linkage.txt").write_text(
                     "linkage\n", encoding="utf-8"
                 )
-            (root / "prnsd-0.3.1-source.spdx.json").write_text("{}\n", encoding="utf-8")
+            (root / f"prnsd-{VERSION}-source.spdx.json").write_text(
+                "{}\n", encoding="utf-8"
+            )
             index = root / f"prnsd-candidate-{'a' * 40}.json"
             arguments = types.SimpleNamespace(
                 assets=root,
@@ -474,7 +477,7 @@ class PrnsdDistributionTests(unittest.TestCase):
 
     def test_railway_contract_exposes_write_once_announcement_controls(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            output = Path(temporary) / "railway-template-contract-v0.3.1.json"
+            output = Path(temporary) / f"railway-template-contract-v{VERSION}.json"
             distribution.write_railway_contract(
                 types.SimpleNamespace(
                     source_commit="c" * 40,
@@ -514,33 +517,33 @@ class PrnsdDistributionTests(unittest.TestCase):
                 "linux/arm64": f"sha256:{'f' * 64}",
             }
             for target in distribution.TARGETS:
-                (assets / distribution.archive_name("0.3.1", target)).write_bytes(
+                (assets / distribution.archive_name(VERSION, target)).write_bytes(
                     target.encode()
                 )
                 (assets / f"{target}-linkage.txt").write_text(
                     "linkage\n", encoding="utf-8"
                 )
             for name in (
-                "prnsd-0.3.1-source.spdx.json",
+                f"prnsd-{VERSION}-source.spdx.json",
                 "prnsd-linux-amd64.spdx.json",
                 "prnsd-linux-arm64.spdx.json",
             ):
                 (assets / name).write_text("{}\n", encoding="utf-8")
             for name in (
-                "prnsd-native-attestation-v0.3.1.json",
-                "prnsd-image-attestation-v0.3.1.json",
-                "prns-flasher-candidate-v0.3.1-signed.tar.gz",
+                f"prnsd-native-attestation-v{VERSION}.json",
+                f"prnsd-image-attestation-v{VERSION}.json",
+                f"prns-flasher-candidate-v{VERSION}-signed.tar.gz",
             ):
                 (assets / name).write_text("evidence\n", encoding="utf-8")
             candidate = root / "flasher-candidate"
             candidate.mkdir()
             payload_content = b"signed firmware payload"
-            payload_relative = "firmware/hopspot/heltec-v4/0.3.1/application.bin"
+            payload_relative = f"firmware/hopspot/heltec-v4/{VERSION}/application.bin"
             payload = candidate / payload_relative
             payload.parent.mkdir(parents=True)
             payload.write_bytes(payload_content)
             manifest = {
-                "release": {"channel": "stable", "version": "0.3.1"},
+                "release": {"channel": "stable", "version": VERSION},
                 "targets": [
                     {
                         "board_slug": "heltec-v4",
@@ -569,21 +572,21 @@ class PrnsdDistributionTests(unittest.TestCase):
                         f"{platform}={digest}"
                         for platform, digest in platform_digests.items()
                     ],
-                    output=assets / "prnsd-image-v0.3.1.json",
+                    output=assets / f"prnsd-image-v{VERSION}.json",
                 )
             )
             distribution.write_railway_contract(
                 types.SimpleNamespace(
                     source_commit=commit,
                     image_digest=manifest_digest,
-                    output=assets / "railway-template-contract-v0.3.1.json",
+                    output=assets / f"railway-template-contract-v{VERSION}.json",
                 )
             )
             (assets / f"prnsd-candidate-{commit}.json").write_bytes(
                 distribution.canonical_json(
                     {
                         "source_commit": commit,
-                        "version": "0.3.1",
+                        "version": VERSION,
                         "workflow": {"path": ".github/workflows/prnsd-candidate.yml"},
                     }
                 )
@@ -594,7 +597,7 @@ class PrnsdDistributionTests(unittest.TestCase):
                         "platform_digests": platform_digests,
                         "source_archive_sha256": "1" * 64,
                         "source_commit": commit,
-                        "version": "0.3.1",
+                        "version": VERSION,
                         "workflow": {
                             "path": ".github/workflows/prnsd-image-candidate.yml"
                         },
@@ -605,7 +608,7 @@ class PrnsdDistributionTests(unittest.TestCase):
             distribution.create_inventory(
                 types.SimpleNamespace(assets=assets, output=inventory)
             )
-            record = custody / "release-record-v0.3.1.json"
+            record = custody / f"release-record-v{VERSION}.json"
             distribution.write_suite_record(
                 types.SimpleNamespace(
                     assets=assets,
@@ -619,7 +622,7 @@ class PrnsdDistributionTests(unittest.TestCase):
                 record_value["flasher"]["payloads"],
                 [
                     {
-                        "asset": "prns-hopspot-0.3.1-heltec-v4-application.bin",
+                        "asset": f"prns-hopspot-{VERSION}-heltec-v4-application.bin",
                         "board_slug": "heltec-v4",
                         "candidate_path": payload_relative,
                         "sha256": hashlib.sha256(payload_content).hexdigest(),
@@ -641,13 +644,13 @@ class PrnsdDistributionTests(unittest.TestCase):
                 image_digest=manifest_digest,
             )
             distribution.verify_suite_release(verify)
-            (release / "public-review-v0.3.1-run-71-attempt-2.json").write_text(
+            (release / f"public-review-v{VERSION}-run-71-attempt-2.json").write_text(
                 "{}\n", encoding="utf-8"
             )
-            (release / "qualification-evidence-v0.3.1.tar.gz").write_bytes(
+            (release / f"qualification-evidence-v{VERSION}.tar.gz").write_bytes(
                 b"separately signed flasher evidence"
             )
-            (release / "deployment-qualification-v0.3.1.json").write_text(
+            (release / f"deployment-qualification-v{VERSION}.json").write_text(
                 "{}\n", encoding="utf-8"
             )
             distribution.verify_suite_release(verify)

@@ -128,10 +128,12 @@ jobs:
         run: |
           release_tag="$(jq -r .releaseTag dist/promotion/promotion.json)"
           version="$(jq -r .version dist/promotion/promotion.json)"
+          contract_abi="$(jq -r .contractAbi dist/promotion/release-index.json)"
+          schema_version="$(jq -r .schemaVersion dist/promotion/release-index.json)"
           gh release create "$release_tag" dist/promotion/* \
             --verify-tag \
             --target "$EXPECTED_SHA" \
             --title "Personal RNS host SDK $version" \
-            --notes "Signed ABI 1, schema 2 host SDK artifacts for Personal RNS $version." \
+            --notes "Signed ABI $contract_abi, schema $schema_version host SDK artifacts for Personal RNS $version." \
             --latest=false
           test "$(gh release view "$release_tag" --json targetCommitish --jq .targetCommitish)" = "$EXPECTED_SHA"

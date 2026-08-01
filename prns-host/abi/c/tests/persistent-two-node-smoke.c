@@ -382,6 +382,7 @@ static int create_host(
     const JourneyFixture *fixture,
     const uint8_t *announce_data,
     size_t announce_data_length,
+    const char *product_version,
     PrnsHost **host
 ) {
     char identity_path[1024];
@@ -416,7 +417,7 @@ static int create_host(
     options.struct_size = sizeof(options);
     options.required_abi = PRNS_HOST_CONTRACT_ABI;
     options.required_schema_version = PRNS_HOST_SCHEMA_VERSION;
-    options.required_product_version = string_view("0.3.1");
+    options.required_product_version = string_view(product_version);
     options.limits.struct_size = sizeof(options.limits);
     options.limits.pending_commands = (size_t)PRNS_BALANCED_PENDING_COMMANDS;
     options.limits.application_events = (size_t)PRNS_BALANCED_APPLICATION_EVENTS;
@@ -541,7 +542,7 @@ int main(int argc, char **argv) {
         } \
     } while (0)
 
-    REQUIRE(argc == 4, "expected journey fixture, interface fixture, and persistence root arguments");
+    REQUIRE(argc == 5, "expected journey fixture, interface fixture, persistence root, and product version arguments");
     REQUIRE(load_fixture(argv[1], &fixture), "could not load fixture");
     REQUIRE(validate_interface_fixture(argv[2]), "interface fixture does not match the C contract");
     REQUIRE(fixture.schema_version == PRNS_HOST_SCHEMA_VERSION, "schema mismatch");
@@ -565,8 +566,8 @@ int main(int argc, char **argv) {
     REQUIRE(snprintf(server_address, sizeof(server_address), "127.0.0.1:%u", (unsigned int)port) > 0, "could not format address");
     REQUIRE(snprintf(server_root, sizeof(server_root), "%s/server", argv[3]) > 0, "could not format server root");
     REQUIRE(snprintf(client_root, sizeof(client_root), "%s/client", argv[3]) > 0, "could not format client root");
-    REQUIRE(create_host(server_root, 1, &fixture, announce_data, announce_data_length, &server), "server creation failed");
-    REQUIRE(create_host(client_root, 0, &fixture, announce_data, announce_data_length, &client), "client creation failed");
+    REQUIRE(create_host(server_root, 1, &fixture, announce_data, announce_data_length, argv[4], &server), "server creation failed");
+    REQUIRE(create_host(client_root, 0, &fixture, announce_data, announce_data_length, argv[4], &client), "client creation failed");
     REQUIRE(prns_host_identity_hash(server, &view) == PRNS_STATUS_OK && view.length == sizeof(server_identity), "server identity unavailable");
     memcpy(server_identity, view.data, sizeof(server_identity));
     REQUIRE(prns_host_identity_hash(client, &view) == PRNS_STATUS_OK && view.length == sizeof(client_identity), "client identity unavailable");
@@ -662,8 +663,8 @@ int main(int argc, char **argv) {
     prns_host_release(server);
     server = NULL;
 
-    REQUIRE(create_host(server_root, 1, &fixture, announce_data, announce_data_length, &restored_server), "restored server creation failed");
-    REQUIRE(create_host(client_root, 0, &fixture, announce_data, announce_data_length, &restored_client), "restored client creation failed");
+    REQUIRE(create_host(server_root, 1, &fixture, announce_data, announce_data_length, argv[4], &restored_server), "restored server creation failed");
+    REQUIRE(create_host(client_root, 0, &fixture, announce_data, announce_data_length, argv[4], &restored_client), "restored client creation failed");
     REQUIRE(prns_host_identity_hash(restored_server, &view) == PRNS_STATUS_OK && view.length == sizeof(server_identity) && memcmp(view.data, server_identity, sizeof(server_identity)) == 0, "server identity changed after restart");
     REQUIRE(prns_host_identity_hash(restored_client, &view) == PRNS_STATUS_OK && view.length == sizeof(client_identity) && memcmp(view.data, client_identity, sizeof(client_identity)) == 0, "client identity changed after restart");
     REQUIRE(prns_host_destination_hash(restored_server, 0, &view) == PRNS_STATUS_OK && view.length == sizeof(destination_hash) && memcmp(view.data, destination_hash, sizeof(destination_hash)) == 0, "destination changed after restart");
