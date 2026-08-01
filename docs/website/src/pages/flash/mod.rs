@@ -17,13 +17,10 @@ use crate::routes::Route;
 
 use view::{BoardTargetCard, GuidedFlasher, LocalBuildUnavailablePanel, UnavailablePanel};
 
-#[cfg(test)]
-fn release_0_2_6_fixture(
+#[cfg(any(test, feature = "browser-test-fixture"))]
+fn validate_release_0_2_6_fixture(
+    manifest: &[u8],
 ) -> Result<prns_flash_manifest::ValidatedFlashManifest, Box<dyn std::error::Error>> {
-    const MANIFEST: &[u8] = include_bytes!(
-        "../../../web-flasher/browser/fixtures/signed-candidate/releases/0.2.6/flash-manifest.json"
-    );
-
     let mut catalog = prns_flash_manifest::board_catalog()?;
     let historical_heltec = catalog
         .boards
@@ -39,11 +36,21 @@ fn release_0_2_6_fixture(
 
     Ok(
         prns_flash_manifest::ValidatedFlashManifest::from_json_with_target_set(
-            MANIFEST,
+            manifest,
             &catalog,
             &historical_targets,
         )?,
     )
+}
+
+#[cfg(test)]
+fn release_0_2_6_fixture(
+) -> Result<prns_flash_manifest::ValidatedFlashManifest, Box<dyn std::error::Error>> {
+    const MANIFEST: &[u8] = include_bytes!(
+        "../../../web-flasher/browser/fixtures/signed-candidate/releases/0.2.6/flash-manifest.json"
+    );
+
+    validate_release_0_2_6_fixture(MANIFEST)
 }
 
 #[component]
