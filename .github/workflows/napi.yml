@@ -418,6 +418,7 @@ jobs:
           npm install --ignore-scripts --no-audit --no-fund \
             "$GITHUB_WORKSPACE/dist/npm/personal-rns-linux-x64-gnu-$(cat "$GITHUB_WORKSPACE/VERSION").tgz" \
             "$GITHUB_WORKSPACE/dist/npm/personal-rns-$(cat "$GITHUB_WORKSPACE/VERSION").tgz"
+          cp "$GITHUB_WORKSPACE/VERSION" VERSION
           mkdir -p prns-js/tests prns-host/conformance
           cp "$GITHUB_WORKSPACE/prns-js/tests/native-consumer.test.mjs" \
             prns-js/tests/

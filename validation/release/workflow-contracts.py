@@ -552,6 +552,7 @@ def validate() -> list[str]:
         "ssh-keygen -Y verify",
         "git tag -v",
         "Install npm packages and repeat the persistent two-node journey",
+        'cp VERSION "$scratch/VERSION"',
         "release.host-sdk.python.smoke",
         "release.host-sdk.dotnet.smoke -- --public",
         '"personal-rns@=$VERSION"',
@@ -581,6 +582,7 @@ def validate() -> list[str]:
     for package_gate in (
         "smoke packed Node and Bun consumers",
         "persistent-two-node-v1.json",
+        'cp "$GITHUB_WORKSPACE/VERSION" VERSION',
         "node --test prns-js/tests/native-consumer.test.mjs",
     ):
         if package_gate not in napi_release:
