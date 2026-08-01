@@ -418,7 +418,7 @@ tiers = ["pr", "release", "scheduled"]
 platform = "any"
 toolchain = "stable"
 timeout_seconds = 120
-command = ["cargo", "tools", "guide", "rust"]
+command = ["cargo", "tools", "guide", "rust-basics"]
 inputs = ["Cargo.toml", "Cargo.lock", ".cargo/config.toml", "personal-rns/Cargo.toml", "personal-rns/examples/node_basics.rs", "tools/guide/run-rust-example.py", "tools/prns", "tools/tasks.toml"]
 artifacts = "validation-artifacts/results/guide-rust"
 

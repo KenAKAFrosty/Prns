@@ -290,7 +290,7 @@ mod tests {
         let page = core::str::from_utf8(QUICKSTART_PAGE).unwrap();
         for expected in [
             "cargo prnsd",
-            "cargo tools guide rust",
+            "cargo tools guide rust-basics",
             "cargo c6 --locked",
             "cargo test --locked",
             "cargo benchmark --smoke",

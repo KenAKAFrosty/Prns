@@ -528,7 +528,7 @@ Examples:
   ./tools/prns list --domain release
   ./tools/prns doctor getting-started
   cargo tools explain release.candidate.build
-  cargo tools guide rust
+  cargo tools guide rust-basics
   ./tools/prns doctor release
   cargo tools release candidate verify -- target/candidate
 """
