@@ -21,6 +21,7 @@ RUN test -n "${VERSION}" \
     && case "${SOURCE_DATE_EPOCH}" in *[!0-9]*) exit 1 ;; esac
 
 ENV CARGO_PROFILE_RELEASE_STRIP=symbols
+ENV CARGO_TARGET_DIR=/tmp/prnsd-target
 ENV RUSTUP_TOOLCHAIN=1.96.0
 ENV SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
 
@@ -30,9 +31,8 @@ RUN test "$(rustc --version | cut -d ' ' -f 2)" = "1.96.0" \
     --locked \
     --release \
     --no-default-features \
-    --features tokio-cloud-host,observability
-
-RUN install -D -m 0755 prnsd/target/release/prnsd /image/usr/local/bin/prnsd \
+    --features tokio-cloud-host,observability,otlp \
+    && install -D -m 0755 /tmp/prnsd-target/release/prnsd /image/usr/local/bin/prnsd \
     && install -D -m 0644 LICENSE-APACHE /image/usr/share/doc/prnsd/LICENSE-APACHE \
     && install -D -m 0644 LICENSE-MIT /image/usr/share/doc/prnsd/LICENSE-MIT \
     && install -D -m 0644 THIRD_PARTY_NOTICES.md /image/usr/share/doc/prnsd/THIRD_PARTY_NOTICES.md \
@@ -41,7 +41,8 @@ RUN install -D -m 0755 prnsd/target/release/prnsd /image/usr/local/bin/prnsd \
          install -D -m 0644 release/source-bundle/source.zip /image/usr/share/prnsd/source.zip; \
          install -D -m 0644 release/source-bundle/source.zip.sha256 /image/usr/share/prnsd/source.zip.sha256; \
        fi \
-    && install -d -m 0700 -o 65532 -g 65532 /image/var/lib/prnsd
+    && install -d -m 0700 -o 65532 -g 65532 /image/var/lib/prnsd \
+    && rm -rf /tmp/prnsd-target /usr/local/cargo/registry
 
 FROM gcr.io/distroless/cc-debian12:nonroot@sha256:fccdbb0a547c14e23fcf4ce8ad62ca5d43b4faae8d22cd292f490fef9946c96e
 

@@ -91,7 +91,7 @@ Visibility is built in, from readable logs to a metrics dashboard.
 
 - **Metrics and traces, with a dashboard included**
 
-    The standard release build includes an OTLP exporter. Point it at any OpenTelemetry collector, or use the one that ships in the repository: `cargo observability` brings up a local Grafana + collector stack with a prnsd dashboard already built.
+    The official cloud container and canonical `cargo prnsd build` artifact include an OTLP exporter. Point either at any OpenTelemetry collector, or use the one that ships in the repository: `cargo observability` brings up a local Grafana + collector stack with a prnsd dashboard already built.
 
 Once you've got this repo cloned and your toolchain set up, see [the observability guide](observability.md). That guide goes into more details, from log filters to the collector stack.
 

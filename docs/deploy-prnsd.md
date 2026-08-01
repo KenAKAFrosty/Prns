@@ -71,6 +71,32 @@ docker exec prnsd prnsd interfaces list
 docker logs --follow prnsd
 ```
 
+### OTLP metrics and traces
+
+The official image includes OTLP/HTTP protobuf metrics and traces. The
+capability is dormant by default: without a common or signal-specific endpoint,
+no telemetry provider or runtime reporter task starts. Point the container at a
+collector reachable from its network to activate it:
+
+```sh
+docker run -d \
+  --name prnsd \
+  --restart on-failure \
+  --mount type=volume,source=prnsd-data,target=/var/lib/prnsd \
+  --publish 4242:4242/tcp \
+  --publish 4284:4284/tcp \
+  --env OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318 \
+  --env OTEL_SERVICE_NAME=prnsd \
+  --env OTEL_RESOURCE_ATTRIBUTES=service.instance.id=backbone-1 \
+  "$PRNSD_IMAGE"
+```
+
+`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` and
+`OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` can configure the signals separately.
+`OTEL_SDK_DISABLED=true` is an explicit kill switch. Use a stable, unique
+`service.instance.id` for each daemon that reports to the same backend. Export
+is bounded and does not replace the structured JSON container logs.
+
 The entrypoint publishes `/var/lib/prnsd` as the container's active Prns
 instance. Every `docker exec prnsd prnsd ...` operator command therefore uses
 that configuration automatically. Running bare `prnsd` reports the already
@@ -104,9 +130,10 @@ prnsd run --service --config /var/lib/prnsd --persistence-policy required --boot
 ```
 
 When `/var/lib/prnsd/config` does not exist, `--bootstrap server` atomically
-creates a private `0600` configuration with one Backbone listener on
-`0.0.0.0:4242`. After that first write the configuration is operator-owned:
-bootstrap never rewrites an existing file.
+creates a private `0600` configuration with a Backbone listener on
+`0.0.0.0:4242` and a WebSocket listener on `0.0.0.0:4284`. After that first
+write the configuration is operator-owned: bootstrap never rewrites an
+existing file.
 
 The same first bootstrap creates `/var/lib/prnsd/nnpages`, with hosted
 documents under `pages/`, downloads under `files/`, announcement policy in

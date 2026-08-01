@@ -127,6 +127,7 @@ class PrnsdDistributionTests(unittest.TestCase):
 
     def test_container_publishes_one_default_operator_context(self) -> None:
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+        self.assertIn("--features tokio-cloud-host,observability,otlp", dockerfile)
         self.assertIn("ENV PRNSD_STATE_DIR=/var/lib/prnsd/.service\n", dockerfile)
         self.assertIn("EXPOSE 4242/tcp 4284/tcp\n", dockerfile)
         self.assertIn(

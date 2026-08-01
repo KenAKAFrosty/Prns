@@ -14,7 +14,7 @@ cargo observability
 
 This starts the pinned LGTM container, waits until it is healthy, prints the dashboard and OTLP endpoints, and exits. It does not start `prnsd`. Repeated runs reconcile the same container. `docker compose` and `docker-compose` are both supported.
 
-Run the daemon separately with the non-default OTLP feature and point it at the collector:
+Run a source-built daemon separately with the non-default OTLP feature and point it at the collector. The official cloud container already compiles this capability:
 
 ```sh
 OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 \
@@ -115,7 +115,7 @@ best-effort: headless sessions continue normally and emit `tray_unavailable` whe
 service is absent. Service-oriented builds can omit it with
 `--no-default-features --features tokio-host,observability`.
 
-OTLP metrics and traces are a non-default build feature. Export starts only when an endpoint is configured for that signal and `OTEL_SDK_DISABLED` is not `true`.
+OTLP metrics and traces are an explicit build capability. The official cloud container and canonical `cargo prnsd build` artifact include it; custom source and native service builds must select the `otlp` feature. Export starts only when an endpoint is configured for that signal and `OTEL_SDK_DISABLED` is not `true`.
 
 The exporter uses OTLP/HTTP protobuf. `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` and `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` can replace the common endpoint per signal. `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_TRACES_SAMPLER`, and `OTEL_SDK_DISABLED` are also honored.
 
@@ -133,7 +133,7 @@ Structured events remain on stderr for journald, Grafana Alloy, Vector, Fluent B
 | `tracing` | Structured Tokio events and bounded operation spans | Provides fields, context, filtering, JSON output, and sampled OTLP traces |
 | `runtime-metrics` | Exact cumulative counters, gauges, and snapshots | Remains unsampled and exporter-independent |
 
-The default `prnsd/observability` feature provides human or JSON output and bridges portable `log` records into the tracing subscriber, giving the daemon one local output path rather than duplicate streams. The independent default `prnsd/tray` feature provides the system-tray integration described above. The non-default `prnsd/otlp` feature additionally enables runtime metrics and OTLP metric and trace export. Logs remain on stderr.
+The default `prnsd/observability` feature provides human or JSON output and bridges portable `log` records into the tracing subscriber, giving the daemon one local output path rather than duplicate streams. The independent default `prnsd/tray` feature provides the system-tray integration described above. The non-default `prnsd/otlp` crate feature additionally enables runtime metrics and OTLP metric and trace export; official cloud images select it at build time. Logs remain on stderr.
 
 There is no span per packet, frame, crypto operation, or resource segment. Spans cover bounded calls such as requests, sends, links, resources, persistence, and individual interface connection attempts.
 

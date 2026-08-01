@@ -36,7 +36,7 @@ On a desktop the daemon also sits in the system tray with a live status readout 
 
 The daemon binary is also the utility toolkit. `prnsd status`, `path`, `probe`, `id`, `cp`, and `x` are the equivalents of the stock `rn*` utilities, with secure defaults: `cp --listen` and `x --listen` permit nobody until an identity is allowed, and remote management stays off until you enable it. [Prnsd utilities](../docs/prnsd-utilities.md) documents each role.
 
-Every log line is a structured event: human-readable by default, the same events as JSON with `--log-format json`, and a rotated pair of log files either way. The release build also carries an OTLP exporter for metrics and traces. [Observability](../docs/observability.md) goes from log filters to the shipped Grafana dashboard.
+Every log line is a structured event: human-readable by default, the same events as JSON with `--log-format json`, and a rotated pair of log files either way. The official cloud container and canonical `cargo prnsd build` artifact also carry an OTLP exporter for metrics and traces. [Observability](../docs/observability.md) goes from log filters to the shipped Grafana dashboard.
 
 For I2P interfaces, `prnsd i2p doctor` checks your SAM bridge and `prnsd i2p setup` walks the setup.
 

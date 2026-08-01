@@ -35,6 +35,15 @@ CLOUD_FEATURES = {
     "dep:clap",
     "dep:tokio",
 }
+OTLP_FEATURES = {
+    "observability",
+    "personal-rns/runtime-metrics",
+    "dep:opentelemetry",
+    "dep:opentelemetry-otlp",
+    "dep:opentelemetry_sdk",
+    "dep:tracing-opentelemetry",
+}
+CLOUD_IMAGE_FEATURES = "tokio-cloud-host,observability,otlp"
 LOCAL_FEATURES = {
     "personal-rns/serial",
     "personal-rns/kiss",
@@ -72,6 +81,12 @@ REQUIRED_COMPLETE_PACKAGES = {
     "serial2",
     "serial2-tokio",
 }
+REQUIRED_OTLP_PACKAGES = {
+    "opentelemetry",
+    "opentelemetry-otlp",
+    "opentelemetry_sdk",
+    "tracing-opentelemetry",
+}
 
 
 def dependency_packages(features: str) -> set[str]:
@@ -108,6 +123,7 @@ def main() -> int:
     features = manifest["features"]
     cloud = set(features["tokio-cloud-host"])
     complete = set(features["tokio-host"])
+    otlp = set(features["otlp"])
     if cloud != CLOUD_FEATURES:
         raise ValueError(
             "tokio-cloud-host feature surface drifted: "
@@ -118,21 +134,38 @@ def main() -> int:
         raise ValueError(
             "tokio-host must remain tokio-cloud-host plus all local-device capabilities"
         )
+    if otlp != OTLP_FEATURES:
+        raise ValueError(
+            "otlp feature surface drifted: "
+            f"missing={sorted(OTLP_FEATURES - otlp)}, "
+            f"unexpected={sorted(otlp - OTLP_FEATURES)}"
+        )
     required = set(manifest["bin"][0]["required-features"])
     if required != {"tokio-cloud-host", "observability"}:
         raise ValueError("the prnsd binary must be available to the cloud-host profile")
 
-    cloud_packages = dependency_packages("tokio-cloud-host,observability")
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    if f"--features {CLOUD_IMAGE_FEATURES}" not in dockerfile:
+        raise ValueError(
+            "the official cloud image must compile the opt-in OTLP capability"
+        )
+
+    cloud_packages = dependency_packages(CLOUD_IMAGE_FEATURES)
     leaked = cloud_packages & FORBIDDEN_CLOUD_PACKAGES
     if leaked:
         raise ValueError(f"tokio-cloud-host leaked local-device packages: {sorted(leaked)}")
+    missing_otlp = REQUIRED_OTLP_PACKAGES - cloud_packages
+    if missing_otlp:
+        raise ValueError(
+            f"the official cloud image lost OTLP packages: {sorted(missing_otlp)}"
+        )
 
     complete_packages = dependency_packages("tokio-host,observability,tray")
     missing = REQUIRED_COMPLETE_PACKAGES - complete_packages
     if missing:
         raise ValueError(f"tokio-host lost complete host packages: {sorted(missing)}")
 
-    print("prnsd tokio-cloud-host and tokio-host feature contracts are exact")
+    print("prnsd cloud image, tokio-cloud-host, OTLP, and tokio-host feature contracts are exact")
     return 0
 
 
