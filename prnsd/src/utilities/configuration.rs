@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use personal_rns::config::{
-    discover, parse_and_plan_named, ConfigErrors, ConfigReport, DaemonPlan, DiscoveredConfig,
-    DiscoveryError, SharedInstance, SharedInstanceTransport as ConfigSharedInstanceTransport,
+    parse_and_plan_named, ConfigErrors, ConfigReport, DaemonPlan, DiscoveredConfig, SharedInstance,
+    SharedInstanceTransport as ConfigSharedInstanceTransport,
 };
 use personal_rns::identity::vault::{read_identity_file, FileVaultError};
 use personal_rns::identity::{in_memory::InMemoryNodeIdentity, IdentityHash, IdentitySigner};
@@ -22,7 +22,8 @@ pub struct LoadedConfiguration {
 
 impl LoadedConfiguration {
     pub fn load(config_dir: Option<&Path>) -> Result<Self, UtilityConfigurationError> {
-        let discovered = discover(config_dir).map_err(UtilityConfigurationError::Discovery)?;
+        let discovered = crate::command_context::discover(config_dir)
+            .map_err(UtilityConfigurationError::CommandContext)?;
         let (source, text) = match &discovered.config {
             Some(path) => (
                 path.display().to_string(),
@@ -174,7 +175,7 @@ fn runtime_transport(
 
 #[derive(Debug)]
 pub enum UtilityConfigurationError {
-    Discovery(DiscoveryError),
+    CommandContext(crate::command_context::CommandContextError),
     Read {
         path: PathBuf,
         source: std::io::Error,
@@ -193,7 +194,7 @@ pub enum UtilityConfigurationError {
 impl fmt::Display for UtilityConfigurationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Discovery(error) => write!(formatter, "config discovery failed: {error}"),
+            Self::CommandContext(error) => error.fmt(formatter),
             Self::Read { path, source } => {
                 write!(formatter, "could not read config {}: {source}", path.display())
             }

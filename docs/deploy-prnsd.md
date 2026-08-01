@@ -39,14 +39,21 @@ docker run -d \
   --restart on-failure \
   --mount type=volume,source=prnsd-data,target=/var/lib/prnsd \
   --publish 4242:4242/tcp \
+  --publish 4284:4284/tcp \
   "$PRNSD_IMAGE"
 ```
 
-The image runs as UID and GID `65532`, listens on container port `4242`, emits
-JSON logs, and stores configuration, identity, routing state, ratchets, and the
-control endpoint under `/var/lib/prnsd`. That path is not optional: an
-unwritable or missing persistent mount makes startup fail instead of silently
-using ephemeral state.
+The image runs as UID and GID `65532`. A new server configuration listens for
+Backbone connections on container port `4242` and WebSocket connections on
+container port `4284`; the conventional WebSocket endpoint is
+`ws://HOST:4284/prns`. The daemon emits JSON logs and stores configuration,
+identity, routing state, ratchets, and the control endpoint under
+`/var/lib/prnsd`. That path is not optional: an unwritable or missing persistent
+mount makes startup fail instead of silently using ephemeral state.
+
+For a public browser-facing deployment, terminate TLS at the platform or reverse
+proxy and forward its `wss://HOST/prns` route to the container's plain WebSocket
+listener on port `4284`.
 
 For a bind mount, create and assign the directory before starting the container:
 
@@ -59,9 +66,21 @@ Inspect readiness and logs without adding an HTTP service:
 
 ```sh
 docker inspect --format '{{json .State.Health}}' prnsd
-docker exec prnsd prnsd status --config /var/lib/prnsd --json
+docker exec prnsd prnsd status --json
+docker exec prnsd prnsd interfaces list
 docker logs --follow prnsd
 ```
+
+The entrypoint publishes `/var/lib/prnsd` as the container's active Prns
+instance. Every `docker exec prnsd prnsd ...` operator command therefore uses
+that configuration automatically. Running bare `prnsd` reports the already
+running daemon instead of starting a second instance or falling back to a
+home-directory configuration. An explicitly isolated second foreground
+instance still requires its own `--config DIR` and state boundary.
+
+Docker owns this foreground service's log attachment and restart lifecycle, so
+use `docker logs` and `docker restart` rather than `prnsd logs` or
+`prnsd restart` inside the container.
 
 Docker sends `SIGTERM` because the image declares it as its stop signal. A
 successful stop waits for acknowledged final routing-state and ratchet flushes:
@@ -81,7 +100,7 @@ configured daemon runs remain `best-effort` unless the operator chooses
 The image starts with:
 
 ```text
-prnsd run --config /var/lib/prnsd --persistence-policy required --bootstrap server --log-format json
+prnsd run --service --config /var/lib/prnsd --persistence-policy required --bootstrap server --log-format json
 ```
 
 When `/var/lib/prnsd/config` does not exist, `--bootstrap server` atomically
@@ -112,7 +131,7 @@ The daemon lightly reconciles filenames every five minutes. To publish an
 addition, deletion, or rename immediately, run:
 
 ```sh
-prnsd nnpages refresh --config /var/lib/prnsd
+docker exec prnsd prnsd nnpages refresh
 ```
 
 That command uses the configuration-local control lane, so it works with both
@@ -160,12 +179,11 @@ To change bootstrap inputs after creation, edit the Reticulum `config` or
 NNPages `settings.toml` deliberately; restarting with different environment
 variables does not mutate either operator-owned file or recreate deleted pages.
 
-For a running managed daemon, Backbone publication is an ordinary interface
-setting and can be changed over SSH without a restart:
+For a running container, Backbone publication is an ordinary interface setting
+and can be changed without a restart:
 
 ```sh
-prnsd interfaces edit "Cloud Backbone" \
-  --config /var/lib/prnsd \
+docker exec prnsd prnsd interfaces edit "Cloud Backbone" \
   --discoverable false \
   --apply
 ```
@@ -180,7 +198,7 @@ announce_interval_minutes = 360
 ```
 
 ```sh
-prnsd nnpages refresh --config /var/lib/prnsd
+docker exec prnsd prnsd nnpages refresh
 ```
 
 ## Backup and restore
@@ -236,6 +254,7 @@ docker run -d \
   --restart on-failure \
   --mount type=volume,source=prnsd-data,target=/var/lib/prnsd \
   --publish 4242:4242/tcp \
+  --publish 4284:4284/tcp \
   "$PRNSD_IMAGE"
 ```
 

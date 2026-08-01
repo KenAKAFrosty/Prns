@@ -13,8 +13,8 @@ pub use error::ServiceError;
 pub use logs::{follow, print_recent_log, stop_and_follow};
 pub use paths::{ServicePaths, StateDirectoryError};
 pub use process::{
-    active_config_dir, launch_signature, running, start, stop, wait_until_ready, LaunchSpec,
-    ManagedProcess, StartOutcome,
+    active_config_dir, launch_signature, running, start, stop, wait_until_ready, ForegroundSpec,
+    LaunchSpec, ManagedProcess, StartOutcome,
 };
-pub use record::{LogLane, ServiceRecord, ServiceState};
+pub use record::{LogLane, ServiceKind, ServiceRecord, ServiceState};
 pub use reload::{config_digest, request_reload, ReloadRequest, ReloadResult};

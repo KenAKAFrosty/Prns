@@ -9,6 +9,7 @@ use personal_rns::config::{discover, DiscoveryError};
 
 const CONFIG_FILE_NAME: &str = "config";
 const DEFAULT_BACKBONE_PORT: u16 = 4242;
+const DEFAULT_WEBSOCKET_PORT: u16 = 4284;
 static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 const LISTEN_PORT: &str = "PRNSD_BACKBONE_LISTEN_PORT";
@@ -113,6 +114,13 @@ impl ServerBootstrapEnvironment {
             (false, _) => config.push_str("discoverable = No\n"),
             (true, None) => unreachable!("validated bootstrap discovery endpoint"),
         }
+        config.push_str(&format!(
+            "\n[[WebSocket Server]]\n\
+             type = PrnsWebSocketServer\n\
+             interface_enabled = Yes\n\
+             listen_ip = 0.0.0.0\n\
+             listen_port = {DEFAULT_WEBSOCKET_PORT}\n"
+        ));
         config
     }
 
@@ -1193,7 +1201,9 @@ impl std::error::Error for ServerBootstrapError {
 mod tests {
     use std::collections::BTreeMap;
 
-    use personal_rns::config::{parse_and_plan, DiscoveryAdvertisementPlan};
+    use personal_rns::config::{
+        parse_and_plan, DiscoveryAdvertisementPlan, PlannedMedium, TcpListenHost,
+    };
 
     use super::*;
 
@@ -1327,6 +1337,22 @@ mod tests {
         );
         assert!(!snapshot.effective().announce());
         assert_eq!(snapshot.effective().announce_interval_minutes(), 720);
+    }
+
+    #[test]
+    fn server_bootstrap_includes_the_default_websocket_listener() {
+        let environment = environment(&[]).expect("default environment is valid");
+        let plan = parse_and_plan(&environment.render())
+            .expect("rendered configuration plans")
+            .value;
+
+        assert_eq!(plan.interfaces.len(), 2);
+        assert!(matches!(
+            &plan.interfaces[1].medium,
+            PlannedMedium::PrnsWebSocketServer { listener }
+                if listener.host == TcpListenHost::Address("0.0.0.0".to_string())
+                    && listener.port == DEFAULT_WEBSOCKET_PORT
+        ));
     }
 
     #[test]

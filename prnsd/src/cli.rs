@@ -46,6 +46,15 @@ pub struct DaemonArgs {
     pub bootstrap: Option<BootstrapProfile>,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Args)]
+pub struct RunArgs {
+    #[arg(long, requires = "config", hide = true)]
+    pub service: bool,
+
+    #[command(flatten)]
+    pub daemon: DaemonArgs,
+}
+
 impl DaemonArgs {
     pub fn command_line(&self) -> Vec<OsString> {
         let mut args = vec![OsString::from("run")];
@@ -205,7 +214,7 @@ pub enum Command {
     Restart(LaunchArgs),
     Stop,
     Logs,
-    Run(DaemonArgs),
+    Run(RunArgs),
     #[command(about = "Inspect I2P connectivity")]
     I2p(I2pArgs),
     #[command(about = "Inspect and safely edit Reticulum interfaces")]
@@ -348,11 +357,35 @@ mod tests {
     fn foreground_run_is_explicit() {
         assert_eq!(
             parse(&["prnsd", "run", "--config", "/node"]),
-            Command::Run(DaemonArgs {
-                log_format: LogFormat::Human,
-                config: Some(PathBuf::from("/node")),
-                persistence_policy: PersistencePolicy::BestEffort,
-                bootstrap: None,
+            Command::Run(RunArgs {
+                service: false,
+                daemon: DaemonArgs {
+                    log_format: LogFormat::Human,
+                    config: Some(PathBuf::from("/node")),
+                    persistence_policy: PersistencePolicy::BestEffort,
+                    bootstrap: None,
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn foreground_service_requires_an_explicit_configuration() {
+        let error = parse_from(
+            ["prnsd", "run", "--service"]
+                .into_iter()
+                .map(OsString::from),
+        )
+        .unwrap_err();
+        assert_eq!(error.exit_code(), 2);
+        assert_eq!(
+            parse(&["prnsd", "run", "--service", "--config", "/node"]),
+            Command::Run(RunArgs {
+                service: true,
+                daemon: DaemonArgs {
+                    config: Some(PathBuf::from("/node")),
+                    ..DaemonArgs::default()
+                },
             })
         );
     }

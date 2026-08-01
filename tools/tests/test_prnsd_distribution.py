@@ -125,6 +125,20 @@ class PrnsdDistributionTests(unittest.TestCase):
             "ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32",
         )
 
+    def test_container_publishes_one_default_operator_context(self) -> None:
+        dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+        self.assertIn("ENV PRNSD_STATE_DIR=/var/lib/prnsd/.service\n", dockerfile)
+        self.assertIn("EXPOSE 4242/tcp 4284/tcp\n", dockerfile)
+        self.assertIn(
+            'CMD ["/usr/local/bin/prnsd", "status", "--json"]', dockerfile
+        )
+        self.assertIn(
+            'CMD ["run", "--service", "--config", "/var/lib/prnsd", '
+            '"--persistence-policy", "required", "--bootstrap", "server", '
+            '"--log-format", "json"]',
+            dockerfile,
+        )
+
     def test_native_archives_are_byte_reproducible_and_self_describing(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

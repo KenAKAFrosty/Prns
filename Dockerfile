@@ -63,12 +63,13 @@ LABEL org.opencontainers.image.title="prnsd" \
 COPY --from=builder /image /
 
 USER 65532:65532
+ENV PRNSD_STATE_DIR=/var/lib/prnsd/.service
 VOLUME ["/var/lib/prnsd"]
-EXPOSE 4242/tcp
+EXPOSE 4242/tcp 4284/tcp
 STOPSIGNAL SIGTERM
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD ["/usr/local/bin/prnsd", "status", "--config", "/var/lib/prnsd", "--json"]
+    CMD ["/usr/local/bin/prnsd", "status", "--json"]
 
 ENTRYPOINT ["/usr/local/bin/prnsd"]
-CMD ["run", "--config", "/var/lib/prnsd", "--persistence-policy", "required", "--bootstrap", "server", "--log-format", "json"]
+CMD ["run", "--service", "--config", "/var/lib/prnsd", "--persistence-policy", "required", "--bootstrap", "server", "--log-format", "json"]
