@@ -718,7 +718,7 @@ unsafe fn required_mut<'a, T>(value: *mut T) -> Result<&'a mut T, u32> {
 }
 
 unsafe fn read_string<'a>(value: PrnsStringView) -> Result<&'a str, u32> {
-    if value.data.is_null() && value.length != 0 {
+    if value.length > isize::MAX as usize || value.data.is_null() && value.length != 0 {
         return Err(status(AbiStatus::InvalidArgument));
     }
     let bytes = if value.length == 0 {
@@ -730,7 +730,7 @@ unsafe fn read_string<'a>(value: PrnsStringView) -> Result<&'a str, u32> {
 }
 
 unsafe fn read_bytes<'a>(value: PrnsByteView) -> Result<&'a [u8], u32> {
-    if value.data.is_null() && value.length != 0 {
+    if value.length > isize::MAX as usize || value.data.is_null() && value.length != 0 {
         return Err(status(AbiStatus::InvalidArgument));
     }
     Ok(if value.length == 0 {
@@ -741,7 +741,11 @@ unsafe fn read_bytes<'a>(value: PrnsByteView) -> Result<&'a [u8], u32> {
 }
 
 unsafe fn read_array<'a, T>(data: *const T, length: usize) -> Result<&'a [T], u32> {
-    if data.is_null() && length != 0 {
+    let byte_length = match length.checked_mul(size_of::<T>()) {
+        Some(byte_length) => byte_length,
+        None => return Err(status(AbiStatus::InvalidArgument)),
+    };
+    if byte_length > isize::MAX as usize || data.is_null() && length != 0 {
         return Err(status(AbiStatus::InvalidArgument));
     }
     Ok(if length == 0 {
@@ -3627,6 +3631,55 @@ mod tests {
         let readiness = unsafe { &*context.cast::<BlockingReadiness>() };
         readiness.entered.wait();
         readiness.resume.wait();
+    }
+
+    #[test]
+    fn views_reject_unrepresentable_and_malformed_inputs() {
+        let invalid = status(AbiStatus::InvalidArgument);
+        let byte_cases = [
+            PrnsByteView {
+                data: ptr::null(),
+                length: 1,
+            },
+            PrnsByteView {
+                data: ptr::dangling(),
+                length: isize::MAX as usize + 1,
+            },
+        ];
+        for value in byte_cases {
+            assert_eq!(unsafe { read_bytes(value) }.map(|_| ()), Err(invalid));
+        }
+
+        let invalid_utf8 = [u8::MAX];
+        let string_cases = [
+            PrnsStringView {
+                data: ptr::null(),
+                length: 1,
+            },
+            PrnsStringView {
+                data: ptr::dangling(),
+                length: isize::MAX as usize + 1,
+            },
+            PrnsStringView {
+                data: invalid_utf8.as_ptr(),
+                length: invalid_utf8.len(),
+            },
+        ];
+        for value in string_cases {
+            assert_eq!(unsafe { read_string(value) }.map(|_| ()), Err(invalid));
+        }
+
+        let array_cases = [
+            (ptr::null(), 1),
+            (ptr::dangling(), isize::MAX as usize / size_of::<u32>() + 1),
+            (ptr::dangling(), usize::MAX),
+        ];
+        for (data, length) in array_cases {
+            assert_eq!(
+                unsafe { read_array::<u32>(data, length) }.map(|_| ()),
+                Err(invalid)
+            );
+        }
     }
 
     #[test]

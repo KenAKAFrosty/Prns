@@ -852,6 +852,14 @@ path = "tools/release/flasher_website_history.py"
 reason = "Shared signed website history implementation."
 
 [[internal]]
+path = "tools/repo/host_contract/__init__.py"
+reason = "Internal host-contract generator validation package."
+
+[[internal]]
+path = "tools/repo/host_contract/model.py"
+reason = "Internal host-contract generator schema model."
+
+[[internal]]
 path = "tools/repo/cargo-tools-command/Cargo.toml"
 reason = "Cargo package metadata for the post-bootstrap cargo-tools forwarding adapter."
 
