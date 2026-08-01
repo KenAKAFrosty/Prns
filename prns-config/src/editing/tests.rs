@@ -465,6 +465,54 @@ fn writes_are_atomic_backed_up_and_permission_preserving() {
 }
 
 #[test]
+fn a_write_receipt_can_atomically_restore_the_previous_configuration() {
+    let directory = tempdir().unwrap_or_else(|error| panic!("{error}"));
+    let path = directory.path().join("config");
+    fs::write(&path, BASE).unwrap_or_else(|error| panic!("{error}"));
+    let file = ConfigFile::load(&path, "").unwrap_or_else(|error| panic!("{error}"));
+    let edited = file
+        .document()
+        .edit(&ConfigEdit::Add(usb("USB")))
+        .unwrap_or_else(|error| panic!("{error}"));
+    let receipt = file
+        .write(&edited)
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    receipt.rollback().unwrap_or_else(|error| panic!("{error}"));
+
+    assert_eq!(
+        fs::read_to_string(path).unwrap_or_else(|error| panic!("{error}")),
+        BASE
+    );
+}
+
+#[test]
+fn rollback_refuses_to_overwrite_a_concurrent_configuration_change() {
+    let directory = tempdir().unwrap_or_else(|error| panic!("{error}"));
+    let path = directory.path().join("config");
+    fs::write(&path, BASE).unwrap_or_else(|error| panic!("{error}"));
+    let file = ConfigFile::load(&path, "").unwrap_or_else(|error| panic!("{error}"));
+    let edited = file
+        .document()
+        .edit(&ConfigEdit::Add(usb("USB")))
+        .unwrap_or_else(|error| panic!("{error}"));
+    let receipt = file
+        .write(&edited)
+        .unwrap_or_else(|error| panic!("{error}"));
+    let competing = format!("{BASE}# competing edit\n");
+    fs::write(&path, &competing).unwrap_or_else(|error| panic!("{error}"));
+
+    assert!(matches!(
+        receipt.rollback(),
+        Err(ConfigFileError::ConcurrentModification)
+    ));
+    assert_eq!(
+        fs::read_to_string(path).unwrap_or_else(|error| panic!("{error}")),
+        competing
+    );
+}
+
+#[test]
 fn stale_sources_are_rejected_without_overwriting_either_version() {
     let directory = tempdir().unwrap_or_else(|error| panic!("{error}"));
     let path = directory.path().join("config");
@@ -507,6 +555,24 @@ fn editing_a_missing_installation_materializes_the_fallback() {
         fs::read_to_string(path).unwrap_or_else(|error| panic!("{error}")),
         edited.candidate()
     );
+}
+
+#[test]
+fn rollback_removes_a_configuration_created_by_the_write() {
+    let directory = tempdir().unwrap_or_else(|error| panic!("{error}"));
+    let path = directory.path().join("config");
+    let file = ConfigFile::load(&path, BASE).unwrap_or_else(|error| panic!("{error}"));
+    let edited = file
+        .document()
+        .edit(&ConfigEdit::Add(usb("USB")))
+        .unwrap_or_else(|error| panic!("{error}"));
+    let receipt = file
+        .write(&edited)
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    receipt.rollback().unwrap_or_else(|error| panic!("{error}"));
+
+    assert!(!path.exists());
 }
 
 #[cfg(unix)]

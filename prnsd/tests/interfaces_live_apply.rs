@@ -194,6 +194,52 @@ fn managed_interface_changes_apply_without_restarting_the_daemon() {
 }
 
 #[test]
+fn failed_mutation_apply_restores_saved_configuration_and_runtime() {
+    let config = TestDirectory::new("transaction-config");
+    let state = TestDirectory::new("transaction-state");
+    let source = "[reticulum]\nshare_instance = No\n[interfaces]\n";
+    fs::write(config.path().join("config"), source).unwrap_or_else(|error| panic!("{error}"));
+    let (daemon, record) = launch(&config, &state);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_prnsd"))
+        .args([
+            "interfaces",
+            "add",
+            "auto-wifi",
+            "--name",
+            "LAN",
+            "--apply",
+            "--config",
+        ])
+        .arg(config.path())
+        .env("PRNSD_STATE_DIR", state.path())
+        .output()
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("runtime interfaces were restored"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("saved configuration was restored"),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(
+        fs::read_to_string(config.path().join("config")).unwrap_or_else(|error| panic!("{error}")),
+        source
+    );
+    assert_eq!(
+        running(&daemon.paths)
+            .unwrap_or_else(|error| panic!("{error}"))
+            .map(|current| current.pid),
+        Some(record.pid)
+    );
+}
+
+#[test]
 fn managed_shared_client_directs_apply_to_the_routing_owner() {
     let instance_port = free_tcp_port();
     let mut control_port = free_tcp_port();
