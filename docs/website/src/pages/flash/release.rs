@@ -468,7 +468,6 @@ mod tests {
         FETCH_SIGNED_DOCUMENTS_SCRIPT,
     };
     use crate::pages::flash::model::{InstallMode, WifiAction};
-    use prns_flash_manifest::{board_catalog, ValidatedFlashManifest};
 
     #[test]
     fn manifest_url_must_be_exact_and_normalized() {
@@ -490,11 +489,7 @@ mod tests {
     #[test]
     fn unsupported_provisioning_is_rejected_instead_of_discarded(
     ) -> Result<(), Box<dyn std::error::Error>> {
-        const MANIFEST: &[u8] = include_bytes!(
-            "../../../web-flasher/browser/fixtures/signed-candidate/releases/0.2.6/flash-manifest.json"
-        );
-        let catalog = board_catalog()?;
-        let manifest = ValidatedFlashManifest::from_json(MANIFEST, &catalog)?;
+        let manifest = super::super::release_0_2_6_fixture()?;
         let target = manifest
             .targets()
             .iter()

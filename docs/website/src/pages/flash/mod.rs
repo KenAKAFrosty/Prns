@@ -17,6 +17,35 @@ use crate::routes::Route;
 
 use view::{BoardTargetCard, GuidedFlasher, LocalBuildUnavailablePanel, UnavailablePanel};
 
+#[cfg(test)]
+fn release_0_2_6_fixture(
+) -> Result<prns_flash_manifest::ValidatedFlashManifest, Box<dyn std::error::Error>> {
+    const MANIFEST: &[u8] = include_bytes!(
+        "../../../web-flasher/browser/fixtures/signed-candidate/releases/0.2.6/flash-manifest.json"
+    );
+
+    let mut catalog = prns_flash_manifest::board_catalog()?;
+    let historical_heltec = catalog
+        .boards
+        .iter_mut()
+        .find(|board| board.slug == "heltec-v4")
+        .ok_or("0.2.6 fixture board is missing from the current catalog")?;
+    historical_heltec.display_name = "Heltec LoRa 32 V4".to_string();
+    historical_heltec.silicon = "ESP32-S3 + SX1262".to_string();
+    let historical_targets = prns_flash_manifest::ManifestTargetSetPolicy::local_development(
+        &catalog,
+        &["heltec-v4", "t-beam-supreme", "t-echo", "xiao-esp32-c6"],
+    )?;
+
+    Ok(
+        prns_flash_manifest::ValidatedFlashManifest::from_json_with_target_set(
+            MANIFEST,
+            &catalog,
+            &historical_targets,
+        )?,
+    )
+}
+
 #[component]
 pub fn FlashPage() -> Element {
     rsx! { FlashExperience { selected_slug: None } }
