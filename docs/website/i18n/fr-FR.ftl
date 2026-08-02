@@ -1,4 +1,5 @@
 # Navigation
+nav-benchmarks = Benchmarks
 nav-contributing = Contribuer
 nav-api = Référence de l'API
 
@@ -106,7 +107,7 @@ flash-card-action = Flasher
 # Page benchmarks
 benchmarks-kicker = Performance
 benchmarks-title = Benchmarké au grand jour
-benchmarks-lead = Nous traitons la performance comme un nombre, pas comme un adjectif. Chaque chiffre ici vient d'un harness déterministe dans le dépôt, mesuré sur du vrai matériel et vérifié contre la référence RNS lorsque la comparaison est juste. Les chiffres arrivent à mesure que la suite se stabilise ; ci-dessous, la méthodologie qu'ils doivent respecter.
+benchmarks-lead = Chaque chiffre ci-dessous vient des résultats publiés dans le dépôt, mesurés sur du vrai matériel par un harness que vous pouvez exécuter vous-même. À partir d'ici, le contenu est pour l'instant disponible uniquement en anglais.
 
 # Signal licence (pied de page)
 footer-license = Open source. MIT / Apache 2.0.

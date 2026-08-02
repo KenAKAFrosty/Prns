@@ -1,4 +1,5 @@
 # Navigasjon
+nav-benchmarks = Benchmarker
 nav-contributing = Bidra
 nav-api = API-referanse
 
@@ -106,7 +107,7 @@ flash-card-action = Flash
 # Benchmark-side
 benchmarks-kicker = Ytelse
 benchmarks-title = Benchmarket i det åpne
-benchmarks-lead = Vi behandler ytelse som et tall, ikke et adjektiv. Hver verdi her kommer fra et deterministisk harness i repoet, målt på ekte maskinvare og sjekket mot RNS-referansen der sammenligningen er rettferdig. Tallene lander etter hvert som suiten stabiliseres; nedenfor er metodikken de skal holde.
+benchmarks-lead = Hvert tall nedenfor kommer fra de publiserte resultatene i repoet, målt på ekte maskinvare av et harness du kan kjøre selv. Herfra er innholdet foreløpig kun på engelsk.
 
 # Lisenssignal (bunntekst)
 footer-license = Åpen kildekode. MIT / Apache 2.0.

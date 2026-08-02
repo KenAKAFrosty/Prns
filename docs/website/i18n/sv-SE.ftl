@@ -1,4 +1,5 @@
 # Navigering
+nav-benchmarks = Benchmarks
 nav-contributing = Bidra
 nav-api = API-referens
 
@@ -106,7 +107,7 @@ flash-card-action = Flasha
 # Benchmarksida
 benchmarks-kicker = Prestanda
 benchmarks-title = Benchmarkat öppet
-benchmarks-lead = Vi behandlar prestanda som ett tal, inte ett adjektiv. Varje siffra här kommer från ett deterministiskt harness i repot, mätt på riktig hårdvara och kontrollerad mot RNS-referensen där jämförelsen är rättvis. Siffrorna landar medan sviten stabiliseras; nedan finns metodiken de håller sig till.
+benchmarks-lead = Varje siffra nedan kommer från de publicerade resultaten i repot, mätt på riktig hårdvara av ett harness som du kan köra själv. Härifrån är innehållet tills vidare endast på engelska.
 
 # Licenssignal (sidfot)
 footer-license = Öppen källkod. MIT / Apache 2.0.

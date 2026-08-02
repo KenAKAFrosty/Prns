@@ -1,4 +1,5 @@
 # Navigation
+nav-benchmarks = Benchmarks
 nav-contributing = Bidrag
 nav-api = API-reference
 
@@ -106,7 +107,7 @@ flash-card-action = Flash
 # Benchmarks page
 benchmarks-kicker = Ydeevne
 benchmarks-title = Benchmarket i det åbne
-benchmarks-lead = Vi behandler ydeevne som et tal, ikke et adjektiv. Hver figur her kommer fra et deterministisk harness i repoet, målt på rigtig hardware og tjekket mod RNS-referencen, hvor sammenligningen er fair. Tallene lander, efterhånden som suiten stabiliseres; nedenfor er metoden, de skal leve op til.
+benchmarks-lead = Hvert tal nedenfor kommer fra de offentliggjorte resultater i repoet, målt på rigtig hardware af et harness, du selv kan køre. Herfra er indholdet indtil videre kun på engelsk.
 
 # License signal (footer)
 footer-license = Open source. MIT / Apache 2.0.

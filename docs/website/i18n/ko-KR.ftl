@@ -1,4 +1,5 @@
 # 내비게이션
+nav-benchmarks = 벤치마크
 nav-contributing = 기여
 nav-api = API 레퍼런스
 
@@ -106,7 +107,7 @@ flash-card-action = 플래시
 # 벤치마크 페이지
 benchmarks-kicker = 성능
 benchmarks-title = 공개 벤치마크
-benchmarks-lead = 우리는 성능을 형용사가 아니라 숫자로 다룹니다. 여기의 모든 수치는 repo 안의 결정적 harness에서 나오며, 실제 하드웨어에서 측정하고 비교가 공정한 곳에서는 RNS 레퍼런스와 대조했습니다. 수치는 suite가 안정화되는 동안 채워지고 있습니다. 아래에는 그 수치들이 따르는 방법론이 있습니다.
+benchmarks-lead = 아래의 모든 수치는 repo에 공개된 결과에서 나오며, 직접 실행할 수 있는 harness로 실제 하드웨어에서 측정되었습니다. 여기서부터의 내용은 아직 영어로만 제공됩니다.
 
 # 라이선스 신호 (푸터)
 footer-license = 오픈 소스. MIT / Apache 2.0.

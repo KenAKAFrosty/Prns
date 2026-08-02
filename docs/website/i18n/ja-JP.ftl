@@ -1,4 +1,5 @@
 # ナビゲーション
+nav-benchmarks = ベンチマーク
 nav-contributing = 貢献
 nav-api = API リファレンス
 
@@ -106,7 +107,7 @@ flash-card-action = フラッシュ
 # ベンチマークページ
 benchmarks-kicker = 性能
 benchmarks-title = オープンにベンチマーク
-benchmarks-lead = 私たちは性能を形容詞ではなく数値として扱います。ここにある数値はすべて、repo 内の決定的なハーネスから得たもので、実機で測定し、公平に比較できる場所では RNS リファレンスとも照合しています。数値は suite が安定するにつれて追加されます。下には、それらが従う方法論を示しています。
+benchmarks-lead = 以下の数値はすべて、repo に公開された結果から来ており、自分でも実行できるハーネスによって実機で測定されています。ここから先の内容は、今のところ英語のみです。
 
 # ライセンス表示 (フッター)
 footer-license = Open source. MIT / Apache 2.0.

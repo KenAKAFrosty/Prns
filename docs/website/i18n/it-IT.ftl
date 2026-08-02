@@ -1,4 +1,5 @@
 # Navigazione
+nav-benchmarks = Benchmark
 nav-contributing = Contribuire
 nav-api = Riferimento API
 
@@ -106,7 +107,7 @@ flash-card-action = Flash
 # Pagina benchmark
 benchmarks-kicker = Prestazioni
 benchmarks-title = Benchmark in pubblico
-benchmarks-lead = Trattiamo le prestazioni come un numero, non come un aggettivo. Ogni cifra qui viene da un harness deterministico nel repo, misurata su hardware reale e controllata contro la reference RNS quando il confronto è corretto. I numeri arrivano mentre la suite si stabilizza; sotto c'è la metodologia a cui devono reggere.
+benchmarks-lead = Ogni numero qui sotto viene dai risultati pubblicati nel repo, misurati su hardware reale da un harness che puoi eseguire tu stesso. Da qui in poi i contenuti sono per ora disponibili solo in inglese.
 
 # Segnale licenza (footer)
 footer-license = Open source. MIT / Apache 2.0.

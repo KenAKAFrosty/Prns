@@ -1,4 +1,5 @@
 # 导航
+nav-benchmarks = Benchmarks
 nav-contributing = 贡献
 nav-api = API 参考
 
@@ -106,7 +107,7 @@ flash-card-action = 烧录
 # Benchmarks 页面
 benchmarks-kicker = 性能
 benchmarks-title = 公开 benchmark
-benchmarks-lead = 我们把性能当作数字，而不是形容词。这里的每个数字都来自 repo 中的确定性 harness，在真实硬件上测得，并在比较公平时与 RNS 参考实现核对。随着 suite 稳定，数字会陆续补齐；下面是它们遵循的方法论。
+benchmarks-lead = 下面的每个数字都来自 repo 中公开发布的结果，在真实硬件上由你可以自己运行的 harness 测得。从这里开始的内容目前仅提供英文。
 
 # 许可证信号（页脚）
 footer-license = 开源。MIT / Apache 2.0。
