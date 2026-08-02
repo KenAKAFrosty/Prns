@@ -184,18 +184,15 @@ pub(super) const fn guided_steps(
         ],
         (BoardFlashTarget::EspSerial { .. }, InstallMode::PreserveData) => &[
             "Confirm the exact board pictured above.",
-            "Prepare the release; all sparse parts are downloaded and SHA-256 verified before USB access.",
-            "Connect and choose the board's USB serial port.",
-            "The chip family and physical flash capacity are checked before any write begins.",
-            "Every part receives device-side MD5 verification before reset.",
+            "Prepare the release. Every part is downloaded and verified before the flasher touches your device.",
+            "Connect with a USB data cable and choose the board's serial port.",
+            "Flash. Each part is verified again on the device, then the board restarts on its own.",
         ],
         (BoardFlashTarget::EspSerial { .. }, InstallMode::EraseAll) => &[
-            "Confirm the exact board and the separate full-chip erase warning.",
-            "Prepare the release; all replacement parts are downloaded and SHA-256 verified before USB access.",
-            "Connect and choose the board's USB serial port.",
-            "The chip family and physical flash capacity are checked before erasure begins.",
-            "Erase the entire flash, then write and device-verify every replacement part.",
-            "Report success only after USB disconnect and re-enumeration prove the final reset.",
+            "Confirm the exact board and the full-chip erase warning.",
+            "Prepare the release. Every replacement part is downloaded and verified before the flasher touches your device.",
+            "Connect with a USB data cable and choose the board's serial port.",
+            "Erase and flash. Success is reported only after every part verifies on the device and the board restarts on its own.",
         ],
     }
 }
