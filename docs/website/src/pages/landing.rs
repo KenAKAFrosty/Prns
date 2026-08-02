@@ -183,7 +183,7 @@ pub fn Landing() -> Element {
                     p { class: "mt-2 text-sm text-soft leading-relaxed",
                         {t!("standards-benchmarked-body")}
                     }
-                    p { class: "mt-3 font-mono text-xs text-mid group-hover:text-accent transition-colors",
+                    p { class: "mt-4 inline-flex items-center gap-1.5 rounded-full border border-accent/45 px-3 py-1.5 font-mono text-xs text-accent group-hover:bg-accent/10 transition-colors",
                         {t!("standards-benchmarked-cta")}
                     }
                 }
