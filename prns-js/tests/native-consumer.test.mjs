@@ -67,6 +67,13 @@ test("packaged native API starts, exposes lifecycle, and stops", async () => {
     assert.equal(attachedSnapshot.interfaces[0].kind, "TcpClient");
     const unsupported = await created.data.attachInterface(
       esm.Tag("BrowserRendezvous", { url: "ws://fixture.invalid/rendezvous" }),
+      {
+        mode: "Boundary",
+        gravity: -73,
+        recursivePathRequests: true,
+        announcesFromInternal: false,
+        announcesToInternal: true,
+      },
     );
     assert.deepEqual(unsupported, {
       tag: "Failed",

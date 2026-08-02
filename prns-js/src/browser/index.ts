@@ -40,6 +40,7 @@ import type {
   InterfaceHealth,
   InterfaceId,
   InterfaceKind,
+  InterfaceRoutingPolicy,
   LifecycleState as HostLifecycleState,
   LinkId,
   PrnsLimits as HostLimits,
@@ -636,6 +637,11 @@ export type RuntimeRegisterInterfaceOptions = {
   channelTag: ChannelTag;
   bitrateBps?: BitrateBps;
   hardwareMtu?: HardwareMtu;
+  mode?: InterfaceRoutingPolicy["mode"];
+  gravity?: number;
+  recursivePathRequests?: boolean;
+  announcesFromInternal?: boolean;
+  announcesToInternal?: boolean;
 };
 
 export type RuntimeRegisterInterfaceInput = RuntimeRegisterInterfaceOptions & {
@@ -1498,6 +1504,7 @@ export type WebSocketConnectOptions = {
   readonly channelTag?: ChannelTag;
   readonly bitrateBps?: BitrateBps;
   readonly hardwareMtu?: HardwareMtu;
+  readonly routing?: InterfaceRoutingPolicy;
 };
 
 export class PrnsInterfaces {
@@ -2037,6 +2044,7 @@ export class WebSocketInterface {
         channelTag: tag,
         bitrateBps: options.bitrateBps ?? this.#host.websocketBitrateBps(),
         hardwareMtu: options.hardwareMtu ?? this.#host.websocketHardwareMtu(),
+        ...runtimeInterfaceRouting(options.routing),
       });
       if (registered.tag !== "Registered") {
         closeBrowserWebSocket(socket);
@@ -3063,7 +3071,7 @@ export class Prns {
         commandFailed(Tag("UnsupportedByBackend")),
       AttachUdp: async () =>
         commandFailed(Tag("UnsupportedByBackend")),
-      AttachInterface: ({ config }) => this.#attachInterface(config),
+      AttachInterface: ({ config, routing }) => this.#attachInterface(config, routing),
       DetachInterface: ({ interface: interfaceId }) =>
         this.#detachInterface(interfaceId),
       EstablishLink: ({ destination }) =>
@@ -3252,8 +3260,15 @@ export class Prns {
     return this.execute(Tag("CloseLink", { linkId: value }));
   }
 
-  attachInterface(config: InterfaceConfig): Promise<AttachOutcome> {
-    return this.execute(Tag("AttachInterface", { config }));
+  attachInterface(
+    config: InterfaceConfig,
+    routing?: InterfaceRoutingPolicy,
+  ): Promise<AttachOutcome> {
+    return this.execute(
+      routing === undefined
+        ? Tag("AttachInterface", { config })
+        : Tag("AttachInterface", { config, routing }),
+    );
   }
 
   detachInterface(interfaceId: InterfaceId): Promise<DetachInterfaceOutcome> {
@@ -3598,7 +3613,10 @@ export class Prns {
     return Tag("Stopped");
   }
 
-  #attachInterface(config: InterfaceConfig): Promise<CommandSettlement> {
+  #attachInterface(
+    config: InterfaceConfig,
+    routing: InterfaceRoutingPolicy | undefined,
+  ): Promise<CommandSettlement> {
     const unsupported = async (): Promise<CommandSettlement> =>
       commandFailed(Tag("UnsupportedByBackend"));
     return match_into<Promise<CommandSettlement>>().from(config, {
@@ -3619,18 +3637,22 @@ export class Prns {
       AutomaticUsb: unsupported,
       AutomaticBluetoothLe: unsupported,
       WebSocketClient: ({ target }) =>
-        this.#attachWebSocket(target, "WebSocketClient"),
+        this.#attachWebSocket(target, "WebSocketClient", routing),
       WebSocketServer: unsupported,
       BrowserRendezvous: ({ url }) =>
-        this.#attachWebSocket(url, "BrowserRendezvous"),
+        this.#attachWebSocket(url, "BrowserRendezvous", routing),
     });
   }
 
   async #attachWebSocket(
     target: string,
     kind: InterfaceKind,
+    routing: InterfaceRoutingPolicy | undefined,
   ): Promise<CommandSettlement> {
-    const connected = await this.interfaces.webSocket.connect(target);
+    const connected = await this.interfaces.webSocket.connect(
+      target,
+      routing === undefined ? {} : { routing },
+    );
     if (connected.tag !== "Connected") {
       return commandFailed(webSocketCommandFailure(connected));
     }
@@ -5151,6 +5173,38 @@ function nonNegativeInteger(value: number, name: string): number {
     );
   }
   return value;
+}
+
+function runtimeInterfaceRouting(
+  routing: InterfaceRoutingPolicy | undefined,
+): Pick<
+  RuntimeRegisterInterfaceOptions,
+  | "mode"
+  | "gravity"
+  | "recursivePathRequests"
+  | "announcesFromInternal"
+  | "announcesToInternal"
+> {
+  if (routing === undefined) return {};
+  if (routing.gravity !== undefined && !Number.isSafeInteger(routing.gravity)) {
+    throw new PrnsValidationError(
+      "invalid-number",
+      "gravity must be a safe integer",
+    );
+  }
+  return {
+    ...(routing.mode === undefined ? {} : { mode: routing.mode }),
+    ...(routing.gravity === undefined ? {} : { gravity: routing.gravity }),
+    ...(routing.recursivePathRequests === undefined
+      ? {}
+      : { recursivePathRequests: routing.recursivePathRequests }),
+    ...(routing.announcesFromInternal === undefined
+      ? {}
+      : { announcesFromInternal: routing.announcesFromInternal }),
+    ...(routing.announcesToInternal === undefined
+      ? {}
+      : { announcesToInternal: routing.announcesToInternal }),
+  };
 }
 
 function field(object: Record<string, unknown>, key: string): unknown {

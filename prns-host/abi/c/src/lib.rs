@@ -27,10 +27,10 @@ use prns_host_core::{
     HostConfig, HostFailure, HostRole as AbiHostRole, HostRole, HostSnapshot as CoreHostSnapshot,
     IdentityConfig, IdentityConfigKind as AbiIdentityConfigKind, IdentityHash, IdentitySecret,
     InterfaceConfig, InterfaceHealth, InterfaceId, InterfaceKind as AbiInterfaceKind,
-    InterfaceKind, LifecyclePhase as AbiLifecyclePhase, LifecycleState,
-    LinkClosedReason as AbiLinkClosedReason, LinkClosedReason, LinkId, MultiRNodeMemberConfig,
-    MulticastAddressType as AbiMulticastAddressType, MulticastAddressType, PersistenceConfig,
-    PersistenceConfigKind as AbiPersistenceConfigKind,
+    InterfaceKind, InterfaceMode, InterfaceRoutingPolicy, LifecyclePhase as AbiLifecyclePhase,
+    LifecycleState, LinkClosedReason as AbiLinkClosedReason, LinkClosedReason, LinkId,
+    MultiRNodeMemberConfig, MulticastAddressType as AbiMulticastAddressType, MulticastAddressType,
+    PersistenceConfig, PersistenceConfigKind as AbiPersistenceConfigKind,
     PersistenceFlushCause as AbiPersistenceFlushCause, PersistenceFlushCause,
     PersistenceFlushTarget as AbiPersistenceFlushTarget, PersistenceFlushTarget,
     PrnsLimits as CoreLimits, RNodeRadioConfig, RequestHandlerConfig, RequestId, RequestPathHash,
@@ -40,7 +40,8 @@ use prns_host_core::{
     ResponseTimeoutKind as AbiResponseTimeoutKind, SerialDataBits as AbiSerialDataBits,
     SerialDataBits, SerialLineConfig, SerialParity as AbiSerialParity, SerialParity,
     SerialStopBits as AbiSerialStopBits, SerialStopBits, Status as AbiStatus,
-    StopReason as AbiStopReason, StopReason, HOST_CONTRACT, HOST_SCHEMA_VERSION, SAFE_UINT_MAX,
+    StopReason as AbiStopReason, StopReason, HOST_CONTRACT, HOST_SCHEMA_VERSION, SAFE_INT_MAX,
+    SAFE_INT_MIN, SAFE_UINT_MAX,
 };
 use prns_host_native::{
     CommandHandle, CommandWait, IdentityStartError, NativeEventSink, NativeHost,
@@ -308,6 +309,22 @@ pub struct PrnsInterfaceConfig {
     pub peer_count: usize,
     pub connectable: u8,
     pub url: PrnsStringView,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PrnsInterfaceRoutingPolicy {
+    pub struct_size: usize,
+    pub has_mode: u8,
+    pub mode: u32,
+    pub has_gravity: u8,
+    pub gravity: i64,
+    pub has_recursive_path_requests: u8,
+    pub recursive_path_requests: u8,
+    pub has_announces_from_internal: u8,
+    pub announces_from_internal: u8,
+    pub has_announces_to_internal: u8,
+    pub announces_to_internal: u8,
 }
 
 #[repr(C)]
@@ -1149,6 +1166,34 @@ unsafe fn parse_interface_config(value: &PrnsInterfaceConfig) -> Result<Interfac
     }
 }
 
+fn parse_interface_routing_policy(
+    value: &PrnsInterfaceRoutingPolicy,
+) -> Result<InterfaceRoutingPolicy, u32> {
+    validate_size(value.struct_size, size_of::<PrnsInterfaceRoutingPolicy>())?;
+    let mode = if value.has_mode == 0 {
+        None
+    } else {
+        Some(InterfaceMode::try_from(value.mode).map_err(|_| status(AbiStatus::InvalidArgument))?)
+    };
+    let gravity = if value.has_gravity == 0 {
+        None
+    } else if (SAFE_INT_MIN..=SAFE_INT_MAX).contains(&value.gravity) {
+        Some(value.gravity)
+    } else {
+        return Err(status(AbiStatus::InvalidArgument));
+    };
+    Ok(InterfaceRoutingPolicy {
+        mode,
+        gravity,
+        recursive_path_requests: (value.has_recursive_path_requests != 0)
+            .then_some(value.recursive_path_requests != 0),
+        announces_from_internal: (value.has_announces_from_internal != 0)
+            .then_some(value.announces_from_internal != 0),
+        announces_to_internal: (value.has_announces_to_internal != 0)
+            .then_some(value.announces_to_internal != 0),
+    })
+}
+
 fn parse_response_timeout(kind: u32, millis: u64) -> Result<ResponseTimeout, u32> {
     match AbiResponseTimeoutKind::try_from(kind).map_err(|_| status(AbiStatus::InvalidArgument))? {
         AbiResponseTimeoutKind::LinkDefault => Ok(ResponseTimeout::LinkDefault),
@@ -1884,6 +1929,7 @@ pub unsafe extern "C" fn prns_host_attach_udp(
 pub unsafe extern "C" fn prns_host_attach_interface(
     host: *mut PrnsHost,
     config: *const PrnsInterfaceConfig,
+    routing: *const PrnsInterfaceRoutingPolicy,
     out_command: *mut *mut PrnsIssuedCommand,
 ) -> u32 {
     catch_status(|| {
@@ -1895,7 +1941,21 @@ pub unsafe extern "C" fn prns_host_attach_interface(
             Ok(config) => config,
             Err(error) => return error,
         };
-        unsafe { submit_host_command(host, HostCommand::AttachInterface { config }, out_command) }
+        let routing = if routing.is_null() {
+            None
+        } else {
+            match unsafe { required_ref(routing) }.and_then(parse_interface_routing_policy) {
+                Ok(routing) => Some(routing),
+                Err(error) => return error,
+            }
+        };
+        unsafe {
+            submit_host_command(
+                host,
+                HostCommand::AttachInterface { config, routing },
+                out_command,
+            )
+        }
     })
 }
 
@@ -4224,9 +4284,22 @@ mod tests {
         generic.struct_size = size_of::<PrnsInterfaceConfig>();
         generic.kind = AbiInterfaceKind::BrowserRendezvous as u32;
         generic.url = string_view("ws://127.0.0.1:4242");
+        let mut routing = PrnsInterfaceRoutingPolicy {
+            struct_size: size_of::<PrnsInterfaceRoutingPolicy>(),
+            has_mode: 1,
+            mode: InterfaceMode::Boundary as u32,
+            has_gravity: 1,
+            gravity: -73,
+            has_recursive_path_requests: 1,
+            recursive_path_requests: 1,
+            has_announces_from_internal: 1,
+            announces_from_internal: 0,
+            has_announces_to_internal: 1,
+            announces_to_internal: 1,
+        };
         command = ptr::null_mut();
         assert_eq!(
-            unsafe { prns_host_attach_interface(host, &generic, &mut command) },
+            unsafe { prns_host_attach_interface(host, &generic, &routing, &mut command) },
             status(AbiStatus::Ok)
         );
         let mut generic_result = PrnsCommandResult {
@@ -4249,6 +4322,19 @@ mod tests {
         unsafe {
             prns_command_release(command);
         }
+        routing.mode = u32::MAX;
+        command = ptr::null_mut();
+        assert_eq!(
+            unsafe { prns_host_attach_interface(host, &generic, &routing, &mut command) },
+            status(AbiStatus::InvalidArgument)
+        );
+        assert!(command.is_null());
+        routing.mode = InterfaceMode::Full as u32;
+        routing.gravity = SAFE_INT_MAX + 1;
+        assert_eq!(
+            unsafe { prns_host_attach_interface(host, &generic, &routing, &mut command) },
+            status(AbiStatus::InvalidArgument)
+        );
 
         let link = [0u8; 16];
         let mut upload = ptr::null_mut();

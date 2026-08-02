@@ -180,6 +180,13 @@ class HostContractTest {
                             target = "127.0.0.1:9",
                             bitrate = BitrateAuto,
                         ),
+                        InterfaceRoutingPolicy(
+                            mode = InterfaceMode.BOUNDARY,
+                            gravity = -73,
+                            recursivePathRequests = true,
+                            announcesFromInternal = false,
+                            announcesToInternal = true,
+                        ),
                     ),
                 ).outcome
             }
@@ -266,6 +273,7 @@ class HostContractTest {
                                             bind = "127.0.0.1:$port",
                                             bitrate = BitrateAuto,
                                         ),
+                                        null,
                                     ),
                                 ),
                             ),
@@ -279,6 +287,7 @@ class HostContractTest {
                                             target = "127.0.0.1:$port",
                                             bitrate = BitrateAuto,
                                         ),
+                                        null,
                                     ),
                                 ),
                             ),

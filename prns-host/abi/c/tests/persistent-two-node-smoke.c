@@ -500,6 +500,7 @@ int main(int argc, char **argv) {
     PrnsIssuedCommand *command = NULL;
     PrnsIssuedCommand *request_command = NULL;
     PrnsInterfaceConfig interface_config = PRNS_ZERO;
+    PrnsInterfaceRoutingPolicy interface_routing = PRNS_ZERO;
     PrnsByteView view = PRNS_ZERO;
     uint8_t announce_data[128] = PRNS_ZERO;
     uint8_t request_payload[128] = PRNS_ZERO;
@@ -584,14 +585,25 @@ int main(int argc, char **argv) {
     interface_config.kind = PRNS_INTERFACE_KIND_TCP_SERVER;
     interface_config.bind = string_view(server_address);
     interface_config.bitrate_kind = PRNS_BITRATE_KIND_AUTO;
-    REQUIRE(prns_host_attach_interface(server, &interface_config, &command) == PRNS_STATUS_OK, "server attach submission failed");
+    interface_routing.struct_size = sizeof(interface_routing);
+    interface_routing.has_mode = 1;
+    interface_routing.mode = PRNS_INTERFACE_MODE_FULL;
+    interface_routing.has_gravity = 1;
+    interface_routing.gravity = -73;
+    interface_routing.has_recursive_path_requests = 1;
+    interface_routing.recursive_path_requests = 1;
+    interface_routing.has_announces_from_internal = 1;
+    interface_routing.announces_from_internal = 0;
+    interface_routing.has_announces_to_internal = 1;
+    interface_routing.announces_to_internal = 1;
+    REQUIRE(prns_host_attach_interface(server, &interface_config, &interface_routing, &command) == PRNS_STATUS_OK, "server attach submission failed");
     REQUIRE(wait_outcome(&command, PRNS_COMMAND_OUTCOME_KIND_INTERFACE_ATTACHED, command_value, sizeof(command_value), &command_value_length), "server attach failed");
     memset(&interface_config, 0, sizeof(interface_config));
     interface_config.struct_size = sizeof(interface_config);
     interface_config.kind = PRNS_INTERFACE_KIND_TCP_CLIENT;
     interface_config.target = string_view(server_address);
     interface_config.bitrate_kind = PRNS_BITRATE_KIND_AUTO;
-    REQUIRE(prns_host_attach_interface(client, &interface_config, &command) == PRNS_STATUS_OK, "client attach submission failed");
+    REQUIRE(prns_host_attach_interface(client, &interface_config, &interface_routing, &command) == PRNS_STATUS_OK, "client attach submission failed");
     REQUIRE(wait_outcome(&command, PRNS_COMMAND_OUTCOME_KIND_INTERFACE_ATTACHED, command_value, sizeof(command_value), &command_value_length), "client attach failed");
 
     for (index = 0; index < 50 && !routed; index += 1) {

@@ -1,7 +1,7 @@
 use js_sys::{Array, Reflect, Uint8Array};
 use personal_rns::identity::IdentityHash;
 use personal_rns::identity::IDENTITY_SECRET_KEY_LEN;
-use personal_rns::interfaces::{InterfaceId, InterfaceKind, INTERFACE_ID_LEN};
+use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceMode, INTERFACE_ID_LEN};
 use personal_rns::routing::links::request::RequestId;
 use personal_rns::routing::links::LinkId;
 use personal_rns::routing::request_handlers::RequestPathHash;
@@ -41,6 +41,26 @@ pub(crate) fn required_bool(object: &JsValue, key: &str) -> Result<bool, JsValue
     required_value(object, key)?
         .as_bool()
         .ok_or_else(|| JsValue::from_str(&format!("{key} must be a boolean")))
+}
+
+pub(crate) fn optional_bool(object: &JsValue, key: &str) -> Result<Option<bool>, JsValue> {
+    optional_value(object, key)?
+        .map(|value| {
+            value
+                .as_bool()
+                .ok_or_else(|| JsValue::from_str(&format!("{key} must be a boolean")))
+        })
+        .transpose()
+}
+
+pub(crate) fn optional_string(object: &JsValue, key: &str) -> Result<Option<String>, JsValue> {
+    optional_value(object, key)?
+        .map(|value| {
+            value
+                .as_string()
+                .ok_or_else(|| JsValue::from_str(&format!("{key} must be a string")))
+        })
+        .transpose()
 }
 
 pub(crate) fn required_array(object: &JsValue, key: &str) -> Result<Array, JsValue> {
@@ -119,6 +139,19 @@ pub(crate) fn optional_u64(object: &JsValue, key: &str) -> Result<Option<u64>, J
     optional_value(object, key)?
         .map(|value| u64_from_value(value, key))
         .transpose()
+}
+
+pub(crate) fn optional_i64(object: &JsValue, key: &str) -> Result<Option<i64>, JsValue> {
+    let Some(value) = optional_value(object, key)? else {
+        return Ok(None);
+    };
+    let number = value
+        .as_f64()
+        .ok_or_else(|| JsValue::from_str(&format!("{key} must be a number")))?;
+    if !number.is_finite() || number.fract() != 0.0 || number.abs() > JS_MAX_SAFE_INTEGER {
+        return Err(JsValue::from_str(&format!("{key} must be a safe integer")));
+    }
+    Ok(Some(number as i64))
 }
 
 pub(crate) fn array_to_strings(values: &Array) -> Result<Vec<String>, JsValue> {
@@ -215,6 +248,21 @@ pub(crate) fn parse_interface_kind(kind: &str) -> Result<InterfaceKind, JsValue>
     }
 }
 
+pub(crate) fn parse_interface_mode(mode: &str) -> Result<InterfaceMode, JsValue> {
+    match mode {
+        "Full" => Ok(InterfaceMode::Full),
+        "PointToPoint" => Ok(InterfaceMode::PointToPoint),
+        "AccessPoint" => Ok(InterfaceMode::AccessPoint),
+        "Roaming" => Ok(InterfaceMode::Roaming),
+        "Boundary" => Ok(InterfaceMode::Boundary),
+        "Gateway" => Ok(InterfaceMode::Gateway),
+        "Internal" => Ok(InterfaceMode::Internal),
+        other => Err(JsValue::from_str(&format!(
+            "unknown interface mode {other:?}"
+        ))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,5 +273,20 @@ mod tests {
             parse_interface_kind("auto-wifi"),
             Ok(InterfaceKind::AutoWifi)
         ));
+    }
+
+    #[test]
+    fn interface_modes_cross_the_wasm_contract_boundary() {
+        for (name, expected) in [
+            ("Full", InterfaceMode::Full),
+            ("PointToPoint", InterfaceMode::PointToPoint),
+            ("AccessPoint", InterfaceMode::AccessPoint),
+            ("Roaming", InterfaceMode::Roaming),
+            ("Boundary", InterfaceMode::Boundary),
+            ("Gateway", InterfaceMode::Gateway),
+            ("Internal", InterfaceMode::Internal),
+        ] {
+            assert_eq!(parse_interface_mode(name).ok(), Some(expected));
+        }
     }
 }

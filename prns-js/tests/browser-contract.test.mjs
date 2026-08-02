@@ -95,6 +95,11 @@ test("generated contract inventories and guards accept exactly their known strin
       ],
     ],
     [
+      "INTERFACE_MODE_VALUES",
+      "isInterfaceMode",
+      ["Full", "PointToPoint", "AccessPoint", "Roaming", "Boundary", "Gateway", "Internal"],
+    ],
+    [
       "INTERFACE_HEALTH_VALUES",
       "isInterfaceHealth",
       ["Initializing", "Connected", "Degraded", "Reconnecting", "Failed", "Disconnected", "Disabled", "Unknown"],

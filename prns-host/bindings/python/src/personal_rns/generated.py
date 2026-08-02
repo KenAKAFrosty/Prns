@@ -82,6 +82,15 @@ class InterfaceKind(IntEnum):
     WEB_SOCKET_SERVER = 18
     BROWSER_RENDEZVOUS = 19
 
+class InterfaceMode(IntEnum):
+    FULL = 1
+    POINT_TO_POINT = 2
+    ACCESS_POINT = 3
+    ROAMING = 4
+    BOUNDARY = 5
+    GATEWAY = 6
+    INTERNAL = 7
+
 class InterfaceHealth(IntEnum):
     INITIALIZING = 1
     CONNECTED = 2
@@ -470,6 +479,14 @@ class MultiRNodeMemberConfig:
     outgoing: bool
 
 @dataclass(frozen=True, slots=True)
+class InterfaceRoutingPolicy:
+    mode: InterfaceMode | None
+    gravity: int | None
+    recursive_path_requests: bool | None
+    announces_from_internal: bool | None
+    announces_to_internal: bool | None
+
+@dataclass(frozen=True, slots=True)
 class BackendInfo:
     backend: BackendKind
     capabilities: tuple[Capability, ...]
@@ -825,6 +842,7 @@ class HostCommandAllowRequester:
 @dataclass(frozen=True, slots=True)
 class HostCommandAttachInterface:
     config: InterfaceConfig
+    routing: InterfaceRoutingPolicy | None
 
 @dataclass(frozen=True, slots=True)
 class CommandOutcomeAnnounced:
@@ -1395,4 +1413,4 @@ class _RawHostProtocol(Protocol):
     def host_set_destination_resource_strategy(self, host: _RawHost, destination: DestinationHash, strategy: ResourceStrategy) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
     def host_send_channel_message(self, host: _RawHost, link_id: LinkId, message_type: int, payload: bytes) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
     def host_allow_requester(self, host: _RawHost, destination: DestinationHash, path_hash: RequestPathHash, identity: IdentityHash) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
-    def host_attach_interface(self, host: _RawHost, config: InterfaceConfig) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
+    def host_attach_interface(self, host: _RawHost, config: InterfaceConfig, routing: InterfaceRoutingPolicy | None) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...

@@ -82,7 +82,18 @@ func (host *Host) AttachInterface(
 	ctx context.Context,
 	config InterfaceConfig,
 ) (CommandSettlement, error) {
-	return host.executeSettlement(ctx, HostCommandAttachInterface{Config: config})
+	return host.AttachInterfaceWithRouting(ctx, config, nil)
+}
+
+func (host *Host) AttachInterfaceWithRouting(
+	ctx context.Context,
+	config InterfaceConfig,
+	routing *InterfaceRoutingPolicy,
+) (CommandSettlement, error) {
+	return host.executeSettlement(ctx, HostCommandAttachInterface{
+		Config:  config,
+		Routing: routing,
+	})
 }
 
 func (host *Host) DetachInterface(

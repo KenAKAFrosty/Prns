@@ -141,7 +141,14 @@ await using (host)
     }
 
     var attached = await host.AttachInterfaceAsync(
-        new InterfaceConfig.TcpClient("127.0.0.1:9", new Bitrate.Auto())
+        new InterfaceConfig.TcpClient("127.0.0.1:9", new Bitrate.Auto()),
+        new InterfaceRoutingPolicy(
+            InterfaceMode.Boundary,
+            -73,
+            true,
+            false,
+            true
+        )
     );
     if (
         attached

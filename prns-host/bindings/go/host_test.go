@@ -243,11 +243,23 @@ func TestNativeHostContract(t *testing.T) {
 		2*time.Second,
 	)
 	defer waitCancel()
-	settlement, err := host.AttachInterface(
+	mode := InterfaceModeBoundary
+	gravity := int64(-73)
+	recursive := true
+	fromInternal := false
+	toInternal := true
+	settlement, err := host.AttachInterfaceWithRouting(
 		waitCtx,
 		InterfaceConfigTcpClient{
 			Target:  "127.0.0.1:9",
 			Bitrate: BitrateAuto{},
+		},
+		&InterfaceRoutingPolicy{
+			Mode:                  &mode,
+			Gravity:               &gravity,
+			RecursivePathRequests: &recursive,
+			AnnouncesFromInternal: &fromInternal,
+			AnnouncesToInternal:   &toInternal,
 		},
 	)
 	if err != nil {

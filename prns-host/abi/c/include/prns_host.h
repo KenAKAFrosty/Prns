@@ -93,6 +93,15 @@ typedef uint32_t PrnsInterfaceKind;
 #define PRNS_INTERFACE_KIND_WEB_SOCKET_SERVER UINT32_C(18)
 #define PRNS_INTERFACE_KIND_BROWSER_RENDEZVOUS UINT32_C(19)
 
+typedef uint32_t PrnsInterfaceMode;
+#define PRNS_INTERFACE_MODE_FULL UINT32_C(1)
+#define PRNS_INTERFACE_MODE_POINT_TO_POINT UINT32_C(2)
+#define PRNS_INTERFACE_MODE_ACCESS_POINT UINT32_C(3)
+#define PRNS_INTERFACE_MODE_ROAMING UINT32_C(4)
+#define PRNS_INTERFACE_MODE_BOUNDARY UINT32_C(5)
+#define PRNS_INTERFACE_MODE_GATEWAY UINT32_C(6)
+#define PRNS_INTERFACE_MODE_INTERNAL UINT32_C(7)
+
 typedef uint32_t PrnsInterfaceHealth;
 #define PRNS_INTERFACE_HEALTH_INITIALIZING UINT32_C(1)
 #define PRNS_INTERFACE_HEALTH_CONNECTED UINT32_C(2)
@@ -436,6 +445,20 @@ typedef struct PrnsMultiRNodeMemberConfig {
     uint8_t outgoing;
 } PrnsMultiRNodeMemberConfig;
 
+typedef struct PrnsInterfaceRoutingPolicy {
+    size_t struct_size;
+    uint8_t has_mode;
+    PrnsInterfaceMode mode;
+    uint8_t has_gravity;
+    int64_t gravity;
+    uint8_t has_recursive_path_requests;
+    uint8_t recursive_path_requests;
+    uint8_t has_announces_from_internal;
+    uint8_t announces_from_internal;
+    uint8_t has_announces_to_internal;
+    uint8_t announces_to_internal;
+} PrnsInterfaceRoutingPolicy;
+
 typedef struct PrnsBackendInfo {
     size_t struct_size;
     PrnsBackendKind backend;
@@ -684,7 +707,7 @@ PRNS_HOST_API PrnsStatus prns_host_set_link_resource_strategy(PrnsHost *host, Pr
 PRNS_HOST_API PrnsStatus prns_host_set_destination_resource_strategy(PrnsHost *host, PrnsByteView destination, PrnsResourceStrategyKind strategy_kind, uint64_t maximum_uncompressed_bytes, uint8_t accept_compressed, PrnsIssuedCommand **out_command);
 PRNS_HOST_API PrnsStatus prns_host_send_channel_message(PrnsHost *host, PrnsByteView link_id, uint16_t message_type, PrnsByteView payload, PrnsIssuedCommand **out_command);
 PRNS_HOST_API PrnsStatus prns_host_allow_requester(PrnsHost *host, PrnsByteView destination, PrnsByteView path_hash, PrnsByteView identity, PrnsIssuedCommand **out_command);
-PRNS_HOST_API PrnsStatus prns_host_attach_interface(PrnsHost *host, const PrnsInterfaceConfig *config, PrnsIssuedCommand **out_command);
+PRNS_HOST_API PrnsStatus prns_host_attach_interface(PrnsHost *host, const PrnsInterfaceConfig *config, const PrnsInterfaceRoutingPolicy *routing, PrnsIssuedCommand **out_command);
 #if defined(__cplusplus)
 }
 #endif

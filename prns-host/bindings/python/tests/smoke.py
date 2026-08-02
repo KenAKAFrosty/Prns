@@ -331,7 +331,14 @@ async def main():
     assert isinstance(resource, prns.CommandFailed)
     assert isinstance(resource.failure, prns.CommandFailureUnknownLink)
     attached = await host.attach_interface(
-        prns.InterfaceConfigTcpClient("127.0.0.1:9", prns.BitrateAuto())
+        prns.InterfaceConfigTcpClient("127.0.0.1:9", prns.BitrateAuto()),
+        prns.InterfaceRoutingPolicy(
+            prns.InterfaceMode.BOUNDARY,
+            -73,
+            True,
+            False,
+            True,
+        ),
     )
     assert isinstance(attached, prns.CommandSucceeded)
     assert isinstance(attached.outcome, prns.CommandOutcomeInterfaceAttached)

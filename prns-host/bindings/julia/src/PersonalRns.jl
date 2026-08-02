@@ -169,6 +169,8 @@ export InterfaceConfigWebSocketClient
 export InterfaceConfigWebSocketServer
 export InterfaceConfigBrowserRendezvous
 export InterfaceKind
+export InterfaceMode
+export InterfaceRoutingPolicy
 export DiscoveryScope
 export MulticastAddressType
 export SerialDataBits

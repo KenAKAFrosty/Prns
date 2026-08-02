@@ -2,8 +2,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::{
-    DestinationHash, IdentityHash, InterfaceConfig, InterfaceId, LinkId, PacketHash, RequestId,
-    RequestPathHash,
+    DestinationHash, IdentityHash, InterfaceConfig, InterfaceId, InterfaceRoutingPolicy, LinkId,
+    PacketHash, RequestId, RequestPathHash,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,6 +61,7 @@ pub enum HostCommand {
     },
     AttachInterface {
         config: InterfaceConfig,
+        routing: Option<InterfaceRoutingPolicy>,
     },
     DetachInterface {
         interface: InterfaceId,

@@ -247,6 +247,15 @@
       "WebSocketClient": 17,
       "WebSocketServer": 18
     },
+    "InterfaceMode": {
+      "AccessPoint": 3,
+      "Boundary": 5,
+      "Full": 1,
+      "Gateway": 6,
+      "Internal": 7,
+      "PointToPoint": 2,
+      "Roaming": 4
+    },
     "LifecyclePhase": {
       "Failed": 5,
       "Running": 2,
@@ -1106,6 +1115,33 @@
       {
         "name": "persistence",
         "type": "PersistenceSnapshot"
+      }
+    ],
+    "InterfaceRoutingPolicy": [
+      {
+        "name": "mode",
+        "optional": true,
+        "type": "InterfaceMode"
+      },
+      {
+        "name": "gravity",
+        "optional": true,
+        "type": "safeInt"
+      },
+      {
+        "name": "recursivePathRequests",
+        "optional": true,
+        "type": "bool"
+      },
+      {
+        "name": "announcesFromInternal",
+        "optional": true,
+        "type": "bool"
+      },
+      {
+        "name": "announcesToInternal",
+        "optional": true,
+        "type": "bool"
       }
     ],
     "InterfaceSnapshot": [

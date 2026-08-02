@@ -20,6 +20,7 @@ from ._native import (
     HostSnapshot as NativeHostSnapshot,
     IdentityConfig as NativeIdentityConfig,
     InterfaceConfig as NativeInterfaceConfig,
+    InterfaceRoutingPolicy as NativeInterfaceRoutingPolicy,
     Lifecycle,
     Limits as NativeLimits,
     MultiRNodeMemberConfig as NativeMultiRNodeMemberConfig,
@@ -680,6 +681,26 @@ def _marshal_interface(
     else:
         raise TypeError(f"unknown interface config {type(value)!r}")
     return result
+
+
+def _marshal_interface_routing(
+    value: g.InterfaceRoutingPolicy,
+) -> NativeInterfaceRoutingPolicy:
+    if value.gravity is not None and not g.SAFE_INT_MIN <= value.gravity <= g.SAFE_INT_MAX:
+        raise ValueError("gravity must be a safe integer")
+    return NativeInterfaceRoutingPolicy(
+        ctypes.sizeof(NativeInterfaceRoutingPolicy),
+        int(value.mode is not None),
+        0 if value.mode is None else value.mode,
+        int(value.gravity is not None),
+        0 if value.gravity is None else value.gravity,
+        int(value.recursive_path_requests is not None),
+        int(value.recursive_path_requests or False),
+        int(value.announces_from_internal is not None),
+        int(value.announces_from_internal or False),
+        int(value.announces_to_internal is not None),
+        int(value.announces_to_internal or False),
+    )
 
 
 def _decode_backend(value: NativeBackendInfo) -> g.BackendInfo:
@@ -1611,9 +1632,15 @@ class Host:
                 )
             elif isinstance(command, g.HostCommandAttachInterface):
                 interface = _marshal_interface(command.config, arena)
+                routing = (
+                    None
+                    if command.routing is None
+                    else _marshal_interface_routing(command.routing)
+                )
                 status = self._native.library.prns_host_attach_interface(
                     self._handle,
                     ctypes.byref(interface),
+                    None if routing is None else ctypes.byref(routing),
                     ctypes.byref(handle),
                 )
             elif isinstance(command, g.HostCommandDetachInterface):
@@ -1786,8 +1813,9 @@ class Host:
     async def attach_interface(
         self,
         config: g.InterfaceConfig,
+        routing: g.InterfaceRoutingPolicy | None = None,
     ) -> CommandSettlement:
-        return await self.submit(g.HostCommandAttachInterface(config))
+        return await self.submit(g.HostCommandAttachInterface(config, routing))
 
     async def detach_interface(
         self,

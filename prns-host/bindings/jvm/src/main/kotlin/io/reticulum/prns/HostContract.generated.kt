@@ -102,6 +102,20 @@ enum class InterfaceKind(val rawValue: Int) {
     }
 }
 
+enum class InterfaceMode(val rawValue: Int) {
+    FULL(1),
+    POINT_TO_POINT(2),
+    ACCESS_POINT(3),
+    ROAMING(4),
+    BOUNDARY(5),
+    GATEWAY(6),
+    INTERNAL(7);
+
+    companion object {
+        fun fromRawValue(value: Int): InterfaceMode? = entries.firstOrNull { it.rawValue == value }
+    }
+}
+
 enum class InterfaceHealth(val rawValue: Int) {
     INITIALIZING(1),
     CONNECTED(2),
@@ -642,6 +656,14 @@ data class MultiRNodeMemberConfig(
     val outgoing: Boolean,
 )
 
+data class InterfaceRoutingPolicy(
+    val mode: InterfaceMode?,
+    val gravity: Long?,
+    val recursivePathRequests: Boolean?,
+    val announcesFromInternal: Boolean?,
+    val announcesToInternal: Boolean?,
+)
+
 data class BackendInfo(
     val backend: BackendKind,
     val capabilities: List<Capability>,
@@ -1003,7 +1025,8 @@ data class HostCommandAllowRequester(
 ) : HostCommand
 
 data class HostCommandAttachInterface(
-    val config: InterfaceConfig
+    val config: InterfaceConfig,
+    val routing: InterfaceRoutingPolicy?
 ) : HostCommand
 
 sealed interface CommandOutcome
@@ -1458,5 +1481,5 @@ internal interface RawHostProtocol {
     fun hostSetDestinationResourceStrategy(host: RawHost, destination: DestinationHash, strategy: ResourceStrategy): RawCallResult<RawOwned<RawIssuedCommand>>
     fun hostSendChannelMessage(host: RawHost, linkId: LinkId, messageType: Int, payload: Bytes): RawCallResult<RawOwned<RawIssuedCommand>>
     fun hostAllowRequester(host: RawHost, destination: DestinationHash, pathHash: RequestPathHash, identity: IdentityHash): RawCallResult<RawOwned<RawIssuedCommand>>
-    fun hostAttachInterface(host: RawHost, config: InterfaceConfig): RawCallResult<RawOwned<RawIssuedCommand>>
+    fun hostAttachInterface(host: RawHost, config: InterfaceConfig, routing: InterfaceRoutingPolicy?): RawCallResult<RawOwned<RawIssuedCommand>>
 }

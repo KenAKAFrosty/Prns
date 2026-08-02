@@ -98,6 +98,18 @@ const (
 	InterfaceKindBrowserRendezvous InterfaceKind = 19
 )
 
+type InterfaceMode uint32
+
+const (
+	InterfaceModeFull InterfaceMode = 1
+	InterfaceModePointToPoint InterfaceMode = 2
+	InterfaceModeAccessPoint InterfaceMode = 3
+	InterfaceModeRoaming InterfaceMode = 4
+	InterfaceModeBoundary InterfaceMode = 5
+	InterfaceModeGateway InterfaceMode = 6
+	InterfaceModeInternal InterfaceMode = 7
+)
+
 type InterfaceHealth uint32
 
 const (
@@ -473,6 +485,14 @@ type MultiRNodeMemberConfig struct {
 	Radio RNodeRadioConfig
 	FlowControl bool
 	Outgoing bool
+}
+
+type InterfaceRoutingPolicy struct {
+	Mode *InterfaceMode
+	Gravity *int64
+	RecursivePathRequests *bool
+	AnnouncesFromInternal *bool
+	AnnouncesToInternal *bool
 }
 
 type BackendInfo struct {
@@ -964,6 +984,7 @@ func (HostCommandAllowRequester) hostCommand() {}
 
 type HostCommandAttachInterface struct {
 	Config InterfaceConfig
+	Routing *InterfaceRoutingPolicy
 }
 
 func (HostCommandAttachInterface) hostCommand() {}
@@ -1594,5 +1615,5 @@ type rawHostProtocol interface {
 	hostSetDestinationResourceStrategy(host rawHost, destination DestinationHash, strategy ResourceStrategy) rawCallResult[rawOwned[rawIssuedCommand]]
 	hostSendChannelMessage(host rawHost, linkId LinkId, messageType uint16, payload []byte) rawCallResult[rawOwned[rawIssuedCommand]]
 	hostAllowRequester(host rawHost, destination DestinationHash, pathHash RequestPathHash, identity IdentityHash) rawCallResult[rawOwned[rawIssuedCommand]]
-	hostAttachInterface(host rawHost, config InterfaceConfig) rawCallResult[rawOwned[rawIssuedCommand]]
+	hostAttachInterface(host rawHost, config InterfaceConfig, routing *InterfaceRoutingPolicy) rawCallResult[rawOwned[rawIssuedCommand]]
 }

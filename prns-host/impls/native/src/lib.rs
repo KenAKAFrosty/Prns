@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use personal_rns::config::{
     plan_reference_config, RNodeRadio, RNodeSubinterface, ReferenceConfig, ReferenceConfigParams,
-    ReferenceInterface,
+    ReferenceInterface, ReferenceMode,
 };
 use personal_rns::engine::{
     AllowRequester, AllowRequesterFailure, AllowRequesterRejection, AnnounceAppData, AnnounceNow,
@@ -57,13 +57,13 @@ use prns_host::{
     DestinationIdentityConfig, DestinationIdentitySnapshot, DestinationLinkRequestPolicy,
     DestinationProofStrategy, DestinationRatchetPolicy, DiagnosticEvent, HostCommand, HostConfig,
     HostRole, HostSnapshot, IdentityConfig, IdentityHash, InterfaceConfig, InterfaceHealth,
-    InterfaceId, InterfaceKind, InterfaceSnapshot, LinkClosedReason, LinkId, PacketHash,
-    PersistenceConfig, PersistenceFlushCause, PersistenceFlushTarget, PersistenceSnapshot,
-    RequestAvailable, RequestHandlerConfig, RequestId, RequestPathHash, RequestPolicy,
-    ResourceAvailable, ResourceCompression, ResourceHash, ResourceNeedsDecompression,
-    ResourceSegmentAvailable, ResourceStrategy, ResourceStreamId, ResponseAvailable,
-    ResponseSegmentAvailable, ResponseTimeout, RouteSnapshot, RuntimeHealthSnapshot,
-    SingleDelivery, SAFE_UINT_MAX,
+    InterfaceId, InterfaceKind, InterfaceMode, InterfaceRoutingPolicy, InterfaceSnapshot,
+    LinkClosedReason, LinkId, PacketHash, PersistenceConfig, PersistenceFlushCause,
+    PersistenceFlushTarget, PersistenceSnapshot, RequestAvailable, RequestHandlerConfig, RequestId,
+    RequestPathHash, RequestPolicy, ResourceAvailable, ResourceCompression, ResourceHash,
+    ResourceNeedsDecompression, ResourceSegmentAvailable, ResourceStrategy, ResourceStreamId,
+    ResponseAvailable, ResponseSegmentAvailable, ResponseTimeout, RouteSnapshot,
+    RuntimeHealthSnapshot, SingleDelivery, SAFE_INT_MAX, SAFE_INT_MIN, SAFE_UINT_MAX,
 };
 use tokio::io::{AsyncRead, ReadBuf};
 use tokio::sync::{mpsc, oneshot, watch};
@@ -1903,11 +1903,40 @@ fn reference_interface(config: &InterfaceConfig) -> Result<ReferenceInterface, C
     Ok(interface)
 }
 
+fn reference_mode(mode: InterfaceMode) -> ReferenceMode {
+    match mode {
+        InterfaceMode::Full => ReferenceMode::Full,
+        InterfaceMode::PointToPoint => ReferenceMode::PointToPoint,
+        InterfaceMode::AccessPoint => ReferenceMode::AccessPoint,
+        InterfaceMode::Roaming => ReferenceMode::Roaming,
+        InterfaceMode::Boundary => ReferenceMode::Boundary,
+        InterfaceMode::Gateway => ReferenceMode::Gateway,
+        InterfaceMode::Internal => ReferenceMode::Internal,
+    }
+}
+
 fn typed_interface_plan(
     config: &InterfaceConfig,
+    routing: Option<InterfaceRoutingPolicy>,
 ) -> Result<personal_rns::config::DaemonPlan, CommandFailure> {
     let mut reference = ReferenceConfig::default();
-    reference.interfaces.push(reference_interface(config)?);
+    let mut interface = reference_interface(config)?;
+    if let Some(routing) = routing {
+        if routing
+            .gravity
+            .is_some_and(|gravity| !(SAFE_INT_MIN..=SAFE_INT_MAX).contains(&gravity))
+        {
+            return Err(invalid_configuration(
+                "interface gravity exceeds the exact host integer range".to_string(),
+            ));
+        }
+        interface.mode = routing.mode.map(reference_mode);
+        interface.gravity = routing.gravity;
+        interface.recursive_prs = routing.recursive_path_requests;
+        interface.announces_from_internal = routing.announces_from_internal;
+        interface.announces_to_internal = routing.announces_to_internal;
+    }
+    reference.interfaces.push(interface);
     plan_reference_config(&reference).map_err(|error| invalid_configuration(error.to_string()))
 }
 
@@ -1960,8 +1989,9 @@ async fn attach_typed_interface(
     handle: &PrnsNodeHandle,
     context: &PlanRuntimeContext,
     config: &InterfaceConfig,
+    routing: Option<InterfaceRoutingPolicy>,
 ) -> Result<Attachment, CommandFailure> {
-    let plan = typed_interface_plan(config)?;
+    let plan = typed_interface_plan(config, routing)?;
     let mut primary = None;
     let mut failure = None;
     let attachments =
@@ -2105,13 +2135,13 @@ async fn execute_command(
             );
             Ok(CommandOutcome::InterfaceAttached { interface })
         }
-        HostCommand::AttachInterface { config } => {
+        HostCommand::AttachInterface { config, routing } => {
             config
                 .validate()
                 .map_err(|error| CommandFailure::InvalidConfiguration {
                     detail: format!("{error:?}"),
                 })?;
-            let attachment = attach_typed_interface(handle, plan_context, config).await?;
+            let attachment = attach_typed_interface(handle, plan_context, config, *routing).await?;
             let interface = attachment
                 .interfaces()
                 .first()
@@ -3151,7 +3181,7 @@ mod tests {
         ];
         for config in configs {
             config.validate().map_err(|error| format!("{error:?}"))?;
-            let plan = typed_interface_plan(&config).map_err(|error| format!("{error:?}"))?;
+            let plan = typed_interface_plan(&config, None).map_err(|error| format!("{error:?}"))?;
             if plan.interfaces.is_empty() {
                 return Err(format!(
                     "{:?} produced no planned interfaces",
@@ -3160,10 +3190,111 @@ mod tests {
             }
         }
         assert!(matches!(
-            typed_interface_plan(&InterfaceConfig::BrowserRendezvous {
-                url: "ws://127.0.0.1:4242".to_string(),
-            }),
+            typed_interface_plan(
+                &InterfaceConfig::BrowserRendezvous {
+                    url: "ws://127.0.0.1:4242".to_string(),
+                },
+                None
+            ),
             Err(CommandFailure::UnsupportedByBackend)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn typed_interface_routing_is_applied_before_attachment() -> Result<(), String> {
+        let config = InterfaceConfig::TcpClient {
+            target: "127.0.0.1:4242".to_string(),
+            bitrate: Bitrate::Auto,
+        };
+        let default_plan =
+            typed_interface_plan(&config, None).map_err(|error| format!("{error:?}"))?;
+        let default_policy = default_plan
+            .interfaces
+            .first()
+            .ok_or_else(|| "default interface plan was empty".to_string())?
+            .policy;
+        if default_policy.mode != personal_rns::interfaces::InterfaceMode::Full
+            || default_policy.gravity.get() != 0
+            || default_policy.common.forwarding.recursive_path_requests
+            || !default_policy.common.forwarding.announces_from_internal
+            || default_policy.common.forwarding.announces_to_internal
+        {
+            return Err(format!(
+                "unexpected default routing policy: {default_policy:?}"
+            ));
+        }
+        let routing = InterfaceRoutingPolicy {
+            mode: Some(InterfaceMode::Boundary),
+            gravity: Some(-73),
+            recursive_path_requests: Some(true),
+            announces_from_internal: Some(false),
+            announces_to_internal: Some(true),
+        };
+        let plan =
+            typed_interface_plan(&config, Some(routing)).map_err(|error| format!("{error:?}"))?;
+        let policy = plan
+            .interfaces
+            .first()
+            .ok_or_else(|| "interface plan was empty".to_string())?
+            .policy;
+        if policy.mode != personal_rns::interfaces::InterfaceMode::Boundary
+            || policy.gravity.get() != -73
+            || !policy.common.forwarding.recursive_path_requests
+            || policy.common.forwarding.announces_from_internal
+            || !policy.common.forwarding.announces_to_internal
+        {
+            return Err(format!("unexpected routing policy: {policy:?}"));
+        }
+        let multi_plan = typed_interface_plan(
+            &InterfaceConfig::MultiRNode {
+                port: "/dev/ttyUSB0".to_string(),
+                station_callsign: None,
+                station_interval_seconds: None,
+                members: vec![
+                    prns_host::MultiRNodeMemberConfig {
+                        name: "uplink".to_string(),
+                        virtual_port: 1,
+                        radio: radio(),
+                        flow_control: true,
+                        outgoing: true,
+                    },
+                    prns_host::MultiRNodeMemberConfig {
+                        name: "downlink".to_string(),
+                        virtual_port: 2,
+                        radio: radio(),
+                        flow_control: true,
+                        outgoing: true,
+                    },
+                ],
+            },
+            Some(routing),
+        )
+        .map_err(|error| format!("{error:?}"))?;
+        if multi_plan.interfaces.is_empty()
+            || multi_plan.interfaces.iter().any(|interface| {
+                let policy = interface.policy;
+                policy.mode != personal_rns::interfaces::InterfaceMode::Boundary
+                    || policy.gravity.get() != -73
+                    || !policy.common.forwarding.recursive_path_requests
+                    || policy.common.forwarding.announces_from_internal
+                    || !policy.common.forwarding.announces_to_internal
+            })
+        {
+            return Err(format!(
+                "multi-interface routing was not inherited: {:?}",
+                multi_plan.interfaces
+            ));
+        }
+        assert!(matches!(
+            typed_interface_plan(
+                &config,
+                Some(InterfaceRoutingPolicy {
+                    gravity: Some(SAFE_INT_MAX + 1),
+                    ..routing
+                })
+            ),
+            Err(CommandFailure::InvalidConfiguration { .. })
         ));
         Ok(())
     }
@@ -3249,6 +3380,7 @@ mod tests {
                     target: "127.0.0.1:9".to_string(),
                     bitrate: Bitrate::Auto,
                 },
+                routing: None,
             })
             .map_err(|error| format!("{error:?}"))?;
         let interface = match attached.wait(Some(Duration::from_secs(2))) {

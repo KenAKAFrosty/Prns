@@ -58,6 +58,13 @@ try
     attached = attach_interface(
         host,
         InterfaceConfigTcpClient("127.0.0.1:9", BitrateAuto()),
+        routing=InterfaceRoutingPolicy(
+            PersonalRns.InterfaceModeBoundary,
+            -73,
+            true,
+            false,
+            true,
+        ),
     )
     @test attached isa CommandSucceeded
     @test attached.outcome isa PersonalRns.CommandOutcomeInterfaceAttached
@@ -275,12 +282,14 @@ mktempdir() do root
             server,
             HostCommandAttachInterface(
                 InterfaceConfigTcpServer("127.0.0.1:$(port)", BitrateAuto()),
+                nothing,
             ),
         ) isa PersonalRns.CommandOutcomeInterfaceAttached
         @test successful_outcome(
             client,
             HostCommandAttachInterface(
                 InterfaceConfigTcpClient("127.0.0.1:$(port)", BitrateAuto()),
+                nothing,
             ),
         ) isa PersonalRns.CommandOutcomeInterfaceAttached
 

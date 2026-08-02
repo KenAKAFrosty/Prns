@@ -79,7 +79,7 @@ export declare class PrnsNode {
   attachTcpServer(options: TcpServerOptions): Promise<InterfaceHandle>
   attachTcpClient(options: TcpClientOptions): Promise<InterfaceHandle>
   attachUdp(options: UdpOptions): Promise<InterfaceHandle>
-  attachInterface(config: InterfaceConfigSpec): Promise<InterfaceHandle>
+  attachInterface(config: InterfaceConfigSpec, routing?: InterfaceRoutingPolicySpec | undefined | null): Promise<InterfaceHandle>
   previewValidateInterfaceConfig(spec: InterfaceConfigSpec): string
   attachSharedInstanceServer(options?: SharedInstanceOptions | undefined | null): Promise<InterfaceHandle>
   attachSharedInstanceClient(options?: SharedInstanceOptions | undefined | null): Promise<InterfaceHandle>
@@ -321,6 +321,14 @@ export interface InterfaceInventoryInfo {
   name?: string
   origin: string
   interface: InterfaceInfo
+}
+
+export interface InterfaceRoutingPolicySpec {
+  mode?: string
+  gravity?: number
+  recursivePathRequests?: boolean
+  announcesFromInternal?: boolean
+  announcesToInternal?: boolean
 }
 
 export interface LinkInfo {

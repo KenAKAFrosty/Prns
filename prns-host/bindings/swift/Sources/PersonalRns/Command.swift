@@ -93,13 +93,24 @@ public final class Command: @unchecked Sendable {
                 nativeBitrate.bitsPerSecond,
                 &output
             )
-        case .attachInterface(let config):
+        case .attachInterface(let config, let routing):
             var nativeConfig = try nativeInterfaceConfig(config, arena: arena)
-            status = prns_host_attach_interface(
-                host,
-                &nativeConfig,
-                &output
-            )
+            if let routing {
+                var nativeRouting = try nativeInterfaceRouting(routing)
+                status = prns_host_attach_interface(
+                    host,
+                    &nativeConfig,
+                    &nativeRouting,
+                    &output
+                )
+            } else {
+                status = prns_host_attach_interface(
+                    host,
+                    &nativeConfig,
+                    nil,
+                    &output
+                )
+            }
         case .detachInterface(let interface):
             status = prns_host_detach_interface(
                 host,

@@ -317,6 +317,68 @@ class GenerateHostContractTests(unittest.TestCase):
                 for fragment in fragments:
                     self.assertIn(fragment, projections[language])
 
+    def test_interface_routing_contract_projects_across_every_language(self):
+        schema = canonical_schema()
+        projections = {
+            "typescript": GENERATOR.ts_output(schema),
+            "c": GENERATOR.c_output(schema),
+            "python": GENERATOR.python_output(schema),
+            "dotnet": GENERATOR.dotnet_output(schema),
+            "go": GENERATOR.go_output(schema),
+            "swift": GENERATOR.swift_output(schema),
+            "kotlin": GENERATOR.kotlin_output(schema),
+            "julia": GENERATOR.julia_output(schema),
+        }
+        expected = {
+            "typescript": (
+                'export type InterfaceMode =',
+                '  | "Internal";',
+                "readonly gravity?: number;",
+                "readonly routing?: InterfaceRoutingPolicy;",
+            ),
+            "c": (
+                "PRNS_INTERFACE_MODE_INTERNAL UINT32_C(7)",
+                "typedef struct PrnsInterfaceRoutingPolicy",
+                "uint8_t has_announces_to_internal;",
+                "const PrnsInterfaceRoutingPolicy *routing",
+            ),
+            "python": (
+                "class InterfaceMode(IntEnum):",
+                "gravity: int | None",
+                "routing: InterfaceRoutingPolicy | None",
+            ),
+            "dotnet": (
+                "public enum InterfaceMode : uint",
+                "long? Gravity",
+                "InterfaceRoutingPolicy? Routing",
+            ),
+            "go": (
+                "type InterfaceMode uint32",
+                "Gravity *int64",
+                "Routing *InterfaceRoutingPolicy",
+            ),
+            "swift": (
+                "public enum InterfaceMode: UInt32, Sendable",
+                "case `internal` = 7",
+                "public let gravity: Int64?",
+                "case attachInterface(config: InterfaceConfig, routing: InterfaceRoutingPolicy?)",
+            ),
+            "kotlin": (
+                "enum class InterfaceMode(val rawValue: Int)",
+                "val gravity: Long?",
+                "val routing: InterfaceRoutingPolicy?",
+            ),
+            "julia": (
+                "@enum InterfaceMode::UInt32",
+                "gravity::Union{Nothing,Int64}",
+                "routing::Union{Nothing,InterfaceRoutingPolicy}",
+            ),
+        }
+        for language, fragments in expected.items():
+            with self.subTest(language=language):
+                for fragment in fragments:
+                    self.assertIn(fragment, projections[language])
+
     def test_records_arrays_optionals_and_nested_unions_project_exactly(self):
         schema = canonical_schema()
         schema["records"].append(

@@ -72,6 +72,11 @@ def lower_first(name):
     return name[0].lower() + name[1:]
 
 
+def swift_identifier(name):
+    value = lower_first(name)
+    return f"`{value}`" if value in {"internal"} else value
+
+
 def raw_operations(schema):
     operations = [dict(operation) for operation in schema["operations"]]
     union_name = schema["commandProjection"]["union"]
@@ -622,6 +627,7 @@ def ts_output(schema):
         for name in (
             "BackendKind",
             "InterfaceKind",
+            "InterfaceMode",
             "InterfaceHealth",
             "DiscoveryScope",
             "MulticastAddressType",
@@ -1654,7 +1660,7 @@ def swift_output(schema):
     for enum in schema["enums"]:
         lines.append(f"public enum {enum['name']}: UInt32, Sendable {{")
         for value in enum["values"]:
-            lines.append(f"    case {lower_first(value['name'])} = {value['value']}")
+            lines.append(f"    case {swift_identifier(value['name'])} = {value['value']}")
         lines.extend(["}", ""])
     for item in schema["fixedBytes"]:
         if item.get("secret", False):

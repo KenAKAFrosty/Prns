@@ -131,9 +131,10 @@ public final class Host: @unchecked Sendable {
     }
 
     public func attachInterface(
-        config: InterfaceConfig
+        config: InterfaceConfig,
+        routing: InterfaceRoutingPolicy? = nil
     ) async throws -> CommandSettlement {
-        try await settle(.attachInterface(config: config))
+        try await settle(.attachInterface(config: config, routing: routing))
     }
 
     public func detachInterface(

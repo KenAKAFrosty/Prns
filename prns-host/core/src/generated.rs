@@ -321,6 +321,50 @@ impl TryFrom<u32> for InterfaceKind {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum InterfaceMode {
+    Full = 1,
+    PointToPoint = 2,
+    AccessPoint = 3,
+    Roaming = 4,
+    Boundary = 5,
+    Gateway = 6,
+    Internal = 7,
+}
+
+impl InterfaceMode {
+    #[must_use]
+    pub const fn contract_name(self) -> &'static str {
+        match self {
+            Self::Full => "Full",
+            Self::PointToPoint => "PointToPoint",
+            Self::AccessPoint => "AccessPoint",
+            Self::Roaming => "Roaming",
+            Self::Boundary => "Boundary",
+            Self::Gateway => "Gateway",
+            Self::Internal => "Internal",
+        }
+    }
+}
+
+impl TryFrom<u32> for InterfaceMode {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::Full),
+            2 => Ok(Self::PointToPoint),
+            3 => Ok(Self::AccessPoint),
+            4 => Ok(Self::Roaming),
+            5 => Ok(Self::Boundary),
+            6 => Ok(Self::Gateway),
+            7 => Ok(Self::Internal),
+            _ => Err(()),
+        }
+    }
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum InterfaceHealth {
     Initializing = 1,
     Connected = 2,
@@ -1591,6 +1635,20 @@ mod tests {
             (InterfaceKind::WebSocketClient, 17, "WebSocketClient"),
             (InterfaceKind::WebSocketServer, 18, "WebSocketServer"),
             (InterfaceKind::BrowserRendezvous, 19, "BrowserRendezvous"),
+        ]);
+    }
+
+    #[rustfmt::skip]
+    #[test]
+    fn interface_mode_values_match_the_contract() {
+        assert_contract_enum!(InterfaceMode, [
+            (InterfaceMode::Full, 1, "Full"),
+            (InterfaceMode::PointToPoint, 2, "PointToPoint"),
+            (InterfaceMode::AccessPoint, 3, "AccessPoint"),
+            (InterfaceMode::Roaming, 4, "Roaming"),
+            (InterfaceMode::Boundary, 5, "Boundary"),
+            (InterfaceMode::Gateway, 6, "Gateway"),
+            (InterfaceMode::Internal, 7, "Internal"),
         ]);
     }
 

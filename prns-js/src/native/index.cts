@@ -23,6 +23,7 @@ import type {
   InterfaceId,
   InterfaceHealth,
   InterfaceKind,
+  InterfaceRoutingPolicy,
   LifecycleState,
   LinkId,
   PrnsCreateOptions,
@@ -231,6 +232,14 @@ type RawInterfaceConfig = {
   url?: string;
 };
 
+type RawInterfaceRoutingPolicy = {
+  mode?: string;
+  gravity?: number;
+  recursivePathRequests?: boolean;
+  announcesFromInternal?: boolean;
+  announcesToInternal?: boolean;
+};
+
 type RawNode = {
   readonly identityHash: Buffer;
   readonly destinationHashes: Buffer[];
@@ -297,7 +306,10 @@ type RawNode = {
     peer: string;
     bitrateBps?: number;
   }): Promise<RawInterface>;
-  attachInterface(config: RawInterfaceConfig): Promise<RawInterface>;
+  attachInterface(
+    config: RawInterfaceConfig,
+    routing?: RawInterfaceRoutingPolicy,
+  ): Promise<RawInterface>;
   hostSnapshot(): Promise<RawHostSnapshot>;
 };
 
@@ -790,9 +802,12 @@ export class Prns {
               interface: attached.id,
             });
           },
-          AttachInterface: async ({ config }) => {
+          AttachInterface: async ({ config, routing }) => {
             validateInterfaceConfig(config);
-            const raw = await this.#raw.attachInterface(rawInterfaceConfig(config));
+            const raw = await this.#raw.attachInterface(
+              rawInterfaceConfig(config),
+              rawInterfaceRoutingPolicy(routing),
+            );
             const attached = new NativeInterface(raw);
             this.#interfaces.set(interfaceKey(attached.id), attached);
             return casework.Tag("InterfaceAttached", {
@@ -1039,8 +1054,15 @@ export class Prns {
     );
   }
 
-  attachInterface(config: InterfaceConfig): Promise<AttachOutcome> {
-    return this.execute(casework.Tag("AttachInterface", { config }));
+  attachInterface(
+    config: InterfaceConfig,
+    routing?: InterfaceRoutingPolicy,
+  ): Promise<AttachOutcome> {
+    return this.execute(
+      routing === undefined
+        ? casework.Tag("AttachInterface", { config })
+        : casework.Tag("AttachInterface", { config, routing }),
+    );
   }
 
   detachInterface(interfaceId: InterfaceId): Promise<DetachInterfaceOutcome> {
@@ -2269,6 +2291,28 @@ function rawInterfaceConfig(config: InterfaceConfig): RawInterfaceConfig {
     WebSocketServer: ({ bind }) => ({ kind: "WebSocketServer", bind }),
     BrowserRendezvous: ({ url }) => ({ kind: "BrowserRendezvous", url }),
   });
+}
+
+function rawInterfaceRoutingPolicy(
+  routing: InterfaceRoutingPolicy | undefined,
+): RawInterfaceRoutingPolicy | undefined {
+  if (routing === undefined) return undefined;
+  if (routing.gravity !== undefined && !Number.isSafeInteger(routing.gravity)) {
+    invalidConfiguration("gravity must be a safe integer");
+  }
+  return {
+    ...(routing.mode === undefined ? {} : { mode: routing.mode }),
+    ...(routing.gravity === undefined ? {} : { gravity: routing.gravity }),
+    ...(routing.recursivePathRequests === undefined
+      ? {}
+      : { recursivePathRequests: routing.recursivePathRequests }),
+    ...(routing.announcesFromInternal === undefined
+      ? {}
+      : { announcesFromInternal: routing.announcesFromInternal }),
+    ...(routing.announcesToInternal === undefined
+      ? {}
+      : { announcesToInternal: routing.announcesToInternal }),
+  };
 }
 
 function rawSerialLine(

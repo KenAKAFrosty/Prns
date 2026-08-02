@@ -577,7 +577,13 @@ public sealed class PrnsHost : IAsyncDisposable
     public ValueTask<CommandSettlement> AttachInterfaceAsync(
         InterfaceConfig config,
         CancellationToken cancellationToken = default
-    ) => ExecuteAsync(new HostCommand.AttachInterface(config), cancellationToken);
+    ) => ExecuteAsync(new HostCommand.AttachInterface(config, null), cancellationToken);
+
+    public ValueTask<CommandSettlement> AttachInterfaceAsync(
+        InterfaceConfig config,
+        InterfaceRoutingPolicy routing,
+        CancellationToken cancellationToken = default
+    ) => ExecuteAsync(new HostCommand.AttachInterface(config, routing), cancellationToken);
 
     public ValueTask<CommandSettlement> DetachInterfaceAsync(
         InterfaceId interfaceId,
@@ -847,12 +853,42 @@ public sealed class PrnsHost : IAsyncDisposable
     private CommandHandle Submit(HostCommand.AttachInterface command, NativeArena arena)
     {
         var config = InterfaceConfigMarshaller.Marshal(command.Config, arena);
+        var routing = command.Routing is null
+            ? 0
+            : arena.Array<Native.InterfaceRoutingPolicy>([
+                MarshalInterfaceRoutingPolicy(command.Routing)
+            ]);
         var status = Native.prns_host_attach_interface(
             _handle,
             in config,
+            routing,
             out var nativeCommand
         );
         return Submitted(status, nativeCommand);
+    }
+
+    private static Native.InterfaceRoutingPolicy MarshalInterfaceRoutingPolicy(
+        InterfaceRoutingPolicy routing
+    )
+    {
+        if (routing.Gravity is < HostContract.SafeIntMin or > HostContract.SafeIntMax)
+        {
+            throw new ArgumentOutOfRangeException(nameof(routing), "gravity must be a safe integer");
+        }
+        return new Native.InterfaceRoutingPolicy
+        {
+            StructSize = (nuint)Marshal.SizeOf<Native.InterfaceRoutingPolicy>(),
+            HasMode = (byte)(routing.Mode.HasValue ? 1 : 0),
+            Mode = routing.Mode.GetValueOrDefault(),
+            HasGravity = (byte)(routing.Gravity.HasValue ? 1 : 0),
+            Gravity = routing.Gravity.GetValueOrDefault(),
+            HasRecursivePathRequests = (byte)(routing.RecursivePathRequests.HasValue ? 1 : 0),
+            RecursivePathRequests = (byte)(routing.RecursivePathRequests.GetValueOrDefault() ? 1 : 0),
+            HasAnnouncesFromInternal = (byte)(routing.AnnouncesFromInternal.HasValue ? 1 : 0),
+            AnnouncesFromInternal = (byte)(routing.AnnouncesFromInternal.GetValueOrDefault() ? 1 : 0),
+            HasAnnouncesToInternal = (byte)(routing.AnnouncesToInternal.HasValue ? 1 : 0),
+            AnnouncesToInternal = (byte)(routing.AnnouncesToInternal.GetValueOrDefault() ? 1 : 0),
+        };
     }
 
     private CommandHandle Submit(HostCommand.DetachInterface command, NativeArena arena)

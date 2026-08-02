@@ -324,6 +324,7 @@ internal interface PrnsNative : Library {
     fun prns_host_attach_interface(
         host: Pointer,
         config: NativeInterfaceConfig,
+        routing: NativeInterfaceRoutingPolicy?,
         command: PointerByReference,
     ): Int
     fun prns_host_detach_interface(

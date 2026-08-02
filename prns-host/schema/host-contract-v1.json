@@ -87,6 +87,17 @@
       ]
     },
     {
+      "name": "InterfaceRoutingPolicy",
+      "hashable": true,
+      "fields": [
+        { "name": "mode", "type": "InterfaceMode", "optional": true },
+        { "name": "gravity", "type": "safeInt", "optional": true },
+        { "name": "recursivePathRequests", "type": "bool", "optional": true },
+        { "name": "announcesFromInternal", "type": "bool", "optional": true },
+        { "name": "announcesToInternal", "type": "bool", "optional": true }
+      ]
+    },
+    {
       "name": "BackendInfo",
       "hashable": true,
       "fields": [
@@ -245,6 +256,18 @@
         { "name": "WebSocketClient", "value": 17 },
         { "name": "WebSocketServer", "value": 18 },
         { "name": "BrowserRendezvous", "value": 19 }
+      ]
+    },
+    {
+      "name": "InterfaceMode",
+      "values": [
+        { "name": "Full", "value": 1 },
+        { "name": "PointToPoint", "value": 2 },
+        { "name": "AccessPoint", "value": 3 },
+        { "name": "Roaming", "value": 4 },
+        { "name": "Boundary", "value": 5 },
+        { "name": "Gateway", "value": 6 },
+        { "name": "Internal", "value": 7 }
       ]
     },
     {
@@ -946,7 +969,8 @@
           "name": "AttachInterface",
           "value": 19,
           "fields": [
-            { "name": "config", "type": "InterfaceConfig" }
+            { "name": "config", "type": "InterfaceConfig" },
+            { "name": "routing", "type": "InterfaceRoutingPolicy", "optional": true }
           ]
         }
       ]

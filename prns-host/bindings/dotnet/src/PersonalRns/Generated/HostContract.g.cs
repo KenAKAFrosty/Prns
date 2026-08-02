@@ -93,6 +93,17 @@ public enum InterfaceKind : uint
     BrowserRendezvous = 19,
 }
 
+public enum InterfaceMode : uint
+{
+    Full = 1,
+    PointToPoint = 2,
+    AccessPoint = 3,
+    Roaming = 4,
+    Boundary = 5,
+    Gateway = 6,
+    Internal = 7,
+}
+
 public enum InterfaceHealth : uint
 {
     Initializing = 1,
@@ -728,6 +739,8 @@ public sealed record RNodeRadioConfig(ulong FrequencyHz, uint BandwidthHz, short
 
 public sealed record MultiRNodeMemberConfig(string Name, byte VirtualPort, RNodeRadioConfig Radio, bool FlowControl, bool Outgoing);
 
+public sealed record InterfaceRoutingPolicy(InterfaceMode? Mode, long? Gravity, bool? RecursivePathRequests, bool? AnnouncesFromInternal, bool? AnnouncesToInternal);
+
 public sealed record BackendInfo(BackendKind Backend, ImmutableArray<Capability> Capabilities, ImmutableArray<InterfaceKind> InterfaceKinds);
 
 public sealed record InterfaceSnapshot(InterfaceId InterfaceId, string? Name, InterfaceKind? Kind, InterfaceHealth Health, string? FailureDetail, ulong RxBytes, ulong TxBytes, ulong? RxBps, ulong? TxBps, uint RouteCount, uint LinkCount, uint TransportedLinkCount);
@@ -1147,7 +1160,8 @@ public abstract record HostCommand
         IdentityHash Identity
     ) : HostCommand;
     public sealed record AttachInterface(
-        InterfaceConfig Config
+        InterfaceConfig Config,
+        InterfaceRoutingPolicy? Routing
     ) : HostCommand;
 
     public TResult Match<TResult>(
@@ -1781,5 +1795,5 @@ internal interface IRawHostProtocol
     RawCallResult<RawOwned<IRawIssuedCommand>> HostSetDestinationResourceStrategy(IRawHost host, DestinationHash destination, ResourceStrategy strategy);
     RawCallResult<RawOwned<IRawIssuedCommand>> HostSendChannelMessage(IRawHost host, LinkId linkId, ushort messageType, ReadOnlyMemory<byte> payload);
     RawCallResult<RawOwned<IRawIssuedCommand>> HostAllowRequester(IRawHost host, DestinationHash destination, RequestPathHash pathHash, IdentityHash identity);
-    RawCallResult<RawOwned<IRawIssuedCommand>> HostAttachInterface(IRawHost host, InterfaceConfig config);
+    RawCallResult<RawOwned<IRawIssuedCommand>> HostAttachInterface(IRawHost host, InterfaceConfig config, InterfaceRoutingPolicy? routing);
 }

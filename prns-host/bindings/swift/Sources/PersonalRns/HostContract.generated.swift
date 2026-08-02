@@ -84,6 +84,16 @@ public enum InterfaceKind: UInt32, Sendable {
     case browserRendezvous = 19
 }
 
+public enum InterfaceMode: UInt32, Sendable {
+    case full = 1
+    case pointToPoint = 2
+    case accessPoint = 3
+    case roaming = 4
+    case boundary = 5
+    case gateway = 6
+    case `internal` = 7
+}
+
 public enum InterfaceHealth: UInt32, Sendable {
     case initializing = 1
     case connected = 2
@@ -537,6 +547,22 @@ public struct MultiRNodeMemberConfig: Hashable, Sendable {
     }
 }
 
+public struct InterfaceRoutingPolicy: Hashable, Sendable {
+    public let mode: InterfaceMode?
+    public let gravity: Int64?
+    public let recursivePathRequests: Bool?
+    public let announcesFromInternal: Bool?
+    public let announcesToInternal: Bool?
+
+    public init(mode: InterfaceMode?, gravity: Int64?, recursivePathRequests: Bool?, announcesFromInternal: Bool?, announcesToInternal: Bool?) {
+        self.mode = mode
+        self.gravity = gravity
+        self.recursivePathRequests = recursivePathRequests
+        self.announcesFromInternal = announcesFromInternal
+        self.announcesToInternal = announcesToInternal
+    }
+}
+
 public struct BackendInfo: Hashable, Sendable {
     public let backend: BackendKind
     public let capabilities: [Capability]
@@ -761,7 +787,7 @@ public enum HostCommand: Sendable {
     case setDestinationResourceStrategy(destination: DestinationHash, strategy: ResourceStrategy)
     case sendChannelMessage(linkId: LinkId, messageType: UInt16, payload: [UInt8])
     case allowRequester(destination: DestinationHash, pathHash: RequestPathHash, identity: IdentityHash)
-    case attachInterface(config: InterfaceConfig)
+    case attachInterface(config: InterfaceConfig, routing: InterfaceRoutingPolicy?)
 }
 
 public enum CommandOutcome: Sendable {
@@ -998,5 +1024,5 @@ protocol RawHostProtocol {
     func hostSetDestinationResourceStrategy(_ host: RawHost, _ destination: DestinationHash, _ strategy: ResourceStrategy) -> RawCallResult<RawOwned<RawIssuedCommand>>
     func hostSendChannelMessage(_ host: RawHost, _ linkId: LinkId, _ messageType: UInt16, _ payload: [UInt8]) -> RawCallResult<RawOwned<RawIssuedCommand>>
     func hostAllowRequester(_ host: RawHost, _ destination: DestinationHash, _ pathHash: RequestPathHash, _ identity: IdentityHash) -> RawCallResult<RawOwned<RawIssuedCommand>>
-    func hostAttachInterface(_ host: RawHost, _ config: InterfaceConfig) -> RawCallResult<RawOwned<RawIssuedCommand>>
+    func hostAttachInterface(_ host: RawHost, _ config: InterfaceConfig, _ routing: InterfaceRoutingPolicy?) -> RawCallResult<RawOwned<RawIssuedCommand>>
 }

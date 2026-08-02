@@ -397,15 +397,18 @@ function execute(host::Host, value::HostCommandAttachInterface)
     arena = NativeArena()
     try
         config = Ref(native_interface(arena, value.config))
+        routing = value.routing === nothing ? nothing : Ref(native_interface_routing(value.routing))
+        routing_pointer = routing === nothing ? Ptr{NativeInterfaceRoutingPolicy}(C_NULL) : Base.unsafe_convert(Ptr{NativeInterfaceRoutingPolicy}, routing)
         output = Ref{Ptr{Cvoid}}(C_NULL)
-        status = GC.@preserve arena config begin
+        status = GC.@preserve arena config routing begin
             with_host_pointer(host) do pointer
                 ccall(
                     native_symbol(:prns_host_attach_interface),
                     UInt32,
-                    (Ptr{Cvoid}, Ref{NativeInterfaceConfig}, Ref{Ptr{Cvoid}}),
+                    (Ptr{Cvoid}, Ref{NativeInterfaceConfig}, Ptr{NativeInterfaceRoutingPolicy}, Ref{Ptr{Cvoid}}),
                     pointer,
                     config,
+                    routing_pointer,
                     output,
                 )
             end
@@ -863,8 +866,11 @@ function attach_udp(
     )
 end
 
-attach_interface(host::Host, config::InterfaceConfig) =
-    execute_settled(host, HostCommandAttachInterface(config))
+attach_interface(
+    host::Host,
+    config::InterfaceConfig;
+    routing::Union{Nothing,InterfaceRoutingPolicy}=nothing,
+) = execute_settled(host, HostCommandAttachInterface(config, routing))
 
 detach_interface(host::Host, interface::InterfaceId) =
     execute_settled(host, HostCommandDetachInterface(interface))

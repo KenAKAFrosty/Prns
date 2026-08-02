@@ -233,6 +233,29 @@ export function isInterfaceKind(value: unknown): value is InterfaceKind {
   return typeof value === "string" && (INTERFACE_KIND_VALUES as readonly string[]).includes(value);
 }
 
+export type InterfaceMode =
+  | "Full"
+  | "PointToPoint"
+  | "AccessPoint"
+  | "Roaming"
+  | "Boundary"
+  | "Gateway"
+  | "Internal";
+
+export const INTERFACE_MODE_VALUES: readonly InterfaceMode[] = Object.freeze([
+  "Full",
+  "PointToPoint",
+  "AccessPoint",
+  "Roaming",
+  "Boundary",
+  "Gateway",
+  "Internal",
+]);
+
+export function isInterfaceMode(value: unknown): value is InterfaceMode {
+  return typeof value === "string" && (INTERFACE_MODE_VALUES as readonly string[]).includes(value);
+}
+
 export type InterfaceHealth =
   | "Initializing"
   | "Connected"
@@ -366,6 +389,14 @@ export type MultiRNodeMemberConfig = {
   readonly radio: RNodeRadioConfig;
   readonly flowControl: boolean;
   readonly outgoing: boolean;
+};
+
+export type InterfaceRoutingPolicy = {
+  readonly mode?: InterfaceMode;
+  readonly gravity?: number;
+  readonly recursivePathRequests?: boolean;
+  readonly announcesFromInternal?: boolean;
+  readonly announcesToInternal?: boolean;
 };
 
 export type BackendInfo = {
@@ -807,6 +838,7 @@ export type HostCommand =
       "AttachInterface",
       {
         readonly config: InterfaceConfig;
+        readonly routing?: InterfaceRoutingPolicy;
       }
     >;
 
@@ -1310,5 +1342,5 @@ interface RawHostProtocol {
   readonly hostSetDestinationResourceStrategy: (host: RawHost, destination: DestinationHash, strategy: ResourceStrategy) => RawCallResult<RawOwned<RawIssuedCommand>>;
   readonly hostSendChannelMessage: (host: RawHost, linkId: LinkId, messageType: number, payload: Uint8Array) => RawCallResult<RawOwned<RawIssuedCommand>>;
   readonly hostAllowRequester: (host: RawHost, destination: DestinationHash, pathHash: RequestPathHash, identity: IdentityHash) => RawCallResult<RawOwned<RawIssuedCommand>>;
-  readonly hostAttachInterface: (host: RawHost, config: InterfaceConfig) => RawCallResult<RawOwned<RawIssuedCommand>>;
+  readonly hostAttachInterface: (host: RawHost, config: InterfaceConfig, routing: InterfaceRoutingPolicy | undefined) => RawCallResult<RawOwned<RawIssuedCommand>>;
 }

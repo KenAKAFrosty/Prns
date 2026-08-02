@@ -34,8 +34,8 @@ use personal_rns::runtime::{
     RoutingControl, RoutingControlError,
 };
 use personal_rns::runtime::{
-    RequestOptions as EngineRequestOptions, RequestPathError, ResourceSendError,
-    ResponseSendError, SegmentCompression,
+    RequestOptions as EngineRequestOptions, RequestPathError, ResourceSendError, ResponseSendError,
+    SegmentCompression,
 };
 use personal_rns::shared_instance::{SharedInstanceClient, SharedInstanceServer};
 use personal_rns::units::{ByteLimit, DurationMillis, RttMillis};
@@ -52,8 +52,9 @@ use prns_host::{
     DestinationIdentityConfig, DestinationLinkRequestPolicy, DestinationName,
     DestinationProofStrategy, DestinationRatchetPolicy, DiscoveryScope,
     HostCommand as StableHostCommand, HostConfig, HostRole, IdentityConfig, IdentitySecret,
-    InterfaceConfig as StableInterfaceConfig, MultiRNodeMemberConfig, MulticastAddressType,
-    PersistenceConfig, PrnsLimits, RNodeRadioConfig, RequestHandlerConfig,
+    InterfaceConfig as StableInterfaceConfig, InterfaceMode as StableInterfaceMode,
+    InterfaceRoutingPolicy as StableInterfaceRoutingPolicy, MultiRNodeMemberConfig,
+    MulticastAddressType, PersistenceConfig, PrnsLimits, RNodeRadioConfig, RequestHandlerConfig,
     RequestPolicy as HostRequestPolicy, ResourceStrategy as HostResourceStrategy, SerialDataBits,
     SerialLineConfig, SerialParity, SerialStopBits, SingleDestinationConfig,
 };
@@ -258,6 +259,15 @@ pub struct InterfaceConfigSpec {
     pub peers: Option<Vec<String>>,
     pub connectable: Option<bool>,
     pub url: Option<String>,
+}
+
+#[napi(object)]
+pub struct InterfaceRoutingPolicySpec {
+    pub mode: Option<String>,
+    pub gravity: Option<f64>,
+    pub recursive_path_requests: Option<bool>,
+    pub announces_from_internal: Option<bool>,
+    pub announces_to_internal: Option<bool>,
 }
 
 #[napi(object)]
@@ -893,6 +903,20 @@ fn interface_u64(value: f64, name: &str) -> CodeResult<u64> {
     }
 }
 
+fn interface_i64(value: f64, name: &str) -> CodeResult<i64> {
+    if value.is_finite()
+        && value.fract() == 0.0
+        && value >= prns_host::SAFE_INT_MIN as f64
+        && value <= prns_host::SAFE_INT_MAX as f64
+    {
+        Ok(value as i64)
+    } else {
+        Err(interface_config_error(format!(
+            "{name} must be a safe integer"
+        )))
+    }
+}
+
 fn interface_u16(value: u32, name: &str) -> CodeResult<u16> {
     u16::try_from(value)
         .map_err(|_| interface_config_error(format!("{name} exceeds the 16-bit range")))
@@ -1134,6 +1158,36 @@ fn stable_interface_config(spec: InterfaceConfigSpec) -> CodeResult<StableInterf
         }
     };
     Ok(config)
+}
+
+fn stable_interface_routing_policy(
+    spec: InterfaceRoutingPolicySpec,
+) -> CodeResult<StableInterfaceRoutingPolicy> {
+    let mode = spec
+        .mode
+        .map(|mode| match mode.as_str() {
+            "Full" => Ok(StableInterfaceMode::Full),
+            "PointToPoint" => Ok(StableInterfaceMode::PointToPoint),
+            "AccessPoint" => Ok(StableInterfaceMode::AccessPoint),
+            "Roaming" => Ok(StableInterfaceMode::Roaming),
+            "Boundary" => Ok(StableInterfaceMode::Boundary),
+            "Gateway" => Ok(StableInterfaceMode::Gateway),
+            "Internal" => Ok(StableInterfaceMode::Internal),
+            other => Err(interface_config_error(format!(
+                "unknown interface mode {other:?}"
+            ))),
+        })
+        .transpose()?;
+    Ok(StableInterfaceRoutingPolicy {
+        mode,
+        gravity: spec
+            .gravity
+            .map(|gravity| interface_i64(gravity, "gravity"))
+            .transpose()?,
+        recursive_path_requests: spec.recursive_path_requests,
+        announces_from_internal: spec.announces_from_internal,
+        announces_to_internal: spec.announces_to_internal,
+    })
 }
 
 fn host_resource_strategy(spec: &ResourceStrategySpec) -> CodeResult<HostResourceStrategy> {
@@ -1678,8 +1732,9 @@ impl PrnsNode {
     pub async fn attach_interface(
         &self,
         config: InterfaceConfigSpec,
+        routing: Option<InterfaceRoutingPolicySpec>,
     ) -> Result<Fallible<InterfaceHandle>> {
-        Ok(Fallible(self.attach_interface_inner(config).await))
+        Ok(Fallible(self.attach_interface_inner(config, routing).await))
     }
 
     #[napi]
@@ -2337,11 +2392,13 @@ impl PrnsNode {
     async fn attach_interface_inner(
         &self,
         spec: InterfaceConfigSpec,
+        routing: Option<InterfaceRoutingPolicySpec>,
     ) -> CodeResult<InterfaceHandle> {
         let config = stable_interface_config(spec)?;
+        let routing = routing.map(stable_interface_routing_policy).transpose()?;
         let kind = format!("{:?}", config.kind());
         let outcome = self
-            .submit_host(StableHostCommand::AttachInterface { config })
+            .submit_host(StableHostCommand::AttachInterface { config, routing })
             .await?;
         match outcome {
             HostCommandOutcome::InterfaceAttached { interface } => Ok(InterfaceHandle::from_host(
@@ -3041,7 +3098,8 @@ fn packet_receipt(receipt: PacketReceiptDelivered) -> PacketReceipt {
 #[cfg(test)]
 mod tests {
     use super::{
-        host_snapshot_info, parse_resource_strategy, safe_u64_argument, ResourceStrategySpec,
+        host_snapshot_info, interface_i64, parse_resource_strategy, safe_u64_argument,
+        stable_interface_routing_policy, InterfaceRoutingPolicySpec, ResourceStrategySpec,
     };
     use personal_rns::routing::links::resources::ResourceStrategy;
     use prns_host::{
@@ -3073,6 +3131,28 @@ mod tests {
         );
         assert!(safe_u64_argument(9_007_199_254_740_992.0, "value").is_err());
         assert!(safe_u64_argument(1.5, "value").is_err());
+        assert_eq!(
+            interface_i64(prns_host::SAFE_INT_MIN as f64, "value").ok(),
+            Some(prns_host::SAFE_INT_MIN)
+        );
+        assert!(interface_i64(-9_007_199_254_740_992.0, "value").is_err());
+    }
+
+    #[test]
+    fn interface_routing_policy_uses_exact_contract_names() {
+        let policy = stable_interface_routing_policy(InterfaceRoutingPolicySpec {
+            mode: Some("Boundary".to_string()),
+            gravity: Some(-73.0),
+            recursive_path_requests: Some(true),
+            announces_from_internal: Some(false),
+            announces_to_internal: Some(true),
+        })
+        .expect("routing policy should be valid");
+        assert_eq!(policy.mode, Some(prns_host::InterfaceMode::Boundary));
+        assert_eq!(policy.gravity, Some(-73));
+        assert_eq!(policy.recursive_path_requests, Some(true));
+        assert_eq!(policy.announces_from_internal, Some(false));
+        assert_eq!(policy.announces_to_internal, Some(true));
     }
 
     #[test]

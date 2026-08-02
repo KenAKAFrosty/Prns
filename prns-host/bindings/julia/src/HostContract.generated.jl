@@ -80,6 +80,16 @@ end
     InterfaceKindBrowserRendezvous = 19
 end
 
+@enum InterfaceMode::UInt32 begin
+    InterfaceModeFull = 1
+    InterfaceModePointToPoint = 2
+    InterfaceModeAccessPoint = 3
+    InterfaceModeRoaming = 4
+    InterfaceModeBoundary = 5
+    InterfaceModeGateway = 6
+    InterfaceModeInternal = 7
+end
+
 @enum InterfaceHealth::UInt32 begin
     InterfaceHealthInitializing = 1
     InterfaceHealthConnected = 2
@@ -469,6 +479,14 @@ struct MultiRNodeMemberConfig
     outgoing::Bool
 end
 
+struct InterfaceRoutingPolicy
+    mode::Union{Nothing,InterfaceMode}
+    gravity::Union{Nothing,Int64}
+    recursive_path_requests::Union{Nothing,Bool}
+    announces_from_internal::Union{Nothing,Bool}
+    announces_to_internal::Union{Nothing,Bool}
+end
+
 struct BackendInfo
     backend::BackendKind
     capabilities::Vector{Capability}
@@ -844,6 +862,7 @@ end
 
 struct HostCommandAttachInterface <: HostCommand
     config::InterfaceConfig
+    routing::Union{Nothing,InterfaceRoutingPolicy}
 end
 
 struct CommandOutcomeAnnounced <: CommandOutcome
@@ -1499,6 +1518,6 @@ function host_allow_requester(protocol::RawHostProtocol, host::RawHost, destinat
     throw(MethodError(host_allow_requester, (protocol,)))
 end
 
-function host_attach_interface(protocol::RawHostProtocol, host::RawHost, config::InterfaceConfig)::RawCallResult{RawOwned{RawIssuedCommand}}
+function host_attach_interface(protocol::RawHostProtocol, host::RawHost, config::InterfaceConfig, routing::Union{Nothing,InterfaceRoutingPolicy})::RawCallResult{RawOwned{RawIssuedCommand}}
     throw(MethodError(host_attach_interface, (protocol,)))
 end

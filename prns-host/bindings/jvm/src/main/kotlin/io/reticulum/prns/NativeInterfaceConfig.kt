@@ -281,6 +281,33 @@ internal class NativeInterfaceConfig : Structure() {
     var url: NativeStringView.ByValue = NativeStringView.ByValue()
 }
 
+@Structure.FieldOrder(
+    "structSize",
+    "hasMode",
+    "mode",
+    "hasGravity",
+    "gravity",
+    "hasRecursivePathRequests",
+    "recursivePathRequests",
+    "hasAnnouncesFromInternal",
+    "announcesFromInternal",
+    "hasAnnouncesToInternal",
+    "announcesToInternal",
+)
+internal class NativeInterfaceRoutingPolicy : Structure() {
+    @JvmField var structSize: SizeT = SizeT()
+    @JvmField var hasMode: Byte = 0
+    @JvmField var mode: Int = 0
+    @JvmField var hasGravity: Byte = 0
+    @JvmField var gravity: Long = 0
+    @JvmField var hasRecursivePathRequests: Byte = 0
+    @JvmField var recursivePathRequests: Byte = 0
+    @JvmField var hasAnnouncesFromInternal: Byte = 0
+    @JvmField var announcesFromInternal: Byte = 0
+    @JvmField var hasAnnouncesToInternal: Byte = 0
+    @JvmField var announcesToInternal: Byte = 0
+}
+
 internal fun NativeArena.interfaceConfig(value: InterfaceConfig): NativeInterfaceConfig {
     val result = NativeInterfaceConfig()
     result.structSize = SizeT(result.size().toLong())
@@ -437,6 +464,37 @@ internal fun NativeArena.interfaceConfig(value: InterfaceConfig): NativeInterfac
     result.write()
     return result
 }
+
+internal fun interfaceRouting(value: InterfaceRoutingPolicy?): NativeInterfaceRoutingPolicy? =
+    value?.let {
+        require(it.gravity == null || it.gravity in HostContract.SAFE_INT_MIN..HostContract.SAFE_INT_MAX) {
+            "gravity must be a safe integer"
+        }
+        NativeInterfaceRoutingPolicy().also { result ->
+            result.structSize = SizeT(result.size().toLong())
+            it.mode?.let { mode ->
+                result.hasMode = 1
+                result.mode = mode.rawValue
+            }
+            it.gravity?.let { gravity ->
+                result.hasGravity = 1
+                result.gravity = gravity
+            }
+            it.recursivePathRequests?.let { enabled ->
+                result.hasRecursivePathRequests = 1
+                result.recursivePathRequests = enabled.native()
+            }
+            it.announcesFromInternal?.let { enabled ->
+                result.hasAnnouncesFromInternal = 1
+                result.announcesFromInternal = enabled.native()
+            }
+            it.announcesToInternal?.let { enabled ->
+                result.hasAnnouncesToInternal = 1
+                result.announcesToInternal = enabled.native()
+            }
+            result.write()
+        }
+    }
 
 private fun NativeArena.stringArray(values: List<String>): Pointer? =
     structureArray(NativeStringView(), values.size) { target, index ->

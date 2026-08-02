@@ -158,6 +158,41 @@ func nativeBool(value bool) C.uint8_t {
 	return 0
 }
 
+func marshalInterfaceRouting(
+	policy *InterfaceRoutingPolicy,
+) (*C.PrnsInterfaceRoutingPolicy, error) {
+	if policy == nil {
+		return nil, nil
+	}
+	result := &C.PrnsInterfaceRoutingPolicy{
+		struct_size: C.size_t(C.sizeof_PrnsInterfaceRoutingPolicy),
+	}
+	if policy.Mode != nil {
+		result.has_mode = 1
+		result.mode = C.PrnsInterfaceMode(*policy.Mode)
+	}
+	if policy.Gravity != nil {
+		if *policy.Gravity < SafeIntMin || *policy.Gravity > SafeIntMax {
+			return nil, ConfigError{Kind: ConfigInvalidLimits, Field: "routing.gravity"}
+		}
+		result.has_gravity = 1
+		result.gravity = C.int64_t(*policy.Gravity)
+	}
+	if policy.RecursivePathRequests != nil {
+		result.has_recursive_path_requests = 1
+		result.recursive_path_requests = nativeBool(*policy.RecursivePathRequests)
+	}
+	if policy.AnnouncesFromInternal != nil {
+		result.has_announces_from_internal = 1
+		result.announces_from_internal = nativeBool(*policy.AnnouncesFromInternal)
+	}
+	if policy.AnnouncesToInternal != nil {
+		result.has_announces_to_internal = 1
+		result.announces_to_internal = nativeBool(*policy.AnnouncesToInternal)
+	}
+	return result, nil
+}
+
 func marshalStringViews(
 	arena *nativeArena,
 	values []string,
@@ -1059,9 +1094,14 @@ func ffiExecute(host nativeHost, value HostCommand) (nativeCommand, Status, erro
 		if err != nil {
 			return nativeCommand{}, StatusInvalidArgument, err
 		}
+		routing, err := marshalInterfaceRouting(command.Routing)
+		if err != nil {
+			return nativeCommand{}, StatusInvalidArgument, err
+		}
 		status = Status(C.prns_host_attach_interface(
 			(*C.PrnsHost)(host.pointer),
 			&config,
+			routing,
 			&pointer,
 		))
 	case HostCommandDetachInterface:

@@ -19,6 +19,16 @@ func requestByteLimitsStayInTheInteroperableIntegerRange() throws {
     #expect(throws: StatusFailure.self) {
         _ = try nativeDestination(destination, arena: NativeArena())
     }
+    let routing = InterfaceRoutingPolicy(
+        mode: nil,
+        gravity: HostContract.safeIntMax + 1,
+        recursivePathRequests: nil,
+        announcesFromInternal: nil,
+        announcesToInternal: nil
+    )
+    #expect(throws: StatusFailure.self) {
+        _ = try nativeInterfaceRouting(routing)
+    }
 }
 
 @Test
@@ -184,7 +194,14 @@ func nativeHostContract() async throws {
     }
 
     let attached = try await host.attachInterface(
-        config: .tcpClient(target: "127.0.0.1:9", bitrate: .auto)
+        config: .tcpClient(target: "127.0.0.1:9", bitrate: .auto),
+        routing: InterfaceRoutingPolicy(
+            mode: .boundary,
+            gravity: -73,
+            recursivePathRequests: true,
+            announcesFromInternal: false,
+            announcesToInternal: true
+        )
     )
     guard case .succeeded(.interfaceAttached(let interface)) = attached else {
         Issue.record("attach command did not return an interface")
@@ -262,7 +279,8 @@ func persistentTwoNodeJourney() async throws {
     guard case .interfaceAttached = try await successfulOutcome(
         server,
         .attachInterface(
-            config: .tcpServer(bind: "127.0.0.1:\(port)", bitrate: .auto)
+            config: .tcpServer(bind: "127.0.0.1:\(port)", bitrate: .auto),
+            routing: nil
         )
     ) else {
         Issue.record("server interface attachment returned the wrong outcome")
@@ -271,7 +289,8 @@ func persistentTwoNodeJourney() async throws {
     guard case .interfaceAttached = try await successfulOutcome(
         client,
         .attachInterface(
-            config: .tcpClient(target: "127.0.0.1:\(port)", bitrate: .auto)
+            config: .tcpClient(target: "127.0.0.1:\(port)", bitrate: .auto),
+            routing: nil
         )
     ) else {
         Issue.record("client interface attachment returned the wrong outcome")

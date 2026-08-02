@@ -124,6 +124,7 @@ class Host(options: HostOptions) : AutoCloseable {
                     NativeApi.library.prns_host_attach_interface(
                         host,
                         arena.interfaceConfig(command.config),
+                        interfaceRouting(command.routing),
                         output,
                     )
                 }
@@ -339,13 +340,24 @@ class Host(options: HostOptions) : AutoCloseable {
         attachUdp(local, peer, bitrate)
     }
 
-    suspend fun attachInterface(config: InterfaceConfig): CommandSettlement =
-        settle(HostCommandAttachInterface(config = config))
+    suspend fun attachInterface(
+        config: InterfaceConfig,
+        routing: InterfaceRoutingPolicy? = null,
+    ): CommandSettlement = settle(
+        HostCommandAttachInterface(config = config, routing = routing),
+    )
 
     fun attachInterfaceAsync(
         config: InterfaceConfig,
     ): CompletionStage<CommandSettlement> = javaFuture {
-        attachInterface(config)
+        attachInterface(config, null)
+    }
+
+    fun attachInterfaceAsync(
+        config: InterfaceConfig,
+        routing: InterfaceRoutingPolicy,
+    ): CompletionStage<CommandSettlement> = javaFuture {
+        attachInterface(config, routing)
     }
 
     suspend fun detachInterface(interfaceId: InterfaceId): CommandSettlement =
