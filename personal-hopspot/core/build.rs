@@ -14,9 +14,13 @@ const SOURCE_ENV: &[&str] = &[
 ];
 
 fn main() -> io::Result<()> {
-    println!("cargo:rerun-if-changed=src/node_pages/index_head.mu");
-    println!("cargo:rerun-if-changed=src/node_pages/index_tail.mu");
+    println!("cargo:rerun-if-changed=src/node_pages/index_intro.mu");
+    println!("cargo:rerun-if-changed=src/node_pages/index_license.mu");
     println!("cargo:rerun-if-changed=src/node_pages/quickstart.mu");
+    println!("cargo:rerun-if-changed=../../assets/nnpages/masthead.mu");
+    println!("cargo:rerun-if-changed=../../assets/nnpages/why_prns.mu");
+    println!("cargo:rerun-if-changed=../../assets/nnpages/quote.mu");
+    println!("cargo:rerun-if-changed=../../assets/nnpages/credits.mu");
     println!("cargo:rerun-if-changed=../../VERSION");
     println!("cargo:rerun-if-env-changed=PRNS_BUILD_VERSION");
     println!("cargo:rerun-if-env-changed=PRNS_BUILD_COMMIT");
@@ -85,8 +89,20 @@ fn main() -> io::Result<()> {
         )
     };
 
-    let head = fs::read_to_string(manifest.join("src/node_pages/index_head.mu"))?;
-    let tail = fs::read_to_string(manifest.join("src/node_pages/index_tail.mu"))?;
+    let shared = repo.join("assets/nnpages");
+    let head = [
+        fs::read_to_string(shared.join("masthead.mu"))?,
+        fs::read_to_string(manifest.join("src/node_pages/index_intro.mu"))?,
+        fs::read_to_string(shared.join("why_prns.mu"))?,
+        fs::read_to_string(manifest.join("src/node_pages/index_license.mu"))?,
+        fs::read_to_string(shared.join("quote.mu"))?,
+    ]
+    .concat();
+    let tail = [
+        "\n",
+        fs::read_to_string(shared.join("credits.mu"))?.as_str(),
+    ]
+    .concat();
     let short_commit = commit.chars().take(12).collect::<String>();
     let no_source = format!(
         "\nSource {version} {short_commit}: compact build; source.zip not carried or served.\n"

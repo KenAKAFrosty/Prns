@@ -29,7 +29,16 @@ pub(crate) const SOURCE_PAGE_FILE_NAME: &str = "source.mu";
 pub(crate) const COMING_FROM_RNS_PAGE_FILE_NAME: &str = "coming-from-rns.mu";
 pub(crate) const SOURCE_ARCHIVE_FILE_NAME: &str = "source.zip";
 pub(crate) const SOURCE_CHECKSUM_FILE_NAME: &str = "source.zip.sha256";
-pub(crate) const DEFAULT_INDEX_PAGE: &[u8] = include_bytes!("../assets/nnpages/index.mu");
+pub(crate) const DEFAULT_INDEX_PAGE: &[u8] = concat!(
+    include_str!("../../assets/nnpages/masthead.mu"),
+    include_str!("../assets/nnpages/index_welcome.mu"),
+    include_str!("../../assets/nnpages/why_prns.mu"),
+    include_str!("../assets/nnpages/index_license.mu"),
+    include_str!("../../assets/nnpages/quote.mu"),
+    include_str!("../assets/nnpages/index_outro.mu"),
+    include_str!("../../assets/nnpages/credits.mu"),
+)
+.as_bytes();
 
 const REQUEST_PREFIX: &str = "/page/";
 const FILE_REQUEST_PREFIX: &str = "/file/";
