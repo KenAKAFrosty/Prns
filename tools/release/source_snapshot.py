@@ -27,9 +27,13 @@ REQUIRED_SOURCE_FILES = (
     "docs/website/package-lock.json",
     "docs/website/package.json",
     "docs/website/src/main.rs",
+    "assets/nnpages/credits.mu",
+    "assets/nnpages/masthead.mu",
+    "assets/nnpages/quote.mu",
+    "assets/nnpages/why_prns.mu",
     "personal-hopspot/core/src/node_pages.rs",
-    "personal-hopspot/core/src/node_pages/index_head.mu",
-    "personal-hopspot/core/src/node_pages/index_tail.mu",
+    "personal-hopspot/core/src/node_pages/index_intro.mu",
+    "personal-hopspot/core/src/node_pages/index_license.mu",
 )
 
 

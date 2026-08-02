@@ -218,7 +218,7 @@ class FlasherReproducibilityTests(unittest.TestCase):
                 names,
             )
             self.assertIn(
-                f"{prefix}personal-hopspot/core/src/node_pages/index_head.mu",
+                f"{prefix}assets/nnpages/masthead.mu",
                 names,
             )
 
@@ -285,7 +285,7 @@ class FlasherReproducibilityTests(unittest.TestCase):
             rewritten = io.BytesIO()
             omitted = (
                 f"Prns-{VERSION}/"
-                "personal-hopspot/core/src/node_pages/index_tail.mu"
+                "assets/nnpages/credits.mu"
             )
             with (
                 zipfile.ZipFile(archive) as source,
