@@ -209,4 +209,5 @@ private fun decodeCommandFailure(
     CommandFailureKind.DEVICE_UNAVAILABLE -> CommandFailureDeviceUnavailable(detail)
     CommandFailureKind.CONNECT_FAILED -> CommandFailureConnectFailed(detail)
     CommandFailureKind.BACKEND_FAILED -> CommandFailureBackendFailed(detail)
+    CommandFailureKind.RESPONSE_TOO_LARGE -> CommandFailureResponseTooLarge
 }

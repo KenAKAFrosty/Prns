@@ -10,6 +10,8 @@ const REQUEST_ID_LENGTH = 16
 const REQUEST_PATH_HASH_LENGTH = 16
 const RESOURCE_HASH_LENGTH = 32
 const IDENTITY_SECRET_LENGTH = 64
+const SAFE_INT_MIN = Int64(-9007199254740991)
+const SAFE_INT_MAX = Int64(9007199254740991)
 const SAFE_UINT_MAX = UInt64(9007199254740991)
 const BALANCED_PENDING_COMMANDS = 256
 const BALANCED_APPLICATION_EVENTS = 1024
@@ -229,6 +231,7 @@ end
     CommandFailureKindDeviceUnavailable = 38
     CommandFailureKindConnectFailed = 39
     CommandFailureKindBackendFailed = 40
+    CommandFailureKindResponseTooLarge = 41
 end
 
 @enum DeliveryEvidenceKind::UInt32 begin
@@ -739,6 +742,7 @@ struct DestinationConfigSingle <: DestinationConfig
     name::DestinationName
     identity::DestinationIdentityConfig
     announce_app_data::Union{Nothing,Vector{UInt8}}
+    maximum_request_bytes::Union{Nothing,UInt64}
     request_handlers::Vector{RequestHandlerConfig}
 end
 
@@ -799,6 +803,7 @@ struct HostCommandRequest <: HostCommand
     path_hash::RequestPathHash
     payload::Vector{UInt8}
     timeout::ResponseTimeout
+    maximum_response_bytes::Union{Nothing,UInt64}
 end
 
 struct HostCommandRespond <: HostCommand
@@ -1016,6 +1021,9 @@ end
 
 struct CommandFailureBackendFailed <: CommandFailure
     detail::String
+end
+
+struct CommandFailureResponseTooLarge <: CommandFailure
 end
 
 struct ApplicationEventSingleDelivery <: ApplicationEvent
@@ -1463,7 +1471,7 @@ function host_send_link_packet(protocol::RawHostProtocol, host::RawHost, link_id
     throw(MethodError(host_send_link_packet, (protocol,)))
 end
 
-function host_request(protocol::RawHostProtocol, host::RawHost, link_id::LinkId, path_hash::RequestPathHash, payload::Vector{UInt8}, timeout::ResponseTimeout)::RawCallResult{RawOwned{RawIssuedCommand}}
+function host_request(protocol::RawHostProtocol, host::RawHost, link_id::LinkId, path_hash::RequestPathHash, payload::Vector{UInt8}, timeout::ResponseTimeout, maximum_response_bytes::Union{Nothing,UInt64})::RawCallResult{RawOwned{RawIssuedCommand}}
     throw(MethodError(host_request, (protocol,)))
 end
 

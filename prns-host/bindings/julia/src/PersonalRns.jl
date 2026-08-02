@@ -47,6 +47,7 @@ export CommandFailurePermissionDenied
 export CommandFailureDeviceUnavailable
 export CommandFailureConnectFailed
 export CommandFailureBackendFailed
+export CommandFailureResponseTooLarge
 export CommandFailureLinkBusy
 export CommandFailureLinkNotActive
 export CommandFailureNoRouteToDestination

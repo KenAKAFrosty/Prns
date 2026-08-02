@@ -103,6 +103,7 @@ pub struct SingleDestinationConfig {
     pub name: DestinationName,
     pub identity: DestinationIdentityConfig,
     pub announce_app_data: Vec<u8>,
+    pub maximum_request_bytes: Option<u64>,
     pub proof: DestinationProofStrategy,
     pub link_requests: DestinationLinkRequestPolicy,
     pub ratchet: DestinationRatchetPolicy,

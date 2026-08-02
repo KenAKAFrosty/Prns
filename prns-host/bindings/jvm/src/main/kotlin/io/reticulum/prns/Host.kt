@@ -1,6 +1,7 @@
 package io.reticulum.prns
 
 import com.sun.jna.Pointer
+import com.sun.jna.ptr.LongByReference
 import com.sun.jna.ptr.PointerByReference
 import java.util.concurrent.CompletionStage
 import java.util.concurrent.locks.ReentrantLock
@@ -165,6 +166,12 @@ class Host(options: HostOptions) : AutoCloseable {
                 }
                 is HostCommandRequest -> {
                     val timeout = command.timeout.native()
+                    val maximumResponseBytes = command.maximumResponseBytes?.let {
+                        require(it in 0..HostContract.SAFE_UINT_MAX) {
+                            "maximumResponseBytes must be an unsigned safe integer"
+                        }
+                        LongByReference(it)
+                    }
                     NativeApi.library.prns_host_request(
                         host,
                         arena.bytes(command.linkId.copyBytes()),
@@ -172,6 +179,7 @@ class Host(options: HostOptions) : AutoCloseable {
                         arena.bytes(command.payload.copyBytes()),
                         timeout.first,
                         timeout.second,
+                        maximumResponseBytes,
                         output,
                     )
                 }
@@ -400,12 +408,14 @@ class Host(options: HostOptions) : AutoCloseable {
         pathHash: RequestPathHash,
         payload: Bytes,
         timeout: ResponseTimeout,
+        maximumResponseBytes: Long? = null,
     ): CommandSettlement = settle(
         HostCommandRequest(
             linkId = linkId,
             pathHash = pathHash,
             payload = payload,
             timeout = timeout,
+            maximumResponseBytes = maximumResponseBytes,
         ),
     )
 
@@ -414,8 +424,17 @@ class Host(options: HostOptions) : AutoCloseable {
         pathHash: RequestPathHash,
         payload: Bytes,
         timeout: ResponseTimeout,
+    ): CompletionStage<CommandSettlement> =
+        requestAsync(linkId, pathHash, payload, timeout, null)
+
+    fun requestAsync(
+        linkId: LinkId,
+        pathHash: RequestPathHash,
+        payload: Bytes,
+        timeout: ResponseTimeout,
+        maximumResponseBytes: Long?,
     ): CompletionStage<CommandSettlement> = javaFuture {
-        request(linkId, pathHash, payload, timeout)
+        request(linkId, pathHash, payload, timeout, maximumResponseBytes)
     }
 
     suspend fun respond(

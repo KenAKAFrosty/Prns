@@ -16,6 +16,8 @@ REQUEST_ID_LENGTH = 16
 REQUEST_PATH_HASH_LENGTH = 16
 RESOURCE_HASH_LENGTH = 32
 IDENTITY_SECRET_LENGTH = 64
+SAFE_INT_MIN = -9007199254740991
+SAFE_INT_MAX = 9007199254740991
 SAFE_UINT_MAX = 9007199254740991
 BALANCED_PENDING_COMMANDS = 256
 BALANCED_APPLICATION_EVENTS = 1024
@@ -214,6 +216,7 @@ class CommandFailureKind(IntEnum):
     DEVICE_UNAVAILABLE = 38
     CONNECT_FAILED = 39
     BACKEND_FAILED = 40
+    RESPONSE_TOO_LARGE = 41
 
 class DeliveryEvidenceKind(IntEnum):
     EXPLICIT_PROOF = 1
@@ -720,6 +723,7 @@ class DestinationConfigSingle:
     name: DestinationName
     identity: DestinationIdentityConfig
     announce_app_data: bytes | None
+    maximum_request_bytes: int | None
     request_handlers: tuple[RequestHandlerConfig, ...]
 
 @dataclass(frozen=True, slots=True)
@@ -780,6 +784,7 @@ class HostCommandRequest:
     path_hash: RequestPathHash
     payload: bytes
     timeout: ResponseTimeout
+    maximum_response_bytes: int | None
 
 @dataclass(frozen=True, slots=True)
 class HostCommandRespond:
@@ -1038,6 +1043,10 @@ class CommandFailureBackendFailed:
     detail: str
 
 @dataclass(frozen=True, slots=True)
+class CommandFailureResponseTooLarge:
+    pass
+
+@dataclass(frozen=True, slots=True)
 class ApplicationEventSingleDelivery:
     destination: DestinationHash
     source_interface: InterfaceId
@@ -1213,7 +1222,7 @@ ResourceStrategy: TypeAlias = ResourceStrategyRefuse | ResourceStrategyAccept
 DestinationConfig: TypeAlias = DestinationConfigPlain | DestinationConfigSingle
 HostCommand: TypeAlias = HostCommandAnnounce | HostCommandSendSinglePacket | HostCommandCloseLink | HostCommandAttachTcpServer | HostCommandAttachTcpClient | HostCommandAttachUdp | HostCommandDetachInterface | HostCommandEstablishLink | HostCommandRequestPath | HostCommandIdentify | HostCommandSendLinkPacket | HostCommandRequest | HostCommandRespond | HostCommandSendResource | HostCommandSetLinkResourceStrategy | HostCommandSetDestinationResourceStrategy | HostCommandSendChannelMessage | HostCommandAllowRequester | HostCommandAttachInterface
 CommandOutcome: TypeAlias = CommandOutcomeAnnounced | CommandOutcomePacketDelivered | CommandOutcomeLinkCloseQueued | CommandOutcomeInterfaceAttached | CommandOutcomeInterfaceDetached | CommandOutcomeLinkEstablished | CommandOutcomePathDiscovered | CommandOutcomeIdentified | CommandOutcomeResponseReceived | CommandOutcomeResponseSent | CommandOutcomeResourceSent | CommandOutcomeResourceStrategySet | CommandOutcomeRequesterAllowed
-CommandFailure: TypeAlias = CommandFailureNodeStopped | CommandFailureBusy | CommandFailurePayloadTooLarge | CommandFailureUnknownDestination | CommandFailureNotSingleDestination | CommandFailureAnnounceAppDataTooLong | CommandFailureUnknownInterface | CommandFailureNoRouteToDestination | CommandFailureNotDirectlyReachable | CommandFailurePacketCulled | CommandFailureDeliveryTimedOut | CommandFailureInvalidBitrate | CommandFailureBindFailed | CommandFailureWriteFailed | CommandFailureUnsupportedByBackend | CommandFailureUnknownLink | CommandFailureLinkNotActive | CommandFailureEntropyUnavailable | CommandFailureNotLinkInitiator | CommandFailureIdentityNotHeld | CommandFailureUnknownRequestHandler | CommandFailureRequestPolicyNotAllowList | CommandFailureRequestAllowListFull | CommandFailureLinkBusy | CommandFailureResourceTableFull | CommandFailureResourceMetadataTooLarge | CommandFailureResourceRejectedByPeer | CommandFailureResourceSequencingFailed | CommandFailureResourcePredecessorFailed | CommandFailureChannelWindowFull | CommandFailureChannelUntrackable | CommandFailureInvalidChannelMessageType | CommandFailureInvalidConfiguration | CommandFailureResourceUploadCancelled | CommandFailureResourceEarlyEof | CommandFailureResourceLengthOverrun | CommandFailurePermissionDenied | CommandFailureDeviceUnavailable | CommandFailureConnectFailed | CommandFailureBackendFailed
+CommandFailure: TypeAlias = CommandFailureNodeStopped | CommandFailureBusy | CommandFailurePayloadTooLarge | CommandFailureUnknownDestination | CommandFailureNotSingleDestination | CommandFailureAnnounceAppDataTooLong | CommandFailureUnknownInterface | CommandFailureNoRouteToDestination | CommandFailureNotDirectlyReachable | CommandFailurePacketCulled | CommandFailureDeliveryTimedOut | CommandFailureInvalidBitrate | CommandFailureBindFailed | CommandFailureWriteFailed | CommandFailureUnsupportedByBackend | CommandFailureUnknownLink | CommandFailureLinkNotActive | CommandFailureEntropyUnavailable | CommandFailureNotLinkInitiator | CommandFailureIdentityNotHeld | CommandFailureUnknownRequestHandler | CommandFailureRequestPolicyNotAllowList | CommandFailureRequestAllowListFull | CommandFailureLinkBusy | CommandFailureResourceTableFull | CommandFailureResourceMetadataTooLarge | CommandFailureResourceRejectedByPeer | CommandFailureResourceSequencingFailed | CommandFailureResourcePredecessorFailed | CommandFailureChannelWindowFull | CommandFailureChannelUntrackable | CommandFailureInvalidChannelMessageType | CommandFailureInvalidConfiguration | CommandFailureResourceUploadCancelled | CommandFailureResourceEarlyEof | CommandFailureResourceLengthOverrun | CommandFailurePermissionDenied | CommandFailureDeviceUnavailable | CommandFailureConnectFailed | CommandFailureBackendFailed | CommandFailureResponseTooLarge
 ApplicationEvent: TypeAlias = ApplicationEventSingleDelivery | ApplicationEventRequest | ApplicationEventResponse | ApplicationEventResponseSegment | ApplicationEventResourceAvailable | ApplicationEventResourceSegment | ApplicationEventResourceNeedsDecompression | ApplicationEventChannelMessage
 DiagnosticEvent: TypeAlias = DiagnosticEventAnnounceHeard | DiagnosticEventLinkEstablished | DiagnosticEventPeerIdentified | DiagnosticEventLinkClosed | DiagnosticEventLinkInterfaceMismatch | DiagnosticEventResourceAssembled | DiagnosticEventResourceFailed | DiagnosticEventResourceSendProgress | DiagnosticEventSelfRatchetRotated | DiagnosticEventAnnounceHeldDropped | DiagnosticEventDelivered | DiagnosticEventRouteExpired | DiagnosticEventRouteEvicted | DiagnosticEventRouteInterfaceGone | DiagnosticEventRouteDropped | DiagnosticEventBackendDiagnostic | DiagnosticEventDiagnosticsDropped | DiagnosticEventPersistenceRestored | DiagnosticEventPersistenceFlushed | DiagnosticEventPersistenceFlushFailed
 
@@ -1379,7 +1388,7 @@ class _RawHostProtocol(Protocol):
     def host_request_path(self, host: _RawHost, destination: DestinationHash) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
     def host_identify(self, host: _RawHost, link_id: LinkId, identity: IdentityHash) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
     def host_send_link_packet(self, host: _RawHost, link_id: LinkId, payload: bytes) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
-    def host_request(self, host: _RawHost, link_id: LinkId, path_hash: RequestPathHash, payload: bytes, timeout: ResponseTimeout) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
+    def host_request(self, host: _RawHost, link_id: LinkId, path_hash: RequestPathHash, payload: bytes, timeout: ResponseTimeout, maximum_response_bytes: int | None) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
     def host_respond(self, host: _RawHost, link_id: LinkId, request_id: RequestId, request_rtt_millis: int, payload: bytes) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
     def host_send_resource(self, host: _RawHost, link_id: LinkId, payload: bytes, packed_metadata: bytes | None, compression: ResourceCompression) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
     def host_set_link_resource_strategy(self, host: _RawHost, link_id: LinkId, strategy: ResourceStrategy) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...

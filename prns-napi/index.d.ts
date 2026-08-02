@@ -185,6 +185,7 @@ export interface DestinationSpec {
   identity?: IdentitySpec
   useHostIdentity?: boolean
   announceAppData?: Buffer
+  maximumRequestBytes?: number
   proof?: ProofStrategyName
   linkRequests?: LinkRequestPolicyName
   ratchet?: RatchetPolicyName
@@ -359,6 +360,7 @@ export interface PathInfo {
 export interface RequestOptions {
   /** Request timeout in milliseconds. */
   timeoutMillis?: number
+  maximumResponseBytes?: number
 }
 
 export declare function requestPathHash(path: string): Buffer

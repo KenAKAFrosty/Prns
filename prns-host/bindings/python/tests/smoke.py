@@ -137,6 +137,7 @@ async def persistent_two_node_journey():
             ),
             prns.DestinationIdentityConfigHostIdentity(),
             bytes.fromhex(destination_fixture["announceAppDataHex"]),
+            1_048_576,
             (
                 prns.RequestHandlerConfig(
                     request_fixture["path"],
@@ -201,6 +202,7 @@ async def persistent_two_node_journey():
                     ),
                     request_payload,
                     prns.ResponseTimeoutExact(request_fixture["timeoutMillis"]),
+                    1_048_576,
                 )
             )
             request = await next_matching(

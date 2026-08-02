@@ -513,6 +513,16 @@ func marshalDestination(
 				return result, err
 			}
 		}
+		if destination.MaximumRequestBytes != nil {
+			if *destination.MaximumRequestBytes > SafeUintMax {
+				return result, ConfigError{
+					Kind:  ConfigInvalidLimits,
+					Field: "maximum request bytes",
+				}
+			}
+			result.has_maximum_request_bytes = 1
+			result.maximum_request_bytes = C.uint64_t(*destination.MaximumRequestBytes)
+		}
 		requestHandlersPointer, err := arena.allocate(
 			len(destination.RequestHandlers),
 			C.sizeof_PrnsRequestHandlerConfig,
@@ -1131,6 +1141,18 @@ func ffiExecute(host nativeHost, value HostCommand) (nativeCommand, Status, erro
 		if err != nil {
 			return nativeCommand{}, StatusInvalidArgument, err
 		}
+		var maximumResponseBytes C.uint64_t
+		var maximumResponseBytesPointer *C.uint64_t
+		if command.MaximumResponseBytes != nil {
+			if *command.MaximumResponseBytes > SafeUintMax {
+				return nativeCommand{}, StatusInvalidArgument, ConfigError{
+					Kind:  ConfigInvalidLimits,
+					Field: "maximum response bytes",
+				}
+			}
+			maximumResponseBytes = C.uint64_t(*command.MaximumResponseBytes)
+			maximumResponseBytesPointer = &maximumResponseBytes
+		}
 		status = Status(C.prns_host_request(
 			(*C.PrnsHost)(host.pointer),
 			linkID,
@@ -1138,6 +1160,7 @@ func ffiExecute(host nativeHost, value HostCommand) (nativeCommand, Status, erro
 			payload,
 			timeoutKind,
 			timeoutMillis,
+			maximumResponseBytesPointer,
 			&pointer,
 		))
 	case HostCommandRespond:

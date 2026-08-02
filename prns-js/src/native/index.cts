@@ -75,6 +75,8 @@ export const {
   REQUEST_PATH_HASH_LENGTH,
   RESOURCE_HASH_LENGTH,
   IDENTITY_SECRET_LENGTH,
+  SAFE_INT_MAX,
+  SAFE_INT_MIN,
   PrnsValidationError,
   balancedLimits,
   destinationHash,
@@ -152,6 +154,7 @@ type RawDestination = {
   identity?: RawIdentity;
   useHostIdentity?: boolean;
   announceAppData?: Buffer;
+  maximumRequestBytes?: number;
   requestPaths?: {
     path: string;
     policy: "allowNone" | "allowAll" | "allowList";
@@ -249,7 +252,7 @@ type RawNode = {
     linkId: Buffer,
     pathHash: Buffer,
     data: Buffer,
-    options?: { timeoutMillis: number },
+    options?: { timeoutMillis?: number; maximumResponseBytes?: number },
   ): Promise<RawRequestResult>;
   respond(token: RawRespondToken, data: Buffer): Promise<number>;
   sendResource(
@@ -842,12 +845,18 @@ export class Prns {
                 Buffer.from(bytes("payload", payload)),
               ),
             ),
-          Request: async ({ linkId, pathHash, payload, timeout }) => {
+          Request: async ({
+            linkId,
+            pathHash,
+            payload,
+            timeout,
+            maximumResponseBytes,
+          }) => {
             const response = await this.#raw.request(
               Buffer.from(linkId),
               Buffer.from(pathHash),
               Buffer.from(bytes("payload", payload)),
-              rawResponseTimeout(timeout),
+              rawRequestOptions(timeout, maximumResponseBytes),
             );
             return casework.Tag("ResponseReceived", {
               data: bytes("response data", response.data).slice(),
@@ -1071,9 +1080,18 @@ export class Prns {
     pathHash: RequestPathHash,
     payload: Uint8Array,
     timeout: ResponseTimeout = casework.Tag("LinkDefault"),
+    maximumResponseBytes?: number,
   ): Promise<RequestOutcome> {
     return this.execute(
-      casework.Tag("Request", { linkId, pathHash, payload, timeout }),
+      casework.Tag("Request", {
+        linkId,
+        pathHash,
+        payload,
+        timeout,
+        ...(maximumResponseBytes === undefined
+          ? {}
+          : { maximumResponseBytes }),
+      }),
     );
   }
 
@@ -1783,6 +1801,7 @@ function rawDestination(destination: DestinationConfig): RawDestination {
     Single: ({
       identity,
       announceAppData,
+      maximumRequestBytes,
       requestHandlers,
     }): RawDestination => {
       const raw: RawDestination = { appName, aspects, kind: "single" };
@@ -1800,6 +1819,12 @@ function rawDestination(destination: DestinationConfig): RawDestination {
       if (announceAppData !== undefined) {
         raw.announceAppData = Buffer.from(
           bytes("announceAppData", announceAppData),
+        );
+      }
+      if (maximumRequestBytes !== undefined) {
+        raw.maximumRequestBytes = nonNegativeInteger(
+          "maximumRequestBytes",
+          maximumRequestBytes,
         );
       }
       raw.requestPaths = requestHandlers.map((handler) => ({
@@ -1878,6 +1903,9 @@ function commandFailure(error: unknown): CommandFailure {
   }
   if (details.code === "PRNS_PAYLOAD_TOO_LARGE") {
     return casework.Tag("PayloadTooLarge");
+  }
+  if (details.code === "PRNS_RESPONSE_TOO_LARGE") {
+    return casework.Tag("ResponseTooLarge");
   }
   if (details.code === "PRNS_NO_ROUTE_TO_DESTINATION") {
     return casework.Tag("NoRouteToDestination");
@@ -2006,6 +2034,23 @@ function rawResponseTimeout(
       timeoutMillis: nonNegativeInteger("timeout millis", millis),
     }),
   });
+}
+
+function rawRequestOptions(
+  timeout: ResponseTimeout,
+  maximumResponseBytes: number | undefined,
+): { timeoutMillis?: number; maximumResponseBytes?: number } | undefined {
+  const options: {
+    timeoutMillis?: number;
+    maximumResponseBytes?: number;
+  } = rawResponseTimeout(timeout) ?? {};
+  if (maximumResponseBytes !== undefined) {
+    options.maximumResponseBytes = nonNegativeInteger(
+      "maximumResponseBytes",
+      maximumResponseBytes,
+    );
+  }
+  return Object.keys(options).length === 0 ? undefined : options;
 }
 
 function rawResourceCompression(

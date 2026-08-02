@@ -15,6 +15,8 @@ object HostContract {
     const val REQUEST_PATH_HASH_LENGTH = 16
     const val RESOURCE_HASH_LENGTH = 32
     const val IDENTITY_SECRET_LENGTH = 64
+    const val SAFE_INT_MIN = -9007199254740991L
+    const val SAFE_INT_MAX = 9007199254740991L
     const val SAFE_UINT_MAX = 9007199254740991L
     const val BALANCED_PENDING_COMMANDS = 256
     const val BALANCED_APPLICATION_EVENTS = 1024
@@ -318,7 +320,8 @@ enum class CommandFailureKind(val rawValue: Int) {
     PERMISSION_DENIED(37),
     DEVICE_UNAVAILABLE(38),
     CONNECT_FAILED(39),
-    BACKEND_FAILED(40);
+    BACKEND_FAILED(40),
+    RESPONSE_TOO_LARGE(41);
 
     companion object {
         fun fromRawValue(value: Int): CommandFailureKind? = entries.firstOrNull { it.rawValue == value }
@@ -897,6 +900,7 @@ data class DestinationConfigSingle(
     val name: DestinationName,
     val identity: DestinationIdentityConfig,
     val announceAppData: Bytes?,
+    val maximumRequestBytes: Long?,
     val requestHandlers: List<RequestHandlerConfig>
 ) : DestinationConfig
 
@@ -958,7 +962,8 @@ data class HostCommandRequest(
     val linkId: LinkId,
     val pathHash: RequestPathHash,
     val payload: Bytes,
-    val timeout: ResponseTimeout
+    val timeout: ResponseTimeout,
+    val maximumResponseBytes: Long?
 ) : HostCommand
 
 data class HostCommandRespond(
@@ -1142,6 +1147,8 @@ data class CommandFailureConnectFailed(
 data class CommandFailureBackendFailed(
     val detail: String
 ) : CommandFailure
+
+data object CommandFailureResponseTooLarge : CommandFailure
 
 sealed interface ApplicationEvent
 
@@ -1444,7 +1451,7 @@ internal interface RawHostProtocol {
     fun hostRequestPath(host: RawHost, destination: DestinationHash): RawCallResult<RawOwned<RawIssuedCommand>>
     fun hostIdentify(host: RawHost, linkId: LinkId, identity: IdentityHash): RawCallResult<RawOwned<RawIssuedCommand>>
     fun hostSendLinkPacket(host: RawHost, linkId: LinkId, payload: Bytes): RawCallResult<RawOwned<RawIssuedCommand>>
-    fun hostRequest(host: RawHost, linkId: LinkId, pathHash: RequestPathHash, payload: Bytes, timeout: ResponseTimeout): RawCallResult<RawOwned<RawIssuedCommand>>
+    fun hostRequest(host: RawHost, linkId: LinkId, pathHash: RequestPathHash, payload: Bytes, timeout: ResponseTimeout, maximumResponseBytes: Long?): RawCallResult<RawOwned<RawIssuedCommand>>
     fun hostRespond(host: RawHost, linkId: LinkId, requestId: RequestId, requestRttMillis: Long, payload: Bytes): RawCallResult<RawOwned<RawIssuedCommand>>
     fun hostSendResource(host: RawHost, linkId: LinkId, payload: Bytes, packedMetadata: Bytes?, compression: ResourceCompression): RawCallResult<RawOwned<RawIssuedCommand>>
     fun hostSetLinkResourceStrategy(host: RawHost, linkId: LinkId, strategy: ResourceStrategy): RawCallResult<RawOwned<RawIssuedCommand>>

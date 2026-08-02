@@ -84,6 +84,7 @@ pub enum HostCommand {
         path_hash: RequestPathHash,
         payload: Vec<u8>,
         timeout: ResponseTimeout,
+        maximum_response_bytes: Option<u64>,
     },
     Respond {
         link_id: LinkId,
@@ -200,4 +201,5 @@ pub enum CommandFailure {
     DeviceUnavailable { detail: String },
     ConnectFailed { detail: String },
     BackendFailed { detail: String },
+    ResponseTooLarge,
 }

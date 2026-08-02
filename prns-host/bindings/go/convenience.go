@@ -141,11 +141,30 @@ func (host *Host) Request(
 	payload []byte,
 	timeout ResponseTimeout,
 ) (CommandSettlement, error) {
+	return host.RequestWithMaximumResponseBytes(
+		ctx,
+		linkID,
+		pathHash,
+		payload,
+		timeout,
+		nil,
+	)
+}
+
+func (host *Host) RequestWithMaximumResponseBytes(
+	ctx context.Context,
+	linkID LinkId,
+	pathHash RequestPathHash,
+	payload []byte,
+	timeout ResponseTimeout,
+	maximumResponseBytes *uint64,
+) (CommandSettlement, error) {
 	return host.executeSettlement(ctx, HostCommandRequest{
-		LinkId:   linkID,
-		PathHash: pathHash,
-		Payload:  payload,
-		Timeout:  timeout,
+		LinkId:               linkID,
+		PathHash:             pathHash,
+		Payload:              payload,
+		Timeout:              timeout,
+		MaximumResponseBytes: maximumResponseBytes,
 	})
 }
 

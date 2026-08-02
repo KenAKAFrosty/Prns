@@ -271,6 +271,8 @@ class DestinationConfig(ctypes.Structure):
         ("announce_app_data", ByteView),
         ("request_handlers", ctypes.POINTER(RequestHandlerConfig)),
         ("request_handler_count", ctypes.c_size_t),
+        ("has_maximum_request_bytes", ctypes.c_uint8),
+        ("maximum_request_bytes", ctypes.c_uint64),
     ]
 
 
@@ -460,6 +462,7 @@ class NativeLibrary:
             ByteView,
             ctypes.c_uint32,
             ctypes.c_uint64,
+            ctypes.POINTER(ctypes.c_uint64),
             ctypes.POINTER(ctypes.c_void_p),
         ]
         lib.prns_host_request.restype = ctypes.c_uint32

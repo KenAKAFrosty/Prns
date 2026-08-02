@@ -132,8 +132,23 @@ public final class Command: @unchecked Sendable {
                 try arena.bytes(payload),
                 &output
             )
-        case .request(let linkId, let pathHash, let payload, let timeout):
+        case .request(
+            let linkId,
+            let pathHash,
+            let payload,
+            let timeout,
+            let maximumResponseBytes
+        ):
+            guard maximumResponseBytes.map({ $0 <= HostContract.safeUintMax }) ?? true else {
+                throw StatusFailure(
+                    operation: "marshalRequest",
+                    status: .invalidArgument
+                )
+            }
             let nativeTimeout = timeout.native
+            let nativeMaximumResponseBytes = try arena.array(
+                maximumResponseBytes.map { [$0] } ?? []
+            )
             status = prns_host_request(
                 host,
                 try arena.bytes(linkId.bytes),
@@ -141,6 +156,7 @@ public final class Command: @unchecked Sendable {
                 try arena.bytes(payload),
                 nativeTimeout.kind,
                 nativeTimeout.millis,
+                nativeMaximumResponseBytes.map { UnsafePointer($0) },
                 &output
             )
         case .respond(
@@ -514,6 +530,8 @@ private func decodeCommandFailure(
         return .connectFailed(detail: detail)
     case .backendFailed:
         return .backendFailed(detail: detail)
+    case .responseTooLarge:
+        return .responseTooLarge
     }
 }
 

@@ -323,6 +323,8 @@ func decodeCommandFailure(kind CommandFailureKind, detail string) (CommandFailur
 		return CommandFailureConnectFailed{Detail: detail}, nil
 	case CommandFailureKindBackendFailed:
 		return CommandFailureBackendFailed{Detail: detail}, nil
+	case CommandFailureKindResponseTooLarge:
+		return CommandFailureResponseTooLarge{}, nil
 	default:
 		return nil, StatusError{
 			Operation: "decode command failure",

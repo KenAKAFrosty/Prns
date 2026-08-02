@@ -36,13 +36,13 @@ use personal_rns::routing::request_handlers::RequestPolicy as EngineRequestPolic
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::request_endpoints::RespondToken;
 use personal_rns::runtime::{
-    Diagnostic, Message, NodePersistence, PersistenceIntent, PrnsEvent, RequestPathError,
-    ResourceSendError, SegmentCompression,
+    Diagnostic, Message, NodePersistence, PersistenceIntent, PrnsEvent, RequestOptions,
+    RequestPathError, ResourceSendError, SegmentCompression,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::{TcpClientInterface, TcpServer};
 use personal_rns::udp::UdpInterface;
-use personal_rns::units::{DurationMillis, RttMillis};
+use personal_rns::units::{ByteLimit, DurationMillis, RttMillis};
 use personal_rns::{
     attach_plan_with_context, fill_os_entropy, load_or_create_ble_identity,
     load_or_create_identity_secret, request_endpoints, try_generate_identity_secret,
@@ -63,7 +63,7 @@ use prns_host::{
     ResourceAvailable, ResourceCompression, ResourceHash, ResourceNeedsDecompression,
     ResourceSegmentAvailable, ResourceStrategy, ResourceStreamId, ResponseAvailable,
     ResponseSegmentAvailable, ResponseTimeout, RouteSnapshot, RuntimeHealthSnapshot,
-    SingleDelivery,
+    SingleDelivery, SAFE_UINT_MAX,
 };
 use tokio::io::{AsyncRead, ReadBuf};
 use tokio::sync::{mpsc, oneshot, watch};
@@ -73,6 +73,10 @@ const STOP_TIMEOUT: Duration = Duration::from_secs(5);
 const AUTO_BITRATE_BPS: u64 = 65_000_000;
 const UPLOAD_CHUNK_CAPACITY: usize = 4;
 const MAX_UPLOAD_CHUNK_BYTES: usize = 256 * 1024;
+
+fn is_optional_safe_uint(value: Option<u64>) -> bool {
+    value.is_none_or(|value| value <= SAFE_UINT_MAX)
+}
 
 static THREAD_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static RESOURCE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -719,6 +723,7 @@ struct Ready {
 struct ResolvedSingle {
     identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
     announce_app_data: Vec<u8>,
+    maximum_request_bytes: Option<u64>,
     proof: DestinationProofStrategy,
     link_requests: DestinationLinkRequestPolicy,
     ratchet: DestinationRatchetPolicy,
@@ -836,6 +841,11 @@ fn resolve_config(config: HostConfig) -> Result<ResolvedConfig, NativeStartError
                 single: None,
             }),
             DestinationConfig::Single(single) => {
+                if !is_optional_safe_uint(single.maximum_request_bytes) {
+                    return Err(NativeStartError::Destination(
+                        "maximum request bytes must be an unsigned safe integer".to_string(),
+                    ));
+                }
                 let identity = match single.identity {
                     DestinationIdentityConfig::HostIdentity => host_identity.clone(),
                     DestinationIdentityConfig::Dedicated(identity) => resolve_identity(identity)?,
@@ -846,6 +856,7 @@ fn resolve_config(config: HostConfig) -> Result<ResolvedConfig, NativeStartError
                     single: Some(ResolvedSingle {
                         identity,
                         announce_app_data: single.announce_app_data,
+                        maximum_request_bytes: single.maximum_request_bytes,
                         proof: single.proof,
                         link_requests: single.link_requests,
                         ratchet: single.ratchet,
@@ -941,7 +952,10 @@ fn build_destinations<'a>(
                     DestinationRatchetPolicy::RatchetsRequired => RatchetPolicy::RatchetsRequired,
                 },
                 resource_strategy: engine_resource_strategy(single.resource_strategy),
-                maximum_request_bytes: Default::default(),
+                maximum_request_bytes: single
+                    .maximum_request_bytes
+                    .map(ByteLimit::Maximum)
+                    .unwrap_or_default(),
                 request_endpoints: personal_rns::runtime::ServeMyRequestEndpoints::No,
             },
         })
@@ -2154,7 +2168,13 @@ async fn execute_command(
             path_hash,
             payload,
             timeout,
+            maximum_response_bytes,
         } => {
+            if !is_optional_safe_uint(*maximum_response_bytes) {
+                return Err(invalid_configuration(
+                    "maximum response bytes must be an unsigned safe integer",
+                ));
+            }
             let timeout = match timeout {
                 ResponseTimeout::LinkDefault => RequestResponseTimeout::LinkDefault,
                 ResponseTimeout::Exact { millis } => {
@@ -2162,11 +2182,16 @@ async fn execute_command(
                 }
             };
             let (data, rtt) = handle
-                .request_with_response_timeout(
+                .request_with_options(
                     engine_link(*link_id),
                     engine_request_path(*path_hash),
                     payload,
-                    timeout,
+                    RequestOptions {
+                        response_timeout: timeout,
+                        maximum_response_bytes: maximum_response_bytes
+                            .map(ByteLimit::Maximum)
+                            .unwrap_or_default(),
+                    },
                 )
                 .await
                 .map_err(request_failure)?;
@@ -2437,7 +2462,7 @@ fn request_failure(error: SendError<SendRequestFailure>) -> CommandFailure {
         },
         SendError::Failed(SendRequestFailure::Culled) => CommandFailure::PacketCulled,
         SendError::Failed(SendRequestFailure::Timeout) => CommandFailure::DeliveryTimedOut,
-        SendError::Failed(SendRequestFailure::ResponseTooLarge) => CommandFailure::PayloadTooLarge,
+        SendError::Failed(SendRequestFailure::ResponseTooLarge) => CommandFailure::ResponseTooLarge,
     }
 }
 
@@ -3266,6 +3291,21 @@ mod tests {
     }
 
     #[test]
+    fn oversized_response_failure_remains_typed() {
+        assert_eq!(
+            request_failure(SendError::Failed(SendRequestFailure::ResponseTooLarge)),
+            CommandFailure::ResponseTooLarge
+        );
+    }
+
+    #[test]
+    fn request_byte_limits_stay_in_the_interoperable_integer_range() {
+        assert!(is_optional_safe_uint(None));
+        assert!(is_optional_safe_uint(Some(SAFE_UINT_MAX)));
+        assert!(!is_optional_safe_uint(Some(SAFE_UINT_MAX + 1)));
+    }
+
+    #[test]
     fn configured_host_registers_request_handlers() -> Result<(), String> {
         let mut config = config();
         config
@@ -3275,6 +3315,7 @@ mod tests {
                     .map_err(|error| format!("{error:?}"))?,
                 identity: DestinationIdentityConfig::HostIdentity,
                 announce_app_data: Vec::new(),
+                maximum_request_bytes: Some(4_096),
                 proof: DestinationProofStrategy::ProveAll,
                 link_requests: DestinationLinkRequestPolicy::AcceptAll,
                 ratchet: DestinationRatchetPolicy::NoRatchets,

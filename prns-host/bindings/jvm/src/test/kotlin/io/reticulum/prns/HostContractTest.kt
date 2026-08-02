@@ -229,6 +229,7 @@ class HostContractTest {
             ),
             identity = DestinationIdentityConfigHostIdentity,
             announceAppData = Bytes(fixture.destination.announceAppDataHex.decodeHex()),
+            maximumRequestBytes = 1_048_576,
             requestHandlers = listOf(
                 RequestHandlerConfig(
                     path = fixture.request.path,
@@ -324,6 +325,7 @@ class HostContractTest {
                                     timeout = ResponseTimeoutExact(
                                         fixture.request.timeoutMillis,
                                     ),
+                                    maximumResponseBytes = 1_048_576,
                                 ),
                             )
                         }

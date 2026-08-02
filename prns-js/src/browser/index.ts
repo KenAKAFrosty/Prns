@@ -8,6 +8,8 @@ import {
   INTERFACE_ID_LENGTH,
   PRODUCT_VERSION,
   RESOURCE_HASH_LENGTH,
+  SAFE_INT_MAX,
+  SAFE_INT_MIN,
   balancedLimits,
   destinationHash,
   identityHash,
@@ -75,6 +77,8 @@ export {
   INTERFACE_ID_LENGTH,
   PRODUCT_VERSION,
   RESOURCE_HASH_LENGTH,
+  SAFE_INT_MAX,
+  SAFE_INT_MIN,
   balancedLimits,
   destinationHash,
   identityHash,
@@ -647,6 +651,7 @@ export type RuntimeRegisterSingleDestinationOptions = {
   appName: AppName;
   aspects: readonly Aspect[];
   appData?: AppData;
+  maximumRequestBytes?: number;
   requestHandlers?: readonly RequestHandlerConfig[];
 };
 
@@ -695,6 +700,7 @@ export type RuntimeLinkPayloadOptions = RuntimeCommandContext & {
 export type RuntimeRequestOptions = RuntimeLinkPayloadOptions & {
   pathHash: RequestPathHash;
   timeoutMillis?: number;
+  maximumResponseBytes?: number;
 };
 
 export type RuntimeRespondOptions = RuntimeLinkPayloadOptions & {
@@ -3094,7 +3100,13 @@ export class Prns {
             entropy,
           }),
         ),
-      Request: ({ linkId: value, pathHash, payload, timeout }) =>
+      Request: ({
+        linkId: value,
+        pathHash,
+        payload,
+        timeout,
+        maximumResponseBytes,
+      }) =>
         this.#issueCommand("request", command, (entropy) =>
           this.#runtime.request({
             linkId: value,
@@ -3103,6 +3115,14 @@ export class Prns {
             nowMs: this.#now(),
             entropy,
             ...runtimeResponseTimeout(timeout),
+            ...(maximumResponseBytes === undefined
+              ? {}
+              : {
+                  maximumResponseBytes: nonNegativeInteger(
+                    maximumResponseBytes,
+                    "maximumResponseBytes",
+                  ),
+                }),
           }),
         ),
       Respond: ({
@@ -3271,6 +3291,7 @@ export class Prns {
     pathHash: RequestPathHash,
     payload: Uint8Array,
     timeout: ResponseTimeout = Tag("LinkDefault"),
+    maximumResponseBytes?: number,
   ): Promise<RequestOutcome> {
     return this.execute(
       Tag("Request", {
@@ -3278,6 +3299,9 @@ export class Prns {
         pathHash,
         payload,
         timeout,
+        ...(maximumResponseBytes === undefined
+          ? {}
+          : { maximumResponseBytes }),
       }),
     );
   }
@@ -4835,6 +4859,9 @@ function parseCommandFailure(value: Record<string, unknown>): CommandFailure {
   }
   if (kind === "PayloadTooLarge") {
     return Tag("PayloadTooLarge");
+  }
+  if (kind === "ResponseTooLarge") {
+    return Tag("ResponseTooLarge");
   }
   if (kind === "UnknownDestination") {
     return Tag("UnknownDestination");

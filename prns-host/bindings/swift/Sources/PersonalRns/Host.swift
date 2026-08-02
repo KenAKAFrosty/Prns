@@ -172,14 +172,16 @@ public final class Host: @unchecked Sendable {
         linkId: LinkId,
         pathHash: RequestPathHash,
         payload: [UInt8],
-        timeout: ResponseTimeout
+        timeout: ResponseTimeout,
+        maximumResponseBytes: UInt64? = nil
     ) async throws -> CommandSettlement {
         try await settle(
             .request(
                 linkId: linkId,
                 pathHash: pathHash,
                 payload: payload,
-                timeout: timeout
+                timeout: timeout,
+                maximumResponseBytes: maximumResponseBytes
             )
         )
     }

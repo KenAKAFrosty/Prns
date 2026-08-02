@@ -18,6 +18,8 @@ public static class HostContract
     public const int RequestPathHashLength = 16;
     public const int ResourceHashLength = 32;
     public const int IdentitySecretLength = 64;
+    public const long SafeIntMin = -9007199254740991;
+    public const long SafeIntMax = 9007199254740991;
     public const ulong SafeUintMax = 9007199254740991;
     public const int BalancedPendingCommands = 256;
     public const int BalancedApplicationEvents = 1024;
@@ -260,6 +262,7 @@ public enum CommandFailureKind : uint
     DeviceUnavailable = 38,
     ConnectFailed = 39,
     BackendFailed = 40,
+    ResponseTooLarge = 41,
 }
 
 public enum DeliveryEvidenceKind : uint
@@ -1045,6 +1048,7 @@ public abstract record DestinationConfig
         DestinationName Name,
         DestinationIdentityConfig Identity,
         ReadOnlyMemory<byte>? AnnounceAppData,
+        ulong? MaximumRequestBytes,
         ImmutableArray<RequestHandlerConfig> RequestHandlers
     ) : DestinationConfig;
 
@@ -1109,7 +1113,8 @@ public abstract record HostCommand
         LinkId LinkId,
         RequestPathHash PathHash,
         ReadOnlyMemory<byte> Payload,
-        ResponseTimeout Timeout
+        ResponseTimeout Timeout,
+        ulong? MaximumResponseBytes
     ) : HostCommand;
     public sealed record Respond(
         LinkId LinkId,
@@ -1319,6 +1324,7 @@ public abstract record CommandFailure
     public sealed record BackendFailed(
         string Detail
     ) : CommandFailure;
+    public sealed record ResponseTooLarge() : CommandFailure;
 
     public TResult Match<TResult>(
         Func<CommandFailure.NodeStopped, TResult> nodeStopped,
@@ -1360,7 +1366,8 @@ public abstract record CommandFailure
         Func<CommandFailure.PermissionDenied, TResult> permissionDenied,
         Func<CommandFailure.DeviceUnavailable, TResult> deviceUnavailable,
         Func<CommandFailure.ConnectFailed, TResult> connectFailed,
-        Func<CommandFailure.BackendFailed, TResult> backendFailed
+        Func<CommandFailure.BackendFailed, TResult> backendFailed,
+        Func<CommandFailure.ResponseTooLarge, TResult> responseTooLarge
     ) =>
         this switch
         {
@@ -1404,6 +1411,7 @@ public abstract record CommandFailure
             DeviceUnavailable value => deviceUnavailable(value),
             ConnectFailed value => connectFailed(value),
             BackendFailed value => backendFailed(value),
+            ResponseTooLarge value => responseTooLarge(value),
             _ => throw new InvalidOperationException("Unknown contract case."),
         };
 }
@@ -1766,7 +1774,7 @@ internal interface IRawHostProtocol
     RawCallResult<RawOwned<IRawIssuedCommand>> HostRequestPath(IRawHost host, DestinationHash destination);
     RawCallResult<RawOwned<IRawIssuedCommand>> HostIdentify(IRawHost host, LinkId linkId, IdentityHash identity);
     RawCallResult<RawOwned<IRawIssuedCommand>> HostSendLinkPacket(IRawHost host, LinkId linkId, ReadOnlyMemory<byte> payload);
-    RawCallResult<RawOwned<IRawIssuedCommand>> HostRequest(IRawHost host, LinkId linkId, RequestPathHash pathHash, ReadOnlyMemory<byte> payload, ResponseTimeout timeout);
+    RawCallResult<RawOwned<IRawIssuedCommand>> HostRequest(IRawHost host, LinkId linkId, RequestPathHash pathHash, ReadOnlyMemory<byte> payload, ResponseTimeout timeout, ulong? maximumResponseBytes);
     RawCallResult<RawOwned<IRawIssuedCommand>> HostRespond(IRawHost host, LinkId linkId, RequestId requestId, ulong requestRttMillis, ReadOnlyMemory<byte> payload);
     RawCallResult<RawOwned<IRawIssuedCommand>> HostSendResource(IRawHost host, LinkId linkId, ReadOnlyMemory<byte> payload, ReadOnlyMemory<byte>? packedMetadata, ResourceCompression compression);
     RawCallResult<RawOwned<IRawIssuedCommand>> HostSetLinkResourceStrategy(IRawHost host, LinkId linkId, ResourceStrategy strategy);

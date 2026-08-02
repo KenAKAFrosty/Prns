@@ -50,10 +50,11 @@ Kotlin `Flow` or consumed through Java's `nextAsync()`. Closing a host, command,
 event flow, or resource stream releases the corresponding native handle
 deterministically.
 
-Contract `safeUint` fields use JVM `long`; their schema bound keeps every value
-non-negative and exactly representable for JavaScript interop. Exact contract
-`u64` fields use Kotlin `ULong`; the JNA boundary preserves all 64 bits while
-the generated Kotlin surface makes unsigned intent explicit.
+Contract `safeInt` and `safeUint` fields use JVM `long`; their schema bounds
+keep every value exactly representable for JavaScript interop, with `safeUint`
+remaining non-negative. Exact contract `u64` fields use Kotlin `ULong`; the JNA
+boundary preserves all 64 bits while the generated Kotlin surface makes
+unsigned intent explicit.
 
 Desktop applications provide `libprns_host` through the dynamic loader, the
 `PRNS_HOST_LIBRARY` environment variable, or the `personal.rns.library` system

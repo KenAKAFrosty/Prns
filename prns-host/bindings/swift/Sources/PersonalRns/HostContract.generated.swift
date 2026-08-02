@@ -13,6 +13,8 @@ public enum HostContract {
     public static let requestPathHashLength = 16
     public static let resourceHashLength = 32
     public static let identitySecretLength = 64
+    public static let safeIntMin: Int64 = -9007199254740991
+    public static let safeIntMax: Int64 = 9007199254740991
     public static let safeUintMax: UInt64 = 9007199254740991
     public static let balancedPendingCommands = 256
     public static let balancedApplicationEvents = 1024
@@ -233,6 +235,7 @@ public enum CommandFailureKind: UInt32, Sendable {
     case deviceUnavailable = 38
     case connectFailed = 39
     case backendFailed = 40
+    case responseTooLarge = 41
 }
 
 public enum DeliveryEvidenceKind: UInt32, Sendable {
@@ -736,7 +739,7 @@ public enum ResourceStrategy: Sendable {
 
 public enum DestinationConfig: Sendable {
     case plain(name: DestinationName)
-    case single(name: DestinationName, identity: DestinationIdentityConfig, announceAppData: [UInt8]?, requestHandlers: [RequestHandlerConfig])
+    case single(name: DestinationName, identity: DestinationIdentityConfig, announceAppData: [UInt8]?, maximumRequestBytes: UInt64?, requestHandlers: [RequestHandlerConfig])
 }
 
 public enum HostCommand: Sendable {
@@ -751,7 +754,7 @@ public enum HostCommand: Sendable {
     case requestPath(destination: DestinationHash)
     case identify(linkId: LinkId, identity: IdentityHash)
     case sendLinkPacket(linkId: LinkId, payload: [UInt8])
-    case request(linkId: LinkId, pathHash: RequestPathHash, payload: [UInt8], timeout: ResponseTimeout)
+    case request(linkId: LinkId, pathHash: RequestPathHash, payload: [UInt8], timeout: ResponseTimeout, maximumResponseBytes: UInt64?)
     case respond(linkId: LinkId, requestId: RequestId, requestRttMillis: UInt64, payload: [UInt8])
     case sendResource(linkId: LinkId, payload: [UInt8], packedMetadata: [UInt8]?, compression: ResourceCompression)
     case setLinkResourceStrategy(linkId: LinkId, strategy: ResourceStrategy)
@@ -818,6 +821,7 @@ public enum CommandFailure: Sendable {
     case deviceUnavailable(detail: String)
     case connectFailed(detail: String)
     case backendFailed(detail: String)
+    case responseTooLarge
 }
 
 public enum ApplicationEvent: Sendable {
@@ -987,7 +991,7 @@ protocol RawHostProtocol {
     func hostRequestPath(_ host: RawHost, _ destination: DestinationHash) -> RawCallResult<RawOwned<RawIssuedCommand>>
     func hostIdentify(_ host: RawHost, _ linkId: LinkId, _ identity: IdentityHash) -> RawCallResult<RawOwned<RawIssuedCommand>>
     func hostSendLinkPacket(_ host: RawHost, _ linkId: LinkId, _ payload: [UInt8]) -> RawCallResult<RawOwned<RawIssuedCommand>>
-    func hostRequest(_ host: RawHost, _ linkId: LinkId, _ pathHash: RequestPathHash, _ payload: [UInt8], _ timeout: ResponseTimeout) -> RawCallResult<RawOwned<RawIssuedCommand>>
+    func hostRequest(_ host: RawHost, _ linkId: LinkId, _ pathHash: RequestPathHash, _ payload: [UInt8], _ timeout: ResponseTimeout, _ maximumResponseBytes: UInt64?) -> RawCallResult<RawOwned<RawIssuedCommand>>
     func hostRespond(_ host: RawHost, _ linkId: LinkId, _ requestId: RequestId, _ requestRttMillis: UInt64, _ payload: [UInt8]) -> RawCallResult<RawOwned<RawIssuedCommand>>
     func hostSendResource(_ host: RawHost, _ linkId: LinkId, _ payload: [UInt8], _ packedMetadata: [UInt8]?, _ compression: ResourceCompression) -> RawCallResult<RawOwned<RawIssuedCommand>>
     func hostSetLinkResourceStrategy(_ host: RawHost, _ linkId: LinkId, _ strategy: ResourceStrategy) -> RawCallResult<RawOwned<RawIssuedCommand>>

@@ -40,7 +40,7 @@ use prns_host_core::{
     ResponseTimeoutKind as AbiResponseTimeoutKind, SerialDataBits as AbiSerialDataBits,
     SerialDataBits, SerialLineConfig, SerialParity as AbiSerialParity, SerialParity,
     SerialStopBits as AbiSerialStopBits, SerialStopBits, Status as AbiStatus,
-    StopReason as AbiStopReason, StopReason, HOST_CONTRACT, HOST_SCHEMA_VERSION,
+    StopReason as AbiStopReason, StopReason, HOST_CONTRACT, HOST_SCHEMA_VERSION, SAFE_UINT_MAX,
 };
 use prns_host_native::{
     CommandHandle, CommandWait, IdentityStartError, NativeEventSink, NativeHost,
@@ -321,6 +321,8 @@ pub struct PrnsDestinationConfig {
     pub announce_app_data: PrnsByteView,
     pub request_handlers: *const PrnsRequestHandlerConfig,
     pub request_handler_count: usize,
+    pub has_maximum_request_bytes: u8,
+    pub maximum_request_bytes: u64,
 }
 
 #[repr(C)]
@@ -890,6 +892,10 @@ unsafe fn parse_destination(value: &PrnsDestinationConfig) -> Result<Destination
                     name,
                     identity,
                     announce_app_data: unsafe { read_bytes(value.announce_app_data) }?.to_vec(),
+                    maximum_request_bytes: optional_safe_uint(
+                        value.has_maximum_request_bytes,
+                        value.maximum_request_bytes,
+                    )?,
                     proof: prns_host_core::DestinationProofStrategy::ProveAll,
                     link_requests: prns_host_core::DestinationLinkRequestPolicy::AcceptAll,
                     ratchet: prns_host_core::DestinationRatchetPolicy::NoRatchets,
@@ -908,6 +914,24 @@ fn parse_bitrate(kind: u32, bits_per_second: u64) -> Result<Bitrate, u32> {
             Ok(Bitrate::BitsPerSecond(bits_per_second))
         }
         AbiBitrateKind::BitsPerSecond => Err(status(AbiStatus::InvalidArgument)),
+    }
+}
+
+fn optional_safe_uint(has_value: u8, value: u64) -> Result<Option<u64>, u32> {
+    if has_value == 0 {
+        Ok(None)
+    } else if value <= SAFE_UINT_MAX {
+        Ok(Some(value))
+    } else {
+        Err(status(AbiStatus::InvalidArgument))
+    }
+}
+
+unsafe fn optional_safe_uint_pointer(value: *const u64) -> Result<Option<u64>, u32> {
+    if value.is_null() {
+        Ok(None)
+    } else {
+        optional_safe_uint(1, unsafe { *value })
     }
 }
 
@@ -1992,6 +2016,7 @@ pub unsafe extern "C" fn prns_host_request(
     payload: PrnsByteView,
     timeout_kind: u32,
     timeout_millis: u64,
+    maximum_response_bytes: *const u64,
     out_command: *mut *mut PrnsIssuedCommand,
 ) -> u32 {
     catch_status(|| {
@@ -2011,6 +2036,11 @@ pub unsafe extern "C" fn prns_host_request(
             Ok(timeout) => timeout,
             Err(error) => return error,
         };
+        let maximum_response_bytes =
+            match unsafe { optional_safe_uint_pointer(maximum_response_bytes) } {
+                Ok(maximum_response_bytes) => maximum_response_bytes,
+                Err(error) => return error,
+            };
         unsafe {
             submit_host_command(
                 host,
@@ -2019,6 +2049,7 @@ pub unsafe extern "C" fn prns_host_request(
                     path_hash,
                     payload,
                     timeout,
+                    maximum_response_bytes,
                 },
                 out_command,
             )
@@ -2600,6 +2631,7 @@ fn cache_command_result(result: Result<CommandOutcome, CommandFailure>) -> Cache
                     cached.detail = detail;
                     AbiCommandFailureKind::BackendFailed as u32
                 }
+                CommandFailure::ResponseTooLarge => AbiCommandFailureKind::ResponseTooLarge as u32,
             };
         }
     }
@@ -3588,6 +3620,28 @@ mod tests {
         DestinationHash, InterfaceId, LinkId, ResourceHash, ResourceStreamId, SingleDelivery,
     };
     use std::sync::atomic::AtomicUsize;
+
+    #[test]
+    fn response_too_large_preserves_its_failure_kind() {
+        let cached = cache_command_result(Err(CommandFailure::ResponseTooLarge));
+        assert_eq!(
+            cached.failure,
+            AbiCommandFailureKind::ResponseTooLarge as u32
+        );
+    }
+
+    #[test]
+    fn optional_safe_uint_rejects_values_outside_the_contract_range() {
+        assert_eq!(optional_safe_uint(0, u64::MAX), Ok(None));
+        assert_eq!(
+            optional_safe_uint(1, SAFE_UINT_MAX),
+            Ok(Some(SAFE_UINT_MAX))
+        );
+        assert_eq!(
+            optional_safe_uint(1, SAFE_UINT_MAX + 1),
+            Err(status(AbiStatus::InvalidArgument))
+        );
+    }
 
     #[test]
     fn backend_info_reports_exact_compiled_capabilities() {

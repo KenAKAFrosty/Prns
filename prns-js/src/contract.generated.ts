@@ -18,6 +18,8 @@ export const REQUEST_ID_LENGTH = 16;
 export const REQUEST_PATH_HASH_LENGTH = 16;
 export const RESOURCE_HASH_LENGTH = 32;
 export const IDENTITY_SECRET_LENGTH = 64;
+export const SAFE_INT_MIN = -9007199254740991;
+export const SAFE_INT_MAX = 9007199254740991;
 export const SAFE_UINT_MAX = 9007199254740991;
 
 export type DestinationHash = BrandedBytes<"DestinationHash">;
@@ -663,6 +665,7 @@ export type DestinationConfig =
         readonly name: DestinationName;
         readonly identity: DestinationIdentityConfig;
         readonly announceAppData?: Uint8Array;
+        readonly maximumRequestBytes?: number;
         readonly requestHandlers: readonly RequestHandlerConfig[];
       }
     >;
@@ -749,6 +752,7 @@ export type HostCommand =
         readonly pathHash: RequestPathHash;
         readonly payload: Uint8Array;
         readonly timeout: ResponseTimeout;
+        readonly maximumResponseBytes?: number;
       }
     >
   | Tag<
@@ -935,7 +939,8 @@ export type CommandFailure =
       {
         readonly detail: string;
       }
-    >;
+    >
+  | Tag<"ResponseTooLarge">;
 
 export type ApplicationEvent =
   | Tag<
@@ -1298,7 +1303,7 @@ interface RawHostProtocol {
   readonly hostRequestPath: (host: RawHost, destination: DestinationHash) => RawCallResult<RawOwned<RawIssuedCommand>>;
   readonly hostIdentify: (host: RawHost, linkId: LinkId, identity: IdentityHash) => RawCallResult<RawOwned<RawIssuedCommand>>;
   readonly hostSendLinkPacket: (host: RawHost, linkId: LinkId, payload: Uint8Array) => RawCallResult<RawOwned<RawIssuedCommand>>;
-  readonly hostRequest: (host: RawHost, linkId: LinkId, pathHash: RequestPathHash, payload: Uint8Array, timeout: ResponseTimeout) => RawCallResult<RawOwned<RawIssuedCommand>>;
+  readonly hostRequest: (host: RawHost, linkId: LinkId, pathHash: RequestPathHash, payload: Uint8Array, timeout: ResponseTimeout, maximumResponseBytes: number | undefined) => RawCallResult<RawOwned<RawIssuedCommand>>;
   readonly hostRespond: (host: RawHost, linkId: LinkId, requestId: RequestId, requestRttMillis: number, payload: Uint8Array) => RawCallResult<RawOwned<RawIssuedCommand>>;
   readonly hostSendResource: (host: RawHost, linkId: LinkId, payload: Uint8Array, packedMetadata: Uint8Array | undefined, compression: ResourceCompression) => RawCallResult<RawOwned<RawIssuedCommand>>;
   readonly hostSetLinkResourceStrategy: (host: RawHost, linkId: LinkId, strategy: ResourceStrategy) => RawCallResult<RawOwned<RawIssuedCommand>>;

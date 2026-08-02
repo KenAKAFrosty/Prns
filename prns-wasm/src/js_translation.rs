@@ -420,6 +420,9 @@ fn settlement_to_js(object: &Object, settlement: Settlement) {
         Settlement::SendRequest(Err(SendRequestFailure::Timeout)) => {
             set_command_failure(object, "DeliveryTimedOut", None);
         }
+        Settlement::SendRequest(Err(SendRequestFailure::ResponseTooLarge)) => {
+            set_command_failure(object, "ResponseTooLarge", None);
+        }
         Settlement::Respond(Ok(())) => {
             set_str(object, "result", "succeeded");
             set_str(object, "kind", "ResponseSent");

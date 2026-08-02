@@ -34,10 +34,11 @@ use personal_rns::runtime::{
     RoutingControl, RoutingControlError,
 };
 use personal_rns::runtime::{
-    RequestPathError, ResourceSendError, ResponseSendError, SegmentCompression,
+    RequestOptions as EngineRequestOptions, RequestPathError, ResourceSendError,
+    ResponseSendError, SegmentCompression,
 };
 use personal_rns::shared_instance::{SharedInstanceClient, SharedInstanceServer};
-use personal_rns::units::{DurationMillis, RttMillis};
+use personal_rns::units::{ByteLimit, DurationMillis, RttMillis};
 use personal_rns::wifi_auto::AutoWifi;
 use personal_rns::ResourceStrategy;
 use personal_rns::{attach_plan_with_context, PlanOutcome, PlanRuntimeContext};
@@ -97,6 +98,7 @@ pub struct DestinationSpec {
     pub identity: Option<IdentitySpec>,
     pub use_host_identity: Option<bool>,
     pub announce_app_data: Option<Buffer>,
+    pub maximum_request_bytes: Option<f64>,
     #[napi(ts_type = "ProofStrategyName")]
     pub proof: Option<String>,
     #[napi(ts_type = "LinkRequestPolicyName")]
@@ -166,6 +168,7 @@ pub struct RespondTokenSpec {
 pub struct RequestOptions {
     /// Request timeout in milliseconds.
     pub timeout_millis: Option<f64>,
+    pub maximum_response_bytes: Option<f64>,
 }
 
 #[napi(object)]
@@ -625,6 +628,9 @@ fn request_error(error: personal_rns::SendError<SendRequestFailure>) -> crate::e
         }
         personal_rns::SendError::Failed(SendRequestFailure::Timeout) => {
             code_err(ErrorCode::DeliveryTimedOut, "request timed out")
+        }
+        personal_rns::SendError::Failed(SendRequestFailure::ResponseTooLarge) => {
+            code_err(ErrorCode::ResponseTooLarge, "response is too large")
         }
     }
 }
@@ -1222,6 +1228,10 @@ fn parse_options(options: NodeOptions, limits: PrnsLimits) -> CodeResult<HostCon
                         .as_ref()
                         .map(|data| data.to_vec())
                         .unwrap_or_default(),
+                    maximum_request_bytes: spec
+                        .maximum_request_bytes
+                        .map(|value| safe_u64_argument(value, "maximumRequestBytes"))
+                        .transpose()?,
                     proof: parse_proof(spec.proof.as_deref())?,
                     link_requests: parse_link_requests(spec.link_requests.as_deref())?,
                     ratchet: parse_ratchet(spec.ratchet.as_deref())?,
@@ -1479,6 +1489,7 @@ fn host_command_error(error: HostCommandFailure) -> crate::errors::CodeError {
         HostCommandFailure::NodeStopped => ErrorCode::NodeStopped,
         HostCommandFailure::Busy => ErrorCode::Busy,
         HostCommandFailure::PayloadTooLarge => ErrorCode::PayloadTooLarge,
+        HostCommandFailure::ResponseTooLarge => ErrorCode::ResponseTooLarge,
         HostCommandFailure::InvalidBitrate | HostCommandFailure::InvalidConfiguration { .. } => {
             ErrorCode::InvalidArgument
         }
@@ -2080,7 +2091,7 @@ impl PrnsNode {
     ) -> CodeResult<RequestResult> {
         let link_id = marshal::link_id(&link_id)?;
         let path_hash = marshal::request_path_hash(&path_hash)?;
-        let configured_timeout = options.and_then(|value| value.timeout_millis);
+        let configured_timeout = options.as_ref().and_then(|value| value.timeout_millis);
         let timeout = match configured_timeout {
             Some(ms) => RequestResponseTimeout::Exact(DurationMillis(safe_u64_argument(
                 ms,
@@ -2088,9 +2099,23 @@ impl PrnsNode {
             )?)),
             None => RequestResponseTimeout::LinkDefault,
         };
+        let maximum_response_bytes = options
+            .and_then(|value| value.maximum_response_bytes)
+            .map(|value| safe_u64_argument(value, "maximumResponseBytes"))
+            .transpose()?
+            .map(ByteLimit::Maximum)
+            .unwrap_or_default();
         let handle = self.handle()?;
         let (packed, rtt) = handle
-            .request_with_response_timeout(link_id, path_hash, &data, timeout)
+            .request_with_options(
+                link_id,
+                path_hash,
+                &data,
+                EngineRequestOptions {
+                    response_timeout: timeout,
+                    maximum_response_bytes,
+                },
+            )
             .await
             .map_err(request_error)?;
         let data = match marshal::unwrap_packed_binary(&packed) {

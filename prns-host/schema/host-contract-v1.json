@@ -4,6 +4,12 @@
   "productVersion": "0.3.2",
   "scalars": [
     {
+      "name": "safeInt",
+      "storage": "i64",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    {
       "name": "safeUint",
       "storage": "u64",
       "minimum": 0,
@@ -427,7 +433,8 @@
         { "name": "PermissionDenied", "value": 37 },
         { "name": "DeviceUnavailable", "value": 38 },
         { "name": "ConnectFailed", "value": 39 },
-        { "name": "BackendFailed", "value": 40 }
+        { "name": "BackendFailed", "value": 40 },
+        { "name": "ResponseTooLarge", "value": 41 }
       ]
     },
     {
@@ -776,6 +783,7 @@
             { "name": "name", "type": "DestinationName" },
             { "name": "identity", "type": "DestinationIdentityConfig" },
             { "name": "announceAppData", "type": "bytes", "optional": true },
+            { "name": "maximumRequestBytes", "type": "safeUint", "optional": true },
             { "name": "requestHandlers", "type": { "array": "RequestHandlerConfig" } }
           ]
         }
@@ -876,7 +884,8 @@
             { "name": "linkId", "type": "LinkId" },
             { "name": "pathHash", "type": "RequestPathHash" },
             { "name": "payload", "type": "bytes" },
-            { "name": "timeout", "type": "ResponseTimeout" }
+            { "name": "timeout", "type": "ResponseTimeout" },
+            { "name": "maximumResponseBytes", "type": "safeUint", "optional": true }
           ]
         },
         {
@@ -1070,7 +1079,8 @@
         ] },
         { "name": "BackendFailed", "value": 40, "fields": [
           { "name": "detail", "type": "string" }
-        ] }
+        ] },
+        { "name": "ResponseTooLarge", "value": 41, "fields": [] }
       ]
     },
     {

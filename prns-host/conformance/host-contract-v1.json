@@ -101,6 +101,7 @@
       "ResourceSequencingFailed": 28,
       "ResourceTableFull": 25,
       "ResourceUploadCancelled": 34,
+      "ResponseTooLarge": 41,
       "UnknownDestination": 4,
       "UnknownInterface": 7,
       "UnknownLink": 16,
@@ -386,6 +387,18 @@
     }
   ],
   "integerChecks": {
+    "safeInt": {
+      "accepted": [
+        "-9007199254740991",
+        "0",
+        "9007199254740991"
+      ],
+      "rejected": [
+        "-9007199254740992",
+        "9007199254740992"
+      ],
+      "typescript": "number"
+    },
     "safeUint": {
       "accepted": [
         "0",
@@ -1321,6 +1334,11 @@
     ]
   },
   "scalars": {
+    "safeInt": {
+      "maximum": "9007199254740991",
+      "minimum": "-9007199254740991",
+      "storage": "i64"
+    },
     "safeUint": {
       "maximum": "9007199254740991",
       "minimum": "0",
@@ -1378,6 +1396,7 @@
       "ResourceSequencingFailed": 28,
       "ResourceTableFull": 25,
       "ResourceUploadCancelled": 34,
+      "ResponseTooLarge": 41,
       "UnknownDestination": 4,
       "UnknownInterface": 7,
       "UnknownLink": 16,

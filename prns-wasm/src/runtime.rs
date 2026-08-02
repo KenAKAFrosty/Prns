@@ -28,7 +28,7 @@ use personal_rns::routing::tunnel::SeedTunnelOutcome;
 use personal_rns::routing::upstream_app_destinations::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::routing::warmth::Departure;
 use personal_rns::storage::GrowableHeap;
-use personal_rns::units::DurationMillis;
+use personal_rns::units::{ByteLimit, DurationMillis};
 use prns_host::PrnsLimits;
 use prns_host_cooperative::{CooperativeHost, Entropy, MonotonicMillis};
 use prns_runtime::runtime::persistence_snapshots::{
@@ -224,6 +224,10 @@ impl PrnsRuntime {
             .map_err(|error| {
                 JsValue::from_str(&format!("destination registration failed: {error:?}"))
             })?;
+        self.engine.set_maximum_request_bytes(
+            &destination,
+            ByteLimit::from(optional_u64(&options, "maximumRequestBytes")?),
+        );
         self.bump_revision();
         if let Some(handlers) = optional_array(&options, "requestHandlers")? {
             for handler in handlers.iter() {
@@ -444,6 +448,8 @@ impl PrnsRuntime {
         let response_timeout = optional_u64(&options, "timeoutMillis")?
             .map(|millis| RequestResponseTimeout::Exact(DurationMillis(millis)))
             .unwrap_or(RequestResponseTimeout::LinkDefault);
+        let maximum_response_bytes =
+            ByteLimit::from(optional_u64(&options, "maximumResponseBytes")?);
         let (now_ms, entropy) = self.command_context(&options)?;
         let id = self.mint_command_id();
         self.ingest_command(
@@ -453,6 +459,7 @@ impl PrnsRuntime {
                 path_hash,
                 data,
                 response_timeout,
+                maximum_response_bytes,
             }),
             now_ms,
             entropy,

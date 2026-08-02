@@ -15,6 +15,8 @@ const RequestIdLength = 16
 const RequestPathHashLength = 16
 const ResourceHashLength = 32
 const IdentitySecretLength = 64
+const SafeIntMin int64 = -9007199254740991
+const SafeIntMax int64 = 9007199254740991
 const SafeUintMax uint64 = 9007199254740991
 const BalancedPendingCommands = 256
 const BalancedApplicationEvents = 1024
@@ -283,6 +285,7 @@ const (
 	CommandFailureKindDeviceUnavailable CommandFailureKind = 38
 	CommandFailureKindConnectFailed CommandFailureKind = 39
 	CommandFailureKindBackendFailed CommandFailureKind = 40
+	CommandFailureKindResponseTooLarge CommandFailureKind = 41
 )
 
 type DeliveryEvidenceKind uint32
@@ -817,6 +820,7 @@ type DestinationConfigSingle struct {
 	Name DestinationName
 	Identity DestinationIdentityConfig
 	AnnounceAppData *[]byte
+	MaximumRequestBytes *uint64
 	RequestHandlers []RequestHandlerConfig
 }
 
@@ -905,6 +909,7 @@ type HostCommandRequest struct {
 	PathHash RequestPathHash
 	Payload []byte
 	Timeout ResponseTimeout
+	MaximumResponseBytes *uint64
 }
 
 func (HostCommandRequest) hostCommand() {}
@@ -1214,6 +1219,10 @@ type CommandFailureBackendFailed struct {
 }
 
 func (CommandFailureBackendFailed) commandFailure() {}
+
+type CommandFailureResponseTooLarge struct{}
+
+func (CommandFailureResponseTooLarge) commandFailure() {}
 
 type ApplicationEvent interface {
 	applicationEvent()
@@ -1578,7 +1587,7 @@ type rawHostProtocol interface {
 	hostRequestPath(host rawHost, destination DestinationHash) rawCallResult[rawOwned[rawIssuedCommand]]
 	hostIdentify(host rawHost, linkId LinkId, identity IdentityHash) rawCallResult[rawOwned[rawIssuedCommand]]
 	hostSendLinkPacket(host rawHost, linkId LinkId, payload []byte) rawCallResult[rawOwned[rawIssuedCommand]]
-	hostRequest(host rawHost, linkId LinkId, pathHash RequestPathHash, payload []byte, timeout ResponseTimeout) rawCallResult[rawOwned[rawIssuedCommand]]
+	hostRequest(host rawHost, linkId LinkId, pathHash RequestPathHash, payload []byte, timeout ResponseTimeout, maximumResponseBytes *uint64) rawCallResult[rawOwned[rawIssuedCommand]]
 	hostRespond(host rawHost, linkId LinkId, requestId RequestId, requestRttMillis uint64, payload []byte) rawCallResult[rawOwned[rawIssuedCommand]]
 	hostSendResource(host rawHost, linkId LinkId, payload []byte, packedMetadata *[]byte, compression ResourceCompression) rawCallResult[rawOwned[rawIssuedCommand]]
 	hostSetLinkResourceStrategy(host rawHost, linkId LinkId, strategy ResourceStrategy) rawCallResult[rawOwned[rawIssuedCommand]]

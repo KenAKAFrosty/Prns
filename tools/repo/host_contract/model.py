@@ -7,7 +7,7 @@ FIELD_NAME = re.compile(r"^[a-z][A-Za-z0-9]*$")
 SCALAR_NAME = re.compile(r"^[a-z][A-Za-z0-9]*$")
 PRODUCT_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 PRIMITIVES = frozenset(
-    {"bytes", "bool", "string", "i16", "u8", "u16", "u32", "u64", "u128"}
+    {"bytes", "bool", "string", "i16", "i64", "u8", "u16", "u32", "u64", "u128"}
 )
 OPERATION_TYPES = frozenset(
     {
@@ -38,6 +38,7 @@ OPERATION_KINDS = frozenset(
 )
 INTEGER_BOUNDS = {
     "i16": (-(2**15), 2**15 - 1),
+    "i64": (-(2**63), 2**63 - 1),
     "u8": (0, 2**8 - 1),
     "u16": (0, 2**16 - 1),
     "u32": (0, 2**32 - 1),
@@ -223,6 +224,11 @@ def parse_scalars(values):
             raise ValueError(f"scalar bounds exceed storage {name}")
         if name == "safeUint" and (minimum != 0 or maximum != 9_007_199_254_740_991):
             raise ValueError("safeUint must match the interoperable safe integer range")
+        if name == "safeInt" and (
+            minimum != -9_007_199_254_740_991
+            or maximum != 9_007_199_254_740_991
+        ):
+            raise ValueError("safeInt must match the interoperable safe integer range")
         names.add(name)
         result.append(Scalar(name, storage, minimum, maximum))
     return result

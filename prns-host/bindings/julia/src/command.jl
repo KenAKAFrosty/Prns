@@ -551,8 +551,14 @@ function execute(host::Host, value::HostCommandRequest)
         path_hash = native_byte_view(arena, value.path_hash.bytes)
         payload = native_byte_view(arena, value.payload)
         timeout_kind, timeout_millis = native_response_timeout(value.timeout)
+        if !isnothing(value.maximum_response_bytes) &&
+           value.maximum_response_bytes > SAFE_UINT_MAX
+            throw(ArgumentError("maximum_response_bytes must be an unsigned safe integer"))
+        end
+        maximum_response_bytes = isnothing(value.maximum_response_bytes) ?
+            Ptr{UInt64}(C_NULL) : Ref(value.maximum_response_bytes)
         output = Ref{Ptr{Cvoid}}(C_NULL)
-        status = GC.@preserve arena begin
+        status = GC.@preserve arena maximum_response_bytes begin
             with_host_pointer(host) do pointer
                 ccall(
                     native_symbol(:prns_host_request),
@@ -564,6 +570,7 @@ function execute(host::Host, value::HostCommandRequest)
                         NativeByteView,
                         UInt32,
                         UInt64,
+                        Ptr{UInt64},
                         Ref{Ptr{Cvoid}},
                     ),
                     pointer,
@@ -572,6 +579,7 @@ function execute(host::Host, value::HostCommandRequest)
                     payload,
                     timeout_kind,
                     timeout_millis,
+                    maximum_response_bytes,
                     output,
                 )
             end
@@ -887,6 +895,7 @@ function request(
     path_hash::RequestPathHash,
     payload::AbstractVector{UInt8};
     timeout::ResponseTimeout=ResponseTimeoutLinkDefault(),
+    maximum_response_bytes::Union{Nothing,UInt64}=nothing,
 )
     execute_settled(
         host,
@@ -895,6 +904,7 @@ function request(
             path_hash,
             Vector{UInt8}(payload),
             timeout,
+            maximum_response_bytes,
         ),
     )
 end
@@ -1120,6 +1130,8 @@ function decode_command_failure(kind::CommandFailureKind, detail::String)
         return CommandFailureConnectFailed(detail)
     kind == CommandFailureKindBackendFailed &&
         return CommandFailureBackendFailed(detail)
+    kind == CommandFailureKindResponseTooLarge &&
+        return CommandFailureResponseTooLarge()
     throw(StatusFailure(:decode_command_failure, StatusBackendFailed))
 end
 

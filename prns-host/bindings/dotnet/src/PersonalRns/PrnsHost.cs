@@ -352,6 +352,11 @@ public sealed class PrnsHost : IAsyncDisposable
                         AnnounceAppData = single.AnnounceAppData is { } appData
                             ? arena.Bytes(appData.Span)
                             : default,
+                        HasMaximumRequestBytes = (byte)(single.MaximumRequestBytes.HasValue ? 1 : 0),
+                        MaximumRequestBytes = ValidateSafeUint(
+                            single.MaximumRequestBytes,
+                            nameof(single.MaximumRequestBytes)
+                        ) ?? 0,
                         RequestHandlers = arena.Array<Native.RequestHandlerConfig>(handlers),
                         RequestHandlerCount = (nuint)handlers.Length,
                     };
@@ -607,7 +612,34 @@ public sealed class PrnsHost : IAsyncDisposable
         ReadOnlyMemory<byte> payload,
         ResponseTimeout timeout,
         CancellationToken cancellationToken = default
-    ) => ExecuteAsync(new HostCommand.Request(linkId, pathHash, payload, timeout), cancellationToken);
+    ) =>
+        RequestAsync(
+            linkId,
+            pathHash,
+            payload,
+            timeout,
+            null,
+            cancellationToken
+        );
+
+    public ValueTask<CommandSettlement> RequestAsync(
+        LinkId linkId,
+        RequestPathHash pathHash,
+        ReadOnlyMemory<byte> payload,
+        ResponseTimeout timeout,
+        ulong? maximumResponseBytes,
+        CancellationToken cancellationToken = default
+    ) =>
+        ExecuteAsync(
+            new HostCommand.Request(
+                linkId,
+                pathHash,
+                payload,
+                timeout,
+                maximumResponseBytes
+            ),
+            cancellationToken
+        );
 
     public ValueTask<CommandSettlement> RespondAsync(
         LinkId linkId,
@@ -878,6 +910,10 @@ public sealed class PrnsHost : IAsyncDisposable
     private CommandHandle Submit(HostCommand.Request command, NativeArena arena)
     {
         var timeout = MarshalResponseTimeout(command.Timeout);
+        var maximumResponseBytes = ValidateSafeUint(
+            command.MaximumResponseBytes,
+            nameof(command.MaximumResponseBytes)
+        );
         var status = Native.prns_host_request(
             _handle,
             arena.Bytes(command.LinkId.Span),
@@ -885,6 +921,9 @@ public sealed class PrnsHost : IAsyncDisposable
             arena.Bytes(command.Payload.Span),
             timeout.Kind,
             timeout.Millis,
+            maximumResponseBytes is { } maximum
+                ? arena.Array<ulong>([maximum])
+                : 0,
             out var nativeCommand
         );
         return Submitted(status, nativeCommand);
@@ -1169,8 +1208,18 @@ public sealed class PrnsHost : IAsyncDisposable
                 new CommandFailure.DeviceUnavailable(detail),
             CommandFailureKind.ConnectFailed => new CommandFailure.ConnectFailed(detail),
             CommandFailureKind.BackendFailed => new CommandFailure.BackendFailed(detail),
+            CommandFailureKind.ResponseTooLarge => new CommandFailure.ResponseTooLarge(),
             _ => throw new InvalidOperationException("Unknown native command failure."),
         };
+    }
+
+    private static ulong? ValidateSafeUint(ulong? value, string name)
+    {
+        if (value > HostContract.SafeUintMax)
+        {
+            throw new ArgumentOutOfRangeException(name);
+        }
+        return value;
     }
 
     private static byte DecodeHops(Native.ByteView value)

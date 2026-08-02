@@ -470,6 +470,8 @@ def _marshal_destination(
             ByteView(),
             ctypes.POINTER(NativeRequestHandlerConfig)(),
             0,
+            0,
+            0,
         )
     if isinstance(destination, g.DestinationConfigSingle):
         identity = destination.identity
@@ -489,6 +491,9 @@ def _marshal_destination(
             )
             for handler in destination.request_handlers
         ]
+        maximum_request_bytes = destination.maximum_request_bytes
+        if maximum_request_bytes is not None and not 0 <= maximum_request_bytes <= g.SAFE_UINT_MAX:
+            raise ValueError("maximum_request_bytes must be an unsigned safe integer")
         return NativeDestinationConfig(
             ctypes.sizeof(NativeDestinationConfig),
             g.DestinationConfigKind.SINGLE,
@@ -498,6 +503,8 @@ def _marshal_destination(
             arena.bytes(destination.announce_app_data or b""),
             arena.array(NativeRequestHandlerConfig, request_handlers),
             len(request_handlers),
+            int(maximum_request_bytes is not None),
+            maximum_request_bytes or 0,
         )
     raise TypeError(f"unknown destination config {type(destination)!r}")
 
@@ -850,6 +857,8 @@ def _decode_command_failure(
             return g.CommandFailureConnectFailed(detail)
         case g.CommandFailureKind.BACKEND_FAILED:
             return g.CommandFailureBackendFailed(detail)
+        case g.CommandFailureKind.RESPONSE_TOO_LARGE:
+            return g.CommandFailureResponseTooLarge()
     raise RuntimeError(f"unknown command failure {kind}")
 
 
@@ -1643,6 +1652,14 @@ class Host:
                 timeout_kind, timeout_millis = _marshal_response_timeout(
                     command.timeout
                 )
+                maximum_response_bytes = command.maximum_response_bytes
+                if maximum_response_bytes is not None and not 0 <= maximum_response_bytes <= g.SAFE_UINT_MAX:
+                    raise ValueError("maximum_response_bytes must be an unsigned safe integer")
+                maximum_response_storage = (
+                    None
+                    if maximum_response_bytes is None
+                    else ctypes.c_uint64(maximum_response_bytes)
+                )
                 status = self._native.library.prns_host_request(
                     self._handle,
                     arena.bytes(command.link_id.value),
@@ -1650,6 +1667,9 @@ class Host:
                     arena.bytes(command.payload),
                     timeout_kind,
                     timeout_millis,
+                    None
+                    if maximum_response_storage is None
+                    else ctypes.byref(maximum_response_storage),
                     ctypes.byref(handle),
                 )
             elif isinstance(command, g.HostCommandRespond):
@@ -1807,9 +1827,16 @@ class Host:
         path_hash: g.RequestPathHash,
         payload: bytes,
         timeout: g.ResponseTimeout,
+        maximum_response_bytes: int | None = None,
     ) -> CommandSettlement:
         return await self.submit(
-            g.HostCommandRequest(link_id, path_hash, payload, timeout)
+            g.HostCommandRequest(
+                link_id,
+                path_hash,
+                payload,
+                timeout,
+                maximum_response_bytes,
+            )
         )
 
     async def respond(

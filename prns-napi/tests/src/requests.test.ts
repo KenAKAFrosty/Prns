@@ -11,7 +11,12 @@ test('link, request, respond, and unregistered-path refusal', async () => {
   const server = startNode(
     {
       destinations: [
-        { appName: 'prnsnapi', aspects: ['reqsuite'], requestPaths: [{ path: '/echo' }] },
+        {
+          appName: 'prnsnapi',
+          aspects: ['reqsuite'],
+          maximumRequestBytes: 1024,
+          requestPaths: [{ path: '/echo' }],
+        },
       ],
     },
     (e) => {
@@ -38,6 +43,7 @@ test('link, request, respond, and unregistered-path refusal', async () => {
     const echoHash = requestPathHash('/echo');
     const result = await client.request(link.linkId, echoHash, Buffer.from('ping'), {
       timeoutMillis: 5000,
+      maximumResponseBytes: 9,
     });
     assert.equal(Buffer.from(result.data).toString(), 'echo:ping');
     assert.ok(result.packed.length > result.data.length);
@@ -46,6 +52,15 @@ test('link, request, respond, and unregistered-path refusal', async () => {
     assert.ok(requestEvent);
     assert.ok(bufEq(requestEvent.pathHash, echoHash));
     assert.ok(bufEq(requestEvent.destination, dest));
+
+    await assert.rejects(
+      () =>
+        client.request(link.linkId, echoHash, Buffer.from('ping'), {
+          timeoutMillis: 2000,
+          maximumResponseBytes: 8,
+        }),
+      (error: any) => error.code === 'PRNS_RESPONSE_TOO_LARGE'
+    );
 
     await assert.rejects(
       () =>

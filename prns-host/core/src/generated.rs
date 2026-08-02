@@ -10,6 +10,8 @@ pub const REQUEST_ID_LENGTH: usize = 16;
 pub const REQUEST_PATH_HASH_LENGTH: usize = 16;
 pub const RESOURCE_HASH_LENGTH: usize = 32;
 pub const IDENTITY_SECRET_LENGTH: usize = 64;
+pub const SAFE_INT_MIN: i64 = -9007199254740991;
+pub const SAFE_INT_MAX: i64 = 9007199254740991;
 pub const SAFE_UINT_MAX: u64 = 9007199254740991;
 pub const BALANCED_PENDING_COMMANDS: usize = 256;
 pub const BALANCED_APPLICATION_EVENTS: usize = 1024;
@@ -928,6 +930,7 @@ pub enum CommandFailureKind {
     DeviceUnavailable = 38,
     ConnectFailed = 39,
     BackendFailed = 40,
+    ResponseTooLarge = 41,
 }
 
 impl CommandFailureKind {
@@ -974,6 +977,7 @@ impl CommandFailureKind {
             Self::DeviceUnavailable => "DeviceUnavailable",
             Self::ConnectFailed => "ConnectFailed",
             Self::BackendFailed => "BackendFailed",
+            Self::ResponseTooLarge => "ResponseTooLarge",
         }
     }
 }
@@ -1023,6 +1027,7 @@ impl TryFrom<u32> for CommandFailureKind {
             38 => Ok(Self::DeviceUnavailable),
             39 => Ok(Self::ConnectFailed),
             40 => Ok(Self::BackendFailed),
+            41 => Ok(Self::ResponseTooLarge),
             _ => Err(()),
         }
     }
@@ -1811,6 +1816,7 @@ mod tests {
             (CommandFailureKind::DeviceUnavailable, 38, "DeviceUnavailable"),
             (CommandFailureKind::ConnectFailed, 39, "ConnectFailed"),
             (CommandFailureKind::BackendFailed, 40, "BackendFailed"),
+            (CommandFailureKind::ResponseTooLarge, 41, "ResponseTooLarge"),
         ]);
     }
 

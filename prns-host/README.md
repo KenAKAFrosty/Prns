@@ -83,7 +83,8 @@ lifetimes, and stale projections before rendering any language.
 Generated raw protocols and operation inventories give hand-written adapters a
 structural target. Those adapters own only language idiom, memory marshalling,
 cancellation, and scheduling. JavaScript maps exact `u64` values to `bigint` and
-uses safe-integer `number` only for the schema's bounded `safeUint` scalar.
+uses safe-integer `number` only for the schema's bounded `safeInt` and
+`safeUint` scalars.
 
 Registered native smokes then exercise real creation, ABI/schema/product mismatch gates, stream
 single-ownership, wait interruption, and command settlement across C, .NET,

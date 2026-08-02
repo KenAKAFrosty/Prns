@@ -362,6 +362,8 @@ struct NativeDestinationConfig
     announce_app_data::NativeByteView
     request_handlers::Ptr{NativeRequestHandlerConfig}
     request_handler_count::Csize_t
+    has_maximum_request_bytes::UInt8
+    maximum_request_bytes::UInt64
 end
 
 struct NativeHostOptions
@@ -910,6 +912,8 @@ function native_destination(arena::NativeArena, value::DestinationConfig)
             NativeByteView(C_NULL, 0),
             C_NULL,
             0,
+            0,
+            0,
         )
     end
     if value isa DestinationConfigSingle
@@ -925,6 +929,10 @@ function native_destination(arena::NativeArena, value::DestinationConfig)
             )
             for handler in value.request_handlers
         ]
+        if !isnothing(value.maximum_request_bytes) &&
+           value.maximum_request_bytes > SAFE_UINT_MAX
+            throw(ArgumentError("maximum_request_bytes must be an unsigned safe integer"))
+        end
         push!(arena.request_handler_arrays, request_handlers)
         return NativeDestinationConfig(
             sizeof(NativeDestinationConfig),
@@ -935,6 +943,8 @@ function native_destination(arena::NativeArena, value::DestinationConfig)
             native_optional_byte_view(arena, value.announce_app_data),
             isempty(request_handlers) ? C_NULL : pointer(request_handlers),
             length(request_handlers),
+            UInt8(!isnothing(value.maximum_request_bytes)),
+            something(value.maximum_request_bytes, UInt64(0)),
         )
     end
     throw(ArgumentError("unknown destination configuration"))

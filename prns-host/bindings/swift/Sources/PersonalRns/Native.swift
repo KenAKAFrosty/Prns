@@ -185,9 +185,23 @@ func nativeDestination(
             dedicated_identity: emptyNativeIdentity(),
             announce_app_data: PrnsByteView(data: nil, length: 0),
             request_handlers: nil,
-            request_handler_count: 0
+            request_handler_count: 0,
+            has_maximum_request_bytes: 0,
+            maximum_request_bytes: 0
         )
-    case .single(let name, let identity, let announceAppData, let requestHandlers):
+    case .single(
+        let name,
+        let identity,
+        let announceAppData,
+        let maximumRequestBytes,
+        let requestHandlers
+    ):
+        guard maximumRequestBytes.map({ $0 <= HostContract.safeUintMax }) ?? true else {
+            throw StatusFailure(
+                operation: "marshalDestination",
+                status: .invalidArgument
+            )
+        }
         let nativeIdentity = try nativeDestinationIdentity(identity, arena: arena)
         let handlers = try requestHandlers.map { handler in
             PrnsRequestHandlerConfig(
@@ -204,7 +218,9 @@ func nativeDestination(
             dedicated_identity: nativeIdentity.1,
             announce_app_data: try arena.optionalBytes(announceAppData),
             request_handlers: try arena.array(handlers).map { UnsafePointer($0) },
-            request_handler_count: handlers.count
+            request_handler_count: handlers.count,
+            has_maximum_request_bytes: maximumRequestBytes == nil ? 0 : 1,
+            maximum_request_bytes: maximumRequestBytes ?? 0
         )
     }
 }

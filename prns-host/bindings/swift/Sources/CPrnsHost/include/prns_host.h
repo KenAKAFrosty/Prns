@@ -27,6 +27,8 @@ extern "C" {
 #define PRNS_REQUEST_PATH_HASH_LENGTH UINT32_C(16)
 #define PRNS_RESOURCE_HASH_LENGTH UINT32_C(32)
 #define PRNS_IDENTITY_SECRET_LENGTH UINT32_C(64)
+#define PRNS_SAFE_INT_MIN (-INT64_C(9007199254740991))
+#define PRNS_SAFE_INT_MAX INT64_C(9007199254740991)
 #define PRNS_SAFE_UINT_MAX UINT64_C(9007199254740991)
 #define PRNS_BALANCED_PENDING_COMMANDS UINT64_C(256)
 #define PRNS_BALANCED_APPLICATION_EVENTS UINT64_C(1024)
@@ -225,6 +227,7 @@ typedef uint32_t PrnsCommandFailureKind;
 #define PRNS_COMMAND_FAILURE_KIND_DEVICE_UNAVAILABLE UINT32_C(38)
 #define PRNS_COMMAND_FAILURE_KIND_CONNECT_FAILED UINT32_C(39)
 #define PRNS_COMMAND_FAILURE_KIND_BACKEND_FAILED UINT32_C(40)
+#define PRNS_COMMAND_FAILURE_KIND_RESPONSE_TOO_LARGE UINT32_C(41)
 
 typedef uint32_t PrnsDeliveryEvidenceKind;
 #define PRNS_DELIVERY_EVIDENCE_KIND_EXPLICIT_PROOF UINT32_C(1)
@@ -582,6 +585,8 @@ typedef struct PrnsDestinationConfig {
     PrnsByteView announce_app_data;
     const PrnsRequestHandlerConfig *request_handlers;
     size_t request_handler_count;
+    uint8_t has_maximum_request_bytes;
+    uint64_t maximum_request_bytes;
 } PrnsDestinationConfig;
 
 typedef struct PrnsHostOptions {
@@ -672,7 +677,7 @@ PRNS_HOST_API PrnsStatus prns_host_establish_link(PrnsHost *host, PrnsByteView d
 PRNS_HOST_API PrnsStatus prns_host_request_path(PrnsHost *host, PrnsByteView destination, PrnsIssuedCommand **out_command);
 PRNS_HOST_API PrnsStatus prns_host_identify(PrnsHost *host, PrnsByteView link_id, PrnsByteView identity, PrnsIssuedCommand **out_command);
 PRNS_HOST_API PrnsStatus prns_host_send_link_packet(PrnsHost *host, PrnsByteView link_id, PrnsByteView payload, PrnsIssuedCommand **out_command);
-PRNS_HOST_API PrnsStatus prns_host_request(PrnsHost *host, PrnsByteView link_id, PrnsByteView path_hash, PrnsByteView payload, PrnsResponseTimeoutKind timeout_kind, uint64_t timeout_millis, PrnsIssuedCommand **out_command);
+PRNS_HOST_API PrnsStatus prns_host_request(PrnsHost *host, PrnsByteView link_id, PrnsByteView path_hash, PrnsByteView payload, PrnsResponseTimeoutKind timeout_kind, uint64_t timeout_millis, const uint64_t *maximum_response_bytes, PrnsIssuedCommand **out_command);
 PRNS_HOST_API PrnsStatus prns_host_respond(PrnsHost *host, PrnsByteView link_id, PrnsByteView request_id, uint64_t request_rtt_millis, PrnsByteView payload, PrnsIssuedCommand **out_command);
 PRNS_HOST_API PrnsStatus prns_host_send_resource(PrnsHost *host, PrnsByteView link_id, PrnsByteView payload, const PrnsByteView *packed_metadata, PrnsResourceCompressionKind compression_kind, PrnsIssuedCommand **out_command);
 PRNS_HOST_API PrnsStatus prns_host_set_link_resource_strategy(PrnsHost *host, PrnsByteView link_id, PrnsResourceStrategyKind strategy_kind, uint64_t maximum_uncompressed_bytes, uint8_t accept_compressed, PrnsIssuedCommand **out_command);

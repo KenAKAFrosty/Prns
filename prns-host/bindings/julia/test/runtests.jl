@@ -2,6 +2,18 @@ using PersonalRns
 using Sockets
 using Test
 
+oversized_destination = DestinationConfigSingle(
+    DestinationName("limits", ["request"]),
+    DestinationIdentityConfigHostIdentity(),
+    nothing,
+    PersonalRns.SAFE_UINT_MAX + UInt64(1),
+    RequestHandlerConfig[],
+)
+@test_throws ArgumentError PersonalRns.native_destination(
+    PersonalRns.NativeArena(),
+    oversized_destination,
+)
+
 host = Host(
     ephemeral_endpoint(
         required_capabilities=Capability[PersonalRns.CapabilityTcpClient],
@@ -232,6 +244,7 @@ mktempdir() do root
         ),
         DestinationIdentityConfigHostIdentity(),
         announce_data,
+        UInt64(1_048_576),
         RequestHandlerConfig[
             RequestHandlerConfig(
                 json_string(fixture, "path"),
@@ -302,6 +315,7 @@ mktempdir() do root
                 ),
                 request_payload,
                 ResponseTimeoutExact(json_integer(fixture, "timeoutMillis")),
+                UInt64(1_048_576),
             ),
         )
         request_task = @async wait(request_command)

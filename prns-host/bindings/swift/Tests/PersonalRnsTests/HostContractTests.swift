@@ -8,6 +8,20 @@ import Darwin
 #endif
 
 @Test
+func requestByteLimitsStayInTheInteroperableIntegerRange() throws {
+    let destination = DestinationConfig.single(
+        name: DestinationName(appName: "limits", aspects: ["request"]),
+        identity: .hostIdentity,
+        announceAppData: nil,
+        maximumRequestBytes: HostContract.safeUintMax + 1,
+        requestHandlers: []
+    )
+    #expect(throws: StatusFailure.self) {
+        _ = try nativeDestination(destination, arena: NativeArena())
+    }
+}
+
+@Test
 func everySharedInterfaceFixtureMarshals() throws {
     let fixture = try loadInterfaceFixture()
     let line = SerialLineConfig(
@@ -217,6 +231,7 @@ func persistentTwoNodeJourney() async throws {
         ),
         identity: .hostIdentity,
         announceAppData: try decodeHex(fixture.destination.announceAppDataHex),
+        maximumRequestBytes: 1_048_576,
         requestHandlers: [
             RequestHandlerConfig(path: fixture.request.path, policy: .allowAll)
         ]
@@ -296,7 +311,8 @@ func persistentTwoNodeJourney() async throws {
             linkId: linkId,
             pathHash: try RequestPathHash(decodeHex(fixture.request.pathHashHex)),
             payload: requestPayload,
-            timeout: .exact(millis: fixture.request.timeoutMillis)
+            timeout: .exact(millis: fixture.request.timeoutMillis),
+            maximumResponseBytes: 1_048_576
         )
     )
     defer { requestCommand.close() }

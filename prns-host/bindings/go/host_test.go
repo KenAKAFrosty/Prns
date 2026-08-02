@@ -138,6 +138,29 @@ func TestMarshalEveryInterfaceFixture(t *testing.T) {
 	}
 }
 
+func TestRequestByteLimitsRejectValuesOutsideTheSafeIntegerRange(t *testing.T) {
+	oversized := SafeUintMax + 1
+	var arena nativeArena
+	defer arena.close()
+	_, err := marshalDestination(&arena, DestinationConfigSingle{
+		Name:                DestinationName{AppName: "limits", Aspects: []string{"request"}},
+		Identity:            DestinationIdentityConfigHostIdentity{},
+		MaximumRequestBytes: &oversized,
+	})
+	var configError ConfigError
+	if !errors.As(err, &configError) || configError.Kind != ConfigInvalidLimits {
+		t.Fatalf("oversized request limit returned %v", err)
+	}
+
+	_, status, err := ffiExecute(nativeHost{}, HostCommandRequest{
+		Timeout:              ResponseTimeoutLinkDefault{},
+		MaximumResponseBytes: &oversized,
+	})
+	if status != StatusInvalidArgument || !errors.As(err, &configError) {
+		t.Fatalf("oversized response limit returned status %d and error %v", status, err)
+	}
+}
+
 func settledCommand(t *testing.T, host *Host, value HostCommand) CommandSettlement {
 	t.Helper()
 	command, err := host.Execute(value)
@@ -307,13 +330,15 @@ func TestPersistentTwoNodeJourney(t *testing.T) {
 		t.Fatal(err)
 	}
 	announceData := fixtureBytes(t, fixture.Destination.AnnounceAppDataHex)
+	maximumRequestBytes := uint64(1_048_576)
 	destination := DestinationConfigSingle{
 		Name: DestinationName{
 			AppName: fixture.Destination.AppName,
 			Aspects: fixture.Destination.Aspects,
 		},
-		Identity:        DestinationIdentityConfigHostIdentity{},
-		AnnounceAppData: &announceData,
+		Identity:            DestinationIdentityConfigHostIdentity{},
+		AnnounceAppData:     &announceData,
+		MaximumRequestBytes: &maximumRequestBytes,
 		RequestHandlers: []RequestHandlerConfig{{
 			Path:   fixture.Request.Path,
 			Policy: RequestPolicyAllowAll,
@@ -395,11 +420,13 @@ func TestPersistentTwoNodeJourney(t *testing.T) {
 	copy(pathHash[:], fixtureBytes(t, fixture.Request.PathHashHex))
 	requestPayload := fixtureBytes(t, fixture.Request.PayloadHex)
 	responsePayload := fixtureBytes(t, fixture.Request.ResponseHex)
+	maximumResponseBytes := uint64(1_048_576)
 	requestCommand, err := client.Execute(HostCommandRequest{
-		LinkId:   link.LinkId,
-		PathHash: pathHash,
-		Payload:  requestPayload,
-		Timeout:  ResponseTimeoutExact{Millis: fixture.Request.TimeoutMillis},
+		LinkId:               link.LinkId,
+		PathHash:             pathHash,
+		Payload:              requestPayload,
+		Timeout:              ResponseTimeoutExact{Millis: fixture.Request.TimeoutMillis},
+		MaximumResponseBytes: &maximumResponseBytes,
 	})
 	if err != nil {
 		t.Fatal(err)

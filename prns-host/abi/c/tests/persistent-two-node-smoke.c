@@ -411,6 +411,8 @@ static int create_host(
     destination.name.aspect_count = fixture->aspect_count;
     destination.identity_kind = PRNS_DESTINATION_IDENTITY_CONFIG_KIND_HOST_IDENTITY;
     destination.announce_app_data = byte_view(announce_data, announce_data_length);
+    destination.has_maximum_request_bytes = 1;
+    destination.maximum_request_bytes = UINT64_C(1048576);
     destination.request_handlers = &handler;
     destination.request_handler_count = 1;
     capability = server ? PRNS_CAPABILITY_TCP_SERVER : PRNS_CAPABILITY_TCP_CLIENT;
@@ -524,6 +526,7 @@ int main(int argc, char **argv) {
     size_t received_resource_length = 0;
     size_t command_value_length = 0;
     uint64_t request_rtt_millis = 0;
+    uint64_t maximum_response_bytes = 0;
     uint16_t port = 0;
     char server_address[64];
     char server_root[1024];
@@ -553,6 +556,7 @@ int main(int argc, char **argv) {
     REQUIRE(hex_bytes(fixture.announce_app_data_hex, announce_data, sizeof(announce_data), &announce_data_length), "invalid announce data");
     REQUIRE(hex_bytes(fixture.request_payload_hex, request_payload, sizeof(request_payload), &request_payload_length), "invalid request payload");
     REQUIRE(hex_bytes(fixture.response_hex, response_payload, sizeof(response_payload), &response_payload_length), "invalid response payload");
+    maximum_response_bytes = (uint64_t)response_payload_length;
     REQUIRE(hex_bytes(fixture.path_hash_hex, path_hash, sizeof(path_hash), &path_hash_length), "invalid path hash");
     REQUIRE(path_hash_length == PRNS_REQUEST_PATH_HASH_LENGTH, "path hash length mismatch");
     REQUIRE(hex_bytes(fixture.metadata_hex, metadata, sizeof(metadata), &metadata_length), "invalid metadata");
@@ -603,7 +607,7 @@ int main(int argc, char **argv) {
     REQUIRE(wait_outcome(&command, PRNS_COMMAND_OUTCOME_KIND_LINK_ESTABLISHED, link_id, sizeof(link_id), &command_value_length), "link establishment failed");
     REQUIRE(command_value_length == sizeof(link_id), "link ID length mismatch");
 
-    REQUIRE(prns_host_request(client, byte_view(link_id, sizeof(link_id)), byte_view(path_hash, path_hash_length), byte_view(request_payload, request_payload_length), PRNS_RESPONSE_TIMEOUT_KIND_EXACT, fixture.timeout_millis, &command) == PRNS_STATUS_OK, "request submission failed");
+    REQUIRE(prns_host_request(client, byte_view(link_id, sizeof(link_id)), byte_view(path_hash, path_hash_length), byte_view(request_payload, request_payload_length), PRNS_RESPONSE_TIMEOUT_KIND_EXACT, fixture.timeout_millis, &maximum_response_bytes, &command) == PRNS_STATUS_OK, "request submission failed");
     REQUIRE(next_application_event(events, PRNS_APPLICATION_EVENT_KIND_REQUEST, &event), "request event missing");
     REQUIRE(prns_event_bytes(event, PRNS_EVENT_FIELD_LINK_ID, &view) == PRNS_STATUS_OK && view.length == sizeof(request_link_id), "request link missing");
     memcpy(request_link_id, view.data, sizeof(request_link_id));
