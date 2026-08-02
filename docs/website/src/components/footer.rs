@@ -2,9 +2,8 @@ use dioxus::prelude::*;
 use dioxus_i18n::t;
 
 use crate::links::{
-    api_docs_available, source_archive_available, source_zip_download_name,
-    source_zip_sha256_download_name, API_DOCS_HREF, BUILD_COMMIT, BUILD_COMMIT_SHORT,
-    BUILD_VERSION, SOURCE_ZIP_HREF, SOURCE_ZIP_SHA256_HREF,
+    source_archive_available, source_zip_download_name, source_zip_sha256_download_name,
+    BUILD_COMMIT, BUILD_COMMIT_SHORT, BUILD_VERSION, SOURCE_ZIP_HREF, SOURCE_ZIP_SHA256_HREF,
 };
 use crate::repository_docs::REPOSITORY_BLOB_BASE;
 use crate::routes::Route;
@@ -79,13 +78,6 @@ pub fn Footer() -> Element {
                                 rel: "noopener",
                                 class: "hover:text-accent transition-colors",
                                 {t!("nav-contributing")}
-                            }
-                            if api_docs_available() {
-                                a {
-                                    href: API_DOCS_HREF,
-                                    class: "hover:text-accent transition-colors",
-                                    {t!("nav-api")}
-                                }
                             }
                             if source_archive_available {
                                 a {
