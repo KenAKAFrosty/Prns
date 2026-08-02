@@ -1,5 +1,10 @@
 # PersonalRns for Swift
 
+> **Status: solid core, young surface.**
+> This binding runs the same Rust engine as every Prns node and passes the same cross-language conformance suite on every release.
+> The young part is the Swift-facing API. Its shape is a working first draft: a starting point, not the final word.
+> If you are an experienced Swift developer and something here does not feel native, that is exactly the feedback we want. Issues and PRs on API design are among the most valuable contributions right now.
+
 The Swift package is a thin adapter over the stable Personal RNS C capsule. The schema generates Swift enums with associated values for every command, outcome, application event, and diagnostic event. Native event lanes surface as single-iterator `AsyncSequence` values, resource bodies are asynchronous byte sequences, and native readiness resumes Swift continuations without occupying a dispatch worker. Task cancellation interrupts readiness directly.
 
 Install the matching native capsule so `pkg-config personal-rns` resolves it, then add the package:

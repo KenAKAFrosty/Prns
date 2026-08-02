@@ -1,5 +1,10 @@
 # Prns C host ABI
 
+> **Status: solid core, young surface.**
+> The engine beneath this ABI is the same Rust core every Prns node runs, and each release passes the same cross-language conformance suite.
+> The young part is what it feels like to consume this contract directly from C or C++. That surface is a working first draft: a starting point, not the final word.
+> If you are an experienced C or C++ developer and something here does not feel right, that is exactly the feedback we want. Issues and PRs on API design are among the most valuable contributions right now.
+
 This crate is the stable binary capsule beneath native language bindings. Rust backends publish semantic events through `HostPublisher`; foreign runtimes see only opaque host, event-stream, event, and resource-stream handles from `include/prns_host.h`.
 
 The header is generated from `prns-host/schema/host-contract-v1.json`. Run `./tools/prns run repo.host-contract.generate` after an intentional schema change and `./tools/prns run repo.host-contract.check` in review or release automation.

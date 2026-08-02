@@ -1,5 +1,10 @@
 # Personal RNS for .NET
 
+> **Status: solid core, young surface.**
+> This binding runs the same Rust engine as every Prns node and passes the same cross-language conformance suite on every release.
+> The young part is the .NET-facing API. Its shape is a working first draft: a starting point, not the final word.
+> If you are an experienced .NET developer and something here does not feel native, that is exactly the feedback we want. Issues and PRs on API design are among the most valuable contributions right now.
+
 The .NET adapter is a thin, idiomatic presentation of the common host contract:
 
 - `SafeHandle` owns every native handle.

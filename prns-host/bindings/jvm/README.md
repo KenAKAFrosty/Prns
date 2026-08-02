@@ -1,5 +1,10 @@
 # Personal RNS for Kotlin, Java, and Android
 
+> **Status: solid core, young surface.**
+> This binding runs the same Rust engine as every Prns node and passes the same cross-language conformance suite on every release.
+> The young part is the JVM-facing API. Its shape is a working first draft: a starting point, not the final word.
+> If you are an experienced Kotlin or Java developer and something here does not feel native, that is exactly the feedback we want. Issues and PRs on API design are among the most valuable contributions right now.
+
 The JVM SDK is a thin, typed adapter over the versioned Personal RNS C host
 contract. Kotlin callers receive sealed command outcomes and cold
 single-consumer `Flow` event streams. Java callers use the same classes and
