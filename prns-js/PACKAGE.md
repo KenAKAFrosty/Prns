@@ -1,6 +1,6 @@
-# Personal RNS
+# Personal RNS (Prns)
 
-Personal RNS is a correct, robust, fast Reticulum implementation with one
+Prns is a safe, robust, fast Reticulum implementation with one
 language-neutral host contract and idiomatic SDKs for Rust, TypeScript,
 JavaScript, Python, .NET, Go, Swift, Kotlin, Java, Julia, C, and C++.
 
@@ -14,8 +14,8 @@ The package version and contract ABI are checked before host creation. Commands
 settle as typed success or failure values, event lanes have one explicit owner,
 and resource bodies retain their own bounded stream lifetime.
 
-- Documentation: [reticulum.rs](https://reticulum.rs)
-- Project: [prns.dev](https://prns.dev)
+- Documentation: [prns.dev](https://prns.dev)
+- Documentation mirror: [reticulum.rs](https://reticulum.rs)
 - Source and examples: [github.com/KenAKAFrosty/Prns](https://github.com/KenAKAFrosty/Prns)
 - Issues: [GitHub Issues](https://github.com/KenAKAFrosty/Prns/issues)
 - Security reports: [Security policy](https://github.com/KenAKAFrosty/Prns/security/policy)
