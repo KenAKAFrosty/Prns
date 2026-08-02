@@ -200,12 +200,18 @@ impl<S: StorageLayout> EngineState<S> {
         interfaces: AttachedInterfaces<'_>,
     ) -> IngestPacketOutcome<'p> {
         let source_descriptor = interfaces.descriptor_for(source_interface);
+        let explicitly_forwards_recursively = source_descriptor
+            .is_some_and(|descriptor| descriptor.common.forwarding.recursive_path_requests);
         let forwards_recursively = self.network_transport_enabled()
             && source_descriptor.is_some_and(|descriptor| {
                 descriptor.mode.recursively_forwards_unknown_paths()
-                    || descriptor.common.forwarding.recursive_path_requests
+                    || explicitly_forwards_recursively
             });
-        if forwards_recursively
+        let forwards_across_boundary = self.network_transport_enabled()
+            && !explicitly_forwards_recursively
+            && source_descriptor
+                .is_some_and(|descriptor| descriptor.mode == InterfaceMode::Boundary);
+        if (forwards_recursively || forwards_across_boundary)
             && self
                 .interface_path_request_limits
                 .record_and_should_limit_with_policy(
@@ -222,8 +228,18 @@ impl<S: StorageLayout> EngineState<S> {
         let has_local_client = interfaces
             .iter()
             .any(|descriptor| descriptor.id.kind() == Some(InterfaceKind::LocalClient));
-        let outcome = if from_local_client || forwards_recursively {
+        let outcome = if from_local_client {
+            IngestPacketOutcome::ForwardLocalClientPathRequest {
+                destination: request.destination,
+                id: request.id,
+            }
+        } else if forwards_recursively {
             IngestPacketOutcome::ForwardRecursivePathRequest {
+                destination: request.destination,
+                id: request.id,
+            }
+        } else if forwards_across_boundary {
+            IngestPacketOutcome::ForwardBoundaryPathRequest {
                 destination: request.destination,
                 id: request.id,
             }
@@ -253,7 +269,7 @@ mod tests {
     use super::*;
     use crate::engine::test_support::*;
     use crate::engine::{Directive, EngineReaction, IngestIo, Journaled};
-    use crate::interfaces::{InboundPacket, InterfaceDescriptor};
+    use crate::interfaces::{EgressCapability, InboundPacket, InterfaceDescriptor};
     use crate::routing::ingress::testkit::iface;
     use crate::routing::ingress::AnnounceIngest;
     use crate::routing::path_requests::{write_path_request_wire_packet, PATH_REQUEST_DESTINATION};
@@ -536,6 +552,103 @@ mod tests {
     }
 
     #[test]
+    fn a_boundary_path_request_recurses_only_over_boundary_and_gateway_interfaces() {
+        let source = iface(0xA1);
+        let boundary = iface(0xB2);
+        let gateway = iface(0xC3);
+        let full = iface(0xD4);
+        let internal = iface(0xE5);
+        let transmit_disabled = iface(0xF6);
+        let mut disabled_descriptor =
+            discovering_descriptor(transmit_disabled, InterfaceMode::Gateway);
+        disabled_descriptor.capabilities.egress = EgressCapability::Disabled;
+        let interfaces = [
+            discovering_descriptor(source, InterfaceMode::Boundary),
+            discovering_descriptor(boundary, InterfaceMode::Boundary),
+            discovering_descriptor(gateway, InterfaceMode::Gateway),
+            discovering_descriptor(full, InterfaceMode::Full),
+            discovering_descriptor(internal, InterfaceMode::Internal),
+            disabled_descriptor,
+        ];
+        let mut relay = transporting_node();
+        let mut wire = stranger_path_request([0x55; 16]);
+        let mut targets = std::vec::Vec::new();
+
+        relay.ingest_packet_into(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: source,
+                bytes: &mut wire,
+            },
+            IngestIo {
+                interfaces: AttachedInterfaces::new(&interfaces),
+                now: InstantMillis(1_000),
+                fill_entropy: &mut |_| {},
+                should_prove: &mut |_| false,
+                should_accept_resource: &mut |_| false,
+                sink: &mut |reaction| {
+                    if let EngineReaction::Directive(Directive::SendIfOnline {
+                        target,
+                        on_send,
+                        ..
+                    }) = reaction
+                    {
+                        on_send();
+                        targets.push(target);
+                    }
+                },
+            },
+        );
+
+        assert_eq!(targets, std::vec![boundary, gateway]);
+    }
+
+    #[test]
+    fn explicit_recursive_path_requests_keep_boundary_egress_unrestricted() {
+        let source = iface(0xA1);
+        let full = iface(0xB2);
+        let gateway = iface(0xC3);
+        let mut source_descriptor = discovering_descriptor(source, InterfaceMode::Boundary);
+        source_descriptor.common.forwarding.recursive_path_requests = true;
+        let interfaces = [
+            source_descriptor,
+            discovering_descriptor(full, InterfaceMode::Full),
+            discovering_descriptor(gateway, InterfaceMode::Gateway),
+        ];
+        let mut relay = transporting_node();
+        let mut wire = stranger_path_request([0x55; 16]);
+        let mut targets = std::vec::Vec::new();
+
+        relay.ingest_packet_into(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: source,
+                bytes: &mut wire,
+            },
+            IngestIo {
+                interfaces: AttachedInterfaces::new(&interfaces),
+                now: InstantMillis(1_000),
+                fill_entropy: &mut |_| {},
+                should_prove: &mut |_| false,
+                should_accept_resource: &mut |_| false,
+                sink: &mut |reaction| {
+                    if let EngineReaction::Directive(Directive::SendIfOnline {
+                        target,
+                        on_send,
+                        ..
+                    }) = reaction
+                    {
+                        on_send();
+                        targets.push(target);
+                    }
+                },
+            },
+        );
+
+        assert_eq!(targets, std::vec![full, gateway]);
+    }
+
+    #[test]
     fn a_flooded_discover_interface_stops_forwarding_path_requests() {
         let source = iface(0xA1);
         let mut relay = transporting_node();
@@ -664,7 +777,7 @@ mod tests {
                 &mut |_| {},
                 None,
             ),
-            IngestPacketOutcome::ForwardRecursivePathRequest {
+            IngestPacketOutcome::ForwardLocalClientPathRequest {
                 destination: stranger,
                 id: [0x55; 16],
             },
@@ -729,9 +842,9 @@ mod tests {
     fn path_request_egress_control_stops_the_seventh_request_in_a_burst() {
         let source = iface(0xA1);
         let target = iface(0xB2);
-        let mut source_descriptor = discovering_descriptor(source, InterfaceMode::Gateway);
+        let mut source_descriptor = discovering_descriptor(source, InterfaceMode::Boundary);
         source_descriptor.common.ingress_control.enabled = false;
-        let mut target_descriptor = routable_descriptor(target);
+        let mut target_descriptor = discovering_descriptor(target, InterfaceMode::Gateway);
         target_descriptor.common.path_request_egress =
             crate::interfaces::PathRequestEgressControl {
                 enabled: true,
@@ -763,14 +876,16 @@ mod tests {
                     should_prove: &mut |_| false,
                     should_accept_resource: &mut |_| false,
                     sink: &mut |reaction| {
-                        if matches!(
-                            reaction,
-                            EngineReaction::Directive(Directive::Send {
-                                target: emitted_target,
-                                ..
-                            }) if emitted_target == target
-                        ) {
-                            sent += 1;
+                        if let EngineReaction::Directive(Directive::SendIfOnline {
+                            target: emitted_target,
+                            on_send,
+                            ..
+                        }) = reaction
+                        {
+                            if emitted_target == target {
+                                on_send();
+                                sent += 1;
+                            }
                         }
                     },
                 },
@@ -1531,7 +1646,7 @@ mod tests {
                 &mut |_| {},
                 None,
             ),
-            IngestPacketOutcome::ForwardRecursivePathRequest {
+            IngestPacketOutcome::ForwardLocalClientPathRequest {
                 destination: stranger,
                 id: [0x55; 16],
             },

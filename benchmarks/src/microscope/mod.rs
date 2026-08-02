@@ -66,6 +66,10 @@ impl FeedCapture {
             | EngineReaction::Directive(Directive::SendAnnounce { bytes, .. }) => {
                 self.frames.push(bytes.to_vec());
             }
+            EngineReaction::Directive(Directive::SendIfOnline { bytes, on_send, .. }) => {
+                on_send();
+                self.frames.push(bytes.to_vec());
+            }
             EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
                 scratch.resize(MAX_WIRE_FRAME_LEN, 0);
                 if let Some(n) = fill(scratch.as_mut_slice()) {

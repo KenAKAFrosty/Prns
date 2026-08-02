@@ -133,6 +133,14 @@ pub enum IngestPacketOutcome<'p> {
         destination: DestinationHash,
         id: PathRequestIdBytes,
     },
+    ForwardBoundaryPathRequest {
+        destination: DestinationHash,
+        id: PathRequestIdBytes,
+    },
+    ForwardLocalClientPathRequest {
+        destination: DestinationHash,
+        id: PathRequestIdBytes,
+    },
     RelayPathRequestToLocalClients {
         destination: DestinationHash,
         id: PathRequestIdBytes,

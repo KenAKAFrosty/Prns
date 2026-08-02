@@ -1292,6 +1292,19 @@ fn directive_to_frame(directive: Directive<'_>) -> OutboundFrame {
             announce: false,
             hops: None,
         },
+        Directive::SendIfOnline {
+            target,
+            bytes,
+            on_send,
+        } => {
+            on_send();
+            OutboundFrame {
+                target: OutboundTarget::Interface(target),
+                bytes: bytes.to_vec(),
+                announce: false,
+                hops: None,
+            }
+        }
         Directive::SendAnnounce {
             target,
             bytes,

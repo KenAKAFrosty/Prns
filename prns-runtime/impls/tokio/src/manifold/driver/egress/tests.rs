@@ -368,3 +368,44 @@ fn an_unavailable_interface_never_enters_the_pacer_or_lane() {
         );
     }
 }
+
+#[test]
+fn online_only_directives_skip_disconnected_interfaces() {
+    let id = InterfaceId::new([0x6b; 8]);
+    let status = TokioInterfaceStatus::new(id, ConnectionState::Disconnected);
+    let (tx, mut rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
+    let mut egress = Egress::new(std::vec![]);
+    egress.add_lane(id, id, tx, Some(ConnectionView::of(status.clone())));
+    let mut pacers = std::vec::Vec::new();
+    let mut scratch = WireScratch::new(MAX_WIRE_FRAME_LEN);
+    let mut sent = 0;
+
+    {
+        let mut on_send = || sent += 1;
+        let mut directive_egress = TokioDirectiveEgress {
+            egress: &mut egress,
+            ifacs: &[],
+            pacers: &mut pacers,
+            scratch: &mut scratch,
+            now: InstantMillis(1_000),
+        };
+        directive_egress.send_if_online(id, b"disconnected", &mut on_send);
+    }
+    assert!(rx.try_peek().is_none());
+    assert_eq!(sent, 0);
+
+    status.set_connection(ConnectionState::Connected);
+    {
+        let mut on_send = || sent += 1;
+        let mut directive_egress = TokioDirectiveEgress {
+            egress: &mut egress,
+            ifacs: &[],
+            pacers: &mut pacers,
+            scratch: &mut scratch,
+            now: InstantMillis(1_100),
+        };
+        directive_egress.send_if_online(id, b"connected", &mut on_send);
+    }
+    assert_eq!(rx.try_peek().unwrap().frame(), b"connected");
+    assert_eq!(sent, 1);
+}

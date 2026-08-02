@@ -231,6 +231,11 @@ pub enum Directive<'a> {
         target: InterfaceId,
         bytes: &'a [u8],
     },
+    SendIfOnline {
+        target: InterfaceId,
+        bytes: &'a [u8],
+        on_send: &'a mut dyn FnMut(),
+    },
 
     SendAnnounce {
         target: InterfaceId,

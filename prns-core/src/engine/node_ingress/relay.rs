@@ -11,6 +11,8 @@ use crate::wire::{DestinationHash, BROADCAST_MTU};
 #[derive(Clone, Copy)]
 pub(super) enum RelayAudience {
     Transports,
+    OnlineTransports,
+    BoundaryAndGateway,
     LocalClients,
 }
 
@@ -41,13 +43,18 @@ impl<S: StorageLayout> EngineState<S> {
         };
         for descriptor in interfaces {
             let in_audience = match audience {
-                RelayAudience::Transports => true,
+                RelayAudience::Transports | RelayAudience::OnlineTransports => true,
+                RelayAudience::BoundaryAndGateway => matches!(
+                    descriptor.mode,
+                    crate::interfaces::InterfaceMode::Boundary
+                        | crate::interfaces::InterfaceMode::Gateway
+                ),
                 RelayAudience::LocalClients => {
                     descriptor.id.kind() == Some(InterfaceKind::LocalClient)
                 }
             };
             if in_audience && descriptor.id != source && descriptor.capabilities.allows_transmit() {
-                if matches!(audience, RelayAudience::Transports)
+                if !matches!(audience, RelayAudience::LocalClients)
                     && self.egress_path_request_limits.should_egress_limit(
                         descriptor.id,
                         now,
@@ -56,14 +63,33 @@ impl<S: StorageLayout> EngineState<S> {
                 {
                     continue;
                 }
-                if matches!(audience, RelayAudience::Transports) {
-                    self.egress_path_request_limits
-                        .record_egress(descriptor.id, now);
+                match audience {
+                    RelayAudience::OnlineTransports | RelayAudience::BoundaryAndGateway => {
+                        let mut record_egress = || {
+                            self.egress_path_request_limits
+                                .record_egress(descriptor.id, now);
+                        };
+                        sink(EngineReaction::Directive(Directive::SendIfOnline {
+                            target: descriptor.id,
+                            bytes: &buf[..wire_bytes],
+                            on_send: &mut record_egress,
+                        }));
+                    }
+                    RelayAudience::Transports => {
+                        self.egress_path_request_limits
+                            .record_egress(descriptor.id, now);
+                        sink(EngineReaction::Directive(Directive::Send {
+                            target: descriptor.id,
+                            bytes: &buf[..wire_bytes],
+                        }));
+                    }
+                    RelayAudience::LocalClients => {
+                        sink(EngineReaction::Directive(Directive::Send {
+                            target: descriptor.id,
+                            bytes: &buf[..wire_bytes],
+                        }))
+                    }
                 }
-                sink(EngineReaction::Directive(Directive::Send {
-                    target: descriptor.id,
-                    bytes: &buf[..wire_bytes],
-                }));
             }
         }
     }

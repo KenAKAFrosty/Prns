@@ -280,6 +280,34 @@ impl<S: StorageLayout> EngineState<S> {
                     },
                     source,
                     interfaces,
+                    RelayAudience::OnlineTransports,
+                    now,
+                    sink,
+                );
+                wake_schedule_changes.path_request_timeouts = self.path_request_timeouts_wake();
+            }
+            IngestPacketOutcome::ForwardBoundaryPathRequest { destination, id } => {
+                self.relay_path_request(
+                    RelayPathRequest {
+                        destination,
+                        id: &id,
+                    },
+                    source,
+                    interfaces,
+                    RelayAudience::BoundaryAndGateway,
+                    now,
+                    sink,
+                );
+                wake_schedule_changes.path_request_timeouts = self.path_request_timeouts_wake();
+            }
+            IngestPacketOutcome::ForwardLocalClientPathRequest { destination, id } => {
+                self.relay_path_request(
+                    RelayPathRequest {
+                        destination,
+                        id: &id,
+                    },
+                    source,
+                    interfaces,
                     RelayAudience::Transports,
                     now,
                     sink,
