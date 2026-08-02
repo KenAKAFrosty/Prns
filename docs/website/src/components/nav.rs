@@ -28,6 +28,11 @@ pub fn TopNav() -> Element {
                     }
                 }
                 nav { class: "hidden items-center gap-6 text-sm text-soft sm:flex",
+                    Link {
+                        to: Route::BenchmarksPage {},
+                        class: "hover:text-accent transition-colors",
+                        {t!("nav-benchmarks")}
+                    }
                     a {
                         href: format!("{REPOSITORY_BLOB_BASE}/CONTRIBUTING.md"),
                         target: "_blank",
