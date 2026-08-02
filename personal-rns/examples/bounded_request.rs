@@ -143,6 +143,7 @@ fn responder_destination() -> PreConfiguredDestination<'static> {
         request_endpoints: ServeMyRequestEndpoints::Yes,
 
         resource_strategy: ResourceStrategy::AcceptNone,
+        maximum_request_bytes: Default::default(),
         app_name: "prns-example",
         aspects: &["example", "bounded-request"],
         identity: try_generate_identity_secret().expect("identity generation failed"),
@@ -158,6 +159,7 @@ fn requester_destination() -> PreConfiguredDestination<'static> {
         request_endpoints: ServeMyRequestEndpoints::No,
 
         resource_strategy: ResourceStrategy::AcceptNone,
+        maximum_request_bytes: Default::default(),
         app_name: "prns-example",
         aspects: &["example", "bounded-request"],
         identity: try_generate_identity_secret().expect("identity generation failed"),

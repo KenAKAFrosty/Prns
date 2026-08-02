@@ -132,7 +132,7 @@ impl<S: StorageLayout> EngineState<S> {
                             delivered,
                         }
                     }
-                    ReceiptKind::SendRequest => ProofIngest::Ignored,
+                    ReceiptKind::SendRequest { .. } => ProofIngest::Ignored,
                 }
             }
             None => ProofIngest::Ignored,
@@ -192,7 +192,7 @@ impl<S: StorageLayout> EngineState<S> {
                     delivered,
                 }
             }
-            ReceiptKind::SendRequest => return None,
+            ReceiptKind::SendRequest { .. } => return None,
         };
         Some(DeferredProof {
             ingest,

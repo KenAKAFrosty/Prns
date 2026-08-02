@@ -52,6 +52,7 @@ impl<S: StorageLayout> EngineState<S> {
         let Some(LinkPhase::Active {
             key,
             mtu,
+            role,
             resource_strategy,
             ..
         }) = self.links.phase_for(&link_id)
@@ -60,6 +61,12 @@ impl<S: StorageLayout> EngineState<S> {
         };
         let resource_strategy = *resource_strategy;
         let mtu = *mtu;
+        let responder_destination = match role {
+            crate::routing::links::table::LinkRole::Responder { destination, .. } => {
+                Some(*destination)
+            }
+            crate::routing::links::table::LinkRole::Initiator { .. } => None,
+        };
         let packet_hash = PacketHash::of_fields(
             DestinationType::Link,
             PacketType::Data,
@@ -96,13 +103,39 @@ impl<S: StorageLayout> EngineState<S> {
             (true, false, Some(id)) => ResourceCorrelation::Request {
                 id,
                 response_timeout: Default::default(),
+                maximum_response_bytes: Default::default(),
             },
             (false, true, Some(id)) => ResourceCorrelation::Response(id),
             _ => ResourceCorrelation::Unsolicited,
         };
+        if let ResourceCorrelation::Request { .. } = correlation {
+            let maximum_request_bytes = responder_destination
+                .and_then(|destination| self.upstream_app_destinations.lookup_single(&destination))
+                .map(|registered| registered.maximum_request_bytes)
+                .unwrap_or_default();
+            if !maximum_request_bytes.allows(advertisement.data_bytes) {
+                return IngestPacketOutcome::ResourceTooLarge {
+                    link_id,
+                    hash: advertisement.hash,
+                    settled_request: None,
+                };
+            }
+        }
         if let ResourceCorrelation::Response(id) = correlation {
-            if !self.receipts.has_pending_request(id) {
+            let Some(maximum_response_bytes) = self.receipts.pending_request_response_limit(id)
+            else {
                 return IngestPacketOutcome::Ignored(IgnoreReason::UnmatchedResponse);
+            };
+            if !maximum_response_bytes.allows(advertisement.data_bytes) {
+                let settled_request = self
+                    .receipts
+                    .settle_by_request_id(id)
+                    .map(|proven| proven.command_id);
+                return IngestPacketOutcome::ResourceTooLarge {
+                    link_id,
+                    hash: advertisement.hash,
+                    settled_request,
+                };
             }
         }
         let bypasses_strategy = match correlation {
@@ -367,7 +400,9 @@ mod tests {
         receiver.receipts.track(OutstandingReceipt {
             packet_hash,
             command_id: CommandId(42),
-            kind: ReceiptKind::SendRequest,
+            kind: ReceiptKind::SendRequest {
+                maximum_response_bytes: crate::units::ByteLimit::Unlimited,
+            },
             peer_signing_key: IdentitySigningPublicKey::new(Ed25519PublicKey([0x99; 32])),
             sent_at: InstantMillis(1_800),
             timeout_at: InstantMillis(20_000),
@@ -430,6 +465,62 @@ mod tests {
     }
 
     #[test]
+    fn an_oversized_response_resource_is_rejected_before_allocation() {
+        use crate::engine::test_support::filled_frame;
+        use crate::routing::links::resources::ResourceCorrelation;
+        use crate::units::ByteLimit;
+
+        let data = four_part_payload();
+        let mut receiver = engine_with_active_link();
+        let request_id = track_pending_request_with_limit(
+            &mut receiver,
+            CommandId(42),
+            1_800,
+            20_000,
+            ByteLimit::Maximum(data.len() as u64 - 1),
+        );
+        let mut sender = engine_with_active_link();
+        let mut advertisement = None;
+        sender.ingest_send_resource_into(
+            &ResourceSend {
+                id: CommandId(7),
+                link_id: link_id(),
+                body: ResourceBody {
+                    data: &data,
+                    compressed_candidate: None,
+                    metadata: ResourceMetadata::None,
+                },
+                correlation: ResourceCorrelation::Response(request_id),
+            },
+            InstantMillis(1_500),
+            &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                    advertisement = filled_frame(fill);
+                }
+            },
+        );
+
+        let capture = feed(
+            &mut receiver,
+            &advertisement.expect("the responder advertises"),
+            2_000,
+        );
+        assert_eq!(capture.frames.len(), 1);
+        let (header, _) = WirePacketHeader::parse(&capture.frames[0].1).unwrap();
+        assert_eq!(header.context, WireContext::ResourceReceiverCancel);
+        assert_eq!(
+            capture.settlements,
+            std::vec![(
+                CommandId(42),
+                Settlement::SendRequest(Err(crate::engine::SendRequestFailure::ResponseTooLarge)),
+            )],
+        );
+        assert!(receiver.incoming_resources.is_empty());
+        assert!(!receiver.receipts.has_pending_request(request_id));
+    }
+
+    #[test]
     fn a_request_resource_dispatches_a_request_despite_the_default_strategy() {
         use crate::engine::test_support::filled_frame;
         use crate::routing::links::request::{write_request_plaintext, RequestId};
@@ -459,6 +550,7 @@ mod tests {
                 correlation: ResourceCorrelation::Request {
                     id: request_id,
                     response_timeout: Default::default(),
+                    maximum_response_bytes: Default::default(),
                 },
             },
             InstantMillis(1_500),
@@ -507,6 +599,107 @@ mod tests {
     }
 
     #[test]
+    fn an_oversized_request_resource_is_rejected_before_allocation() {
+        use crate::crypto::ratchets::RatchetPolicy;
+        use crate::engine::test_support::filled_frame;
+        use crate::identity::IdentityHash;
+        use crate::routing::links::request::{write_request_plaintext, RequestId};
+        use crate::routing::links::resources::ResourceCorrelation;
+        use crate::routing::links::table::RespondingLink;
+        use crate::routing::request_handlers::RequestPathHash;
+        use crate::routing::upstream_app_destinations::{LinkRequestPolicy, ProofStrategy};
+        use crate::units::{ByteLimit, RttMillis};
+
+        let path_hash = RequestPathHash::new([0x44; 16]);
+        let request_data = b"a request too fat for one packet, ".repeat(40);
+        let mut packed = std::vec![0u8; request_data.len() + 64];
+        let plain_len =
+            write_request_plaintext(InstantMillis(1_400), &path_hash, &request_data, &mut packed)
+                .unwrap();
+        let packed_request = &packed[..plain_len];
+        let request_id = RequestId::of_request_data(packed_request);
+
+        let mut sender = engine_with_active_link();
+        let mut advertisement = None;
+        sender.ingest_send_resource_into(
+            &ResourceSend {
+                id: CommandId(7),
+                link_id: link_id(),
+                body: ResourceBody {
+                    data: packed_request,
+                    compressed_candidate: None,
+                    metadata: ResourceMetadata::None,
+                },
+                correlation: ResourceCorrelation::Request {
+                    id: request_id,
+                    response_timeout: Default::default(),
+                    maximum_response_bytes: Default::default(),
+                },
+            },
+            InstantMillis(1_500),
+            &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                    advertisement = filled_frame(fill);
+                }
+            },
+        );
+
+        let mut receiver = EngineState::<TestStorageLayout>::default();
+        let identity = IdentityHash::new([0x77; 16]);
+        let destination = receiver
+            .upstream_app_destinations
+            .register_single(
+                &identity,
+                "limits",
+                &["request"],
+                b"",
+                ProofStrategy::ProveNone,
+                LinkRequestPolicy::AcceptAll,
+                RatchetPolicy::NoRatchets,
+            )
+            .unwrap();
+        assert!(receiver.set_maximum_request_bytes(
+            &destination,
+            ByteLimit::Maximum(packed_request.len() as u64 - 1),
+        ));
+        receiver
+            .links
+            .track_responding(RespondingLink {
+                link_id: link_id(),
+                key: link_key(),
+                requested_at: InstantMillis(500),
+                timeout_at: InstantMillis(5_000),
+                mtu: BROADCAST_MTU,
+                initiator_signing: crate::crypto::Ed25519PublicKey([0x99; 32]),
+                destination,
+                identity,
+                proof_strategy: ProofStrategy::ProveNone,
+            })
+            .unwrap();
+        receiver
+            .links
+            .activate_responding(
+                &link_id(),
+                RttMillis::new(250),
+                lane(),
+                InstantMillis(1_000),
+            )
+            .unwrap();
+
+        let capture = feed(
+            &mut receiver,
+            &advertisement.expect("the requester advertises"),
+            2_000,
+        );
+        assert_eq!(capture.frames.len(), 1);
+        let (header, _) = WirePacketHeader::parse(&capture.frames[0].1).unwrap();
+        assert_eq!(header.context, WireContext::ResourceReceiverCancel);
+        assert!(capture.settlements.is_empty());
+        assert!(receiver.incoming_resources.is_empty());
+    }
+
+    #[test]
     fn a_big_request_rides_a_resource_that_books_its_pending_row() {
         use crate::engine::test_support::filled_frame;
         use crate::routing::links::request::{write_request_plaintext, RequestId};
@@ -544,6 +737,7 @@ mod tests {
                 correlation: ResourceCorrelation::Request {
                     id: request_id,
                     response_timeout: Default::default(),
+                    maximum_response_bytes: Default::default(),
                 },
             },
             InstantMillis(1_500),

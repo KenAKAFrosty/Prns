@@ -6,6 +6,31 @@ pub struct InstantMillis(pub u64);
 #[repr(transparent)]
 pub struct ByteCount(pub u64);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ByteLimit {
+    #[default]
+    Unlimited,
+    Maximum(u64),
+}
+
+impl ByteLimit {
+    pub const fn allows(self, byte_count: u64) -> bool {
+        match self {
+            Self::Unlimited => true,
+            Self::Maximum(maximum) => byte_count <= maximum,
+        }
+    }
+}
+
+impl From<Option<u64>> for ByteLimit {
+    fn from(maximum: Option<u64>) -> Self {
+        match maximum {
+            Some(maximum) => Self::Maximum(maximum),
+            None => Self::Unlimited,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 #[repr(transparent)]
 pub struct BitsPerSecond(pub u32);

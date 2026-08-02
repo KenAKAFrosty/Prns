@@ -245,6 +245,7 @@ pub enum IgnoreReasonKind {
     StrategyDeclined,
     UnmatchedResponse,
     IfacRefused,
+    RequestTooLarge,
 }
 
 impl IgnoreReasonKind {
@@ -311,6 +312,7 @@ impl From<IgnoreReason> for IgnoreReasonKind {
             IgnoreReason::StrategyDeclined => Self::StrategyDeclined,
             IgnoreReason::UnmatchedResponse => Self::UnmatchedResponse,
             IgnoreReason::IfacRefused => Self::IfacRefused,
+            IgnoreReason::RequestTooLarge => Self::RequestTooLarge,
         }
     }
 }
@@ -595,6 +597,7 @@ mod tests {
             IgnoreReason::StrategyDeclined,
             IgnoreReason::UnmatchedResponse,
             IgnoreReason::IfacRefused,
+            IgnoreReason::RequestTooLarge,
         ];
         let mut counts = IgnoreReasonCounts::default();
         for reason in reasons {

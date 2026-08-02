@@ -90,6 +90,7 @@ mod tests {
                     proof_strategy: ProofStrategy::ProveNone,
                     link_request_policy: LinkRequestPolicy::AcceptAll,
                     resource_strategy: ResourceStrategy::AcceptNone,
+                    maximum_request_bytes: crate::units::ByteLimit::Unlimited,
                     ratchet_policy: RatchetPolicy::NoRatchets,
                 },
                 DottedNameHash::new([n; DOTTED_NAME_HASH_BYTE_LEN]),

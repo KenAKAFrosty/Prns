@@ -18,6 +18,7 @@ use crate::routing::links::resources::send::STATIC_RESPONSE_SEGMENT_BYTES;
 use crate::routing::links::resources::MAX_EFFICIENT_SIZE;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
+use crate::units::ByteLimit;
 use crate::units::RttMillis;
 
 use super::super::request_endpoints::RespondToken;
@@ -29,6 +30,12 @@ use super::PrnsNodeHandle;
 use prns_core::rncp::write_file_metadata;
 
 const RESPONSE_PACKET_CEILING: usize = LINK_MDU - RESPONSE_WIRE_OVERHEAD;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RequestOptions {
+    pub response_timeout: RequestResponseTimeout,
+    pub maximum_response_bytes: ByteLimit,
+}
 
 #[derive(Debug)]
 pub enum ResponseSendError {
@@ -56,7 +63,6 @@ impl std::fmt::Display for ResponseSendError {
 }
 
 impl PrnsNodeHandle {
-    /// Make a request of `path_hash` with `data` of any length and await the response. The runtime picks the rung (a single REQUEST packet within the link MDU, or a resource that rides past it), so a consumer never meets a size limit; the answer carries the measured round trip.
     #[cfg_attr(
         feature = "tracing",
         tracing::instrument(
@@ -89,6 +95,25 @@ impl PrnsNodeHandle {
         data: &[u8],
         response_timeout: RequestResponseTimeout,
     ) -> Result<(std::vec::Vec<u8>, RttMillis), SendError<SendRequestFailure>> {
+        self.request_with_options(
+            link_id,
+            path_hash,
+            data,
+            RequestOptions {
+                response_timeout,
+                maximum_response_bytes: ByteLimit::Unlimited,
+            },
+        )
+        .await
+    }
+
+    pub async fn request_with_options(
+        &self,
+        link_id: LinkId,
+        path_hash: RequestPathHash,
+        data: &[u8],
+        options: RequestOptions,
+    ) -> Result<(std::vec::Vec<u8>, RttMillis), SendError<SendRequestFailure>> {
         let id = self.mint();
         let (completion, settled) = oneshot::channel();
         self.commands
@@ -97,7 +122,8 @@ impl PrnsNodeHandle {
                 link_id,
                 path_hash,
                 data: data.to_vec().into(),
-                response_timeout,
+                response_timeout: options.response_timeout,
+                maximum_response_bytes: options.maximum_response_bytes,
                 completion,
             }))
             .map_err(|_| SendError::NodeStopped)?;

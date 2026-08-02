@@ -7,6 +7,7 @@ use crate::routing::announce::{
 };
 use crate::routing::links::resources::ResourceStrategy;
 use crate::storage::TablePushError;
+use crate::units::ByteLimit;
 use crate::wire::{DestinationHash, DestinationType};
 
 /// RNS 1.4.0 `Destination.PROVE_NONE` / `PROVE_ALL` / `PROVE_APP`
@@ -34,6 +35,7 @@ pub enum UpstreamAppDestinationKind {
         link_request_policy: LinkRequestPolicy,
         /// How links answered for this destination greet inbound resource advertisements the moment they activate: set once per destination, stamped onto every responder-side link at birth, so no per-link command can race a sender who advertises instantly.
         resource_strategy: ResourceStrategy,
+        maximum_request_bytes: ByteLimit,
         /// Read at decrypt: `RatchetsRequired` refuses the identity-key fallback on inbound singles. The retained secrets themselves live in the engine's self-ratchets table.
         ratchet_policy: RatchetPolicy,
     },
@@ -64,6 +66,7 @@ pub struct RegisteredSingle {
     pub proof_strategy: ProofStrategy,
     pub link_request_policy: LinkRequestPolicy,
     pub resource_strategy: ResourceStrategy,
+    pub maximum_request_bytes: ByteLimit,
     pub ratchet_policy: RatchetPolicy,
 }
 
@@ -143,6 +146,7 @@ impl<C: UpstreamAppDestinationTable> UpstreamAppDestinations<C> {
                 proof_strategy,
                 link_request_policy,
                 resource_strategy: ResourceStrategy::AcceptNone,
+                maximum_request_bytes: ByteLimit::Unlimited,
                 ratchet_policy,
             },
             name_hash,
@@ -186,6 +190,31 @@ impl<C: UpstreamAppDestinationTable> UpstreamAppDestinations<C> {
         } = self.table.kind_mut(index)
         {
             *resource_strategy = strategy;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn set_maximum_request_bytes(
+        &mut self,
+        destination: &DestinationHash,
+        maximum: ByteLimit,
+    ) -> bool {
+        let Some(index) = self
+            .table
+            .destinations()
+            .iter()
+            .position(|candidate| candidate == destination)
+        else {
+            return false;
+        };
+        if let UpstreamAppDestinationKind::Single {
+            maximum_request_bytes,
+            ..
+        } = self.table.kind_mut(index)
+        {
+            *maximum_request_bytes = maximum;
             true
         } else {
             false
@@ -275,12 +304,14 @@ impl<C: UpstreamAppDestinationTable> UpstreamAppDestinations<C> {
                 proof_strategy,
                 link_request_policy,
                 resource_strategy,
+                maximum_request_bytes,
                 ratchet_policy,
             } => Some(RegisteredSingle {
                 identity,
                 proof_strategy,
                 link_request_policy,
                 resource_strategy,
+                maximum_request_bytes,
                 ratchet_policy,
             }),
             UpstreamAppDestinationKind::Plain | UpstreamAppDestinationKind::Group => None,
@@ -386,6 +417,7 @@ mod tests {
                 proof_strategy: ProofStrategy::ProveAll,
                 link_request_policy: LinkRequestPolicy::AcceptAll,
                 resource_strategy: ResourceStrategy::AcceptNone,
+                maximum_request_bytes: ByteLimit::Unlimited,
                 ratchet_policy: RatchetPolicy::RatchetsRequired,
             }),
         );
@@ -448,6 +480,7 @@ mod tests {
                 proof_strategy: ProofStrategy::ProveAll,
                 link_request_policy: LinkRequestPolicy::AcceptAll,
                 resource_strategy: ResourceStrategy::AcceptNone,
+                maximum_request_bytes: ByteLimit::Unlimited,
                 ratchet_policy: RatchetPolicy::NoRatchets,
             }),
             "re-registration overwrites the proof strategy in place",
@@ -536,6 +569,7 @@ mod tests {
                 proof_strategy: ProofStrategy::ProveAll,
                 link_request_policy: LinkRequestPolicy::AcceptAll,
                 resource_strategy: ResourceStrategy::AcceptNone,
+                maximum_request_bytes: ByteLimit::Unlimited,
                 ratchet_policy: RatchetPolicy::NoRatchets,
             }
         );
@@ -578,6 +612,7 @@ mod tests {
                 proof_strategy: ProofStrategy::ProveAll,
                 link_request_policy: LinkRequestPolicy::AcceptAll,
                 resource_strategy: ResourceStrategy::AcceptNone,
+                maximum_request_bytes: ByteLimit::Unlimited,
                 ratchet_policy: RatchetPolicy::NoRatchets,
             }),
         );
@@ -590,6 +625,7 @@ mod tests {
                 proof_strategy: ProofStrategy::ProveNone,
                 link_request_policy: LinkRequestPolicy::AcceptAll,
                 resource_strategy: ResourceStrategy::AcceptNone,
+                maximum_request_bytes: ByteLimit::Unlimited,
                 ratchet_policy: RatchetPolicy::NoRatchets,
             }),
         );

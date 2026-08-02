@@ -2463,6 +2463,7 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
         path_hash: RequestPathHash::of("/status"),
         data: SendRequestData::from_slice(&[0xC4, 0x03, b'a', b's', b'k']).unwrap(),
         response_timeout: Default::default(),
+        maximum_response_bytes: Default::default(),
     };
 
     let expected_request_hint = link_data_frame_ceiling(REQUEST_WIRE_OVERHEAD + ask.data.len());

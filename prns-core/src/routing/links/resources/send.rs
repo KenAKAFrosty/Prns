@@ -563,7 +563,9 @@ impl<S: StorageLayout> EngineState<S> {
                         .set_timeout_at(index, Some(advertised_deadline(now, rtt_millis)));
                 }
                 if let ResourceCorrelation::Request {
-                    response_timeout, ..
+                    response_timeout,
+                    maximum_response_bytes,
+                    ..
                 } = correlation
                 {
                     if segment_index == 1 {
@@ -572,6 +574,7 @@ impl<S: StorageLayout> EngineState<S> {
                             &link_id,
                             data,
                             response_timeout,
+                            maximum_response_bytes,
                             now,
                         );
                         wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();

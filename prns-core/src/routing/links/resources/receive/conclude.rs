@@ -836,6 +836,7 @@ mod seam_tests {
         let correlation = ResourceCorrelation::Request {
             id: RequestId::of_request_data(&packed[..len]),
             response_timeout: Default::default(),
+            maximum_response_bytes: Default::default(),
         };
         let mut handlers = RequestHandlers::<FixedRequestHandlerTable<1>>::default();
         assert!(!request_is_permitted(
@@ -1224,6 +1225,7 @@ mod seam_tests {
                 correlation: ResourceCorrelation::Request {
                     id: request_id,
                     response_timeout: Default::default(),
+                    maximum_response_bytes: Default::default(),
                 },
             },
             InstantMillis(1_500),
@@ -1360,6 +1362,7 @@ mod seam_tests {
                 correlation: ResourceCorrelation::Request {
                     id: request_id,
                     response_timeout: Default::default(),
+                    maximum_response_bytes: Default::default(),
                 },
             },
             InstantMillis(1_500),

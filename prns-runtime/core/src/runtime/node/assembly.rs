@@ -11,6 +11,7 @@ use crate::routing::upstream_app_destinations::RegisterDestinationError;
 use crate::routing::{LinkRequestPolicy, ProofStrategy};
 use crate::storage::StorageLayout;
 use crate::storage::TablePushError;
+use crate::units::ByteLimit;
 use crate::wire::DestinationHash;
 
 use super::super::request_endpoints::RequestEndpointSet;
@@ -45,6 +46,7 @@ struct SingleDestinationConfiguration<'a> {
     link_requests: LinkRequestPolicy,
     ratchet: RatchetPolicy,
     resource_strategy: ResourceStrategy,
+    maximum_request_bytes: ByteLimit,
 }
 
 pub fn configure_preconfigured_destination<'a, St, R, S>(
@@ -68,6 +70,7 @@ where
             link_requests,
             ratchet,
             resource_strategy,
+            maximum_request_bytes,
             request_endpoints,
         } => configure_single_destination::<St, R, S>(
             engine,
@@ -80,6 +83,7 @@ where
                 link_requests,
                 ratchet,
                 resource_strategy,
+                maximum_request_bytes,
             },
             request_endpoints,
         ),
@@ -104,6 +108,7 @@ where
         link_requests,
         ratchet,
         resource_strategy,
+        maximum_request_bytes,
     } = configuration;
     let held = engine
         .hold_identity(identity)
@@ -120,6 +125,7 @@ where
         )
         .map_err(ConfigurePreconfiguredDestinationError::Register)?;
     engine.set_default_resource_strategy(&destination, resource_strategy);
+    engine.set_maximum_request_bytes(&destination, maximum_request_bytes);
     if matches!(request_endpoints, ServeMyRequestEndpoints::Yes) {
         register_request_routes_for::<St, R, S>(engine, destination)?;
     }
@@ -285,6 +291,7 @@ mod tests {
 
     fn configured_engine(
         request_endpoints: ServeMyRequestEndpoints,
+        maximum_request_bytes: ByteLimit,
     ) -> (EngineState<Storage>, DestinationHash) {
         let mut engine = EngineState::<Storage>::default();
         let destination = configure_preconfigured_destination::<(), Routes, Storage>(
@@ -298,6 +305,7 @@ mod tests {
                 link_requests: LinkRequestPolicy::AcceptAll,
                 ratchet: RatchetPolicy::NoRatchets,
                 resource_strategy: ResourceStrategy::AcceptNone,
+                maximum_request_bytes,
                 request_endpoints,
             },
         )
@@ -307,7 +315,8 @@ mod tests {
 
     #[test]
     fn node_route_set_attaches_routes_to_the_destination() {
-        let (mut engine, destination) = configured_engine(ServeMyRequestEndpoints::Yes);
+        let (mut engine, destination) =
+            configured_engine(ServeMyRequestEndpoints::Yes, ByteLimit::Unlimited);
 
         assert_eq!(
             engine.allow_requester(&destination, "/test", IdentityHash::new([0x22; 16])),
@@ -317,11 +326,33 @@ mod tests {
 
     #[test]
     fn none_leaves_routes_unattached_from_the_destination() {
-        let (mut engine, destination) = configured_engine(ServeMyRequestEndpoints::No);
+        let (mut engine, destination) =
+            configured_engine(ServeMyRequestEndpoints::No, ByteLimit::Unlimited);
 
         assert_eq!(
             engine.allow_requester(&destination, "/test", IdentityHash::new([0x22; 16])),
             Err(RequestHandlerError::NoSuchHandler)
+        );
+    }
+
+    #[test]
+    fn recipe_request_limit_reaches_the_registered_destination() {
+        let (engine, destination) =
+            configured_engine(ServeMyRequestEndpoints::No, ByteLimit::Maximum(1_024));
+
+        assert_eq!(
+            engine
+                .upstream_app_destinations()
+                .find(|registered| registered.destination == destination)
+                .and_then(|registered| match registered.kind {
+                    crate::routing::upstream_app_destinations::UpstreamAppDestinationKind::Single {
+                        maximum_request_bytes,
+                        ..
+                    } => Some(maximum_request_bytes),
+                    crate::routing::upstream_app_destinations::UpstreamAppDestinationKind::Plain
+                    | crate::routing::upstream_app_destinations::UpstreamAppDestinationKind::Group => None,
+                }),
+            Some(ByteLimit::Maximum(1_024)),
         );
     }
 

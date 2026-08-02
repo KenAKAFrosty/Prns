@@ -277,6 +277,7 @@ where
                     path_hash,
                     data,
                     response_timeout,
+                    maximum_response_bytes,
                     completion,
                 } = request;
                 journal.register_request(id, completion);
@@ -291,6 +292,7 @@ where
                                     path_hash,
                                     data: send_data,
                                     response_timeout,
+                                    maximum_response_bytes,
                                 }),
                             },
                             topology.interfaces.view(),
@@ -318,6 +320,7 @@ where
                                     correlation: ResourceCorrelation::Request {
                                         id: request_id,
                                         response_timeout,
+                                        maximum_response_bytes,
                                     },
                                 },
                                 now,

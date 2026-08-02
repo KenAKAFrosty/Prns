@@ -316,6 +316,7 @@ pub enum ResourceCorrelation {
     Request {
         id: RequestId,
         response_timeout: crate::engine::RequestResponseTimeout,
+        maximum_response_bytes: crate::units::ByteLimit,
     },
     Response(RequestId),
 }

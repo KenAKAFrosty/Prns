@@ -11,11 +11,10 @@ use crate::routing::links::request::{
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::runtime::request_endpoints::RespondToken;
-use crate::units::DurationMillis;
-use crate::units::RttMillis;
+use crate::units::{ByteLimit, DurationMillis, RttMillis};
 
 use super::super::PrnsNodeHandle;
-use super::RESPONSE_PACKET_CEILING;
+use super::{RequestOptions, RESPONSE_PACKET_CEILING};
 use prns_core::rncp::parse_file_metadata;
 
 static MULTI_SEGMENT_STATIC_RESPONSE: [u8; super::STATIC_RESPONSE_SEGMENT_BYTES * 2 + 33_333] =
@@ -44,6 +43,7 @@ async fn request_emits_a_request_any_and_returns_the_response_with_its_rtt() {
         request.response_timeout,
         RequestResponseTimeout::LinkDefault
     );
+    assert_eq!(request.maximum_response_bytes, ByteLimit::Unlimited);
     request
         .completion
         .send(Ok((b"pong".to_vec(), RttMillis::new(42))))
@@ -52,6 +52,36 @@ async fn request_emits_a_request_any_and_returns_the_response_with_its_rtt() {
     let (data, rtt) = requesting.await.unwrap().unwrap();
     assert_eq!(data, b"pong");
     assert_eq!(rtt, RttMillis::new(42));
+}
+
+#[tokio::test]
+async fn request_options_preserve_the_response_ceiling() {
+    let (handle, mut command_rx) = handle();
+    let link = LinkId::new([7; 16]);
+    let path_hash = RequestPathHash::new([0x46; 16]);
+    let options = RequestOptions {
+        response_timeout: RequestResponseTimeout::Exact(DurationMillis(45_000)),
+        maximum_response_bytes: ByteLimit::Maximum(8_192),
+    };
+
+    let requesting = tokio::spawn(async move {
+        handle
+            .request_with_options(link, path_hash, b"bounded", options)
+            .await
+    });
+    let HostCommand::RequestAny(request) = command_rx.recv().await.unwrap() else {
+        panic!("request issues a RequestAny host command");
+    };
+    assert_eq!(request.response_timeout, options.response_timeout);
+    assert_eq!(
+        request.maximum_response_bytes,
+        options.maximum_response_bytes
+    );
+    request
+        .completion
+        .send(Ok((b"done".to_vec(), RttMillis::new(42))))
+        .unwrap();
+    assert_eq!(requesting.await.unwrap().unwrap().0, b"done");
 }
 
 #[tokio::test]

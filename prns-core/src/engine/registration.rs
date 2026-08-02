@@ -18,6 +18,7 @@ use crate::routing::upstream_app_destinations::{
 use crate::routing::warmth::Departure;
 use crate::routing::{PersistedRouteRow, SeedRouteOutcome};
 use crate::storage::{StorageLayout, TablePushError};
+use crate::units::ByteLimit;
 use crate::wire::{DestinationHash, TransportId};
 use zeroize::Zeroizing;
 
@@ -201,6 +202,15 @@ impl<S: StorageLayout> EngineState<S> {
     ) -> bool {
         self.upstream_app_destinations
             .set_default_resource_strategy(destination, strategy)
+    }
+
+    pub fn set_maximum_request_bytes(
+        &mut self,
+        destination: &DestinationHash,
+        maximum: ByteLimit,
+    ) -> bool {
+        self.upstream_app_destinations
+            .set_maximum_request_bytes(destination, maximum)
     }
 
     /// RNS 1.4.0 `Destination.register_request_handler`; last write wins, and a re-registration starts from an empty allow list.

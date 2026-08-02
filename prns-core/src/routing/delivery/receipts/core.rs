@@ -5,6 +5,7 @@ use crate::identity::IdentitySigningPublicKey;
 use crate::routing::dedup::PacketHash;
 use crate::routing::links::request::RequestId;
 use crate::routing::links::LinkId;
+use crate::units::ByteLimit;
 use crate::wire::DestinationHash;
 
 /// One table for every send kind, as RNS 1.4.0 keeps every `PacketReceipt` in the one `Transport.receipts` list.
@@ -12,7 +13,13 @@ use crate::wire::DestinationHash;
 pub enum ReceiptKind {
     SendSinglePacket,
     SendToLink(LinkId),
-    SendRequest,
+    SendRequest { maximum_response_bytes: ByteLimit },
+}
+
+impl ReceiptKind {
+    const fn is_request(self) -> bool {
+        matches!(self, Self::SendRequest { .. })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -164,7 +171,10 @@ impl<C: ReceiptTable> Receipts<C> {
         signature: &Ed25519Signature,
     ) -> Option<ProvenReceipt> {
         let index = (0..self.table.len()).find(|index| {
-            self.table.kinds().get(*index) != Some(&ReceiptKind::SendRequest)
+            self.table
+                .kinds()
+                .get(*index)
+                .is_some_and(|kind| !kind.is_request())
                 && self.table.packet_hashes().get(*index) == Some(proof_hash)
         })?;
         self.settle_verified(index, signature)
@@ -177,7 +187,11 @@ impl<C: ReceiptTable> Receipts<C> {
     ) -> Option<ProvenReceipt> {
         let mut matched = None;
         for index in 0..self.table.len() {
-            if self.table.kinds().get(index) != Some(&ReceiptKind::SendRequest)
+            if self
+                .table
+                .kinds()
+                .get(index)
+                .is_some_and(|kind| !kind.is_request())
                 && self.row_signature_valid(index, signature)
             {
                 matched = Some(index);
@@ -201,7 +215,10 @@ impl<C: ReceiptTable> Receipts<C> {
         proof_hash: &PacketHash,
     ) -> Option<DeferredVerify> {
         let index = (0..self.table.len()).find(|index| {
-            self.table.kinds().get(*index) != Some(&ReceiptKind::SendRequest)
+            self.table
+                .kinds()
+                .get(*index)
+                .is_some_and(|kind| !kind.is_request())
                 && self.table.packet_hashes().get(*index) == Some(proof_hash)
         })?;
         self.read_for_deferred_verify(index)
@@ -213,7 +230,10 @@ impl<C: ReceiptTable> Receipts<C> {
         proof_destination: &DestinationHash,
     ) -> Option<DeferredVerify> {
         let index = (0..self.table.len()).find(|index| {
-            self.table.kinds().get(*index) != Some(&ReceiptKind::SendRequest)
+            self.table
+                .kinds()
+                .get(*index)
+                .is_some_and(|kind| !kind.is_request())
                 && self
                     .table
                     .packet_hashes()
@@ -245,7 +265,11 @@ impl<C: ReceiptTable> Receipts<C> {
     pub fn settle_resolved(&mut self, command_id: CommandId) -> Option<ProvenReceipt> {
         let index = (0..self.table.len()).find(|index| {
             self.table.command_ids().get(*index) == Some(&command_id)
-                && self.table.kinds().get(*index) != Some(&ReceiptKind::SendRequest)
+                && self
+                    .table
+                    .kinds()
+                    .get(*index)
+                    .is_some_and(|kind| !kind.is_request())
         })?;
         let proven = ProvenReceipt {
             command_id,
@@ -281,6 +305,16 @@ impl<C: ReceiptTable> Receipts<C> {
         self.table.command_ids().get(index).copied()
     }
 
+    pub fn pending_request_response_limit(&self, request_id: RequestId) -> Option<ByteLimit> {
+        let index = self.request_row_index(request_id)?;
+        match self.table.kinds().get(index)? {
+            ReceiptKind::SendRequest {
+                maximum_response_bytes,
+            } => Some(*maximum_response_bytes),
+            ReceiptKind::SendSinglePacket | ReceiptKind::SendToLink(_) => None,
+        }
+    }
+
     /// RNS 1.4.0 `RequestReceipt.response_resource_progress`: accepting a response resource flips the request to `RECEIVING` and its own timeout stops.
     /// The transfer settles the row through every exit, so a claimed row cannot leak.
     pub fn claim_request_for_transfer(&mut self, request_id: RequestId) {
@@ -302,7 +336,10 @@ impl<C: ReceiptTable> Receipts<C> {
 
     fn request_row_index(&self, request_id: RequestId) -> Option<usize> {
         (0..self.table.len()).find(|index| {
-            self.table.kinds().get(*index) == Some(&ReceiptKind::SendRequest)
+            self.table
+                .kinds()
+                .get(*index)
+                .is_some_and(|kind| kind.is_request())
                 && self
                     .table
                     .packet_hashes()
@@ -593,7 +630,9 @@ mod tests {
         receipts.track(OutstandingReceipt {
             packet_hash,
             command_id: CommandId(4),
-            kind: ReceiptKind::SendRequest,
+            kind: ReceiptKind::SendRequest {
+                maximum_response_bytes: ByteLimit::Unlimited,
+            },
             peer_signing_key: key,
             sent_at: InstantMillis(100),
             timeout_at: InstantMillis(7_000),

@@ -99,6 +99,7 @@ pub enum IgnoreReason {
     PermissionDenied,
     RateLimited,
     CapacityExhausted,
+    RequestTooLarge,
     /// The app's declared acceptance policy declined an offer that was well-formed and deliverable.
     StrategyDeclined,
     /// A resource response advertisement has no matching pending request.
@@ -166,6 +167,11 @@ pub enum IngestPacketOutcome<'p> {
         request_id: RequestId,
         data: &'p [u8],
     },
+    ResponseTooLarge {
+        id: CommandId,
+        link_id: LinkId,
+        request_id: RequestId,
+    },
     ChannelDataReceived {
         link_id: LinkId,
         message_type: MessageType,
@@ -190,6 +196,11 @@ pub enum IngestPacketOutcome<'p> {
         link_id: LinkId,
         original_hash: ResourceHash,
         accepted: AcceptedResource<'p>,
+    },
+    ResourceTooLarge {
+        link_id: LinkId,
+        hash: ResourceHash,
+        settled_request: Option<CommandId>,
     },
     OwesResourceAssembly {
         link_id: LinkId,

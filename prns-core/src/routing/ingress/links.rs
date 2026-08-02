@@ -708,6 +708,14 @@ impl<S: StorageLayout> EngineState<S> {
             return IngestPacketOutcome::Ignored(IgnoreReason::DecryptFailed);
         };
         let plaintext: &'p [u8] = plaintext;
+        let maximum_request_bytes = self
+            .upstream_app_destinations
+            .lookup_single(&destination)
+            .map(|registered| registered.maximum_request_bytes)
+            .unwrap_or_default();
+        if !maximum_request_bytes.allows(plaintext.len() as u64) {
+            return IngestPacketOutcome::Ignored(IgnoreReason::RequestTooLarge);
+        }
         let Ok(parsed) = parse_request_plaintext(plaintext) else {
             return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         };
@@ -750,6 +758,22 @@ impl<S: StorageLayout> EngineState<S> {
         let Ok((request_id, response_data)) = parse_response_plaintext(plaintext) else {
             return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         };
+        let Some(maximum_response_bytes) = self.receipts.pending_request_response_limit(request_id)
+        else {
+            return IngestPacketOutcome::Ignored(IgnoreReason::Superseded);
+        };
+        let response_size = response_data.len().saturating_sub(2) as u64;
+        if !maximum_response_bytes.allows(response_size) {
+            let Some(proven) = self.receipts.settle_by_request_id(request_id) else {
+                return IngestPacketOutcome::Ignored(IgnoreReason::Superseded);
+            };
+            self.links.note_inbound(&link_id, arrived_at);
+            return IngestPacketOutcome::ResponseTooLarge {
+                id: proven.command_id,
+                link_id,
+                request_id,
+            };
+        }
         let Some(proven) = self.receipts.settle_by_request_id(request_id) else {
             return IngestPacketOutcome::Ignored(IgnoreReason::Superseded);
         };

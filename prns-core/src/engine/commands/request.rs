@@ -5,7 +5,7 @@ use crate::routing::links::data::link_mdu;
 use crate::routing::links::request::{RequestId, REQUEST_WIRE_OVERHEAD, RESPONSE_WIRE_OVERHEAD};
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
-use crate::units::DurationMillis;
+use crate::units::{ByteLimit, DurationMillis};
 use crate::wire::DestinationHash;
 
 use super::{PacketReceiptDelivered, PrnsCommand, SendResourceFailure, Settleable, Settlement};
@@ -29,6 +29,7 @@ pub struct SendRequest {
     pub path_hash: RequestPathHash,
     pub data: SendRequestData,
     pub response_timeout: RequestResponseTimeout,
+    pub maximum_response_bytes: ByteLimit,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +44,7 @@ pub enum SendRequestFailure {
     WriteFailed,
     Culled,
     Timeout,
+    ResponseTooLarge,
 }
 
 pub const MAX_RESPOND_DATA_LEN: usize =

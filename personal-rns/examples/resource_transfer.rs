@@ -116,6 +116,7 @@ async fn main() {
 fn example_destination(resource_strategy: ResourceStrategy) -> PreConfiguredDestination<'static> {
     PreConfiguredDestination::Single {
         resource_strategy,
+        maximum_request_bytes: Default::default(),
         app_name: "prns-example",
         aspects: &["example", "resource-transfer"],
         identity: try_generate_identity_secret().expect("identity generation failed"),

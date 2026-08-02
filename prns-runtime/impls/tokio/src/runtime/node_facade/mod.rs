@@ -51,7 +51,7 @@ pub use persistence::{
     PreparedFlush, RatchetSeedReport, RegionFlush, RouteSeedProgress, RouteSeedReport, SaveOnLearn,
     SaveOnLearnWiring, TunnelSeedReport,
 };
-pub use request_response::ResponseSendError;
+pub use request_response::{RequestOptions, ResponseSendError};
 pub use resource_admission::{ResourceAdmissionPeer, ResourceOfferAdmission, ResourceOfferMonitor};
 pub use resource_transfer::{
     PreparedResourceReceiver, ResourceProgress, ResourceReceipt, ResourceReceiveError,

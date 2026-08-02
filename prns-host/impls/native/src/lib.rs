@@ -941,6 +941,7 @@ fn build_destinations<'a>(
                     DestinationRatchetPolicy::RatchetsRequired => RatchetPolicy::RatchetsRequired,
                 },
                 resource_strategy: engine_resource_strategy(single.resource_strategy),
+                maximum_request_bytes: Default::default(),
                 request_endpoints: personal_rns::runtime::ServeMyRequestEndpoints::No,
             },
         })
@@ -2436,6 +2437,7 @@ fn request_failure(error: SendError<SendRequestFailure>) -> CommandFailure {
         },
         SendError::Failed(SendRequestFailure::Culled) => CommandFailure::PacketCulled,
         SendError::Failed(SendRequestFailure::Timeout) => CommandFailure::DeliveryTimedOut,
+        SendError::Failed(SendRequestFailure::ResponseTooLarge) => CommandFailure::PayloadTooLarge,
     }
 }
 
