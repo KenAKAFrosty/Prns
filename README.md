@@ -24,15 +24,15 @@ Prns is built on a unified core engine that is `no_std` (no `alloc` required eit
 
 It has first-class SDKs and bindings for:
 
-- Rust
-- TypeScript and JavaScript (browser, Node.js, and Bun)
-- Python
-- .NET and C#
-- Go
-- Swift
-- Kotlin, Java, and Android
-- Julia
-- C and C++
+- [Rust](personal-rns/README.md)
+- [TypeScript and JavaScript](prns-js/README.md) (browser, Node.js, and Bun)
+- [Python](prns-host/bindings/python/README.md)
+- [.NET and C#](prns-host/bindings/dotnet/README.md)
+- [Go](prns-host/bindings/go/README.md)
+- [Swift](prns-host/bindings/swift/README.md)
+- [Kotlin, Java, and Android](prns-host/bindings/jvm/README.md)
+- [Julia](prns-host/bindings/julia/README.md)
+- [C and C++](prns-host/abi/c/README.md)
 
 If you're already familiar with Reticulum, you can [jump to here](#coming-from-rns). 
 
