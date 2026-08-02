@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::platforms::BoardFlashTarget;
 
 use super::contract::{self, BridgeErrorCode, BridgePhase};
-use super::model::{part_kind, DestructiveConfirmation, FlasherState, InstallMode};
+use super::model::{part_kind, DestructiveConfirmation, FlasherState, InstallMode, WebSerialCapability};
 use super::protocol;
 
 const PREPARE_SCRIPT: &str = r#"
@@ -22,8 +22,20 @@ try {
 } catch (_) {}
 "#;
 
-const BROWSER_SUPPORT_SCRIPT: &str =
-    "return Boolean(window.isSecureContext && navigator.serial && navigator.serial.requestPort);";
+// Chrome for Android exposes Web Serial for Bluetooth RFCOMM services only;
+// wired USB serial ports never appear in its picker until the Android Serial
+// API lands (Chromium blink-dev PSA, February 2026: estimated 2026Q2 on a
+// limited set of devices). The platform probe exists to explain that dead
+// end instead of presenting an empty picker; remove it once Android Chrome
+// reaches wired ports on the devices people actually carry.
+const WEB_SERIAL_PROBE_SCRIPT: &str = r#"
+if (!(window.isSecureContext && navigator.serial && navigator.serial.requestPort)) {
+  return "unavailable";
+}
+const wiredPortsUnreachable = navigator.userAgentData?.platform === "Android"
+  || /\bAndroid\b/.test(navigator.userAgent);
+return wiredPortsUnreachable ? "android-bluetooth-only" : "supported";
+"#;
 
 const FOCUS_STATUS_SCRIPT: &str =
     "document.getElementById('flash-status')?.focus({ preventScroll: true });";
@@ -319,11 +331,12 @@ impl BridgeEvent {
     }
 }
 
-pub(super) async fn browser_supported() -> bool {
-    document::eval(BROWSER_SUPPORT_SCRIPT)
-        .join::<bool>()
+pub(super) async fn web_serial_capability() -> WebSerialCapability {
+    document::eval(WEB_SERIAL_PROBE_SCRIPT)
+        .join::<String>()
         .await
-        .unwrap_or(false)
+        .map(|probe| WebSerialCapability::from_probe(&probe))
+        .unwrap_or(WebSerialCapability::Unavailable)
 }
 
 pub(super) fn clear_prepared() {
@@ -931,6 +944,19 @@ mod tests {
             cancel < clear,
             "active work must be cancelled before cleanup"
         );
+    }
+
+    #[test]
+    fn web_serial_probe_script_speaks_the_model_wire_spellings() {
+        use super::super::model::{
+            WEB_SERIAL_PROBE_ANDROID_BLUETOOTH_ONLY, WEB_SERIAL_PROBE_SUPPORTED,
+        };
+
+        assert!(WEB_SERIAL_PROBE_SCRIPT.contains("window.isSecureContext"));
+        assert!(WEB_SERIAL_PROBE_SCRIPT.contains("navigator.serial.requestPort"));
+        assert!(WEB_SERIAL_PROBE_SCRIPT.contains(&format!("\"{WEB_SERIAL_PROBE_SUPPORTED}\"")));
+        assert!(WEB_SERIAL_PROBE_SCRIPT
+            .contains(&format!("\"{WEB_SERIAL_PROBE_ANDROID_BLUETOOTH_ONLY}\"")));
     }
 
     #[test]
