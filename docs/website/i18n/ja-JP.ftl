@@ -1,7 +1,6 @@
 # ナビゲーション
 nav-benchmarks = ベンチマーク
 nav-contributing = 貢献
-nav-api = API リファレンス
 
 # フッター
 footer-tagline = KenAKAFrosty と Personal/Prns チームがお届けします。
@@ -24,12 +23,12 @@ landing-quote-body = Reticulum は、私たち全員が作り続ける限り手�
 # インターフェース
 interfaces-section-label = インターフェース
 interfaces-section-title = メッシュが現実世界と出会う場所
-interfaces-section-lead = Prns は builder がすでに知っている RNS 互換インターフェースを保ち、新しいデバイスとネットワーク向けのネイティブリンクでその地図を広げます。
+interfaces-section-lead = Prns はビルダーがすでに知っている RNS 互換インターフェースを保ち、新しいデバイスとネットワーク向けのネイティブリンクでその地図を広げます。
 interfaces-section-hot-note = Prns のインターフェースはホットスワップ可能です。ノードを再起動せずに、インターフェースを追加、削除、変更できます。
 
 interfaces-radio-label = 無線
 interfaces-radio-headline = デバイスとボード向けの近距離リンク
-interfaces-radio-body = Bluetooth LE Auto-interface、ESP-NOW、LoRa が、近くのデバイス、ボード群、長距離リンクをひとつの Reticulum メッシュへつなぎます。
+interfaces-radio-body = Bluetooth LE Auto-interface、ESP-NOW、LoRa が、近くのデバイス、ボード群、長距離 RF リンクをひとつの Reticulum メッシュへつなぎます。
 
 interfaces-lan-label = LAN
 interfaces-lan-headline = 自動発見されるローカルリンクのピア
@@ -41,16 +40,16 @@ interfaces-cable-body = USB Auto-interface、シリアルフレーミング、KI
 
 interfaces-host-label = ルーティングされた IP
 interfaces-host-headline = Internet、WAN、backbone リンク
-interfaces-host-body = TCP client/server、UDP、WebSocket、Backbone により、遠くの peer も private WAN、VPN、public Internet relay、ブラウザ統合を通じてメッシュへ参加できます。
+interfaces-host-body = TCP client/server、UDP、WebSocket、Backbone により、遠くのピアも private WAN、VPN、public Internet relay、ブラウザ統合を通じてメッシュへ参加できます。
 
 # 信頼できる基準
 standards-section-label = 私たちの基準
 standards-section-title = 信頼できること
 standards-license-label = ライセンス
 standards-license-headline = MIT / Apache 2.0
-standards-license-body = デュアルライセンスで permissive。コピーレフトや商用利用の制限はありません。
+standards-license-body = パーミッシブなデュアルライセンスです。コピーレフトや商用利用の制限はありません。
 standards-safety-label = 安全性
-standards-safety-headline = 強制、そして監査
+standards-safety-headline = まず強制、そして監査
 standards-safety-body = エンジンでは panic、unwrap、根拠のない unsafe は決してコンパイルされません。禁止できないものは監査します。依存関係内の unsafe は cargo-geiger で、未定義動作は Miri で、セキュリティ勧告は cargo-deny で確認します。
 standards-correctness-label = 正しさ
 standards-correctness-headline = RNS との差分テスト済み
@@ -106,12 +105,12 @@ flash-card-action = フラッシュ
 
 # ベンチマークページ
 benchmarks-kicker = 性能
-benchmarks-title = オープンにベンチマーク
-benchmarks-lead = 以下の数値はすべて、repo に公開された結果から来ており、自分でも実行できるハーネスによって実機で測定されています。ここから先の内容は、今のところ英語のみです。
+benchmarks-title = 公開の場でベンチマーク
+benchmarks-lead = 以下の数値はすべて、repo に公開された結果に基づいており、自分でも実行できるハーネスによって実機で測定されています。ここから先の内容は、今のところ英語のみです。
 
 # ライセンス表示 (フッター)
-footer-license = Open source. MIT / Apache 2.0.
-footer-trademarks = 第三者のロゴおよび商標は、それぞれの所有者に帰属します。これらはプラットフォーム、ハードウェア、互換性対象を識別するためだけに表示しています。推奨や承認を主張または示唆するものではありません。
+footer-license = オープンソース。MIT / Apache 2.0。
+footer-trademarks = 第三者のロゴ、商標、製品画像は、それぞれの所有者に帰属します。これらはプラットフォーム、ハードウェア、互換性対象を識別するためだけに表示しています。推奨や承認を主張または示唆するものではありません。
 
 # 貢献ページ
 contributing-kicker = 基準

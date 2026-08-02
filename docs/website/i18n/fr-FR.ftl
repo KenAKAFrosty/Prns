@@ -1,7 +1,6 @@
 # Navigation
 nav-benchmarks = Benchmarks
 nav-contributing = Contribuer
-nav-api = Référence de l'API
 
 # Pied de page
 footer-tagline = Proposé par KenAKAFrosty et l'équipe Personal/Prns.
@@ -14,11 +13,11 @@ landing-kicker-prefix = Des réseaux mesh qui vous
 landing-title = Reticulum (RNS) haute performance, conçu pour tourner sur n'importe quel appareil.
 landing-title-lead = Reticulum (RNS) haute performance,
 landing-title-accent = conçu pour tourner sur n'importe quel appareil.
-landing-subtitle = Conçu pour les performances, la stabilité et l'efficacité énergétique dont chaque nœud Reticulum a besoin, du microcontrôleur à cinq dollars au cluster de serveurs cloud. Un seul moteur et une seule API, identiques en embarqué, sur desktop, mobile, dans les jeux et sur le web.
+landing-subtitle = Conçu pour les performances, la stabilité et l'efficacité énergétique dont chaque nœud Reticulum a besoin, du microcontrôleur à 5 dollars au cluster de serveurs cloud. Un seul moteur et une seule API, identiques en embarqué, sur desktop, mobile, dans les jeux et sur le web.
 landing-cta-ethos = Trouvez votre chemin dans Prns
 landing-cta-standards = Nos standards
 # Citation
-landing-quote-label = Ce vers quoi nous construisons
+landing-quote-label = Ce que nous voulons construire
 landing-quote-body = Reticulum est l'infrastructure de communication fondatrice d'un avenir lumineux que nous pouvons avoir, tant que nous le construisons tous ensemble. C'est l'effort de l'équipe Personal pour mettre RNS entre les mains de plus de builders et aider cet avenir à prendre forme.
 
 # Interfaces
@@ -29,13 +28,13 @@ interfaces-section-hot-note = Les interfaces Prns sont hot-swappable : ajoutez, 
 
 interfaces-radio-label = Radios
 interfaces-radio-headline = Liens de proximité pour appareils et cartes
-interfaces-radio-body = Bluetooth LE Auto-interface, ESP-NOW et LoRa font entrer les appareils proches, les flottes de cartes et les liens longue portée dans un même mesh RNS.
+interfaces-radio-body = Bluetooth LE Auto-interface, ESP-NOW et LoRa font entrer les appareils proches, les flottes de cartes et les liens RF longue portée dans un même mesh Reticulum.
 
 interfaces-lan-label = LAN
 interfaces-lan-headline = Pairs de lien local découverts automatiquement
 interfaces-lan-body = Wi-Fi Auto-interface utilise le multicast, mDNS et le rendez-vous passerelle pour trouver les nœuds proches et intégrer un réseau local au mesh.
 
-interfaces-cable-label = Fils + radio paquet
+interfaces-cable-label = Filaire + radio paquet
 interfaces-cable-headline = Câbles, TNC et modems radio
 interfaces-cable-body = USB Auto-interface, le framing série, KISS, AX.25 et RNode relient les petits appareils et le matériel radio paquet au même mesh.
 
@@ -50,11 +49,11 @@ standards-license-label = Licence
 standards-license-headline = MIT / Apache 2.0
 standards-license-body = Double licence permissive. Pas de copyleft ni de restrictions commerciales.
 standards-safety-label = Sécurité
-standards-safety-headline = Imposé, puis audité
+standards-safety-headline = Imposée, puis auditée
 standards-safety-body = Dans le moteur, les panics, les unwraps et le unsafe injustifié ne compilent jamais. Ce qui ne peut pas être interdit est audité : le unsafe des dépendances avec cargo-geiger, le comportement indéfini sous Miri, les avis de sécurité avec cargo-deny.
 standards-correctness-label = Correction
 standards-correctness-headline = Diff-testé contre RNS
-standards-correctness-body = Chaque changement est vérifié contre la référence, puis passe par des tests unitaires, de propriétés, de fuzzing et de mutation, avec des preuves Kani là où elles comptent.
+standards-correctness-body = Chaque changement est vérifié par rapport à la référence, puis passe par des tests unitaires, de propriétés, de fuzzing et de mutation, avec des preuves Kani là où elles comptent.
 standards-benchmarked-label = Performance
 standards-benchmarked-headline = Mesurée, pas seulement affirmée
 standards-benchmarked-body = Les performances sont suivies au grand jour, mesurées par un harness que vous pouvez exécuter vous-même.
@@ -81,13 +80,13 @@ start-embedded-code = Matrice des cartes
 start-embedded-target = Flasher un Hopspot (en anglais uniquement)
 
 start-web-headline = Utiliser le playground du nœud navigateur
-start-web-body = Essayez l’API TypeScript avec le moteur Rust partagé en WebAssembly, connectez-vous via Auto Wi-Fi ou USB Auto et suivez en direct l’activité locale du nœud.
+start-web-body = Essayez l'API TypeScript avec le moteur Rust partagé en WebAssembly, connectez-vous via Auto Wi-Fi ou USB Auto et suivez en direct l'activité locale du nœud.
 start-web-code = Runtime WebAssembly
     Auto Wi-Fi + USB Auto
     Exemple TypeScript
 start-web-target = Ouvrir le playground (en anglais uniquement)
 
-start-rust-headline = Construisez sur Reticulum
+start-rust-headline = Construire sur Reticulum
 start-rust-body = Utilisez le moteur et les bindings pour ajouter du réseau mesh à des apps, outils, services ou jeux.
 start-rust-target = Lire le README
 start-rust-target-source = Télécharger le code source
@@ -111,12 +110,12 @@ benchmarks-lead = Chaque chiffre ci-dessous vient des résultats publiés dans l
 
 # Signal licence (pied de page)
 footer-license = Open source. MIT / Apache 2.0.
-footer-trademarks = Les logos et marques de tiers appartiennent à leurs propriétaires respectifs. Ils sont affichés uniquement pour identifier des plateformes, du matériel et des cibles de compatibilité. Aucune approbation n'est revendiquée ni implicite.
+footer-trademarks = Les logos, marques et images de produits de tiers appartiennent à leurs propriétaires respectifs. Ils sont affichés uniquement pour identifier des plateformes, du matériel et des cibles de compatibilité. Aucune approbation n'est revendiquée ni implicite.
 
 # Page contribution
 contributing-kicker = Le niveau d'exigence
 contributing-title = Contribuer
-contributing-lead = Comment contribuer — ce que nous valorisons, les conventions que votre code suit, et le standard que chaque changement franchit. Pour les contributeurs humains comme automatisés.
+contributing-lead = Comment contribuer — ce qui compte pour nous, les conventions que votre code suit, et la barre que chaque changement franchit. Pour les contributeurs humains comme automatisés.
 
 # 404
 not-found-title = Il n'y a encore rien ici.

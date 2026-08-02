@@ -1,7 +1,6 @@
 # Navigasjon
 nav-benchmarks = Benchmarker
 nav-contributing = Bidra
-nav-api = API-referanse
 
 # Bunntekst
 footer-tagline = Levert av KenAKAFrosty og Personal/Prns-teamet.
@@ -11,10 +10,10 @@ footer-playground = Nettleser-lekeplass (kun på engelsk)
 # Landing
 landing-kicker = Mesh-nettverk som er ditt
 landing-kicker-prefix = Mesh-nettverk som er
-landing-title = Høyytelses Reticulum (RNS), bygget for å kjøre på enhver enhet.
-landing-title-lead = Høyytelses Reticulum (RNS),
+landing-title = Høytytende Reticulum (RNS), bygget for å kjøre på enhver enhet.
+landing-title-lead = Høytytende Reticulum (RNS),
 landing-title-accent = bygget for å kjøre på enhver enhet.
-landing-subtitle = Bygget for ytelsen, stabiliteten og energieffektiviteten alle Reticulum-noder trenger, fra en femdollars mikrokontroller til en skyserverklynge. Én motor og ett API, det samme på embedded, desktop, mobil, i spill og på nettet.
+landing-subtitle = Bygget for ytelsen, stabiliteten og energieffektiviteten alle Reticulum-noder trenger, fra en 5-dollars mikrokontroller til en skyserverklynge. Én motor og ett API, det samme på embedded, desktop, mobil, i spill og på nettet.
 landing-cta-ethos = Finn din vei i Prns
 landing-cta-standards = Våre standarder
 # Sitat
@@ -29,18 +28,18 @@ interfaces-section-hot-note = Prns-interfaces er hot-swappable: legg til, fjern 
 
 interfaces-radio-label = Radioer
 interfaces-radio-headline = Nærhetslenker for enheter og kort
-interfaces-radio-body = Bluetooth LE Auto-interface, ESP-NOW og LoRa bringer nære enheter, kortflåter og langtrekkende lenker inn i ett RNS-mesh.
+interfaces-radio-body = Bluetooth LE Auto-interface, ESP-NOW og LoRa bringer nære enheter, kortflåter og langtrekkende RF-lenker inn i ett Reticulum-mesh.
 
 interfaces-lan-label = LAN
 interfaces-lan-headline = Automatisk oppdagede local-link-peers
-interfaces-lan-body = Wi-Fi Auto-interface bruker multicast, mDNS og gateway-rendezvous til å finne nære noder og folde et lokalt nettverk inn i meshet.
+interfaces-lan-body = Wi-Fi Auto-interface bruker multicast, mDNS og gateway-rendezvous til å finne nære noder og flette et lokalt nettverk inn i meshet.
 
 interfaces-cable-label = Kabler + packet radio
 interfaces-cable-headline = Kabler, TNC-er og radiomodemer
-interfaces-cable-body = USB Auto-interface, seriell framing, KISS, AX.25 og RNode kobler små enheter og packet-radio-hardware inn i samme mesh.
+interfaces-cable-body = USB Auto-interface, seriell framing, KISS, AX.25 og RNode kobler små enheter og packet-radio-maskinvare inn i samme mesh.
 
 interfaces-host-label = Rutet IP
-interfaces-host-headline = Internet-, WAN- og backbone-lenker
+interfaces-host-headline = Internett-, WAN- og backbone-lenker
 interfaces-host-body = TCP-klient/server, UDP, WebSocket og Backbone lar fjerne peers delta i meshet over private WAN, VPN, releer på det åpne internettet og nettleserintegrasjoner.
 
 # Det du kan stole på
@@ -57,7 +56,7 @@ standards-correctness-headline = Diff-testet mot RNS
 standards-correctness-body = Hver endring sjekkes mot referansen og kjøres deretter gjennom unit-, property-, fuzz- og mutasjonstester, med Kani-bevis der de betyr noe.
 standards-benchmarked-label = Ytelse
 standards-benchmarked-headline = Målt, ikke bare påstått
-standards-benchmarked-body = Ytelse følges åpent, målt av et harness du kan kjøre selv.
+standards-benchmarked-body = Ytelsen følges åpent, målt av et harness du kan kjøre selv.
 standards-benchmarked-cta = Se benchmarkene →
 
 # Hvor begynner jeg?
@@ -111,10 +110,10 @@ benchmarks-lead = Hvert tall nedenfor kommer fra de publiserte resultatene i rep
 
 # Lisenssignal (bunntekst)
 footer-license = Åpen kildekode. MIT / Apache 2.0.
-footer-trademarks = Tredjepartslogoer og varemerker tilhører sine respektive eiere. De vises bare for å identifisere plattformer, maskinvare og kompatibilitetsmål. Ingen godkjenning hevdes eller antydes.
+footer-trademarks = Tredjepartslogoer, varemerker og produktbilder tilhører sine respektive eiere. De vises bare for å identifisere plattformer, maskinvare og kompatibilitetsmål. Ingen godkjenning hevdes eller antydes.
 
 # Bidrag-side
-contributing-kicker = Listen
+contributing-kicker = Lista
 contributing-title = Bidra
 contributing-lead = Slik bidrar du — hva vi verdsetter, konvensjonene koden din følger, og standarden hver endring må klare. For både menneskelige og automatiserte bidragsytere.
 

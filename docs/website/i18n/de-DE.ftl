@@ -1,7 +1,6 @@
 # Navigation
 nav-benchmarks = Benchmarks
 nav-contributing = Mitwirken
-nav-api = API-Referenz
 
 # Footer
 footer-tagline = Präsentiert von KenAKAFrosty und dem Personal/Prns-Team.
@@ -14,26 +13,26 @@ landing-kicker-prefix = Mesh-Netzwerke, die dir
 landing-title = Hochperformantes Reticulum (RNS), gebaut für jedes Gerät.
 landing-title-lead = Hochperformantes Reticulum (RNS),
 landing-title-accent = gebaut für jedes Gerät.
-landing-subtitle = Gebaut für die Performance, Stabilität und Energieeffizienz, die jeder Reticulum-Knoten braucht, vom Fünf-Dollar-Mikrocontroller bis zum Cloud-Server-Cluster. Eine Engine und eine API, identisch auf Embedded, Desktop, Mobile, in Spielen und im Web.
+landing-subtitle = Gebaut für die Performance, Stabilität und Energieeffizienz, die jeder Reticulum-Knoten braucht, vom 5-Dollar-Mikrocontroller bis zum Cloud-Server-Cluster. Eine Engine und eine API, identisch auf Embedded, Desktop, Mobile, in Spielen und im Web.
 landing-cta-ethos = Finde deinen Weg in Prns
 landing-cta-standards = Unsere Standards
 # Pull quote
 landing-quote-label = Worauf wir hinarbeiten
-landing-quote-body = Reticulum ist die grundlegende Kommunikationsinfrastruktur einer hellen Zukunft, die wir haben können, solange wir sie alle mitbauen. Dies ist der Beitrag des Personal-Teams, RNS in die Hände von mehr Buildern zu legen und diese Zukunft möglich zu machen.
+landing-quote-body = Reticulum ist die grundlegende Kommunikationsinfrastruktur einer strahlenden Zukunft, die wir haben können, solange wir sie alle mitbauen. Dies ist der Beitrag des Personal-Teams, RNS in die Hände von mehr Buildern zu legen und diese Zukunft möglich zu machen.
 
 # Interfaces
 interfaces-section-label = Interfaces
-interfaces-section-title = Wo das Mesh die Welt berührt
+interfaces-section-title = Wo das Mesh auf die Welt trifft
 interfaces-section-lead = Prns behält die RNS-kompatiblen Interfaces bei, die Builder schon kennen, und erweitert die Karte mit nativen Links für neue Geräte und Netzwerke.
 interfaces-section-hot-note = Prns-Interfaces sind hot-swappable: Füge ein Interface hinzu, entferne es oder ändere es ohne Node-Neustart.
 
 interfaces-radio-label = Funk
 interfaces-radio-headline = Nahbereichslinks für Geräte und Boards
-interfaces-radio-body = Bluetooth LE Auto-interface, ESP-NOW und LoRa bringen nahe Geräte, Board-Flotten und Langstreckenlinks in ein gemeinsames Reticulum-Mesh.
+interfaces-radio-body = Bluetooth LE Auto-interface, ESP-NOW und LoRa bringen nahe Geräte, Board-Flotten und Langstrecken-RF-Links in ein gemeinsames Reticulum-Mesh.
 
 interfaces-lan-label = LAN
 interfaces-lan-headline = Automatisch entdeckte Local-Link-Peers
-interfaces-lan-body = Wi-Fi Auto-interface nutzt Multicast, mDNS und Gateway-Rendezvous, um nahe Nodes zu finden und ein lokales Netzwerk ins Mesh zu falten.
+interfaces-lan-body = Wi-Fi Auto-interface nutzt Multicast, mDNS und Gateway-Rendezvous, um nahe Nodes zu finden und ein lokales Netzwerk ins Mesh einzubinden.
 
 interfaces-cable-label = Kabel + Packet Radio
 interfaces-cable-headline = Kabel, TNCs und Funkmodems
@@ -67,7 +66,7 @@ start-section-lead = Wähle den Weg, der dazu passt, wie Prns in deine Arbeit ko
 
 start-daemon-headline = Einen Daemon betreiben
 start-daemon-body = Installiere einen schnellen Reticulum-Daemon für Desktops, LXMF-Apps, Backbone-VPS und mehr.
-start-daemon-code = Drop-in für Stock-Apps
+start-daemon-code = Drop-in für Standard-Apps
     Liest ~/.reticulum
     Interface-Änderungen live
     Metriken eingebaut
@@ -96,7 +95,7 @@ start-rust-target-source = Quellcode herunterladen
 landing-platforms-label = Läuft auf
 landing-platforms-cta = Alle ansehen →
 platforms-title = Wo Prns läuft
-platforms-lead = Eine Engine, viele Zuhause. Diese Schnellübersicht trennt die Runtime-Plattformunterstützung von der Unterstützung konkreter Hopspot-Boards.
+platforms-lead = Eine Engine, überall zuhause. Diese Schnellübersicht trennt die Runtime-Plattformunterstützung von der Unterstützung konkreter Hopspot-Boards.
 platforms-board-support-link = Board-Unterstützung & Bring-up ansehen →
 
 # Flash a Hopspot page
@@ -106,12 +105,12 @@ flash-card-action = Flashen
 
 # Benchmarks page
 benchmarks-kicker = Performance
-benchmarks-title = Offen benchmarked
+benchmarks-title = Offen gebenchmarkt
 benchmarks-lead = Jede Zahl unten stammt aus den veröffentlichten Ergebnissen im Repo, gemessen auf echter Hardware mit einem Harness, den du selbst ausführen kannst. Ab hier sind die Inhalte vorerst nur auf Englisch verfügbar.
 
 # License signal (footer)
 footer-license = Open Source. MIT / Apache 2.0.
-footer-trademarks = Logos und Marken Dritter gehören ihren jeweiligen Inhabern. Sie werden nur gezeigt, um Plattformen, Hardware und Kompatibilitätsziele zu identifizieren. Eine Billigung wird weder beansprucht noch impliziert.
+footer-trademarks = Logos, Marken und Produktbilder Dritter gehören ihren jeweiligen Inhabern. Sie werden nur gezeigt, um Plattformen, Hardware und Kompatibilitätsziele zu identifizieren. Eine Billigung wird weder beansprucht noch impliziert.
 
 # Contributing page
 contributing-kicker = Die Messlatte

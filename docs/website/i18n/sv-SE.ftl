@@ -1,7 +1,6 @@
 # Navigering
 nav-benchmarks = Benchmarks
 nav-contributing = Bidra
-nav-api = API-referens
 
 # Sidfot
 footer-tagline = Levererat av KenAKAFrosty och Personal/Prns-teamet.
@@ -14,7 +13,7 @@ landing-kicker-prefix = Mesh-nätverk som är
 landing-title = Högpresterande Reticulum (RNS), byggt för att köras på vilken enhet som helst.
 landing-title-lead = Högpresterande Reticulum (RNS),
 landing-title-accent = byggt för att köras på vilken enhet som helst.
-landing-subtitle = Byggt för den prestanda, stabilitet och energieffektivitet varje Reticulum-nod behöver, från en femdollars mikrokontroller till ett molnserverkluster. En motor och ett API, samma på embedded, desktop, mobil, i spel och på webben.
+landing-subtitle = Byggt för den prestanda, stabilitet och energieffektivitet varje Reticulum-nod behöver, från en 5-dollars mikrokontroller till ett molnserverkluster. En motor och ett API, samma på embedded, desktop, mobil, i spel och på webben.
 landing-cta-ethos = Hitta din väg i Prns
 landing-cta-standards = Våra standarder
 # Citat
@@ -29,11 +28,11 @@ interfaces-section-hot-note = Prns-interfaces är hot-swappable: lägg till, ta 
 
 interfaces-radio-label = Radio
 interfaces-radio-headline = Närhetslänkar för enheter och kort
-interfaces-radio-body = Bluetooth LE Auto-interface, ESP-NOW och LoRa för in nära enheter, kortflottor och långräckviddiga länkar i ett RNS-mesh.
+interfaces-radio-body = Bluetooth LE Auto-interface, ESP-NOW och LoRa för in nära enheter, kortflottor och långräckviddiga RF-länkar i ett Reticulum-mesh.
 
 interfaces-lan-label = LAN
 interfaces-lan-headline = Automatiskt upptäckta local-link-peers
-interfaces-lan-body = Wi-Fi Auto-interface använder multicast, mDNS och gateway-rendezvous för att hitta nära noder och vika in ett lokalt nätverk i meshet.
+interfaces-lan-body = Wi-Fi Auto-interface använder multicast, mDNS och gateway-rendezvous för att hitta nära noder och väva in ett lokalt nätverk i meshet.
 
 interfaces-cable-label = Kablar + packet radio
 interfaces-cable-headline = Kablar, TNC:er och radiomodem
@@ -82,7 +81,7 @@ start-embedded-target = Flasha en Hopspot (endast på engelska)
 
 start-web-headline = Använd lekplatsen för webbläsarnoder
 start-web-body = Prova TypeScript-API:t med den delade Rust-motorn i WebAssembly, anslut via Auto Wi-Fi eller USB Auto och följ lokal nodaktivitet live.
-start-web-code = WebAssembly-körning
+start-web-code = WebAssembly-runtime
     Auto Wi-Fi + USB Auto
     TypeScript-exempel
 start-web-target = Öppna lekplatsen (endast på engelska)
@@ -111,7 +110,7 @@ benchmarks-lead = Varje siffra nedan kommer från de publicerade resultaten i re
 
 # Licenssignal (sidfot)
 footer-license = Öppen källkod. MIT / Apache 2.0.
-footer-trademarks = Tredjepartslogotyper och varumärken tillhör sina respektive ägare. De visas endast för att identifiera plattformar, hårdvara och kompatibilitetsmål. Inget godkännande hävdas eller antyds.
+footer-trademarks = Tredjepartslogotyper, varumärken och produktbilder tillhör sina respektive ägare. De visas endast för att identifiera plattformar, hårdvara och kompatibilitetsmål. Inget godkännande hävdas eller antyds.
 
 # Bidragssida
 contributing-kicker = Ribban

@@ -1,7 +1,6 @@
 # Navigation
 nav-benchmarks = Benchmarks
 nav-contributing = Contributing
-nav-api = API Reference
 
 # Footer
 footer-tagline = Brought to you by KenAKAFrosty and the Personal/Prns team.
@@ -21,7 +20,7 @@ landing-title = High-performance Reticulum (RNS), built to run on any device.
 # the accent green, matching the OG card. Other locales use landing-title as-is.
 landing-title-lead = High-performance Reticulum (RNS),
 landing-title-accent = built to run on any device.
-landing-subtitle = Built for the performance, stability, and energy efficiency every Reticulum node needs, from a five-dollar microcontroller to a cloud server cluster. One engine and one API, the same on embedded, desktop, mobile, games, and the web.
+landing-subtitle = Built for the performance, stability, and energy efficiency every Reticulum node needs, from a $5 microcontroller to a cloud server cluster. One engine and one API, the same on embedded, desktop, mobile, games, and the web.
 landing-cta-ethos = Find your path in Prns
 landing-cta-standards = Our Standards
 # Pull quote

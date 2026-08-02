@@ -1,7 +1,6 @@
 # Navigation
 nav-benchmarks = Benchmarks
 nav-contributing = Bidrag
-nav-api = API-reference
 
 # Footer
 footer-tagline = Bragt til dig af KenAKAFrosty og Personal/Prns-teamet.
@@ -14,7 +13,7 @@ landing-kicker-prefix = Mesh-netværk, der er
 landing-title = Højtydende Reticulum (RNS), bygget til at køre på enhver enhed.
 landing-title-lead = Højtydende Reticulum (RNS),
 landing-title-accent = bygget til at køre på enhver enhed.
-landing-subtitle = Bygget til den ydeevne, stabilitet og energieffektivitet, enhver Reticulum-node har brug for, fra en mikrocontroller til fem dollars til en cloud-serverklynge. Én motor og ét API, det samme på embedded, desktop, mobil, i spil og på nettet.
+landing-subtitle = Bygget til den ydeevne, stabilitet og energieffektivitet, enhver Reticulum-node har brug for, fra en mikrocontroller til 5 dollars til en cloud-serverklynge. Én motor og ét API, det samme på embedded, desktop, mobil, i spil og på nettet.
 landing-cta-ethos = Find din vej i Prns
 landing-cta-standards = Vores standarder
 # Pull quote
@@ -24,24 +23,24 @@ landing-quote-body = Reticulum er den grundlæggende kommunikationsinfrastruktur
 # Interfaces
 interfaces-section-label = Interfaces
 interfaces-section-title = Hvor meshet møder verden
-interfaces-section-lead = Prns bevarer de RNS-kompatible interfaces, buildere allerede kender, og udvider kortet med native links til nye enheder og netværk.
-interfaces-section-hot-note = Prns-interfaces kan skiftes hot: tilføj, fjern eller ændr en interface uden en node-genstart.
+interfaces-section-lead = Prns bevarer de RNS-kompatible interfaces, byggere allerede kender, og udvider kortet med native links til nye enheder og netværk.
+interfaces-section-hot-note = Prns-interfaces er hot-swappable: tilføj, fjern eller ændr et interface uden node-genstart.
 
 interfaces-radio-label = Radioer
 interfaces-radio-headline = Nærhedslinks til enheder og boards
-interfaces-radio-body = Bluetooth LE Auto-interface, ESP-NOW og LoRa bringer nære enheder, board-flåder og langtrækkende links ind i ét RNS-mesh.
+interfaces-radio-body = Bluetooth LE Auto-interface, ESP-NOW og LoRa bringer nære enheder, board-flåder og langtrækkende RF-links ind i ét Reticulum-mesh.
 
 interfaces-lan-label = LAN
 interfaces-lan-headline = Automatisk fundne local-link-peers
-interfaces-lan-body = Wi-Fi Auto-interface bruger multicast, mDNS og gateway-rendezvous til at finde nære noder og folde et lokalt netværk ind i meshet.
+interfaces-lan-body = Wi-Fi Auto-interface bruger multicast, mDNS og gateway-rendezvous til at finde nære noder og flette et lokalt netværk ind i meshet.
 
 interfaces-cable-label = Kabler + packet radio
-interfaces-cable-headline = Kabler, TNC'er og radiomodems
+interfaces-cable-headline = Kabler, TNC'er og radiomodemer
 interfaces-cable-body = USB Auto-interface, seriel framing, KISS, AX.25 og RNode forbinder små enheder og packet-radio-hardware til det samme mesh.
 
 interfaces-host-label = Routet IP
 interfaces-host-headline = Internet-, WAN- og backbone-links
-interfaces-host-body = TCP client/server, UDP, WebSocket og Backbone lader fjerne peers deltage i meshet over private WANs, VPNs, relays på det offentlige internet og browserintegrationer.
+interfaces-host-body = TCP-klient/server, UDP, WebSocket og Backbone lader fjerne peers deltage i meshet over private WAN'er, VPN'er, relæer på det offentlige internet og browserintegrationer.
 
 # What you can count on (standards callout)
 standards-section-label = Vores standarder
@@ -57,7 +56,7 @@ standards-correctness-headline = Diff-testet mod RNS
 standards-correctness-body = Hver ændring tjekkes mod referencen og køres derefter gennem unit-, property-, fuzz- og mutationstests med Kani-beviser dér, hvor de betyder noget.
 standards-benchmarked-label = Ydeevne
 standards-benchmarked-headline = Målt, ikke bare påstået
-standards-benchmarked-body = Ydeevnen følges åbent, målt af et harness du selv kan køre.
+standards-benchmarked-body = Ydeevnen følges åbent, målt af et harness, du selv kan køre.
 standards-benchmarked-cta = Se benchmarks →
 
 # Where do I start? (use-case cards on landing)
@@ -111,12 +110,12 @@ benchmarks-lead = Hvert tal nedenfor kommer fra de offentliggjorte resultater i 
 
 # License signal (footer)
 footer-license = Open source. MIT / Apache 2.0.
-footer-trademarks = Tredjepartslogoer og varemærker tilhører deres respektive ejere. De vises kun for at identificere platforme, hardware og kompatibilitetsmål. Ingen godkendelse hævdes eller antydes.
+footer-trademarks = Tredjepartslogoer, varemærker og produktbilleder tilhører deres respektive ejere. De vises kun for at identificere platforme, hardware og kompatibilitetsmål. Ingen godkendelse hævdes eller antydes.
 
 # Contributing page
-contributing-kicker = Standarden
+contributing-kicker = Barren
 contributing-title = Bidrag
-contributing-lead = Sådan bidrager du — hvad vi værdsætter, de konventioner din kode følger, og den standard hver ændring skal klare. For både menneskelige og automatiserede bidragydere.
+contributing-lead = Sådan bidrager du — hvad vi værdsætter, de konventioner, din kode følger, og den standard, hver ændring skal klare. For både menneskelige og automatiserede bidragydere.
 
 # 404
 not-found-title = Her er der ikke noget endnu.

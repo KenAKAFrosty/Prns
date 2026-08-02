@@ -1,7 +1,6 @@
 # Navegación
 nav-benchmarks = Benchmarks
 nav-contributing = Contribuir
-nav-api = Referencia de la API
 
 # Pie de página
 footer-tagline = Hecho por KenAKAFrosty y el equipo de Personal/Prns.
@@ -14,11 +13,11 @@ landing-kicker-prefix = Redes mesh que son
 landing-title = Reticulum (RNS) de alto rendimiento, construido para funcionar en cualquier dispositivo.
 landing-title-lead = Reticulum (RNS) de alto rendimiento,
 landing-title-accent = construido para funcionar en cualquier dispositivo.
-landing-subtitle = Construido para el rendimiento, la estabilidad y la eficiencia energética que todo nodo Reticulum necesita, desde un microcontrolador de cinco dólares hasta un clúster de servidores en la nube. Un solo motor y una sola API, iguales en embebido, escritorio, móvil, juegos y web.
+landing-subtitle = Construido para el rendimiento, la estabilidad y la eficiencia energética que todo nodo Reticulum necesita, desde un microcontrolador de 5 dólares hasta un clúster de servidores en la nube. Un solo motor y una sola API, iguales en embebido, escritorio, móvil, juegos y web.
 landing-cta-ethos = Encuentra tu camino en Prns
 landing-cta-standards = Nuestros estándares
 # Cita
-landing-quote-label = Hacia lo que estamos construyendo
+landing-quote-label = Lo que queremos construir
 landing-quote-body = Reticulum es la infraestructura de comunicación fundacional de un futuro luminoso que podemos tener, siempre que lo construyamos entre todos. Este es el esfuerzo del equipo de Personal por poner RNS en manos de más builders y ayudar a hacer realidad ese futuro.
 
 # Interfaces
@@ -29,7 +28,7 @@ interfaces-section-hot-note = Las interfaces de Prns son hot-swappable: añade, 
 
 interfaces-radio-label = Radios
 interfaces-radio-headline = Enlaces de proximidad para dispositivos y placas
-interfaces-radio-body = Bluetooth LE Auto-interface, ESP-NOW y LoRa llevan dispositivos cercanos, flotas de placas y enlaces de largo alcance a una misma mesh RNS.
+interfaces-radio-body = Bluetooth LE Auto-interface, ESP-NOW y LoRa llevan dispositivos cercanos, flotas de placas y enlaces RF de largo alcance a una misma mesh Reticulum.
 
 interfaces-lan-label = LAN
 interfaces-lan-headline = Pares de enlace local descubiertos automáticamente
@@ -48,9 +47,9 @@ standards-section-label = Nuestros estándares
 standards-section-title = Con lo que puedes contar
 standards-license-label = Licencia
 standards-license-headline = MIT / Apache 2.0
-standards-license-body = Doble licencia y permisiva. Sin copyleft ni restricciones comerciales.
+standards-license-body = Doble licencia permisiva. Sin copyleft ni restricciones comerciales.
 standards-safety-label = Seguridad
-standards-safety-headline = Impuesto, luego auditado
+standards-safety-headline = Impuesta, luego auditada
 standards-safety-body = En el motor, los panics, los unwraps y el unsafe sin justificar nunca compilan. Lo que no se puede prohibir se audita: el unsafe de las dependencias con cargo-geiger, el comportamiento indefinido con Miri, los avisos de seguridad con cargo-deny.
 standards-correctness-label = Corrección
 standards-correctness-headline = Diff-testado contra RNS
@@ -65,15 +64,15 @@ start-section-label = Caminos de entrada
 start-section-title = ¿Qué vienes a hacer?
 start-section-lead = Elige el camino que encaje con cómo Prns entra en tu trabajo: hardware que flasheas, infraestructura que operas o software que construyes.
 
-start-daemon-headline = Ejecutar un daemon
+start-daemon-headline = Ejecuta un daemon
 start-daemon-body = Instala un daemon Reticulum rápido para escritorios, apps LXMF, VPS de backbone y más.
 start-daemon-code = Drop-in para apps estándar
     Lee ~/.reticulum
-    Edición de interfaces en vivo
+    Edición de interfaces en caliente
     Métricas integradas
 start-daemon-target = Ejecutar Prnsd
 
-start-embedded-headline = Flashear un Hopspot
+start-embedded-headline = Flashea un Hopspot
 start-embedded-body = Elige una placa compatible, compara los compromisos de radio y batería y flashea un dispositivo mesh dedicado.
 start-embedded-code = Matriz de placas
     Flasher web
@@ -111,12 +110,12 @@ benchmarks-lead = Cada número de abajo viene de los resultados publicados en el
 
 # Pie (licencia)
 footer-license = Código abierto. MIT / Apache 2.0.
-footer-trademarks = Los logotipos y marcas de terceros pertenecen a sus respectivos propietarios. Se muestran solo para identificar plataformas, hardware y objetivos de compatibilidad. No se afirma ni se implica ningún respaldo.
+footer-trademarks = Los logotipos, marcas e imágenes de productos de terceros pertenecen a sus respectivos propietarios. Se muestran solo para identificar plataformas, hardware y objetivos de compatibilidad. No se afirma ni se implica ningún respaldo.
 
 # Página de contribución
-contributing-kicker = El estándar
+contributing-kicker = El listón
 contributing-title = Contribuir
-contributing-lead = Cómo contribuir — qué valoramos, las convenciones que sigue tu código y el estándar que supera cada cambio. Para contribuidores humanos y automatizados por igual.
+contributing-lead = Cómo contribuir — qué valoramos, las convenciones que sigue tu código y el estándar que cada cambio supera. Para contribuidores humanos y automatizados por igual.
 
 # 404
 not-found-title = Aquí todavía no hay nada.
