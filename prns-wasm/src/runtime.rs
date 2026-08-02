@@ -52,6 +52,8 @@ use crate::parameters::{bitrate_bps_u32, BROWSER_PERSISTENCE_VERSION};
 enum NodeResponse {
     Index,
     Quickstart,
+    ComingFromRns,
+    SourcePage,
     #[cfg(feature = "source-archive")]
     SourceArchive,
     #[cfg(feature = "source-archive")]
@@ -280,7 +282,7 @@ impl PrnsRuntime {
                 JsValue::from_str(&format!("node page registration failed: {error:?}"))
             })?;
         self.bump_revision();
-        for (path, policy) in <personal_hopspot_core::node_pages::NodePageRoutes as personal_rns::runtime::request_endpoints::RequestEndpointSet<()>>::REGISTRATIONS {
+        for (path, policy) in <personal_hopspot_core::node_pages::BrowserNodePageRoutes as personal_rns::runtime::request_endpoints::RequestEndpointSet<()>>::REGISTRATIONS {
             self.engine
                 .register_request_handler(&destination, path, policy.engine_policy())
                 .map_err(|error| {
@@ -693,6 +695,10 @@ impl PrnsRuntime {
         let index_path = RequestPathHash::of(personal_hopspot_core::node_pages::INDEX_PATH);
         let quickstart_path =
             RequestPathHash::of(personal_hopspot_core::node_pages::QUICKSTART_PATH);
+        let coming_from_rns_path =
+            RequestPathHash::of(personal_hopspot_core::node_pages::COMING_FROM_RNS_PATH);
+        let source_page_path =
+            RequestPathHash::of(personal_hopspot_core::node_pages::SOURCE_PAGE_PATH);
         #[cfg(feature = "source-archive")]
         let source_path =
             RequestPathHash::of(personal_hopspot_core::node_pages::SOURCE_ARCHIVE_PATH);
@@ -721,6 +727,16 @@ impl PrnsRuntime {
                         }
                         if node_page && *path_hash == quickstart_path {
                             page_requests.push((*link_id, *request_id, NodeResponse::Quickstart));
+                        }
+                        if node_page && *path_hash == coming_from_rns_path {
+                            page_requests.push((
+                                *link_id,
+                                *request_id,
+                                NodeResponse::ComingFromRns,
+                            ));
+                        }
+                        if node_page && *path_hash == source_page_path {
+                            page_requests.push((*link_id, *request_id, NodeResponse::SourcePage));
                         }
                         #[cfg(feature = "source-archive")]
                         if node_page && *path_hash == source_path {
@@ -760,6 +776,12 @@ impl PrnsRuntime {
                             ),
                             NodeResponse::Quickstart => RespondPayload::StaticBytes(
                                 personal_hopspot_core::node_pages::QUICKSTART_PAGE,
+                            ),
+                            NodeResponse::ComingFromRns => RespondPayload::StaticBytes(
+                                personal_hopspot_core::node_pages::COMING_FROM_RNS_PAGE,
+                            ),
+                            NodeResponse::SourcePage => RespondPayload::StaticBytes(
+                                personal_hopspot_core::node_pages::BROWSER_SOURCE_PAGE,
                             ),
                             #[cfg(feature = "source-archive")]
                             NodeResponse::SourceArchive => RespondPayload::StaticFile {

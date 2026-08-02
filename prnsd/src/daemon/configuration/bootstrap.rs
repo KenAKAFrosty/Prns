@@ -270,9 +270,9 @@ pub(crate) fn materialize_nnpages_settings(
 
 const SOURCE_PAGE_MARKER: &str = "# prnsd:managed:source-page";
 const SOURCE_PAGE_MISSING: &str = include_str!("../../../assets/nnpages/source_missing.mu");
-const SOURCE_PAGE_AVAILABLE: &str = include_str!("../../../assets/nnpages/source_available.mu");
+const SOURCE_PAGE_AVAILABLE: &str = include_str!("../../../../assets/nnpages/source_available.mu");
 const COMING_FROM_RNS_MARKER: &str = "# prnsd:managed:coming-from-rns";
-const COMING_FROM_RNS_PAGE: &str = include_str!("../../../assets/nnpages/coming_from_rns.mu");
+const COMING_FROM_RNS_PAGE: &str = include_str!("../../../../assets/nnpages/coming_from_rns.mu");
 const SOURCE_CHECKSUM_LINE: &str =
     "`F999Verify:`f `F6eb`_`[source.zip.sha256`:/file/source.zip.sha256]`_`f\n\n";
 

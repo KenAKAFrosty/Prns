@@ -11,9 +11,13 @@ pub const NODE_APP_NAME: &str = "nomadnetwork";
 pub const NODE_ASPECTS: &[&str] = &["node"];
 pub const INDEX_PATH: &str = "/page/index.mu";
 pub const QUICKSTART_PATH: &str = "/page/quickstart.mu";
+pub const COMING_FROM_RNS_PATH: &str = "/page/coming-from-rns.mu";
+pub const SOURCE_PAGE_PATH: &str = "/page/source.mu";
 pub const SOURCE_ARCHIVE_PATH: &str = "/file/source.zip";
 pub const SOURCE_CHECKSUM_PATH: &str = "/file/source.zip.sha256";
 pub const QUICKSTART_PAGE: &[u8] = include_bytes!("node_pages/quickstart.mu");
+pub const COMING_FROM_RNS_PAGE: &[u8] =
+    include_bytes!("../../../assets/nnpages/coming_from_rns.mu");
 
 #[cfg(feature = "source-archive")]
 pub const SERVES_SOURCE_ARCHIVE: bool = true;
@@ -24,10 +28,6 @@ pub const SERVES_SOURCE_ARCHIVE: bool = false;
 pub const HOPSPOT_INDEX_PAGE: &[u8] = HOPSPOT_INDEX_PAGE_WITH_SOURCE;
 #[cfg(not(feature = "source-archive"))]
 pub const HOPSPOT_INDEX_PAGE: &[u8] = HOPSPOT_INDEX_PAGE_NO_SOURCE;
-#[cfg(feature = "source-archive")]
-pub const BROWSER_INDEX_PAGE: &[u8] = BROWSER_INDEX_PAGE_WITH_SOURCE;
-#[cfg(not(feature = "source-archive"))]
-pub const BROWSER_INDEX_PAGE: &[u8] = BROWSER_INDEX_PAGE_NO_SOURCE;
 
 const LARGEST_INDEX_PAGE_LEN: usize = {
     let hopspot = HOPSPOT_INDEX_PAGE.len();
@@ -169,6 +169,55 @@ impl<S> RequestEndpointSet<S> for SourceNodePageRoutes {
     }
 }
 
+pub struct BrowserNodePageRoutes;
+
+impl<S> RequestEndpointSet<S> for BrowserNodePageRoutes {
+    #[cfg(feature = "source-archive")]
+    const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)] = &[
+        (INDEX_PATH, RequestEndpointPolicy::AllowAll),
+        (QUICKSTART_PATH, RequestEndpointPolicy::AllowAll),
+        (COMING_FROM_RNS_PATH, RequestEndpointPolicy::AllowAll),
+        (SOURCE_PAGE_PATH, RequestEndpointPolicy::AllowAll),
+        (SOURCE_ARCHIVE_PATH, RequestEndpointPolicy::AllowAll),
+        (SOURCE_CHECKSUM_PATH, RequestEndpointPolicy::AllowAll),
+    ];
+    #[cfg(not(feature = "source-archive"))]
+    const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)] = &[
+        (INDEX_PATH, RequestEndpointPolicy::AllowAll),
+        (QUICKSTART_PATH, RequestEndpointPolicy::AllowAll),
+        (COMING_FROM_RNS_PATH, RequestEndpointPolicy::AllowAll),
+        (SOURCE_PAGE_PATH, RequestEndpointPolicy::AllowAll),
+    ];
+
+    async fn dispatch(
+        mut context: RequestContext<'_, S>,
+        path_hash: RequestPathHash,
+    ) -> Result<(), Decline> {
+        if path_hash == RequestPathHash::of(INDEX_PATH) {
+            return context.respond_static_messagepack_bytes(BROWSER_INDEX_PAGE);
+        }
+        if path_hash == RequestPathHash::of(QUICKSTART_PATH) {
+            return context.respond_static_messagepack_bytes(QUICKSTART_PAGE);
+        }
+        if path_hash == RequestPathHash::of(COMING_FROM_RNS_PATH) {
+            return context.respond_static_messagepack_bytes(COMING_FROM_RNS_PAGE);
+        }
+        if path_hash == RequestPathHash::of(SOURCE_PAGE_PATH) {
+            return context.respond_static_messagepack_bytes(BROWSER_SOURCE_PAGE);
+        }
+        #[cfg(feature = "source-archive")]
+        {
+            if path_hash == RequestPathHash::of(SOURCE_ARCHIVE_PATH) {
+                return context.respond_static_file("source.zip", SOURCE_ARCHIVE);
+            }
+            if path_hash == RequestPathHash::of(SOURCE_CHECKSUM_PATH) {
+                return context.respond_static_file("source.zip.sha256", SOURCE_CHECKSUM);
+            }
+        }
+        Err(Decline::Ignore)
+    }
+}
+
 pub struct NodeIndexPage;
 
 impl<S> RequestEndpoint<S> for NodeIndexPage {
@@ -267,6 +316,39 @@ mod tests {
             page.contains("source.zip not carried or served"),
             !SERVES_SOURCE_ARCHIVE
         );
+    }
+
+    #[test]
+    fn the_browser_face_carries_the_shared_nav_and_pages() {
+        let browser = core::str::from_utf8(BROWSER_INDEX_PAGE).unwrap();
+        assert!(browser.contains("`[Coming from RNS?`:/page/coming-from-rns.mu]"));
+        assert!(browser.contains("`[Download the source`:/page/source.mu]"));
+        assert!(browser.contains("`[Get the source`:/page/source.mu]"));
+        assert!(!browser.contains("Open the offline Prns quickstart"));
+        assert!(!browser.contains("source.zip not carried or served"));
+
+        let routes = <BrowserNodePageRoutes as RequestEndpointSet<()>>::REGISTRATIONS;
+        assert!(routes.iter().any(|(path, _)| *path == COMING_FROM_RNS_PATH));
+        assert!(routes.iter().any(|(path, _)| *path == SOURCE_PAGE_PATH));
+        assert_eq!(
+            routes.iter().any(|(path, _)| *path == SOURCE_ARCHIVE_PATH),
+            SERVES_SOURCE_ARCHIVE
+        );
+
+        let source_page = core::str::from_utf8(BROWSER_SOURCE_PAGE).unwrap();
+        assert_eq!(
+            source_page.contains("`[source.zip ("),
+            SERVES_SOURCE_ARCHIVE
+        );
+        assert_eq!(
+            source_page.contains("This compact build doesn't carry the source archive"),
+            !SERVES_SOURCE_ARCHIVE
+        );
+        assert!(!source_page.contains("{{"));
+        assert!(!source_page.contains("prnsd:managed"));
+
+        let coming_from_rns = core::str::from_utf8(COMING_FROM_RNS_PAGE).unwrap();
+        assert!(coming_from_rns.contains(">Coming from RNS"));
     }
 
     #[test]

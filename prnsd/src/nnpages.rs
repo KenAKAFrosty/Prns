@@ -32,8 +32,9 @@ pub(crate) const SOURCE_CHECKSUM_FILE_NAME: &str = "source.zip.sha256";
 pub(crate) const DEFAULT_INDEX_PAGE: &[u8] = concat!(
     include_str!("../../assets/nnpages/masthead.mu"),
     include_str!("../assets/nnpages/index_welcome.mu"),
+    include_str!("../../assets/nnpages/nav.mu"),
     include_str!("../../assets/nnpages/why_prns.mu"),
-    include_str!("../assets/nnpages/index_license.mu"),
+    include_str!("../../assets/nnpages/license.mu"),
     include_str!("../../assets/nnpages/quote.mu"),
     include_str!("../assets/nnpages/index_outro.mu"),
     include_str!("../../assets/nnpages/credits.mu"),

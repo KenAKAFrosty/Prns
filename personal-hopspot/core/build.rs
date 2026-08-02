@@ -17,10 +17,15 @@ fn main() -> io::Result<()> {
     println!("cargo:rerun-if-changed=src/node_pages/index_intro.mu");
     println!("cargo:rerun-if-changed=src/node_pages/index_license.mu");
     println!("cargo:rerun-if-changed=src/node_pages/quickstart.mu");
+    println!("cargo:rerun-if-changed=src/node_pages/browser_welcome.mu");
+    println!("cargo:rerun-if-changed=src/node_pages/browser_source_missing.mu");
     println!("cargo:rerun-if-changed=../../assets/nnpages/masthead.mu");
+    println!("cargo:rerun-if-changed=../../assets/nnpages/nav.mu");
     println!("cargo:rerun-if-changed=../../assets/nnpages/why_prns.mu");
+    println!("cargo:rerun-if-changed=../../assets/nnpages/license.mu");
     println!("cargo:rerun-if-changed=../../assets/nnpages/quote.mu");
     println!("cargo:rerun-if-changed=../../assets/nnpages/credits.mu");
+    println!("cargo:rerun-if-changed=../../assets/nnpages/source_available.mu");
     println!("cargo:rerun-if-changed=../../VERSION");
     println!("cargo:rerun-if-env-changed=PRNS_BUILD_VERSION");
     println!("cargo:rerun-if-env-changed=PRNS_BUILD_COMMIT");
@@ -90,11 +95,20 @@ fn main() -> io::Result<()> {
     };
 
     let shared = repo.join("assets/nnpages");
-    let head = [
+    let hopspot_head = [
         fs::read_to_string(shared.join("masthead.mu"))?,
         fs::read_to_string(manifest.join("src/node_pages/index_intro.mu"))?,
         fs::read_to_string(shared.join("why_prns.mu"))?,
         fs::read_to_string(manifest.join("src/node_pages/index_license.mu"))?,
+        fs::read_to_string(shared.join("quote.mu"))?,
+    ]
+    .concat();
+    let browser_head = [
+        fs::read_to_string(shared.join("masthead.mu"))?,
+        fs::read_to_string(manifest.join("src/node_pages/browser_welcome.mu"))?,
+        fs::read_to_string(shared.join("nav.mu"))?,
+        fs::read_to_string(shared.join("why_prns.mu"))?,
+        fs::read_to_string(shared.join("license.mu"))?,
         fs::read_to_string(shared.join("quote.mu"))?,
     ]
     .concat();
@@ -108,21 +122,32 @@ fn main() -> io::Result<()> {
         "\nSource {version} {short_commit}: compact build; source.zip not carried or served.\n"
     );
     let hopspot_no_source = page(
-        &head,
+        &hopspot_head,
         "`F999This node is a Personal Hopspot, one small piece of that future.`f\n",
         &no_source,
         &tail,
     );
-    let browser_no_source = page(
-        &head,
+    let browser_index = page(
+        &browser_head,
         "`F999This node lives in a browser tab, one small piece of that future.`f\n",
-        &no_source,
+        "",
         &tail,
     );
+    let browser_source_page = match &source {
+        Some((_, size, _)) => fs::read_to_string(shared.join("source_available.mu"))?
+            .replacen("# prnsd:managed:source-page\n", "", 1)
+            .replace("{{SIZE}}", &format_archive_size(*size as u64))
+            .replace(
+                "{{CHECKSUM_LINE}}\n",
+                "`F999Verify:`f `F6eb`_`[source.zip.sha256`:/file/source.zip.sha256]`_`f\n\n",
+            ),
+        None => fs::read_to_string(manifest.join("src/node_pages/browser_source_missing.mu"))?,
+    };
 
     let out = path_environment("OUT_DIR")?;
     fs::write(out.join("hopspot_index_no_source.mu"), hopspot_no_source)?;
-    fs::write(out.join("browser_index_no_source.mu"), browser_no_source)?;
+    fs::write(out.join("browser_index.mu"), browser_index)?;
+    fs::write(out.join("browser_source.mu"), browser_source_page)?;
 
     let mut generated = String::new();
     generated.push_str(&format!("pub const BUILD_VERSION: &str = {version:?};\n"));
@@ -132,8 +157,12 @@ fn main() -> io::Result<()> {
          include_bytes!(concat!(env!(\"OUT_DIR\"), \"/hopspot_index_no_source.mu\"));\n",
     );
     generated.push_str(
-        "pub const BROWSER_INDEX_PAGE_NO_SOURCE: &[u8] = \
-         include_bytes!(concat!(env!(\"OUT_DIR\"), \"/browser_index_no_source.mu\"));\n",
+        "pub const BROWSER_INDEX_PAGE: &[u8] = \
+         include_bytes!(concat!(env!(\"OUT_DIR\"), \"/browser_index.mu\"));\n",
+    );
+    generated.push_str(
+        "pub const BROWSER_SOURCE_PAGE: &[u8] = \
+         include_bytes!(concat!(env!(\"OUT_DIR\"), \"/browser_source.mu\"));\n",
     );
     if let Some((archive, size, digest)) = source {
         let status = format!(
@@ -147,17 +176,8 @@ fn main() -> io::Result<()> {
         fs::write(
             out.join("hopspot_index_with_source.mu"),
             page(
-                &head,
+                &hopspot_head,
                 "`F999This node is a Personal Hopspot, one small piece of that future.`f\n",
-                &status,
-                &tail,
-            ),
-        )?;
-        fs::write(
-            out.join("browser_index_with_source.mu"),
-            page(
-                &head,
-                "`F999This node lives in a browser tab, one small piece of that future.`f\n",
                 &status,
                 &tail,
             ),
@@ -177,10 +197,6 @@ fn main() -> io::Result<()> {
         generated.push_str(
             "pub const HOPSPOT_INDEX_PAGE_WITH_SOURCE: &[u8] = \
              include_bytes!(concat!(env!(\"OUT_DIR\"), \"/hopspot_index_with_source.mu\"));\n",
-        );
-        generated.push_str(
-            "pub const BROWSER_INDEX_PAGE_WITH_SOURCE: &[u8] = \
-             include_bytes!(concat!(env!(\"OUT_DIR\"), \"/browser_index_with_source.mu\"));\n",
         );
     }
     fs::write(out.join("node_pages_generated.rs"), generated)?;
@@ -251,4 +267,18 @@ fn hex_digest(bytes: &[u8]) -> String {
 
 fn page(head: &str, mission: &str, source: &str, tail: &str) -> String {
     [head, mission, source, tail].concat()
+}
+
+fn format_archive_size(bytes: u64) -> String {
+    if bytes < 1024 {
+        return format!("{bytes} B");
+    }
+    let (scaled_tenths, unit) = if bytes < 1024 * 1024 {
+        (bytes * 10 / 1024, "KB")
+    } else if bytes < 1024 * 1024 * 1024 {
+        (bytes * 10 / (1024 * 1024), "MB")
+    } else {
+        (bytes * 10 / (1024 * 1024 * 1024), "GB")
+    };
+    format!("{}.{} {}", scaled_tenths / 10, scaled_tenths % 10, unit)
 }
