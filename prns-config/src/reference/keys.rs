@@ -29,6 +29,8 @@ pub(crate) mod global {
     pub const BLACKHOLE_UPDATE_INTERVAL: &str = "blackhole_update_interval";
     pub const INTERFACE_DISCOVERY_SOURCES: &str = "interface_discovery_sources";
     pub const AUTOCONNECT_DISCOVERED_INTERFACES: &str = "autoconnect_discovered_interfaces";
+    pub const AUTOCONNECT_INTERFACE_GRAVITY: &str = "autoconnect_interface_gravity";
+    pub const DEFAULT_GRAVITY: &str = "default_gravity";
     pub const DEFAULT_AR_TARGET: &str = "default_ar_target";
     pub const DEFAULT_AR_PENALTY: &str = "default_ar_penalty";
     pub const DEFAULT_AR_GRACE: &str = "default_ar_grace";
@@ -69,6 +71,7 @@ pub(crate) mod interface {
     pub const MODE: &str = "mode";
     pub const OUTGOING: &str = "outgoing";
     pub const BITRATE: &str = "bitrate";
+    pub const GRAVITY: &str = "gravity";
     pub const ANNOUNCE_CAP: &str = "announce_cap";
     pub const ANNOUNCE_RATE_TARGET: &str = "announce_rate_target";
     pub const ANNOUNCE_RATE_GRACE: &str = "announce_rate_grace";
@@ -169,6 +172,7 @@ pub(crate) mod interface {
         MODE,
         OUTGOING,
         BITRATE,
+        GRAVITY,
         ANNOUNCE_CAP,
         ANNOUNCE_RATE_TARGET,
         ANNOUNCE_RATE_GRACE,

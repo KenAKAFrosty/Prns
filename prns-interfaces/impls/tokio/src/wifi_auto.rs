@@ -484,6 +484,10 @@ impl InterfaceSupervisor for AutoWifi {
         &self.settings.instance_tag
     }
 
+    fn policy(&self) -> EffectiveInterfacePolicy {
+        self.policy
+    }
+
     async fn run(self, fleet: Fleet) {
         // RNS AutoInterface is multi-interface: each eligible link-local NIC owns its token and peer table, and inbound datagrams demultiplex by source scope. Multicast is best-effort so rendezvous, gateway, and mDNS still run when it is unavailable.
         let AutoWifi {

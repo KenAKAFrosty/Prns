@@ -214,6 +214,13 @@ network name/passphrase/size, ingress and egress controls, `recursive_prs`,
 `announces_from_internal`, and the common IC/EC tuning values. Interface-mode behavior follows RNS
 1.4.0. `outgoing = No` disables egress while retaining ingress.
 
+`gravity` is a signed 64-bit routing preference. An interface inherits `default_gravity` from
+`[reticulum]` when it has no explicit value, and both default to zero. After an announce has passed
+normal identity, signature, freshness, and hop-count checks, a route may move to a higher-gravity
+interface only when the new evidence has the same announce timebase. Gravity does not make an
+older or longer route eligible. Dynamically spawned peers inherit their parent's effective
+gravity, and status output reports nonzero values.
+
 An explicit `bitrate` overrides the medium estimate and recomputes optimized MTU. TCP client/server
 `fixed_mtu` remains authoritative. Network-traversing TCP, UDP, Backbone, and WebSocket media use a
 500 Mbps estimate. Auto Wi-Fi and local shared-instance transports use 1 Gbps. Serial derives its
@@ -394,6 +401,8 @@ An interface with `bootstrap_only = Yes` starts normally while no auto-connected
 interface is available. When the configured `autoconnect_discovered_interfaces` limit is full,
 Prnsd retires all bootstrap-only interfaces. It restores them after every auto-connected interface
 is gone. As in RNS, this lifecycle is inactive when discovery auto-connect is disabled.
+`autoconnect_interface_gravity` selects the signed gravity assigned atomically to every
+auto-connected Backbone or TCP interface and defaults to zero.
 
 Weave uses a serial device path in `port`, not a numeric network port:
 

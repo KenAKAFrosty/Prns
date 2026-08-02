@@ -2,7 +2,7 @@ mod connection;
 
 pub use connection::ConnectionState;
 
-use crate::interfaces::InterfaceId;
+use crate::interfaces::{InterfaceGravity, InterfaceId, InterfaceMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AirtimeUtilization {
@@ -66,6 +66,8 @@ impl InterfaceVitals {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InterfaceSnapshot {
     pub id: InterfaceId,
+    pub mode: InterfaceMode,
+    pub gravity: InterfaceGravity,
     pub connection: ConnectionState,
     pub failure_reason: Option<&'static str>,
     pub rx_bytes: u64,

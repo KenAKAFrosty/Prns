@@ -449,6 +449,10 @@ where
         contract::GROUP_ID
     }
 
+    fn policy(&self) -> EffectiveInterfacePolicy {
+        self.policy
+    }
+
     async fn run(self, fleet: Fleet) {
         let Self {
             mut backend,

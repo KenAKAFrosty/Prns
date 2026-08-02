@@ -35,6 +35,7 @@ fn policy(cost: u16, sources: Vec<IdentityHash>) -> InterfaceDiscoveryPolicy {
         stamp_cost(cost),
         DiscoverySourcePolicy::from_sources(sources),
         AutoConnectPolicy::from_maximum(0),
+        crate::interfaces::InterfaceGravity::ZERO,
     )
 }
 

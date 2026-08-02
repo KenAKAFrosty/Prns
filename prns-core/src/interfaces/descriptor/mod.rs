@@ -8,7 +8,7 @@ pub use bitrate::BitrateBps;
 
 use crate::interfaces::{
     AirtimeDutyCycle, AnnounceBandwidthCap, AnnounceRateLimit, InterfaceCapabilities,
-    InterfaceCommonPolicy, InterfaceId, InterfaceMode,
+    InterfaceCommonPolicy, InterfaceGravity, InterfaceId, InterfaceMode,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,6 +16,7 @@ pub struct InterfaceDescriptor {
     pub id: InterfaceId,
     pub capabilities: InterfaceCapabilities,
     pub mode: InterfaceMode,
+    pub gravity: InterfaceGravity,
     pub bitrate: BitrateBps,
     pub hardware_mtu: Option<usize>,
     pub announce_rate_limit: Option<AnnounceRateLimit>,

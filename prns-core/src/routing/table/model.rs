@@ -1,5 +1,5 @@
 use crate::engine::InstantMillis;
-use crate::interfaces::InterfaceId;
+use crate::interfaces::{InterfaceGravity, InterfaceId};
 use crate::routing::announce::stored::{AnnounceAppData, AnnounceIdHistory, AnnounceRecordTable};
 use crate::routing::announce::{Announce, AnnounceId};
 use crate::routing::route_expiry::{LinearRouteExpiryIndex, RouteExpiryIndex};
@@ -38,6 +38,7 @@ pub struct ExistingRoute<'a> {
     pub expires_at: InstantMillis,
     pub announce_id_history: &'a [AnnounceId],
     pub responsiveness: RouteResponsiveness,
+    pub interface_gravity: Option<InterfaceGravity>,
 }
 
 #[derive(Debug, Clone)]

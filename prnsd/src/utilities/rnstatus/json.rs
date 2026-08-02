@@ -89,6 +89,7 @@ fn interface_value(status: &RnsInterfaceStatusReport) -> Value {
         String::from(interface::MODE),
         status.mode.wire_value().into(),
     );
+    insert_optional_i64(&mut fields, interface::GRAVITY, &status.gravity);
     insert_optional_u64(&mut fields, interface::CLIENTS, &status.clients);
     fields.insert(
         String::from(interface::RECEIVE_BYTES),
@@ -278,6 +279,14 @@ fn insert_optional_u64(
     insert_optional(fields, name, field, |value| (*value).into());
 }
 
+fn insert_optional_i64(
+    fields: &mut Map<String, Value>,
+    name: &'static str,
+    field: &RnsOptionalField<i64>,
+) {
+    insert_optional(fields, name, field, |value| (*value).into());
+}
+
 fn insert_optional_f64(
     fields: &mut Map<String, Value>,
     name: &'static str,
@@ -336,6 +345,7 @@ mod tests {
             parent_hash: RnsOptionalField::Absent,
             online: true,
             mode: RnsInterfaceMode::Internal,
+            gravity: RnsOptionalField::Value(-7),
             clients: RnsOptionalField::Null,
             receive_bytes: 1,
             transmit_bytes: 2,
@@ -391,6 +401,7 @@ mod tests {
         assert_eq!(fields.get(interface::TYPE), Some(&Value::Null));
         assert_eq!(fields.get(interface::CLIENTS), Some(&Value::Null));
         assert_eq!(fields.get(interface::MODE), Some(&Value::from(7)));
+        assert_eq!(fields.get(interface::GRAVITY), Some(&Value::from(-7)));
         assert_eq!(
             fields.get(interface::BLOCKED_IP_LIST),
             Some(&serde_json::json!(["192.0.2.10", "2001:db8::1"])),

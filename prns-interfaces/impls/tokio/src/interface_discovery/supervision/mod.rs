@@ -14,7 +14,9 @@ use prns_core::interface_discovery::{
     DiscoveryIngressFilter, DiscoveryNotApplicable, DiscoveryRecord, DiscoveryRejection,
     InterfaceDiscoveryPolicy,
 };
-use prns_core::interfaces::{BitrateBps, InterfaceId, InterfaceStatus, ReportsStatus};
+use prns_core::interfaces::{
+    BitrateBps, ConfiguredInterfacePolicy, InterfaceId, InterfaceStatus, ReportsStatus,
+};
 use prns_core::interfaces::{IfacContext, IfacSize};
 use prns_core::routing::announce::AnnounceObservation;
 use prns_core::units::{HopCount, InstantMillis};
@@ -368,8 +370,17 @@ fn attach_discovered(
     let target = dial_target(plan.endpoint().host(), plan.endpoint().port());
     match plan.connection_kind() {
         DiscoveredConnectionKind::BackboneClient => {
-            let interface =
-                BackboneClientInterface::new(target, AUTOCONNECT_BITRATE, RECONNECT_POLICY);
+            let interface = BackboneClientInterface::with_policy(
+                target,
+                prns_core::interfaces::backbone::CLIENT_DEFAULTS.configured(
+                    ConfiguredInterfacePolicy {
+                        gravity: Some(plan.gravity()),
+                        bitrate: Some(AUTOCONNECT_BITRATE),
+                        ..ConfiguredInterfacePolicy::default()
+                    },
+                ),
+                RECONNECT_POLICY,
+            );
             let status = interface.status();
             let attached = attach_with_access(handle, interface, plan)?;
             Ok(AttachedDiscoveredInterface {
@@ -378,8 +389,15 @@ fn attach_discovered(
             })
         }
         DiscoveredConnectionKind::TcpClient => {
-            let interface =
-                TcpClientInterface::new_with_bitrate(target, AUTOCONNECT_BITRATE, RECONNECT_POLICY);
+            let interface = TcpClientInterface::with_policy(
+                target,
+                prns_core::interfaces::tcp::DEFAULTS.configured(ConfiguredInterfacePolicy {
+                    gravity: Some(plan.gravity()),
+                    bitrate: Some(AUTOCONNECT_BITRATE),
+                    ..ConfiguredInterfacePolicy::default()
+                }),
+                RECONNECT_POLICY,
+            );
             let status = interface.status();
             let attached = attach_with_access(handle, interface, plan)?;
             Ok(AttachedDiscoveredInterface {

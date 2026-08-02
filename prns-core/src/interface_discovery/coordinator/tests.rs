@@ -120,6 +120,7 @@ fn enabled_policy(maximum: usize) -> InterfaceDiscoveryPolicy {
         StampCost::new(1).expect("one is a valid stamp cost"),
         DiscoverySourcePolicy::from_sources(Vec::new()),
         AutoConnectPolicy::from_maximum(maximum),
+        crate::interfaces::InterfaceGravity::ZERO,
     )
 }
 
@@ -303,6 +304,7 @@ fn seeding_discards_records_below_the_effective_stamp_policy() {
         StampCost::new(16).expect("sixteen is a valid stamp cost"),
         DiscoverySourcePolicy::from_sources(Vec::new()),
         AutoConnectPolicy::from_maximum(1),
+        crate::interfaces::InterfaceGravity::ZERO,
     ));
     upgraded.seed_catalog(default_catalog);
     assert_eq!(upgraded.catalog().len(), 1);
@@ -327,6 +329,7 @@ fn seeding_discards_records_below_the_effective_stamp_policy() {
         StampCost::new(14).expect("fourteen is a valid stamp cost"),
         DiscoverySourcePolicy::from_sources(Vec::new()),
         AutoConnectPolicy::from_maximum(1),
+        crate::interfaces::InterfaceGravity::ZERO,
     ));
     custom.seed_catalog(custom_catalog);
     assert_eq!(custom.catalog().len(), 1);

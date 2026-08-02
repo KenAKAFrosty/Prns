@@ -1,5 +1,6 @@
 mod capabilities;
 mod common;
+mod gravity;
 mod mode;
 
 pub use capabilities::{
@@ -11,6 +12,7 @@ pub use common::{
     IngressControlPolicy, InterfaceCommonPolicy, InterfaceForwardingPolicy,
     PathRequestEgressControl,
 };
+pub use gravity::InterfaceGravity;
 pub use mode::InterfaceMode;
 
 use core::num::NonZeroUsize;
@@ -84,6 +86,7 @@ impl MtuPolicy {
 pub struct InterfaceDefaults {
     pub capabilities: InterfaceCapabilities,
     pub mode: InterfaceMode,
+    pub gravity: InterfaceGravity,
     pub bitrate: BitrateBps,
     pub mtu: MtuPolicy,
     pub announce_rate_limit: Option<AnnounceRateLimit>,
@@ -97,6 +100,7 @@ impl InterfaceDefaults {
         EffectiveInterfacePolicy {
             capabilities: configured.capabilities.unwrap_or(self.capabilities),
             mode: configured.mode.unwrap_or(self.mode),
+            gravity: configured.gravity.unwrap_or(self.gravity),
             bitrate: configured.bitrate.unwrap_or(self.bitrate),
             mtu: configured.mtu.unwrap_or(self.mtu),
             announce_rate_limit: configured.announce_rate_limit.or(self.announce_rate_limit),
@@ -115,6 +119,7 @@ impl InterfaceDefaults {
 pub struct ConfiguredInterfacePolicy {
     pub capabilities: Option<InterfaceCapabilities>,
     pub mode: Option<InterfaceMode>,
+    pub gravity: Option<InterfaceGravity>,
     pub bitrate: Option<BitrateBps>,
     pub mtu: Option<MtuPolicy>,
     pub announce_rate_limit: Option<AnnounceRateLimit>,
@@ -127,6 +132,7 @@ pub struct ConfiguredInterfacePolicy {
 pub struct EffectiveInterfacePolicy {
     pub capabilities: InterfaceCapabilities,
     pub mode: InterfaceMode,
+    pub gravity: InterfaceGravity,
     pub bitrate: BitrateBps,
     pub mtu: MtuPolicy,
     pub announce_rate_limit: Option<AnnounceRateLimit>,
@@ -142,6 +148,7 @@ impl EffectiveInterfacePolicy {
             id,
             capabilities: self.capabilities,
             mode: self.mode,
+            gravity: self.gravity,
             bitrate: self.bitrate,
             hardware_mtu: self.mtu.resolve(self.bitrate),
             announce_rate_limit: self.announce_rate_limit,
@@ -164,6 +171,7 @@ mod tests {
                 egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
             },
             mode: InterfaceMode::PointToPoint,
+            gravity: InterfaceGravity::ZERO,
             bitrate: BitrateBps::guess(500_000_000),
             mtu: MtuPolicy::optimized_from_bitrate(524_288),
             announce_rate_limit: None,
@@ -208,6 +216,7 @@ mod tests {
                 id,
                 capabilities: policy.capabilities,
                 mode: InterfaceMode::Full,
+                gravity: InterfaceGravity::ZERO,
                 bitrate: policy.bitrate,
                 hardware_mtu: Some(131_072),
                 announce_rate_limit: None,

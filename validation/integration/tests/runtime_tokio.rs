@@ -6,7 +6,9 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::BitrateBps;
-use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceStatus};
+use personal_rns::interfaces::{
+    EffectiveInterfacePolicy, InterfaceId, InterfaceKind, InterfaceStatus,
+};
 use personal_rns::manifold::reconnect::ReconnectPolicy;
 use personal_rns::request_endpoints;
 use personal_rns::routing::links::resources::ResourceStrategy;
@@ -30,6 +32,15 @@ struct DialOnce {
 
 impl InterfaceSupervisor for DialOnce {
     const KIND: InterfaceKind = InterfaceKind::Loopback;
+
+    fn policy(&self) -> EffectiveInterfacePolicy {
+        personal_rns::interfaces::tcp::DEFAULTS.configured(
+            personal_rns::interfaces::ConfiguredInterfacePolicy {
+                bitrate: Some(BITRATE),
+                ..Default::default()
+            },
+        )
+    }
 
     fn channel_tag(&self) -> &[u8] {
         self.addr.as_bytes()

@@ -188,6 +188,8 @@ mod tests {
     fn snapshot(kind: InterfaceKind) -> InterfaceSnapshot {
         InterfaceSnapshot {
             id: InterfaceId::new([kind as u8, 0, 0, 0, 0, 0, 0, 0]),
+            mode: personal_rns::interfaces::InterfaceMode::Full,
+            gravity: personal_rns::interfaces::InterfaceGravity::ZERO,
             connection: ConnectionState::Connected,
             failure_reason: None,
             rx_bytes: 0,

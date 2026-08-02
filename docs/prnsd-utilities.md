@@ -34,6 +34,9 @@ to the shared instance because they use the network.
 
 `cargo prnsd status` therefore reports RNS network state. Managed-process operations remain
 `cargo prnsd`, `cargo prnsd logs`, `cargo prnsd restart`, and `cargo prnsd stop`.
+Interface status includes nonzero signed gravity values. Use `status --sort gravity` to order
+interfaces by that routing preference; JSON output includes the signed `gravity` field when the
+reporting peer supplies it.
 
 ## File transfer security
 

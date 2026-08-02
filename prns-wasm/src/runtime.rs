@@ -152,6 +152,7 @@ impl PrnsRuntime {
             id,
             capabilities,
             mode: InterfaceMode::Full,
+            gravity: personal_rns::interfaces::InterfaceGravity::ZERO,
             bitrate,
             hardware_mtu: hardware_mtu.map(|mtu| mtu as usize),
             announce_rate_limit: None,

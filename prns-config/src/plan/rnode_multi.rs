@@ -1,5 +1,5 @@
 use prns_core::interfaces::rnode::multi::{RadioConfig, RadioConfigError, RadioConfigInput, VPort};
-use prns_core::interfaces::{AnnounceRateLimit, InterfaceCommonPolicy};
+use prns_core::interfaces::{AnnounceRateLimit, InterfaceCommonPolicy, InterfaceGravity};
 
 use crate::reference::keys::interface as interface_key;
 use crate::reference::{RNodeSubinterface, ReferenceConfigParams, ReferenceInterface};
@@ -83,6 +83,7 @@ pub(super) fn plan(
     interface: &ReferenceInterface,
     global_common: InterfaceCommonPolicy,
     global_announce_rate: AnnounceRateLimit,
+    default_gravity: InterfaceGravity,
     transport_enabled: bool,
 ) -> Result<Vec<PlannedInterface>, PlanFailure> {
     let ReferenceConfigParams::RnodeMulti {
@@ -115,6 +116,7 @@ pub(super) fn plan(
                 parent.clone(),
                 global_common,
                 global_announce_rate,
+                default_gravity,
                 transport_enabled,
             )
             .map_err(|kind| PlanFailure::member(&subinterface.name, kind))
@@ -128,6 +130,7 @@ fn plan_member(
     parent: RNodeMultiDevicePlan,
     global_common: InterfaceCommonPolicy,
     global_announce_rate: AnnounceRateLimit,
+    default_gravity: InterfaceGravity,
     transport_enabled: bool,
 ) -> Result<PlannedInterface, PlanErrorKind> {
     let member = RNodeMultiMemberPlan {
@@ -146,8 +149,11 @@ fn plan_member(
         interface,
         &medium,
         &discovery,
-        global_common,
-        global_announce_rate,
+        super::interface::InheritedInterfacePolicy {
+            common: global_common,
+            announce_rate: global_announce_rate,
+            gravity: default_gravity,
+        },
         transport_enabled,
         MemberEgressPolicy::from_outgoing(subinterface.outgoing),
     )?;

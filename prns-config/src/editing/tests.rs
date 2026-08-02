@@ -328,6 +328,10 @@ fn auto_setting_catalog_exposes_runtime_relevant_values_and_effective_defaults()
         .iter()
         .find(|spec| spec.key().as_str() == "bitrate")
         .unwrap_or_else(|| panic!("missing bitrate setting"));
+    let gravity = specs
+        .iter()
+        .find(|spec| spec.key().as_str() == "gravity")
+        .unwrap_or_else(|| panic!("missing gravity setting"));
     let outgoing = specs
         .iter()
         .find(|spec| spec.key().as_str() == "outgoing")
@@ -339,6 +343,11 @@ fn auto_setting_catalog_exposes_runtime_relevant_values_and_effective_defaults()
         Some("1000000000")
     );
     assert_eq!(bitrate.format_value("1000000000"), "1 Gbps");
+    assert_eq!(gravity.effective_value(planned).as_deref(), Some("0"));
+    assert!(matches!(
+        gravity.parse(InterfaceKind::Auto, "-42").unwrap().value(),
+        InterfaceSettingValue::Signed(-42)
+    ));
     assert_eq!(outgoing.label(), "Outgoing traffic allowed");
     assert!(data_port.description().contains("packet traffic"));
 }

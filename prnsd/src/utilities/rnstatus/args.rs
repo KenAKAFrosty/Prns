@@ -21,6 +21,7 @@ pub enum RnstatusSort {
     Prx,
     Ptx,
     Held,
+    Gravity,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Args)]

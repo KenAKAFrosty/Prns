@@ -147,6 +147,7 @@ mod tests {
                 egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
             },
             mode: InterfaceMode::Full,
+            gravity: crate::interfaces::InterfaceGravity::ZERO,
             bitrate: BitrateBps::guess(1_000_000_000),
             hardware_mtu: None,
             announce_rate_limit: None,

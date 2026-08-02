@@ -108,6 +108,7 @@ fn policy(maximum: usize) -> InterfaceDiscoveryPolicy {
         DEFAULT_STAMP_COST,
         DiscoverySourcePolicy::from_sources(Vec::new()),
         AutoConnectPolicy::from_maximum(maximum),
+        crate::interfaces::InterfaceGravity::new(-14),
     )
 }
 
@@ -225,6 +226,10 @@ fn startup_selection_is_bounded_ranked_deduplicated_and_type_safe() {
     assert_eq!(plans[0].endpoint().host(), "one.example");
     assert_eq!(plans[0].endpoint().port(), 4242);
     assert_eq!(plans[0].transport_id(), TransportId::new([1; 16]));
+    assert_eq!(
+        plans[0].gravity(),
+        crate::interfaces::InterfaceGravity::new(-14)
+    );
     assert_eq!(
         plans[0].connection_kind(),
         DiscoveredConnectionKind::BackboneClient

@@ -870,6 +870,8 @@ mod tests {
         screen::snapshots_to_cards(
             &[InterfaceSnapshot {
                 id: InterfaceId::new([0; 8]),
+                mode: personal_rns::interfaces::InterfaceMode::Full,
+                gravity: personal_rns::interfaces::InterfaceGravity::ZERO,
                 connection: ConnectionState::Connected,
                 failure_reason: None,
                 rx_bytes: 0,

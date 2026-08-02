@@ -43,6 +43,7 @@ pub struct ReferenceDiscoveryConfig {
     pub required_stamp_cost: Option<StampCost>,
     pub interface_sources: Vec<IdentityHash>,
     pub auto_connect_limit: Option<usize>,
+    pub auto_connect_gravity: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -214,6 +215,7 @@ pub struct ReferenceInterface {
     pub outgoing: Option<bool>,
     pub bootstrap_only: Option<bool>,
     pub bitrate: Option<u64>,
+    pub gravity: Option<i64>,
     pub announce_cap: Option<f64>,
     pub announce_rate_target: Option<u64>,
     pub announce_rate_grace: Option<u64>,
@@ -254,6 +256,7 @@ impl ReferenceInterface {
             outgoing: None,
             bootstrap_only: None,
             bitrate: None,
+            gravity: None,
             announce_cap: None,
             announce_rate_target: None,
             announce_rate_grace: None,

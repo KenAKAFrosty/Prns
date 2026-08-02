@@ -260,6 +260,35 @@ fn grouped_global_controls_reach_the_effective_interface_policy() {
 }
 
 #[test]
+fn signed_interface_gravity_inherits_and_overrides_the_global_default() {
+    let plan = plan_of(
+        "[reticulum]\n\
+             default_gravity = -23\n\
+             [interfaces]\n\
+             [[Inherited]]\n\
+             type = TCPClientInterface\n\
+             enabled = Yes\n\
+             target_host = inherited\n\
+             target_port = 4242\n\
+             [[Overridden]]\n\
+             type = TCPClientInterface\n\
+             enabled = Yes\n\
+             target_host = overridden\n\
+             target_port = 4242\n\
+             gravity = 17\n",
+    );
+
+    assert_eq!(
+        named(&plan, "Inherited").policy.gravity,
+        InterfaceGravity::new(-23)
+    );
+    assert_eq!(
+        named(&plan, "Overridden").policy.gravity,
+        InterfaceGravity::new(17)
+    );
+}
+
+#[test]
 fn internal_outgoing_and_common_controls_form_one_effective_policy() {
     let plan = plan_of(
         "[reticulum]\n\

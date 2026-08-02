@@ -41,6 +41,8 @@ fn interface_stats_preserve_live_counters_and_access_code_fields() {
         Some(String::from("Public TCP")),
         InterfaceSnapshot {
             id,
+            mode: crate::interfaces::InterfaceMode::Boundary,
+            gravity: crate::interfaces::InterfaceGravity::new(-12),
             connection: ConnectionState::Degraded,
             failure_reason: None,
             rx_bytes: 10,
@@ -75,6 +77,17 @@ fn interface_stats_preserve_live_counters_and_access_code_fields() {
         .find_map(|(key, value)| (key.as_str() == Some(interface::INTERFACES)).then_some(value))
         .and_then(rmpv::Value::as_array);
     assert!(interfaces.is_some_and(|entries| entries.len() == 1));
+    let entry = interfaces
+        .and_then(|entries| entries.first())
+        .and_then(rmpv::Value::as_map);
+    assert!(entry.is_some_and(|fields| {
+        fields
+            .iter()
+            .any(|(key, value)| key.as_str() == Some(interface::MODE) && value.as_i64() == Some(5))
+            && fields.iter().any(|(key, value)| {
+                key.as_str() == Some(interface::GRAVITY) && value.as_i64() == Some(-12)
+            })
+    }));
 }
 
 #[test]

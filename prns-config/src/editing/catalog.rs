@@ -187,6 +187,7 @@ impl InterfaceSettingSpec {
             interface_key::INTERFACE_MODE
             | interface_key::OUTGOING
             | interface_key::BITRATE
+            | interface_key::GRAVITY
             | interface_key::BOOTSTRAP_ONLY
             | interface_key::RECURSIVE_PRS
             | interface_key::ANNOUNCES_FROM_INTERNAL => InterfaceSettingCategory::Behavior,
@@ -382,6 +383,9 @@ impl InterfaceSettingSpec {
             }
             interface_key::BITRATE => {
                 "Overrides the interface bitrate used for pacing, MTU selection, and route costs."
+            }
+            interface_key::GRAVITY => {
+                "Prefers this interface when equally fresh valid announce evidence arrives through multiple paths."
             }
             interface_key::ANNOUNCE_CAP => {
                 "Limits announcement traffic to a percentage of this interface's bitrate."
@@ -599,6 +603,7 @@ impl InterfaceSettingSpec {
             }
             interface_key::INTERFACE_MODE => Some("full"),
             interface_key::OUTGOING => Some("Yes"),
+            interface_key::GRAVITY => Some("0"),
             interface_key::ANNOUNCE_CAP => Some("2%"),
             interface_key::NETWORK_NAME | interface_key::PASS_PHRASE => Some("not set"),
             interface_key::IFAC_SIZE
@@ -697,6 +702,7 @@ impl InterfaceSettingSpec {
             interface_key::ANNOUNCE_RATE_TARGET
                 | interface_key::ANNOUNCE_RATE_GRACE
                 | interface_key::ANNOUNCE_RATE_PENALTY
+                | interface_key::GRAVITY
                 | interface_key::RECURSIVE_PRS
                 | interface_key::ANNOUNCES_FROM_INTERNAL
                 | common_key::INGRESS_CONTROL
@@ -823,6 +829,7 @@ impl InterfaceSettingSpec {
                     _ => None,
                 })
             }
+            interface_key::GRAVITY => Some(planned.policy.gravity.get().to_string()),
             interface_key::BOOTSTRAP_ONLY => Some(yes_no(matches!(
                 planned.lifecycle,
                 ConfiguredInterfaceLifecycle::BootstrapOnly
@@ -1086,6 +1093,7 @@ impl InterfaceSettingSpec {
             | interface_key::SPREADINGFACTOR
             | interface_key::CODINGRATE => InterfaceSettingInputKind::Unsigned,
             interface_key::ANNOUNCE_INTERVAL
+            | interface_key::GRAVITY
             | interface_key::TXPOWER
             | common_key::IC_MAX_HELD_ANNOUNCES => InterfaceSettingInputKind::Signed,
             interface_key::ANNOUNCE_CAP

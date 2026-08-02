@@ -75,6 +75,10 @@ impl InterfaceSupervisor for BrowserRendezvous {
         &self.channel_tag
     }
 
+    fn policy(&self) -> EffectiveInterfacePolicy {
+        self.policy
+    }
+
     async fn run(self, fleet: Fleet) {
         let catalog = catalog::Catalog::new(self.id);
         let mut handshakes = JoinSet::new();

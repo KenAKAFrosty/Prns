@@ -26,6 +26,7 @@ pub const DEFAULTS: InterfaceDefaults = InterfaceDefaults {
         egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
     },
     mode: InterfaceMode::Full,
+    gravity: crate::interfaces::InterfaceGravity::ZERO,
     bitrate: WIFI_LAN_BITRATE_BPS,
     mtu: MtuPolicy::optimized_from_bitrate(WIFI_HW_MTU_CAP),
     announce_rate_limit: None,

@@ -141,6 +141,7 @@ fn interpret_interface(
     let outgoing = opt(&mut rest, interface_key::OUTGOING, name, coerce_bool)?;
     let bootstrap_only = opt(&mut rest, interface_key::BOOTSTRAP_ONLY, name, coerce_bool)?;
     let bitrate = opt(&mut rest, interface_key::BITRATE, name, coerce_u64)?;
+    let gravity = opt(&mut rest, interface_key::GRAVITY, name, coerce_i64)?;
     let announce_cap = opt(&mut rest, interface_key::ANNOUNCE_CAP, name, coerce_f64)?;
     let announce_rate_target = opt(
         &mut rest,
@@ -209,6 +210,7 @@ fn interpret_interface(
         outgoing,
         bootstrap_only,
         bitrate,
+        gravity,
         announce_cap,
         announce_rate_target,
         announce_rate_grace,
@@ -245,11 +247,13 @@ fn interpret_discovery_config(
         global_identity_hashes(globals, global_key::INTERFACE_DISCOVERY_SOURCES)?;
     let auto_connect_limit =
         global_positive_usize(globals, global_key::AUTOCONNECT_DISCOVERED_INTERFACES)?;
+    let auto_connect_gravity = global_i64(globals, global_key::AUTOCONNECT_INTERFACE_GRAVITY)?;
     Ok(ReferenceDiscoveryConfig {
         discover_interfaces,
         required_stamp_cost,
         interface_sources,
         auto_connect_limit,
+        auto_connect_gravity,
     })
 }
 
@@ -731,6 +735,18 @@ fn global_positive_usize(
             .map_err(|_| bad_global_value(key, "expected a positive integer")),
         Some(_) | None => Ok(None),
     }
+}
+
+fn global_i64(
+    globals: &BTreeMap<String, ReferenceValue>,
+    key: &str,
+) -> Result<Option<i64>, ReferenceError> {
+    global_integer(globals, key)?
+        .map(|value| {
+            i64::try_from(value)
+                .map_err(|_| bad_global_value(key, "expected a signed 64-bit integer"))
+        })
+        .transpose()
 }
 
 fn global_identity_hashes(

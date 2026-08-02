@@ -192,6 +192,7 @@ fn network_encrypted_publication_round_trips_through_the_shared_identity_crypto(
         stamp_cost(8),
         DiscoverySourcePolicy::Open,
         AutoConnectPolicy::Disabled,
+        crate::interfaces::InterfaceGravity::ZERO,
     );
     let outcome = ingest_discovery_announce(
         &policy,

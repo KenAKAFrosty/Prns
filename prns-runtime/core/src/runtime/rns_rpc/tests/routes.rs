@@ -93,6 +93,8 @@ async fn interface_stats_renders_each_held_interface_with_its_live_counters() {
                 origin: prns_core::interfaces::InterfaceOriginKind::Configured,
                 snapshot: prns_core::interfaces::InterfaceSnapshot {
                     id: InterfaceId::new([0x07; 8]),
+                    mode: prns_core::interfaces::InterfaceMode::Boundary,
+                    gravity: prns_core::interfaces::InterfaceGravity::new(-8),
                     connection: ConnectionState::Connected,
                     failure_reason: None,
                     rx_bytes: 1234,
@@ -117,6 +119,8 @@ async fn interface_stats_renders_each_held_interface_with_its_live_counters() {
                 origin: prns_core::interfaces::InterfaceOriginKind::Configured,
                 snapshot: prns_core::interfaces::InterfaceSnapshot {
                     id: InterfaceId::new([0x09; 8]),
+                    mode: prns_core::interfaces::InterfaceMode::Full,
+                    gravity: prns_core::interfaces::InterfaceGravity::ZERO,
                     connection: ConnectionState::Reconnecting,
                     failure_reason: None,
                     rx_bytes: 10,

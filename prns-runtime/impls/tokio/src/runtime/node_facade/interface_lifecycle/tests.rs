@@ -80,7 +80,8 @@ impl Interface for StatusInterface {
                     crate::interfaces::TransportCapability::CrossInterfaceOnly,
                 ),
             },
-            mode: crate::interfaces::InterfaceMode::Full,
+            mode: crate::interfaces::InterfaceMode::Boundary,
+            gravity: crate::interfaces::InterfaceGravity::new(-27),
             bitrate: crate::interfaces::BitrateBps::guess(1_000_000),
             hardware_mtu: None,
             announce_rate_limit: None,
@@ -133,6 +134,8 @@ async fn runtime_attachment_carries_ifac_wire_and_status_metadata() {
             origin: InterfaceOriginKind::Configured,
             snapshot: InterfaceSnapshot {
                 id,
+                mode: crate::interfaces::InterfaceMode::Boundary,
+                gravity: crate::interfaces::InterfaceGravity::new(-27),
                 connection: crate::interfaces::ConnectionState::Connected,
                 failure_reason: None,
                 rx_bytes: 0,

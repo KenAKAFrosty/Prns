@@ -21,6 +21,8 @@ fn snapshot(
 ) -> InterfaceSnapshot {
     InterfaceSnapshot {
         id: InterfaceId::new([tag, 0, 0, 0, 0, 0, 0, 0]),
+        mode: personal_rns::interfaces::InterfaceMode::Full,
+        gravity: personal_rns::interfaces::InterfaceGravity::ZERO,
         connection,
         failure_reason: None,
         rx_bytes,

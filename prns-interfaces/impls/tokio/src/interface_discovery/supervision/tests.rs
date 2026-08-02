@@ -14,6 +14,7 @@ fn enabled_policy(maximum: usize) -> InterfaceDiscoveryPolicy {
         StampCost::new(1).expect("one is a valid stamp cost"),
         DiscoverySourcePolicy::from_sources(Vec::new()),
         AutoConnectPolicy::from_maximum(maximum),
+        prns_core::interfaces::InterfaceGravity::new(15),
     )
 }
 
@@ -122,6 +123,7 @@ fn auto_connect_capacity_reports_only_when_auto_connect_is_enabled() {
             StampCost::new(1).expect("one is a valid stamp cost"),
             DiscoverySourcePolicy::from_sources(Vec::new()),
             AutoConnectPolicy::Disabled,
+            prns_core::interfaces::InterfaceGravity::ZERO,
         ),
         None,
     );
@@ -224,6 +226,10 @@ async fn an_eligible_discovery_stands_up_a_real_backbone_client() {
         assert_eq!(
             (attached.name.as_deref(), attached.origin),
             (Some("Public backbone"), InterfaceOriginKind::Discovered)
+        );
+        assert_eq!(
+            attached.snapshot.gravity,
+            prns_core::interfaces::InterfaceGravity::new(15)
         );
 
         drop(ingress);

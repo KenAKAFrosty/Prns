@@ -222,6 +222,10 @@ impl InterfaceSupervisor for PreparedPlatformBluetooth {
         contract::GROUP_ID
     }
 
+    fn policy(&self) -> EffectiveInterfacePolicy {
+        self.policy
+    }
+
     async fn run(self, fleet: Fleet) {
         run_prepared_platform_bluetooth(
             fleet,
@@ -349,6 +353,10 @@ impl InterfaceSupervisor for PlatformBluetooth {
 
     fn channel_tag(&self) -> &[u8] {
         contract::GROUP_ID
+    }
+
+    fn policy(&self) -> EffectiveInterfacePolicy {
+        self.policy
     }
 
     async fn run(self, fleet: Fleet) {

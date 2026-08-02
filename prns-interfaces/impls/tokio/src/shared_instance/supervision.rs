@@ -259,6 +259,10 @@ impl InterfaceSupervisor for SharedInstanceServer {
         &self.channel_tag
     }
 
+    fn policy(&self) -> EffectiveInterfacePolicy {
+        self.policy
+    }
+
     async fn run(self, fleet: Fleet) {
         let Ok(server) = self.bind().await else {
             return;
@@ -272,6 +276,10 @@ impl InterfaceSupervisor for BoundSharedInstanceServer {
 
     fn channel_tag(&self) -> &[u8] {
         &self.channel_tag
+    }
+
+    fn policy(&self) -> EffectiveInterfacePolicy {
+        self.policy
     }
 
     async fn run(self, fleet: Fleet) {

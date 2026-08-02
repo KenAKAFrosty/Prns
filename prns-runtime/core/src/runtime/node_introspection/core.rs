@@ -1,6 +1,7 @@
 use prns_core::interfaces::IfacSize;
 use prns_core::interfaces::{
-    ConnectionState, InterfaceId, InterfaceOriginKind, InterfaceSnapshot, Membership, TransferRates,
+    ConnectionState, InterfaceGravity, InterfaceId, InterfaceMode, InterfaceOriginKind,
+    InterfaceSnapshot, Membership, TransferRates,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,6 +26,8 @@ struct FoldedInterface<Label> {
     root: Option<InterfaceSnapshot>,
     ifac: Option<InterfaceIfacSnapshot<Label>>,
     member_connection: ConnectionState,
+    member_mode: Option<InterfaceMode>,
+    member_gravity: Option<InterfaceGravity>,
     member_failure_reason: Option<&'static str>,
     member_rx_bytes: u64,
     member_tx_bytes: u64,
@@ -44,6 +47,8 @@ impl<Label> FoldedInterface<Label> {
             root: None,
             ifac: None,
             member_connection: ConnectionState::Unknown,
+            member_mode: None,
+            member_gravity: None,
             member_failure_reason: None,
             member_rx_bytes: 0,
             member_tx_bytes: 0,
@@ -78,6 +83,8 @@ impl<Label> FoldedInterface<Label> {
                     self.origin = InterfaceOriginKind::Discovered;
                 }
                 self.has_members = true;
+                self.member_mode.get_or_insert(snapshot.mode);
+                self.member_gravity.get_or_insert(snapshot.gravity);
                 self.member_connection =
                     preferred_connection(self.member_connection, snapshot.connection);
                 self.member_failure_reason = self.member_failure_reason.or(snapshot.failure_reason);
@@ -109,6 +116,16 @@ impl<Label> FoldedInterface<Label> {
             .root
             .and_then(|snapshot| snapshot.failure_reason)
             .or(self.member_failure_reason);
+        let mode = self
+            .root
+            .map(|snapshot| snapshot.mode)
+            .or(self.member_mode)
+            .unwrap_or(InterfaceMode::Full);
+        let gravity = self
+            .root
+            .map(|snapshot| snapshot.gravity)
+            .or(self.member_gravity)
+            .unwrap_or(InterfaceGravity::ZERO);
         let (rx_bytes, tx_bytes, transfer_rates) = if self.has_members {
             (
                 self.member_rx_bytes,
@@ -129,6 +146,8 @@ impl<Label> FoldedInterface<Label> {
             origin: self.origin,
             snapshot: InterfaceSnapshot {
                 id: self.id,
+                mode,
+                gravity,
                 connection,
                 failure_reason,
                 rx_bytes,
@@ -234,6 +253,8 @@ mod tests {
             origin: InterfaceOriginKind::Configured,
             snapshot: InterfaceSnapshot {
                 id,
+                mode: InterfaceMode::Full,
+                gravity: InterfaceGravity::ZERO,
                 connection: ConnectionState::Connected,
                 failure_reason: None,
                 rx_bytes,

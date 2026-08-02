@@ -3,7 +3,9 @@ use std::fmt;
 
 use tokio::sync::mpsc;
 
-use prns_core::interfaces::{InterfaceId, InterfaceKind, InterfaceStatus};
+use prns_core::interfaces::{
+    EffectiveInterfacePolicy, InterfaceId, InterfaceKind, InterfaceStatus,
+};
 use prns_runtime::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
 
 use super::super::persistence::{
@@ -288,6 +290,10 @@ where
 
     fn channel_tag(&self) -> &[u8] {
         self.config.name.as_str().as_bytes()
+    }
+
+    fn policy(&self) -> EffectiveInterfacePolicy {
+        self.config.policy
     }
 
     async fn run(self, fleet: Fleet) {

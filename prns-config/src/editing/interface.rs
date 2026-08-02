@@ -459,6 +459,7 @@ pub(super) const ALL_SETTING_KEYS: &[&str] = &[
     interface_key::MODE,
     interface_key::OUTGOING,
     interface_key::BITRATE,
+    interface_key::GRAVITY,
     interface_key::ANNOUNCE_CAP,
     interface_key::ANNOUNCE_RATE_TARGET,
     interface_key::ANNOUNCE_RATE_GRACE,

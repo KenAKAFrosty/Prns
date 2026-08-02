@@ -93,6 +93,8 @@ pub(super) fn build_snapshots(
         let counts = INTERFACE_STORE.counts(id);
         let _ = snapshots.push(InterfaceSnapshot {
             id,
+            mode: personal_rns::interfaces::InterfaceMode::Full,
+            gravity: personal_rns::interfaces::InterfaceGravity::ZERO,
             connection: status.connection(),
             failure_reason: status.failure_reason(),
             rx_bytes: status.rx_bytes(),

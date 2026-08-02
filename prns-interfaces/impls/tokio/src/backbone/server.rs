@@ -147,6 +147,10 @@ impl InterfaceSupervisor for BackboneServer {
         &self.channel_tag
     }
 
+    fn policy(&self) -> EffectiveInterfacePolicy {
+        self.policy
+    }
+
     async fn run(self, fleet: Fleet) {
         let policy = ReconnectPolicy::STANDARD;
         let mut schedule = policy.schedule();

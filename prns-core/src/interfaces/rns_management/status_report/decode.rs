@@ -192,6 +192,7 @@ struct InterfaceBuilder {
     parent_hash: RnsOptionalField<Vec<u8>>,
     online: Option<bool>,
     mode: Option<RnsInterfaceMode>,
+    gravity: RnsOptionalField<i64>,
     clients: RnsOptionalField<u64>,
     receive_bytes: Option<u64>,
     transmit_bytes: Option<u64>,
@@ -253,6 +254,7 @@ impl InterfaceBuilder {
             parent_hash: self.parent_hash,
             online: required(self.online, path(interface::STATUS))?,
             mode: required(self.mode, path(interface::MODE))?,
+            gravity: self.gravity,
             clients: self.clients,
             receive_bytes: required(self.receive_bytes, path(interface::RECEIVE_BYTES))?,
             transmit_bytes: required(self.transmit_bytes, path(interface::TRANSMIT_BYTES))?,
@@ -439,6 +441,7 @@ fn read_interface(
             interface::MODE => {
                 interface_report.mode = Some(RnsInterfaceMode::from_wire(read_i64(reader, path)?))
             }
+            interface::GRAVITY => interface_report.gravity = read_optional_i64(reader, path)?,
             interface::CLIENTS => interface_report.clients = read_optional_u64(reader, path)?,
             interface::RECEIVE_BYTES => {
                 interface_report.receive_bytes = Some(read_u64(reader, path)?)
@@ -720,6 +723,26 @@ fn read_i64(
         Some(MessagePackInteger::Nonnegative(value)) => {
             i64::try_from(value).map_err(|_| RnsInterfaceStatsDecodeError::InvalidFieldType(path))
         }
+        None => Err(RnsInterfaceStatsDecodeError::InvalidFieldType(path)),
+    }
+}
+
+fn read_optional_i64(
+    reader: &mut MessagePackReader<'_>,
+    path: RnsStatsFieldPath,
+) -> Result<RnsOptionalField<i64>, RnsInterfaceStatsDecodeError> {
+    let marker = marker(reader)?;
+    if marker == Marker::Null {
+        return Ok(RnsOptionalField::Null);
+    }
+    match reader
+        .integer(marker)
+        .map_err(|_| RnsInterfaceStatsDecodeError::InvalidMessagePack)?
+    {
+        Some(MessagePackInteger::Negative(value)) => Ok(RnsOptionalField::Value(value)),
+        Some(MessagePackInteger::Nonnegative(value)) => i64::try_from(value)
+            .map(RnsOptionalField::Value)
+            .map_err(|_| RnsInterfaceStatsDecodeError::InvalidFieldType(path)),
         None => Err(RnsInterfaceStatsDecodeError::InvalidFieldType(path)),
     }
 }

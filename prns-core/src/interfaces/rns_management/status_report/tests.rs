@@ -168,6 +168,17 @@ fn blocked_ip_list_preserves_absent_and_null() {
 }
 
 #[test]
+fn signed_interface_gravity_decodes_without_breaking_older_status_shapes() {
+    let older = RnsInterfaceStatsReport::decode_message_pack(&encode(&complete_report())).unwrap();
+    assert_eq!(older.interfaces[0].gravity, RnsOptionalField::Absent);
+
+    let mut current = complete_report();
+    interface_fields_mut(&mut current).push(field(interface::GRAVITY, Value::from(-17)));
+    let decoded = RnsInterfaceStatsReport::decode_message_pack(&encode(&current)).unwrap();
+    assert_eq!(decoded.interfaces[0].gravity, RnsOptionalField::Value(-17));
+}
+
+#[test]
 fn malformed_blocked_ip_list_reports_its_field_path() {
     for malformed in [
         Value::from("192.0.2.10"),

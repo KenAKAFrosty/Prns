@@ -231,6 +231,9 @@ impl<S: StorageLayout> EngineState<S> {
             existing_route: self
                 .routing_table
                 .existing_route_for(&announce.destination, interfaces),
+            incoming_interface_gravity: interfaces
+                .descriptor_for(source_interface)
+                .map(|descriptor| descriptor.gravity),
             arrived_at,
         });
 
@@ -781,6 +784,87 @@ mod tests {
             IngestPacketOutcome::Announce(AnnounceIngest::Ignored)
         );
         assert_eq!(state.route_count(), 1);
+    }
+
+    #[test]
+    fn equal_valid_evidence_repoints_only_to_the_higher_gravity_interface() {
+        let low = InterfaceId::new([0x21; 8]);
+        let high = InterfaceId::new([0x22; 8]);
+        let invalid = InterfaceId::new([0x23; 8]);
+        let mut low_descriptor = routable_descriptor(low);
+        low_descriptor.gravity = crate::interfaces::InterfaceGravity::new(-10);
+        let mut high_descriptor = routable_descriptor(high);
+        high_descriptor.gravity = crate::interfaces::InterfaceGravity::new(4);
+        let mut invalid_descriptor = routable_descriptor(invalid);
+        invalid_descriptor.gravity = crate::interfaces::InterfaceGravity::new(100);
+        let interfaces = [low_descriptor, high_descriptor, invalid_descriptor];
+        let mut first = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
+        let destination = WirePacketHeader::parse(&first).unwrap().0.address;
+        let mut replay = first.clone();
+        let mut forgery = first.clone();
+        let last = forgery.len() - 1;
+        forgery[last] ^= 0x01;
+        let mut state = transporting_node();
+
+        assert_eq!(
+            state.ingest_packet_with(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: low,
+                    bytes: &mut first,
+                },
+                &mut |_| {},
+                AttachedInterfaces::new(&interfaces),
+                &mut |_| {},
+                None,
+            ),
+            rns_1_4_0_announce_accepted(1),
+        );
+        assert_eq!(
+            state.ingest_packet_with(
+                InboundPacket {
+                    arrived_at: InstantMillis(2_000),
+                    source_interface: high,
+                    bytes: &mut replay,
+                },
+                &mut |_| {},
+                AttachedInterfaces::new(&interfaces),
+                &mut |_| {},
+                None,
+            ),
+            rns_1_4_0_announce_accepted(1),
+        );
+        assert_eq!(
+            state
+                .routing_table
+                .path_row(&DestinationHash::from_address(destination))
+                .unwrap()
+                .receiving_interface,
+            high,
+        );
+
+        assert_eq!(
+            state.ingest_packet_with(
+                InboundPacket {
+                    arrived_at: InstantMillis(3_000),
+                    source_interface: invalid,
+                    bytes: &mut forgery,
+                },
+                &mut |_| {},
+                AttachedInterfaces::new(&interfaces),
+                &mut |_| {},
+                None,
+            ),
+            IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid),
+        );
+        assert_eq!(
+            state
+                .routing_table
+                .path_row(&DestinationHash::from_address(destination))
+                .unwrap()
+                .receiving_interface,
+            high,
+        );
     }
 
     #[test]

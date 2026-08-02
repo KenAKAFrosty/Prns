@@ -196,6 +196,11 @@ pub(super) const GLOBAL_RULES: &[(&str, KeyRule)] = &[
         global_key::AUTOCONNECT_DISCOVERED_INTERFACES,
         Applied(ValueKind::I64),
     ),
+    (
+        global_key::AUTOCONNECT_INTERFACE_GRAVITY,
+        Applied(ValueKind::I64),
+    ),
+    (global_key::DEFAULT_GRAVITY, Applied(ValueKind::I64)),
     (global_key::DEFAULT_AR_TARGET, Applied(ValueKind::I64)),
     (global_key::DEFAULT_AR_PENALTY, Applied(ValueKind::I64)),
     (global_key::DEFAULT_AR_GRACE, Applied(ValueKind::I64)),
@@ -244,6 +249,8 @@ fn common_interface_key_rule(key: &str) -> Option<KeyRule> {
         interface_key::IGNORE_CONFIG_WARNINGS => Some(FollowOn(ValueKind::Bool)),
 
         interface_key::BITRATE => Some(Applied(ValueKind::Bitrate)),
+
+        interface_key::GRAVITY => Some(Applied(ValueKind::I64)),
 
         interface_key::ANNOUNCE_RATE_TARGET
         | interface_key::ANNOUNCE_RATE_GRACE
