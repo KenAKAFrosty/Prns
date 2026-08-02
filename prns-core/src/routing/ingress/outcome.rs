@@ -67,6 +67,7 @@ pub enum DeferredCrypto {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LinkRttOwed {
     pub link_id: LinkId,
+    pub received_hops: u8,
     pub responder_encryption: X25519PublicKey,
     pub responder_signing: Ed25519PublicKey,
     pub command_id: CommandId,

@@ -23,6 +23,8 @@ fn engine_with_active_link() -> (EngineState<TestStorageLayout>, LinkId, Interfa
         .track_initiated(InitiatedLink {
             link_id,
             destination: DestinationHash::new([0x77; 16]),
+            expected_hops: 1,
+            mode: crate::routing::links::LinkMode::Aes256Cbc,
             initiator_secret: X25519SecretKey::new([0x33; 32]),
             link_signing: Ed25519SecretKey::new([0x33; 32]),
             requested_at: InstantMillis(500),
@@ -36,6 +38,7 @@ fn engine_with_active_link() -> (EngineState<TestStorageLayout>, LinkId, Interfa
             &link_id,
             LinkKey::derive(&link_id, &shared),
             &LinkActivation {
+                received_hops: 1,
                 rtt: RttMillis::new(250),
                 mtu: BROADCAST_MTU,
                 attached_interface: lane,

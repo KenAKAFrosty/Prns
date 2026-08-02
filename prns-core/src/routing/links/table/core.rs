@@ -5,7 +5,7 @@ use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
 use crate::routing::links::maintenance::{keepalive_ms_from, stale_ms_from, timeout_grace_ms_from};
 use crate::routing::links::resources::ResourceStrategy;
-use crate::routing::links::{LinkId, LinkKey};
+use crate::routing::links::{LinkId, LinkKey, LinkMode};
 use crate::routing::upstream_app_destinations::ProofStrategy;
 use crate::units::RttMillis;
 use crate::wire::DestinationHash;
@@ -43,6 +43,8 @@ impl core::fmt::Debug for LinkRole {
 pub enum LinkPhase {
     Pending {
         destination: DestinationHash,
+        expected_hops: u8,
+        mode: LinkMode,
         initiator_secret: X25519SecretKey,
         link_signing: Ed25519SecretKey,
         requested_at: InstantMillis,
@@ -79,6 +81,8 @@ impl LinkPhase {
     pub fn vacant() -> Self {
         Self::Pending {
             destination: DestinationHash::new([0u8; 16]),
+            expected_hops: 0,
+            mode: LinkMode::Aes256Cbc,
             initiator_secret: X25519SecretKey::new([0u8; 32]),
             link_signing: Ed25519SecretKey::new([0u8; 32]),
             requested_at: InstantMillis(0),
@@ -143,6 +147,8 @@ impl core::fmt::Debug for LinkPhase {
 pub struct InitiatedLink {
     pub link_id: LinkId,
     pub destination: DestinationHash,
+    pub expected_hops: u8,
+    pub mode: LinkMode,
     pub initiator_secret: X25519SecretKey,
     pub link_signing: Ed25519SecretKey,
     pub requested_at: InstantMillis,
@@ -222,6 +228,7 @@ pub enum TrackLinkError {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LinkActivation {
+    pub received_hops: u8,
     pub rtt: RttMillis,
     pub mtu: usize,
     pub attached_interface: InterfaceId,
@@ -311,6 +318,8 @@ impl<C: LinkTable> Links<C> {
             link.link_id,
             LinkPhase::Pending {
                 destination: link.destination,
+                expected_hops: link.expected_hops,
+                mode: link.mode,
                 initiator_secret: link.initiator_secret,
                 link_signing: link.link_signing,
                 requested_at: link.requested_at,
@@ -404,6 +413,7 @@ impl<C: LinkTable> Links<C> {
         now: InstantMillis,
     ) -> Result<(), LinkActivationError> {
         let &LinkActivation {
+            received_hops: _,
             rtt,
             mtu,
             attached_interface,
@@ -804,6 +814,8 @@ mod tests {
         InitiatedLink {
             link_id: link_id(id),
             destination: dest(id),
+            expected_hops: 1,
+            mode: LinkMode::Aes256Cbc,
             initiator_secret: secret(id),
             link_signing: Ed25519SecretKey::new([id; 32]),
             requested_at: InstantMillis(1_000),
@@ -858,6 +870,7 @@ mod tests {
                 &link_id(1),
                 key(1, 9),
                 &LinkActivation {
+                    received_hops: 1,
                     rtt: RttMillis::new(250),
                     mtu: 500,
                     attached_interface: iface(0xEE),
@@ -932,6 +945,7 @@ mod tests {
                 &link_id(1),
                 key(1, 9),
                 &LinkActivation {
+                    received_hops: 1,
                     rtt: RttMillis::new(250),
                     mtu: 500,
                     attached_interface: iface(0xAA),
@@ -957,6 +971,7 @@ mod tests {
                 &link_id(3),
                 key(3, 9),
                 &LinkActivation {
+                    received_hops: 1,
                     rtt: RttMillis::new(250),
                     mtu: 500,
                     attached_interface: iface(0xBB),
@@ -998,6 +1013,7 @@ mod tests {
                 &link_id(9),
                 key(9, 9),
                 &LinkActivation {
+                    received_hops: 1,
                     rtt: RttMillis::new(100),
                     mtu: 500,
                     attached_interface: iface(0xEE),
@@ -1038,6 +1054,7 @@ mod tests {
                 &link_id(2),
                 key(2, 9),
                 &LinkActivation {
+                    received_hops: 1,
                     rtt: RttMillis::new(100),
                     mtu: 500,
                     attached_interface: iface(0xEE),
@@ -1053,6 +1070,7 @@ mod tests {
                 &link_id(1),
                 key(1, 9),
                 &LinkActivation {
+                    received_hops: 1,
                     rtt: RttMillis::new(100),
                     mtu: 500,
                     attached_interface: iface(0xEE),
@@ -1066,6 +1084,7 @@ mod tests {
                 &link_id(1),
                 key(1, 9),
                 &LinkActivation {
+                    received_hops: 1,
                     rtt: RttMillis::new(100),
                     mtu: 500,
                     attached_interface: iface(0xEE),
@@ -1119,6 +1138,7 @@ mod tests {
                 &link_id(3),
                 key(3, 9),
                 &LinkActivation {
+                    received_hops: 1,
                     rtt: RttMillis::new(100),
                     mtu: 500,
                     attached_interface: iface(0xEE),
@@ -1161,6 +1181,7 @@ mod tests {
                 &link_id(2),
                 key(2, 9),
                 &LinkActivation {
+                    received_hops: 1,
                     rtt: RttMillis::new(100),
                     mtu: 500,
                     attached_interface: iface(0xEE),
@@ -1176,6 +1197,7 @@ mod tests {
                 &link_id(1),
                 key(1, 9),
                 &LinkActivation {
+                    received_hops: 1,
                     rtt: RttMillis::new(100),
                     mtu: 500,
                     attached_interface: iface(0xEE),
@@ -1208,6 +1230,7 @@ mod tests {
                 &link_id(id),
                 key(id, 9),
                 &LinkActivation {
+                    received_hops: 1,
                     rtt,
                     mtu: 500,
                     attached_interface: iface(0xEE),

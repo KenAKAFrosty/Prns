@@ -696,6 +696,8 @@ mod tests {
             .track_initiated(InitiatedLink {
                 link_id,
                 destination: DestinationHash::new([0x11; 16]),
+                expected_hops: 1,
+                mode: crate::routing::links::LinkMode::Aes256Cbc,
                 initiator_secret: X25519SecretKey::new([0x21; 32]),
                 link_signing: Ed25519SecretKey::new([0x21; 32]),
                 requested_at: InstantMillis(0),
@@ -716,6 +718,7 @@ mod tests {
                 &link_id,
                 key,
                 &LinkActivation {
+                    received_hops: 1,
                     rtt: crate::units::RttMillis::new(100),
                     mtu,
                     attached_interface: InterfaceId::new([0xEE; 8]),

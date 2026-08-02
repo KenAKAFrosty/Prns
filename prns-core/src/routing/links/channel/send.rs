@@ -481,7 +481,7 @@ mod tests {
     use crate::routing::links::data::link_data_frame_ceiling;
     use crate::routing::links::table::{InitiatedLink, RespondingLink};
     use crate::routing::links::table::{LinkActivation, LinkPhase};
-    use crate::routing::links::{LinkId, LinkKey};
+    use crate::routing::links::{LinkId, LinkKey, LinkMode};
     use crate::routing::upstream_app_destinations::ProofStrategy;
     use crate::wire::BROADCAST_MTU;
     use std::vec::Vec;
@@ -545,6 +545,8 @@ mod tests {
             .track_initiated(InitiatedLink {
                 link_id,
                 destination: DestinationHash::new([0x77; 16]),
+                expected_hops: 1,
+                mode: LinkMode::Aes256Cbc,
                 initiator_secret: X25519SecretKey::new([0x33; 32]),
                 link_signing: Ed25519SecretKey::new([0x11; 32]),
                 requested_at: InstantMillis(0),
@@ -558,6 +560,7 @@ mod tests {
                 &link_id,
                 session_key(&link_id),
                 &LinkActivation {
+                    received_hops: 1,
                     rtt: RttMillis::new(250),
                     mtu: BROADCAST_MTU,
                     attached_interface: InterfaceId::new(LANE),

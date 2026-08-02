@@ -41,6 +41,8 @@ fn active_initiator() -> (
         .track_initiated(InitiatedLink {
             link_id,
             destination: DestinationHash::new([0x77; 16]),
+            expected_hops: 1,
+            mode: crate::routing::links::LinkMode::Aes256Cbc,
             initiator_secret: X25519SecretKey::new([0x33; 32]),
             link_signing,
             requested_at: InstantMillis(0),
@@ -54,6 +56,7 @@ fn active_initiator() -> (
             &link_id,
             LinkKey::derive(&link_id, &shared()),
             &LinkActivation {
+                received_hops: 1,
                 rtt: crate::units::RttMillis::new(250),
                 mtu: BROADCAST_MTU,
                 attached_interface: InterfaceId::new(LANE),

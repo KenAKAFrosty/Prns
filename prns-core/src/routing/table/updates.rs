@@ -36,6 +36,23 @@ where
         );
     }
 
+    pub(crate) fn rebalance_hops(&mut self, destination: &DestinationHash, hops: u8) {
+        let Some(i) = self.index_of(destination) else {
+            return;
+        };
+        self.routes.set_row(
+            i,
+            RouteEntry {
+                hops,
+                learned_at: self.routes.learned_at()[i],
+                last_relayed_at: self.routes.last_relayed_at()[i],
+                responsiveness: self.routes.responsiveness()[i],
+                receiving_interface: self.routes.receiving_interfaces()[i],
+                next_hop: self.routes.next_hops()[i],
+            },
+        );
+    }
+
     pub fn note_relayed(&mut self, destination: &DestinationHash, now: InstantMillis) {
         let Some(i) = self.index_of(destination) else {
             return;

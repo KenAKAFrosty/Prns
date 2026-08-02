@@ -320,6 +320,7 @@ pub struct LinkProofParsed {
 pub struct LinkProofVerifyOwed {
     pub link_id: LinkId,
     pub source_interface: InterfaceId,
+    pub received_hops: u8,
     pub responder_encryption: X25519PublicKey,
     pub responder_signing: Ed25519PublicKey,
     pub initiator_secret: X25519SecretKey,

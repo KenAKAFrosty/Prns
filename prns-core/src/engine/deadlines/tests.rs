@@ -7,6 +7,7 @@ use crate::engine::{
 use crate::interfaces::InterfaceDescriptor;
 use crate::interfaces::{InboundPacket, InterfaceId, InterfaceMode};
 use crate::routing::announce::defaults::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
+use crate::routing::links::LinkMode;
 use crate::wire::{
     DestinationHash, DestinationType, PacketType, PropagationType, WirePacketHeader,
 };
@@ -1049,6 +1050,7 @@ fn route_culling_drops_reverse_and_transported_rows_with_a_missing_interface() {
         .track(TransportedLink {
             link_id: LinkId::new([0x5C; 16]),
             destination: DestinationHash::new([0xDD; 16]),
+            mode: LinkMode::Aes256Cbc,
             next_hop: None,
             next_hop_interface: attached,
             received_interface: missing,
@@ -1109,6 +1111,7 @@ fn overdue_transport_recovery_emissions(
         .track(TransportedLink {
             link_id: LinkId::new([0x5C; 16]),
             destination,
+            mode: LinkMode::Aes256Cbc,
             next_hop: None,
             next_hop_interface: away,
             received_interface: received,
@@ -1187,6 +1190,7 @@ fn an_unproved_transported_link_to_a_neighbor_marks_the_route_unresponsive() {
         .track(TransportedLink {
             link_id: LinkId::new([0x5C; 16]),
             destination,
+            mode: LinkMode::Aes256Cbc,
             next_hop: None,
             next_hop_interface: source,
             received_interface: source,
@@ -1250,6 +1254,7 @@ fn an_unproved_neighbor_link_fires_a_path_request_away_from_the_received_lane() 
         .track(TransportedLink {
             link_id: LinkId::new([0x5C; 16]),
             destination,
+            mode: LinkMode::Aes256Cbc,
             next_hop: None,
             next_hop_interface: away,
             received_interface: received,
@@ -1336,6 +1341,7 @@ fn an_unproved_link_recovers_when_the_initiator_is_the_neighbor_too() {
         .track(TransportedLink {
             link_id: LinkId::new([0x5C; 16]),
             destination,
+            mode: LinkMode::Aes256Cbc,
             next_hop: None,
             next_hop_interface: away,
             received_interface: received,
@@ -1404,6 +1410,7 @@ fn an_unproved_link_from_a_local_client_rediscovers_everywhere_without_a_mark() 
         .track(TransportedLink {
             link_id: LinkId::new([0x5C; 16]),
             destination,
+            mode: LinkMode::Aes256Cbc,
             next_hop: None,
             next_hop_interface: away,
             received_interface: received,
@@ -1480,6 +1487,7 @@ fn a_boundary_arrival_interface_rediscovers_without_the_unresponsive_mark() {
         .track(TransportedLink {
             link_id: LinkId::new([0x5C; 16]),
             destination,
+            mode: LinkMode::Aes256Cbc,
             next_hop: None,
             next_hop_interface: away,
             received_interface: received,
@@ -1715,6 +1723,7 @@ fn a_recently_requested_destination_holds_off_the_overdue_links_path_request() {
         .track(TransportedLink {
             link_id: LinkId::new([0x5C; 16]),
             destination,
+            mode: LinkMode::Aes256Cbc,
             next_hop: None,
             next_hop_interface: away,
             received_interface: received,

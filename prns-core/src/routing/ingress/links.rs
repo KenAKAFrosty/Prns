@@ -23,7 +23,7 @@ use crate::routing::links::request::{
 };
 use crate::routing::links::table::{LinkPhase, LinkRole};
 use crate::routing::links::transported::{
-    extra_link_proof_timeout_ms, TrackTransportedLinkError, TransportedLink,
+    extra_link_proof_timeout_ms, TrackTransportedLinkError, TransportSwitch, TransportedLink,
 };
 use crate::routing::links::LinkId;
 use crate::routing::proof::{LinkProofOwed, ProofObligation};
@@ -32,8 +32,8 @@ use crate::routing::{NextHop, RouteResponsiveness};
 use crate::storage::StorageLayout;
 use crate::units::RttMillis;
 use crate::wire::{
-    ContextFlag, DestinationType, IfacFlag, PacketType, PropagationType, WireAddress, WireContext,
-    WirePacketHeader, BROADCAST_MTU,
+    ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
+    WireAddress, WireContext, WirePacketHeader, BROADCAST_MTU,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +64,19 @@ pub(super) struct LinkRequestArrival<'a> {
     pub(super) source_interface: InterfaceId,
     pub(super) arrived_at: InstantMillis,
     pub(super) interfaces: AttachedInterfaces<'a>,
+}
+
+struct AcceptedTransportedLinkProof {
+    switch: TransportSwitch,
+    destination: DestinationHash,
+    next_hop_interface: InterfaceId,
+    received_interface: InterfaceId,
+    route_update: TransportedRouteUpdate,
+}
+
+enum TransportedRouteUpdate {
+    Unchanged,
+    RebalancedTo(u8),
 }
 
 impl<S: StorageLayout> EngineState<S> {
@@ -185,7 +198,6 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.4.0 relays returning link proofs after validating their wire shape, interface, and hop direction; end-to-end verification belongs to the initiator.
     fn ingest_transported_link_proof<'p>(
         &mut self,
         link_id: &LinkId,
@@ -194,27 +206,27 @@ impl<S: StorageLayout> EngineState<S> {
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'p> {
-        let Some(entry) = self.transported_links.entry_for(link_id) else {
-            return IngestPacketOutcome::Ignored(IgnoreReason::UnknownLink);
-        };
-        let destination = entry.destination;
-        let next_hop_interface = entry.next_hop_interface;
-        let received_interface = entry.received_interface;
-        if payload.len() != LINK_PROOF_BODY_LEN && payload.len() != SIGNALLED_LINK_PROOF_LEN {
-            return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
-        }
-        let Ok(switch) = self.transported_links.validate_by_proof(
+        let accepted = match self.accept_transported_link_proof(
             link_id,
-            source_interface,
+            payload,
             received_hops,
+            source_interface,
             arrived_at,
-        ) else {
-            return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
+        ) {
+            Ok(accepted) => accepted,
+            Err(reason) => return IngestPacketOutcome::Ignored(reason),
         };
-        self.mark_interface_dirty(next_hop_interface);
-        self.mark_interface_dirty(received_interface);
+        self.mark_interface_dirty(accepted.next_hop_interface);
+        self.mark_interface_dirty(accepted.received_interface);
+        match accepted.route_update {
+            TransportedRouteUpdate::Unchanged => {}
+            TransportedRouteUpdate::RebalancedTo(hops) => {
+                self.routing_table
+                    .rebalance_hops(&accepted.destination, hops);
+            }
+        }
         self.routing_table
-            .mark_responsiveness(&destination, RouteResponsiveness::Responsive);
+            .mark_responsiveness(&accepted.destination, RouteResponsiveness::Responsive);
         IngestPacketOutcome::Forward(PacketToForward {
             header: WirePacketHeader {
                 ifac_flag: IfacFlag::Open,
@@ -225,14 +237,74 @@ impl<S: StorageLayout> EngineState<S> {
                 hops: self.hops_across_local_boundary(
                     received_hops,
                     source_interface,
-                    switch.fire_on,
+                    accepted.switch.fire_on,
                 ),
                 transport_id: None,
                 address: link_id.to_address(),
                 context: WireContext::LinkRequestProof,
             },
             payload,
-            fire_on: switch.fire_on,
+            fire_on: accepted.switch.fire_on,
+        })
+    }
+
+    fn accept_transported_link_proof(
+        &mut self,
+        link_id: &LinkId,
+        payload: &[u8],
+        received_hops: u8,
+        source_interface: InterfaceId,
+        arrived_at: InstantMillis,
+    ) -> Result<AcceptedTransportedLinkProof, IgnoreReason> {
+        let entry = self
+            .transported_links
+            .entry_for(link_id)
+            .ok_or(IgnoreReason::UnknownLink)?;
+        let destination = entry.destination;
+        let mode = entry.mode;
+        let next_hop_interface = entry.next_hop_interface;
+        let received_interface = entry.received_interface;
+        let expected_hops = entry.remaining_hops;
+        let already_validated = entry.validated_by_proof;
+        if payload.len() != LINK_PROOF_BODY_LEN && payload.len() != SIGNALLED_LINK_PROOF_LEN {
+            return Err(IgnoreReason::Malformed);
+        }
+        if received_hops == expected_hops {
+            let switch = self
+                .transported_links
+                .validate_by_proof(link_id, source_interface, received_hops, arrived_at)
+                .map_err(|_| IgnoreReason::ProofInvalid)?;
+            return Ok(AcceptedTransportedLinkProof {
+                switch,
+                destination,
+                next_hop_interface,
+                received_interface,
+                route_update: TransportedRouteUpdate::Unchanged,
+            });
+        }
+        if already_validated || source_interface != next_hop_interface {
+            return Err(IgnoreReason::ProofInvalid);
+        }
+        let stored = self
+            .routing_table
+            .stored_announce_for(&destination)
+            .ok_or(IgnoreReason::UnknownIdentity)?;
+        let responder_signing = *stored.announce.public_keys.signing.as_ed25519();
+        let proof = link_proof_from(link_id, payload, &responder_signing)
+            .map_err(|_| IgnoreReason::ProofInvalid)?;
+        if proof.mode != mode {
+            return Err(IgnoreReason::ProofInvalid);
+        }
+        let switch = self
+            .transported_links
+            .rebalance_and_validate_by_proof(link_id, source_interface, received_hops, arrived_at)
+            .map_err(|_| IgnoreReason::ProofInvalid)?;
+        Ok(AcceptedTransportedLinkProof {
+            switch,
+            destination,
+            next_hop_interface,
+            received_interface,
+            route_update: TransportedRouteUpdate::RebalancedTo(received_hops),
         })
     }
 
@@ -340,6 +412,7 @@ impl<S: StorageLayout> EngineState<S> {
         match self.transported_links.track(TransportedLink {
             link_id: request.link_id,
             destination: request.destination,
+            mode: request.mode,
             next_hop: match route.next_hop {
                 NextHop::Via(next) => Some(next),
                 NextHop::Direct => None,
@@ -378,6 +451,7 @@ impl<S: StorageLayout> EngineState<S> {
     ) -> IngestPacketOutcome<'p> {
         let Some(LinkPhase::Pending {
             destination: link_destination,
+            mode,
             requested_at,
             command_id,
             initiator_secret,
@@ -398,13 +472,18 @@ impl<S: StorageLayout> EngineState<S> {
         let responder_signing = *stored.announce.public_keys.signing.as_ed25519();
         let requested_at = *requested_at;
         let command_id = *command_id;
+        let mode = *mode;
         if let Some(deferred) = deferred {
             let Ok(parsed) = link_proof_parse(&link_id, payload, &responder_signing) else {
                 return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
             };
+            if parsed.proof.mode != mode {
+                return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
+            }
             *deferred = DeferredCrypto::LinkProofVerify(LinkProofVerifyOwed {
                 link_id,
                 source_interface,
+                received_hops,
                 responder_encryption: parsed.proof.responder_encryption,
                 responder_signing,
                 initiator_secret: initiator_secret.cloned(),
@@ -424,8 +503,12 @@ impl<S: StorageLayout> EngineState<S> {
         let Ok(proof) = link_proof_from(&link_id, payload, &responder_signing) else {
             return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
         };
+        if proof.mode != mode {
+            return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
+        }
         IngestPacketOutcome::OwesLinkRtt(LinkRttOwed {
             link_id,
+            received_hops,
             responder_encryption: proof.responder_encryption,
             responder_signing,
             command_id,

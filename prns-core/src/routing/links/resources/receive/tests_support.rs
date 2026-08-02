@@ -104,6 +104,8 @@ pub(crate) fn active_engine<S: StorageLayout>() -> EngineState<S> {
         .track_initiated(InitiatedLink {
             link_id: link_id(),
             destination: RESPONDER_DESTINATION,
+            expected_hops: 1,
+            mode: crate::routing::links::LinkMode::Aes256Cbc,
             initiator_secret: X25519SecretKey::new([0x33; 32]),
             link_signing: Ed25519SecretKey::new([0x33; 32]),
             requested_at: InstantMillis(500),
@@ -117,6 +119,7 @@ pub(crate) fn active_engine<S: StorageLayout>() -> EngineState<S> {
             &link_id(),
             link_key(),
             &LinkActivation {
+                received_hops: 1,
                 rtt: crate::units::RttMillis::new(250),
                 mtu: BROADCAST_MTU,
                 attached_interface: lane(),

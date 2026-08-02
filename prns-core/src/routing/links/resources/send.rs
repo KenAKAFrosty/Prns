@@ -1421,7 +1421,7 @@ mod tests {
     use crate::routing::links::resources::{ResourceBody, ResourceCorrelation, ResourceMetadata};
     use crate::routing::links::table::InitiatedLink;
     use crate::routing::links::table::LinkActivation;
-    use crate::routing::links::LinkKey;
+    use crate::routing::links::{LinkKey, LinkMode};
     use crate::wire::{PacketType, WirePacketHeader, BROADCAST_MTU};
 
     fn bytes_from_hex(s: &str) -> std::vec::Vec<u8> {
@@ -1458,6 +1458,8 @@ mod tests {
             .track_initiated(InitiatedLink {
                 link_id: link_id(),
                 destination: DestinationHash::new([0x77; 16]),
+                expected_hops: 1,
+                mode: LinkMode::Aes256Cbc,
                 initiator_secret: X25519SecretKey::new([0x33; 32]),
                 link_signing: Ed25519SecretKey::new([0x33; 32]),
                 requested_at: InstantMillis(500),
@@ -1471,6 +1473,7 @@ mod tests {
                 &link_id(),
                 link_key(),
                 &LinkActivation {
+                    received_hops: 1,
                     rtt: crate::units::RttMillis::new(250),
                     mtu: BROADCAST_MTU,
                     attached_interface: lane(),
@@ -1777,6 +1780,8 @@ mod tests {
             .track_initiated(InitiatedLink {
                 link_id: link_id(),
                 destination: DestinationHash::new([0x77; 16]),
+                expected_hops: 1,
+                mode: LinkMode::Aes256Cbc,
                 initiator_secret: X25519SecretKey::new([0x33; 32]),
                 link_signing: Ed25519SecretKey::new([0x33; 32]),
                 requested_at: InstantMillis(500),
