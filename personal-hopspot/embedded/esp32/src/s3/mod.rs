@@ -475,8 +475,8 @@ async fn usb_device_task(
 ///
 /// Heap region order is load-bearing for Wi-Fi boards: PSRAM must register first so capability-free
 /// boot allocations land externally and leave the small internal regions for the radio. Heltec V4-R8
-/// (Octal private bump) passes a custom `PsramConfig` and uses `private_psram_bump` so boot/log
-/// allocations cannot share a freelist with engine construction.
+/// (Octal) passes a custom `PsramConfig` and uses `split_psram_heap`, which splits the window so
+/// engine construction gets a freelist of its own without starving the rest of the system.
 macro_rules! boot_common {
     ($p:ident, $banner:expr) => {
         $crate::s3::boot_common!(
@@ -487,7 +487,7 @@ macro_rules! boot_common {
         )
     };
     ($p:ident, $banner:expr, $psram_config:expr) => {
-        $crate::s3::boot_common!($p, $banner, $psram_config, private_psram_bump)
+        $crate::s3::boot_common!($p, $banner, $psram_config, split_psram_heap)
     };
     ($p:ident, $banner:expr, $psram_config:expr, global_psram_heap) => {{
         ::esp_println::logger::init_logger_from_env();
@@ -497,12 +497,11 @@ macro_rules! boot_common {
         $crate::s3::boot_psram_probe!();
         $crate::s3::boot_rtos_tail!($p, $banner)
     }};
-    ($p:ident, $banner:expr, $psram_config:expr, private_psram_bump) => {{
+    ($p:ident, $banner:expr, $psram_config:expr, split_psram_heap) => {{
         ::esp_println::logger::init_logger_from_env();
-        // Heltec V4-R8: keep Octal PSRAM out of the global heap so boot/log allocs cannot spill into it.
+        $crate::s3::boot_add_psram_split!($p, $psram_config);
         ::esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 43 * 1024);
         $crate::s3::reclaim_dcache_region();
-        $crate::s3::boot_add_psram_private!($p, $psram_config);
         $crate::s3::boot_psram_probe!();
         $crate::s3::boot_rtos_tail!($p, $banner)
     }};
@@ -526,16 +525,37 @@ macro_rules! boot_add_psram_global {
 }
 pub(crate) use boot_add_psram_global;
 
-macro_rules! boot_add_psram_private {
+/// Split a board's PSRAM into two disjoint windows: a private low half owned solely by [`PsramAlloc`]
+/// for engine construction, and a high half handed to `esp_alloc`. The global half is registered
+/// before the internal region so capability-free allocations land externally and leave the small
+/// internal regions for the radios, which is the same ordering `global_psram_heap` relies on.
+///
+/// Reserving the whole window privately instead leaves the system on internal RAM alone, roughly
+/// 75 KiB across the reclaimed region and the D-cache window. The Bluetooth controller's receive
+/// buffers cannot be allocated from that, and neither can the captive portal, whose four HTTP tasks
+/// want 24 KiB each. Both fail on a board carrying 8 MiB of PSRAM.
+macro_rules! boot_add_psram_split {
     ($p:ident, $psram_config:expr) => {{
         let psram = ::esp_hal::psram::Psram::new($p.PSRAM, $psram_config);
         let (start, size) = psram.raw_parts();
-        ::esp_println::println!("PSRAM mapped start={start:?} size={size} (private)");
-        // SAFETY: exclusive mapped window for PsramAlloc; not registered with esp_alloc.
-        unsafe { $crate::storage::init_private_psram_heap(start, size) };
+        let private_size = size / 2;
+        let global_size = size - private_size;
+        ::esp_println::println!(
+            "PSRAM mapped start={start:?} size={size} (private={private_size} global={global_size})"
+        );
+        // SAFETY: the low window is given to PsramAlloc alone and is never registered with
+        // esp_alloc; the high window is disjoint from it and is added to the heap exactly once.
+        unsafe {
+            $crate::storage::init_private_psram_heap(start, private_size);
+            ::esp_alloc::HEAP.add_region(::esp_alloc::HeapRegion::new(
+                start.add(private_size),
+                global_size,
+                ::esp_alloc::MemoryCapability::External.into(),
+            ));
+        }
     }};
 }
-pub(crate) use boot_add_psram_private;
+pub(crate) use boot_add_psram_split;
 
 macro_rules! boot_psram_probe {
     () => {{
