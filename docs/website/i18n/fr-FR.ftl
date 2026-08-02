@@ -1,6 +1,7 @@
 # Navigation
 nav-benchmarks = Benchmarks
 nav-contributing = Contribuer
+site-early-english-note = Prns en est à ses débuts : la documentation complète se trouve sur GitHub et dans le code source, et n'est disponible qu'en anglais pour l'instant.
 
 # Pied de page
 footer-tagline = Proposé par KenAKAFrosty et l'équipe Personal/Prns.

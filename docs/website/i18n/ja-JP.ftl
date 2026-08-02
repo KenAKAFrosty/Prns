@@ -1,6 +1,7 @@
 # ナビゲーション
 nav-benchmarks = ベンチマーク
 nav-contributing = 貢献
+site-early-english-note = Prns はまだ初期段階です。完全なドキュメントは GitHub とソースコードにあり、今のところ英語のみです。
 
 # フッター
 footer-tagline = KenAKAFrosty と Personal/Prns チームがお届けします。

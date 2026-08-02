@@ -1,7 +1,23 @@
 use dioxus::document;
 use dioxus::prelude::*;
+use dioxus_i18n::prelude::*;
+use dioxus_i18n::t;
+use unic_langid::langid;
 
 use super::{Footer, TopNav};
+
+#[component]
+fn EnglishDocsNotice() -> Element {
+    let i18n = i18n();
+    if i18n.language() == langid!("en-US") {
+        return rsx! {};
+    }
+    rsx! {
+        aside { class: "border-b border-line/60 bg-surface/60 px-6 py-2 text-center text-xs text-soft",
+            {t!("site-early-english-note")}
+        }
+    }
+}
 
 #[component]
 pub fn Shell() -> Element {
@@ -20,6 +36,7 @@ pub fn Shell() -> Element {
 
     rsx! {
         div { class: "min-h-screen flex flex-col bg-ink text-paper",
+            EnglishDocsNotice {}
             TopNav {}
             crate::local_development::LocalDevelopmentBanner {}
             main { class: "flex-1 w-full max-w-5xl mx-auto px-6 pt-12 pb-24",

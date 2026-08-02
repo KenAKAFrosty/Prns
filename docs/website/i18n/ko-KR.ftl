@@ -1,6 +1,7 @@
 # 내비게이션
 nav-benchmarks = 벤치마크
 nav-contributing = 기여
+site-early-english-note = Prns는 아직 초기 단계입니다. 전체 문서는 GitHub와 소스 코드에 있으며, 아직은 영어로만 제공됩니다.
 
 # 푸터
 footer-tagline = KenAKAFrosty와 Personal/Prns 팀이 만듭니다.

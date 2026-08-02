@@ -1,6 +1,7 @@
 # 导航
 nav-benchmarks = 基准测试
 nav-contributing = 贡献
+site-early-english-note = Prns 尚处早期：完整文档在 GitHub 和源代码中，目前仅提供英文。
 
 # 页脚
 footer-tagline = 由 KenAKAFrosty 与 Personal/Prns 团队打造。

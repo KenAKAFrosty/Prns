@@ -1,6 +1,7 @@
 # Navigation
 nav-benchmarks = Benchmarks
 nav-contributing = Bidrag
+site-early-english-note = Prns er stadig tidligt på vej: den fulde dokumentation findes på GitHub og i kildekoden og er indtil videre kun på engelsk.
 
 # Footer
 footer-tagline = Bragt til dig af KenAKAFrosty og Personal/Prns-teamet.
