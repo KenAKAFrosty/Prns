@@ -276,6 +276,7 @@ fn parse_types_every_stock_discovery_setting() {
            interface_discovery_sources = 00112233445566778899aabbccddeeff, 00112233445566778899AABBCCDDEEFF\n\
            autoconnect_discovered_interfaces = 4\n\
            autoconnect_interface_gravity = -31\n\
+           autoconnect_announces_to_internal = Yes\n\
            default_gravity = -7\n\
          [interfaces]\n\
            [[Spine]]\n\
@@ -319,6 +320,10 @@ fn parse_types_every_stock_discovery_setting() {
     );
     assert_eq!(config.discovery.auto_connect_limit, Some(4));
     assert_eq!(config.discovery.auto_connect_gravity, Some(-31));
+    assert_eq!(
+        config.discovery.auto_connect_announces_to_internal,
+        Some(true)
+    );
     assert_eq!(
         config
             .globals

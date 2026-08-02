@@ -30,6 +30,7 @@ pub(crate) mod global {
     pub const INTERFACE_DISCOVERY_SOURCES: &str = "interface_discovery_sources";
     pub const AUTOCONNECT_DISCOVERED_INTERFACES: &str = "autoconnect_discovered_interfaces";
     pub const AUTOCONNECT_INTERFACE_GRAVITY: &str = "autoconnect_interface_gravity";
+    pub const AUTOCONNECT_ANNOUNCES_TO_INTERNAL: &str = "autoconnect_announces_to_internal";
     pub const DEFAULT_GRAVITY: &str = "default_gravity";
     pub const DEFAULT_AR_TARGET: &str = "default_ar_target";
     pub const DEFAULT_AR_PENALTY: &str = "default_ar_penalty";
@@ -98,6 +99,7 @@ pub(crate) mod interface {
     pub const BOOTSTRAP_ONLY: &str = "bootstrap_only";
     pub const RECURSIVE_PRS: &str = "recursive_prs";
     pub const ANNOUNCES_FROM_INTERNAL: &str = "announces_from_internal";
+    pub const ANNOUNCES_TO_INTERNAL: &str = "announces_to_internal";
     pub const IGNORE_CONFIG_WARNINGS: &str = "ignore_config_warnings";
     pub const GROUP_ID: &str = "group_id";
     pub const DISCOVERY_SCOPE: &str = "discovery_scope";
@@ -211,6 +213,7 @@ pub(crate) mod interface {
         BOOTSTRAP_ONLY,
         RECURSIVE_PRS,
         ANNOUNCES_FROM_INTERNAL,
+        ANNOUNCES_TO_INTERNAL,
         IGNORE_CONFIG_WARNINGS,
     ];
     pub const AUTO: &[&str] = &[

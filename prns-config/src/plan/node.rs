@@ -3,7 +3,8 @@ use std::time::Duration;
 
 use prns_core::identity::IdentityHash;
 use prns_core::interface_discovery::{
-    AutoConnectPolicy, DiscoverySourcePolicy, InterfaceDiscoveryPolicy, DEFAULT_STAMP_COST,
+    AutoConnectPolicy, AutoConnectRoutingPolicy, DiscoverySourcePolicy, InterfaceDiscoveryPolicy,
+    DEFAULT_STAMP_COST,
 };
 use prns_core::interfaces::{BitrateBps, InterfaceGravity};
 
@@ -501,7 +502,13 @@ fn discovery_policy(config: &ReferenceConfig) -> InterfaceDiscoveryPolicy {
             .unwrap_or(DEFAULT_STAMP_COST),
         DiscoverySourcePolicy::from_sources(config.discovery.interface_sources.clone()),
         AutoConnectPolicy::from_maximum(config.discovery.auto_connect_limit.unwrap_or(0)),
-        InterfaceGravity::new(config.discovery.auto_connect_gravity.unwrap_or(0)),
+        AutoConnectRoutingPolicy {
+            gravity: InterfaceGravity::new(config.discovery.auto_connect_gravity.unwrap_or(0)),
+            announces_to_internal: config
+                .discovery
+                .auto_connect_announces_to_internal
+                .unwrap_or(false),
+        },
     )
 }
 

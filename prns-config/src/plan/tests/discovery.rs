@@ -9,7 +9,8 @@ fn enabled_discovery_carries_stamp_trust_and_bounded_autoconnect_policy() {
                required_discovery_value = 18\n\
                interface_discovery_sources = 00112233445566778899aabbccddeeff\n\
                autoconnect_discovered_interfaces = 3\n\
-               autoconnect_interface_gravity = -9\n",
+               autoconnect_interface_gravity = -9\n\
+               autoconnect_announces_to_internal = Yes\n",
     );
     assert_eq!(
         plan.network_identity_path.as_deref(),
@@ -33,6 +34,7 @@ fn enabled_discovery_carries_stamp_trust_and_bounded_autoconnect_policy() {
         .accepts(&prns_core::identity::IdentityHash::new([0xff; 16])));
     assert_eq!(policy.auto_connect().maximum(), Some(3));
     assert_eq!(policy.auto_connect_gravity(), InterfaceGravity::new(-9));
+    assert!(policy.auto_connect_announces_to_internal());
 }
 
 #[test]
@@ -48,6 +50,7 @@ fn zero_discovery_controls_use_the_stock_stamp_and_disable_autoconnect() {
     assert_eq!(policy.sources().allow_list(), None);
     assert_eq!(policy.auto_connect().maximum(), None);
     assert_eq!(policy.auto_connect_gravity(), InterfaceGravity::ZERO);
+    assert!(!policy.auto_connect_announces_to_internal());
 }
 
 #[test]

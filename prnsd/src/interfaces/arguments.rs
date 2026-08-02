@@ -191,6 +191,8 @@ pub struct InterfaceOptions {
     #[arg(long)]
     pub announces_from_internal: Option<bool>,
     #[arg(long)]
+    pub announces_to_internal: Option<bool>,
+    #[arg(long)]
     pub ignore_config_warnings: Option<bool>,
     #[arg(long)]
     pub group_id: Option<String>,

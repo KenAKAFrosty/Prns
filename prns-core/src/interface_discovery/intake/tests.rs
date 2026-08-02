@@ -2,8 +2,9 @@ use core::cell::Cell;
 
 use super::*;
 use crate::interface_discovery::{
-    encode_encrypted_envelope, encode_plaintext_envelope, AutoConnectPolicy, DiscoverySourcePolicy,
-    HeapDiscoveryValidationCache, RNS_VALIDATION_CACHE_CAPACITY,
+    encode_encrypted_envelope, encode_plaintext_envelope, AutoConnectPolicy,
+    AutoConnectRoutingPolicy, DiscoverySourcePolicy, HeapDiscoveryValidationCache,
+    RNS_VALIDATION_CACHE_CAPACITY,
 };
 
 const PYTHON_BACKBONE: &str = "8b00b14261636b626f6e65496e7465726661636501c3ccfec41000112233445566778899aabbccddeeffccffaf5075626c6963204261636b626f6e6503cb402900000000000004cbc04120000000000005cb405ec0000000000002ae726f757465722e6578616d706c6506cd109207a46d65736808a6736563726574";
@@ -35,7 +36,10 @@ fn policy(cost: u16, sources: Vec<IdentityHash>) -> InterfaceDiscoveryPolicy {
         stamp_cost(cost),
         DiscoverySourcePolicy::from_sources(sources),
         AutoConnectPolicy::from_maximum(0),
-        crate::interfaces::InterfaceGravity::ZERO,
+        AutoConnectRoutingPolicy {
+            gravity: crate::interfaces::InterfaceGravity::ZERO,
+            announces_to_internal: false,
+        },
     )
 }
 

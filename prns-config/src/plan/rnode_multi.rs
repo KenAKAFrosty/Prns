@@ -251,7 +251,7 @@ mod tests {
             "[interfaces]\n[[Dual]]\ntype = RNodeMultiInterface\nenabled = Yes\nport = /dev/ttyACM0\n\
              interface_mode = internal\nannounce_cap = 3.5\nannounce_rate_target = 120\n\
              network_name = field\npassphrase = secret\nifac_size = 64\nrecursive_prs = Yes\n\
-             announces_from_internal = No\ningress_control = No\negress_control = Yes\n\
+             announces_from_internal = No\nannounces_to_internal = Yes\ningress_control = No\negress_control = Yes\n\
              id_callsign = N0CALL\nid_interval = 600\n\
              [[[Low]]]\ninterface_enabled = Yes\nvport = 0\nfrequency = 868000000\n\
              bandwidth = 125000\ntxpower = -4\nspreadingfactor = 8\ncodingrate = 5\n\
@@ -301,6 +301,7 @@ mod tests {
         assert_eq!(low.policy.common, high.policy.common);
         assert!(low.policy.common.forwarding.recursive_path_requests);
         assert!(!low.policy.common.forwarding.announces_from_internal);
+        assert!(low.policy.common.forwarding.announces_to_internal);
         assert!(!low.policy.common.ingress_control.enabled);
         assert!(low.policy.common.path_request_egress.enabled);
         assert_eq!(low.policy.bitrate.get(), 3_125);

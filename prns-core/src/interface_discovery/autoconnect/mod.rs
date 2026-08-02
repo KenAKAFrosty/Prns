@@ -86,6 +86,7 @@ pub struct DiscoveredConnectionPlan {
     provenance: DiscoveryProvenance,
     stamp_value: StampValue,
     gravity: InterfaceGravity,
+    announces_to_internal: bool,
 }
 
 impl DiscoveredConnectionPlan {
@@ -135,6 +136,10 @@ impl DiscoveredConnectionPlan {
 
     pub const fn gravity(&self) -> InterfaceGravity {
         self.gravity
+    }
+
+    pub const fn announces_to_internal(&self) -> bool {
+        self.announces_to_internal
     }
 }
 
@@ -201,7 +206,11 @@ where
         if !status_is_eligible {
             continue;
         }
-        let Some(plan) = connection_plan(record.interface(), enabled.auto_connect_gravity()) else {
+        let Some(plan) = connection_plan(
+            record.interface(),
+            enabled.auto_connect_gravity(),
+            enabled.auto_connect_announces_to_internal(),
+        ) else {
             continue;
         };
         let endpoint = plan.endpoint_id();
@@ -220,6 +229,7 @@ where
 fn connection_plan(
     interface: &super::DiscoveredInterface,
     gravity: InterfaceGravity,
+    announces_to_internal: bool,
 ) -> Option<DiscoveredConnectionPlan> {
     let transport_id = match interface.advertisement.transport {
         AdvertisedTransport::Enabled(transport_id) => transport_id,
@@ -258,6 +268,7 @@ fn connection_plan(
         provenance: interface.provenance,
         stamp_value: interface.stamp_value,
         gravity,
+        announces_to_internal,
     })
 }
 

@@ -15,7 +15,8 @@ use prns_core::interface_discovery::{
     InterfaceDiscoveryPolicy,
 };
 use prns_core::interfaces::{
-    BitrateBps, ConfiguredInterfacePolicy, InterfaceId, InterfaceStatus, ReportsStatus,
+    BitrateBps, ConfiguredInterfacePolicy, InterfaceCommonPolicy, InterfaceId, InterfaceStatus,
+    ReportsStatus,
 };
 use prns_core::interfaces::{IfacContext, IfacSize};
 use prns_core::routing::announce::AnnounceObservation;
@@ -368,17 +369,12 @@ fn attach_discovered(
     plan: &DiscoveredConnectionPlan,
 ) -> Result<AttachedDiscoveredInterface, DiscoveredConnectionFailure> {
     let target = dial_target(plan.endpoint().host(), plan.endpoint().port());
+    let policy = discovered_interface_policy(plan);
     match plan.connection_kind() {
         DiscoveredConnectionKind::BackboneClient => {
             let interface = BackboneClientInterface::with_policy(
                 target,
-                prns_core::interfaces::backbone::CLIENT_DEFAULTS.configured(
-                    ConfiguredInterfacePolicy {
-                        gravity: Some(plan.gravity()),
-                        bitrate: Some(AUTOCONNECT_BITRATE),
-                        ..ConfiguredInterfacePolicy::default()
-                    },
-                ),
+                prns_core::interfaces::backbone::CLIENT_DEFAULTS.configured(policy),
                 RECONNECT_POLICY,
             );
             let status = interface.status();
@@ -391,11 +387,7 @@ fn attach_discovered(
         DiscoveredConnectionKind::TcpClient => {
             let interface = TcpClientInterface::with_policy(
                 target,
-                prns_core::interfaces::tcp::DEFAULTS.configured(ConfiguredInterfacePolicy {
-                    gravity: Some(plan.gravity()),
-                    bitrate: Some(AUTOCONNECT_BITRATE),
-                    ..ConfiguredInterfacePolicy::default()
-                }),
+                prns_core::interfaces::tcp::DEFAULTS.configured(policy),
                 RECONNECT_POLICY,
             );
             let status = interface.status();
@@ -405,6 +397,17 @@ fn attach_discovered(
                 status,
             })
         }
+    }
+}
+
+fn discovered_interface_policy(plan: &DiscoveredConnectionPlan) -> ConfiguredInterfacePolicy {
+    let mut common = InterfaceCommonPolicy::RNS_DEFAULT;
+    common.forwarding.announces_to_internal = plan.announces_to_internal();
+    ConfiguredInterfacePolicy {
+        gravity: Some(plan.gravity()),
+        bitrate: Some(AUTOCONNECT_BITRATE),
+        common: Some(common),
+        ..ConfiguredInterfacePolicy::default()
     }
 }
 

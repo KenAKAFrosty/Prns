@@ -1,8 +1,8 @@
 use prns_core::interface_discovery::{
     discovery_destination_hash, frame_discovery_publication, prepare_discovery_publication,
     AdvertisedInterfaceType, AdvertisedTransport, AdvertisementDetails, AutoConnectPolicy,
-    DiscoveryAdvertisement, DiscoveryPublicationPreparation, DiscoveryPublicationSecurity,
-    DiscoverySourcePolicy, GeographicLocation, StampCost,
+    AutoConnectRoutingPolicy, DiscoveryAdvertisement, DiscoveryPublicationPreparation,
+    DiscoveryPublicationSecurity, DiscoverySourcePolicy, GeographicLocation, StampCost,
 };
 use prns_core::interfaces::InterfaceOriginKind;
 use prns_core::wire::TransportId;
@@ -14,7 +14,10 @@ fn enabled_policy(maximum: usize) -> InterfaceDiscoveryPolicy {
         StampCost::new(1).expect("one is a valid stamp cost"),
         DiscoverySourcePolicy::from_sources(Vec::new()),
         AutoConnectPolicy::from_maximum(maximum),
-        prns_core::interfaces::InterfaceGravity::new(15),
+        AutoConnectRoutingPolicy {
+            gravity: prns_core::interfaces::InterfaceGravity::new(15),
+            announces_to_internal: false,
+        },
     )
 }
 
@@ -123,7 +126,10 @@ fn auto_connect_capacity_reports_only_when_auto_connect_is_enabled() {
             StampCost::new(1).expect("one is a valid stamp cost"),
             DiscoverySourcePolicy::from_sources(Vec::new()),
             AutoConnectPolicy::Disabled,
-            prns_core::interfaces::InterfaceGravity::ZERO,
+            AutoConnectRoutingPolicy {
+                gravity: prns_core::interfaces::InterfaceGravity::ZERO,
+                announces_to_internal: false,
+            },
         ),
         None,
     );

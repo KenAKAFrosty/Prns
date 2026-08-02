@@ -170,6 +170,12 @@ fn interpret_interface(
         name,
         coerce_bool,
     )?;
+    let announces_to_internal = opt(
+        &mut rest,
+        interface_key::ANNOUNCES_TO_INTERNAL,
+        name,
+        coerce_bool,
+    )?;
     let ic_max_held_announces = opt(
         &mut rest,
         common_key::IC_MAX_HELD_ANNOUNCES,
@@ -219,6 +225,7 @@ fn interpret_interface(
         egress_control,
         recursive_prs,
         announces_from_internal,
+        announces_to_internal,
         ic_max_held_announces,
         ic_new_time,
         ic_burst_hold,
@@ -248,12 +255,15 @@ fn interpret_discovery_config(
     let auto_connect_limit =
         global_positive_usize(globals, global_key::AUTOCONNECT_DISCOVERED_INTERFACES)?;
     let auto_connect_gravity = global_i64(globals, global_key::AUTOCONNECT_INTERFACE_GRAVITY)?;
+    let auto_connect_announces_to_internal =
+        global_bool(globals, global_key::AUTOCONNECT_ANNOUNCES_TO_INTERNAL)?;
     Ok(ReferenceDiscoveryConfig {
         discover_interfaces,
         required_stamp_cost,
         interface_sources,
         auto_connect_limit,
         auto_connect_gravity,
+        auto_connect_announces_to_internal,
     })
 }
 

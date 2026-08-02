@@ -146,7 +146,7 @@ impl<S: StorageLayout> EngineState<S> {
                     continue;
                 };
                 let bytes = &buf[..written];
-                let next_hop_mode = interfaces.iter().find(|c| c.id == source).map(|c| c.mode);
+                let source_descriptor = interfaces.iter().find(|candidate| candidate.id == source);
                 let mut fleets_emitted: u128 = 0;
                 for descriptor in interfaces {
                     let eligible = match directed_to {
@@ -160,7 +160,11 @@ impl<S: StorageLayout> EngineState<S> {
                         }
                         None => {
                             descriptor.id.kind() != Some(InterfaceKind::LocalClient)
-                                && allows_announce_rebroadcast(descriptor, source, next_hop_mode)
+                                && allows_announce_rebroadcast(
+                                    descriptor,
+                                    source,
+                                    source_descriptor,
+                                )
                         }
                     };
                     if !eligible {

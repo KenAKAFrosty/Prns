@@ -287,6 +287,9 @@ fn interface_common_policy(
         announces_from_internal: interface
             .announces_from_internal
             .unwrap_or(common.forwarding.announces_from_internal),
+        announces_to_internal: interface
+            .announces_to_internal
+            .unwrap_or(common.forwarding.announces_to_internal),
     };
     common.ingress_control.enabled = interface
         .ingress_control

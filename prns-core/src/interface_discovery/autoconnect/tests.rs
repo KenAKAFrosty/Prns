@@ -3,9 +3,10 @@ use alloc::string::String;
 use super::*;
 use crate::identity::IdentityHash;
 use crate::interface_discovery::{
-    generate_stamp, AutoConnectPolicy, DiscoveryAdvertisement, DiscoveryEnvelopeSecurity,
-    DiscoverySourcePolicy, GeographicLocation, HeapDiscoveredEndpointSet, PublishedIfac, StampCost,
-    StampGeneration, DEFAULT_STAMP_COST, DISCOVERY_UNKNOWN_AFTER,
+    generate_stamp, AutoConnectPolicy, AutoConnectRoutingPolicy, DiscoveryAdvertisement,
+    DiscoveryEnvelopeSecurity, DiscoverySourcePolicy, GeographicLocation,
+    HeapDiscoveredEndpointSet, PublishedIfac, StampCost, StampGeneration, DEFAULT_STAMP_COST,
+    DISCOVERY_UNKNOWN_AFTER,
 };
 use crate::units::HopCount;
 
@@ -108,7 +109,10 @@ fn policy(maximum: usize) -> InterfaceDiscoveryPolicy {
         DEFAULT_STAMP_COST,
         DiscoverySourcePolicy::from_sources(Vec::new()),
         AutoConnectPolicy::from_maximum(maximum),
-        crate::interfaces::InterfaceGravity::new(-14),
+        AutoConnectRoutingPolicy {
+            gravity: crate::interfaces::InterfaceGravity::new(-14),
+            announces_to_internal: true,
+        },
     )
 }
 
@@ -230,6 +234,7 @@ fn startup_selection_is_bounded_ranked_deduplicated_and_type_safe() {
         plans[0].gravity(),
         crate::interfaces::InterfaceGravity::new(-14)
     );
+    assert!(plans[0].announces_to_internal());
     assert_eq!(
         plans[0].connection_kind(),
         DiscoveredConnectionKind::BackboneClient

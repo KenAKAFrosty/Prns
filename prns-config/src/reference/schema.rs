@@ -200,6 +200,10 @@ pub(super) const GLOBAL_RULES: &[(&str, KeyRule)] = &[
         global_key::AUTOCONNECT_INTERFACE_GRAVITY,
         Applied(ValueKind::I64),
     ),
+    (
+        global_key::AUTOCONNECT_ANNOUNCES_TO_INTERNAL,
+        Applied(ValueKind::Bool),
+    ),
     (global_key::DEFAULT_GRAVITY, Applied(ValueKind::I64)),
     (global_key::DEFAULT_AR_TARGET, Applied(ValueKind::I64)),
     (global_key::DEFAULT_AR_PENALTY, Applied(ValueKind::I64)),
@@ -243,7 +247,8 @@ fn common_interface_key_rule(key: &str) -> Option<KeyRule> {
         | common_key::INGRESS_CONTROL
         | common_key::EGRESS_CONTROL
         | interface_key::RECURSIVE_PRS
-        | interface_key::ANNOUNCES_FROM_INTERNAL => Some(Applied(ValueKind::Bool)),
+        | interface_key::ANNOUNCES_FROM_INTERNAL
+        | interface_key::ANNOUNCES_TO_INTERNAL => Some(Applied(ValueKind::Bool)),
 
         interface_key::BOOTSTRAP_ONLY => Some(Applied(ValueKind::Bool)),
         interface_key::IGNORE_CONFIG_WARNINGS => Some(FollowOn(ValueKind::Bool)),

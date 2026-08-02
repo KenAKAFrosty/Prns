@@ -124,6 +124,11 @@ impl InterfaceOptions {
         )?;
         push(
             &mut values,
+            "announces_to_internal",
+            boolean(self.announces_to_internal),
+        )?;
+        push(
+            &mut values,
             "ignore_config_warnings",
             boolean(self.ignore_config_warnings),
         )?;

@@ -485,6 +485,7 @@ pub(super) const ALL_SETTING_KEYS: &[&str] = &[
     interface_key::BOOTSTRAP_ONLY,
     interface_key::RECURSIVE_PRS,
     interface_key::ANNOUNCES_FROM_INTERNAL,
+    interface_key::ANNOUNCES_TO_INTERNAL,
     interface_key::IGNORE_CONFIG_WARNINGS,
     interface_key::GROUP_ID,
     interface_key::DISCOVERY_SCOPE,

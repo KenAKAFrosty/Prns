@@ -6,18 +6,22 @@ use crate::interfaces::{
 pub(in crate::engine) fn allows_announce_rebroadcast(
     descriptor: &InterfaceDescriptor,
     source: InterfaceId,
-    next_hop_mode: Option<InterfaceMode>,
+    source_descriptor: Option<&InterfaceDescriptor>,
 ) -> bool {
     let transport_allowed = if descriptor.id == source {
         descriptor.capabilities.allows_same_interface_repeat()
     } else {
         descriptor.capabilities.allows_transport()
     };
+    let next_hop_mode = source_descriptor.map(|descriptor| descriptor.mode);
+    let announces_to_internal = source_descriptor
+        .is_some_and(|descriptor| descriptor.common.forwarding.announces_to_internal);
     transport_allowed
         && mode_allows_announce_egress(
             descriptor.mode,
             next_hop_mode,
             descriptor.common.forwarding.announces_from_internal,
+            announces_to_internal,
         )
 }
 
@@ -26,6 +30,7 @@ fn mode_allows_announce_egress(
     egress: InterfaceMode,
     next_hop_mode: Option<InterfaceMode>,
     announces_from_internal: bool,
+    announces_to_internal: bool,
 ) -> bool {
     use InterfaceMode::{AccessPoint, Boundary, Full, Gateway, Internal, PointToPoint, Roaming};
     if !announces_from_internal && next_hop_mode == Some(Internal) {
@@ -41,7 +46,7 @@ fn mode_allows_announce_egress(
             None | Some(Roaming) => false,
             Some(Full | PointToPoint | AccessPoint | Gateway | Boundary | Internal) => true,
         },
-        Internal => !matches!(next_hop_mode, Some(Boundary)),
+        Internal => !matches!(next_hop_mode, Some(Boundary)) || announces_to_internal,
         Full | PointToPoint | Gateway => true,
     }
 }
@@ -205,7 +210,7 @@ mod tests {
     }
 
     #[test]
-    fn every_learned_on_and_egress_mode_pair_matches_rns_1_4_0() {
+    fn every_default_learned_on_and_egress_mode_pair_matches_rns_1_4_2() {
         let expected_by_learned_on = [
             (
                 InterfaceMode::Full,
@@ -240,7 +245,7 @@ mod tests {
         for (learned_on, expected_egress) in expected_by_learned_on {
             for (egress, expected) in MODES.into_iter().zip(expected_egress) {
                 assert_eq!(
-                    mode_allows_announce_egress(egress, Some(learned_on), true),
+                    mode_allows_announce_egress(egress, Some(learned_on), true, false),
                     expected,
                     "learned on {learned_on:?}, egress {egress:?}",
                 );
@@ -255,17 +260,43 @@ mod tests {
                 egress,
                 Some(InterfaceMode::Internal),
                 false,
+                false,
             ));
             for learned_on in MODES {
                 if learned_on == InterfaceMode::Internal {
                     continue;
                 }
                 assert_eq!(
-                    mode_allows_announce_egress(egress, Some(learned_on), false),
-                    mode_allows_announce_egress(egress, Some(learned_on), true),
+                    mode_allows_announce_egress(egress, Some(learned_on), false, false),
+                    mode_allows_announce_egress(egress, Some(learned_on), true, false),
                     "learned on {learned_on:?}, egress {egress:?}",
                 );
             }
+        }
+    }
+
+    #[test]
+    fn boundary_announces_reach_internal_only_when_the_source_opts_in() {
+        assert!(!mode_allows_announce_egress(
+            InterfaceMode::Internal,
+            Some(InterfaceMode::Boundary),
+            true,
+            false,
+        ));
+        assert!(mode_allows_announce_egress(
+            InterfaceMode::Internal,
+            Some(InterfaceMode::Boundary),
+            true,
+            true,
+        ));
+        for egress in MODES
+            .into_iter()
+            .filter(|mode| *mode != InterfaceMode::Internal)
+        {
+            assert_eq!(
+                mode_allows_announce_egress(egress, Some(InterfaceMode::Boundary), true, false,),
+                mode_allows_announce_egress(egress, Some(InterfaceMode::Boundary), true, true,),
+            );
         }
     }
 }

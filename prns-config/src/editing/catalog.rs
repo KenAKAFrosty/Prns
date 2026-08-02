@@ -190,7 +190,8 @@ impl InterfaceSettingSpec {
             | interface_key::GRAVITY
             | interface_key::BOOTSTRAP_ONLY
             | interface_key::RECURSIVE_PRS
-            | interface_key::ANNOUNCES_FROM_INTERNAL => InterfaceSettingCategory::Behavior,
+            | interface_key::ANNOUNCES_FROM_INTERNAL
+            | interface_key::ANNOUNCES_TO_INTERNAL => InterfaceSettingCategory::Behavior,
             interface_key::ANNOUNCE_CAP
             | interface_key::ANNOUNCE_RATE_TARGET
             | interface_key::ANNOUNCE_RATE_GRACE
@@ -456,6 +457,9 @@ impl InterfaceSettingSpec {
             interface_key::ANNOUNCES_FROM_INTERNAL => {
                 "Allows announcements arriving from internal-mode interfaces to leave through this interface."
             }
+            interface_key::ANNOUNCES_TO_INTERNAL => {
+                "Allows announcements arriving on this interface to enter internal-mode interfaces."
+            }
             interface_key::IGNORE_CONFIG_WARNINGS => {
                 "Requests stock RNS warning suppression; Prns intentionally does not apply this setting."
             }
@@ -628,6 +632,7 @@ impl InterfaceSettingSpec {
             interface_key::BOOTSTRAP_ONLY => Some("No"),
             interface_key::RECURSIVE_PRS => Some("No"),
             interface_key::ANNOUNCES_FROM_INTERNAL => Some("Yes"),
+            interface_key::ANNOUNCES_TO_INTERNAL => Some("No"),
             interface_key::GROUP_ID if kind == InterfaceKind::Auto => Some("reticulum"),
             interface_key::DISCOVERY_SCOPE if kind == InterfaceKind::Auto => Some("link"),
             interface_key::DISCOVERY_PORT if kind == InterfaceKind::Auto => Some("29716"),
@@ -705,6 +710,7 @@ impl InterfaceSettingSpec {
                 | interface_key::GRAVITY
                 | interface_key::RECURSIVE_PRS
                 | interface_key::ANNOUNCES_FROM_INTERNAL
+                | interface_key::ANNOUNCES_TO_INTERNAL
                 | common_key::INGRESS_CONTROL
                 | common_key::EGRESS_CONTROL
                 | common_key::IC_MAX_HELD_ANNOUNCES
@@ -837,6 +843,9 @@ impl InterfaceSettingSpec {
             interface_key::RECURSIVE_PRS => Some(yes_no(common.forwarding.recursive_path_requests)),
             interface_key::ANNOUNCES_FROM_INTERNAL => {
                 Some(yes_no(common.forwarding.announces_from_internal))
+            }
+            interface_key::ANNOUNCES_TO_INTERNAL => {
+                Some(yes_no(common.forwarding.announces_to_internal))
             }
             common_key::INGRESS_CONTROL => Some(yes_no(common.ingress_control.enabled)),
             common_key::EGRESS_CONTROL => Some(yes_no(common.path_request_egress.enabled)),
@@ -1060,6 +1069,7 @@ impl InterfaceSettingSpec {
             | interface_key::BOOTSTRAP_ONLY
             | interface_key::RECURSIVE_PRS
             | interface_key::ANNOUNCES_FROM_INTERNAL
+            | interface_key::ANNOUNCES_TO_INTERNAL
             | interface_key::IGNORE_CONFIG_WARNINGS
             | interface_key::KISS_FRAMING
             | interface_key::I2P_TUNNELED

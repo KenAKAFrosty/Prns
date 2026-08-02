@@ -5,8 +5,8 @@ use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{IdentitySigner, RemoteIdentity};
 use crate::interface_discovery::{
     ingest_discovery_announce, AdvertisedInterfaceType, AdvertisedTransport, AdvertisementDetails,
-    AutoConnectPolicy, DiscoveryDecryptionError, DiscoveryIntake, DiscoverySourcePolicy,
-    GeographicLocation, InterfaceDiscoveryPolicy, PublishedIfac,
+    AutoConnectPolicy, AutoConnectRoutingPolicy, DiscoveryDecryptionError, DiscoveryIntake,
+    DiscoverySourcePolicy, GeographicLocation, InterfaceDiscoveryPolicy, PublishedIfac,
 };
 use crate::routing::announce::AnnounceObservation;
 use crate::units::HopCount;
@@ -192,7 +192,10 @@ fn network_encrypted_publication_round_trips_through_the_shared_identity_crypto(
         stamp_cost(8),
         DiscoverySourcePolicy::Open,
         AutoConnectPolicy::Disabled,
-        crate::interfaces::InterfaceGravity::ZERO,
+        AutoConnectRoutingPolicy {
+            gravity: crate::interfaces::InterfaceGravity::ZERO,
+            announces_to_internal: false,
+        },
     );
     let outcome = ingest_discovery_announce(
         &policy,

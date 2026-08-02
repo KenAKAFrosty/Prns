@@ -44,6 +44,7 @@ pub struct ReferenceDiscoveryConfig {
     pub interface_sources: Vec<IdentityHash>,
     pub auto_connect_limit: Option<usize>,
     pub auto_connect_gravity: Option<i64>,
+    pub auto_connect_announces_to_internal: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -224,6 +225,7 @@ pub struct ReferenceInterface {
     pub egress_control: Option<bool>,
     pub recursive_prs: Option<bool>,
     pub announces_from_internal: Option<bool>,
+    pub announces_to_internal: Option<bool>,
     pub ic_max_held_announces: Option<i64>,
     pub ic_new_time: Option<f64>,
     pub ic_burst_hold: Option<f64>,
@@ -265,6 +267,7 @@ impl ReferenceInterface {
             egress_control: None,
             recursive_prs: None,
             announces_from_internal: None,
+            announces_to_internal: None,
             ic_max_held_announces: None,
             ic_new_time: None,
             ic_burst_hold: None,

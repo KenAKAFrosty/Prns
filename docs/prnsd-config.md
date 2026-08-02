@@ -211,8 +211,8 @@ back up the Prns storage containing them.
 
 Every enabled interface applies `mode`, `outgoing`, `bitrate`, announce cap and rate controls, IFAC
 network name/passphrase/size, ingress and egress controls, `recursive_prs`,
-`announces_from_internal`, and the common IC/EC tuning values. Interface-mode behavior follows RNS
-1.4.0. `outgoing = No` disables egress while retaining ingress.
+`announces_from_internal`, `announces_to_internal`, and the common IC/EC tuning values.
+Interface-mode behavior follows RNS 1.4.0. `outgoing = No` disables egress while retaining ingress.
 
 `gravity` is a signed 64-bit routing preference. An interface inherits `default_gravity` from
 `[reticulum]` when it has no explicit value, and both default to zero. After an announce has passed
@@ -245,7 +245,7 @@ Use the canonical RNS names and `mode` configuration values below. Prns also acc
 | Roaming | `roaming` | Serves a physically mobile segment. It uses six-hour paths, recursively resolves unknown paths, waits an additional 1.5 seconds before answering path requests, refuses to answer with a route learned on the same Roaming interface, and propagates announces conservatively. |
 | Boundary | `boundary` | Connects a significantly different or external segment. It controls outbound announce propagation and failed-path recovery; it does not block inbound announce learning. |
 | Gateway | `gateway` or `gw` | Uses Full announce and path-expiry behavior while recursively resolving unknown paths on behalf of nodes facing this interface. |
-| Internal | `internal` | Represents the inside counterpart to Boundary. It rejects Boundary-sourced announce propagation, recursively resolves outward paths, and can be filtered with `announces_from_internal = No` on other interfaces. |
+| Internal | `internal` | Represents the inside counterpart to Boundary. It rejects Boundary-sourced announce propagation unless that Boundary source sets `announces_to_internal = Yes`, recursively resolves outward paths, and can be filtered with `announces_from_internal = No` on other interfaces. |
 
 The following matrix covers automatic propagation of non-local announces. Rows identify the mode of
 the interface on which the route was learned; columns identify the outgoing interface mode.
@@ -263,6 +263,8 @@ the interface on which the route was learned; columns identify the outgoing inte
 Locally originated announces use every outgoing mode except Access Point. Setting
 `announces_from_internal = No` on an interface changes the Internal row to `No` for that outgoing
 interface without changing path-request resolution.
+Setting `announces_to_internal = Yes` on a Boundary interface changes only its Internal-column entry
+to `Yes`. The setting defaults to `No` and does not relax any other mode rule.
 
 Interface modes are Transport policy. They are not authentication, an ingress firewall, or a
 substitute for an IFAC network name and passphrase. In particular, Boundary interfaces still learn
@@ -403,6 +405,8 @@ Prnsd retires all bootstrap-only interfaces. It restores them after every auto-c
 is gone. As in RNS, this lifecycle is inactive when discovery auto-connect is disabled.
 `autoconnect_interface_gravity` selects the signed gravity assigned atomically to every
 auto-connected Backbone or TCP interface and defaults to zero.
+`autoconnect_announces_to_internal = Yes` gives those interfaces the corresponding Internal
+announce opt-in and defaults to `No`.
 
 Weave uses a serial device path in `port`, not a numeric network port:
 

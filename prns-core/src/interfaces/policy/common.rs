@@ -18,6 +18,7 @@ impl FrequencyMilliHertz {
 pub struct InterfaceForwardingPolicy {
     pub recursive_path_requests: bool,
     pub announces_from_internal: bool,
+    pub announces_to_internal: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,6 +53,7 @@ impl InterfaceCommonPolicy {
         forwarding: InterfaceForwardingPolicy {
             recursive_path_requests: false,
             announces_from_internal: true,
+            announces_to_internal: false,
         },
         ingress_control: IngressControlPolicy {
             enabled: true,

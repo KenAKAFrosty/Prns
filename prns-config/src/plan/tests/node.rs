@@ -304,6 +304,7 @@ fn internal_outgoing_and_common_controls_form_one_effective_policy() {
              outgoing = No\n\
              recursive_prs = Yes\n\
              announces_from_internal = No\n\
+             announces_to_internal = Yes\n\
              ingress_control = No\n\
              ec_pr_freq = 0\n\
              ic_max_held_announces = 0\n",
@@ -317,6 +318,7 @@ fn internal_outgoing_and_common_controls_form_one_effective_policy() {
     assert_eq!(policy.capabilities.egress, EgressCapability::Disabled);
     assert!(policy.common.forwarding.recursive_path_requests);
     assert!(!policy.common.forwarding.announces_from_internal);
+    assert!(policy.common.forwarding.announces_to_internal);
     assert!(!policy.common.ingress_control.enabled);
     assert_eq!(policy.common.ingress_control.max_held_announces, 0);
     assert_eq!(
