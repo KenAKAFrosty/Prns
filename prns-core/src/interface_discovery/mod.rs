@@ -45,8 +45,9 @@ pub use coordinator::{
 };
 pub use intake::{
     ingest_discovery_announce, DiscoveredInterface, DiscoveredInterfaceId,
-    DiscoveryDecryptionError, DiscoveryEnvelopeSecurity, DiscoveryIntake, DiscoveryNotApplicable,
-    DiscoveryProvenance, DiscoveryRejection, DiscoveryRejectionKind, InterfaceOrigin,
+    DiscoveryDecryptionError, DiscoveryEnvelopeSecurity, DiscoveryIdentityRole, DiscoveryIntake,
+    DiscoveryNotApplicable, DiscoveryProvenance, DiscoveryRejection, DiscoveryRejectionKind,
+    InterfaceOrigin,
 };
 pub use policy::{
     discovered_interface_status, AutoConnectPolicy, AutoConnectRoutingPolicy,

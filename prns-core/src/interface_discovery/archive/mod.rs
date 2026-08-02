@@ -9,7 +9,7 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
-use crate::interface_discovery::{DiscoveryCatalog, DiscoveryRecord};
+use crate::interface_discovery::{DiscoveredInterfaceId, DiscoveryCatalog, DiscoveryRecord};
 
 use self::document::{ArchiveDocument, ArchiveDocumentRef, ArchivedRecord};
 use self::file::replace_archive_file;
@@ -44,14 +44,30 @@ pub struct DiscoveryArchive {
 
 pub struct DiscoveryArchiveRecord {
     id: String,
-    record: ArchivedRecord,
+    operation: DiscoveryArchiveOperation,
+}
+
+enum DiscoveryArchiveOperation {
+    Upsert(Box<ArchivedRecord>),
+    Remove,
 }
 
 impl From<&DiscoveryRecord> for DiscoveryArchiveRecord {
     fn from(record: &DiscoveryRecord) -> Self {
         Self {
             id: file::encode_hex(record.id().as_bytes()),
-            record: ArchivedRecord::from_record(record),
+            operation: DiscoveryArchiveOperation::Upsert(Box::new(ArchivedRecord::from_record(
+                record,
+            ))),
+        }
+    }
+}
+
+impl DiscoveryArchiveRecord {
+    pub fn remove(id: DiscoveredInterfaceId) -> Self {
+        Self {
+            id: file::encode_hex(id.as_bytes()),
+            operation: DiscoveryArchiveOperation::Remove,
         }
     }
 }
@@ -137,10 +153,20 @@ impl DiscoveryArchive {
         &mut self,
         record: impl Into<DiscoveryArchiveRecord>,
     ) -> Result<(), DiscoveryArchiveError> {
-        let DiscoveryArchiveRecord {
-            id,
-            record: mut updated,
-        } = record.into();
+        let DiscoveryArchiveRecord { id, operation } = record.into();
+        let mut updated = match operation {
+            DiscoveryArchiveOperation::Upsert(updated) => *updated,
+            DiscoveryArchiveOperation::Remove => {
+                let previous = self.interfaces.remove(&id);
+                if let Err(error) = self.persist() {
+                    if let Some(previous) = previous {
+                        self.interfaces.insert(id, previous);
+                    }
+                    return Err(error);
+                }
+                return Ok(());
+            }
+        };
         if let Some(previous) = self.interfaces.get(&id) {
             if !updated.merge_history_from(previous) {
                 return Ok(());

@@ -107,6 +107,9 @@ pub(super) fn start(mut archive: DiscoveryArchive) -> (ArchiveSink, ArchiveWorke
 }
 
 pub(super) fn archive_record(event: &TokioDiscoveryEvent<'_>) -> Option<DiscoveryArchiveRecord> {
+    if let TokioDiscoveryEvent::CatalogBlackholed(record) = event {
+        return Some(DiscoveryArchiveRecord::remove(record.id()));
+    }
     let TokioDiscoveryEvent::CatalogUpdated { update, record } = event else {
         return None;
     };

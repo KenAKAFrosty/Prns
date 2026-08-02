@@ -128,9 +128,13 @@ fn enabled_policy(maximum: usize) -> InterfaceDiscoveryPolicy {
 }
 
 fn discovery_app_data(host: &str, port: u16) -> Vec<u8> {
+    discovery_app_data_with_transport(host, port, TransportId::new([0x44; 16]))
+}
+
+fn discovery_app_data_with_transport(host: &str, port: u16, transport: TransportId) -> Vec<u8> {
     let advertisement = DiscoveryAdvertisement {
         interface_type: AdvertisedInterfaceType::Backbone,
-        transport: AdvertisedTransport::Enabled(TransportId::new([0x44; 16])),
+        transport: AdvertisedTransport::Enabled(transport),
         name: Some(String::from("Public backbone")),
         location: GeographicLocation::UNKNOWN,
         details: AdvertisementDetails::Reachable {
@@ -165,6 +169,92 @@ fn discovery_app_data(host: &str, port: u16) -> Vec<u8> {
         Err(super::super::DiscoveryPublicationEncryptionError::NetworkIdentityUnavailable)
     })
     .expect("plaintext framing does not ask for encryption")
+}
+
+#[test]
+fn blackholed_announcing_and_transport_identities_are_rejected() {
+    let announcing = IdentityHash::new([0x22; 16]);
+    let transport = IdentityHash::new([0x44; 16]);
+    let app_data = discovery_app_data("router.example", 4242);
+
+    let mut coordinator = DiscoveryCoordinator::new(enabled_policy(1));
+    assert!(matches!(
+        coordinator.observe_announce_with_blackholes(
+            observation(announcing, &app_data),
+            InstantMillis(10_005),
+            plaintext_decrypt,
+            &[announcing],
+        ).as_slice(),
+        [DiscoveryCoordinatorOutput::Event(
+            DiscoveryCoordinatorEvent::IntakeRejected(
+                DiscoveryRejection::BlackholedIdentity {
+                    identity,
+                    role: DiscoveryIdentityRole::Announcing,
+                }
+            )
+        )] if *identity == announcing
+    ));
+    assert!(coordinator.catalog().is_empty());
+
+    assert!(matches!(
+        coordinator.observe_announce_with_blackholes(
+            observation(announcing, &app_data),
+            InstantMillis(10_005),
+            plaintext_decrypt,
+            &[transport],
+        ).as_slice(),
+        [DiscoveryCoordinatorOutput::Event(
+            DiscoveryCoordinatorEvent::IntakeRejected(
+                DiscoveryRejection::BlackholedIdentity {
+                    identity,
+                    role: DiscoveryIdentityRole::AdvertisedTransport,
+                }
+            )
+        )] if *identity == transport
+    ));
+    assert!(coordinator.catalog().is_empty());
+}
+
+#[test]
+fn reconciling_a_blackhole_purges_and_detaches_an_active_discovery() {
+    let mut coordinator = DiscoveryCoordinator::new(enabled_policy(1));
+    let announcing = IdentityHash::new([0x22; 16]);
+    let app_data =
+        discovery_app_data_with_transport("router.example", 4242, TransportId::new([0x44; 16]));
+    let plan = only_attachment(coordinator.observe_announce(
+        observation(announcing, &app_data),
+        InstantMillis(10_005),
+        plaintext_decrypt,
+    ));
+    let discovery = plan.discovery_id();
+    let interface = InterfaceId::new([0x77; 8]);
+    coordinator
+        .attachment_succeeded(plan, interface)
+        .expect("the discovered interface registers");
+
+    let outputs = coordinator.reconcile_blackholes(&[IdentityHash::new([0x44; 16])]);
+    assert!(matches!(
+        outputs.as_slice(),
+        [
+            DiscoveryCoordinatorOutput::Event(
+                DiscoveryCoordinatorEvent::CatalogBlackholed(record)
+            ),
+            DiscoveryCoordinatorOutput::Action(DiscoveryCoordinatorAction::Detach {
+                interface: detached,
+            }),
+            DiscoveryCoordinatorOutput::Event(
+                DiscoveryCoordinatorEvent::ConnectionDetached {
+                    discovery: detached_discovery,
+                    interface: detached_event,
+                }
+            ),
+        ] if record.id() == discovery
+            && *detached == interface
+            && *detached_discovery == discovery
+            && *detached_event == interface
+    ));
+    assert!(coordinator.catalog().is_empty());
+    assert!(coordinator.reconcile_blackholes(&[announcing]).is_empty());
 }
 
 fn observation<'a>(identity: IdentityHash, app_data: &'a [u8]) -> AnnounceObservation<'a> {

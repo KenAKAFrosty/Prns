@@ -25,7 +25,9 @@ use prns_core::wire::DestinationHash;
 use prns_runtime::manifold::driver::{TokioHost, TokioInterfaceStatus};
 use prns_runtime::manifold::interface_seam::Interface;
 use prns_runtime::manifold::Host;
-use prns_runtime::runtime::{AttachedInterface, InterfaceAttachmentMetadata, PrnsNodeHandle};
+use prns_runtime::runtime::{
+    AttachedInterface, IdentityBlackholeSource, InterfaceAttachmentMetadata, PrnsNodeHandle,
+};
 use tokio::sync::mpsc::{self, error::TrySendError, Receiver, Sender};
 
 use crate::backbone::BackboneClientInterface;
@@ -87,6 +89,7 @@ pub enum TokioDiscoveryEvent<'a> {
         record: &'a DiscoveryRecord,
     },
     CatalogExpired(&'a DiscoveryRecord),
+    CatalogBlackholed(&'a DiscoveryRecord),
     ConnectionAttached {
         plan: &'a DiscoveredConnectionPlan,
         interface: InterfaceId,
@@ -174,7 +177,9 @@ impl TokioInterfaceDiscovery {
         clock: TokioHost,
         mut report: impl for<'a> FnMut(TokioDiscoveryEvent<'a>) + Send,
     ) {
-        let outputs = self.coordinator.startup(clock.now());
+        let blackholed = blackholed_identities(&handle).await;
+        let mut outputs = self.coordinator.reconcile_blackholes(&blackholed);
+        outputs.extend(self.coordinator.startup(clock.now()));
         self.process_outputs(&handle, outputs, &mut report);
         self.report_auto_connect_capacity(&mut report);
         let mut monitor = tokio::time::interval(MONITOR_INTERVAL);
@@ -186,12 +191,16 @@ impl TokioInterfaceDiscovery {
                     let Some(observation) = observation else {
                         return;
                     };
-                    let outputs = self.ingest_observation(observation, clock.now());
+                    let blackholed = blackholed_identities(&handle).await;
+                    let mut outputs = self.coordinator.reconcile_blackholes(&blackholed);
+                    outputs.extend(self.ingest_observation(observation, clock.now(), &blackholed));
                     self.process_outputs(&handle, outputs, &mut report);
                     self.report_auto_connect_capacity(&mut report);
                 }
                 _ = monitor.tick() => {
-                    let outputs = self.maintenance_outputs(clock.now());
+                    let blackholed = blackholed_identities(&handle).await;
+                    let mut outputs = self.coordinator.reconcile_blackholes(&blackholed);
+                    outputs.extend(self.maintenance_outputs(clock.now()));
                     self.process_outputs(&handle, outputs, &mut report);
                     self.report_auto_connect_capacity(&mut report);
                 }
@@ -203,10 +212,13 @@ impl TokioInterfaceDiscovery {
         &mut self,
         observation: OwnedAnnounceObservation,
         now: InstantMillis,
+        blackholed: &[IdentityHash],
     ) -> Vec<DiscoveryCoordinatorOutput> {
         let network_identity = &self.network_identity;
-        self.coordinator
-            .observe_announce(observation.borrowed(), now, |ciphertext| {
+        self.coordinator.observe_announce_with_blackholes(
+            observation.borrowed(),
+            now,
+            |ciphertext| {
                 let Some(identity) = network_identity else {
                     return Err(DiscoveryDecryptionError::NetworkIdentityUnavailable);
                 };
@@ -216,7 +228,9 @@ impl TokioInterfaceDiscovery {
                     .map_err(DiscoveryDecryptionError::Identity)?;
                 plaintext.truncate(written);
                 Ok(plaintext)
-            })
+            },
+            blackholed,
+        )
     }
 
     fn maintenance_outputs(&mut self, now: InstantMillis) -> Vec<DiscoveryCoordinatorOutput> {
@@ -311,6 +325,9 @@ impl TokioInterfaceDiscovery {
             DiscoveryCoordinatorEvent::CatalogExpired(record) => {
                 report(TokioDiscoveryEvent::CatalogExpired(record));
             }
+            DiscoveryCoordinatorEvent::CatalogBlackholed(record) => {
+                report(TokioDiscoveryEvent::CatalogBlackholed(record));
+            }
             DiscoveryCoordinatorEvent::ConnectionAttached { plan, interface } => {
                 report(TokioDiscoveryEvent::ConnectionAttached {
                     plan,
@@ -357,6 +374,14 @@ impl TokioInterfaceDiscovery {
             .count();
         report(TokioDiscoveryEvent::AutoConnectCapacity { online, maximum });
     }
+}
+
+async fn blackholed_identities(handle: &PrnsNodeHandle) -> Vec<IdentityHash> {
+    handle
+        .blackholed_identities()
+        .await
+        .map(|entries| entries.into_iter().map(|entry| entry.identity).collect())
+        .unwrap_or_default()
 }
 
 struct AttachedDiscoveredInterface {

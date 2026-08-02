@@ -144,7 +144,7 @@ fn accepted_observations_update_the_generic_catalog_with_full_provenance() {
     let identity = IdentityHash::new([0x22; 16]);
     let app_data = discovery_app_data("router.example", 4242);
     let owned = OwnedAnnounceObservation::from_borrowed(observation(identity, &app_data));
-    let outputs = service.ingest_observation(owned, InstantMillis(10_000));
+    let outputs = service.ingest_observation(owned, InstantMillis(10_000), &[]);
     let updates = outputs
         .iter()
         .filter_map(|output| match output {
@@ -176,8 +176,10 @@ fn dial_targets_bracket_ipv6_without_changing_dns_or_ipv4() {
 
 #[tokio::test]
 async fn an_eligible_discovery_stands_up_a_real_backbone_client() {
+    use prns_runtime::routing::{BlackholeExpiry, BlackholedIdentity};
     use prns_runtime::runtime::{
-        ManuallyAttached, NoPersistence, PreConfiguredDestination, PrnsNode, PrnsNodeRecipe,
+        IdentityBlackholeControl, ManuallyAttached, NoPersistence, PreConfiguredDestination,
+        PrnsNode, PrnsNodeRecipe,
     };
     use prns_runtime::storage::GrowableHeap;
 
@@ -200,11 +202,17 @@ async fn an_eligible_discovery_stands_up_a_real_backbone_client() {
     let handle = node.handle();
     let clock = node.clock();
     let (events_tx, mut events_rx) = tokio::sync::mpsc::unbounded_channel();
-    let service_task = tokio::spawn(service.run(handle.clone(), clock, move |event| {
-        if let TokioDiscoveryEvent::ConnectionAttached { interface, .. } = event {
-            let _ = events_tx.send(interface);
-        }
-    }));
+    let service_task = tokio::spawn(
+        service.run(handle.clone(), clock, move |event| match event {
+            TokioDiscoveryEvent::ConnectionAttached { interface, .. } => {
+                let _ = events_tx.send((true, interface));
+            }
+            TokioDiscoveryEvent::ConnectionDetached { interface, .. } => {
+                let _ = events_tx.send((false, interface));
+            }
+            _ => {}
+        }),
+    );
     let scenario = async move {
         let identity = IdentityHash::new([0x22; 16]);
         let app_data = discovery_app_data("127.0.0.1", address.port());
@@ -212,10 +220,11 @@ async fn an_eligible_discovery_stands_up_a_real_backbone_client() {
             ingress.observe(observation(identity, &app_data)),
             DiscoveryIngressOutcome::Queued
         );
-        let interface = tokio::time::timeout(Duration::from_secs(2), events_rx.recv())
+        let (attached, interface) = tokio::time::timeout(Duration::from_secs(2), events_rx.recv())
             .await
             .expect("the discovery service attaches promptly")
             .expect("the discovery event lane remains open");
+        assert!(attached);
         let (_socket, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
             .await
             .expect("the discovered client dials promptly")
@@ -237,6 +246,38 @@ async fn an_eligible_discovery_stands_up_a_real_backbone_client() {
             attached.snapshot.gravity,
             prns_core::interfaces::InterfaceGravity::new(15)
         );
+
+        handle
+            .blackhole_identity(BlackholedIdentity {
+                identity: IdentityHash::new([0x44; 16]),
+                source: IdentityHash::new([0x99; 16]),
+                expiry: BlackholeExpiry::Indefinite,
+                reason: None,
+            })
+            .await
+            .expect("the advertised transport identity is blackholed");
+        assert_eq!(
+            ingress.observe(observation(identity, &app_data)),
+            DiscoveryIngressOutcome::Queued
+        );
+        let (attached, detached_interface) =
+            tokio::time::timeout(Duration::from_secs(2), events_rx.recv())
+                .await
+                .expect("blackhole reconciliation detaches promptly")
+                .expect("the discovery event lane remains open");
+        assert!(!attached);
+        assert_eq!(detached_interface, interface);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while handle
+                .interface_inventory()
+                .iter()
+                .any(|entry| entry.snapshot.id == interface)
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the detached interface leaves runtime inventory promptly");
 
         drop(ingress);
         service_task

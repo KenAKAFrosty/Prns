@@ -1,6 +1,7 @@
 use alloc::vec::Vec;
 use core::num::NonZeroU64;
 
+use crate::identity::IdentityHash;
 use crate::storage::TablePushError;
 use crate::units::InstantMillis;
 
@@ -301,6 +302,24 @@ impl<T: DiscoveryCatalogTable> DiscoveryCatalog<T> {
             })
             .collect::<Vec<_>>();
         below_cost
+            .into_iter()
+            .filter_map(|id| self.records.remove(id))
+            .collect()
+    }
+
+    pub fn remove_blackholed(&mut self, identities: &[IdentityHash]) -> Vec<DiscoveryRecord> {
+        let blackholed = self
+            .records()
+            .filter_map(|record| {
+                let interface = record.interface();
+                let transport =
+                    IdentityHash::new(*interface.advertisement.transport.transport_id().as_bytes());
+                (identities.contains(&interface.provenance.announced_by)
+                    || identities.contains(&transport))
+                .then_some(record.id())
+            })
+            .collect::<Vec<_>>();
+        blackholed
             .into_iter()
             .filter_map(|id| self.records.remove(id))
             .collect()

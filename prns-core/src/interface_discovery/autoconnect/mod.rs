@@ -448,6 +448,25 @@ impl<T: DiscoveredConnectionTable> DiscoveredConnectionRegistry<T> {
             .map(ActiveDiscoveredInterface::endpoint_id)
     }
 
+    pub(super) fn remove_discoveries(
+        &mut self,
+        discoveries: &[DiscoveredInterfaceId],
+    ) -> Vec<ActiveDiscoveredInterface> {
+        let interfaces = self
+            .active
+            .connections()
+            .filter_map(|active| {
+                discoveries
+                    .contains(&active.discovery_id)
+                    .then_some(active.interface_id)
+            })
+            .collect::<Vec<_>>();
+        interfaces
+            .into_iter()
+            .filter_map(|interface| self.active.remove(interface))
+            .collect()
+    }
+
     pub(super) fn len(&self) -> usize {
         self.active.len()
     }
