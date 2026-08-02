@@ -387,7 +387,7 @@ pub const PLATFORMS: &[Platform] = &[
     Platform {
         name: "WebAssembly",
         group: Group::Web,
-        tier: Tier::BringUp,
+        tier: Tier::Shipping,
         icon: Some("webassembly"),
     },
     Platform {
@@ -399,31 +399,31 @@ pub const PLATFORMS: &[Platform] = &[
     Platform {
         name: "Chrome",
         group: Group::Web,
-        tier: Tier::BringUp,
+        tier: Tier::Shipping,
         icon: Some("googlechrome"),
     },
     Platform {
         name: "Firefox",
         group: Group::Web,
-        tier: Tier::BringUp,
+        tier: Tier::Shipping,
         icon: Some("firefoxbrowser"),
     },
     Platform {
         name: "Safari",
         group: Group::Web,
-        tier: Tier::BringUp,
+        tier: Tier::Shipping,
         icon: Some("safari"),
     },
     Platform {
         name: "Node",
         group: Group::Server,
-        tier: Tier::BringUp,
+        tier: Tier::Shipping,
         icon: Some("nodedotjs"),
     },
     Platform {
         name: "Bun",
         group: Group::Server,
-        tier: Tier::BringUp,
+        tier: Tier::Shipping,
         icon: Some("bun"),
     },
     Platform {
