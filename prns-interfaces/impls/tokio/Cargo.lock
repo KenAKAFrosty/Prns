@@ -1975,7 +1975,7 @@ dependencies = [
 
 [[package]]
 name = "prns-config"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "home",
  "prns-core",
@@ -1985,7 +1985,7 @@ dependencies = [
 
 [[package]]
 name = "prns-core"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "aes",
  "base64",
@@ -2007,7 +2007,7 @@ dependencies = [
 
 [[package]]
 name = "prns-ffi"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "cfg-if",
  "dispatch2",
@@ -2024,7 +2024,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-tokio"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "base64",
  "bluer",
@@ -2060,7 +2060,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "bzip2",
  "cfg-if",
@@ -2070,7 +2070,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime-tokio"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "futures-util",
  "getrandom 0.2.17",

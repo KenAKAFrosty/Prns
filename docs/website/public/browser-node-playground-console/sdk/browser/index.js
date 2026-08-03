@@ -1,12 +1,12 @@
 import { Tag, from, match, match_into } from "../casework.js";
 import { BoundedAsyncLane } from "../async_lanes.js";
-import { DESTINATION_HASH_LENGTH, HOST_CONTRACT_ABI, HOST_SCHEMA_VERSION, INTERFACE_ID_LENGTH, PRODUCT_VERSION, RESOURCE_HASH_LENGTH, balancedLimits, destinationHash, identityHash, interfaceId, linkId, packetHash, requestId, requestPathHash, resourceHash, } from "../contract.js";
+import { DESTINATION_HASH_LENGTH, HOST_CONTRACT_ABI, HOST_SCHEMA_VERSION, INTERFACE_ID_LENGTH, PRODUCT_VERSION, RESOURCE_HASH_LENGTH, SAFE_INT_MAX, SAFE_INT_MIN, balancedLimits, destinationHash, identityHash, interfaceId, linkId, packetHash, requestId, requestPathHash, resourceHash, } from "../contract.js";
 import { MemoryResourceStream } from "../memory_resource.js";
 import { AutoWifiInterface } from "./auto_wifi.js";
 import { blobResourceSource, byteResourceSource, sendResourceFromSource, } from "./resource_send.js";
 import { browserResourceCompressor } from "./resource_compressor.js";
 export { Tag, from, match, match_into };
-export { DESTINATION_HASH_LENGTH, HOST_CONTRACT_ABI, HOST_SCHEMA_VERSION, INTERFACE_ID_LENGTH, PRODUCT_VERSION, RESOURCE_HASH_LENGTH, balancedLimits, destinationHash, identityHash, interfaceId, linkId, packetHash, requestId, requestPathHash, resourceHash, };
+export { DESTINATION_HASH_LENGTH, HOST_CONTRACT_ABI, HOST_SCHEMA_VERSION, INTERFACE_ID_LENGTH, PRODUCT_VERSION, RESOURCE_HASH_LENGTH, SAFE_INT_MAX, SAFE_INT_MIN, balancedLimits, destinationHash, identityHash, interfaceId, linkId, packetHash, requestId, requestPathHash, resourceHash, };
 export { AutoWifiController, AutoWifiInterface, parseBrowserGatewayCatalog, validateBrowserGatewayUrl, } from "./auto_wifi.js";
 export const MIN_ENTROPY_BYTES = 128;
 export const BLE_IDENTITY_LENGTH = 16;
@@ -684,6 +684,7 @@ export class WebSocketInterface {
                 channelTag: tag,
                 bitrateBps: options.bitrateBps ?? this.#host.websocketBitrateBps(),
                 hardwareMtu: options.hardwareMtu ?? this.#host.websocketHardwareMtu(),
+                ...runtimeInterfaceRouting(options.routing),
             });
             if (registered.tag !== "Registered") {
                 closeBrowserWebSocket(socket);
@@ -1537,7 +1538,7 @@ export class Prns {
             AttachTcpServer: async () => commandFailed(Tag("UnsupportedByBackend")),
             AttachTcpClient: async () => commandFailed(Tag("UnsupportedByBackend")),
             AttachUdp: async () => commandFailed(Tag("UnsupportedByBackend")),
-            AttachInterface: ({ config }) => this.#attachInterface(config),
+            AttachInterface: ({ config, routing }) => this.#attachInterface(config, routing),
             DetachInterface: ({ interface: interfaceId }) => this.#detachInterface(interfaceId),
             EstablishLink: ({ destination }) => this.#issueCommand("establish-link", command, (entropy) => this.#runtime.establishLink({
                 destination,
@@ -1561,13 +1562,18 @@ export class Prns {
                 nowMs: this.#now(),
                 entropy,
             })),
-            Request: ({ linkId: value, pathHash, payload, timeout }) => this.#issueCommand("request", command, (entropy) => this.#runtime.request({
+            Request: ({ linkId: value, pathHash, payload, timeout, maximumResponseBytes, }) => this.#issueCommand("request", command, (entropy) => this.#runtime.request({
                 linkId: value,
                 pathHash,
                 payload,
                 nowMs: this.#now(),
                 entropy,
                 ...runtimeResponseTimeout(timeout),
+                ...(maximumResponseBytes === undefined
+                    ? {}
+                    : {
+                        maximumResponseBytes: nonNegativeInteger(maximumResponseBytes, "maximumResponseBytes"),
+                    }),
             })),
             Respond: ({ linkId: value, requestId: responseRequestId, requestRttMillis, payload, }) => this.#issueCommand("respond", command, (entropy) => this.#runtime.respond({
                 linkId: value,
@@ -1632,8 +1638,10 @@ export class Prns {
     closeLink(value) {
         return this.execute(Tag("CloseLink", { linkId: value }));
     }
-    attachInterface(config) {
-        return this.execute(Tag("AttachInterface", { config }));
+    attachInterface(config, routing) {
+        return this.execute(routing === undefined
+            ? Tag("AttachInterface", { config })
+            : Tag("AttachInterface", { config, routing }));
     }
     detachInterface(interfaceId) {
         return this.execute(Tag("DetachInterface", { interface: interfaceId }));
@@ -1650,12 +1658,15 @@ export class Prns {
     sendLinkPacket(value, payload) {
         return this.execute(Tag("SendLinkPacket", { linkId: value, payload }));
     }
-    request(value, pathHash, payload, timeout = Tag("LinkDefault")) {
+    request(value, pathHash, payload, timeout = Tag("LinkDefault"), maximumResponseBytes) {
         return this.execute(Tag("Request", {
             linkId: value,
             pathHash,
             payload,
             timeout,
+            ...(maximumResponseBytes === undefined
+                ? {}
+                : { maximumResponseBytes }),
         }));
     }
     respond(value, responseRequestId, requestRttMillis, payload) {
@@ -1871,7 +1882,7 @@ export class Prns {
         }
         return Tag("Stopped");
     }
-    #attachInterface(config) {
+    #attachInterface(config, routing) {
         const unsupported = async () => commandFailed(Tag("UnsupportedByBackend"));
         return match_into().from(config, {
             AutoLan: unsupported,
@@ -1890,13 +1901,13 @@ export class Prns {
             Weave: unsupported,
             AutomaticUsb: unsupported,
             AutomaticBluetoothLe: unsupported,
-            WebSocketClient: ({ target }) => this.#attachWebSocket(target, "WebSocketClient"),
+            WebSocketClient: ({ target }) => this.#attachWebSocket(target, "WebSocketClient", routing),
             WebSocketServer: unsupported,
-            BrowserRendezvous: ({ url }) => this.#attachWebSocket(url, "BrowserRendezvous"),
+            BrowserRendezvous: ({ url }) => this.#attachWebSocket(url, "BrowserRendezvous", routing),
         });
     }
-    async #attachWebSocket(target, kind) {
-        const connected = await this.interfaces.webSocket.connect(target);
+    async #attachWebSocket(target, kind, routing) {
+        const connected = await this.interfaces.webSocket.connect(target, routing === undefined ? {} : { routing });
         if (connected.tag !== "Connected") {
             return commandFailed(webSocketCommandFailure(connected));
         }
@@ -2743,6 +2754,9 @@ function parseCommandFailure(value) {
     if (kind === "PayloadTooLarge") {
         return Tag("PayloadTooLarge");
     }
+    if (kind === "ResponseTooLarge") {
+        return Tag("ResponseTooLarge");
+    }
     if (kind === "UnknownDestination") {
         return Tag("UnknownDestination");
     }
@@ -2954,6 +2968,26 @@ function nonNegativeInteger(value, name) {
         throw new PrnsValidationError("invalid-number", `${name} must be a non-negative safe integer`);
     }
     return value;
+}
+function runtimeInterfaceRouting(routing) {
+    if (routing === undefined)
+        return {};
+    if (routing.gravity !== undefined && !Number.isSafeInteger(routing.gravity)) {
+        throw new PrnsValidationError("invalid-number", "gravity must be a safe integer");
+    }
+    return {
+        ...(routing.mode === undefined ? {} : { mode: routing.mode }),
+        ...(routing.gravity === undefined ? {} : { gravity: routing.gravity }),
+        ...(routing.recursivePathRequests === undefined
+            ? {}
+            : { recursivePathRequests: routing.recursivePathRequests }),
+        ...(routing.announcesFromInternal === undefined
+            ? {}
+            : { announcesFromInternal: routing.announcesFromInternal }),
+        ...(routing.announcesToInternal === undefined
+            ? {}
+            : { announcesToInternal: routing.announcesToInternal }),
+    };
 }
 function field(object, key) {
     if (!(key in object)) {
