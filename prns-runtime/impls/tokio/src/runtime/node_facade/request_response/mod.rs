@@ -314,7 +314,7 @@ impl PrnsNodeHandle {
 
     /// Send a static response as a NomadNet-compatible named file without copying the complete
     /// payload. Each segment is bounded to 256 KiB and the next segment is not read until the
-    /// current resource proof settles. RNS 1.4.0 hands a metadata-bearing response to the
+    /// current resource proof settles. RNS 1.4.2 hands a metadata-bearing response to the
     /// requester as the raw resource payload, so the bytes travel bare: no response envelope,
     /// no binary header.
     pub(crate) async fn respond_static_file_settled(

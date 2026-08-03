@@ -36,7 +36,7 @@ pub struct HeapPacketHashHistory {
 }
 
 impl HeapPacketHashHistory {
-    /// RNS 1.4.0 `Transport.hashlist_maxsize // 2`: the reference rotates its hashlist once it grows past half the configured maximum (1,000,000).
+    /// RNS 1.4.2 `Transport.hashlist_maxsize // 2`: the reference rotates its hashlist once it grows past half the configured maximum (1,000,000).
     pub const RNS_GENERATION_CAPACITY: usize = 500_000;
 }
 

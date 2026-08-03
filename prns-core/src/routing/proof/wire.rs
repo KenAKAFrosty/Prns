@@ -61,7 +61,7 @@ pub fn write_explicit_proof_wire_packet(
     Ok(EXPLICIT_PROOF_WIRE_LEN)
 }
 
-/// Unencrypted per the reference. RNS 1.4.0 `Packet.pack` exemption ("packet proofs over links are not encrypted").
+/// Unencrypted per the reference. RNS 1.4.2 `Packet.pack` exemption ("packet proofs over links are not encrypted").
 pub fn write_link_proof_wire_packet(
     link_id: &LinkId,
     packet_hash: &PacketHash,

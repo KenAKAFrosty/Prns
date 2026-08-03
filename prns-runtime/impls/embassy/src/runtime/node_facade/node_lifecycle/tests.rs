@@ -1,6 +1,6 @@
 use super::super::{CompletionPool, Fleet, ManifoldLaneSet, StaticManifoldLane};
 use super::*;
-use crate::engine::test_support::{bytes_from_hex, RNS_1_4_0_ANNOUNCE};
+use crate::engine::test_support::{bytes_from_hex, RNS_1_4_2_ANNOUNCE};
 use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::{
     AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability, InterfaceCapabilities,
@@ -96,7 +96,7 @@ fn a_recipe_node_hears_an_ifac_announce_a_supervisor_stands_a_peer_up_for() {
         EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0)),
     );
 
-    let raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
+    let raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
     let mut masked = [0u8; FRAME];
     let masked_len = network.mask_outbound(&raw, &mut masked).unwrap();
     let peer = InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, b"test-peer-medium");

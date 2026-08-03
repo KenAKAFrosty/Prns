@@ -6,13 +6,13 @@ pub mod table;
 use crate::routing::links::data::link_mdu;
 use crate::units::RttMillis;
 
-/// RNS 1.4.0 `Channel` `MSGTYPE`
+/// RNS 1.4.2 `Channel` `MSGTYPE`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct MessageType(pub u16);
 
 impl MessageType {
-    /// RNS 1.4.0 `Channel._register_message_type`: types at or above `0xf000` belong to the protocol itself, and the reference refuses user registrations in that range.
+    /// RNS 1.4.2 `Channel._register_message_type`: types at or above `0xf000` belong to the protocol itself, and the reference refuses user registrations in that range.
     pub const SYSTEM_RESERVED_FLOOR: Self = Self(0xf000);
 
     pub const fn is_system_reserved(self) -> bool {
@@ -20,12 +20,12 @@ impl MessageType {
     }
 }
 
-/// RNS 1.4.0 `Channel` sequence number: the ordering key for reliable in-order delivery.
+/// RNS 1.4.2 `Channel` sequence number: the ordering key for reliable in-order delivery.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 #[repr(transparent)]
 pub struct ChannelSequence(pub u16);
 
-/// RNS 1.4.0 `Channel.SEQ_MODULUS` (`SEQ_MAX + 1`)
+/// RNS 1.4.2 `Channel.SEQ_MODULUS` (`SEQ_MAX + 1`)
 pub const SEQUENCE_MODULUS: u32 = 0x1_0000;
 
 impl ChannelSequence {
@@ -46,12 +46,12 @@ pub enum ChannelRttTier {
 }
 
 impl ChannelRtt {
-    /// RNS 1.4.0 `Channel.RTT_FAST` (0.18 s)
+    /// RNS 1.4.2 `Channel.RTT_FAST` (0.18 s)
     pub const FAST_CEILING: RttMillis = RttMillis::new(180);
-    /// RNS 1.4.0 `Channel.RTT_MEDIUM` (0.75 s)
+    /// RNS 1.4.2 `Channel.RTT_MEDIUM` (0.75 s)
     pub const MEDIUM_CEILING: RttMillis = RttMillis::new(750);
 
-    /// RNS 1.4.0 `Channel.RTT_SLOW` (1.45 s)
+    /// RNS 1.4.2 `Channel.RTT_SLOW` (1.45 s)
     pub const STOP_AND_WAIT_THRESHOLD: RttMillis = RttMillis::new(1_450);
 
     pub const fn tier(self) -> ChannelRttTier {
@@ -186,7 +186,7 @@ pub enum EnvelopeError {
     LengthMismatch,
 }
 
-/// RNS 1.4.0 `Envelope.pack`'s header: `message_type ‖ sequence ‖ length`, each u16 BE.
+/// RNS 1.4.2 `Envelope.pack`'s header: `message_type ‖ sequence ‖ length`, each u16 BE.
 pub fn write_envelope(
     message_type: MessageType,
     sequence: ChannelSequence,

@@ -353,7 +353,7 @@ mod tests {
     #[test]
     fn a_path_response_is_learned_as_a_route_but_never_rebroadcast() {
         let mut relay = transporting_node();
-        let mut response = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
+        let mut response = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         response[HEADER_MIN_LEN - 1] = WireContext::PathResponse.to_byte();
 
         assert_eq!(
@@ -389,7 +389,7 @@ mod tests {
     #[test]
     fn the_same_announce_without_the_path_response_tag_is_scheduled() {
         let mut relay = transporting_node();
-        let mut announce = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
+        let mut announce = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         assert!(matches!(
             relay.ingest_packet_with(
                 InboundPacket {
@@ -417,7 +417,7 @@ mod tests {
         let app = InterfaceId::from_channel_tag(InterfaceKind::LocalClient, b"nomadnet");
         let network = iface(0xB2);
         let interfaces = [routable_descriptor(app), routable_descriptor(network)];
-        let mut raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
 
         let out = leaf.ingest_packet_with(
             InboundPacket {
@@ -469,7 +469,7 @@ mod tests {
             routable_descriptor(app),
             muted_descriptor,
         ];
-        let mut raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         let mut sent = std::vec::Vec::new();
 
         leaf.ingest_packet_into(
@@ -716,7 +716,7 @@ mod tests {
     fn a_node_without_transport_interfaces_learns_the_route_but_owes_no_rebroadcast() {
         use crate::interfaces::{EgressCapability, TransportCapability};
 
-        let mut raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         let mut state = transporting_node();
         let mut leaf = routable_descriptor(InterfaceId::new([0xEE; 8]));
         leaf.capabilities.egress = EgressCapability::Enabled(TransportCapability::NoTransport);
@@ -751,7 +751,7 @@ mod tests {
 
     #[test]
     fn ingest_accepts_a_real_announce_then_rejects_its_replay() {
-        let mut raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         let mut state = transporting_node();
 
         let first = state.ingest_packet_with(
@@ -765,7 +765,7 @@ mod tests {
             &mut |_| {},
             None,
         );
-        assert_eq!(first, rns_1_4_0_announce_accepted(1));
+        assert_eq!(first, rns_1_4_2_announce_accepted(1));
         assert_eq!(state.route_count(), 1);
 
         let second = state.ingest_packet_with(
@@ -798,7 +798,7 @@ mod tests {
         let mut invalid_descriptor = routable_descriptor(invalid);
         invalid_descriptor.gravity = crate::interfaces::InterfaceGravity::new(100);
         let interfaces = [low_descriptor, high_descriptor, invalid_descriptor];
-        let mut first = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
+        let mut first = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         let destination = WirePacketHeader::parse(&first).unwrap().0.address;
         let mut replay = first.clone();
         let mut forgery = first.clone();
@@ -818,7 +818,7 @@ mod tests {
                 &mut |_| {},
                 None,
             ),
-            rns_1_4_0_announce_accepted(1),
+            rns_1_4_2_announce_accepted(1),
         );
         assert_eq!(
             state.ingest_packet_with(
@@ -832,7 +832,7 @@ mod tests {
                 &mut |_| {},
                 None,
             ),
-            rns_1_4_0_announce_accepted(1),
+            rns_1_4_2_announce_accepted(1),
         );
         assert_eq!(
             state
@@ -869,7 +869,7 @@ mod tests {
 
     #[test]
     fn deferred_announce_verify_matches_inline_accept_and_gates_forgeries() {
-        let mut raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         let mut state = transporting_node();
         let mut deferred = DeferredCrypto::default();
         let outcome = state.ingest_packet_with(
@@ -925,7 +925,7 @@ mod tests {
 
     #[test]
     fn received_hops_are_incremented_so_the_reach_boundary_matches_pathfinder_m() {
-        let mut at_limit = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
+        let mut at_limit = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         at_limit[1] = 127;
         let mut state = transporting_node();
         let out = state.ingest_packet_with(
@@ -939,9 +939,9 @@ mod tests {
             &mut |_| {},
             None,
         );
-        assert_eq!(out, rns_1_4_0_announce_accepted(128));
+        assert_eq!(out, rns_1_4_2_announce_accepted(128));
 
-        let mut beyond = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
+        let mut beyond = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         beyond[1] = 128;
         let mut state = transporting_node();
         let out = state.ingest_packet_with(
@@ -961,7 +961,7 @@ mod tests {
 
     #[test]
     fn an_accepted_announce_is_retained_for_faithful_rebroadcast() {
-        let mut raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         let pristine = raw.clone();
         let (header, payload) = WirePacketHeader::parse(&pristine).unwrap();
         let destination =
@@ -979,7 +979,7 @@ mod tests {
             &mut |_| {},
             None,
         );
-        assert_eq!(out, rns_1_4_0_announce_accepted(1));
+        assert_eq!(out, rns_1_4_2_announce_accepted(1));
 
         let stored = state
             .routing_table
@@ -993,7 +993,7 @@ mod tests {
 
     #[test]
     fn a_node_without_a_transport_id_learns_the_route_but_owes_no_rebroadcast() {
-        let mut raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
 
         let out = state.ingest_packet_with(
@@ -1029,7 +1029,7 @@ mod tests {
         use crate::routing::NextHop;
         use crate::wire::PropagationType;
 
-        let raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
+        let raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         let (header, payload) = WirePacketHeader::parse(&raw).unwrap();
         let destination = header.address;
         let relay = TransportId::new([0xBB; 16]);
@@ -1056,7 +1056,7 @@ mod tests {
             &mut |_| {},
             None,
         );
-        assert_eq!(out, rns_1_4_0_announce_accepted(2));
+        assert_eq!(out, rns_1_4_2_announce_accepted(2));
         assert_eq!(
             state
                 .routing_table
@@ -1093,7 +1093,7 @@ mod tests {
 
     #[test]
     fn an_announce_whose_app_data_can_never_fit_is_ignored() {
-        let mut raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         let mut state =
             EngineState::<TestFixedStorage<4, 64, 8, 8, 8, 128, 8, 8, 8, 8, 16, 16>>::default();
 
@@ -1131,7 +1131,7 @@ mod tests {
                 .schedule(occupied, InstantMillis(9_000), source, 7,),
             ScheduleOutcome::Inserted,
         );
-        let mut raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
 
         let outcome = state.ingest_packet_with(
             InboundPacket {

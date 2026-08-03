@@ -139,7 +139,7 @@ pub enum Diagnostic {
         reason: LinkClosedReason,
     },
     /// A packet for this active link arrived on `arrived_on`, not the `attached_interface` the link
-    /// runs over — dropped unprocessed (RNS 1.4.0 `Link.receive`), surfaced as a possible attempt to
+    /// runs over — dropped unprocessed (RNS 1.4.2 `Link.receive`), surfaced as a possible attempt to
     /// inject into the link from a foreign interface.
     LinkInterfaceMismatch {
         link_id: LinkId,

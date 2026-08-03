@@ -63,7 +63,7 @@ fn path_request_decodes_stock_table_and_rate_shapes() {
 }
 
 #[test]
-fn path_request_encoders_match_rns_138_umsgpack() {
+fn path_request_encoders_match_rns_1_4_2_umsgpack() {
     let destination = DestinationHash::new([0x44; 16]);
     assert_eq!(
         RnsRemotePathRequest::Table(RnsRemotePathTableRequest::new(Some(destination), Some(3)))

@@ -88,7 +88,7 @@ pub struct InterfaceAnnounceLimits<C: InterfaceAnnounceLimitTable> {
 }
 
 impl<C: InterfaceAnnounceLimitTable> InterfaceAnnounceLimits<C> {
-    /// RNS 1.4.0 `Interface.received_announce`
+    /// RNS 1.4.2 `Interface.received_announce`
     pub fn record(&mut self, interface: InterfaceId, now: InstantMillis) {
         let index = self.index_or_insert(interface, now);
         let row = &mut self.table.rows_mut()[index];
@@ -108,7 +108,7 @@ impl<C: InterfaceAnnounceLimitTable> InterfaceAnnounceLimits<C> {
         let _ = self.index_or_insert(interface, now);
     }
 
-    /// RNS 1.4.0 `Interface.should_ingress_limit`: latch or clear the burst and report whether an unknown-destination announce arriving now should be held.
+    /// RNS 1.4.2 `Interface.should_ingress_limit`: latch or clear the burst and report whether an unknown-destination announce arriving now should be held.
     /// [`Self::record`] runs before this for every announce, known or unknown destination, so the announce being judged already counts toward its own reading; only unknown destinations consult this judgment, so known-destination floods raise the rate without touching the latch. Both behaviors mirror the reference's call order.
     pub fn should_limit(&mut self, interface: InterfaceId, now: InstantMillis) -> bool {
         self.should_limit_with_policy(

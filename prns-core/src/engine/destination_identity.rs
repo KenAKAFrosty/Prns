@@ -265,7 +265,7 @@ mod tests {
     use super::*;
     use crate::engine::test_support::{
         bytes_from_hex, test_fill_entropy, transporting_interfaces, transporting_node,
-        RNS_1_4_0_ANNOUNCE,
+        RNS_1_4_2_ANNOUNCE,
     };
     use crate::engine::DropRouteOutcome;
     use crate::engine::{AnnounceIngest, IngestPacketOutcome, WakeSchedule};
@@ -284,7 +284,7 @@ mod tests {
         engine: &mut EngineState<crate::engine::test_support::TestStorageLayout>,
     ) {
         let interfaces = transporting_interfaces();
-        let mut wire = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
+        let mut wire = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         assert!(matches!(
             engine.ingest_packet_with(
                 InboundPacket {

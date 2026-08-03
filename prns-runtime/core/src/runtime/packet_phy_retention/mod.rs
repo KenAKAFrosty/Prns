@@ -11,7 +11,7 @@ use crate::routing::dedup::PacketHash;
 
 pub use fixed::{fixed_packet_phy_retention, FixedPacketMetricStorage, FixedPacketPhyRetention};
 #[cfg(feature = "alloc")]
-pub use heap::{HeapPacketMetricStorage, HeapPacketPhyRetention, RNS_1_4_0_PACKET_PHY_CAPACITY};
+pub use heap::{HeapPacketMetricStorage, HeapPacketPhyRetention, RNS_1_4_2_PACKET_PHY_CAPACITY};
 
 pub trait PacketMetricStorage {
     type Metric: Copy;

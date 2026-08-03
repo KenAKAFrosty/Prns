@@ -44,7 +44,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// Intentional deviation from RNS 1.4.0 `Transport.outbound`, which excludes only PLAIN sends from its receipt gate: a GROUP destination carries no identity to prove with, so the reference's GROUP receipt can only ever time out, and we track none.
+    /// Intentional deviation from RNS 1.4.2 `Transport.outbound`, which excludes only PLAIN sends from its receipt gate: a GROUP destination carries no identity to prove with, so the reference's GROUP receipt can only ever time out, and we track none.
     pub fn write_commanded_send_group(
         &self,
         send: &SendGroup,
@@ -143,8 +143,8 @@ mod tests {
     }
 
     #[test]
-    fn a_commanded_group_send_seals_byte_identically_to_rns_1_4_0_and_we_open_it() {
-        // Vector minted live against Python RNS 1.3.5 and revalidated with 1.4.0: the same GROUP as the delivery test, sealing b"group-send-hi" under a pinned IV.
+    fn a_commanded_group_send_seals_byte_identically_to_rns_1_4_2_and_we_open_it() {
+        // Vector minted live against Python RNS 1.3.5 and revalidated with 1.4.2: the same GROUP as the delivery test, sealing b"group-send-hi" under a pinned IV.
         const TOKEN: &str = "44444444444444444444444444444444ce215bf3e6687202ac7d97a8deaee7c392356d2cfc86276758362f19ccb937d989e1391c477ae92487a0011dbe786123";
 
         let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();

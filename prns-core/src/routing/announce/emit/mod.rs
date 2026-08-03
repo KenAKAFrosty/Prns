@@ -134,7 +134,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// Answer a path request for one of our own upstream destinations; RNS 1.4.0 `Destination.announce(path_response=True)`.
+    /// Answer a path request for one of our own upstream destinations; RNS 1.4.2 `Destination.announce(path_response=True)`.
     /// Path responses for foreign tracked destinations re-emit the retained announce instead, over in the scheduled-announce lane.
     pub fn write_path_response_for_upstream(
         &mut self,

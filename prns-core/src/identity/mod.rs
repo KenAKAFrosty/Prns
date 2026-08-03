@@ -138,7 +138,7 @@ pub(crate) fn derive_identity_hash(
     IdentityHash(truncated)
 }
 
-/// RNS 1.4.0 `Identity.DERIVED_KEY_LENGTH`
+/// RNS 1.4.2 `Identity.DERIVED_KEY_LENGTH`
 const DERIVED_PACKET_KEY_LEN: usize = 64;
 
 pub const ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN: usize = 32;
@@ -158,7 +158,7 @@ pub enum DecryptError {
     RatchetRequired,
 }
 
-/// RNS 1.4.0 `Identity.decrypt(..., enforce_ratchets=…)`: whether the identity key may open a token that no retained ratchet authenticates.
+/// RNS 1.4.2 `Identity.decrypt(..., enforce_ratchets=…)`: whether the identity key may open a token that no retained ratchet authenticates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IdentityKeyFallback {
     Permitted,
@@ -209,7 +209,7 @@ fn decrypt_token_in_place<'t>(
     .map(|opened| opened.plaintext)
 }
 
-/// RNS 1.4.0 `Identity.decrypt(ciphertext, ratchets=…)`: ratchets newest-first, then the identity key.
+/// RNS 1.4.2 `Identity.decrypt(ciphertext, ratchets=…)`: ratchets newest-first, then the identity key.
 /// The HKDF salt stays the *identity* hash even when a ratchet did the exchange (reference `get_salt` is `self.hash` unconditionally).
 /// Candidates are probed by MAC so the buffer decrypts in place exactly once.
 pub fn decrypt_token_in_place_with_ratchets<'t>(
@@ -299,7 +299,7 @@ fn decrypt_token(
     })
 }
 
-/// The encrypting side of RNS 1.4.0 `Identity.encrypt`. No private material.
+/// The encrypting side of RNS 1.4.2 `Identity.encrypt`. No private material.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RemoteIdentity {
     encryption_public: IdentityEncryptionPublicKey,
@@ -341,7 +341,7 @@ impl RemoteIdentity {
         )
     }
 
-    /// RNS 1.4.0 `Identity.encrypt(ratchet=…)`. Only the Diffie-Hellman target changes; the HKDF salt stays the identity hash.
+    /// RNS 1.4.2 `Identity.encrypt(ratchet=…)`. Only the Diffie-Hellman target changes; the HKDF salt stays the identity hash.
     pub fn encrypt_to_ratchet(
         &self,
         ratchet_public: &X25519PublicKey,

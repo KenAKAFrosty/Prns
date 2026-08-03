@@ -485,7 +485,7 @@ mod tests {
                 .unwrap(),
         );
         let mut relay = transporting_node();
-        let mut announce = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
+        let mut announce = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         assert!(matches!(
             relay.ingest_packet_with(
                 InboundPacket {
@@ -1224,7 +1224,7 @@ mod tests {
                 .unwrap(),
         );
         let mut relay = transporting_node();
-        let mut announce = bytes_from_hex(RNS_1_4_0_RETRANSMITTED_ANNOUNCE);
+        let mut announce = bytes_from_hex(RNS_1_4_2_RETRANSMITTED_ANNOUNCE);
         let _ = relay.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(500),
@@ -1551,7 +1551,7 @@ mod tests {
                 .unwrap(),
         );
         let mut leaf: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
-        let mut announce = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
+        let mut announce = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         let _ = leaf.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(500),
@@ -1593,7 +1593,7 @@ mod tests {
         let uplink = iface(0xB2);
         let mut shared: EngineState<TestStorageLayout> =
             EngineState::<TestStorageLayout>::default();
-        let mut announce = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
+        let mut announce = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         let _ = shared.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(500),

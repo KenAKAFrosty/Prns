@@ -1,5 +1,5 @@
 use crate::engine::test_support::{
-    bytes_from_hex, transporting_interfaces, transporting_node, RNS_1_4_0_ANNOUNCE,
+    bytes_from_hex, transporting_interfaces, transporting_node, RNS_1_4_2_ANNOUNCE,
 };
 use crate::engine::{EngineReaction, IngestIo, Journaled};
 use crate::interfaces::{AttachedInterfaces, InboundPacket, InterfaceId};
@@ -10,7 +10,7 @@ use crate::units::InstantMillis;
 fn an_accepted_announce_journals_the_identity_app_data_and_path_provenance() {
     let source_interface = InterfaceId::new([0xA7; 8]);
     let arrived_at = InstantMillis(7_000);
-    let mut identity_wire = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
+    let mut identity_wire = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
     let Ingress::Announce {
         identity_hash: expected_identity,
         ..
@@ -25,7 +25,7 @@ fn an_accepted_announce_journals_the_identity_app_data_and_path_provenance() {
 
     let mut engine = transporting_node();
     let interfaces = transporting_interfaces();
-    let mut wire = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
+    let mut wire = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
     let mut heard = None;
     engine.ingest_packet_into(
         InboundPacket {

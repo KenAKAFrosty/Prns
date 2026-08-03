@@ -514,7 +514,7 @@ impl<C: LinkTable> Links<C> {
         }
     }
 
-    /// RNS 1.4.0 `Link.set_resource_strategy`: how this link answers inbound resource advertisements from now on.
+    /// RNS 1.4.2 `Link.set_resource_strategy`: how this link answers inbound resource advertisements from now on.
     pub fn set_resource_strategy(
         &mut self,
         link_id: &LinkId,
@@ -533,7 +533,7 @@ impl<C: LinkTable> Links<C> {
         Ok(())
     }
 
-    /// RNS 1.4.0 `Link.resource_concluded`'s memory. The window and expected in-flight rate an incoming transfer ended with, inherited by the next transfer this link accepts.
+    /// RNS 1.4.2 `Link.resource_concluded`'s memory. The window and expected in-flight rate an incoming transfer ended with, inherited by the next transfer this link accepts.
     pub fn note_resource_concluded(&mut self, link_id: &LinkId, window: usize, eifr: u64) {
         let Some(index) = self.index_of(link_id) else {
             return;

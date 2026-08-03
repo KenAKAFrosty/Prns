@@ -1,4 +1,4 @@
-//! RNS 1.4.0 `Link.request` (context 0x09) and its answer (0x0A).
+//! RNS 1.4.2 `Link.request` (context 0x09) and its answer (0x0A).
 //! - A request is msgpack `[time, truncated_hash(path), data]`.
 //! - The response is msgpack `[request_id, data]`. `data` crosses as raw msgpack value bytes.
 //!
@@ -28,7 +28,7 @@ use crate::wire::{
 #[cfg(test)]
 use crate::wire::{DestinationHash, BROADCAST_MTU};
 
-/// RNS 1.4.0 `Resource.RESPONSE_MAX_GRACE_TIME` (10 s) × 1.125, the flat term in a request's default timeout: `rtt × traffic_timeout_factor + 11.25 s`.
+/// RNS 1.4.2 `Resource.RESPONSE_MAX_GRACE_TIME` (10 s) × 1.125, the flat term in a request's default timeout: `rtt × traffic_timeout_factor + 11.25 s`.
 pub const REQUEST_RESPONSE_GRACE_MS: u64 = 11_250;
 
 /// msgpack `fixarray(3)` ‖ `float64` time ‖ `bin8(16)` path hash, before data.
@@ -57,7 +57,7 @@ const BIN_32: u8 = 0xC6;
 const NIL: u8 = 0xC0;
 pub const MAX_PACKED_BINARY_HEADER_LEN: usize = 5;
 
-/// RNS 1.4.0 `packet.getTruncatedHash()`, naming the request in its response.
+/// RNS 1.4.2 `packet.getTruncatedHash()`, naming the request in its response.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RequestId(pub [u8; TRUNCATED_HASH_BYTE_LEN]);
 
@@ -69,7 +69,7 @@ impl RequestId {
         Self(id)
     }
 
-    /// RNS 1.4.0 `Link.request` / `request_resource_concluded`: a request that rode a resource is named by `truncated_hash(packed_request)`
+    /// RNS 1.4.2 `Link.request` / `request_resource_concluded`: a request that rode a resource is named by `truncated_hash(packed_request)`
     #[must_use]
     pub fn of_request_data(packed_request: &[u8]) -> Self {
         let mut id = [0u8; TRUNCATED_HASH_BYTE_LEN];
@@ -469,7 +469,7 @@ impl<S: StorageLayout> EngineState<S> {
         })
     }
 
-    /// The request formed no packet, so the row is keyed by `sha256` of the pack. Its first sixteen bytes are the request id (RNS 1.4.0 `truncated_hash(packed_request)`) the response names back.
+    /// The request formed no packet, so the row is keyed by `sha256` of the pack. Its first sixteen bytes are the request id (RNS 1.4.2 `truncated_hash(packed_request)`) the response names back.
     pub(crate) fn book_request_resource_receipt(
         &mut self,
         id: CommandId,

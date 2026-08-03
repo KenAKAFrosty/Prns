@@ -1,7 +1,7 @@
 use crate::engine::InstantMillis;
 use crate::wire::DestinationHash;
 
-/// RNS 1.4.0 `Transport.PATH_REQUEST_MI` (20 seconds)
+/// RNS 1.4.2 `Transport.PATH_REQUEST_MI` (20 seconds)
 pub const PATH_REQUEST_MIN_INTERVAL_MS: u64 = 20 * 1_000;
 
 pub trait RecentPathRequestTable {

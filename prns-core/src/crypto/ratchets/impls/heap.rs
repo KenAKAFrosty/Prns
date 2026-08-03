@@ -5,7 +5,7 @@ use crate::crypto::X25519SecretKey;
 use crate::engine::InstantMillis;
 use crate::wire::DestinationHash;
 
-/// RNS 1.4.0 `Destination.RATCHET_COUNT`: how many generated ratchets a destination retains for decryption, newest first.
+/// RNS 1.4.2 `Destination.RATCHET_COUNT`: how many generated ratchets a destination retains for decryption, newest first.
 pub const DEFAULT_RETAINED_RATCHETS: usize = 512;
 
 #[derive(Default)]

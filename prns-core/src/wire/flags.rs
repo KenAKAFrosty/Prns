@@ -70,7 +70,7 @@ impl PacketType {
     }
 }
 
-/// Every writer packs Open because that is what RNS 1.4.0 does at construction. IFAC is an interface-boundary transform, where `Transport.transmit` masks the raw packet and flips this flag per interface key, and `Transport.inbound` unmasks or drops.
+/// Every writer packs Open because that is what RNS 1.4.2 does at construction. IFAC is an interface-boundary transform, where `Transport.transmit` masks the raw packet and flips this flag per interface key, and `Transport.inbound` unmasks or drops.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum IfacFlag {

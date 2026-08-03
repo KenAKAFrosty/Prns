@@ -1,4 +1,4 @@
-//! RNS 1.4.0 `Resource.accept`: the strategy gate runs before a single part moves. The advertisement declares size and kind up front, so refusing is free.
+//! RNS 1.4.2 `Resource.accept`: the strategy gate runs before a single part moves. The advertisement declares size and kind up front, so refusing is free.
 
 use crate::engine::{CommandId, CommandOutcome, SetResourceStrategy, SetResourceStrategyRejection};
 use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis};
@@ -38,7 +38,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.4.0 `Resource.accept`; strategy refusals are silent, like a reference receiver that never accepts — except an `AcceptIf` decline, which answers with the reference's `Resource.reject`.
+    /// RNS 1.4.2 `Resource.accept`; strategy refusals are silent, like a reference receiver that never accepts — except an `AcceptIf` decline, which answers with the reference's `Resource.reject`.
     /// Request-correlated and pending-response advertisements bypass the strategy, exactly the reference's `Link.receive` `RESOURCE_ADV` ladder: its strategy arms only ever see unsolicited resources, and a response naming no pending request drops before them.
     /// Accepting a response segment claims the pending request's timeout (the reference's `RECEIVING` flip); the transfer settles the row through every exit from here.
     /// Intentional deviation from reference: a split request advertisement stays behind the strategy — the reference accepts request resources unconditionally, but our inbound request dispatch reads the whole pack at once, which a split does not deliver. Under `AcceptIf` the decider judges it like any unsolicited offer, and an admitted request still faces the route policy at dispatch.
@@ -258,7 +258,7 @@ impl<S: StorageLayout> EngineState<S> {
                 | AcceptIncomingResourceError::TooManyParts,
             ) => return IngestPacketOutcome::Ignored(IgnoreReason::CapacityExhausted),
             Err(AcceptIncomingResourceError::AlreadyReceiving) => {
-                // RNS 1.4.0 sends an advertisement immediately before registering the outgoing
+                // RNS 1.4.2 sends an advertisement immediately before registering the outgoing
                 // resource, so a fast first pull can reach it in that gap and be discarded. Its
                 // watchdog rebuilds each advertisement retry with a fresh IV; packet dedup sees
                 // a new frame, while this table recognizes the active resource. Refreshing the
@@ -290,7 +290,7 @@ impl<S: StorageLayout> EngineState<S> {
         IngestPacketOutcome::OwesResourcePull { link_id, hash }
     }
 
-    /// RNS 1.4.0 `Resource.reject`: the declined segment's bare hash, sealed under the link key, context `RESOURCE_RCL`.
+    /// RNS 1.4.2 `Resource.reject`: the declined segment's bare hash, sealed under the link key, context `RESOURCE_RCL`.
     pub(crate) fn reject_offered_resource<F>(
         &mut self,
         link_id: &LinkId,

@@ -165,7 +165,7 @@ fn an_establish_link_needs_a_known_route_and_takes_relayed_ones() {
 
     hear_announce(
         &mut state,
-        &bytes_from_hex(RNS_1_4_0_RETRANSMITTED_ANNOUNCE),
+        &bytes_from_hex(RNS_1_4_2_RETRANSMITTED_ANNOUNCE),
     );
     let outcome = state.ingest_command(
         IssuedCommand {
@@ -1710,7 +1710,7 @@ fn relay_that_routes_to_the_responder(
 }
 
 fn transported_request_wire(initiator: &mut EngineState<TestStorageLayout>) -> std::vec::Vec<u8> {
-    hear_announce(initiator, &bytes_from_hex(RNS_1_4_0_RETRANSMITTED_ANNOUNCE));
+    hear_announce(initiator, &bytes_from_hex(RNS_1_4_2_RETRANSMITTED_ANNOUNCE));
     let mut request = [0u8; BROADCAST_MTU];
     let dispatch = initiator
         .write_commanded_link_request(
@@ -1768,7 +1768,7 @@ fn a_duplicate_transported_link_request_is_dropped_as_a_duplicate() {
     assert_eq!(
         outcome,
         IngestPacketOutcome::Ignored(IgnoreReason::Duplicate),
-        "RNS 1.4.0 remembers transported link requests; the echo is a duplicate, not a capacity event",
+        "RNS 1.4.2 remembers transported link requests; the echo is a duplicate, not a capacity event",
     );
 }
 
@@ -1833,7 +1833,7 @@ fn a_returning_proof_switches_home_without_the_destinations_announce() {
     );
     assert!(
         matches!(outcome, IngestPacketOutcome::Forward(_)),
-        "RNS 1.4.0 switches a returning proof home on shape alone; verification is the initiator's job",
+        "RNS 1.4.2 switches a returning proof home on shape alone; verification is the initiator's job",
     );
 }
 
@@ -2117,7 +2117,7 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
     let mut initiator = EngineState::<TestStorageLayout>::new(second_secret_key());
     hear_announce(
         &mut initiator,
-        &bytes_from_hex(RNS_1_4_0_RETRANSMITTED_ANNOUNCE),
+        &bytes_from_hex(RNS_1_4_2_RETRANSMITTED_ANNOUNCE),
     );
 
     let mut request = [0u8; BROADCAST_MTU];
@@ -2334,7 +2334,7 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
     assert_eq!(
         data_replay.len(),
         1,
-        "a byte-identical retry switches through again: RNS 1.4.0 never remembers a transported link's packets in the duplicate filter",
+        "a byte-identical retry switches through again: RNS 1.4.2 never remembers a transported link's packets in the duplicate filter",
     );
     let mut close_frames = std::vec::Vec::new();
     let _ = initiator.ingest_command_into(

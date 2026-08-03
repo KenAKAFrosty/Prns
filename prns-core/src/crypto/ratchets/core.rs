@@ -4,11 +4,11 @@ use crate::routing::announce::RatchetKey;
 use crate::wire::DestinationHash;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-/// RNS 1.4.0 `Destination.RATCHET_INTERVAL`: the minimum time between minting new ratchet keys.
+/// RNS 1.4.2 `Destination.RATCHET_INTERVAL`: the minimum time between minting new ratchet keys.
 /// Rotation rides the announce. An announce inside the floor re-carries the newest ratchet instead of minting another.
 pub const MIN_RATCHET_ROTATION_INTERVAL_MS: u64 = 30 * 60 * 1000;
 
-/// RNS 1.4.0 `Destination.enable_ratchets` / `Destination.enforce_ratchets`.
+/// RNS 1.4.2 `Destination.enable_ratchets` / `Destination.enforce_ratchets`.
 /// One enum where the reference has two bool flags, so enforcing without ratchets (which would refuse every single packet) is unrepresentable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RatchetPolicy {
@@ -19,7 +19,7 @@ pub enum RatchetPolicy {
 
 pub const RATCHET_ID_LEN: usize = 10;
 
-/// RNS 1.4.0 `Identity._get_ratchet_id`: `full_hash(ratchet_public_bytes)[:NAME_HASH_LENGTH//8]`
+/// RNS 1.4.2 `Identity._get_ratchet_id`: `full_hash(ratchet_public_bytes)[:NAME_HASH_LENGTH//8]`
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RatchetId([u8; RATCHET_ID_LEN]);
 
@@ -46,7 +46,7 @@ impl RatchetId {
 
 const RATCHET_SECRET_LEN: usize = 32;
 
-/// A minted ratchet *is* 32 CSPRNG bytes used as an X25519 secret (RNS 1.4.0 `Identity._generate_ratchet`); move-only, deliberately without `Debug`.
+/// A minted ratchet *is* 32 CSPRNG bytes used as an X25519 secret (RNS 1.4.2 `Identity._generate_ratchet`); move-only, deliberately without `Debug`.
 #[derive(Zeroize, ZeroizeOnDrop)]
 pub struct RatchetEntropy([u8; RATCHET_SECRET_LEN]);
 
@@ -138,7 +138,7 @@ impl<C: SelfRatchetTable> SelfRatchets<C> {
         self.table.len() < self.table.capacity()
     }
 
-    /// RNS 1.4.0 `Destination.rotate_ratchets`; a never-rotated row is always due.
+    /// RNS 1.4.2 `Destination.rotate_ratchets`; a never-rotated row is always due.
     /// Entropy is drawn only once a rotation is actually due.
     pub fn rotate_if_due(
         &mut self,
@@ -282,7 +282,7 @@ mod tests {
 
     type TestRatchets = SelfRatchets<FixedSelfRatchetTable<2, 3>>;
 
-    /// RNS 1.4.0 `Identity._get_ratchet_id(ratchet_public_bytes)` for the `[0x55; 32]` secret.
+    /// RNS 1.4.2 `Identity._get_ratchet_id(ratchet_public_bytes)` for the `[0x55; 32]` secret.
     #[test]
     fn the_ratchet_id_matches_the_reference_derivation() {
         assert_eq!(

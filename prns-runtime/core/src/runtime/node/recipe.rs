@@ -79,7 +79,7 @@ pub struct PrnsNodeRecipe<
 > where
     OnEvent: FnMut(PrnsEvent<'_>, &AppState),
 {
-    /// The transport role takes a whole identity, never a bare address: a transport node signs (tunnel synthesis), and RNS 1.4.0 keeps a dedicated persisted transport identity.
+    /// The transport role takes a whole identity, never a bare address: a transport node signs (tunnel synthesis), and RNS 1.4.2 keeps a dedicated persisted transport identity.
     pub transport_identity: Option<Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>>,
     pub pre_configured_destinations: Destinations,
     pub app_state: AppState,

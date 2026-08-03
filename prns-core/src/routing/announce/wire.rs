@@ -19,7 +19,7 @@ pub fn write_announce_wire_packet(
     )
 }
 
-/// RNS 1.4.0 `Destination.announce(path_response=True)`
+/// RNS 1.4.2 `Destination.announce(path_response=True)`
 pub fn write_path_response_announce_wire_packet(
     announce: &Announce,
     hops: u8,
@@ -35,7 +35,7 @@ pub fn write_path_response_announce_wire_packet(
     )
 }
 
-/// RNS 1.4.0 `Transport.jobs()` announce retransmission
+/// RNS 1.4.2 `Transport.jobs()` announce retransmission
 pub fn write_retransmitted_announce_wire_packet(
     announce: &Announce,
     hops: u8,

@@ -96,7 +96,7 @@ fn interface_fields_mut(report: &mut Value) -> &mut Vec<(Value, Value)> {
 }
 
 #[test]
-fn decodes_complete_rns_1_4_0_status_shape() {
+fn decodes_complete_rns_1_4_2_status_shape() {
     let report = RnsInterfaceStatsReport::decode_message_pack(&encode(&complete_report())).unwrap();
     let status = &report.interfaces[0];
 

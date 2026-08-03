@@ -8,7 +8,7 @@ use crate::routing::links::LinkId;
 use crate::units::ByteLimit;
 use crate::wire::DestinationHash;
 
-/// One table for every send kind, as RNS 1.4.0 keeps every `PacketReceipt` in the one `Transport.receipts` list.
+/// One table for every send kind, as RNS 1.4.2 keeps every `PacketReceipt` in the one `Transport.receipts` list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReceiptKind {
     SendSinglePacket,
@@ -43,7 +43,7 @@ pub struct ProvenReceipt {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReceiptDeadline {
     Due(InstantMillis),
-    /// RNS 1.4.0 `RequestReceipt.RECEIVING`: an accepted response resource owns failure for its request, so the row stops expiring.
+    /// RNS 1.4.2 `RequestReceipt.RECEIVING`: an accepted response resource owns failure for its request, so the row stops expiring.
     /// Every exit of that transfer settles the row — delivery, the resource watchdog, or the re-armed between-segments deadline.
     ClaimedByTransfer,
 }
@@ -103,7 +103,7 @@ pub struct Receipts<C: ReceiptTable> {
 }
 
 impl<C: ReceiptTable> Receipts<C> {
-    /// A full table culls its stalest receipt, as RNS 1.4.0 `Transport.jobs()` does past `MAX_RECEIPTS`, always favoring the new send; the culled command still settles, typed.
+    /// A full table culls its stalest receipt, as RNS 1.4.2 `Transport.jobs()` does past `MAX_RECEIPTS`, always favoring the new send; the culled command still settles, typed.
     pub fn track(&mut self, receipt: OutstandingReceipt) -> Option<CulledReceipt> {
         let mut culled = None;
         if self.table.len() >= self.table.capacity() {
@@ -164,7 +164,7 @@ impl<C: ReceiptTable> Receipts<C> {
         Some(expired)
     }
 
-    /// RNS 1.4.0 explicit proof: match the row by full packet hash, then verify. A failed signature leaves the row outstanding (reference parity; the timeout still owns it).
+    /// RNS 1.4.2 explicit proof: match the row by full packet hash, then verify. A failed signature leaves the row outstanding (reference parity; the timeout still owns it).
     pub fn settle_by_explicit_proof(
         &mut self,
         proof_hash: &PacketHash,
@@ -180,7 +180,7 @@ impl<C: ReceiptTable> Receipts<C> {
         self.settle_verified(index, signature)
     }
 
-    /// RNS 1.4.0 implicit proof: a bare signature, trial-verified against every outstanding row in insertion order (Packet.py); the ordering invariant makes that send order, so a FIFO wire's proofs match on the first trial.
+    /// RNS 1.4.2 implicit proof: a bare signature, trial-verified against every outstanding row in insertion order (Packet.py); the ordering invariant makes that send order, so a FIFO wire's proofs match on the first trial.
     pub fn settle_by_implicit_proof(
         &mut self,
         signature: &Ed25519Signature,
@@ -294,7 +294,7 @@ impl<C: ReceiptTable> Receipts<C> {
         Some(proven)
     }
 
-    /// Non-removing peek for the resource accept gate: RNS 1.4.0 `Link.receive` accepts a response resource only when it names a request we actually sent.
+    /// Non-removing peek for the resource accept gate: RNS 1.4.2 `Link.receive` accepts a response resource only when it names a request we actually sent.
     pub fn has_pending_request(&self, request_id: RequestId) -> bool {
         self.request_row_index(request_id).is_some()
     }
@@ -315,7 +315,7 @@ impl<C: ReceiptTable> Receipts<C> {
         }
     }
 
-    /// RNS 1.4.0 `RequestReceipt.response_resource_progress`: accepting a response resource flips the request to `RECEIVING` and its own timeout stops.
+    /// RNS 1.4.2 `RequestReceipt.response_resource_progress`: accepting a response resource flips the request to `RECEIVING` and its own timeout stops.
     /// The transfer settles the row through every exit, so a claimed row cannot leak.
     pub fn claim_request_for_transfer(&mut self, request_id: RequestId) {
         if let Some(index) = self.request_row_index(request_id) {

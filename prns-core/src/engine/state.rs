@@ -518,7 +518,7 @@ mod tests {
 
     #[test]
     fn a_capable_host_can_widen_the_routing_table_at_the_type_level() {
-        let mut raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         let mut state =
             EngineState::<TestFixedStorage<64, 128, 4096, 8, 8, 128, 8, 8, 8, 8, 16, 16>>::default(
             );
@@ -534,7 +534,7 @@ mod tests {
             &mut |_| {},
             None,
         );
-        assert_eq!(out, rns_1_4_0_announce_accepted(1));
+        assert_eq!(out, rns_1_4_2_announce_accepted(1));
         assert_eq!(state.route_count(), 1);
     }
 

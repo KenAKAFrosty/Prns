@@ -7,13 +7,13 @@ use crate::wire::{DestinationHash, BROADCAST_MDU};
 
 use super::{PacketReceiptDelivered, PrnsCommand, Settleable, Settlement};
 
-/// RNS 1.4.0 `Packet.ENCRYPTED_MDU`: whole AES blocks, less one byte so PKCS7 always has room to pad.
+/// RNS 1.4.2 `Packet.ENCRYPTED_MDU`: whole AES blocks, less one byte so PKCS7 always has room to pad.
 pub const MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN: usize =
     ((BROADCAST_MDU - ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN - TOKEN_OVERHEAD) / 16) * 16 - 1;
 
 pub type SendSinglePacketPayload = HeaplessVec<u8, MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN>;
 
-/// RNS 1.4.0 `Packet(destination, data).send()` with its `PacketReceipt`.
+/// RNS 1.4.2 `Packet(destination, data).send()` with its `PacketReceipt`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SendSinglePacket {
     pub destination: DestinationHash,

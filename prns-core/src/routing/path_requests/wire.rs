@@ -10,7 +10,7 @@ pub const PATH_REQUEST_DESTINATION: DestinationHash = DestinationHash::new([
 
 pub const PATH_REQUEST_PAYLOAD_LEN: usize = TRUNCATED_HASH_BYTE_LEN * 2;
 
-/// RNS 1.4.0 `Transport.request_path`
+/// RNS 1.4.2 `Transport.request_path`
 pub fn write_path_request_wire_packet(
     destination: DestinationHash,
     requester_transport_id: Option<TransportId>,
@@ -55,10 +55,10 @@ pub fn write_path_request_wire_packet(
 mod tests {
     use super::*;
 
-    const RNS_1_4_0_PATH_REQUEST: &str = "08006b9f66014d9853faab220fba47d02761002222222222\
+    const RNS_1_4_2_PATH_REQUEST: &str = "08006b9f66014d9853faab220fba47d02761002222222222\
                                           2222222222222222222222abababababababababababababababab";
 
-    const RNS_1_4_0_PATH_REQUEST_TRANSPORT: &str =
+    const RNS_1_4_2_PATH_REQUEST_TRANSPORT: &str =
         "08006b9f66014d9853faab220fba47d027610022222222222222222222222222222222\
          7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7aabababababababababababababababab";
 
@@ -70,7 +70,7 @@ mod tests {
     }
 
     #[test]
-    fn path_request_destination_matches_rns_1_4_0() {
+    fn path_request_destination_matches_rns_1_4_2() {
         assert_eq!(
             PATH_REQUEST_DESTINATION,
             DestinationHash::new(
@@ -82,7 +82,7 @@ mod tests {
     }
 
     #[test]
-    fn write_path_request_reproduces_the_rns_1_4_0_wire() {
+    fn write_path_request_reproduces_the_rns_1_4_2_wire() {
         let mut buf = [0u8; HEADER_MIN_LEN + PATH_REQUEST_PAYLOAD_LEN];
         let n = write_path_request_wire_packet(
             DestinationHash::new([0x22; 16]),
@@ -91,11 +91,11 @@ mod tests {
             &mut buf,
         )
         .unwrap();
-        assert_eq!(&buf[..n], bytes_from_hex(RNS_1_4_0_PATH_REQUEST).as_slice());
+        assert_eq!(&buf[..n], bytes_from_hex(RNS_1_4_2_PATH_REQUEST).as_slice());
     }
 
     #[test]
-    fn write_transport_path_request_reproduces_the_rns_1_4_0_wire() {
+    fn write_transport_path_request_reproduces_the_rns_1_4_2_wire() {
         let mut buf = [0u8; HEADER_MIN_LEN + PATH_REQUEST_PAYLOAD_LEN + TRUNCATED_HASH_BYTE_LEN];
         let n = write_path_request_wire_packet(
             DestinationHash::new([0x22; 16]),
@@ -106,7 +106,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             &buf[..n],
-            bytes_from_hex(RNS_1_4_0_PATH_REQUEST_TRANSPORT).as_slice()
+            bytes_from_hex(RNS_1_4_2_PATH_REQUEST_TRANSPORT).as_slice()
         );
     }
 

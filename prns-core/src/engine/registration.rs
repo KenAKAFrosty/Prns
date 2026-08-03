@@ -86,7 +86,7 @@ impl<S: StorageLayout> EngineState<S> {
         Ok(registered)
     }
 
-    /// RNS 1.4.0 GROUP (type `0x01`): `identity` is addressing material only: a GROUP never announces, proves, or ratchets.
+    /// RNS 1.4.2 GROUP (type `0x01`): `identity` is addressing material only: a GROUP never announces, proves, or ratchets.
     pub fn register_group_destination(
         &mut self,
         identity: &IdentityHash,
@@ -194,7 +194,7 @@ impl<S: StorageLayout> EngineState<S> {
         self.upstream_app_destinations.iter()
     }
 
-    /// RNS 1.4.0 apps set `Link.resource_strategy` in the link-established callback, a de facto per-destination default; stamping at activation outraces a sender's instant advertise.
+    /// RNS 1.4.2 apps set `Link.resource_strategy` in the link-established callback, a de facto per-destination default; stamping at activation outraces a sender's instant advertise.
     pub fn set_default_resource_strategy(
         &mut self,
         destination: &DestinationHash,
@@ -213,7 +213,7 @@ impl<S: StorageLayout> EngineState<S> {
             .set_maximum_request_bytes(destination, maximum)
     }
 
-    /// RNS 1.4.0 `Destination.register_request_handler`; last write wins, and a re-registration starts from an empty allow list.
+    /// RNS 1.4.2 `Destination.register_request_handler`; last write wins, and a re-registration starts from an empty allow list.
     pub fn register_request_handler(
         &mut self,
         destination: &DestinationHash,
@@ -246,7 +246,7 @@ impl<S: StorageLayout> EngineState<S> {
         self.request_handlers.unregister(destination, path_hash)
     }
 
-    /// Admit one identified peer to an [`RequestPolicy::AllowList`] handler (RNS 1.4.0's `allowed_list`)
+    /// Admit one identified peer to an [`RequestPolicy::AllowList`] handler (RNS 1.4.2's `allowed_list`)
     pub fn allow_requester(
         &mut self,
         destination: &DestinationHash,
@@ -298,7 +298,7 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// Boot-restore for one snapshot row, refusing what storage may have forged: the address binding re-derives and the announce signature re-verifies before anything lands.
-    /// RNS 1.4.0's load path instead re-reads the cached announce packet and counts the cache read as a hop (`announce_packet.hops += 1`); seeding writes the row directly, so `hops` carries verbatim.
+    /// RNS 1.4.2's load path instead re-reads the cached announce packet and counts the cache read as a hop (`announce_packet.hops += 1`); seeding writes the row directly, so `hops` carries verbatim.
     /// A seeded row's interface gets the departed grace (`Departure::MayReturn`), holding the route warm until the medium re-derives the same id at attach.
     pub fn seed_route(
         &mut self,

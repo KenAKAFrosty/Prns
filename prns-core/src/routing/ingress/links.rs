@@ -156,7 +156,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// Transported-link retries bypass packet dedup to match RNS 1.4.0; `switch_through` prevents loops by validating hop direction.
+    /// Transported-link retries bypass packet dedup to match RNS 1.4.2; `switch_through` prevents loops by validating hop direction.
     pub(super) fn relay_if_transported(
         &mut self,
         address: WireAddress,

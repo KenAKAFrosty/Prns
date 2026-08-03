@@ -25,7 +25,7 @@ pub(in crate::engine) fn allows_announce_rebroadcast(
         )
 }
 
-/// RNS 1.4.0 `Transport.outbound` announce mode gating.
+/// RNS 1.4.2 `Transport.outbound` announce mode gating.
 fn mode_allows_announce_egress(
     egress: InterfaceMode,
     next_hop_mode: Option<InterfaceMode>,

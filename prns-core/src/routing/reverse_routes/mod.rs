@@ -1,4 +1,4 @@
-//! The return path for proofs riding back over packets we forwarded (RNS 1.4.0 `Transport.reverse_table`).
+//! The return path for proofs riding back over packets we forwarded (RNS 1.4.2 `Transport.reverse_table`).
 
 pub mod core;
 mod impls;

@@ -1,4 +1,4 @@
-//! The sender answering a part request: RNS 1.4.0 `Resource.request`.
+//! The sender answering a part request: RNS 1.4.2 `Resource.request`.
 //!
 //! Requested names are picked out of the serving scope (the receiver's minimum consecutive height through the collision guard span) in ascending part order.
 //! A hashmap-exhausted request additionally works out the next segment of names and slides the scope forward.

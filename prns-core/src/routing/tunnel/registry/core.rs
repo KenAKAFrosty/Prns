@@ -4,7 +4,7 @@ use crate::routing::tunnel::TunnelId;
 use crate::routing::warmth::RouteWarmth;
 use crate::storage::TablePushError;
 
-/// RNS 1.4.0 `Transport.TUNNEL_TIMEOUT` (8 hours).
+/// RNS 1.4.2 `Transport.TUNNEL_TIMEOUT` (8 hours).
 pub const TUNNEL_TIMEOUT_MS: u64 = 8 * 60 * 60 * 1000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,4 +1,4 @@
-//! The links this node carries for others (RNS 1.4.0's `Transport.link_table`).
+//! The links this node carries for others (RNS 1.4.2's `Transport.link_table`).
 
 use crate::engine::InstantMillis;
 use crate::interfaces::{BitrateBps, InterfaceId};
@@ -6,10 +6,10 @@ use crate::routing::links::{LinkId, LinkMode};
 use crate::storage::TablePushError;
 use crate::wire::{DestinationHash, TransportId};
 
-/// RNS 1.4.0 `Transport.LINK_TIMEOUT = Link.STALE_TIME × 1.25`: a switched frame refreshes the row, so only a truly dead link goes idle this long.
+/// RNS 1.4.2 `Transport.LINK_TIMEOUT = Link.STALE_TIME × 1.25`: a switched frame refreshes the row, so only a truly dead link goes idle this long.
 pub const TRANSPORTED_LINK_TIMEOUT_MS: u64 = 900_000;
 
-/// RNS 1.4.0 `Transport.extra_link_proof_timeout`: one MTU's airtime on the arrival interface, an allowance for slow last hops.
+/// RNS 1.4.2 `Transport.extra_link_proof_timeout`: one MTU's airtime on the arrival interface, an allowance for slow last hops.
 #[must_use]
 pub fn extra_link_proof_timeout_ms(bitrate: BitrateBps) -> u64 {
     4_000_000u64 / bitrate.get()
@@ -142,7 +142,7 @@ impl<C: TransportedLinkTable> TransportedLinks<C> {
             .and_then(|index| self.table.entries().get(index))
     }
 
-    /// The returning LRPROOF's gate. RNS 1.4.0 transports a proof only when it arrives over the next hop with exactly the remaining hop count.
+    /// The returning LRPROOF's gate. RNS 1.4.2 transports a proof only when it arrives over the next hop with exactly the remaining hop count.
     /// The row validates and the proof leaves toward the initiator's side.
     /// Intentional deviation from reference: a second proof for a validated row is refused, where the reference re-relays it.
     pub fn validate_by_proof(
@@ -210,7 +210,7 @@ impl<C: TransportedLinkTable> TransportedLinks<C> {
         Ok(TransportSwitch { fire_on })
     }
 
-    /// RNS 1.4.0's link-table relay: a packet switches through the row toward whichever side it did not arrive from, gated on the exact hop count that side expects; one shared interface accepts either count.
+    /// RNS 1.4.2's link-table relay: a packet switches through the row toward whichever side it did not arrive from, gated on the exact hop count that side expects; one shared interface accepts either count.
     /// Intentional deviation from reference: nothing switches before the proof validates the row because no legitimate traffic can flow ahead of the proof.
     pub fn switch_through(
         &mut self,

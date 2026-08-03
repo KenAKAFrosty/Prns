@@ -80,7 +80,7 @@ async fn ifac_members_hear_each_other_and_strangers_stay_outside() {
     tokio::spawn(source_iface.run(source_seam));
     tokio::spawn(peer_iface.run(peer_seam));
 
-    let clean = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
+    let clean = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
     let mut member_wire = std::vec![0u8; MAX_WIRE_FRAME_LEN];
     let masked_len = network().mask_outbound(&clean, &mut member_wire).unwrap();
     source_wire_in_tx
@@ -125,7 +125,7 @@ async fn ifac_members_hear_each_other_and_strangers_stay_outside() {
     let mut stranger_wire = std::vec![0u8; MAX_WIRE_FRAME_LEN];
     let stranger_len = stranger
         .mask_outbound(
-            &bytes_from_hex(RNS_1_4_0_RATCHETED_ANNOUNCE),
+            &bytes_from_hex(RNS_1_4_2_RATCHETED_ANNOUNCE),
             &mut stranger_wire,
         )
         .unwrap();
@@ -176,7 +176,7 @@ async fn a_dynamic_interface_drains_a_frame_queued_before_attachment() {
     inbound
         .try_grant()
         .unwrap()
-        .fill(&bytes_from_hex(RNS_1_4_0_ANNOUNCE));
+        .fill(&bytes_from_hex(RNS_1_4_2_ANNOUNCE));
     inbound.commit();
 
     command_tx
@@ -247,7 +247,7 @@ async fn dynamic_ifac_state_arrives_and_leaves_with_its_interface() {
         .unwrap();
     tokio::task::yield_now().await;
 
-    let clean = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
+    let clean = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
     let mut masked = std::vec![0u8; MAX_WIRE_FRAME_LEN];
     let masked_len = network.mask_outbound(&clean, &mut masked).unwrap();
     protected_in
@@ -281,7 +281,7 @@ async fn dynamic_ifac_state_arrives_and_leaves_with_its_interface() {
         .unwrap();
     tokio::task::yield_now().await;
 
-    let open = bytes_from_hex(RNS_1_4_0_RATCHETED_ANNOUNCE);
+    let open = bytes_from_hex(RNS_1_4_2_RATCHETED_ANNOUNCE);
     open_in.try_grant().unwrap().fill(&open);
     open_in.commit();
     notify_tx.send(source).unwrap();
