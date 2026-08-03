@@ -75,6 +75,8 @@ You've now seen a node born, announced, and heard. Where next depends on what yo
 
 - **Building an app?** The [example catalog](examples.md#example-catalog) ladders up from here: request and response, resource transfer, changing interfaces on a live node, and the same recipe in every SDK language. When you're ready to use Prns in your Rust apps, the crate is a `cargo add personal-rns` away.
 
+  Looking for another language besides Rust? Check the [front door](../README.md#what-is-prns) for the path to our SDKs in other languages.
+
 - **Running a transport node for yourself or the ecosystem?** Take a look at [`prnsd`](../prnsd/README.md), the daemon. It owns the interfaces on a machine, and every Reticulum app on that machine shares its one instance.
 
 - **Putting it on hardware?** [Flash a Hopspot](https://prns.dev/flash) in minutes, or work through the [embedded guide](embedded.md) to build board firmware from source.

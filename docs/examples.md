@@ -59,6 +59,10 @@ Every native SDK follows the same recipe: create a host with explicit capabiliti
 
 The native package graph and the validation suites that exercise these adapters live in the [host-contract guide](../prns-host/README.md).
 
+## Full applications
+
+The examples above are small on purpose. For the other end of the scale, this repository ships two complete applications that serve as examples too: [`prnsd`](../prnsd/README.md), the daemon that runs a full transport node and shares it with every Reticulum app on the machine, and [Personal Hopspot](../personal-hopspot/README.md), one node application across desktop, mobile, and embedded platforms. Both are useful tools in their own right, and both show what the same public API looks like carried into a real application.
+
 ## Community examples
 
 Examples and projects built outside this repository belong here too, and this section is meant to grow. Nothing is listed yet; yours could be the first.
