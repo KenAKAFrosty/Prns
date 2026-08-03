@@ -17,7 +17,7 @@ pub fn TopNav() -> Element {
 
     rsx! {
         header { class: "border-b border-line/60 backdrop-blur-md sticky top-0 z-30 bg-ink/85",
-            div { class: "max-w-5xl mx-auto px-6 h-16 flex items-center gap-8",
+            div { class: "max-w-5xl mx-auto px-6 py-3 flex flex-wrap items-center gap-x-8 sm:h-16 sm:flex-nowrap sm:py-0",
                 Link {
                     to: Route::Landing {},
                     class: "flex items-center gap-2 font-semibold tracking-tight text-paper hover:text-accent transition-colors",
@@ -27,7 +27,7 @@ pub fn TopNav() -> Element {
                         "rns"
                     }
                 }
-                nav { class: "hidden items-center gap-6 text-sm text-soft sm:flex",
+                nav { class: "order-last mt-3 flex w-full flex-wrap items-center gap-x-5 gap-y-2 text-sm text-soft sm:order-none sm:mt-0 sm:w-auto sm:gap-6",
                     Link {
                         to: Route::BenchmarksPage {},
                         class: "hover:text-accent transition-colors",
