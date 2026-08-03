@@ -34,6 +34,7 @@ fn single(identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> PreConfiguredDe
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
+        maximum_request_bytes: Default::default(),
         request_endpoints: ServeMyRequestEndpoints::No,
     }
 }

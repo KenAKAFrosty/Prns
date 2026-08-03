@@ -68,6 +68,7 @@ fn single(identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> PreConfiguredDe
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
+        maximum_request_bytes: Default::default(),
         request_endpoints: ServeMyRequestEndpoints::No,
     }
 }
@@ -504,6 +505,7 @@ async fn a_recipe_accept_destination_receives_a_resource() {
             max_uncompressed_bytes: 1024 * 1024,
             accept_compressed: true,
         },
+        maximum_request_bytes: Default::default(),
         request_endpoints: ServeMyRequestEndpoints::No,
     };
     let dest_a = single_a.destination_hash().expect("valid destination");

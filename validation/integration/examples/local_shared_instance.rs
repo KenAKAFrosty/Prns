@@ -41,6 +41,7 @@ async fn main() {
             proof: ProofStrategy::ProveAll,
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
+            maximum_request_bytes: Default::default(),
             request_endpoints: ServeMyRequestEndpoints::No,
         }],
         app_state: (),

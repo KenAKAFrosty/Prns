@@ -76,6 +76,7 @@ async fn a_recipe_node_synthesizes_a_tunnel_when_its_transport_is_a_held_identit
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
             resource_strategy: ResourceStrategy::AcceptNone,
+            maximum_request_bytes: Default::default(),
             request_endpoints: ServeMyRequestEndpoints::No,
         }],
         app_state: (),

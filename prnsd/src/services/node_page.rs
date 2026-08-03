@@ -46,6 +46,7 @@ where
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
             resource_strategy: ResourceStrategy::AcceptNone,
+            maximum_request_bytes: Default::default(),
             request_endpoints: ServeMyRequestEndpoints::No,
         })?;
     for path in catalog.request_paths() {

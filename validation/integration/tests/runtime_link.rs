@@ -59,6 +59,7 @@ async fn a_link_establishes_and_carries_data_across_two_nodes_over_udp() {
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
+        maximum_request_bytes: Default::default(),
         request_endpoints: ServeMyRequestEndpoints::Yes,
     };
     let dest_a = responder_dest
@@ -117,6 +118,7 @@ async fn a_link_establishes_and_carries_data_across_two_nodes_over_udp() {
             proof: ProofStrategy::ProveAll,
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
+            maximum_request_bytes: Default::default(),
             request_endpoints: ServeMyRequestEndpoints::No,
         }],
         app_state: (),
