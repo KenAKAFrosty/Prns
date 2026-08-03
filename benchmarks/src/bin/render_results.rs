@@ -426,10 +426,17 @@ fn glance_rows(
     rows
 }
 
+struct MemoryGlanceRow {
+    title: String,
+    ours_rss: f64,
+    reference_rss: f64,
+    ratio: f64,
+}
+
 fn memory_glance_rows(
     aggregates: &[Aggregate],
     implementations: &[ImplementationDescriptor],
-) -> Vec<(String, f64)> {
+) -> Vec<MemoryGlanceRow> {
     let mut rows = Vec::new();
     for scenario_manifest in load_catalog().expect("validated benchmark catalog") {
         let scenario = scenario_manifest.name.as_str();
@@ -467,10 +474,12 @@ fn memory_glance_rows(
                 reference.maximum(Axis::Memory, metric),
             ) {
                 if ours_rss > 0.0 {
-                    rows.push((
-                        format!("{} · {role}", manifest.title),
-                        reference_rss / ours_rss,
-                    ));
+                    rows.push(MemoryGlanceRow {
+                        title: format!("{} · {role}", manifest.title),
+                        ours_rss,
+                        reference_rss,
+                        ratio: reference_rss / ours_rss,
+                    });
                 }
             }
         }
@@ -490,7 +499,7 @@ fn render_headline(
     out: &mut String,
     host: &str,
     glance: &[GlanceRow],
-    memory: &[(String, f64)],
+    memory: &[MemoryGlanceRow],
     implementations: &[ImplementationDescriptor],
     assets: &mut Vec<(PathBuf, String)>,
 ) {
@@ -521,8 +530,12 @@ fn render_headline(
         let caption = format!(
             "{reference} peak RSS as a multiple of Prns · higher means Prns uses less memory"
         );
-        let light = ratio_chart_svg(memory, &caption, &LIGHT_CHART);
-        let dark = ratio_chart_svg(memory, &caption, &DARK_CHART);
+        let chart_rows: Vec<(String, f64)> = memory
+            .iter()
+            .map(|row| (row.title.clone(), row.ratio))
+            .collect();
+        let light = ratio_chart_svg(&chart_rows, &caption, &LIGHT_CHART);
+        let dark = ratio_chart_svg(&chart_rows, &caption, &DARK_CHART);
         assets.push((
             bench_dir().join(format!("assets/at-a-glance-memory-{host}-light.svg")),
             light,
@@ -551,6 +564,21 @@ fn render_headline(
             format_primary(row.ours, &row.primary_metric),
             format_primary(row.reference, &row.primary_metric),
         );
+    }
+    if !memory.is_empty() {
+        out.push_str(
+            "\n| Scenario · role | Prns peak RSS | Reference peak RSS | Reference / Prns |\n|---|---:|---:|---:|\n",
+        );
+        for row in memory {
+            let _ = writeln!(
+                out,
+                "| {} | {:.1} MiB | {:.1} MiB | {:.2}× |",
+                row.title,
+                row.ours_rss / 1_048_576.0,
+                row.reference_rss / 1_048_576.0,
+                row.ratio,
+            );
+        }
     }
     out.push_str(
         "\nA dash means no current three-sample release evidence is published for that scenario.\n\n</details>\n",
@@ -582,7 +610,7 @@ fn ratio_chart_svg(rows: &[(String, f64)], caption: &str, theme: &ChartTheme) ->
     );
     let _ = writeln!(
         svg,
-        "  <text x=\"{gutter:.1}\" y=\"17\" font-size=\"12\" fill=\"{}\">{}</text>",
+        "  <text x=\"8\" y=\"17\" font-size=\"12\" fill=\"{}\">{}</text>",
         theme.secondary,
         escape_text(caption),
     );

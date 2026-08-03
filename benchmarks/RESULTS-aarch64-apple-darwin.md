@@ -38,6 +38,26 @@ Release binaries run over loopback for 30 seconds per sample, three samples per 
 | Transported resource throughput | 1290.36 MB/s | 146.28 MB/s | 8.82× |
 | Transported resource throughput · 1 Gbps policy | 1201.08 MB/s | 155.61 MB/s | 7.72× |
 
+| Scenario · role | Prns peak RSS | Reference peak RSS | Reference / Prns |
+|---|---:|---:|---:|
+| Single-packet throughput · initiator | 16.5 MiB | 203.8 MiB | 12.38× |
+| Single-packet throughput · responder | 48.6 MiB | 206.5 MiB | 4.25× |
+| Link-message throughput · initiator | 25.2 MiB | 234.4 MiB | 9.31× |
+| Link-message throughput · responder | 48.3 MiB | 232.0 MiB | 4.80× |
+| Request/response · initiator | 17.8 MiB | 288.3 MiB | 16.17× |
+| Request/response · responder | 45.2 MiB | 341.3 MiB | 7.56× |
+| Maximum resource segment · initiator | 43.7 MiB | 493.3 MiB | 11.28× |
+| Maximum resource segment · responder | 39.9 MiB | 286.9 MiB | 7.19× |
+| Maximum resource segment · 1 Gbps policy · initiator | 74.6 MiB | 402.5 MiB | 5.39× |
+| Maximum resource segment · 1 Gbps policy · responder | 76.1 MiB | 304.1 MiB | 4.00× |
+| 64 MiB resource stream · initiator | 49.2 MiB | 408.4 MiB | 8.30× |
+| 64 MiB resource stream · responder | 40.3 MiB | 397.6 MiB | 9.87× |
+| 64 MiB resource stream · 1 Gbps policy · initiator | 145.6 MiB | 346.9 MiB | 2.38× |
+| 64 MiB resource stream · 1 Gbps policy · responder | 142.9 MiB | 532.0 MiB | 3.72× |
+| Raw transport throughput · relay | 48.9 MiB | 320.1 MiB | 6.55× |
+| Transported resource throughput · relay | 146.7 MiB | 264.0 MiB | 1.80× |
+| Transported resource throughput · 1 Gbps policy · relay | 538.4 MiB | 208.8 MiB | 0.39× |
+
 A dash means no current three-sample release evidence is published for that scenario.
 
 </details>
