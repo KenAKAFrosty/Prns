@@ -41,9 +41,9 @@ const _: () = assert!(
 
 /// A `Default`-able allocator that places allocations in PSRAM.
 ///
-/// On Heltec V4-R8, PSRAM is owned by a private bump allocator (see [`init_private_psram_heap`]) so
-/// ordinary boot/`log` allocs cannot share a freelist with engine construction. Other S3 boards
-/// keep PSRAM in `esp_alloc`'s global heap and this forwards to `ExternalMemory`.
+/// On Heltec V4-R8, `PsramAlloc` owns a private low PSRAM window installed by [`init_private_psram_heap`], while `esp_alloc` owns the disjoint high window.
+/// Ordinary boot and `log` allocations therefore cannot share a freelist with engine construction.
+/// Other S3 boards keep the whole PSRAM window in `esp_alloc`'s global heap, and this allocator forwards to `ExternalMemory`.
 #[cfg(target_arch = "xtensa")]
 #[derive(Default, Clone, Copy)]
 pub struct PsramAlloc;

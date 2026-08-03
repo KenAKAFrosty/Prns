@@ -473,10 +473,8 @@ async fn usb_device_task(
 /// for the slow PSRAM-backed engine construction. A block expression (so its bindings escape
 /// macro hygiene) owning `$p`'s early peripherals, yielding `(software_interrupt1, timebase, rtc)`.
 ///
-/// Heap region order is load-bearing for Wi-Fi boards: PSRAM must register first so capability-free
-/// boot allocations land externally and leave the small internal regions for the radio. Heltec V4-R8
-/// (Octal) passes a custom `PsramConfig` and uses `split_psram_heap`, which splits the window so
-/// engine construction gets a freelist of its own without starving the rest of the system.
+/// Heap region order is load-bearing for Wi-Fi boards: PSRAM must register first so capability-free boot allocations land externally and leave the small internal regions for the radio.
+/// Heltec V4-R8 (Octal) passes a custom `PsramConfig` and uses `split_psram_heap`, which gives engine construction a private freelist without starving the rest of the system.
 macro_rules! boot_common {
     ($p:ident, $banner:expr) => {
         $crate::s3::boot_common!(
@@ -525,15 +523,11 @@ macro_rules! boot_add_psram_global {
 }
 pub(crate) use boot_add_psram_global;
 
-/// Split a board's PSRAM into two disjoint windows: a private low half owned solely by [`PsramAlloc`]
-/// for engine construction, and a high half handed to `esp_alloc`. The global half is registered
-/// before the internal region so capability-free allocations land externally and leave the small
-/// internal regions for the radios, which is the same ordering `global_psram_heap` relies on.
+/// Split a board's PSRAM into two disjoint windows: a private low half owned solely by [`crate::storage::PsramAlloc`] for engine construction, and a high half handed to `esp_alloc`.
+/// Register the global half before the internal regions so capability-free allocations land externally and leave the small internal regions for the radios, matching the ordering `global_psram_heap` relies on.
 ///
-/// Reserving the whole window privately instead leaves the system on internal RAM alone, roughly
-/// 75 KiB across the reclaimed region and the D-cache window. The Bluetooth controller's receive
-/// buffers cannot be allocated from that, and neither can the captive portal, whose four HTTP tasks
-/// want 24 KiB each. Both fail on a board carrying 8 MiB of PSRAM.
+/// Reserving the whole window privately instead leaves the system on roughly 75 KiB of internal RAM across the reclaimed region and the D-cache window.
+/// The Bluetooth controller cannot allocate its receive buffers from that, and the captive portal's four HTTP tasks each request another 24 KiB.
 macro_rules! boot_add_psram_split {
     ($p:ident, $psram_config:expr) => {{
         let psram = ::esp_hal::psram::Psram::new($p.PSRAM, $psram_config);
@@ -543,8 +537,8 @@ macro_rules! boot_add_psram_split {
         ::esp_println::println!(
             "PSRAM mapped start={start:?} size={size} (private={private_size} global={global_size})"
         );
-        // SAFETY: the low window is given to PsramAlloc alone and is never registered with
-        // esp_alloc; the high window is disjoint from it and is added to the heap exactly once.
+        // SAFETY: The low window is given to PsramAlloc alone and is never registered with esp_alloc.
+        // The high window is disjoint from it and is added to the heap exactly once.
         unsafe {
             $crate::storage::init_private_psram_heap(start, private_size);
             ::esp_alloc::HEAP.add_region(::esp_alloc::HeapRegion::new(
