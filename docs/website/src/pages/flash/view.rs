@@ -717,7 +717,7 @@ pub(super) fn BoardTargetCard(board: &'static BoardTarget, selected: bool) -> El
                     match board.tier {
                         Tier::BringUp => "Bring-up in progress",
                         Tier::Roadmap => "Planned",
-                        Tier::Shipping | Tier::Flashable => "Coming later",
+                        Tier::Shipping | Tier::SdkPreview | Tier::Flashable => "Coming later",
                     }
                 }
             }

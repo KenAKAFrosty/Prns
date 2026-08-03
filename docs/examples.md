@@ -4,7 +4,8 @@ Every example here is a small, complete program. Each one exercises one concept 
 
 ## Rust
 
-These seven Rust examples form a ladder (We suggest you run them strictly in order as listed below). 
+These eight Rust examples form a ladder. We suggest running them in the order
+listed below.
 
 Every one runs from a fresh clone and ends on a bounded success condition, so you always know whether what you just ran actually worked.
 
@@ -34,7 +35,7 @@ cargo run --locked -p personal-rns --example dynamic_interface --features tokio-
 | --- | --- |
 | [`native-lifecycle.ts`](../prns-js/examples/native-lifecycle.ts) | Create a native node, claim its event stream, attach and detach an interface, and stop cleanly, with every event and command case handled exhaustively. |
 | [`browser-resource.ts`](../prns-js/examples/browser-resource.ts) | Create a node in the browser and send a `Blob` as bounded resource segments, handling failure right where it can happen. |
-| [Browser transport playground](/prns-wasm/examples/browser-playground/README.md) | A live WebAssembly node in your browser, with WebUSB and Wi-Fi kept behind explicit permission clicks. |
+| [Browser transport playground](../prns-wasm/examples/browser-playground/README.md) | A live WebAssembly node in your browser, with WebUSB and Wi-Fi kept behind explicit permission clicks. |
 
 Typecheck both source examples:
 
@@ -45,7 +46,7 @@ npm --prefix prns-js run check
 
 ## Native SDKs
 
-Every native SDK follows the same recipe: create a host with explicit capabilities, claim the application event stream once, execute typed commands, and handle each settlement as plain success or failure data. The guides below show that recipe in each language's own idiom.
+Every native SDK preview follows the same recipe: create a host with explicit capabilities, claim the application event stream once, execute typed commands, and handle each settlement as plain success or failure data. These are implemented adapters with registered live conformance suites, while idiomatic registry packaging and native artifact delivery remain active release work. See the [SDK guide](sdks.md#native-sdk-previews) for the exact readiness and source-evaluation path, then use the language guide below for its current API shape.
 
 | SDK | Authoritative recipe |
 | --- | --- |

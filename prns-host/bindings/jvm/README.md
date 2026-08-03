@@ -1,9 +1,27 @@
 # Personal RNS for Kotlin, Java, and Android
 
-> **Status: solid core, young surface.**
-> This binding runs the same Rust engine as every Prns node and passes the same cross-language conformance suite on every release.
-> The young part is the JVM-facing API. Its shape is a working first draft: a starting point, not the final word.
-> If you are an experienced Kotlin or Java developer and something here does not feel native, that is exactly the feedback we want. Issues and PRs on API design are among the most valuable contributions right now.
+> **SDK preview: implemented, tested in-tree, and awaiting polished distribution.**
+> This adapter runs the same Rust engine as every Prns node and is exercised by the repository's registered live JVM conformance suite.
+> Maven packaging, desktop and Android native assets, and public-package qualification are active release work, so a source checkout is currently the supported evaluation path.
+> If you are experienced with Kotlin, Java, Android, or Maven design, help making this feel completely at home in those ecosystems would be especially valuable.
+
+## Evaluate the current source
+
+On Linux, the registered suite builds the matching native capsule and runs the
+complete persistent two-node journey through the Gradle project:
+
+```console
+python3 validation/run.py run --suite host-jvm-contract
+```
+
+The intended public delivery is an `io.reticulum:personal-rns` Maven package
+paired with desktop and Android native assets. Until those packages have
+completed public qualification, do not assume Maven Central contains the
+adapter from this checkout. See the
+[SDK guide](../../../docs/sdks.md#native-sdk-previews) for the shared release
+posture and contribution path.
+
+## API shape
 
 The JVM SDK is a thin, typed adapter over the versioned Personal RNS C host
 contract. Kotlin callers receive sealed command outcomes and cold
@@ -56,14 +74,15 @@ remaining non-negative. Exact contract `u64` fields use Kotlin `ULong`; the JNA
 boundary preserves all 64 bits while the generated Kotlin surface makes
 unsigned intent explicit.
 
-Desktop applications provide `libprns_host` through the dynamic loader, the
-`PRNS_HOST_LIBRARY` environment variable, or the `personal.rns.library` system
-property. Release archives contain the matching library and `personal-rns`
-pkg-config metadata.
+Source-built desktop applications provide `libprns_host` through the dynamic
+loader, the `PRNS_HOST_LIBRARY` environment variable, or the
+`personal.rns.library` system property. The planned release archives contain
+the matching library and `personal-rns` pkg-config metadata.
 
-Android applications use the same API and bytecode. Add JNA's Android artifact,
-exclude the desktop JNA runtime selected by the Maven POM, and place the Personal
-RNS libraries from the Android release artifact in the normal ABI directories:
+Android applications use the same API and bytecode. After public package
+promotion, the intended Gradle shape adds JNA's Android artifact, excludes the
+desktop JNA runtime selected by the Maven POM, and places the Personal RNS
+libraries from the Android release artifact in the normal ABI directories:
 
 ```kotlin
 implementation("io.reticulum:personal-rns:0.3.3") {

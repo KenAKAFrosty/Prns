@@ -1,13 +1,31 @@
 # Personal RNS for Go
 
-> **Status: solid core, young surface.**
-> This binding runs the same Rust engine as every Prns node and passes the same cross-language conformance suite on every release.
-> The young part is the Go-facing API. Its shape is a working first draft: a starting point, not the final word.
-> If you are an experienced Go developer and something here does not feel native, that is exactly the feedback we want. Issues and PRs on API design are among the most valuable contributions right now.
+> **SDK preview: implemented, tested in-tree, and awaiting polished distribution.**
+> This adapter runs the same Rust engine as every Prns node and is exercised by the repository's registered live Go conformance suite.
+> Module tags, matching native archives, and public-package qualification are active release work, so a source checkout is currently the supported evaluation path.
+> If you are experienced with Go API, cgo, or module design, help making this feel completely at home in Go would be especially valuable.
 
 The Go module is a thin, typed adapter over the stable Personal RNS C capsule. Contract enums and sum types are generated from the same schema as Rust, TypeScript, .NET, Python, Swift, Kotlin, and Julia. Native waits are interrupted directly when a `context.Context` is cancelled, and application, diagnostic, and resource streams retain their single-consumer ownership.
 
-Install a matching native capsule and make its `lib/pkgconfig` directory visible through `PKG_CONFIG_PATH`, then import:
+## Evaluate the current source
+
+On Linux, the registered suite builds a relocatable native capsule, exposes its
+pkg-config metadata, and runs the complete persistent two-node journey:
+
+```console
+python3 validation/run.py run --suite host-go-contract
+```
+
+The intended public delivery is an immutable Go module tag paired with a
+matching signed native archive. Until those artifacts have completed public
+qualification, do not assume the tag below exists. See the
+[SDK guide](../../../docs/sdks.md#native-sdk-previews) for the shared release
+posture and contribution path.
+
+## API shape
+
+With a matching native capsule's `lib/pkgconfig` directory visible through
+`PKG_CONFIG_PATH`, import:
 
 ```go
 import prns "github.com/KenAKAFrosty/Prns/prns-host/bindings/go"
@@ -36,4 +54,5 @@ case prns.CommandFailed:
 }
 ```
 
-The module has no Go dependencies. Its version tag must use the monorepo submodule form `prns-host/bindings/go/v0.3.3`.
+The module has no Go dependencies. Its eventual `0.3.3` tag uses the monorepo
+submodule form `prns-host/bindings/go/v0.3.3`.

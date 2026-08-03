@@ -1,9 +1,26 @@
 # Personal RNS for .NET
 
-> **Status: solid core, young surface.**
-> This binding runs the same Rust engine as every Prns node and passes the same cross-language conformance suite on every release.
-> The young part is the .NET-facing API. Its shape is a working first draft: a starting point, not the final word.
-> If you are an experienced .NET developer and something here does not feel native, that is exactly the feedback we want. Issues and PRs on API design are among the most valuable contributions right now.
+> **SDK preview: implemented, tested in-tree, and awaiting polished distribution.**
+> This adapter runs the same Rust engine as every Prns node and is exercised by the repository's registered live .NET conformance suite.
+> NuGet packaging with runtime-specific native assets and public-package qualification are active release work, so a source checkout is currently the supported evaluation path.
+> If you are experienced with .NET API or packaging design, help making this feel completely at home in .NET would be especially valuable.
+
+## Evaluate the current source
+
+On Linux, the registered suite builds the matching native capsule and runs the
+complete persistent two-node journey:
+
+```console
+python3 validation/run.py run --suite host-dotnet-contract
+```
+
+The intended public delivery is a `PersonalRns` NuGet package containing the
+target's native runtime asset. Until that package has completed public
+qualification, do not assume NuGet contains the adapter from this checkout. See
+the [SDK guide](../../../docs/sdks.md#native-sdk-previews) for the shared release
+posture and contribution path.
+
+## API shape
 
 The .NET adapter is a thin, idiomatic presentation of the common host contract:
 
@@ -14,7 +31,7 @@ The .NET adapter is a thin, idiomatic presentation of the common host contract:
 - Fixed-size hashes and identifiers validate and copy at construction.
 - Native event memory is copied exactly once before its event handle is released.
 
-## On-the-fly start
+### On-the-fly start
 
 ```csharp
 using PersonalRns;
@@ -69,10 +86,8 @@ static async Task Consume(OwnedAsyncStream<ApplicationEvent> events)
 }
 ```
 
-The managed package expects the target’s `prns_host` native library to be available through normal .NET native-library resolution. On Linux, the registered contract smoke builds the capsule and exercises contract-gated creation, lifecycle, single-owner rejection, release, and reclaim across the real ABI:
-
-```sh
-python3 validation/run.py run --suite host-dotnet-contract
-```
+The source adapter expects the target's `prns_host` native library to be
+available through normal .NET native-library resolution. The planned NuGet
+package supplies it as a runtime-specific asset.
 
 `ExecuteAsync` accepts the generated `HostCommand` sum and resolves to `CommandSettlement.Succeeded(CommandOutcome)` or `CommandSettlement.Failed(CommandFailure)`. Convenience methods such as `SendSinglePacketAsync`, `AttachTcpClientAsync`, and `DetachInterfaceAsync` delegate to that same contract.

@@ -1,13 +1,28 @@
 # Prns C host ABI
 
-> **Status: solid core, young surface.**
-> The engine beneath this ABI is the same Rust core every Prns node runs, and each release passes the same cross-language conformance suite.
-> The young part is what it feels like to consume this contract directly from C or C++. That surface is a working first draft: a starting point, not the final word.
-> If you are an experienced C or C++ developer and something here does not feel right, that is exactly the feedback we want. Issues and PRs on API design are among the most valuable contributions right now.
+> **SDK preview: implemented, tested in-tree, and awaiting polished distribution.**
+> The engine beneath this ABI is the same Rust core every Prns node runs, and the generated header is exercised as both C11 and C++17 by the repository's registered live conformance suite.
+> Signed native archives, installer ergonomics, and public-package qualification are active release work, so a source checkout is currently the supported evaluation path.
+> If you are experienced with C or C++ API and package design, help making this feel completely at home in those ecosystems would be especially valuable.
 
 This crate is the stable binary capsule beneath native language bindings. Rust backends publish semantic events through `HostPublisher`; foreign runtimes see only opaque host, event-stream, event, and resource-stream handles from `include/prns_host.h`.
 
 The header is generated from `prns-host/schema/host-contract-v1.json`. Run `./tools/prns run repo.host-contract.generate` after an intentional schema change and `./tools/prns run repo.host-contract.check` in review or release automation.
+
+## Evaluate the current source
+
+On Linux, the registered suite builds the native capsule, compiles the same
+persistent two-node consumer as C11 and C++17, and runs both binaries:
+
+```console
+python3 validation/run.py run --suite host-c-contract
+```
+
+The intended public delivery is a signed target archive containing the header,
+dynamic and static libraries, pkg-config metadata, checksums, and licenses.
+Until those archives have completed public qualification, build the capsule
+from this checkout. See the [SDK guide](../../../docs/sdks.md#native-sdk-previews)
+for the shared release posture and contribution path.
 
 ## Mechanical contract
 

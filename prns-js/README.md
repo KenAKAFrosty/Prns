@@ -1,8 +1,60 @@
 # personal-rns
 
-`personal-rns` provides one casework-shaped JavaScript API for native Node.js, Bun, and browsers.
+
+`personal-rns` provides one JavaScript/Typescript API for native Node.js, Bun, and browsers.
 
 The root export selects the native backend in Node.js and Bun and the cooperative WebAssembly backend in browser bundlers. Explicit `personal-rns/native` and `personal-rns/browser` subpaths are available when runtime selection must be fixed.
+
+## Install
+
+For the announced release:
+
+```console
+npm install personal-rns
+```
+
+Prns is still completing its first announced release. Until the release notice
+in the [project README](../README.md) is removed, use the
+[source-checkout instructions](../docs/sdks.md#typescript-and-javascript) when
+you need the exact `0.3.3` candidate rather than assuming a registry listing
+contains it.
+
+## Create a host
+
+Node.js and Bun use the native backend selected by the root export:
+
+```ts
+import { Prns, Tag } from "personal-rns";
+
+const created = await Prns.create({
+  identity: Tag("GenerateEphemeral"),
+  role: "Endpoint",
+});
+if (created.tag !== "Ready") {
+  throw new Error(`node creation failed: ${created.tag}`);
+}
+
+const node = created.data;
+console.log(node.identityHash);
+await node.stop();
+```
+
+Browsers use the cooperative WebAssembly backend:
+
+```ts
+import { Prns } from "personal-rns/browser";
+
+const created = await Prns.create({});
+if (created.tag !== "Ready") {
+  throw new Error(`browser node creation failed: ${created.tag}`);
+}
+
+const node = created.data;
+console.log(node.backendInfo);
+await node.stop();
+```
+
+## Handle events and commands
 
 Application events and diagnostics are separate, bounded, single-owner streams. Claiming a stream is an explicit outcome, so an ownership conflict never appears as an iterator exception. Handle that boundary once, then keep the event loop flat:
 
@@ -60,7 +112,6 @@ match(settlement.data, {
   RequesterAllowed: confirmRequester,
 });
 ```
-
 The compiler requires every declared case. Commands settle their returned promises, expected failures are typed tagged outcomes, and public binary values are semantically branded `Uint8Array` instances. Browser backends attach `WebSocketClient` and `BrowserRendezvous` through the bounded cooperative transport and return `UnsupportedByBackend` for native-only interface kinds. Each host reports its current support through `backendInfo` and `capabilities`. The browser `hostSnapshot()` projects the generated inspection contract with revisioned routes, destination identities, logical interfaces, transfer counters, runtime health, and exact persistence status. A `ResourceAvailable` event owns a `ResourceStream`; its `claim()` method uses the same `Claimed | AlreadyClaimed` contract.
 
 Browser hosts are ephemeral by default. `persistentBrowser()` selects a caller-named `localStorage` root for the host identity, Bluetooth identity, routing state, destination identities, tunnels, and ratchets. Interfaces remain caller-supplied after restart. `stop()` flushes the bounded state before settling, while restoration and flush results appear on the diagnostic stream and in `hostSnapshot()`:
@@ -84,7 +135,7 @@ if (stopped.tag !== "Stopped") {
 }
 ```
 
-Browser resource sends accept either bytes or a `Blob`. The `Blob` path slices
+Sending a Resource in the browser accepts either bytes or a `Blob`. The `Blob` path slices
 the source into bounded segments instead of materializing the whole value:
 
 ```ts
@@ -108,3 +159,9 @@ match(sent.data, {
 The send remains correct if Worker startup or compression is unavailable: it
 continues with the uncompressed segment. Planning, metadata placement, segment
 bounds, and wire submission remain in the shared Rust implementation.
+
+### More Examples
+A simple source example can be seen at
+[`examples/native-lifecycle.ts`](examples/native-lifecycle.ts). The
+[browser transport playground](../prns-wasm/examples/browser-playground/README.md)
+runs a live node with permission-gated WebUSB and Wi-Fi controls.

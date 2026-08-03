@@ -43,7 +43,14 @@ generic submit envelope.
 
 ## Ecosystem shape
 
-| Ecosystem | Typed cases | Async/event surface | Distribution |
+Rust and TypeScript/JavaScript are the paved application SDKs. Python, .NET,
+Go, Swift, Kotlin/Java, Julia, C, and C++ are source-ready SDK previews: their
+contract and live in-tree journeys are implemented, while idiomatic public
+packaging and native artifact delivery remain active release work. The
+[SDK guide](../docs/sdks.md) is the user-facing source of truth for that
+distinction.
+
+| Ecosystem | Typed cases | Async/event surface | Intended public distribution |
 | --- | --- | --- | --- |
 | TypeScript, Node, Bun, browser | `casework` unions and exhaustive `match()` | `AsyncIterableIterator<T>` | one `personal-rns` npm package with native and browser exports |
 | .NET | sealed records and exhaustive `Match` helpers | `IAsyncEnumerable<T>` | `PersonalRns` NuGet with runtime-specific native assets |
@@ -86,9 +93,12 @@ cancellation, and scheduling. JavaScript maps exact `u64` values to `bigint` and
 uses safe-integer `number` only for the schema's bounded `safeInt` and
 `safeUint` scalars.
 
-Registered native smokes then exercise real creation, ABI/schema/product mismatch gates, stream
-single-ownership, wait interruption, and command settlement across C, .NET,
-Python, Go, Swift, Kotlin/JVM, and Julia.
+Registered Linux native smokes exercise real creation, ABI/schema/product
+mismatch gates, stream single-ownership, wait interruption, and command
+settlement across C, C++, .NET, Python, Go, Swift, Kotlin/JVM, and Julia. The
+shared persistent journey additionally covers a real loopback interface,
+announce discovery, link establishment, request and response, bounded resource
+transfer, restart, and persistence restoration.
 
 Product `0.3.1`, schema 1, and C ABI 1 are the first real baseline. There is no
 schema-2 compatibility layer or legacy host-options layout. Browser persisted
@@ -100,10 +110,11 @@ that value independently of the host schema.
 `tools/release/package-host-native.py` creates a relocatable target artifact
 containing the generated header, dynamic and static libraries, pkg-config
 metadata, both project licenses, an exact commit, and SHA-256/size records for
-every shipped file. The host SDK workflow builds GNU and musl Linux, macOS,
-Windows, and Android targets. Python wheels and the NuGet package consume those
-same outputs; the Maven staging repository and source-first Go, Swift, and Julia
-packages remain anchored to the identical contract version.
+every shipped file. The host SDK workflow is prepared to build GNU and musl
+Linux, macOS, Windows, and Android targets. Staged Python wheels and the NuGet
+package consume those same outputs; the Maven staging repository and
+source-first Go, Swift, and Julia packages remain anchored to the identical
+contract version.
 
 Publication is an explicit, SHA-gated workflow-dispatch action. Building and
 testing never implicitly publish.

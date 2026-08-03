@@ -1,13 +1,30 @@
 # PersonalRns for Swift
 
-> **Status: solid core, young surface.**
-> This binding runs the same Rust engine as every Prns node and passes the same cross-language conformance suite on every release.
-> The young part is the Swift-facing API. Its shape is a working first draft: a starting point, not the final word.
-> If you are an experienced Swift developer and something here does not feel native, that is exactly the feedback we want. Issues and PRs on API design are among the most valuable contributions right now.
+> **SDK preview: implemented, tested in-tree, and awaiting polished distribution.**
+> This adapter runs the same Rust engine as every Prns node and is exercised by the repository's registered live Swift conformance suite.
+> Swift Package tagging, matching native archives, and public-package qualification are active release work, so a source checkout is currently the supported evaluation path.
+> If you are experienced with Swift API or package design, help making this feel completely at home in Swift would be especially valuable.
 
 The Swift package is a thin adapter over the stable Personal RNS C capsule. The schema generates Swift enums with associated values for every command, outcome, application event, and diagnostic event. Native event lanes surface as single-iterator `AsyncSequence` values, resource bodies are asynchronous byte sequences, and native readiness resumes Swift continuations without occupying a dispatch worker. Task cancellation interrupts readiness directly.
 
-Install the matching native capsule so `pkg-config personal-rns` resolves it, then add the package:
+## Evaluate the current source
+
+On Linux, the registered suite builds a relocatable native capsule, exposes its
+pkg-config metadata, and runs the complete persistent two-node journey:
+
+```console
+python3 validation/run.py run --suite host-swift-contract
+```
+
+The intended public delivery is an immutable Swift Package tag paired with a
+matching signed native archive. Until those artifacts have completed public
+qualification, do not assume the release tag exists. See the
+[SDK guide](../../../docs/sdks.md#native-sdk-previews) for the shared release
+posture and contribution path.
+
+## API shape
+
+With `pkg-config personal-rns` resolving the matching native capsule:
 
 ```swift
 func run(_ host: Host) async throws {
@@ -32,4 +49,5 @@ func run(_ host: Host) async throws {
 }
 ```
 
-Swift Package Manager reads the native include and link paths from the same relocatable `personal-rns.pc` file shipped in every native archive.
+Swift Package Manager reads the native include and link paths from the same
+relocatable `personal-rns.pc` file intended for each native archive.
