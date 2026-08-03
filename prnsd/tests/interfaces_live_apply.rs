@@ -200,17 +200,26 @@ fn failed_mutation_apply_restores_saved_configuration_and_runtime() {
     let source = "[reticulum]\nshare_instance = No\n[interfaces]\n";
     fs::write(config.path().join("config"), source).unwrap_or_else(|error| panic!("{error}"));
     let (daemon, record) = launch(&config, &state);
+    let occupied = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .unwrap_or_else(|error| panic!("{error}"));
+    let occupied_port = occupied
+        .local_addr()
+        .unwrap_or_else(|error| panic!("{error}"))
+        .port();
 
     let output = Command::new(env!("CARGO_BIN_EXE_prnsd"))
         .args([
             "interfaces",
             "add",
-            "auto-wifi",
+            "tcp-server",
             "--name",
-            "LAN",
-            "--apply",
-            "--config",
+            "Occupied",
+            "--listen-ip",
+            "127.0.0.1",
+            "--listen-port",
         ])
+        .arg(occupied_port.to_string())
+        .args(["--apply", "--config"])
         .arg(config.path())
         .env("PRNSD_STATE_DIR", state.path())
         .output()
