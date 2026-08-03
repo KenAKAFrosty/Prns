@@ -369,8 +369,12 @@ mod tests {
 
     #[test]
     fn blocked_capabilities_explain_themselves_and_working_states_stay_silent() {
-        assert!(WebSerialCapability::Checking.blocked_explanation().is_none());
-        assert!(WebSerialCapability::Supported.blocked_explanation().is_none());
+        assert!(WebSerialCapability::Checking
+            .blocked_explanation()
+            .is_none());
+        assert!(WebSerialCapability::Supported
+            .blocked_explanation()
+            .is_none());
 
         let android = WebSerialCapability::AndroidBluetoothOnly
             .blocked_explanation()

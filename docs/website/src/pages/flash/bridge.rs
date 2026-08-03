@@ -5,7 +5,10 @@ use serde::{Deserialize, Serialize};
 use crate::platforms::BoardFlashTarget;
 
 use super::contract::{self, BridgeErrorCode, BridgePhase};
-use super::model::{part_kind, DestructiveConfirmation, FlasherState, InstallMode, WebSerialCapability};
+use super::model::{
+    part_kind, DestructiveConfirmation, FlasherState, InstallMode, WebSerialCapability,
+    WEB_SERIAL_PROBE_ANDROID_BLUETOOTH_ONLY, WEB_SERIAL_PROBE_SUPPORTED,
+};
 use super::protocol;
 
 const PREPARE_SCRIPT: &str = r#"
@@ -28,14 +31,18 @@ try {
 // limited set of devices). The platform probe exists to explain that dead
 // end instead of presenting an empty picker; remove it once Android Chrome
 // reaches wired ports on the devices people actually carry.
-const WEB_SERIAL_PROBE_SCRIPT: &str = r#"
-if (!(window.isSecureContext && navigator.serial && navigator.serial.requestPort)) {
+fn web_serial_probe_script() -> String {
+    format!(
+        r#"
+if (!(window.isSecureContext && navigator.serial && navigator.serial.requestPort)) {{
   return "unavailable";
-}
+}}
 const wiredPortsUnreachable = navigator.userAgentData?.platform === "Android"
   || /\bAndroid\b/.test(navigator.userAgent);
-return wiredPortsUnreachable ? "android-bluetooth-only" : "supported";
-"#;
+return wiredPortsUnreachable ? "{WEB_SERIAL_PROBE_ANDROID_BLUETOOTH_ONLY}" : "{WEB_SERIAL_PROBE_SUPPORTED}";
+"#
+    )
+}
 
 const FOCUS_STATUS_SCRIPT: &str =
     "document.getElementById('flash-status')?.focus({ preventScroll: true });";
@@ -332,7 +339,7 @@ impl BridgeEvent {
 }
 
 pub(super) async fn web_serial_capability() -> WebSerialCapability {
-    document::eval(WEB_SERIAL_PROBE_SCRIPT)
+    document::eval(&web_serial_probe_script())
         .join::<String>()
         .await
         .map(|probe| WebSerialCapability::from_probe(&probe))
@@ -948,15 +955,12 @@ mod tests {
 
     #[test]
     fn web_serial_probe_script_speaks_the_model_wire_spellings() {
-        use super::super::model::{
-            WEB_SERIAL_PROBE_ANDROID_BLUETOOTH_ONLY, WEB_SERIAL_PROBE_SUPPORTED,
-        };
+        let script = web_serial_probe_script();
 
-        assert!(WEB_SERIAL_PROBE_SCRIPT.contains("window.isSecureContext"));
-        assert!(WEB_SERIAL_PROBE_SCRIPT.contains("navigator.serial.requestPort"));
-        assert!(WEB_SERIAL_PROBE_SCRIPT.contains(&format!("\"{WEB_SERIAL_PROBE_SUPPORTED}\"")));
-        assert!(WEB_SERIAL_PROBE_SCRIPT
-            .contains(&format!("\"{WEB_SERIAL_PROBE_ANDROID_BLUETOOTH_ONLY}\"")));
+        assert!(script.contains("window.isSecureContext"));
+        assert!(script.contains("navigator.serial.requestPort"));
+        assert!(script.contains(&format!("\"{WEB_SERIAL_PROBE_SUPPORTED}\"")));
+        assert!(script.contains(&format!("\"{WEB_SERIAL_PROBE_ANDROID_BLUETOOTH_ONLY}\"")));
     }
 
     #[test]
