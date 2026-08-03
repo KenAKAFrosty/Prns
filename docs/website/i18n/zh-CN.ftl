@@ -74,7 +74,7 @@ start-daemon-code = 对现有应用即插即用
 start-daemon-target = 运行 Prnsd
 
 start-embedded-headline = 烧录一个 Hopspot
-start-embedded-body = 选择一块受支持的开发板，比较无线与电池的取舍，然后烧录一台专用 mesh 设备。
+start-embedded-body = 选择一块受支持的开发板，直接在浏览器中烧录，几分钟内就能拥有一台专用 mesh 设备。
 start-embedded-code = 开发板矩阵
     Web 烧录器
     本地烧录
@@ -97,7 +97,7 @@ landing-platforms-label = 运行于
 landing-platforms-cta = 查看全部 →
 platforms-title = Prns 运行在哪里
 platforms-lead = 一个引擎，四处安家。这份速览把运行时平台支持与具体 Hopspot 开发板支持分开呈现。
-platforms-board-support-link = 查看开发板支持与 bring-up →
+platforms-board-support-link = 查看 Hopspot 开发板支持与 bring-up →
 
 # 烧录 Hopspot 页面
 flash-back = 平台

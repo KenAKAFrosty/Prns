@@ -74,7 +74,7 @@ start-daemon-code = 기존 앱에 drop-in
 start-daemon-target = Prnsd 실행
 
 start-embedded-headline = Hopspot 플래시하기
-start-embedded-body = 지원 보드를 고르고 무선과 배터리 트레이드오프를 비교한 뒤 전용 메시 기기를 플래시하세요.
+start-embedded-body = 지원 보드를 고르고 브라우저에서 바로 플래시하면 몇 분 만에 전용 메시 기기가 생깁니다.
 start-embedded-code = 보드 매트릭스
     웹 플래셔
     로컬 플래시
@@ -97,7 +97,7 @@ landing-platforms-label = 실행 환경
 landing-platforms-cta = 전체 보기 →
 platforms-title = Prns가 돌아가는 곳
 platforms-lead = 하나의 엔진, 여러 보금자리. 이 요약은 런타임 플랫폼 지원과 개별 Hopspot 보드 지원을 구분해 보여 줍니다.
-platforms-board-support-link = 보드 지원과 bring-up 보기 →
+platforms-board-support-link = Hopspot 보드 지원과 bring-up 보기 →
 
 # Hopspot 플래시 페이지
 flash-back = 플랫폼

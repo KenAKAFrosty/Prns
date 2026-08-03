@@ -74,7 +74,7 @@ start-daemon-code = Drop-in pour les apps standard
 start-daemon-target = Lancer Prnsd
 
 start-embedded-headline = Flasher un Hopspot
-start-embedded-body = Choisissez une carte prise en charge, comparez les compromis radio et batterie, puis flashez un appareil mesh dédié.
+start-embedded-body = Choisissez une carte prise en charge, flashez-la directement depuis votre navigateur et obtenez un appareil mesh dédié en quelques minutes.
 start-embedded-code = Matrice des cartes
     Flasher web
     Flash local
@@ -97,7 +97,7 @@ landing-platforms-label = Tourne sur
 landing-platforms-cta = Tout voir →
 platforms-title = Où tourne Prns
 platforms-lead = Un moteur, de nombreux foyers. Cette vue rapide sépare la prise en charge des plateformes runtime de celle des cartes Hopspot spécifiques.
-platforms-board-support-link = Voir la prise en charge des cartes et le bring-up →
+platforms-board-support-link = Voir la prise en charge des cartes Hopspot et le bring-up →
 
 # Page Flasher un Hopspot
 flash-back = Plateformes

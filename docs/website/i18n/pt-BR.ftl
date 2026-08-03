@@ -74,7 +74,7 @@ start-daemon-code = Drop-in para apps padrão
 start-daemon-target = Rodar o Prnsd
 
 start-embedded-headline = Flasheie um Hopspot
-start-embedded-body = Escolha uma placa suportada, compare os trade-offs de rádio e bateria e flasheie um dispositivo mesh dedicado.
+start-embedded-body = Escolha uma placa suportada, flasheie direto do navegador e tenha um dispositivo mesh dedicado em minutos.
 start-embedded-code = Matriz de placas
     Flasher web
     Flash local
@@ -97,7 +97,7 @@ landing-platforms-label = Roda em
 landing-platforms-cta = Ver tudo →
 platforms-title = Onde o Prns roda
 platforms-lead = Um motor, muitos lares. Esta visão rápida separa o suporte de plataformas de runtime do suporte a placas Hopspot específicas.
-platforms-board-support-link = Ver suporte de placas e bring-up →
+platforms-board-support-link = Ver suporte de placas Hopspot e bring-up →
 
 # Página de Flashear um Hopspot
 flash-back = Plataformas

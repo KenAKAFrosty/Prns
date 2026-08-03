@@ -47,10 +47,10 @@ impl Group {
         match self {
             Group::Desktop => "Desktop",
             Group::Mobile => "Mobile",
-            Group::Microcontroller => "Microcontrollers",
+            Group::Microcontroller => "Microcontrollers & radios",
             Group::SingleBoardComputer => "Single-board computers",
             Group::Web => "Web & browsers",
-            Group::Server => "Servers & edge",
+            Group::Server => "Web servers & edge",
             Group::Language => "Languages & bindings",
             Group::GameEngine => "Game engines",
         }

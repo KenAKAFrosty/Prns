@@ -74,7 +74,7 @@ start-daemon-code = Drop-in for standardapper
 start-daemon-target = Kjør Prnsd
 
 start-embedded-headline = Flash en Hopspot
-start-embedded-body = Velg et støttet kort, sammenlign radio- og batteriavveininger, og flash så en dedikert mesh-enhet.
+start-embedded-body = Velg et støttet kort, flash det rett fra nettleseren, og ha en dedikert mesh-enhet på få minutter.
 start-embedded-code = Kortmatrise
     Web-flasher
     Lokal flash
@@ -97,7 +97,7 @@ landing-platforms-label = Kjører på
 landing-platforms-cta = Se alle →
 platforms-title = Hvor Prns kjører
 platforms-lead = Én motor, mange hjem. Denne hurtigvisningen skiller runtime-plattformstøtte fra støtte for spesifikke Hopspot-kort.
-platforms-board-support-link = Se kortstøtte og bring-up →
+platforms-board-support-link = Se Hopspot-kortstøtte og bring-up →
 
 # Flash en Hopspot-side
 flash-back = Plattformer

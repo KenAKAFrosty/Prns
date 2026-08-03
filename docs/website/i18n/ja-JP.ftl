@@ -74,7 +74,7 @@ start-daemon-code = 既存アプリにドロップイン
 start-daemon-target = Prnsd を実行
 
 start-embedded-headline = Hopspot をフラッシュする
-start-embedded-body = 対応ボードを選び、無線とバッテリーのトレードオフを比較して、専用メッシュデバイスをフラッシュします。
+start-embedded-body = 対応ボードを選び、ブラウザから直接フラッシュすれば、数分で専用メッシュデバイスが手に入ります。
 start-embedded-code = ボードマトリクス
     Web フラッシャー
     ローカルフラッシュ
@@ -97,7 +97,7 @@ landing-platforms-label = 動作環境
 landing-platforms-cta = すべて見る →
 platforms-title = Prns が動く場所
 platforms-lead = ひとつのエンジン、たくさんの居場所。このクイックビューは、ランタイムのプラットフォーム対応と、個々の Hopspot ボード対応を分けて示します。
-platforms-board-support-link = ボード対応と bring-up を見る →
+platforms-board-support-link = Hopspot ボード対応と bring-up を見る →
 
 # Hopspot フラッシュページ
 flash-back = プラットフォーム
