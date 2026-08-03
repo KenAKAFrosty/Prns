@@ -10,6 +10,9 @@ pub enum DomainValueError {
     /// A stable board identifier is malformed.
     #[error("board ID {0:?} must use lowercase ASCII, digits, and hyphens")]
     BoardId(String),
+    /// A UF2 bootloader identity prefix is not in canonical form.
+    #[error("UF2 Board-ID prefix {0:?} is not canonically normalized")]
+    Uf2BoardIdPrefix(String),
     /// An immutable release version is malformed.
     #[error("release version {0:?} is not an immutable path-safe identifier")]
     ReleaseVersion(String),
@@ -87,6 +90,29 @@ impl BoardId {
 }
 
 validated_string!(BoardId);
+
+/// Validated `Board-ID` prefix a UF2 bootloader publishes in `INFO_UF2.TXT`.
+#[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Uf2BoardIdPrefix(String);
+
+impl Uf2BoardIdPrefix {
+    /// Fold a bootloader-reported identity into the one spelling the catalog stores.
+    pub fn normalize(value: &str) -> String {
+        value.trim().to_ascii_lowercase().replace('_', "-")
+    }
+
+    /// Require the catalog to store an already-normalized prefix so no comparison has to
+    /// normalize the trusted side.
+    pub fn parse(value: impl Into<String>) -> Result<Self, DomainValueError> {
+        let value = value.into();
+        let canonical = !value.is_empty() && value == Self::normalize(&value);
+        canonical
+            .then_some(Self(value.clone()))
+            .ok_or(DomainValueError::Uf2BoardIdPrefix(value))
+    }
+}
+
+validated_string!(Uf2BoardIdPrefix);
 
 /// Validated immutable release version.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]

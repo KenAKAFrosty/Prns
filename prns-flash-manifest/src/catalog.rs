@@ -3,7 +3,7 @@ use thiserror::Error;
 
 use crate::{
     AfterResetStrategy, BeforeResetStrategy, BoardId, ChipFamily, PreparationProfile,
-    ProvisioningFormat, CONFIG_OFFSET, CONFIG_PASSWORD_MAX_BYTES, CONFIG_SIZE,
+    ProvisioningFormat, Uf2BoardIdPrefix, CONFIG_OFFSET, CONFIG_PASSWORD_MAX_BYTES, CONFIG_SIZE,
     CONFIG_SSID_MAX_BYTES, CONFIG_VERSION,
 };
 
@@ -157,6 +157,8 @@ pub struct Uf2Build {
     pub base_address: String,
     /// Bootloader volume label.
     pub mount_label: String,
+    /// Normalized `Board-ID` prefix this bootloader publishes in `INFO_UF2.TXT`.
+    pub board_id_prefix: String,
 }
 
 /// Catalog loading or invariant failure.
@@ -294,7 +296,8 @@ fn validate_transport(board: &BoardCatalogEntry) -> Result<(), CatalogError> {
                 || board.flash_size.is_some()
                 || PreparationProfile::parse(&board.preparation_profile)
                     != Ok(PreparationProfile::TechoUf2)
-                || build.mount_label != "TECHOBOOT"
+                || build.mount_label.trim().is_empty()
+                || Uf2BoardIdPrefix::parse(build.board_id_prefix.clone()).is_err()
                 || build.package.trim().is_empty()
                 || build.rust_target != "thumbv7em-none-eabihf"
                 || parse_hex_u32(&build.family_id).is_none()
@@ -465,6 +468,44 @@ mod tests {
             .pop();
         assert!(matches!(
             BoardCatalog::from_json(&serde_json::to_vec(&value)?),
+            Err(CatalogError::InvalidBoard { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn a_uf2_board_is_not_tied_to_one_bootloader_volume() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut catalog = board_catalog()?;
+        let board = catalog
+            .boards
+            .iter_mut()
+            .find(|board| board.transport == Transport::Uf2MassStorage)
+            .ok_or("expected a UF2 board")?;
+        let BoardBuild::Uf2(build) = &mut board.build else {
+            return Err("expected a UF2 build".into());
+        };
+        build.mount_label = "T114BOOT".to_string();
+        build.board_id_prefix = "nrf52840-heltec-t114-v".to_string();
+        catalog.validate()?;
+        Ok(())
+    }
+
+    #[test]
+    fn an_unnormalized_uf2_board_id_prefix_is_rejected() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut catalog = board_catalog()?;
+        let board = catalog
+            .boards
+            .iter_mut()
+            .find(|board| board.transport == Transport::Uf2MassStorage)
+            .ok_or("expected a UF2 board")?;
+        let BoardBuild::Uf2(build) = &mut board.build else {
+            return Err("expected a UF2 build".into());
+        };
+        build.board_id_prefix = "nRF52840_TEcho_v".to_string();
+        assert!(matches!(
+            catalog.validate(),
             Err(CatalogError::InvalidBoard { .. })
         ));
         Ok(())

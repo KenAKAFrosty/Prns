@@ -14,8 +14,8 @@ pub use domain::{
     AfterResetStrategy, BeforeResetStrategy, BoardId, ChipFamily, DomainValueError, EspFlashPart,
     EspSerialTarget, FlashFrequency, FlashMode, ImmutableArtifactPath, KeyId, PreparationProfile,
     ProvisioningFormat, ProvisioningSlot, ReleasePartRef, ReleaseTarget, ReleaseVersion,
-    Sha256Digest, Uf2Part, Uf2Target, ValidatedChannelDescriptor, ValidatedFlashManifest,
-    ValidatedReleaseInfo, ValidatedSigningInfo,
+    Sha256Digest, Uf2BoardIdPrefix, Uf2Part, Uf2Target, ValidatedChannelDescriptor,
+    ValidatedFlashManifest, ValidatedReleaseInfo, ValidatedSigningInfo,
 };
 pub use manifest::{
     ChannelDescriptor, FlashManifest, FlashPart, FlashPartKind, ManifestError,
