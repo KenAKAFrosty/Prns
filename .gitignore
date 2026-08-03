@@ -14,6 +14,7 @@ godot-smoke/
 .vscode/*
 !.vscode/extensions.json
 .wifi-env
+.env
 # Parked standalone crate builds into its own target dir
 prnsd/target/
 /prnsd/.run/
