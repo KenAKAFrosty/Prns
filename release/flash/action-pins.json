@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "verified_at": "2026-07-24",
+  "verified_at": "2026-08-03",
   "actions": {
     "NuGet/login": {
       "resolved_ref": "v1",
@@ -81,6 +81,18 @@
     "docker/setup-buildx-action": {
       "resolved_ref": "v3",
       "sha": "8d2750c68a42422c14e847fe6c8ac0403b4cbd6f"
+    },
+    "github/codeql-action/analyze": {
+      "resolved_ref": "v4.37.5",
+      "sha": "d1ba80a13dd99fba24a470575428917156a28b43"
+    },
+    "github/codeql-action/autobuild": {
+      "resolved_ref": "v4.37.5",
+      "sha": "d1ba80a13dd99fba24a470575428917156a28b43"
+    },
+    "github/codeql-action/init": {
+      "resolved_ref": "v4.37.5",
+      "sha": "d1ba80a13dd99fba24a470575428917156a28b43"
     },
     "julia-actions/setup-julia": {
       "resolved_ref": "v2.7.0",
