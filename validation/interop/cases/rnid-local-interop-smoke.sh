@@ -2,7 +2,7 @@
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-PYTHON="${RPC_SMOKE_PYTHON:-$ROOT/validation/.venv/rns-rpc-1.4.0/bin/python}"
+PYTHON="${RPC_SMOKE_PYTHON:-$ROOT/validation/.venv/rns-rpc-1.4.2/bin/python}"
 ORACLE="$ROOT/validation/interop/peers/rns_rnid_oracle.py"
 WORK="$(mktemp -d)"
 PRIVATE="$WORK/oracle.rid"
@@ -112,4 +112,4 @@ $PYTHON "$ORACLE" verify "$PRIVATE" "$CANDIDATE_MESSAGE" "$WORK/stdin.rsg"
 $BIN id -g "$WORK/generated.rid" > "$WORK/generate.out"
 [ "$(wc -c < "$WORK/generated.rid" | tr -d ' ')" -eq 64 ] || { echo "FAIL: generated identity has the wrong length"; exit 1; }
 
-echo "PASS: Prnsd id matches stock RNS 1.4.0 identity, RSG/RSM, encryption, and encoding behavior"
+echo "PASS: Prnsd id matches stock RNS 1.4.2 identity, RSG/RSM, encryption, and encoding behavior"

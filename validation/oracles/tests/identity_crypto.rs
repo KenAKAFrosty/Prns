@@ -137,7 +137,7 @@ fn stock_rns_and_prns_agree_on_identity_crypto_boundaries() {
         "cases": request_cases,
     });
     let response = support::run_json_oracle(&python, &oracle_script(), &request);
-    assert_eq!(response["version"], "1.4.0");
+    assert_eq!(response["version"], "1.4.2");
     assert_eq!(response["public"], hex(public.as_bytes()));
     assert_eq!(
         response["identity_hash"],

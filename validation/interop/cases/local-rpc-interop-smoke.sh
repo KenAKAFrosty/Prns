@@ -3,15 +3,15 @@
 #
 # Stands up a Prns-owned LocalServer plus the RPC compatibility shim, then lets
 # a stock RNS client connect and call Reticulum's own get_* methods. The active
-# lane exercises RNS 1.4.0 MessagePack; compatibility runs may select the
+# lane exercises RNS 1.4.2 MessagePack; compatibility runs may select the
 # earlier pickle dialect with RPC_SMOKE_LEGACY_PICKLE=1.
 set -u
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 source "$ROOT/validation/interop/lib/cargo-artifacts.sh"
 DAEMON="$(cargo_debug_example "$ROOT/validation/integration/Cargo.toml" local_shared_rpc_instance)"
-VENV_PY="${RPC_SMOKE_PYTHON:-$ROOT/validation/.venv/rns-rpc-1.4.0/bin/python}"
-EXPECTED_RNS_VERSION="${RPC_SMOKE_EXPECTED_RNS_VERSION:-1.4.0}"
+VENV_PY="${RPC_SMOKE_PYTHON:-$ROOT/validation/.venv/rns-rpc-1.4.2/bin/python}"
+EXPECTED_RNS_VERSION="${RPC_SMOKE_EXPECTED_RNS_VERSION:-1.4.2}"
 CLIENT="$ROOT/validation/interop/peers/rns_shared_rpc_client.py"
 RPC_KEY="${PRNS_RPC_KEY:-$(printf '5a%.0s' $(seq 1 32))}"
 DAEMON_LOG="$(mktemp)"

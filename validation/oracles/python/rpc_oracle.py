@@ -10,7 +10,7 @@ import RNS
 import RNS.vendor.umsgpack as msgpack
 
 
-EXPECTED_RNS_VERSION = "1.4.0"
+EXPECTED_RNS_VERSION = "1.4.2"
 RPC_FRAME_MAX_LENGTH = 16_777_216
 
 

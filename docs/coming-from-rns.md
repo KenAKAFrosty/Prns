@@ -1,6 +1,6 @@
 # Coming from RNS
 
-Your config, your identity file, and your apps carry over unchanged. The interoperability suite proves it against real RNS 1.4.0 nodes in CI. Everything below is what's new.
+Your config, your identity file, and your apps carry over unchanged. The interoperability suite proves it against real RNS 1.4.2 nodes in CI. Everything below is what's new.
 
 ## Brand-new interfaces
 
@@ -124,5 +124,5 @@ The display name deliberately lives outside the policy file. `prnsd nnpages rena
 
 ## Verify it yourself
 
-- [Run the interoperability suite](validation.md): real stock RNS 1.4.0 nodes against Prns nodes, on your own machine, traffic checked byte for byte.
+- [Run the interoperability suite](validation.md): real stock RNS 1.4.2 nodes against Prns nodes, on your own machine, traffic checked byte for byte.
 - [Read the benchmark methodology](../benchmarks/README.md): how runs are calibrated, qualified, and published before any number becomes a claim.

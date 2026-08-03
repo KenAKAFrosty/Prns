@@ -8,13 +8,13 @@ fn oracle_script() -> PathBuf {
 }
 
 #[test]
-fn stock_rns_1_4_0_skips_prns_owned_types_and_aliases() {
+fn stock_rns_1_4_2_skips_prns_owned_types_and_aliases() {
     let python = support::required_python("SMOKE_PYTHON");
 
     let output = Command::new(python)
         .arg(oracle_script())
         .output()
-        .expect("spawn RNS 1.4.0 Prns interface oracle");
+        .expect("spawn RNS 1.4.2 Prns interface oracle");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     let logs = format!("{stdout}\n{stderr}");
@@ -34,7 +34,7 @@ fn stock_rns_1_4_0_skips_prns_owned_types_and_aliases() {
         .find_map(|line| line.strip_prefix("PRNS_STOCK_SKIP_RESULT="))
         .expect("oracle emits its result marker");
     let result: serde_json::Value = serde_json::from_str(result).expect("oracle emits JSON");
-    assert_eq!(result["version"], "1.4.0");
+    assert_eq!(result["version"], "1.4.2");
     assert_eq!(result["discovery_default_stamp_cost"], 16);
     assert_eq!(result["registered"], serde_json::json!([]));
     assert_eq!(

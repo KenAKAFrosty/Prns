@@ -3,7 +3,7 @@
 >Coming from RNS
 >>
 
-Your config, your identity file, and your apps carry over unchanged. The interoperability suite proves it against real RNS 1.4.0 nodes in CI. Everything below is what's new.
+Your config, your identity file, and your apps carry over unchanged. The interoperability suite proves it against real RNS 1.4.2 nodes in CI. Everything below is what's new.
 
 >>`!Brand-new interfaces`!
 

@@ -6,14 +6,14 @@
 # instance can keep running alongside validation.
 #
 # The Python interpreter is $SMOKE_PYTHON if set (CI points it at a uv-built venv with the pinned rns
-# from benchmarks/reference/requirements.txt), otherwise the local reference venv. Needs a free
+# from validation/oracles/requirements.txt), otherwise the local reference venv. Needs a free
 # loopback ports. Prints PASS or FAIL and exits accordingly.
 set -u
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 source "$ROOT/validation/interop/lib/cargo-artifacts.sh"
 PRNSD="$(cargo_debug_binary "$ROOT/prnsd/Cargo.toml" prnsd)"
-VENV_PY="${SMOKE_PYTHON:-$ROOT/benchmarks/reference/.venv/bin/python}"
+VENV_PY="${SMOKE_PYTHON:-$ROOT/validation/.venv/rns-1.4.2/bin/python}"
 STOCK_DIR="$(mktemp -d)"
 PRNS_DIR="$(mktemp -d)"
 STOCK_LOG="$(mktemp)"

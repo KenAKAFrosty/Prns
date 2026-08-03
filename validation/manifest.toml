@@ -10,15 +10,15 @@ nightly = "nightly-2025-11-21"
 
 [interpreters.smoke]
 environment = "SMOKE_PYTHON"
-venv = "validation/.venv/rns-1.4.0"
-requirements = "benchmarks/reference/requirements.txt"
-version = "1.4.0"
+venv = "validation/.venv/rns-1.4.2"
+requirements = "validation/oracles/requirements.txt"
+version = "1.4.2"
 
 [interpreters.rpc]
 environment = "RPC_SMOKE_PYTHON"
-venv = "validation/.venv/rns-rpc-1.4.0"
-requirements = "benchmarks/reference/requirements.txt"
-version = "1.4.0"
+venv = "validation/.venv/rns-rpc-1.4.2"
+requirements = "validation/oracles/requirements.txt"
+version = "1.4.2"
 
 [registry]
 cargo_manifests = [
@@ -297,7 +297,7 @@ platform = "any"
 toolchain = "stable"
 timeout_seconds = 60
 command = ["python3", "validation/run.py", "verify"]
-inputs = ["validation/manifest.toml", "validation/run.py", "validation/evidence-schema.json", "validation/BASELINE.md", "validation/mutation/triage.toml", "validation/oracles/tests/support/mod.rs"]
+inputs = ["validation/manifest.toml", "validation/run.py", "validation/evidence-schema.json", "validation/BASELINE.md", "validation/mutation/triage.toml", "validation/oracles/requirements.lock", "validation/oracles/requirements.txt", "validation/oracles/tests/support/mod.rs"]
 artifacts = "validation-artifacts/results/registry"
 
 [[suite]]

@@ -14,7 +14,7 @@ use super::configuration::LoadedConfiguration;
 pub async fn run(args: RnstatusArgs) -> Result<(), String> {
     if args.version {
         println!(
-            "prnsd status {} (RNS 1.4.0 compatibility)",
+            "prnsd status {} (RNS 1.4.2 compatibility)",
             env!("CARGO_PKG_VERSION")
         );
         return Ok(());

@@ -134,7 +134,7 @@ Set `enable_remote_management = Yes` to expose the stock
 `remote_management_allowed` must be a 32-character hexadecimal identity hash. Both handlers require
 the peer to identify over the link as one of those identities; an empty list permits nobody. The
 service is owned only by a standalone daemon or the process that wins shared-instance election. A
-process that joins an existing shared instance does not register it. Stock RNS 1.4.0 `rnstatus -R`
+process that joins an existing shared instance does not register it. Stock RNS 1.4.2 `rnstatus -R`
 and the table/rate forms of `rnpath -R` use these endpoints.
 
 Set `respond_to_probes = Yes` to expose the stock `rnstransport.probe` destination. It refuses link
@@ -212,7 +212,7 @@ back up the Prns storage containing them.
 Every enabled interface applies `mode`, `outgoing`, `bitrate`, announce cap and rate controls, IFAC
 network name/passphrase/size, ingress and egress controls, `recursive_prs`,
 `announces_from_internal`, `announces_to_internal`, and the common IC/EC tuning values.
-Interface-mode behavior follows RNS 1.4.0. `outgoing = No` disables egress while retaining ingress.
+Interface-mode behavior follows RNS 1.4.2. `outgoing = No` disables egress while retaining ingress.
 
 `gravity` is a signed 64-bit routing preference. An interface inherits `default_gravity` from
 `[reticulum]` when it has no explicit value, and both default to zero. After an announce has passed
@@ -230,9 +230,9 @@ Weave uses stock's 250 kbps estimate and fixed 1024-byte hardware MTU.
 
 ### Interface modes
 
-These descriptions and the announce matrix follow the RNS 1.4.0
-[`Interface` policy](https://github.com/markqvist/Reticulum/blob/1.4.0/RNS/Interfaces/Interface.py)
-and [`Transport` implementation](https://github.com/markqvist/Reticulum/blob/1.4.0/RNS/Transport.py).
+These descriptions and the announce matrix follow the RNS 1.4.2
+[`Interface` policy](https://github.com/markqvist/Reticulum/blob/1.4.2/RNS/Interfaces/Interface.py)
+and [`Transport` implementation](https://github.com/markqvist/Reticulum/blob/1.4.2/RNS/Transport.py).
 
 Use the canonical RNS names and `mode` configuration values below. Prns also accepts
 `interface_mode` as a compatibility key, but new configuration should use `mode`.
@@ -240,7 +240,7 @@ Use the canonical RNS names and `mode` configuration values below. Prns also acc
 | Canonical mode | Configuration | Meaning |
 | --- | --- | --- |
 | Full | `full` | The default: ordinary announce propagation and seven-day paths. It does not recursively search for unknown paths unless `recursive_prs = Yes`. |
-| Point-to-Point | `pointtopoint` or `ptp` | Behaviorally identical to Full in RNS 1.4.0. It identifies the intended topology but imposes no additional routing restriction. |
+| Point-to-Point | `pointtopoint` or `ptp` | Behaviorally identical to Full in RNS 1.4.2. It identifies the intended topology but imposes no additional routing restriction. |
 | Access Point | `access_point` or `ap` | Suppresses automatic announce broadcasts on the interface, recursively resolves paths for attached clients, and expires learned paths after one day. |
 | Roaming | `roaming` | Serves a physically mobile segment. It uses six-hour paths, recursively resolves unknown paths, waits an additional 1.5 seconds before answering path requests, refuses to answer with a route learned on the same Roaming interface, and propagates announces conservatively. |
 | Boundary | `boundary` | Connects a significantly different or external segment. It controls outbound announce propagation and failed-path recovery; it does not block inbound announce learning. |
@@ -271,7 +271,7 @@ substitute for an IFAC network name and passphrase. In particular, Boundary inte
 valid inbound announces; the mode controls where those announces can be propagated afterward.
 `recursive_prs = Yes` enables recursive unknown-path discovery on any mode.
 
-RNS 1.4.0 preserves an explicitly configured Gateway, Access Point, or Internal mode when interface
+RNS 1.4.2 preserves an explicitly configured Gateway, Access Point, or Internal mode when interface
 discovery is enabled. Other discoverable radio interfaces are automatically configured as Access
 Point, while other discoverable interfaces are configured as Gateway.
 
@@ -302,7 +302,7 @@ remains a local serial-device interface.
 
 ## Prns-owned host interface backends
 
-Prnsd also accepts these canonical interface types, which stock RNS 1.4.0 does not implement:
+Prnsd also accepts these canonical interface types, which stock RNS 1.4.2 does not implement:
 
 | Canonical type | Applied configuration |
 | --- | --- |
@@ -347,7 +347,7 @@ running. Auto Wi-Fi continues to use stock `AutoInterface`. Wi-Fi Direct and Wi-
 have accepted config types because Prnsd cannot construct their required platform adapters.
 
 RNode Bluetooth LE uses the stock Nordic UART Service transport and accepts the same three target
-forms as RNS 1.4.0:
+forms as RNS 1.4.2:
 
 ```ini
 port = ble://

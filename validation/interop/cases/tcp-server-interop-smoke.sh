@@ -17,7 +17,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 source "$ROOT/validation/interop/lib/cargo-artifacts.sh"
 HOST="$(cargo_debug_example "$ROOT/validation/integration/Cargo.toml" tcp_server_host)"
-VENV_PY="${SMOKE_PYTHON:-$ROOT/benchmarks/reference/.venv/bin/python}"
+VENV_PY="${SMOKE_PYTHON:-$ROOT/validation/.venv/rns-1.4.2/bin/python}"
 CLIENT="$ROOT/validation/interop/peers/rns_tcp_client_peer.py"
 HOST_LOG="$(mktemp)"
 CLIENT_LOG="$(mktemp)"

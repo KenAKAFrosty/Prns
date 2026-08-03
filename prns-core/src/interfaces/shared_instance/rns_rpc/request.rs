@@ -1603,7 +1603,7 @@ mod tests {
     }
 
     #[test]
-    fn decodes_every_rns_1_4_0_operation() {
+    fn decodes_every_rns_1_4_2_operation() {
         let cases = [
             request(vec![("get", Value::from("interface_stats"))]),
             request(vec![

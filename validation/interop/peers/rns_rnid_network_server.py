@@ -4,7 +4,7 @@ import time
 
 import RNS
 
-EXPECTED_RNS_VERSION = "1.4.0"
+EXPECTED_RNS_VERSION = "1.4.2"
 LOOKUP_PRIVATE = bytes([0x33]) * 32 + bytes([0x44]) * 32
 ANNOUNCE_PRIVATE = bytes([0x55]) * 32 + bytes([0x66]) * 32
 

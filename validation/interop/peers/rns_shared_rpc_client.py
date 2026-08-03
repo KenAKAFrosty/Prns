@@ -2,7 +2,7 @@
 """Stock-RNS control-RPC oracle for a Prns shared instance.
 
 This intentionally drives Reticulum's public methods rather than hand-crafting
-frames. The active RNS 1.4.0 lane uses MessagePack; an explicit compatibility
+frames. The active RNS 1.4.2 lane uses MessagePack; an explicit compatibility
 lane can select the older pickle payload while exercising the same methods.
 """
 
@@ -19,7 +19,7 @@ import time
 import RNS
 from RNS.vendor import umsgpack as mp
 
-EXPECTED_RNS_VERSION = os.environ.get("RPC_SMOKE_EXPECTED_RNS_VERSION", "1.4.0")
+EXPECTED_RNS_VERSION = os.environ.get("RPC_SMOKE_EXPECTED_RNS_VERSION", "1.4.2")
 LEGACY_PICKLE = os.environ.get("RPC_SMOKE_LEGACY_PICKLE") == "1"
 RPC_FRAME_MAX_LENGTH = 16_777_216
 EXPECTED_RPC_SURFACE = frozenset(

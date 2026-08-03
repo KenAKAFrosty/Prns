@@ -2,7 +2,7 @@
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-PYTHON="${RPC_SMOKE_PYTHON:-$ROOT/validation/.venv/rns-rpc-1.4.0/bin/python}"
+PYTHON="${RPC_SMOKE_PYTHON:-$ROOT/validation/.venv/rns-rpc-1.4.2/bin/python}"
 RNX="$(dirname "$PYTHON")/rnx"
 ORACLE="$ROOT/validation/interop/peers/rns_rnx_oracle.py"
 BIN="$ROOT/prnsd/target/debug/prnsd"
@@ -101,4 +101,4 @@ DENIED_STATUS=$?
 set -e
 [ "$DENIED_STATUS" -ne 0 ] || { echo "FAIL: unlisted stock x client was accepted"; cat "$WORK/denied.out"; exit 1; }
 
-echo "PASS: Prnsd x exchanges authenticated execution requests and results with stock RNS 1.4.0 rnx"
+echo "PASS: Prnsd x exchanges authenticated execution requests and results with stock RNS 1.4.2 rnx"
