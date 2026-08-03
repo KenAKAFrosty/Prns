@@ -634,6 +634,30 @@ test("browser support is feature-detected and T-Echo stays on the signed UF2 rou
   await expect(page.getByText(/device-side verification/i)).toHaveCount(0);
 });
 
+for (const androidPlatform of ["client-hints", "legacy-ua"]) {
+  test(`Android ${androidPlatform} Web Serial explains the wired dead end and stays fail closed`, async ({
+    page,
+  }) => {
+    await installFakeBridge(page, { supported: true, androidPlatform });
+    await selectBoard(page, "xiao-esp32-c6");
+
+    await expect(page.locator("#flash-status")).toContainText(
+      /Bluetooth serial devices only.*never appears in the port picker/i,
+    );
+    await expect(page.getByText(/only a limited set of devices provides/i)).toBeVisible();
+    await page.getByRole("checkbox").check();
+    await expect(page.getByRole("button", { name: "Prepare and verify release" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Connect and flash" })).toBeDisabled();
+    expect(await page.evaluate(() => window.__prnsFlashTest.state.readyCount)).toBe(0);
+
+    await page.goto("/flash/t-echo");
+    await appReady(page);
+    await fixtureBuildReady(page);
+    await page.getByRole("checkbox").check();
+    await expect(page.getByRole("button", { name: "Prepare and verify release" })).toBeEnabled();
+  });
+}
+
 test("a Web Serial detection failure keeps ESP preparation and connection fail closed", async ({
   page,
 }) => {

@@ -31,16 +31,40 @@ pub(super) enum DestructiveConfirmation {
     Confirmed,
 }
 
+pub(super) const WEB_SERIAL_PROBE_SUPPORTED: &str = "supported";
+pub(super) const WEB_SERIAL_PROBE_ANDROID_BLUETOOTH_ONLY: &str = "android-bluetooth-only";
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum WebSerialCapability {
     Checking,
     Supported,
+    AndroidBluetoothOnly,
     Unavailable,
 }
 
 impl WebSerialCapability {
     pub(super) const fn permits_esp_flash(self) -> bool {
         matches!(self, Self::Supported)
+    }
+
+    pub(super) fn from_probe(probe: &str) -> Self {
+        match probe {
+            WEB_SERIAL_PROBE_SUPPORTED => Self::Supported,
+            WEB_SERIAL_PROBE_ANDROID_BLUETOOTH_ONLY => Self::AndroidBluetoothOnly,
+            _ => Self::Unavailable,
+        }
+    }
+
+    pub(super) const fn blocked_explanation(self) -> Option<&'static str> {
+        match self {
+            Self::Checking | Self::Supported => None,
+            Self::AndroidBluetoothOnly => Some(
+                "Web Serial on this Android browser reaches Bluetooth serial devices only, so a USB-connected board never appears in the port picker. Use desktop Chrome or Edge, or the standalone CLI.",
+            ),
+            Self::Unavailable => Some(
+                "Web Serial is unavailable in this browser or context. Open this page in current Chrome or Edge over HTTPS, or use the standalone CLI.",
+            ),
+        }
     }
 }
 
@@ -306,6 +330,7 @@ mod tests {
     #[test]
     fn web_serial_capability_fails_closed_until_support_is_proven() {
         assert!(!WebSerialCapability::Checking.permits_esp_flash());
+        assert!(!WebSerialCapability::AndroidBluetoothOnly.permits_esp_flash());
         assert!(!WebSerialCapability::Unavailable.permits_esp_flash());
         assert!(WebSerialCapability::Supported.permits_esp_flash());
     }
@@ -320,5 +345,48 @@ mod tests {
         assert!(WifiAction::for_install_mode(InstallMode::EraseAll) == WifiAction::Clear);
         assert_eq!(InstallMode::PreserveData.wire(), "preserve-data");
         assert_eq!(InstallMode::EraseAll.wire(), "erase-all");
+    }
+
+    #[test]
+    fn web_serial_probe_spellings_parse_and_unknown_probes_fail_closed() {
+        assert!(matches!(
+            WebSerialCapability::from_probe(WEB_SERIAL_PROBE_SUPPORTED),
+            WebSerialCapability::Supported
+        ));
+        assert!(matches!(
+            WebSerialCapability::from_probe(WEB_SERIAL_PROBE_ANDROID_BLUETOOTH_ONLY),
+            WebSerialCapability::AndroidBluetoothOnly
+        ));
+        assert!(matches!(
+            WebSerialCapability::from_probe("invented"),
+            WebSerialCapability::Unavailable
+        ));
+        assert!(matches!(
+            WebSerialCapability::from_probe(""),
+            WebSerialCapability::Unavailable
+        ));
+    }
+
+    #[test]
+    fn blocked_capabilities_explain_themselves_and_working_states_stay_silent() {
+        assert!(WebSerialCapability::Checking
+            .blocked_explanation()
+            .is_none());
+        assert!(WebSerialCapability::Supported
+            .blocked_explanation()
+            .is_none());
+
+        let android = WebSerialCapability::AndroidBluetoothOnly
+            .blocked_explanation()
+            .expect("the Android capability explains itself");
+        assert!(android.contains("Bluetooth serial devices only"));
+        assert!(android.contains("USB"));
+        assert!(android.contains("CLI"));
+
+        let unavailable = WebSerialCapability::Unavailable
+            .blocked_explanation()
+            .expect("the unavailable capability explains itself");
+        assert!(unavailable.contains("Chrome or Edge"));
+        assert!(unavailable.contains("CLI"));
     }
 }
