@@ -113,11 +113,6 @@ benchmarks-lead = Jede Zahl unten stammt aus den veröffentlichten Ergebnissen i
 footer-license = Open Source. MIT / Apache 2.0.
 footer-trademarks = Logos, Marken und Produktbilder Dritter gehören ihren jeweiligen Inhabern. Sie werden nur gezeigt, um Plattformen, Hardware und Kompatibilitätsziele zu identifizieren. Eine Billigung wird weder beansprucht noch impliziert.
 
-# Contributing page
-contributing-kicker = Die Messlatte
-contributing-title = Mitwirken
-contributing-lead = Wie du beiträgst — was wir wertschätzen, welchen Konventionen dein Code folgt und welchen Standard jede Änderung erfüllt. Für menschliche und automatisierte Beitragende gleichermaßen.
-
 # 404
 not-found-title = Hier ist noch nichts.
 not-found-cta = Zurück zur Startseite

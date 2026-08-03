@@ -113,11 +113,6 @@ benchmarks-lead = 아래의 모든 수치는 repo에 공개된 결과에서 나�
 footer-license = 오픈 소스. MIT / Apache 2.0.
 footer-trademarks = 제3자 로고, 상표, 제품 이미지는 각 소유자에게 속합니다. 이는 플랫폼, 하드웨어, 호환성 대상을 식별하기 위해서만 표시됩니다. 보증이나 승인을 주장하거나 암시하지 않습니다.
 
-# 기여 페이지
-contributing-kicker = 기준선
-contributing-title = 기여
-contributing-lead = 기여하는 방법 — 우리가 중요하게 여기는 것, 코드가 따르는 관례, 모든 변경이 통과해야 하는 기준입니다. 사람 기여자와 자동화된 기여자 모두에게 적용됩니다.
-
 # 404
 not-found-title = 여기는 아직 비어 있습니다.
 not-found-cta = 홈으로 돌아가기

@@ -113,11 +113,6 @@ benchmarks-lead = 以下の数値はすべて、repo に公開された結果に
 footer-license = オープンソース。MIT / Apache 2.0。
 footer-trademarks = 第三者のロゴ、商標、製品画像は、それぞれの所有者に帰属します。これらはプラットフォーム、ハードウェア、互換性対象を識別するためだけに表示しています。推奨や承認を主張または示唆するものではありません。
 
-# 貢献ページ
-contributing-kicker = 基準
-contributing-title = 貢献
-contributing-lead = 貢献のしかた — 私たちが大切にしていること、コードが従う規約、そしてすべての変更が満たす基準。人間の貢献者にも自動化された貢献者にも同じです。
-
 # 404
 not-found-title = ここにはまだ何もありません。
 not-found-cta = ホームへ戻る

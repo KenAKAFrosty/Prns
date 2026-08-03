@@ -113,11 +113,6 @@ benchmarks-lead = 下面的每个数字都来自 repo 中公开发布的结果�
 footer-license = 开源。MIT / Apache 2.0。
 footer-trademarks = 第三方标志、商标和产品图片归各自所有者所有。它们仅用于标识平台、硬件和兼容性目标。不主张也不暗示任何认可或背书。
 
-# 贡献页面
-contributing-kicker = 门槛
-contributing-title = 贡献
-contributing-lead = 如何贡献——我们重视什么、你的代码遵循哪些约定，以及每个改动需要达到的标准。人类贡献者和自动化贡献者一视同仁。
-
 # 404
 not-found-title = 这里还什么都没有。
 not-found-cta = 回到首页

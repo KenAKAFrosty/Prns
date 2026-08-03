@@ -1,15 +1,11 @@
 mod benchmarks;
-mod contributing;
 mod flash;
-mod guides;
 mod landing;
 mod not_found;
 mod platforms;
 
 pub use benchmarks::{BenchmarksHostPage, BenchmarksPage};
-pub use contributing::ContributingPage;
 pub use flash::{FlashBoardPage, FlashPage};
-pub use guides::GuidesIndex;
 pub use landing::Landing;
 pub use not_found::NotFound;
 pub use platforms::PlatformsPage;

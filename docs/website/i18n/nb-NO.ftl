@@ -113,11 +113,6 @@ benchmarks-lead = Hvert tall nedenfor kommer fra de publiserte resultatene i rep
 footer-license = Åpen kildekode. MIT / Apache 2.0.
 footer-trademarks = Tredjepartslogoer, varemerker og produktbilder tilhører sine respektive eiere. De vises bare for å identifisere plattformer, maskinvare og kompatibilitetsmål. Ingen godkjenning hevdes eller antydes.
 
-# Bidrag-side
-contributing-kicker = Lista
-contributing-title = Bidra
-contributing-lead = Slik bidrar du — hva vi verdsetter, konvensjonene koden din følger, og standarden hver endring må klare. For både menneskelige og automatiserte bidragsytere.
-
 # 404
 not-found-title = Her er det ingenting ennå.
 not-found-cta = Tilbake til forsiden
