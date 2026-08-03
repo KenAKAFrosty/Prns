@@ -473,8 +473,82 @@ where
     Ok(observation)
 }
 
-/// The signal the app holds to reconfigure a running radio: it sends a whole new [`RadioProfile`] and the worker rebuilds the silicon's params from it.
-pub type LoRaControl = Signal<CriticalSectionRawMutex, RadioProfile>;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoRaApplyOutcome {
+    Applied,
+    Rejected,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LoRaApplyRequest {
+    id: u32,
+    profile: RadioProfile,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LoRaApplyResult {
+    id: u32,
+    outcome: LoRaApplyOutcome,
+}
+
+/// The app-side control for reconfiguring a running radio.
+///
+/// [`signal`](Self::signal) preserves the original fire-and-forget behavior. An app that must
+/// persist only an accepted profile uses [`apply`](Self::apply) and awaits the matching worker
+/// result. Callers serialize awaited requests; Hopspot's UI event loop naturally does so.
+pub struct LoRaControl {
+    requests: Signal<CriticalSectionRawMutex, LoRaApplyRequest>,
+    results: Signal<CriticalSectionRawMutex, LoRaApplyResult>,
+    next_id: AtomicU32,
+}
+
+impl LoRaControl {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            requests: Signal::new(),
+            results: Signal::new(),
+            next_id: AtomicU32::new(1),
+        }
+    }
+
+    pub fn signal(&self, profile: RadioProfile) {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        self.requests.signal(LoRaApplyRequest { id, profile });
+    }
+
+    pub async fn apply(&self, profile: RadioProfile) -> LoRaApplyOutcome {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        self.requests.signal(LoRaApplyRequest { id, profile });
+        loop {
+            let result = self.results.wait().await;
+            if result.id == id {
+                return result.outcome;
+            }
+        }
+    }
+
+    async fn wait(&self) -> LoRaApplyRequest {
+        self.requests.wait().await
+    }
+
+    fn complete(&self, id: u32, applied: bool) {
+        self.results.signal(LoRaApplyResult {
+            id,
+            outcome: if applied {
+                LoRaApplyOutcome::Applied
+            } else {
+                LoRaApplyOutcome::Rejected
+            },
+        });
+    }
+}
+
+impl Default for LoRaControl {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 fn sx126x_config(profile: &RadioProfile) -> sx126x::RadioConfig {
     let Modulation::Lora {
@@ -959,10 +1033,10 @@ where
                 )
                 .await
                 {
-                    Either5::First(new_profile) => {
+                    Either5::First(request) => {
                         let changed = apply_profile(
                             &mut radio,
-                            new_profile,
+                            request.profile,
                             airtime_policy,
                             &mut profile,
                             &mut duty_cycle,
@@ -987,6 +1061,7 @@ where
                             duty_was_held = false;
                             reported_deferrals = 0;
                         }
+                        control.complete(request.id, changed);
                     }
                     Either5::Second(()) => continue,
                     Either5::Third(Ok(event)) => {
@@ -1316,10 +1391,10 @@ where
                 )
                 .await
                 {
-                    Either4::First(new_profile) => {
+                    Either4::First(request) => {
                         let changed = apply_profile(
                             &mut radio,
-                            new_profile,
+                            request.profile,
                             airtime_policy,
                             &mut profile,
                             &mut duty_cycle,
@@ -1336,6 +1411,7 @@ where
                             service_age.reset(profile);
                             continuation = false;
                         }
+                        control.complete(request.id, changed);
                     }
                     Either4::Second(()) => continue,
                     Either4::Third(Ok(event)) => {
@@ -1407,10 +1483,47 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::future::Future;
+    use core::task::{Context, Poll};
+    use embassy_futures::join::join;
     use prns_core::interfaces::lora::{PreambleSymbols, TxPower, DEFAULT_915_PROFILE};
+    use std::boxed::Box;
+    use std::task::Waker;
+
+    fn block_on<F: Future>(future: F) -> F::Output {
+        let mut context = Context::from_waker(Waker::noop());
+        let mut future = Box::pin(future);
+        loop {
+            match future.as_mut().poll(&mut context) {
+                Poll::Ready(output) => return output,
+                Poll::Pending => std::thread::yield_now(),
+            }
+        }
+    }
 
     fn id_of(profile: &RadioProfile) -> InterfaceId {
         InterfaceId::from_channel_tag(InterfaceKind::LoRa, &lora::channel_tag(profile))
+    }
+
+    #[test]
+    fn awaited_control_returns_only_the_matching_radio_result() {
+        let control = LoRaControl::new();
+        control.signal(DEFAULT_915_PROFILE);
+        block_on(async {
+            let stale = control.wait().await;
+            control.complete(stale.id, true);
+        });
+
+        let requested = RadioProfile {
+            tx_power: TxPower::new(12),
+            ..DEFAULT_915_PROFILE
+        };
+        let (outcome, ()) = block_on(join(control.apply(requested), async {
+            let request = control.wait().await;
+            assert_eq!(request.profile, requested);
+            control.complete(request.id, false);
+        }));
+        assert_eq!(outcome, LoRaApplyOutcome::Rejected);
     }
 
     #[test]

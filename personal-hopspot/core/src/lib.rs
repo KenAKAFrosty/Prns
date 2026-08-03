@@ -3,19 +3,27 @@
 
 #[cfg(feature = "host")]
 extern crate std;
+#[cfg(all(test, not(feature = "host")))]
+extern crate std;
 
 mod battery;
 mod destinations;
 mod flash_identity;
+mod flash_layout;
 mod identity;
 mod mobile;
 pub mod node_pages;
+mod radio_profile_store;
 mod screen;
 
 pub use battery::{BatteryGauge, BatteryPercent, BatterySource, BatteryState, NoBattery};
 pub use destinations::{HopspotDestinationHashes, HopspotDestinationSet};
 pub use flash_identity::{
     bootstrap_flash_ble_identity, bootstrap_flash_node_identity, FlashIdentityError,
+};
+pub use flash_layout::{
+    HopspotS3FlashLayout, HOPSPOT_FLASH_PAGE_BYTES, S3_16_MIB_FLASH_LAYOUT, S3_8_MIB_FLASH_LAYOUT,
+    T_ECHO_JOURNAL_LAYOUT, T_ECHO_MIN_ARENA_BYTES, T_ECHO_RADIO_PROFILE_PAGES,
 };
 #[cfg(feature = "host")]
 pub use identity::{
@@ -31,12 +39,15 @@ pub use mobile::{
     MobileInputCode, MobileRgbaFrameBuffer, MOBILE_DARK_RGBA, MOBILE_LIT_RGBA, MOBILE_PANEL_HEIGHT,
     MOBILE_PANEL_WIDTH, MOBILE_PIXEL_COUNT, MOBILE_RGBA_BYTES,
 };
+pub use radio_profile_store::{
+    LoadedRadioProfile, RadioProfileLoadNotice, RadioProfileStore, RadioProfileStoreError,
+};
 pub use screen::{
-    card_label, render, splash, tcp_card_label, AccessPointState, Card, CardActivityTracker,
-    CardKind, CardLabel, DisplayPowerControl, EinkRefresh, EinkRefreshPolicy, EinkRefreshUrgency,
-    InputEvent, InterfaceMenuDetails, Liveness, LoRaSpectrumMenuDetails, LocalDocsAccess,
-    RenderFrame, ScreenContent, SplashContent, UiAction, UiConfiguration, UiNotice, UiState,
-    WifiNetworkStatus,
+    apply_and_persist_radio_profile, card_label, render, splash, tcp_card_label, AccessPointState,
+    Card, CardActivityTracker, CardKind, CardLabel, DisplayPowerControl, EinkRefresh,
+    EinkRefreshPolicy, EinkRefreshUrgency, InputEvent, InterfaceMenuDetails, Liveness,
+    LoRaSpectrumMenuDetails, LocalDocsAccess, RadioProfileChangeResult, RenderFrame, ScreenContent,
+    SplashContent, UiAction, UiConfiguration, UiNotice, UiState, WifiNetworkStatus,
 };
 
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceSnapshot, Membership};

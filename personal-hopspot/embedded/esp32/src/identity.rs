@@ -52,7 +52,7 @@ pub fn startup_notice(
 
 pub fn bootstrap_node_identity() -> IdentityBootstrap<HopspotNodeIdentity, Error> {
     let mut vault = FlashVault::<_, VAULT_SLOTS>::new(
-        EspRomFlash::<IDENTITY_FLASH_END>::new(),
+        EspRomFlash::new(IDENTITY_FLASH_END),
         NODE_IDENTITY_FLASH_OFFSET,
     );
     bootstrap_flash_node_identity(&mut vault, &mut hardware_entropy)
@@ -60,7 +60,7 @@ pub fn bootstrap_node_identity() -> IdentityBootstrap<HopspotNodeIdentity, Error
 
 pub fn bootstrap_ble_identity() -> IdentityBootstrap<BleIdentity, Error> {
     let mut vault = FlashVault::<_, VAULT_SLOTS>::new(
-        EspRomFlash::<IDENTITY_FLASH_END>::new(),
+        EspRomFlash::new(IDENTITY_FLASH_END),
         BLE_IDENTITY_FLASH_OFFSET,
     );
     bootstrap_flash_ble_identity(&mut vault, &mut hardware_entropy)

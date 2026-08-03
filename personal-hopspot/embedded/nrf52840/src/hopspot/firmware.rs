@@ -3,6 +3,8 @@ use embassy_futures::join::{join, join3, join5};
 use embassy_futures::select::{select3, Either3};
 use embassy_nrf::gpio::{Input, Output};
 use embassy_nrf::spim::Spim;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::mutex::Mutex;
 use embassy_time::{Delay, Duration, Timer};
 use embassy_usb::{Builder, Config as UsbConfig};
 use static_cell::{ConstStaticCell, StaticCell};
@@ -22,11 +24,13 @@ use personal_rns::interfaces::lora::{AirtimePolicy, DEFAULT_915_PROFILE};
 use personal_rns::interfaces::usb_auto::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
 use personal_rns::interfaces::{ConnectionState, InterfaceStatus};
 use personal_rns::lora::{
-    LoRaInterface, LoRaInterfaceInput, LoRaSpectrumStatus, LORA_TX_QUEUE_BYTES,
+    LoRaApplyOutcome, LoRaInterface, LoRaInterfaceInput, LoRaSpectrumStatus, LORA_TX_QUEUE_BYTES,
 };
 use personal_rns::manifold::embassy::{EmbassyHost, EmbassyInterfaceStatus};
 use personal_rns::manifold::interface_seam::Interface;
-use personal_rns::runtime::{Fleet, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe};
+use personal_rns::runtime::{
+    Fleet, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe, SharedNorFlash,
+};
 use personal_rns::storage::StorageLayout;
 use personal_rns::usb_auto::{UsbAutoDevice, UsbAutoDeviceInput};
 use personal_rns::usb_auto::{WebUsbAutoClass, WebUsbAutoState, WEBUSB_AUTO_PACKET_SIZE};
@@ -118,6 +122,23 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
     let sd: &'static Softdevice = sd;
     spawner.spawn(softdevice_task(sd, vbus).expect("softdevice task fits"));
     let flash = Flash::take(sd);
+    static FLASH_STORAGE: StaticCell<Mutex<CriticalSectionRawMutex, Flash>> = StaticCell::new();
+    let flash = FLASH_STORAGE.init(Mutex::new(flash));
+    let shared_flash = SharedNorFlash::new(flash, 1024 * 1024);
+    let mut lora_profile_store =
+        hopspot::RadioProfileStore::new(shared_flash, hopspot::T_ECHO_RADIO_PROFILE_PAGES);
+    let loaded_lora_profile = match lora_profile_store.load(DEFAULT_915_PROFILE).await {
+        Ok(loaded) => loaded,
+        Err(_) => hopspot::LoadedRadioProfile {
+            profile: DEFAULT_915_PROFILE,
+            follows_default: true,
+            notice: Some(hopspot::RadioProfileLoadNotice::Reset),
+        },
+    };
+    let profile_startup_notice = loaded_lora_profile.notice.map(|notice| match notice {
+        hopspot::RadioProfileLoadNotice::Recovered => hopspot::UiNotice::ProfileRecovered,
+        hopspot::RadioProfileLoadNotice::Reset => hopspot::UiNotice::ProfileReset,
+    });
     if let Some(identity) = ble_identity {
         super::bluetooth_auto::set_columba_identity(server, identity);
     }
@@ -160,7 +181,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
         core::sync::atomic::Ordering::Relaxed,
     );
     let mut manifold_lanes = ManifoldLanes::new();
-    let lora_profile = DEFAULT_915_PROFILE;
+    let lora_profile = loaded_lora_profile.profile;
     let lora_id = LoRaInterface::<
         ExclusiveDevice<Spim<'static>, Output<'static>, Delay>,
         Input<'static>,
@@ -237,7 +258,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
         storage: crate::storage::TechoStorage,
         request_endpoints: hopspot::node_pages::NodePageRoutes,
         interfaces: personal_rns::runtime::ManuallyAttached,
-        persistence: super::persistence::new(flash),
+        persistence: super::persistence::new(shared_flash),
         on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
     };
     let (node, persistence) =
@@ -295,10 +316,15 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
             display_power_control: hopspot::DisplayPowerControl::Unavailable,
             access_point: hopspot::AccessPointState::Unsupported,
         });
-        if let Some(notice) = identity_startup_notice {
+        let startup_notice = identity_startup_notice.or(profile_startup_notice);
+        let mut pending_startup_notice = identity_startup_notice
+            .is_some()
+            .then_some(profile_startup_notice)
+            .flatten();
+        if let Some(notice) = startup_notice {
             ui_state.show_notice(notice);
         }
-        let mut working_lora_profile = DEFAULT_915_PROFILE;
+        let mut working_lora_profile = lora_profile;
         let mut refresh_policy = hopspot::EinkRefreshPolicy::new(
             PARTIAL_REFRESH_LIMIT,
             FULL_REFRESH_MAX_AGE_MS,
@@ -308,7 +334,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
         let mut displayed_hash = None;
         let mut activity = hopspot::CardActivityTracker::<{ MEMBERS + 4 }>::new();
         let mut notice_until_ms =
-            identity_startup_notice.map(|_| embassy_time::Instant::now().as_millis() + 5_000);
+            startup_notice.map(|_| embassy_time::Instant::now().as_millis() + 5_000);
         let mut battery_gauge = hopspot::BatteryGauge::lipo();
         let mut persistence_notice_visible = false;
         loop {
@@ -337,8 +363,13 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                 persistence_notice_visible = false;
             }
             if notice_until_ms.is_some_and(|until| now_ms >= until) {
-                ui_state.clear_notice();
-                notice_until_ms = None;
+                if let Some(notice) = pending_startup_notice.take() {
+                    ui_state.show_notice(notice);
+                    notice_until_ms = Some(now_ms + 5_000);
+                } else {
+                    ui_state.clear_notice();
+                    notice_until_ms = None;
+                }
                 refresh_urgency = hopspot::EinkRefreshUrgency::Immediate;
             }
 
@@ -478,11 +509,35 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                             ui_state.open_lora_editor(working_lora_profile);
                         }
                         hopspot::UiAction::SetLoRaProfile(profile) => {
-                            ui_state.show_notice(hopspot::UiNotice::Saved);
+                            let result = hopspot::apply_and_persist_radio_profile(
+                                async {
+                                    LORA_CONTROL.apply(profile).await == LoRaApplyOutcome::Applied
+                                },
+                                || async { lora_profile_store.save(profile).await.is_ok() },
+                            )
+                            .await;
+                            if result.applied() {
+                                working_lora_profile = profile;
+                            }
+                            ui_state.show_notice(result.notice());
                             notice_until_ms =
                                 Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
-                            working_lora_profile = profile;
-                            LORA_CONTROL.signal(profile);
+                        }
+                        hopspot::UiAction::ResetLoRaProfile => {
+                            let result = hopspot::apply_and_persist_radio_profile(
+                                async {
+                                    LORA_CONTROL.apply(DEFAULT_915_PROFILE).await
+                                        == LoRaApplyOutcome::Applied
+                                },
+                                || async { lora_profile_store.reset().await.is_ok() },
+                            )
+                            .await;
+                            if result.applied() {
+                                working_lora_profile = DEFAULT_915_PROFILE;
+                            }
+                            ui_state.show_notice(result.notice());
+                            notice_until_ms =
+                                Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
                         }
                         hopspot::UiAction::OpenDocs => {}
                         hopspot::UiAction::SwapRadioMode => {}

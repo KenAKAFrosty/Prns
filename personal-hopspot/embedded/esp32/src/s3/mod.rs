@@ -33,6 +33,7 @@ use embassy_net::{
 use embassy_net::{IpAddress, Ipv4Address, Ipv4Cidr, StaticConfigV4};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
+use embassy_sync::mutex::Mutex;
 use embassy_sync::signal::Signal;
 #[cfg(feature = "wifi-auto")]
 use embassy_time::with_timeout;
@@ -81,7 +82,9 @@ use personal_rns::interfaces::{
     ConnectionState, InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus, MacAddress,
     Membership,
 };
-use personal_rns::lora::{LoRaControl, LoRaInterface, LoRaInterfaceInput, LoRaSpectrumStatus};
+use personal_rns::lora::{
+    LoRaApplyOutcome, LoRaControl, LoRaInterface, LoRaInterfaceInput, LoRaSpectrumStatus,
+};
 use personal_rns::manifold::embassy::{
     EmbassyHost, EmbassyInterfaceSeam, EmbassyInterfaceStatus, EmbassyTimebase, InterfaceLifecycle,
 };
@@ -91,7 +94,7 @@ use personal_rns::radios::sx126x::Sx126x;
 use personal_rns::runtime::{
     minimum_interface_store_capacity, minimum_manifold_notification_capacity, CompletionPool,
     EmbassyInterfaceStore, Fleet, ManifoldLaneSet, PrnsEvent, PrnsNode, PrnsNodeHandle,
-    PrnsNodeRecipe, StaticManifoldLane,
+    PrnsNodeRecipe, SharedNorFlash, StaticManifoldLane,
 };
 use personal_rns::storage::StorageLayout;
 use personal_rns::tcp::{

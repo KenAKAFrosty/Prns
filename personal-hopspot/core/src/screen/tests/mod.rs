@@ -39,10 +39,11 @@ use super::state::{
     POWER_MENU_ITEM, POWER_ONLY_MENU_ITEMS, RADIO_MENU_ITEM_NO_DISPLAY, SLEEP_MENU_ITEM,
 };
 use super::{
-    card_label, render as render_screen, sort_cards_for_display, AccessPointState, Card,
-    CardActivityTracker, CardKind, DisplayPowerControl, InputEvent, InterfaceMenuDetails, Liveness,
-    LoRaSpectrumMenuDetails, LocalDocsAccess, RenderFrame, ScreenContent, UiAction,
-    UiConfiguration, UiState,
+    apply_and_persist_radio_profile, card_label, render as render_screen, sort_cards_for_display,
+    AccessPointState, Card, CardActivityTracker, CardKind, DisplayPowerControl, InputEvent,
+    InterfaceMenuDetails, Liveness, LoRaSpectrumMenuDetails, LocalDocsAccess,
+    RadioProfileChangeResult, RenderFrame, ScreenContent, UiAction, UiConfiguration, UiNotice,
+    UiState,
 };
 
 const TEST_WIDTH: usize = WIDTH as usize;

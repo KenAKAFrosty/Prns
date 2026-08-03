@@ -1,29 +1,22 @@
 use portable_atomic::{AtomicBool, Ordering};
 
-use personal_rns::persistence::{FlashArenaRange, FlashJournalLayout};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+#[cfg(target_arch = "riscv32")]
+use personal_rns::persistence::FlashArenaRange;
+use personal_rns::persistence::FlashJournalLayout;
 use personal_rns::runtime::{
     EmbeddedFlashPersistence, EmbeddedPersistenceDiagnostic, EmbeddedPersistenceFailure,
-    EmbeddedPersistencePolicy,
+    EmbeddedPersistencePolicy, SharedNorFlash,
 };
 
 use crate::flash::EspRomFlash;
 
-#[cfg(target_arch = "xtensa")]
-pub const S3_FLASH_CAPACITY: usize = 8 * 1024 * 1024;
 #[cfg(target_arch = "riscv32")]
 pub const C6_FLASH_CAPACITY: usize = 4 * 1024 * 1024;
 #[cfg(target_arch = "xtensa")]
 pub const S3_ARENA_BYTES: usize = 191 * 4096;
 #[cfg(target_arch = "riscv32")]
 pub const C6_ARENA_BYTES: usize = 15 * 4096;
-#[cfg(target_arch = "xtensa")]
-pub const S3_LAYOUT: FlashJournalLayout = FlashJournalLayout::new(
-    [0x680000, 0x681000],
-    [
-        FlashArenaRange::new(0x682000, 0x741000),
-        FlashArenaRange::new(0x741000, 0x800000),
-    ],
-);
 #[cfg(target_arch = "riscv32")]
 pub const C6_LAYOUT: FlashJournalLayout = FlashJournalLayout::new(
     [0x3E0000, 0x3E1000],
@@ -39,25 +32,21 @@ const S3_PENDING: usize = 64;
 const C6_PENDING: usize = 32;
 
 #[cfg(target_arch = "xtensa")]
-pub type S3Persistence = EmbeddedFlashPersistence<
-    EspRomFlash<S3_FLASH_CAPACITY>,
-    fn(EmbeddedPersistenceDiagnostic),
-    S3_PENDING,
->;
+pub type S3SharedFlash = SharedNorFlash<'static, CriticalSectionRawMutex, EspRomFlash>;
+#[cfg(target_arch = "xtensa")]
+pub type S3Persistence =
+    EmbeddedFlashPersistence<S3SharedFlash, fn(EmbeddedPersistenceDiagnostic), S3_PENDING>;
 #[cfg(target_arch = "riscv32")]
-pub type C6Persistence = EmbeddedFlashPersistence<
-    EspRomFlash<C6_FLASH_CAPACITY>,
-    fn(EmbeddedPersistenceDiagnostic),
-    C6_PENDING,
->;
+pub type C6Persistence =
+    EmbeddedFlashPersistence<EspRomFlash, fn(EmbeddedPersistenceDiagnostic), C6_PENDING>;
 
 static STATE_NOT_SAVED: AtomicBool = AtomicBool::new(false);
 
 #[cfg(target_arch = "xtensa")]
-pub fn s3() -> S3Persistence {
+pub fn s3(flash: S3SharedFlash, layout: FlashJournalLayout) -> S3Persistence {
     EmbeddedFlashPersistence::new(
-        EspRomFlash::new(),
-        S3_LAYOUT,
+        flash,
+        layout,
         EmbeddedPersistencePolicy::hopspot_default(),
         observe as fn(EmbeddedPersistenceDiagnostic),
     )
@@ -66,7 +55,7 @@ pub fn s3() -> S3Persistence {
 #[cfg(target_arch = "riscv32")]
 pub fn c6() -> C6Persistence {
     EmbeddedFlashPersistence::new(
-        EspRomFlash::new(),
+        EspRomFlash::new(C6_FLASH_CAPACITY),
         C6_LAYOUT,
         EmbeddedPersistencePolicy::hopspot_default(),
         observe as fn(EmbeddedPersistenceDiagnostic),

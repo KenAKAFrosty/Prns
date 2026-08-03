@@ -649,6 +649,11 @@ pub(super) fn run_window(handles: WindowHandles) {
             *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
             *working_lora_profile = profile;
         }
+        UiAction::ResetLoRaProfile => {
+            ui_state.show_notice(screen::UiNotice::Saved);
+            *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
+            *working_lora_profile = DEFAULT_915_PROFILE;
+        }
         UiAction::SwapRadioMode => {}
         UiAction::OpenDocs => {}
     };
