@@ -25,12 +25,11 @@ try {
 } catch (_) {}
 "#;
 
-// Chrome for Android exposes Web Serial for Bluetooth RFCOMM services only;
-// wired USB serial ports never appear in its picker until the Android Serial
-// API lands (Chromium blink-dev PSA, February 2026: estimated 2026Q2 on a
-// limited set of devices). The platform probe exists to explain that dead
-// end instead of presenting an empty picker; remove it once Android Chrome
-// reaches wired ports on the devices people actually carry.
+// Chrome for Android initially exposed Web Serial only for Bluetooth RFCOMM.
+// Chromium's February 2026 PSA targeted wired support for M149 on devices with the Android Serial API, with a limited rollout estimated for 2026Q2.
+//
+// That estimate has passed, but `navigator.serial` still does not reveal whether a particular device can enumerate wired ports.
+// Keep this conservative gate until verified device coverage justifies narrowing or removing the Android classification.
 fn web_serial_probe_script() -> String {
     format!(
         r#"
