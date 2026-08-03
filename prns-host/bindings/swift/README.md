@@ -9,18 +9,13 @@ The Swift package is a thin adapter over the stable Personal RNS C capsule. The 
 
 ## Evaluate the current source
 
-On Linux, the registered suite builds a relocatable native capsule, exposes its
-pkg-config metadata, and runs the complete persistent two-node journey:
+On Linux, the registered suite builds a relocatable native capsule, exposes its pkg-config metadata, and runs the complete persistent two-node journey:
 
 ```console
 python3 validation/run.py run --suite host-swift-contract
 ```
 
-The intended public delivery is an immutable Swift Package tag paired with a
-matching signed native archive. Until those artifacts have completed public
-qualification, do not assume the release tag exists. See the
-[SDK guide](../../../docs/sdks.md#native-sdk-previews) for the shared release
-posture and contribution path.
+The intended public delivery is an immutable Swift Package tag paired with a matching signed native archive. Until those artifacts have completed public qualification, do not assume the release tag exists. See the [SDK guide](../../../docs/sdks.md#native-sdk-previews) for the shared release posture and contribution path.
 
 ## API shape
 
@@ -49,5 +44,4 @@ func run(_ host: Host) async throws {
 }
 ```
 
-Swift Package Manager reads the native include and link paths from the same
-relocatable `personal-rns.pc` file intended for each native archive.
+Swift Package Manager reads the native include and link paths from the same relocatable `personal-rns.pc` file intended for each native archive.

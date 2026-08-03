@@ -7,18 +7,13 @@
 
 ## Evaluate the current source
 
-On Linux, the registered suite builds the matching native capsule and runs the
-complete persistent two-node journey:
+On Linux, the registered suite builds the matching native capsule and runs the complete persistent two-node journey:
 
 ```console
 python3 validation/run.py run --suite host-dotnet-contract
 ```
 
-The intended public delivery is a `PersonalRns` NuGet package containing the
-target's native runtime asset. Until that package has completed public
-qualification, do not assume NuGet contains the adapter from this checkout. See
-the [SDK guide](../../../docs/sdks.md#native-sdk-previews) for the shared release
-posture and contribution path.
+The intended public delivery is a `PersonalRns` NuGet package containing the target's native runtime asset. Until that package has completed public qualification, do not assume NuGet contains the adapter from this checkout. See the [SDK guide](../../../docs/sdks.md#native-sdk-previews) for the shared release posture and contribution path.
 
 ## API shape
 
@@ -86,8 +81,6 @@ static async Task Consume(OwnedAsyncStream<ApplicationEvent> events)
 }
 ```
 
-The source adapter expects the target's `prns_host` native library to be
-available through normal .NET native-library resolution. The planned NuGet
-package supplies it as a runtime-specific asset.
+The source adapter expects the target's `prns_host` native library to be available through normal .NET native-library resolution. The planned NuGet package supplies it as a runtime-specific asset.
 
 `ExecuteAsync` accepts the generated `HostCommand` sum and resolves to `CommandSettlement.Succeeded(CommandOutcome)` or `CommandSettlement.Failed(CommandFailure)`. Convenience methods such as `SendSinglePacketAsync`, `AttachTcpClientAsync`, and `DetachInterfaceAsync` delegate to that same contract.

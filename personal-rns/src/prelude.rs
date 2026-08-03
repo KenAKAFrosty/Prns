@@ -16,6 +16,7 @@ pub use crate::runtime::request_endpoints::{
     RespondToken,
 };
 pub use crate::runtime::ServeMyRequestEndpoints;
+pub use crate::storage::{DisplayedStorageLimits, StorageCapacity, StorageLayout};
 
 #[cfg(feature = "alloc")]
 pub use crate::GrowableHeap;

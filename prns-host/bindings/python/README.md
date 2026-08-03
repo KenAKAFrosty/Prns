@@ -9,18 +9,13 @@ The Python package is a thin, typed adapter over the generated Personal RNS C ho
 
 ## Evaluate the current source
 
-On Linux, the registered suite builds the matching native capsule and runs the
-complete persistent two-node journey:
+On Linux, the registered suite builds the matching native capsule and runs the complete persistent two-node journey:
 
 ```console
 python3 validation/run.py run --suite host-python-contract
 ```
 
-The intended public delivery is a `personal-rns` platform wheel containing the
-matching native capsule. Until that package has completed public qualification,
-do not assume a package index contains the adapter from this checkout. See the
-[SDK guide](../../../docs/sdks.md#native-sdk-previews) for the shared release
-posture and contribution path.
+The intended public delivery is a `personal-rns` platform wheel containing the matching native capsule. Until that package has completed public qualification, do not assume a package index contains the adapter from this checkout. See the [SDK guide](../../../docs/sdks.md#native-sdk-previews) for the shared release posture and contribution path.
 
 ## API shape
 

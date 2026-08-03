@@ -144,6 +144,7 @@ mod riscv {
     };
     use personal_rns::identity::held::FixedHeldIdentityTable;
     use personal_rns::manifold::interface_seam::EMBEDDED_MAX_LINK_MTU;
+    use personal_rns::prelude::*;
     use personal_rns::routing::announce::destination_announce_limit::FixedDestinationAnnounceLimitTable;
     use personal_rns::routing::announce::held::FixedHeldAnnounceTable;
     use personal_rns::routing::announce::interface_announce_limit::FixedInterfaceAnnounceLimitTable;
@@ -177,12 +178,10 @@ mod riscv {
     use personal_rns::routing::tunnel::FixedTunnelTable;
     use personal_rns::routing::upstream_app_destinations::FixedUpstreamAppDestinationTable;
     use personal_rns::routing::warmth::FixedDepartedInterfaceTable;
-    use personal_rns::storage::{DisplayedStorageLimits, StorageCapacity, StorageLayout};
 
-    /// The XIAO ESP32-C6 Hopspot's storage profile, sized to its internal SRAM
-    /// and application role. This board is a headless USB/ESP-NOW/BLE mesh
-    /// bridge: keep one local app identity, bias the budget toward heard
-    /// destinations, and leave links, resources, and channel windows modest.
+    /// The XIAO ESP32-C6 Hopspot's storage profile, sized to its internal SRAM and application role.
+    ///
+    /// This board is a headless USB/ESP-NOW/BLE mesh bridge. The intent is to keep one local app identity, bias the budget toward heard destinations, and leave links, resources, and channel windows modest.
     pub struct C6Storage;
 
     impl C6Storage {

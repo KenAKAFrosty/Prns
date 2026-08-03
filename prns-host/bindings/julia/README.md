@@ -9,20 +9,13 @@
 
 ## Evaluate the current source
 
-On Linux, the registered suite builds the matching native capsule and runs the
-complete persistent two-node journey with both single-threaded and
-multi-threaded Julia:
+On Linux, the registered suite builds the matching native capsule and runs the complete persistent two-node journey with both single-threaded and multi-threaded Julia:
 
 ```console
 python3 validation/run.py run --suite host-julia-contract
 ```
 
-The intended public delivery is a Julia General package whose generated
-artifact metadata resolves the matching native capsule. Until registration and
-public qualification are complete, do not assume the registry contains this
-checkout. Source-tree development sets `PRNS_HOST_LIBRARY` to an explicit
-native capsule. See the [SDK guide](../../../docs/sdks.md#native-sdk-previews)
-for the shared release posture and contribution path.
+The intended public delivery is a Julia General package whose generated artifact metadata resolves the matching native capsule. Until registration and public qualification are complete, do not assume the registry contains this checkout. Source-tree development sets `PRNS_HOST_LIBRARY` to an explicit native capsule. See the [SDK guide](../../../docs/sdks.md#native-sdk-previews) for the shared release posture and contribution path.
 
 ## API shape
 
@@ -45,6 +38,4 @@ settlement = attach_tcp_client(
 )
 ```
 
-Release automation is prepared to bind every platform artifact to its immutable
-archive URL, SHA-256 digest, and Julia Git tree hash before packaging this
-module.
+Release automation is prepared to bind every platform artifact to its immutable archive URL, SHA-256 digest, and Julia Git tree hash before packaging this module.

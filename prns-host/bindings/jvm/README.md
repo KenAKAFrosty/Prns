@@ -7,28 +7,17 @@
 
 ## Evaluate the current source
 
-On Linux, the registered suite builds the matching native capsule and runs the
-complete persistent two-node journey through the Gradle project:
+On Linux, the registered suite builds the matching native capsule and runs the complete persistent two-node journey through the Gradle project:
 
 ```console
 python3 validation/run.py run --suite host-jvm-contract
 ```
 
-The intended public delivery is an `io.reticulum:personal-rns` Maven package
-paired with desktop and Android native assets. Until those packages have
-completed public qualification, do not assume Maven Central contains the
-adapter from this checkout. See the
-[SDK guide](../../../docs/sdks.md#native-sdk-previews) for the shared release
-posture and contribution path.
+The intended public delivery is an `io.reticulum:personal-rns` Maven package paired with desktop and Android native assets. Until those packages have completed public qualification, do not assume Maven Central contains the adapter from this checkout. See the [SDK guide](../../../docs/sdks.md#native-sdk-previews) for the shared release posture and contribution path.
 
 ## API shape
 
-The JVM SDK is a thin, typed adapter over the versioned Personal RNS C host
-contract. Kotlin callers receive sealed command outcomes and cold
-single-consumer `Flow` event streams. Java callers use the same classes and
-`AutoCloseable` ownership with cancellable `CompletionStage` operations. Native
-readiness wakes Kotlin coroutines through a conflated channel without occupying
-a waiting worker thread.
+The JVM SDK is a thin, typed adapter over the versioned Personal RNS C host contract. Kotlin callers receive sealed command outcomes and cold single-consumer `Flow` event streams. Java callers use the same classes and `AutoCloseable` ownership with cancellable `CompletionStage` operations. Native readiness wakes Kotlin coroutines through a conflated channel without occupying a waiting worker thread.
 
 ```kotlin
 Host(
@@ -61,28 +50,13 @@ host.attachTcpClientAsync("127.0.0.1:4242", BitrateAuto.INSTANCE)
     .whenComplete((settlement, failure) -> host.close());
 ```
 
-Cancelling the `CompletableFuture` returned by `toCompletableFuture()` interrupts
-the native wait immediately. Each application or diagnostic stream can be
-claimed once, and each claimed `EventFlow` can either be collected once as a
-Kotlin `Flow` or consumed through Java's `nextAsync()`. Closing a host, command,
-event flow, or resource stream releases the corresponding native handle
-deterministically.
+Cancelling the `CompletableFuture` returned by `toCompletableFuture()` interrupts the native wait immediately. Each application or diagnostic stream can be claimed once, and each claimed `EventFlow` can either be collected once as a Kotlin `Flow` or consumed through Java's `nextAsync()`. Closing a host, command, event flow, or resource stream releases the corresponding native handle deterministically.
 
-Contract `safeInt` and `safeUint` fields use JVM `long`; their schema bounds
-keep every value exactly representable for JavaScript interop, with `safeUint`
-remaining non-negative. Exact contract `u64` fields use Kotlin `ULong`; the JNA
-boundary preserves all 64 bits while the generated Kotlin surface makes
-unsigned intent explicit.
+Contract `safeInt` and `safeUint` fields use JVM `long`; their schema bounds keep every value exactly representable for JavaScript interop, with `safeUint` remaining non-negative. Exact contract `u64` fields use Kotlin `ULong`; the JNA boundary preserves all 64 bits while the generated Kotlin surface makes unsigned intent explicit.
 
-Source-built desktop applications provide `libprns_host` through the dynamic
-loader, the `PRNS_HOST_LIBRARY` environment variable, or the
-`personal.rns.library` system property. The planned release archives contain
-the matching library and `personal-rns` pkg-config metadata.
+Source-built desktop applications provide `libprns_host` through the dynamic loader, the `PRNS_HOST_LIBRARY` environment variable, or the `personal.rns.library` system property. The planned release archives contain the matching library and `personal-rns` pkg-config metadata.
 
-Android applications use the same API and bytecode. After public package
-promotion, the intended Gradle shape adds JNA's Android artifact, excludes the
-desktop JNA runtime selected by the Maven POM, and places the Personal RNS
-libraries from the Android release artifact in the normal ABI directories:
+Android applications use the same API and bytecode. After public package promotion, the intended Gradle shape adds JNA's Android artifact, excludes the desktop JNA runtime selected by the Maven POM, and places the Personal RNS libraries from the Android release artifact in the normal ABI directories:
 
 ```kotlin
 implementation("io.reticulum:personal-rns:0.3.3") {
@@ -96,10 +70,6 @@ src/main/jniLibs/arm64-v8a/libprns_host.so
 src/main/jniLibs/armeabi-v7a/libprns_host.so
 ```
 
-`CompletionStage` requires Android API 24 or core library desugaring on older
-Android versions.
+`CompletionStage` requires Android API 24 or core library desugaring on older Android versions.
 
-The Gradle wrapper is pinned to 9.6.1 with distribution checksum verification.
-`./gradlew test` compiles with warnings as errors and runs the adapter against a
-real native host when `-Dpersonal.rns.library=/absolute/path/libprns_host.so` is
-provided.
+The Gradle wrapper is pinned to 9.6.1 with distribution checksum verification. `./gradlew test` compiles with warnings as errors and runs the adapter against a real native host when `-Dpersonal.rns.library=/absolute/path/libprns_host.so` is provided.

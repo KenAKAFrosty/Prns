@@ -1,8 +1,6 @@
 # Prns SDKs
 
-Every Prns SDK runs the same Reticulum engine. The language layer owns types,
-lifetimes, cancellation, and the event-stream shape; it does not reimplement
-routing or wire behavior.
+Every Prns SDK runs the same Reticulum engine. The language layer owns types, lifetimes, cancellation, and the event-stream shape; it does not reimplement routing or wire behavior.
 
 The implementations are at two different stages of their user journey:
 
@@ -18,19 +16,9 @@ The implementations are at two different stages of their user journey:
 | Julia | SDK preview | Source project and registered live conformance suite |
 | C and C++ | SDK preview | Generated C ABI and registered live C and C++ conformance suite |
 
-Here, **paved** means the API, examples, and package structure form the route we
-expect application developers to take. **SDK preview** does not mean a mock or
-an unfinished protocol port. These adapters already call the same native Rust
-host, project the same schema-1 contract, and exercise the same persistent
-two-node journey in the repository. What remains young is their ecosystem fit
-and public delivery: idiomatic package structure, registry publication, native
-artifact installation, and more feedback from experienced developers in each
-language.
+Here, **paved** means the API, examples, and package structure form the route we expect application developers to take. **SDK preview** does not mean a mock or an unfinished protocol port. These adapters already call the same native Rust host, project the same schema-1 contract, and exercise the same persistent two-node journey in the repository. What remains young is their ecosystem fit and public delivery: idiomatic package structure, registry publication, native artifact installation, and more feedback from experienced developers in each language.
 
-Prns is still completing its first announced release. Until the release notice
-at the top of the [project README](../README.md) is removed, source-checkout
-commands are the authority for the current `0.3.3` candidate. No registry
-listing should be assumed to contain these exact candidate bytes.
+Prns is still completing its first announced release. Until the release notice at the top of the [project README](../README.md) is removed, source-checkout commands are the authority for the current `0.3.3` candidate. No registry listing should be assumed to contain these exact candidate bytes.
 
 ## Rust
 
@@ -40,24 +28,20 @@ For an application using the announced release:
 cargo add personal-rns --features tokio-host,tcp
 ```
 
-During the current pre-release window, use this repository as the dependency
-when you need the exact candidate:
+During the current pre-release window, use this repository as the dependency when you need the exact candidate:
 
 ```console
 cargo add personal-rns --git https://github.com/KenAKAFrosty/Prns --features tokio-host,tcp
 ```
 
-The fastest source-checkout journey creates two real nodes, connects them over
-TCP, and succeeds only after one verifies the other's signed announce:
+The fastest source-checkout journey creates two real nodes, connects them over TCP, and succeeds only after one verifies the other's signed announce:
 
 ```console
 ./tools/prns doctor getting-started
 cargo tools guide rust-basics
 ```
 
-Continue through the [Rust example ladder](examples.md#rust), or open the
-[`personal-rns` crate guide](../personal-rns/README.md) for runtime and feature
-selection.
+Continue through the [Rust example ladder](examples.md#rust), or open the [`personal-rns` crate guide](../personal-rns/README.md) for runtime and feature selection.
 
 ## TypeScript and JavaScript
 
@@ -67,13 +51,11 @@ The package is designed as one install with runtime-selected exports:
 npm install personal-rns
 ```
 
-- `personal-rns` selects native Node.js/Bun or browser WebAssembly through
-  package exports.
+- `personal-rns` selects native Node.js/Bun or browser WebAssembly through package exports.
 - `personal-rns/native` fixes the native backend.
 - `personal-rns/browser` fixes the cooperative WebAssembly backend.
 
-During the pre-release window, the exact candidate is exercised from a source
-checkout:
+During the pre-release window, the exact candidate is exercised from a source checkout:
 
 ```console
 npm --prefix prns-napi ci
@@ -83,22 +65,13 @@ npm --prefix prns-js run test:native:full
 npm --prefix prns-js run test:browser:full
 ```
 
-Read the [TypeScript and JavaScript guide](../prns-js/README.md) for host
-creation, tagged outcomes, event streams, persistence, and bounded browser
-resource transfer.
+Read the [TypeScript and JavaScript guide](../prns-js/README.md) for host creation, tagged outcomes, event streams, persistence, and bounded browser resource transfer.
 
 ## Native SDK previews
 
-The native previews all sit above the generated
-[`prns_host.h`](../prns-host/abi/c/include/prns_host.h) contract. The adapters
-and native capsule are version-gated together; mixing arbitrary library and
-adapter versions is intentionally rejected.
+The native previews all sit above the generated [`prns_host.h`](../prns-host/abi/c/include/prns_host.h) contract. The adapters and native capsule are version-gated together; mixing arbitrary library and adapter versions is intentionally rejected.
 
-On Linux, each registered suite builds the current native capsule and runs the
-language adapter through lifecycle, exclusive stream ownership, interface
-configuration, a real loopback connection, announce discovery, link
-establishment, request and response, bounded resource transfer, shutdown,
-restart, and persistence restoration.
+On Linux, each registered suite builds the current native capsule and runs the language adapter through lifecycle, exclusive stream ownership, interface configuration, a real loopback connection, announce discovery, link establishment, request and response, bounded resource transfer, shutdown, restart, and persistence restoration.
 
 | SDK | Run from the repository root | Intended public delivery |
 | --- | --- | --- |
@@ -110,8 +83,7 @@ restart, and persistence restoration.
 | Julia | `python3 validation/run.py run --suite host-julia-contract` | Julia General package with matching native artifacts |
 | C and C++ | `python3 validation/run.py run --suite host-c-contract` | Signed native archive with header, libraries, and pkg-config metadata |
 
-These commands are evaluation and contributor paths, not substitutes for the
-planned public packages. Each SDK guide shows its current API shape:
+These commands are evaluation and contributor paths, not substitutes for the planned public packages. Each SDK guide shows its current API shape:
 
 - [Python](../prns-host/bindings/python/README.md)
 - [.NET and C#](../prns-host/bindings/dotnet/README.md)
@@ -123,14 +95,9 @@ planned public packages. Each SDK guide shows its current API shape:
 
 ## Help make an SDK feel native
 
-Distribution for every implemented SDK is high-priority release work. The
-repository already contains package manifests, target matrices, artifact
-assembly, version checks, and public-package qualification workflows. The
-remaining decisions deserve people who know the conventions and failure modes
-of their ecosystems deeply.
+Distribution for every implemented SDK is high-priority release work. The repository already contains package manifests, target matrices, artifact assembly, version checks, and public-package qualification workflows. The remaining decisions deserve people who know the conventions and failure modes of their ecosystems deeply.
 
-Experienced maintainers can make an unusually valuable contribution by
-reviewing:
+Experienced maintainers can make an unusually valuable contribution by reviewing:
 
 - package layout, native-library discovery, and platform selection;
 - ownership, cancellation, and asynchronous stream idioms;
@@ -138,10 +105,4 @@ reviewing:
 - minimal complete examples and first-project ergonomics;
 - registry metadata and clean-consumer installation behavior.
 
-Please start with an issue or pull request rather than publishing a package name
-from a personal registry account. Release coordinates and signing custody are
-part of the project-wide release process. The
-[binding implementation guide](../prns-host/bindings/README.md) describes the
-invariants every adapter preserves, and the
-[release administration guide](../prns-host/distribution/ADMIN.md) records the
-intended distribution path.
+Please start with an issue or pull request rather than publishing a package name from a personal registry account. Release coordinates and signing custody are part of the project-wide release process. The [binding implementation guide](../prns-host/bindings/README.md) describes the invariants every adapter preserves, and the [release administration guide](../prns-host/distribution/ADMIN.md) records the intended distribution path.

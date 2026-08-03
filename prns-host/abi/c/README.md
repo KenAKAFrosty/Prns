@@ -11,18 +11,13 @@ The header is generated from `prns-host/schema/host-contract-v1.json`. Run `./to
 
 ## Evaluate the current source
 
-On Linux, the registered suite builds the native capsule, compiles the same
-persistent two-node consumer as C11 and C++17, and runs both binaries:
+On Linux, the registered suite builds the native capsule, compiles the same persistent two-node consumer as C11 and C++17, and runs both binaries:
 
 ```console
 python3 validation/run.py run --suite host-c-contract
 ```
 
-The intended public delivery is a signed target archive containing the header,
-dynamic and static libraries, pkg-config metadata, checksums, and licenses.
-Until those archives have completed public qualification, build the capsule
-from this checkout. See the [SDK guide](../../../docs/sdks.md#native-sdk-previews)
-for the shared release posture and contribution path.
+The intended public delivery is a signed target archive containing the header, dynamic and static libraries, pkg-config metadata, checksums, and licenses. Until those archives have completed public qualification, build the capsule from this checkout. See the [SDK guide](../../../docs/sdks.md#native-sdk-previews) for the shared release posture and contribution path.
 
 ## Mechanical contract
 
@@ -48,19 +43,9 @@ Host, command, and stream operations are safe from multiple native threads. An i
 
 ## Versioning
 
-Product version, schema version, and C ABI are three explicit creation gates.
-The first public baseline is product `0.3.1`, schema 1, ABI 1. The capsule has
-one `PrnsHostOptions` layout and no compatibility shim for unpublished earlier
-layouts. `struct_size` remains on public structures so every call can prove the
-memory prefix it may read or write; undersized structures are rejected and
-larger structures are accepted at their known prefix. That safety mechanism is
-not a promise to preserve pre-baseline layouts.
+Product version, schema version, and C ABI are three explicit creation gates. The first public baseline is product `0.3.1`, schema 1, ABI 1. The capsule has one `PrnsHostOptions` layout and no compatibility shim for unpublished earlier layouts. `struct_size` remains on public structures so every call can prove the memory prefix it may read or write; undersized structures are rejected and larger structures are accepted at their known prefix. That safety mechanism is not a promise to preserve pre-baseline layouts.
 
-The schema's operation IDL generates every exported declaration. Each
-`HostCommand` case becomes its own `prns_host_*` function, matching ordinary C
-calling conventions and debugger/tooling expectations. Ownership, borrowed
-lifetimes, readiness, interruption, and release relationships are validated
-before the header is rendered.
+The schema's operation IDL generates every exported declaration. Each `HostCommand` case becomes its own `prns_host_*` function, matching ordinary C calling conventions and debugger/tooling expectations. Ownership, borrowed lifetimes, readiness, interruption, and release relationships are validated before the header is rendered.
 
 `prns-host/conformance/host-contract-v1.json` is the portable oracle for fixed sizes, limits, discriminants, and mismatch behavior. Rust tests additionally exercise lifecycle terminality, pressure, exact diagnostic gaps, single ownership, event-view lifetimes, and resource transfer.
 

@@ -1,7 +1,6 @@
 # personal-rns
 
-
-`personal-rns` provides one JavaScript/Typescript API for native Node.js, Bun, and browsers.
+`personal-rns` provides one JavaScript/TypeScript API for native Node.js, Bun, and browsers.
 
 The root export selects the native backend in Node.js and Bun and the cooperative WebAssembly backend in browser bundlers. Explicit `personal-rns/native` and `personal-rns/browser` subpaths are available when runtime selection must be fixed.
 
@@ -13,11 +12,7 @@ For the announced release:
 npm install personal-rns
 ```
 
-Prns is still completing its first announced release. Until the release notice
-in the [project README](../README.md) is removed, use the
-[source-checkout instructions](../docs/sdks.md#typescript-and-javascript) when
-you need the exact `0.3.3` candidate rather than assuming a registry listing
-contains it.
+Prns is still completing its first announced release. Until the release notice in the [project README](../README.md) is removed, use the [source-checkout instructions](../docs/sdks.md#typescript-and-javascript) when you need the exact `0.3.3` candidate rather than assuming a registry listing contains it.
 
 ## Create a host
 
@@ -135,8 +130,7 @@ if (stopped.tag !== "Stopped") {
 }
 ```
 
-Sending a Resource in the browser accepts either bytes or a `Blob`. The `Blob` path slices
-the source into bounded segments instead of materializing the whole value:
+Sending a Resource in the browser accepts either bytes or a `Blob`. The `Blob` path slices the source into bounded segments instead of materializing the whole value:
 
 ```ts
 import { Tag, match } from "personal-rns/browser";
@@ -155,13 +149,8 @@ match(sent.data, {
 });
 ```
 
-`Auto` compression runs the shared Rust codec in a dedicated module Worker.
-The send remains correct if Worker startup or compression is unavailable: it
-continues with the uncompressed segment. Planning, metadata placement, segment
-bounds, and wire submission remain in the shared Rust implementation.
+`Auto` compression runs the shared Rust codec in a dedicated module Worker. The send remains correct if Worker startup or compression is unavailable: it continues with the uncompressed segment. Planning, metadata placement, segment bounds, and wire submission remain in the shared Rust implementation.
 
-### More Examples
-A simple source example can be seen at
-[`examples/native-lifecycle.ts`](examples/native-lifecycle.ts). The
-[browser transport playground](../prns-wasm/examples/browser-playground/README.md)
-runs a live node with permission-gated WebUSB and Wi-Fi controls.
+## More examples
+
+[`examples/native-lifecycle.ts`](examples/native-lifecycle.ts) is a complete native lifecycle program with a self-contained loopback interface. The [browser transport playground](../prns-wasm/examples/browser-playground/README.md) runs a live node with permission-gated WebUSB and Wi-Fi controls.

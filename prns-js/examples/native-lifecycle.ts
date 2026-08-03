@@ -1,11 +1,5 @@
-import {
-  Prns,
-  Tag,
-  match_into,
-} from "../src/native/index.js";
-import type {
-  ApplicationEvent,
-} from "../src/native/index.js";
+import { Prns, Tag, match_into } from "../src/native/index.js";
+import type { ApplicationEvent } from "../src/native/index.js";
 
 async function runExample() {
   const creationOutcome = await Prns.create({
@@ -14,7 +8,7 @@ async function runExample() {
   });
 
   if (creationOutcome.tag !== "Ready") {
-    throw new Error(`node creation failed: ${creationOutcome}`);
+    throw new Error(`node creation failed: ${creationOutcome.tag}`);
   }
 
   const node = creationOutcome.data;
@@ -32,30 +26,26 @@ async function runExample() {
     }
   })();
 
-  const attachedOutcome = await node.execute(
-    Tag("AttachTcpClient", {
-      target: "127.0.0.1:4242",
-      bitrate: Tag("Auto"),
-    }),
-  );
+  try {
+    const attached = await node.attachTcpServer({ bind: "127.0.0.1:0" });
+    if (attached.tag !== "Succeeded") {
+      throw new Error(`attach failed: ${attached.data.tag}`);
+    }
+    const interfaceId = attached.data.data.interface;
 
-  if (attachedOutcome.tag !== "Succeeded") {
-    throw new Error(`attach failed: ${attachedOutcome}`);
+    console.log("attached loopback TCP server", interfaceId);
+
+    const detached = await node.detachInterface(interfaceId);
+    if (detached.tag !== "Succeeded") {
+      throw new Error(`detach failed: ${detached.data.tag}`);
+    }
+  } finally {
+    const stopped = await node.stop();
+    if (stopped.tag === "OperationFailed") {
+      throw new Error(`stop failed: ${stopped.data.detail}`);
+    }
+    await eventTask;
   }
-
-  const attachedTcpClient = attachedOutcome.data;
-
-  const detached = await node.execute(
-    Tag("DetachInterface", {
-      interface: attachedTcpClient.data.interface,
-    }),
-  );
-  if (detached.tag !== "Succeeded") {
-    throw new Error(`detach failed: ${detached.data.tag}`);
-  }
-
-  await node.stop();
-  await eventTask;
 }
 
 function describe(event: ApplicationEvent): string {
@@ -74,5 +64,4 @@ function describe(event: ApplicationEvent): string {
   });
 }
 
-
-runExample()
+await runExample();

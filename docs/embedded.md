@@ -1,16 +1,10 @@
 # Embedded Prns
 
-Embedded Prns is the same protocol engine and node-recipe API used by native
-applications, hosted by Embassy with fixed storage and hardware-specific
-interfaces. Personal Hopspot is the repository's board-backed reference
-application; it is a useful place to learn the boundary between reusable Prns
-code and device bring-up.
+Embedded Prns is the same protocol engine and node-recipe API used by native applications, hosted by Embassy with fixed storage and hardware-specific interfaces. Personal Hopspot is the repository's board-backed reference application; it is a useful place to learn the boundary between reusable Prns code and device bring-up.
 
 ## Start with a build, not a flash
 
-The XIAO ESP32-C6 is the smallest complete reference path. It is headless and
-uses USB, ESP-NOW, and Bluetooth, so the example does not imply that an embedded
-node needs a display or Wi-Fi LAN.
+The XIAO ESP32-C6 is the smallest complete reference path. It is headless and uses USB, ESP-NOW, and Bluetooth, so this example punctuates the fact that an embedded node does not need a display or Wi-Fi LAN.
 
 Install the repository's ESP Rust toolchain once:
 
@@ -20,68 +14,44 @@ espup install --targets esp32s3
 rustc +esp --version
 ```
 
-These commands prepare an ordinary developer workstation. Release builds use
-the repository's isolated, reproducible toolchain task. Build the real firmware
-without touching a connected device:
+These commands prepare an ordinary developer workstation. Release builds use the repository's isolated, reproducible toolchain task. Build the real firmware without touching a connected device:
 
 ```console
 cd personal-hopspot/embedded/esp32
 cargo c6 --locked
 ```
 
-That shortcut expands to the `hopspot-xiao-esp32-c6` release build for
-`riscv32imac-unknown-none-elf`, including `-Zbuild-std=core,alloc`. The workspace
-has its own lockfile and selects the `esp` toolchain through
-`personal-hopspot/embedded/esp32/rust-toolchain.toml`.
+That shortcut expands to the `hopspot-xiao-esp32-c6` release build for `riscv32imac-unknown-none-elf`, including `-Zbuild-std=core,alloc`. The workspace has its own lockfile and selects the `esp` toolchain through `personal-hopspot/embedded/esp32/rust-toolchain.toml`.
 
 ## Follow the recipe through the board
 
 The important files form a short path:
 
-1. `personal-hopspot/embedded/esp32/boards/xiao-esp32-c6/src/main.rs` is the
-   board binary. It only hands the Embassy spawner to the shared C6 application.
-2. `personal-hopspot/embedded/esp32/src/c6/board.rs` owns clocks, peripherals,
-   USB, radio handles, the hardware MAC, and the hardware-backed timebase.
-3. `personal-hopspot/embedded/esp32/src/c6/firmware.rs` creates fresh or
-   persisted identities, claims interface lanes, constructs `PrnsNodeRecipe`,
-   and runs the node manifold.
-4. `personal-hopspot/embedded/esp32/src/storage.rs` is the explicit fixed-memory
-   budget. It is part of the application design, not hidden allocator magic.
-5. `personal-hopspot/core/src/node_pages.rs` is the reusable static-route
-   example that serves the built-in NomadNet index and quickstart.
+1. `personal-hopspot/embedded/esp32/boards/xiao-esp32-c6/src/main.rs` is the board binary. It only hands the Embassy spawner to the shared C6 application.
+2. `personal-hopspot/embedded/esp32/src/c6/board.rs` owns clocks, peripherals, USB, radio handles, the hardware MAC, and the hardware-backed timebase.
+3. `personal-hopspot/embedded/esp32/src/c6/firmware.rs` creates fresh or persisted identities, claims interface lanes, constructs `PrnsNodeRecipe`, and runs the node manifold.
+4. `personal-hopspot/embedded/esp32/src/storage.rs` is the explicit fixed-memory budget. It is part of the application design, not hidden allocator magic.
+5. `personal-hopspot/core/src/node_pages.rs` is the reusable static-route example that serves the built-in NomadNet index and quickstart.
 
-The center of the firmware is a `PrnsNodeRecipe`: transport identity,
-application destinations, storage, routes, interfaces, application state, and
-an event callback. Hardware code supplies those same obligations under
-`no_std`; it does not switch to a separate networking API.
+The center of the firmware is a `PrnsNodeRecipe`: transport identity, application destinations, storage, routes, interfaces, application state, and an event callback. Hardware code supplies those same obligations under `no_std`; it does not switch to a separate networking API.
 
 ## Understand the bounded choices
 
-The C6 deliberately uses a small fixed storage profile. It carries the
-NomadNet index and quickstart but does not embed the multi-megabyte release
-source archive. Source-capable S3 boards use flash-backed archive bytes and a
-larger outgoing resource window. That capability difference is selected during
-the release build and changes both the registered file routes and the page
-language.
+The C6 deliberately uses a small fixed storage profile. It carries the NomadNet index and quickstart but does not embed the multi-megabyte release source archive. Source-capable S3 boards use flash-backed archive bytes and a larger outgoing resource window. That capability difference is selected during the release build and changes both the registered file routes and the page language.
 
 When adapting the recipe to a new board, decide these explicitly:
 
 - where identity material persists and where boot entropy comes from;
 - which interface drivers exist and how many simultaneous lanes or peers fit;
-- the fixed capacities for destinations, links, resources, receipts, and
-  packet history;
+- the fixed capacities for destinations, links, resources, receipts, and packet history;
 - which application routes and destinations the device owns;
-- how tasks are supervised and how failure is reported without a desktop
-  process around them.
+- how tasks are supervised and how failure is reported without a desktop process around them.
 
-Start from the nearest shipped board instead of copying the native two-node
-example and guessing at these obligations.
+Start from the nearest shipped board instead of copying the native two-node example and guessing at these obligations.
 
 ## Flash only when you mean to
 
-Building does not require a board. Flashing does, and writes the selected
-device. Install the pinned flasher, connect a XIAO ESP32-C6, verify the target,
-then opt into the flash command:
+Building does not require a board. Flashing does, and writes the selected device. Install the pinned flasher, connect a XIAO ESP32-C6, verify the target, then opt into the flash command:
 
 ```console
 cargo install espflash --version 4.5.0 --locked
@@ -90,10 +60,7 @@ cd personal-hopspot/embedded/esp32
 cargo c6-flash --locked
 ```
 
-The doctor step is read-only. The final command flashes and opens a serial
-monitor. For signed release firmware, board discovery, and the supported
-operator flow, use the flasher described in
-[Personal Hopspot](../personal-hopspot/README.md).
+The doctor step is read-only. The final command flashes and opens a serial monitor. For signed release firmware, board discovery, and the supported operator flow, use the flasher described in [Personal Hopspot](../personal-hopspot/README.md).
 
 ## Verify embedded changes
 
@@ -106,13 +73,10 @@ cargo build --locked -p personal-rns --no-default-features \
 bash validation/platforms/no-std-esp-build.sh
 ```
 
-The Linux `embedded-builds` validation suite adds the Embassy interface
-cross-builds and T-Echo firmware:
+The Linux `embedded-builds` validation suite adds the Embassy interface cross-builds and T-Echo firmware:
 
 ```console
 python3 validation/run.py run --suite embedded-builds --platform linux
 ```
 
-Release qualification builds the Heltec V4, T-Beam Supreme, XIAO ESP32-C6, and
-T-Echo through the release-custody path. See the
-[testing guide](testing.md) before choosing a broader lane.
+Release qualification builds the Heltec V4, T-Beam Supreme, XIAO ESP32-C6, and T-Echo through the release-custody path. See the [testing guide](testing.md) before choosing a broader lane.
