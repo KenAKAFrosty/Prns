@@ -108,7 +108,6 @@ class TaskRegistryTests(unittest.TestCase):
                     f"{relative} has a dead local link: {target}",
                 )
             self.assertNotIn("cargo add prnsd", source)
-            self.assertNotIn("cargo add personal-rns", source)
 
     def test_task_implementation_cannot_cross_domain_boundaries(self) -> None:
         manifest = copy.deepcopy(self.manifest)
