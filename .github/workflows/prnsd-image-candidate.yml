@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       commit_sha:
-        description: Protected trunk commit to build
+        description: Protected main commit to build
         required: true
         type: string
 
@@ -42,7 +42,7 @@ jobs:
           EXPECTED_COMMIT: ${{ inputs.commit_sha }}
           REF_PROTECTED: ${{ github.ref_protected }}
         run: |
-          test "$GITHUB_REF" = "refs/heads/trunk"
+          test "$GITHUB_REF" = "refs/heads/main"
           test "$REF_PROTECTED" = "true"
           test "$GITHUB_SHA" = "$EXPECTED_COMMIT"
           test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"

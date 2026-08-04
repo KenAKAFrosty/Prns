@@ -39,7 +39,7 @@ jobs:
         env:
           REF_PROTECTED: ${{ github.ref_protected }}
         run: |
-          test "$GITHUB_REF" = "refs/heads/trunk"
+          test "$GITHUB_REF" = "refs/heads/main"
           test "$REF_PROTECTED" = "true"
           test "$GITHUB_SHA" = "$GITHUB_WORKFLOW_SHA"
           [[ "$IMAGE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
@@ -56,7 +56,7 @@ jobs:
           test "$(jq -r '.event' "${RUNNER_TEMP}/image-run.json")" = "workflow_dispatch"
           test "$(jq -r '.status' "${RUNNER_TEMP}/image-run.json")" = "completed"
           test "$(jq -r '.conclusion' "${RUNNER_TEMP}/image-run.json")" = "success"
-          test "$(jq -r '.head_branch' "${RUNNER_TEMP}/image-run.json")" = "trunk"
+          test "$(jq -r '.head_branch' "${RUNNER_TEMP}/image-run.json")" = "main"
           test "$(jq -r '.head_sha' "${RUNNER_TEMP}/image-run.json")" = "$GITHUB_SHA"
           test "$(jq -r '.head_repository.full_name' "${RUNNER_TEMP}/image-run.json")" = "$GITHUB_REPOSITORY"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093

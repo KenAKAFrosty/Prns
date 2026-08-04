@@ -199,6 +199,8 @@ def validate() -> list[str]:
         ROOT / ".github" / "workflows" / "prnsd-image-candidate.yml"
     ).read_text(encoding="utf-8")
     for source_gate in (
+        'test "$GITHUB_REF" = "refs/heads/main"',
+        'test "$REF_PROTECTED" = "true"',
         "./tools/prns release source package --",
         '--commit "$GITHUB_SHA"',
         "--output target/source-bundle/source.zip",
@@ -215,8 +217,11 @@ def validate() -> list[str]:
     ).read_text(encoding="utf-8")
     for staging_gate in (
         "Require exact protected staging source",
+        'test "$GITHUB_REF" = "refs/heads/main"',
+        'test "$REF_PROTECTED" = "true"',
         "Verify image candidate workflow custody",
         ".github/workflows/prnsd-image-candidate.yml",
+        "head_branch' \"${RUNNER_TEMP}/image-run.json\")\" = \"main\"",
         "image-candidate-verify",
         "ghcr.io/kenakafrosty/prnsd-staging",
         "candidate-${GITHUB_SHA}-${architecture}",
@@ -249,8 +254,11 @@ def validate() -> list[str]:
         ROOT / ".github" / "workflows" / "prnsd-staging-qualification.yml"
     ).read_text(encoding="utf-8")
     for staging_gate in (
+        'test "$GITHUB_REF" = "refs/heads/main"',
+        'test "$REF_PROTECTED" = "true"',
         "Verify public staging publication custody",
         ".github/workflows/prnsd-staging-publish.yml",
+        "head_branch' \"${RUNNER_TEMP}/publication-run.json\")\" = \"main\"",
         ".inputs.package_is_public",
         "staging-metadata-verify",
         "ghcr.io/kenakafrosty/prnsd-staging",

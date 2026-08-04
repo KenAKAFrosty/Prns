@@ -295,27 +295,27 @@ operator contract.
 
 The public staging lane exercises the real container and Railway journey without creating a release, tag, signature, prerelease, or promotion record. It republishes the exact reproducible OCI layouts under `ghcr.io/kenakafrosty/prnsd-staging`; the separate package name and its generated metadata identify the artifact as staging while the executable bytes remain eligible to become a later release candidate.
 
-Start from an exact protected `trunk` commit. Dispatch `prnsd-image-candidate.yml` with that full commit SHA and wait for its primary and reproduction builds to agree for amd64 and ARM64. Then dispatch `prnsd-staging-publish.yml` with the successful image-candidate run ID and leave `package_is_public` false on the first run. The workflow verifies the producer run, rechecks the OCI layouts and their embedded source, preserves the platform manifest digests while copying them, and publishes only immutable `candidate-COMMIT` tags to the staging package.
+Start from an exact protected `main` commit. Dispatch `prnsd-image-candidate.yml` with that full commit SHA and wait for its primary and reproduction builds to agree for amd64 and ARM64. Then dispatch `prnsd-staging-publish.yml` with the successful image-candidate run ID and leave `package_is_public` false on the first run. The workflow verifies the producer run, rechecks the OCI layouts and their embedded source, preserves the platform manifest digests while copying them, and publishes only immutable `candidate-COMMIT` tags to the staging package.
 
 GitHub creates a new container package as private. Open the `prnsd-staging` package settings and deliberately change its visibility to public only after confirming that this separate package is the intended permanent public staging surface. GitHub does not permit a public package to become private again. Rerun `prnsd-staging-publish.yml` with the same image-candidate run ID and `package_is_public` true; the workflow then proves anonymous digest access and uploads `prnsd-staging-image-COMMIT.json` plus `railway-staging-contract-COMMIT.json`.
 
 The equivalent CLI dispatches are:
 
 ```sh
-export SOURCE_COMMIT='FULL_PROTECTED_TRUNK_SHA'
+export SOURCE_COMMIT='FULL_PROTECTED_MAIN_SHA'
 export IMAGE_CANDIDATE_RUN_ID='SUCCESSFUL_IMAGE_CANDIDATE_RUN_ID'
 
 gh workflow run prnsd-image-candidate.yml \
-  --ref trunk \
+  --ref main \
   -f commit_sha="$SOURCE_COMMIT"
 
 gh workflow run prnsd-staging-publish.yml \
-  --ref trunk \
+  --ref main \
   -f image_candidate_run_id="$IMAGE_CANDIDATE_RUN_ID" \
   -f package_is_public=false
 
 gh workflow run prnsd-staging-publish.yml \
-  --ref trunk \
+  --ref main \
   -f image_candidate_run_id="$IMAGE_CANDIDATE_RUN_ID" \
   -f package_is_public=true
 ```

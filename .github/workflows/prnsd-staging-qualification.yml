@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       source_commit:
-        description: Exact protected trunk source commit deployed
+        description: Exact protected main source commit deployed
         required: true
         type: string
       image_digest:
@@ -92,7 +92,7 @@ jobs:
         env:
           REF_PROTECTED: ${{ github.ref_protected }}
         run: |
-          test "$GITHUB_REF" = "refs/heads/trunk"
+          test "$GITHUB_REF" = "refs/heads/main"
           test "$REF_PROTECTED" = "true"
           test "$GITHUB_SHA" = "$SOURCE_COMMIT"
           test "$PERSISTENCE_RESTORED" = "true"
@@ -112,7 +112,7 @@ jobs:
           test "$(jq -r '.event' "${RUNNER_TEMP}/publication-run.json")" = "workflow_dispatch"
           test "$(jq -r '.status' "${RUNNER_TEMP}/publication-run.json")" = "completed"
           test "$(jq -r '.conclusion' "${RUNNER_TEMP}/publication-run.json")" = "success"
-          test "$(jq -r '.head_branch' "${RUNNER_TEMP}/publication-run.json")" = "trunk"
+          test "$(jq -r '.head_branch' "${RUNNER_TEMP}/publication-run.json")" = "main"
           test "$(jq -r '.head_sha' "${RUNNER_TEMP}/publication-run.json")" = "$GITHUB_SHA"
           test "$(jq -r '.head_repository.full_name' "${RUNNER_TEMP}/publication-run.json")" = "$GITHUB_REPOSITORY"
           test "$(jq -r '.inputs.package_is_public' "${RUNNER_TEMP}/publication-run.json")" = "true"

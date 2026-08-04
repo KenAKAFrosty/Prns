@@ -127,7 +127,7 @@ container operation, Railway publication, backups, rollback, SBOMs, signatures,
 and provenance verification are documented in
 [`docs/deploy-prnsd.md`](deploy-prnsd.md).
 
-The separate public `ghcr.io/kenakafrosty/prnsd-staging` package supports live Docker and Railway rehearsal before release readiness. Its immutable commit tags and staging evidence are intentionally outside release custody and cannot satisfy suite signing or promotion.
+The separate public `ghcr.io/kenakafrosty/prnsd-staging` package supports live Docker and Railway rehearsal from an exact protected `main` commit before release readiness. Its immutable commit tags and staging evidence are intentionally outside release custody and cannot satisfy suite signing or promotion.
 
 The unified suite retains the flasher's established physical-acceptance
 boundary. The protected suite public review, signed physical acceptance and
