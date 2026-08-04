@@ -24,7 +24,7 @@ use prns_core::interfaces::bluetooth_auto::{
 };
 
 use super::data_plane::{wire_l2cap, DataPlane, PendingL2cap};
-use super::gatt_link::{ControlPlane, GattLink};
+use super::gatt_link::{gatt_inbound_channel, ControlPlane, GattInboundSender, GattLink};
 use super::{
     advertisement_data, cbuuid_eq, columba_identity_uuid, columba_rx_uuid, columba_tx_uuid,
     control_uuid, core_bluetooth_peer_id, data_uuid, service_uuid, CoreBluetoothPeerId, Event,
@@ -62,7 +62,7 @@ struct PeripheralPeerSession {
     central: Retained<CBCentral>,
     protocol: PeerProtocol,
     control_tx: tokio_mpsc::Sender<Control>,
-    data_tx: tokio_mpsc::Sender<Box<[u8]>>,
+    data_tx: GattInboundSender,
 }
 
 impl PeripheralPeerSession {
@@ -316,21 +316,31 @@ define_class!(
                 let central = unsafe { request.central() };
                 let peer_id = core_bluetooth_peer_id(&central);
                 if cbuuid_eq(&written_uuid, &data_uuid()) {
-                    let sessions = self.ivars().sessions.borrow();
-                    if let Some(session) = sessions
+                    let enqueue_error = self
+                        .ivars()
+                        .sessions
+                        .borrow()
                         .get(&peer_id)
                         .filter(|session| session.protocol == PeerProtocol::Native)
-                    {
-                        let _ = session.data_tx.try_send(Box::from(bytes.as_slice()));
-                    }
+                        .and_then(|session| {
+                            session.data_tx.try_send(Box::from(bytes.as_slice())).err()
+                        });
+                    let result = if let Some(error) = enqueue_error {
+                        crate::diagnostic_log::warn!(
+                            "bluetooth: GATT write inbox failed for {:02x?}: {error:?}",
+                            peer_id.address().octets()
+                        );
+                        CBATTError::InsufficientResources
+                    } else {
+                        CBATTError::Success
+                    };
                     // SAFETY: the request belongs to this live manager callback and is answered
                     // exactly once on this branch.
-                    unsafe {
-                        peripheral.respondToRequest_withResult(&request, CBATTError::Success)
-                    };
+                    unsafe { peripheral.respondToRequest_withResult(&request, result) };
                     continue;
                 }
                 if cbuuid_eq(&written_uuid, &columba_rx_uuid()) {
+                    let mut enqueue_error = None;
                     let known = self.ivars().sessions.borrow().contains_key(&peer_id);
                     if !known && bytes.len() == 16 {
                         let mut peer_identity = [0u8; 16];
@@ -347,13 +357,20 @@ define_class!(
                         .get(&peer_id)
                         .filter(|session| session.protocol == PeerProtocol::Columba)
                     {
-                        let _ = session.data_tx.try_send(Box::from(bytes.as_slice()));
+                        enqueue_error = session.data_tx.try_send(Box::from(bytes.as_slice())).err();
                     }
+                    let result = if let Some(error) = enqueue_error {
+                        crate::diagnostic_log::warn!(
+                            "bluetooth: Columba GATT write inbox failed for {:02x?}: {error:?}",
+                            peer_id.address().octets()
+                        );
+                        CBATTError::InsufficientResources
+                    } else {
+                        CBATTError::Success
+                    };
                     // SAFETY: the request belongs to this live manager callback and is answered
                     // exactly once on this branch.
-                    unsafe {
-                        peripheral.respondToRequest_withResult(&request, CBATTError::Success)
-                    };
+                    unsafe { peripheral.respondToRequest_withResult(&request, result) };
                     continue;
                 }
                 if let Some(control) = Control::decode(&bytes) {
@@ -527,7 +544,7 @@ impl PeripheralDelegate {
         profile: InboundProfile,
     ) {
         let (control_tx, control_rx) = tokio_mpsc::channel::<Control>(8);
-        let (data_tx, data_rx) = tokio_mpsc::channel::<Box<[u8]>>(16);
+        let (data_tx, data_rx) = gatt_inbound_channel();
         let protocol = profile.protocol();
         let peer_identity = profile.peer_identity();
         // SAFETY: this is an immutable property query on the live requesting central.

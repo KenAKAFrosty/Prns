@@ -23,7 +23,7 @@ use prns_core::interfaces::bluetooth_auto::{BleAddress, BleIdentity, Control, Ps
 use super::central::{
     is_system_connected, CentralDelegate, CentralPeerSession, DialCommand, DialCompletion,
 };
-use super::gatt_link::{ControlPlane, GattLink};
+use super::gatt_link::{gatt_inbound_channel, ControlPlane, GattLink};
 use super::peripheral::PeripheralDelegate;
 #[cfg(target_os = "ios")]
 use super::{central_manager_options, peripheral_manager_options};
@@ -447,7 +447,7 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
         };
         let (control_tx, control_rx) = tokio_mpsc::channel::<Control>(8);
         let (completion_tx, completion_rx) = oneshot::channel::<DialCompletion>();
-        let (data_inbound_tx, data_inbound_rx) = tokio_mpsc::channel::<Box<[u8]>>(16);
+        let (data_inbound_tx, data_inbound_rx) = gatt_inbound_channel();
         let command = DialCommand {
             central: self.central.0.clone(),
             delegate: self.central_delegate.0.clone(),

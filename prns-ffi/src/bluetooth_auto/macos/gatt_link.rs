@@ -1,4 +1,5 @@
 use core::time::Duration;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use dispatch2::{DispatchQueue, DispatchRetained};
@@ -20,7 +21,100 @@ use super::{
 
 const GATT_REASSEMBLY_CAP: usize = BLE_HW_MTU;
 const GATT_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+const GATT_INBOUND_BUDGET_BYTES: usize = 128 * 1024;
 const L2CAP_OUTBOUND_CAP: usize = 8 * L2CAP_SDU_LEN;
+
+#[derive(Clone)]
+pub(super) struct GattInboundSender {
+    sender: tokio_mpsc::UnboundedSender<Box<[u8]>>,
+    queued_bytes: Arc<AtomicUsize>,
+    budget_bytes: usize,
+}
+
+pub(super) struct GattInboundReceiver {
+    receiver: tokio_mpsc::UnboundedReceiver<Box<[u8]>>,
+    queued_bytes: Arc<AtomicUsize>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum GattInboundSendError {
+    Closed,
+    BudgetExceeded,
+}
+
+pub(super) fn gatt_inbound_channel() -> (GattInboundSender, GattInboundReceiver) {
+    gatt_inbound_channel_with_budget(GATT_INBOUND_BUDGET_BYTES)
+}
+
+pub(super) fn gatt_inbound_channel_with_budget(
+    budget_bytes: usize,
+) -> (GattInboundSender, GattInboundReceiver) {
+    let (sender, receiver) = tokio_mpsc::unbounded_channel();
+    let queued_bytes = Arc::new(AtomicUsize::new(0));
+    (
+        GattInboundSender {
+            sender,
+            queued_bytes: queued_bytes.clone(),
+            budget_bytes,
+        },
+        GattInboundReceiver {
+            receiver,
+            queued_bytes,
+        },
+    )
+}
+
+impl GattInboundSender {
+    pub(super) fn try_send(&self, data: Box<[u8]>) -> Result<(), GattInboundSendError> {
+        if self.sender.is_closed() {
+            return Err(GattInboundSendError::Closed);
+        }
+        // Charge empty callbacks as one byte so the byte budget also bounds the number of queued
+        // allocations. Empty values are not useful GATT fragments, but CoreBluetooth is an
+        // external input and must not be able to grow an unbounded queue for free.
+        let charge = data.len().max(1);
+        let mut queued = self.queued_bytes.load(Ordering::Acquire);
+        loop {
+            let Some(next) = queued.checked_add(charge) else {
+                return Err(GattInboundSendError::BudgetExceeded);
+            };
+            if next > self.budget_bytes {
+                return Err(GattInboundSendError::BudgetExceeded);
+            }
+            match self.queued_bytes.compare_exchange_weak(
+                queued,
+                next,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => break,
+                Err(actual) => queued = actual,
+            }
+        }
+        match self.sender.send(data) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                self.queued_bytes
+                    .fetch_sub(error.0.len().max(1), Ordering::AcqRel);
+                Err(GattInboundSendError::Closed)
+            }
+        }
+    }
+
+    pub(super) fn is_closed(&self) -> bool {
+        self.sender.is_closed()
+    }
+}
+
+impl GattInboundReceiver {
+    pub(super) async fn recv(&mut self) -> Option<Box<[u8]>> {
+        let data = self.receiver.recv().await?;
+        self.queued_bytes
+            .fetch_sub(data.len().max(1), Ordering::AcqRel);
+        Some(data)
+    }
+}
+
 pub(super) enum ControlPlane {
     Listener {
         peer_id: CoreBluetoothPeerId,
@@ -147,7 +241,7 @@ pub struct GattLink {
     pub(super) control: ControlPlane,
     pub(super) control_rx: tokio_mpsc::Receiver<Control>,
     pub(super) address: BleAddress,
-    pub(super) data_inbound_rx: Option<tokio_mpsc::Receiver<Box<[u8]>>>,
+    pub(super) data_inbound_rx: Option<GattInboundReceiver>,
     pub(super) l2cap_pending: Option<oneshot::Receiver<DataPlane>>,
 }
 
