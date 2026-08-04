@@ -155,13 +155,13 @@ mod tests {
             AttachedInterfaces::new(&interfaces),
             FanTarget::All,
             &[0xAB],
-            &mut |reaction| match reaction {
-                EngineReaction::Directive(Directive::SendAnnounce {
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::SendAnnounce {
                     target, hops: 0, ..
-                }) => {
+                }) = reaction
+                {
                     targets.push(target);
                 }
-                _ => {}
             },
         );
 
