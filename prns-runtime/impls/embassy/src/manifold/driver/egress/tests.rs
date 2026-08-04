@@ -1,14 +1,25 @@
-use crate::engine::test_support::{bytes_from_hex, RNS_1_4_2_ANNOUNCE};
-use crate::engine::FanTarget;
-use crate::interfaces::InterfaceIfac;
-use crate::interfaces::{InterfaceId, InterfaceKind};
+use crate::engine::test_support::{bytes_from_hex, routable_descriptor, RNS_1_4_2_ANNOUNCE};
+use crate::engine::{Directive, EngineReaction, FanTarget, InstantMillis};
+use crate::interfaces::{
+    AnnounceBandwidthCap, BitrateBps, InterfaceDescriptor, InterfaceId, InterfaceIfac,
+    InterfaceKind,
+};
 use crate::manifold::grant::{FrameTarget, GrantConsumer};
 use crate::manifold::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
 
 use super::super::leaked_grant_lane;
 use super::{
-    enqueue_broadcast_for_wire, enqueue_for_wire, EgressOutcome, ManifoldEgress, PooledEgress,
+    enqueue_broadcast_for_wire, enqueue_for_wire, flush_due_pacers, route_reaction,
+    soonest_pacer_release, EgressOutcome, InterfacePacer, ManifoldEgress, PooledEgress,
 };
+
+fn paced_descriptor(id: InterfaceId) -> InterfaceDescriptor {
+    InterfaceDescriptor {
+        bitrate: BitrateBps::guess(5_000),
+        announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
+        ..routable_descriptor(id)
+    }
+}
 
 #[test]
 fn pooled_egress_retag_relabels_a_lane_and_ignores_a_missing_id() {
@@ -88,5 +99,103 @@ fn a_fleet_lane_masks_direct_and_broadcast_frames_once() {
         .unmask_inbound(broadcast.frame(), &mut opened)
         .unwrap();
     assert_eq!(&opened[..opened_len], clean.as_slice());
+    consumer.release();
+}
+
+#[test]
+fn a_pacer_retains_back_to_back_announces_for_a_one_slot_direct_lane() {
+    let id = InterfaceId::new([0x55; 8]);
+    const FRAME: usize = EMBEDDED_MAX_WIRE_FRAME_LEN;
+    let (producer, mut consumer) = leaked_grant_lane::<FRAME>(1);
+    let mut egress: PooledEgress<1> = PooledEgress::new();
+    let _ = egress.push(id, std::boxed::Box::leak(std::boxed::Box::new(producer)));
+    let mut pacers = [InterfacePacer::from_descriptor(id, &paced_descriptor(id))];
+
+    for bytes in [b"delivery".as_slice(), b"node"] {
+        route_reaction(
+            EngineReaction::Directive(Directive::SendAnnounce {
+                target: id,
+                bytes,
+                hops: 0,
+            }),
+            &mut egress,
+            &[],
+            &mut pacers,
+            InstantMillis(0),
+            &mut |_| {},
+        );
+    }
+
+    let first = consumer
+        .try_peek()
+        .expect("the first announce enters egress");
+    assert_eq!(first.target, FrameTarget::Direct(id));
+    assert_eq!(first.frame(), b"delivery");
+    consumer.release();
+    assert!(
+        consumer.try_peek().is_none(),
+        "the second announce waits in the pacer"
+    );
+
+    let due = soonest_pacer_release(&pacers).expect("the retained announce has a deadline");
+    flush_due_pacers(&mut pacers, due, &mut egress, &[]);
+    let second = consumer
+        .try_peek()
+        .expect("the retained announce enters the released lane");
+    assert_eq!(second.target, FrameTarget::Direct(id));
+    assert_eq!(second.frame(), b"node");
+    consumer.release();
+}
+
+#[test]
+fn a_pacer_retains_back_to_back_announces_for_a_one_slot_fleet_lane() {
+    let supervisor = InterfaceId::from_channel_tag(InterfaceKind::BluetoothAuto, b"announce-fleet");
+    let peer = InterfaceId::new([InterfaceKind::BluetoothPeer as u8, 0x66, 0, 0, 0, 0, 0, 0]);
+    const FRAME: usize = EMBEDDED_MAX_WIRE_FRAME_LEN;
+    let (producer, mut consumer) = leaked_grant_lane::<FRAME>(1);
+    let mut egress: PooledEgress<1> = PooledEgress::new();
+    let _ = egress.push(
+        supervisor,
+        std::boxed::Box::leak(std::boxed::Box::new(producer)),
+    );
+    let mut pacers = [InterfacePacer::from_descriptor(
+        supervisor,
+        &paced_descriptor(peer),
+    )];
+
+    for bytes in [b"delivery".as_slice(), b"node"] {
+        route_reaction(
+            EngineReaction::Directive(Directive::SendAnnounceToFleet {
+                supervisor: InterfaceKind::BluetoothAuto,
+                fan: FanTarget::All,
+                bytes,
+                hops: 0,
+            }),
+            &mut egress,
+            &[],
+            &mut pacers,
+            InstantMillis(0),
+            &mut |_| {},
+        );
+    }
+
+    let first = consumer
+        .try_peek()
+        .expect("the first announce enters egress");
+    assert_eq!(first.target, FrameTarget::Fan(FanTarget::All));
+    assert_eq!(first.frame(), b"delivery");
+    consumer.release();
+    assert!(
+        consumer.try_peek().is_none(),
+        "the second fleet announce waits in the shared pacer"
+    );
+
+    let due = soonest_pacer_release(&pacers).expect("the retained announce has a deadline");
+    flush_due_pacers(&mut pacers, due, &mut egress, &[]);
+    let second = consumer
+        .try_peek()
+        .expect("the retained fleet announce enters the released lane");
+    assert_eq!(second.target, FrameTarget::Fan(FanTarget::All));
+    assert_eq!(second.frame(), b"node");
     consumer.release();
 }
