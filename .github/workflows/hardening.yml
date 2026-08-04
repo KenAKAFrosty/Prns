@@ -28,6 +28,8 @@ jobs:
         sanitizer: [address, leak, thread]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install Linux native development packages
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - id: toolchain
         run: echo "nightly=$(python3 validation/run.py toolchain nightly)" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
