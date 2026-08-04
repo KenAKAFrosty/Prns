@@ -197,8 +197,7 @@ const LANE_DEPTH: usize = 1;
 /// A resource request is one inbound frame that synchronously emits its parts and, at most, one
 /// hashmap update. Derive every S3 lane's PSRAM backlog from the engine storage recipe: the compact
 /// build can hold only eighteen parts, rather than the protocol-wide seventy-five-part window.
-const OUTBOUND_BURST_DEPTH: usize =
-    EngineStorageType::MAX_OUTGOING_RESOURCE_REACTION_FRAMES;
+const OUTBOUND_BURST_DEPTH: usize = EngineStorageType::MAX_OUTGOING_RESOURCE_REACTION_FRAMES;
 pub const NOTIFY_CAP: usize = minimum_manifold_notification_capacity(LANE_COUNT, LANE_DEPTH);
 const COMMANDS_CAP: usize = 8;
 pub const LIFECYCLE_CAP: usize = 8;

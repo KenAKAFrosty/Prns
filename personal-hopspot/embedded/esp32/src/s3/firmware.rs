@@ -227,9 +227,9 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let tcp_cfg = tcp_built.as_ref().map(|(t, _, _)| t.descriptor());
     let has_wifi = wifi.is_some();
 
-    let usb_outbound = crate::storage::allocate_manifold_outbound::<
-        EMBEDDED_MAX_WIRE_FRAME_LEN,
-    >(OUTBOUND_BURST_DEPTH);
+    let usb_outbound = crate::storage::allocate_manifold_outbound::<EMBEDDED_MAX_WIRE_FRAME_LEN>(
+        OUTBOUND_BURST_DEPTH,
+    );
     let usb_lane = manifold_lanes
         .claim_interface_with_outbound_buffer(
             &USB_MANIFOLD_LANE,
@@ -238,9 +238,9 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         )
         .expect("USB lane is available");
     let tcp_lane = tcp_cfg.map(|descriptor| {
-        let outbound = crate::storage::allocate_manifold_outbound::<
-            EMBEDDED_MAX_WIRE_FRAME_LEN,
-        >(OUTBOUND_BURST_DEPTH);
+        let outbound = crate::storage::allocate_manifold_outbound::<EMBEDDED_MAX_WIRE_FRAME_LEN>(
+            OUTBOUND_BURST_DEPTH,
+        );
         manifold_lanes
             .claim_interface_with_outbound_buffer(&TCP_MANIFOLD_LANE, descriptor, outbound)
             .expect("TCP lane is available")

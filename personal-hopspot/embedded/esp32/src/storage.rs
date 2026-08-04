@@ -173,11 +173,11 @@ mod riscv {
     use personal_rns::routing::links::resources::assembly::{
         FixedIncomingAssemblyTable, FixedOutgoingAssemblyTable,
     };
-    use personal_rns::routing::links::resources::{
-        max_outgoing_resource_reaction_frames, max_part_count,
-    };
     use personal_rns::routing::links::resources::table::{
         FixedResourceTable, IncomingResourceState, OutgoingResourceState,
+    };
+    use personal_rns::routing::links::resources::{
+        max_outgoing_resource_reaction_frames, max_part_count,
     };
     use personal_rns::routing::links::table::FixedLinkTable;
     use personal_rns::routing::links::transported::FixedTransportedLinkTable;

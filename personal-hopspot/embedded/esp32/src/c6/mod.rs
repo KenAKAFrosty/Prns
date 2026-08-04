@@ -136,12 +136,8 @@ static ESPNOW_MANIFOLD_LANE: StaticManifoldLane<
     OUTBOUND_BURST_DEPTH,
 > = StaticManifoldLane::new();
 #[cfg(feature = "bluetooth-auto")]
-static BLE_MANIFOLD_LANE: StaticManifoldLane<
-    Mtx,
-    BLE_HW_MTU,
-    LANE_DEPTH,
-    OUTBOUND_BURST_DEPTH,
-> = StaticManifoldLane::new();
+static BLE_MANIFOLD_LANE: StaticManifoldLane<Mtx, BLE_HW_MTU, LANE_DEPTH, OUTBOUND_BURST_DEPTH> =
+    StaticManifoldLane::new();
 static USB_STATUS: EmbassyInterfaceStatus =
     EmbassyInterfaceStatus::new(USB_INTERFACE_ID, ConnectionState::Initializing);
 #[cfg(feature = "bluetooth-auto")]
