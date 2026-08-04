@@ -127,6 +127,16 @@ class PrnsdDistributionTests(unittest.TestCase):
 
     def test_container_publishes_one_default_operator_context(self) -> None:
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+        self.assertIn(
+            "FROM debian:bookworm-slim@sha256:"
+            "7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818",
+            dockerfile,
+        )
+        self.assertIn(
+            "COPY --from=builder /etc/ssl/certs/ca-certificates.crt "
+            "/etc/ssl/certs/ca-certificates.crt\n",
+            dockerfile,
+        )
         self.assertIn("--features tokio-cloud-host,observability,otlp", dockerfile)
         self.assertIn("ENV PRNSD_STATE_DIR=/var/lib/prnsd/.service\n", dockerfile)
         self.assertIn("EXPOSE 4242/tcp 4284/tcp\n", dockerfile)
@@ -514,6 +524,10 @@ class PrnsdDistributionTests(unittest.TestCase):
             self.assertEqual(
                 controls["PRNSD_NNPAGES_ANNOUNCE_INTERVAL_MINUTES"],
                 {"default": "360", "unit": "minutes"},
+            )
+            self.assertEqual(
+                contract["platform_environment"],
+                {"RAILWAY_RUN_UID": "0"},
             )
 
     def test_staging_railway_contract_is_explicit_and_digest_pinned(self) -> None:

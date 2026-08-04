@@ -262,6 +262,7 @@ def validate() -> list[str]:
         ".inputs.package_is_public",
         "staging-metadata-verify",
         "ghcr.io/kenakafrosty/prnsd-staging",
+        ".platform_environment.RAILWAY_RUN_UID",
         "docker pull --platform linux/amd64",
         "docker pull --platform linux/arm64",
         "persistence_restored",

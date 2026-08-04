@@ -662,6 +662,7 @@ def railway_contract(source_commit: str, image_digest: str, image: str) -> dict:
                 "RAILWAY_TCP_PROXY_PORT",
             ],
         },
+        "platform_environment": {"RAILWAY_RUN_UID": "0"},
         "replicas": 1,
         "restart_policy": "on_failure",
         "schema": 1,

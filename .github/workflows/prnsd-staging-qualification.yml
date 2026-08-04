@@ -133,6 +133,7 @@ jobs:
             --publication-run-id "$PUBLICATION_RUN_ID"
           test "$(jq -r '.image' "target/staging/railway-staging-contract-${GITHUB_SHA}.json")" = "${STAGING_IMAGE}@${IMAGE_DIGEST}"
           test "$(jq -r '.channel' "target/staging/railway-staging-contract-${GITHUB_SHA}.json")" = "staging"
+          test "$(jq -r '.platform_environment.RAILWAY_RUN_UID' "target/staging/railway-staging-contract-${GITHUB_SHA}.json")" = "0"
       - name: Install registry transport
         run: |
           sudo apt-get update
