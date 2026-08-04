@@ -44,7 +44,7 @@ RUN test "$(rustc --version | cut -d ' ' -f 2)" = "1.96.0" \
     && install -d -m 0700 -o 65532 -g 65532 /image/var/lib/prnsd \
     && rm -rf /tmp/prnsd-target /usr/local/cargo/registry
 
-FROM gcr.io/distroless/cc-debian12:nonroot@sha256:fccdbb0a547c14e23fcf4ce8ad62ca5d43b4faae8d22cd292f490fef9946c96e
+FROM debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
 
 ARG VERSION
 ARG VCS_REF
@@ -61,6 +61,7 @@ LABEL org.opencontainers.image.title="prnsd" \
     org.opencontainers.image.revision="${VCS_REF}" \
     org.opencontainers.image.created="${BUILD_DATE}"
 
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=builder /image /
 
 USER 65532:65532

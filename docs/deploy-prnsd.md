@@ -71,6 +71,13 @@ docker exec prnsd prnsd interfaces list
 docker logs --follow prnsd
 ```
 
+The Debian slim runtime includes `/bin/sh`, ordinary filesystem and text utilities, and `apt-get`, so `docker exec -it prnsd /bin/sh`, Railway's browser console, and `railway ssh` provide a familiar diagnostic environment. The image normally enters as non-root UID 65532; use `docker exec -u 0 -it prnsd /bin/sh` only when root is needed, such as temporarily installing an optional tool with `apt-get`. Those additions disappear on redeployment. The `prnsd` executable remains available at `/usr/local/bin/prnsd`, and ordinary inspection commands can use the persistent operator configuration directly:
+
+```sh
+prnsd status --config /var/lib/prnsd --json
+prnsd interfaces list --config /var/lib/prnsd
+```
+
 ### OTLP metrics and traces
 
 The official image includes OTLP/HTTP protobuf metrics and traces. The
@@ -231,7 +238,7 @@ docker exec prnsd prnsd nnpages refresh
 ## Backup and restore
 
 Stop the daemon first so the backup represents one acknowledged final flush.
-The released image itself can act as a shell-free volume carrier:
+The released image itself can act as a volume carrier:
 
 ```sh
 docker stop --time 30 prnsd
@@ -320,7 +327,9 @@ gh workflow run prnsd-staging-publish.yml \
   -f package_is_public=true
 ```
 
-Create a private Railway project from the exact `ghcr.io/kenakafrosty/prnsd-staging@sha256:...` reference in the generated contract. Apply the same one-volume, one-replica, TCP-port-4242, restart-on-failure shape recorded there; do not override the image entrypoint or configure an HTTP-path health check. The public package makes registry credentials unnecessary, while the Railway project and its operator-owned state remain private.
+Create a private Railway project from the exact `ghcr.io/kenakafrosty/prnsd-staging@sha256:...` reference in the generated contract. Apply the same one-volume, one-replica, TCP-port-4242, restart-on-failure shape recorded there; do not override the image entrypoint or configure an HTTP-path health check. Set the fixed Railway service variable `RAILWAY_RUN_UID=0` recorded in the contract because Railway mounts volumes as root while the image normally runs as non-root UID 65532. The public package makes registry credentials unnecessary, while the Railway project and its operator-owned state remain private.
+
+Railway's dashboard and template composer stage the service, volume, variables, and TCP proxy together. When provisioning sequentially with the CLI, create the image service with `PRNSD_BACKBONE_DISCOVERABLE=Yes` and `RAILWAY_RUN_UID=0`, attach the volume, create the TCP proxy, wait for it to become active, and then redeploy the same exact digest. The first start can fail closed while the Railway endpoint variables are incomplete; this prevents bootstrap from writing a permanently undiscoverable or invalid operator configuration before the proxy exists.
 
 After the service is healthy, capture its transport identity directly from the running container, exercise a public Backbone connection, restart it, and confirm that the same identity and persisted routing state return:
 
@@ -330,6 +339,8 @@ railway ssh -- \
   --config /var/lib/prnsd \
   --json
 ```
+
+Running `railway ssh` without a command opens the same Debian shell exposed by Railway's browser console.
 
 Publish an intentional second Railway template revision, roll back to the previous revision, then restore the exact digest under test. Dispatch `prnsd-staging-qualification.yml` with the public endpoint, both observed identity hashes, both template revisions, the public staging publication run ID, and the three explicit confirmations. That workflow anonymously pulls both architectures, checks the live TCP endpoint, verifies the staging publication chain, and emits a staging-only evidence artifact.
 
@@ -344,7 +355,7 @@ that must be published:
 
 1. Use `ghcr.io/kenakafrosty/prnsd@sha256:...` from the signed image metadata,
    never a mutable tag.
-2. Mount one persistent volume at `/var/lib/prnsd`.
+2. Set the fixed service variable `RAILWAY_RUN_UID=0`, then mount one persistent volume at `/var/lib/prnsd`.
 3. Configure one TCP Proxy targeting internal port `4242`.
 4. Run exactly one replica and select restart-on-failure.
 5. Keep JSON logging and do not configure an HTTP-path health check.
