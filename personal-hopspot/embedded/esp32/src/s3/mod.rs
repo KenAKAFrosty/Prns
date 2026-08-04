@@ -194,7 +194,11 @@ const INTERFACE_CAPACITY: usize =
 const WIFI_SUPERVISOR_ID: InterfaceId =
     InterfaceId::new([InterfaceKind::AutoWifi as u8, 0, 0, 0, 0, 0, 0, 0]);
 const LANE_DEPTH: usize = 1;
-const LORA_OUTBOUND_DEPTH: usize = 1;
+/// A resource request is one inbound frame that synchronously emits its parts and, at most, one
+/// hashmap update. Derive every S3 lane's PSRAM backlog from the engine storage recipe: the compact
+/// build can hold only eighteen parts, rather than the protocol-wide seventy-five-part window.
+const OUTBOUND_BURST_DEPTH: usize =
+    EngineStorageType::MAX_OUTGOING_RESOURCE_REACTION_FRAMES;
 pub const NOTIFY_CAP: usize = minimum_manifold_notification_capacity(LANE_COUNT, LANE_DEPTH);
 const COMMANDS_CAP: usize = 8;
 pub const LIFECYCLE_CAP: usize = 8;
@@ -291,26 +295,23 @@ const BLE_SUPERVISOR_ID: InterfaceId =
 static BLE_SHARED: BluetoothAutoShared<BLE_PEER_CAPACITY> =
     BluetoothAutoShared::new(BLE_SUPERVISOR_ID);
 static LORA_CONTROL: LoRaControl = LoRaControl::new();
-static USB_MANIFOLD_LANE: StaticManifoldLane<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, LANE_DEPTH> =
+static USB_MANIFOLD_LANE: StaticManifoldLane<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, LANE_DEPTH, 0> =
     StaticManifoldLane::new();
-static TCP_MANIFOLD_LANE: StaticManifoldLane<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, LANE_DEPTH> =
+static TCP_MANIFOLD_LANE: StaticManifoldLane<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, LANE_DEPTH, 0> =
     StaticManifoldLane::new();
 static WIFI_MANIFOLD_LANE: StaticManifoldLane<
     Mtx,
     { wifi_auto_contract::HARDWARE_MTU },
     LANE_DEPTH,
+    0,
 > = StaticManifoldLane::new();
-static LORA_MANIFOLD_LANE: StaticManifoldLane<
-    Mtx,
-    LORA_MAX_PAYLOAD,
-    LANE_DEPTH,
-    LORA_OUTBOUND_DEPTH,
-> = StaticManifoldLane::new();
+static LORA_MANIFOLD_LANE: StaticManifoldLane<Mtx, LORA_MAX_PAYLOAD, LANE_DEPTH, 0> =
+    StaticManifoldLane::new();
 #[cfg(feature = "bluetooth-auto")]
-static BLE_MANIFOLD_LANE: StaticManifoldLane<Mtx, BLE_HW_MTU, LANE_DEPTH> =
+static BLE_MANIFOLD_LANE: StaticManifoldLane<Mtx, BLE_HW_MTU, LANE_DEPTH, 0> =
     StaticManifoldLane::new();
 #[cfg(feature = "esp-now")]
-static ESPNOW_MANIFOLD_LANE: StaticManifoldLane<Mtx, ESP_NOW_V2_AIR_MTU, LANE_DEPTH> =
+static ESPNOW_MANIFOLD_LANE: StaticManifoldLane<Mtx, ESP_NOW_V2_AIR_MTU, LANE_DEPTH, 0> =
     StaticManifoldLane::new();
 
 static NOTIFY: Channel<Mtx, InterfaceId, NOTIFY_CAP> = Channel::new();

@@ -227,34 +227,64 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let tcp_cfg = tcp_built.as_ref().map(|(t, _, _)| t.descriptor());
     let has_wifi = wifi.is_some();
 
+    let usb_outbound = crate::storage::allocate_manifold_outbound::<
+        EMBEDDED_MAX_WIRE_FRAME_LEN,
+    >(OUTBOUND_BURST_DEPTH);
     let usb_lane = manifold_lanes
-        .claim_interface(&USB_MANIFOLD_LANE, device_descriptor(usb_id))
+        .claim_interface_with_outbound_buffer(
+            &USB_MANIFOLD_LANE,
+            device_descriptor(usb_id),
+            usb_outbound,
+        )
         .expect("USB lane is available");
     let tcp_lane = tcp_cfg.map(|descriptor| {
+        let outbound = crate::storage::allocate_manifold_outbound::<
+            EMBEDDED_MAX_WIRE_FRAME_LEN,
+        >(OUTBOUND_BURST_DEPTH);
         manifold_lanes
-            .claim_interface(&TCP_MANIFOLD_LANE, descriptor)
+            .claim_interface_with_outbound_buffer(&TCP_MANIFOLD_LANE, descriptor, outbound)
             .expect("TCP lane is available")
     });
     #[cfg(feature = "wifi-auto")]
     let wifi_supervisor_lane = has_wifi.then(|| {
+        let outbound = crate::storage::allocate_manifold_outbound::<
+            { wifi_auto_contract::HARDWARE_MTU },
+        >(OUTBOUND_BURST_DEPTH);
         manifold_lanes
-            .claim_supervisor(&WIFI_MANIFOLD_LANE, WIFI_SUPERVISOR_ID, &OUTBOUND_WAKE)
+            .claim_supervisor_with_outbound_buffer(
+                &WIFI_MANIFOLD_LANE,
+                WIFI_SUPERVISOR_ID,
+                &OUTBOUND_WAKE,
+                outbound,
+            )
             .expect("Wi-Fi supervisor lane is available")
     });
     #[cfg(feature = "lora")]
+    let lora_outbound =
+        crate::storage::allocate_manifold_outbound::<LORA_MAX_PAYLOAD>(OUTBOUND_BURST_DEPTH);
+    #[cfg(feature = "lora")]
     let lora_lane = manifold_lanes
-        .claim_interface(&LORA_MANIFOLD_LANE, lora_cfg)
+        .claim_interface_with_outbound_buffer(&LORA_MANIFOLD_LANE, lora_cfg, lora_outbound)
         .expect("LoRa lane is available");
     #[cfg(feature = "bluetooth-auto")]
     let ble_supervisor_lane = (radio_mode == RadioMode::Ble && ble_identity.is_some()).then(|| {
+        let outbound =
+            crate::storage::allocate_manifold_outbound::<BLE_HW_MTU>(OUTBOUND_BURST_DEPTH);
         manifold_lanes
-            .claim_supervisor(&BLE_MANIFOLD_LANE, BLE_SUPERVISOR_ID, &BLE_OUTBOUND_WAKE)
+            .claim_supervisor_with_outbound_buffer(
+                &BLE_MANIFOLD_LANE,
+                BLE_SUPERVISOR_ID,
+                &BLE_OUTBOUND_WAKE,
+                outbound,
+            )
             .expect("Bluetooth supervisor lane is available")
     });
     #[cfg(feature = "esp-now")]
     let espnow_lane = espnow_cfg.map(|descriptor| {
+        let outbound =
+            crate::storage::allocate_manifold_outbound::<ESP_NOW_V2_AIR_MTU>(OUTBOUND_BURST_DEPTH);
         manifold_lanes
-            .claim_interface(&ESPNOW_MANIFOLD_LANE, descriptor)
+            .claim_interface_with_outbound_buffer(&ESPNOW_MANIFOLD_LANE, descriptor, outbound)
             .expect("ESP-NOW lane is available")
     });
 

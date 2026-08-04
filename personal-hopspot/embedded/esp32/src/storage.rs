@@ -103,6 +103,18 @@ pub fn allocate_lora_tx_queue() -> &'static mut [u8; personal_rns::lora::LORA_TX
         .expect("the LoRa transmit queue allocation has its requested length")
 }
 
+/// Allocate a manifold frame ring in PSRAM after the board has mapped external memory.
+#[cfg(target_arch = "xtensa")]
+pub fn allocate_manifold_outbound<const FRAME: usize>(
+    depth: usize,
+) -> &'static mut [personal_rns::manifold::grant::FrameSlot<FRAME>] {
+    use personal_rns::manifold::grant::FrameSlot;
+
+    let mut storage = Vec::with_capacity_in(depth, PsramAlloc);
+    storage.resize_with(depth, FrameSlot::empty);
+    Box::leak(storage.into_boxed_slice())
+}
+
 #[cfg(target_arch = "xtensa")]
 // SAFETY: Private bump returns exclusive slices from the mapped PSRAM window; ExternalMemory
 // fallback preserves esp-alloc's contract. Deallocate is a no-op for the bump path.

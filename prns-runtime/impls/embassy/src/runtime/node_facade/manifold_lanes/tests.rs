@@ -170,6 +170,85 @@ fn outbound_depth_can_grow_without_spending_inbound_notification_capacity() {
 }
 
 #[test]
+fn supervisor_can_keep_its_outbound_ring_in_external_storage() {
+    static LANE: StaticManifoldLane<Mtx, 8, 1, 0> = StaticManifoldLane::new();
+    static WAKE: Signal<Mtx, ()> = Signal::new();
+    let external = std::boxed::Box::leak(
+        std::vec![
+            FrameSlot::<8>::empty(),
+            FrameSlot::empty(),
+            FrameSlot::empty()
+        ]
+        .into_boxed_slice(),
+    );
+    let id = InterfaceId::new(*b"external");
+    let mut lanes: ManifoldLaneSet<Mtx, 1, 1> = ManifoldLaneSet::new();
+    let _supervisor = lanes
+        .claim_supervisor_with_outbound_buffer(&LANE, id, &WAKE, external)
+        .unwrap();
+
+    let manifold_outbound = &mut lanes.egress.lanes[0].1;
+    for frame in [b"one".as_slice(), b"two", b"three"] {
+        assert_eq!(
+            manifold_outbound.try_write(FrameTarget::Direct(id), frame),
+            LaneWriteOutcome::Written
+        );
+    }
+    assert_eq!(
+        manifold_outbound.try_write(FrameTarget::Direct(id), b"four"),
+        LaneWriteOutcome::Full
+    );
+}
+
+#[test]
+fn interface_can_keep_its_outbound_ring_in_external_storage() {
+    static LANE: StaticManifoldLane<Mtx, 8, 1, 0> = StaticManifoldLane::new();
+    let external = std::boxed::Box::leak(
+        std::vec![FrameSlot::<8>::empty(), FrameSlot::empty()].into_boxed_slice(),
+    );
+    let id = InterfaceId::new(*b"ext-ifce");
+    let mut lanes: ManifoldLaneSet<Mtx, 1, 1> = ManifoldLaneSet::new();
+    let _interface = lanes
+        .claim_interface_with_outbound_buffer(&LANE, descriptor(id, 8), external)
+        .unwrap();
+
+    let manifold_outbound = &mut lanes.egress.lanes[0].1;
+    assert_eq!(
+        manifold_outbound.try_write(FrameTarget::Direct(id), b"one"),
+        LaneWriteOutcome::Written
+    );
+    assert_eq!(
+        manifold_outbound.try_write(FrameTarget::Direct(id), b"two"),
+        LaneWriteOutcome::Written
+    );
+    assert_eq!(
+        manifold_outbound.try_write(FrameTarget::Direct(id), b"full"),
+        LaneWriteOutcome::Full
+    );
+}
+
+#[test]
+fn an_empty_external_ring_is_rejected_without_consuming_the_lane() {
+    static LANE: StaticManifoldLane<Mtx, 8, 1, 0> = StaticManifoldLane::new();
+    static WAKE: Signal<Mtx, ()> = Signal::new();
+    let id = InterfaceId::new(*b"emptybuf");
+    let mut first: ManifoldLaneSet<Mtx, 1, 1> = ManifoldLaneSet::new();
+    let empty = std::boxed::Box::leak(std::vec::Vec::new().into_boxed_slice());
+    assert_eq!(
+        first
+            .claim_supervisor_with_outbound_buffer(&LANE, id, &WAKE, empty)
+            .err(),
+        Some(LaneClaimError::EmptyOutboundBuffer)
+    );
+
+    let mut second: ManifoldLaneSet<Mtx, 1, 1> = ManifoldLaneSet::new();
+    let external = std::boxed::Box::leak(std::vec![FrameSlot::<8>::empty()].into_boxed_slice());
+    assert!(second
+        .claim_supervisor_with_outbound_buffer(&LANE, id, &WAKE, external)
+        .is_ok());
+}
+
+#[test]
 fn an_interface_cannot_claim_a_lane_smaller_than_its_frame() {
     static LANE: StaticManifoldLane<Mtx, 8, 1> = StaticManifoldLane::new();
     let id = InterfaceId::new(*b"toosmall");
