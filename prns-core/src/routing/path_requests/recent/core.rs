@@ -116,6 +116,7 @@ mod tests {
         DestinationHash::new([byte; 16])
     }
 
+    #[cfg(feature = "std")]
     fn dest_n(value: u64) -> DestinationHash {
         let mut bytes = [0; 16];
         bytes[..8].copy_from_slice(&value.to_le_bytes());
