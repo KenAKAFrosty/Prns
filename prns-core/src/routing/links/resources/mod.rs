@@ -145,6 +145,35 @@ pub const fn max_part_count(transfer_capacity: usize) -> usize {
     transfer_capacity.div_ceil(resource_sdu(BROADCAST_MTU))
 }
 
+/// The most frames one inbound resource request can synchronously ask the engine to emit.
+///
+/// A request names at most [`WINDOW_MAX`] existing parts. When the receiver has exhausted its
+/// current hashmap segment, the same reaction can append one hashmap update. Storage recipes that
+/// cannot hold a full window need capacity only for every part they can actually materialize plus
+/// that update.
+pub const fn max_outgoing_resource_reaction_frames(transfer_capacity: usize) -> usize {
+    let parts = max_part_count(transfer_capacity);
+    if parts < WINDOW_MAX {
+        parts + 1
+    } else {
+        WINDOW_MAX + 1
+    }
+}
+
+#[cfg(test)]
+mod reaction_capacity_tests {
+    use super::*;
+
+    #[test]
+    fn outbound_reaction_capacity_tracks_small_stores_and_caps_at_one_full_window() {
+        let part = resource_sdu(BROADCAST_MTU);
+        assert_eq!(max_outgoing_resource_reaction_frames(0), 1);
+        assert_eq!(max_outgoing_resource_reaction_frames(18 * part), 19);
+        assert_eq!(max_outgoing_resource_reaction_frames(WINDOW_MAX * part), 76);
+        assert_eq!(max_outgoing_resource_reaction_frames(100 * part), 76);
+    }
+}
+
 /// RNS 1.4.2 `Resource.get_map_hash`; the four-byte name a part is requested by `full_hash(part ‖ salt nonce)` truncated.
 pub fn map_hash(part: &[u8], salt_nonce: &SaltNonce) -> [u8; MAP_HASH_LEN] {
     let mut hasher = Sha256::new();

@@ -37,7 +37,9 @@ use crate::routing::links::resources::assembly::FixedStaticOutgoingAssemblyTable
 use crate::routing::links::resources::table::{
     FixedHeapResourceTable, IncomingResourceState, OutgoingResourceState,
 };
-use crate::routing::links::resources::{max_part_count, sealed_transfer_bytes, WINDOW_MAX};
+use crate::routing::links::resources::{
+    max_outgoing_resource_reaction_frames, max_part_count, sealed_transfer_bytes,
+};
 use crate::routing::links::table::FixedLinkTable;
 use crate::routing::links::transported::FixedTransportedLinkTable;
 use crate::routing::path_requests::interface_path_request_limit::FixedInterfacePathRequestLimitTable;
@@ -102,11 +104,7 @@ impl<A: Allocator> Esp32S3<A> {
     /// update. Compact layouts cannot materialize a full 75-part resource, so deriving the bound
     /// from their outgoing store avoids reserving unreachable transport backlog on every lane.
     pub const MAX_OUTGOING_RESOURCE_REACTION_FRAMES: usize =
-        if MAX_OUTGOING_RESOURCE_PARTS < WINDOW_MAX {
-            MAX_OUTGOING_RESOURCE_PARTS + 1
-        } else {
-            WINDOW_MAX + 1
-        };
+        max_outgoing_resource_reaction_frames(MAX_OUTGOING_RESOURCE_TRANSFER_BYTES);
 }
 
 #[cfg(feature = "flash")]

@@ -173,7 +173,9 @@ mod riscv {
     use personal_rns::routing::links::resources::assembly::{
         FixedIncomingAssemblyTable, FixedOutgoingAssemblyTable,
     };
-    use personal_rns::routing::links::resources::max_part_count;
+    use personal_rns::routing::links::resources::{
+        max_outgoing_resource_reaction_frames, max_part_count,
+    };
     use personal_rns::routing::links::resources::table::{
         FixedResourceTable, IncomingResourceState, OutgoingResourceState,
     };
@@ -206,6 +208,9 @@ mod riscv {
         const BLACKHOLE_REASON_BYTES: usize = 64;
         const RESOURCE_TRANSFER_BYTES: usize =
             personal_hopspot_core::node_pages::PAGE_RESPONSE_TRANSFER_BYTES;
+        /// The outbound lane capacity needed to retain one complete resource-request reaction.
+        pub const MAX_OUTGOING_RESOURCE_REACTION_FRAMES: usize =
+            max_outgoing_resource_reaction_frames(Self::RESOURCE_TRANSFER_BYTES);
         const CHANNEL_REORDER_DEPTH: usize = 1;
         const LINK_MTU: usize = EMBEDDED_MAX_LINK_MTU;
         const CHANNEL_MESSAGE_BYTES: usize = channel_mdu(Self::LINK_MTU);
