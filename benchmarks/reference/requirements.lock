@@ -3,5 +3,5 @@ cryptography==49.0.0
 cython==3.2.8
 pycparser==3.0
 pyserial==3.5
-rns==1.4.0
+rns==1.4.2
 setuptools==83.0.0

@@ -85,9 +85,9 @@ pub(super) fn provenance_for(subject: &Subject) -> BTreeMap<String, String> {
             responder,
             relay,
         } => {
-            initiator == "rns-1.4.0-compiled"
-                || responder == "rns-1.4.0-compiled"
-                || relay.as_deref() == Some("rns-1.4.0-compiled")
+            initiator == REFERENCE_IMPLEMENTATION
+                || responder == REFERENCE_IMPLEMENTATION
+                || relay.as_deref() == Some(REFERENCE_IMPLEMENTATION)
         }
     };
     if !uses_compiled_reference {

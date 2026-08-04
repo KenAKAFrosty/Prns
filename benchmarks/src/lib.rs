@@ -7,7 +7,8 @@ mod results;
 pub use catalog::{
     deterministic_payload, load_catalog, load_manifest, scenarios_dir, CatalogError,
     ConformanceRule, ScenarioCellNote, ScenarioId, ScenarioManifest, ScenarioTopology,
-    SizeSequence, WorkloadProfile, DEFAULT_SIZE_SEED, IMPLEMENTATIONS,
+    SizeSequence, WorkloadProfile, DEFAULT_SIZE_SEED, IMPLEMENTATIONS, KNOWN_IMPLEMENTATIONS,
+    REFERENCE_IMPLEMENTATION, REFERENCE_VERSION,
 };
 pub use energy::{unavailable_hint as energy_unavailable_hint, PowerMeter};
 pub use results::{

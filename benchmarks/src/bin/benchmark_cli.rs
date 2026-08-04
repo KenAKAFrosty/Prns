@@ -2,6 +2,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 
+use benchmarks::REFERENCE_VERSION;
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 
@@ -235,7 +236,7 @@ fn parse_options(arguments: impl Iterator<Item = String>) -> Result<Options, Cli
     Ok(options)
 }
 
-fn preflight(options: &Options) -> Result<(), CliError> {
+fn preflight(_options: &Options) -> Result<(), CliError> {
     for (tool, setup) in [
         ("cargo", rust_setup()),
         ("rustc", rust_setup()),
@@ -258,14 +259,14 @@ fn preflight(options: &Options) -> Result<(), CliError> {
     println!("  prerequisites cargo, rustc, uv, and {compiler} are available");
 
     #[cfg(target_os = "macos")]
-    if options.energy {
+    if _options.energy {
         checked(
             Command::new("sudo").arg("-v"),
             "authorize macOS energy sampling",
         )?;
     }
     #[cfg(windows)]
-    if options.energy {
+    if _options.energy {
         return Err(CliError::Evidence(
             "energy measurement is not available on Windows; run without --energy".into(),
         ));
@@ -313,7 +314,7 @@ fn benchmark_rustflags() -> String {
 }
 
 fn prepare_reference(root: &Path) -> Result<(), CliError> {
-    println!("[2/4] Preparing locked compiled RNS 1.4.0 reference");
+    println!("[2/4] Preparing locked compiled RNS {REFERENCE_VERSION} reference");
     let reference = root.join("reference");
     let environment = reference.join(".venv");
     let cache = reference.join(".object-cache/uv");
@@ -343,7 +344,7 @@ fn prepare_reference(root: &Path) -> Result<(), CliError> {
         Command::new(reference_python(&reference))
             .arg(reference.join("compiled_reference.py"))
             .arg("--verify-only"),
-        "verify compiled RNS 1.4.0",
+        "verify compiled RNS 1.4.2",
     )?;
     checked(
         Command::new(reference_python(&reference))

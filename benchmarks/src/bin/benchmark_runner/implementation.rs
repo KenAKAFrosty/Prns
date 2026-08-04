@@ -140,8 +140,8 @@ mod tests {
         let ours = implementation("personal-rns");
         assert_eq!(ours.slug(), "personal-rns");
         assert!(ours.interop_command().is_some());
-        let reference = implementation("rns-1.4.0-compiled");
-        assert_eq!(reference.slug(), "rns-1.4.0-compiled");
+        let reference = implementation(benchmarks::REFERENCE_IMPLEMENTATION);
+        assert_eq!(reference.slug(), benchmarks::REFERENCE_IMPLEMENTATION);
         assert!(reference.interop_command().is_some());
     }
 }

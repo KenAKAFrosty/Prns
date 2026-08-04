@@ -9,7 +9,7 @@
   "headline": true,
   "notes": [
     "Announce signing and verification happen before measurement; the timed path switches opaque transport data.",
-    "This practical profile preserves each implementation's normal TCP policy: 500 Mbps for Prns and 10 Mbps for compiled RNS 1.4.0."
+    "This practical profile preserves each implementation's normal TCP policy: 500 Mbps for Prns and 10 Mbps for compiled RNS {reference_version}."
   ],
   "description": "A fixed raw-wire driver establishes one warm route in each direction through the relay under test, then keeps 256 unique SINGLE/DATA frames outstanding per direction over open HDLC-framed TCP. Payload sizes follow the shared deterministic 60–420 byte sequence. The relay hashes for deduplication, books reverse routes, refreshes route activity, rewrites the transport header, and performs real framing and TCP I/O, but never decrypts or re-encrypts the opaque payload.",
   "roles": [
