@@ -215,6 +215,7 @@ fn service_context_is_the_default_for_every_operator_command() {
             "[reticulum]\n\
              enable_transport = Yes\n\
              share_instance = Yes\n\
+             shared_instance_type = tcp\n\
              shared_instance_port = {}\n\
              instance_control_port = {}\n\
              rpc_key = 000102030405060708090a0b0c0d0e0f\n\

@@ -48,7 +48,33 @@ These commands target the active managed or service-owned daemon configuration a
 
 ## Deploy it
 
-Official releases ship one native archive per desktop platform and a cloud-oriented container image, all running the same daemon. [Deploy prnsd](../docs/deploy-prnsd.md) covers the signed releases, the container, one-time cloud bootstrap, Railway, backups, upgrades, and verification.
+Official releases ship one native archive per desktop platform and a cloud-oriented container image, all running the same daemon.
+
+### Docker
+
+If Docker is already part of your toolkit, this starts one persistent Prns backbone from the official `0.3.3` image:
+
+```sh
+docker volume create prnsd-data
+
+docker run -d \
+  --name prnsd \
+  --restart on-failure \
+  --mount type=volume,source=prnsd-data,target=/var/lib/prnsd \
+  --publish 4242:4242/tcp \
+  --publish 4284:4284/tcp \
+  ghcr.io/kenakafrosty/prnsd:0.3.3
+```
+
+Reticulum TCP clients can connect to `HOST:4242`, and WebSocket clients can connect to `ws://HOST:4284/prns`. Public browser deployments need a certificate-valid `wss://` endpoint, normally supplied by the hosting platform or a reverse proxy.
+
+[Browse the image on GHCR](https://github.com/KenAKAFrosty/Prns/pkgs/container/prnsd). The complete [deployment guide](../docs/deploy-prnsd.md) covers exact digest pinning, public discovery, inspection, backups, upgrades, and verification.
+
+### Railway
+
+If you would rather not manage Docker or a server yourself, the Railway template creates the same daemon in your Railway account with persistent storage, a public Reticulum TCP address, and a certificate-backed WebSocket address. The public template link is published with the exact release image revision instead of pointing new deployments at a mutable or unqualified image.
+
+After deployment, open the service's **Networking** panel. Copy its **TCP Proxy** address for Reticulum clients; its browser address is `wss://YOUR-PUBLIC-DOMAIN/prns`. The [Railway deployment guide](../docs/deploy-prnsd.md#railway) covers the template's small set of controls and the underlying deployment shape.
 
 ## Work in the repository
 

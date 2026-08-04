@@ -1,12 +1,9 @@
 use core::time::Duration;
 
-use personal_rns::runtime::{
-    FlushFailurePolicy, NodePersistence, PersistenceFlushStatus, PrnsNodeHandle,
-};
+use personal_rns::runtime::{NodePersistence, PersistenceFlushStatus, PrnsNodeHandle};
 use personal_rns::wire::DestinationHash;
 use prnsd_control::ManagedProcess;
 
-use crate::cli::PersistencePolicy;
 use crate::shutdown::ShutdownSignal;
 
 mod restore;
@@ -25,16 +22,11 @@ pub(crate) fn prepare_worker(
     persistence: NodePersistence,
     handle: PrnsNodeHandle,
     rotated: tokio::sync::mpsc::UnboundedReceiver<DestinationHash>,
-    policy: PersistencePolicy,
 ) -> PersistenceWorker {
     let worker = persistence
         .worker(handle)
         .with_flush_interval(PERSIST_INTERVAL)
         .with_ratchet_rotations(rotated);
-    let worker = match policy {
-        PersistencePolicy::BestEffort => worker,
-        PersistencePolicy::Required => worker.with_flush_failure_policy(FlushFailurePolicy::Exit),
-    };
     PersistenceWorker::new(worker)
 }
 

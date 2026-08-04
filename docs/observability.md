@@ -140,3 +140,9 @@ There is no span per packet, frame, crypto operation, or resource segment. Spans
 With an `otlp` build that has no OTLP endpoint configured, no provider or reporter task starts. Without the feature, the daemon's OTLP dependencies and runtime counters are not compiled. The top-level `personal-rns` `tracing` and `runtime-metrics` features select the Tokio host lane and stay out of Embassy builds; embedded firmware can use portable `log` diagnostics or omit all three layers entirely.
 
 Prns's structured events and spans record sizes and operational identifiers, not payload bodies, private keys, or secrets. Production retention and access policy should still treat debug output accordingly.
+
+### Persistence notifications
+
+The lower-level host worker injects `Journaled::PersistenceFlushed` and `Journaled::PersistenceFlushFailed` into the ordered engine journal because those notifications must retain their position relative to engine work even though the engine performs no storage I/O. Recipe-managed restoration and terminal persistence notifications still travel through the normal manifold and application event path and its panic boundary.
+
+For `prnsd`, a runtime persistence failure is a degraded durability signal rather than a routing shutdown signal. The worker reports the failure and continues retrying while the live node retains its in-memory state. Startup remains fail-closed when required storage or the stable transport identity cannot be established, and a failed final shutdown flush remains a nonzero shutdown result.
