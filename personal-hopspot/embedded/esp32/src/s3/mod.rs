@@ -370,7 +370,6 @@ pub(crate) enum BootPhase {
     BluetoothReady = 23,
     WatchdogReady = 24,
     AnnounceBegin = 25,
-    AnnounceDeliveryIssueReturned = 26,
     AnnounceNodeIssueReturned = 27,
 }
 
@@ -402,7 +401,6 @@ impl BootPhase {
             Self::BluetoothReady => "bluetooth.ready",
             Self::WatchdogReady => "watchdog.ready",
             Self::AnnounceBegin => "announce.begin",
-            Self::AnnounceDeliveryIssueReturned => "announce.delivery.issue.return",
             Self::AnnounceNodeIssueReturned => "announce.node.issue.return",
         }
     }

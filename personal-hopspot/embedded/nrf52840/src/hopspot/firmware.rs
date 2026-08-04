@@ -460,11 +460,6 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                             notice_until_ms =
                                 Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
                             let _ = ui_handle.issue(PrnsCommand::AnnounceNow(AnnounceNow {
-                                destination: self_destination,
-                                target: AnnounceTarget::AllInterfaces,
-                                app_data: AnnounceAppData::Registered,
-                            }));
-                            let _ = ui_handle.issue(PrnsCommand::AnnounceNow(AnnounceNow {
                                 destination: node_page_destination,
                                 target: AnnounceTarget::AllInterfaces,
                                 app_data: AnnounceAppData::Registered,
