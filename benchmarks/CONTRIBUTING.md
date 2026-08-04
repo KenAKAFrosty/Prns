@@ -22,13 +22,13 @@ For publishable local evidence, run:
 cargo benchmark
 ```
 
-This executes all 34 cells in three counterbalanced rounds. Cells run one at a time to isolate CPU, memory, and optional energy, while each workload retains its protocol-owned asynchronous window. A failed run prints the retained run ID; continue only its missing samples with:
+This executes all 34 cells in three counterbalanced rounds. Cells run one at a time to isolate CPU, memory, and optional energy, while each workload retains its protocol-owned asynchronous window. An interrupted run retains its run ID; continue only its missing samples with:
 
 ```sh
 cargo benchmark --resume RUN_ID
 ```
 
-The suite checkpoint is installed before the first cell and refreshed atomically after every cell. Resume keeps only exact, conformant samples from the same source SHA, tracked/untracked source fingerprint, and release profile. An unchanged dirty local worktree can resume safely; any source edit invalidates it. A child that exits before `MEASURE_DONE` may receive up to three explicit startup attempts; every attempt and failure is printed, logged, and counted in suite evidence. Once measurement starts, a sample is never retried.
+The suite checkpoint is installed before the first cell and refreshed atomically after every cell. Resume keeps only exact, conformant samples from the same source SHA, tracked/untracked source fingerprint, and release profile. An unchanged dirty local worktree can resume safely; any source edit invalidates it. A child that exits before `MEASURE_DONE` may receive up to three explicit startup attempts; every attempt and failure is printed, logged, and counted in suite evidence. Once measurement starts, a sample is never retried. A measured failure is terminal for that suite and cannot be resumed or published.
 
 Maintainers publish a complete suite from a clean exact commit with:
 

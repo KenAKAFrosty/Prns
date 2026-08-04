@@ -447,19 +447,33 @@ pub(super) fn run(args: SuiteArgs) {
     evidence.finished_unix_ms = unix_ms();
     evidence.files = result_hashes(&output);
     write_suite_evidence(&output, &evidence);
+    let failed_samples = evidence
+        .schedule
+        .iter()
+        .filter(|sample| sample.status == "fail")
+        .count();
+    let passed_samples = schedule.len().saturating_sub(failed_samples);
+    let validation_errors = evidence.failures.len().saturating_sub(failed_samples);
     println!(
-        "SUMMARY selected={} matrix={} samples={} pass={} fail={} output={}",
+        "SUMMARY selected={} matrix={} samples={} pass={} fail={} validation_errors={} output={}",
         selected.len(),
         all_cells.len(),
         schedule.len(),
-        schedule.len().saturating_sub(evidence.failures.len()),
-        evidence.failures.len(),
+        passed_samples,
+        failed_samples,
+        validation_errors,
         output.display()
     );
     if !complete {
-        eprintln!(
-            "RESUME with the same suite ID and output directory; completed samples are retained"
-        );
+        if failed_samples == 0 {
+            eprintln!(
+                "RESUME with the same suite ID and output directory; completed samples are retained"
+            );
+        } else {
+            eprintln!(
+                "FAILED_SUITE measured failures are retained; start a new suite after diagnosis"
+            );
+        }
         std::process::exit(1);
     }
 }

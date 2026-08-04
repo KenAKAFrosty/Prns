@@ -174,11 +174,19 @@ fn run() -> Result<(), CliError> {
         runner.env("BENCHMARK_POWER_VIA_SUDO", "1");
     }
     if let Err(error) = checked(&mut runner, "benchmark matrix") {
-        eprintln!(
-            "Resume with: cargo benchmark --resume {suite_id}{}{}",
-            if options.publish { " --publish" } else { "" },
-            if options.energy { " --energy" } else { "" }
-        );
+        if let Ok(suite) = read_suite(&run_dir) {
+            if suite.failures.is_empty() {
+                eprintln!(
+                    "Resume with: cargo benchmark --resume {suite_id}{}{}",
+                    if options.publish { " --publish" } else { "" },
+                    if options.energy { " --energy" } else { "" }
+                );
+            } else {
+                eprintln!(
+                    "Suite {suite_id} contains retained failures and cannot be resumed or published"
+                );
+            }
+        }
         return Err(error);
     }
 
@@ -454,6 +462,11 @@ fn validate_resume(run_dir: &Path, suite_id: &str, source: &SourceState) -> Resu
         )));
     }
     let suite = read_suite(run_dir)?;
+    if !suite.failures.is_empty() {
+        return Err(CliError::Evidence(format!(
+            "cannot resume {suite_id}: the suite contains retained failures"
+        )));
+    }
     if !resume_compatible(&suite, suite_id, &source.commit, &source.fingerprint) {
         return Err(CliError::Evidence(format!(
             "suite {suite_id} is incompatible with this exact source state or release profile"
@@ -476,6 +489,7 @@ fn resume_compatible(
         && suite.matrix_cells == release_cell_count()
         && suite.source_commit == current_commit
         && suite.source_fingerprint == current_fingerprint
+        && suite.failures.is_empty()
 }
 
 fn release_cell_count() -> usize {
@@ -1040,6 +1054,14 @@ mod tests {
             serde_json::to_string(&suite).expect("suite JSON"),
         )
         .expect("write suite");
+        assert!(!resume_compatible(
+            &suite,
+            &suite.suite_id,
+            &suite.source_commit,
+            &suite.source_fingerprint
+        ));
+        suite.duration_ms = 30_000;
+        suite.failures.push("measured failure".into());
         assert!(!resume_compatible(
             &suite,
             &suite.suite_id,
