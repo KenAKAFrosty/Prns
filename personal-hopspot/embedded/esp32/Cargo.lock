@@ -2525,6 +2525,7 @@ name = "prns-interfaces-embassy"
 version = "0.3.3"
 dependencies = [
  "bt-hci",
+ "cfg-if",
  "embassy-futures",
  "embassy-net",
  "embassy-sync 0.7.2",
