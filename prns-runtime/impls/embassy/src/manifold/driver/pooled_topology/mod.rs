@@ -51,6 +51,21 @@ fn clamp_to_embedded_ceiling(mut descriptor: InterfaceDescriptor) -> InterfaceDe
     descriptor
 }
 
+fn inbound_source(
+    lane_id: InterfaceId,
+    stamped_source: InterfaceId,
+    descriptors: &[InterfaceDescriptor],
+) -> InterfaceId {
+    if descriptors
+        .iter()
+        .any(|descriptor| descriptor.id == lane_id)
+    {
+        lane_id
+    } else {
+        stamped_source
+    }
+}
+
 /// Borrowed lanes and channels for one pooled-topology manifold run.
 pub struct PooledWiring<
     'run,
@@ -137,10 +152,16 @@ pub(crate) async fn run_pooled<
                 while notify.try_receive().is_ok() {}
                 for (lane_id, lane) in inbound.iter_mut() {
                     while let Some((target, packet_phy, frame)) = lane.try_read() {
-                        let FrameTarget::Direct(source) = target else {
+                        let FrameTarget::Direct(stamped_source) = target else {
                             lane.release();
                             continue;
                         };
+                        // A dedicated lane's live key is authoritative. Runtime retagging updates
+                        // that key atomically with the descriptor, while the already-constructed
+                        // interface seam can still have stamped a queued frame with its prior id.
+                        // Fleet lanes have no descriptor of their own, so their per-member stamp
+                        // remains authoritative instead.
+                        let source = inbound_source(*lane_id, stamped_source, descriptors);
                         let mut unmasked = [0u8; EMBEDDED_MAX_WIRE_FRAME_LEN];
                         let bytes = match ifac_for(ifacs, *lane_id) {
                             Some(entry) => {

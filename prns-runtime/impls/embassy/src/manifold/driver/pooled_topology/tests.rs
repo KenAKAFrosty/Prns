@@ -22,10 +22,28 @@ use crate::storage::{GrowableHeap, StorageLayout};
 
 use super::super::test_support::{descriptor, WATCHDOG};
 use super::super::{leaked_grant_lane, EmbassyHost, PooledEgress};
-use super::{run_pooled, InterfaceLifecycle, PooledWiring};
+use super::{inbound_source, run_pooled, InterfaceLifecycle, PooledWiring};
 
 struct AlwaysDuePersistence {
     progress: Rc<Cell<usize>>,
+}
+
+#[test]
+fn dedicated_lanes_own_the_source_id_but_fleet_lanes_preserve_the_member_stamp() {
+    let prior_dedicated_id = InterfaceId::new([0xA1; 8]);
+    let live_dedicated_id = InterfaceId::new([0xB2; 8]);
+    let fleet_lane_id = InterfaceId::new([0xC3; 8]);
+    let member_id = InterfaceId::new([0xD4; 8]);
+    let descriptors = [descriptor(live_dedicated_id), descriptor(member_id)];
+
+    assert_eq!(
+        inbound_source(live_dedicated_id, prior_dedicated_id, &descriptors),
+        live_dedicated_id
+    );
+    assert_eq!(
+        inbound_source(fleet_lane_id, member_id, &descriptors),
+        member_id
+    );
 }
 
 impl<S: StorageLayout> ManifoldPersistence<S> for AlwaysDuePersistence {
@@ -317,9 +335,11 @@ fn a_pooled_slot_retagged_at_runtime_carries_traffic_under_the_new_id() {
                 })
                 .await;
             Timer::after(Duration::from_millis(30)).await;
-            source_in_tx.grant().await.fill_for(new_id, &raw);
+            // The real interface seam was constructed under `old_id`; retagging the pooled lane
+            // cannot rewrite that value inside an already-running interface task.
+            source_in_tx.grant().await.fill_for(old_id, &raw);
             source_in_tx.commit();
-            notify.sender().send(new_id).await;
+            notify.sender().send(old_id).await;
             loop {
                 if *heard.borrow() >= 1 {
                     break;
@@ -341,4 +361,6 @@ fn a_pooled_slot_retagged_at_runtime_carries_traffic_under_the_new_id() {
         count, 1,
         "the retagged slot carried the announce under its new channel id"
     );
+    assert_eq!(engine.interface_counts(new_id).destinations, 1);
+    assert_eq!(engine.interface_counts(old_id).destinations, 0);
 }
