@@ -1,0 +1,173 @@
+name: qualify public prnsd staging deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_commit:
+        description: Exact protected main source commit deployed
+        required: true
+        type: string
+      image_digest:
+        description: Exact public prnsd-staging OCI manifest digest deployed
+        required: true
+        type: string
+      publication_run_id:
+        description: Successful public staging image publication workflow run ID
+        required: true
+        type: string
+      railway_template_revision:
+        description: Immutable Railway staging template revision exercised
+        required: true
+        type: string
+      rollback_revision:
+        description: Exact staging template revision restored during rollback
+        required: true
+        type: string
+      public_host:
+        description: Published staging Backbone host exercised outside Railway
+        required: true
+        type: string
+      public_port:
+        description: Published staging Backbone TCP proxy port
+        required: true
+        type: string
+      identity_before:
+        description: Transport identity hash before restart
+        required: true
+        type: string
+      identity_after:
+        description: Transport identity hash after persistence restart
+        required: true
+        type: string
+      persistence_restored:
+        description: Confirm persisted routing state restored after restart
+        required: true
+        default: false
+        type: boolean
+      rollback_completed:
+        description: Confirm rollback and return to this digest succeeded
+        required: true
+        default: false
+        type: boolean
+      single_replica:
+        description: Confirm the staging deployment used exactly one replica
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: prnsd-staging-qualification-${{ inputs.image_digest }}
+  cancel-in-progress: false
+
+jobs:
+  qualify:
+    name: Verify public staging image and Railway exercise
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: staging-qualification
+    env:
+      IDENTITY_AFTER: ${{ inputs.identity_after }}
+      IDENTITY_BEFORE: ${{ inputs.identity_before }}
+      IMAGE_DIGEST: ${{ inputs.image_digest }}
+      PERSISTENCE_RESTORED: ${{ inputs.persistence_restored }}
+      PUBLIC_HOST: ${{ inputs.public_host }}
+      PUBLIC_PORT: ${{ inputs.public_port }}
+      PUBLICATION_RUN_ID: ${{ inputs.publication_run_id }}
+      RAILWAY_TEMPLATE_REVISION: ${{ inputs.railway_template_revision }}
+      ROLLBACK_COMPLETED: ${{ inputs.rollback_completed }}
+      ROLLBACK_REVISION: ${{ inputs.rollback_revision }}
+      SINGLE_REPLICA: ${{ inputs.single_replica }}
+      SOURCE_COMMIT: ${{ inputs.source_commit }}
+      STAGING_IMAGE: ghcr.io/kenakafrosty/prnsd-staging
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.source_commit }}
+      - name: Require exact protected staging source and operator confirmations
+        env:
+          REF_PROTECTED: ${{ github.ref_protected }}
+        run: |
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$REF_PROTECTED" = "true"
+          test "$GITHUB_SHA" = "$SOURCE_COMMIT"
+          test "$PERSISTENCE_RESTORED" = "true"
+          test "$ROLLBACK_COMPLETED" = "true"
+          test "$SINGLE_REPLICA" = "true"
+          [[ "$PUBLICATION_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$PUBLIC_PORT" =~ ^[1-9][0-9]{0,4}$ ]]
+          test "$PUBLIC_PORT" -le 65535
+      - name: Verify public staging publication custody
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${PUBLICATION_RUN_ID}" > "${RUNNER_TEMP}/publication-run.json"
+          test "$(jq -r '.id' "${RUNNER_TEMP}/publication-run.json")" = "$PUBLICATION_RUN_ID"
+          test "$(jq -r '.path' "${RUNNER_TEMP}/publication-run.json")" = ".github/workflows/prnsd-staging-publish.yml"
+          test "$(jq -r '.event' "${RUNNER_TEMP}/publication-run.json")" = "workflow_dispatch"
+          test "$(jq -r '.status' "${RUNNER_TEMP}/publication-run.json")" = "completed"
+          test "$(jq -r '.conclusion' "${RUNNER_TEMP}/publication-run.json")" = "success"
+          test "$(jq -r '.head_branch' "${RUNNER_TEMP}/publication-run.json")" = "main"
+          test "$(jq -r '.head_sha' "${RUNNER_TEMP}/publication-run.json")" = "$GITHUB_SHA"
+          test "$(jq -r '.head_repository.full_name' "${RUNNER_TEMP}/publication-run.json")" = "$GITHUB_REPOSITORY"
+          test "$(jq -r '.inputs.package_is_public' "${RUNNER_TEMP}/publication-run.json")" = "true"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          run-id: ${{ inputs.publication_run_id }}
+          pattern: prnsd-staging-publication-*-${{ inputs.publication_run_id }}
+          path: target/staging
+          merge-multiple: true
+          github-token: ${{ github.token }}
+      - name: Verify public staging metadata
+        run: |
+          ./tools/prns release prnsd distribution -- staging-metadata-verify \
+            --metadata "target/staging/prnsd-staging-image-${GITHUB_SHA}.json" \
+            --source-commit "$GITHUB_SHA" \
+            --image-digest "$IMAGE_DIGEST" \
+            --repository "$GITHUB_REPOSITORY" \
+            --publication-run-id "$PUBLICATION_RUN_ID"
+          test "$(jq -r '.image' "target/staging/railway-staging-contract-${GITHUB_SHA}.json")" = "${STAGING_IMAGE}@${IMAGE_DIGEST}"
+          test "$(jq -r '.channel' "target/staging/railway-staging-contract-${GITHUB_SHA}.json")" = "staging"
+      - name: Install registry transport
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes skopeo
+          skopeo --version
+      - name: Verify anonymous multi-platform image access and live Backbone
+        run: |
+          docker logout ghcr.io >/dev/null 2>&1 || true
+          printf '{}\n' > "${RUNNER_TEMP}/anonymous-auth.json"
+          skopeo inspect --authfile "${RUNNER_TEMP}/anonymous-auth.json" --raw "docker://${STAGING_IMAGE}@${IMAGE_DIGEST}" > "${RUNNER_TEMP}/anonymous.json"
+          test "sha256:$(sha256sum "${RUNNER_TEMP}/anonymous.json" | awk '{print $1}')" = "$IMAGE_DIGEST"
+          docker pull --platform linux/amd64 "${STAGING_IMAGE}@${IMAGE_DIGEST}"
+          docker pull --platform linux/arm64 "${STAGING_IMAGE}@${IMAGE_DIGEST}"
+          nc -vz -w 15 "$PUBLIC_HOST" "$PUBLIC_PORT"
+      - name: Write isolated staging deployment evidence
+        run: |
+          observed_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          mkdir -p target/qualification
+          ./tools/prns release prnsd distribution -- staging-deployment-evidence \
+            --source-commit "$GITHUB_SHA" \
+            --image-digest "$IMAGE_DIGEST" \
+            --repository "$GITHUB_REPOSITORY" \
+            --publication-run-id "$PUBLICATION_RUN_ID" \
+            --template-revision "$RAILWAY_TEMPLATE_REVISION" \
+            --rollback-revision "$ROLLBACK_REVISION" \
+            --public-endpoint "${PUBLIC_HOST}:${PUBLIC_PORT}" \
+            --identity-before "$IDENTITY_BEFORE" \
+            --identity-after "$IDENTITY_AFTER" \
+            --observed-at "$observed_at" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --workflow-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --output "target/qualification/staging-deployment-${GITHUB_SHA}.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: prnsd-staging-qualification-${{ github.sha }}-${{ github.run_id }}
+          path: target/qualification
+          retention-days: 30
+          if-no-files-found: error

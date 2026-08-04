@@ -4,11 +4,11 @@ use crate::routing::links::resources::assembly::{
 use crate::routing::links::resources::{ResourceHash, RESOURCE_HASH_LEN};
 use crate::routing::links::LinkId;
 
-/// Fixed outgoing assembly rows with the extra continuation state needed by
-/// source-capable embedded builds.
+/// Fixed outgoing assembly rows with the continuation state needed to serve a large
+/// flash-backed response through bounded Resource windows.
 ///
-/// Constrained layouts use `FixedOutgoingAssemblyTable` instead, so they keep
-/// the same assembly-row memory footprint as before static file serving.
+/// The complete response remains in static storage. Each row retains only its borrow and offsets
+/// while the live Resource table owns the current encrypted window.
 #[derive(Debug)]
 pub struct FixedStaticOutgoingAssemblyTable<const MAX_OUTGOING_ASSEMBLIES: usize> {
     len: usize,

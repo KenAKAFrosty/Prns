@@ -199,6 +199,8 @@ def validate() -> list[str]:
         ROOT / ".github" / "workflows" / "prnsd-image-candidate.yml"
     ).read_text(encoding="utf-8")
     for source_gate in (
+        'test "$GITHUB_REF" = "refs/heads/main"',
+        'test "$REF_PROTECTED" = "true"',
         "./tools/prns release source package --",
         '--commit "$GITHUB_SHA"',
         "--output target/source-bundle/source.zip",
@@ -208,6 +210,82 @@ def validate() -> list[str]:
             errors.append(
                 "prnsd-image-candidate.yml is missing exact image source gate "
                 f"{source_gate!r}"
+            )
+
+    staging_publication = (
+        ROOT / ".github" / "workflows" / "prnsd-staging-publish.yml"
+    ).read_text(encoding="utf-8")
+    for staging_gate in (
+        "Require exact protected staging source",
+        'test "$GITHUB_REF" = "refs/heads/main"',
+        'test "$REF_PROTECTED" = "true"',
+        "Verify image candidate workflow custody",
+        ".github/workflows/prnsd-image-candidate.yml",
+        "head_branch' \"${RUNNER_TEMP}/image-run.json\")\" = \"main\"",
+        "image-candidate-verify",
+        "ghcr.io/kenakafrosty/prnsd-staging",
+        "candidate-${GITHUB_SHA}-${architecture}",
+        "--preserve-digests",
+        "package_is_public",
+        "Verify explicitly public staging visibility",
+        "staging-metadata",
+        "staging-railway-contract",
+    ):
+        if staging_gate not in staging_publication:
+            errors.append(
+                "prnsd-staging-publish.yml is missing staging isolation gate "
+                f"{staging_gate!r}"
+            )
+    for release_mutation in (
+        "gh release",
+        "ghcr.io/kenakafrosty/prnsd:candidate-",
+        "ghcr.io/kenakafrosty/prnsd:latest",
+        "contents: write",
+        "release-signing",
+        "public-release",
+    ):
+        if release_mutation in staging_publication:
+            errors.append(
+                "prnsd-staging-publish.yml crosses into release authority with "
+                f"{release_mutation!r}"
+            )
+
+    staging_qualification = (
+        ROOT / ".github" / "workflows" / "prnsd-staging-qualification.yml"
+    ).read_text(encoding="utf-8")
+    for staging_gate in (
+        'test "$GITHUB_REF" = "refs/heads/main"',
+        'test "$REF_PROTECTED" = "true"',
+        "Verify public staging publication custody",
+        ".github/workflows/prnsd-staging-publish.yml",
+        "head_branch' \"${RUNNER_TEMP}/publication-run.json\")\" = \"main\"",
+        ".inputs.package_is_public",
+        "staging-metadata-verify",
+        "ghcr.io/kenakafrosty/prnsd-staging",
+        "docker pull --platform linux/amd64",
+        "docker pull --platform linux/arm64",
+        "persistence_restored",
+        "rollback_completed",
+        "single_replica",
+        "staging-deployment-evidence",
+    ):
+        if staging_gate not in staging_qualification:
+            errors.append(
+                "prnsd-staging-qualification.yml is missing live staging gate "
+                f"{staging_gate!r}"
+            )
+    for release_mutation in (
+        "gh release",
+        "ghcr.io/kenakafrosty/prnsd@",
+        "contents: write",
+        "packages: write",
+        "deployment-qualification-v",
+        "environment: release-qualification",
+    ):
+        if release_mutation in staging_qualification:
+            errors.append(
+                "prnsd-staging-qualification.yml crosses into release authority with "
+                f"{release_mutation!r}"
             )
 
     ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
@@ -534,6 +612,8 @@ def validate() -> list[str]:
     for workflow_name in (
         "prnsd-candidate.yml",
         "prnsd-image-candidate.yml",
+        "prnsd-staging-publish.yml",
+        "prnsd-staging-qualification.yml",
         "suite-sign.yml",
         "suite-promote.yml",
     ):

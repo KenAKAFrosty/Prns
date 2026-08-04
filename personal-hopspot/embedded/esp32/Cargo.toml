@@ -47,6 +47,9 @@ allocator-api2 = { version = "0.3", default-features = false, features = ["alloc
 embedded-hal = "1"
 embedded-hal-bus = { version = "0.3", features = ["async"] }
 esp-radio = { version = "0.18", default-features = false, features = ["esp32s3", "unstable", "esp-alloc"] }
+# Keep Trouble's packet pool in scarce internal RAM. The Embassy backend treats transient pool
+# exhaustion as notification backpressure, so sustained GATT bursts drain through these eight
+# packets instead of requiring a board-specific oversized pool.
 trouble-host = { version = "0.6.0", optional = true, default-features = false, features = ["default-packet-pool-size-8"] }
 embassy-net = { version = "0.9.1", default-features = false, features = ["proto-ipv4", "proto-ipv6", "dhcpv4", "medium-ethernet", "multicast", "tcp", "udp"] }
 static_cell = "2"

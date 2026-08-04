@@ -516,6 +516,163 @@ class PrnsdDistributionTests(unittest.TestCase):
                 {"default": "360", "unit": "minutes"},
             )
 
+    def test_staging_railway_contract_is_explicit_and_digest_pinned(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            commit = "c" * 40
+            digest = f"sha256:{'d' * 64}"
+            release_output = root / "release.json"
+            staging_output = root / "staging.json"
+            arguments = {
+                "source_commit": commit,
+                "image_digest": digest,
+            }
+            distribution.write_railway_contract(
+                types.SimpleNamespace(output=release_output, **arguments)
+            )
+            distribution.write_staging_railway_contract(
+                types.SimpleNamespace(output=staging_output, **arguments)
+            )
+            release = json.loads(release_output.read_text(encoding="utf-8"))
+            staging = json.loads(staging_output.read_text(encoding="utf-8"))
+            self.assertEqual(staging["channel"], "staging")
+            self.assertEqual(
+                staging["image"],
+                f"ghcr.io/kenakafrosty/prnsd-staging@{digest}",
+            )
+            staging.pop("channel")
+            staging["image"] = f"ghcr.io/kenakafrosty/prnsd@{digest}"
+            self.assertEqual(staging, release)
+
+    def test_staging_metadata_requires_verified_public_visibility(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            commit = "c" * 40
+            digest = f"sha256:{'d' * 64}"
+            candidate = root / f"prnsd-image-candidate-{commit}.json"
+            candidate.write_bytes(
+                distribution.canonical_json(
+                    {
+                        "assets": [],
+                        "platform_digests": {
+                            "linux/amd64": f"sha256:{'e' * 64}",
+                            "linux/arm64": f"sha256:{'f' * 64}",
+                        },
+                        "repository": "KenAKAFrosty/Prns",
+                        "schema": 1,
+                        "source_archive_sha256": "a" * 64,
+                        "source_commit": commit,
+                        "version": VERSION,
+                        "workflow": {
+                            "path": ".github/workflows/prnsd-image-candidate.yml",
+                            "run_attempt": 2,
+                            "run_id": 52,
+                        },
+                    }
+                )
+            )
+            metadata = root / f"prnsd-staging-image-{commit}.json"
+            arguments = types.SimpleNamespace(
+                candidate_index=candidate,
+                source_commit=commit,
+                manifest_digest=digest,
+                repository="KenAKAFrosty/Prns",
+                image_candidate_run_id=52,
+                workflow_run_id=61,
+                workflow_run_attempt=3,
+                visibility="public",
+                output=metadata,
+            )
+            distribution.write_staging_metadata(arguments)
+            verify = types.SimpleNamespace(
+                metadata=metadata,
+                source_commit=commit,
+                image_digest=digest,
+                repository="KenAKAFrosty/Prns",
+                publication_run_id=61,
+            )
+            distribution.verify_staging_metadata(verify)
+            value = json.loads(metadata.read_text(encoding="utf-8"))
+            self.assertEqual(
+                (value["channel"], value["image"], value["visibility"]),
+                (
+                    "staging",
+                    "ghcr.io/kenakafrosty/prnsd-staging",
+                    "public",
+                ),
+            )
+            arguments.visibility = "private"
+            distribution.write_staging_metadata(arguments)
+            with self.assertRaisesRegex(ValueError, "public publication"):
+                distribution.verify_staging_metadata(verify)
+
+    def test_staging_deployment_evidence_cannot_verify_as_release_evidence(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            release_output = root / f"deployment-qualification-v{VERSION}.json"
+            common = {
+                "source_commit": "c" * 40,
+                "image_digest": f"sha256:{'d' * 64}",
+                "repository": "KenAKAFrosty/Prns",
+                "template_revision": "staging-2",
+                "rollback_revision": "staging-1",
+                "public_endpoint": "staging.example.com:4242",
+                "identity_before": "e" * 32,
+                "identity_after": "e" * 32,
+                "observed_at": "2026-08-04T12:00:00Z",
+                "workflow_run_id": 62,
+                "workflow_run_attempt": 1,
+            }
+            distribution.write_deployment_evidence(
+                types.SimpleNamespace(output=release_output, **common)
+            )
+            distribution.verify_deployment_evidence(
+                types.SimpleNamespace(
+                    evidence=release_output,
+                    evidence_sha256=hashlib.sha256(
+                        release_output.read_bytes()
+                    ).hexdigest(),
+                    source_commit="c" * 40,
+                    image_digest=f"sha256:{'d' * 64}",
+                    repository="KenAKAFrosty/Prns",
+                    workflow_run_id=62,
+                )
+            )
+            output = root / f"staging-deployment-{'c' * 40}.json"
+            distribution.write_staging_deployment_evidence(
+                types.SimpleNamespace(
+                    publication_run_id=61,
+                    output=output,
+                    **common,
+                )
+            )
+            value = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(
+                (
+                    value["channel"],
+                    value["image"],
+                    value["workflow"]["path"],
+                ),
+                (
+                    "staging",
+                    "ghcr.io/kenakafrosty/prnsd-staging",
+                    ".github/workflows/prnsd-staging-qualification.yml",
+                ),
+            )
+            with self.assertRaisesRegex(ValueError, "required release"):
+                distribution.verify_deployment_evidence(
+                    types.SimpleNamespace(
+                        evidence=output,
+                        evidence_sha256=hashlib.sha256(output.read_bytes()).hexdigest(),
+                        source_commit="c" * 40,
+                        image_digest=f"sha256:{'d' * 64}",
+                        repository="KenAKAFrosty/Prns",
+                        workflow_run_id=62,
+                    )
+                )
+
     def test_suite_record_binds_every_inventoried_asset(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

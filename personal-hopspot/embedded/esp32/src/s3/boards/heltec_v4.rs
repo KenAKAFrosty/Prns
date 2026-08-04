@@ -16,6 +16,7 @@ use personal_rns::radios::sx126x::{BoardConfig, Sx126x, TcxoVoltage};
 
 use personal_hopspot_core as screen;
 
+use super::{HELTEC_GC1109_RX_GAIN_DB, HELTEC_KCT8103L_RX_GAIN_DB};
 use crate::s3::{
     self, BoardDisplay, BoardFace, Esp32S3Board, S3BoardHardware, S3InterfaceHardware,
     S3ManifoldHardware,
@@ -178,6 +179,11 @@ impl Esp32S3Board for HeltecBoard {
             lora_csd.apply_input_config(&InputConfig::default());
             lora_csd.set_input_enable(true);
             let lora_is_kct8103l = lora_csd.is_high();
+            let lora_rx_gain_db = if lora_is_kct8103l {
+                HELTEC_KCT8103L_RX_GAIN_DB
+            } else {
+                HELTEC_GC1109_RX_GAIN_DB
+            };
             lora_csd.set_output_enable(true);
             lora_csd.set_high();
             let _lora_fem_switch = if lora_is_kct8103l {
@@ -196,6 +202,7 @@ impl Esp32S3Board for HeltecBoard {
                     use_dcdc: true,
                     rx_boost: true,
                     dio2_as_rf_switch: true,
+                    external_rx_gain_db: lora_rx_gain_db,
                 },
             )
         };

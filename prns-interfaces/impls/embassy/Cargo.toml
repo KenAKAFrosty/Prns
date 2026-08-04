@@ -45,6 +45,7 @@ trouble-host = { version = "0.6.0", optional = true, default-features = false, f
 bt-hci = { version = "0.8", optional = true, default-features = false }
 embassy-sync-07 = { package = "embassy-sync", version = "0.7", default-features = false, optional = true }
 heapless-09 = { package = "heapless", version = "0.9", default-features = false, optional = true }
+cfg-if = { version = "1", optional = true }
 
 [dev-dependencies]
 prns-core = { version = "=0.3.3", path = "../../../prns-core", default-features = false, features = ["std", "embassy-host"] }
@@ -61,7 +62,7 @@ wifi-auto = ["dep:embassy-net", "dep:embedded-io-async-07"]
 lora = ["dep:embedded-hal", "dep:embedded-hal-async"]
 esp-now = ["prns-core/alloc", "prns-runtime/alloc"]
 bluetooth-auto = []
-bluetooth-auto-trouble = ["bluetooth-auto", "dep:trouble-host", "dep:bt-hci", "dep:embassy-sync-07", "dep:heapless-09", "dep:embedded-io-07"]
+bluetooth-auto-trouble = ["bluetooth-auto", "dep:trouble-host", "dep:bt-hci", "dep:embassy-sync-07", "dep:heapless-09", "dep:embedded-io-07", "dep:cfg-if"]
 usb = ["dep:embedded-io-async", "dep:embassy-usb"]
 
 [lints.clippy]

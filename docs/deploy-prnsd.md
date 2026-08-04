@@ -291,6 +291,50 @@ convenient discovery aliases, not deployment locks; promotion only moves them
 after independent verification, but an exact digest remains the durable
 operator contract.
 
+## Public staging
+
+The public staging lane exercises the real container and Railway journey without creating a release, tag, signature, prerelease, or promotion record. It republishes the exact reproducible OCI layouts under `ghcr.io/kenakafrosty/prnsd-staging`; the separate package name and its generated metadata identify the artifact as staging while the executable bytes remain eligible to become a later release candidate.
+
+Start from an exact protected `main` commit. Dispatch `prnsd-image-candidate.yml` with that full commit SHA and wait for its primary and reproduction builds to agree for amd64 and ARM64. Then dispatch `prnsd-staging-publish.yml` with the successful image-candidate run ID and leave `package_is_public` false on the first run. The workflow verifies the producer run, rechecks the OCI layouts and their embedded source, preserves the platform manifest digests while copying them, and publishes only immutable `candidate-COMMIT` tags to the staging package.
+
+GitHub creates a new container package as private. Open the `prnsd-staging` package settings and deliberately change its visibility to public only after confirming that this separate package is the intended permanent public staging surface. GitHub does not permit a public package to become private again. Rerun `prnsd-staging-publish.yml` with the same image-candidate run ID and `package_is_public` true; the workflow then proves anonymous digest access and uploads `prnsd-staging-image-COMMIT.json` plus `railway-staging-contract-COMMIT.json`.
+
+The equivalent CLI dispatches are:
+
+```sh
+export SOURCE_COMMIT='FULL_PROTECTED_MAIN_SHA'
+export IMAGE_CANDIDATE_RUN_ID='SUCCESSFUL_IMAGE_CANDIDATE_RUN_ID'
+
+gh workflow run prnsd-image-candidate.yml \
+  --ref main \
+  -f commit_sha="$SOURCE_COMMIT"
+
+gh workflow run prnsd-staging-publish.yml \
+  --ref main \
+  -f image_candidate_run_id="$IMAGE_CANDIDATE_RUN_ID" \
+  -f package_is_public=false
+
+gh workflow run prnsd-staging-publish.yml \
+  --ref main \
+  -f image_candidate_run_id="$IMAGE_CANDIDATE_RUN_ID" \
+  -f package_is_public=true
+```
+
+Create a private Railway project from the exact `ghcr.io/kenakafrosty/prnsd-staging@sha256:...` reference in the generated contract. Apply the same one-volume, one-replica, TCP-port-4242, restart-on-failure shape recorded there; do not override the image entrypoint or configure an HTTP-path health check. The public package makes registry credentials unnecessary, while the Railway project and its operator-owned state remain private.
+
+After the service is healthy, capture its transport identity directly from the running container, exercise a public Backbone connection, restart it, and confirm that the same identity and persisted routing state return:
+
+```sh
+railway ssh -- \
+  /usr/local/bin/prnsd status \
+  --config /var/lib/prnsd \
+  --json
+```
+
+Publish an intentional second Railway template revision, roll back to the previous revision, then restore the exact digest under test. Dispatch `prnsd-staging-qualification.yml` with the public endpoint, both observed identity hashes, both template revisions, the public staging publication run ID, and the three explicit confirmations. That workflow anonymously pulls both architectures, checks the live TCP endpoint, verifies the staging publication chain, and emits a staging-only evidence artifact.
+
+Staging evidence is never accepted by suite promotion. After the final source commit is settled, release readiness and every producer workflow run again for that exact SHA; the signed `ghcr.io/kenakafrosty/prnsd` candidate and protected release deployment qualification remain separate authorities.
+
 ## Railway
 
 Railway's template composer, rather than a repository file, is the publication

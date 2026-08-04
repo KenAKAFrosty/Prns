@@ -192,10 +192,13 @@ impl TechoDeferredHardware {
             radio_reset,
             Delay,
             BoardConfig {
-                tcxo_voltage: Some(TcxoVoltage::V1_8),
+                // LilyGo's factory firmware initializes this HPD16A through RadioLib's 1.6 V
+                // TCXO default.
+                tcxo_voltage: Some(TcxoVoltage::V1_6),
                 use_dcdc: true,
                 rx_boost: true,
                 dio2_as_rf_switch: true,
+                external_rx_gain_db: 0,
             },
         );
 

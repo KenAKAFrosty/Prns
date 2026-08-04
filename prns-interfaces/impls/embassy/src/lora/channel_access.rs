@@ -839,6 +839,19 @@ mod tests {
     }
 
     #[test]
+    fn antenna_referred_heltec_noise_does_not_pin_the_channel_busy() {
+        let mut floor = NoiseFloor::new();
+        for index in 0..NOISE_SAMPLE_COUNT {
+            let _ = floor.observe(index as u64, -103, false);
+        }
+
+        assert_eq!(floor.noise_floor_dbm(), Some(-103));
+        assert_eq!(floor.cca_threshold_dbm(), Some(-92));
+        assert_eq!(floor.observe(100, -100, false), ChannelObservation::Clear);
+        assert_eq!(floor.observe(101, -80, false), ChannelObservation::Busy);
+    }
+
+    #[test]
     fn calibration_and_sensing_fail_closed() {
         let mut floor = NoiseFloor::new();
         assert_eq!(floor.observe(0, -120, false), ChannelObservation::Unknown);

@@ -12,7 +12,13 @@ SCRIPT_DIRECTORY = Path(__file__).resolve().parent
 if str(SCRIPT_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIRECTORY))
 
-from flasher_acceptance_contract import CLI_TARGETS, SHIPPING_BOARDS  # noqa: E402,F401
+from flasher_acceptance_contract import (  # noqa: E402,F401
+    CLI_TARGETS,
+    OS_ARCHITECTURES,
+    REQUIRED_FALLBACKS,
+    SHIPPING_BOARDS,
+    SURFACES,
+)
 from flasher_tester_roster import validate_roster  # noqa: E402
 
 
@@ -41,7 +47,11 @@ def main() -> int:
         for error in errors:
             print(f"tester roster validation failed: {error}", file=sys.stderr)
         return 1
-    print("tester roster covers eight physical, four fallback, and five installer assignments")
+    print(
+        f"tester roster covers {len(SHIPPING_BOARDS) * len(SURFACES)} physical, "
+        f"{len(REQUIRED_FALLBACKS)} fallback, and "
+        f"{len(OS_ARCHITECTURES)} installer assignments"
+    )
     return 0
 
 

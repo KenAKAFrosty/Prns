@@ -239,7 +239,7 @@ class AcceptanceScaffoldTests(unittest.TestCase):
         self.manifest_path.write_text(
             json.dumps(self.manifest_document, sort_keys=True) + "\n", encoding="utf-8"
         )
-        with self.assertRaisesRegex(ValueError, "exactly four well-formed targets"):
+        with self.assertRaisesRegex(ValueError, "well-formed targets"):
             self.create()
 
     def test_prerelease_publication_requires_full_utc_timestamp(self) -> None:

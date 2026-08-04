@@ -9,14 +9,21 @@ use core::alloc::Layout;
 #[cfg(target_arch = "xtensa")]
 use core::ptr::NonNull;
 
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+use personal_rns::runtime::request_endpoints::RequestEndpointSet;
 #[cfg(target_arch = "xtensa")]
 use personal_rns::storage::Esp32S3;
+
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const NODE_REQUEST_HANDLER_CAPACITY: usize =
+    <personal_hopspot_core::node_pages::NodePageRoutes as RequestEndpointSet<()>>::REGISTRATIONS
+        .len();
 
 /// The engine's storage recipe: hot/synchronized columns stay inline in SRAM, the cold
 /// per-destination bulk (routes, announces, history, app-data, resource buffers) is boxed
 /// into PSRAM through `PsramAlloc`, each keeping its small index/metadata in SRAM.
 #[cfg(target_arch = "xtensa")]
-pub type EngineStorageType = Esp32S3<PsramAlloc>;
+pub type EngineStorageType = Esp32S3<PsramAlloc, NODE_REQUEST_HANDLER_CAPACITY>;
 
 #[cfg(target_arch = "riscv32")]
 pub use riscv::C6Storage;
@@ -36,7 +43,7 @@ const _: () = assert!(
 
 #[cfg(target_arch = "xtensa")]
 const _: () = assert!(
-    Esp32S3::<PsramAlloc>::MAX_COMPACTED_FLASH_JOURNAL_BYTES <= crate::persistence::S3_ARENA_BYTES
+    EngineStorageType::MAX_COMPACTED_FLASH_JOURNAL_BYTES <= crate::persistence::S3_ARENA_BYTES
 );
 
 /// A `Default`-able allocator that places allocations in PSRAM.
@@ -171,7 +178,7 @@ mod riscv {
     use personal_rns::routing::links::channel::channel_mdu;
     use personal_rns::routing::links::channel::table::impls::FixedArrayChannelTable;
     use personal_rns::routing::links::resources::assembly::{
-        FixedIncomingAssemblyTable, FixedOutgoingAssemblyTable,
+        FixedIncomingAssemblyTable, FixedStaticOutgoingAssemblyTable,
     };
     use personal_rns::routing::links::resources::table::{
         FixedResourceTable, IncomingResourceState, OutgoingResourceState,
@@ -286,7 +293,7 @@ mod riscv {
         type DestinationAnnounceLimits =
             FixedDestinationAnnounceLimitTable<{ Self::TRACKED_DESTINATIONS }>;
         type GroupKeys = FixedGroupKeyTable<{ Self::UPSTREAM_APP_DESTINATIONS }>;
-        type RequestHandlers = FixedRequestHandlerTable<{ Self::UPSTREAM_APP_DESTINATIONS }>;
+        type RequestHandlers = FixedRequestHandlerTable<{ super::NODE_REQUEST_HANDLER_CAPACITY }>;
         type TransportedLinks = FixedTransportedLinkTable<{ Self::LINKS }>;
         type Links = FixedLinkTable<{ Self::LINKS }>;
         type OutgoingResources = FixedResourceTable<
@@ -302,7 +309,7 @@ mod riscv {
             { max_part_count(Self::RESOURCE_TRANSFER_BYTES) },
         >;
         type IncomingAssemblies = FixedIncomingAssemblyTable<{ Self::LINKS }>;
-        type OutgoingAssemblies = FixedOutgoingAssemblyTable<{ Self::LINKS }>;
+        type OutgoingAssemblies = FixedStaticOutgoingAssemblyTable<{ Self::LINKS }>;
         type Channels = FixedArrayChannelTable<
             { Self::LINKS },
             { Self::CHANNEL_REORDER_DEPTH },

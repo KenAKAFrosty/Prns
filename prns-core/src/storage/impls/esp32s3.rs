@@ -29,11 +29,9 @@ use crate::routing::group_keys::FixedGroupKeyTable;
 use crate::routing::links::channel::channel_mdu;
 use crate::routing::links::channel::receive::WINDOW_MAX_MESSAGES;
 use crate::routing::links::channel::table::impls::FixedHeapChannelTable;
-use crate::routing::links::resources::assembly::FixedIncomingAssemblyTable;
-#[cfg(not(feature = "large-static-responses"))]
-use crate::routing::links::resources::assembly::FixedOutgoingAssemblyTable;
-#[cfg(feature = "large-static-responses")]
-use crate::routing::links::resources::assembly::FixedStaticOutgoingAssemblyTable;
+use crate::routing::links::resources::assembly::{
+    FixedIncomingAssemblyTable, FixedStaticOutgoingAssemblyTable,
+};
 use crate::routing::links::resources::table::{
     FixedHeapResourceTable, IncomingResourceState, OutgoingResourceState,
 };
@@ -90,14 +88,18 @@ const MAX_INCOMING_RESOURCE_PARTS: usize = max_part_count(MAX_INCOMING_RESOURCE_
 const CHANNEL_REORDER_DEPTH: usize = WINDOW_MAX_MESSAGES as usize;
 const CHANNEL_MESSAGE_BYTES: usize = channel_mdu(EMBEDDED_MAX_LINK_MTU);
 
-#[cfg(feature = "large-static-responses")]
-type Esp32S3OutgoingAssemblies = FixedStaticOutgoingAssemblyTable<MAX_CONCURRENT_LINKS>;
-#[cfg(not(feature = "large-static-responses"))]
-type Esp32S3OutgoingAssemblies = FixedOutgoingAssemblyTable<MAX_CONCURRENT_LINKS>;
+/// The PSRAM-backed ESP32-S3 storage profile.
+///
+/// `MAX_REQUEST_HANDLERS` is independent from the upstream-application destination capacity:
+/// applications commonly register several request paths on one destination. It defaults to the
+/// historical two rows, while application recipes with more routes should supply their exact
+/// registration count.
+pub struct Esp32S3<
+    A: Allocator = Global,
+    const MAX_REQUEST_HANDLERS: usize = MAX_UPSTREAM_APP_DESTINATIONS,
+>(PhantomData<A>);
 
-pub struct Esp32S3<A: Allocator = Global>(PhantomData<A>);
-
-impl<A: Allocator> Esp32S3<A> {
+impl<A: Allocator, const MAX_REQUEST_HANDLERS: usize> Esp32S3<A, MAX_REQUEST_HANDLERS> {
     /// The most frames one resource request can synchronously emit for this storage recipe.
     ///
     /// A request names at most `WINDOW_MAX` existing parts, and a response can append one hashmap
@@ -108,7 +110,7 @@ impl<A: Allocator> Esp32S3<A> {
 }
 
 #[cfg(feature = "flash")]
-impl<A: Allocator> Esp32S3<A> {
+impl<A: Allocator, const MAX_REQUEST_HANDLERS: usize> Esp32S3<A, MAX_REQUEST_HANDLERS> {
     pub const MAX_COMPACTED_FLASH_JOURNAL_BYTES: usize = MAX_TRACKED_DESTINATIONS
         * (flash_journal_record_storage_len(maximum_route_upsert_payload_len(0, 0), 4) + 3)
         + RETAINED_ANNOUNCE_APP_DATA_BYTES
@@ -121,13 +123,15 @@ impl<A: Allocator> Esp32S3<A> {
         + flash_journal_record_storage_len(0, 4);
 }
 
-impl<A: Allocator> Default for Esp32S3<A> {
+impl<A: Allocator, const MAX_REQUEST_HANDLERS: usize> Default for Esp32S3<A, MAX_REQUEST_HANDLERS> {
     fn default() -> Self {
         Self(PhantomData)
     }
 }
 
-impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
+impl<A: Allocator + Default, const MAX_REQUEST_HANDLERS: usize> StorageLayout
+    for Esp32S3<A, MAX_REQUEST_HANDLERS>
+{
     const LIMITS: DisplayedStorageLimits = DisplayedStorageLimits {
         tracked_destinations: StorageCapacity::Fixed(MAX_TRACKED_DESTINATIONS),
         destination_identities: StorageCapacity::Fixed(0),
@@ -190,7 +194,7 @@ impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
         A,
     >;
     type GroupKeys = FixedGroupKeyTable<MAX_UPSTREAM_APP_DESTINATIONS>;
-    type RequestHandlers = FixedRequestHandlerTable<MAX_UPSTREAM_APP_DESTINATIONS>;
+    type RequestHandlers = FixedRequestHandlerTable<MAX_REQUEST_HANDLERS>;
     type TransportedLinks = FixedTransportedLinkTable<MAX_CONCURRENT_LINKS>;
     type Links = FixedLinkTable<MAX_CONCURRENT_LINKS>;
     type OutgoingResources = FixedHeapResourceTable<
@@ -208,7 +212,7 @@ impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
         A,
     >;
     type IncomingAssemblies = FixedIncomingAssemblyTable<MAX_CONCURRENT_LINKS>;
-    type OutgoingAssemblies = Esp32S3OutgoingAssemblies;
+    type OutgoingAssemblies = FixedStaticOutgoingAssemblyTable<MAX_CONCURRENT_LINKS>;
     type Channels = FixedHeapChannelTable<
         MAX_CONCURRENT_CHANNELS,
         CHANNEL_REORDER_DEPTH,
@@ -222,6 +226,7 @@ impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
 mod tests {
     use super::Esp32S3;
     use crate::engine::EngineState;
+    use crate::routing::request_handlers::RequestHandlerTable;
     use crate::storage::{StorageCapacity, StorageLayout};
 
     #[test]
@@ -254,12 +259,24 @@ mod tests {
             engine.outgoing_resources.transfer_capacity(),
             super::MAX_OUTGOING_RESOURCE_TRANSFER_BYTES
         );
+        assert!(engine.outgoing_assemblies.supports_static_continuations());
         #[cfg(feature = "large-static-responses")]
         assert_eq!(super::MAX_OUTGOING_RESOURCE_PLAINTEXT_BYTES, 256 * 1024);
         #[cfg(not(feature = "large-static-responses"))]
         assert_eq!(
             super::MAX_OUTGOING_RESOURCE_PLAINTEXT_BYTES,
             super::MAX_INCOMING_RESOURCE_TRANSFER_BYTES
+        );
+    }
+
+    #[test]
+    fn request_handler_capacity_is_an_application_owned_dimension() {
+        type L = Esp32S3<allocator_api2::alloc::Global, 5>;
+        let handlers = <L as StorageLayout>::RequestHandlers::default();
+        assert_eq!(handlers.capacity(), 5);
+        assert_eq!(
+            <L as StorageLayout>::LIMITS.upstream_app_destinations,
+            StorageCapacity::Fixed(super::MAX_UPSTREAM_APP_DESTINATIONS)
         );
     }
 

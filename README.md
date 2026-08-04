@@ -22,9 +22,16 @@ Prns is a ground-up implementation of Reticulum, written in Rust. It's highly fo
 
 Prns is built on a unified core engine that is `no_std` (no `alloc` required either), so it runs on nearly anything, whether that's a $5 microcontroller, a web browser, a native smartphone app, a personal laptop, or a backbone cloud server.
 
-Its paved application SDKs are currently [Rust](personal-rns/README.md) and [TypeScript / JavaScript](prns-js/README.md), including browsers, Node.js, and Bun.
+Its application SDKs come in two stages today:
 
-Prns also has source-ready SDK previews for [Python](prns-host/bindings/python/README.md), [.NET and C#](prns-host/bindings/dotnet/README.md), [Go](prns-host/bindings/go/README.md), [Swift](prns-host/bindings/swift/README.md), [Kotlin, Java, and Android](prns-host/bindings/jvm/README.md), [Julia](prns-host/bindings/julia/README.md), and [C and C++](prns-host/abi/c/README.md). These are real adapters over the same native Rust engine, with generated types and live conformance tests. Their idiomatic registry packaging and native artifact delivery are active release work. Experienced developers in those ecosystems can make an especially valuable contribution to Prns by helping refine the consumer API, as well as platform/packaging structure.
+- **Paved:** [Rust](personal-rns/README.md) · [TypeScript / JavaScript](prns-js/README.md) (browsers, Node.js, and Bun)
+- **Previews:** [Python](prns-host/bindings/python/README.md) · [.NET & C#](prns-host/bindings/dotnet/README.md) · [Go](prns-host/bindings/go/README.md) · [Swift](prns-host/bindings/swift/README.md) · [Kotlin / Java / Android](prns-host/bindings/jvm/README.md) · [Julia](prns-host/bindings/julia/README.md) · [C & C++](prns-host/abi/c/README.md)
+
+The previews aren't stubs. Each drives the same native Rust engine, with generated types and a live conformance suite.
+
+What's still young is the packaging. Today they run straight from this repository. A proper package on each language's registry, prebuilt binaries included, is the road still being paved.
+
+If one of these ecosystems is home for you, shaping its consumer API and packaging is some of the most valuable contribution work in Prns right now.
 
 [Choose an SDK and see its exact readiness and installation path](docs/sdks.md).
 

@@ -71,7 +71,7 @@ Before signing any candidate:
 - create `release-rollback` with manual release-owner approval and no signing secrets or wait
   timer; rollback jobs only receive the repository public key and read-only release inputs;
 - confirm Actions attestations are available for the repository and `gh attestation verify` works;
-- assign the eight physical, four fallback, and five archive-installation coverage slots to real
+- assign the ten physical, four fallback, and five archive-installation coverage slots to real
   testers across their required hosts; one person may hold multiple or all slots;
 - commit and validate `release/acceptance/rosters/VERSION.json` with those real assignments;
 - review the exact default-branch workflow revisions. Do not dispatch a signing workflow from a
