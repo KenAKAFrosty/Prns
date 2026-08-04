@@ -87,14 +87,16 @@ fn render_all() -> Vec<(PathBuf, String)> {
             "{} still uses result schema v{}",
             row.scenario, row.schema_version
         );
-        if Manifest::exists(&row.scenario) {
-            by_host.entry(row.host.clone()).or_default().push(row);
-        }
+        by_host.entry(row.host.clone()).or_default().push(row);
     }
 
     let mut files = Vec::new();
     let mut hosts = Vec::new();
     for (host, rows) in &by_host {
+        hosts.push((host.clone(), machine_label(host)));
+        if !host_matches_current_catalog(rows) {
+            continue;
+        }
         let mut assets = Vec::new();
         let body = render_host(host, rows, &implementations, &mut assets);
         files.push((output_dir.join(format!("RESULTS-{host}.md")), body));
@@ -107,10 +109,22 @@ fn render_all() -> Vec<(PathBuf, String)> {
             }
         }
         files.append(&mut assets);
-        hosts.push((host.clone(), machine_label(host)));
     }
     files.push((output_dir.join("RESULTS.md"), render_index(&hosts)));
     files
+}
+
+fn host_matches_current_catalog(rows: &[ResultRow]) -> bool {
+    let expected = load_catalog()
+        .expect("validated benchmark catalog")
+        .into_iter()
+        .map(|manifest| (manifest.name.as_str().to_string(), manifest.version))
+        .collect::<BTreeSet<_>>();
+    let observed = rows
+        .iter()
+        .map(|row| (row.scenario.clone(), row.scenario_version))
+        .collect::<BTreeSet<_>>();
+    observed == expected
 }
 
 fn website_asset_dir(output_dir: &Path) -> Option<PathBuf> {
@@ -1362,10 +1376,6 @@ impl Manifest {
         self.primary_metric.contains("bytes_per_sec")
     }
 
-    fn exists(scenario: &str) -> bool {
-        scenario_dir(scenario).join("manifest.json").is_file()
-    }
-
     fn load(scenario: &str) -> Self {
         let path = scenario_dir(scenario).join("manifest.json");
         let json: serde_json::Value = serde_json::from_str(
@@ -1429,6 +1439,33 @@ mod tests {
             submitter_id: None,
             provenance: BTreeMap::new(),
         }
+    }
+
+    fn rows_for_current_catalog() -> Vec<ResultRow> {
+        load_catalog()
+            .expect("validated benchmark catalog")
+            .into_iter()
+            .map(|manifest| {
+                let mut result = row(0, Axis::Conformance, "settled_clean", Some(1.0));
+                result.scenario = manifest.name.as_str().to_string();
+                result.scenario_version = manifest.version;
+                result
+            })
+            .collect()
+    }
+
+    #[test]
+    fn only_current_catalog_evidence_is_rendered_with_current_manifests() {
+        let current = rows_for_current_catalog();
+        assert!(host_matches_current_catalog(&current));
+
+        let mut historical = current.clone();
+        historical[0].scenario_version -= 1;
+        assert!(!host_matches_current_catalog(&historical));
+
+        let mut incomplete = current;
+        incomplete.pop();
+        assert!(!host_matches_current_catalog(&incomplete));
     }
 
     #[test]

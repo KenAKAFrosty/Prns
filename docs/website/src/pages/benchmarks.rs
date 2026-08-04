@@ -17,6 +17,10 @@ const HOST_PAGES: &[(&str, &str)] = &[
         "x86_64-pc-windows-msvc",
         include_str!("../../../../benchmarks/RESULTS-x86_64-pc-windows-msvc.md"),
     ),
+    (
+        "x86_64-unknown-linux-gnu",
+        include_str!("../../../../benchmarks/RESULTS-x86_64-unknown-linux-gnu.md"),
+    ),
 ];
 
 #[component]
@@ -120,6 +124,7 @@ mod tests {
 
         assert!(md.contains("](/benchmarks/aarch64-apple-darwin)"));
         assert!(md.contains("](/benchmarks/x86_64-pc-windows-msvc)"));
+        assert!(md.contains("](/benchmarks/x86_64-unknown-linux-gnu)"));
         assert!(!md.contains("](RESULTS-aarch64-apple-darwin.md)"));
         assert!(!md.contains("# Benchmark results"));
     }

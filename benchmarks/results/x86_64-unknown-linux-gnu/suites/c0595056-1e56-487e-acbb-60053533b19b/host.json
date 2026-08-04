@@ -1,0 +1,12 @@
+{
+  "host": "x86_64-unknown-linux-gnu",
+  "device_id": "29fc6657-e90d-4baa-ac46-e3ca8db31e80",
+  "cpu_model": "12th Gen Intel(R) Core(TM) i7-1260P",
+  "physical_cores": 12,
+  "logical_cores": 16,
+  "total_memory_bytes": 33241399296,
+  "os_version": "Linux (Ubuntu 22.04)",
+  "kernel_version": "6.8.0-136-generic",
+  "cpu_governor": "powersave",
+  "cpu_max_mhz": 4700
+}
