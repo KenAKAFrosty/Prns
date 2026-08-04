@@ -16,6 +16,9 @@ pub const KNOWN_IMPLEMENTATIONS: [&str; 3] = [
 ];
 const STANDARD_ENCRYPTED_LINK_MDU: usize = 383;
 const STOCK_REQUEST_ENVELOPE_BUDGET: usize = 64;
+const LARGE_RESOURCE_SEGMENTS: usize = 64;
+const LARGE_RESOURCE_PAYLOAD_BYTES: usize =
+    personal_rns::routing::links::resources::MAX_EFFICIENT_SIZE * LARGE_RESOURCE_SEGMENTS;
 pub const DEFAULT_SIZE_SEED: u64 = 0x5EED_CAFE_F00D_0001;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -373,6 +376,16 @@ fn validate_manifest(manifest: &ScenarioManifest, path: &Path) -> Result<(), Cat
             manifest.name
         )));
     }
+    if matches!(
+        manifest.name,
+        ScenarioId::Resource64mibStream | ScenarioId::Resource64mibStreamUnleashed
+    ) && manifest.profile.payload_len != LARGE_RESOURCE_PAYLOAD_BYTES
+    {
+        return Err(CatalogError::Invalid(format!(
+            "{} must carry exactly {LARGE_RESOURCE_SEGMENTS} maximum-efficient resource segments",
+            manifest.name
+        )));
+    }
     let expected_topology = if manifest.name.is_transport() {
         ScenarioTopology::Relay
     } else {
@@ -660,5 +673,16 @@ mod tests {
                 .as_str()
                 .expect("resource stream vector")
         );
+    }
+
+    #[test]
+    fn large_resource_stream_is_exactly_sixty_four_full_segments() {
+        for scenario in [
+            ScenarioId::Resource64mibStream,
+            ScenarioId::Resource64mibStreamUnleashed,
+        ] {
+            let manifest = load_manifest(scenario).expect("valid large-resource manifest");
+            assert_eq!(manifest.profile.payload_len, LARGE_RESOURCE_PAYLOAD_BYTES);
+        }
     }
 }
