@@ -103,6 +103,18 @@ pub fn allocate_lora_tx_queue() -> &'static mut [u8; personal_rns::lora::LORA_TX
         .expect("the LoRa transmit queue allocation has its requested length")
 }
 
+/// Allocate a manifold frame ring in PSRAM after the board has mapped external memory.
+#[cfg(target_arch = "xtensa")]
+pub fn allocate_manifold_outbound<const FRAME: usize>(
+    depth: usize,
+) -> &'static mut [personal_rns::manifold::grant::FrameSlot<FRAME>] {
+    use personal_rns::manifold::grant::FrameSlot;
+
+    let mut storage = Vec::with_capacity_in(depth, PsramAlloc);
+    storage.resize_with(depth, FrameSlot::empty);
+    Box::leak(storage.into_boxed_slice())
+}
+
 #[cfg(target_arch = "xtensa")]
 // SAFETY: Private bump returns exclusive slices from the mapped PSRAM window; ExternalMemory
 // fallback preserves esp-alloc's contract. Deallocate is a no-op for the bump path.
@@ -161,9 +173,11 @@ mod riscv {
     use personal_rns::routing::links::resources::assembly::{
         FixedIncomingAssemblyTable, FixedOutgoingAssemblyTable,
     };
-    use personal_rns::routing::links::resources::max_part_count;
     use personal_rns::routing::links::resources::table::{
         FixedResourceTable, IncomingResourceState, OutgoingResourceState,
+    };
+    use personal_rns::routing::links::resources::{
+        max_outgoing_resource_reaction_frames, max_part_count,
     };
     use personal_rns::routing::links::table::FixedLinkTable;
     use personal_rns::routing::links::transported::FixedTransportedLinkTable;
@@ -194,6 +208,9 @@ mod riscv {
         const BLACKHOLE_REASON_BYTES: usize = 64;
         const RESOURCE_TRANSFER_BYTES: usize =
             personal_hopspot_core::node_pages::PAGE_RESPONSE_TRANSFER_BYTES;
+        /// The outbound lane capacity needed to retain one complete resource-request reaction.
+        pub const MAX_OUTGOING_RESOURCE_REACTION_FRAMES: usize =
+            max_outgoing_resource_reaction_frames(Self::RESOURCE_TRANSFER_BYTES);
         const CHANNEL_REORDER_DEPTH: usize = 1;
         const LINK_MTU: usize = EMBEDDED_MAX_LINK_MTU;
         const CHANNEL_MESSAGE_BYTES: usize = channel_mdu(Self::LINK_MTU);

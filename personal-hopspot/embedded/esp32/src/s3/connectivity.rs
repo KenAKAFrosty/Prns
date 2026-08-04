@@ -118,6 +118,21 @@ pub(super) fn build_wifi(
                 TX_BUF.take(),
             )
         };
+        let unicast_discovery = {
+            static RX_META: ConstStaticCell<[PacketMetadata; 8]> =
+                ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
+            static RX_BUF: ConstStaticCell<[u8; 128]> = ConstStaticCell::new([0u8; 128]);
+            static TX_META: ConstStaticCell<[PacketMetadata; 1]> =
+                ConstStaticCell::new([PacketMetadata::EMPTY; 1]);
+            static TX_BUF: ConstStaticCell<[u8; 1]> = ConstStaticCell::new([0u8; 1]);
+            UdpSocket::new(
+                stack,
+                RX_META.take(),
+                RX_BUF.take(),
+                TX_META.take(),
+                TX_BUF.take(),
+            )
+        };
         let data = {
             static RX_META: ConstStaticCell<[PacketMetadata; 8]> =
                 ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
@@ -147,6 +162,7 @@ pub(super) fn build_wifi(
         Some(AutoWifiSegment {
             stack,
             discovery,
+            unicast_discovery,
             data,
             mac,
         })
@@ -188,6 +204,21 @@ pub(super) fn build_wifi(
                 TX_BUF.take(),
             )
         };
+        let ap_unicast_discovery = {
+            static RX_META: ConstStaticCell<[PacketMetadata; 8]> =
+                ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
+            static RX_BUF: ConstStaticCell<[u8; 128]> = ConstStaticCell::new([0u8; 128]);
+            static TX_META: ConstStaticCell<[PacketMetadata; 1]> =
+                ConstStaticCell::new([PacketMetadata::EMPTY; 1]);
+            static TX_BUF: ConstStaticCell<[u8; 1]> = ConstStaticCell::new([0u8; 1]);
+            UdpSocket::new(
+                ap_stack,
+                RX_META.take(),
+                RX_BUF.take(),
+                TX_META.take(),
+                TX_BUF.take(),
+            )
+        };
         let ap_data = {
             static RX_META: ConstStaticCell<[PacketMetadata; 8]> =
                 ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
@@ -208,6 +239,7 @@ pub(super) fn build_wifi(
                 primary: AutoWifiSegment {
                     stack: ap_stack,
                     discovery: ap_discovery,
+                    unicast_discovery: ap_unicast_discovery,
                     data: ap_data,
                     mac: ap_mac,
                 },

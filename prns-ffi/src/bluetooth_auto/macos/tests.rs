@@ -6,6 +6,9 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::backend::{dial_admission, DialAdmission, StartupReadiness};
 use super::central::CentralPeerSession;
+use super::gatt_link::{
+    gatt_inbound_channel, gatt_inbound_channel_with_budget, GattInboundSendError,
+};
 use super::gatt_write::{write_admission, GattWriteAdmission, GattWriteMode, GattWritePlan};
 use super::MacosBleBackend;
 use super::MacosBleError;
@@ -33,7 +36,7 @@ fn dial_yields_only_when_peer_is_already_system_connected() {
 fn role_cleanup_only_selects_a_session_after_its_data_receiver_closes() {
     let (control_tx, _control_rx) = mpsc::channel::<Control>(1);
     let (completion_tx, _completion_rx) = oneshot::channel();
-    let (data_tx, data_rx) = mpsc::channel::<Box<[u8]>>(1);
+    let (data_tx, data_rx) = gatt_inbound_channel();
     let session = CentralPeerSession::new(
         prns_core::interfaces::bluetooth_auto::BleAddress::new([1; 6]),
         control_tx,
@@ -44,6 +47,48 @@ fn role_cleanup_only_selects_a_session_after_its_data_receiver_closes() {
     assert!(!session.data_receiver_closed());
     drop(data_rx);
     assert!(session.data_receiver_closed());
+}
+
+#[tokio::test]
+async fn gatt_callback_inbox_preserves_bursts_up_to_its_byte_budget() {
+    let (data_tx, mut data_rx) = gatt_inbound_channel_with_budget(5);
+
+    data_tx
+        .try_send(Box::from(&[1, 2, 3][..]))
+        .expect("the first fragment should fit");
+    data_tx
+        .try_send(Box::from(&[4, 5][..]))
+        .expect("the burst should fill the byte budget exactly");
+    assert_eq!(
+        data_tx.try_send(Box::from(&[6][..])),
+        Err(GattInboundSendError::BudgetExceeded)
+    );
+
+    assert_eq!(&*data_rx.recv().await.unwrap(), &[1, 2, 3]);
+    data_tx
+        .try_send(Box::from(&[6, 7, 8][..]))
+        .expect("receiving a fragment should release its exact capacity");
+    assert_eq!(&*data_rx.recv().await.unwrap(), &[4, 5]);
+    assert_eq!(&*data_rx.recv().await.unwrap(), &[6, 7, 8]);
+}
+
+#[tokio::test]
+async fn gatt_callback_inbox_bounds_empty_callbacks_and_reports_closure() {
+    let (data_tx, data_rx) = gatt_inbound_channel_with_budget(1);
+
+    data_tx
+        .try_send(Box::from(&[][..]))
+        .expect("an empty callback consumes one unit of capacity");
+    assert_eq!(
+        data_tx.try_send(Box::from(&[][..])),
+        Err(GattInboundSendError::BudgetExceeded)
+    );
+
+    drop(data_rx);
+    assert_eq!(
+        data_tx.try_send(Box::from(&[1][..])),
+        Err(GattInboundSendError::Closed)
+    );
 }
 
 #[test]

@@ -39,6 +39,7 @@ pub enum LaneClaimError {
     LaneSetFull { capacity: usize },
     NotificationCapacityExceeded { required: usize, capacity: usize },
     FrameCapacityExceeded { required: usize, capacity: usize },
+    EmptyOutboundBuffer,
 }
 
 pub struct StaticManifoldLane<
@@ -84,7 +85,14 @@ impl<
         &'static self,
         id: InterfaceId,
         outbound_wake: Option<&'static Signal<M, ()>>,
+        external_outbound: Option<&'static mut [FrameSlot<FRAME>]>,
     ) -> Result<TakenManifoldLane<M, FRAME>, LaneClaimError> {
+        if external_outbound
+            .as_ref()
+            .map_or(OUTBOUND_DEPTH == 0, |buffer| buffer.is_empty())
+        {
+            return Err(LaneClaimError::EmptyOutboundBuffer);
+        }
         if self
             .taken
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -99,9 +107,11 @@ impl<
         let (mut interface_inbound, manifold_inbound) = embassy_grant_lane(inbound_channel);
         interface_inbound.set_pressure_counter(&self.ingress_pressure_events);
 
+        let outbound_buffer =
+            external_outbound.unwrap_or_else(|| self.outbound_buffer.take().as_mut_slice());
         let outbound_channel = self
             .outbound_channel
-            .init(zerocopy_channel::Channel::new(self.outbound_buffer.take()));
+            .init(zerocopy_channel::Channel::new(outbound_buffer));
         let (mut manifold_outbound, interface_outbound) = embassy_grant_lane(outbound_channel);
         manifold_outbound.set_pressure_counter(&self.egress_pressure_events);
         if let Some(wake) = outbound_wake {
@@ -181,7 +191,21 @@ impl<M: RawMutex + Sync + 'static, const LANE_COUNT: usize, const NOTIFY: usize>
         storage: &'static StaticManifoldLane<M, FRAME, INBOUND_DEPTH, OUTBOUND_DEPTH>,
         descriptor: InterfaceDescriptor,
     ) -> Result<InterfaceLane<M, FRAME>, LaneClaimError> {
-        self.claim_interface_configuration(storage, descriptor, None)
+        self.claim_interface_configuration(storage, descriptor, None, None)
+    }
+
+    /// Claims an interface whose outbound frame ring lives in caller-owned static storage.
+    pub fn claim_interface_with_outbound_buffer<
+        const FRAME: usize,
+        const INBOUND_DEPTH: usize,
+        const OUTBOUND_DEPTH: usize,
+    >(
+        &mut self,
+        storage: &'static StaticManifoldLane<M, FRAME, INBOUND_DEPTH, OUTBOUND_DEPTH>,
+        descriptor: InterfaceDescriptor,
+        outbound_buffer: &'static mut [FrameSlot<FRAME>],
+    ) -> Result<InterfaceLane<M, FRAME>, LaneClaimError> {
+        self.claim_interface_configuration(storage, descriptor, None, Some(outbound_buffer))
     }
 
     pub fn claim_interface_with_ifac<
@@ -194,7 +218,7 @@ impl<M: RawMutex + Sync + 'static, const LANE_COUNT: usize, const NOTIFY: usize>
         descriptor: InterfaceDescriptor,
         context: IfacContext,
     ) -> Result<InterfaceLane<M, FRAME>, LaneClaimError> {
-        self.claim_interface_configuration(storage, descriptor, Some(context))
+        self.claim_interface_configuration(storage, descriptor, Some(context), None)
     }
 
     fn claim_interface_configuration<
@@ -206,6 +230,7 @@ impl<M: RawMutex + Sync + 'static, const LANE_COUNT: usize, const NOTIFY: usize>
         storage: &'static StaticManifoldLane<M, FRAME, INBOUND_DEPTH, OUTBOUND_DEPTH>,
         mut descriptor: InterfaceDescriptor,
         context: Option<IfacContext>,
+        external_outbound: Option<&'static mut [FrameSlot<FRAME>]>,
     ) -> Result<InterfaceLane<M, FRAME>, LaneClaimError> {
         self.validate_claim::<INBOUND_DEPTH>(descriptor.id)?;
         if let Some(mtu) = descriptor.hardware_mtu {
@@ -223,7 +248,7 @@ impl<M: RawMutex + Sync + 'static, const LANE_COUNT: usize, const NOTIFY: usize>
         }
 
         let id = descriptor.id;
-        let taken = storage.try_take(id, None)?;
+        let taken = storage.try_take(id, None, external_outbound)?;
         self.register_lane::<INBOUND_DEPTH>(id, taken.manifold_inbound, taken.manifold_outbound);
         if self.initial.push(descriptor).is_err() {
             unreachable!()
@@ -246,7 +271,32 @@ impl<M: RawMutex + Sync + 'static, const LANE_COUNT: usize, const NOTIFY: usize>
         supervisor: InterfaceId,
         outbound_wake: &'static Signal<M, ()>,
     ) -> Result<SupervisorLane<M, FRAME>, LaneClaimError> {
-        self.claim_supervisor_configuration(storage, supervisor, None, outbound_wake)
+        self.claim_supervisor_configuration(storage, supervisor, None, outbound_wake, None)
+    }
+
+    /// Claims a supervisor whose outbound frame ring lives in caller-owned static storage.
+    ///
+    /// This keeps a large burst queue out of scarce internal RAM on targets with a separately
+    /// initialized external-memory allocator. Inbound storage and notification accounting remain
+    /// those declared by `INBOUND_DEPTH`.
+    pub fn claim_supervisor_with_outbound_buffer<
+        const FRAME: usize,
+        const INBOUND_DEPTH: usize,
+        const OUTBOUND_DEPTH: usize,
+    >(
+        &mut self,
+        storage: &'static StaticManifoldLane<M, FRAME, INBOUND_DEPTH, OUTBOUND_DEPTH>,
+        supervisor: InterfaceId,
+        outbound_wake: &'static Signal<M, ()>,
+        outbound_buffer: &'static mut [FrameSlot<FRAME>],
+    ) -> Result<SupervisorLane<M, FRAME>, LaneClaimError> {
+        self.claim_supervisor_configuration(
+            storage,
+            supervisor,
+            None,
+            outbound_wake,
+            Some(outbound_buffer),
+        )
     }
 
     pub fn claim_supervisor_with_ifac<
@@ -260,7 +310,7 @@ impl<M: RawMutex + Sync + 'static, const LANE_COUNT: usize, const NOTIFY: usize>
         context: IfacContext,
         outbound_wake: &'static Signal<M, ()>,
     ) -> Result<SupervisorLane<M, FRAME>, LaneClaimError> {
-        self.claim_supervisor_configuration(storage, supervisor, Some(context), outbound_wake)
+        self.claim_supervisor_configuration(storage, supervisor, Some(context), outbound_wake, None)
     }
 
     fn claim_supervisor_configuration<
@@ -273,9 +323,10 @@ impl<M: RawMutex + Sync + 'static, const LANE_COUNT: usize, const NOTIFY: usize>
         supervisor: InterfaceId,
         context: Option<IfacContext>,
         outbound_wake: &'static Signal<M, ()>,
+        external_outbound: Option<&'static mut [FrameSlot<FRAME>]>,
     ) -> Result<SupervisorLane<M, FRAME>, LaneClaimError> {
         self.validate_claim::<INBOUND_DEPTH>(supervisor)?;
-        let taken = storage.try_take(supervisor, Some(outbound_wake))?;
+        let taken = storage.try_take(supervisor, Some(outbound_wake), external_outbound)?;
         self.register_lane::<INBOUND_DEPTH>(
             supervisor,
             taken.manifold_inbound,

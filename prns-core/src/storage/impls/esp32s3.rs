@@ -37,7 +37,9 @@ use crate::routing::links::resources::assembly::FixedStaticOutgoingAssemblyTable
 use crate::routing::links::resources::table::{
     FixedHeapResourceTable, IncomingResourceState, OutgoingResourceState,
 };
-use crate::routing::links::resources::{max_part_count, sealed_transfer_bytes};
+use crate::routing::links::resources::{
+    max_outgoing_resource_reaction_frames, max_part_count, sealed_transfer_bytes,
+};
 use crate::routing::links::table::FixedLinkTable;
 use crate::routing::links::transported::FixedTransportedLinkTable;
 use crate::routing::path_requests::interface_path_request_limit::FixedInterfacePathRequestLimitTable;
@@ -94,6 +96,16 @@ type Esp32S3OutgoingAssemblies = FixedStaticOutgoingAssemblyTable<MAX_CONCURRENT
 type Esp32S3OutgoingAssemblies = FixedOutgoingAssemblyTable<MAX_CONCURRENT_LINKS>;
 
 pub struct Esp32S3<A: Allocator = Global>(PhantomData<A>);
+
+impl<A: Allocator> Esp32S3<A> {
+    /// The most frames one resource request can synchronously emit for this storage recipe.
+    ///
+    /// A request names at most `WINDOW_MAX` existing parts, and a response can append one hashmap
+    /// update. Compact layouts cannot materialize a full 75-part resource, so deriving the bound
+    /// from their outgoing store avoids reserving unreachable transport backlog on every lane.
+    pub const MAX_OUTGOING_RESOURCE_REACTION_FRAMES: usize =
+        max_outgoing_resource_reaction_frames(MAX_OUTGOING_RESOURCE_TRANSFER_BYTES);
+}
 
 #[cfg(feature = "flash")]
 impl<A: Allocator> Esp32S3<A> {
@@ -211,6 +223,15 @@ mod tests {
     use super::Esp32S3;
     use crate::engine::EngineState;
     use crate::storage::{StorageCapacity, StorageLayout};
+
+    #[test]
+    fn outgoing_resource_reaction_bound_matches_the_storage_recipe() {
+        type Layout = Esp32S3<allocator_api2::alloc::Global>;
+        #[cfg(not(feature = "large-static-responses"))]
+        assert_eq!(Layout::MAX_OUTGOING_RESOURCE_REACTION_FRAMES, 19);
+        #[cfg(feature = "large-static-responses")]
+        assert_eq!(Layout::MAX_OUTGOING_RESOURCE_REACTION_FRAMES, 76);
+    }
 
     #[test]
     fn limits_report_the_storage_constants() {

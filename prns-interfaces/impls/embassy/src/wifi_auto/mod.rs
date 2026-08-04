@@ -4,7 +4,7 @@ use ::core::cell::Cell;
 use ::core::net::Ipv6Addr;
 
 use embassy_futures::join::join;
-use embassy_futures::select::{select, select4, Either, Either4};
+use embassy_futures::select::{select, select5, Either, Either5};
 use embassy_net::udp::{RecvError, UdpMetadata, UdpSocket};
 use embassy_net::{IpAddress, Stack};
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex};
@@ -291,6 +291,7 @@ impl<const MEMBERS: usize> InterfaceStatus for AutoWifiStatus<MEMBERS> {
 pub struct AutoWifiSegment<'a> {
     pub stack: Stack<'a>,
     pub discovery: UdpSocket<'a>,
+    pub unicast_discovery: UdpSocket<'a>,
     pub data: UdpSocket<'a>,
     pub mac: [u8; 6],
 }
@@ -348,6 +349,11 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
             .discovery
             .bind(contract::DEFAULT_DISCOVERY_PORT)
             .is_ok()
+            && self
+                .primary
+                .unicast_discovery
+                .bind(contract::UNICAST_DISCOVERY_PORT)
+                .is_ok()
             && self.primary.data.bind(contract::DEFAULT_DATA_PORT).is_ok()
             && self
                 .primary
@@ -369,6 +375,10 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                 && segment
                     .discovery
                     .bind(contract::DEFAULT_DISCOVERY_PORT)
+                    .is_ok()
+                && segment
+                    .unicast_discovery
+                    .bind(contract::UNICAST_DISCOVERY_PORT)
                     .is_ok()
                 && segment.data.bind(contract::DEFAULT_DATA_PORT).is_ok()
                 && segment
@@ -404,7 +414,9 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
         let mut beacon = Ticker::every(BEACON_INTERVAL);
         let mut fanout_start = 0;
         let mut discovery_buf = [0u8; 64];
+        let mut unicast_discovery_buf = [0u8; 64];
         let mut sec_discovery_buf = [0u8; 64];
+        let mut sec_unicast_discovery_buf = [0u8; 64];
 
         loop {
             if !self.status.is_enabled() {
@@ -419,8 +431,11 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                 self.status.wait_until_enabled().await;
             }
             match select(
-                select4(
+                select5(
                     self.primary.discovery.recv_from(&mut discovery_buf),
+                    self.primary
+                        .unicast_discovery
+                        .recv_from(&mut unicast_discovery_buf),
                     self.primary.data.recv_from(&mut data_buf[..]),
                     beacon.next(),
                     fleet.next_outbound(),
@@ -429,6 +444,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                     next_secondary_datagram(
                         &self.secondary,
                         &mut sec_discovery_buf,
+                        &mut sec_unicast_discovery_buf,
                         &mut sec_data_buf[..],
                     ),
                     self.status.wait_until_disabled(),
@@ -436,7 +452,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
             )
             .await
             {
-                Either::First(Either4::First(received)) => {
+                Either::First(Either5::First(received)) => {
                     if let Ok((len, meta)) = received {
                         if let IpAddress::Ipv6(src) = meta.endpoint.addr {
                             ingest_beacon(
@@ -456,7 +472,27 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                         }
                     }
                 }
-                Either::First(Either4::Second(received)) => {
+                Either::First(Either5::Second(received)) => {
+                    if let Ok((len, meta)) = received {
+                        if let IpAddress::Ipv6(src) = meta.endpoint.addr {
+                            ingest_beacon(
+                                &mut self.brain,
+                                &mut peers,
+                                &mut ids,
+                                &mut peer_on_secondary,
+                                &self.status,
+                                &fleet,
+                                self.bitrate,
+                                src,
+                                &unicast_discovery_buf[..len],
+                                Instant::now().as_millis(),
+                                false,
+                            )
+                            .await;
+                        }
+                    }
+                }
+                Either::First(Either5::Third(received)) => {
                     if let Ok((len, meta)) = received {
                         if let IpAddress::Ipv6(src) = meta.endpoint.addr {
                             route_inbound(
@@ -470,7 +506,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                         }
                     }
                 }
-                Either::First(Either4::Third(())) => {
+                Either::First(Either5::Fourth(())) => {
                     let sends = with_timeout(
                         SEND_TIMEOUT,
                         join(
@@ -498,7 +534,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                     )
                     .await;
                 }
-                Either::First(Either4::Fourth(outbound)) => {
+                Either::First(Either5::Fifth(outbound)) => {
                     if !outbound.is_empty() {
                         let mut plan =
                             FanoutPlan::new(outbound.target(), &peers, &ids, fanout_start);
@@ -537,6 +573,26 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                         }
                     }
                 }
+                Either::Second(Either::First(SecondaryDatagram::UnicastDiscovery(received))) => {
+                    if let Ok((len, meta)) = received {
+                        if let IpAddress::Ipv6(src) = meta.endpoint.addr {
+                            ingest_beacon(
+                                &mut self.brain,
+                                &mut peers,
+                                &mut ids,
+                                &mut peer_on_secondary,
+                                &self.status,
+                                &fleet,
+                                self.bitrate,
+                                src,
+                                &sec_unicast_discovery_buf[..len],
+                                Instant::now().as_millis(),
+                                true,
+                            )
+                            .await;
+                        }
+                    }
+                }
                 Either::Second(Either::First(SecondaryDatagram::Data(received))) => {
                     if let Ok((len, meta)) = received {
                         if let IpAddress::Ipv6(src) = meta.endpoint.addr {
@@ -559,25 +615,31 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
 
 enum SecondaryDatagram {
     Discovery(Result<(usize, UdpMetadata), RecvError>),
+    UnicastDiscovery(Result<(usize, UdpMetadata), RecvError>),
     Data(Result<(usize, UdpMetadata), RecvError>),
 }
 
 async fn next_secondary_datagram(
     segment: &Option<AutoWifiSegment<'_>>,
     discovery_buf: &mut [u8],
+    unicast_discovery_buf: &mut [u8],
     data_buf: &mut [u8],
 ) -> SecondaryDatagram {
     let Some(segment) = segment else {
         return ::core::future::pending().await;
     };
-    match select(
+    match embassy_futures::select::select3(
         segment.discovery.recv_from(discovery_buf),
+        segment.unicast_discovery.recv_from(unicast_discovery_buf),
         segment.data.recv_from(data_buf),
     )
     .await
     {
-        Either::First(received) => SecondaryDatagram::Discovery(received),
-        Either::Second(received) => SecondaryDatagram::Data(received),
+        embassy_futures::select::Either3::First(received) => SecondaryDatagram::Discovery(received),
+        embassy_futures::select::Either3::Second(received) => {
+            SecondaryDatagram::UnicastDiscovery(received)
+        }
+        embassy_futures::select::Either3::Third(received) => SecondaryDatagram::Data(received),
     }
 }
 

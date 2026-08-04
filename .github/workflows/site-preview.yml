@@ -82,6 +82,7 @@ jobs:
           test -f "$hosted/index.html"
           mkdir -p "$dist/assets/flasher"
           cp -R "$hosted/." "$dist/"
+          cp "$dist/index.html" "$dist/404.html"
           cp "$PRNS_SOURCE_ARCHIVE" "$dist/source.zip"
           cp "$PRNS_SOURCE_ARCHIVE.sha256" "$dist/source.zip.sha256"
           cp docs/website/target/hosted-assets/prns-flash.js "$dist/assets/flasher/prns-flash.js"
