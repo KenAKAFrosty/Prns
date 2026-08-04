@@ -282,17 +282,7 @@ impl InterfaceStatus for TcpServerStatus {
     }
 
     fn connection(&self) -> ConnectionState {
-        let live = match self.shared.members.lock() {
-            Ok(members) => members
-                .iter()
-                .any(|member| matches!(member.connection(), ConnectionState::Connected)),
-            Err(_) => false,
-        };
-        if live {
-            ConnectionState::Connected
-        } else {
-            ConnectionState::Disconnected
-        }
+        ConnectionState::Connected
     }
 
     fn rx_bytes(&self) -> u64 {
@@ -472,15 +462,15 @@ mod tests {
     }
 
     #[test]
-    fn the_aggregate_status_is_dormant_until_a_client_connects() {
+    fn the_listener_status_stays_connected_between_client_sessions() {
         let status = TcpServerStatus::new(InterfaceId::from_channel_tag(
             InterfaceKind::TcpServer,
             b"127.0.0.1:4242",
         ));
         assert_eq!(
             status.connection(),
-            ConnectionState::Disconnected,
-            "a bound listener with no client reads as Dormant",
+            ConnectionState::Connected,
+            "a bound listener is ready before a client arrives",
         );
         assert_eq!(status.id().kind(), Some(InterfaceKind::TcpServer));
 
@@ -497,8 +487,8 @@ mod tests {
         client_status.set_connection(ConnectionState::Disconnected);
         assert_eq!(
             status.connection(),
-            ConnectionState::Disconnected,
-            "the listener falls back to Dormant when its last client drops",
+            ConnectionState::Connected,
+            "the listener stays ready when its last client drops",
         );
     }
 

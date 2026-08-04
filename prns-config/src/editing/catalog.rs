@@ -698,7 +698,7 @@ impl InterfaceSettingSpec {
             ) => Some("a radio value is required"),
             (InterfaceKind::Pipe, interface_key::COMMAND) => Some("a command is required"),
             (InterfaceKind::PrnsWebSocketClient, interface_key::TARGET) => {
-                Some("a ws:// target is required")
+                Some("a ws:// or wss:// target is required")
             }
             _ => None,
         }

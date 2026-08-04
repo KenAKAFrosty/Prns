@@ -198,10 +198,7 @@ pub struct WebSocketTargetPlan(String);
 impl WebSocketTargetPlan {
     fn from_configured(target: String) -> Result<Self, PlanErrorKind> {
         let target = target.trim();
-        if !target.starts_with("ws://")
-            || target.len() == "ws://".len()
-            || target.chars().any(char::is_whitespace)
-        {
+        if !crate::reference::supported_websocket_target(target) {
             return Err(PlanErrorKind::InvalidSetting {
                 key: interface_key::TARGET,
             });

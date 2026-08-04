@@ -316,9 +316,10 @@ fn validate_optional_callsign(value: Option<&str>) -> Result<(), InterfaceConfig
 }
 
 fn validate_websocket(value: &str) -> Result<(), InterfaceConfigError> {
-    if value.starts_with("ws://")
-        && value.len() > "ws://".len()
-        && !value.chars().any(char::is_whitespace)
+    let address = value
+        .strip_prefix("ws://")
+        .or_else(|| value.strip_prefix("wss://"));
+    if address.is_some_and(|address| !address.is_empty()) && !value.chars().any(char::is_whitespace)
     {
         Ok(())
     } else {
@@ -443,7 +444,7 @@ mod tests {
             InterfaceConfig::AutomaticUsb,
             InterfaceConfig::AutomaticBluetoothLe,
             InterfaceConfig::WebSocketClient {
-                target: "ws://localhost:1/prns".into(),
+                target: "wss://example.com/prns".into(),
             },
             InterfaceConfig::WebSocketServer {
                 bind: "127.0.0.1:0".into(),

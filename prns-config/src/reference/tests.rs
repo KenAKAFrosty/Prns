@@ -660,13 +660,20 @@ fn stock_interface_names_remain_case_sensitive() {
 }
 
 #[test]
-fn websocket_targets_require_a_plain_ws_url() {
-    for target in ["wss://peer.example/prns", "peer.example", "ws://bad target"] {
+fn websocket_targets_require_a_supported_websocket_url() {
+    for target in ["peer.example", "ws://bad target", "wss://bad target"] {
         let errors = parse(&format!(
             "[interfaces]\n[[WebSocket]]\ntype = PrnsWebSocketClient\nenabled = Yes\ntarget = {target}\n"
         ))
         .unwrap_err();
         assert!(has_code(&errors, ConfigDiagnosticCode::InvalidValue));
+    }
+
+    for target in ["ws://peer.example:4284/prns", "wss://peer.example/prns"] {
+        parse(&format!(
+            "[interfaces]\n[[WebSocket]]\ntype = PrnsWebSocketClient\nenabled = Yes\ntarget = {target}\n"
+        ))
+        .expect("supported WebSocket targets parse");
     }
 }
 

@@ -1050,9 +1050,9 @@ fn validate_medium_requirements(
                 RequiredSetting {
                     primary: interface_key::TARGET,
                     alternatives: &[],
-                    accepted: "a ws:// WebSocket target",
+                    accepted: "a ws:// or wss:// WebSocket target",
                     correction: format!(
-                        "add `{} = ws://example.com:4242/prns` under [[{interface}]]",
+                        "add `{} = wss://example.com/prns` under [[{interface}]]",
                         interface_key::TARGET
                     ),
                 },
@@ -1309,10 +1309,7 @@ fn validate_websocket_target(
         return;
     };
     let target = target.trim();
-    if target.starts_with("ws://")
-        && target.len() > "ws://".len()
-        && !target.chars().any(char::is_whitespace)
-    {
+    if supported_websocket_target(target) {
         return;
     }
     errors.push(ErrorDiagnostic::new(
@@ -1332,14 +1329,21 @@ fn validate_websocket_target(
             interface_key::TARGET
         ),
         Some(target.to_string()),
-        "the WebSocket client target is not a plain ws:// URL",
-        Some("a ws:// URL with no whitespace".to_string()),
+        "the WebSocket client target is not a ws:// or wss:// URL",
+        Some("a ws:// or wss:// URL with no whitespace".to_string()),
         format!(
-            "set `{} = ws://example.com:4242/prns` under [[{}]]",
+            "set `{} = wss://example.com/prns` under [[{}]]",
             interface_key::TARGET,
             context.interface
         ),
     ));
+}
+
+pub(crate) fn supported_websocket_target(target: &str) -> bool {
+    let address = target
+        .strip_prefix("ws://")
+        .or_else(|| target.strip_prefix("wss://"));
+    address.is_some_and(|address| !address.is_empty()) && !target.chars().any(char::is_whitespace)
 }
 
 fn validate_station_identification(

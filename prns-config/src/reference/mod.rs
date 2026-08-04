@@ -17,6 +17,7 @@ pub use types::{
     ReferenceConfig, ReferenceConfigParams, ReferenceDiscoveryConfig, ReferenceInterface,
     ReferenceInterfaceDiscovery, ReferenceMode, ReferenceRemoteManagement, ReferenceValue,
 };
+pub(crate) use validation::supported_websocket_target;
 
 pub(crate) fn announce_rate_target_is_explicit_off(text: &str) -> bool {
     matches!(

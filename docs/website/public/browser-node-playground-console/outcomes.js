@@ -29,7 +29,20 @@ export function describeUsbConnectFailure(outcome) {
         RuntimeRejected: ({ operation, detail }) => `${operation}: ${detail}`,
     });
 }
-export function describeUsbCloseFailure(outcome) {
+export function describeWebSocketConnectFailure(outcome) {
+    return match_into().from(outcome, {
+        HostOperationFailed: ({ operation, detail }) => `${operation}: ${detail}`,
+        HostApiUnavailable: ({ api }) => `${api} is unavailable in this browser`,
+        PermissionDenied: ({ stage, detail }) => `${stage}: ${detail}`,
+        Cancelled: ({ stage }) => `Cancelled during ${stage}`,
+        AlreadyActive: ({ target }) => `Already active for ${target}`,
+        InvalidTarget: ({ detail }) => detail,
+        TimedOut: ({ stage, timeoutMs }) => `${stage} timed out after ${timeoutMs}ms`,
+        ConnectionFailed: ({ stage, detail }) => `${stage}: ${detail}`,
+        RuntimeRejected: ({ operation, detail }) => `${operation}: ${detail}`,
+    });
+}
+export function describeInterfaceCloseFailure(outcome) {
     return match_into().from(outcome, {
         HostOperationFailed: ({ operation, detail }) => `${operation}: ${detail}`,
         CloseFailed: ({ causes }) => causes.map(describeCleanupFailure).join("; "),

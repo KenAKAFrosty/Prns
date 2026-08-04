@@ -6,13 +6,15 @@ import type {
   PrnsSnapshot,
   Tag as Tagged,
   UsbAutoSession,
+  WebSocketSession,
 } from "./sdk/index.js";
 import {
   describeAutoWifiFailure,
+  describeInterfaceCloseFailure,
   describeSessionFailure,
   describeStartupFailure,
-  describeUsbCloseFailure,
   describeUsbConnectFailure,
+  describeWebSocketConnectFailure,
 } from "./outcomes.js";
 import type { StartupFailure } from "./outcomes.js";
 import { boundedDetail, formatBitrate, hex } from "./presentation.js";
@@ -20,6 +22,7 @@ import type {
   AutoWifiState,
   ControlAvailability,
   UsbState,
+  WebSocketState,
 } from "./state.js";
 
 const MAX_ACTIVITY_ENTRIES = 120;
@@ -27,6 +30,7 @@ const MAX_ACTIVITY_ENTRIES = 120;
 export type ActivityKind =
   | "Runtime"
   | "Auto Wi-Fi"
+  | "WebSocket"
   | "USB Auto"
   | "Announce"
   | "Node page"
@@ -37,6 +41,8 @@ export type ActivityKind =
 export type PlaygroundControlHandlers = {
   readonly startAutoWifi: () => void;
   readonly closeAutoWifi: () => void;
+  readonly connectWebSocket: (url: string) => void;
+  readonly closeWebSocket: () => void;
   readonly connectUsb: () => void;
   readonly closeUsb: () => void;
   readonly announce: () => void;
@@ -52,6 +58,8 @@ type PlaygroundElements = {
   readonly destination: HTMLElement;
   readonly autoWifiState: HTMLElement;
   readonly autoWifiDetail: HTMLElement;
+  readonly webSocketState: HTMLElement;
+  readonly webSocketDetail: HTMLElement;
   readonly usbState: HTMLElement;
   readonly usbDetail: HTMLElement;
   readonly interfaceCount: HTMLElement;
@@ -63,6 +71,10 @@ type PlaygroundElements = {
   readonly activityList: HTMLOListElement;
   readonly autoWifiStart: HTMLButtonElement;
   readonly autoWifiClose: HTMLButtonElement;
+  readonly webSocketForm: HTMLFormElement;
+  readonly webSocketUrl: HTMLInputElement;
+  readonly webSocketConnect: HTMLButtonElement;
+  readonly webSocketClose: HTMLButtonElement;
   readonly usbConnect: HTMLButtonElement;
   readonly usbClose: HTMLButtonElement;
   readonly announce: HTMLButtonElement;
@@ -84,6 +96,14 @@ export class PlaygroundView {
     this.elements.autoWifiClose.addEventListener(
       "click",
       handlers.closeAutoWifi,
+    );
+    this.elements.webSocketForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      handlers.connectWebSocket(this.elements.webSocketUrl.value.trim());
+    });
+    this.elements.webSocketClose.addEventListener(
+      "click",
+      handlers.closeWebSocket,
     );
     this.elements.usbConnect.addEventListener("click", handlers.connectUsb);
     this.elements.usbClose.addEventListener("click", handlers.closeUsb);
@@ -169,7 +189,52 @@ export class PlaygroundView {
       CloseFailed: ({ failure }) => {
         setStatus(this.elements.usbState, "Close failed", "failed");
         this.elements.usbDetail.textContent =
-          describeUsbCloseFailure(failure);
+          describeInterfaceCloseFailure(failure);
+      },
+    });
+  }
+
+  renderWebSocket(status: WebSocketState): void {
+    match(status, {
+      Waiting: () => {
+        setStatus(this.elements.webSocketState, "Waiting", "idle");
+        this.elements.webSocketDetail.textContent = "Waiting for the runtime";
+      },
+      Ready: () => {
+        setStatus(this.elements.webSocketState, "Ready", "active");
+        this.elements.webSocketDetail.textContent =
+          "Enter a ws:// or wss:// Prns endpoint";
+      },
+      Unavailable: ({ api }) => {
+        setStatus(this.elements.webSocketState, "Unavailable", "failed");
+        this.elements.webSocketDetail.textContent =
+          `${api} is not exposed by this browser`;
+      },
+      Connecting: ({ url }) => {
+        setStatus(this.elements.webSocketState, "Connecting", "working");
+        this.elements.webSocketDetail.textContent = url || "No URL provided";
+      },
+      Connected: (session) => {
+        this.#renderWebSocketSession(session);
+      },
+      Closing: (session) => {
+        setStatus(this.elements.webSocketState, "Closing", "working");
+        this.elements.webSocketDetail.textContent = session.url;
+      },
+      ConnectFailed: (failure) => {
+        setStatus(this.elements.webSocketState, "Not connected", "failed");
+        this.elements.webSocketDetail.textContent =
+          describeWebSocketConnectFailure(failure);
+      },
+      Closed: () => {
+        setStatus(this.elements.webSocketState, "Closed", "closed");
+        this.elements.webSocketDetail.textContent =
+          "The WebSocket transport is closed";
+      },
+      CloseFailed: ({ failure }) => {
+        setStatus(this.elements.webSocketState, "Close failed", "failed");
+        this.elements.webSocketDetail.textContent =
+          describeInterfaceCloseFailure(failure);
       },
     });
   }
@@ -191,6 +256,10 @@ export class PlaygroundView {
   setControls(availability: ControlAvailability): void {
     this.elements.autoWifiStart.disabled = !availability.autoWifiStart;
     this.elements.autoWifiClose.disabled = !availability.autoWifiClose;
+    this.elements.webSocketConnect.disabled =
+      !availability.webSocketConnect;
+    this.elements.webSocketClose.disabled = !availability.webSocketClose;
+    this.elements.webSocketUrl.readOnly = !availability.webSocketConnect;
     this.elements.usbConnect.disabled = !availability.usbConnect;
     this.elements.usbClose.disabled = !availability.usbClose;
     this.elements.announce.disabled = !availability.announce;
@@ -286,6 +355,28 @@ export class PlaygroundView {
       },
     });
   }
+
+  #renderWebSocketSession(session: WebSocketSession): void {
+    match(session.status, {
+      Negotiating: () => {
+        setStatus(this.elements.webSocketState, "Negotiating", "working");
+        this.elements.webSocketDetail.textContent = session.url;
+      },
+      Active: () => {
+        setStatus(this.elements.webSocketState, "Active", "active");
+        this.elements.webSocketDetail.textContent = session.url;
+      },
+      Closed: () => {
+        setStatus(this.elements.webSocketState, "Closed", "closed");
+        this.elements.webSocketDetail.textContent = session.url;
+      },
+      Failed: (failure) => {
+        setStatus(this.elements.webSocketState, "Session failed", "failed");
+        this.elements.webSocketDetail.textContent =
+          describeSessionFailure(failure);
+      },
+    });
+  }
 }
 
 export function bindPlaygroundView(document: Document): DomBindingOutcome {
@@ -304,6 +395,14 @@ export function bindPlaygroundView(document: Document): DomBindingOutcome {
   const autoWifiDetail = document.getElementById("auto-wifi-detail");
   if (!(autoWifiDetail instanceof HTMLElement)) {
     return Tag("MissingElement", { id: "auto-wifi-detail" });
+  }
+  const webSocketState = document.getElementById("websocket-state");
+  if (!(webSocketState instanceof HTMLElement)) {
+    return Tag("MissingElement", { id: "websocket-state" });
+  }
+  const webSocketDetail = document.getElementById("websocket-detail");
+  if (!(webSocketDetail instanceof HTMLElement)) {
+    return Tag("MissingElement", { id: "websocket-detail" });
   }
   const usbState = document.getElementById("usb-state");
   if (!(usbState instanceof HTMLElement)) {
@@ -349,6 +448,22 @@ export function bindPlaygroundView(document: Document): DomBindingOutcome {
   if (!(autoWifiClose instanceof HTMLButtonElement)) {
     return Tag("MissingElement", { id: "wifi-close" });
   }
+  const webSocketForm = document.getElementById("websocket-form");
+  if (!(webSocketForm instanceof HTMLFormElement)) {
+    return Tag("MissingElement", { id: "websocket-form" });
+  }
+  const webSocketUrl = document.getElementById("websocket-url");
+  if (!(webSocketUrl instanceof HTMLInputElement)) {
+    return Tag("MissingElement", { id: "websocket-url" });
+  }
+  const webSocketConnect = document.getElementById("websocket-connect");
+  if (!(webSocketConnect instanceof HTMLButtonElement)) {
+    return Tag("MissingElement", { id: "websocket-connect" });
+  }
+  const webSocketClose = document.getElementById("websocket-close");
+  if (!(webSocketClose instanceof HTMLButtonElement)) {
+    return Tag("MissingElement", { id: "websocket-close" });
+  }
   const usbConnect = document.getElementById("usb-connect");
   if (!(usbConnect instanceof HTMLButtonElement)) {
     return Tag("MissingElement", { id: "usb-connect" });
@@ -372,6 +487,8 @@ export function bindPlaygroundView(document: Document): DomBindingOutcome {
       destination,
       autoWifiState,
       autoWifiDetail,
+      webSocketState,
+      webSocketDetail,
       usbState,
       usbDetail,
       interfaceCount,
@@ -383,6 +500,10 @@ export function bindPlaygroundView(document: Document): DomBindingOutcome {
       activityList,
       autoWifiStart,
       autoWifiClose,
+      webSocketForm,
+      webSocketUrl,
+      webSocketConnect,
+      webSocketClose,
       usbConnect,
       usbClose,
       announce,

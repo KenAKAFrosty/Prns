@@ -1,5 +1,5 @@
 import { Tag, match } from "./sdk/index.js";
-import { describeAutoWifiFailure, describeSessionFailure, describeStartupFailure, describeUsbCloseFailure, describeUsbConnectFailure, } from "./outcomes.js";
+import { describeAutoWifiFailure, describeInterfaceCloseFailure, describeSessionFailure, describeStartupFailure, describeUsbConnectFailure, describeWebSocketConnectFailure, } from "./outcomes.js";
 import { boundedDetail, formatBitrate, hex } from "./presentation.js";
 const MAX_ACTIVITY_ENTRIES = 120;
 export class PlaygroundView {
@@ -10,6 +10,11 @@ export class PlaygroundView {
     bindControls(handlers) {
         this.elements.autoWifiStart.addEventListener("click", handlers.startAutoWifi);
         this.elements.autoWifiClose.addEventListener("click", handlers.closeAutoWifi);
+        this.elements.webSocketForm.addEventListener("submit", (event) => {
+            event.preventDefault();
+            handlers.connectWebSocket(this.elements.webSocketUrl.value.trim());
+        });
+        this.elements.webSocketClose.addEventListener("click", handlers.closeWebSocket);
         this.elements.usbConnect.addEventListener("click", handlers.connectUsb);
         this.elements.usbClose.addEventListener("click", handlers.closeUsb);
         this.elements.announce.addEventListener("click", handlers.announce);
@@ -84,7 +89,51 @@ export class PlaygroundView {
             CloseFailed: ({ failure }) => {
                 setStatus(this.elements.usbState, "Close failed", "failed");
                 this.elements.usbDetail.textContent =
-                    describeUsbCloseFailure(failure);
+                    describeInterfaceCloseFailure(failure);
+            },
+        });
+    }
+    renderWebSocket(status) {
+        match(status, {
+            Waiting: () => {
+                setStatus(this.elements.webSocketState, "Waiting", "idle");
+                this.elements.webSocketDetail.textContent = "Waiting for the runtime";
+            },
+            Ready: () => {
+                setStatus(this.elements.webSocketState, "Ready", "active");
+                this.elements.webSocketDetail.textContent =
+                    "Enter a ws:// or wss:// Prns endpoint";
+            },
+            Unavailable: ({ api }) => {
+                setStatus(this.elements.webSocketState, "Unavailable", "failed");
+                this.elements.webSocketDetail.textContent =
+                    `${api} is not exposed by this browser`;
+            },
+            Connecting: ({ url }) => {
+                setStatus(this.elements.webSocketState, "Connecting", "working");
+                this.elements.webSocketDetail.textContent = url || "No URL provided";
+            },
+            Connected: (session) => {
+                this.#renderWebSocketSession(session);
+            },
+            Closing: (session) => {
+                setStatus(this.elements.webSocketState, "Closing", "working");
+                this.elements.webSocketDetail.textContent = session.url;
+            },
+            ConnectFailed: (failure) => {
+                setStatus(this.elements.webSocketState, "Not connected", "failed");
+                this.elements.webSocketDetail.textContent =
+                    describeWebSocketConnectFailure(failure);
+            },
+            Closed: () => {
+                setStatus(this.elements.webSocketState, "Closed", "closed");
+                this.elements.webSocketDetail.textContent =
+                    "The WebSocket transport is closed";
+            },
+            CloseFailed: ({ failure }) => {
+                setStatus(this.elements.webSocketState, "Close failed", "failed");
+                this.elements.webSocketDetail.textContent =
+                    describeInterfaceCloseFailure(failure);
             },
         });
     }
@@ -102,6 +151,10 @@ export class PlaygroundView {
     setControls(availability) {
         this.elements.autoWifiStart.disabled = !availability.autoWifiStart;
         this.elements.autoWifiClose.disabled = !availability.autoWifiClose;
+        this.elements.webSocketConnect.disabled =
+            !availability.webSocketConnect;
+        this.elements.webSocketClose.disabled = !availability.webSocketClose;
+        this.elements.webSocketUrl.readOnly = !availability.webSocketConnect;
         this.elements.usbConnect.disabled = !availability.usbConnect;
         this.elements.usbClose.disabled = !availability.usbClose;
         this.elements.announce.disabled = !availability.announce;
@@ -186,6 +239,27 @@ export class PlaygroundView {
             },
         });
     }
+    #renderWebSocketSession(session) {
+        match(session.status, {
+            Negotiating: () => {
+                setStatus(this.elements.webSocketState, "Negotiating", "working");
+                this.elements.webSocketDetail.textContent = session.url;
+            },
+            Active: () => {
+                setStatus(this.elements.webSocketState, "Active", "active");
+                this.elements.webSocketDetail.textContent = session.url;
+            },
+            Closed: () => {
+                setStatus(this.elements.webSocketState, "Closed", "closed");
+                this.elements.webSocketDetail.textContent = session.url;
+            },
+            Failed: (failure) => {
+                setStatus(this.elements.webSocketState, "Session failed", "failed");
+                this.elements.webSocketDetail.textContent =
+                    describeSessionFailure(failure);
+            },
+        });
+    }
 }
 export function bindPlaygroundView(document) {
     const runtimeState = document.getElementById("runtime-state");
@@ -203,6 +277,14 @@ export function bindPlaygroundView(document) {
     const autoWifiDetail = document.getElementById("auto-wifi-detail");
     if (!(autoWifiDetail instanceof HTMLElement)) {
         return Tag("MissingElement", { id: "auto-wifi-detail" });
+    }
+    const webSocketState = document.getElementById("websocket-state");
+    if (!(webSocketState instanceof HTMLElement)) {
+        return Tag("MissingElement", { id: "websocket-state" });
+    }
+    const webSocketDetail = document.getElementById("websocket-detail");
+    if (!(webSocketDetail instanceof HTMLElement)) {
+        return Tag("MissingElement", { id: "websocket-detail" });
     }
     const usbState = document.getElementById("usb-state");
     if (!(usbState instanceof HTMLElement)) {
@@ -248,6 +330,22 @@ export function bindPlaygroundView(document) {
     if (!(autoWifiClose instanceof HTMLButtonElement)) {
         return Tag("MissingElement", { id: "wifi-close" });
     }
+    const webSocketForm = document.getElementById("websocket-form");
+    if (!(webSocketForm instanceof HTMLFormElement)) {
+        return Tag("MissingElement", { id: "websocket-form" });
+    }
+    const webSocketUrl = document.getElementById("websocket-url");
+    if (!(webSocketUrl instanceof HTMLInputElement)) {
+        return Tag("MissingElement", { id: "websocket-url" });
+    }
+    const webSocketConnect = document.getElementById("websocket-connect");
+    if (!(webSocketConnect instanceof HTMLButtonElement)) {
+        return Tag("MissingElement", { id: "websocket-connect" });
+    }
+    const webSocketClose = document.getElementById("websocket-close");
+    if (!(webSocketClose instanceof HTMLButtonElement)) {
+        return Tag("MissingElement", { id: "websocket-close" });
+    }
     const usbConnect = document.getElementById("usb-connect");
     if (!(usbConnect instanceof HTMLButtonElement)) {
         return Tag("MissingElement", { id: "usb-connect" });
@@ -269,6 +367,8 @@ export function bindPlaygroundView(document) {
         destination,
         autoWifiState,
         autoWifiDetail,
+        webSocketState,
+        webSocketDetail,
         usbState,
         usbDetail,
         interfaceCount,
@@ -280,6 +380,10 @@ export function bindPlaygroundView(document) {
         activityList,
         autoWifiStart,
         autoWifiClose,
+        webSocketForm,
+        webSocketUrl,
+        webSocketConnect,
+        webSocketClose,
         usbConnect,
         usbClose,
         announce,

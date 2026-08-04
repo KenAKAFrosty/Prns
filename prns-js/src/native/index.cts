@@ -2518,8 +2518,17 @@ function validateCallsign(value: string): void {
 }
 
 function validateWebSocket(name: string, value: string): void {
-  if (!value.startsWith("ws://")) {
-    invalidConfiguration(`${name} must use ws://`);
+  const scheme = value.startsWith("ws://")
+    ? "ws://"
+    : value.startsWith("wss://")
+      ? "wss://"
+      : undefined;
+  if (
+    scheme === undefined ||
+    value.length === scheme.length ||
+    /\s/.test(value)
+  ) {
+    invalidConfiguration(`${name} must be a ws:// or wss:// URL with no whitespace`);
   }
 }
 

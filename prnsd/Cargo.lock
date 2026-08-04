@@ -3129,6 +3129,7 @@ dependencies = [
  "prns-core",
  "prns-ffi",
  "prns-runtime-tokio",
+ "rustls",
  "serde",
  "serde-pickle",
  "serde_json",
@@ -3626,6 +3627,7 @@ checksum = "3c54fcab019b409d04215d3a17cb438fd7fbf192ee61461f20f4fe18704bc138"
 dependencies = [
  "aws-lc-rs",
  "once_cell",
+ "ring",
  "rustls-pki-types",
  "rustls-webpki",
  "subtle",
@@ -4293,7 +4295,11 @@ checksum = "d25a406cddcc431a75d3d9afc6a7c0f7428d4891dd973e4d54c56b46127bf857"
 dependencies = [
  "futures-util",
  "log",
+ "rustls",
+ "rustls-native-certs",
+ "rustls-pki-types",
  "tokio",
+ "tokio-rustls",
  "tungstenite",
 ]
 
@@ -4564,6 +4570,8 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.9.5",
+ "rustls",
+ "rustls-pki-types",
  "sha1",
  "thiserror 2.0.18",
  "utf-8",

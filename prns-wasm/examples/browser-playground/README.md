@@ -6,10 +6,7 @@ page owns its WebAssembly node exactly as a browser application would.
 
 The page doesn't use React, Solid, Dioxus, or any other web framework. The reason is to avoid making you have to learn a new framework if you're not familiar with the one we happened to choose, and to keep the example as universally-readable as possible.
 
-The playground keeps both Auto Wi-Fi and USB Auto behind explicit clicks,
-registers an LXMF delivery destination named `Prns Browser Playground`, and
-exposes engine snapshots, single-packet payloads, and tagged outcomes for
-inspection.
+The playground keeps Auto Wi-Fi, direct WebSocket, and USB Auto connections behind explicit actions, registers an LXMF delivery destination named `Prns Browser Playground`, and exposes engine snapshots, single-packet payloads, and tagged outcomes for inspection.
 
 Build and stage the page into the documentation site's public assets:
 

@@ -56,7 +56,7 @@ fn prns_owned_host_interfaces_reach_typed_plans() {
         "[interfaces]\n\
          [[USB]]\ntype = prnsusbautointerface\nenabled = Yes\nbitrate = 7654321\n\
          [[BLE]]\ntype = PrnsBleAuto\nenabled = Yes\nbitrate = 7654321\n\
-         [[WebSocket Client]]\ntype = PRNSWEBSOCKETCLIENT\nenabled = Yes\ntarget = ws://peer.example:4242/prns\nbitrate = 7654321\n\
+         [[WebSocket Client]]\ntype = PRNSWEBSOCKETCLIENT\nenabled = Yes\ntarget = wss://peer.example/prns\nbitrate = 7654321\n\
          [[WebSocket Server]]\ntype = PrnsWebSocketServerInterface\nenabled = Yes\nlisten_ip = ::1\nlisten_port = 4243\nprefer_ipv6 = Yes\nbitrate = 7654321\n",
     );
 
@@ -72,7 +72,7 @@ fn prns_owned_host_interfaces_reach_typed_plans() {
     else {
         panic!("Prns WebSocket client medium expected")
     };
-    assert_eq!(target.as_str(), "ws://peer.example:4242/prns");
+    assert_eq!(target.as_str(), "wss://peer.example/prns");
     assert_eq!(
         named(&plan, "WebSocket Server").medium,
         PlannedMedium::PrnsWebSocketServer {
