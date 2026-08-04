@@ -1842,7 +1842,7 @@ fn accepted_for_key(key: &str, kind: ValueKind) -> String {
         ),
         global_key::DEFAULT_AR_TARGET => {
             format!(
-                "off, or an integer from 0 through {} seconds (0 is treated as off)",
+                "off, no, false, or an integer from 0 through {} seconds (0 is treated as off)",
                 i64::MAX / 1_000
             )
         }
@@ -1851,7 +1851,7 @@ fn accepted_for_key(key: &str, kind: ValueKind) -> String {
         }
         interface_key::ANNOUNCE_RATE_TARGET => {
             format!(
-                "off, or an integer from 0 through {} seconds (0 is treated as off)",
+                "off, no, false, or an integer from 0 through {} seconds (0 is treated as off)",
                 u64::MAX / 1_000
             )
         }
@@ -1978,7 +1978,7 @@ fn semantic_value_is_valid(key: &str, value: &Value, kind: ValueKind) -> bool {
             value >= 0 && u128::try_from(value).is_ok_and(|value| value <= usize::MAX as u128)
         }),
         global_key::DEFAULT_AR_TARGET => {
-            text.trim().eq_ignore_ascii_case("off")
+            super::announce_rate_target_is_explicit_off(text)
                 || parse_integer::<i64>(text)
                     .is_ok_and(|value| (0..=i64::MAX / 1_000).contains(&value))
         }
@@ -1986,7 +1986,7 @@ fn semantic_value_is_valid(key: &str, value: &Value, kind: ValueKind) -> bool {
             parse_integer::<i64>(text).is_ok_and(|value| (0..=i64::MAX / 1_000).contains(&value))
         }
         interface_key::ANNOUNCE_RATE_TARGET => {
-            text.trim().eq_ignore_ascii_case("off")
+            super::announce_rate_target_is_explicit_off(text)
                 || parse_integer::<u64>(text).is_ok_and(|value| value <= u64::MAX / 1_000)
         }
         interface_key::ANNOUNCE_RATE_PENALTY => {
@@ -2061,7 +2061,7 @@ fn normalized_value(value: &Value, kind: ValueKind) -> Result<String, ()> {
         }
         ValueKind::U64 => parse_integer::<u64>(text)?.to_string(),
         ValueKind::SecondsOrOff => {
-            if text.trim().eq_ignore_ascii_case("off") {
+            if super::announce_rate_target_is_explicit_off(text) {
                 "off".to_string()
             } else {
                 parse_integer::<u64>(text)?.to_string()

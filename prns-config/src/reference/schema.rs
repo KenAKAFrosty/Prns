@@ -47,7 +47,9 @@ impl ValueKind {
             ValueKind::Bitrate => "an integer from 5 through 18446744073709551615 bps",
             ValueKind::LinkMtu => "an integer from 1 through 524288 bytes",
             ValueKind::U64 => "a non-negative integer",
-            ValueKind::SecondsOrOff => "off, or a non-negative integer number of seconds",
+            ValueKind::SecondsOrOff => {
+                "off, no, false, or a non-negative integer number of seconds"
+            }
             ValueKind::U32 => "an integer from 0 through 4294967295",
             ValueKind::U16 => "an integer from 0 through 65535",
             ValueKind::NonZeroU16 => "an integer from 1 through 65535",

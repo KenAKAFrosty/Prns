@@ -18,5 +18,12 @@ pub use types::{
     ReferenceInterfaceDiscovery, ReferenceMode, ReferenceRemoteManagement, ReferenceValue,
 };
 
+pub(crate) fn announce_rate_target_is_explicit_off(text: &str) -> bool {
+    matches!(
+        text.trim().to_ascii_lowercase().as_str(),
+        "off" | "no" | "false"
+    )
+}
+
 #[cfg(test)]
 mod tests;

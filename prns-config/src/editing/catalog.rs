@@ -2,7 +2,10 @@ use std::fmt;
 
 use prns_core::interfaces::{AnnounceBandwidthCap, EgressCapability, InterfaceMode};
 
-use crate::reference::keys::{common as common_key, interface as interface_key};
+use crate::reference::{
+    announce_rate_target_is_explicit_off,
+    keys::{common as common_key, interface as interface_key},
+};
 use crate::{
     ConfiguredInterfaceLifecycle, DiscoveryAdvertisementPlan, DiscoveryEncryption,
     DiscoveryIfacPublication, InterfaceAccessPlan, InterfaceDiscoveryPlan, InterfaceKind,
@@ -1062,6 +1065,7 @@ impl InterfaceSettingSpec {
 
     pub fn input_kind(self, kind: InterfaceKind) -> InterfaceSettingInputKind {
         match self.key.as_str() {
+            interface_key::ANNOUNCE_RATE_TARGET => InterfaceSettingInputKind::Text,
             interface_key::OUTGOING
             | interface_key::DISCOVERABLE
             | interface_key::DISCOVERY_ENCRYPT
@@ -1079,7 +1083,6 @@ impl InterfaceSettingSpec {
             | common_key::INGRESS_CONTROL
             | common_key::EGRESS_CONTROL => InterfaceSettingInputKind::Boolean,
             interface_key::BITRATE
-            | interface_key::ANNOUNCE_RATE_TARGET
             | interface_key::ANNOUNCE_RATE_GRACE
             | interface_key::ANNOUNCE_RATE_PENALTY
             | interface_key::IFAC_SIZE
@@ -1152,8 +1155,10 @@ impl InterfaceSettingSpec {
                 "full, access_point, pointtopoint, roaming, boundary, gateway, or internal"
             }
             interface_key::ANNOUNCE_CAP => "a percentage from 0 through 100",
-            interface_key::ANNOUNCE_RATE_TARGET
-            | interface_key::ANNOUNCE_RATE_PENALTY
+            interface_key::ANNOUNCE_RATE_TARGET => {
+                "off, no, false, or seconds as a non-negative whole number"
+            }
+            interface_key::ANNOUNCE_RATE_PENALTY
             | interface_key::CONNECT_TIMEOUT
             | interface_key::ID_INTERVAL => "seconds as a non-negative whole number",
             interface_key::RESPAWN_DELAY => "seconds as a non-negative number",
@@ -1193,6 +1198,11 @@ impl InterfaceSettingSpec {
 
     pub fn format_value(self, value: impl AsRef<str>) -> String {
         let value = value.as_ref();
+        if self.key.as_str() == interface_key::ANNOUNCE_RATE_TARGET
+            && announce_rate_target_is_explicit_off(value)
+        {
+            return "off".to_string();
+        }
         if matches!(
             self.key.as_str(),
             interface_key::AIRTIME_LIMIT_SHORT | interface_key::AIRTIME_LIMIT_LONG
@@ -1254,6 +1264,18 @@ impl InterfaceSettingSpec {
         kind: InterfaceKind,
         input: &str,
     ) -> Result<InterfaceSetting, InterfaceSettingInputError> {
+        if self.key.as_str() == interface_key::ANNOUNCE_RATE_TARGET {
+            let value = if announce_rate_target_is_explicit_off(input) {
+                InterfaceSettingValue::Text("off".to_string())
+            } else {
+                InterfaceSettingValue::Unsigned(
+                    cleaned_number(input)
+                        .parse()
+                        .map_err(|_| InterfaceSettingInputError::AnnounceRateTarget)?,
+                )
+            };
+            return Ok(InterfaceSetting::new(self.key, value));
+        }
         let value = match self.input_kind(kind) {
             InterfaceSettingInputKind::Boolean => parse_bool(input)
                 .map(InterfaceSettingValue::Bool)
@@ -1485,6 +1507,7 @@ impl ConfiguredInterfaceSetting {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InterfaceSettingInputError {
+    AnnounceRateTarget,
     Boolean,
     Unsigned,
     Signed,
@@ -1496,6 +1519,9 @@ pub enum InterfaceSettingInputError {
 impl fmt::Display for InterfaceSettingInputError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
+            Self::AnnounceRateTarget => {
+                "enter off, no, false, or a non-negative whole number of seconds"
+            }
             Self::Boolean => "enter yes or no",
             Self::Unsigned => "enter a non-negative whole number",
             Self::Signed => "enter a whole number",

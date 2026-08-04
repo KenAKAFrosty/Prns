@@ -1079,20 +1079,21 @@ fn a_zero_announce_rate_target_earns_a_gentle_implicit_off_advisory() {
 }
 
 #[test]
-fn an_off_announce_rate_target_is_accepted_without_advisories() {
-    let report = parse_named(
-        "/tmp/rns/config",
-        "[reticulum]\ndefault_ar_target = off\n[interfaces]\n[[Quiet]]\ntype = TCPClientInterface\nenabled = Yes\ntarget_host = host\ntarget_port = 4242\nannounce_rate_target = Off\n",
-    )
-    .unwrap();
-    assert!(report
-        .warnings
-        .iter()
-        .all(|diagnostic| diagnostic.code() != ConfigDiagnosticCode::ImplicitOff));
-    assert_eq!(
-        report.value.interfaces[0].announce_rate_target,
-        Some(ReferenceAnnounceRateTarget::Off)
-    );
+fn explicit_off_announce_rate_target_spellings_are_accepted_without_advisories() {
+    for spelling in ["off", "NO", "False"] {
+        let source = format!(
+            "[reticulum]\ndefault_ar_target = {spelling}\n[interfaces]\n[[Quiet]]\ntype = TCPClientInterface\nenabled = Yes\ntarget_host = host\ntarget_port = 4242\nannounce_rate_target = {spelling}\n"
+        );
+        let report = parse_named("/tmp/rns/config", &source).unwrap();
+        assert!(report
+            .warnings
+            .iter()
+            .all(|diagnostic| diagnostic.code() != ConfigDiagnosticCode::ImplicitOff));
+        assert_eq!(
+            report.value.interfaces[0].announce_rate_target,
+            Some(ReferenceAnnounceRateTarget::Off)
+        );
+    }
 }
 
 #[test]

@@ -27,8 +27,8 @@ use crate::reference::keys::{
     common as common_key, global as global_key, interface as interface_key,
 };
 use crate::reference::{
-    ReferenceAnnounceRateTarget, ReferenceConfig, ReferenceConfigParams, ReferenceInterface,
-    ReferenceMode, ReferenceValue,
+    announce_rate_target_is_explicit_off, ReferenceAnnounceRateTarget, ReferenceConfig,
+    ReferenceConfigParams, ReferenceInterface, ReferenceMode, ReferenceValue,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -456,7 +456,7 @@ pub(in crate::plan) fn global_announce_rate(
         .globals
         .get(global_key::DEFAULT_AR_TARGET)
         .and_then(ReferenceValue::as_scalar)
-        .is_some_and(|text| text.trim().eq_ignore_ascii_case("off"));
+        .is_some_and(announce_rate_target_is_explicit_off);
     if configured_off {
         return Ok(None);
     }

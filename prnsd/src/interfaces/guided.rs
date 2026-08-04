@@ -446,13 +446,7 @@ impl SettingDraft {
                 self.boolean_value("discoverable", false)
                     && self.boolean_value("kiss_framing", false)
             }
-            InterfaceSettingCondition::AnnounceRateLimit => {
-                self.has_named_value("announce_rate_target")
-                    || self
-                        .planned
-                        .as_ref()
-                        .is_some_and(|planned| planned.policy.announce_rate_limit.is_some())
-            }
+            InterfaceSettingCondition::AnnounceRateLimit => self.announce_rate_limit_active(),
             InterfaceSettingCondition::IngressControl => {
                 self.boolean_value("ingress_control", true)
             }
@@ -463,6 +457,34 @@ impl SettingDraft {
 
     fn has_named_value(&self, name: &str) -> bool {
         InterfaceSettingKey::parse(name).is_some_and(|key| self.has_value(key))
+    }
+
+    fn announce_rate_limit_active(&self) -> bool {
+        let Some(spec) = self
+            .kind
+            .setting_specs()
+            .into_iter()
+            .find(|spec| spec.key().as_str() == "announce_rate_target")
+        else {
+            return false;
+        };
+        let key = spec.key();
+        let explicit = match self.staged.get(&key) {
+            Some(Some(setting)) => Some(display_setting(setting.value())),
+            Some(None) => None,
+            None => self.current.get(&key).cloned(),
+        };
+        if let Some(value) = explicit {
+            return spec.parse(self.kind, &value).map_or(true, |setting| {
+                !matches!(
+                    setting.value(),
+                    InterfaceSettingValue::Unsigned(0) | InterfaceSettingValue::Text(_)
+                )
+            });
+        }
+        self.planned
+            .as_ref()
+            .is_some_and(|planned| planned.policy.announce_rate_limit.is_some())
     }
 
     fn boolean_value(&self, name: &str, default: bool) -> bool {
@@ -657,7 +679,8 @@ fn display_setting(value: &InterfaceSettingValue) -> String {
 #[cfg(test)]
 mod tests {
     use prns_config::editing::{
-        InterfaceSetting, InterfaceSettingKey, InterfaceSettingTier, InterfaceSettingValue,
+        InterfaceSetting, InterfaceSettingCondition, InterfaceSettingKey, InterfaceSettingTier,
+        InterfaceSettingValue,
     };
     use prns_config::{parse_and_plan, InterfaceKind};
 
@@ -769,5 +792,38 @@ mod tests {
             .ordered_specs()
             .iter()
             .any(|spec| spec.key().as_str() == "bitrate"));
+    }
+
+    #[test]
+    fn explicit_off_announce_targets_leave_dependent_controls_inactive() {
+        let target = InterfaceSettingKey::parse("announce_rate_target")
+            .unwrap_or_else(|| panic!("missing announce rate target"));
+        let mut draft = SettingDraft::new(
+            InterfaceKind::Auto,
+            false,
+            vec![InterfaceSetting::new(
+                target,
+                InterfaceSettingValue::Text("off".to_string()),
+            )],
+            Vec::new(),
+        );
+
+        assert!(!draft.condition_satisfied(InterfaceSettingCondition::AnnounceRateLimit));
+        draft.staged.insert(
+            target,
+            Some(InterfaceSetting::new(
+                target,
+                InterfaceSettingValue::Unsigned(120),
+            )),
+        );
+        assert!(draft.condition_satisfied(InterfaceSettingCondition::AnnounceRateLimit));
+        draft.staged.insert(
+            target,
+            Some(InterfaceSetting::new(
+                target,
+                InterfaceSettingValue::Unsigned(0),
+            )),
+        );
+        assert!(!draft.condition_satisfied(InterfaceSettingCondition::AnnounceRateLimit));
     }
 }

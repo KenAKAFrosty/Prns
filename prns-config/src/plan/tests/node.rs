@@ -290,19 +290,21 @@ fn a_zero_global_announce_rate_target_disables_the_transport_default() {
 }
 
 #[test]
-fn an_off_global_announce_rate_target_disables_the_transport_default() {
-    let plan = plan_of(
-        "[reticulum]\n\
-             enable_transport = Yes\n\
-             default_ar_target = off\n\
-             [interfaces]\n\
-             [[Hub]]\n\
-             type = TCPClientInterface\n\
-             enabled = Yes\n\
-             target_host = hub\n\
-             target_port = 4242\n",
-    );
-    assert_eq!(named(&plan, "Hub").policy.announce_rate_limit, None);
+fn explicit_off_global_announce_rate_target_spellings_disable_the_transport_default() {
+    for spelling in ["off", "NO", "False"] {
+        let plan = plan_of(&format!(
+            "[reticulum]\n\
+                 enable_transport = Yes\n\
+                 default_ar_target = {spelling}\n\
+                 [interfaces]\n\
+                 [[Hub]]\n\
+                 type = TCPClientInterface\n\
+                 enabled = Yes\n\
+                 target_host = hub\n\
+                 target_port = 4242\n"
+        ));
+        assert_eq!(named(&plan, "Hub").policy.announce_rate_limit, None);
+    }
 }
 
 #[test]

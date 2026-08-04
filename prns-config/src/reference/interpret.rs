@@ -896,17 +896,14 @@ fn coerce_announce_rate_target(
     interface: &str,
     key: &str,
 ) -> Result<ReferenceAnnounceRateTarget, ReferenceError> {
-    if scalar_text(value, interface, key)?
-        .trim()
-        .eq_ignore_ascii_case("off")
-    {
+    if super::announce_rate_target_is_explicit_off(scalar_text(value, interface, key)?) {
         return Ok(ReferenceAnnounceRateTarget::Off);
     }
     let seconds = coerce_int(
         value,
         interface,
         key,
-        "expected off or a non-negative integer number of seconds",
+        "expected off, no, false, or a non-negative integer number of seconds",
     )?;
     Ok(match core::num::NonZeroU64::new(seconds) {
         None => ReferenceAnnounceRateTarget::Off,
