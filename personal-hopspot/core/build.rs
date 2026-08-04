@@ -14,11 +14,10 @@ const SOURCE_ENV: &[&str] = &[
 ];
 
 fn main() -> io::Result<()> {
-    println!("cargo:rerun-if-changed=src/node_pages/index_intro.mu");
-    println!("cargo:rerun-if-changed=src/node_pages/index_license.mu");
+    println!("cargo:rerun-if-changed=src/node_pages/hopspot_welcome.mu");
     println!("cargo:rerun-if-changed=src/node_pages/quickstart.mu");
     println!("cargo:rerun-if-changed=src/node_pages/browser_welcome.mu");
-    println!("cargo:rerun-if-changed=src/node_pages/browser_source_missing.mu");
+    println!("cargo:rerun-if-changed=src/node_pages/source_missing.mu");
     println!("cargo:rerun-if-changed=../../assets/nnpages/masthead.mu");
     println!("cargo:rerun-if-changed=../../assets/nnpages/nav.mu");
     println!("cargo:rerun-if-changed=../../assets/nnpages/why_prns.mu");
@@ -97,9 +96,10 @@ fn main() -> io::Result<()> {
     let shared = repo.join("assets/nnpages");
     let hopspot_head = [
         fs::read_to_string(shared.join("masthead.mu"))?,
-        fs::read_to_string(manifest.join("src/node_pages/index_intro.mu"))?,
+        fs::read_to_string(manifest.join("src/node_pages/hopspot_welcome.mu"))?,
+        fs::read_to_string(shared.join("nav.mu"))?,
         fs::read_to_string(shared.join("why_prns.mu"))?,
-        fs::read_to_string(manifest.join("src/node_pages/index_license.mu"))?,
+        fs::read_to_string(shared.join("license.mu"))?,
         fs::read_to_string(shared.join("quote.mu"))?,
     ]
     .concat();
@@ -117,14 +117,10 @@ fn main() -> io::Result<()> {
         fs::read_to_string(shared.join("credits.mu"))?.as_str(),
     ]
     .concat();
-    let short_commit = commit.chars().take(12).collect::<String>();
-    let no_source = format!(
-        "\nSource {version} {short_commit}: compact build; source.zip not carried or served.\n"
-    );
     let hopspot_no_source = page(
         &hopspot_head,
         "`F999This node is a Personal Hopspot, one small piece of that future.`f\n",
-        &no_source,
+        "",
         &tail,
     );
     let browser_index = page(
@@ -133,7 +129,7 @@ fn main() -> io::Result<()> {
         "",
         &tail,
     );
-    let browser_source_page = match &source {
+    let source_page = match &source {
         Some((_, size, _)) => fs::read_to_string(shared.join("source_available.mu"))?
             .replacen("# prnsd:managed:source-page\n", "", 1)
             .replace("{{SIZE}}", &format_archive_size(*size as u64))
@@ -141,13 +137,13 @@ fn main() -> io::Result<()> {
                 "{{CHECKSUM_LINE}}\n",
                 "`F999Verify:`f `F6eb`_`[source.zip.sha256`:/file/source.zip.sha256]`_`f\n\n",
             ),
-        None => fs::read_to_string(manifest.join("src/node_pages/browser_source_missing.mu"))?,
+        None => fs::read_to_string(manifest.join("src/node_pages/source_missing.mu"))?,
     };
 
     let out = path_environment("OUT_DIR")?;
     fs::write(out.join("hopspot_index_no_source.mu"), hopspot_no_source)?;
     fs::write(out.join("browser_index.mu"), browser_index)?;
-    fs::write(out.join("browser_source.mu"), browser_source_page)?;
+    fs::write(out.join("source.mu"), source_page)?;
 
     let mut generated = String::new();
     generated.push_str(&format!("pub const BUILD_VERSION: &str = {version:?};\n"));
@@ -161,16 +157,11 @@ fn main() -> io::Result<()> {
          include_bytes!(concat!(env!(\"OUT_DIR\"), \"/browser_index.mu\"));\n",
     );
     generated.push_str(
-        "pub const BROWSER_SOURCE_PAGE: &[u8] = \
-         include_bytes!(concat!(env!(\"OUT_DIR\"), \"/browser_source.mu\"));\n",
+        "pub const SOURCE_PAGE: &[u8] = \
+         include_bytes!(concat!(env!(\"OUT_DIR\"), \"/source.mu\"));\n\
+         pub const BROWSER_SOURCE_PAGE: &[u8] = SOURCE_PAGE;\n",
     );
     if let Some((archive, size, digest)) = source {
-        let status = format!(
-            "\n>>`!Release source`!\n\nVersion: {version}\n\nCommit: {short_commit}\n\n\
-             Archive: {size} bytes\n\nSHA-256: {digest}\n\n\
-             `[Download source.zip`:/file/source.zip]\n\n\
-             `[Download checksum`:/file/source.zip.sha256]\n\n"
-        );
         let checksum = format!("{digest}  source.zip\n");
         fs::write(out.join("source.zip.sha256"), checksum)?;
         fs::write(
@@ -178,7 +169,7 @@ fn main() -> io::Result<()> {
             page(
                 &hopspot_head,
                 "`F999This node is a Personal Hopspot, one small piece of that future.`f\n",
-                &status,
+                "",
                 &tail,
             ),
         )?;

@@ -17,7 +17,7 @@ use personal_rns::routing::group_keys::FixedGroupKeyTable;
 use personal_rns::routing::links::channel::channel_mdu;
 use personal_rns::routing::links::channel::table::impls::FixedArrayChannelTable;
 use personal_rns::routing::links::resources::assembly::{
-    FixedIncomingAssemblyTable, FixedOutgoingAssemblyTable,
+    FixedIncomingAssemblyTable, FixedStaticOutgoingAssemblyTable,
 };
 use personal_rns::routing::links::resources::max_part_count;
 use personal_rns::routing::links::resources::table::{
@@ -36,6 +36,7 @@ use personal_rns::routing::routes::FixedArrayRouteTable;
 use personal_rns::routing::tunnel::FixedTunnelTable;
 use personal_rns::routing::upstream_app_destinations::FixedUpstreamAppDestinationTable;
 use personal_rns::routing::warmth::FixedDepartedInterfaceTable;
+use personal_rns::runtime::request_endpoints::RequestEndpointSet;
 use personal_rns::storage::{DisplayedStorageLimits, StorageCapacity, StorageLayout};
 
 pub struct TechoStorage;
@@ -43,6 +44,9 @@ pub struct TechoStorage;
 impl TechoStorage {
     const TRACKED_DESTINATIONS: usize = 8;
     const UPSTREAM_APP_DESTINATIONS: usize = 2;
+    const REQUEST_HANDLERS: usize =
+        <personal_hopspot_core::node_pages::NodePageRoutes as RequestEndpointSet<()>>::REGISTRATIONS
+            .len();
     const LINKS: usize = 2;
     const BLACKHOLED_IDENTITIES: usize = 0;
     const BLACKHOLE_REASON_BYTES: usize = 0;
@@ -129,7 +133,7 @@ impl StorageLayout for TechoStorage {
     type DestinationAnnounceLimits =
         FixedDestinationAnnounceLimitTable<{ Self::TRACKED_DESTINATIONS }>;
     type GroupKeys = FixedGroupKeyTable<{ Self::UPSTREAM_APP_DESTINATIONS }>;
-    type RequestHandlers = FixedRequestHandlerTable<{ Self::UPSTREAM_APP_DESTINATIONS }>;
+    type RequestHandlers = FixedRequestHandlerTable<{ Self::REQUEST_HANDLERS }>;
     type TransportedLinks = FixedTransportedLinkTable<{ Self::LINKS }>;
     type Links = FixedLinkTable<{ Self::LINKS }>;
     type OutgoingResources = FixedResourceTable<
@@ -145,7 +149,7 @@ impl StorageLayout for TechoStorage {
         { max_part_count(Self::RESOURCE_TRANSFER_BYTES) },
     >;
     type IncomingAssemblies = FixedIncomingAssemblyTable<{ Self::LINKS }>;
-    type OutgoingAssemblies = FixedOutgoingAssemblyTable<{ Self::LINKS }>;
+    type OutgoingAssemblies = FixedStaticOutgoingAssemblyTable<{ Self::LINKS }>;
     type Channels = FixedArrayChannelTable<
         { Self::LINKS },
         { Self::CHANNEL_REORDER_DEPTH },

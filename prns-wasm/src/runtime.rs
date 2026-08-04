@@ -808,7 +808,7 @@ impl PrnsRuntime {
                                 personal_hopspot_core::node_pages::COMING_FROM_RNS_PAGE,
                             ),
                             NodeResponse::SourcePage => RespondPayload::StaticBytes(
-                                personal_hopspot_core::node_pages::BROWSER_SOURCE_PAGE,
+                                personal_hopspot_core::node_pages::SOURCE_PAGE,
                             ),
                             #[cfg(feature = "source-archive")]
                             NodeResponse::SourceArchive => RespondPayload::StaticFile {

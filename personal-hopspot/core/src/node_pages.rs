@@ -45,7 +45,14 @@ const LARGEST_PAGE_LEN: usize = if QUICKSTART_PAGE.len() > LARGEST_INDEX_PAGE_LE
     LARGEST_INDEX_PAGE_LEN
 };
 
-pub const PAGE_PACKED_RESPONSE_LEN: usize = match packed_binary_len(LARGEST_PAGE_LEN) {
+const LARGEST_SINGLE_WINDOW_PAGE_LEN: usize = if SOURCE_PAGE.len() > LARGEST_PAGE_LEN {
+    SOURCE_PAGE.len()
+} else {
+    LARGEST_PAGE_LEN
+};
+
+pub const PAGE_PACKED_RESPONSE_LEN: usize = match packed_binary_len(LARGEST_SINGLE_WINDOW_PAGE_LEN)
+{
     Some(len) => len,
     None => panic!("node page exceeds MessagePack binary limits"),
 };
@@ -123,6 +130,8 @@ impl<S> RequestEndpointSet<S> for NoSourceNodePageRoutes {
     const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)] = &[
         (INDEX_PATH, RequestEndpointPolicy::AllowAll),
         (QUICKSTART_PATH, RequestEndpointPolicy::AllowAll),
+        (COMING_FROM_RNS_PATH, RequestEndpointPolicy::AllowAll),
+        (SOURCE_PAGE_PATH, RequestEndpointPolicy::AllowAll),
     ];
 
     async fn dispatch(
@@ -133,6 +142,10 @@ impl<S> RequestEndpointSet<S> for NoSourceNodePageRoutes {
             context.respond_static_messagepack_bytes(HOPSPOT_INDEX_PAGE_NO_SOURCE)
         } else if path_hash == RequestPathHash::of(QUICKSTART_PATH) {
             context.respond_static_messagepack_bytes(QUICKSTART_PAGE)
+        } else if path_hash == RequestPathHash::of(COMING_FROM_RNS_PATH) {
+            context.respond_static_messagepack_bytes(COMING_FROM_RNS_PAGE)
+        } else if path_hash == RequestPathHash::of(SOURCE_PAGE_PATH) {
+            context.respond_static_messagepack_bytes(SOURCE_PAGE)
         } else {
             Err(Decline::Ignore)
         }
@@ -147,6 +160,8 @@ impl<S> RequestEndpointSet<S> for SourceNodePageRoutes {
     const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)] = &[
         (INDEX_PATH, RequestEndpointPolicy::AllowAll),
         (QUICKSTART_PATH, RequestEndpointPolicy::AllowAll),
+        (COMING_FROM_RNS_PATH, RequestEndpointPolicy::AllowAll),
+        (SOURCE_PAGE_PATH, RequestEndpointPolicy::AllowAll),
         (SOURCE_ARCHIVE_PATH, RequestEndpointPolicy::AllowAll),
         (SOURCE_CHECKSUM_PATH, RequestEndpointPolicy::AllowAll),
     ];
@@ -159,6 +174,10 @@ impl<S> RequestEndpointSet<S> for SourceNodePageRoutes {
             context.respond_static_messagepack_bytes(HOPSPOT_INDEX_PAGE_WITH_SOURCE)
         } else if path_hash == RequestPathHash::of(QUICKSTART_PATH) {
             context.respond_static_messagepack_bytes(QUICKSTART_PAGE)
+        } else if path_hash == RequestPathHash::of(COMING_FROM_RNS_PATH) {
+            context.respond_static_messagepack_bytes(COMING_FROM_RNS_PAGE)
+        } else if path_hash == RequestPathHash::of(SOURCE_PAGE_PATH) {
+            context.respond_static_messagepack_bytes(SOURCE_PAGE)
         } else if path_hash == RequestPathHash::of(SOURCE_ARCHIVE_PATH) {
             context.respond_static_file("source.zip", SOURCE_ARCHIVE)
         } else if path_hash == RequestPathHash::of(SOURCE_CHECKSUM_PATH) {
@@ -203,7 +222,7 @@ impl<S> RequestEndpointSet<S> for BrowserNodePageRoutes {
             return context.respond_static_messagepack_bytes(COMING_FROM_RNS_PAGE);
         }
         if path_hash == RequestPathHash::of(SOURCE_PAGE_PATH) {
-            return context.respond_static_messagepack_bytes(BROWSER_SOURCE_PAGE);
+            return context.respond_static_messagepack_bytes(SOURCE_PAGE);
         }
         #[cfg(feature = "source-archive")]
         {
@@ -268,13 +287,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_page_response_capacity_covers_every_static_page() {
-        assert!(LARGEST_PAGE_LEN >= HOPSPOT_INDEX_PAGE.len());
-        assert!(LARGEST_PAGE_LEN >= BROWSER_INDEX_PAGE.len());
-        assert!(LARGEST_PAGE_LEN >= QUICKSTART_PAGE.len());
+    fn the_single_window_capacity_covers_every_primary_page() {
+        assert!(LARGEST_SINGLE_WINDOW_PAGE_LEN >= HOPSPOT_INDEX_PAGE.len());
+        assert!(LARGEST_SINGLE_WINDOW_PAGE_LEN >= BROWSER_INDEX_PAGE.len());
+        assert!(LARGEST_SINGLE_WINDOW_PAGE_LEN >= QUICKSTART_PAGE.len());
+        assert!(LARGEST_SINGLE_WINDOW_PAGE_LEN >= SOURCE_PAGE.len());
+        assert!(COMING_FROM_RNS_PAGE.len() > LARGEST_SINGLE_WINDOW_PAGE_LEN);
         assert_eq!(
             PAGE_PACKED_RESPONSE_LEN,
-            packed_binary_len(LARGEST_PAGE_LEN).unwrap()
+            packed_binary_len(LARGEST_SINGLE_WINDOW_PAGE_LEN).unwrap()
         );
         assert_eq!(
             PAGE_RESPONSE_TRANSFER_BYTES,
@@ -302,7 +323,14 @@ mod tests {
         let routes = <NodePageRoutes as RequestEndpointSet<()>>::REGISTRATIONS;
         assert!(routes.iter().any(|(path, _)| *path == INDEX_PATH));
         assert!(routes.iter().any(|(path, _)| *path == QUICKSTART_PATH));
-        assert!(page.contains("Open the offline Prns quickstart"));
+        assert!(routes.iter().any(|(path, _)| *path == COMING_FROM_RNS_PATH));
+        assert!(routes.iter().any(|(path, _)| *path == SOURCE_PAGE_PATH));
+        assert!(page.contains("`[Coming from RNS?`:/page/coming-from-rns.mu]"));
+        assert!(page.contains("`[Download the source`:/page/source.mu]"));
+        assert!(!page.contains("Offline quickstart"));
+        assert!(page.contains("Mesh networking that's yours"));
+        assert!(page.contains(">>`!Why Prns?`!"));
+        assert!(page.contains("`[Get the source`:/page/source.mu]"));
         assert_eq!(
             routes.iter().any(|(path, _)| *path == SOURCE_ARCHIVE_PATH),
             SERVES_SOURCE_ARCHIVE
@@ -311,11 +339,20 @@ mod tests {
             routes.iter().any(|(path, _)| *path == SOURCE_CHECKSUM_PATH),
             SERVES_SOURCE_ARCHIVE
         );
-        assert_eq!(page.contains("Download source.zip"), SERVES_SOURCE_ARCHIVE);
+        let source_page = core::str::from_utf8(SOURCE_PAGE).unwrap();
         assert_eq!(
-            page.contains("source.zip not carried or served"),
+            source_page.contains("`[source.zip ("),
+            SERVES_SOURCE_ARCHIVE
+        );
+        assert_eq!(
+            source_page.contains("This compact build doesn't carry the source archive"),
             !SERVES_SOURCE_ARCHIVE
         );
+
+        let coming_from_rns = core::str::from_utf8(COMING_FROM_RNS_PAGE).unwrap();
+        assert!(coming_from_rns.contains(">Coming from RNS"));
+        assert!(coming_from_rns.contains("Your config, your identity file, and your apps"));
+        assert!(coming_from_rns.contains("`[Back to index`:/page/index.mu]"));
     }
 
     #[test]
@@ -335,7 +372,7 @@ mod tests {
             SERVES_SOURCE_ARCHIVE
         );
 
-        let source_page = core::str::from_utf8(BROWSER_SOURCE_PAGE).unwrap();
+        let source_page = core::str::from_utf8(SOURCE_PAGE).unwrap();
         assert_eq!(
             source_page.contains("`[source.zip ("),
             SERVES_SOURCE_ARCHIVE
@@ -356,11 +393,20 @@ mod tests {
         for page in [HOPSPOT_INDEX_PAGE, BROWSER_INDEX_PAGE, QUICKSTART_PAGE] {
             let page = core::str::from_utf8(page).unwrap();
             assert!(!page.is_ascii());
+            assert!(page.lines().all(|line| line.len() <= 600));
+        }
+        for page in [
+            HOPSPOT_INDEX_PAGE,
+            BROWSER_INDEX_PAGE,
+            QUICKSTART_PAGE,
+            COMING_FROM_RNS_PAGE,
+            SOURCE_PAGE,
+        ] {
+            let page = core::str::from_utf8(page).unwrap();
             let mut formatting_toggles = 0usize;
             for line in page.lines() {
                 formatting_toggles += line.matches("`!").count();
                 assert!(!line.contains('\t'));
-                assert!(line.len() <= 600);
             }
             assert_eq!(formatting_toggles % 2, 0);
             assert_eq!(page.matches("`c").count(), page.matches("`a").count());

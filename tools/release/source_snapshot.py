@@ -37,8 +37,8 @@ REQUIRED_SOURCE_FILES = (
     "assets/nnpages/why_prns.mu",
     "personal-hopspot/core/src/node_pages.rs",
     "personal-hopspot/core/src/node_pages/browser_welcome.mu",
-    "personal-hopspot/core/src/node_pages/index_intro.mu",
-    "personal-hopspot/core/src/node_pages/index_license.mu",
+    "personal-hopspot/core/src/node_pages/hopspot_welcome.mu",
+    "personal-hopspot/core/src/node_pages/source_missing.mu",
 )
 
 
