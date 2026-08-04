@@ -183,6 +183,9 @@ pub struct BoardConfig {
     pub use_dcdc: bool,
     pub rx_boost: bool,
     pub dio2_as_rf_switch: bool,
+    /// Receive-path gain ahead of the SX126x, removed from RSSI reports so callers see the signal
+    /// level at the antenna rather than the amplified level at the transceiver input.
+    pub external_rx_gain_db: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -569,7 +572,10 @@ where
                 self.read_command(op::GET_PACKET_STATUS, &mut packet_status)
                     .await?;
                 let phy = PacketPhyStats {
-                    rssi: Some(RssiDbm::new(-(i16::from(packet_status[1])) / 2)),
+                    rssi: Some(RssiDbm::new(antenna_referred_rssi_dbm(
+                        packet_status[1],
+                        self.config.external_rx_gain_db,
+                    ))),
                     snr: Some(SnrQuarterDb::new(i16::from(i8::from_be_bytes([
                         packet_status[2],
                     ])))),
@@ -613,7 +619,10 @@ where
     pub async fn channel_rssi_dbm(&mut self) -> Result<i16, Error> {
         let mut buf = [0u8; 2];
         self.read_command(op::GET_RSSI_INST, &mut buf).await?;
-        Ok(decode_rssi_dbm(buf[1]))
+        Ok(antenna_referred_rssi_dbm(
+            buf[1],
+            self.config.external_rx_gain_db,
+        ))
     }
 
     async fn standby(&mut self) -> Result<(), Error> {
@@ -724,6 +733,10 @@ fn image_calibration_pair(frequency_hz: u32) -> [u8; 2] {
 
 fn decode_rssi_dbm(encoded: u8) -> i16 {
     -i16::from(encoded) / 2
+}
+
+fn antenna_referred_rssi_dbm(encoded: u8, external_rx_gain_db: u8) -> i16 {
+    decode_rssi_dbm(encoded).saturating_sub(i16::from(external_rx_gain_db))
 }
 
 struct PaConfig {
@@ -837,6 +850,12 @@ mod tests {
                     buf[3] = 184;
                 }
             }
+            op::GET_RSSI_INST => {
+                if buf.len() >= 2 {
+                    buf[0] = 0x00;
+                    buf[1] = 172;
+                }
+            }
             op::READ_BUFFER => {
                 let p = b"PRNS-HELTEC-SMOK";
                 for (i, b) in buf.iter_mut().enumerate() {
@@ -937,6 +956,7 @@ mod tests {
             use_dcdc: true,
             rx_boost: true,
             dio2_as_rf_switch: true,
+            external_rx_gain_db: 0,
         }
     }
 
@@ -959,6 +979,7 @@ mod tests {
             use_dcdc: true,
             rx_boost: true,
             dio2_as_rf_switch: true,
+            external_rx_gain_db: 0,
         };
         let mut radio = Sx126x::new(
             MockSpi { log: log.clone() },
@@ -1078,6 +1099,35 @@ mod tests {
         assert_eq!(image_calibration_pair(780_000_000), [0xC1, 0xC5]);
         assert_eq!(image_calibration_pair(868_000_000), [0xD7, 0xDB]);
         assert_eq!(image_calibration_pair(915_000_000), [0xE1, 0xE9]);
+    }
+
+    #[test]
+    fn external_receive_gain_is_removed_from_reported_rssi() {
+        assert_eq!(antenna_referred_rssi_dbm(172, 0), -86);
+        assert_eq!(antenna_referred_rssi_dbm(172, 17), -103);
+        assert_eq!(antenna_referred_rssi_dbm(172, 23), -109);
+    }
+
+    #[test]
+    fn configured_receive_gain_normalizes_channel_and_packet_rssi() {
+        let mut board = board();
+        board.external_rx_gain_db = 17;
+        let mut radio = Sx126x::new(
+            MockSpi {
+                log: Rc::new(RefCell::new(Vec::new())),
+            },
+            MockWait,
+            MockWait,
+            MockOut,
+            MockDelay,
+            board,
+        );
+
+        assert_eq!(block_on(radio.channel_rssi_dbm()), Ok(-103));
+
+        let mut buf = [0u8; 255];
+        let received = block_on(radio.receive(&mut buf)).expect("receive");
+        assert_eq!(received.phy.rssi, Some(RssiDbm::new(-107)));
     }
 
     #[test]
