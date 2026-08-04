@@ -5,7 +5,7 @@ use crate::routing::links::data::link_mdu;
 use crate::routing::links::request::{RequestId, REQUEST_WIRE_OVERHEAD, RESPONSE_WIRE_OVERHEAD};
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
-use crate::units::DurationMillis;
+use crate::units::{ByteLimit, DurationMillis};
 use crate::wire::DestinationHash;
 
 use super::{PacketReceiptDelivered, PrnsCommand, SendResourceFailure, Settleable, Settlement};
@@ -22,13 +22,14 @@ pub enum RequestResponseTimeout {
     Exact(DurationMillis),
 }
 
-/// RNS 1.4.0 `Link.request(path, data)`, sub-MDU form; empty `data` = the reference's None.
+/// RNS 1.4.2 `Link.request(path, data)`, sub-MDU form; empty `data` = the reference's None.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SendRequest {
     pub link_id: LinkId,
     pub path_hash: RequestPathHash,
     pub data: SendRequestData,
     pub response_timeout: RequestResponseTimeout,
+    pub maximum_response_bytes: ByteLimit,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +44,7 @@ pub enum SendRequestFailure {
     WriteFailed,
     Culled,
     Timeout,
+    ResponseTooLarge,
 }
 
 pub const MAX_RESPOND_DATA_LEN: usize =
@@ -82,7 +84,7 @@ pub enum RespondFailure {
     Resource(SendResourceFailure),
 }
 
-/// RNS 1.4.0 `Destination.register_request_handler(..., allowed_list=…)`, mutated at runtime.
+/// RNS 1.4.2 `Destination.register_request_handler(..., allowed_list=…)`, mutated at runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AllowRequester {
     pub destination: DestinationHash,

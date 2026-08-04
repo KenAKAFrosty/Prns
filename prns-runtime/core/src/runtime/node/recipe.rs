@@ -6,6 +6,7 @@ use crate::routing::announce::{
 };
 use crate::routing::links::resources::ResourceStrategy;
 use crate::routing::{LinkRequestPolicy, ProofStrategy};
+use crate::units::ByteLimit;
 use crate::wire::DestinationHash;
 
 use super::super::PrnsEvent;
@@ -31,6 +32,7 @@ pub enum PreConfiguredDestination<'a> {
         ratchet: RatchetPolicy,
         /// Whether links to this destination accept inbound resources, and how large. The runtime counterpart is the handle's `set_resource_strategy`; most destinations want `ResourceStrategy::AcceptNone` until they expect a transfer.
         resource_strategy: ResourceStrategy,
+        maximum_request_bytes: ByteLimit,
         request_endpoints: ServeMyRequestEndpoints,
     },
 }
@@ -77,7 +79,7 @@ pub struct PrnsNodeRecipe<
 > where
     OnEvent: FnMut(PrnsEvent<'_>, &AppState),
 {
-    /// The transport role takes a whole identity, never a bare address: a transport node signs (tunnel synthesis), and RNS 1.4.0 keeps a dedicated persisted transport identity.
+    /// The transport role takes a whole identity, never a bare address: a transport node signs (tunnel synthesis), and RNS 1.4.2 keeps a dedicated persisted transport identity.
     pub transport_identity: Option<Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>>,
     pub pre_configured_destinations: Destinations,
     pub app_state: AppState,

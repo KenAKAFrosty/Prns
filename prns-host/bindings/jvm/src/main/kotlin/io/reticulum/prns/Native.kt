@@ -156,6 +156,8 @@ internal open class NativeRequestHandlerConfig : Structure() {
     "announceAppData",
     "requestHandlers",
     "requestHandlerCount",
+    "hasMaximumRequestBytes",
+    "maximumRequestBytes",
 )
 internal open class NativeDestinationConfig : Structure() {
     @JvmField
@@ -181,6 +183,12 @@ internal open class NativeDestinationConfig : Structure() {
 
     @JvmField
     var requestHandlerCount: SizeT = SizeT()
+
+    @JvmField
+    var hasMaximumRequestBytes: Byte = 0
+
+    @JvmField
+    var maximumRequestBytes: Long = 0
 }
 
 @Structure.FieldOrder(
@@ -316,6 +324,7 @@ internal interface PrnsNative : Library {
     fun prns_host_attach_interface(
         host: Pointer,
         config: NativeInterfaceConfig,
+        routing: NativeInterfaceRoutingPolicy?,
         command: PointerByReference,
     ): Int
     fun prns_host_detach_interface(
@@ -352,6 +361,7 @@ internal interface PrnsNative : Library {
         payload: NativeByteView.ByValue,
         timeoutKind: Int,
         timeoutMillis: Long,
+        maximumResponseBytes: LongByReference?,
         command: PointerByReference,
     ): Int
     fun prns_host_respond(
@@ -650,6 +660,13 @@ internal class NativeArena : AutoCloseable {
                 }
                 value.announceAppData?.let {
                     result.announceAppData = bytes(it.copyBytes())
+                }
+                value.maximumRequestBytes?.let {
+                    require(it in 0..HostContract.SAFE_UINT_MAX) {
+                        "maximumRequestBytes must be an unsigned safe integer"
+                    }
+                    result.hasMaximumRequestBytes = 1
+                    result.maximumRequestBytes = it
                 }
                 if (value.requestHandlers.isNotEmpty()) {
                     val first = NativeRequestHandlerConfig()

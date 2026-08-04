@@ -156,6 +156,22 @@ class InterfaceConfig(ctypes.Structure):
     ]
 
 
+class InterfaceRoutingPolicy(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("has_mode", ctypes.c_uint8),
+        ("mode", ctypes.c_uint32),
+        ("has_gravity", ctypes.c_uint8),
+        ("gravity", ctypes.c_int64),
+        ("has_recursive_path_requests", ctypes.c_uint8),
+        ("recursive_path_requests", ctypes.c_uint8),
+        ("has_announces_from_internal", ctypes.c_uint8),
+        ("announces_from_internal", ctypes.c_uint8),
+        ("has_announces_to_internal", ctypes.c_uint8),
+        ("announces_to_internal", ctypes.c_uint8),
+    ]
+
+
 class BackendInfo(ctypes.Structure):
     _fields_ = [
         ("struct_size", ctypes.c_size_t),
@@ -271,6 +287,8 @@ class DestinationConfig(ctypes.Structure):
         ("announce_app_data", ByteView),
         ("request_handlers", ctypes.POINTER(RequestHandlerConfig)),
         ("request_handler_count", ctypes.c_size_t),
+        ("has_maximum_request_bytes", ctypes.c_uint8),
+        ("maximum_request_bytes", ctypes.c_uint64),
     ]
 
 
@@ -427,6 +445,7 @@ class NativeLibrary:
         lib.prns_host_attach_interface.argtypes = [
             ctypes.c_void_p,
             ctypes.POINTER(InterfaceConfig),
+            ctypes.POINTER(InterfaceRoutingPolicy),
             ctypes.POINTER(ctypes.c_void_p),
         ]
         lib.prns_host_attach_interface.restype = ctypes.c_uint32
@@ -460,6 +479,7 @@ class NativeLibrary:
             ByteView,
             ctypes.c_uint32,
             ctypes.c_uint64,
+            ctypes.POINTER(ctypes.c_uint64),
             ctypes.POINTER(ctypes.c_void_p),
         ]
         lib.prns_host_request.restype = ctypes.c_uint32

@@ -13,7 +13,8 @@ use personal_rns::engine::{
 use personal_rns::interfaces::bluetooth_auto as bluetooth_contract;
 use personal_rns::interfaces::{
     AnnounceBandwidthCap, BitrateBps, Capabilities, InboundPacket, InterfaceCapabilities,
-    InterfaceCommonPolicy, InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceMode,
+    InterfaceCommonPolicy, InterfaceDescriptor, InterfaceGravity, InterfaceId, InterfaceKind,
+    InterfaceMode,
 };
 use personal_rns::routing::links::channel::MessageType;
 use personal_rns::routing::links::request::RequestId;
@@ -28,7 +29,7 @@ use personal_rns::routing::tunnel::SeedTunnelOutcome;
 use personal_rns::routing::upstream_app_destinations::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::routing::warmth::Departure;
 use personal_rns::storage::GrowableHeap;
-use personal_rns::units::DurationMillis;
+use personal_rns::units::{ByteLimit, DurationMillis};
 use prns_host::PrnsLimits;
 use prns_host_cooperative::{CooperativeHost, Entropy, MonotonicMillis};
 use prns_runtime::runtime::persistence_snapshots::{
@@ -38,9 +39,10 @@ use wasm_bindgen::prelude::*;
 
 use crate::input::{
     array_to_strings, destination_hash_from_vec, identity_hash_from_vec, interface_id_from_vec,
-    link_id_from_vec, optional_array, optional_bytes, optional_u32, optional_u64,
-    parse_interface_kind, request_id_from_vec, request_path_hash_from_vec, required_array,
-    required_bool, required_bytes, required_string, required_u64, secret_key_from_vec,
+    link_id_from_vec, optional_array, optional_bool, optional_bytes, optional_i64, optional_string,
+    optional_u32, optional_u64, parse_interface_kind, parse_interface_mode, request_id_from_vec,
+    request_path_hash_from_vec, required_array, required_bool, required_bytes, required_string,
+    required_u64, secret_key_from_vec,
 };
 use crate::js_translation::{
     interface_kind_name, journaled_to_js, outbound_to_js, set_bigint, set_bytes, set_str, set_u32,
@@ -52,6 +54,8 @@ use crate::parameters::{bitrate_bps_u32, BROWSER_PERSISTENCE_VERSION};
 enum NodeResponse {
     Index,
     Quickstart,
+    ComingFromRns,
+    SourcePage,
     #[cfg(feature = "source-archive")]
     SourceArchive,
     #[cfg(feature = "source-archive")]
@@ -138,6 +142,23 @@ impl PrnsRuntime {
                 JsValue::from_str("bitrateBps is required and must be at least 5 bps")
             })?;
         let hardware_mtu = optional_u32(&options, "hardwareMtu")?;
+        let mode = optional_string(&options, "mode")?
+            .map(|mode| parse_interface_mode(&mode))
+            .transpose()?
+            .unwrap_or(InterfaceMode::Full);
+        let gravity = optional_i64(&options, "gravity")?
+            .map(InterfaceGravity::new)
+            .unwrap_or(InterfaceGravity::ZERO);
+        let mut common = InterfaceCommonPolicy::RNS_DEFAULT;
+        if let Some(value) = optional_bool(&options, "recursivePathRequests")? {
+            common.forwarding.recursive_path_requests = value;
+        }
+        if let Some(value) = optional_bool(&options, "announcesFromInternal")? {
+            common.forwarding.announces_from_internal = value;
+        }
+        if let Some(value) = optional_bool(&options, "announcesToInternal")? {
+            common.forwarding.announces_to_internal = value;
+        }
         let id = InterfaceId::from_channel_tag(kind, &channel_tag);
         let capabilities = InterfaceCapabilities::try_from(Capabilities {
             receives: true,
@@ -149,13 +170,14 @@ impl PrnsRuntime {
         let descriptor = InterfaceDescriptor {
             id,
             capabilities,
-            mode: InterfaceMode::Full,
+            mode,
+            gravity,
             bitrate,
             hardware_mtu: hardware_mtu.map(|mtu| mtu as usize),
             announce_rate_limit: None,
             announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
             airtime_duty_cycle: None,
-            common: InterfaceCommonPolicy::RNS_DEFAULT,
+            common,
         };
         if let Some(slot) = self.interfaces.iter_mut().find(|iface| iface.id == id) {
             *slot = descriptor;
@@ -221,6 +243,10 @@ impl PrnsRuntime {
             .map_err(|error| {
                 JsValue::from_str(&format!("destination registration failed: {error:?}"))
             })?;
+        self.engine.set_maximum_request_bytes(
+            &destination,
+            ByteLimit::from(optional_u64(&options, "maximumRequestBytes")?),
+        );
         self.bump_revision();
         if let Some(handlers) = optional_array(&options, "requestHandlers")? {
             for handler in handlers.iter() {
@@ -280,7 +306,7 @@ impl PrnsRuntime {
                 JsValue::from_str(&format!("node page registration failed: {error:?}"))
             })?;
         self.bump_revision();
-        for (path, policy) in <personal_hopspot_core::node_pages::NodePageRoutes as personal_rns::runtime::request_endpoints::RequestEndpointSet<()>>::REGISTRATIONS {
+        for (path, policy) in <personal_hopspot_core::node_pages::BrowserNodePageRoutes as personal_rns::runtime::request_endpoints::RequestEndpointSet<()>>::REGISTRATIONS {
             self.engine
                 .register_request_handler(&destination, path, policy.engine_policy())
                 .map_err(|error| {
@@ -441,6 +467,8 @@ impl PrnsRuntime {
         let response_timeout = optional_u64(&options, "timeoutMillis")?
             .map(|millis| RequestResponseTimeout::Exact(DurationMillis(millis)))
             .unwrap_or(RequestResponseTimeout::LinkDefault);
+        let maximum_response_bytes =
+            ByteLimit::from(optional_u64(&options, "maximumResponseBytes")?);
         let (now_ms, entropy) = self.command_context(&options)?;
         let id = self.mint_command_id();
         self.ingest_command(
@@ -450,6 +478,7 @@ impl PrnsRuntime {
                 path_hash,
                 data,
                 response_timeout,
+                maximum_response_bytes,
             }),
             now_ms,
             entropy,
@@ -693,6 +722,10 @@ impl PrnsRuntime {
         let index_path = RequestPathHash::of(personal_hopspot_core::node_pages::INDEX_PATH);
         let quickstart_path =
             RequestPathHash::of(personal_hopspot_core::node_pages::QUICKSTART_PATH);
+        let coming_from_rns_path =
+            RequestPathHash::of(personal_hopspot_core::node_pages::COMING_FROM_RNS_PATH);
+        let source_page_path =
+            RequestPathHash::of(personal_hopspot_core::node_pages::SOURCE_PAGE_PATH);
         #[cfg(feature = "source-archive")]
         let source_path =
             RequestPathHash::of(personal_hopspot_core::node_pages::SOURCE_ARCHIVE_PATH);
@@ -721,6 +754,16 @@ impl PrnsRuntime {
                         }
                         if node_page && *path_hash == quickstart_path {
                             page_requests.push((*link_id, *request_id, NodeResponse::Quickstart));
+                        }
+                        if node_page && *path_hash == coming_from_rns_path {
+                            page_requests.push((
+                                *link_id,
+                                *request_id,
+                                NodeResponse::ComingFromRns,
+                            ));
+                        }
+                        if node_page && *path_hash == source_page_path {
+                            page_requests.push((*link_id, *request_id, NodeResponse::SourcePage));
                         }
                         #[cfg(feature = "source-archive")]
                         if node_page && *path_hash == source_path {
@@ -760,6 +803,12 @@ impl PrnsRuntime {
                             ),
                             NodeResponse::Quickstart => RespondPayload::StaticBytes(
                                 personal_hopspot_core::node_pages::QUICKSTART_PAGE,
+                            ),
+                            NodeResponse::ComingFromRns => RespondPayload::StaticBytes(
+                                personal_hopspot_core::node_pages::COMING_FROM_RNS_PAGE,
+                            ),
+                            NodeResponse::SourcePage => RespondPayload::StaticBytes(
+                                personal_hopspot_core::node_pages::BROWSER_SOURCE_PAGE,
                             ),
                             #[cfg(feature = "source-archive")]
                             NodeResponse::SourceArchive => RespondPayload::StaticFile {
@@ -1269,6 +1318,19 @@ fn directive_to_frame(directive: Directive<'_>) -> OutboundFrame {
             announce: false,
             hops: None,
         },
+        Directive::SendIfOnline {
+            target,
+            bytes,
+            on_send,
+        } => {
+            on_send();
+            OutboundFrame {
+                target: OutboundTarget::Interface(target),
+                bytes: bytes.to_vec(),
+                announce: false,
+                hops: None,
+            }
+        }
         Directive::SendAnnounce {
             target,
             bytes,

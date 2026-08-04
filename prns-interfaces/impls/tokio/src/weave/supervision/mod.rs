@@ -100,6 +100,10 @@ where
         &self.channel_tag
     }
 
+    fn policy(&self) -> EffectiveInterfacePolicy {
+        self.policy
+    }
+
     async fn run(mut self, fleet: Fleet) {
         let mut reconnect = self.reconnect_policy.schedule();
         loop {

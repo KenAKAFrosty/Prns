@@ -42,7 +42,7 @@ fn discovery_broadcast_contains_the_host_switch_id() {
 }
 
 #[test]
-fn handshake_matches_the_rns_1_4_0_python_oracle() {
+fn handshake_matches_the_rns_1_4_2_python_oracle() {
     let identity = WeaveHostIdentity::from_signing_secret([0x11; 32]);
     let remote = SwitchId::new([0x34, 0x55, 0xa4, 0xf0]);
     let mut output = [0u8; 256];
@@ -57,7 +57,7 @@ fn handshake_matches_the_rns_1_4_0_python_oracle() {
 }
 
 #[test]
-fn discovery_response_verification_matches_the_rns_1_4_0_python_oracle() {
+fn discovery_response_verification_matches_the_rns_1_4_2_python_oracle() {
     let frame = from_hex(
         "c977873700a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0d6d59bd10d8d43ad27e2c66ffe4be08f4c15408d75698ec87dfcf7e68430efac79a655716f2ea93a60cdf1cc0d6bc2d74310bf067c52d1b6405bdff9f9998a08",
     );

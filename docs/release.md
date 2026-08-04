@@ -95,7 +95,7 @@ time. Build options such as `--target` or `--profile` can be supplied after
 | `prnsd interfaces [COMMAND]` | Guided typed interface editing, grouped validation and repair, and explicit live apply |
 
 `prnsd status` is the prefixless RNS network-status utility, not a managed-process status command.
-It and the other RNS 1.4.0-compatible one-shot utilities are documented in
+It and the other RNS 1.4.2-compatible one-shot utilities are documented in
 [`docs/prnsd-utilities.md`](prnsd-utilities.md).
 
 `prnsd` and `cargo prnsd` share one per-user managed session. Repeated starts

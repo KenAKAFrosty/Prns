@@ -15,7 +15,8 @@ pub use model::{
 pub(crate) use model::{liveness_from_connection, sort_cards_for_display};
 pub use render::{render, splash, RenderFrame, SplashContent};
 pub use state::{
-    AccessPointState, DisplayPowerControl, InputEvent, UiAction, UiConfiguration, UiNotice, UiState,
+    apply_and_persist_radio_profile, AccessPointState, DisplayPowerControl, InputEvent,
+    RadioProfileChangeResult, UiAction, UiConfiguration, UiNotice, UiState,
 };
 
 #[cfg(test)]

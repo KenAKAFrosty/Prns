@@ -2,8 +2,8 @@ use std::fmt;
 use std::process::ExitCode;
 
 use prnsd_control::{
-    LaunchSpec, LogLane, ServiceError, ServicePaths, ServiceRecord, ServiceState, StartOutcome,
-    StateDirectoryError,
+    LaunchSpec, LogLane, ServiceError, ServiceKind, ServicePaths, ServiceRecord, ServiceState,
+    StartOutcome, StateDirectoryError,
 };
 
 use crate::{cli, splash};
@@ -15,6 +15,8 @@ enum CommandError {
     CurrentDirectory(std::io::Error),
     Service(ServiceError),
     NotRunning,
+    ForegroundLogs,
+    ForegroundRestart,
 }
 
 pub enum Command {
@@ -39,6 +41,10 @@ impl fmt::Display for CommandError {
             }
             Self::Service(error) => error.fmt(formatter),
             Self::NotRunning => formatter.write_str("prnsd is not running"),
+            Self::ForegroundLogs => formatter
+                .write_str("the active prnsd writes to its service manager; inspect logs there"),
+            Self::ForegroundRestart => formatter
+                .write_str("the active prnsd is owned by its service manager; restart it there"),
         }
     }
 }
@@ -74,6 +80,11 @@ fn run_inner(command: Command) -> Result<(), CommandError> {
     match command {
         Command::Start(args) => start_or_attach(&paths, args),
         Command::Restart(args) => {
+            if prnsd_control::running(&paths)?
+                .is_some_and(|record| record.kind == ServiceKind::Foreground)
+            {
+                return Err(CommandError::ForegroundRestart);
+            }
             if prnsd_control::stop(&paths)? {
                 eprintln!("Stopped prnsd");
             }
@@ -82,6 +93,12 @@ fn run_inner(command: Command) -> Result<(), CommandError> {
         Command::Stop => match prnsd_control::running(&paths)? {
             Some(record) => {
                 print_managed_banner(&record);
+                if record.kind == ServiceKind::Foreground {
+                    eprintln!("Stopping prnsd (pid {})", record.pid);
+                    prnsd_control::stop(&paths)?;
+                    eprintln!("Stopped prnsd");
+                    return Ok(());
+                }
                 eprintln!(
                     "Stopping prnsd (pid {}); showing recent and shutdown logs\n",
                     record.pid
@@ -96,6 +113,9 @@ fn run_inner(command: Command) -> Result<(), CommandError> {
             }
         },
         Command::Logs => match prnsd_control::running(&paths)? {
+            Some(record) if record.kind == ServiceKind::Foreground => {
+                Err(CommandError::ForegroundLogs)
+            }
             Some(record) => attach(&paths, &record),
             None => Err(CommandError::NotRunning),
         },
@@ -113,6 +133,13 @@ fn start_or_attach(paths: &ServicePaths, args: cli::LaunchArgs) -> Result<(), Co
             if record.state == ServiceState::Starting {
                 prnsd_control::wait_until_ready(paths, record)?;
             }
+            return Ok(());
+        }
+        if record.kind == ServiceKind::Foreground {
+            if record.state == ServiceState::Starting {
+                prnsd_control::wait_until_ready(paths, record)?;
+            }
+            eprintln!("The active prnsd is attached to its service manager");
             return Ok(());
         }
         return attach(paths, &record);
@@ -176,6 +203,9 @@ fn start_new(paths: &ServicePaths, args: cli::LaunchArgs) -> Result<(), CommandE
 }
 
 fn attach(paths: &ServicePaths, record: &ServiceRecord) -> Result<(), CommandError> {
+    if record.kind == ServiceKind::Foreground {
+        return Err(CommandError::ForegroundLogs);
+    }
     print_managed_banner(record);
     eprintln!("Attached to prnsd; Ctrl-C detaches without stopping the daemon\n");
     prnsd_control::follow(paths, record).map_err(CommandError::from)

@@ -23,6 +23,7 @@ import type {
   InterfaceId,
   InterfaceHealth,
   InterfaceKind,
+  InterfaceRoutingPolicy,
   LifecycleState,
   LinkId,
   PrnsCreateOptions,
@@ -75,6 +76,8 @@ export const {
   REQUEST_PATH_HASH_LENGTH,
   RESOURCE_HASH_LENGTH,
   IDENTITY_SECRET_LENGTH,
+  SAFE_INT_MAX,
+  SAFE_INT_MIN,
   PrnsValidationError,
   balancedLimits,
   destinationHash,
@@ -152,6 +155,7 @@ type RawDestination = {
   identity?: RawIdentity;
   useHostIdentity?: boolean;
   announceAppData?: Buffer;
+  maximumRequestBytes?: number;
   requestPaths?: {
     path: string;
     policy: "allowNone" | "allowAll" | "allowList";
@@ -228,6 +232,14 @@ type RawInterfaceConfig = {
   url?: string;
 };
 
+type RawInterfaceRoutingPolicy = {
+  mode?: string;
+  gravity?: number;
+  recursivePathRequests?: boolean;
+  announcesFromInternal?: boolean;
+  announcesToInternal?: boolean;
+};
+
 type RawNode = {
   readonly identityHash: Buffer;
   readonly destinationHashes: Buffer[];
@@ -249,7 +261,7 @@ type RawNode = {
     linkId: Buffer,
     pathHash: Buffer,
     data: Buffer,
-    options?: { timeoutMillis: number },
+    options?: { timeoutMillis?: number; maximumResponseBytes?: number },
   ): Promise<RawRequestResult>;
   respond(token: RawRespondToken, data: Buffer): Promise<number>;
   sendResource(
@@ -294,7 +306,10 @@ type RawNode = {
     peer: string;
     bitrateBps?: number;
   }): Promise<RawInterface>;
-  attachInterface(config: RawInterfaceConfig): Promise<RawInterface>;
+  attachInterface(
+    config: RawInterfaceConfig,
+    routing?: RawInterfaceRoutingPolicy,
+  ): Promise<RawInterface>;
   hostSnapshot(): Promise<RawHostSnapshot>;
 };
 
@@ -787,9 +802,12 @@ export class Prns {
               interface: attached.id,
             });
           },
-          AttachInterface: async ({ config }) => {
+          AttachInterface: async ({ config, routing }) => {
             validateInterfaceConfig(config);
-            const raw = await this.#raw.attachInterface(rawInterfaceConfig(config));
+            const raw = await this.#raw.attachInterface(
+              rawInterfaceConfig(config),
+              rawInterfaceRoutingPolicy(routing),
+            );
             const attached = new NativeInterface(raw);
             this.#interfaces.set(interfaceKey(attached.id), attached);
             return casework.Tag("InterfaceAttached", {
@@ -842,12 +860,18 @@ export class Prns {
                 Buffer.from(bytes("payload", payload)),
               ),
             ),
-          Request: async ({ linkId, pathHash, payload, timeout }) => {
+          Request: async ({
+            linkId,
+            pathHash,
+            payload,
+            timeout,
+            maximumResponseBytes,
+          }) => {
             const response = await this.#raw.request(
               Buffer.from(linkId),
               Buffer.from(pathHash),
               Buffer.from(bytes("payload", payload)),
-              rawResponseTimeout(timeout),
+              rawRequestOptions(timeout, maximumResponseBytes),
             );
             return casework.Tag("ResponseReceived", {
               data: bytes("response data", response.data).slice(),
@@ -1030,8 +1054,15 @@ export class Prns {
     );
   }
 
-  attachInterface(config: InterfaceConfig): Promise<AttachOutcome> {
-    return this.execute(casework.Tag("AttachInterface", { config }));
+  attachInterface(
+    config: InterfaceConfig,
+    routing?: InterfaceRoutingPolicy,
+  ): Promise<AttachOutcome> {
+    return this.execute(
+      routing === undefined
+        ? casework.Tag("AttachInterface", { config })
+        : casework.Tag("AttachInterface", { config, routing }),
+    );
   }
 
   detachInterface(interfaceId: InterfaceId): Promise<DetachInterfaceOutcome> {
@@ -1071,9 +1102,18 @@ export class Prns {
     pathHash: RequestPathHash,
     payload: Uint8Array,
     timeout: ResponseTimeout = casework.Tag("LinkDefault"),
+    maximumResponseBytes?: number,
   ): Promise<RequestOutcome> {
     return this.execute(
-      casework.Tag("Request", { linkId, pathHash, payload, timeout }),
+      casework.Tag("Request", {
+        linkId,
+        pathHash,
+        payload,
+        timeout,
+        ...(maximumResponseBytes === undefined
+          ? {}
+          : { maximumResponseBytes }),
+      }),
     );
   }
 
@@ -1783,6 +1823,7 @@ function rawDestination(destination: DestinationConfig): RawDestination {
     Single: ({
       identity,
       announceAppData,
+      maximumRequestBytes,
       requestHandlers,
     }): RawDestination => {
       const raw: RawDestination = { appName, aspects, kind: "single" };
@@ -1800,6 +1841,12 @@ function rawDestination(destination: DestinationConfig): RawDestination {
       if (announceAppData !== undefined) {
         raw.announceAppData = Buffer.from(
           bytes("announceAppData", announceAppData),
+        );
+      }
+      if (maximumRequestBytes !== undefined) {
+        raw.maximumRequestBytes = nonNegativeInteger(
+          "maximumRequestBytes",
+          maximumRequestBytes,
         );
       }
       raw.requestPaths = requestHandlers.map((handler) => ({
@@ -1878,6 +1925,9 @@ function commandFailure(error: unknown): CommandFailure {
   }
   if (details.code === "PRNS_PAYLOAD_TOO_LARGE") {
     return casework.Tag("PayloadTooLarge");
+  }
+  if (details.code === "PRNS_RESPONSE_TOO_LARGE") {
+    return casework.Tag("ResponseTooLarge");
   }
   if (details.code === "PRNS_NO_ROUTE_TO_DESTINATION") {
     return casework.Tag("NoRouteToDestination");
@@ -2006,6 +2056,23 @@ function rawResponseTimeout(
       timeoutMillis: nonNegativeInteger("timeout millis", millis),
     }),
   });
+}
+
+function rawRequestOptions(
+  timeout: ResponseTimeout,
+  maximumResponseBytes: number | undefined,
+): { timeoutMillis?: number; maximumResponseBytes?: number } | undefined {
+  const options: {
+    timeoutMillis?: number;
+    maximumResponseBytes?: number;
+  } = rawResponseTimeout(timeout) ?? {};
+  if (maximumResponseBytes !== undefined) {
+    options.maximumResponseBytes = nonNegativeInteger(
+      "maximumResponseBytes",
+      maximumResponseBytes,
+    );
+  }
+  return Object.keys(options).length === 0 ? undefined : options;
 }
 
 function rawResourceCompression(
@@ -2224,6 +2291,28 @@ function rawInterfaceConfig(config: InterfaceConfig): RawInterfaceConfig {
     WebSocketServer: ({ bind }) => ({ kind: "WebSocketServer", bind }),
     BrowserRendezvous: ({ url }) => ({ kind: "BrowserRendezvous", url }),
   });
+}
+
+function rawInterfaceRoutingPolicy(
+  routing: InterfaceRoutingPolicy | undefined,
+): RawInterfaceRoutingPolicy | undefined {
+  if (routing === undefined) return undefined;
+  if (routing.gravity !== undefined && !Number.isSafeInteger(routing.gravity)) {
+    invalidConfiguration("gravity must be a safe integer");
+  }
+  return {
+    ...(routing.mode === undefined ? {} : { mode: routing.mode }),
+    ...(routing.gravity === undefined ? {} : { gravity: routing.gravity }),
+    ...(routing.recursivePathRequests === undefined
+      ? {}
+      : { recursivePathRequests: routing.recursivePathRequests }),
+    ...(routing.announcesFromInternal === undefined
+      ? {}
+      : { announcesFromInternal: routing.announcesFromInternal }),
+    ...(routing.announcesToInternal === undefined
+      ? {}
+      : { announcesToInternal: routing.announcesToInternal }),
+  };
 }
 
 function rawSerialLine(

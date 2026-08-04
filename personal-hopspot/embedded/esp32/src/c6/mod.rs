@@ -62,6 +62,7 @@ const ESPNOW_LANE: usize = cfg!(feature = "esp-now") as usize;
 const BLE_LANE: usize = cfg!(feature = "bluetooth-auto") as usize;
 const LANE_COUNT: usize = USB_LANE + ESPNOW_LANE + BLE_LANE;
 const LANE_DEPTH: usize = 1;
+const OUTBOUND_BURST_DEPTH: usize = C6Storage::MAX_OUTGOING_RESOURCE_REACTION_FRAMES;
 #[cfg(feature = "bluetooth-auto")]
 pub const BLE_PEER_CAPACITY: usize = EMBEDDED_BLE_PEER_CAPACITY;
 #[cfg(not(feature = "bluetooth-auto"))]
@@ -121,13 +122,21 @@ static COMMANDS: Channel<Mtx, IssuedCommand, COMMANDS_CAP> = Channel::new();
 static LIFECYCLE: Channel<Mtx, InterfaceLifecycle, LIFECYCLE_CAP> = Channel::new();
 static COMPLETION: CompletionPool<Mtx, COMPLETIONS_CAP> = CompletionPool::new();
 static INTERFACE_STORE: InterfaceStore = EmbassyInterfaceStore::new();
-static USB_MANIFOLD_LANE: StaticManifoldLane<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, LANE_DEPTH> =
-    StaticManifoldLane::new();
+static USB_MANIFOLD_LANE: StaticManifoldLane<
+    Mtx,
+    EMBEDDED_MAX_WIRE_FRAME_LEN,
+    LANE_DEPTH,
+    OUTBOUND_BURST_DEPTH,
+> = StaticManifoldLane::new();
 #[cfg(feature = "esp-now")]
-static ESPNOW_MANIFOLD_LANE: StaticManifoldLane<Mtx, ESP_NOW_V2_AIR_MTU, LANE_DEPTH> =
-    StaticManifoldLane::new();
+static ESPNOW_MANIFOLD_LANE: StaticManifoldLane<
+    Mtx,
+    ESP_NOW_V2_AIR_MTU,
+    LANE_DEPTH,
+    OUTBOUND_BURST_DEPTH,
+> = StaticManifoldLane::new();
 #[cfg(feature = "bluetooth-auto")]
-static BLE_MANIFOLD_LANE: StaticManifoldLane<Mtx, BLE_HW_MTU, LANE_DEPTH> =
+static BLE_MANIFOLD_LANE: StaticManifoldLane<Mtx, BLE_HW_MTU, LANE_DEPTH, OUTBOUND_BURST_DEPTH> =
     StaticManifoldLane::new();
 static USB_STATUS: EmbassyInterfaceStatus =
     EmbassyInterfaceStatus::new(USB_INTERFACE_ID, ConnectionState::Initializing);

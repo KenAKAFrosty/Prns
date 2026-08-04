@@ -50,6 +50,7 @@ export function describeCommandFailure(outcome) {
         NodeStopped: () => "The node is no longer running",
         Busy: () => "The pending command limit is full",
         PayloadTooLarge: () => "The payload exceeds the packet limit",
+        ResponseTooLarge: () => "The response exceeds the requested limit",
         UnknownDestination: () => "The destination is not registered",
         NotSingleDestination: () => "The destination does not accept single packets",
         AnnounceAppDataTooLong: () => "The announce application data is too long",

@@ -66,7 +66,36 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let mut manifold_lanes = ManifoldLanes::new();
 
     #[cfg(feature = "lora")]
-    let lora_profile = DEFAULT_915_PROFILE;
+    static FLASH: StaticCell<Mutex<CriticalSectionRawMutex, crate::flash::EspRomFlash>> =
+        StaticCell::new();
+    #[cfg(feature = "lora")]
+    let flash = FLASH.init(Mutex::new(crate::flash::EspRomFlash::new(
+        B::FLASH_LAYOUT.flash_capacity,
+    )));
+    #[cfg(feature = "lora")]
+    let shared_flash = SharedNorFlash::new(flash, B::FLASH_LAYOUT.flash_capacity);
+    #[cfg(feature = "lora")]
+    let mut lora_profile_store =
+        screen::RadioProfileStore::new(shared_flash, B::FLASH_LAYOUT.radio_profile_pages);
+    #[cfg(feature = "lora")]
+    let loaded_lora_profile = match lora_profile_store.load(DEFAULT_915_PROFILE).await {
+        Ok(loaded) => loaded,
+        Err(error) => {
+            log::error!("LoRa profile restore failed: {error:?}");
+            screen::LoadedRadioProfile {
+                profile: DEFAULT_915_PROFILE,
+                follows_default: true,
+                notice: Some(screen::RadioProfileLoadNotice::Reset),
+            }
+        }
+    };
+    #[cfg(feature = "lora")]
+    let lora_profile = loaded_lora_profile.profile;
+    #[cfg(feature = "lora")]
+    let profile_startup_notice = loaded_lora_profile.notice.map(|notice| match notice {
+        screen::RadioProfileLoadNotice::Recovered => screen::UiNotice::ProfileRecovered,
+        screen::RadioProfileLoadNotice::Reset => screen::UiNotice::ProfileReset,
+    });
     let lora_id = LoRaInterface::<
         ExclusiveDevice<Spi<'static, esp_hal::Async>, Output<'static>, Delay>,
         Input<'static>,
@@ -187,7 +216,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         storage: EngineStorageType::default(),
         request_endpoints: screen::node_pages::NodePageRoutes,
         interfaces: personal_rns::runtime::ManuallyAttached,
-        persistence: crate::persistence::s3(),
+        persistence: crate::persistence::s3(shared_flash, B::FLASH_LAYOUT.journal),
         on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
     };
 
@@ -198,34 +227,64 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let tcp_cfg = tcp_built.as_ref().map(|(t, _, _)| t.descriptor());
     let has_wifi = wifi.is_some();
 
+    let usb_outbound = crate::storage::allocate_manifold_outbound::<EMBEDDED_MAX_WIRE_FRAME_LEN>(
+        OUTBOUND_BURST_DEPTH,
+    );
     let usb_lane = manifold_lanes
-        .claim_interface(&USB_MANIFOLD_LANE, device_descriptor(usb_id))
+        .claim_interface_with_outbound_buffer(
+            &USB_MANIFOLD_LANE,
+            device_descriptor(usb_id),
+            usb_outbound,
+        )
         .expect("USB lane is available");
     let tcp_lane = tcp_cfg.map(|descriptor| {
+        let outbound = crate::storage::allocate_manifold_outbound::<EMBEDDED_MAX_WIRE_FRAME_LEN>(
+            OUTBOUND_BURST_DEPTH,
+        );
         manifold_lanes
-            .claim_interface(&TCP_MANIFOLD_LANE, descriptor)
+            .claim_interface_with_outbound_buffer(&TCP_MANIFOLD_LANE, descriptor, outbound)
             .expect("TCP lane is available")
     });
     #[cfg(feature = "wifi-auto")]
     let wifi_supervisor_lane = has_wifi.then(|| {
+        let outbound = crate::storage::allocate_manifold_outbound::<
+            { wifi_auto_contract::HARDWARE_MTU },
+        >(OUTBOUND_BURST_DEPTH);
         manifold_lanes
-            .claim_supervisor(&WIFI_MANIFOLD_LANE, WIFI_SUPERVISOR_ID, &OUTBOUND_WAKE)
+            .claim_supervisor_with_outbound_buffer(
+                &WIFI_MANIFOLD_LANE,
+                WIFI_SUPERVISOR_ID,
+                &OUTBOUND_WAKE,
+                outbound,
+            )
             .expect("Wi-Fi supervisor lane is available")
     });
     #[cfg(feature = "lora")]
+    let lora_outbound =
+        crate::storage::allocate_manifold_outbound::<LORA_MAX_PAYLOAD>(OUTBOUND_BURST_DEPTH);
+    #[cfg(feature = "lora")]
     let lora_lane = manifold_lanes
-        .claim_interface(&LORA_MANIFOLD_LANE, lora_cfg)
+        .claim_interface_with_outbound_buffer(&LORA_MANIFOLD_LANE, lora_cfg, lora_outbound)
         .expect("LoRa lane is available");
     #[cfg(feature = "bluetooth-auto")]
     let ble_supervisor_lane = (radio_mode == RadioMode::Ble && ble_identity.is_some()).then(|| {
+        let outbound =
+            crate::storage::allocate_manifold_outbound::<BLE_HW_MTU>(OUTBOUND_BURST_DEPTH);
         manifold_lanes
-            .claim_supervisor(&BLE_MANIFOLD_LANE, BLE_SUPERVISOR_ID, &BLE_OUTBOUND_WAKE)
+            .claim_supervisor_with_outbound_buffer(
+                &BLE_MANIFOLD_LANE,
+                BLE_SUPERVISOR_ID,
+                &BLE_OUTBOUND_WAKE,
+                outbound,
+            )
             .expect("Bluetooth supervisor lane is available")
     });
     #[cfg(feature = "esp-now")]
     let espnow_lane = espnow_cfg.map(|descriptor| {
+        let outbound =
+            crate::storage::allocate_manifold_outbound::<ESP_NOW_V2_AIR_MTU>(OUTBOUND_BURST_DEPTH);
         manifold_lanes
-            .claim_interface(&ESPNOW_MANIFOLD_LANE, descriptor)
+            .claim_interface_with_outbound_buffer(&ESPNOW_MANIFOLD_LANE, descriptor, outbound)
             .expect("ESP-NOW lane is available")
     });
 
@@ -334,10 +393,15 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             },
             access_point,
         });
-        if let Some(notice) = identity_startup_notice {
+        let startup_notice = identity_startup_notice.or(profile_startup_notice);
+        let mut pending_startup_notice = identity_startup_notice
+            .is_some()
+            .then_some(profile_startup_notice)
+            .flatten();
+        if let Some(notice) = startup_notice {
             ui_state.show_notice(notice);
         }
-        let mut working_lora_profile = DEFAULT_915_PROFILE;
+        let mut working_lora_profile = lora_profile;
         let mut battery_state = screen::BatteryState::Unknown;
         let mut battery_gauge = screen::BatteryGauge::lipo();
         #[cfg(feature = "wifi-auto")]
@@ -354,7 +418,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         let mut ticks_to_battery: u8 = 0;
         let mut activity = screen::CardActivityTracker::<8>::new();
         let mut notice_until_ms =
-            identity_startup_notice.map(|_| embassy_time::Instant::now().as_millis() + 5_000);
+            startup_notice.map(|_| embassy_time::Instant::now().as_millis() + 5_000);
         let mut oled_awake = true;
         let mut oled_off_at_ms: Option<u64> = None;
         let mut oled_sleep_at_ms: Option<u64> = None;
@@ -428,8 +492,13 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 persistence_notice_visible = false;
             }
             if notice_until_ms.is_some_and(|until| now_ms >= until) {
-                ui_state.clear_notice();
-                notice_until_ms = None;
+                if let Some(notice) = pending_startup_notice.take() {
+                    ui_state.show_notice(notice);
+                    notice_until_ms = Some(now_ms + 5_000);
+                } else {
+                    ui_state.clear_notice();
+                    notice_until_ms = None;
+                }
             }
             if let Some(off_at) = oled_off_at_ms {
                 if oled_awake && now_ms >= off_at {
@@ -642,11 +711,51 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                             ui_state.open_lora_editor(working_lora_profile);
                         }
                         screen::UiAction::SetLoRaProfile(profile) => {
-                            ui_state.show_notice(screen::UiNotice::Saved);
+                            let result = screen::apply_and_persist_radio_profile(
+                                async {
+                                    LORA_CONTROL.apply(profile).await == LoRaApplyOutcome::Applied
+                                },
+                                || async {
+                                    match lora_profile_store.save(profile).await {
+                                        Ok(()) => true,
+                                        Err(error) => {
+                                            log::error!("LoRa profile save failed: {error:?}");
+                                            false
+                                        }
+                                    }
+                                },
+                            )
+                            .await;
+                            if result.applied() {
+                                working_lora_profile = profile;
+                            }
+                            ui_state.show_notice(result.notice());
                             notice_until_ms =
                                 Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
-                            working_lora_profile = profile;
-                            LORA_CONTROL.signal(profile);
+                        }
+                        screen::UiAction::ResetLoRaProfile => {
+                            let result = screen::apply_and_persist_radio_profile(
+                                async {
+                                    LORA_CONTROL.apply(DEFAULT_915_PROFILE).await
+                                        == LoRaApplyOutcome::Applied
+                                },
+                                || async {
+                                    match lora_profile_store.reset().await {
+                                        Ok(()) => true,
+                                        Err(error) => {
+                                            log::error!("LoRa profile reset failed: {error:?}");
+                                            false
+                                        }
+                                    }
+                                },
+                            )
+                            .await;
+                            if result.applied() {
+                                working_lora_profile = DEFAULT_915_PROFILE;
+                            }
+                            ui_state.show_notice(result.notice());
+                            notice_until_ms =
+                                Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
                         }
                         screen::UiAction::SwapRadioMode => {
                             #[cfg(feature = "wifi-auto")]

@@ -320,6 +320,7 @@ pub struct LinkProofParsed {
 pub struct LinkProofVerifyOwed {
     pub link_id: LinkId,
     pub source_interface: InterfaceId,
+    pub received_hops: u8,
     pub responder_encryption: X25519PublicKey,
     pub responder_signing: Ed25519PublicKey,
     pub initiator_secret: X25519SecretKey,
@@ -540,7 +541,7 @@ mod tests {
                                      b3fb123c9e5280a5d08e5c0ebee0b02b7ea57d3f5791a99ab69f9cf102dd5002\
                                      bf18d33e4d3400ea2c4307296b89dd85da180ca81b1590be97f26d34d45cc26f\
                                      2001f4";
-    // Minted from RNS 1.3.5 and revalidated with 1.4.0: the pre-signalling LRPROOF form (signature ‖ encryption key, no signalling bytes) that `Link.validate_proof` still accepts from older peers. A reference `Identity` signed `link_id ‖ pub ‖ sig_pub`, and `Identity.validate` self-checked it before pinning.
+    // Minted from RNS 1.3.5 and revalidated with 1.4.2: the pre-signalling LRPROOF form (signature ‖ encryption key, no signalling bytes) that `Link.validate_proof` still accepts from older peers. A reference `Identity` signed `link_id ‖ pub ‖ sig_pub`, and `Identity.validate` self-checked it before pinning.
     const UNSIGNALLED_PROOF_LINK_ID: &str = "4242aa55c3e1d20f8badf00d5ca1ab1e";
     const UNSIGNALLED_RESPONDER_ENCRYPTION_PUBLIC: &str =
         "07a37cbc142093c8b755dc1b10e86cb426374ad16aa853ed0bdfc0b2b86d1c7c";

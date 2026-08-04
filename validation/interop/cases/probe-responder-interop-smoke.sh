@@ -4,7 +4,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 source "$ROOT/validation/interop/lib/cargo-artifacts.sh"
 PRNSD="$(cargo_debug_binary "$ROOT/prnsd/Cargo.toml" prnsd)"
-PYTHON="${RPC_SMOKE_PYTHON:-$ROOT/validation/.venv/rns-rpc-1.4.0/bin/python}"
+PYTHON="${RPC_SMOKE_PYTHON:-$ROOT/validation/.venv/rns-rpc-1.4.2/bin/python}"
 CLIENT="$ROOT/validation/interop/peers/rns_probe_client.py"
 WORK="$(mktemp -d)"
 SERVER_CONFIG="$WORK/server"
@@ -38,7 +38,7 @@ TRANSPORT_HASH="$($PYTHON "$CLIENT" identity-hash "$SERVER_CONFIG/storage/transp
 
 RESULT="$($PYTHON "$CLIENT" probe "$CLIENT_CONFIG" "$TRANSPORT_HASH" 2>&1)"
 if [[ "$RESULT" == *"PROBE_RESPONDER_OK"* ]]; then
-    echo "PASS: stock RNS 1.4.0 received Prnsd's delivery proof from rnstransport.probe"
+    echo "PASS: stock RNS 1.4.2 received Prnsd's delivery proof from rnstransport.probe"
     echo "$RESULT" | grep "PROBE_RESPONDER_OK"
     exit 0
 fi

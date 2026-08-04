@@ -70,6 +70,8 @@ mod tests {
     fn runtime_health_aggregates_interface_snapshots() {
         let local_client = InterfaceSnapshot {
             id: InterfaceId::from_channel_tag(InterfaceKind::LocalClient, b"app"),
+            mode: crate::interfaces::InterfaceMode::Full,
+            gravity: crate::interfaces::InterfaceGravity::ZERO,
             connection: ConnectionState::Connected,
             failure_reason: None,
             rx_bytes: 10,
@@ -85,6 +87,8 @@ mod tests {
         };
         let wifi_peer = InterfaceSnapshot {
             id: InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, b"peer"),
+            mode: crate::interfaces::InterfaceMode::Full,
+            gravity: crate::interfaces::InterfaceGravity::ZERO,
             connection: ConnectionState::Reconnecting,
             failure_reason: None,
             rx_bytes: 5,

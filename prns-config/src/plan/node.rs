@@ -3,15 +3,18 @@ use std::time::Duration;
 
 use prns_core::identity::IdentityHash;
 use prns_core::interface_discovery::{
-    AutoConnectPolicy, DiscoverySourcePolicy, InterfaceDiscoveryPolicy, DEFAULT_STAMP_COST,
+    AutoConnectPolicy, AutoConnectRoutingPolicy, DiscoverySourcePolicy, InterfaceDiscoveryPolicy,
+    DEFAULT_STAMP_COST,
 };
-use prns_core::interfaces::BitrateBps;
+use prns_core::interfaces::{BitrateBps, InterfaceGravity};
 
 use super::error::{GlobalPlanError, PlanError, PlanningError};
 use super::interface::{
     global_announce_rate, global_common_policy, plan_interface, PlanErrorKind, PlannedInterface,
 };
-use super::reference_globals::{decode_hex, global_bool, global_string, global_u16, global_u64};
+use super::reference_globals::{
+    decode_hex, global_bool, global_i64, global_string, global_u16, global_u64,
+};
 use super::rnode_multi;
 use crate::reference::keys::{
     global as global_key, interface as interface_key, logging as logging_key,
@@ -282,12 +285,16 @@ pub(super) fn build_plan(config: &ReferenceConfig) -> Result<DaemonPlan, Vec<Pla
         global_common_policy(config).map_err(|error| vec![PlanningError::Global(error)])?;
     let announce_rate =
         global_announce_rate(config).map_err(|error| vec![PlanningError::Global(error)])?;
+    let default_gravity = InterfaceGravity::new(
+        global_i64(&config.globals, global_key::DEFAULT_GRAVITY).unwrap_or(0),
+    );
     for interface in &config.interfaces {
         if matches!(interface.params, ReferenceConfigParams::RnodeMulti { .. }) {
             match rnode_multi::plan(
                 interface,
                 common,
                 announce_rate,
+                default_gravity,
                 transport.routing_enabled(),
             ) {
                 Ok(planned) => interfaces.extend(planned),
@@ -304,6 +311,7 @@ pub(super) fn build_plan(config: &ReferenceConfig) -> Result<DaemonPlan, Vec<Pla
             interface,
             common,
             announce_rate,
+            default_gravity,
             transport.routing_enabled(),
         ) {
             Ok(planned) => interfaces.push(planned),
@@ -494,6 +502,13 @@ fn discovery_policy(config: &ReferenceConfig) -> InterfaceDiscoveryPolicy {
             .unwrap_or(DEFAULT_STAMP_COST),
         DiscoverySourcePolicy::from_sources(config.discovery.interface_sources.clone()),
         AutoConnectPolicy::from_maximum(config.discovery.auto_connect_limit.unwrap_or(0)),
+        AutoConnectRoutingPolicy {
+            gravity: InterfaceGravity::new(config.discovery.auto_connect_gravity.unwrap_or(0)),
+            announces_to_internal: config
+                .discovery
+                .auto_connect_announces_to_internal
+                .unwrap_or(false),
+        },
     )
 }
 

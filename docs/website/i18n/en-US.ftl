@@ -1,9 +1,12 @@
 # Navigation
+nav-benchmarks = Benchmarks
 nav-contributing = Contributing
-nav-api = API Reference
+site-early-english-note = Prns is early: the full documentation lives on GitHub and in the source, and is English-only for now.
 
 # Footer
 footer-tagline = Brought to you by KenAKAFrosty and the Personal/Prns team.
+footer-flash = Flash a Hopspot
+footer-playground = Browser playground
 
 # Landing
 # `landing-kicker` is the full eyebrow, used as-is by every non-English locale.
@@ -18,8 +21,9 @@ landing-title = High-performance Reticulum (RNS), built to run on any device.
 # the accent green, matching the OG card. Other locales use landing-title as-is.
 landing-title-lead = High-performance Reticulum (RNS),
 landing-title-accent = built to run on any device.
-landing-subtitle = Built for the performance, stability, and energy efficiency every Reticulum node needs, from a five-dollar microcontroller to a cloud server cluster. One engine and one API, the same on embedded, desktop, mobile, games, and the web.
+landing-subtitle = Built for the performance, stability, and energy efficiency every Reticulum node needs, from a $5 microcontroller to a cloud server cluster. One engine and one API, the same on embedded, desktop, mobile, games, and the web.
 landing-cta-ethos = Find your path in Prns
+landing-cta-standards = Our Standards
 # Pull quote
 landing-quote-label = What we're building toward
 landing-quote-body = Reticulum is the foundational communication infrastructure of a bright future we can have, as long as we all build it. This is the Personal team's effort to put RNS into the hands of more builders, to help realize that future.
@@ -77,7 +81,7 @@ start-daemon-code = Drop-in for stock apps
 start-daemon-target = Run Prnsd
 
 start-embedded-headline = Flash a Hopspot
-start-embedded-body = Pick a supported board, compare radio and battery tradeoffs, then flash a dedicated mesh device.
+start-embedded-body = Pick a supported board, flash it straight from your browser, and have a dedicated mesh device in minutes.
 start-embedded-code = Board matrix
     Web flasher
     Local flash
@@ -100,7 +104,7 @@ landing-platforms-label = Runs on
 landing-platforms-cta = See all →
 platforms-title = Where Prns runs
 platforms-lead = One engine, many homes. This quick view separates runtime platform support from specific Hopspot board support.
-platforms-board-support-link = View board support & bring-up →
+platforms-board-support-link = View Hopspot board support & bring-up →
 
 # Flash a Hopspot page
 flash-back = Platforms
@@ -110,16 +114,11 @@ flash-card-action = Flash
 # Benchmarks page
 benchmarks-kicker = Performance
 benchmarks-title = Benchmarked in the open
-benchmarks-lead = We treat performance as a number, not an adjective. Every figure here comes from a deterministic harness in the repo, measured on real hardware and checked against the RNS reference where the comparison is fair. The numbers are landing as the suite stabilizes; below is the methodology they hold to.
+benchmarks-lead = Every number below comes from the published results in the repo, measured on real hardware by a harness you can run yourself.
 
 # License signal (footer)
 footer-license = Open source. MIT / Apache 2.0.
 footer-trademarks = Third-party logos, trademarks, and product images belong to their respective owners. They are shown only to identify platforms, hardware, and compatibility targets. No endorsement is claimed or implied.
-
-# Contributing page
-contributing-kicker = The bar
-contributing-title = Contributing
-contributing-lead = How to contribute — what we value, the conventions your code follows, and the standard every change clears. For human and automated contributors alike.
 
 # 404
 not-found-title = There's nothing here yet.

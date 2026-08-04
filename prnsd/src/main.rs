@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod cli;
+mod command_context;
 mod daemon;
 mod i2p;
 mod interface_discovery;
@@ -22,7 +23,7 @@ mod utilities;
 
 use std::process::ExitCode;
 
-use prnsd_control::ManagedProcess;
+use prnsd_control::{ForegroundSpec, LogLane, ManagedProcess, ServicePaths};
 
 #[cfg(not(all(feature = "tray", any(target_os = "macos", target_os = "windows"))))]
 #[tokio::main(flavor = "multi_thread")]
@@ -43,12 +44,12 @@ fn main() -> ExitCode {
         Err(exit_code) => return exit_code,
     };
     let command = match command {
-        cli::Command::Run(args) => {
+        cli::Command::Run(args) if !args.service => {
             let managed = match tray::managed_process() {
                 Ok(managed) => managed,
                 Err(exit_code) => return exit_code,
             };
-            tray::run(args, managed);
+            tray::run(args.daemon, managed);
         }
         command => command,
     };
@@ -85,14 +86,14 @@ fn command_from_environment() -> Result<Option<cli::Command>, ExitCode> {
 async fn run_command(command: cli::Command) -> ExitCode {
     match command {
         cli::Command::Run(args) => {
-            let managed = match ManagedProcess::from_environment() {
+            let managed = match run_process_context(&args) {
                 Ok(managed) => managed,
                 Err(error) => {
                     eprintln!("prnsd: {error}");
                     return ExitCode::FAILURE;
                 }
             };
-            match daemon::run(args, managed, None, None).await {
+            match daemon::run(args.daemon, managed, None, None).await {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
                     eprintln!("prnsd: {error}");
@@ -161,5 +162,64 @@ async fn run_command(command: cli::Command) -> ExitCode {
         }
         cli::Command::Stop => managed_service::run(managed_service::Command::Stop),
         cli::Command::Logs => managed_service::run(managed_service::Command::Logs),
+    }
+}
+
+fn run_process_context(args: &cli::RunArgs) -> Result<Option<ManagedProcess>, RunContextError> {
+    if let Some(managed) = ManagedProcess::from_environment().map_err(RunContextError::Service)? {
+        return Ok(Some(managed));
+    }
+    if !args.service && args.daemon.config.is_some() {
+        return Ok(None);
+    }
+    let paths = ServicePaths::discover().map_err(RunContextError::StateDirectory)?;
+    if args.service {
+        let binary = std::env::current_exe().map_err(RunContextError::CurrentExecutable)?;
+        let log_lane = match args.daemon.log_format {
+            cli::LogFormat::Human => LogLane::Human,
+            cli::LogFormat::Json => LogLane::Json,
+        };
+        let managed = ManagedProcess::adopt_foreground(
+            paths,
+            ForegroundSpec {
+                binary: &binary,
+                log_lane,
+                signature: prnsd_control::launch_signature(
+                    args.daemon.command_line(),
+                    std::env::vars_os(),
+                ),
+                version: env!("CARGO_PKG_VERSION"),
+            },
+        )
+        .map_err(RunContextError::Service)?;
+        return Ok(Some(managed));
+    }
+    if let Some(record) = prnsd_control::running(&paths).map_err(RunContextError::Service)? {
+        return Err(RunContextError::ImplicitDuplicate { pid: record.pid });
+    }
+    Ok(None)
+}
+
+#[derive(Debug)]
+enum RunContextError {
+    StateDirectory(prnsd_control::StateDirectoryError),
+    CurrentExecutable(std::io::Error),
+    Service(prnsd_control::ServiceError),
+    ImplicitDuplicate { pid: u32 },
+}
+
+impl std::fmt::Display for RunContextError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::StateDirectory(error) => error.fmt(formatter),
+            Self::CurrentExecutable(error) => {
+                write!(formatter, "could not locate the prnsd executable: {error}")
+            }
+            Self::Service(error) => error.fmt(formatter),
+            Self::ImplicitDuplicate { pid } => write!(
+                formatter,
+                "prnsd is already running (pid {pid}); use the normal operator commands or pass --config DIR for an explicitly isolated instance"
+            ),
+        }
     }
 }

@@ -2,6 +2,7 @@ use alloc::vec::Vec;
 use core::num::NonZeroUsize;
 
 use crate::identity::IdentityHash;
+use crate::interfaces::InterfaceGravity;
 use crate::units::{DurationMillis, InstantMillis};
 
 use super::StampCost;
@@ -21,11 +22,13 @@ impl InterfaceDiscoveryPolicy {
         required_stamp_cost: StampCost,
         sources: DiscoverySourcePolicy,
         auto_connect: AutoConnectPolicy,
+        auto_connect_routing: AutoConnectRoutingPolicy,
     ) -> Self {
         Self::Enabled(EnabledDiscoveryPolicy {
             required_stamp_cost,
             sources,
             auto_connect,
+            auto_connect_routing,
         })
     }
 
@@ -42,6 +45,7 @@ pub struct EnabledDiscoveryPolicy {
     required_stamp_cost: StampCost,
     sources: DiscoverySourcePolicy,
     auto_connect: AutoConnectPolicy,
+    auto_connect_routing: AutoConnectRoutingPolicy,
 }
 
 impl EnabledDiscoveryPolicy {
@@ -56,6 +60,20 @@ impl EnabledDiscoveryPolicy {
     pub const fn auto_connect(&self) -> &AutoConnectPolicy {
         &self.auto_connect
     }
+
+    pub const fn auto_connect_gravity(&self) -> InterfaceGravity {
+        self.auto_connect_routing.gravity
+    }
+
+    pub const fn auto_connect_announces_to_internal(&self) -> bool {
+        self.auto_connect_routing.announces_to_internal
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AutoConnectRoutingPolicy {
+    pub gravity: InterfaceGravity,
+    pub announces_to_internal: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

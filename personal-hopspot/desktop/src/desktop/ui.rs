@@ -649,6 +649,11 @@ pub(super) fn run_window(handles: WindowHandles) {
             *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
             *working_lora_profile = profile;
         }
+        UiAction::ResetLoRaProfile => {
+            ui_state.show_notice(screen::UiNotice::Saved);
+            *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
+            *working_lora_profile = DEFAULT_915_PROFILE;
+        }
         UiAction::SwapRadioMode => {}
         UiAction::OpenDocs => {}
     };
@@ -865,6 +870,8 @@ mod tests {
         screen::snapshots_to_cards(
             &[InterfaceSnapshot {
                 id: InterfaceId::new([0; 8]),
+                mode: personal_rns::interfaces::InterfaceMode::Full,
+                gravity: personal_rns::interfaces::InterfaceGravity::ZERO,
                 connection: ConnectionState::Connected,
                 failure_reason: None,
                 rx_bytes: 0,

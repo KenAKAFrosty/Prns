@@ -117,6 +117,8 @@ pub struct InterfaceOptions {
     #[arg(long, value_name = "BPS")]
     pub bitrate: Option<u64>,
     #[arg(long)]
+    pub gravity: Option<i64>,
+    #[arg(long)]
     pub announce_cap: Option<f64>,
     #[arg(long)]
     pub announce_rate_target: Option<u64>,
@@ -188,6 +190,8 @@ pub struct InterfaceOptions {
     pub recursive_prs: Option<bool>,
     #[arg(long)]
     pub announces_from_internal: Option<bool>,
+    #[arg(long)]
+    pub announces_to_internal: Option<bool>,
     #[arg(long)]
     pub ignore_config_warnings: Option<bool>,
     #[arg(long)]

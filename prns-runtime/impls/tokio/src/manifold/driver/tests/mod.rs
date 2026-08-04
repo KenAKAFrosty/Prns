@@ -5,8 +5,8 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 
 use crate::engine::test_support::{
-    bytes_from_hex, pin_transport_id, TestStorageLayout, RNS_1_4_0_ANNOUNCE,
-    RNS_1_4_0_RATCHETED_ANNOUNCE, TEST_TRANSPORT_ID,
+    bytes_from_hex, pin_transport_id, TestStorageLayout, RNS_1_4_2_ANNOUNCE,
+    RNS_1_4_2_RATCHETED_ANNOUNCE, TEST_TRANSPORT_ID,
 };
 #[cfg(feature = "runtime-metrics")]
 use crate::engine::AnnounceOrigin;
@@ -31,6 +31,7 @@ fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
             egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
         },
         mode: InterfaceMode::Full,
+        gravity: crate::interfaces::InterfaceGravity::ZERO,
         bitrate: BitrateBps::guess(1_000_000_000),
         hardware_mtu: None,
         announce_rate_limit: None,

@@ -45,14 +45,15 @@ pub use coordinator::{
 };
 pub use intake::{
     ingest_discovery_announce, DiscoveredInterface, DiscoveredInterfaceId,
-    DiscoveryDecryptionError, DiscoveryEnvelopeSecurity, DiscoveryIntake, DiscoveryNotApplicable,
-    DiscoveryProvenance, DiscoveryRejection, DiscoveryRejectionKind, InterfaceOrigin,
+    DiscoveryDecryptionError, DiscoveryEnvelopeSecurity, DiscoveryIdentityRole, DiscoveryIntake,
+    DiscoveryNotApplicable, DiscoveryProvenance, DiscoveryRejection, DiscoveryRejectionKind,
+    InterfaceOrigin,
 };
 pub use policy::{
-    discovered_interface_status, AutoConnectPolicy, DiscoveredInterfaceStatus,
-    DiscoverySourceAllowList, DiscoverySourcePolicy, EnabledDiscoveryPolicy,
-    InterfaceDiscoveryPolicy, DISCOVERY_EXPIRES_AFTER, DISCOVERY_STALE_AFTER,
-    DISCOVERY_UNKNOWN_AFTER,
+    discovered_interface_status, AutoConnectPolicy, AutoConnectRoutingPolicy,
+    DiscoveredInterfaceStatus, DiscoverySourceAllowList, DiscoverySourcePolicy,
+    EnabledDiscoveryPolicy, InterfaceDiscoveryPolicy, DISCOVERY_EXPIRES_AFTER,
+    DISCOVERY_STALE_AFTER, DISCOVERY_UNKNOWN_AFTER,
 };
 pub use protocol::{discovery_destination_hash, APP_ASPECTS, APP_NAME, DOTTED_NAME_HASH};
 pub use publication::{

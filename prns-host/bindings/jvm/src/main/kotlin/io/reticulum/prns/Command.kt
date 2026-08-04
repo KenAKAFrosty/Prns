@@ -80,32 +80,6 @@ class Command internal constructor(pointer: Pointer) : AutoCloseable {
         decodeCommandSettlement(result)
     }
 
-    /**
-     * Waits for this command without a coroutine bridge.
-     *
-     * This is the natural Java entry point. Closing the command from another
-     * thread interrupts the native wait.
-     */
-    fun awaitBlocking(): CommandSettlement = waitLock.withLock {
-        val nativePointer = stateLock.withLock {
-            pointer
-                ?: throw StatusException("command", Status.STOPPED)
-        }
-        val result = NativeCommandResult()
-        result.structSize = SizeT(result.size().toLong())
-        result.write()
-        checkedStatus(
-            NativeApi.library.prns_command_wait(
-                nativePointer,
-                -1,
-                result,
-            ),
-            "waitCommand",
-        )
-        result.read()
-        decodeCommandSettlement(result)
-    }
-
     override fun close() {
         val nativePointer = stateLock.withLock {
             val current = pointer
@@ -235,4 +209,5 @@ private fun decodeCommandFailure(
     CommandFailureKind.DEVICE_UNAVAILABLE -> CommandFailureDeviceUnavailable(detail)
     CommandFailureKind.CONNECT_FAILED -> CommandFailureConnectFailed(detail)
     CommandFailureKind.BACKEND_FAILED -> CommandFailureBackendFailed(detail)
+    CommandFailureKind.RESPONSE_TOO_LARGE -> CommandFailureResponseTooLarge
 }

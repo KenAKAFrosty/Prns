@@ -11,7 +11,7 @@ use crate::storage::StorageLayout;
 use crate::wire::{DestinationType, PacketType};
 
 impl<S: StorageLayout> EngineState<S> {
-    /// RNS 1.4.0's link dispatch for `RESOURCE_ICL`. Sealed, and behind the duplicate filter like the advertisement.
+    /// RNS 1.4.2's link dispatch for `RESOURCE_ICL`. Sealed, and behind the duplicate filter like the advertisement.
     pub(crate) fn ingest_resource_cancel<'p>(
         &mut self,
         data: DataPacket<'p>,

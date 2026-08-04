@@ -49,7 +49,7 @@ impl IngestEffects<'_> {
     }
 }
 
-/// RNS 1.4.0 `Transport.packet_filter` drops PLAIN and GROUP data received more than one hop out.
+/// RNS 1.4.2 `Transport.packet_filter` drops PLAIN and GROUP data received more than one hop out.
 pub const NON_TRANSPORTED_DATA_MAX_RECEIVED_HOPS: u8 = 1;
 
 #[derive(Default)]
@@ -67,6 +67,7 @@ pub enum DeferredCrypto {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LinkRttOwed {
     pub link_id: LinkId,
+    pub received_hops: u8,
     pub responder_encryption: X25519PublicKey,
     pub responder_signing: Ed25519PublicKey,
     pub command_id: CommandId,
@@ -98,6 +99,7 @@ pub enum IgnoreReason {
     PermissionDenied,
     RateLimited,
     CapacityExhausted,
+    RequestTooLarge,
     /// The app's declared acceptance policy declined an offer that was well-formed and deliverable.
     StrategyDeclined,
     /// A resource response advertisement has no matching pending request.
@@ -132,6 +134,14 @@ pub enum IngestPacketOutcome<'p> {
         destination: DestinationHash,
         id: PathRequestIdBytes,
     },
+    ForwardBoundaryPathRequest {
+        destination: DestinationHash,
+        id: PathRequestIdBytes,
+    },
+    ForwardLocalClientPathRequest {
+        destination: DestinationHash,
+        id: PathRequestIdBytes,
+    },
     RelayPathRequestToLocalClients {
         destination: DestinationHash,
         id: PathRequestIdBytes,
@@ -157,6 +167,11 @@ pub enum IngestPacketOutcome<'p> {
         request_id: RequestId,
         data: &'p [u8],
     },
+    ResponseTooLarge {
+        id: CommandId,
+        link_id: LinkId,
+        request_id: RequestId,
+    },
     ChannelDataReceived {
         link_id: LinkId,
         message_type: MessageType,
@@ -176,11 +191,16 @@ pub enum IngestPacketOutcome<'p> {
         link_id: LinkId,
         hash: ResourceHash,
     },
-    /// RNS 1.4.0 `ACCEPT_APP` callback point.
+    /// RNS 1.4.2 `ACCEPT_APP` callback point.
     ResourceOffered {
         link_id: LinkId,
         original_hash: ResourceHash,
         accepted: AcceptedResource<'p>,
+    },
+    ResourceTooLarge {
+        link_id: LinkId,
+        hash: ResourceHash,
+        settled_request: Option<CommandId>,
     },
     OwesResourceAssembly {
         link_id: LinkId,

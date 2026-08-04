@@ -90,10 +90,27 @@ internal static partial class Native
         internal StringView Url;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct InterfaceRoutingPolicy
+    {
+        internal nuint StructSize;
+        internal byte HasMode;
+        internal PersonalRns.InterfaceMode Mode;
+        internal byte HasGravity;
+        internal long Gravity;
+        internal byte HasRecursivePathRequests;
+        internal byte RecursivePathRequests;
+        internal byte HasAnnouncesFromInternal;
+        internal byte AnnouncesFromInternal;
+        internal byte HasAnnouncesToInternal;
+        internal byte AnnouncesToInternal;
+    }
+
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
     internal static extern Status prns_host_attach_interface(
         HostHandle host,
         in InterfaceConfig config,
+        nint routing,
         out CommandHandle command
     );
 }

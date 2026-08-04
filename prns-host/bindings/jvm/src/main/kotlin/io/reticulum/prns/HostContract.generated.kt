@@ -5,7 +5,7 @@ import java.math.BigInteger
 object HostContract {
     const val ABI: Int = 1
     const val SCHEMA_VERSION: Int = 1
-    const val PRODUCT_VERSION = "0.3.2"
+    const val PRODUCT_VERSION = "0.3.3"
     const val DESTINATION_HASH_LENGTH = 16
     const val IDENTITY_HASH_LENGTH = 16
     const val INTERFACE_ID_LENGTH = 8
@@ -15,6 +15,8 @@ object HostContract {
     const val REQUEST_PATH_HASH_LENGTH = 16
     const val RESOURCE_HASH_LENGTH = 32
     const val IDENTITY_SECRET_LENGTH = 64
+    const val SAFE_INT_MIN = -9007199254740991L
+    const val SAFE_INT_MAX = 9007199254740991L
     const val SAFE_UINT_MAX = 9007199254740991L
     const val BALANCED_PENDING_COMMANDS = 256
     const val BALANCED_APPLICATION_EVENTS = 1024
@@ -97,6 +99,20 @@ enum class InterfaceKind(val rawValue: Int) {
 
     companion object {
         fun fromRawValue(value: Int): InterfaceKind? = entries.firstOrNull { it.rawValue == value }
+    }
+}
+
+enum class InterfaceMode(val rawValue: Int) {
+    FULL(1),
+    POINT_TO_POINT(2),
+    ACCESS_POINT(3),
+    ROAMING(4),
+    BOUNDARY(5),
+    GATEWAY(6),
+    INTERNAL(7);
+
+    companion object {
+        fun fromRawValue(value: Int): InterfaceMode? = entries.firstOrNull { it.rawValue == value }
     }
 }
 
@@ -318,7 +334,8 @@ enum class CommandFailureKind(val rawValue: Int) {
     PERMISSION_DENIED(37),
     DEVICE_UNAVAILABLE(38),
     CONNECT_FAILED(39),
-    BACKEND_FAILED(40);
+    BACKEND_FAILED(40),
+    RESPONSE_TOO_LARGE(41);
 
     companion object {
         fun fromRawValue(value: Int): CommandFailureKind? = entries.firstOrNull { it.rawValue == value }
@@ -639,6 +656,14 @@ data class MultiRNodeMemberConfig(
     val outgoing: Boolean,
 )
 
+data class InterfaceRoutingPolicy(
+    val mode: InterfaceMode?,
+    val gravity: Long?,
+    val recursivePathRequests: Boolean?,
+    val announcesFromInternal: Boolean?,
+    val announcesToInternal: Boolean?,
+)
+
 data class BackendInfo(
     val backend: BackendKind,
     val capabilities: List<Capability>,
@@ -897,6 +922,7 @@ data class DestinationConfigSingle(
     val name: DestinationName,
     val identity: DestinationIdentityConfig,
     val announceAppData: Bytes?,
+    val maximumRequestBytes: Long?,
     val requestHandlers: List<RequestHandlerConfig>
 ) : DestinationConfig
 
@@ -958,7 +984,8 @@ data class HostCommandRequest(
     val linkId: LinkId,
     val pathHash: RequestPathHash,
     val payload: Bytes,
-    val timeout: ResponseTimeout
+    val timeout: ResponseTimeout,
+    val maximumResponseBytes: Long?
 ) : HostCommand
 
 data class HostCommandRespond(
@@ -998,7 +1025,8 @@ data class HostCommandAllowRequester(
 ) : HostCommand
 
 data class HostCommandAttachInterface(
-    val config: InterfaceConfig
+    val config: InterfaceConfig,
+    val routing: InterfaceRoutingPolicy?
 ) : HostCommand
 
 sealed interface CommandOutcome
@@ -1142,6 +1170,8 @@ data class CommandFailureConnectFailed(
 data class CommandFailureBackendFailed(
     val detail: String
 ) : CommandFailure
+
+data object CommandFailureResponseTooLarge : CommandFailure
 
 sealed interface ApplicationEvent
 
@@ -1444,12 +1474,12 @@ internal interface RawHostProtocol {
     fun hostRequestPath(host: RawHost, destination: DestinationHash): RawCallResult<RawOwned<RawIssuedCommand>>
     fun hostIdentify(host: RawHost, linkId: LinkId, identity: IdentityHash): RawCallResult<RawOwned<RawIssuedCommand>>
     fun hostSendLinkPacket(host: RawHost, linkId: LinkId, payload: Bytes): RawCallResult<RawOwned<RawIssuedCommand>>
-    fun hostRequest(host: RawHost, linkId: LinkId, pathHash: RequestPathHash, payload: Bytes, timeout: ResponseTimeout): RawCallResult<RawOwned<RawIssuedCommand>>
+    fun hostRequest(host: RawHost, linkId: LinkId, pathHash: RequestPathHash, payload: Bytes, timeout: ResponseTimeout, maximumResponseBytes: Long?): RawCallResult<RawOwned<RawIssuedCommand>>
     fun hostRespond(host: RawHost, linkId: LinkId, requestId: RequestId, requestRttMillis: Long, payload: Bytes): RawCallResult<RawOwned<RawIssuedCommand>>
     fun hostSendResource(host: RawHost, linkId: LinkId, payload: Bytes, packedMetadata: Bytes?, compression: ResourceCompression): RawCallResult<RawOwned<RawIssuedCommand>>
     fun hostSetLinkResourceStrategy(host: RawHost, linkId: LinkId, strategy: ResourceStrategy): RawCallResult<RawOwned<RawIssuedCommand>>
     fun hostSetDestinationResourceStrategy(host: RawHost, destination: DestinationHash, strategy: ResourceStrategy): RawCallResult<RawOwned<RawIssuedCommand>>
     fun hostSendChannelMessage(host: RawHost, linkId: LinkId, messageType: Int, payload: Bytes): RawCallResult<RawOwned<RawIssuedCommand>>
     fun hostAllowRequester(host: RawHost, destination: DestinationHash, pathHash: RequestPathHash, identity: IdentityHash): RawCallResult<RawOwned<RawIssuedCommand>>
-    fun hostAttachInterface(host: RawHost, config: InterfaceConfig): RawCallResult<RawOwned<RawIssuedCommand>>
+    fun hostAttachInterface(host: RawHost, config: InterfaceConfig, routing: InterfaceRoutingPolicy?): RawCallResult<RawOwned<RawIssuedCommand>>
 }

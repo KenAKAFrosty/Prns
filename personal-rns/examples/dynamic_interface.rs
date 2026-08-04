@@ -65,6 +65,7 @@ async fn main() {
 fn example_destination() -> PreConfiguredDestination<'static> {
     PreConfiguredDestination::Single {
         resource_strategy: ResourceStrategy::AcceptNone,
+        maximum_request_bytes: Default::default(),
         app_name: "prns-example",
         aspects: &["example", "dynamic-interface"],
         identity: try_generate_identity_secret().expect("identity generation failed"),

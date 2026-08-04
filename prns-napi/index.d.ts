@@ -79,7 +79,7 @@ export declare class PrnsNode {
   attachTcpServer(options: TcpServerOptions): Promise<InterfaceHandle>
   attachTcpClient(options: TcpClientOptions): Promise<InterfaceHandle>
   attachUdp(options: UdpOptions): Promise<InterfaceHandle>
-  attachInterface(config: InterfaceConfigSpec): Promise<InterfaceHandle>
+  attachInterface(config: InterfaceConfigSpec, routing?: InterfaceRoutingPolicySpec | undefined | null): Promise<InterfaceHandle>
   previewValidateInterfaceConfig(spec: InterfaceConfigSpec): string
   attachSharedInstanceServer(options?: SharedInstanceOptions | undefined | null): Promise<InterfaceHandle>
   attachSharedInstanceClient(options?: SharedInstanceOptions | undefined | null): Promise<InterfaceHandle>
@@ -185,6 +185,7 @@ export interface DestinationSpec {
   identity?: IdentitySpec
   useHostIdentity?: boolean
   announceAppData?: Buffer
+  maximumRequestBytes?: number
   proof?: ProofStrategyName
   linkRequests?: LinkRequestPolicyName
   ratchet?: RatchetPolicyName
@@ -322,6 +323,14 @@ export interface InterfaceInventoryInfo {
   interface: InterfaceInfo
 }
 
+export interface InterfaceRoutingPolicySpec {
+  mode?: string
+  gravity?: number
+  recursivePathRequests?: boolean
+  announcesFromInternal?: boolean
+  announcesToInternal?: boolean
+}
+
 export interface LinkInfo {
   linkId: Buffer
   rttMillis: number
@@ -359,6 +368,7 @@ export interface PathInfo {
 export interface RequestOptions {
   /** Request timeout in milliseconds. */
   timeoutMillis?: number
+  maximumResponseBytes?: number
 }
 
 export declare function requestPathHash(path: string): Buffer

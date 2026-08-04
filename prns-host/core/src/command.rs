@@ -2,8 +2,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::{
-    DestinationHash, IdentityHash, InterfaceConfig, InterfaceId, LinkId, PacketHash, RequestId,
-    RequestPathHash,
+    DestinationHash, IdentityHash, InterfaceConfig, InterfaceId, InterfaceRoutingPolicy, LinkId,
+    PacketHash, RequestId, RequestPathHash,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,6 +61,7 @@ pub enum HostCommand {
     },
     AttachInterface {
         config: InterfaceConfig,
+        routing: Option<InterfaceRoutingPolicy>,
     },
     DetachInterface {
         interface: InterfaceId,
@@ -84,6 +85,7 @@ pub enum HostCommand {
         path_hash: RequestPathHash,
         payload: Vec<u8>,
         timeout: ResponseTimeout,
+        maximum_response_bytes: Option<u64>,
     },
     Respond {
         link_id: LinkId,
@@ -200,4 +202,5 @@ pub enum CommandFailure {
     DeviceUnavailable { detail: String },
     ConnectFailed { detail: String },
     BackendFailed { detail: String },
+    ResponseTooLarge,
 }

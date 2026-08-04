@@ -137,6 +137,7 @@ async def persistent_two_node_journey():
             ),
             prns.DestinationIdentityConfigHostIdentity(),
             bytes.fromhex(destination_fixture["announceAppDataHex"]),
+            1_048_576,
             (
                 prns.RequestHandlerConfig(
                     request_fixture["path"],
@@ -201,6 +202,7 @@ async def persistent_two_node_journey():
                     ),
                     request_payload,
                     prns.ResponseTimeoutExact(request_fixture["timeoutMillis"]),
+                    1_048_576,
                 )
             )
             request = await next_matching(
@@ -329,7 +331,14 @@ async def main():
     assert isinstance(resource, prns.CommandFailed)
     assert isinstance(resource.failure, prns.CommandFailureUnknownLink)
     attached = await host.attach_interface(
-        prns.InterfaceConfigTcpClient("127.0.0.1:9", prns.BitrateAuto())
+        prns.InterfaceConfigTcpClient("127.0.0.1:9", prns.BitrateAuto()),
+        prns.InterfaceRoutingPolicy(
+            prns.InterfaceMode.BOUNDARY,
+            -73,
+            True,
+            False,
+            True,
+        ),
     )
     assert isinstance(attached, prns.CommandSucceeded)
     assert isinstance(attached.outcome, prns.CommandOutcomeInterfaceAttached)

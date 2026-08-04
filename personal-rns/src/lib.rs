@@ -104,13 +104,14 @@ pub use prns_runtime_tokio::runtime::{
 pub use prns_runtime_embassy::runtime::{
     EmbeddedFlashPersistence, EmbeddedPersistenceDiagnostic, EmbeddedPersistenceFailure,
     EmbeddedPersistencePolicy, EmbeddedPersistenceRestoreReport, Fleet, PrnsNode, PrnsNodeHandle,
+    SharedNorFlash,
 };
 
 #[cfg(all(feature = "embassy-host", feature = "tokio-host"))]
 pub use prns_runtime_embassy::runtime::{
     EmbeddedFlashPersistence, EmbeddedPersistenceDiagnostic, EmbeddedPersistenceFailure,
     EmbeddedPersistencePolicy, EmbeddedPersistenceRestoreReport, PrnsNode as EmbassyPrnsNode,
-    PrnsNodeHandle as EmbassyPrnsNodeHandle,
+    PrnsNodeHandle as EmbassyPrnsNodeHandle, SharedNorFlash,
 };
 
 #[cfg(all(

@@ -85,6 +85,7 @@ pub(super) fn ignore_reason_name(reason: IgnoreReasonKind) -> &'static str {
         IgnoreReasonKind::CapacityExhausted => "capacity_exhausted",
         IgnoreReasonKind::StrategyDeclined => "strategy_declined",
         IgnoreReasonKind::UnmatchedResponse => "unmatched_response",
+        IgnoreReasonKind::RequestTooLarge => "request_too_large",
         IgnoreReasonKind::IfacRefused => "ifac_refused",
     }
 }
@@ -172,6 +173,7 @@ pub(super) fn runtime_operation_outcome_name(outcome: RuntimeOperationOutcome) -
         RuntimeOperationOutcome::DependencyFailed => "dependency_failed",
         RuntimeOperationOutcome::Backpressure => "backpressure",
         RuntimeOperationOutcome::Untrackable => "untrackable",
+        RuntimeOperationOutcome::ResponseTooLarge => "response_too_large",
     }
 }
 

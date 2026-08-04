@@ -92,6 +92,7 @@ pub enum DiscoveryDecryptionError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiscoveryRejectionKind {
     UnauthorizedSource,
+    BlackholedIdentity,
     MalformedEnvelope,
     Decryption,
     StampBelowCost,
@@ -103,6 +104,10 @@ pub enum DiscoveryRejectionKind {
 pub enum DiscoveryRejection {
     UnauthorizedSource {
         source: IdentityHash,
+    },
+    BlackholedIdentity {
+        identity: IdentityHash,
+        role: DiscoveryIdentityRole,
     },
     MalformedEnvelope(DiscoveryEnvelopeError),
     Decryption(DiscoveryDecryptionError),
@@ -120,6 +125,7 @@ impl DiscoveryRejection {
     pub const fn kind(&self) -> DiscoveryRejectionKind {
         match self {
             Self::UnauthorizedSource { .. } => DiscoveryRejectionKind::UnauthorizedSource,
+            Self::BlackholedIdentity { .. } => DiscoveryRejectionKind::BlackholedIdentity,
             Self::MalformedEnvelope(_) => DiscoveryRejectionKind::MalformedEnvelope,
             Self::Decryption(_) => DiscoveryRejectionKind::Decryption,
             Self::StampBelowCost { .. } => DiscoveryRejectionKind::StampBelowCost,
@@ -127,6 +133,12 @@ impl DiscoveryRejection {
             Self::InvalidReachableOn { .. } => DiscoveryRejectionKind::InvalidReachableOn,
         }
     }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum DiscoveryIdentityRole {
+    Announcing,
+    AdvertisedTransport,
 }
 
 #[derive(Debug, PartialEq)]

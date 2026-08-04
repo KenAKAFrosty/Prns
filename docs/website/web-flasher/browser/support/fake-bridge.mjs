@@ -2,6 +2,7 @@ export async function installFakeBridge(page, overrides = {}) {
   const configuration = {
     supported: true,
     supportDetectionFailure: false,
+    androidPlatform: null,
     failureCode: null,
     pauseAtWriting: false,
     preparationProtocolViolation: false,
@@ -42,6 +43,20 @@ export async function installFakeBridge(page, overrides = {}) {
           configurable: true,
           value: config.supported ? { requestPort: async () => ({}) } : undefined,
         });
+
+    if (config.androidPlatform) {
+      Object.defineProperty(navigator, "userAgentData", {
+        configurable: true,
+        value: config.androidPlatform === "client-hints" ? { platform: "Android" } : undefined,
+      });
+      if (config.androidPlatform === "legacy-ua") {
+        Object.defineProperty(navigator, "userAgent", {
+          configurable: true,
+          value:
+            "Mozilla/5.0 (Linux; Android 16; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36",
+        });
+      }
+    }
 
     const navigationGuard = (event) => {
       if (!state.active) return;

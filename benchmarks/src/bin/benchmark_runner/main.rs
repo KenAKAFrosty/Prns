@@ -13,7 +13,7 @@ use std::time::Duration;
 use benchmarks::{
     energy_unavailable_hint, load_host, load_manifest, load_or_create_submitter_id, scenario_dir,
     write_rows, Axis, ConformanceRule, DeviceId, PowerMeter, ResultRow, ScenarioManifest,
-    ScenarioTopology, Subject, SubmitterId, RESULT_SCHEMA_VERSION,
+    ScenarioTopology, Subject, SubmitterId, REFERENCE_IMPLEMENTATION, RESULT_SCHEMA_VERSION,
 };
 use personal_rns::interfaces::{hardware_mtu_for_bitrate, tcp};
 
@@ -153,7 +153,7 @@ fn expected_relay_tcp_policy(manifest: &ScenarioManifest, relay_slug: &str) -> R
         .tcp_bitrate_bps
         .unwrap_or_else(|| match relay_slug {
             "personal-rns" => tcp::TCP_BITRATE_ESTIMATE.get(),
-            "rns-1.4.0-compiled" => 10_000_000,
+            REFERENCE_IMPLEMENTATION => 10_000_000,
             other => panic!("unknown relay implementation {other:?}"),
         });
     RelayTcpPolicy {
@@ -395,7 +395,7 @@ mod tests {
         expected_relay_tcp_policy, relay_tcp_policy, result_metric, MeasurementPhase, PhaseTracker,
         RelayTcpPolicy,
     };
-    use benchmarks::{load_manifest, ScenarioId};
+    use benchmarks::{load_manifest, ScenarioId, REFERENCE_IMPLEMENTATION};
 
     #[test]
     fn measurement_barrier_has_one_valid_phase_order() {
@@ -441,7 +441,7 @@ mod tests {
             }
         );
         assert_eq!(
-            expected_relay_tcp_policy(&practical, "rns-1.4.0-compiled"),
+            expected_relay_tcp_policy(&practical, REFERENCE_IMPLEMENTATION),
             RelayTcpPolicy {
                 bitrate_bps: 10_000_000,
                 mtu_bytes: 8_192,
@@ -450,7 +450,7 @@ mod tests {
         let unleashed =
             load_manifest(ScenarioId::TransportResourceThroughputUnleashed).expect("manifest");
         assert_eq!(
-            expected_relay_tcp_policy(&unleashed, "rns-1.4.0-compiled"),
+            expected_relay_tcp_policy(&unleashed, REFERENCE_IMPLEMENTATION),
             RelayTcpPolicy {
                 bitrate_bps: 1_000_000_000,
                 mtu_bytes: 524_288,

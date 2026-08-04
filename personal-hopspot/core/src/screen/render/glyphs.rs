@@ -1,4 +1,4 @@
-use embedded_graphics::mono_font::ascii::{FONT_5X8, FONT_9X15_BOLD};
+use embedded_graphics::mono_font::iso_8859_1::{FONT_5X8, FONT_9X15_BOLD};
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;

@@ -1,6 +1,7 @@
 #[derive(Clone, Copy, PartialEq)]
 pub enum Tier {
     Shipping,
+    SdkPreview,
     Flashable,
     BringUp,
     Roadmap,
@@ -10,6 +11,7 @@ impl Tier {
     pub fn chip_badge(self) -> Option<&'static str> {
         match self {
             Tier::Shipping => None,
+            Tier::SdkPreview => Some("SDK preview"),
             Tier::Flashable => Some("flashable"),
             Tier::BringUp => Some("bring-up"),
             Tier::Roadmap => Some("roadmap"),
@@ -22,7 +24,7 @@ impl Tier {
 
     pub fn flash_card_class(self) -> &'static str {
         match self {
-            Tier::Shipping => "flash-board-card--runtime",
+            Tier::Shipping | Tier::SdkPreview => "flash-board-card--runtime",
             Tier::Flashable => "flash-board-card--flashable",
             Tier::BringUp => "flash-board-card--bringup",
             Tier::Roadmap => "flash-board-card--roadmap",
@@ -47,10 +49,10 @@ impl Group {
         match self {
             Group::Desktop => "Desktop",
             Group::Mobile => "Mobile",
-            Group::Microcontroller => "Microcontrollers",
+            Group::Microcontroller => "Microcontrollers & radios",
             Group::SingleBoardComputer => "Single-board computers",
             Group::Web => "Web & browsers",
-            Group::Server => "Servers & edge",
+            Group::Server => "Web servers & edge",
             Group::Language => "Languages & bindings",
             Group::GameEngine => "Game engines",
         }
@@ -387,7 +389,7 @@ pub const PLATFORMS: &[Platform] = &[
     Platform {
         name: "WebAssembly",
         group: Group::Web,
-        tier: Tier::BringUp,
+        tier: Tier::Shipping,
         icon: Some("webassembly"),
     },
     Platform {
@@ -399,31 +401,31 @@ pub const PLATFORMS: &[Platform] = &[
     Platform {
         name: "Chrome",
         group: Group::Web,
-        tier: Tier::BringUp,
+        tier: Tier::Shipping,
         icon: Some("googlechrome"),
     },
     Platform {
         name: "Firefox",
         group: Group::Web,
-        tier: Tier::BringUp,
+        tier: Tier::Shipping,
         icon: Some("firefoxbrowser"),
     },
     Platform {
         name: "Safari",
         group: Group::Web,
-        tier: Tier::BringUp,
+        tier: Tier::Shipping,
         icon: Some("safari"),
     },
     Platform {
         name: "Node",
         group: Group::Server,
-        tier: Tier::BringUp,
+        tier: Tier::Shipping,
         icon: Some("nodedotjs"),
     },
     Platform {
         name: "Bun",
         group: Group::Server,
-        tier: Tier::BringUp,
+        tier: Tier::Shipping,
         icon: Some("bun"),
     },
     Platform {
@@ -459,55 +461,55 @@ pub const PLATFORMS: &[Platform] = &[
     Platform {
         name: "Kotlin",
         group: Group::Language,
-        tier: Tier::BringUp,
+        tier: Tier::SdkPreview,
         icon: Some("kotlin"),
     },
     Platform {
         name: "Swift",
         group: Group::Language,
-        tier: Tier::BringUp,
+        tier: Tier::SdkPreview,
         icon: Some("swift"),
     },
     Platform {
         name: "Python",
         group: Group::Language,
-        tier: Tier::BringUp,
+        tier: Tier::SdkPreview,
         icon: Some("python"),
     },
     Platform {
         name: "Go",
         group: Group::Language,
-        tier: Tier::BringUp,
+        tier: Tier::SdkPreview,
         icon: Some("go"),
     },
     Platform {
         name: "Julia",
         group: Group::Language,
-        tier: Tier::BringUp,
+        tier: Tier::SdkPreview,
         icon: Some("julia"),
     },
     Platform {
         name: "Java",
         group: Group::Language,
-        tier: Tier::BringUp,
+        tier: Tier::SdkPreview,
         icon: Some("openjdk"),
     },
     Platform {
         name: ".NET",
         group: Group::Language,
-        tier: Tier::BringUp,
+        tier: Tier::SdkPreview,
         icon: Some("dotnet"),
     },
     Platform {
         name: "C",
         group: Group::Language,
-        tier: Tier::BringUp,
+        tier: Tier::SdkPreview,
         icon: Some("c"),
     },
     Platform {
         name: "C++",
         group: Group::Language,
-        tier: Tier::BringUp,
+        tier: Tier::SdkPreview,
         icon: Some("cplusplus"),
     },
     Platform {
@@ -600,6 +602,34 @@ pub const LANDING_PLATFORM_CHIPS: &[LandingPlatformChip] = &[
         icon: Some("swift"),
     },
     LandingPlatformChip {
+        name: "Python",
+        icon: Some("python"),
+    },
+    LandingPlatformChip {
+        name: "Go",
+        icon: Some("go"),
+    },
+    LandingPlatformChip {
+        name: "Java",
+        icon: Some("openjdk"),
+    },
+    LandingPlatformChip {
+        name: ".NET",
+        icon: Some("dotnet"),
+    },
+    LandingPlatformChip {
+        name: "Julia",
+        icon: Some("julia"),
+    },
+    LandingPlatformChip {
+        name: "C",
+        icon: Some("c"),
+    },
+    LandingPlatformChip {
+        name: "C++",
+        icon: Some("cplusplus"),
+    },
+    LandingPlatformChip {
         name: "WebAssembly",
         icon: Some("webassembly"),
     },
@@ -661,15 +691,15 @@ mod tests {
         let expected = [
             ("Rust", Tier::Shipping),
             ("TypeScript", Tier::Shipping),
-            ("Kotlin", Tier::BringUp),
-            ("Swift", Tier::BringUp),
-            ("Python", Tier::BringUp),
-            ("Go", Tier::BringUp),
-            ("Java", Tier::BringUp),
-            (".NET", Tier::BringUp),
-            ("Julia", Tier::BringUp),
-            ("C", Tier::BringUp),
-            ("C++", Tier::BringUp),
+            ("Kotlin", Tier::SdkPreview),
+            ("Swift", Tier::SdkPreview),
+            ("Python", Tier::SdkPreview),
+            ("Go", Tier::SdkPreview),
+            ("Java", Tier::SdkPreview),
+            (".NET", Tier::SdkPreview),
+            ("Julia", Tier::SdkPreview),
+            ("C", Tier::SdkPreview),
+            ("C++", Tier::SdkPreview),
             ("Ruby", Tier::Roadmap),
             ("Zig", Tier::Roadmap),
         ];

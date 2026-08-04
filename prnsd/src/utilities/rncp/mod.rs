@@ -154,7 +154,7 @@ fn respond_fetch(
 pub async fn run(args: RncpArgs) -> Result<(), RncpError> {
     if args.version {
         println!(
-            "prnsd cp {} (RNS 1.4.0 compatibility)",
+            "prnsd cp {} (RNS 1.4.2 compatibility)",
             env!("CARGO_PKG_VERSION")
         );
         return Ok(());
@@ -486,6 +486,7 @@ where
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
             resource_strategy: ResourceStrategy::AcceptIf,
+            maximum_request_bytes: Default::default(),
             request_endpoints: ServeMyRequestEndpoints::Yes,
         }],
         app_state: ListenerState {

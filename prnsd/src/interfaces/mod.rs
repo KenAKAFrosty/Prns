@@ -1,4 +1,5 @@
 pub(crate) mod arguments;
+mod capabilities;
 mod error;
 mod guided;
 mod options;
@@ -16,7 +17,7 @@ use prns_config::editing::{
     InterfaceName, InterfaceSetting, InterfaceSettingChange, InterfaceSettingKey,
     InterfaceSettingValue, SecretDisplay,
 };
-use prns_config::{discover, parse_and_plan_named, ConfigFix, InterfaceKind};
+use prns_config::{parse_and_plan_named, ConfigFix, InterfaceKind};
 use prnsd_control::{
     config_digest, request_reload, running as managed_running, ReloadResult, ServicePaths,
     ServiceState,
@@ -715,13 +716,24 @@ fn mutate_loaded(
         false
     };
     if should_apply {
-        let result = apply_path(receipt.path());
-        if result.is_ok() {
-            if let Some(session) = session.as_mut() {
-                session.applied(digest);
+        match apply_path(receipt.path()) {
+            Ok(code) => {
+                if let Some(session) = session.as_mut() {
+                    session.applied(digest);
+                }
+                Ok(code)
             }
+            Err(apply) => match receipt.rollback() {
+                Ok(()) => {
+                    println!("Apply failed; the saved configuration was restored.");
+                    Err(apply)
+                }
+                Err(rollback) => Err(InterfacesError::ConfigRollback {
+                    apply: Box::new(apply),
+                    rollback,
+                }),
+            },
         }
-        result
     } else {
         Ok(0)
     }
@@ -941,7 +953,8 @@ fn guided_interface(
 }
 
 fn load(config: Option<&Path>) -> Result<ConfigFile, InterfacesError> {
-    let discovered = discover(config).map_err(InterfacesError::Discovery)?;
+    let discovered =
+        crate::command_context::discover(config).map_err(InterfacesError::CommandContext)?;
     let path = discovered
         .config
         .unwrap_or_else(|| discovered.dir.join("config"));
@@ -964,28 +977,29 @@ fn required_name(
 fn prompt_kind() -> Result<InterfaceKind, InterfacesError> {
     println!();
     println!("Interface types");
-    for (index, canonical) in InterfaceKind::CANONICAL_NAMES.iter().enumerate() {
-        if let Some(kind) = InterfaceKind::parse(canonical) {
-            println!(
-                "  {:>2}. {:<24} {}",
-                index + 1,
-                friendly_kind(kind),
-                canonical
-            );
-        }
+    let available = capabilities::available_kinds().collect::<Vec<_>>();
+    for (index, kind) in available.iter().enumerate() {
+        println!(
+            "  {:>2}. {:<24} {}",
+            index + 1,
+            friendly_kind(*kind),
+            kind.canonical_name()
+        );
     }
     let value = prompt("Type")?;
     if let Ok(index) = value.parse::<usize>() {
-        if let Some(kind) = InterfaceKind::CANONICAL_NAMES
-            .get(index.saturating_sub(1))
-            .and_then(|canonical| InterfaceKind::parse(canonical))
-        {
-            return Ok(kind);
+        if let Some(kind) = available.get(index.saturating_sub(1)) {
+            return Ok(*kind);
         }
     }
-    InterfaceKind::parse_cli(&value).ok_or(InterfacesError::Usage(
+    let kind = InterfaceKind::parse_cli(&value).ok_or(InterfacesError::Usage(
         InterfacesUsageError::UnknownInterfaceType(value),
-    ))
+    ))?;
+    if capabilities::available(kind) {
+        Ok(kind)
+    } else {
+        Err(InterfacesError::UnavailableInBuild(kind))
+    }
 }
 
 fn prompt(label: &str) -> Result<String, InterfacesError> {

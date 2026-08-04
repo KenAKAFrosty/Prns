@@ -31,16 +31,40 @@ pub(super) enum DestructiveConfirmation {
     Confirmed,
 }
 
+pub(super) const WEB_SERIAL_PROBE_SUPPORTED: &str = "supported";
+pub(super) const WEB_SERIAL_PROBE_ANDROID_BLUETOOTH_ONLY: &str = "android-bluetooth-only";
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum WebSerialCapability {
     Checking,
     Supported,
+    AndroidBluetoothOnly,
     Unavailable,
 }
 
 impl WebSerialCapability {
     pub(super) const fn permits_esp_flash(self) -> bool {
         matches!(self, Self::Supported)
+    }
+
+    pub(super) fn from_probe(probe: &str) -> Self {
+        match probe {
+            WEB_SERIAL_PROBE_SUPPORTED => Self::Supported,
+            WEB_SERIAL_PROBE_ANDROID_BLUETOOTH_ONLY => Self::AndroidBluetoothOnly,
+            _ => Self::Unavailable,
+        }
+    }
+
+    pub(super) const fn blocked_explanation(self) -> Option<&'static str> {
+        match self {
+            Self::Checking | Self::Supported => None,
+            Self::AndroidBluetoothOnly => Some(
+                "Web Serial on this Android browser reaches Bluetooth serial devices only, so a USB-connected board never appears in the port picker. Use desktop Chrome or Edge, or the standalone CLI.",
+            ),
+            Self::Unavailable => Some(
+                "Web Serial is unavailable in this browser or context. Open this page in current Chrome or Edge over HTTPS, or use the standalone CLI.",
+            ),
+        }
     }
 }
 
@@ -184,18 +208,15 @@ pub(super) const fn guided_steps(
         ],
         (BoardFlashTarget::EspSerial { .. }, InstallMode::PreserveData) => &[
             "Confirm the exact board pictured above.",
-            "Prepare the release; all sparse parts are downloaded and SHA-256 verified before USB access.",
-            "Connect and choose the board's USB serial port.",
-            "The chip family and physical flash capacity are checked before any write begins.",
-            "Every part receives device-side MD5 verification before reset.",
+            "Prepare the release. Every part is downloaded and verified before the flasher touches your device.",
+            "Connect with a USB data cable and choose the board's serial port.",
+            "Flash. Each part is verified again on the device, then the board restarts on its own.",
         ],
         (BoardFlashTarget::EspSerial { .. }, InstallMode::EraseAll) => &[
-            "Confirm the exact board and the separate full-chip erase warning.",
-            "Prepare the release; all replacement parts are downloaded and SHA-256 verified before USB access.",
-            "Connect and choose the board's USB serial port.",
-            "The chip family and physical flash capacity are checked before erasure begins.",
-            "Erase the entire flash, then write and device-verify every replacement part.",
-            "Report success only after USB disconnect and re-enumeration prove the final reset.",
+            "Confirm the exact board and the full-chip erase warning.",
+            "Prepare the release. Every replacement part is downloaded and verified before the flasher touches your device.",
+            "Connect with a USB data cable and choose the board's serial port.",
+            "Erase and flash. Success is reported only after every part verifies on the device and the board restarts on its own.",
         ],
     }
 }
@@ -309,6 +330,7 @@ mod tests {
     #[test]
     fn web_serial_capability_fails_closed_until_support_is_proven() {
         assert!(!WebSerialCapability::Checking.permits_esp_flash());
+        assert!(!WebSerialCapability::AndroidBluetoothOnly.permits_esp_flash());
         assert!(!WebSerialCapability::Unavailable.permits_esp_flash());
         assert!(WebSerialCapability::Supported.permits_esp_flash());
     }
@@ -323,5 +345,48 @@ mod tests {
         assert!(WifiAction::for_install_mode(InstallMode::EraseAll) == WifiAction::Clear);
         assert_eq!(InstallMode::PreserveData.wire(), "preserve-data");
         assert_eq!(InstallMode::EraseAll.wire(), "erase-all");
+    }
+
+    #[test]
+    fn web_serial_probe_spellings_parse_and_unknown_probes_fail_closed() {
+        assert!(matches!(
+            WebSerialCapability::from_probe(WEB_SERIAL_PROBE_SUPPORTED),
+            WebSerialCapability::Supported
+        ));
+        assert!(matches!(
+            WebSerialCapability::from_probe(WEB_SERIAL_PROBE_ANDROID_BLUETOOTH_ONLY),
+            WebSerialCapability::AndroidBluetoothOnly
+        ));
+        assert!(matches!(
+            WebSerialCapability::from_probe("invented"),
+            WebSerialCapability::Unavailable
+        ));
+        assert!(matches!(
+            WebSerialCapability::from_probe(""),
+            WebSerialCapability::Unavailable
+        ));
+    }
+
+    #[test]
+    fn blocked_capabilities_explain_themselves_and_working_states_stay_silent() {
+        assert!(WebSerialCapability::Checking
+            .blocked_explanation()
+            .is_none());
+        assert!(WebSerialCapability::Supported
+            .blocked_explanation()
+            .is_none());
+
+        let android = WebSerialCapability::AndroidBluetoothOnly
+            .blocked_explanation()
+            .expect("the Android capability explains itself");
+        assert!(android.contains("Bluetooth serial devices only"));
+        assert!(android.contains("USB"));
+        assert!(android.contains("CLI"));
+
+        let unavailable = WebSerialCapability::Unavailable
+            .blocked_explanation()
+            .expect("the unavailable capability explains itself");
+        assert!(unavailable.contains("Chrome or Edge"));
+        assert!(unavailable.contains("CLI"));
     }
 }

@@ -6,7 +6,7 @@ from typing import Any, Generic, Protocol, TypeAlias, TypeVar
 
 HOST_CONTRACT_ABI = 1
 SCHEMA_VERSION = 1
-PRODUCT_VERSION = "0.3.2"
+PRODUCT_VERSION = "0.3.3"
 DESTINATION_HASH_LENGTH = 16
 IDENTITY_HASH_LENGTH = 16
 INTERFACE_ID_LENGTH = 8
@@ -16,6 +16,8 @@ REQUEST_ID_LENGTH = 16
 REQUEST_PATH_HASH_LENGTH = 16
 RESOURCE_HASH_LENGTH = 32
 IDENTITY_SECRET_LENGTH = 64
+SAFE_INT_MIN = -9007199254740991
+SAFE_INT_MAX = 9007199254740991
 SAFE_UINT_MAX = 9007199254740991
 BALANCED_PENDING_COMMANDS = 256
 BALANCED_APPLICATION_EVENTS = 1024
@@ -79,6 +81,15 @@ class InterfaceKind(IntEnum):
     WEB_SOCKET_CLIENT = 17
     WEB_SOCKET_SERVER = 18
     BROWSER_RENDEZVOUS = 19
+
+class InterfaceMode(IntEnum):
+    FULL = 1
+    POINT_TO_POINT = 2
+    ACCESS_POINT = 3
+    ROAMING = 4
+    BOUNDARY = 5
+    GATEWAY = 6
+    INTERNAL = 7
 
 class InterfaceHealth(IntEnum):
     INITIALIZING = 1
@@ -214,6 +225,7 @@ class CommandFailureKind(IntEnum):
     DEVICE_UNAVAILABLE = 38
     CONNECT_FAILED = 39
     BACKEND_FAILED = 40
+    RESPONSE_TOO_LARGE = 41
 
 class DeliveryEvidenceKind(IntEnum):
     EXPLICIT_PROOF = 1
@@ -465,6 +477,14 @@ class MultiRNodeMemberConfig:
     radio: RNodeRadioConfig
     flow_control: bool
     outgoing: bool
+
+@dataclass(frozen=True, slots=True)
+class InterfaceRoutingPolicy:
+    mode: InterfaceMode | None
+    gravity: int | None
+    recursive_path_requests: bool | None
+    announces_from_internal: bool | None
+    announces_to_internal: bool | None
 
 @dataclass(frozen=True, slots=True)
 class BackendInfo:
@@ -720,6 +740,7 @@ class DestinationConfigSingle:
     name: DestinationName
     identity: DestinationIdentityConfig
     announce_app_data: bytes | None
+    maximum_request_bytes: int | None
     request_handlers: tuple[RequestHandlerConfig, ...]
 
 @dataclass(frozen=True, slots=True)
@@ -780,6 +801,7 @@ class HostCommandRequest:
     path_hash: RequestPathHash
     payload: bytes
     timeout: ResponseTimeout
+    maximum_response_bytes: int | None
 
 @dataclass(frozen=True, slots=True)
 class HostCommandRespond:
@@ -820,6 +842,7 @@ class HostCommandAllowRequester:
 @dataclass(frozen=True, slots=True)
 class HostCommandAttachInterface:
     config: InterfaceConfig
+    routing: InterfaceRoutingPolicy | None
 
 @dataclass(frozen=True, slots=True)
 class CommandOutcomeAnnounced:
@@ -1038,6 +1061,10 @@ class CommandFailureBackendFailed:
     detail: str
 
 @dataclass(frozen=True, slots=True)
+class CommandFailureResponseTooLarge:
+    pass
+
+@dataclass(frozen=True, slots=True)
 class ApplicationEventSingleDelivery:
     destination: DestinationHash
     source_interface: InterfaceId
@@ -1213,7 +1240,7 @@ ResourceStrategy: TypeAlias = ResourceStrategyRefuse | ResourceStrategyAccept
 DestinationConfig: TypeAlias = DestinationConfigPlain | DestinationConfigSingle
 HostCommand: TypeAlias = HostCommandAnnounce | HostCommandSendSinglePacket | HostCommandCloseLink | HostCommandAttachTcpServer | HostCommandAttachTcpClient | HostCommandAttachUdp | HostCommandDetachInterface | HostCommandEstablishLink | HostCommandRequestPath | HostCommandIdentify | HostCommandSendLinkPacket | HostCommandRequest | HostCommandRespond | HostCommandSendResource | HostCommandSetLinkResourceStrategy | HostCommandSetDestinationResourceStrategy | HostCommandSendChannelMessage | HostCommandAllowRequester | HostCommandAttachInterface
 CommandOutcome: TypeAlias = CommandOutcomeAnnounced | CommandOutcomePacketDelivered | CommandOutcomeLinkCloseQueued | CommandOutcomeInterfaceAttached | CommandOutcomeInterfaceDetached | CommandOutcomeLinkEstablished | CommandOutcomePathDiscovered | CommandOutcomeIdentified | CommandOutcomeResponseReceived | CommandOutcomeResponseSent | CommandOutcomeResourceSent | CommandOutcomeResourceStrategySet | CommandOutcomeRequesterAllowed
-CommandFailure: TypeAlias = CommandFailureNodeStopped | CommandFailureBusy | CommandFailurePayloadTooLarge | CommandFailureUnknownDestination | CommandFailureNotSingleDestination | CommandFailureAnnounceAppDataTooLong | CommandFailureUnknownInterface | CommandFailureNoRouteToDestination | CommandFailureNotDirectlyReachable | CommandFailurePacketCulled | CommandFailureDeliveryTimedOut | CommandFailureInvalidBitrate | CommandFailureBindFailed | CommandFailureWriteFailed | CommandFailureUnsupportedByBackend | CommandFailureUnknownLink | CommandFailureLinkNotActive | CommandFailureEntropyUnavailable | CommandFailureNotLinkInitiator | CommandFailureIdentityNotHeld | CommandFailureUnknownRequestHandler | CommandFailureRequestPolicyNotAllowList | CommandFailureRequestAllowListFull | CommandFailureLinkBusy | CommandFailureResourceTableFull | CommandFailureResourceMetadataTooLarge | CommandFailureResourceRejectedByPeer | CommandFailureResourceSequencingFailed | CommandFailureResourcePredecessorFailed | CommandFailureChannelWindowFull | CommandFailureChannelUntrackable | CommandFailureInvalidChannelMessageType | CommandFailureInvalidConfiguration | CommandFailureResourceUploadCancelled | CommandFailureResourceEarlyEof | CommandFailureResourceLengthOverrun | CommandFailurePermissionDenied | CommandFailureDeviceUnavailable | CommandFailureConnectFailed | CommandFailureBackendFailed
+CommandFailure: TypeAlias = CommandFailureNodeStopped | CommandFailureBusy | CommandFailurePayloadTooLarge | CommandFailureUnknownDestination | CommandFailureNotSingleDestination | CommandFailureAnnounceAppDataTooLong | CommandFailureUnknownInterface | CommandFailureNoRouteToDestination | CommandFailureNotDirectlyReachable | CommandFailurePacketCulled | CommandFailureDeliveryTimedOut | CommandFailureInvalidBitrate | CommandFailureBindFailed | CommandFailureWriteFailed | CommandFailureUnsupportedByBackend | CommandFailureUnknownLink | CommandFailureLinkNotActive | CommandFailureEntropyUnavailable | CommandFailureNotLinkInitiator | CommandFailureIdentityNotHeld | CommandFailureUnknownRequestHandler | CommandFailureRequestPolicyNotAllowList | CommandFailureRequestAllowListFull | CommandFailureLinkBusy | CommandFailureResourceTableFull | CommandFailureResourceMetadataTooLarge | CommandFailureResourceRejectedByPeer | CommandFailureResourceSequencingFailed | CommandFailureResourcePredecessorFailed | CommandFailureChannelWindowFull | CommandFailureChannelUntrackable | CommandFailureInvalidChannelMessageType | CommandFailureInvalidConfiguration | CommandFailureResourceUploadCancelled | CommandFailureResourceEarlyEof | CommandFailureResourceLengthOverrun | CommandFailurePermissionDenied | CommandFailureDeviceUnavailable | CommandFailureConnectFailed | CommandFailureBackendFailed | CommandFailureResponseTooLarge
 ApplicationEvent: TypeAlias = ApplicationEventSingleDelivery | ApplicationEventRequest | ApplicationEventResponse | ApplicationEventResponseSegment | ApplicationEventResourceAvailable | ApplicationEventResourceSegment | ApplicationEventResourceNeedsDecompression | ApplicationEventChannelMessage
 DiagnosticEvent: TypeAlias = DiagnosticEventAnnounceHeard | DiagnosticEventLinkEstablished | DiagnosticEventPeerIdentified | DiagnosticEventLinkClosed | DiagnosticEventLinkInterfaceMismatch | DiagnosticEventResourceAssembled | DiagnosticEventResourceFailed | DiagnosticEventResourceSendProgress | DiagnosticEventSelfRatchetRotated | DiagnosticEventAnnounceHeldDropped | DiagnosticEventDelivered | DiagnosticEventRouteExpired | DiagnosticEventRouteEvicted | DiagnosticEventRouteInterfaceGone | DiagnosticEventRouteDropped | DiagnosticEventBackendDiagnostic | DiagnosticEventDiagnosticsDropped | DiagnosticEventPersistenceRestored | DiagnosticEventPersistenceFlushed | DiagnosticEventPersistenceFlushFailed
 
@@ -1379,11 +1406,11 @@ class _RawHostProtocol(Protocol):
     def host_request_path(self, host: _RawHost, destination: DestinationHash) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
     def host_identify(self, host: _RawHost, link_id: LinkId, identity: IdentityHash) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
     def host_send_link_packet(self, host: _RawHost, link_id: LinkId, payload: bytes) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
-    def host_request(self, host: _RawHost, link_id: LinkId, path_hash: RequestPathHash, payload: bytes, timeout: ResponseTimeout) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
+    def host_request(self, host: _RawHost, link_id: LinkId, path_hash: RequestPathHash, payload: bytes, timeout: ResponseTimeout, maximum_response_bytes: int | None) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
     def host_respond(self, host: _RawHost, link_id: LinkId, request_id: RequestId, request_rtt_millis: int, payload: bytes) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
     def host_send_resource(self, host: _RawHost, link_id: LinkId, payload: bytes, packed_metadata: bytes | None, compression: ResourceCompression) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
     def host_set_link_resource_strategy(self, host: _RawHost, link_id: LinkId, strategy: ResourceStrategy) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
     def host_set_destination_resource_strategy(self, host: _RawHost, destination: DestinationHash, strategy: ResourceStrategy) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
     def host_send_channel_message(self, host: _RawHost, link_id: LinkId, message_type: int, payload: bytes) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
     def host_allow_requester(self, host: _RawHost, destination: DestinationHash, path_hash: RequestPathHash, identity: IdentityHash) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
-    def host_attach_interface(self, host: _RawHost, config: InterfaceConfig) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
+    def host_attach_interface(self, host: _RawHost, config: InterfaceConfig, routing: InterfaceRoutingPolicy | None) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...

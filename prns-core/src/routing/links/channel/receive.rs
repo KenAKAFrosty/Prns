@@ -1,21 +1,12 @@
-//! RNS 1.4.0 `Channel._receive`'s window validation, duplicate rejection, and contiguous in-order drain, ported to integer sequence arithmetic (to match our integer units of ms).
-
 use super::table::{BufferOutcome, ChannelTable, EnsureChannelError};
+use super::ChannelSequence;
 use super::MessageType;
-use super::{ChannelSequence, SEQUENCE_MODULUS};
 use crate::routing::links::LinkId;
 
-/// RNS 1.4.0 `Channel.WINDOW_MAX` (`= WINDOW_MAX_FAST`): the furthest ahead a well-behaved peer ever transmits / the most out-of-order messages worth holding.
 pub const WINDOW_MAX_MESSAGES: u16 = 48;
 
-/// RNS 1.4.0 `Channel._receive`'s window guard
 pub fn within_receive_window(sequence: ChannelSequence, next_rx: ChannelSequence) -> bool {
-    if sequence.0 >= next_rx.0 {
-        return true;
-    }
-    let window_overflow =
-        ((next_rx.0 as u32 + WINDOW_MAX_MESSAGES as u32) % SEQUENCE_MODULUS) as u16;
-    window_overflow < next_rx.0 && sequence.0 <= window_overflow
+    sequence.0.wrapping_sub(next_rx.0) <= WINDOW_MAX_MESSAGES
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -160,6 +151,13 @@ mod tests {
         assert!(!within_receive_window(seq(0x0021), next_rx));
         assert!(!within_receive_window(seq(5), seq(10)));
         assert!(within_receive_window(seq(10), seq(10)));
+    }
+
+    #[test]
+    fn the_window_guard_rejects_an_excessively_advanced_non_wrapped_sequence() {
+        assert!(within_receive_window(seq(148), seq(100)));
+        assert!(!within_receive_window(seq(149), seq(100)));
+        assert!(!within_receive_window(seq(u16::MAX), seq(100)));
     }
 
     #[test]

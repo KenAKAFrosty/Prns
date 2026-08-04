@@ -42,6 +42,22 @@ JULIA_PATH = (
     / "prns-host/bindings/julia/src/HostContract.generated.jl"
 )
 VECTORS_PATH = ROOT / "prns-host/conformance/host-contract-v1.json"
+GO_HOST_PATH = ROOT / "prns-host/bindings/go/convenience.go"
+SWIFT_HOST_PATH = ROOT / "prns-host/bindings/swift/Sources/PersonalRns/Host.swift"
+KOTLIN_HOST_PATH = (
+    ROOT / "prns-host/bindings/jvm/src/main/kotlin/io/reticulum/prns/Host.kt"
+)
+KOTLIN_EVENTS_PATH = (
+    ROOT / "prns-host/bindings/jvm/src/main/kotlin/io/reticulum/prns/Events.kt"
+)
+KOTLIN_UPLOAD_PATH = (
+    ROOT / "prns-host/bindings/jvm/src/main/kotlin/io/reticulum/prns/ResourceUpload.kt"
+)
+KOTLIN_COMMAND_PATH = (
+    ROOT / "prns-host/bindings/jvm/src/main/kotlin/io/reticulum/prns/Command.kt"
+)
+JULIA_COMMAND_PATH = ROOT / "prns-host/bindings/julia/src/command.jl"
+JULIA_MODULE_PATH = ROOT / "prns-host/bindings/julia/src/PersonalRns.jl"
 
 
 def snake(name):
@@ -54,6 +70,11 @@ def screaming(name):
 
 def lower_first(name):
     return name[0].lower() + name[1:]
+
+
+def swift_identifier(name):
+    value = lower_first(name)
+    return f"`{value}`" if value in {"internal"} else value
 
 
 def raw_operations(schema):
@@ -377,8 +398,12 @@ def rust_output(schema):
             f"pub const {screaming(item['name'])}_LENGTH: usize = {item['length']};"
         )
     for scalar in schema["scalars"]:
+        if scalar["minimum"] != 0:
+            lines.append(
+                f"pub const {screaming(scalar['name'])}_MIN: {scalar['storage']} = {scalar['minimum']};"
+            )
         lines.append(
-            f"pub const {screaming(scalar['name'])}_MAX: u64 = {scalar['maximum']};"
+            f"pub const {screaming(scalar['name'])}_MAX: {scalar['storage']} = {scalar['maximum']};"
         )
     for key, value in schema["limits"].items():
         lines.append(f"pub const BALANCED_{screaming(key)}: usize = {value};")
@@ -474,9 +499,11 @@ def ts_type(value):
         "bool": "boolean",
         "string": "string",
         "i16": "number",
+        "i64": "bigint",
         "u8": "number",
         "u16": "number",
         "u32": "number",
+        "safeInt": "number",
         "safeUint": "number",
         "u64": "bigint",
         "u128": "bigint",
@@ -562,6 +589,10 @@ def ts_output(schema):
             f"export const {screaming(item['name'])}_LENGTH = {item['length']};"
         )
     for scalar in schema["scalars"]:
+        if scalar["minimum"] != 0:
+            lines.append(
+                f"export const {screaming(scalar['name'])}_MIN = {scalar['minimum']};"
+            )
         lines.append(
             f"export const {screaming(scalar['name'])}_MAX = {scalar['maximum']};"
         )
@@ -596,6 +627,7 @@ def ts_output(schema):
         for name in (
             "BackendKind",
             "InterfaceKind",
+            "InterfaceMode",
             "InterfaceHealth",
             "DiscoveryScope",
             "MulticastAddressType",
@@ -670,9 +702,11 @@ def c_type(value, fixed_types=frozenset()):
         "bool": "uint8_t",
         "string": "PrnsStringView",
         "i16": "int16_t",
+        "i64": "int64_t",
         "u8": "uint8_t",
         "u16": "uint16_t",
         "u32": "uint32_t",
+        "safeInt": "int64_t",
         "safeUint": "uint64_t",
         "u64": "uint64_t",
         "u128": "PrnsUInt128",
@@ -861,8 +895,18 @@ def c_output(schema):
             f"#define PRNS_{screaming(item['name'])}_LENGTH UINT32_C({item['length']})"
         )
     for scalar in schema["scalars"]:
+        macro = "INT64_C" if scalar["storage"] == "i64" else "UINT64_C"
+        if scalar["minimum"] != 0:
+            minimum = (
+                f"(-{macro}({-scalar['minimum']}))"
+                if scalar["minimum"] < 0
+                else f"{macro}({scalar['minimum']})"
+            )
+            lines.append(
+                f"#define PRNS_{screaming(scalar['name'])}_MIN {minimum}"
+            )
         lines.append(
-            f"#define PRNS_{screaming(scalar['name'])}_MAX UINT64_C({scalar['maximum']})"
+            f"#define PRNS_{screaming(scalar['name'])}_MAX {macro}({scalar['maximum']})"
         )
     for key, value in schema["limits"].items():
         lines.append(f"#define PRNS_BALANCED_{screaming(key)} UINT64_C({value})")
@@ -1006,6 +1050,8 @@ def c_output(schema):
             "    PrnsByteView announce_app_data;",
             "    const PrnsRequestHandlerConfig *request_handlers;",
             "    size_t request_handler_count;",
+            "    uint8_t has_maximum_request_bytes;",
+            "    uint64_t maximum_request_bytes;",
             "} PrnsDestinationConfig;",
             "",
             "typedef struct PrnsHostOptions {",
@@ -1072,9 +1118,11 @@ def python_type(value):
         "bool": "bool",
         "string": "str",
         "i16": "int",
+        "i64": "int",
         "u8": "int",
         "u16": "int",
         "u32": "int",
+        "safeInt": "int",
         "safeUint": "int",
         "u64": "int",
         "u128": "int",
@@ -1119,6 +1167,8 @@ def python_output(schema):
     for item in schema["fixedBytes"]:
         lines.append(f"{screaming(item['name'])}_LENGTH = {item['length']}")
     for scalar in schema["scalars"]:
+        if scalar["minimum"] != 0:
+            lines.append(f"{screaming(scalar['name'])}_MIN = {scalar['minimum']}")
         lines.append(f"{screaming(scalar['name'])}_MAX = {scalar['maximum']}")
     for key, value in schema["limits"].items():
         lines.append(f"BALANCED_{screaming(key)} = {value}")
@@ -1212,9 +1262,11 @@ def dotnet_type(value):
         "bool": "bool",
         "string": "string",
         "i16": "short",
+        "i64": "long",
         "u8": "byte",
         "u16": "ushort",
         "u32": "uint",
+        "safeInt": "long",
         "safeUint": "ulong",
         "u64": "ulong",
         "u128": "UInt128",
@@ -1252,8 +1304,13 @@ def dotnet_output(schema):
             f"    public const int {item['name']}Length = {item['length']};"
         )
     for scalar in schema["scalars"]:
+        scalar_type = {"i64": "long", "u64": "ulong"}[scalar["storage"]]
+        if scalar["minimum"] != 0:
+            lines.append(
+                f"    public const {scalar_type} {scalar['name'][0].upper() + scalar['name'][1:]}Min = {scalar['minimum']};"
+            )
         lines.append(
-            f"    public const ulong {scalar['name'][0].upper() + scalar['name'][1:]}Max = {scalar['maximum']};"
+            f"    public const {scalar_type} {scalar['name'][0].upper() + scalar['name'][1:]}Max = {scalar['maximum']};"
         )
     for key, value in schema["limits"].items():
         lines.append(
@@ -1404,9 +1461,11 @@ def go_type(value):
         "bool": "bool",
         "string": "string",
         "i16": "int16",
+        "i64": "int64",
         "u8": "uint8",
         "u16": "uint16",
         "u32": "uint32",
+        "safeInt": "int64",
         "safeUint": "uint64",
         "u64": "uint64",
         "u128": "UInt128",
@@ -1439,8 +1498,13 @@ def go_output(schema):
     for item in schema["fixedBytes"]:
         lines.append(f"const {item['name']}Length = {item['length']}")
     for scalar in schema["scalars"]:
+        scalar_type = {"i64": "int64", "u64": "uint64"}[scalar["storage"]]
+        if scalar["minimum"] != 0:
+            lines.append(
+                f"const {scalar['name'][0].upper() + scalar['name'][1:]}Min {scalar_type} = {scalar['minimum']}"
+            )
         lines.append(
-            f"const {scalar['name'][0].upper() + scalar['name'][1:]}Max uint64 = {scalar['maximum']}"
+            f"const {scalar['name'][0].upper() + scalar['name'][1:]}Max {scalar_type} = {scalar['maximum']}"
         )
     for key, value in schema["limits"].items():
         lines.append(f"const Balanced{key[0].upper() + key[1:]} = {value}")
@@ -1535,9 +1599,11 @@ def swift_type(value):
         "bool": "Bool",
         "string": "String",
         "i16": "Int16",
+        "i64": "Int64",
         "u8": "UInt8",
         "u16": "UInt16",
         "u32": "UInt32",
+        "safeInt": "Int64",
         "safeUint": "UInt64",
         "u64": "UInt64",
         "u128": "UInt128",
@@ -1580,8 +1646,13 @@ def swift_output(schema):
             f"    public static let {lower_first(item['name'])}Length = {item['length']}"
         )
     for scalar in schema["scalars"]:
+        scalar_type = {"i64": "Int64", "u64": "UInt64"}[scalar["storage"]]
+        if scalar["minimum"] != 0:
+            lines.append(
+                f"    public static let {lower_first(scalar['name'])}Min: {scalar_type} = {scalar['minimum']}"
+            )
         lines.append(
-            f"    public static let {lower_first(scalar['name'])}Max: UInt64 = {scalar['maximum']}"
+            f"    public static let {lower_first(scalar['name'])}Max: {scalar_type} = {scalar['maximum']}"
         )
     for key, value in schema["limits"].items():
         lines.append(f"    public static let balanced{key[0].upper() + key[1:]} = {value}")
@@ -1589,7 +1660,7 @@ def swift_output(schema):
     for enum in schema["enums"]:
         lines.append(f"public enum {enum['name']}: UInt32, Sendable {{")
         for value in enum["values"]:
-            lines.append(f"    case {lower_first(value['name'])} = {value['value']}")
+            lines.append(f"    case {swift_identifier(value['name'])} = {value['value']}")
         lines.extend(["}", ""])
     for item in schema["fixedBytes"]:
         if item.get("secret", False):
@@ -1686,6 +1757,7 @@ def kotlin_type(value):
         "bool": "Boolean",
         "string": "String",
         "i16": "Int",
+        "i64": "Long",
         # Kotlin unsigned values compile to name-mangled JVM methods and
         # synthetic constructors, which makes an otherwise shared Kotlin/Java
         # SDK unusable from Java. Int and Long preserve every ABI bit while
@@ -1693,6 +1765,7 @@ def kotlin_type(value):
         "u8": "Int",
         "u16": "Int",
         "u32": "Long",
+        "safeInt": "Long",
         "safeUint": "Long",
         "u64": "ULong",
         "u128": "BigInteger",
@@ -1730,6 +1803,10 @@ def kotlin_output(schema):
     for item in schema["fixedBytes"]:
         lines.append(f"    const val {screaming(item['name'])}_LENGTH = {item['length']}")
     for scalar in schema["scalars"]:
+        if scalar["minimum"] != 0:
+            lines.append(
+                f"    const val {screaming(scalar['name'])}_MIN = {scalar['minimum']}L"
+            )
         lines.append(f"    const val {screaming(scalar['name'])}_MAX = {scalar['maximum']}L")
     for key, value in schema["limits"].items():
         lines.append(f"    const val BALANCED_{screaming(key)} = {value}")
@@ -1848,9 +1925,11 @@ def julia_type(value):
         "bool": "Bool",
         "string": "String",
         "i16": "Int16",
+        "i64": "Int64",
         "u8": "UInt8",
         "u16": "UInt16",
         "u32": "UInt32",
+        "safeInt": "Int64",
         "safeUint": "UInt64",
         "u64": "UInt64",
         "u128": "UInt128",
@@ -1887,8 +1966,13 @@ def julia_output(schema):
     for item in schema["fixedBytes"]:
         lines.append(f"const {screaming(item['name'])}_LENGTH = {item['length']}")
     for scalar in schema["scalars"]:
+        scalar_type = {"i64": "Int64", "u64": "UInt64"}[scalar["storage"]]
+        if scalar["minimum"] != 0:
+            lines.append(
+                f"const {screaming(scalar['name'])}_MIN = {scalar_type}({scalar['minimum']})"
+            )
         lines.append(
-            f"const {screaming(scalar['name'])}_MAX = UInt64({scalar['maximum']})"
+            f"const {screaming(scalar['name'])}_MAX = {scalar_type}({scalar['maximum']})"
         )
     for key, value in schema["limits"].items():
         lines.append(f"const BALANCED_{screaming(key)} = {value}")
@@ -1975,6 +2059,11 @@ def vectors_output(schema):
                     for scalar in schema["scalars"]
                 },
                 "integerChecks": {
+                    "safeInt": {
+                        "typescript": "number",
+                        "accepted": ["-9007199254740991", "0", "9007199254740991"],
+                        "rejected": ["-9007199254740992", "9007199254740992"],
+                    },
                     "safeUint": {
                         "typescript": "number",
                         "accepted": ["0", "9007199254740991"],
@@ -2053,6 +2142,74 @@ def write_or_check(path, content, check):
     temporary.replace(path)
 
 
+def require_functions(path, names, prefix=""):
+    content = path.read_text()
+    missing = [
+        name
+        for name in names
+        if re.search(rf"\b{re.escape(prefix + name)}\s*\(", content) is None
+    ]
+    if missing:
+        joined = ", ".join(missing)
+        raise ValueError(
+            f"host SDK high-level surface is stale: {path.relative_to(ROOT)}: {joined}"
+        )
+
+
+def verify_high_level_surfaces(schema):
+    union_name = schema["commandProjection"]["union"]
+    command = next(item for item in schema["unions"] if item["name"] == union_name)
+    cases = [case["name"] for case in command["cases"]]
+    kotlin_names = [lower_first(name) for name in cases]
+    swift_names = list(kotlin_names)
+    go_names = [name.replace("Tcp", "TCP").replace("Udp", "UDP") for name in cases]
+    julia_names = [snake(name) for name in cases]
+
+    require_functions(KOTLIN_HOST_PATH, kotlin_names, "suspend fun ")
+    kotlin_host = KOTLIN_HOST_PATH.read_text()
+    missing_async = [
+        name
+        for name in kotlin_names
+        if re.search(rf"\bfun\s+{re.escape(name)}Async\s*\(", kotlin_host) is None
+    ]
+    if missing_async:
+        joined = ", ".join(missing_async)
+        raise ValueError(f"JVM async host surface is stale: {joined}")
+
+    require_functions(SWIFT_HOST_PATH, swift_names, "public func ")
+    require_functions(GO_HOST_PATH, go_names, "Host) ")
+    require_functions(JULIA_COMMAND_PATH, julia_names)
+    julia_module = JULIA_MODULE_PATH.read_text()
+    missing_exports = [
+        name
+        for name in julia_names
+        if re.search(rf"^export\s+{re.escape(name)}$", julia_module, re.MULTILINE)
+        is None
+    ]
+    if missing_exports:
+        joined = ", ".join(missing_exports)
+        raise ValueError(f"Julia high-level exports are stale: {joined}")
+
+    jvm_sources = "\n".join(
+        path.read_text()
+        for path in (KOTLIN_HOST_PATH, KOTLIN_EVENTS_PATH, KOTLIN_UPLOAD_PATH)
+    )
+    for required in (
+        "executeAsync(",
+        "nextAsync(",
+        "writeAsync(",
+        "finishAsync(",
+    ):
+        if required not in jvm_sources:
+            raise ValueError(f"JVM async bridge is stale: missing {required}")
+    blocking_sources = "\n".join(
+        path.read_text() for path in (KOTLIN_COMMAND_PATH, KOTLIN_EVENTS_PATH)
+    )
+    for forbidden in ("awaitBlocking(", "nextBlocking("):
+        if forbidden in blocking_sources:
+            raise ValueError(f"JVM blocking bridge remains public: {forbidden}")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true")
@@ -2074,6 +2231,8 @@ def main():
     }
     for path, content in outputs.items():
         write_or_check(path, content, args.check)
+    if args.check:
+        verify_high_level_surfaces(schema)
 
 
 if __name__ == "__main__":

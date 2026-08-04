@@ -1,6 +1,6 @@
 pub const HOST_SCHEMA_VERSION: u32 = 1;
 pub const HOST_SCHEMA_ABI: u32 = 1;
-pub const HOST_SCHEMA_PRODUCT_VERSION: &str = "0.3.2";
+pub const HOST_SCHEMA_PRODUCT_VERSION: &str = "0.3.3";
 pub const DESTINATION_HASH_LENGTH: usize = 16;
 pub const IDENTITY_HASH_LENGTH: usize = 16;
 pub const INTERFACE_ID_LENGTH: usize = 8;
@@ -10,6 +10,8 @@ pub const REQUEST_ID_LENGTH: usize = 16;
 pub const REQUEST_PATH_HASH_LENGTH: usize = 16;
 pub const RESOURCE_HASH_LENGTH: usize = 32;
 pub const IDENTITY_SECRET_LENGTH: usize = 64;
+pub const SAFE_INT_MIN: i64 = -9007199254740991;
+pub const SAFE_INT_MAX: i64 = 9007199254740991;
 pub const SAFE_UINT_MAX: u64 = 9007199254740991;
 pub const BALANCED_PENDING_COMMANDS: usize = 256;
 pub const BALANCED_APPLICATION_EVENTS: usize = 1024;
@@ -312,6 +314,50 @@ impl TryFrom<u32> for InterfaceKind {
             17 => Ok(Self::WebSocketClient),
             18 => Ok(Self::WebSocketServer),
             19 => Ok(Self::BrowserRendezvous),
+            _ => Err(()),
+        }
+    }
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum InterfaceMode {
+    Full = 1,
+    PointToPoint = 2,
+    AccessPoint = 3,
+    Roaming = 4,
+    Boundary = 5,
+    Gateway = 6,
+    Internal = 7,
+}
+
+impl InterfaceMode {
+    #[must_use]
+    pub const fn contract_name(self) -> &'static str {
+        match self {
+            Self::Full => "Full",
+            Self::PointToPoint => "PointToPoint",
+            Self::AccessPoint => "AccessPoint",
+            Self::Roaming => "Roaming",
+            Self::Boundary => "Boundary",
+            Self::Gateway => "Gateway",
+            Self::Internal => "Internal",
+        }
+    }
+}
+
+impl TryFrom<u32> for InterfaceMode {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::Full),
+            2 => Ok(Self::PointToPoint),
+            3 => Ok(Self::AccessPoint),
+            4 => Ok(Self::Roaming),
+            5 => Ok(Self::Boundary),
+            6 => Ok(Self::Gateway),
+            7 => Ok(Self::Internal),
             _ => Err(()),
         }
     }
@@ -928,6 +974,7 @@ pub enum CommandFailureKind {
     DeviceUnavailable = 38,
     ConnectFailed = 39,
     BackendFailed = 40,
+    ResponseTooLarge = 41,
 }
 
 impl CommandFailureKind {
@@ -974,6 +1021,7 @@ impl CommandFailureKind {
             Self::DeviceUnavailable => "DeviceUnavailable",
             Self::ConnectFailed => "ConnectFailed",
             Self::BackendFailed => "BackendFailed",
+            Self::ResponseTooLarge => "ResponseTooLarge",
         }
     }
 }
@@ -1023,6 +1071,7 @@ impl TryFrom<u32> for CommandFailureKind {
             38 => Ok(Self::DeviceUnavailable),
             39 => Ok(Self::ConnectFailed),
             40 => Ok(Self::BackendFailed),
+            41 => Ok(Self::ResponseTooLarge),
             _ => Err(()),
         }
     }
@@ -1591,6 +1640,20 @@ mod tests {
 
     #[rustfmt::skip]
     #[test]
+    fn interface_mode_values_match_the_contract() {
+        assert_contract_enum!(InterfaceMode, [
+            (InterfaceMode::Full, 1, "Full"),
+            (InterfaceMode::PointToPoint, 2, "PointToPoint"),
+            (InterfaceMode::AccessPoint, 3, "AccessPoint"),
+            (InterfaceMode::Roaming, 4, "Roaming"),
+            (InterfaceMode::Boundary, 5, "Boundary"),
+            (InterfaceMode::Gateway, 6, "Gateway"),
+            (InterfaceMode::Internal, 7, "Internal"),
+        ]);
+    }
+
+    #[rustfmt::skip]
+    #[test]
     fn interface_health_values_match_the_contract() {
         assert_contract_enum!(InterfaceHealth, [
             (InterfaceHealth::Initializing, 1, "Initializing"),
@@ -1811,6 +1874,7 @@ mod tests {
             (CommandFailureKind::DeviceUnavailable, 38, "DeviceUnavailable"),
             (CommandFailureKind::ConnectFailed, 39, "ConnectFailed"),
             (CommandFailureKind::BackendFailed, 40, "BackendFailed"),
+            (CommandFailureKind::ResponseTooLarge, 41, "ResponseTooLarge"),
         ]);
     }
 

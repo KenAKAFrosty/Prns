@@ -143,6 +143,7 @@ where
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
             resource_strategy: ResourceStrategy::AcceptIf,
+            maximum_request_bytes: Default::default(),
             request_endpoints: ServeMyRequestEndpoints::Yes,
         }],
         app_state: ListenerState {

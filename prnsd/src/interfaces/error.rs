@@ -7,7 +7,7 @@ use prns_config::editing::{
     InterfaceDefinitionError, InterfaceNameError, InterfaceSettingInputError,
     RNodeMultiRadioDefinitionError,
 };
-use prns_config::{DiscoveryError, InterfaceKind};
+use prns_config::InterfaceKind;
 use prnsd_control::{ServiceError, StateDirectoryError};
 
 #[derive(Debug)]
@@ -22,6 +22,7 @@ pub(super) enum InterfacesError {
         key: &'static str,
         kind: InterfaceKind,
     },
+    UnavailableInBuild(InterfaceKind),
     InvalidPort(InterfaceKind),
     UnknownSettingKey(&'static str),
     RestartRequired,
@@ -31,13 +32,17 @@ pub(super) enum InterfacesError {
         rollback_failed: bool,
     },
     NoManagedDaemon,
+    CommandContext(crate::command_context::CommandContextError),
     Io {
         operation: InterfacesIoOperation,
         path: Option<PathBuf>,
         source: io::Error,
     },
-    Discovery(DiscoveryError),
     ConfigFile(ConfigFileError),
+    ConfigRollback {
+        apply: Box<InterfacesError>,
+        rollback: ConfigFileError,
+    },
     ConfigEdit(ConfigEditError),
     ConfigRepair(ConfigRepairError),
     InterfaceDefinition(InterfaceDefinitionError),
@@ -54,6 +59,7 @@ impl InterfacesError {
         match self {
             Self::Usage(_)
             | Self::InapplicableSetting { .. }
+            | Self::UnavailableInBuild(_)
             | Self::InvalidPort(_)
             | Self::UnknownSettingKey(_) => 2,
             Self::NoManagedDaemon => 3,
@@ -67,8 +73,9 @@ impl InterfacesError {
             | Self::ReloadRejected
             | Self::ReloadRolledBack { .. }
             | Self::Io { .. }
-            | Self::Discovery(_)
+            | Self::CommandContext(_)
             | Self::ConfigFile(_)
+            | Self::ConfigRollback { .. }
             | Self::ConfigEdit(_)
             | Self::ConfigRepair(_)
             | Self::InterfaceDefinition(_)
@@ -104,6 +111,11 @@ impl fmt::Display for InterfacesError {
                 formatter,
                 "--{} does not apply to {}",
                 key.replace('_', "-"),
+                kind.canonical_name()
+            ),
+            Self::UnavailableInBuild(kind) => write!(
+                formatter,
+                "{} is not available in this prnsd build",
                 kind.canonical_name()
             ),
             Self::InvalidPort(kind) => write!(
@@ -142,8 +154,12 @@ impl fmt::Display for InterfacesError {
                 path: None,
                 source,
             } => write!(formatter, "could not {operation}: {source}"),
-            Self::Discovery(error) => error.fmt(formatter),
+            Self::CommandContext(error) => error.fmt(formatter),
             Self::ConfigFile(error) => error.fmt(formatter),
+            Self::ConfigRollback { apply, rollback } => write!(
+                formatter,
+                "{apply}; the saved configuration could not be restored: {rollback}"
+            ),
             Self::ConfigEdit(error) => error.fmt(formatter),
             Self::ConfigRepair(error) => error.fmt(formatter),
             Self::InterfaceDefinition(error) => error.fmt(formatter),

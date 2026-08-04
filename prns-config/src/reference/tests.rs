@@ -275,10 +275,14 @@ fn parse_types_every_stock_discovery_setting() {
            required_discovery_value = 18\n\
            interface_discovery_sources = 00112233445566778899aabbccddeeff, 00112233445566778899AABBCCDDEEFF\n\
            autoconnect_discovered_interfaces = 4\n\
+           autoconnect_interface_gravity = -31\n\
+           autoconnect_announces_to_internal = Yes\n\
+           default_gravity = -7\n\
          [interfaces]\n\
            [[Spine]]\n\
              type = BackboneInterface\n\
              enabled = Yes\n\
+             gravity = 19\n\
              listen_port = 4242\n\
              discoverable = Yes\n\
              announce_interval = 10\n\
@@ -315,8 +319,21 @@ fn parse_types_every_stock_discovery_setting() {
         ],
     );
     assert_eq!(config.discovery.auto_connect_limit, Some(4));
+    assert_eq!(config.discovery.auto_connect_gravity, Some(-31));
+    assert_eq!(
+        config.discovery.auto_connect_announces_to_internal,
+        Some(true)
+    );
+    assert_eq!(
+        config
+            .globals
+            .get("default_gravity")
+            .and_then(ReferenceValue::as_scalar),
+        Some("-7")
+    );
 
     let spine = &config.interfaces[0];
+    assert_eq!(spine.gravity, Some(19));
     assert_eq!(spine.discovery.discoverable, Some(true));
     assert_eq!(spine.discovery.announce_interval_minutes, Some(10));
     assert_eq!(spine.discovery.stamp_cost.map(StampCost::get), Some(19));

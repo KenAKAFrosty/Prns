@@ -2,7 +2,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use benchmarks::{load_catalog, ResultRow, ScenarioId, ScenarioTopology, Subject, IMPLEMENTATIONS};
+use benchmarks::{
+    load_catalog, ResultRow, ScenarioId, ScenarioTopology, Subject, IMPLEMENTATIONS,
+    REFERENCE_IMPLEMENTATION, REFERENCE_VERSION,
+};
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 
@@ -222,7 +225,7 @@ pub(super) fn run(args: SuiteArgs) {
         all_cells.len(),
         args.samples
     );
-    println!("participants: Prns and compiled RNS 1.4.0 reference");
+    println!("participants: Prns and compiled RNS {REFERENCE_VERSION} reference");
     println!(
         "matrix: endpoint scenarios use four pairings; relay scenarios use two relay subjects"
     );
@@ -444,19 +447,33 @@ pub(super) fn run(args: SuiteArgs) {
     evidence.finished_unix_ms = unix_ms();
     evidence.files = result_hashes(&output);
     write_suite_evidence(&output, &evidence);
+    let failed_samples = evidence
+        .schedule
+        .iter()
+        .filter(|sample| sample.status == "fail")
+        .count();
+    let passed_samples = schedule.len().saturating_sub(failed_samples);
+    let validation_errors = evidence.failures.len().saturating_sub(failed_samples);
     println!(
-        "SUMMARY selected={} matrix={} samples={} pass={} fail={} output={}",
+        "SUMMARY selected={} matrix={} samples={} pass={} fail={} validation_errors={} output={}",
         selected.len(),
         all_cells.len(),
         schedule.len(),
-        schedule.len().saturating_sub(evidence.failures.len()),
-        evidence.failures.len(),
+        passed_samples,
+        failed_samples,
+        validation_errors,
         output.display()
     );
     if !complete {
-        eprintln!(
-            "RESUME with the same suite ID and output directory; completed samples are retained"
-        );
+        if failed_samples == 0 {
+            eprintln!(
+                "RESUME with the same suite ID and output directory; completed samples are retained"
+            );
+        } else {
+            eprintln!(
+                "FAILED_SUITE measured failures are retained; start a new suite after diagnosis"
+            );
+        }
         std::process::exit(1);
     }
 }
@@ -760,16 +777,16 @@ fn validate_suite(
                     .collect::<Vec<_>>()
             ));
         }
-        if cell.initiator == "rns-1.4.0-compiled"
-            || cell.responder == "rns-1.4.0-compiled"
-            || cell.relay == Some("rns-1.4.0-compiled")
+        if cell.initiator == REFERENCE_IMPLEMENTATION
+            || cell.responder == REFERENCE_IMPLEMENTATION
+            || cell.relay == Some(REFERENCE_IMPLEMENTATION)
         {
             let proved_samples = rows
                 .iter()
                 .filter(|row| {
                     row.provenance
                         .get("reference_rns")
-                        .is_some_and(|value| value == "1.4.0")
+                        .is_some_and(|value| value == REFERENCE_VERSION)
                         && row
                             .provenance
                             .get("reference_compiled")
@@ -794,7 +811,7 @@ fn validate_suite(
         reference_verified |= rows.iter().any(|row| {
             row.provenance
                 .get("reference_rns")
-                .is_some_and(|value| value == "1.4.0")
+                .is_some_and(|value| value == REFERENCE_VERSION)
                 && row
                     .provenance
                     .get("reference_compiled")
@@ -805,7 +822,7 @@ fn validate_suite(
         reasons.push(format!("suite must contain one host, found {hosts:?}"));
     }
     if selected.len() == cells.len() && !reference_verified {
-        reasons.push("compiled RNS 1.4.0 proof is absent".into());
+        reasons.push(format!("compiled RNS {REFERENCE_VERSION} proof is absent"));
     }
     if reasons.is_empty() {
         Ok(ValidatedSuite {
@@ -1082,7 +1099,7 @@ mod tests {
             subject: benchmarks::Subject::Direct {
                 initiator: "benchmark-wire-driver".into(),
                 responder: "benchmark-wire-driver".into(),
-                relay: Some("rns-1.4.0-compiled".into()),
+                relay: Some("other-relay".into()),
             },
             commit: "0123456789abcdef0123456789abcdef01234567".into(),
             toolchain: "rustc test".into(),

@@ -50,23 +50,25 @@ test("packaged native API starts, exposes lifecycle, and stops", async () => {
       tag: "AlreadyClaimed",
       data: { lane: "ApplicationEvents" },
     });
-    const attached = await created.data.execute(
-      esm.Tag("AttachTcpClient", {
-        target: "127.0.0.1:9",
-        bitrate: esm.Tag("Auto"),
-      }),
-    );
+    const attached = await created.data.attachTcpServer({ bind: "127.0.0.1:0" });
     assert.equal(attached.tag, "Succeeded");
     assert.equal(attached.data.tag, "InterfaceAttached");
     assert.equal(created.data.backendInfo.backend, "Native");
-    assert.ok(created.data.backendInfo.interfaceKinds.includes("TcpClient"));
+    assert.ok(created.data.backendInfo.interfaceKinds.includes("TcpServer"));
     const attachedSnapshot = await created.data.snapshot();
     assert.equal(attachedSnapshot.backend.backend, "Native");
-    assert.ok(attachedSnapshot.backend.interfaceKinds.includes("TcpClient"));
+    assert.ok(attachedSnapshot.backend.interfaceKinds.includes("TcpServer"));
     assert.equal(attachedSnapshot.interfaces.length, 1);
-    assert.equal(attachedSnapshot.interfaces[0].kind, "TcpClient");
+    assert.equal(attachedSnapshot.interfaces[0].kind, "TcpServer");
     const unsupported = await created.data.attachInterface(
       esm.Tag("BrowserRendezvous", { url: "ws://fixture.invalid/rendezvous" }),
+      {
+        mode: "Boundary",
+        gravity: -73,
+        recursivePathRequests: true,
+        announcesFromInternal: false,
+        announcesToInternal: true,
+      },
     );
     assert.deepEqual(unsupported, {
       tag: "Failed",

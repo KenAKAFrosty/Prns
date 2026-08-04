@@ -15,6 +15,7 @@ pub const DEFAULTS: InterfaceDefaults = InterfaceDefaults {
         egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
     },
     mode: InterfaceMode::Full,
+    gravity: crate::interfaces::InterfaceGravity::ZERO,
     bitrate: WEAVE_BITRATE_ESTIMATE,
     mtu: MtuPolicy::fixed(WEAVE_HW_MTU),
     announce_rate_limit: None,

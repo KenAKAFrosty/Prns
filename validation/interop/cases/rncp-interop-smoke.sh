@@ -2,7 +2,7 @@
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-PYTHON="${RPC_SMOKE_PYTHON:-$ROOT/validation/.venv/rns-rpc-1.4.0/bin/python}"
+PYTHON="${RPC_SMOKE_PYTHON:-$ROOT/validation/.venv/rns-rpc-1.4.2/bin/python}"
 RNCP="$(dirname "$PYTHON")/rncp"
 ORACLE="$ROOT/validation/interop/peers/rns_rncp_oracle.py"
 BIN="$ROOT/prnsd/target/debug/prnsd"
@@ -294,4 +294,4 @@ fi
 [ ! -f "$WORK/auth-receive/prns-send.bin" ] || { echo "FAIL: unlisted stock bytes were published"; exit 1; }
 stop_listener
 
-echo "PASS: Prnsd cp rejects partial publication, settles cancellation, recovers, and exchanges boundary and bulk files with stock RNS 1.4.0 rncp"
+echo "PASS: Prnsd cp rejects partial publication, settles cancellation, recovers, and exchanges boundary and bulk files with stock RNS 1.4.2 rncp"

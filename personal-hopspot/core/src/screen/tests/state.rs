@@ -1,4 +1,58 @@
 use super::*;
+use core::future::Future;
+use core::task::{Context, Poll};
+use std::boxed::Box;
+use std::cell::RefCell;
+use std::task::Waker;
+
+fn block_on<F: Future>(future: F) -> F::Output {
+    let mut context = Context::from_waker(Waker::noop());
+    let mut future = Box::pin(future);
+    loop {
+        match future.as_mut().poll(&mut context) {
+            Poll::Ready(output) => return output,
+            Poll::Pending => std::thread::yield_now(),
+        }
+    }
+}
+
+#[test]
+fn radio_profile_save_result_waits_for_apply_and_verified_persistence() {
+    let steps = RefCell::new(std::vec::Vec::new());
+    let result = block_on(apply_and_persist_radio_profile(
+        async {
+            steps.borrow_mut().push("applied");
+            true
+        },
+        || async {
+            assert_eq!(steps.borrow().as_slice(), ["applied"]);
+            steps.borrow_mut().push("verified");
+            true
+        },
+    ));
+
+    assert_eq!(result, RadioProfileChangeResult::Saved);
+    assert_eq!(result.notice(), UiNotice::Saved);
+    assert_eq!(steps.into_inner(), ["applied", "verified"]);
+}
+
+#[test]
+fn radio_profile_save_result_distinguishes_apply_and_persistence_failures() {
+    let apply_failed = block_on(apply_and_persist_radio_profile(async { false }, || async {
+        panic!("persistence must not run after a rejected profile")
+    }));
+    assert_eq!(apply_failed, RadioProfileChangeResult::ApplyFailed);
+    assert!(!apply_failed.applied());
+
+    let persistence_failed = block_on(apply_and_persist_radio_profile(async { true }, || async {
+        false
+    }));
+    assert_eq!(
+        persistence_failed,
+        RadioProfileChangeResult::ProfileNotSaved
+    );
+    assert!(persistence_failed.applied());
+}
 
 #[test]
 fn short_press_cycles_global_then_cards_and_pages_visible_window() {
@@ -256,6 +310,23 @@ fn lora_interface_menu_keeps_tune_and_reset() {
     assert_eq!(state.interface_menu_selected_item(), Some(3));
     state.handle_input(InputEvent::ShortPress, content);
     assert_eq!(state.interface_menu_selected_item(), Some(0));
+}
+
+#[test]
+fn lora_reset_is_distinct_from_saving_the_current_default_values() {
+    let cards = test_cards::<1>(CardKind::LoRa);
+    let content = test_content(&cards);
+    let mut state = test_ui_state();
+    state.handle_input(InputEvent::ShortPress, content);
+    state.handle_input(InputEvent::LongPress, content);
+    for _ in 0..LORA_RESET_MENU_ITEM {
+        state.handle_input(InputEvent::ShortPress, content);
+    }
+
+    assert_eq!(
+        state.handle_input(InputEvent::LongPress, content),
+        UiAction::ResetLoRaProfile
+    );
 }
 
 #[test]

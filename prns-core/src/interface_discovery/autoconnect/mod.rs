@@ -3,7 +3,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::crypto::sha256;
-use crate::interfaces::InterfaceId;
+use crate::interfaces::{InterfaceGravity, InterfaceId};
 use crate::storage::TablePushError;
 use crate::units::{DurationMillis, InstantMillis};
 use crate::wire::TransportId;
@@ -85,6 +85,8 @@ pub struct DiscoveredConnectionPlan {
     access: DiscoveredConnectionAccess,
     provenance: DiscoveryProvenance,
     stamp_value: StampValue,
+    gravity: InterfaceGravity,
+    announces_to_internal: bool,
 }
 
 impl DiscoveredConnectionPlan {
@@ -130,6 +132,14 @@ impl DiscoveredConnectionPlan {
 
     pub const fn stamp_value(&self) -> StampValue {
         self.stamp_value
+    }
+
+    pub const fn gravity(&self) -> InterfaceGravity {
+        self.gravity
+    }
+
+    pub const fn announces_to_internal(&self) -> bool {
+        self.announces_to_internal
     }
 }
 
@@ -196,7 +206,11 @@ where
         if !status_is_eligible {
             continue;
         }
-        let Some(plan) = connection_plan(record.interface()) else {
+        let Some(plan) = connection_plan(
+            record.interface(),
+            enabled.auto_connect_gravity(),
+            enabled.auto_connect_announces_to_internal(),
+        ) else {
             continue;
         };
         let endpoint = plan.endpoint_id();
@@ -212,7 +226,11 @@ where
     plans
 }
 
-fn connection_plan(interface: &super::DiscoveredInterface) -> Option<DiscoveredConnectionPlan> {
+fn connection_plan(
+    interface: &super::DiscoveredInterface,
+    gravity: InterfaceGravity,
+    announces_to_internal: bool,
+) -> Option<DiscoveredConnectionPlan> {
     let transport_id = match interface.advertisement.transport {
         AdvertisedTransport::Enabled(transport_id) => transport_id,
         AdvertisedTransport::Disabled(_) => return None,
@@ -249,6 +267,8 @@ fn connection_plan(interface: &super::DiscoveredInterface) -> Option<DiscoveredC
         access,
         provenance: interface.provenance,
         stamp_value: interface.stamp_value,
+        gravity,
+        announces_to_internal,
     })
 }
 
@@ -426,6 +446,25 @@ impl<T: DiscoveredConnectionTable> DiscoveredConnectionRegistry<T> {
         self.active
             .connections()
             .map(ActiveDiscoveredInterface::endpoint_id)
+    }
+
+    pub(super) fn remove_discoveries(
+        &mut self,
+        discoveries: &[DiscoveredInterfaceId],
+    ) -> Vec<ActiveDiscoveredInterface> {
+        let interfaces = self
+            .active
+            .connections()
+            .filter_map(|active| {
+                discoveries
+                    .contains(&active.discovery_id)
+                    .then_some(active.interface_id)
+            })
+            .collect::<Vec<_>>();
+        interfaces
+            .into_iter()
+            .filter_map(|interface| self.active.remove(interface))
+            .collect()
     }
 
     pub(super) fn len(&self) -> usize {

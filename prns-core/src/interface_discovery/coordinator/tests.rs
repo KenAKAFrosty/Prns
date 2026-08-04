@@ -3,9 +3,9 @@ use alloc::string::String;
 use crate::identity::IdentityHash;
 use crate::interface_discovery::{
     frame_discovery_publication, prepare_discovery_publication, AdvertisedInterfaceType,
-    AdvertisedTransport, AdvertisementDetails, AutoConnectPolicy, DiscoveredConnectionTable,
-    DiscoveredEndpointSet, DiscoveredInterface, DiscoveredInterfaceId, DiscoveryAdvertisement,
-    DiscoveryCatalogSeed, DiscoveryCatalogTable, DiscoveryEnvelopeSecurity,
+    AdvertisedTransport, AdvertisementDetails, AutoConnectPolicy, AutoConnectRoutingPolicy,
+    DiscoveredConnectionTable, DiscoveredEndpointSet, DiscoveredInterface, DiscoveredInterfaceId,
+    DiscoveryAdvertisement, DiscoveryCatalogSeed, DiscoveryCatalogTable, DiscoveryEnvelopeSecurity,
     DiscoveryObservationCount, DiscoveryProvenance, DiscoveryPublicationPreparation,
     DiscoveryPublicationSecurity, DiscoveryRecord, DiscoverySourcePolicy,
     FixedDiscoveryValidationCache, GeographicLocation, StampCost, StampValue,
@@ -120,13 +120,21 @@ fn enabled_policy(maximum: usize) -> InterfaceDiscoveryPolicy {
         StampCost::new(1).expect("one is a valid stamp cost"),
         DiscoverySourcePolicy::from_sources(Vec::new()),
         AutoConnectPolicy::from_maximum(maximum),
+        AutoConnectRoutingPolicy {
+            gravity: crate::interfaces::InterfaceGravity::ZERO,
+            announces_to_internal: false,
+        },
     )
 }
 
 fn discovery_app_data(host: &str, port: u16) -> Vec<u8> {
+    discovery_app_data_with_transport(host, port, TransportId::new([0x44; 16]))
+}
+
+fn discovery_app_data_with_transport(host: &str, port: u16, transport: TransportId) -> Vec<u8> {
     let advertisement = DiscoveryAdvertisement {
         interface_type: AdvertisedInterfaceType::Backbone,
-        transport: AdvertisedTransport::Enabled(TransportId::new([0x44; 16])),
+        transport: AdvertisedTransport::Enabled(transport),
         name: Some(String::from("Public backbone")),
         location: GeographicLocation::UNKNOWN,
         details: AdvertisementDetails::Reachable {
@@ -161,6 +169,92 @@ fn discovery_app_data(host: &str, port: u16) -> Vec<u8> {
         Err(super::super::DiscoveryPublicationEncryptionError::NetworkIdentityUnavailable)
     })
     .expect("plaintext framing does not ask for encryption")
+}
+
+#[test]
+fn blackholed_announcing_and_transport_identities_are_rejected() {
+    let announcing = IdentityHash::new([0x22; 16]);
+    let transport = IdentityHash::new([0x44; 16]);
+    let app_data = discovery_app_data("router.example", 4242);
+
+    let mut coordinator = DiscoveryCoordinator::new(enabled_policy(1));
+    assert!(matches!(
+        coordinator.observe_announce_with_blackholes(
+            observation(announcing, &app_data),
+            InstantMillis(10_005),
+            plaintext_decrypt,
+            &[announcing],
+        ).as_slice(),
+        [DiscoveryCoordinatorOutput::Event(
+            DiscoveryCoordinatorEvent::IntakeRejected(
+                DiscoveryRejection::BlackholedIdentity {
+                    identity,
+                    role: DiscoveryIdentityRole::Announcing,
+                }
+            )
+        )] if *identity == announcing
+    ));
+    assert!(coordinator.catalog().is_empty());
+
+    assert!(matches!(
+        coordinator.observe_announce_with_blackholes(
+            observation(announcing, &app_data),
+            InstantMillis(10_005),
+            plaintext_decrypt,
+            &[transport],
+        ).as_slice(),
+        [DiscoveryCoordinatorOutput::Event(
+            DiscoveryCoordinatorEvent::IntakeRejected(
+                DiscoveryRejection::BlackholedIdentity {
+                    identity,
+                    role: DiscoveryIdentityRole::AdvertisedTransport,
+                }
+            )
+        )] if *identity == transport
+    ));
+    assert!(coordinator.catalog().is_empty());
+}
+
+#[test]
+fn reconciling_a_blackhole_purges_and_detaches_an_active_discovery() {
+    let mut coordinator = DiscoveryCoordinator::new(enabled_policy(1));
+    let announcing = IdentityHash::new([0x22; 16]);
+    let app_data =
+        discovery_app_data_with_transport("router.example", 4242, TransportId::new([0x44; 16]));
+    let plan = only_attachment(coordinator.observe_announce(
+        observation(announcing, &app_data),
+        InstantMillis(10_005),
+        plaintext_decrypt,
+    ));
+    let discovery = plan.discovery_id();
+    let interface = InterfaceId::new([0x77; 8]);
+    coordinator
+        .attachment_succeeded(plan, interface)
+        .expect("the discovered interface registers");
+
+    let outputs = coordinator.reconcile_blackholes(&[IdentityHash::new([0x44; 16])]);
+    assert!(matches!(
+        outputs.as_slice(),
+        [
+            DiscoveryCoordinatorOutput::Event(
+                DiscoveryCoordinatorEvent::CatalogBlackholed(record)
+            ),
+            DiscoveryCoordinatorOutput::Action(DiscoveryCoordinatorAction::Detach {
+                interface: detached,
+            }),
+            DiscoveryCoordinatorOutput::Event(
+                DiscoveryCoordinatorEvent::ConnectionDetached {
+                    discovery: detached_discovery,
+                    interface: detached_event,
+                }
+            ),
+        ] if record.id() == discovery
+            && *detached == interface
+            && *detached_discovery == discovery
+            && *detached_event == interface
+    ));
+    assert!(coordinator.catalog().is_empty());
+    assert!(coordinator.reconcile_blackholes(&[announcing]).is_empty());
 }
 
 fn observation<'a>(identity: IdentityHash, app_data: &'a [u8]) -> AnnounceObservation<'a> {
@@ -303,6 +397,10 @@ fn seeding_discards_records_below_the_effective_stamp_policy() {
         StampCost::new(16).expect("sixteen is a valid stamp cost"),
         DiscoverySourcePolicy::from_sources(Vec::new()),
         AutoConnectPolicy::from_maximum(1),
+        AutoConnectRoutingPolicy {
+            gravity: crate::interfaces::InterfaceGravity::ZERO,
+            announces_to_internal: false,
+        },
     ));
     upgraded.seed_catalog(default_catalog);
     assert_eq!(upgraded.catalog().len(), 1);
@@ -327,6 +425,10 @@ fn seeding_discards_records_below_the_effective_stamp_policy() {
         StampCost::new(14).expect("fourteen is a valid stamp cost"),
         DiscoverySourcePolicy::from_sources(Vec::new()),
         AutoConnectPolicy::from_maximum(1),
+        AutoConnectRoutingPolicy {
+            gravity: crate::interfaces::InterfaceGravity::ZERO,
+            announces_to_internal: false,
+        },
     ));
     custom.seed_catalog(custom_catalog);
     assert_eq!(custom.catalog().len(), 1);

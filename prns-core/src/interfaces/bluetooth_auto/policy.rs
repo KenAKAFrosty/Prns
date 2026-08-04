@@ -431,6 +431,7 @@ pub fn defaults_for_bitrate(bitrate: BitrateBps) -> InterfaceDefaults {
             egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
         },
         mode: InterfaceMode::Full,
+        gravity: crate::interfaces::InterfaceGravity::ZERO,
         bitrate,
         mtu: MtuPolicy::fixed(BLE_HW_MTU),
         announce_rate_limit: None,

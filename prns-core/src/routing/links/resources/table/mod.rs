@@ -1,4 +1,4 @@
-//! RNS 1.4.0 `Link.outgoing_resources` and `incoming_resources`.
+//! RNS 1.4.2 `Link.outgoing_resources` and `incoming_resources`.
 //! - [`OutgoingResources`]: one advertised transfer per link at a time (`Link.ready_for_new_resource`).
 //! - [`IncomingResources`]: one transfer per distinct hash on a link (`Link.has_incoming_resource`).
 //!

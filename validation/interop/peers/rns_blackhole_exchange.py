@@ -5,7 +5,7 @@ import time
 import RNS
 from RNS.vendor import umsgpack
 
-EXPECTED_RNS_VERSION = "1.4.0"
+EXPECTED_RNS_VERSION = "1.4.2"
 ENTRY_HASH = bytes.fromhex("33445566778899aabbccddeeff001122")
 
 

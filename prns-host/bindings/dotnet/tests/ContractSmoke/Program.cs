@@ -141,7 +141,14 @@ await using (host)
     }
 
     var attached = await host.AttachInterfaceAsync(
-        new InterfaceConfig.TcpClient("127.0.0.1:9", new Bitrate.Auto())
+        new InterfaceConfig.TcpClient("127.0.0.1:9", new Bitrate.Auto()),
+        new InterfaceRoutingPolicy(
+            InterfaceMode.Boundary,
+            -73,
+            true,
+            false,
+            true
+        )
     );
     if (
         attached
@@ -320,6 +327,7 @@ static async Task PersistentTwoNodeJourneyAsync()
         ),
         new DestinationIdentityConfig.HostIdentity(),
         DecodeHex(fixture.Destination.AnnounceAppDataHex),
+        1_048_576,
         [new RequestHandlerConfig(fixture.Request.Path, RequestPolicy.AllowAll)]
     );
     var serverOptions = HostOptions.PersistentEndpoint(Path.Combine(root, "server")) with
@@ -398,7 +406,8 @@ static async Task PersistentTwoNodeJourneyAsync()
                 link.LinkId,
                 new RequestPathHash(DecodeHex(fixture.Request.PathHashHex)),
                 requestPayload,
-                new ResponseTimeout.Exact(fixture.Request.TimeoutMillis)
+                new ResponseTimeout.Exact(fixture.Request.TimeoutMillis),
+                1_048_576
             ).AsTask();
             var request = await NextEventAsync<ApplicationEvent.Request>(eventIterator);
             if (!request.Data.Span.SequenceEqual(requestPayload))

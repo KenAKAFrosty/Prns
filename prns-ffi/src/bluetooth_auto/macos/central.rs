@@ -16,6 +16,7 @@ use tokio::sync::{mpsc as tokio_mpsc, oneshot};
 
 use prns_core::interfaces::bluetooth_auto::{BleAddress, BleIdentity, Control, PeerProtocol};
 
+use super::gatt_link::GattInboundSender;
 use super::gatt_write::{
     write_admission, GattWriteAdmission, GattWriteMode, GattWriteRequest, GattWriteTarget,
     PendingAcknowledgedWrite,
@@ -76,7 +77,7 @@ pub(super) struct CentralPeerSession {
     address: BleAddress,
     control_tx: tokio_mpsc::Sender<Control>,
     completion_tx: Option<oneshot::Sender<DialCompletion>>,
-    data_tx: tokio_mpsc::Sender<Box<[u8]>>,
+    data_tx: GattInboundSender,
     profile: CentralProfile,
     acknowledged_write: Option<PendingAcknowledgedWrite>,
     unacknowledged_write: Option<GattWriteRequest>,
@@ -87,7 +88,7 @@ impl CentralPeerSession {
         address: BleAddress,
         control_tx: tokio_mpsc::Sender<Control>,
         completion_tx: oneshot::Sender<DialCompletion>,
-        data_tx: tokio_mpsc::Sender<Box<[u8]>>,
+        data_tx: GattInboundSender,
     ) -> Self {
         Self {
             address,
@@ -604,8 +605,23 @@ define_class!(
             if cbuuid_eq(&updated_uuid, &data_uuid())
                 || cbuuid_eq(&updated_uuid, &columba_tx_uuid())
             {
-                if let Some(session) = self.ivars().sessions.borrow().get(&peer_id) {
-                    let _ = session.data_tx.try_send(Box::from(&value.to_vec()[..]));
+                let enqueue_error =
+                    self.ivars()
+                        .sessions
+                        .borrow()
+                        .get(&peer_id)
+                        .and_then(|session| {
+                            session
+                                .data_tx
+                                .try_send(Box::from(&value.to_vec()[..]))
+                                .err()
+                        });
+                if let Some(error) = enqueue_error {
+                    crate::diagnostic_log::warn!(
+                        "bluetooth: GATT notification inbox failed for {:02x?}: {error:?}",
+                        peer_id.address().octets()
+                    );
+                    self.fail_peer(peer_id);
                 }
                 return;
             }

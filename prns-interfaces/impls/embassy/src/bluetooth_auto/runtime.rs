@@ -636,19 +636,22 @@ where
                     .await;
                 }
                 SupervisorStep::Outbound => {
-                    let Some(frame) = fleet.try_next_outbound() else {
-                        continue;
-                    };
-                    send_outbound(
-                        &frame,
-                        &mut manager,
-                        &mut pending,
-                        &status,
-                        &mut fleet,
-                        &mut backend,
-                        &mut members,
-                    )
-                    .await;
+                    // `outbound_ready` is a coalescing signal, while the lane is a queue. One
+                    // wake therefore means "one or more frames", not "exactly one frame". Drain
+                    // every committed frame before waiting again or a burst's tail can sleep
+                    // indefinitely until unrelated traffic happens to signal the lane.
+                    while let Some(frame) = fleet.try_next_outbound() {
+                        send_outbound(
+                            &frame,
+                            &mut manager,
+                            &mut pending,
+                            &status,
+                            &mut fleet,
+                            &mut backend,
+                            &mut members,
+                        )
+                        .await;
+                    }
                 }
             }
         }
@@ -1216,8 +1219,13 @@ async fn deliver_inbound<
         Ok(0) => {}
         Ok(len) => {
             if let Some(member) = members[index].as_ref() {
-                status.member(member.slot).add_rx(len as u64);
-                let _ = fleet.try_deliver_inbound(member.id, &inbufs[index][..len]);
+                if fleet
+                    .deliver_inbound(member.id, &inbufs[index][..len])
+                    .await
+                    .is_ok()
+                {
+                    status.member(member.slot).add_rx(len as u64);
+                }
             }
         }
         Err(()) => {

@@ -11,7 +11,7 @@ use crate::storage::StorageLayout;
 use crate::wire::BROADCAST_MTU;
 
 impl<S: StorageLayout> EngineState<S> {
-    /// RNS 1.4.0 `Interface.process_held_announces`.
+    /// RNS 1.4.2 `Interface.process_held_announces`.
     pub fn fire_due_held_announces<F>(
         &mut self,
         now: InstantMillis,

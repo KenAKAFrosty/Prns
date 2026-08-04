@@ -163,7 +163,7 @@ mod tests {
     }
 
     #[test]
-    fn private_material_derives_the_rns_1_4_0_public_identity_and_hash() {
+    fn private_material_derives_the_rns_1_4_2_public_identity_and_hash() {
         let private = fixed_private();
         assert_eq!(private.public().as_bytes(), &EXPECTED_PUBLIC);
         assert_eq!(
@@ -176,7 +176,7 @@ mod tests {
     }
 
     #[test]
-    fn raw_signature_matches_rns_1_4_0_and_verifies_with_public_material() {
+    fn raw_signature_matches_rns_1_4_2_and_verifies_with_public_material() {
         let private = fixed_private();
         let signature = private.sign(b"local-id-oracle");
         assert_eq!(

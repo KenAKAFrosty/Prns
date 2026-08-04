@@ -280,6 +280,34 @@ impl<S: StorageLayout> EngineState<S> {
                     },
                     source,
                     interfaces,
+                    RelayAudience::OnlineTransports,
+                    now,
+                    sink,
+                );
+                wake_schedule_changes.path_request_timeouts = self.path_request_timeouts_wake();
+            }
+            IngestPacketOutcome::ForwardBoundaryPathRequest { destination, id } => {
+                self.relay_path_request(
+                    RelayPathRequest {
+                        destination,
+                        id: &id,
+                    },
+                    source,
+                    interfaces,
+                    RelayAudience::BoundaryAndGateway,
+                    now,
+                    sink,
+                );
+                wake_schedule_changes.path_request_timeouts = self.path_request_timeouts_wake();
+            }
+            IngestPacketOutcome::ForwardLocalClientPathRequest { destination, id } => {
+                self.relay_path_request(
+                    RelayPathRequest {
+                        destination,
+                        id: &id,
+                    },
+                    source,
+                    interfaces,
                     RelayAudience::Transports,
                     now,
                     sink,
@@ -339,6 +367,14 @@ impl<S: StorageLayout> EngineState<S> {
                     data,
                 }));
                 settle(sink, id, Settlement::SendRequest(Ok(delivered)));
+                wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
+            }
+            IngestPacketOutcome::ResponseTooLarge { id, .. } => {
+                settle(
+                    sink,
+                    id,
+                    Settlement::SendRequest(Err(SendRequestFailure::ResponseTooLarge)),
+                );
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             }
             IngestPacketOutcome::ChannelDataReceived {
@@ -421,6 +457,21 @@ impl<S: StorageLayout> EngineState<S> {
                     }
                 } else {
                     self.reject_offered_resource(&link_id, &accepted.hash, now, fill_entropy, sink);
+                }
+            }
+            IngestPacketOutcome::ResourceTooLarge {
+                link_id,
+                hash,
+                settled_request,
+            } => {
+                self.reject_offered_resource(&link_id, &hash, now, fill_entropy, sink);
+                if let Some(id) = settled_request {
+                    settle(
+                        sink,
+                        id,
+                        Settlement::SendRequest(Err(SendRequestFailure::ResponseTooLarge)),
+                    );
+                    wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
                 }
             }
             IngestPacketOutcome::OwesResourceAssembly { link_id, hash } => {

@@ -5,13 +5,13 @@ use core::time::Duration;
 
 use crate::identity::IdentityHash;
 use crate::interfaces::IfacSize;
-use crate::interfaces::{ConnectionState, InterfaceId, InterfaceSnapshot, TransferRates};
+use crate::interfaces::{
+    ConnectionState, InterfaceId, InterfaceMode, InterfaceSnapshot, TransferRates,
+};
 
 use super::message_pack::MessagePackEncoder;
 use super::wire_names::{interface, transport};
 use super::{interface_name, RnsManagementEncodeError};
-
-const RNS_INTERFACE_MODE_FULL: i64 = 0x01;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RnsInterfaceAccessCode {
@@ -170,14 +170,16 @@ fn encode_interface_entry(
         rx_bps: 0,
         tx_bps: 0,
     });
-    encoder.map(13)?;
+    encoder.map(14)?;
     encoder.string_field(interface::NAME, &name)?;
     encoder.string_field(interface::SHORT_NAME, &name)?;
     encoder.string_field(interface::TYPE, &interface_type(entry.snapshot.id))?;
     encoder.field(interface::STATUS)?;
     encoder.boolean(is_online(entry.snapshot.connection));
     encoder.field(interface::MODE)?;
-    encoder.signed(RNS_INTERFACE_MODE_FULL);
+    encoder.signed(interface_mode(entry.snapshot.mode));
+    encoder.field(interface::GRAVITY)?;
+    encoder.signed(entry.snapshot.gravity.get());
     encoder.field(interface::CLIENTS)?;
     encoder.nil();
     encoder.unsigned_field(interface::RECEIVE_BYTES, entry.snapshot.rx_bytes)?;
@@ -206,6 +208,18 @@ fn encode_interface_entry(
         None => encoder.nil(),
     }
     Ok(())
+}
+
+fn interface_mode(mode: InterfaceMode) -> i64 {
+    match mode {
+        InterfaceMode::Full => 0x01,
+        InterfaceMode::PointToPoint => 0x02,
+        InterfaceMode::AccessPoint => 0x03,
+        InterfaceMode::Roaming => 0x04,
+        InterfaceMode::Boundary => 0x05,
+        InterfaceMode::Gateway => 0x06,
+        InterfaceMode::Internal => 0x07,
+    }
 }
 
 fn interface_type(id: InterfaceId) -> String {

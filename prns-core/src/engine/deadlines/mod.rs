@@ -57,7 +57,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// The reference's two cull arms (RNS 1.4.0 `Transport.jobs`): [`RouteRemovalCause::Expired`](crate::routing::RouteRemovalCause::Expired) for the aged, [`RouteRemovalCause::InterfaceGone`](crate::routing::RouteRemovalCause::InterfaceGone) for the orphaned.
+    /// The reference's two cull arms (RNS 1.4.2 `Transport.jobs`): [`RouteRemovalCause::Expired`](crate::routing::RouteRemovalCause::Expired) for the aged, [`RouteRemovalCause::InterfaceGone`](crate::routing::RouteRemovalCause::InterfaceGone) for the orphaned.
     /// The orphan arm is softened by the [`crate::routing::warmth::DepartedInterfaces`] grace; the reverse-route and transported-link culls below stay eager like the reference's, since they carry in-flight work that a bounced lane kills regardless.
     pub fn cull_expired_routes(
         &mut self,
@@ -146,7 +146,7 @@ impl<S: StorageLayout> EngineState<S> {
                     continue;
                 };
                 let bytes = &buf[..written];
-                let next_hop_mode = interfaces.iter().find(|c| c.id == source).map(|c| c.mode);
+                let source_descriptor = interfaces.iter().find(|candidate| candidate.id == source);
                 let mut fleets_emitted: u128 = 0;
                 for descriptor in interfaces {
                     let eligible = match directed_to {
@@ -160,7 +160,11 @@ impl<S: StorageLayout> EngineState<S> {
                         }
                         None => {
                             descriptor.id.kind() != Some(InterfaceKind::LocalClient)
-                                && allows_announce_rebroadcast(descriptor, source, next_hop_mode)
+                                && allows_announce_rebroadcast(
+                                    descriptor,
+                                    source,
+                                    source_descriptor,
+                                )
                         }
                     };
                     if !eligible {

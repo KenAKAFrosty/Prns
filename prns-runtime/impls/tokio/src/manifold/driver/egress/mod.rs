@@ -341,6 +341,14 @@ impl DirectiveEgress for TokioDirectiveEgress<'_> {
         );
     }
 
+    fn send_if_online(&mut self, target: InterfaceId, bytes: &[u8], on_send: &mut dyn FnMut()) {
+        if self.egress.skip_unavailable(target) {
+            return;
+        }
+        on_send();
+        self.send(target, bytes);
+    }
+
     fn send_announce(&mut self, target: InterfaceId, announce: AnnounceDirective<'_>) {
         offer_to_pacer(
             self.pacers,

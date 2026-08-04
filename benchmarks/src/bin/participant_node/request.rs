@@ -50,6 +50,7 @@ pub(super) async fn run_request_endpoint(
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         resource_strategy: ResourceStrategy::AcceptNone,
+        maximum_request_bytes: Default::default(),
         request_endpoints: if role == "responder" {
             ServeMyRequestEndpoints::Yes
         } else {

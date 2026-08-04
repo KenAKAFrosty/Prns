@@ -170,6 +170,20 @@ struct NativeInterfaceConfig
     url::NativeStringView
 end
 
+struct NativeInterfaceRoutingPolicy
+    struct_size::Csize_t
+    has_mode::UInt8
+    mode::UInt32
+    has_gravity::UInt8
+    gravity::Int64
+    has_recursive_path_requests::UInt8
+    recursive_path_requests::UInt8
+    has_announces_from_internal::UInt8
+    announces_from_internal::UInt8
+    has_announces_to_internal::UInt8
+    announces_to_internal::UInt8
+end
+
 struct NativeBackendInfo
     struct_size::Csize_t
     backend::UInt32
@@ -353,6 +367,25 @@ function NativeInterfaceConfig(;
     )
 end
 
+function native_interface_routing(value::InterfaceRoutingPolicy)
+    if value.gravity !== nothing && !(SAFE_INT_MIN <= value.gravity <= SAFE_INT_MAX)
+        throw(ArgumentError("gravity must be a safe integer"))
+    end
+    NativeInterfaceRoutingPolicy(
+        sizeof(NativeInterfaceRoutingPolicy),
+        UInt8(value.mode !== nothing),
+        value.mode === nothing ? UInt32(0) : UInt32(value.mode),
+        UInt8(value.gravity !== nothing),
+        something(value.gravity, Int64(0)),
+        UInt8(value.recursive_path_requests !== nothing),
+        UInt8(something(value.recursive_path_requests, false)),
+        UInt8(value.announces_from_internal !== nothing),
+        UInt8(something(value.announces_from_internal, false)),
+        UInt8(value.announces_to_internal !== nothing),
+        UInt8(something(value.announces_to_internal, false)),
+    )
+end
+
 struct NativeDestinationConfig
     struct_size::Csize_t
     kind::UInt32
@@ -362,6 +395,8 @@ struct NativeDestinationConfig
     announce_app_data::NativeByteView
     request_handlers::Ptr{NativeRequestHandlerConfig}
     request_handler_count::Csize_t
+    has_maximum_request_bytes::UInt8
+    maximum_request_bytes::UInt64
 end
 
 struct NativeHostOptions
@@ -910,6 +945,8 @@ function native_destination(arena::NativeArena, value::DestinationConfig)
             NativeByteView(C_NULL, 0),
             C_NULL,
             0,
+            0,
+            0,
         )
     end
     if value isa DestinationConfigSingle
@@ -925,6 +962,10 @@ function native_destination(arena::NativeArena, value::DestinationConfig)
             )
             for handler in value.request_handlers
         ]
+        if !isnothing(value.maximum_request_bytes) &&
+           value.maximum_request_bytes > SAFE_UINT_MAX
+            throw(ArgumentError("maximum_request_bytes must be an unsigned safe integer"))
+        end
         push!(arena.request_handler_arrays, request_handlers)
         return NativeDestinationConfig(
             sizeof(NativeDestinationConfig),
@@ -935,6 +976,8 @@ function native_destination(arena::NativeArena, value::DestinationConfig)
             native_optional_byte_view(arena, value.announce_app_data),
             isempty(request_handlers) ? C_NULL : pointer(request_handlers),
             length(request_handlers),
+            UInt8(!isnothing(value.maximum_request_bytes)),
+            something(value.maximum_request_bytes, UInt64(0)),
         )
     end
     throw(ArgumentError("unknown destination configuration"))

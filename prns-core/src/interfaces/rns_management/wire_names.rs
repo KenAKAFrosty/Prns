@@ -26,6 +26,7 @@ pub mod interface {
     pub const TYPE: &str = "type";
     pub const STATUS: &str = "status";
     pub const MODE: &str = "mode";
+    pub const GRAVITY: &str = "gravity";
     pub const CLIENTS: &str = "clients";
     pub const RECEIVE_BYTES: &str = "rxb";
     pub const TRANSMIT_BYTES: &str = "txb";

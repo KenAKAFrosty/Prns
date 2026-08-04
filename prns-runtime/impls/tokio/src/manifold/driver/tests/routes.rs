@@ -60,7 +60,7 @@ async fn routing_control_drops_a_live_route_and_journals_the_explicit_removal() 
         CryptoPoolConfig::Inline,
     ));
 
-    let announce = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
+    let announce = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
     inbound_tx.try_grant().unwrap().fill(&announce);
     inbound_tx.commit();
     notify_tx.send(source).unwrap();
@@ -187,7 +187,7 @@ async fn the_manifold_culls_an_expired_route_at_its_deadline() {
     tokio::spawn(iface.run(seam));
 
     wire_in_tx
-        .send(bytes_from_hex(RNS_1_4_0_ANNOUNCE))
+        .send(bytes_from_hex(RNS_1_4_2_ANNOUNCE))
         .expect("the interface holds its wire");
     let destination = tokio::time::timeout(Duration::from_secs(2), heard_rx.recv())
         .await

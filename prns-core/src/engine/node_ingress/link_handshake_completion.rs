@@ -59,6 +59,7 @@ impl<S: StorageLayout> EngineState<S> {
             &owed.link_id,
             &owed.responder_encryption,
             &LinkActivation {
+                received_hops: owed.received_hops,
                 rtt: owed.rtt,
                 mtu: owed.mtu.min(link_mtu_ceiling(interfaces, source)),
                 attached_interface: source,
@@ -103,6 +104,7 @@ impl<S: StorageLayout> EngineState<S> {
             &owed.link_id,
             &shared,
             &LinkActivation {
+                received_hops: owed.received_hops,
                 rtt: owed.rtt,
                 mtu: owed.mtu.min(link_mtu_ceiling(interfaces, source)),
                 attached_interface: source,

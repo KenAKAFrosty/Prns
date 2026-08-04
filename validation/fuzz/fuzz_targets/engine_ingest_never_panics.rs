@@ -25,6 +25,7 @@ fn interface_descriptor(id: InterfaceId) -> InterfaceDescriptor {
             egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
         },
         mode: InterfaceMode::Full,
+        gravity: prns_core::interfaces::InterfaceGravity::ZERO,
         bitrate: BitrateBps::guess(1_000_000_000),
         hardware_mtu: None,
         announce_rate_limit: None,

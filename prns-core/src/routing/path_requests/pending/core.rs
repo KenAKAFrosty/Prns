@@ -2,7 +2,7 @@ use crate::engine::CommandId;
 use crate::engine::InstantMillis;
 use crate::wire::DestinationHash;
 
-/// RNS 1.4.0 `Transport.PATH_REQUEST_TIMEOUT` (15s): how long a client path request waits for an answer before giving up.
+/// RNS 1.4.2 `Transport.PATH_REQUEST_TIMEOUT` (15s): how long a client path request waits for an answer before giving up.
 pub const PATH_REQUEST_TIMEOUT_MS: u64 = 15_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,7 +115,7 @@ impl<C: PendingPathRequestTable> PendingPathRequests<C> {
         self.earliest_timeout
     }
 
-    /// Whether RNS 1.4.0 `Transport.inbound` would exempt `destination` from announce ingress limiting because a request for it is active.
+    /// Whether RNS 1.4.2 `Transport.inbound` would exempt `destination` from announce ingress limiting because a request for it is active.
     pub fn contains(&self, destination: &DestinationHash) -> bool {
         self.table.index_of(destination).is_some()
     }

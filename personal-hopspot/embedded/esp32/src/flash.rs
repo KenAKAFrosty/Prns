@@ -60,11 +60,13 @@ fn unpark_core(core: Cpu) {
     control.unpark_core(core);
 }
 
-pub struct EspRomFlash<const CAPACITY: usize>;
+pub struct EspRomFlash {
+    capacity: usize,
+}
 
-impl<const CAPACITY: usize> EspRomFlash<CAPACITY> {
-    pub const fn new() -> Self {
-        Self
+impl EspRomFlash {
+    pub const fn new(capacity: usize) -> Self {
+        Self { capacity }
     }
 }
 
@@ -85,11 +87,11 @@ impl NorFlashError for EspRomFlashError {
     }
 }
 
-impl<const CAPACITY: usize> ErrorType for EspRomFlash<CAPACITY> {
+impl ErrorType for EspRomFlash {
     type Error = EspRomFlashError;
 }
 
-impl<const CAPACITY: usize> ReadNorFlash for EspRomFlash<CAPACITY> {
+impl ReadNorFlash for EspRomFlash {
     const READ_SIZE: usize = WORD_LEN;
 
     fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
@@ -107,11 +109,11 @@ impl<const CAPACITY: usize> ReadNorFlash for EspRomFlash<CAPACITY> {
     }
 
     fn capacity(&self) -> usize {
-        CAPACITY
+        self.capacity
     }
 }
 
-impl<const CAPACITY: usize> NorFlash for EspRomFlash<CAPACITY> {
+impl NorFlash for EspRomFlash {
     const WRITE_SIZE: usize = WORD_LEN;
     const ERASE_SIZE: usize = SECTOR_LEN;
 
@@ -141,7 +143,7 @@ impl<const CAPACITY: usize> NorFlash for EspRomFlash<CAPACITY> {
     }
 }
 
-impl<const CAPACITY: usize> AsyncReadNorFlash for EspRomFlash<CAPACITY> {
+impl AsyncReadNorFlash for EspRomFlash {
     const READ_SIZE: usize = WORD_LEN;
 
     async fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
@@ -153,7 +155,7 @@ impl<const CAPACITY: usize> AsyncReadNorFlash for EspRomFlash<CAPACITY> {
     }
 }
 
-impl<const CAPACITY: usize> AsyncNorFlash for EspRomFlash<CAPACITY> {
+impl AsyncNorFlash for EspRomFlash {
     const WRITE_SIZE: usize = WORD_LEN;
     const ERASE_SIZE: usize = SECTOR_LEN;
 

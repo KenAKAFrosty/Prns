@@ -87,6 +87,14 @@ pub(super) fn trace(event: &TokioDiscoveryEvent<'_>) {
                 interface_name = %record.interface().name,
             );
         }
+        TokioDiscoveryEvent::CatalogBlackholed(record) => {
+            tracing::info!(
+                event = "interface_discovery_blackholed",
+                interface_origin = InterfaceOriginKind::Discovered.as_str(),
+                discovery_id = ?record.id().as_bytes(),
+                interface_name = %record.interface().name,
+            );
+        }
         TokioDiscoveryEvent::ConnectionAttached { plan, interface } => {
             tracing::info!(
                 event = "interface_discovery_connected",

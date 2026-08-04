@@ -39,6 +39,11 @@ class GenerateHostContractTests(unittest.TestCase):
             GENERATOR.validate(schema)
 
         schema = canonical_schema()
+        schema["scalars"][0]["minimum"] += 1
+        with self.assertRaisesRegex(ValueError, "safeInt must match"):
+            GENERATOR.validate(schema)
+
+        schema = canonical_schema()
         schema["limits"]["unbounded"] = 1
         with self.assertRaisesRegex(ValueError, "unknown limits keys"):
             GENERATOR.validate(schema)
@@ -234,10 +239,14 @@ class GenerateHostContractTests(unittest.TestCase):
     def test_javascript_integer_policy_is_explicit(self):
         schema = canonical_schema()
         projection = GENERATOR.ts_output(schema)
+        self.assertIn("export const SAFE_INT_MIN = -9007199254740991;", projection)
+        self.assertIn("export const SAFE_INT_MAX = 9007199254740991;", projection)
         self.assertIn("export const SAFE_UINT_MAX = 9007199254740991;", projection)
         self.assertIn("readonly revision: bigint;", projection)
         self.assertIn("readonly uptimeMillis: number;", projection)
         vectors = json.loads(GENERATOR.vectors_output(schema))
+        self.assertEqual(vectors["integerChecks"]["safeInt"]["typescript"], "number")
+        self.assertIn("-9007199254740991", vectors["integerChecks"]["safeInt"]["accepted"])
         self.assertEqual(vectors["integerChecks"]["safeUint"]["typescript"], "number")
         self.assertEqual(vectors["integerChecks"]["u64"]["typescript"], "bigint")
         self.assertIn("18446744073709551615", vectors["integerChecks"]["u64"]["accepted"])
@@ -247,6 +256,128 @@ class GenerateHostContractTests(unittest.TestCase):
         self.assertIn("safeUintMax: UInt64 = 9007199254740991", GENERATOR.swift_output(schema))
         self.assertIn("SAFE_UINT_MAX = 9007199254740991L", GENERATOR.kotlin_output(schema))
         self.assertIn("SAFE_UINT_MAX = UInt64(9007199254740991)", GENERATOR.julia_output(schema))
+
+    def test_request_ceiling_contract_projects_across_every_language(self):
+        schema = canonical_schema()
+        projections = {
+            "typescript": GENERATOR.ts_output(schema),
+            "c": GENERATOR.c_output(schema),
+            "python": GENERATOR.python_output(schema),
+            "dotnet": GENERATOR.dotnet_output(schema),
+            "go": GENERATOR.go_output(schema),
+            "swift": GENERATOR.swift_output(schema),
+            "kotlin": GENERATOR.kotlin_output(schema),
+            "julia": GENERATOR.julia_output(schema),
+        }
+        expected = {
+            "typescript": (
+                "readonly maximumRequestBytes?: number;",
+                "readonly maximumResponseBytes?: number;",
+                'Tag<"ResponseTooLarge">',
+            ),
+            "c": (
+                "uint8_t has_maximum_request_bytes;",
+                "uint64_t maximum_request_bytes;",
+                "const uint64_t *maximum_response_bytes",
+                "PRNS_COMMAND_FAILURE_KIND_RESPONSE_TOO_LARGE UINT32_C(41)",
+            ),
+            "python": (
+                "maximum_request_bytes: int | None",
+                "maximum_response_bytes: int | None",
+                "class CommandFailureResponseTooLarge:",
+            ),
+            "dotnet": (
+                "ulong? MaximumRequestBytes",
+                "ulong? MaximumResponseBytes",
+                "public sealed record ResponseTooLarge() : CommandFailure;",
+            ),
+            "go": (
+                "MaximumRequestBytes *uint64",
+                "MaximumResponseBytes *uint64",
+                "type CommandFailureResponseTooLarge struct{}",
+            ),
+            "swift": (
+                "maximumRequestBytes: UInt64?",
+                "maximumResponseBytes: UInt64?",
+                "case responseTooLarge",
+            ),
+            "kotlin": (
+                "val maximumRequestBytes: Long?",
+                "val maximumResponseBytes: Long?",
+                "data object CommandFailureResponseTooLarge",
+            ),
+            "julia": (
+                "maximum_request_bytes::Union{Nothing,UInt64}",
+                "maximum_response_bytes::Union{Nothing,UInt64}",
+                "struct CommandFailureResponseTooLarge",
+            ),
+        }
+        for language, fragments in expected.items():
+            with self.subTest(language=language):
+                for fragment in fragments:
+                    self.assertIn(fragment, projections[language])
+
+    def test_interface_routing_contract_projects_across_every_language(self):
+        schema = canonical_schema()
+        projections = {
+            "typescript": GENERATOR.ts_output(schema),
+            "c": GENERATOR.c_output(schema),
+            "python": GENERATOR.python_output(schema),
+            "dotnet": GENERATOR.dotnet_output(schema),
+            "go": GENERATOR.go_output(schema),
+            "swift": GENERATOR.swift_output(schema),
+            "kotlin": GENERATOR.kotlin_output(schema),
+            "julia": GENERATOR.julia_output(schema),
+        }
+        expected = {
+            "typescript": (
+                'export type InterfaceMode =',
+                '  | "Internal";',
+                "readonly gravity?: number;",
+                "readonly routing?: InterfaceRoutingPolicy;",
+            ),
+            "c": (
+                "PRNS_INTERFACE_MODE_INTERNAL UINT32_C(7)",
+                "typedef struct PrnsInterfaceRoutingPolicy",
+                "uint8_t has_announces_to_internal;",
+                "const PrnsInterfaceRoutingPolicy *routing",
+            ),
+            "python": (
+                "class InterfaceMode(IntEnum):",
+                "gravity: int | None",
+                "routing: InterfaceRoutingPolicy | None",
+            ),
+            "dotnet": (
+                "public enum InterfaceMode : uint",
+                "long? Gravity",
+                "InterfaceRoutingPolicy? Routing",
+            ),
+            "go": (
+                "type InterfaceMode uint32",
+                "Gravity *int64",
+                "Routing *InterfaceRoutingPolicy",
+            ),
+            "swift": (
+                "public enum InterfaceMode: UInt32, Sendable",
+                "case `internal` = 7",
+                "public let gravity: Int64?",
+                "case attachInterface(config: InterfaceConfig, routing: InterfaceRoutingPolicy?)",
+            ),
+            "kotlin": (
+                "enum class InterfaceMode(val rawValue: Int)",
+                "val gravity: Long?",
+                "val routing: InterfaceRoutingPolicy?",
+            ),
+            "julia": (
+                "@enum InterfaceMode::UInt32",
+                "gravity::Union{Nothing,Int64}",
+                "routing::Union{Nothing,InterfaceRoutingPolicy}",
+            ),
+        }
+        for language, fragments in expected.items():
+            with self.subTest(language=language):
+                for fragment in fragments:
+                    self.assertIn(fragment, projections[language])
 
     def test_records_arrays_optionals_and_nested_unions_project_exactly(self):
         schema = canonical_schema()

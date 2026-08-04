@@ -89,6 +89,8 @@ internal static partial class Native
         internal ByteView AnnounceAppData;
         internal nint RequestHandlers;
         internal nuint RequestHandlerCount;
+        internal byte HasMaximumRequestBytes;
+        internal ulong MaximumRequestBytes;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -250,6 +252,7 @@ internal static partial class Native
         ByteView payload,
         ResponseTimeoutKind timeoutKind,
         ulong timeoutMillis,
+        nint maximumResponseBytes,
         out CommandHandle command
     );
 

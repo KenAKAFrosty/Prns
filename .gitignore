@@ -14,6 +14,7 @@ godot-smoke/
 .vscode/*
 !.vscode/extensions.json
 .wifi-env
+.env
 # Parked standalone crate builds into its own target dir
 prnsd/target/
 /prnsd/.run/
@@ -29,7 +30,7 @@ benchmarks/target/
 benchmarks/reference/.venv/
 benchmarks/reference/.object-cache/
 benchmarks/.benchmark-runs/
-# Dedicated venv for the rns 1.4.0 reference (oracle tests)
+# Legacy dedicated venv for the previous RNS oracle
 /.venv-rns-1.4.0/
 /validation/.venv/
 **/__pycache__/

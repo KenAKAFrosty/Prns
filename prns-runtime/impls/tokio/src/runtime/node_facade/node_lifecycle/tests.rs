@@ -393,6 +393,7 @@ fn a_runtime_destination_registers_only_its_selected_route_types() {
             link_requests: crate::routing::LinkRequestPolicy::AcceptAll,
             ratchet: crate::engine::RatchetPolicy::NoRatchets,
             resource_strategy: ResourceStrategy::AcceptNone,
+            maximum_request_bytes: Default::default(),
             request_endpoints: ServeMyRequestEndpoints::No,
         })
         .unwrap();

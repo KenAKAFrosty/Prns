@@ -72,14 +72,10 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
     use_effect(move || {
         if is_esp && !embedded {
             spawn(async move {
-                if bridge::browser_supported().await {
-                    web_serial.set(WebSerialCapability::Supported);
-                } else {
-                    web_serial.set(WebSerialCapability::Unavailable);
-                    status.set(
-                        "Web Serial is unavailable in this browser or context. Open this page in current Chrome or Edge over HTTPS, or use the standalone CLI."
-                            .to_string(),
-                    );
+                let capability = bridge::web_serial_capability().await;
+                web_serial.set(capability);
+                if let Some(explanation) = capability.blocked_explanation() {
+                    status.set(explanation.to_string());
                 }
             });
         }
@@ -89,6 +85,7 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
     let device_operation_active = busy && !preparation_active();
     let browser_ready = !is_esp || web_serial().permits_esp_flash();
     let browser_checking = is_esp && web_serial() == WebSerialCapability::Checking;
+    let browser_android = is_esp && web_serial() == WebSerialCapability::AndroidBluetoothOnly;
     let browser_blocked = is_esp && web_serial() == WebSerialCapability::Unavailable;
     let destructive_action_permitted = destructive_confirmation().permits(install_mode());
     let can_prepare = confirmed()
@@ -456,6 +453,10 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                     div { class: "flash-web-install-message mt-5",
                         "Checking this browser for secure Web Serial support before release preparation is enabled."
                     }
+                } else if browser_android {
+                    div { class: "flash-web-install-message mt-5",
+                        "This Android browser provides Web Serial for Bluetooth serial devices only; a board connected over USB cannot be selected yet. Wired serial support waits on a new Android system API that only a limited set of devices provides. Desktop Chrome or Edge, or the standalone CLI, provides the same verified release path."
+                    }
                 } else if browser_blocked {
                     div { class: "flash-web-install-message mt-5",
                         "Direct ESP flashing requires a secure current Chrome or Edge browser with Web Serial. The standalone CLI provides the same verified release path."
@@ -716,7 +717,7 @@ pub(super) fn BoardTargetCard(board: &'static BoardTarget, selected: bool) -> El
                     match board.tier {
                         Tier::BringUp => "Bring-up in progress",
                         Tier::Roadmap => "Planned",
-                        Tier::Shipping | Tier::Flashable => "Coming later",
+                        Tier::Shipping | Tier::SdkPreview | Tier::Flashable => "Coming later",
                     }
                 }
             }

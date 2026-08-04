@@ -19,7 +19,7 @@ pub enum PathRequestWriteOutcome {
 }
 
 impl<S: StorageLayout> EngineState<S> {
-    /// RNS 1.4.0 `Transport.request_path` emits unconditionally: an existing route never blocks the request, so a suspect path stays refreshable.
+    /// RNS 1.4.2 `Transport.request_path` emits unconditionally: an existing route never blocks the request, so a suspect path stays refreshable.
     pub fn write_commanded_path_request(
         &mut self,
         id: CommandId,
@@ -75,7 +75,7 @@ mod tests {
     #[test]
     fn a_live_route_never_blocks_a_path_request() {
         let mut state: EngineState<TestStorageLayout> = EngineState::new(second_secret_key());
-        let mut announce = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
+        let mut announce = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         let (header, _) = WirePacketHeader::parse(&announce).expect("the announce fixture parses");
         let destination = DestinationHash::from_address(header.address);
 
@@ -109,7 +109,7 @@ mod tests {
             &mut buf,
         );
         let PathRequestWriteOutcome::Written { wire_bytes, .. } = outcome else {
-            panic!("RNS 1.4.0 Transport.request_path emits unconditionally; a live route must not block a refresh");
+            panic!("RNS 1.4.2 Transport.request_path emits unconditionally; a live route must not block a refresh");
         };
 
         let (header, _) =

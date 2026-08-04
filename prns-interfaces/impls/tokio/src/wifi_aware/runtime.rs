@@ -18,7 +18,8 @@ use prns_core::interfaces::wifi_aware::{
 use prns_core::interfaces::wifi_aware::{AwarePolicy, PolicyAction, PolicyInput};
 use prns_core::interfaces::wifi_aware::{DiscoveryMode, WifiAwareBackend, WifiAwareEvent};
 use prns_core::interfaces::{
-    BitrateBps, ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
+    BitrateBps, ConnectionState, EffectiveInterfacePolicy, InterfaceId, InterfaceKind,
+    InterfaceStatus, TransferRates,
 };
 use prns_runtime::manifold::driver::TokioInterfaceStatus;
 use prns_runtime::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
@@ -30,7 +31,7 @@ const OPEN_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct WifiAwareAuto<B> {
     backend: B,
-    bitrate: BitrateBps,
+    interface_policy: EffectiveInterfacePolicy,
     status: WifiAwareStatus,
 }
 
@@ -42,14 +43,24 @@ impl<B: WifiAwareBackend> WifiAwareAuto<B> {
         ));
         Self {
             backend,
-            bitrate: WIFI_AWARE_BITRATE_GUESS_BPS,
+            interface_policy: prns_core::interfaces::wifi_aware::defaults_for_bitrate(
+                WIFI_AWARE_BITRATE_GUESS_BPS,
+            )
+            .configured(Default::default()),
             status,
         }
     }
 
     #[must_use]
     pub fn with_bitrate(mut self, bitrate: BitrateBps) -> Self {
-        self.bitrate = bitrate;
+        self.interface_policy = prns_core::interfaces::wifi_aware::defaults_for_bitrate(bitrate)
+            .configured(Default::default());
+        self
+    }
+
+    #[must_use]
+    pub fn with_policy(mut self, policy: EffectiveInterfacePolicy) -> Self {
+        self.interface_policy = policy;
         self
     }
 
@@ -320,6 +331,10 @@ enum Step {
 impl<B: WifiAwareBackend> InterfaceSupervisor for WifiAwareAuto<B> {
     const KIND: InterfaceKind = InterfaceKind::WifiAware;
 
+    fn policy(&self) -> EffectiveInterfacePolicy {
+        self.interface_policy
+    }
+
     fn channel_tag(&self) -> &[u8] {
         FAMILY_TAG
     }
@@ -327,7 +342,7 @@ impl<B: WifiAwareBackend> InterfaceSupervisor for WifiAwareAuto<B> {
     async fn run(self, fleet: Fleet) {
         let Self {
             mut backend,
-            bitrate,
+            interface_policy,
             status,
         } = self;
         if let Some(reason) = backend.blocked() {
@@ -405,9 +420,12 @@ impl<B: WifiAwareBackend> InterfaceSupervisor for WifiAwareAuto<B> {
                 }) => {
                     if dp.opens.get(&peer).map(|handle| handle.role) == Some(role) {
                         dp.opens.remove(&peer);
-                        let member =
-                            WifiAwareMember::new(addr.to_string().into_bytes(), stream, bitrate)
-                                .report_close_to(closed_tx.clone());
+                        let member = WifiAwareMember::with_policy(
+                            addr.to_string().into_bytes(),
+                            stream,
+                            interface_policy,
+                        )
+                        .report_close_to(closed_tx.clone());
                         let id = member.id();
                         let member_status = member.status();
                         let attached = fleet.add(member);

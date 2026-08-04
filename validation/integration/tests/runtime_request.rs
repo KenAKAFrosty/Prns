@@ -72,6 +72,7 @@ async fn a_request_endpoints_answers_a_live_request_over_tcp() {
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
+        maximum_request_bytes: Default::default(),
         request_endpoints: ServeMyRequestEndpoints::Yes,
     };
     let dest_a = responder_dest
@@ -126,6 +127,7 @@ async fn a_request_endpoints_answers_a_live_request_over_tcp() {
             proof: ProofStrategy::ProveAll,
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
+            maximum_request_bytes: Default::default(),
             request_endpoints: ServeMyRequestEndpoints::No,
         }],
         app_state: (),
@@ -188,6 +190,7 @@ async fn a_request_endpoints_answers_a_live_request_over_tcp() {
                 path_hash: RequestPathHash::of(QUERY_PATH),
                 data: SendRequestData::from_slice(b"ping").expect("request fits a single packet"),
                 response_timeout: Default::default(),
+                maximum_response_bytes: Default::default(),
             }))
             .expect("the initiator node is running");
         loop {
@@ -219,6 +222,7 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
+        maximum_request_bytes: Default::default(),
         request_endpoints: ServeMyRequestEndpoints::Yes,
     };
     let dest_a = responder_dest
@@ -273,6 +277,7 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
             proof: ProofStrategy::ProveAll,
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
+            maximum_request_bytes: Default::default(),
             request_endpoints: ServeMyRequestEndpoints::No,
         }],
         app_state: (),
@@ -347,6 +352,7 @@ async fn the_hopspot_node_page_serves_over_tcp() {
         proof: ProofStrategy::ProveNone,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
+        maximum_request_bytes: Default::default(),
         request_endpoints: ServeMyRequestEndpoints::Yes,
     };
     let dest_a = responder_dest
@@ -401,6 +407,7 @@ async fn the_hopspot_node_page_serves_over_tcp() {
             proof: ProofStrategy::ProveAll,
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
+            maximum_request_bytes: Default::default(),
             request_endpoints: ServeMyRequestEndpoints::No,
         }],
         app_state: (),
@@ -475,6 +482,7 @@ async fn serve_the_hopspot_page_for_a_stock_client() {
         proof: ProofStrategy::ProveNone,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
+        maximum_request_bytes: Default::default(),
         request_endpoints: ServeMyRequestEndpoints::Yes,
     };
     let dest_a = responder_dest
@@ -534,6 +542,7 @@ async fn a_split_response_answers_a_small_request_over_tcp() {
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
+        maximum_request_bytes: Default::default(),
         request_endpoints: ServeMyRequestEndpoints::Yes,
     };
     let dest_a = responder_dest
@@ -588,6 +597,7 @@ async fn a_split_response_answers_a_small_request_over_tcp() {
             proof: ProofStrategy::ProveAll,
             link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
+            maximum_request_bytes: Default::default(),
             request_endpoints: ServeMyRequestEndpoints::No,
         }],
         app_state: (),

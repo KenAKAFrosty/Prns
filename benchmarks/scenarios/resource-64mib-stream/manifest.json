@@ -1,14 +1,14 @@
 {
   "name": "resource-64mib-stream",
-  "version": 9,
+  "version": 10,
   "order": 6,
-  "title": "64 MiB resource stream",
+  "title": "64-segment resource stream",
   "category": "Resources",
-  "summary": "Stream a 64 MiB incompressible resource with compression disabled.",
+  "summary": "Stream 64 maximum-efficient resource segments with compression disabled.",
   "primary_metric": "goodput_bytes_per_sec",
   "headline": true,
   "notes": [
-    "Both implementations carry the same 64 MiB in 65 authenticated protocol segments. RNS 1.4.0 fills 64 maximum-efficient segments and ends with a 64-byte tail; Prns keeps the first 63 at that ceiling and balances the final pair. The protocol-valid rebalance avoids an RNS 1.4.0 receive-side handoff race in which the proof leaves before the retiring receiver is removed and that one untagged tail part can be skipped."
+    "Both implementations carry the same 67,108,800-byte payload in 64 maximum-efficient protocol segments. This is 64 bytes below 64 MiB and avoids making benchmark completion depend on RNS {reference_version}'s timing-sensitive handoff to a 65th 64-byte tail segment."
   ],
   "cell_notes": [
     {
@@ -18,16 +18,24 @@
         "responder": "personal-rns"
       },
       "text": "RNS prepares the next 1 MiB segment in a background thread. Prns proves the current segment before that preparation completes, making RNS enter a coarse 50 ms polling loop. A slower stock receiver gives preparation enough time to finish, avoiding that cliff."
+    },
+    {
+      "subject": {
+        "path": "direct",
+        "initiator": "rns-1.4.2-compiled",
+        "responder": "personal-rns"
+      },
+      "text": "RNS prepares the next 1 MiB segment in a background thread. Prns proves the current segment before that preparation completes, making RNS enter a coarse 50 ms polling loop. A slower stock receiver gives preparation enough time to finish, avoiding that cliff."
     }
   ],
-  "description": "A single large resource transferred whole, over and over, for a fixed wall-time - the multi-segment bulk mechanism. Each logical transfer is 64 MiB sliced into 65 segments no larger than MAX_EFFICIENT_SIZE, sent one at a time, hash-proved, and application-acknowledged before another logical transfer begins. The payload repeats one shared deterministic maximum-size block, allowing Prns to stream with bounded memory while both participants transmit identical bytes. Compression is disabled on both stacks.",
+  "description": "A single large resource transferred whole, over and over, for a fixed wall-time - the multi-segment bulk mechanism. Each logical transfer is exactly 64 maximum-efficient segments, sent one at a time, hash-proved, and application-acknowledged before another logical transfer begins. The payload repeats one shared deterministic maximum-size block, allowing Prns to stream with bounded memory while both participants transmit identical bytes. Compression is disabled on both stacks.",
   "roles": [
     "responder",
     "initiator"
   ],
   "profile": {
     "mechanism": "resource",
-    "payload_len": 67108864,
+    "payload_len": 67108800,
     "window": 1,
     "duration_ms": 30000,
     "drain_timeout_ms": 30000,

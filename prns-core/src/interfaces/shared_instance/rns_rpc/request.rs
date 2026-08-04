@@ -1603,7 +1603,7 @@ mod tests {
     }
 
     #[test]
-    fn decodes_every_rns_1_4_0_operation() {
+    fn decodes_every_rns_1_4_2_operation() {
         let cases = [
             request(vec![("get", Value::from("interface_stats"))]),
             request(vec![
@@ -1756,7 +1756,7 @@ mod tests {
     }
 
     #[test]
-    fn blackhole_deadlines_preserve_rns_138_truthiness_and_epoch_seconds() {
+    fn blackhole_deadlines_preserve_rns_1_4_2_truthiness_and_epoch_seconds() {
         assert_eq!(
             RnsNumber::Integer(RnsInteger::from_i64(-1)).blackhole_expiry(),
             BlackholeExpiry::At(InstantMillis(0))

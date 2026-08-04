@@ -14,7 +14,7 @@ use prns_core::interfaces::{
     tcp, udp, websocket, AnnounceBandwidthCap, AnnounceRateLimit, BitrateBps,
     ConfiguredInterfacePolicy, EffectiveInterfacePolicy, EgressCapability, FrequencyMilliHertz,
     IngressCapability, InterfaceCommonPolicy, InterfaceDefaults, InterfaceForwardingPolicy,
-    InterfaceMode, MtuBytes, MtuPolicy,
+    InterfaceGravity, InterfaceMode, MtuBytes, MtuPolicy,
 };
 use prns_core::routing::links::MAX_LINK_MTU;
 
@@ -36,6 +36,13 @@ pub(in crate::plan) enum MemberEgressPolicy {
     Disabled,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::plan) struct InheritedInterfacePolicy {
+    pub common: InterfaceCommonPolicy,
+    pub announce_rate: AnnounceRateLimit,
+    pub gravity: InterfaceGravity,
+}
+
 impl MemberEgressPolicy {
     pub(in crate::plan) const fn from_outgoing(outgoing: Option<bool>) -> Self {
         if matches!(outgoing, Some(false)) {
@@ -50,8 +57,7 @@ pub(in crate::plan) fn effective_policy(
     interface: &ReferenceInterface,
     medium: &PlannedMedium,
     discovery: &InterfaceDiscoveryPlan,
-    global_common: InterfaceCommonPolicy,
-    global_announce_rate: AnnounceRateLimit,
+    inherited: InheritedInterfacePolicy,
     transport_enabled: bool,
     member_egress: MemberEgressPolicy,
 ) -> Result<EffectiveInterfacePolicy, PlanErrorKind> {
@@ -95,11 +101,14 @@ pub(in crate::plan) fn effective_policy(
         .map(announce_bandwidth_cap)
         .transpose()?;
     let announce_rate_limit =
-        planned_announce_rate_limit(interface, global_announce_rate, transport_enabled)?;
-    let common = interface_common_policy(interface, global_common)?;
+        planned_announce_rate_limit(interface, inherited.announce_rate, transport_enabled)?;
+    let common = interface_common_policy(interface, inherited.common)?;
     Ok(defaults.configured(ConfiguredInterfacePolicy {
         capabilities,
         mode: Some(planned_mode(interface, medium, discovery)),
+        gravity: Some(InterfaceGravity::new(
+            interface.gravity.unwrap_or(inherited.gravity.get()),
+        )),
         bitrate,
         mtu,
         announce_rate_limit,
@@ -278,6 +287,9 @@ fn interface_common_policy(
         announces_from_internal: interface
             .announces_from_internal
             .unwrap_or(common.forwarding.announces_from_internal),
+        announces_to_internal: interface
+            .announces_to_internal
+            .unwrap_or(common.forwarding.announces_to_internal),
     };
     common.ingress_control.enabled = interface
         .ingress_control

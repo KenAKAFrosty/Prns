@@ -352,6 +352,11 @@ public sealed class PrnsHost : IAsyncDisposable
                         AnnounceAppData = single.AnnounceAppData is { } appData
                             ? arena.Bytes(appData.Span)
                             : default,
+                        HasMaximumRequestBytes = (byte)(single.MaximumRequestBytes.HasValue ? 1 : 0),
+                        MaximumRequestBytes = ValidateSafeUint(
+                            single.MaximumRequestBytes,
+                            nameof(single.MaximumRequestBytes)
+                        ) ?? 0,
                         RequestHandlers = arena.Array<Native.RequestHandlerConfig>(handlers),
                         RequestHandlerCount = (nuint)handlers.Length,
                     };
@@ -572,7 +577,13 @@ public sealed class PrnsHost : IAsyncDisposable
     public ValueTask<CommandSettlement> AttachInterfaceAsync(
         InterfaceConfig config,
         CancellationToken cancellationToken = default
-    ) => ExecuteAsync(new HostCommand.AttachInterface(config), cancellationToken);
+    ) => ExecuteAsync(new HostCommand.AttachInterface(config, null), cancellationToken);
+
+    public ValueTask<CommandSettlement> AttachInterfaceAsync(
+        InterfaceConfig config,
+        InterfaceRoutingPolicy routing,
+        CancellationToken cancellationToken = default
+    ) => ExecuteAsync(new HostCommand.AttachInterface(config, routing), cancellationToken);
 
     public ValueTask<CommandSettlement> DetachInterfaceAsync(
         InterfaceId interfaceId,
@@ -607,7 +618,34 @@ public sealed class PrnsHost : IAsyncDisposable
         ReadOnlyMemory<byte> payload,
         ResponseTimeout timeout,
         CancellationToken cancellationToken = default
-    ) => ExecuteAsync(new HostCommand.Request(linkId, pathHash, payload, timeout), cancellationToken);
+    ) =>
+        RequestAsync(
+            linkId,
+            pathHash,
+            payload,
+            timeout,
+            null,
+            cancellationToken
+        );
+
+    public ValueTask<CommandSettlement> RequestAsync(
+        LinkId linkId,
+        RequestPathHash pathHash,
+        ReadOnlyMemory<byte> payload,
+        ResponseTimeout timeout,
+        ulong? maximumResponseBytes,
+        CancellationToken cancellationToken = default
+    ) =>
+        ExecuteAsync(
+            new HostCommand.Request(
+                linkId,
+                pathHash,
+                payload,
+                timeout,
+                maximumResponseBytes
+            ),
+            cancellationToken
+        );
 
     public ValueTask<CommandSettlement> RespondAsync(
         LinkId linkId,
@@ -815,12 +853,42 @@ public sealed class PrnsHost : IAsyncDisposable
     private CommandHandle Submit(HostCommand.AttachInterface command, NativeArena arena)
     {
         var config = InterfaceConfigMarshaller.Marshal(command.Config, arena);
+        var routing = command.Routing is null
+            ? 0
+            : arena.Array<Native.InterfaceRoutingPolicy>([
+                MarshalInterfaceRoutingPolicy(command.Routing)
+            ]);
         var status = Native.prns_host_attach_interface(
             _handle,
             in config,
+            routing,
             out var nativeCommand
         );
         return Submitted(status, nativeCommand);
+    }
+
+    private static Native.InterfaceRoutingPolicy MarshalInterfaceRoutingPolicy(
+        InterfaceRoutingPolicy routing
+    )
+    {
+        if (routing.Gravity is < HostContract.SafeIntMin or > HostContract.SafeIntMax)
+        {
+            throw new ArgumentOutOfRangeException(nameof(routing), "gravity must be a safe integer");
+        }
+        return new Native.InterfaceRoutingPolicy
+        {
+            StructSize = (nuint)Marshal.SizeOf<Native.InterfaceRoutingPolicy>(),
+            HasMode = (byte)(routing.Mode.HasValue ? 1 : 0),
+            Mode = routing.Mode.GetValueOrDefault(),
+            HasGravity = (byte)(routing.Gravity.HasValue ? 1 : 0),
+            Gravity = routing.Gravity.GetValueOrDefault(),
+            HasRecursivePathRequests = (byte)(routing.RecursivePathRequests.HasValue ? 1 : 0),
+            RecursivePathRequests = (byte)(routing.RecursivePathRequests.GetValueOrDefault() ? 1 : 0),
+            HasAnnouncesFromInternal = (byte)(routing.AnnouncesFromInternal.HasValue ? 1 : 0),
+            AnnouncesFromInternal = (byte)(routing.AnnouncesFromInternal.GetValueOrDefault() ? 1 : 0),
+            HasAnnouncesToInternal = (byte)(routing.AnnouncesToInternal.HasValue ? 1 : 0),
+            AnnouncesToInternal = (byte)(routing.AnnouncesToInternal.GetValueOrDefault() ? 1 : 0),
+        };
     }
 
     private CommandHandle Submit(HostCommand.DetachInterface command, NativeArena arena)
@@ -878,6 +946,10 @@ public sealed class PrnsHost : IAsyncDisposable
     private CommandHandle Submit(HostCommand.Request command, NativeArena arena)
     {
         var timeout = MarshalResponseTimeout(command.Timeout);
+        var maximumResponseBytes = ValidateSafeUint(
+            command.MaximumResponseBytes,
+            nameof(command.MaximumResponseBytes)
+        );
         var status = Native.prns_host_request(
             _handle,
             arena.Bytes(command.LinkId.Span),
@@ -885,6 +957,9 @@ public sealed class PrnsHost : IAsyncDisposable
             arena.Bytes(command.Payload.Span),
             timeout.Kind,
             timeout.Millis,
+            maximumResponseBytes is { } maximum
+                ? arena.Array<ulong>([maximum])
+                : 0,
             out var nativeCommand
         );
         return Submitted(status, nativeCommand);
@@ -1169,8 +1244,18 @@ public sealed class PrnsHost : IAsyncDisposable
                 new CommandFailure.DeviceUnavailable(detail),
             CommandFailureKind.ConnectFailed => new CommandFailure.ConnectFailed(detail),
             CommandFailureKind.BackendFailed => new CommandFailure.BackendFailed(detail),
+            CommandFailureKind.ResponseTooLarge => new CommandFailure.ResponseTooLarge(),
             _ => throw new InvalidOperationException("Unknown native command failure."),
         };
+    }
+
+    private static ulong? ValidateSafeUint(ulong? value, string name)
+    {
+        if (value > HostContract.SafeUintMax)
+        {
+            throw new ArgumentOutOfRangeException(name);
+        }
+        return value;
     }
 
     private static byte DecodeHops(Native.ByteView value)

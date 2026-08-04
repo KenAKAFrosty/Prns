@@ -126,6 +126,9 @@ where
             expires_at: self.gate_expiry_of(i, interfaces),
             announce_id_history: self.announce_id_history.history(i),
             responsiveness: self.routes.responsiveness()[i],
+            interface_gravity: interfaces
+                .descriptor_for(self.routes.receiving_interfaces()[i])
+                .map(|descriptor| descriptor.gravity),
         })
     }
 

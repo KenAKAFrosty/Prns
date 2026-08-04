@@ -2336,6 +2336,7 @@ version = "0.1.0"
 dependencies = [
  "embedded-graphics",
  "embedded-storage",
+ "embedded-storage-async",
  "heapless 0.8.0",
  "personal-rns",
  "sha2 0.11.0",
@@ -2381,7 +2382,7 @@ dependencies = [
 
 [[package]]
 name = "personal-rns"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "cfg-if",
  "prns-core",
@@ -2483,7 +2484,7 @@ checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
 
 [[package]]
 name = "prns-core"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "aes",
  "allocator-api2",
@@ -2504,7 +2505,7 @@ dependencies = [
 
 [[package]]
 name = "prns-ffi"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "cfg-if",
  "dispatch2",
@@ -2521,7 +2522,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-embassy"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "bt-hci",
  "embassy-futures",
@@ -2546,7 +2547,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-tokio"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "bluer",
  "cfg-if",
@@ -2565,7 +2566,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "bzip2",
  "cfg-if",
@@ -2575,7 +2576,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime-embassy"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "embassy-futures",
  "embassy-sync 0.8.0",
@@ -2591,7 +2592,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime-tokio"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "futures-util",
  "getrandom 0.2.17",

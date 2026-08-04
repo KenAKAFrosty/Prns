@@ -91,6 +91,7 @@ pub struct RnsInterfaceStatusReport {
     pub parent_hash: RnsOptionalField<Vec<u8>>,
     pub online: bool,
     pub mode: RnsInterfaceMode,
+    pub gravity: RnsOptionalField<i64>,
     pub clients: RnsOptionalField<u64>,
     pub receive_bytes: u64,
     pub transmit_bytes: u64,

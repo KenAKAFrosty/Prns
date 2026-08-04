@@ -1,6 +1,6 @@
 # Coming from RNS
 
-Your config, your identity file, and your apps carry over unchanged. The interoperability suite proves it against real RNS 1.4.0 nodes in CI. Everything below is what's new.
+Your config, your identity file, and your apps carry over unchanged. The interoperability suite proves it against real RNS 1.4.2 nodes in CI. Everything below is what's new.
 
 ## Brand-new interfaces
 
@@ -91,7 +91,7 @@ Visibility is built in, from readable logs to a metrics dashboard.
 
 - **Metrics and traces, with a dashboard included**
 
-    The standard release build includes an OTLP exporter. Point it at any OpenTelemetry collector, or use the one that ships in the repository: `cargo observability` brings up a local Grafana + collector stack with a prnsd dashboard already built.
+    The official cloud container and canonical `cargo prnsd build` artifact include an OTLP exporter. Point either at any OpenTelemetry collector, or use the one that ships in the repository: `cargo observability` brings up a local Grafana + collector stack with a prnsd dashboard already built.
 
 Once you've got this repo cloned and your toolchain set up, see [the observability guide](observability.md). That guide goes into more details, from log filters to the collector stack.
 
@@ -116,13 +116,13 @@ Serving stays live: file handles are opened beneath those roots for each request
 
 Automatic announcements are enabled every six hours by default and run only while `index.mu` is serveable. `nnpages/settings.toml` controls that policy only: tune `announce` and `announce_interval_minutes` there. Disabling automatic announcements does not disable serving or `prnsd nnpages announce`, which can still announce on demand whenever `index.mu` is available. Settings changes apply during the five-minute reconciliation or immediately with `prnsd nnpages refresh`.
 
-The display name deliberately lives outside the policy file. `prnsd nnpages rename "My Node"` atomically writes the validated, live-read name to `nnpages/name`; when that file is missing or invalid, the destination uses its registered default name. `prnsd nnpages seed` creates the complete editable layout, starter pages, and default `settings.toml` without replacing operator-owned files, while `--source` also stages the exact shipped source bundle. With a managed `cargo prnsd` session these commands select its active configuration automatically; pass `--config` for a nondefault foreground or container daemon. The routing owner that carries your traffic can carry your pages too.
+The display name deliberately lives outside the policy file. `prnsd nnpages rename "My Node"` atomically writes the validated, live-read name to `nnpages/name`; when that file is missing or invalid, the destination uses its registered default name. `prnsd nnpages seed` creates the complete editable layout, starter pages, and default `settings.toml` without replacing operator-owned files, while `--source` also stages the exact shipped source bundle. With a managed `prnsd` session these commands select its active configuration automatically; pass `--config` for a nondefault foreground or container daemon. The routing owner that carries your traffic can carry your pages too.
 
 ## Beyond the daemon
 
-`prnsd` is one face of a larger engine, and that engine goes everywhere: onto a $5 microcontroller ([flash a Hopspot](https://prns.dev/flash)), into a browser tab, and inside your own software through [SDKs for Rust, TypeScript, and many more](../README.md#what-is-prns). Anything you build against one meshes with the rest, including any RNS network you already participate in.
+`prnsd` is one face of a larger engine, and that engine goes everywhere: onto a $5 microcontroller ([flash a Hopspot](https://prns.dev/flash)), into a browser tab, and inside your own software through [paved and source-ready SDKs](sdks.md). Anything you build against one meshes with the rest, including any RNS network you already participate in.
 
 ## Verify it yourself
 
-- [Run the interoperability suite](validation.md): real stock RNS 1.4.0 nodes against Prns nodes, on your own machine, traffic checked byte for byte.
+- [Run the interoperability suite](validation.md): real stock RNS 1.4.2 nodes against Prns nodes, on your own machine, traffic checked byte for byte.
 - [Read the benchmark methodology](../benchmarks/README.md): how runs are calibrated, qualified, and published before any number becomes a claim.

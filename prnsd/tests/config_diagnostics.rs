@@ -108,7 +108,8 @@ fn remaining_follow_ons_warn_while_blackhole_exchange_does_not() {
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
         match line_receiver.recv_timeout(remaining) {
             Ok(line) => {
-                let ready = line.contains("\"event\":\"daemon_ready\"");
+                let ready = line.contains("\"event\":\"daemon_ready\"")
+                    || line.contains("\"event\":\"daemon_ready_degraded\"");
                 lines.push(line);
                 if ready {
                     while let Ok(line) =
@@ -161,7 +162,8 @@ fn remaining_follow_ons_warn_while_blackhole_exchange_does_not() {
         "applied daemon settings still warned as unsupported:\n{rendered}"
     );
     assert!(
-        rendered.contains("\"event\":\"daemon_ready\""),
+        rendered.contains("\"event\":\"daemon_ready\"")
+            || rendered.contains("\"event\":\"daemon_ready_degraded\""),
         "missing readiness in daemon output:\n{rendered}"
     );
 }

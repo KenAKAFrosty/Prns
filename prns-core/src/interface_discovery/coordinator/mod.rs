@@ -2,6 +2,7 @@ use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
 use crate::routing::announce::AnnounceObservation;
 use crate::storage::TablePushError;
@@ -15,9 +16,9 @@ use super::autoconnect::{
 use super::{
     discovery_destination_hash, DiscoveredConnectionHealth, DiscoveredConnectionPlan,
     DiscoveredEndpointSet, DiscoveryCatalog, DiscoveryCatalogStoreError, DiscoveryCatalogUpdate,
-    DiscoveryDecryptionError, DiscoveryIntake, DiscoveryNotApplicable, DiscoveryRecord,
-    DiscoveryRejection, GrowableInterfaceDiscoveryStorage, InterfaceDiscoveryPolicy,
-    InterfaceDiscoveryStorage,
+    DiscoveryDecryptionError, DiscoveryIdentityRole, DiscoveryIntake, DiscoveryNotApplicable,
+    DiscoveryRecord, DiscoveryRejection, GrowableInterfaceDiscoveryStorage,
+    InterfaceDiscoveryPolicy, InterfaceDiscoveryStorage,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,6 +61,7 @@ pub enum DiscoveryCoordinatorEvent {
     CatalogStoreRejected(DiscoveryCatalogStoreError),
     CatalogUpdated(DiscoveryCatalogUpdate),
     CatalogExpired(DiscoveryRecord),
+    CatalogBlackholed(DiscoveryRecord),
     ConnectionAttached {
         plan: DiscoveredConnectionPlan,
         interface: InterfaceId,
@@ -213,6 +215,24 @@ impl<S: InterfaceDiscoveryStorage> DiscoveryCoordinator<S> {
         now: InstantMillis,
         decrypt: impl FnOnce(&[u8]) -> Result<Vec<u8>, DiscoveryDecryptionError>,
     ) -> Vec<DiscoveryCoordinatorOutput> {
+        self.observe_announce_with_blackholes(observation, now, decrypt, &[])
+    }
+
+    pub fn observe_announce_with_blackholes(
+        &mut self,
+        observation: AnnounceObservation<'_>,
+        now: InstantMillis,
+        decrypt: impl FnOnce(&[u8]) -> Result<Vec<u8>, DiscoveryDecryptionError>,
+        blackholed: &[IdentityHash],
+    ) -> Vec<DiscoveryCoordinatorOutput> {
+        if blackholed.contains(&observation.announced_identity) {
+            return vec![DiscoveryCoordinatorOutput::Event(
+                DiscoveryCoordinatorEvent::IntakeRejected(DiscoveryRejection::BlackholedIdentity {
+                    identity: observation.announced_identity,
+                    role: DiscoveryIdentityRole::Announcing,
+                }),
+            )];
+        }
         match super::intake::ingest_discovery_announce_cached(
             &self.policy,
             observation,
@@ -226,6 +246,18 @@ impl<S: InterfaceDiscoveryStorage> DiscoveryCoordinator<S> {
                 DiscoveryCoordinatorEvent::IntakeRejected(rejection),
             )],
             DiscoveryIntake::Discovered(interface) => {
+                let advertised_transport =
+                    IdentityHash::new(*interface.advertisement.transport.transport_id().as_bytes());
+                if blackholed.contains(&advertised_transport) {
+                    return vec![DiscoveryCoordinatorOutput::Event(
+                        DiscoveryCoordinatorEvent::IntakeRejected(
+                            DiscoveryRejection::BlackholedIdentity {
+                                identity: advertised_transport,
+                                role: DiscoveryIdentityRole::AdvertisedTransport,
+                            },
+                        ),
+                    )];
+                }
                 let discovery = interface.id;
                 let update = match self.catalog.observe(*interface) {
                     Ok(update) => update,
@@ -247,6 +279,37 @@ impl<S: InterfaceDiscoveryStorage> DiscoveryCoordinator<S> {
                 outputs
             }
         }
+    }
+
+    pub fn reconcile_blackholes(
+        &mut self,
+        blackholed: &[IdentityHash],
+    ) -> Vec<DiscoveryCoordinatorOutput> {
+        let removed = self.catalog.remove_blackholed(blackholed);
+        let discoveries = removed.iter().map(DiscoveryRecord::id).collect::<Vec<_>>();
+        let detached = self.connections.remove_discoveries(&discoveries);
+        let mut outputs = removed
+            .into_iter()
+            .map(|record| {
+                DiscoveryCoordinatorOutput::Event(DiscoveryCoordinatorEvent::CatalogBlackholed(
+                    record,
+                ))
+            })
+            .collect::<Vec<_>>();
+        for active in detached {
+            let discovery = active.discovery_id();
+            let interface = active.interface_id();
+            outputs.push(DiscoveryCoordinatorOutput::Action(
+                DiscoveryCoordinatorAction::Detach { interface },
+            ));
+            outputs.push(DiscoveryCoordinatorOutput::Event(
+                DiscoveryCoordinatorEvent::ConnectionDetached {
+                    discovery,
+                    interface,
+                },
+            ));
+        }
+        outputs
     }
 
     pub fn maintain(

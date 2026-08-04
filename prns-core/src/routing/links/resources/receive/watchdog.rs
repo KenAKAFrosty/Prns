@@ -9,7 +9,7 @@ use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
 
 impl<S: StorageLayout> EngineState<S> {
-    /// RNS 1.4.0's watchdog TRANSFERRING branch. A receiver that gives up goes silent, like the reference; the sender discovers through its own watchdog.
+    /// RNS 1.4.2's watchdog TRANSFERRING branch. A receiver that gives up goes silent, like the reference; the sender discovers through its own watchdog.
     pub(crate) fn fire_due_incoming_resources<F>(
         &mut self,
         now: InstantMillis,
@@ -48,7 +48,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.4.0 `Link.resource_concluded` stores the final window and expected rate for the next transfer to inherit, however this one ended.
+    /// RNS 1.4.2 `Link.resource_concluded` stores the final window and expected rate for the next transfer to inherit, however this one ended.
     pub(crate) fn retire_incoming_resource(&mut self, link_id: &LinkId, hash: &ResourceHash) {
         if let Some(index) = self.incoming_resources.lookup(link_id, hash) {
             let state = *self.incoming_resources.state(index);

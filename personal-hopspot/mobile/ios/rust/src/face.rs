@@ -87,6 +87,7 @@ impl HopspotFace {
             | UiAction::OpenLoRaEditor
             | UiAction::OpenDocs
             | UiAction::SetLoRaProfile(_)
+            | UiAction::ResetLoRaProfile
             | UiAction::SwapRadioMode => {}
         }
         action

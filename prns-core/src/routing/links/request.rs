@@ -1,4 +1,4 @@
-//! RNS 1.4.0 `Link.request` (context 0x09) and its answer (0x0A).
+//! RNS 1.4.2 `Link.request` (context 0x09) and its answer (0x0A).
 //! - A request is msgpack `[time, truncated_hash(path), data]`.
 //! - The response is msgpack `[request_id, data]`. `data` crosses as raw msgpack value bytes.
 //!
@@ -28,7 +28,7 @@ use crate::wire::{
 #[cfg(test)]
 use crate::wire::{DestinationHash, BROADCAST_MTU};
 
-/// RNS 1.4.0 `Resource.RESPONSE_MAX_GRACE_TIME` (10 s) × 1.125, the flat term in a request's default timeout: `rtt × traffic_timeout_factor + 11.25 s`.
+/// RNS 1.4.2 `Resource.RESPONSE_MAX_GRACE_TIME` (10 s) × 1.125, the flat term in a request's default timeout: `rtt × traffic_timeout_factor + 11.25 s`.
 pub const REQUEST_RESPONSE_GRACE_MS: u64 = 11_250;
 
 /// msgpack `fixarray(3)` ‖ `float64` time ‖ `bin8(16)` path hash, before data.
@@ -57,7 +57,7 @@ const BIN_32: u8 = 0xC6;
 const NIL: u8 = 0xC0;
 pub const MAX_PACKED_BINARY_HEADER_LEN: usize = 5;
 
-/// RNS 1.4.0 `packet.getTruncatedHash()`, naming the request in its response.
+/// RNS 1.4.2 `packet.getTruncatedHash()`, naming the request in its response.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RequestId(pub [u8; TRUNCATED_HASH_BYTE_LEN]);
 
@@ -69,7 +69,7 @@ impl RequestId {
         Self(id)
     }
 
-    /// RNS 1.4.0 `Link.request` / `request_resource_concluded`: a request that rode a resource is named by `truncated_hash(packed_request)`
+    /// RNS 1.4.2 `Link.request` / `request_resource_concluded`: a request that rode a resource is named by `truncated_hash(packed_request)`
     #[must_use]
     pub fn of_request_data(packed_request: &[u8]) -> Self {
         let mut id = [0u8; TRUNCATED_HASH_BYTE_LEN];
@@ -453,7 +453,9 @@ impl<S: StorageLayout> EngineState<S> {
         let culled = self.receipts.track(OutstandingReceipt {
             packet_hash,
             command_id: id,
-            kind: ReceiptKind::SendRequest,
+            kind: ReceiptKind::SendRequest {
+                maximum_response_bytes: request.maximum_response_bytes,
+            },
             peer_signing_key: IdentitySigningPublicKey::new(peer_signing),
             sent_at: now,
             timeout_at: InstantMillis(now.0.saturating_add(timeout_ms)),
@@ -467,13 +469,14 @@ impl<S: StorageLayout> EngineState<S> {
         })
     }
 
-    /// The request formed no packet, so the row is keyed by `sha256` of the pack. Its first sixteen bytes are the request id (RNS 1.4.0 `truncated_hash(packed_request)`) the response names back.
+    /// The request formed no packet, so the row is keyed by `sha256` of the pack. Its first sixteen bytes are the request id (RNS 1.4.2 `truncated_hash(packed_request)`) the response names back.
     pub(crate) fn book_request_resource_receipt(
         &mut self,
         id: CommandId,
         link_id: &LinkId,
         packed_request: &[u8],
         response_timeout: RequestResponseTimeout,
+        maximum_response_bytes: crate::units::ByteLimit,
         now: InstantMillis,
     ) {
         let Some(LinkPhase::Active {
@@ -487,7 +490,9 @@ impl<S: StorageLayout> EngineState<S> {
         let _ = self.receipts.track(OutstandingReceipt {
             packet_hash: PacketHash::new(sha256(packed_request)),
             command_id: id,
-            kind: ReceiptKind::SendRequest,
+            kind: ReceiptKind::SendRequest {
+                maximum_response_bytes,
+            },
             peer_signing_key: IdentitySigningPublicKey::new(peer_signing),
             sent_at: now,
             timeout_at: InstantMillis(now.0.saturating_add(timeout_ms)),
@@ -696,6 +701,8 @@ mod tests {
             .track_initiated(InitiatedLink {
                 link_id,
                 destination: DestinationHash::new([0x11; 16]),
+                expected_hops: 1,
+                mode: crate::routing::links::LinkMode::Aes256Cbc,
                 initiator_secret: X25519SecretKey::new([0x21; 32]),
                 link_signing: Ed25519SecretKey::new([0x21; 32]),
                 requested_at: InstantMillis(0),
@@ -716,6 +723,7 @@ mod tests {
                 &link_id,
                 key,
                 &LinkActivation {
+                    received_hops: 1,
                     rtt: crate::units::RttMillis::new(100),
                     mtu,
                     attached_interface: InterfaceId::new([0xEE; 8]),
@@ -725,6 +733,102 @@ mod tests {
             )
             .unwrap();
         engine
+    }
+
+    fn engine_with_request_limit(
+        maximum_request_bytes: crate::units::ByteLimit,
+    ) -> EngineState<crate::storage::GrowableHeap> {
+        use crate::crypto::ratchets::RatchetPolicy;
+        use crate::crypto::Ed25519PublicKey;
+        use crate::identity::IdentityHash;
+        use crate::routing::links::resources::receive::tests_support::{lane, link_id, link_key};
+        use crate::routing::links::table::RespondingLink;
+        use crate::routing::upstream_app_destinations::{LinkRequestPolicy, ProofStrategy};
+
+        let mut engine = EngineState::<crate::storage::GrowableHeap>::default();
+        let identity = IdentityHash::new([0x77; 16]);
+        let destination = engine
+            .upstream_app_destinations
+            .register_single(
+                &identity,
+                "limits",
+                &["request"],
+                b"",
+                ProofStrategy::ProveNone,
+                LinkRequestPolicy::AcceptAll,
+                RatchetPolicy::NoRatchets,
+            )
+            .unwrap();
+        assert!(engine.set_maximum_request_bytes(&destination, maximum_request_bytes));
+        engine
+            .request_handlers
+            .register(
+                destination,
+                PATH_HASH,
+                crate::routing::request_handlers::RequestPolicy::AllowAll,
+            )
+            .unwrap();
+        engine
+            .links
+            .track_responding(RespondingLink {
+                link_id: link_id(),
+                key: link_key(),
+                requested_at: InstantMillis(500),
+                timeout_at: InstantMillis(5_000),
+                mtu: BROADCAST_MTU,
+                initiator_signing: Ed25519PublicKey([0x99; 32]),
+                destination,
+                identity,
+                proof_strategy: ProofStrategy::ProveNone,
+            })
+            .unwrap();
+        engine
+            .links
+            .activate_responding(
+                &link_id(),
+                crate::units::RttMillis::new(250),
+                lane(),
+                InstantMillis(1_000),
+            )
+            .unwrap();
+        engine
+    }
+
+    #[test]
+    fn packet_requests_are_admitted_at_the_destination_limit_and_refused_past_it() {
+        use crate::routing::links::data::write_link_packet;
+        use crate::routing::links::resources::receive::tests_support::{feed, link_id, link_key};
+        use crate::units::ByteLimit;
+
+        let request_data = [BIN_8, 3, b'a', b's', b'k'];
+        let mut plaintext = [0u8; 64];
+        let plaintext_len = write_request_plaintext(
+            InstantMillis(1_500),
+            &PATH_HASH,
+            &request_data,
+            &mut plaintext,
+        )
+        .unwrap();
+        let mut frame = [0u8; BROADCAST_MTU];
+        let wire_bytes = write_link_packet(
+            &link_id(),
+            &link_key(),
+            BROADCAST_MTU,
+            WireContext::Request,
+            &plaintext[..plaintext_len],
+            &[0xD1; 16],
+            &mut frame,
+        )
+        .unwrap();
+
+        let mut exact = engine_with_request_limit(ByteLimit::Maximum(plaintext_len as u64));
+        let admitted = feed(&mut exact, &frame[..wire_bytes], 2_000);
+        assert_eq!(admitted.requests.len(), 1);
+        assert_eq!(admitted.requests[0].1, request_data);
+
+        let mut over = engine_with_request_limit(ByteLimit::Maximum(plaintext_len as u64 - 1));
+        let refused = feed(&mut over, &frame[..wire_bytes], 2_000);
+        assert!(refused.requests.is_empty());
     }
 
     #[test]
@@ -738,6 +842,7 @@ mod tests {
                 path_hash: RequestPathHash::of("/q"),
                 data: SendRequestData::from_slice(&std::vec![0xAA; data_len]).unwrap(),
                 response_timeout: Default::default(),
+                maximum_response_bytes: Default::default(),
             };
             let mut buf = [0u8; 600];
             engine_with_an_active_link_at(link_id, 300).write_commanded_send_request(
@@ -767,6 +872,7 @@ mod tests {
             path_hash: RequestPathHash::of("/default-timeout"),
             data: SendRequestData::from_slice(b"work").unwrap(),
             response_timeout: RequestResponseTimeout::LinkDefault,
+            maximum_response_bytes: Default::default(),
         };
         let mut buf = [0u8; 600];
         engine
@@ -796,6 +902,7 @@ mod tests {
             path_hash: RequestPathHash::of("/slow"),
             data: SendRequestData::from_slice(b"work").unwrap(),
             response_timeout: RequestResponseTimeout::Exact(DurationMillis(45_000)),
+            maximum_response_bytes: Default::default(),
         };
         let mut buf = [0u8; 600];
         engine
@@ -891,6 +998,97 @@ mod tests {
         assert!(!wide_engine
             .request_fits_packet(&wide_link, &std::vec![0xBB; MAX_SEND_REQUEST_DATA_LEN + 1],));
         assert!(!engine.request_fits_packet(&LinkId::new([0x99; 16]), b"anything"));
+    }
+
+    #[test]
+    fn a_packet_response_settles_with_response_too_large_past_its_limit() {
+        use crate::engine::{SendRequestFailure, Settlement};
+        use crate::routing::links::data::write_link_packet;
+        use crate::routing::links::resources::receive::tests_support::{
+            engine_with_active_link, feed, link_id, link_key, track_pending_request_with_limit,
+        };
+        use crate::units::ByteLimit;
+
+        let mut receiver = engine_with_active_link();
+        let request_id = track_pending_request_with_limit(
+            &mut receiver,
+            CommandId(42),
+            1_800,
+            20_000,
+            ByteLimit::Maximum(3),
+        );
+        let mut plaintext = [0u8; 64];
+        let plaintext_len = write_response_plaintext(
+            &request_id,
+            &[BIN_8, 4, b't', b'e', b's', b't'],
+            &mut plaintext,
+        )
+        .unwrap();
+        let mut frame = [0u8; BROADCAST_MTU];
+        let wire_bytes = write_link_packet(
+            &link_id(),
+            &link_key(),
+            BROADCAST_MTU,
+            WireContext::Response,
+            &plaintext[..plaintext_len],
+            &[0xD2; 16],
+            &mut frame,
+        )
+        .unwrap();
+
+        let capture = feed(&mut receiver, &frame[..wire_bytes], 2_000);
+        assert_eq!(
+            capture.settlements,
+            std::vec![(
+                CommandId(42),
+                Settlement::SendRequest(Err(SendRequestFailure::ResponseTooLarge)),
+            )],
+        );
+        assert!(!receiver.receipts.has_pending_request(request_id));
+    }
+
+    #[test]
+    fn a_packet_response_at_its_limit_still_settles_successfully() {
+        use crate::engine::Settlement;
+        use crate::routing::links::data::write_link_packet;
+        use crate::routing::links::resources::receive::tests_support::{
+            engine_with_active_link, feed, link_id, link_key, track_pending_request_with_limit,
+        };
+        use crate::units::ByteLimit;
+
+        let mut receiver = engine_with_active_link();
+        let request_id = track_pending_request_with_limit(
+            &mut receiver,
+            CommandId(42),
+            1_800,
+            20_000,
+            ByteLimit::Maximum(4),
+        );
+        let mut plaintext = [0u8; 64];
+        let plaintext_len = write_response_plaintext(
+            &request_id,
+            &[BIN_8, 4, b't', b'e', b's', b't'],
+            &mut plaintext,
+        )
+        .unwrap();
+        let mut frame = [0u8; BROADCAST_MTU];
+        let wire_bytes = write_link_packet(
+            &link_id(),
+            &link_key(),
+            BROADCAST_MTU,
+            WireContext::Response,
+            &plaintext[..plaintext_len],
+            &[0xD2; 16],
+            &mut frame,
+        )
+        .unwrap();
+
+        let capture = feed(&mut receiver, &frame[..wire_bytes], 2_000);
+        assert!(matches!(
+            capture.settlements.as_slice(),
+            [(CommandId(42), Settlement::SendRequest(Ok(_)))]
+        ));
+        assert!(!receiver.receipts.has_pending_request(request_id));
     }
 
     #[test]

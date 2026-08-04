@@ -8,6 +8,8 @@ import {
   HOST_SCHEMA_VERSION,
   DESTINATION_HASH_LENGTH,
   PRODUCT_VERSION,
+  SAFE_INT_MAX,
+  SAFE_INT_MIN,
   Prns,
   Tag,
   balancedLimits,
@@ -43,7 +45,10 @@ test("generated JavaScript contract agrees with language-neutral vectors", async
   assert.equal(HOST_SCHEMA_VERSION, vectors.schemaVersion);
   assert.equal(PRODUCT_VERSION, vectors.productVersion);
   assert.equal(DESTINATION_HASH_LENGTH, vectors.fixedBytes.DestinationHash);
+  assert.equal(SAFE_INT_MIN, Number(vectors.scalars.safeInt.minimum));
+  assert.equal(SAFE_INT_MAX, Number(vectors.scalars.safeInt.maximum));
   assert.deepEqual(balancedLimits(), vectors.limits);
+  assert.equal(vectors.integerChecks.safeInt.typescript, "number");
   assert.equal(vectors.integerChecks.safeUint.typescript, "number");
   assert.equal(vectors.integerChecks.u64.typescript, "bigint");
   assert.ok(vectors.integerChecks.u64.accepted.includes("18446744073709551615"));
@@ -88,6 +93,11 @@ test("generated contract inventories and guards accept exactly their known strin
         "Weave", "AutomaticUsb", "AutomaticBluetoothLe", "WebSocketClient",
         "WebSocketServer", "BrowserRendezvous",
       ],
+    ],
+    [
+      "INTERFACE_MODE_VALUES",
+      "isInterfaceMode",
+      ["Full", "PointToPoint", "AccessPoint", "Roaming", "Boundary", "Gateway", "Internal"],
     ],
     [
       "INTERFACE_HEALTH_VALUES",

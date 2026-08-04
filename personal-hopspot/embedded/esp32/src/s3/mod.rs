@@ -33,6 +33,7 @@ use embassy_net::{
 use embassy_net::{IpAddress, Ipv4Address, Ipv4Cidr, StaticConfigV4};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
+use embassy_sync::mutex::Mutex;
 use embassy_sync::signal::Signal;
 #[cfg(feature = "wifi-auto")]
 use embassy_time::with_timeout;
@@ -81,7 +82,9 @@ use personal_rns::interfaces::{
     ConnectionState, InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus, MacAddress,
     Membership,
 };
-use personal_rns::lora::{LoRaControl, LoRaInterface, LoRaInterfaceInput, LoRaSpectrumStatus};
+use personal_rns::lora::{
+    LoRaApplyOutcome, LoRaControl, LoRaInterface, LoRaInterfaceInput, LoRaSpectrumStatus,
+};
 use personal_rns::manifold::embassy::{
     EmbassyHost, EmbassyInterfaceSeam, EmbassyInterfaceStatus, EmbassyTimebase, InterfaceLifecycle,
 };
@@ -91,7 +94,7 @@ use personal_rns::radios::sx126x::Sx126x;
 use personal_rns::runtime::{
     minimum_interface_store_capacity, minimum_manifold_notification_capacity, CompletionPool,
     EmbassyInterfaceStore, Fleet, ManifoldLaneSet, PrnsEvent, PrnsNode, PrnsNodeHandle,
-    PrnsNodeRecipe, StaticManifoldLane,
+    PrnsNodeRecipe, SharedNorFlash, StaticManifoldLane,
 };
 use personal_rns::storage::StorageLayout;
 use personal_rns::tcp::{
@@ -191,7 +194,10 @@ const INTERFACE_CAPACITY: usize =
 const WIFI_SUPERVISOR_ID: InterfaceId =
     InterfaceId::new([InterfaceKind::AutoWifi as u8, 0, 0, 0, 0, 0, 0, 0]);
 const LANE_DEPTH: usize = 1;
-const LORA_OUTBOUND_DEPTH: usize = 1;
+/// A resource request is one inbound frame that synchronously emits its parts and, at most, one
+/// hashmap update. Derive every S3 lane's PSRAM backlog from the engine storage recipe: the compact
+/// build can hold only eighteen parts, rather than the protocol-wide seventy-five-part window.
+const OUTBOUND_BURST_DEPTH: usize = EngineStorageType::MAX_OUTGOING_RESOURCE_REACTION_FRAMES;
 pub const NOTIFY_CAP: usize = minimum_manifold_notification_capacity(LANE_COUNT, LANE_DEPTH);
 const COMMANDS_CAP: usize = 8;
 pub const LIFECYCLE_CAP: usize = 8;
@@ -288,26 +294,23 @@ const BLE_SUPERVISOR_ID: InterfaceId =
 static BLE_SHARED: BluetoothAutoShared<BLE_PEER_CAPACITY> =
     BluetoothAutoShared::new(BLE_SUPERVISOR_ID);
 static LORA_CONTROL: LoRaControl = LoRaControl::new();
-static USB_MANIFOLD_LANE: StaticManifoldLane<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, LANE_DEPTH> =
+static USB_MANIFOLD_LANE: StaticManifoldLane<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, LANE_DEPTH, 0> =
     StaticManifoldLane::new();
-static TCP_MANIFOLD_LANE: StaticManifoldLane<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, LANE_DEPTH> =
+static TCP_MANIFOLD_LANE: StaticManifoldLane<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, LANE_DEPTH, 0> =
     StaticManifoldLane::new();
 static WIFI_MANIFOLD_LANE: StaticManifoldLane<
     Mtx,
     { wifi_auto_contract::HARDWARE_MTU },
     LANE_DEPTH,
+    0,
 > = StaticManifoldLane::new();
-static LORA_MANIFOLD_LANE: StaticManifoldLane<
-    Mtx,
-    LORA_MAX_PAYLOAD,
-    LANE_DEPTH,
-    LORA_OUTBOUND_DEPTH,
-> = StaticManifoldLane::new();
+static LORA_MANIFOLD_LANE: StaticManifoldLane<Mtx, LORA_MAX_PAYLOAD, LANE_DEPTH, 0> =
+    StaticManifoldLane::new();
 #[cfg(feature = "bluetooth-auto")]
-static BLE_MANIFOLD_LANE: StaticManifoldLane<Mtx, BLE_HW_MTU, LANE_DEPTH> =
+static BLE_MANIFOLD_LANE: StaticManifoldLane<Mtx, BLE_HW_MTU, LANE_DEPTH, 0> =
     StaticManifoldLane::new();
 #[cfg(feature = "esp-now")]
-static ESPNOW_MANIFOLD_LANE: StaticManifoldLane<Mtx, ESP_NOW_V2_AIR_MTU, LANE_DEPTH> =
+static ESPNOW_MANIFOLD_LANE: StaticManifoldLane<Mtx, ESP_NOW_V2_AIR_MTU, LANE_DEPTH, 0> =
     StaticManifoldLane::new();
 
 static NOTIFY: Channel<Mtx, InterfaceId, NOTIFY_CAP> = Channel::new();
@@ -473,10 +476,8 @@ async fn usb_device_task(
 /// for the slow PSRAM-backed engine construction. A block expression (so its bindings escape
 /// macro hygiene) owning `$p`'s early peripherals, yielding `(software_interrupt1, timebase, rtc)`.
 ///
-/// Heap region order is load-bearing for Wi-Fi boards: PSRAM must register first so capability-free
-/// boot allocations land externally and leave the small internal regions for the radio. Heltec V4-R8
-/// (Octal private bump) passes a custom `PsramConfig` and uses `private_psram_bump` so boot/log
-/// allocations cannot share a freelist with engine construction.
+/// Heap region order is load-bearing for Wi-Fi boards: PSRAM must register first so capability-free boot allocations land externally and leave the small internal regions for the radio.
+/// Heltec V4-R8 (Octal) passes a custom `PsramConfig` and uses `split_psram_heap`, which gives engine construction a private freelist without starving the rest of the system.
 macro_rules! boot_common {
     ($p:ident, $banner:expr) => {
         $crate::s3::boot_common!(
@@ -487,7 +488,7 @@ macro_rules! boot_common {
         )
     };
     ($p:ident, $banner:expr, $psram_config:expr) => {
-        $crate::s3::boot_common!($p, $banner, $psram_config, private_psram_bump)
+        $crate::s3::boot_common!($p, $banner, $psram_config, split_psram_heap)
     };
     ($p:ident, $banner:expr, $psram_config:expr, global_psram_heap) => {{
         ::esp_println::logger::init_logger_from_env();
@@ -497,12 +498,11 @@ macro_rules! boot_common {
         $crate::s3::boot_psram_probe!();
         $crate::s3::boot_rtos_tail!($p, $banner)
     }};
-    ($p:ident, $banner:expr, $psram_config:expr, private_psram_bump) => {{
+    ($p:ident, $banner:expr, $psram_config:expr, split_psram_heap) => {{
         ::esp_println::logger::init_logger_from_env();
-        // Heltec V4-R8: keep Octal PSRAM out of the global heap so boot/log allocs cannot spill into it.
+        $crate::s3::boot_add_psram_split!($p, $psram_config);
         ::esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 43 * 1024);
         $crate::s3::reclaim_dcache_region();
-        $crate::s3::boot_add_psram_private!($p, $psram_config);
         $crate::s3::boot_psram_probe!();
         $crate::s3::boot_rtos_tail!($p, $banner)
     }};
@@ -526,16 +526,33 @@ macro_rules! boot_add_psram_global {
 }
 pub(crate) use boot_add_psram_global;
 
-macro_rules! boot_add_psram_private {
+/// Split a board's PSRAM into two disjoint windows: a private low half owned solely by [`crate::storage::PsramAlloc`] for engine construction, and a high half handed to `esp_alloc`.
+/// Register the global half before the internal regions so capability-free allocations land externally and leave the small internal regions for the radios, matching the ordering `global_psram_heap` relies on.
+///
+/// Reserving the whole window privately instead leaves the system on roughly 75 KiB of internal RAM across the reclaimed region and the D-cache window.
+/// The Bluetooth controller cannot allocate its receive buffers from that, and the captive portal's four HTTP tasks each request another 24 KiB.
+macro_rules! boot_add_psram_split {
     ($p:ident, $psram_config:expr) => {{
         let psram = ::esp_hal::psram::Psram::new($p.PSRAM, $psram_config);
         let (start, size) = psram.raw_parts();
-        ::esp_println::println!("PSRAM mapped start={start:?} size={size} (private)");
-        // SAFETY: exclusive mapped window for PsramAlloc; not registered with esp_alloc.
-        unsafe { $crate::storage::init_private_psram_heap(start, size) };
+        let private_size = size / 2;
+        let global_size = size - private_size;
+        ::esp_println::println!(
+            "PSRAM mapped start={start:?} size={size} (private={private_size} global={global_size})"
+        );
+        // SAFETY: The low window is given to PsramAlloc alone and is never registered with esp_alloc.
+        // The high window is disjoint from it and is added to the heap exactly once.
+        unsafe {
+            $crate::storage::init_private_psram_heap(start, private_size);
+            ::esp_alloc::HEAP.add_region(::esp_alloc::HeapRegion::new(
+                start.add(private_size),
+                global_size,
+                ::esp_alloc::MemoryCapability::External.into(),
+            ));
+        }
     }};
 }
-pub(crate) use boot_add_psram_private;
+pub(crate) use boot_add_psram_split;
 
 macro_rules! boot_psram_probe {
     () => {{

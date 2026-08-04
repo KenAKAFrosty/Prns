@@ -1,21 +1,14 @@
-# Personal RNS
+# Personal RNS (Prns)
 
-Personal RNS is a correct, robust, fast Reticulum implementation with one
-language-neutral host contract and idiomatic SDKs for Rust, TypeScript,
-JavaScript, Python, .NET, Go, Swift, Kotlin, Java, Julia, C, and C++.
+Prns is a safe, robust, fast Reticulum implementation with one language-neutral host contract. Rust and TypeScript/JavaScript are its paved application SDKs. Source-ready native SDK previews are implemented for Python, .NET, Go, Swift, Kotlin, Java, Julia, C, and C++ while their idiomatic public distribution is completed.
 
-Every hosted SDK delegates protocol behavior to the same native engine through
-the versioned C ABI. Language packages own types, deterministic lifetime,
-cancellation, and ecosystem-native streams; they do not reimplement routing or
-wire semantics. Node, Bun, and browsers share the same generated TypeScript
-contract, with the browser backend running the engine through WebAssembly.
+Every hosted SDK delegates protocol behavior to the same engine. Native FFI packages use the versioned C ABI; Node and Bun talk directly to the native Rust host; browsers run the cooperative engine through WebAssembly. Language packages own types, deterministic lifetime, cancellation, and ecosystem-native streams; they do not reimplement routing or wire semantics.
 
-The package version and contract ABI are checked before host creation. Commands
-settle as typed success or failure values, event lanes have one explicit owner,
-and resource bodies retain their own bounded stream lifetime.
+The package version and contract ABI are checked before host creation. Commands settle as typed success or failure values, event lanes have one explicit owner, and resource bodies retain their own bounded stream lifetime.
 
-- Documentation: [reticulum.rs](https://reticulum.rs)
-- Project: [prns.dev](https://prns.dev)
+- Documentation: [prns.dev](https://prns.dev)
+- Documentation mirror: [reticulum.rs](https://reticulum.rs)
+- SDK readiness: [Prns SDK guide](https://github.com/KenAKAFrosty/Prns/blob/trunk/docs/sdks.md)
 - Source and examples: [github.com/KenAKAFrosty/Prns](https://github.com/KenAKAFrosty/Prns)
 - Issues: [GitHub Issues](https://github.com/KenAKAFrosty/Prns/issues)
 - Security reports: [Security policy](https://github.com/KenAKAFrosty/Prns/security/policy)

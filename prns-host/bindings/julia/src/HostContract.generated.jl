@@ -1,6 +1,6 @@
 const HOST_CONTRACT_ABI = UInt32(1)
 const HOST_SCHEMA_VERSION = UInt32(1)
-const PRODUCT_VERSION = "0.3.2"
+const PRODUCT_VERSION = "0.3.3"
 const DESTINATION_HASH_LENGTH = 16
 const IDENTITY_HASH_LENGTH = 16
 const INTERFACE_ID_LENGTH = 8
@@ -10,6 +10,8 @@ const REQUEST_ID_LENGTH = 16
 const REQUEST_PATH_HASH_LENGTH = 16
 const RESOURCE_HASH_LENGTH = 32
 const IDENTITY_SECRET_LENGTH = 64
+const SAFE_INT_MIN = Int64(-9007199254740991)
+const SAFE_INT_MAX = Int64(9007199254740991)
 const SAFE_UINT_MAX = UInt64(9007199254740991)
 const BALANCED_PENDING_COMMANDS = 256
 const BALANCED_APPLICATION_EVENTS = 1024
@@ -76,6 +78,16 @@ end
     InterfaceKindWebSocketClient = 17
     InterfaceKindWebSocketServer = 18
     InterfaceKindBrowserRendezvous = 19
+end
+
+@enum InterfaceMode::UInt32 begin
+    InterfaceModeFull = 1
+    InterfaceModePointToPoint = 2
+    InterfaceModeAccessPoint = 3
+    InterfaceModeRoaming = 4
+    InterfaceModeBoundary = 5
+    InterfaceModeGateway = 6
+    InterfaceModeInternal = 7
 end
 
 @enum InterfaceHealth::UInt32 begin
@@ -229,6 +241,7 @@ end
     CommandFailureKindDeviceUnavailable = 38
     CommandFailureKindConnectFailed = 39
     CommandFailureKindBackendFailed = 40
+    CommandFailureKindResponseTooLarge = 41
 end
 
 @enum DeliveryEvidenceKind::UInt32 begin
@@ -464,6 +477,14 @@ struct MultiRNodeMemberConfig
     radio::RNodeRadioConfig
     flow_control::Bool
     outgoing::Bool
+end
+
+struct InterfaceRoutingPolicy
+    mode::Union{Nothing,InterfaceMode}
+    gravity::Union{Nothing,Int64}
+    recursive_path_requests::Union{Nothing,Bool}
+    announces_from_internal::Union{Nothing,Bool}
+    announces_to_internal::Union{Nothing,Bool}
 end
 
 struct BackendInfo
@@ -739,6 +760,7 @@ struct DestinationConfigSingle <: DestinationConfig
     name::DestinationName
     identity::DestinationIdentityConfig
     announce_app_data::Union{Nothing,Vector{UInt8}}
+    maximum_request_bytes::Union{Nothing,UInt64}
     request_handlers::Vector{RequestHandlerConfig}
 end
 
@@ -799,6 +821,7 @@ struct HostCommandRequest <: HostCommand
     path_hash::RequestPathHash
     payload::Vector{UInt8}
     timeout::ResponseTimeout
+    maximum_response_bytes::Union{Nothing,UInt64}
 end
 
 struct HostCommandRespond <: HostCommand
@@ -839,6 +862,7 @@ end
 
 struct HostCommandAttachInterface <: HostCommand
     config::InterfaceConfig
+    routing::Union{Nothing,InterfaceRoutingPolicy}
 end
 
 struct CommandOutcomeAnnounced <: CommandOutcome
@@ -1016,6 +1040,9 @@ end
 
 struct CommandFailureBackendFailed <: CommandFailure
     detail::String
+end
+
+struct CommandFailureResponseTooLarge <: CommandFailure
 end
 
 struct ApplicationEventSingleDelivery <: ApplicationEvent
@@ -1463,7 +1490,7 @@ function host_send_link_packet(protocol::RawHostProtocol, host::RawHost, link_id
     throw(MethodError(host_send_link_packet, (protocol,)))
 end
 
-function host_request(protocol::RawHostProtocol, host::RawHost, link_id::LinkId, path_hash::RequestPathHash, payload::Vector{UInt8}, timeout::ResponseTimeout)::RawCallResult{RawOwned{RawIssuedCommand}}
+function host_request(protocol::RawHostProtocol, host::RawHost, link_id::LinkId, path_hash::RequestPathHash, payload::Vector{UInt8}, timeout::ResponseTimeout, maximum_response_bytes::Union{Nothing,UInt64})::RawCallResult{RawOwned{RawIssuedCommand}}
     throw(MethodError(host_request, (protocol,)))
 end
 
@@ -1491,6 +1518,6 @@ function host_allow_requester(protocol::RawHostProtocol, host::RawHost, destinat
     throw(MethodError(host_allow_requester, (protocol,)))
 end
 
-function host_attach_interface(protocol::RawHostProtocol, host::RawHost, config::InterfaceConfig)::RawCallResult{RawOwned{RawIssuedCommand}}
+function host_attach_interface(protocol::RawHostProtocol, host::RawHost, config::InterfaceConfig, routing::Union{Nothing,InterfaceRoutingPolicy})::RawCallResult{RawOwned{RawIssuedCommand}}
     throw(MethodError(host_attach_interface, (protocol,)))
 end

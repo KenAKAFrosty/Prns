@@ -6,9 +6,19 @@ use std::str::FromStr;
 use crate::results::Subject;
 use serde::{Deserialize, Serialize};
 
-pub const IMPLEMENTATIONS: [&str; 2] = ["personal-rns", "rns-1.4.0-compiled"];
+pub const REFERENCE_VERSION: &str = "1.4.2";
+pub const REFERENCE_IMPLEMENTATION: &str = "rns-1.4.2-compiled";
+pub const IMPLEMENTATIONS: [&str; 2] = ["personal-rns", REFERENCE_IMPLEMENTATION];
+pub const KNOWN_IMPLEMENTATIONS: [&str; 3] = [
+    "personal-rns",
+    "rns-1.4.0-compiled",
+    REFERENCE_IMPLEMENTATION,
+];
 const STANDARD_ENCRYPTED_LINK_MDU: usize = 383;
 const STOCK_REQUEST_ENVELOPE_BUDGET: usize = 64;
+const LARGE_RESOURCE_SEGMENTS: usize = 64;
+const LARGE_RESOURCE_PAYLOAD_BYTES: usize =
+    personal_rns::routing::links::resources::MAX_EFFICIENT_SIZE * LARGE_RESOURCE_SEGMENTS;
 pub const DEFAULT_SIZE_SEED: u64 = 0x5EED_CAFE_F00D_0001;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -366,6 +376,16 @@ fn validate_manifest(manifest: &ScenarioManifest, path: &Path) -> Result<(), Cat
             manifest.name
         )));
     }
+    if matches!(
+        manifest.name,
+        ScenarioId::Resource64mibStream | ScenarioId::Resource64mibStreamUnleashed
+    ) && manifest.profile.payload_len != LARGE_RESOURCE_PAYLOAD_BYTES
+    {
+        return Err(CatalogError::Invalid(format!(
+            "{} must carry exactly {LARGE_RESOURCE_SEGMENTS} maximum-efficient resource segments",
+            manifest.name
+        )));
+    }
     let expected_topology = if manifest.name.is_transport() {
         ScenarioTopology::Relay
     } else {
@@ -407,8 +427,8 @@ fn validate_manifest(manifest: &ScenarioManifest, path: &Path) -> Result<(), Cat
                 },
                 ScenarioTopology::Direct,
             ) => {
-                IMPLEMENTATIONS.contains(&initiator.as_str())
-                    && IMPLEMENTATIONS.contains(&responder.as_str())
+                KNOWN_IMPLEMENTATIONS.contains(&initiator.as_str())
+                    && KNOWN_IMPLEMENTATIONS.contains(&responder.as_str())
             }
             (
                 Subject::Direct {
@@ -420,7 +440,7 @@ fn validate_manifest(manifest: &ScenarioManifest, path: &Path) -> Result<(), Cat
             ) => {
                 initiator == "benchmark-wire-driver"
                     && responder == "benchmark-wire-driver"
-                    && IMPLEMENTATIONS.contains(&relay.as_str())
+                    && KNOWN_IMPLEMENTATIONS.contains(&relay.as_str())
             }
             _ => false,
         };
@@ -578,14 +598,21 @@ mod tests {
     #[test]
     fn cell_notes_are_typed_unique_subject_annotations() {
         let mut manifest = load_manifest(ScenarioId::RequestResponse).expect("annotated manifest");
-        assert_eq!(manifest.cell_notes.len(), 1);
+        assert_eq!(manifest.cell_notes.len(), 2);
         assert_eq!(
-            manifest.cell_notes[0].subject,
-            Subject::Direct {
-                initiator: "personal-rns".into(),
-                responder: "rns-1.4.0-compiled".into(),
-                relay: None,
-            }
+            manifest
+                .cell_notes
+                .iter()
+                .map(|note| note.subject.clone())
+                .collect::<Vec<_>>(),
+            ["rns-1.4.0-compiled", REFERENCE_IMPLEMENTATION]
+                .into_iter()
+                .map(|responder| Subject::Direct {
+                    initiator: "personal-rns".into(),
+                    responder: responder.into(),
+                    relay: None,
+                })
+                .collect::<Vec<_>>()
         );
 
         manifest.cell_notes.push(manifest.cell_notes[0].clone());
@@ -646,5 +673,16 @@ mod tests {
                 .as_str()
                 .expect("resource stream vector")
         );
+    }
+
+    #[test]
+    fn large_resource_stream_is_exactly_sixty_four_full_segments() {
+        for scenario in [
+            ScenarioId::Resource64mibStream,
+            ScenarioId::Resource64mibStreamUnleashed,
+        ] {
+            let manifest = load_manifest(scenario).expect("valid large-resource manifest");
+            assert_eq!(manifest.profile.payload_len, LARGE_RESOURCE_PAYLOAD_BYTES);
+        }
     }
 }

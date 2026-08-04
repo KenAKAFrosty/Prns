@@ -1,4 +1,4 @@
-//! RNS 1.4.0 `Resource.__init__`'s transmit path. Two deliberate divergences:
+//! RNS 1.4.2 `Resource.__init__`'s transmit path. Two deliberate divergences:
 //! - on a collision re-roll, the reference recomputes its resource hash from a stale loop variable (a minor latent corruption); we recompute from the true plaintext. Wire identical.
 //! - And where the reference re-rolls forever, [`SALT_REROLL_CAP`] bounds the loop.
 
@@ -10,7 +10,7 @@ use crate::routing::links::resources::{
 };
 use crate::routing::links::LinkKey;
 
-/// RNS 1.4.0 `Resource.__init__`'s keep-when-smaller rule, shared so a staging caller picks the same stream a build would.
+/// RNS 1.4.2 `Resource.__init__`'s keep-when-smaller rule, shared so a staging caller picks the same stream a build would.
 pub fn winning_candidate(
     compressed_candidate: Option<&[u8]>,
     uncompressed_stream_len: usize,

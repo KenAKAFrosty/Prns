@@ -8,7 +8,7 @@ type BrandedBytes<Name extends string> = Uint8Array & Brand<Name>;
 
 export const HOST_CONTRACT_ABI = 1;
 export const HOST_SCHEMA_VERSION = 1;
-export const PRODUCT_VERSION = "0.3.2";
+export const PRODUCT_VERSION = "0.3.3";
 export const DESTINATION_HASH_LENGTH = 16;
 export const IDENTITY_HASH_LENGTH = 16;
 export const INTERFACE_ID_LENGTH = 8;
@@ -18,6 +18,8 @@ export const REQUEST_ID_LENGTH = 16;
 export const REQUEST_PATH_HASH_LENGTH = 16;
 export const RESOURCE_HASH_LENGTH = 32;
 export const IDENTITY_SECRET_LENGTH = 64;
+export const SAFE_INT_MIN = -9007199254740991;
+export const SAFE_INT_MAX = 9007199254740991;
 export const SAFE_UINT_MAX = 9007199254740991;
 
 export type DestinationHash = BrandedBytes<"DestinationHash">;
@@ -231,6 +233,29 @@ export function isInterfaceKind(value: unknown): value is InterfaceKind {
   return typeof value === "string" && (INTERFACE_KIND_VALUES as readonly string[]).includes(value);
 }
 
+export type InterfaceMode =
+  | "Full"
+  | "PointToPoint"
+  | "AccessPoint"
+  | "Roaming"
+  | "Boundary"
+  | "Gateway"
+  | "Internal";
+
+export const INTERFACE_MODE_VALUES: readonly InterfaceMode[] = Object.freeze([
+  "Full",
+  "PointToPoint",
+  "AccessPoint",
+  "Roaming",
+  "Boundary",
+  "Gateway",
+  "Internal",
+]);
+
+export function isInterfaceMode(value: unknown): value is InterfaceMode {
+  return typeof value === "string" && (INTERFACE_MODE_VALUES as readonly string[]).includes(value);
+}
+
 export type InterfaceHealth =
   | "Initializing"
   | "Connected"
@@ -364,6 +389,14 @@ export type MultiRNodeMemberConfig = {
   readonly radio: RNodeRadioConfig;
   readonly flowControl: boolean;
   readonly outgoing: boolean;
+};
+
+export type InterfaceRoutingPolicy = {
+  readonly mode?: InterfaceMode;
+  readonly gravity?: number;
+  readonly recursivePathRequests?: boolean;
+  readonly announcesFromInternal?: boolean;
+  readonly announcesToInternal?: boolean;
 };
 
 export type BackendInfo = {
@@ -663,6 +696,7 @@ export type DestinationConfig =
         readonly name: DestinationName;
         readonly identity: DestinationIdentityConfig;
         readonly announceAppData?: Uint8Array;
+        readonly maximumRequestBytes?: number;
         readonly requestHandlers: readonly RequestHandlerConfig[];
       }
     >;
@@ -749,6 +783,7 @@ export type HostCommand =
         readonly pathHash: RequestPathHash;
         readonly payload: Uint8Array;
         readonly timeout: ResponseTimeout;
+        readonly maximumResponseBytes?: number;
       }
     >
   | Tag<
@@ -803,6 +838,7 @@ export type HostCommand =
       "AttachInterface",
       {
         readonly config: InterfaceConfig;
+        readonly routing?: InterfaceRoutingPolicy;
       }
     >;
 
@@ -935,7 +971,8 @@ export type CommandFailure =
       {
         readonly detail: string;
       }
-    >;
+    >
+  | Tag<"ResponseTooLarge">;
 
 export type ApplicationEvent =
   | Tag<
@@ -1298,12 +1335,12 @@ interface RawHostProtocol {
   readonly hostRequestPath: (host: RawHost, destination: DestinationHash) => RawCallResult<RawOwned<RawIssuedCommand>>;
   readonly hostIdentify: (host: RawHost, linkId: LinkId, identity: IdentityHash) => RawCallResult<RawOwned<RawIssuedCommand>>;
   readonly hostSendLinkPacket: (host: RawHost, linkId: LinkId, payload: Uint8Array) => RawCallResult<RawOwned<RawIssuedCommand>>;
-  readonly hostRequest: (host: RawHost, linkId: LinkId, pathHash: RequestPathHash, payload: Uint8Array, timeout: ResponseTimeout) => RawCallResult<RawOwned<RawIssuedCommand>>;
+  readonly hostRequest: (host: RawHost, linkId: LinkId, pathHash: RequestPathHash, payload: Uint8Array, timeout: ResponseTimeout, maximumResponseBytes: number | undefined) => RawCallResult<RawOwned<RawIssuedCommand>>;
   readonly hostRespond: (host: RawHost, linkId: LinkId, requestId: RequestId, requestRttMillis: number, payload: Uint8Array) => RawCallResult<RawOwned<RawIssuedCommand>>;
   readonly hostSendResource: (host: RawHost, linkId: LinkId, payload: Uint8Array, packedMetadata: Uint8Array | undefined, compression: ResourceCompression) => RawCallResult<RawOwned<RawIssuedCommand>>;
   readonly hostSetLinkResourceStrategy: (host: RawHost, linkId: LinkId, strategy: ResourceStrategy) => RawCallResult<RawOwned<RawIssuedCommand>>;
   readonly hostSetDestinationResourceStrategy: (host: RawHost, destination: DestinationHash, strategy: ResourceStrategy) => RawCallResult<RawOwned<RawIssuedCommand>>;
   readonly hostSendChannelMessage: (host: RawHost, linkId: LinkId, messageType: number, payload: Uint8Array) => RawCallResult<RawOwned<RawIssuedCommand>>;
   readonly hostAllowRequester: (host: RawHost, destination: DestinationHash, pathHash: RequestPathHash, identity: IdentityHash) => RawCallResult<RawOwned<RawIssuedCommand>>;
-  readonly hostAttachInterface: (host: RawHost, config: InterfaceConfig) => RawCallResult<RawOwned<RawIssuedCommand>>;
+  readonly hostAttachInterface: (host: RawHost, config: InterfaceConfig, routing: InterfaceRoutingPolicy | undefined) => RawCallResult<RawOwned<RawIssuedCommand>>;
 }

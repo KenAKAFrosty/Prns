@@ -10,7 +10,7 @@ use prns_core::interfaces::tcp::TcpWireFraming;
 use prns_core::interfaces::IfacSize;
 use prns_core::interfaces::{
     AnnounceBandwidthCap, AnnounceRateLimit, BitrateBps, EgressCapability, IngressCapability,
-    InterfaceMode,
+    InterfaceGravity, InterfaceMode,
 };
 use prns_core::units::DurationMillis;
 

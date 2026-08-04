@@ -20,6 +20,7 @@ from ._native import (
     HostSnapshot as NativeHostSnapshot,
     IdentityConfig as NativeIdentityConfig,
     InterfaceConfig as NativeInterfaceConfig,
+    InterfaceRoutingPolicy as NativeInterfaceRoutingPolicy,
     Lifecycle,
     Limits as NativeLimits,
     MultiRNodeMemberConfig as NativeMultiRNodeMemberConfig,
@@ -470,6 +471,8 @@ def _marshal_destination(
             ByteView(),
             ctypes.POINTER(NativeRequestHandlerConfig)(),
             0,
+            0,
+            0,
         )
     if isinstance(destination, g.DestinationConfigSingle):
         identity = destination.identity
@@ -489,6 +492,9 @@ def _marshal_destination(
             )
             for handler in destination.request_handlers
         ]
+        maximum_request_bytes = destination.maximum_request_bytes
+        if maximum_request_bytes is not None and not 0 <= maximum_request_bytes <= g.SAFE_UINT_MAX:
+            raise ValueError("maximum_request_bytes must be an unsigned safe integer")
         return NativeDestinationConfig(
             ctypes.sizeof(NativeDestinationConfig),
             g.DestinationConfigKind.SINGLE,
@@ -498,6 +504,8 @@ def _marshal_destination(
             arena.bytes(destination.announce_app_data or b""),
             arena.array(NativeRequestHandlerConfig, request_handlers),
             len(request_handlers),
+            int(maximum_request_bytes is not None),
+            maximum_request_bytes or 0,
         )
     raise TypeError(f"unknown destination config {type(destination)!r}")
 
@@ -675,6 +683,26 @@ def _marshal_interface(
     return result
 
 
+def _marshal_interface_routing(
+    value: g.InterfaceRoutingPolicy,
+) -> NativeInterfaceRoutingPolicy:
+    if value.gravity is not None and not g.SAFE_INT_MIN <= value.gravity <= g.SAFE_INT_MAX:
+        raise ValueError("gravity must be a safe integer")
+    return NativeInterfaceRoutingPolicy(
+        ctypes.sizeof(NativeInterfaceRoutingPolicy),
+        int(value.mode is not None),
+        0 if value.mode is None else value.mode,
+        int(value.gravity is not None),
+        0 if value.gravity is None else value.gravity,
+        int(value.recursive_path_requests is not None),
+        int(value.recursive_path_requests or False),
+        int(value.announces_from_internal is not None),
+        int(value.announces_from_internal or False),
+        int(value.announces_to_internal is not None),
+        int(value.announces_to_internal or False),
+    )
+
+
 def _decode_backend(value: NativeBackendInfo) -> g.BackendInfo:
     return g.BackendInfo(
         g.BackendKind(value.backend),
@@ -850,6 +878,8 @@ def _decode_command_failure(
             return g.CommandFailureConnectFailed(detail)
         case g.CommandFailureKind.BACKEND_FAILED:
             return g.CommandFailureBackendFailed(detail)
+        case g.CommandFailureKind.RESPONSE_TOO_LARGE:
+            return g.CommandFailureResponseTooLarge()
     raise RuntimeError(f"unknown command failure {kind}")
 
 
@@ -1602,9 +1632,15 @@ class Host:
                 )
             elif isinstance(command, g.HostCommandAttachInterface):
                 interface = _marshal_interface(command.config, arena)
+                routing = (
+                    None
+                    if command.routing is None
+                    else _marshal_interface_routing(command.routing)
+                )
                 status = self._native.library.prns_host_attach_interface(
                     self._handle,
                     ctypes.byref(interface),
+                    None if routing is None else ctypes.byref(routing),
                     ctypes.byref(handle),
                 )
             elif isinstance(command, g.HostCommandDetachInterface):
@@ -1643,6 +1679,14 @@ class Host:
                 timeout_kind, timeout_millis = _marshal_response_timeout(
                     command.timeout
                 )
+                maximum_response_bytes = command.maximum_response_bytes
+                if maximum_response_bytes is not None and not 0 <= maximum_response_bytes <= g.SAFE_UINT_MAX:
+                    raise ValueError("maximum_response_bytes must be an unsigned safe integer")
+                maximum_response_storage = (
+                    None
+                    if maximum_response_bytes is None
+                    else ctypes.c_uint64(maximum_response_bytes)
+                )
                 status = self._native.library.prns_host_request(
                     self._handle,
                     arena.bytes(command.link_id.value),
@@ -1650,6 +1694,9 @@ class Host:
                     arena.bytes(command.payload),
                     timeout_kind,
                     timeout_millis,
+                    None
+                    if maximum_response_storage is None
+                    else ctypes.byref(maximum_response_storage),
                     ctypes.byref(handle),
                 )
             elif isinstance(command, g.HostCommandRespond):
@@ -1766,8 +1813,9 @@ class Host:
     async def attach_interface(
         self,
         config: g.InterfaceConfig,
+        routing: g.InterfaceRoutingPolicy | None = None,
     ) -> CommandSettlement:
-        return await self.submit(g.HostCommandAttachInterface(config))
+        return await self.submit(g.HostCommandAttachInterface(config, routing))
 
     async def detach_interface(
         self,
@@ -1807,9 +1855,16 @@ class Host:
         path_hash: g.RequestPathHash,
         payload: bytes,
         timeout: g.ResponseTimeout,
+        maximum_response_bytes: int | None = None,
     ) -> CommandSettlement:
         return await self.submit(
-            g.HostCommandRequest(link_id, path_hash, payload, timeout)
+            g.HostCommandRequest(
+                link_id,
+                path_hash,
+                payload,
+                timeout,
+                maximum_response_bytes,
+            )
         )
 
     async def respond(

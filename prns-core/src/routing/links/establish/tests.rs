@@ -165,7 +165,7 @@ fn an_establish_link_needs_a_known_route_and_takes_relayed_ones() {
 
     hear_announce(
         &mut state,
-        &bytes_from_hex(RNS_1_4_0_RETRANSMITTED_ANNOUNCE),
+        &bytes_from_hex(RNS_1_4_2_RETRANSMITTED_ANNOUNCE),
     );
     let outcome = state.ingest_command(
         IssuedCommand {
@@ -682,6 +682,7 @@ fn deferred_link_proof_sign_and_verify_resume_the_handshake() {
     assert!(matches!(sign_wake.link_deadlines, WakeSchedule::At(_)));
 
     let mut raw_proof = proofs[0].1.clone();
+    raw_proof[1] = 2;
     let mut deferred_sign = None;
     let mut deferred = DeferredCrypto::default();
     initiator.ingest_packet_into_deferring(
@@ -704,6 +705,7 @@ fn deferred_link_proof_sign_and_verify_resume_the_handshake() {
     let DeferredCrypto::LinkProofVerify(mut owed) = deferred else {
         panic!("the initiator captures proof verification for the pool");
     };
+    assert_eq!(owed.received_hops, 3);
     assert!(crate::routing::links::handshake::link_proof_signature_valid(&owed));
     owed.signed_data[0] ^= 0x01;
     assert!(!crate::routing::links::handshake::link_proof_signature_valid(&owed));
@@ -729,6 +731,14 @@ fn deferred_link_proof_sign_and_verify_resume_the_handshake() {
     );
     assert_eq!(rtts.len(), 1);
     assert_eq!(rtts[0].0, arrival());
+    assert_eq!(
+        initiator
+            .routing_table
+            .stored_announce_for(&personal_node_destination())
+            .unwrap()
+            .hops,
+        3,
+    );
     assert_eq!(
         settlements,
         std::vec![(
@@ -925,6 +935,123 @@ fn the_full_handshake_activates_both_ends() {
         &by_initiator[..n],
         &by_responder[..m],
         "both active ends hold the same session key",
+    );
+}
+
+#[test]
+fn a_signed_hop_change_rebalances_an_initiated_link_and_its_route() {
+    let mut initiator = neighbor_with_a_route();
+    let mut request = [0u8; BROADCAST_MTU];
+    let dispatch = initiator
+        .write_commanded_link_request(
+            CommandId(7),
+            &establish(),
+            InstantMillis(1_000),
+            vector_establish_entropy(),
+            AttachedInterfaces::new(&arrival_interfaces()),
+            &mut request,
+        )
+        .dispatched();
+    let mut responder = personal_node_announcer();
+    let (mut proofs, _, _) =
+        reactions_of(&mut responder, &request[..dispatch.wire_bytes], 1_100, 0x99);
+    proofs[0][1] = 2;
+
+    let (rtts, settled, _) = reactions_of(&mut initiator, &proofs[0], 1_250, 0xA5);
+
+    assert_eq!(rtts.len(), 1);
+    assert!(matches!(
+        settled.as_slice(),
+        [(CommandId(7), Settlement::EstablishLink(Ok(_)))]
+    ));
+    assert!(matches!(
+        initiator.links.phase_for(&dispatch.link_id),
+        Some(LinkPhase::Active { .. })
+    ));
+    assert_eq!(
+        initiator
+            .routing_table
+            .stored_announce_for(&personal_node_destination())
+            .unwrap()
+            .hops,
+        3,
+    );
+}
+
+#[test]
+fn untrusted_initiated_hop_changes_leave_the_path_unchanged() {
+    let mut initiator = neighbor_with_a_route();
+    let mut request = [0u8; BROADCAST_MTU];
+    let dispatch = initiator
+        .write_commanded_link_request(
+            CommandId(7),
+            &establish(),
+            InstantMillis(1_000),
+            vector_establish_entropy(),
+            AttachedInterfaces::new(&arrival_interfaces()),
+            &mut request,
+        )
+        .dispatched();
+    let mut responder = personal_node_announcer();
+    let (proofs, _, _) = reactions_of(&mut responder, &request[..dispatch.wire_bytes], 1_100, 0x99);
+    let mut proof = proofs[0].clone();
+    proof[1] = 2;
+
+    let mut wrong_mode = proof.clone();
+    let signalling = wrong_mode.len() - 3;
+    wrong_mode[signalling] = (wrong_mode[signalling] & 0x1F) | 0x40;
+    let outcome = initiator.ingest_packet_with(
+        InboundPacket {
+            arrived_at: InstantMillis(1_240),
+            source_interface: arrival(),
+            bytes: &mut wrong_mode,
+        },
+        &mut |_| {},
+        AttachedInterfaces::new(&arrival_interfaces()),
+        &mut |_| {},
+        None,
+    );
+    assert_eq!(
+        outcome,
+        IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid)
+    );
+
+    let payload_offset = {
+        let (_, payload) = crate::wire::WirePacketHeader::parse(&proof).unwrap();
+        proof.len() - payload.len()
+    };
+    proof[payload_offset] ^= 0x01;
+
+    let outcome = initiator.ingest_packet_with(
+        InboundPacket {
+            arrived_at: InstantMillis(1_250),
+            source_interface: arrival(),
+            bytes: &mut proof,
+        },
+        &mut |_| {},
+        AttachedInterfaces::new(&arrival_interfaces()),
+        &mut |_| {},
+        None,
+    );
+
+    assert_eq!(
+        outcome,
+        IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid)
+    );
+    assert!(matches!(
+        initiator.links.phase_for(&dispatch.link_id),
+        Some(LinkPhase::Pending {
+            expected_hops: 1,
+            ..
+        })
+    ));
+    assert_eq!(
+        initiator
+            .routing_table
+            .stored_announce_for(&personal_node_destination())
+            .unwrap()
+            .hops,
+        1,
     );
 }
 
@@ -1583,7 +1710,7 @@ fn relay_that_routes_to_the_responder(
 }
 
 fn transported_request_wire(initiator: &mut EngineState<TestStorageLayout>) -> std::vec::Vec<u8> {
-    hear_announce(initiator, &bytes_from_hex(RNS_1_4_0_RETRANSMITTED_ANNOUNCE));
+    hear_announce(initiator, &bytes_from_hex(RNS_1_4_2_RETRANSMITTED_ANNOUNCE));
     let mut request = [0u8; BROADCAST_MTU];
     let dispatch = initiator
         .write_commanded_link_request(
@@ -1641,7 +1768,7 @@ fn a_duplicate_transported_link_request_is_dropped_as_a_duplicate() {
     assert_eq!(
         outcome,
         IngestPacketOutcome::Ignored(IgnoreReason::Duplicate),
-        "RNS 1.4.0 remembers transported link requests; the echo is a duplicate, not a capacity event",
+        "RNS 1.4.2 remembers transported link requests; the echo is a duplicate, not a capacity event",
     );
 }
 
@@ -1706,7 +1833,188 @@ fn a_returning_proof_switches_home_without_the_destinations_announce() {
     );
     assert!(
         matches!(outcome, IngestPacketOutcome::Forward(_)),
-        "RNS 1.4.0 switches a returning proof home on shape alone; verification is the initiator's job",
+        "RNS 1.4.2 switches a returning proof home on shape alone; verification is the initiator's job",
+    );
+}
+
+#[test]
+fn a_trusted_transported_hop_change_rebalances_the_link_and_route_once() {
+    let iface_to_b = InterfaceId::new([0xB7; 8]);
+    let relay_view = [
+        routable_descriptor(arrival()),
+        routable_descriptor(iface_to_b),
+    ];
+    let (mut relay, mut responder) = relay_that_routes_to_the_responder(iface_to_b);
+    let mut initiator = EngineState::<TestStorageLayout>::new(second_secret_key());
+    let request = transported_request_wire(&mut initiator);
+    let link_id = parse_link_request(&request).unwrap().link_id;
+
+    let mut inbound = request.clone();
+    let outcome = relay.ingest_packet_with(
+        InboundPacket {
+            arrived_at: InstantMillis(1_100),
+            source_interface: arrival(),
+            bytes: &mut inbound,
+        },
+        &mut |_| {},
+        AttachedInterfaces::new(&relay_view),
+        &mut |_| {},
+        None,
+    );
+    let IngestPacketOutcome::TransportedLinkRequest { header, body, .. } = outcome else {
+        panic!("the request must ride transport");
+    };
+    let mut forwarded = [0u8; BROADCAST_MTU];
+    let header_len = header.write(&mut forwarded).unwrap();
+    forwarded[header_len..header_len + body.as_bytes().len()].copy_from_slice(body.as_bytes());
+    let forwarded_len = header_len + body.as_bytes().len();
+    let (proofs, _, _) = reactions_of(&mut responder, &forwarded[..forwarded_len], 1_200, 0x99);
+    let mut valid = proofs[0].clone();
+    valid[1] = 2;
+
+    let assert_unchanged = |relay: &EngineState<TestStorageLayout>| {
+        let entry = relay.transported_links.entry_for(&link_id).unwrap();
+        assert_eq!((entry.remaining_hops, entry.validated_by_proof), (1, false));
+        assert_eq!(
+            relay
+                .routing_table
+                .stored_announce_for(&personal_node_destination())
+                .unwrap()
+                .hops,
+            1,
+        );
+    };
+
+    let mut malformed = valid.clone();
+    malformed.pop();
+    let outcome = relay.ingest_packet_with(
+        InboundPacket {
+            arrived_at: InstantMillis(1_250),
+            source_interface: iface_to_b,
+            bytes: &mut malformed,
+        },
+        &mut |_| {},
+        AttachedInterfaces::new(&relay_view),
+        &mut |_| {},
+        None,
+    );
+    assert_eq!(
+        outcome,
+        IngestPacketOutcome::Ignored(IgnoreReason::Malformed)
+    );
+    assert_unchanged(&relay);
+
+    let mut wrong_mode = valid.clone();
+    let signalling = wrong_mode.len() - 3;
+    wrong_mode[signalling] = (wrong_mode[signalling] & 0x1F) | 0x40;
+    let outcome = relay.ingest_packet_with(
+        InboundPacket {
+            arrived_at: InstantMillis(1_260),
+            source_interface: iface_to_b,
+            bytes: &mut wrong_mode,
+        },
+        &mut |_| {},
+        AttachedInterfaces::new(&relay_view),
+        &mut |_| {},
+        None,
+    );
+    assert_eq!(
+        outcome,
+        IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid)
+    );
+    assert_unchanged(&relay);
+
+    let mut invalid_signature = valid.clone();
+    let payload_offset = {
+        let (_, payload) = crate::wire::WirePacketHeader::parse(&invalid_signature).unwrap();
+        invalid_signature.len() - payload.len()
+    };
+    invalid_signature[payload_offset] ^= 0x01;
+    let outcome = relay.ingest_packet_with(
+        InboundPacket {
+            arrived_at: InstantMillis(1_270),
+            source_interface: iface_to_b,
+            bytes: &mut invalid_signature,
+        },
+        &mut |_| {},
+        AttachedInterfaces::new(&relay_view),
+        &mut |_| {},
+        None,
+    );
+    assert_eq!(
+        outcome,
+        IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid)
+    );
+    assert_unchanged(&relay);
+
+    let mut wrong_ingress = valid.clone();
+    let outcome = relay.ingest_packet_with(
+        InboundPacket {
+            arrived_at: InstantMillis(1_280),
+            source_interface: arrival(),
+            bytes: &mut wrong_ingress,
+        },
+        &mut |_| {},
+        AttachedInterfaces::new(&relay_view),
+        &mut |_| {},
+        None,
+    );
+    assert_eq!(
+        outcome,
+        IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid)
+    );
+    assert_unchanged(&relay);
+
+    let outcome = relay.ingest_packet_with(
+        InboundPacket {
+            arrived_at: InstantMillis(1_300),
+            source_interface: iface_to_b,
+            bytes: &mut valid,
+        },
+        &mut |_| {},
+        AttachedInterfaces::new(&relay_view),
+        &mut |_| {},
+        None,
+    );
+    let IngestPacketOutcome::Forward(forwarded) = outcome else {
+        panic!("the trusted proof must return toward the initiator");
+    };
+    assert_eq!(forwarded.fire_on, arrival());
+    let entry = relay.transported_links.entry_for(&link_id).unwrap();
+    assert_eq!((entry.remaining_hops, entry.validated_by_proof), (3, true));
+    assert_eq!(
+        relay
+            .routing_table
+            .stored_announce_for(&personal_node_destination())
+            .unwrap()
+            .hops,
+        3,
+    );
+
+    let mut second = valid.clone();
+    second[1] = 3;
+    let outcome = relay.ingest_packet_with(
+        InboundPacket {
+            arrived_at: InstantMillis(1_350),
+            source_interface: iface_to_b,
+            bytes: &mut second,
+        },
+        &mut |_| {},
+        AttachedInterfaces::new(&relay_view),
+        &mut |_| {},
+        None,
+    );
+    assert_eq!(
+        outcome,
+        IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid)
+    );
+    assert_eq!(
+        relay
+            .transported_links
+            .entry_for(&link_id)
+            .unwrap()
+            .remaining_hops,
+        3,
     );
 }
 
@@ -1809,7 +2117,7 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
     let mut initiator = EngineState::<TestStorageLayout>::new(second_secret_key());
     hear_announce(
         &mut initiator,
-        &bytes_from_hex(RNS_1_4_0_RETRANSMITTED_ANNOUNCE),
+        &bytes_from_hex(RNS_1_4_2_RETRANSMITTED_ANNOUNCE),
     );
 
     let mut request = [0u8; BROADCAST_MTU];
@@ -2026,7 +2334,7 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
     assert_eq!(
         data_replay.len(),
         1,
-        "a byte-identical retry switches through again: RNS 1.4.0 never remembers a transported link's packets in the duplicate filter",
+        "a byte-identical retry switches through again: RNS 1.4.2 never remembers a transported link's packets in the duplicate filter",
     );
     let mut close_frames = std::vec::Vec::new();
     let _ = initiator.ingest_command_into(
@@ -2155,6 +2463,7 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
         path_hash: RequestPathHash::of("/status"),
         data: SendRequestData::from_slice(&[0xC4, 0x03, b'a', b's', b'k']).unwrap(),
         response_timeout: Default::default(),
+        maximum_response_bytes: Default::default(),
     };
 
     let expected_request_hint = link_data_frame_ceiling(REQUEST_WIRE_OVERHEAD + ask.data.len());

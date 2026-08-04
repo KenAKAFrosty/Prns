@@ -1,7 +1,7 @@
 use super::*;
 
 #[futures_test::test]
-async fn rns_138_management_verbs_get_typed_conservative_replies() {
+async fn rns_1_4_2_management_verbs_get_typed_conservative_replies() {
     let query = StubQuery {
         links: 0,
         packet_phy: None,
@@ -70,7 +70,7 @@ async fn rns_138_management_verbs_get_typed_conservative_replies() {
 }
 
 #[futures_test::test]
-async fn rns_138_destination_data_projects_every_typed_retention_outcome() {
+async fn rns_1_4_2_destination_data_projects_every_typed_retention_outcome() {
     let query = StubQuery {
         links: 0,
         packet_phy: None,
@@ -164,7 +164,7 @@ async fn rns_138_destination_data_projects_every_typed_retention_outcome() {
 }
 
 #[futures_test::test]
-async fn rns_138_identity_retention_is_true_for_any_matching_destination() {
+async fn rns_1_4_2_identity_retention_is_true_for_any_matching_destination() {
     let query = StubQuery {
         links: 0,
         packet_phy: None,
@@ -227,7 +227,7 @@ async fn rns_138_identity_retention_is_true_for_any_matching_destination() {
 }
 
 #[futures_test::test]
-async fn rns_138_blackhole_reads_delegate_and_project_the_live_table() {
+async fn rns_1_4_2_blackhole_reads_delegate_and_project_the_live_table() {
     let query = StubQuery {
         links: 0,
         packet_phy: None,
@@ -285,7 +285,7 @@ async fn rns_138_blackhole_reads_delegate_and_project_the_live_table() {
 }
 
 #[futures_test::test]
-async fn rns_138_blackhole_writes_delegate_source_and_project_tri_state_replies() {
+async fn rns_1_4_2_blackhole_writes_delegate_source_and_project_tri_state_replies() {
     let query = StubQuery {
         links: 0,
         packet_phy: None,
@@ -380,7 +380,7 @@ async fn rns_138_blackhole_writes_delegate_source_and_project_tri_state_replies(
 }
 
 #[futures_test::test]
-async fn rns_138_drop_verbs_delegate_typed_arguments_and_project_reference_replies() {
+async fn rns_1_4_2_drop_verbs_delegate_typed_arguments_and_project_reference_replies() {
     let query = StubQuery {
         links: 0,
         packet_phy: None,

@@ -2,6 +2,18 @@ using PersonalRns
 using Sockets
 using Test
 
+oversized_destination = DestinationConfigSingle(
+    DestinationName("limits", ["request"]),
+    DestinationIdentityConfigHostIdentity(),
+    nothing,
+    PersonalRns.SAFE_UINT_MAX + UInt64(1),
+    RequestHandlerConfig[],
+)
+@test_throws ArgumentError PersonalRns.native_destination(
+    PersonalRns.NativeArena(),
+    oversized_destination,
+)
+
 host = Host(
     ephemeral_endpoint(
         required_capabilities=Capability[PersonalRns.CapabilityTcpClient],
@@ -43,26 +55,24 @@ try
     @test resource isa CommandFailed
     @test resource.failure isa PersonalRns.CommandFailureUnknownLink
 
-    attach = execute(
+    attached = attach_interface(
         host,
-        HostCommandAttachInterface(
-            InterfaceConfigTcpClient("127.0.0.1:9", BitrateAuto()),
+        InterfaceConfigTcpClient("127.0.0.1:9", BitrateAuto()),
+        routing=InterfaceRoutingPolicy(
+            PersonalRns.InterfaceModeBoundary,
+            -73,
+            true,
+            false,
+            true,
         ),
     )
-    attached = wait(attach)
-    close(attach)
     @test attached isa CommandSucceeded
     @test attached.outcome isa PersonalRns.CommandOutcomeInterfaceAttached
     attached_snapshot = snapshot(host)
     @test attached_snapshot.runtime.interface_count == 1
     @test attached_snapshot.interfaces[1].interface_id == attached.outcome.interface
 
-    detach = execute(
-        host,
-        HostCommandDetachInterface(attached.outcome.interface),
-    )
-    detached = wait(detach)
-    close(detach)
+    detached = detach_interface(host, attached.outcome.interface)
     @test detached isa CommandSucceeded
     @test detached.outcome isa PersonalRns.CommandOutcomeInterfaceDetached
 finally
@@ -241,6 +251,7 @@ mktempdir() do root
         ),
         DestinationIdentityConfigHostIdentity(),
         announce_data,
+        UInt64(1_048_576),
         RequestHandlerConfig[
             RequestHandlerConfig(
                 json_string(fixture, "path"),
@@ -271,12 +282,14 @@ mktempdir() do root
             server,
             HostCommandAttachInterface(
                 InterfaceConfigTcpServer("127.0.0.1:$(port)", BitrateAuto()),
+                nothing,
             ),
         ) isa PersonalRns.CommandOutcomeInterfaceAttached
         @test successful_outcome(
             client,
             HostCommandAttachInterface(
                 InterfaceConfigTcpClient("127.0.0.1:$(port)", BitrateAuto()),
+                nothing,
             ),
         ) isa PersonalRns.CommandOutcomeInterfaceAttached
 
@@ -311,6 +324,7 @@ mktempdir() do root
                 ),
                 request_payload,
                 ResponseTimeoutExact(json_integer(fixture, "timeoutMillis")),
+                UInt64(1_048_576),
             ),
         )
         request_task = @async wait(request_command)

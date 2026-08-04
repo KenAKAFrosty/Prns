@@ -149,6 +149,7 @@ async fn main() {
 fn responder_destination() -> PreConfiguredDestination<'static> {
     PreConfiguredDestination::Single {
         resource_strategy: ResourceStrategy::AcceptNone,
+        maximum_request_bytes: Default::default(),
         app_name: "prns-example",
         aspects: &["example", "app-state"],
         identity: try_generate_identity_secret().expect("identity generation failed"),
@@ -163,6 +164,7 @@ fn responder_destination() -> PreConfiguredDestination<'static> {
 fn requester_destination() -> PreConfiguredDestination<'static> {
     PreConfiguredDestination::Single {
         resource_strategy: ResourceStrategy::AcceptNone,
+        maximum_request_bytes: Default::default(),
         app_name: "prns-example",
         aspects: &["example", "app-state"],
         identity: try_generate_identity_secret().expect("identity generation failed"),

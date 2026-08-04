@@ -100,6 +100,29 @@ impl<M: RawMutex + 'static, const FRAME: usize, const NOTIFY: usize, const LIFEC
         Ok(())
     }
 
+    /// Delivers one member frame with end-to-end backpressure.
+    ///
+    /// Supervisors backed by a reliable transport should use this path: when the manifold is
+    /// still consuming the previous frame, the transport can stop admitting further frames
+    /// instead of silently turning transient scheduler latency into packet loss.
+    pub async fn deliver_inbound(
+        &mut self,
+        child: InterfaceId,
+        bytes: &[u8],
+    ) -> Result<(), InboundDeliveryError> {
+        if bytes.len() > FRAME {
+            return Err(InboundDeliveryError::FrameTooLarge {
+                len: bytes.len(),
+                capacity: FRAME,
+            });
+        }
+        let grant = self.wire.inbound.grant().await;
+        grant.fill_for(child, bytes);
+        self.wire.inbound.commit();
+        self.wire.notify.send(child).await;
+        Ok(())
+    }
+
     pub async fn next_outbound(&mut self) -> OutboundFrame<FRAME> {
         self.wire.outbound.release();
         let slot = self.wire.outbound.peek().await;

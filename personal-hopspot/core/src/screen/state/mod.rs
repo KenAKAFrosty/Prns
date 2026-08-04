@@ -1,6 +1,8 @@
 pub(in crate::screen) mod lora;
 
-use personal_rns::interfaces::lora::{RadioProfile, DEFAULT_915_PROFILE};
+use core::future::Future;
+
+use personal_rns::interfaces::lora::RadioProfile;
 use personal_rns::storage::DisplayedStorageLimits;
 
 use super::limits::storage_limit_page_count;
@@ -59,6 +61,7 @@ pub enum UiAction {
     ToggleSelectedInterface,
     OpenLoRaEditor,
     SetLoRaProfile(RadioProfile),
+    ResetLoRaProfile,
     SwapRadioMode,
     OpenDocs,
 }
@@ -72,9 +75,54 @@ pub enum UiNotice {
     Sleeping,
     Awake,
     Saved,
+    ApplyFailed,
+    ProfileNotSaved,
+    ProfileRecovered,
+    ProfileReset,
     IdentityReset,
     IdentityUnstable,
     StateNotSaved,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RadioProfileChangeResult {
+    Saved,
+    ApplyFailed,
+    ProfileNotSaved,
+}
+
+impl RadioProfileChangeResult {
+    #[must_use]
+    pub const fn applied(self) -> bool {
+        matches!(self, Self::Saved | Self::ProfileNotSaved)
+    }
+
+    #[must_use]
+    pub const fn notice(self) -> UiNotice {
+        match self {
+            Self::Saved => UiNotice::Saved,
+            Self::ApplyFailed => UiNotice::ApplyFailed,
+            Self::ProfileNotSaved => UiNotice::ProfileNotSaved,
+        }
+    }
+}
+
+pub async fn apply_and_persist_radio_profile<Apply, Persist, PersistFuture>(
+    apply: Apply,
+    persist: Persist,
+) -> RadioProfileChangeResult
+where
+    Apply: Future<Output = bool>,
+    Persist: FnOnce() -> PersistFuture,
+    PersistFuture: Future<Output = bool>,
+{
+    if !apply.await {
+        RadioProfileChangeResult::ApplyFailed
+    } else if persist().await {
+        RadioProfileChangeResult::Saved
+    } else {
+        RadioProfileChangeResult::ProfileNotSaved
+    }
 }
 
 impl UiNotice {
@@ -87,6 +135,10 @@ impl UiNotice {
             Self::Sleeping => "Sleeping",
             Self::Awake => "Awake",
             Self::Saved => "Saved",
+            Self::ApplyFailed => "Apply Failed",
+            Self::ProfileNotSaved => "Profile Not Saved",
+            Self::ProfileRecovered => "Profile Recovered",
+            Self::ProfileReset => "Profile Reset",
             Self::IdentityReset => "Identity Reset",
             Self::IdentityUnstable => "Identity Unstable",
             Self::StateNotSaved => "State Not Saved",
@@ -401,9 +453,7 @@ impl UiState {
                 match (kind, selected_item) {
                     (_, POWER_MENU_ITEM) => UiAction::ToggleSelectedInterface,
                     (CardKind::LoRa, LORA_TUNE_MENU_ITEM) => UiAction::OpenLoRaEditor,
-                    (CardKind::LoRa, LORA_RESET_MENU_ITEM) => {
-                        UiAction::SetLoRaProfile(DEFAULT_915_PROFILE)
-                    }
+                    (CardKind::LoRa, LORA_RESET_MENU_ITEM) => UiAction::ResetLoRaProfile,
                     _ => UiAction::None,
                 }
             }

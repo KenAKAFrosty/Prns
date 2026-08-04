@@ -93,13 +93,24 @@ public final class Command: @unchecked Sendable {
                 nativeBitrate.bitsPerSecond,
                 &output
             )
-        case .attachInterface(let config):
+        case .attachInterface(let config, let routing):
             var nativeConfig = try nativeInterfaceConfig(config, arena: arena)
-            status = prns_host_attach_interface(
-                host,
-                &nativeConfig,
-                &output
-            )
+            if let routing {
+                var nativeRouting = try nativeInterfaceRouting(routing)
+                status = prns_host_attach_interface(
+                    host,
+                    &nativeConfig,
+                    &nativeRouting,
+                    &output
+                )
+            } else {
+                status = prns_host_attach_interface(
+                    host,
+                    &nativeConfig,
+                    nil,
+                    &output
+                )
+            }
         case .detachInterface(let interface):
             status = prns_host_detach_interface(
                 host,
@@ -132,8 +143,23 @@ public final class Command: @unchecked Sendable {
                 try arena.bytes(payload),
                 &output
             )
-        case .request(let linkId, let pathHash, let payload, let timeout):
+        case .request(
+            let linkId,
+            let pathHash,
+            let payload,
+            let timeout,
+            let maximumResponseBytes
+        ):
+            guard maximumResponseBytes.map({ $0 <= HostContract.safeUintMax }) ?? true else {
+                throw StatusFailure(
+                    operation: "marshalRequest",
+                    status: .invalidArgument
+                )
+            }
             let nativeTimeout = timeout.native
+            let nativeMaximumResponseBytes = try arena.array(
+                maximumResponseBytes.map { [$0] } ?? []
+            )
             status = prns_host_request(
                 host,
                 try arena.bytes(linkId.bytes),
@@ -141,6 +167,7 @@ public final class Command: @unchecked Sendable {
                 try arena.bytes(payload),
                 nativeTimeout.kind,
                 nativeTimeout.millis,
+                nativeMaximumResponseBytes.map { UnsafePointer($0) },
                 &output
             )
         case .respond(
@@ -514,6 +541,8 @@ private func decodeCommandFailure(
         return .connectFailed(detail: detail)
     case .backendFailed:
         return .backendFailed(detail: detail)
+    case .responseTooLarge:
+        return .responseTooLarge
     }
 }
 

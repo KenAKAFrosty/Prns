@@ -27,6 +27,7 @@ pub fn defaults(
             egress: EgressCapability::Enabled(TransportCapability::SameInterfaceRepeat),
         },
         mode: InterfaceMode::Full,
+        gravity: crate::interfaces::InterfaceGravity::ZERO,
         bitrate: BitrateBps::guess(u64::from(profile.nominal_bitrate_bps())),
         mtu: MtuPolicy::fixed(LORA_MAX_PAYLOAD),
         announce_rate_limit: None,

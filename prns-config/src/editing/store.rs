@@ -78,19 +78,21 @@ impl ConfigFile {
             .as_ref()
             .and_then(|_| fs::metadata(&self.path).ok())
             .map(|metadata| metadata.permissions());
-        let backup = match current {
+        let backup = match current.as_ref() {
             Some(bytes) => {
                 let backup = backup_path(&self.path);
-                atomic_write(&backup, &bytes, permissions.clone())?;
+                atomic_write(&backup, bytes, permissions.clone())?;
                 Some(backup)
             }
             None => None,
         };
-        atomic_write(&self.path, edited.candidate().as_bytes(), permissions)?;
+        let installed = edited.candidate().as_bytes().to_vec();
+        atomic_write(&self.path, &installed, permissions)?;
         Ok(ConfigWriteReceipt {
             path: self.path.clone(),
             backup,
-            created: self.original.is_none(),
+            previous: current,
+            installed,
         })
     }
 }
@@ -99,7 +101,8 @@ impl ConfigFile {
 pub struct ConfigWriteReceipt {
     path: PathBuf,
     backup: Option<PathBuf>,
-    created: bool,
+    previous: Option<Vec<u8>>,
+    installed: Vec<u8>,
 }
 
 impl ConfigWriteReceipt {
@@ -112,7 +115,39 @@ impl ConfigWriteReceipt {
     }
 
     pub const fn created(&self) -> bool {
-        self.created
+        self.previous.is_none()
+    }
+
+    pub fn rollback(self) -> Result<(), ConfigFileError> {
+        let current = match fs::read(&self.path) {
+            Ok(bytes) => Some(bytes),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(source) => {
+                return Err(ConfigFileError::Io {
+                    operation: ConfigFileOperation::ReadBeforeRollback,
+                    source,
+                })
+            }
+        };
+        if current.as_deref() != Some(self.installed.as_slice()) {
+            return Err(ConfigFileError::ConcurrentModification);
+        }
+        let parent = self.path.parent().ok_or(ConfigFileError::MissingParent)?;
+        match self.previous {
+            Some(previous) => {
+                let permissions = fs::metadata(&self.path)
+                    .ok()
+                    .map(|metadata| metadata.permissions());
+                atomic_write(&self.path, &previous, permissions)
+            }
+            None => {
+                fs::remove_file(&self.path).map_err(|source| ConfigFileError::Io {
+                    operation: ConfigFileOperation::Remove,
+                    source,
+                })?;
+                sync_parent(parent)
+            }
+        }
     }
 }
 
@@ -121,10 +156,12 @@ pub enum ConfigFileOperation {
     Read,
     CreateDirectory,
     ReadBeforeWrite,
+    ReadBeforeRollback,
     CreateTemporary,
     SetPermissions,
     WriteTemporary,
     Persist,
+    Remove,
     SyncDirectory,
 }
 
@@ -134,10 +171,12 @@ impl fmt::Display for ConfigFileOperation {
             Self::Read => "read configuration",
             Self::CreateDirectory => "create configuration directory",
             Self::ReadBeforeWrite => "re-read configuration before writing",
+            Self::ReadBeforeRollback => "re-read configuration before restoring it",
             Self::CreateTemporary => "create temporary configuration",
             Self::SetPermissions => "set configuration permissions",
             Self::WriteTemporary => "write temporary configuration",
             Self::Persist => "replace configuration",
+            Self::Remove => "remove newly created configuration",
             Self::SyncDirectory => "sync configuration directory",
         })
     }

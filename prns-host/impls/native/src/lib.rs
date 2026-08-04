@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use personal_rns::config::{
     plan_reference_config, RNodeRadio, RNodeSubinterface, ReferenceConfig, ReferenceConfigParams,
-    ReferenceInterface,
+    ReferenceInterface, ReferenceMode,
 };
 use personal_rns::engine::{
     AllowRequester, AllowRequesterFailure, AllowRequesterRejection, AnnounceAppData, AnnounceNow,
@@ -36,13 +36,13 @@ use personal_rns::routing::request_handlers::RequestPolicy as EngineRequestPolic
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::request_endpoints::RespondToken;
 use personal_rns::runtime::{
-    Diagnostic, Message, NodePersistence, PersistenceIntent, PrnsEvent, RequestPathError,
-    ResourceSendError, SegmentCompression,
+    Diagnostic, Message, NodePersistence, PersistenceIntent, PrnsEvent, RequestOptions,
+    RequestPathError, ResourceSendError, SegmentCompression,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::{TcpClientInterface, TcpServer};
 use personal_rns::udp::UdpInterface;
-use personal_rns::units::{DurationMillis, RttMillis};
+use personal_rns::units::{ByteLimit, DurationMillis, RttMillis};
 use personal_rns::{
     attach_plan_with_context, fill_os_entropy, load_or_create_ble_identity,
     load_or_create_identity_secret, request_endpoints, try_generate_identity_secret,
@@ -57,13 +57,13 @@ use prns_host::{
     DestinationIdentityConfig, DestinationIdentitySnapshot, DestinationLinkRequestPolicy,
     DestinationProofStrategy, DestinationRatchetPolicy, DiagnosticEvent, HostCommand, HostConfig,
     HostRole, HostSnapshot, IdentityConfig, IdentityHash, InterfaceConfig, InterfaceHealth,
-    InterfaceId, InterfaceKind, InterfaceSnapshot, LinkClosedReason, LinkId, PacketHash,
-    PersistenceConfig, PersistenceFlushCause, PersistenceFlushTarget, PersistenceSnapshot,
-    RequestAvailable, RequestHandlerConfig, RequestId, RequestPathHash, RequestPolicy,
-    ResourceAvailable, ResourceCompression, ResourceHash, ResourceNeedsDecompression,
-    ResourceSegmentAvailable, ResourceStrategy, ResourceStreamId, ResponseAvailable,
-    ResponseSegmentAvailable, ResponseTimeout, RouteSnapshot, RuntimeHealthSnapshot,
-    SingleDelivery,
+    InterfaceId, InterfaceKind, InterfaceMode, InterfaceRoutingPolicy, InterfaceSnapshot,
+    LinkClosedReason, LinkId, PacketHash, PersistenceConfig, PersistenceFlushCause,
+    PersistenceFlushTarget, PersistenceSnapshot, RequestAvailable, RequestHandlerConfig, RequestId,
+    RequestPathHash, RequestPolicy, ResourceAvailable, ResourceCompression, ResourceHash,
+    ResourceNeedsDecompression, ResourceSegmentAvailable, ResourceStrategy, ResourceStreamId,
+    ResponseAvailable, ResponseSegmentAvailable, ResponseTimeout, RouteSnapshot,
+    RuntimeHealthSnapshot, SingleDelivery, SAFE_INT_MAX, SAFE_INT_MIN, SAFE_UINT_MAX,
 };
 use tokio::io::{AsyncRead, ReadBuf};
 use tokio::sync::{mpsc, oneshot, watch};
@@ -73,6 +73,10 @@ const STOP_TIMEOUT: Duration = Duration::from_secs(5);
 const AUTO_BITRATE_BPS: u64 = 65_000_000;
 const UPLOAD_CHUNK_CAPACITY: usize = 4;
 const MAX_UPLOAD_CHUNK_BYTES: usize = 256 * 1024;
+
+fn is_optional_safe_uint(value: Option<u64>) -> bool {
+    value.is_none_or(|value| value <= SAFE_UINT_MAX)
+}
 
 static THREAD_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static RESOURCE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -719,6 +723,7 @@ struct Ready {
 struct ResolvedSingle {
     identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
     announce_app_data: Vec<u8>,
+    maximum_request_bytes: Option<u64>,
     proof: DestinationProofStrategy,
     link_requests: DestinationLinkRequestPolicy,
     ratchet: DestinationRatchetPolicy,
@@ -836,6 +841,11 @@ fn resolve_config(config: HostConfig) -> Result<ResolvedConfig, NativeStartError
                 single: None,
             }),
             DestinationConfig::Single(single) => {
+                if !is_optional_safe_uint(single.maximum_request_bytes) {
+                    return Err(NativeStartError::Destination(
+                        "maximum request bytes must be an unsigned safe integer".to_string(),
+                    ));
+                }
                 let identity = match single.identity {
                     DestinationIdentityConfig::HostIdentity => host_identity.clone(),
                     DestinationIdentityConfig::Dedicated(identity) => resolve_identity(identity)?,
@@ -846,6 +856,7 @@ fn resolve_config(config: HostConfig) -> Result<ResolvedConfig, NativeStartError
                     single: Some(ResolvedSingle {
                         identity,
                         announce_app_data: single.announce_app_data,
+                        maximum_request_bytes: single.maximum_request_bytes,
                         proof: single.proof,
                         link_requests: single.link_requests,
                         ratchet: single.ratchet,
@@ -941,6 +952,10 @@ fn build_destinations<'a>(
                     DestinationRatchetPolicy::RatchetsRequired => RatchetPolicy::RatchetsRequired,
                 },
                 resource_strategy: engine_resource_strategy(single.resource_strategy),
+                maximum_request_bytes: single
+                    .maximum_request_bytes
+                    .map(ByteLimit::Maximum)
+                    .unwrap_or_default(),
                 request_endpoints: personal_rns::runtime::ServeMyRequestEndpoints::No,
             },
         })
@@ -1888,11 +1903,40 @@ fn reference_interface(config: &InterfaceConfig) -> Result<ReferenceInterface, C
     Ok(interface)
 }
 
+fn reference_mode(mode: InterfaceMode) -> ReferenceMode {
+    match mode {
+        InterfaceMode::Full => ReferenceMode::Full,
+        InterfaceMode::PointToPoint => ReferenceMode::PointToPoint,
+        InterfaceMode::AccessPoint => ReferenceMode::AccessPoint,
+        InterfaceMode::Roaming => ReferenceMode::Roaming,
+        InterfaceMode::Boundary => ReferenceMode::Boundary,
+        InterfaceMode::Gateway => ReferenceMode::Gateway,
+        InterfaceMode::Internal => ReferenceMode::Internal,
+    }
+}
+
 fn typed_interface_plan(
     config: &InterfaceConfig,
+    routing: Option<InterfaceRoutingPolicy>,
 ) -> Result<personal_rns::config::DaemonPlan, CommandFailure> {
     let mut reference = ReferenceConfig::default();
-    reference.interfaces.push(reference_interface(config)?);
+    let mut interface = reference_interface(config)?;
+    if let Some(routing) = routing {
+        if routing
+            .gravity
+            .is_some_and(|gravity| !(SAFE_INT_MIN..=SAFE_INT_MAX).contains(&gravity))
+        {
+            return Err(invalid_configuration(
+                "interface gravity exceeds the exact host integer range".to_string(),
+            ));
+        }
+        interface.mode = routing.mode.map(reference_mode);
+        interface.gravity = routing.gravity;
+        interface.recursive_prs = routing.recursive_path_requests;
+        interface.announces_from_internal = routing.announces_from_internal;
+        interface.announces_to_internal = routing.announces_to_internal;
+    }
+    reference.interfaces.push(interface);
     plan_reference_config(&reference).map_err(|error| invalid_configuration(error.to_string()))
 }
 
@@ -1945,8 +1989,9 @@ async fn attach_typed_interface(
     handle: &PrnsNodeHandle,
     context: &PlanRuntimeContext,
     config: &InterfaceConfig,
+    routing: Option<InterfaceRoutingPolicy>,
 ) -> Result<Attachment, CommandFailure> {
-    let plan = typed_interface_plan(config)?;
+    let plan = typed_interface_plan(config, routing)?;
     let mut primary = None;
     let mut failure = None;
     let attachments =
@@ -2090,13 +2135,13 @@ async fn execute_command(
             );
             Ok(CommandOutcome::InterfaceAttached { interface })
         }
-        HostCommand::AttachInterface { config } => {
+        HostCommand::AttachInterface { config, routing } => {
             config
                 .validate()
                 .map_err(|error| CommandFailure::InvalidConfiguration {
                     detail: format!("{error:?}"),
                 })?;
-            let attachment = attach_typed_interface(handle, plan_context, config).await?;
+            let attachment = attach_typed_interface(handle, plan_context, config, *routing).await?;
             let interface = attachment
                 .interfaces()
                 .first()
@@ -2153,7 +2198,13 @@ async fn execute_command(
             path_hash,
             payload,
             timeout,
+            maximum_response_bytes,
         } => {
+            if !is_optional_safe_uint(*maximum_response_bytes) {
+                return Err(invalid_configuration(
+                    "maximum response bytes must be an unsigned safe integer",
+                ));
+            }
             let timeout = match timeout {
                 ResponseTimeout::LinkDefault => RequestResponseTimeout::LinkDefault,
                 ResponseTimeout::Exact { millis } => {
@@ -2161,11 +2212,16 @@ async fn execute_command(
                 }
             };
             let (data, rtt) = handle
-                .request_with_response_timeout(
+                .request_with_options(
                     engine_link(*link_id),
                     engine_request_path(*path_hash),
                     payload,
-                    timeout,
+                    RequestOptions {
+                        response_timeout: timeout,
+                        maximum_response_bytes: maximum_response_bytes
+                            .map(ByteLimit::Maximum)
+                            .unwrap_or_default(),
+                    },
                 )
                 .await
                 .map_err(request_failure)?;
@@ -2436,6 +2492,7 @@ fn request_failure(error: SendError<SendRequestFailure>) -> CommandFailure {
         },
         SendError::Failed(SendRequestFailure::Culled) => CommandFailure::PacketCulled,
         SendError::Failed(SendRequestFailure::Timeout) => CommandFailure::DeliveryTimedOut,
+        SendError::Failed(SendRequestFailure::ResponseTooLarge) => CommandFailure::ResponseTooLarge,
     }
 }
 
@@ -3124,7 +3181,7 @@ mod tests {
         ];
         for config in configs {
             config.validate().map_err(|error| format!("{error:?}"))?;
-            let plan = typed_interface_plan(&config).map_err(|error| format!("{error:?}"))?;
+            let plan = typed_interface_plan(&config, None).map_err(|error| format!("{error:?}"))?;
             if plan.interfaces.is_empty() {
                 return Err(format!(
                     "{:?} produced no planned interfaces",
@@ -3133,10 +3190,111 @@ mod tests {
             }
         }
         assert!(matches!(
-            typed_interface_plan(&InterfaceConfig::BrowserRendezvous {
-                url: "ws://127.0.0.1:4242".to_string(),
-            }),
+            typed_interface_plan(
+                &InterfaceConfig::BrowserRendezvous {
+                    url: "ws://127.0.0.1:4242".to_string(),
+                },
+                None
+            ),
             Err(CommandFailure::UnsupportedByBackend)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn typed_interface_routing_is_applied_before_attachment() -> Result<(), String> {
+        let config = InterfaceConfig::TcpClient {
+            target: "127.0.0.1:4242".to_string(),
+            bitrate: Bitrate::Auto,
+        };
+        let default_plan =
+            typed_interface_plan(&config, None).map_err(|error| format!("{error:?}"))?;
+        let default_policy = default_plan
+            .interfaces
+            .first()
+            .ok_or_else(|| "default interface plan was empty".to_string())?
+            .policy;
+        if default_policy.mode != personal_rns::interfaces::InterfaceMode::Full
+            || default_policy.gravity.get() != 0
+            || default_policy.common.forwarding.recursive_path_requests
+            || !default_policy.common.forwarding.announces_from_internal
+            || default_policy.common.forwarding.announces_to_internal
+        {
+            return Err(format!(
+                "unexpected default routing policy: {default_policy:?}"
+            ));
+        }
+        let routing = InterfaceRoutingPolicy {
+            mode: Some(InterfaceMode::Boundary),
+            gravity: Some(-73),
+            recursive_path_requests: Some(true),
+            announces_from_internal: Some(false),
+            announces_to_internal: Some(true),
+        };
+        let plan =
+            typed_interface_plan(&config, Some(routing)).map_err(|error| format!("{error:?}"))?;
+        let policy = plan
+            .interfaces
+            .first()
+            .ok_or_else(|| "interface plan was empty".to_string())?
+            .policy;
+        if policy.mode != personal_rns::interfaces::InterfaceMode::Boundary
+            || policy.gravity.get() != -73
+            || !policy.common.forwarding.recursive_path_requests
+            || policy.common.forwarding.announces_from_internal
+            || !policy.common.forwarding.announces_to_internal
+        {
+            return Err(format!("unexpected routing policy: {policy:?}"));
+        }
+        let multi_plan = typed_interface_plan(
+            &InterfaceConfig::MultiRNode {
+                port: "/dev/ttyUSB0".to_string(),
+                station_callsign: None,
+                station_interval_seconds: None,
+                members: vec![
+                    prns_host::MultiRNodeMemberConfig {
+                        name: "uplink".to_string(),
+                        virtual_port: 1,
+                        radio: radio(),
+                        flow_control: true,
+                        outgoing: true,
+                    },
+                    prns_host::MultiRNodeMemberConfig {
+                        name: "downlink".to_string(),
+                        virtual_port: 2,
+                        radio: radio(),
+                        flow_control: true,
+                        outgoing: true,
+                    },
+                ],
+            },
+            Some(routing),
+        )
+        .map_err(|error| format!("{error:?}"))?;
+        if multi_plan.interfaces.is_empty()
+            || multi_plan.interfaces.iter().any(|interface| {
+                let policy = interface.policy;
+                policy.mode != personal_rns::interfaces::InterfaceMode::Boundary
+                    || policy.gravity.get() != -73
+                    || !policy.common.forwarding.recursive_path_requests
+                    || policy.common.forwarding.announces_from_internal
+                    || !policy.common.forwarding.announces_to_internal
+            })
+        {
+            return Err(format!(
+                "multi-interface routing was not inherited: {:?}",
+                multi_plan.interfaces
+            ));
+        }
+        assert!(matches!(
+            typed_interface_plan(
+                &config,
+                Some(InterfaceRoutingPolicy {
+                    gravity: Some(SAFE_INT_MAX + 1),
+                    ..routing
+                })
+            ),
+            Err(CommandFailure::InvalidConfiguration { .. })
         ));
         Ok(())
     }
@@ -3222,6 +3380,7 @@ mod tests {
                     target: "127.0.0.1:9".to_string(),
                     bitrate: Bitrate::Auto,
                 },
+                routing: None,
             })
             .map_err(|error| format!("{error:?}"))?;
         let interface = match attached.wait(Some(Duration::from_secs(2))) {
@@ -3264,6 +3423,21 @@ mod tests {
     }
 
     #[test]
+    fn oversized_response_failure_remains_typed() {
+        assert_eq!(
+            request_failure(SendError::Failed(SendRequestFailure::ResponseTooLarge)),
+            CommandFailure::ResponseTooLarge
+        );
+    }
+
+    #[test]
+    fn request_byte_limits_stay_in_the_interoperable_integer_range() {
+        assert!(is_optional_safe_uint(None));
+        assert!(is_optional_safe_uint(Some(SAFE_UINT_MAX)));
+        assert!(!is_optional_safe_uint(Some(SAFE_UINT_MAX + 1)));
+    }
+
+    #[test]
     fn configured_host_registers_request_handlers() -> Result<(), String> {
         let mut config = config();
         config
@@ -3273,6 +3447,7 @@ mod tests {
                     .map_err(|error| format!("{error:?}"))?,
                 identity: DestinationIdentityConfig::HostIdentity,
                 announce_app_data: Vec::new(),
+                maximum_request_bytes: Some(4_096),
                 proof: DestinationProofStrategy::ProveAll,
                 link_requests: DestinationLinkRequestPolicy::AcceptAll,
                 ratchet: DestinationRatchetPolicy::NoRatchets,

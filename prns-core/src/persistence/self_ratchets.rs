@@ -1,5 +1,5 @@
 //! The self-ratchets region: one destination's rotation clock and its retained secrets, newest first.
-//! RNS 1.4.0 `Destination._persist_ratchets` writes each destination's list to open disk, signed by the destination identity; ours seals the same record and stores it as a vault blob beside the identity secret itself.
+//! RNS 1.4.2 `Destination._persist_ratchets` writes each destination's list to open disk, signed by the destination identity; ours seals the same record and stores it as a vault blob beside the identity secret itself.
 //! Intentional deviation from reference: the signature is dropped — a forger who can write the vault already owns the identity, and the envelope checksum still refuses corruption. Willing to revisit this deviation if evidence points towards it being beneficial.
 //! One blob per destination: the vault label (`ratchets.<destination-hex>`) addresses it, so the destination never rides the payload.
 

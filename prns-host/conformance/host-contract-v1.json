@@ -10,19 +10,19 @@
     {
       "outcome": "Compatible",
       "requiredAbi": 1,
-      "requiredProductVersion": "0.3.2",
+      "requiredProductVersion": "0.3.3",
       "requiredSchemaVersion": 1
     },
     {
       "outcome": "ContractMismatch",
       "requiredAbi": 2,
-      "requiredProductVersion": "0.3.2",
+      "requiredProductVersion": "0.3.3",
       "requiredSchemaVersion": 1
     },
     {
       "outcome": "ContractMismatch",
       "requiredAbi": 1,
-      "requiredProductVersion": "0.3.2",
+      "requiredProductVersion": "0.3.3",
       "requiredSchemaVersion": 2
     },
     {
@@ -101,6 +101,7 @@
       "ResourceSequencingFailed": 28,
       "ResourceTableFull": 25,
       "ResourceUploadCancelled": 34,
+      "ResponseTooLarge": 41,
       "UnknownDestination": 4,
       "UnknownInterface": 7,
       "UnknownLink": 16,
@@ -246,6 +247,15 @@
       "WebSocketClient": 17,
       "WebSocketServer": 18
     },
+    "InterfaceMode": {
+      "AccessPoint": 3,
+      "Boundary": 5,
+      "Full": 1,
+      "Gateway": 6,
+      "Internal": 7,
+      "PointToPoint": 2,
+      "Roaming": 4
+    },
     "LifecyclePhase": {
       "Failed": 5,
       "Running": 2,
@@ -386,6 +396,18 @@
     }
   ],
   "integerChecks": {
+    "safeInt": {
+      "accepted": [
+        "-9007199254740991",
+        "0",
+        "9007199254740991"
+      ],
+      "rejected": [
+        "-9007199254740992",
+        "9007199254740992"
+      ],
+      "typescript": "number"
+    },
     "safeUint": {
       "accepted": [
         "0",
@@ -1013,7 +1035,7 @@
       "status": true
     }
   ],
-  "productVersion": "0.3.2",
+  "productVersion": "0.3.3",
   "records": {
     "BackendInfo": [
       {
@@ -1093,6 +1115,33 @@
       {
         "name": "persistence",
         "type": "PersistenceSnapshot"
+      }
+    ],
+    "InterfaceRoutingPolicy": [
+      {
+        "name": "mode",
+        "optional": true,
+        "type": "InterfaceMode"
+      },
+      {
+        "name": "gravity",
+        "optional": true,
+        "type": "safeInt"
+      },
+      {
+        "name": "recursivePathRequests",
+        "optional": true,
+        "type": "bool"
+      },
+      {
+        "name": "announcesFromInternal",
+        "optional": true,
+        "type": "bool"
+      },
+      {
+        "name": "announcesToInternal",
+        "optional": true,
+        "type": "bool"
       }
     ],
     "InterfaceSnapshot": [
@@ -1321,6 +1370,11 @@
     ]
   },
   "scalars": {
+    "safeInt": {
+      "maximum": "9007199254740991",
+      "minimum": "-9007199254740991",
+      "storage": "i64"
+    },
     "safeUint": {
       "maximum": "9007199254740991",
       "minimum": "0",
@@ -1378,6 +1432,7 @@
       "ResourceSequencingFailed": 28,
       "ResourceTableFull": 25,
       "ResourceUploadCancelled": 34,
+      "ResponseTooLarge": 41,
       "UnknownDestination": 4,
       "UnknownInterface": 7,
       "UnknownLink": 16,

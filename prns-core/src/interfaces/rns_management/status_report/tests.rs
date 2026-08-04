@@ -96,7 +96,7 @@ fn interface_fields_mut(report: &mut Value) -> &mut Vec<(Value, Value)> {
 }
 
 #[test]
-fn decodes_complete_rns_1_4_0_status_shape() {
+fn decodes_complete_rns_1_4_2_status_shape() {
     let report = RnsInterfaceStatsReport::decode_message_pack(&encode(&complete_report())).unwrap();
     let status = &report.interfaces[0];
 
@@ -165,6 +165,17 @@ fn blocked_ip_list_preserves_absent_and_null() {
         decoded.interfaces[0].blocked_ip_list,
         RnsOptionalField::Null
     );
+}
+
+#[test]
+fn signed_interface_gravity_decodes_without_breaking_older_status_shapes() {
+    let older = RnsInterfaceStatsReport::decode_message_pack(&encode(&complete_report())).unwrap();
+    assert_eq!(older.interfaces[0].gravity, RnsOptionalField::Absent);
+
+    let mut current = complete_report();
+    interface_fields_mut(&mut current).push(field(interface::GRAVITY, Value::from(-17)));
+    let decoded = RnsInterfaceStatsReport::decode_message_pack(&encode(&current)).unwrap();
+    assert_eq!(decoded.interfaces[0].gravity, RnsOptionalField::Value(-17));
 }
 
 #[test]

@@ -1,32 +1,26 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use nrf_softdevice::Flash;
-use personal_rns::persistence::{FlashArenaRange, FlashJournalLayout};
 use personal_rns::runtime::{
     EmbeddedFlashPersistence, EmbeddedPersistenceDiagnostic, EmbeddedPersistenceFailure,
-    EmbeddedPersistencePolicy,
+    EmbeddedPersistencePolicy, SharedNorFlash,
 };
 
-pub const ARENA_BYTES: usize = 20 * 4096;
-pub const LAYOUT: FlashJournalLayout = FlashJournalLayout::new(
-    [0xC0000, 0xC1000],
-    [
-        FlashArenaRange::new(0xC2000, 0xD6000),
-        FlashArenaRange::new(0xD6000, 0xEA000),
-    ],
-);
+pub const ARENA_BYTES: usize = personal_hopspot_core::T_ECHO_MIN_ARENA_BYTES;
 
 const PENDING: usize = 8;
 
+pub type TechoSharedFlash = SharedNorFlash<'static, CriticalSectionRawMutex, Flash>;
 pub type TechoPersistence =
-    EmbeddedFlashPersistence<Flash, fn(EmbeddedPersistenceDiagnostic), PENDING>;
+    EmbeddedFlashPersistence<TechoSharedFlash, fn(EmbeddedPersistenceDiagnostic), PENDING>;
 
 static STATE_NOT_SAVED: AtomicBool = AtomicBool::new(false);
 
-pub fn new(flash: Flash) -> TechoPersistence {
+pub fn new(flash: TechoSharedFlash) -> TechoPersistence {
     EmbeddedFlashPersistence::new(
         flash,
-        LAYOUT,
+        personal_hopspot_core::T_ECHO_JOURNAL_LAYOUT,
         EmbeddedPersistencePolicy::hopspot_default(),
         observe as fn(EmbeddedPersistenceDiagnostic),
     )

@@ -36,7 +36,7 @@ On a desktop the daemon also sits in the system tray with a live status readout 
 
 The daemon binary is also the utility toolkit. `prnsd status`, `path`, `probe`, `id`, `cp`, and `x` are the equivalents of the stock `rn*` utilities, with secure defaults: `cp --listen` and `x --listen` permit nobody until an identity is allowed, and remote management stays off until you enable it. [Prnsd utilities](../docs/prnsd-utilities.md) documents each role.
 
-Every log line is a structured event: human-readable by default, the same events as JSON with `--log-format json`, and a rotated pair of log files either way. The release build also carries an OTLP exporter for metrics and traces. [Observability](../docs/observability.md) goes from log filters to the shipped Grafana dashboard.
+Every log line is a structured event: human-readable by default, the same events as JSON with `--log-format json`, and a rotated pair of log files either way. The official cloud container and canonical `cargo prnsd build` artifact also carry an OTLP exporter for metrics and traces. [Observability](../docs/observability.md) goes from log filters to the shipped Grafana dashboard.
 
 For I2P interfaces, `prnsd i2p doctor` checks your SAM bridge and `prnsd i2p setup` walks the setup.
 
@@ -44,7 +44,7 @@ For I2P interfaces, `prnsd i2p doctor` checks your SAM bridge and `prnsd i2p set
 
 The daemon that owns your routing tables can host your NomadNet pages too. Drop `.mu` files into `nnpages/pages/` under the active configuration directory and they serve from the node's `nomadnetwork.node` destination; `nnpages/files/` serves downloads. Edits are read live, path additions and removals reconcile every five minutes, and `prnsd nnpages` carries the CLI surface: `seed` lays down the complete editable layout, `refresh` reconciles immediately, `announce` announces on demand, and `rename "My Node"` sets the display name.
 
-With a managed `cargo prnsd` session these commands target its active configuration automatically, then fall back to the normal platform Reticulum directory; foreground and container daemons using a nondefault directory still need an explicit `--config`. [The pages section of the before-and-after](../docs/coming-from-rns.md#serve-nomadnet-pages-directly-from-the-daemon) tells the full story.
+These commands target the active managed or service-owned daemon configuration automatically, then fall back to the normal platform Reticulum directory when no daemon is active. The official container entrypoint publishes `/var/lib/prnsd` as that active context, so `docker exec prnsd prnsd nnpages refresh` needs no path incantation. A deliberately isolated raw foreground run still selects its own `--config DIR`. [The pages section of the before-and-after](../docs/coming-from-rns.md#serve-nomadnet-pages-directly-from-the-daemon) tells the full story.
 
 ## Deploy it
 

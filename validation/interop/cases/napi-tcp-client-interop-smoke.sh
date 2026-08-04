@@ -3,7 +3,7 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-VENV_PY="${SMOKE_PYTHON:-$ROOT/benchmarks/reference/.venv/bin/python}"
+VENV_PY="${SMOKE_PYTHON:-$ROOT/validation/.venv/rns-1.4.2/bin/python}"
 SERVER="$ROOT/validation/interop/peers/rns_tcp_server_peer.py"
 CLIENT_DRIVER="$ROOT/prns-napi/tests/interop/tcp_client_probe.mjs"
 SERVER_LOG="$(mktemp)"

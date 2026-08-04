@@ -32,7 +32,7 @@ pub fn link_mtu_ceiling(interfaces: AttachedInterfaces<'_>, interface_id: Interf
         .min(MAX_LINK_MTU)
 }
 
-/// RNS 1.4.0 `Link.KEEPALIVE` (360s); the responder's establishment timeout rides on it.
+/// RNS 1.4.2 `Link.KEEPALIVE` (360s); the responder's establishment timeout rides on it.
 pub const LINK_KEEPALIVE_MS: u64 = 360_000;
 
 /// A fresh X25519 ‖ Ed25519 pair, the same layout an identity persists.
@@ -130,7 +130,7 @@ impl<S: StorageLayout> EngineState<S> {
         CommandOutcome::OwesLinkRequest { id, establish }
     }
 
-    /// RNS 1.4.0 `Link.__init__`, which always signals the default MTU and mode.
+    /// RNS 1.4.2 `Link.__init__`, which always signals the default MTU and mode.
     pub fn write_commanded_link_request(
         &mut self,
         id: CommandId,
@@ -162,6 +162,7 @@ impl<S: StorageLayout> EngineState<S> {
             NextHop::Via(next) => Some(next),
             NextHop::Direct => None,
         };
+        let mode = LinkMode::Aes256Cbc;
         let request = match self.protocol.link_mtu_discovery {
             crate::engine::LinkMtuDiscovery::Enabled => write_link_request(
                 &establish.destination,
@@ -169,7 +170,7 @@ impl<S: StorageLayout> EngineState<S> {
                 &encryption_public,
                 &signing_public,
                 link_mtu_ceiling(interfaces, fire_on),
-                LinkMode::Aes256Cbc,
+                mode,
                 buf,
             ),
             crate::engine::LinkMtuDiscovery::Disabled => write_unsignalled_link_request(
@@ -194,6 +195,8 @@ impl<S: StorageLayout> EngineState<S> {
         match self.links.track_initiated(InitiatedLink {
             link_id,
             destination: establish.destination,
+            expected_hops: hops,
+            mode,
             initiator_secret,
             link_signing,
             requested_at: now,
@@ -211,7 +214,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.4.0 `Link.validate_request`, echoing the negotiated MTU and mode.
+    /// RNS 1.4.2 `Link.validate_request`, echoing the negotiated MTU and mode.
     pub fn write_owed_link_proof(
         &mut self,
         accepted: &AcceptedLinkRequest,
@@ -312,7 +315,7 @@ impl<S: StorageLayout> EngineState<S> {
             .map_err(Into::into)
     }
 
-    /// RNS 1.4.0 `Link.validate_proof`
+    /// RNS 1.4.2 `Link.validate_proof`
     pub fn write_owed_link_rtt(
         &mut self,
         link_id: &LinkId,
@@ -344,16 +347,26 @@ impl<S: StorageLayout> EngineState<S> {
         iv: &[u8; 16],
         buf: &mut [u8],
     ) -> Result<usize, WriteLinkRttError> {
-        let Some(LinkPhase::Pending { destination, .. }) = self.links.phase_for(link_id) else {
+        let Some(LinkPhase::Pending {
+            destination,
+            expected_hops,
+            ..
+        }) = self.links.phase_for(link_id)
+        else {
             return Err(WriteLinkRttError::NotPending);
         };
         let destination = *destination;
+        let expected_hops = *expected_hops;
         let key = LinkKey::derive(link_id, shared);
         let written = write_link_rtt(link_id, &key, activation.rtt, iv, buf)
             .map_err(|_| WriteLinkRttError::Serialize)?;
         self.links
             .activate_initiated(link_id, key, activation, now)
             .map_err(|_| WriteLinkRttError::NotPending)?;
+        if activation.received_hops != expected_hops {
+            self.routing_table
+                .rebalance_hops(&destination, activation.received_hops);
+        }
         self.mark_interface_dirty(activation.attached_interface);
         self.routing_table
             .mark_responsiveness(&destination, RouteResponsiveness::Responsive);

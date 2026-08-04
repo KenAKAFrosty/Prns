@@ -2,7 +2,7 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-PYTHON="${RPC_SMOKE_PYTHON:-$ROOT/validation/.venv/rns-rpc-1.4.0/bin/python}"
+PYTHON="${RPC_SMOKE_PYTHON:-$ROOT/validation/.venv/rns-rpc-1.4.2/bin/python}"
 SERVER="$ROOT/validation/interop/peers/rns_rnprobe_server.py"
 WORK="$(mktemp -d)"
 CONFIG="$WORK/config"
@@ -81,4 +81,4 @@ SILENT_STATUS=$?
     exit 1
 }
 
-echo "PASS: Prnsd probe exchanged delivery proofs with stock RNS 1.4.0 and preserved loss exit 2"
+echo "PASS: Prnsd probe exchanged delivery proofs with stock RNS 1.4.2 and preserved loss exit 2"

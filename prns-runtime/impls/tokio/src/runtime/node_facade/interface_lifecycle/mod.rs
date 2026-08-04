@@ -148,6 +148,7 @@ impl PrnsNodeHandle {
             membership: Membership::Independent,
             origin,
         };
+        let descriptor = interface.descriptor();
         let view = interface.status_view();
         let connection = interface.connection_view();
         let attached = attach_interface(
@@ -155,17 +156,24 @@ impl PrnsNodeHandle {
             &self.iface_build,
             &self.notify_tx,
             interface,
-            placement,
-            connection,
-            ifac.as_ref().map(|access| access.context.clone()),
+            InterfaceWiring {
+                descriptor,
+                placement,
+                connection,
+                ifac: ifac.as_ref().map(|access| access.context.clone()),
+            },
         );
         register_status(
             &self.interfaces,
             attached.id(),
-            view,
-            placement,
-            ifac.as_ref().map(RuntimeIfac::snapshot),
-            name,
+            view.map(|view| RegisteredInterface {
+                view,
+                placement,
+                mode: descriptor.mode,
+                gravity: descriptor.gravity,
+                ifac: ifac.as_ref().map(RuntimeIfac::snapshot),
+                name,
+            }),
         );
         attached
     }
@@ -187,6 +195,8 @@ impl PrnsNodeHandle {
                         origin: placement.origin,
                         snapshot: InterfaceSnapshot {
                             id: vitals.id,
+                            mode: registered.mode,
+                            gravity: registered.gravity,
                             connection: vitals.connection,
                             failure_reason: vitals.failure_reason,
                             rx_bytes: vitals.rx_bytes,
@@ -267,6 +277,7 @@ impl PrnsNodeHandle {
             membership: Membership::Independent,
             origin: InterfaceOriginKind::Configured,
         };
+        let policy = supervisor.policy();
         let view = supervisor.status_view();
         let ifac_status = ifac.as_ref().map(RuntimeIfac::snapshot);
         let fleet = Fleet {
@@ -285,7 +296,18 @@ impl PrnsNodeHandle {
             supervisor: None,
             build,
         });
-        register_status(&self.interfaces, id, view, placement, ifac_status, None);
+        register_status(
+            &self.interfaces,
+            id,
+            view.map(|view| RegisteredInterface {
+                view,
+                placement,
+                mode: policy.mode,
+                gravity: policy.gravity,
+                ifac: ifac_status,
+                name: None,
+            }),
+        );
         AttachedSupervisor {
             id,
             iface_build: self.iface_build.clone(),
@@ -398,19 +420,29 @@ impl AttachedSupervisor {
 }
 
 /// Wire one interface onto the running node: build its grant lanes + seam, hand the manifold the `Send` lane halves, and hand the driver the `Send` builder that mints its run future. `supervisor` records it as a fleet member so the driver cascades teardown.
+struct InterfaceWiring {
+    descriptor: crate::interfaces::InterfaceDescriptor,
+    placement: InterfacePlacement,
+    connection: Option<ConnectionView>,
+    ifac: Option<IfacContext>,
+}
+
 fn attach_interface<I>(
     commands: &UnboundedSender<HostCommand>,
     iface_build: &UnboundedSender<DriverMsg>,
     notify_tx: &UnboundedSender<InterfaceId>,
     interface: I,
-    placement: InterfacePlacement,
-    connection: Option<ConnectionView>,
-    ifac: Option<IfacContext>,
+    wiring: InterfaceWiring,
 ) -> AttachedInterface
 where
     I: Interface + Send + 'static,
 {
-    let descriptor = interface.descriptor();
+    let InterfaceWiring {
+        descriptor,
+        placement,
+        connection,
+        ifac,
+    } = wiring;
     let id = descriptor.id;
     let supervisor = match placement.membership {
         Membership::Independent => None,
@@ -469,6 +501,7 @@ impl Fleet {
     {
         let view = interface.status_view();
         let connection = interface.connection_view();
+        let descriptor = interface.descriptor();
         let placement = InterfacePlacement {
             membership: Membership::FleetMember {
                 supervisor_id: self.supervisor_id,
@@ -480,17 +513,24 @@ impl Fleet {
             &self.iface_build,
             &self.notify_tx,
             interface,
-            placement,
-            connection,
-            self.ifac.as_ref().map(|access| access.context.clone()),
+            InterfaceWiring {
+                descriptor,
+                placement,
+                connection,
+                ifac: self.ifac.as_ref().map(|access| access.context.clone()),
+            },
         );
         register_status(
             &self.interfaces,
             attached.id(),
-            view,
-            placement,
-            self.ifac.as_ref().map(RuntimeIfac::snapshot),
-            None,
+            view.map(|view| RegisteredInterface {
+                view,
+                placement,
+                mode: descriptor.mode,
+                gravity: descriptor.gravity,
+                ifac: self.ifac.as_ref().map(RuntimeIfac::snapshot),
+                name: None,
+            }),
         );
         attached
     }
@@ -534,6 +574,8 @@ pub trait InterfaceSupervisor {
 
     /// The bytes that uniquely tag this supervisor, typically config-derived (the group it serves); the same rules as [`channel_tag`](crate::manifold::interface_seam::Interface::channel_tag) apply.
     fn channel_tag(&self) -> &[u8];
+
+    fn policy(&self) -> crate::interfaces::EffectiveInterfacePolicy;
 
     async fn run(self, fleet: Fleet);
 }
@@ -641,6 +683,8 @@ pub(super) async fn drive_interfaces(
 pub(super) struct RegisteredInterface {
     view: StatusView,
     placement: InterfacePlacement,
+    mode: crate::interfaces::InterfaceMode,
+    gravity: crate::interfaces::InterfaceGravity,
     ifac: Option<InterfaceIfacSnapshot>,
     name: Option<String>,
 }
@@ -648,21 +692,10 @@ pub(super) struct RegisteredInterface {
 fn register_status(
     interfaces: &Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
     id: InterfaceId,
-    view: Option<StatusView>,
-    placement: InterfacePlacement,
-    ifac: Option<InterfaceIfacSnapshot>,
-    name: Option<String>,
+    registered: Option<RegisteredInterface>,
 ) {
-    if let (Some(view), Ok(mut map)) = (view, interfaces.lock()) {
-        map.insert(
-            id,
-            RegisteredInterface {
-                view,
-                placement,
-                ifac,
-                name,
-            },
-        );
+    if let (Some(registered), Ok(mut map)) = (registered, interfaces.lock()) {
+        map.insert(id, registered);
     }
 }
 

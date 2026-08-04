@@ -4,12 +4,36 @@ use std::path::{Path, PathBuf};
 
 use crate::ServicePaths;
 
-const RECORD_VERSION: &str = "prnsd-session-v1";
+const RECORD_VERSION_V1: &str = "prnsd-session-v1";
+const RECORD_VERSION_V2: &str = "prnsd-session-v2";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LogLane {
     Human,
     Json,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ServiceKind {
+    Managed,
+    Foreground,
+}
+
+impl ServiceKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Managed => "managed",
+            Self::Foreground => "foreground",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "managed" => Some(Self::Managed),
+            "foreground" => Some(Self::Foreground),
+            _ => None,
+        }
+    }
 }
 
 impl LogLane {
@@ -55,6 +79,7 @@ pub struct ServiceRecord {
     pub pid: u32,
     pub signature: u64,
     pub log_lane: LogLane,
+    pub kind: ServiceKind,
     pub binary: PathBuf,
     pub version: String,
     pub state: ServiceState,
@@ -67,11 +92,12 @@ impl ServiceRecord {
 
     pub(crate) fn encode(&self) -> String {
         format!(
-            "{RECORD_VERSION}\n{:032x}\n{}\n{}\n{}\n{}\n{}\n",
+            "{RECORD_VERSION_V2}\n{:032x}\n{}\n{}\n{}\n{}\n{}\n{}\n",
             self.generation,
             self.pid,
             self.signature,
             self.log_lane.as_str(),
+            self.kind.as_str(),
             encode_os(self.binary.as_os_str()),
             encode_bytes(self.version.as_bytes()),
         )
@@ -79,7 +105,8 @@ impl ServiceRecord {
 
     pub(crate) fn decode(text: &str) -> Result<Self, RecordError> {
         let mut lines = text.lines();
-        if lines.next() != Some(RECORD_VERSION) {
+        let record_version = lines.next().ok_or(RecordError)?;
+        if !matches!(record_version, RECORD_VERSION_V1 | RECORD_VERSION_V2) {
             return Err(RecordError);
         }
         let generation = lines
@@ -95,6 +122,14 @@ impl ServiceRecord {
             .and_then(|value| value.parse().ok())
             .ok_or(RecordError)?;
         let log_lane = lines.next().and_then(LogLane::parse).ok_or(RecordError)?;
+        let kind = match record_version {
+            RECORD_VERSION_V1 => ServiceKind::Managed,
+            RECORD_VERSION_V2 => lines
+                .next()
+                .and_then(ServiceKind::parse)
+                .ok_or(RecordError)?,
+            _ => return Err(RecordError),
+        };
         let binary = lines
             .next()
             .and_then(decode_os)
@@ -113,6 +148,7 @@ impl ServiceRecord {
             pid,
             signature,
             log_lane,
+            kind,
             binary,
             version,
             state: ServiceState::Starting,
@@ -208,6 +244,7 @@ mod tests {
             pid: 17,
             signature: 99,
             log_lane: LogLane::Json,
+            kind: ServiceKind::Foreground,
             binary: PathBuf::from("/tmp/prns d"),
             version: "0.2.3".to_string(),
             state: ServiceState::Running,
@@ -220,5 +257,14 @@ mod tests {
     #[test]
     fn malformed_records_are_rejected() {
         assert!(ServiceRecord::decode("not-a-session").is_err());
+    }
+
+    #[test]
+    fn version_one_records_decode_as_managed_services() {
+        let record = ServiceRecord::decode(
+            "prnsd-session-v1\n0000000000000000000000000000002a\n17\n99\njson\n2f746d702f70726e7364\n302e322e33\n",
+        )
+        .unwrap();
+        assert_eq!(record.kind, ServiceKind::Managed);
     }
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Load RNS 1.4.0 from a controlled, machine-local Cython object cache."""
+"""Load RNS 1.4.2 from a controlled, machine-local Cython object cache."""
 
 from __future__ import annotations
 
@@ -68,8 +68,8 @@ def load_compiled_rns():
     )
     version = getattr(RNS, "__version__", None) or getattr(RNS, "VERSION", None)
     compiled = getattr(RNS, "compiled", False) is True
-    if str(version) != "1.4.0":
-        raise SystemExit(f"compiled reference requires RNS 1.4.0, loaded {version!r}")
+    if str(version) != "1.4.2":
+        raise SystemExit(f"compiled reference requires RNS 1.4.2, loaded {version!r}")
     if not compiled:
         raise SystemExit("compiled reference requires RNS.compiled == true")
     if not native_modules:

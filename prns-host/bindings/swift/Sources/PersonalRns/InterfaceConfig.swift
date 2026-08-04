@@ -179,6 +179,30 @@ func nativeInterfaceConfig(
     return result
 }
 
+func nativeInterfaceRouting(_ value: InterfaceRoutingPolicy) throws -> PrnsInterfaceRoutingPolicy {
+    guard value.gravity.map({
+        $0 >= HostContract.safeIntMin && $0 <= HostContract.safeIntMax
+    }) ?? true else {
+        throw StatusFailure(
+            operation: "marshalInterfaceRouting",
+            status: .invalidArgument
+        )
+    }
+    return PrnsInterfaceRoutingPolicy(
+        struct_size: MemoryLayout<PrnsInterfaceRoutingPolicy>.size,
+        has_mode: value.mode == nil ? 0 : 1,
+        mode: value.mode?.rawValue ?? 0,
+        has_gravity: value.gravity == nil ? 0 : 1,
+        gravity: value.gravity ?? 0,
+        has_recursive_path_requests: value.recursivePathRequests == nil ? 0 : 1,
+        recursive_path_requests: value.recursivePathRequests == true ? 1 : 0,
+        has_announces_from_internal: value.announcesFromInternal == nil ? 0 : 1,
+        announces_from_internal: value.announcesFromInternal == true ? 1 : 0,
+        has_announces_to_internal: value.announcesToInternal == nil ? 0 : 1,
+        announces_to_internal: value.announcesToInternal == true ? 1 : 0
+    )
+}
+
 private func apply(
     _ value: Bitrate,
     to result: inout PrnsInterfaceConfig

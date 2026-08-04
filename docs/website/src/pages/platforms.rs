@@ -3,6 +3,7 @@ use dioxus_i18n::t;
 
 use crate::components::PlatformChip;
 use crate::platforms::{Group, Tier, GROUPS, PLATFORMS};
+use crate::repository_docs::REPOSITORY_BLOB_BASE;
 use crate::routes::Route;
 
 #[component]
@@ -40,8 +41,20 @@ pub fn PlatformsPage() -> Element {
                                     icon: p.icon.map(str::to_string),
                                     badge: p.tier.chip_badge().map(str::to_string),
                                     muted: p.tier.muted(),
-                                    supported: p.tier == Tier::Shipping,
+                                    supported: matches!(p.tier, Tier::Shipping | Tier::SdkPreview),
                                     decorative: false,
+                                }
+                            }
+                        }
+                        if *group == Group::Language {
+                            p { class: "mt-4 max-w-3xl text-sm leading-relaxed text-soft",
+                                "Rust and TypeScript/JavaScript are the paved application SDKs. SDK preview means the language adapter and live in-tree conformance journey are implemented while idiomatic public packaging remains active release work. "
+                                a {
+                                    href: format!("{REPOSITORY_BLOB_BASE}/docs/sdks.md"),
+                                    target: "_blank",
+                                    rel: "noopener",
+                                    class: "font-medium text-accent hover:underline underline-offset-2",
+                                    "Choose an SDK and see its exact readiness →"
                                 }
                             }
                         }

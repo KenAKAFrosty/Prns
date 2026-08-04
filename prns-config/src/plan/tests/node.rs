@@ -260,6 +260,35 @@ fn grouped_global_controls_reach_the_effective_interface_policy() {
 }
 
 #[test]
+fn signed_interface_gravity_inherits_and_overrides_the_global_default() {
+    let plan = plan_of(
+        "[reticulum]\n\
+             default_gravity = -23\n\
+             [interfaces]\n\
+             [[Inherited]]\n\
+             type = TCPClientInterface\n\
+             enabled = Yes\n\
+             target_host = inherited\n\
+             target_port = 4242\n\
+             [[Overridden]]\n\
+             type = TCPClientInterface\n\
+             enabled = Yes\n\
+             target_host = overridden\n\
+             target_port = 4242\n\
+             gravity = 17\n",
+    );
+
+    assert_eq!(
+        named(&plan, "Inherited").policy.gravity,
+        InterfaceGravity::new(-23)
+    );
+    assert_eq!(
+        named(&plan, "Overridden").policy.gravity,
+        InterfaceGravity::new(17)
+    );
+}
+
+#[test]
 fn internal_outgoing_and_common_controls_form_one_effective_policy() {
     let plan = plan_of(
         "[reticulum]\n\
@@ -275,6 +304,7 @@ fn internal_outgoing_and_common_controls_form_one_effective_policy() {
              outgoing = No\n\
              recursive_prs = Yes\n\
              announces_from_internal = No\n\
+             announces_to_internal = Yes\n\
              ingress_control = No\n\
              ec_pr_freq = 0\n\
              ic_max_held_announces = 0\n",
@@ -288,6 +318,7 @@ fn internal_outgoing_and_common_controls_form_one_effective_policy() {
     assert_eq!(policy.capabilities.egress, EgressCapability::Disabled);
     assert!(policy.common.forwarding.recursive_path_requests);
     assert!(!policy.common.forwarding.announces_from_internal);
+    assert!(policy.common.forwarding.announces_to_internal);
     assert!(!policy.common.ingress_control.enabled);
     assert_eq!(policy.common.ingress_control.max_held_announces, 0);
     assert_eq!(

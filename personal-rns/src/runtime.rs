@@ -45,9 +45,9 @@ pub use prns_runtime_tokio::runtime::{
     PersistenceEvent, PersistenceFlushStatus, PersistenceIntent, PersistenceRestoreReport,
     PersistenceTrigger, PersistenceWorker, PoolWorkers, PrepareFlushError, PreparedFlush,
     PreparedResourceReceiver, PrnsNode, PrnsNodeHandle, RatchetSeedReport, RegionFlush,
-    RegisterRequestEndpointError, RequestPathError, ResourceAdmissionPeer, ResourceOfferAdmission,
-    ResourceOfferMonitor, ResourceProgress, ResourceReceipt, ResourceReceiveError,
-    ResourceSendError, ResponseSendError, RouteSeedProgress, RouteSeedReport,
+    RegisterRequestEndpointError, RequestOptions, RequestPathError, ResourceAdmissionPeer,
+    ResourceOfferAdmission, ResourceOfferMonitor, ResourceProgress, ResourceReceipt,
+    ResourceReceiveError, ResourceSendError, ResponseSendError, RouteSeedProgress, RouteSeedReport,
     RuntimeRequestHandlerError, SaveOnLearn, SaveOnLearnWiring, SegmentCompression,
     SharedInstanceIdentityError, StreamId, Subscription, TunnelSeedReport, AUTO_COMPRESS_MAX_LEN,
 };
@@ -61,8 +61,8 @@ pub use prns_runtime_embassy::runtime::{
     EmbassyFleet, EmbassyInterfaceStore, EmbeddedFlashPersistence, EmbeddedPersistenceDiagnostic,
     EmbeddedPersistenceFailure, EmbeddedPersistencePolicy, EmbeddedPersistenceRestoreReport, Fleet,
     InboundDeliveryError, InterfaceLane, LaneClaimError, ManifoldLaneSet, ManifoldWiring,
-    OutboundFrame, PrnsNode, PrnsNodeHandle, RequestRoutingCapacity, StaticManifoldLane,
-    SupervisorLane,
+    OutboundFrame, PrnsNode, PrnsNodeHandle, RequestRoutingCapacity, SharedNorFlash,
+    StaticManifoldLane, SupervisorLane,
 };
 
 #[cfg(all(feature = "embassy-host", feature = "tokio-host"))]
@@ -72,5 +72,5 @@ pub use prns_runtime_embassy::runtime::{
     EmbeddedPersistenceFailure, EmbeddedPersistencePolicy, EmbeddedPersistenceRestoreReport,
     InboundDeliveryError, InterfaceLane, LaneClaimError, ManifoldLaneSet, ManifoldWiring,
     OutboundFrame, PrnsNode as EmbassyPrnsNode, PrnsNodeHandle as EmbassyPrnsNodeHandle,
-    StaticManifoldLane, SupervisorLane,
+    SharedNorFlash, StaticManifoldLane, SupervisorLane,
 };

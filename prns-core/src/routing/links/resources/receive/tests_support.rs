@@ -104,6 +104,8 @@ pub(crate) fn active_engine<S: StorageLayout>() -> EngineState<S> {
         .track_initiated(InitiatedLink {
             link_id: link_id(),
             destination: RESPONDER_DESTINATION,
+            expected_hops: 1,
+            mode: crate::routing::links::LinkMode::Aes256Cbc,
             initiator_secret: X25519SecretKey::new([0x33; 32]),
             link_signing: Ed25519SecretKey::new([0x33; 32]),
             requested_at: InstantMillis(500),
@@ -117,6 +119,7 @@ pub(crate) fn active_engine<S: StorageLayout>() -> EngineState<S> {
             &link_id(),
             link_key(),
             &LinkActivation {
+                received_hops: 1,
                 rtt: crate::units::RttMillis::new(250),
                 mtu: BROADCAST_MTU,
                 attached_interface: lane(),
@@ -328,6 +331,22 @@ pub(crate) fn track_pending_request<S: StorageLayout>(
     sent_at: u64,
     timeout_at: u64,
 ) -> RequestId {
+    track_pending_request_with_limit(
+        engine,
+        command_id,
+        sent_at,
+        timeout_at,
+        crate::units::ByteLimit::Unlimited,
+    )
+}
+
+pub(crate) fn track_pending_request_with_limit<S: StorageLayout>(
+    engine: &mut EngineState<S>,
+    command_id: CommandId,
+    sent_at: u64,
+    timeout_at: u64,
+    maximum_response_bytes: crate::units::ByteLimit,
+) -> RequestId {
     use crate::identity::IdentitySigningPublicKey;
     use crate::routing::dedup::PacketHash;
     use crate::routing::delivery::receipts::{OutstandingReceipt, ReceiptKind};
@@ -343,7 +362,9 @@ pub(crate) fn track_pending_request<S: StorageLayout>(
     engine.receipts.track(OutstandingReceipt {
         packet_hash,
         command_id,
-        kind: ReceiptKind::SendRequest,
+        kind: ReceiptKind::SendRequest {
+            maximum_response_bytes,
+        },
         peer_signing_key: IdentitySigningPublicKey::new(Ed25519PublicKey([0x99; 32])),
         sent_at: InstantMillis(sent_at),
         timeout_at: InstantMillis(timeout_at),

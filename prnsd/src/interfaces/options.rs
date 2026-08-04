@@ -13,6 +13,7 @@ impl InterfaceOptions {
         push(&mut values, "interface_mode", text(self.mode))?;
         push(&mut values, "outgoing", boolean(self.outgoing))?;
         push(&mut values, "bitrate", unsigned(self.bitrate))?;
+        push(&mut values, "gravity", signed(self.gravity))?;
         push(&mut values, "announce_cap", decimal(self.announce_cap))?;
         push(
             &mut values,
@@ -120,6 +121,11 @@ impl InterfaceOptions {
             &mut values,
             "announces_from_internal",
             boolean(self.announces_from_internal),
+        )?;
+        push(
+            &mut values,
+            "announces_to_internal",
+            boolean(self.announces_to_internal),
         )?;
         push(
             &mut values,

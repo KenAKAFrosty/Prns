@@ -1,4 +1,4 @@
-//! RNS 1.4.0 `Resource(data, link)` plus `Resource.advertise`.
+//! RNS 1.4.2 `Resource(data, link)` plus `Resource.advertise`.
 
 use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis, Journaled};
 use crate::engine::{RespondFailure, SendResourceFailure, SendResourceRejection, Settlement};
@@ -342,7 +342,7 @@ impl<S: StorageLayout> EngineState<S> {
 
     /// Segment 1 of a split records its hash as the chain's `original_hash`; every later segment re-advertises it, so the host threads no hashes of its own.
     ///
-    /// `total_data_bytes` is the whole transfer's uncompressed DATA length. The engine adds the metadata block on top, and RNS 1.4.0 advertises the sum (the `d` field) on every segment, never the segment's own size.
+    /// `total_data_bytes` is the whole transfer's uncompressed DATA length. The engine adds the metadata block on top, and RNS 1.4.2 advertises the sum (the `d` field) on every segment, never the segment's own size.
     ///
     /// A continuation whose live segment failed on the wire before this command reached the engine settles `PredecessorFailed` without advertising. A pipelining host therefore cannot revive a dead transfer's tail.
     pub fn ingest_send_resource_segment_into<F>(
@@ -563,7 +563,9 @@ impl<S: StorageLayout> EngineState<S> {
                         .set_timeout_at(index, Some(advertised_deadline(now, rtt_millis)));
                 }
                 if let ResourceCorrelation::Request {
-                    response_timeout, ..
+                    response_timeout,
+                    maximum_response_bytes,
+                    ..
                 } = correlation
                 {
                     if segment_index == 1 {
@@ -572,6 +574,7 @@ impl<S: StorageLayout> EngineState<S> {
                             &link_id,
                             data,
                             response_timeout,
+                            maximum_response_bytes,
                             now,
                         );
                         wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
@@ -587,7 +590,7 @@ impl<S: StorageLayout> EngineState<S> {
         wake_schedule_changes
     }
 
-    /// Note that RNS 1.4.0 `Transport.packet_filter` exempts `RESOURCE_REQ` from duplicate filtering because a receiver's retry is byte-identical by design.
+    /// Note that RNS 1.4.2 `Transport.packet_filter` exempts `RESOURCE_REQ` from duplicate filtering because a receiver's retry is byte-identical by design.
     pub(crate) fn ingest_resource_request<'p>(
         &mut self,
         data: DataPacket<'p>,
@@ -620,7 +623,7 @@ impl<S: StorageLayout> EngineState<S> {
         })
     }
 
-    /// RNS 1.4.0 `Resource.validate_proof`. Note `RESOURCE_PRF` is exempt from duplicate filtering, like the request.
+    /// RNS 1.4.2 `Resource.validate_proof`. Note `RESOURCE_PRF` is exempt from duplicate filtering, like the request.
     pub(crate) fn ingest_resource_proof(
         &mut self,
         link_id: LinkId,
@@ -660,7 +663,7 @@ impl<S: StorageLayout> EngineState<S> {
         })
     }
 
-    /// RNS 1.4.0 `Resource._rejected`; sealed, and behind the duplicate filter.
+    /// RNS 1.4.2 `Resource._rejected`; sealed, and behind the duplicate filter.
     pub(crate) fn ingest_resource_receiver_cancel<'p>(
         &mut self,
         data: DataPacket<'p>,
@@ -708,7 +711,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.4.0 `Resource.request`: parts go back raw (slices of the sealed stream,  no token around them).
+    /// RNS 1.4.2 `Resource.request`: parts go back raw (slices of the sealed stream,  no token around them).
     ///
     /// A request that breaks the segment sequencing cancels the transfer as the reference does, except we settle the command with the failure's name.
     pub(crate) fn serve_resource_request<F>(
@@ -1122,7 +1125,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.4.0 `Resource.cancel`
+    /// RNS 1.4.2 `Resource.cancel`
     pub(crate) fn cancel_outgoing_resource<F>(
         &mut self,
         link_id: &LinkId,
@@ -1184,7 +1187,7 @@ impl<S: StorageLayout> EngineState<S> {
         self.fail_staged_continuation(link_id, sink);
     }
 
-    /// RNS 1.4.0's watchdog states, held as deadlines on the register.
+    /// RNS 1.4.2's watchdog states, held as deadlines on the register.
     ///
     /// The reference also fires `Transport.cache_request` for a missing proof, but packet caching is disabled there: (`TODO: Enable when caching has been redesigned`), so that request recovers nothing: our retry-then-cancel is equivalent, minus the dead packet.
     pub(crate) fn fire_due_outgoing_resources<F>(
@@ -1304,7 +1307,7 @@ fn advertised_deadline(now: InstantMillis, rtt_millis: u64) -> InstantMillis {
     )
 }
 
-/// RNS 1.4.0's sender-side transferring wait: one fat deadline re-armed on each request, after which the receiver is gone.
+/// RNS 1.4.2's sender-side transferring wait: one fat deadline re-armed on each request, after which the receiver is gone.
 fn transferring_deadline(now: InstantMillis, rtt_millis: u64) -> InstantMillis {
     let retry_rtts = rtt_millis
         .saturating_mul(LINK_TRAFFIC_TIMEOUT_FACTOR)
@@ -1400,7 +1403,7 @@ where
     outcome
 }
 
-/// RNS 1.4.0 `Resource.request`: `retries_left = 3` once every part has been sent and only the proof is owed.
+/// RNS 1.4.2 `Resource.request`: `retries_left = 3` once every part has been sent and only the proof is owed.
 const AWAITING_PROOF_RETRIES: u8 = 3;
 
 #[cfg(test)]
@@ -1421,7 +1424,7 @@ mod tests {
     use crate::routing::links::resources::{ResourceBody, ResourceCorrelation, ResourceMetadata};
     use crate::routing::links::table::InitiatedLink;
     use crate::routing::links::table::LinkActivation;
-    use crate::routing::links::LinkKey;
+    use crate::routing::links::{LinkKey, LinkMode};
     use crate::wire::{PacketType, WirePacketHeader, BROADCAST_MTU};
 
     fn bytes_from_hex(s: &str) -> std::vec::Vec<u8> {
@@ -1458,6 +1461,8 @@ mod tests {
             .track_initiated(InitiatedLink {
                 link_id: link_id(),
                 destination: DestinationHash::new([0x77; 16]),
+                expected_hops: 1,
+                mode: LinkMode::Aes256Cbc,
                 initiator_secret: X25519SecretKey::new([0x33; 32]),
                 link_signing: Ed25519SecretKey::new([0x33; 32]),
                 requested_at: InstantMillis(500),
@@ -1471,6 +1476,7 @@ mod tests {
                 &link_id(),
                 link_key(),
                 &LinkActivation {
+                    received_hops: 1,
                     rtt: crate::units::RttMillis::new(250),
                     mtu: BROADCAST_MTU,
                     attached_interface: lane(),
@@ -1777,6 +1783,8 @@ mod tests {
             .track_initiated(InitiatedLink {
                 link_id: link_id(),
                 destination: DestinationHash::new([0x77; 16]),
+                expected_hops: 1,
+                mode: LinkMode::Aes256Cbc,
                 initiator_secret: X25519SecretKey::new([0x33; 32]),
                 link_signing: Ed25519SecretKey::new([0x33; 32]),
                 requested_at: InstantMillis(500),

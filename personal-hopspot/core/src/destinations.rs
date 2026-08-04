@@ -68,6 +68,7 @@ impl<'a> HopspotDestinationSet<'a> {
                 link_requests: LinkRequestPolicy::AcceptAll,
                 ratchet: RatchetPolicy::Ratcheted,
                 resource_strategy: ResourceStrategy::AcceptNone,
+                maximum_request_bytes: Default::default(),
                 request_endpoints: ServeMyRequestEndpoints::No,
             },
             PreConfiguredDestination::Single {
@@ -79,6 +80,7 @@ impl<'a> HopspotDestinationSet<'a> {
                 link_requests: LinkRequestPolicy::AcceptAll,
                 ratchet: RatchetPolicy::NoRatchets,
                 resource_strategy: ResourceStrategy::AcceptNone,
+                maximum_request_bytes: Default::default(),
                 request_endpoints: ServeMyRequestEndpoints::Yes,
             },
         ]

@@ -155,6 +155,17 @@ fn FlashExperience(selected_slug: Option<String>) -> Element {
                     }
                 }
             }
+            p { class: "mt-6 text-sm text-soft",
+                "Not seeing a board you want supported? "
+                a {
+                    href: "https://github.com/KenAKAFrosty/Prns/issues/new?title=Board%20support%20request%3A%20",
+                    target: "_blank",
+                    rel: "noopener",
+                    class: "text-accent hover:underline",
+                    "Let us know in a GitHub issue"
+                }
+                " and help steer what comes next."
+            }
         }
     }
 }

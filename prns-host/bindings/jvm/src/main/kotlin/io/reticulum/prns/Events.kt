@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.flow
 import java.math.BigInteger
+import java.util.concurrent.CompletionStage
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
@@ -53,19 +54,13 @@ class EventFlow<Event : Any> internal constructor(
         }
     }
 
-    /**
-     * Returns the next event without a coroutine bridge, or null after stop.
-     *
-     * This is the natural Java entry point. Once blocking iteration begins,
-     * this flow cannot also be collected as a Kotlin Flow.
-     */
-    fun nextBlocking(): Event? {
-        if (!consumerMode.compareAndSet(UNCLAIMED, BLOCKING_CONSUMER) &&
-            consumerMode.get() != BLOCKING_CONSUMER
+    suspend fun next(): Event? {
+        if (!consumerMode.compareAndSet(UNCLAIMED, ASYNC_CONSUMER) &&
+            consumerMode.get() != ASYNC_CONSUMER
         ) {
             throw StatusException("nextEvent", Status.ALREADY_CLAIMED)
         }
-        val event = nextEventBlocking()
+        val event = nextEvent()
         if (event == null) {
             close()
             return null
@@ -77,27 +72,7 @@ class EventFlow<Event : Any> internal constructor(
         }
     }
 
-    private fun nextEventBlocking(): Pointer? = waitLock.withLock {
-        val stream = stateLock.withLock { pointer }
-            ?: return@withLock null
-        val output = PointerByReference()
-        val status = Status.fromRawValue(
-            NativeApi.library.prns_event_stream_next(
-                stream,
-                -1,
-                output,
-            ),
-        ) ?: Status.BACKEND_FAILED
-        val event = output.value
-        when (status) {
-            Status.OK -> requireNotNull(event)
-            Status.STOPPED -> null
-            else -> {
-                event?.let(NativeApi.library::prns_event_release)
-                throw StatusException("nextEvent", status)
-            }
-        }
-    }
+    fun nextAsync(): CompletionStage<Event?> = javaFuture { next() }
 
     private suspend fun nextEvent(): Pointer? {
         try {
@@ -154,7 +129,7 @@ class EventFlow<Event : Any> internal constructor(
     private companion object {
         const val UNCLAIMED = 0
         const val FLOW_CONSUMER = 1
-        const val BLOCKING_CONSUMER = 2
+        const val ASYNC_CONSUMER = 2
     }
 }
 

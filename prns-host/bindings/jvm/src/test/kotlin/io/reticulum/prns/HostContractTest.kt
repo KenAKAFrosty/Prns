@@ -16,6 +16,7 @@ import java.net.InetAddress
 import java.net.ServerSocket
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -164,27 +165,40 @@ class HostContractTest {
             } catch (_: TimeoutCancellationException) {
             }
 
-            val attached = host.execute(
-                HostCommandAttachInterface(
-                    InterfaceConfigTcpClient(
-                        target = "127.0.0.1:9",
-                        bitrate = BitrateAuto,
+            val diagnosticClaim = assertIs<StreamClaimed<EventFlow<DiagnosticEvent>>>(
+                host.claimDiagnostics(),
+            )
+            val nextDiagnostic = diagnosticClaim.stream.nextAsync().toCompletableFuture()
+            assertTrue(nextDiagnostic.cancel(true))
+            assertTrue(nextDiagnostic.isCancelled)
+            diagnosticClaim.stream.close()
+
+            val attached = withTimeout(2_000) {
+                assertIs<CommandSucceeded>(
+                    host.attachInterface(
+                        InterfaceConfigTcpClient(
+                            target = "127.0.0.1:9",
+                            bitrate = BitrateAuto,
+                        ),
+                        InterfaceRoutingPolicy(
+                            mode = InterfaceMode.BOUNDARY,
+                            gravity = -73,
+                            recursivePathRequests = true,
+                            announcesFromInternal = false,
+                            announcesToInternal = true,
+                        ),
                     ),
-                ),
-            ).use { command ->
-                withTimeout(2_000) {
-                    assertIs<CommandSucceeded>(command.await()).outcome
-                }
+                ).outcome
             }
             val interfaceId = assertIs<CommandOutcomeInterfaceAttached>(
                 attached,
             ).`interface`
-            val resource = host.sendResource(
+            val resource = host.sendResourceAsync(
                 LinkId(ByteArray(HostContract.LINK_ID_LENGTH)),
                 Bytes("bounded upload".encodeToByteArray()),
                 null,
                 ResourceCompressionNever,
-            )
+            ).toCompletableFuture().get(2, TimeUnit.SECONDS)
             assertIs<CommandFailureUnknownLink>(
                 assertIs<CommandFailed>(resource).failure,
             )
@@ -192,13 +206,11 @@ class HostContractTest {
             assertEquals(1, attachedSnapshot.runtime.interfaceCount)
             assertEquals(interfaceId, attachedSnapshot.interfaces.single().interfaceId)
 
-            val detached = host.execute(
-                HostCommandDetachInterface(interfaceId),
-            ).use { command ->
-                withTimeout(2_000) {
-                    assertIs<CommandSucceeded>(command.await()).outcome
-                }
-            }
+            val detached = assertIs<CommandSucceeded>(
+                host.detachInterfaceAsync(interfaceId)
+                    .toCompletableFuture()
+                    .get(2, TimeUnit.SECONDS),
+            ).outcome
             assertContentEquals(
                 interfaceId.copyBytes(),
                 assertIs<CommandOutcomeInterfaceDetached>(detached)
@@ -224,6 +236,7 @@ class HostContractTest {
             ),
             identity = DestinationIdentityConfigHostIdentity,
             announceAppData = Bytes(fixture.destination.announceAppDataHex.decodeHex()),
+            maximumRequestBytes = 1_048_576,
             requestHandlers = listOf(
                 RequestHandlerConfig(
                     path = fixture.request.path,
@@ -260,6 +273,7 @@ class HostContractTest {
                                             bind = "127.0.0.1:$port",
                                             bitrate = BitrateAuto,
                                         ),
+                                        null,
                                     ),
                                 ),
                             ),
@@ -273,6 +287,7 @@ class HostContractTest {
                                             target = "127.0.0.1:$port",
                                             bitrate = BitrateAuto,
                                         ),
+                                        null,
                                     ),
                                 ),
                             ),
@@ -319,6 +334,7 @@ class HostContractTest {
                                     timeout = ResponseTimeoutExact(
                                         fixture.request.timeoutMillis,
                                     ),
+                                    maximumResponseBytes = 1_048_576,
                                 ),
                             )
                         }

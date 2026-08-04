@@ -18,7 +18,7 @@ use crate::units::RttMillis;
 use crate::wire::{DestinationHash, WireError};
 
 impl<S: StorageLayout> EngineState<S> {
-    /// Best-effort by RNS 1.4.0 parity: an unwritable proof is dropped; the sender's timeout-and-resend is the designed recovery, so nothing here is retried.
+    /// Best-effort by RNS 1.4.2 parity: an unwritable proof is dropped; the sender's timeout-and-resend is the designed recovery, so nothing here is retried.
     pub fn write_proof(&self, owed: &ProofOwed, buf: &mut [u8]) -> Result<usize, WriteProofError> {
         let identity = self
             .held_identities
@@ -41,7 +41,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// Best-effort by RNS 1.4.0 parity: an unwritable link proof is dropped; the initiator's timeout is the designed recovery.
+    /// Best-effort by RNS 1.4.2 parity: an unwritable link proof is dropped; the initiator's timeout is the designed recovery.
     pub fn write_link_proof(
         &self,
         owed: &LinkProofOwed,
@@ -56,7 +56,7 @@ impl<S: StorageLayout> EngineState<S> {
             .map_err(WriteProofError::Serialize)
     }
 
-    /// RNS 1.4.0 `Link.receive`'s CHANNEL branch: `packet.prove()` whenever a channel is open, on either side.
+    /// RNS 1.4.2 `Link.receive`'s CHANNEL branch: `packet.prove()` whenever a channel is open, on either side.
     pub fn write_channel_ack(
         &self,
         link_id: &LinkId,
@@ -80,7 +80,7 @@ impl<S: StorageLayout> EngineState<S> {
             .map_err(WriteChannelAckError::Serialize)
     }
 
-    /// RNS 1.4.0 `PacketReceipt.validate_proof`, both forms. Settlement removes the receipt, so a replayed proof finds nothing; exactly-once is structural.
+    /// RNS 1.4.2 `PacketReceipt.validate_proof`, both forms. Settlement removes the receipt, so a replayed proof finds nothing; exactly-once is structural.
     pub fn settle_receipt_proof(
         &mut self,
         payload: &[u8],
@@ -132,7 +132,7 @@ impl<S: StorageLayout> EngineState<S> {
                             delivered,
                         }
                     }
-                    ReceiptKind::SendRequest => ProofIngest::Ignored,
+                    ReceiptKind::SendRequest { .. } => ProofIngest::Ignored,
                 }
             }
             None => ProofIngest::Ignored,
@@ -192,7 +192,7 @@ impl<S: StorageLayout> EngineState<S> {
                     delivered,
                 }
             }
-            ReceiptKind::SendRequest => return None,
+            ReceiptKind::SendRequest { .. } => return None,
         };
         Some(DeferredProof {
             ingest,

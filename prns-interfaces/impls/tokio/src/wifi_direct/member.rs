@@ -6,8 +6,9 @@ use tokio::sync::mpsc;
 use crate::byte_stream::framing;
 use prns_core::interfaces::tcp;
 use prns_core::interfaces::wifi_direct as contract;
-use prns_core::interfaces::BitrateBps;
-use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
+use prns_core::interfaces::{
+    ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
+};
 use prns_runtime::manifold::airtime::AirtimeLedger;
 use prns_runtime::manifold::driver::TokioInterfaceStatus;
 use prns_runtime::manifold::interface_seam::{Interface, InterfaceSeam};
@@ -17,20 +18,20 @@ pub struct WifiDirectMember<S> {
     id: InterfaceId,
     channel_tag: Vec<u8>,
     stream: Option<S>,
-    bitrate: BitrateBps,
+    policy: EffectiveInterfacePolicy,
     status: TokioInterfaceStatus,
     closed: Option<mpsc::UnboundedSender<InterfaceId>>,
 }
 
 impl<S> WifiDirectMember<S> {
     #[must_use]
-    pub fn new(channel_tag: Vec<u8>, stream: S, bitrate: BitrateBps) -> Self {
+    pub fn with_policy(channel_tag: Vec<u8>, stream: S, policy: EffectiveInterfacePolicy) -> Self {
         let id = InterfaceId::from_channel_tag(InterfaceKind::WifiDirectPeer, &channel_tag);
         Self {
             id,
             channel_tag,
             stream: Some(stream),
-            bitrate,
+            policy,
             status: TokioInterfaceStatus::new(id, ConnectionState::Connected),
             closed: None,
         }
@@ -58,7 +59,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for WifiDirectMember<S> {
     const KIND: InterfaceKind = InterfaceKind::WifiDirectPeer;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        contract::descriptor(self.id, self.bitrate)
+        self.policy.descriptor(self.id)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -85,7 +86,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for WifiDirectMember<S> {
                 status: &self.status,
                 airtime: &mut airtime,
                 throughput: &mut throughput,
-                bitrate: self.bitrate,
+                bitrate: self.policy.bitrate,
                 started,
             },
         )
@@ -152,7 +153,12 @@ mod tests {
     fn duplex_member(tag: &[u8]) -> (WifiDirectMember<DuplexStream>, DuplexStream) {
         let (near, far) = tokio::io::duplex(1024);
         (
-            WifiDirectMember::new(tag.to_vec(), near, contract::WIFI_DIRECT_BITRATE_GUESS_BPS),
+            WifiDirectMember::with_policy(
+                tag.to_vec(),
+                near,
+                contract::defaults_for_bitrate(contract::WIFI_DIRECT_BITRATE_GUESS_BPS)
+                    .configured(Default::default()),
+            ),
             far,
         )
     }
@@ -173,6 +179,21 @@ mod tests {
         let descriptor = member.descriptor();
         assert_eq!(descriptor.id, member.id());
         assert_eq!(descriptor.bitrate, contract::WIFI_DIRECT_BITRATE_GUESS_BPS);
+    }
+
+    #[test]
+    fn the_member_descriptor_inherits_the_complete_interface_policy() {
+        let (near, _far) = tokio::io::duplex(1024);
+        let policy = contract::defaults_for_bitrate(contract::WIFI_DIRECT_BITRATE_GUESS_BPS)
+            .configured(prns_core::interfaces::ConfiguredInterfacePolicy {
+                mode: Some(prns_core::interfaces::InterfaceMode::Gateway),
+                gravity: Some(prns_core::interfaces::InterfaceGravity::new(13)),
+                ..Default::default()
+            });
+        let member = WifiDirectMember::with_policy(b"peer".to_vec(), near, policy);
+
+        assert_eq!(member.descriptor().mode, policy.mode);
+        assert_eq!(member.descriptor().gravity, policy.gravity);
     }
 
     #[tokio::test]

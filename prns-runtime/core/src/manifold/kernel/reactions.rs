@@ -31,6 +31,11 @@ impl<'a> AnnounceDirective<'a> {
 pub trait DirectiveEgress {
     fn send(&mut self, target: InterfaceId, bytes: &[u8]);
 
+    fn send_if_online(&mut self, target: InterfaceId, bytes: &[u8], on_send: &mut dyn FnMut()) {
+        on_send();
+        self.send(target, bytes);
+    }
+
     fn send_announce(&mut self, target: InterfaceId, announce: AnnounceDirective<'_>);
 
     fn send_to_fleet(&mut self, supervisor: InterfaceKind, fan: FanTarget, bytes: &[u8]);
@@ -71,6 +76,13 @@ pub fn route_reaction(
     match reaction {
         EngineReaction::Directive(Directive::Send { target, bytes }) => {
             egress.send(target, bytes);
+        }
+        EngineReaction::Directive(Directive::SendIfOnline {
+            target,
+            bytes,
+            on_send,
+        }) => {
+            egress.send_if_online(target, bytes, on_send);
         }
         EngineReaction::Directive(Directive::SendAnnounce {
             target,
@@ -135,5 +147,60 @@ pub fn route_reaction(
             egress.send_measured_local_announce_to_fleet(supervisor, fan, bytes);
         }
         EngineReaction::Journaled(journaled) => app(journaled),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct CountingEgress {
+        sends: usize,
+    }
+
+    impl DirectiveEgress for CountingEgress {
+        fn send(&mut self, _target: InterfaceId, _bytes: &[u8]) {
+            self.sends += 1;
+        }
+
+        fn send_announce(&mut self, _target: InterfaceId, _announce: AnnounceDirective<'_>) {}
+
+        fn send_to_fleet(&mut self, _supervisor: InterfaceKind, _fan: FanTarget, _bytes: &[u8]) {}
+
+        fn send_announce_to_fleet(
+            &mut self,
+            _supervisor: InterfaceKind,
+            _fan: FanTarget,
+            _announce: AnnounceDirective<'_>,
+        ) {
+        }
+
+        fn emit_frame(
+            &mut self,
+            _target: InterfaceId,
+            _size_hint: usize,
+            _fill: &mut dyn FnMut(&mut [u8]) -> Option<usize>,
+        ) {
+        }
+    }
+
+    #[test]
+    fn an_online_only_send_records_after_egress_accepts_it() {
+        let target = InterfaceId::new([0x6c; 8]);
+        let mut records = 0;
+        let mut on_send = || records += 1;
+        let mut egress = CountingEgress { sends: 0 };
+
+        route_reaction(
+            EngineReaction::Directive(Directive::SendIfOnline {
+                target,
+                bytes: b"path request",
+                on_send: &mut on_send,
+            }),
+            &mut egress,
+            &mut |_| {},
+        );
+
+        assert_eq!((records, egress.sends), (1, 1));
     }
 }

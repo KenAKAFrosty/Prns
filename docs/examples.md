@@ -4,7 +4,7 @@ Every example here is a small, complete program. Each one exercises one concept 
 
 ## Rust
 
-These seven Rust examples form a ladder (We suggest you run them strictly in order as listed below). 
+These eight Rust examples form a ladder. We suggest running them in the order listed below.
 
 Every one runs from a fresh clone and ends on a bounded success condition, so you always know whether what you just ran actually worked.
 
@@ -19,7 +19,6 @@ Every one runs from a fresh clone and ends on a bounded success condition, so yo
 | [`dynamic_interface.rs`](../personal-rns/examples/dynamic_interface.rs) | Attach a new [Interface](more-concepts.md#the-essentials) to a running node, observe it live, then tear it down and observe its removal: `cargo tools guide rust-dynamic-interface`. |
 | [`persistence.rs`](../personal-rns/examples/persistence.rs) | Run it twice, on purpose. The first run hears an announce and saves what it learned; the second run restores it from disk and proves the destination is still known while nobody announces at all: `cargo tools guide rust-persistence`. Delete the printed directory to start over. |
 
-
 If you're familiar with Rust and want to de-sugar the commands, you can run the focused examples directly, e.g.:
 
 ```console
@@ -32,20 +31,18 @@ cargo run --locked -p personal-rns --example dynamic_interface --features tokio-
 
 | Example | What you'll see |
 | --- | --- |
-| [`native-lifecycle.ts`](../prns-js/examples/native-lifecycle.ts) | Create a native node, claim its event stream, attach and detach an interface, and stop cleanly, with every event and command case handled exhaustively. |
-| [`browser-resource.ts`](../prns-js/examples/browser-resource.ts) | Create a node in the browser and send a `Blob` as bounded resource segments, handling failure right where it can happen. |
-| [Browser transport playground](/prns-wasm/examples/browser-playground/README.md) | A live WebAssembly node in your browser, with WebUSB and Wi-Fi kept behind explicit permission clicks. |
+| [`native-lifecycle.ts`](../prns-js/examples/native-lifecycle.ts) | Create a native node, claim its event stream, attach and detach a self-contained loopback TCP server, and stop cleanly, with every event case handled exhaustively. |
+| [Browser transport playground](../prns-wasm/examples/browser-playground/README.md) | A live WebAssembly node in your browser, with WebUSB and Wi-Fi kept behind explicit permission clicks. |
 
-Typecheck both source examples:
+Typecheck the native source example and both SDK implementations:
 
 ```console
 npm --prefix prns-js run check
 ```
 
-
 ## Native SDKs
 
-Every native SDK follows the same recipe: create a host with explicit capabilities, claim the application event stream once, execute typed commands, and handle each settlement as plain success or failure data. The guides below show that recipe in each language's own idiom.
+Every native SDK preview follows the same recipe: create a host with explicit capabilities, claim the application event stream once, execute typed commands, and handle each settlement as plain success or failure data. These are implemented adapters with registered live conformance suites, while idiomatic registry packaging and native artifact delivery remain active release work. See the [SDK guide](sdks.md#native-sdk-previews) for the exact readiness and source-evaluation path, then use the language guide below for its current API shape.
 
 | SDK | Authoritative recipe |
 | --- | --- |
@@ -58,6 +55,10 @@ Every native SDK follows the same recipe: create a host with explicit capabiliti
 | C and C++ | [Create opaque owners, pull one stream, and release each handle](../prns-host/abi/c/README.md) |
 
 The native package graph and the validation suites that exercise these adapters live in the [host-contract guide](../prns-host/README.md).
+
+## Full applications
+
+The examples above are small on purpose. For the other end of the scale, this repository ships two complete applications that serve as examples too: [`prnsd`](../prnsd/README.md), the daemon that runs a full transport node and shares it with every Reticulum app on the machine, and [Personal Hopspot](../personal-hopspot/README.md), one node application across desktop, mobile, and embedded platforms. Both are useful tools in their own right, and both show what the same public API looks like carried into a real application.
 
 ## Community examples
 

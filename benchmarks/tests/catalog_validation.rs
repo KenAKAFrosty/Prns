@@ -3,8 +3,8 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use benchmarks::{
-    load_all_rows, load_catalog, load_implementations, ScenarioTopology, Subject, IMPLEMENTATIONS,
-    RESULT_SCHEMA_VERSION,
+    load_all_rows, load_catalog, load_implementations, ScenarioTopology, Subject,
+    KNOWN_IMPLEMENTATIONS, RESULT_SCHEMA_VERSION,
 };
 type HostScenario = (String, String);
 type SubjectSample = (String, u32);
@@ -86,8 +86,11 @@ fn implementation_participant_contracts_are_executable_and_consistent() {
     }
     assert_eq!(
         slugs,
-        IMPLEMENTATIONS.into_iter().map(str::to_string).collect(),
-        "only Prns and the compiled RNS 1.4.0 reference belong in this suite"
+        KNOWN_IMPLEMENTATIONS
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+        "only Prns and the current or historical compiled RNS references belong in the catalog"
     );
 }
 
@@ -110,10 +113,10 @@ fn every_committed_result_is_schema_v2_and_matches_its_path() {
         if let Some(relay) = relay {
             assert_eq!(initiator, "benchmark-wire-driver");
             assert_eq!(responder, "benchmark-wire-driver");
-            assert!(IMPLEMENTATIONS.contains(&relay.as_str()));
+            assert!(KNOWN_IMPLEMENTATIONS.contains(&relay.as_str()));
         } else {
-            assert!(IMPLEMENTATIONS.contains(&initiator.as_str()));
-            assert!(IMPLEMENTATIONS.contains(&responder.as_str()));
+            assert!(KNOWN_IMPLEMENTATIONS.contains(&initiator.as_str()));
+            assert!(KNOWN_IMPLEMENTATIONS.contains(&responder.as_str()));
         }
     }
     for jsonl in jsonl_files(&benchmark_dir().join("results")) {
@@ -143,7 +146,20 @@ fn every_committed_result_is_schema_v2_and_matches_its_path() {
 #[test]
 fn every_published_scenario_has_its_complete_topology_matrix() {
     let mut cells: BTreeMap<HostScenario, BTreeSet<SubjectSample>> = BTreeMap::new();
+    let mut host_implementations: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for row in load_all_rows() {
+        let implementations = host_implementations.entry(row.host.clone()).or_default();
+        let Subject::Direct {
+            initiator,
+            responder,
+            relay,
+        } = &row.subject;
+        if let Some(relay) = relay {
+            implementations.insert(relay.clone());
+        } else {
+            implementations.insert(initiator.clone());
+            implementations.insert(responder.clone());
+        }
         let slug = row.subject.file_slug();
         cells
             .entry((row.host, row.scenario))
@@ -156,6 +172,11 @@ fn every_published_scenario_has_its_complete_topology_matrix() {
         .map(|(host, _)| host.clone())
         .collect::<BTreeSet<_>>();
     for host in hosts {
+        let implementations = host_implementations
+            .get(&host)
+            .expect("published host implementation set");
+        assert_eq!(implementations.len(), 2);
+        assert!(implementations.contains("personal-rns"));
         for manifest in load_catalog().expect("typed catalog") {
             let scenario = manifest.name.as_str().to_string();
             let observed = cells
@@ -168,24 +189,24 @@ fn every_published_scenario_has_its_complete_topology_matrix() {
                 continue;
             }
             let subjects = match manifest.topology {
-                ScenarioTopology::Direct => IMPLEMENTATIONS
+                ScenarioTopology::Direct => implementations
                     .iter()
                     .flat_map(|initiator| {
-                        IMPLEMENTATIONS
+                        implementations
                             .iter()
                             .map(move |responder| Subject::Direct {
-                                initiator: (*initiator).into(),
-                                responder: (*responder).into(),
+                                initiator: initiator.clone(),
+                                responder: responder.clone(),
                                 relay: None,
                             })
                     })
                     .collect::<Vec<_>>(),
-                ScenarioTopology::Relay => IMPLEMENTATIONS
+                ScenarioTopology::Relay => implementations
                     .iter()
                     .map(|relay| Subject::Direct {
                         initiator: "benchmark-wire-driver".into(),
                         responder: "benchmark-wire-driver".into(),
-                        relay: Some((*relay).into()),
+                        relay: Some(relay.clone()),
                     })
                     .collect::<Vec<_>>(),
             };

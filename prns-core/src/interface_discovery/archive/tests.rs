@@ -14,7 +14,7 @@ use crate::wire::TransportId;
 use super::document::ArchivedFloat;
 use super::{
     ArchiveRecordError, DiscoveryArchive, DiscoveryArchiveError, DiscoveryArchiveFileState,
-    DISCOVERED_INTERFACES_FILE, MAX_ARCHIVE_BYTES,
+    DiscoveryArchiveRecord, DISCOVERED_INTERFACES_FILE, MAX_ARCHIVE_BYTES,
 };
 
 fn test_path(name: &str) -> PathBuf {
@@ -25,6 +25,28 @@ fn test_path(name: &str) -> PathBuf {
         "prns-discovery-archive-{}-{nanos}-{name}",
         std::process::id()
     ))
+}
+
+#[test]
+fn removing_a_discovery_is_persisted() {
+    let dir = test_path("remove");
+    let path = dir.join(DISCOVERED_INTERFACES_FILE);
+    let mut loaded = DiscoveryArchive::load(path.clone()).unwrap();
+    let id = DiscoveredInterfaceId::from_bytes([0x11; 32]);
+    let mut catalog = DiscoveryCatalog::new();
+    catalog
+        .observe(discovered(2_000))
+        .expect("the growable catalog accepts the test record");
+    loaded.archive.record(catalog.get(id).unwrap()).unwrap();
+
+    loaded
+        .archive
+        .record(DiscoveryArchiveRecord::remove(id))
+        .unwrap();
+
+    assert!(loaded.archive.is_empty());
+    assert!(DiscoveryArchive::load(path).unwrap().catalog.is_empty());
+    let _ = fs::remove_dir_all(dir);
 }
 
 fn discovered(received_at: u64) -> DiscoveredInterface {

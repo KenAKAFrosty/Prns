@@ -126,7 +126,7 @@ impl fmt::Display for SamBridgeAddressError {
             Self::MissingPort => formatter
                 .write_str("SAM bridge address has no port; use host:port, such as 127.0.0.1:7656"),
             Self::InvalidHost => formatter.write_str(
-                "SAM bridge host is invalid; RNS 1.4.0 accepts a hostname or IPv4 address",
+                "SAM bridge host is invalid; RNS 1.4.2 accepts a hostname or IPv4 address",
             ),
             Self::InvalidPort => {
                 formatter.write_str("SAM bridge port must be an integer from 1 through 65535")

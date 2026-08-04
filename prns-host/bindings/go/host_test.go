@@ -138,6 +138,29 @@ func TestMarshalEveryInterfaceFixture(t *testing.T) {
 	}
 }
 
+func TestRequestByteLimitsRejectValuesOutsideTheSafeIntegerRange(t *testing.T) {
+	oversized := SafeUintMax + 1
+	var arena nativeArena
+	defer arena.close()
+	_, err := marshalDestination(&arena, DestinationConfigSingle{
+		Name:                DestinationName{AppName: "limits", Aspects: []string{"request"}},
+		Identity:            DestinationIdentityConfigHostIdentity{},
+		MaximumRequestBytes: &oversized,
+	})
+	var configError ConfigError
+	if !errors.As(err, &configError) || configError.Kind != ConfigInvalidLimits {
+		t.Fatalf("oversized request limit returned %v", err)
+	}
+
+	_, status, err := ffiExecute(nativeHost{}, HostCommandRequest{
+		Timeout:              ResponseTimeoutLinkDefault{},
+		MaximumResponseBytes: &oversized,
+	})
+	if status != StatusInvalidArgument || !errors.As(err, &configError) {
+		t.Fatalf("oversized response limit returned status %d and error %v", status, err)
+	}
+}
+
 func settledCommand(t *testing.T, host *Host, value HostCommand) CommandSettlement {
 	t.Helper()
 	command, err := host.Execute(value)
@@ -215,23 +238,34 @@ func TestNativeHostContract(t *testing.T) {
 		t.Fatalf("event wait cancellation returned %v", err)
 	}
 
-	attach, err := host.Execute(HostCommandAttachInterface{
-		Config: InterfaceConfigTcpClient{
-			Target:  "127.0.0.1:9",
-			Bitrate: BitrateAuto{},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer attach.Close()
-
 	waitCtx, waitCancel := context.WithTimeout(
 		context.Background(),
 		2*time.Second,
 	)
 	defer waitCancel()
-	resource, err := host.SendResource(
+	mode := InterfaceModeBoundary
+	gravity := int64(-73)
+	recursive := true
+	fromInternal := false
+	toInternal := true
+	settlement, err := host.AttachInterfaceWithRouting(
+		waitCtx,
+		InterfaceConfigTcpClient{
+			Target:  "127.0.0.1:9",
+			Bitrate: BitrateAuto{},
+		},
+		&InterfaceRoutingPolicy{
+			Mode:                  &mode,
+			Gravity:               &gravity,
+			RecursivePathRequests: &recursive,
+			AnnouncesFromInternal: &fromInternal,
+			AnnouncesToInternal:   &toInternal,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource, err := host.SendResourceStream(
 		waitCtx,
 		LinkId{},
 		uint64(len("bounded upload")),
@@ -249,9 +283,22 @@ func TestNativeHostContract(t *testing.T) {
 	if _, ok := failed.Failure.(CommandFailureUnknownLink); !ok {
 		t.Fatalf("resource upload failed with %T", failed.Failure)
 	}
-	settlement, err := attach.Wait(waitCtx)
+	resource, err = host.SendResource(
+		waitCtx,
+		LinkId{},
+		[]byte("bounded upload"),
+		nil,
+		ResourceCompressionNever{},
+	)
 	if err != nil {
 		t.Fatal(err)
+	}
+	failed, ok = resource.(CommandFailed)
+	if !ok {
+		t.Fatalf("resource command returned %T", resource)
+	}
+	if _, ok := failed.Failure.(CommandFailureUnknownLink); !ok {
+		t.Fatalf("resource command failed with %T", failed.Failure)
 	}
 	succeeded, ok := settlement.(CommandSucceeded)
 	if !ok {
@@ -271,14 +318,7 @@ func TestNativeHostContract(t *testing.T) {
 		t.Fatalf("attached interface missing from snapshot: %+v", attachedSnapshot)
 	}
 
-	detach, err := host.Execute(HostCommandDetachInterface{
-		Interface: outcome.Interface,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer detach.Close()
-	settlement, err = detach.Wait(waitCtx)
+	settlement, err = host.DetachInterface(waitCtx, outcome.Interface)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,13 +342,15 @@ func TestPersistentTwoNodeJourney(t *testing.T) {
 		t.Fatal(err)
 	}
 	announceData := fixtureBytes(t, fixture.Destination.AnnounceAppDataHex)
+	maximumRequestBytes := uint64(1_048_576)
 	destination := DestinationConfigSingle{
 		Name: DestinationName{
 			AppName: fixture.Destination.AppName,
 			Aspects: fixture.Destination.Aspects,
 		},
-		Identity:        DestinationIdentityConfigHostIdentity{},
-		AnnounceAppData: &announceData,
+		Identity:            DestinationIdentityConfigHostIdentity{},
+		AnnounceAppData:     &announceData,
+		MaximumRequestBytes: &maximumRequestBytes,
 		RequestHandlers: []RequestHandlerConfig{{
 			Path:   fixture.Request.Path,
 			Policy: RequestPolicyAllowAll,
@@ -390,11 +432,13 @@ func TestPersistentTwoNodeJourney(t *testing.T) {
 	copy(pathHash[:], fixtureBytes(t, fixture.Request.PathHashHex))
 	requestPayload := fixtureBytes(t, fixture.Request.PayloadHex)
 	responsePayload := fixtureBytes(t, fixture.Request.ResponseHex)
+	maximumResponseBytes := uint64(1_048_576)
 	requestCommand, err := client.Execute(HostCommandRequest{
-		LinkId:   link.LinkId,
-		PathHash: pathHash,
-		Payload:  requestPayload,
-		Timeout:  ResponseTimeoutExact{Millis: fixture.Request.TimeoutMillis},
+		LinkId:               link.LinkId,
+		PathHash:             pathHash,
+		Payload:              requestPayload,
+		Timeout:              ResponseTimeoutExact{Millis: fixture.Request.TimeoutMillis},
+		MaximumResponseBytes: &maximumResponseBytes,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -463,7 +507,7 @@ func TestPersistentTwoNodeJourney(t *testing.T) {
 	metadata := fixtureBytes(t, fixture.Resource.MetadataHex)
 	resourceContext, cancelResource := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancelResource()
-	resourceSettlement, err := client.SendResource(
+	resourceSettlement, err := client.SendResourceStream(
 		resourceContext,
 		link.LinkId,
 		uint64(len(resourcePayload)),

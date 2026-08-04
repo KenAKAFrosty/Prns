@@ -5,7 +5,10 @@ use serde::{Deserialize, Serialize};
 use crate::platforms::BoardFlashTarget;
 
 use super::contract::{self, BridgeErrorCode, BridgePhase};
-use super::model::{part_kind, DestructiveConfirmation, FlasherState, InstallMode};
+use super::model::{
+    part_kind, DestructiveConfirmation, FlasherState, InstallMode, WebSerialCapability,
+    WEB_SERIAL_PROBE_ANDROID_BLUETOOTH_ONLY, WEB_SERIAL_PROBE_SUPPORTED,
+};
 use super::protocol;
 
 const PREPARE_SCRIPT: &str = r#"
@@ -22,8 +25,23 @@ try {
 } catch (_) {}
 "#;
 
-const BROWSER_SUPPORT_SCRIPT: &str =
-    "return Boolean(window.isSecureContext && navigator.serial && navigator.serial.requestPort);";
+// Chrome for Android initially exposed Web Serial only for Bluetooth RFCOMM.
+// Chromium's February 2026 PSA targeted wired support for M149 on devices with the Android Serial API, with a limited rollout estimated for 2026Q2.
+//
+// That estimate has passed, but `navigator.serial` still does not reveal whether a particular device can enumerate wired ports.
+// Keep this conservative gate until verified device coverage justifies narrowing or removing the Android classification.
+fn web_serial_probe_script() -> String {
+    format!(
+        r#"
+if (!(window.isSecureContext && navigator.serial && navigator.serial.requestPort)) {{
+  return "unavailable";
+}}
+const wiredPortsUnreachable = navigator.userAgentData?.platform === "Android"
+  || /\bAndroid\b/.test(navigator.userAgent);
+return wiredPortsUnreachable ? "{WEB_SERIAL_PROBE_ANDROID_BLUETOOTH_ONLY}" : "{WEB_SERIAL_PROBE_SUPPORTED}";
+"#
+    )
+}
 
 const FOCUS_STATUS_SCRIPT: &str =
     "document.getElementById('flash-status')?.focus({ preventScroll: true });";
@@ -319,11 +337,12 @@ impl BridgeEvent {
     }
 }
 
-pub(super) async fn browser_supported() -> bool {
-    document::eval(BROWSER_SUPPORT_SCRIPT)
-        .join::<bool>()
+pub(super) async fn web_serial_capability() -> WebSerialCapability {
+    document::eval(&web_serial_probe_script())
+        .join::<String>()
         .await
-        .unwrap_or(false)
+        .map(|probe| WebSerialCapability::from_probe(&probe))
+        .unwrap_or(WebSerialCapability::Unavailable)
 }
 
 pub(super) fn clear_prepared() {
@@ -931,6 +950,16 @@ mod tests {
             cancel < clear,
             "active work must be cancelled before cleanup"
         );
+    }
+
+    #[test]
+    fn web_serial_probe_script_speaks_the_model_wire_spellings() {
+        let script = web_serial_probe_script();
+
+        assert!(script.contains("window.isSecureContext"));
+        assert!(script.contains("navigator.serial.requestPort"));
+        assert!(script.contains(&format!("\"{WEB_SERIAL_PROBE_SUPPORTED}\"")));
+        assert!(script.contains(&format!("\"{WEB_SERIAL_PROBE_ANDROID_BLUETOOTH_ONLY}\"")));
     }
 
     #[test]

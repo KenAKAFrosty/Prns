@@ -48,6 +48,7 @@ pub(crate) trait Esp32S3Board {
     const NODE_ANNOUNCE_APP_DATA: &'static [u8];
     const BOOT_BANNER: &'static str;
     const USB_INTERFACE_ID: InterfaceId;
+    const FLASH_LAYOUT: screen::HopspotS3FlashLayout;
     type Display: DrawTarget<Color = BinaryColor>;
     type Battery: screen::BatterySource;
 

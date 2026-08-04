@@ -5,6 +5,7 @@
 use core::cmp::Ordering;
 
 use crate::engine::InstantMillis;
+use crate::interfaces::InterfaceGravity;
 use crate::routing::announce::{AnnounceId, MonotonicTimebase};
 use crate::routing::{ExistingRoute, RouteResponsiveness};
 use crate::wire::MAX_HOP_COUNT;
@@ -15,6 +16,7 @@ pub struct AnnounceAcceptanceInput<'a> {
     pub announce_id: AnnounceId,
     pub destination_is_self_or_upstream: bool,
     pub existing_route: Option<ExistingRoute<'a>>,
+    pub incoming_interface_gravity: Option<InterfaceGravity>,
     pub arrived_at: InstantMillis,
 }
 
@@ -25,6 +27,7 @@ pub enum AcceptReason {
     ExpiredRouteSucceededByLongerAlternative,
     LongerAlternativeWithNewerEvidence,
     FailoverFromUnresponsiveIncumbent,
+    EqualEvidenceHigherGravity,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,12 +72,11 @@ pub fn determine_acceptance(input: AnnounceAcceptanceInput<'_>) -> AnnounceAccep
     let announce_emitted_at = input.announce_id.timebase;
 
     let mut route_max_emitted = MonotonicTimebase::ZERO;
+    let mut known_announce = false;
     for stored in existing.announce_id_history.iter() {
         if *stored == input.announce_id {
-            if !is_longer_hops {
-                return Reject(KnownRouteReplay);
-            }
-            if route_is_expired {
+            known_announce = true;
+            if is_longer_hops && route_is_expired {
                 return Reject(DeadRouteReplay);
             }
         }
@@ -82,6 +84,17 @@ pub fn determine_acceptance(input: AnnounceAcceptanceInput<'_>) -> AnnounceAccep
     }
 
     if !is_longer_hops {
+        if announce_emitted_at == route_max_emitted
+            && input
+                .incoming_interface_gravity
+                .zip(existing.interface_gravity)
+                .is_some_and(|(incoming, incumbent)| incoming > incumbent)
+        {
+            return Accept(EqualEvidenceHigherGravity);
+        }
+        if known_announce {
+            return Reject(KnownRouteReplay);
+        }
         return if announce_emitted_at > route_max_emitted {
             Accept(KnownRouteFreshEvidence)
         } else {
@@ -125,6 +138,7 @@ mod tests {
     #[test]
     fn hops_beyond_pathfinder_m_are_rejected() {
         let decision = decide(AnnounceAcceptanceInput {
+            incoming_interface_gravity: None,
             packet_hops: MAX_HOP_COUNT + 1,
             announce_id: announce_id(0x11, 5_000),
             destination_is_self_or_upstream: false,
@@ -140,6 +154,7 @@ mod tests {
     #[test]
     fn hops_exactly_at_pathfinder_m_are_accepted() {
         let decision = decide(AnnounceAcceptanceInput {
+            incoming_interface_gravity: None,
             packet_hops: MAX_HOP_COUNT,
             announce_id: announce_id(0x22, 5_000),
             destination_is_self_or_upstream: false,
@@ -155,6 +170,7 @@ mod tests {
     #[test]
     fn an_upstream_app_destination_is_rejected() {
         let decision = decide(AnnounceAcceptanceInput {
+            incoming_interface_gravity: None,
             packet_hops: 1,
             announce_id: announce_id(0x33, 5_000),
             destination_is_self_or_upstream: true,
@@ -170,6 +186,7 @@ mod tests {
     #[test]
     fn no_existing_route_is_a_first_sighting() {
         let decision = decide(AnnounceAcceptanceInput {
+            incoming_interface_gravity: None,
             packet_hops: 2,
             announce_id: announce_id(0x44, 5_000),
             destination_is_self_or_upstream: false,
@@ -188,10 +205,12 @@ mod tests {
         let newer_stamp = announce_id(0x78, 100);
         for history in [[equal_stamp, newer_stamp], [newer_stamp, equal_stamp]] {
             let decision = decide(AnnounceAcceptanceInput {
+                incoming_interface_gravity: None,
                 packet_hops: 5,
                 announce_id: announce_id(0x79, 90),
                 destination_is_self_or_upstream: false,
                 existing_route: Some(ExistingRoute {
+                    interface_gravity: None,
                     hops: crate::units::HopCount(3),
                     expires_at: InstantMillis(10_000),
                     announce_id_history: &history,
@@ -211,10 +230,12 @@ mod tests {
     fn same_hops_newer_emission_unseen_id_accepts() {
         let stored = announce_id(0x55, 100);
         let decision = decide(AnnounceAcceptanceInput {
+            incoming_interface_gravity: None,
             packet_hops: 3,
             announce_id: announce_id(0x56, 200),
             destination_is_self_or_upstream: false,
             existing_route: Some(ExistingRoute {
+                interface_gravity: None,
                 hops: crate::units::HopCount(3),
                 expires_at: InstantMillis(10_000),
                 announce_id_history: core::slice::from_ref(&stored),
@@ -232,10 +253,12 @@ mod tests {
     fn same_hops_replayed_id_rejects() {
         let stored = announce_id(0x55, 200);
         let decision = decide(AnnounceAcceptanceInput {
+            incoming_interface_gravity: None,
             packet_hops: 3,
             announce_id: stored,
             destination_is_self_or_upstream: false,
             existing_route: Some(ExistingRoute {
+                interface_gravity: None,
                 hops: crate::units::HopCount(3),
                 expires_at: InstantMillis(10_000),
                 announce_id_history: core::slice::from_ref(&stored),
@@ -253,10 +276,12 @@ mod tests {
     fn same_hops_equal_emission_unseen_id_rejects() {
         let stored = announce_id(0x55, 200);
         let decision = decide(AnnounceAcceptanceInput {
+            incoming_interface_gravity: None,
             packet_hops: 3,
             announce_id: announce_id(0x56, 200),
             destination_is_self_or_upstream: false,
             existing_route: Some(ExistingRoute {
+                interface_gravity: None,
                 hops: crate::units::HopCount(3),
                 expires_at: InstantMillis(10_000),
                 announce_id_history: core::slice::from_ref(&stored),
@@ -271,13 +296,115 @@ mod tests {
     }
 
     #[test]
+    fn equal_evidence_moves_to_a_higher_gravity_interface() {
+        let stored = announce_id(0x55, 200);
+        for incoming in [stored, announce_id(0x56, 200)] {
+            let decision = decide(AnnounceAcceptanceInput {
+                incoming_interface_gravity: Some(InterfaceGravity::new(8)),
+                packet_hops: 3,
+                announce_id: incoming,
+                destination_is_self_or_upstream: false,
+                existing_route: Some(ExistingRoute {
+                    interface_gravity: Some(InterfaceGravity::new(-3)),
+                    hops: crate::units::HopCount(3),
+                    expires_at: InstantMillis(10_000),
+                    announce_id_history: core::slice::from_ref(&stored),
+                    responsiveness: RouteResponsiveness::Responsive,
+                }),
+                arrived_at: InstantMillis(1_000),
+            });
+            assert_eq!(
+                decision,
+                AnnounceAcceptanceDecision::Accept(AcceptReason::EqualEvidenceHigherGravity)
+            );
+        }
+    }
+
+    #[test]
+    fn equal_evidence_does_not_move_to_equal_or_lower_gravity() {
+        let stored = announce_id(0x55, 200);
+        for incoming in [-4, -5] {
+            let decision = decide(AnnounceAcceptanceInput {
+                incoming_interface_gravity: Some(InterfaceGravity::new(incoming)),
+                packet_hops: 3,
+                announce_id: stored,
+                destination_is_self_or_upstream: false,
+                existing_route: Some(ExistingRoute {
+                    interface_gravity: Some(InterfaceGravity::new(-4)),
+                    hops: crate::units::HopCount(3),
+                    expires_at: InstantMillis(10_000),
+                    announce_id_history: core::slice::from_ref(&stored),
+                    responsiveness: RouteResponsiveness::Responsive,
+                }),
+                arrived_at: InstantMillis(1_000),
+            });
+            assert_eq!(
+                decision,
+                AnnounceAcceptanceDecision::Reject(RejectReason::KnownRouteReplay)
+            );
+        }
+    }
+
+    #[test]
+    fn equal_evidence_requires_both_interface_gravities() {
+        let stored = announce_id(0x55, 200);
+        for (incoming, incumbent) in [
+            (None, Some(InterfaceGravity::ZERO)),
+            (Some(InterfaceGravity::new(1)), None),
+        ] {
+            let decision = decide(AnnounceAcceptanceInput {
+                incoming_interface_gravity: incoming,
+                packet_hops: 3,
+                announce_id: stored,
+                destination_is_self_or_upstream: false,
+                existing_route: Some(ExistingRoute {
+                    interface_gravity: incumbent,
+                    hops: crate::units::HopCount(3),
+                    expires_at: InstantMillis(10_000),
+                    announce_id_history: core::slice::from_ref(&stored),
+                    responsiveness: RouteResponsiveness::Responsive,
+                }),
+                arrived_at: InstantMillis(1_000),
+            });
+            assert_eq!(
+                decision,
+                AnnounceAcceptanceDecision::Reject(RejectReason::KnownRouteReplay)
+            );
+        }
+    }
+
+    #[test]
+    fn gravity_does_not_promote_older_or_longer_evidence() {
+        let stored = announce_id(0x55, 200);
+        for (packet_hops, announce) in [(3, announce_id(0x56, 199)), (4, stored)] {
+            let decision = decide(AnnounceAcceptanceInput {
+                incoming_interface_gravity: Some(InterfaceGravity::new(100)),
+                packet_hops,
+                announce_id: announce,
+                destination_is_self_or_upstream: false,
+                existing_route: Some(ExistingRoute {
+                    interface_gravity: Some(InterfaceGravity::ZERO),
+                    hops: crate::units::HopCount(3),
+                    expires_at: InstantMillis(10_000),
+                    announce_id_history: core::slice::from_ref(&stored),
+                    responsiveness: RouteResponsiveness::Responsive,
+                }),
+                arrived_at: InstantMillis(1_000),
+            });
+            assert!(matches!(decision, AnnounceAcceptanceDecision::Reject(_)));
+        }
+    }
+
+    #[test]
     fn same_hops_fresh_nonce_but_older_emission_rejects() {
         let stored = announce_id(0x55, 200);
         let decision = decide(AnnounceAcceptanceInput {
+            incoming_interface_gravity: None,
             packet_hops: 3,
             announce_id: announce_id(0x56, 150),
             destination_is_self_or_upstream: false,
             existing_route: Some(ExistingRoute {
+                interface_gravity: None,
                 hops: crate::units::HopCount(3),
                 expires_at: InstantMillis(10_000),
                 announce_id_history: core::slice::from_ref(&stored),
@@ -295,10 +422,12 @@ mod tests {
     fn longer_hops_expired_path_unseen_id_accepts() {
         let stored = announce_id(0x66, 200);
         let decision = decide(AnnounceAcceptanceInput {
+            incoming_interface_gravity: None,
             packet_hops: 5,
             announce_id: announce_id(0x67, 50),
             destination_is_self_or_upstream: false,
             existing_route: Some(ExistingRoute {
+                interface_gravity: None,
                 hops: crate::units::HopCount(2),
                 expires_at: InstantMillis(1_000),
                 announce_id_history: core::slice::from_ref(&stored),
@@ -318,10 +447,12 @@ mod tests {
     fn longer_hops_expired_path_seen_id_rejects() {
         let stored = announce_id(0x66, 200);
         let decision = decide(AnnounceAcceptanceInput {
+            incoming_interface_gravity: None,
             packet_hops: 5,
             announce_id: stored,
             destination_is_self_or_upstream: false,
             existing_route: Some(ExistingRoute {
+                interface_gravity: None,
                 hops: crate::units::HopCount(2),
                 expires_at: InstantMillis(1_000),
                 announce_id_history: core::slice::from_ref(&stored),
@@ -339,10 +470,12 @@ mod tests {
     fn longer_hops_fresh_newer_emission_unseen_id_accepts() {
         let stored = announce_id(0x77, 100);
         let decision = decide(AnnounceAcceptanceInput {
+            incoming_interface_gravity: None,
             packet_hops: 6,
             announce_id: announce_id(0x78, 500),
             destination_is_self_or_upstream: false,
             existing_route: Some(ExistingRoute {
+                interface_gravity: None,
                 hops: crate::units::HopCount(2),
                 expires_at: InstantMillis(10_000),
                 announce_id_history: core::slice::from_ref(&stored),
@@ -359,32 +492,38 @@ mod tests {
     #[test]
     fn longer_hops_fresh_equal_emission_unresponsive_is_a_failover() {
         let stored = announce_id(0x88, 300);
-        let decision = decide(AnnounceAcceptanceInput {
-            packet_hops: 6,
-            announce_id: announce_id(0x89, 300),
-            destination_is_self_or_upstream: false,
-            existing_route: Some(ExistingRoute {
-                hops: crate::units::HopCount(2),
-                expires_at: InstantMillis(10_000),
-                announce_id_history: core::slice::from_ref(&stored),
-                responsiveness: RouteResponsiveness::Unresponsive,
-            }),
-            arrived_at: InstantMillis(1_000),
-        });
-        assert_eq!(
-            decision,
-            AnnounceAcceptanceDecision::Accept(AcceptReason::FailoverFromUnresponsiveIncumbent)
-        );
+        for incoming in [stored, announce_id(0x89, 300)] {
+            let decision = decide(AnnounceAcceptanceInput {
+                incoming_interface_gravity: None,
+                packet_hops: 6,
+                announce_id: incoming,
+                destination_is_self_or_upstream: false,
+                existing_route: Some(ExistingRoute {
+                    interface_gravity: None,
+                    hops: crate::units::HopCount(2),
+                    expires_at: InstantMillis(10_000),
+                    announce_id_history: core::slice::from_ref(&stored),
+                    responsiveness: RouteResponsiveness::Unresponsive,
+                }),
+                arrived_at: InstantMillis(1_000),
+            });
+            assert_eq!(
+                decision,
+                AnnounceAcceptanceDecision::Accept(AcceptReason::FailoverFromUnresponsiveIncumbent)
+            );
+        }
     }
 
     #[test]
     fn longer_hops_fresh_equal_emission_responsive_rejects() {
         let stored = announce_id(0x99, 300);
         let decision = decide(AnnounceAcceptanceInput {
+            incoming_interface_gravity: None,
             packet_hops: 6,
             announce_id: announce_id(0x9a, 300),
             destination_is_self_or_upstream: false,
             existing_route: Some(ExistingRoute {
+                interface_gravity: None,
                 hops: crate::units::HopCount(2),
                 expires_at: InstantMillis(10_000),
                 announce_id_history: core::slice::from_ref(&stored),
@@ -402,10 +541,12 @@ mod tests {
     fn longer_hops_fresh_older_emission_is_stale() {
         let stored = announce_id(0xaa, 500);
         let decision = decide(AnnounceAcceptanceInput {
+            incoming_interface_gravity: None,
             packet_hops: 6,
             announce_id: announce_id(0xab, 300),
             destination_is_self_or_upstream: false,
             existing_route: Some(ExistingRoute {
+                interface_gravity: None,
                 hops: crate::units::HopCount(2),
                 expires_at: InstantMillis(10_000),
                 announce_id_history: core::slice::from_ref(&stored),
@@ -429,10 +570,12 @@ mod tests {
         ];
         let replayed = history[2];
         let decision = decide(AnnounceAcceptanceInput {
+            incoming_interface_gravity: None,
             packet_hops: 3,
             announce_id: replayed,
             destination_is_self_or_upstream: false,
             existing_route: Some(ExistingRoute {
+                interface_gravity: None,
                 hops: crate::units::HopCount(3),
                 expires_at: InstantMillis(10_000),
                 announce_id_history: &history,
@@ -450,10 +593,12 @@ mod tests {
     fn max_emitted_reads_the_full_history() {
         let history = [announce_id(0xA, 100), announce_id(0xB, 500)];
         let decision = decide(AnnounceAcceptanceInput {
+            incoming_interface_gravity: None,
             packet_hops: 3,
             announce_id: announce_id(0xC, 300),
             destination_is_self_or_upstream: false,
             existing_route: Some(ExistingRoute {
+                interface_gravity: None,
                 hops: crate::units::HopCount(3),
                 expires_at: InstantMillis(10_000),
                 announce_id_history: &history,
@@ -482,6 +627,7 @@ mod kani_proofs {
         let packet_hops: u8 = kani::any();
         kani::assume(packet_hops > MAX_HOP_COUNT);
         let input = AnnounceAcceptanceInput {
+            incoming_interface_gravity: None,
             packet_hops,
             announce_id: arbitrary_announce_id(),
             destination_is_self_or_upstream: kani::any(),
@@ -500,6 +646,7 @@ mod kani_proofs {
         let packet_hops: u8 = kani::any();
         kani::assume(packet_hops <= MAX_HOP_COUNT);
         let input = AnnounceAcceptanceInput {
+            incoming_interface_gravity: None,
             packet_hops,
             announce_id: arbitrary_announce_id(),
             destination_is_self_or_upstream: true,

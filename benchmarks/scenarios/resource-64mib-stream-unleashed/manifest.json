@@ -1,15 +1,15 @@
 {
   "name": "resource-64mib-stream-unleashed",
-  "version": 2,
+  "version": 3,
   "order": 7,
-  "title": "64 MiB resource stream · 1 Gbps policy",
+  "title": "64-segment resource stream · 1 Gbps policy",
   "category": "Resources",
-  "summary": "Stream the 64 MiB resource with both endpoint TCP interfaces explicitly configured for the 1 Gbps MTU tier.",
+  "summary": "Stream 64 maximum-efficient resource segments with both endpoint TCP interfaces explicitly configured for the 1 Gbps MTU tier.",
   "primary_metric": "goodput_bytes_per_sec",
   "headline": true,
   "notes": [
     "Controlled computational comparison: identical workload and protocol, with only TCP bitrate policy changed.",
-    "Both implementations carry the same 64 MiB in 65 authenticated protocol segments. RNS 1.4.0 fills 64 maximum-efficient segments and ends with a 64-byte tail; Prns keeps the first 63 at that ceiling and balances the final pair. The protocol-valid rebalance avoids an RNS 1.4.0 receive-side handoff race in which the proof leaves before the retiring receiver is removed and that one untagged tail part can be skipped."
+    "Both implementations carry the same 67,108,800-byte payload in 64 maximum-efficient protocol segments. This is 64 bytes below 64 MiB and avoids making benchmark completion depend on RNS {reference_version}'s timing-sensitive handoff to a 65th 64-byte tail segment."
   ],
   "cell_notes": [
     {
@@ -19,16 +19,24 @@
         "responder": "personal-rns"
       },
       "text": "RNS prepares the next 1 MiB segment in a background thread. Prns proves the current segment before that preparation completes, making RNS enter a coarse 50 ms polling loop. A slower stock receiver gives preparation enough time to finish, avoiding that cliff."
+    },
+    {
+      "subject": {
+        "path": "direct",
+        "initiator": "rns-1.4.2-compiled",
+        "responder": "personal-rns"
+      },
+      "text": "RNS prepares the next 1 MiB segment in a background thread. Prns proves the current segment before that preparation completes, making RNS enter a coarse 50 ms polling loop. A slower stock receiver gives preparation enough time to finish, avoiding that cliff."
     }
   ],
-  "description": "The 64 MiB incompressible resource stream repeated with both real initiator and responder TCP interfaces explicitly configured for 1 Gbps. That policy selects the 524,288-byte interface MTU tier on both stacks. Compression remains disabled and every segment remains encrypted, hash-proved, assembled, and application-acknowledged; this is the controlled counterpart to the default-policy result.",
+  "description": "The 64-segment incompressible resource stream repeated with both real initiator and responder TCP interfaces explicitly configured for 1 Gbps. That policy selects the 524,288-byte interface MTU tier on both stacks. Compression remains disabled and every segment remains encrypted, hash-proved, assembled, and application-acknowledged; this is the controlled counterpart to the default-policy result.",
   "roles": [
     "responder",
     "initiator"
   ],
   "profile": {
     "mechanism": "resource",
-    "payload_len": 67108864,
+    "payload_len": 67108800,
     "window": 1,
     "tcp_bitrate_bps": 1000000000,
     "duration_ms": 30000,

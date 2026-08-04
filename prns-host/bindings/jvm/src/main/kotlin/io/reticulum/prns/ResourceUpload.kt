@@ -5,6 +5,7 @@ import com.sun.jna.ptr.PointerByReference
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.yield
+import java.util.concurrent.CompletionStage
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
@@ -60,6 +61,13 @@ class ResourceUpload internal constructor(pointer: Pointer) : AutoCloseable {
             close()
         }
     }
+
+    fun writeAsync(chunk: Bytes): CompletionStage<Void?> = javaFuture {
+        write(chunk)
+        null
+    }
+
+    fun finishAsync(): CompletionStage<CommandSettlement> = javaFuture { finish() }
 
     fun abort() {
         lock.withLock {

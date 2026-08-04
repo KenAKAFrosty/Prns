@@ -9,7 +9,7 @@
 # and link data both ways, including inbound to the local client's own destination. Asserts both ends
 # RECEIVED the other's message.
 #
-# Both RNS ends are the pinned reference RNS from the venv (benchmarks/reference/requirements.txt;
+# Both RNS ends are the pinned reference RNS from the venv (validation/oracles/requirements.txt;
 # $SMOKE_PYTHON if set, else the local reference venv) — genuine RNS-on-the-wire. Prints PASS or
 # FAIL and exits accordingly.
 set -u
@@ -17,7 +17,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 source "$ROOT/validation/interop/lib/cargo-artifacts.sh"
 DAEMON="$(cargo_debug_example "$ROOT/validation/integration/Cargo.toml" local_transit_daemon)"
-VENV_PY="${SMOKE_PYTHON:-$ROOT/benchmarks/reference/.venv/bin/python}"
+VENV_PY="${SMOKE_PYTHON:-$ROOT/validation/.venv/rns-1.4.2/bin/python}"
 PEER="$ROOT/validation/interop/peers/rns_transit_peer.py"
 CLIENT="$ROOT/validation/interop/peers/rns_transit_client.py"
 IFAC_HOSTILE="$ROOT/validation/interop/peers/rns_ifac_hostile.py"

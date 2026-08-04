@@ -489,17 +489,15 @@ def validate_manifest(manifest: dict, check_tools: bool = False) -> list[str]:
 
     errors.extend(validate_triage())
     try:
-        requirements = (
-            ROOT / "benchmarks/reference/requirements.txt"
-        ).read_text().splitlines()
-        lock = (ROOT / "benchmarks/reference/requirements.lock").read_text().splitlines()
+        requirements = (ROOT / "validation/oracles/requirements.txt").read_text().splitlines()
+        lock = (ROOT / "validation/oracles/requirements.lock").read_text().splitlines()
     except OSError as error:
-        errors.append(f"cannot read benchmark reference pins: {error}")
+        errors.append(f"cannot read oracle reference pins: {error}")
     else:
         if requirements != lock:
-            errors.append("benchmarks/reference/requirements.txt must project requirements.lock")
-        if "rns==1.4.0" not in lock:
-            errors.append("benchmarks/reference/requirements.lock must pin rns==1.4.0")
+            errors.append("validation/oracles/requirements.txt must project requirements.lock")
+        if "rns==1.4.2" not in lock:
+            errors.append("validation/oracles/requirements.lock must pin rns==1.4.2")
 
     required_commands = {
         sys.executable if suite["command"][0] == RUNNER_PYTHON_ARGUMENT else suite["command"][0]

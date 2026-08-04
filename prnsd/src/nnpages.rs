@@ -29,7 +29,17 @@ pub(crate) const SOURCE_PAGE_FILE_NAME: &str = "source.mu";
 pub(crate) const COMING_FROM_RNS_PAGE_FILE_NAME: &str = "coming-from-rns.mu";
 pub(crate) const SOURCE_ARCHIVE_FILE_NAME: &str = "source.zip";
 pub(crate) const SOURCE_CHECKSUM_FILE_NAME: &str = "source.zip.sha256";
-pub(crate) const DEFAULT_INDEX_PAGE: &[u8] = include_bytes!("../assets/nnpages/index.mu");
+pub(crate) const DEFAULT_INDEX_PAGE: &[u8] = concat!(
+    include_str!("../../assets/nnpages/masthead.mu"),
+    include_str!("../assets/nnpages/index_welcome.mu"),
+    include_str!("../../assets/nnpages/nav.mu"),
+    include_str!("../../assets/nnpages/why_prns.mu"),
+    include_str!("../../assets/nnpages/license.mu"),
+    include_str!("../../assets/nnpages/quote.mu"),
+    include_str!("../assets/nnpages/index_outro.mu"),
+    include_str!("../../assets/nnpages/credits.mu"),
+)
+.as_bytes();
 
 const REQUEST_PREFIX: &str = "/page/";
 const FILE_REQUEST_PREFIX: &str = "/file/";
@@ -114,9 +124,7 @@ pub(crate) enum NnPagesRefreshError {
 
 #[derive(Debug)]
 pub(crate) enum NnPagesCliError {
-    Configuration(prns_config::DiscoveryError),
-    StateDirectory(prnsd_control::StateDirectoryError),
-    ManagedConfiguration(prnsd_control::ServiceError),
+    CommandContext(crate::command_context::CommandContextError),
     Control(io::Error),
     TimedOut,
     RefreshFailed,
@@ -130,14 +138,7 @@ pub(crate) enum NnPagesCliError {
 impl core::fmt::Display for NnPagesCliError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::Configuration(error) => write!(formatter, "config discovery failed: {error}"),
-            Self::StateDirectory(error) => write!(formatter, "daemon discovery failed: {error}"),
-            Self::ManagedConfiguration(error) => {
-                write!(
-                    formatter,
-                    "could not resolve the running daemon's config: {error}"
-                )
-            }
+            Self::CommandContext(error) => error.fmt(formatter),
             Self::Control(error) => write!(formatter, "NNPages control failed: {error}"),
             Self::TimedOut => {
                 formatter.write_str("the daemon did not acknowledge the request within 10 seconds")
@@ -164,9 +165,7 @@ impl core::fmt::Display for NnPagesCliError {
 impl std::error::Error for NnPagesCliError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Configuration(error) => Some(error),
-            Self::StateDirectory(error) => Some(error),
-            Self::ManagedConfiguration(error) => Some(error),
+            Self::CommandContext(error) => Some(error),
             Self::Control(error) => Some(error),
             Self::Seed(error) => Some(error),
             Self::TimedOut
@@ -692,26 +691,7 @@ const fn seed_requires_refresh(
 fn discover_cli_config(
     explicit: Option<&Path>,
 ) -> Result<prns_config::DiscoveredConfig, NnPagesCliError> {
-    resolve_cli_config(explicit, || {
-        let paths =
-            prnsd_control::ServicePaths::discover().map_err(NnPagesCliError::StateDirectory)?;
-        prnsd_control::active_config_dir(&paths).map_err(NnPagesCliError::ManagedConfiguration)
-    })
-}
-
-fn resolve_cli_config(
-    explicit: Option<&Path>,
-    active_config: impl FnOnce() -> Result<Option<PathBuf>, NnPagesCliError>,
-) -> Result<prns_config::DiscoveredConfig, NnPagesCliError> {
-    if let Some(explicit) = explicit {
-        return prns_config::discover(Some(explicit)).map_err(NnPagesCliError::Configuration);
-    }
-    match active_config()? {
-        Some(directory) => {
-            prns_config::discover(Some(&directory)).map_err(NnPagesCliError::Configuration)
-        }
-        None => prns_config::discover(None).map_err(NnPagesCliError::Configuration),
-    }
+    crate::command_context::discover(explicit).map_err(NnPagesCliError::CommandContext)
 }
 
 fn print_refresh_report(report: &NnPagesRefreshReport) {
@@ -1372,46 +1352,6 @@ mod tests {
     }
 
     #[test]
-    fn explicit_config_wins_without_consulting_managed_state() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let discovered = resolve_cli_config(Some(directory.path()), || {
-            panic!("explicit config must not inspect managed state")
-        })
-        .expect("explicit config");
-        assert_eq!(discovered.dir, directory.path());
-    }
-
-    #[test]
-    fn managed_config_precedes_the_platform_fallback() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let discovered = resolve_cli_config(None, || Ok(Some(directory.path().to_path_buf())))
-            .expect("managed config");
-        assert_eq!(discovered.dir, directory.path());
-    }
-
-    #[test]
-    fn managed_config_failures_do_not_fall_back_silently() {
-        let result = resolve_cli_config(None, || {
-            Err(NnPagesCliError::ManagedConfiguration(
-                prnsd_control::ServiceError::InvalidManagedConfigRecord,
-            ))
-        });
-        assert!(matches!(
-            result,
-            Err(NnPagesCliError::ManagedConfiguration(
-                prnsd_control::ServiceError::InvalidManagedConfigRecord
-            ))
-        ));
-    }
-
-    #[test]
-    fn no_managed_daemon_uses_the_platform_reticulum_directory() {
-        let expected = prns_config::discover(None).expect("platform config");
-        let discovered = resolve_cli_config(None, || Ok(None)).expect("fallback config");
-        assert_eq!(discovered, expected);
-    }
-
-    #[test]
     fn the_node_name_file_is_never_published() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let root = page_root(directory.path());
@@ -1641,6 +1581,7 @@ mod tests {
                 link_requests: LinkRequestPolicy::AcceptAll,
                 ratchet: RatchetPolicy::NoRatchets,
                 resource_strategy: ResourceStrategy::AcceptNone,
+                maximum_request_bytes: Default::default(),
                 request_endpoints: ServeMyRequestEndpoints::No,
             })
             .expect("destination");

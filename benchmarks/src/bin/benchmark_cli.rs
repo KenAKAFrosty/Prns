@@ -2,6 +2,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 
+use benchmarks::REFERENCE_VERSION;
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 
@@ -105,6 +106,7 @@ fn main() {
 fn run() -> Result<(), CliError> {
     let options = parse_options(std::env::args().skip(1))?;
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let rustflags = benchmark_rustflags(std::env::var("RUSTFLAGS").unwrap_or_default());
     let suite_id = options
         .resume
         .clone()
@@ -144,7 +146,7 @@ fn run() -> Result<(), CliError> {
     if options.publish {
         require_clean_source()?;
     }
-    build_harness(root)?;
+    build_harness(root, &rustflags)?;
     prepare_reference(root)?;
     std::fs::create_dir_all(&run_dir).map_err(|source| CliError::Io {
         action: "create run directory",
@@ -161,7 +163,7 @@ fn run() -> Result<(), CliError> {
         .arg(&run_dir)
         .arg("--suite-id")
         .arg(&suite_id)
-        .env("BENCHMARK_BUILD_FLAGS", benchmark_rustflags())
+        .env("BENCHMARK_BUILD_FLAGS", &rustflags)
         .env("BENCHMARK_SOURCE_FINGERPRINT", &source.fingerprint);
     if options.smoke {
         runner.arg("--smoke");
@@ -172,11 +174,19 @@ fn run() -> Result<(), CliError> {
         runner.env("BENCHMARK_POWER_VIA_SUDO", "1");
     }
     if let Err(error) = checked(&mut runner, "benchmark matrix") {
-        eprintln!(
-            "Resume with: cargo benchmark --resume {suite_id}{}{}",
-            if options.publish { " --publish" } else { "" },
-            if options.energy { " --energy" } else { "" }
-        );
+        if let Ok(suite) = read_suite(&run_dir) {
+            if suite.failures.is_empty() {
+                eprintln!(
+                    "Resume with: cargo benchmark --resume {suite_id}{}{}",
+                    if options.publish { " --publish" } else { "" },
+                    if options.energy { " --energy" } else { "" }
+                );
+            } else {
+                eprintln!(
+                    "Suite {suite_id} contains retained failures and cannot be resumed or published"
+                );
+            }
+        }
         return Err(error);
     }
 
@@ -235,7 +245,7 @@ fn parse_options(arguments: impl Iterator<Item = String>) -> Result<Options, Cli
     Ok(options)
 }
 
-fn preflight(options: &Options) -> Result<(), CliError> {
+fn preflight(_options: &Options) -> Result<(), CliError> {
     for (tool, setup) in [
         ("cargo", rust_setup()),
         ("rustc", rust_setup()),
@@ -258,14 +268,14 @@ fn preflight(options: &Options) -> Result<(), CliError> {
     println!("  prerequisites cargo, rustc, uv, and {compiler} are available");
 
     #[cfg(target_os = "macos")]
-    if options.energy {
+    if _options.energy {
         checked(
             Command::new("sudo").arg("-v"),
             "authorize macOS energy sampling",
         )?;
     }
     #[cfg(windows)]
-    if options.energy {
+    if _options.energy {
         return Err(CliError::Evidence(
             "energy measurement is not available on Windows; run without --energy".into(),
         ));
@@ -273,10 +283,16 @@ fn preflight(options: &Options) -> Result<(), CliError> {
     Ok(())
 }
 
-fn build_harness(root: &Path) -> Result<(), CliError> {
+fn build_harness(root: &Path, rustflags: &str) -> Result<(), CliError> {
     println!("\n[1/4] Building release participants and evidence tools");
-    let rustflags = benchmark_rustflags();
-    println!("  rustflags    {rustflags}");
+    println!(
+        "  rustflags    {}",
+        if rustflags.is_empty() {
+            "(portable defaults)"
+        } else {
+            rustflags
+        }
+    );
     checked(
         Command::new("cargo")
             .env("RUSTFLAGS", rustflags)
@@ -301,19 +317,18 @@ fn build_harness(root: &Path) -> Result<(), CliError> {
     )
 }
 
-fn benchmark_rustflags() -> String {
-    let mut flags = std::env::var("RUSTFLAGS").unwrap_or_default();
-    if !flags.is_empty() {
-        flags.push(' ');
-    }
-    flags.push_str("-C target-cpu=native");
+fn benchmark_rustflags(flags: String) -> String {
     #[cfg(target_arch = "aarch64")]
-    flags.push_str(" --cfg aes_armv8");
+    let flags = if flags.is_empty() {
+        "--cfg aes_armv8".into()
+    } else {
+        format!("{flags} --cfg aes_armv8")
+    };
     flags
 }
 
 fn prepare_reference(root: &Path) -> Result<(), CliError> {
-    println!("[2/4] Preparing locked compiled RNS 1.4.0 reference");
+    println!("[2/4] Preparing locked compiled RNS {REFERENCE_VERSION} reference");
     let reference = root.join("reference");
     let environment = reference.join(".venv");
     let cache = reference.join(".object-cache/uv");
@@ -343,7 +358,7 @@ fn prepare_reference(root: &Path) -> Result<(), CliError> {
         Command::new(reference_python(&reference))
             .arg(reference.join("compiled_reference.py"))
             .arg("--verify-only"),
-        "verify compiled RNS 1.4.0",
+        "verify compiled RNS 1.4.2",
     )?;
     checked(
         Command::new(reference_python(&reference))
@@ -447,6 +462,11 @@ fn validate_resume(run_dir: &Path, suite_id: &str, source: &SourceState) -> Resu
         )));
     }
     let suite = read_suite(run_dir)?;
+    if !suite.failures.is_empty() {
+        return Err(CliError::Evidence(format!(
+            "cannot resume {suite_id}: the suite contains retained failures"
+        )));
+    }
     if !resume_compatible(&suite, suite_id, &source.commit, &source.fingerprint) {
         return Err(CliError::Evidence(format!(
             "suite {suite_id} is incompatible with this exact source state or release profile"
@@ -469,6 +489,7 @@ fn resume_compatible(
         && suite.matrix_cells == release_cell_count()
         && suite.source_commit == current_commit
         && suite.source_fingerprint == current_fingerprint
+        && suite.failures.is_empty()
 }
 
 fn release_cell_count() -> usize {
@@ -976,6 +997,24 @@ mod tests {
     }
 
     #[test]
+    fn benchmark_build_uses_portable_defaults() {
+        let flags = benchmark_rustflags(String::new());
+        #[cfg(target_arch = "aarch64")]
+        assert_eq!(flags, "--cfg aes_armv8");
+        #[cfg(not(target_arch = "aarch64"))]
+        assert!(flags.is_empty());
+    }
+
+    #[test]
+    fn benchmark_build_preserves_explicit_rustflags() {
+        let flags = benchmark_rustflags("-D warnings".into());
+        #[cfg(target_arch = "aarch64")]
+        assert_eq!(flags, "-D warnings --cfg aes_armv8");
+        #[cfg(not(target_arch = "aarch64"))]
+        assert_eq!(flags, "-D warnings");
+    }
+
+    #[test]
     fn resume_is_bound_to_the_same_uuid_profile_and_exact_sha() {
         let root = temp_test_dir("resume");
         std::fs::create_dir_all(&root).expect("temporary run directory");
@@ -1015,6 +1054,14 @@ mod tests {
             serde_json::to_string(&suite).expect("suite JSON"),
         )
         .expect("write suite");
+        assert!(!resume_compatible(
+            &suite,
+            &suite.suite_id,
+            &suite.source_commit,
+            &suite.source_fingerprint
+        ));
+        suite.duration_ms = 30_000;
+        suite.failures.push("measured failure".into());
         assert!(!resume_compatible(
             &suite,
             &suite.suite_id,

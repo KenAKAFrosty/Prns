@@ -17,6 +17,10 @@ const HOST_PAGES: &[(&str, &str)] = &[
         "x86_64-pc-windows-msvc",
         include_str!("../../../../benchmarks/RESULTS-x86_64-pc-windows-msvc.md"),
     ),
+    (
+        "x86_64-unknown-linux-gnu",
+        include_str!("../../../../benchmarks/RESULTS-x86_64-unknown-linux-gnu.md"),
+    ),
 ];
 
 #[component]
@@ -39,32 +43,7 @@ pub fn BenchmarksPage() -> Element {
             }
         }
 
-        div { class: "grid gap-5 md:grid-cols-2",
-            div { class: "rounded-card border border-line/60 bg-layer/40 p-5",
-                p { class: "text-[0.7rem] font-bold tracking-[0.18em] uppercase text-accent",
-                    "What we measure"
-                }
-                ul { class: "mt-3 flex flex-col gap-2 text-sm text-soft leading-relaxed",
-                    li { "Conformance: every operation accounted for at both ends." }
-                    li { "Throughput and latency: delivered work and proof-backed round trips." }
-                    li { "Memory: initiator and responder peak resident set size." }
-                    li { "Energy: optional net processor energy, split by role when measurable." }
-                }
-            }
-            div { class: "rounded-card border border-line/60 bg-layer/40 p-5",
-                p { class: "text-[0.7rem] font-bold tracking-[0.18em] uppercase text-accent",
-                    "How we measure"
-                }
-                ul { class: "mt-3 flex flex-col gap-2 text-sm text-soft leading-relaxed",
-                    li { "Three 30-second release samples per published cell." }
-                    li { "The same four Prns/reference directional pairings for every scenario." }
-                    li { "Compared with a verified Cython-compiled RNS 1.4.0 reference." }
-                    li { "Stamped with machine, commit, toolchain, and reference provenance." }
-                }
-            }
-        }
-
-        section { class: "mt-10",
+        section {
             p { class: "mb-6",
                 a {
                     href: "https://github.com/KenAKAFrosty/Prns/blob/main/benchmarks/README.md",
@@ -145,6 +124,7 @@ mod tests {
 
         assert!(md.contains("](/benchmarks/aarch64-apple-darwin)"));
         assert!(md.contains("](/benchmarks/x86_64-pc-windows-msvc)"));
+        assert!(md.contains("](/benchmarks/x86_64-unknown-linux-gnu)"));
         assert!(!md.contains("](RESULTS-aarch64-apple-darwin.md)"));
         assert!(!md.contains("# Benchmark results"));
     }

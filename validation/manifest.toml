@@ -10,15 +10,15 @@ nightly = "nightly-2025-11-21"
 
 [interpreters.smoke]
 environment = "SMOKE_PYTHON"
-venv = "validation/.venv/rns-1.4.0"
-requirements = "benchmarks/reference/requirements.txt"
-version = "1.4.0"
+venv = "validation/.venv/rns-1.4.2"
+requirements = "validation/oracles/requirements.txt"
+version = "1.4.2"
 
 [interpreters.rpc]
 environment = "RPC_SMOKE_PYTHON"
-venv = "validation/.venv/rns-rpc-1.4.0"
-requirements = "benchmarks/reference/requirements.txt"
-version = "1.4.0"
+venv = "validation/.venv/rns-rpc-1.4.2"
+requirements = "validation/oracles/requirements.txt"
+version = "1.4.2"
 
 [registry]
 cargo_manifests = [
@@ -106,12 +106,20 @@ inputs = [
   "prns-host/core/src/generated.rs",
   "prns-host/abi/c/include/prns_host.h",
   "prns-host/bindings/dotnet/src/PersonalRns/Generated/HostContract.g.cs",
+  "prns-host/bindings/go/convenience.go",
   "prns-host/bindings/go/contract_generated.go",
   "prns-host/bindings/julia/src/HostContract.generated.jl",
+  "prns-host/bindings/julia/src/PersonalRns.jl",
+  "prns-host/bindings/julia/src/command.jl",
+  "prns-host/bindings/jvm/src/main/kotlin/io/reticulum/prns/Command.kt",
+  "prns-host/bindings/jvm/src/main/kotlin/io/reticulum/prns/Events.kt",
   "prns-host/bindings/jvm/src/main/kotlin/io/reticulum/prns/HostContract.generated.kt",
+  "prns-host/bindings/jvm/src/main/kotlin/io/reticulum/prns/Host.kt",
+  "prns-host/bindings/jvm/src/main/kotlin/io/reticulum/prns/ResourceUpload.kt",
   "prns-host/bindings/python/src/personal_rns/generated.py",
   "prns-host/bindings/swift/Sources/CPrnsHost/include/prns_host.h",
   "prns-host/bindings/swift/Sources/PersonalRns/HostContract.generated.swift",
+  "prns-host/bindings/swift/Sources/PersonalRns/Host.swift",
   "prns-host/conformance/host-contract-v1.json",
   "prns-js/src/contract.generated.ts",
 ]
@@ -289,7 +297,7 @@ platform = "any"
 toolchain = "stable"
 timeout_seconds = 60
 command = ["python3", "validation/run.py", "verify"]
-inputs = ["validation/manifest.toml", "validation/run.py", "validation/evidence-schema.json", "validation/BASELINE.md", "validation/mutation/triage.toml", "validation/oracles/tests/support/mod.rs"]
+inputs = ["validation/manifest.toml", "validation/run.py", "validation/evidence-schema.json", "validation/BASELINE.md", "validation/mutation/triage.toml", "validation/oracles/requirements.lock", "validation/oracles/requirements.txt", "validation/oracles/tests/support/mod.rs"]
 artifacts = "validation-artifacts/results/registry"
 
 [[suite]]

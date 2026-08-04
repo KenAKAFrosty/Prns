@@ -28,7 +28,7 @@ use crate::units::RttMillis;
 use crate::wire::{PacketType, WireContext};
 
 impl<S: StorageLayout> EngineState<S> {
-    /// RNS 1.4.0 `Resource.assemble` + `prove`
+    /// RNS 1.4.2 `Resource.assemble` + `prove`
     pub(crate) fn conclude_resource(
         &mut self,
         link_id: &LinkId,
@@ -275,7 +275,7 @@ impl<S: StorageLayout> EngineState<S> {
         ConcludeResourceOutcome::Failed(cause)
     }
 
-    /// The receipts half of a response transfer's death: RNS 1.4.0 concludes any non-`COMPLETE` response resource through `request_timed_out`, so the pending request settles with the transfer.
+    /// The receipts half of a response transfer's death: RNS 1.4.2 concludes any non-`COMPLETE` response resource through `request_timed_out`, so the pending request settles with the transfer.
     /// The caller journals the failure settlement for the returned command.
     pub(super) fn settle_response_claim(
         &mut self,
@@ -477,7 +477,7 @@ impl<S: StorageLayout> EngineState<S> {
     }
 }
 
-/// RNS 1.4.0's assemble tail for a metadata transfer: segment one's verified stream opens with `3-byte-BE-length ‖ packed block`, split off ahead of delivery. Every byte count around this point (the advertised `d`, the assembly advance) stays on the whole pre-split stream.
+/// RNS 1.4.2's assemble tail for a metadata transfer: segment one's verified stream opens with `3-byte-BE-length ‖ packed block`, split off ahead of delivery. Every byte count around this point (the advertised `d`, the assembly advance) stays on the whole pre-split stream.
 ///
 /// A declared length past the stream's end fails by name where the reference's Python slicing would silently deliver a truncated block and empty data.
 fn split_metadata_block<'p>(
@@ -836,6 +836,7 @@ mod seam_tests {
         let correlation = ResourceCorrelation::Request {
             id: RequestId::of_request_data(&packed[..len]),
             response_timeout: Default::default(),
+            maximum_response_bytes: Default::default(),
         };
         let mut handlers = RequestHandlers::<FixedRequestHandlerTable<1>>::default();
         assert!(!request_is_permitted(
@@ -1224,6 +1225,7 @@ mod seam_tests {
                 correlation: ResourceCorrelation::Request {
                     id: request_id,
                     response_timeout: Default::default(),
+                    maximum_response_bytes: Default::default(),
                 },
             },
             InstantMillis(1_500),
@@ -1360,6 +1362,7 @@ mod seam_tests {
                 correlation: ResourceCorrelation::Request {
                     id: request_id,
                     response_timeout: Default::default(),
+                    maximum_response_bytes: Default::default(),
                 },
             },
             InstantMillis(1_500),

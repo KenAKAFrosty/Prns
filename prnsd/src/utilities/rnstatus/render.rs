@@ -63,6 +63,7 @@ fn numeric_sort_value(status: &RnsInterfaceStatusReport, sorting: RnstatusSort) 
         RnstatusSort::Prx => optional_number(&status.incoming_path_request_frequency),
         RnstatusSort::Ptx => optional_number(&status.outgoing_path_request_frequency),
         RnstatusSort::Held => optional_u64(&status.held_announces) as f64,
+        RnstatusSort::Gravity => optional_i64(&status.gravity) as f64,
     }
 }
 
@@ -143,6 +144,7 @@ fn render_interface(
     if !mode_is_suppressed(&status.name) {
         let _ = writeln!(output, "    Mode      : {}", status.mode.display_name());
     }
+    render_gravity(output, &status.gravity);
     if let Some(bitrate) = status.bitrate_bps.value() {
         let _ = writeln!(output, "    Rate      : {}", speed_str(*bitrate));
     }
@@ -177,6 +179,16 @@ fn mode_is_suppressed(name: &str) -> bool {
     name.starts_with("Shared Instance[")
         || name.starts_with("TCPInterface[Client")
         || name.starts_with("LocalInterface[")
+}
+
+fn optional_i64(field: &RnsOptionalField<i64>) -> i64 {
+    field.value().copied().unwrap_or(0)
+}
+
+fn render_gravity(output: &mut String, field: &RnsOptionalField<i64>) {
+    if let Some(gravity) = field.value().filter(|gravity| **gravity != 0) {
+        let _ = writeln!(output, "    Gravity   : {gravity}");
+    }
 }
 
 fn render_radio_state(output: &mut String, status: &RnsInterfaceStatusReport, now: f64) {
@@ -696,5 +708,17 @@ mod tests {
         assert!(selection_matches("LAN", Some("lan"), true, false));
         assert!(!selection_matches("LAN", Some("radio"), true, false));
         assert!(selection_matches("LAN", None, false, false));
+    }
+
+    #[test]
+    fn signed_nonzero_gravity_is_visible_and_zero_or_absent_is_quiet() {
+        let mut output = String::new();
+        render_gravity(&mut output, &RnsOptionalField::Value(-7));
+        render_gravity(&mut output, &RnsOptionalField::Value(0));
+        render_gravity(&mut output, &RnsOptionalField::Absent);
+
+        assert_eq!(output, "    Gravity   : -7\n");
+        assert_eq!(optional_i64(&RnsOptionalField::Value(-7)), -7);
+        assert_eq!(optional_i64(&RnsOptionalField::Absent), 0);
     }
 }

@@ -139,7 +139,7 @@ mod tests {
     #[test]
     fn a_final_hop_forward_strips_the_transport_header_back_to_the_direct_wire() {
         let mut relay = transporting_node();
-        let mut announce = bytes_from_hex(RNS_1_4_0_RATCHETED_ANNOUNCE);
+        let mut announce = bytes_from_hex(RNS_1_4_2_RATCHETED_ANNOUNCE);
         let _ = relay.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(500),
@@ -152,7 +152,7 @@ mod tests {
             None,
         );
 
-        let mut in_transport = bytes_from_hex(RNS_1_4_0_SEALED_TO_RATCHET_VIA_TRANSPORT);
+        let mut in_transport = bytes_from_hex(RNS_1_4_2_SEALED_TO_RATCHET_VIA_TRANSPORT);
         let payload_len = WirePacketHeader::parse(&in_transport).unwrap().1.len();
         let mut forwarded = None;
         let mut size_hint = None;
@@ -187,7 +187,7 @@ mod tests {
 
         assert_eq!(size_hint, Some(HEADER_MAX_LEN + payload_len));
         let wire = forwarded.expect("a transport-addressed packet with a one-hop route forwards");
-        let mut expected = bytes_from_hex(RNS_1_4_0_SEALED_TO_RATCHET);
+        let mut expected = bytes_from_hex(RNS_1_4_2_SEALED_TO_RATCHET);
         expected[1] = 1;
         assert_eq!(
             wire,
@@ -195,7 +195,7 @@ mod tests {
             "the final hop strips transport framing: the destination hears the direct wire, one hop further",
         );
 
-        let mut replay = bytes_from_hex(RNS_1_4_0_SEALED_TO_RATCHET_VIA_TRANSPORT);
+        let mut replay = bytes_from_hex(RNS_1_4_2_SEALED_TO_RATCHET_VIA_TRANSPORT);
         let again = relay.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(2_000),
@@ -218,7 +218,7 @@ mod tests {
     fn relaying_a_packet_slides_the_carried_routes_expiry_forward() {
         let route_view = [routable_descriptor(InterfaceId::new([0xB2; 8]))];
         let mut relay = transporting_node();
-        let mut announce = bytes_from_hex(RNS_1_4_0_RATCHETED_ANNOUNCE);
+        let mut announce = bytes_from_hex(RNS_1_4_2_RATCHETED_ANNOUNCE);
         let _ = relay.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(500),
@@ -235,7 +235,7 @@ mod tests {
             .soonest_route_expiry(AttachedInterfaces::new(&route_view))
             .expect("the announce taught exactly one route");
 
-        let mut in_transport = bytes_from_hex(RNS_1_4_0_SEALED_TO_RATCHET_VIA_TRANSPORT);
+        let mut in_transport = bytes_from_hex(RNS_1_4_2_SEALED_TO_RATCHET_VIA_TRANSPORT);
         let out = relay.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(120_000),
@@ -270,7 +270,7 @@ mod tests {
         let next_relay = TransportId::new([0xBB; 16]);
         let mut relay = transporting_node();
 
-        let raw = bytes_from_hex(RNS_1_4_0_RATCHETED_ANNOUNCE);
+        let raw = bytes_from_hex(RNS_1_4_2_RATCHETED_ANNOUNCE);
         let (header, payload) = WirePacketHeader::parse(&raw).unwrap();
         let relayed_header = WirePacketHeader {
             transport_id: Some(next_relay),
@@ -293,7 +293,7 @@ mod tests {
             None,
         );
 
-        let mut in_transport = bytes_from_hex(RNS_1_4_0_SEALED_TO_RATCHET_VIA_TRANSPORT);
+        let mut in_transport = bytes_from_hex(RNS_1_4_2_SEALED_TO_RATCHET_VIA_TRANSPORT);
         let out = relay.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
@@ -311,7 +311,7 @@ mod tests {
         };
         let mut wire = [0u8; BROADCAST_MTU];
         let n = forward.to_wire(&mut wire).unwrap();
-        let mut expected = bytes_from_hex(RNS_1_4_0_SEALED_TO_RATCHET_VIA_TRANSPORT);
+        let mut expected = bytes_from_hex(RNS_1_4_2_SEALED_TO_RATCHET_VIA_TRANSPORT);
         expected[1] = 1;
         expected[2..18].copy_from_slice(next_relay.as_bytes());
         assert_eq!(
@@ -329,7 +329,7 @@ mod tests {
             local_hop_count_override: crate::engine::LocalHopCountOverride::from_entropy(3),
             ..Default::default()
         });
-        let mut announce = bytes_from_hex(RNS_1_4_0_RATCHETED_ANNOUNCE);
+        let mut announce = bytes_from_hex(RNS_1_4_2_RATCHETED_ANNOUNCE);
         let _ = relay.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(500),
@@ -342,7 +342,7 @@ mod tests {
             None,
         );
 
-        let mut direct = bytes_from_hex(RNS_1_4_0_SEALED_TO_RATCHET);
+        let mut direct = bytes_from_hex(RNS_1_4_2_SEALED_TO_RATCHET);
         let out = relay.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
@@ -373,7 +373,7 @@ mod tests {
     #[test]
     fn a_strangers_direct_data_to_a_routed_destination_is_still_dropped() {
         let mut relay = transporting_node();
-        let mut announce = bytes_from_hex(RNS_1_4_0_RATCHETED_ANNOUNCE);
+        let mut announce = bytes_from_hex(RNS_1_4_2_RATCHETED_ANNOUNCE);
         let _ = relay.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(500),
@@ -386,7 +386,7 @@ mod tests {
             None,
         );
 
-        let mut direct = bytes_from_hex(RNS_1_4_0_SEALED_TO_RATCHET);
+        let mut direct = bytes_from_hex(RNS_1_4_2_SEALED_TO_RATCHET);
         let out = relay.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
@@ -411,7 +411,7 @@ mod tests {
     fn a_leaf_shared_instance_does_not_carry_unrelated_network_transit() {
         let mut leaf = shared_instance_leaf();
         let transport_id = leaf.transport_id().unwrap();
-        let mut announce = bytes_from_hex(RNS_1_4_0_RATCHETED_ANNOUNCE);
+        let mut announce = bytes_from_hex(RNS_1_4_2_RATCHETED_ANNOUNCE);
         let _ = leaf.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(500),
@@ -424,7 +424,7 @@ mod tests {
             None,
         );
 
-        let mut in_transport = bytes_from_hex(RNS_1_4_0_SEALED_TO_RATCHET_VIA_TRANSPORT);
+        let mut in_transport = bytes_from_hex(RNS_1_4_2_SEALED_TO_RATCHET_VIA_TRANSPORT);
         in_transport[2..18].copy_from_slice(transport_id.as_bytes());
         let out = leaf.ingest_packet_with(
             InboundPacket {
@@ -447,7 +447,7 @@ mod tests {
         let app = InterfaceId::from_channel_tag(InterfaceKind::LocalClient, b"nomadnet");
         let mut relay = shared_instance_leaf();
         let transport_id = relay.transport_id().unwrap();
-        let mut announce = bytes_from_hex(RNS_1_4_0_RATCHETED_ANNOUNCE);
+        let mut announce = bytes_from_hex(RNS_1_4_2_RATCHETED_ANNOUNCE);
         let _ = relay.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(500),
@@ -460,7 +460,7 @@ mod tests {
             None,
         );
 
-        let mut in_transport = bytes_from_hex(RNS_1_4_0_SEALED_TO_RATCHET_VIA_TRANSPORT);
+        let mut in_transport = bytes_from_hex(RNS_1_4_2_SEALED_TO_RATCHET_VIA_TRANSPORT);
         in_transport[2..18].copy_from_slice(transport_id.as_bytes());
         let out = relay.ingest_packet_with(
             InboundPacket {
@@ -487,7 +487,7 @@ mod tests {
     #[test]
     fn a_proof_rides_the_reverse_route_home_exactly_once() {
         let mut relay = transporting_node();
-        let mut announce = bytes_from_hex(RNS_1_4_0_RATCHETED_ANNOUNCE);
+        let mut announce = bytes_from_hex(RNS_1_4_2_RATCHETED_ANNOUNCE);
         let _ = relay.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(500),
@@ -499,7 +499,7 @@ mod tests {
             &mut |_| {},
             None,
         );
-        let mut in_transport = bytes_from_hex(RNS_1_4_0_SEALED_TO_RATCHET_VIA_TRANSPORT);
+        let mut in_transport = bytes_from_hex(RNS_1_4_2_SEALED_TO_RATCHET_VIA_TRANSPORT);
         let out = relay.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),

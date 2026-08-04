@@ -5,7 +5,7 @@ pub(in crate::screen) mod menus;
 pub(in crate::screen) mod metrics;
 mod primitives;
 
-use embedded_graphics::mono_font::ascii::FONT_6X10;
+use embedded_graphics::mono_font::iso_8859_1::FONT_6X10;
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;

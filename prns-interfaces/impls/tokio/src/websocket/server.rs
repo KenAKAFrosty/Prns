@@ -150,6 +150,10 @@ impl InterfaceSupervisor for WebSocketServer {
         &self.channel_tag
     }
 
+    fn policy(&self) -> EffectiveInterfacePolicy {
+        self.policy
+    }
+
     async fn run(self, fleet: Fleet) {
         let mut handshakes = tokio::task::JoinSet::new();
         loop {

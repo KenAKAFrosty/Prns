@@ -1,6 +1,6 @@
 export const HOST_CONTRACT_ABI = 1;
 export const HOST_SCHEMA_VERSION = 1;
-export const PRODUCT_VERSION = "0.3.2";
+export const PRODUCT_VERSION = "0.3.3";
 export const DESTINATION_HASH_LENGTH = 16;
 export const IDENTITY_HASH_LENGTH = 16;
 export const INTERFACE_ID_LENGTH = 8;
@@ -10,6 +10,8 @@ export const REQUEST_ID_LENGTH = 16;
 export const REQUEST_PATH_HASH_LENGTH = 16;
 export const RESOURCE_HASH_LENGTH = 32;
 export const IDENTITY_SECRET_LENGTH = 64;
+export const SAFE_INT_MIN = -9007199254740991;
+export const SAFE_INT_MAX = 9007199254740991;
 export const SAFE_UINT_MAX = 9007199254740991;
 export const CAPABILITY_NAME_VALUES = Object.freeze([
     "Loopback",
@@ -115,6 +117,18 @@ export const INTERFACE_KIND_VALUES = Object.freeze([
 ]);
 export function isInterfaceKind(value) {
     return typeof value === "string" && INTERFACE_KIND_VALUES.includes(value);
+}
+export const INTERFACE_MODE_VALUES = Object.freeze([
+    "Full",
+    "PointToPoint",
+    "AccessPoint",
+    "Roaming",
+    "Boundary",
+    "Gateway",
+    "Internal",
+]);
+export function isInterfaceMode(value) {
+    return typeof value === "string" && INTERFACE_MODE_VALUES.includes(value);
 }
 export const INTERFACE_HEALTH_VALUES = Object.freeze([
     "Initializing",

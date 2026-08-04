@@ -13,7 +13,7 @@ use std::os::windows::process::CommandExt;
 
 use crate::active_config::{self, ActiveConfigRecord};
 use crate::logs::{open_log, rotate_log};
-use crate::record::{LogLane, ServiceRecord, ServiceState};
+use crate::record::{LogLane, ServiceKind, ServiceRecord, ServiceState};
 use crate::state::{
     cleanup_stale, open_lock, prepare_state_dir, read_generation, read_record, ready_generation,
     remove_generation_if_matching, remove_if_present, runtime_is_locked, write_generation,
@@ -37,6 +37,13 @@ pub struct LaunchSpec<'a> {
     pub managed_binary: Option<&'a Path>,
     pub args: &'a [OsString],
     pub working_dir: &'a Path,
+    pub log_lane: LogLane,
+    pub signature: u64,
+    pub version: &'a str,
+}
+
+pub struct ForegroundSpec<'a> {
+    pub binary: &'a Path,
     pub log_lane: LogLane,
     pub signature: u64,
     pub version: &'a str,
@@ -121,6 +128,7 @@ impl ManagedProcess {
             pid: std::process::id(),
             signature,
             log_lane,
+            kind: ServiceKind::Managed,
             binary: std::env::current_exe().map_err(|source| ServiceError::Io {
                 operation: "could not locate the running prnsd executable",
                 source,
@@ -138,6 +146,51 @@ impl ManagedProcess {
             generation,
             runtime_lock,
         }))
+    }
+
+    pub fn adopt_foreground(
+        paths: ServicePaths,
+        service: ForegroundSpec<'_>,
+    ) -> Result<Self, ServiceError> {
+        let _control = ControlLock::acquire(&paths)?;
+        if running(&paths)?.is_some() {
+            return Err(ServiceError::ManagedInstanceAlreadyRunning);
+        }
+        cleanup_stale(&paths)?;
+        let runtime_lock = open_lock(&paths.runtime_lock, "could not open prnsd runtime lock")?;
+        match runtime_lock.try_lock() {
+            Ok(()) => {}
+            Err(TryLockError::WouldBlock) => {
+                return Err(ServiceError::ManagedInstanceAlreadyRunning);
+            }
+            Err(TryLockError::Error(source)) => {
+                return Err(ServiceError::Io {
+                    operation: "could not lock the prnsd foreground service session",
+                    source,
+                });
+            }
+        }
+        let generation = generation();
+        let record = ServiceRecord {
+            generation,
+            pid: std::process::id(),
+            signature: service.signature,
+            log_lane: service.log_lane,
+            kind: ServiceKind::Foreground,
+            binary: service.binary.to_path_buf(),
+            version: service.version.to_string(),
+            state: ServiceState::Starting,
+        };
+        remove_if_present(
+            &paths.active_config,
+            "could not remove the previous prnsd configuration record",
+        )?;
+        write_record(&paths, &record)?;
+        Ok(Self {
+            paths,
+            generation,
+            runtime_lock,
+        })
     }
 
     pub fn mark_ready(&self) -> Result<(), ServiceError> {
@@ -495,6 +548,7 @@ mod tests {
             pid: 17,
             signature: 9,
             log_lane: LogLane::Human,
+            kind: ServiceKind::Managed,
             binary: PathBuf::from("/test/prnsd"),
             version: "test".to_string(),
             state: ServiceState::Starting,
@@ -541,6 +595,7 @@ mod tests {
             pid: 17,
             signature: 9,
             log_lane: LogLane::Human,
+            kind: ServiceKind::Managed,
             binary: PathBuf::from("/test/prnsd"),
             version: "test".to_string(),
             state: ServiceState::Starting,

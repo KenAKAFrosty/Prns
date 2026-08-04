@@ -60,7 +60,7 @@ fn ingest_processes_but_does_not_accept_non_announce_bytes() {
 
 #[test]
 fn an_ifac_flagged_packet_is_dropped_on_an_open_interface() {
-    let mut raw = bytes_from_hex(RNS_1_4_0_ANNOUNCE);
+    let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
     raw[0] |= 0x80;
     let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
     let out = state.ingest_packet_with(

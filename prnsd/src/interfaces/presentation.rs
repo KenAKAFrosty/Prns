@@ -8,6 +8,8 @@ use prns_config::{
 
 use crate::terminal::{self, ACCENT, ACCENT_STRONG, ERROR, MUTED, PROMPT, WARNING};
 
+use super::capabilities;
+
 pub(super) struct Presentation {
     styled: bool,
 }
@@ -30,7 +32,7 @@ impl Presentation {
         let _ = writeln!(
             output,
             "{}",
-            terminal::paint("Interface configuration", ACCENT, self.styled)
+            terminal::paint("Saved interface configuration", ACCENT, self.styled)
         );
         let _ = writeln!(
             output,
@@ -40,6 +42,15 @@ impl Presentation {
         let _ = writeln!(output);
         let _ = writeln!(output, "{}", self.validation_status(validation));
         let _ = writeln!(output, "{}", self.runtime_status(runtime, apply));
+        let _ = writeln!(
+            output,
+            "{}",
+            terminal::paint(
+                "Interfaces below are saved configuration, not live status. Run `prnsd status` for live connection activity.",
+                MUTED,
+                self.styled
+            )
+        );
         let _ = writeln!(output);
         if interfaces.is_empty() {
             let _ = writeln!(output, "  No interfaces are configured.");
@@ -193,7 +204,7 @@ impl Presentation {
         if errors > 0 {
             let suffix = count_summary(errors, warnings, cleanup);
             return terminal::paint(
-                format!("✗ Configuration invalid · {suffix}"),
+                format!("✗ Saved configuration invalid · {suffix}"),
                 ERROR,
                 self.styled,
             );
@@ -208,7 +219,7 @@ impl Presentation {
                 count_summary(errors, warnings, cleanup)
             };
             return terminal::paint(
-                format!("✓ Configuration valid · {suffix}"),
+                format!("✓ Saved configuration valid · {suffix}"),
                 if cleanup == warnings {
                     ACCENT_STRONG
                 } else {
@@ -217,33 +228,39 @@ impl Presentation {
                 self.styled,
             );
         }
-        terminal::paint("✓ Configuration valid", ACCENT_STRONG, self.styled)
+        terminal::paint("✓ Saved configuration valid", ACCENT_STRONG, self.styled)
     }
 
     fn runtime_status(&self, runtime: RuntimeStatus, apply: ApplyStatus) -> String {
         match (runtime, apply) {
             (RuntimeStatus::Running, ApplyStatus::Pending) => terminal::paint(
-                "● Managed daemon running · saved changes not applied",
+                "● Daemon reachable · saved changes not applied",
                 WARNING,
                 self.styled,
             ),
             (RuntimeStatus::Running, ApplyStatus::Current) => terminal::paint(
-                "● Managed daemon running · saved interface plan applied",
+                "● Daemon reachable · saved interface plan applied",
                 ACCENT_STRONG,
                 self.styled,
             ),
-            (RuntimeStatus::Running, ApplyStatus::Unknown) => {
-                terminal::paint("● Managed daemon running", ACCENT_STRONG, self.styled)
-            }
-            (RuntimeStatus::Starting, _) => {
-                terminal::paint("◐ Managed daemon starting", WARNING, self.styled)
-            }
+            (RuntimeStatus::Running, ApplyStatus::Unknown) => terminal::paint(
+                "● Daemon reachable · live interface state not shown",
+                ACCENT_STRONG,
+                self.styled,
+            ),
+            (RuntimeStatus::Starting, _) => terminal::paint(
+                "◐ Daemon starting · live interface state not shown",
+                WARNING,
+                self.styled,
+            ),
             (RuntimeStatus::Stopped, _) => {
-                terminal::paint("○ Managed daemon stopped", MUTED, self.styled)
+                terminal::paint("○ Daemon stopped · no live interfaces", MUTED, self.styled)
             }
-            (RuntimeStatus::Unavailable, _) => {
-                terminal::paint("! Managed daemon status unavailable", WARNING, self.styled)
-            }
+            (RuntimeStatus::Unavailable, _) => terminal::paint(
+                "! Daemon status unavailable · live interface state not shown",
+                WARNING,
+                self.styled,
+            ),
         }
     }
 
@@ -254,11 +271,15 @@ impl Presentation {
             .unwrap_or("Unknown type");
         let configured = interface.configured_type().unwrap_or("missing type");
         let state = match interface.enabled() {
-            Some(true) => terminal::paint("Enabled", ACCENT_STRONG, self.styled),
-            Some(false) => terminal::paint("Disabled", MUTED, self.styled),
-            None => terminal::paint("Invalid state", ERROR, self.styled),
+            Some(true) => terminal::paint("Configured enabled", ACCENT_STRONG, self.styled),
+            Some(false) => terminal::paint("Configured disabled", MUTED, self.styled),
+            None => terminal::paint("Configured state invalid", ERROR, self.styled),
         };
-        format!("{kind} · {configured} · {state}")
+        let availability = match interface.kind() {
+            Some(kind) if !capabilities::available(kind) => " · unavailable in this build",
+            Some(_) | None => "",
+        };
+        format!("{kind} · {configured} · {state}{availability}")
     }
 }
 
@@ -365,7 +386,7 @@ fn interface_name(path: &str) -> Option<String> {
 
 pub(super) fn friendly_kind(kind: InterfaceKind) -> &'static str {
     match kind {
-        InterfaceKind::Auto => "Auto / Wi-Fi",
+        InterfaceKind::Auto => "Auto Wi-Fi / LAN",
         InterfaceKind::TcpClient => "TCP client",
         InterfaceKind::TcpServer => "TCP server",
         InterfaceKind::Udp => "UDP",
@@ -435,9 +456,16 @@ mod tests {
             ApplyStatus::Pending,
         );
 
-        assert!(rendered.contains("Interface configuration\n/tmp/config"));
-        assert!(rendered.contains("Configuration valid · 3 redundant RNS-generated fields"));
-        assert!(rendered.contains("Auto / Wi-Fi · AutoInterface · Enabled"));
+        assert!(rendered.contains("Saved interface configuration\n/tmp/config"));
+        assert!(rendered.contains("Saved configuration valid · 3 redundant RNS-generated fields"));
+        assert!(rendered.contains(
+            "Interfaces below are saved configuration, not live status. Run `prnsd status` for live connection activity."
+        ));
+        assert!(rendered.contains("Auto Wi-Fi / LAN · AutoInterface · Configured enabled"));
+        assert_eq!(
+            rendered.contains("unavailable in this build"),
+            !cfg!(feature = "tokio-host")
+        );
         assert!(rendered.contains("saved changes not applied"));
         assert!(!rendered.contains("\x1b["));
     }

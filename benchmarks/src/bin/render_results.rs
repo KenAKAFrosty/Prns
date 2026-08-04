@@ -87,14 +87,16 @@ fn render_all() -> Vec<(PathBuf, String)> {
             "{} still uses result schema v{}",
             row.scenario, row.schema_version
         );
-        if Manifest::exists(&row.scenario) {
-            by_host.entry(row.host.clone()).or_default().push(row);
-        }
+        by_host.entry(row.host.clone()).or_default().push(row);
     }
 
     let mut files = Vec::new();
     let mut hosts = Vec::new();
     for (host, rows) in &by_host {
+        hosts.push((host.clone(), machine_label(host)));
+        if !host_matches_current_catalog(rows) {
+            continue;
+        }
         let mut assets = Vec::new();
         let body = render_host(host, rows, &implementations, &mut assets);
         files.push((output_dir.join(format!("RESULTS-{host}.md")), body));
@@ -107,10 +109,22 @@ fn render_all() -> Vec<(PathBuf, String)> {
             }
         }
         files.append(&mut assets);
-        hosts.push((host.clone(), machine_label(host)));
     }
     files.push((output_dir.join("RESULTS.md"), render_index(&hosts)));
     files
+}
+
+fn host_matches_current_catalog(rows: &[ResultRow]) -> bool {
+    let expected = load_catalog()
+        .expect("validated benchmark catalog")
+        .into_iter()
+        .map(|manifest| (manifest.name.as_str().to_string(), manifest.version))
+        .collect::<BTreeSet<_>>();
+    let observed = rows
+        .iter()
+        .map(|row| (row.scenario.clone(), row.scenario_version))
+        .collect::<BTreeSet<_>>();
+    observed == expected
 }
 
 fn website_asset_dir(output_dir: &Path) -> Option<PathBuf> {
@@ -145,6 +159,26 @@ fn render_host(
     implementations: &[ImplementationDescriptor],
     assets: &mut Vec<(PathBuf, String)>,
 ) -> String {
+    let used = rows
+        .iter()
+        .flat_map(|row| match &row.subject {
+            Subject::Direct {
+                initiator,
+                responder,
+                relay,
+            } => [
+                Some(initiator.as_str()),
+                Some(responder.as_str()),
+                relay.as_deref(),
+            ],
+        })
+        .flatten()
+        .collect::<BTreeSet<_>>();
+    let implementations = implementations
+        .iter()
+        .filter(|implementation| used.contains(implementation.slug.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
     let mut out = format!("# Benchmark results — `{host}`\n\n[← All hosts](RESULTS.md)\n");
     render_qualification(&mut out, rows);
     render_machine_and_method(&mut out, host);
@@ -152,11 +186,11 @@ fn render_host(
     let aggregates = aggregate(rows);
     let glance = glance_rows(
         &aggregates,
-        implementations,
+        &implementations,
         qualification_complete(&aggregates),
     );
-    let memory = memory_glance_rows(&aggregates, implementations);
-    render_headline(&mut out, host, &glance, &memory, implementations, assets);
+    let memory = memory_glance_rows(&aggregates, &implementations);
+    render_headline(&mut out, host, &glance, &memory, &implementations, assets);
 
     let mut grouped: BTreeMap<String, Vec<(Manifest, Vec<&Aggregate>)>> = BTreeMap::new();
     let mut by_scenario: BTreeMap<String, Vec<&Aggregate>> = BTreeMap::new();
@@ -179,10 +213,10 @@ fn render_host(
         scenarios.sort_by(|a, b| a.0.title.cmp(&b.0.title));
         let _ = write!(out, "\n### {category}\n");
         for (manifest, subject_rows) in scenarios {
-            render_scenario(&mut out, &manifest, &subject_rows, implementations);
+            render_scenario(&mut out, &manifest, &subject_rows, &implementations);
         }
     }
-    render_legends(&mut out, &aggregates, implementations);
+    render_legends(&mut out, &aggregates, &implementations);
     out
 }
 
@@ -426,10 +460,17 @@ fn glance_rows(
     rows
 }
 
+struct MemoryGlanceRow {
+    title: String,
+    ours_rss: f64,
+    reference_rss: f64,
+    ratio: f64,
+}
+
 fn memory_glance_rows(
     aggregates: &[Aggregate],
     implementations: &[ImplementationDescriptor],
-) -> Vec<(String, f64)> {
+) -> Vec<MemoryGlanceRow> {
     let mut rows = Vec::new();
     for scenario_manifest in load_catalog().expect("validated benchmark catalog") {
         let scenario = scenario_manifest.name.as_str();
@@ -467,10 +508,12 @@ fn memory_glance_rows(
                 reference.maximum(Axis::Memory, metric),
             ) {
                 if ours_rss > 0.0 {
-                    rows.push((
-                        format!("{} · {role}", manifest.title),
-                        reference_rss / ours_rss,
-                    ));
+                    rows.push(MemoryGlanceRow {
+                        title: format!("{} · {role}", manifest.title),
+                        ours_rss,
+                        reference_rss,
+                        ratio: reference_rss / ours_rss,
+                    });
                 }
             }
         }
@@ -490,7 +533,7 @@ fn render_headline(
     out: &mut String,
     host: &str,
     glance: &[GlanceRow],
-    memory: &[(String, f64)],
+    memory: &[MemoryGlanceRow],
     implementations: &[ImplementationDescriptor],
     assets: &mut Vec<(PathBuf, String)>,
 ) {
@@ -521,8 +564,12 @@ fn render_headline(
         let caption = format!(
             "{reference} peak RSS as a multiple of Prns · higher means Prns uses less memory"
         );
-        let light = ratio_chart_svg(memory, &caption, &LIGHT_CHART);
-        let dark = ratio_chart_svg(memory, &caption, &DARK_CHART);
+        let chart_rows: Vec<(String, f64)> = memory
+            .iter()
+            .map(|row| (row.title.clone(), row.ratio))
+            .collect();
+        let light = ratio_chart_svg(&chart_rows, &caption, &LIGHT_CHART);
+        let dark = ratio_chart_svg(&chart_rows, &caption, &DARK_CHART);
         assets.push((
             bench_dir().join(format!("assets/at-a-glance-memory-{host}-light.svg")),
             light,
@@ -551,6 +598,21 @@ fn render_headline(
             format_primary(row.ours, &row.primary_metric),
             format_primary(row.reference, &row.primary_metric),
         );
+    }
+    if !memory.is_empty() {
+        out.push_str(
+            "\n| Scenario · role | Prns peak RSS | Reference peak RSS | Reference / Prns |\n|---|---:|---:|---:|\n",
+        );
+        for row in memory {
+            let _ = writeln!(
+                out,
+                "| {} | {:.1} MiB | {:.1} MiB | {:.2}× |",
+                row.title,
+                row.ours_rss / 1_048_576.0,
+                row.reference_rss / 1_048_576.0,
+                row.ratio,
+            );
+        }
     }
     out.push_str(
         "\nA dash means no current three-sample release evidence is published for that scenario.\n\n</details>\n",
@@ -582,7 +644,7 @@ fn ratio_chart_svg(rows: &[(String, f64)], caption: &str, theme: &ChartTheme) ->
     );
     let _ = writeln!(
         svg,
-        "  <text x=\"{gutter:.1}\" y=\"17\" font-size=\"12\" fill=\"{}\">{}</text>",
+        "  <text x=\"8\" y=\"17\" font-size=\"12\" fill=\"{}\">{}</text>",
         theme.secondary,
         escape_text(caption),
     );
@@ -803,7 +865,7 @@ fn render_scenario(
         let _ = write!(
             out,
             "| {} | {}",
-            annotated_subject_label(&row.subject, manifest, implementations),
+            annotated_subject_label(&row.subject, manifest, rows, implementations),
             conformance_cell(row)
         );
         if columns.rate {
@@ -891,15 +953,10 @@ fn render_manifest_notes(
     rows: &[&Aggregate],
     implementations: &[ImplementationDescriptor],
 ) {
-    let visible_cell_notes = manifest
-        .cell_notes
-        .iter()
-        .enumerate()
-        .filter(|(_, note)| rows.iter().any(|row| row.subject == note.subject))
-        .collect::<Vec<_>>();
+    let visible_cell_notes = visible_cell_notes(manifest, rows);
     if !visible_cell_notes.is_empty() {
         out.push_str("\n**Cell context**\n");
-        for (index, note) in visible_cell_notes {
+        for (index, note) in visible_cell_notes.into_iter().enumerate() {
             let _ = writeln!(
                 out,
                 "\n{}. **{}** — {}",
@@ -910,8 +967,45 @@ fn render_manifest_notes(
         }
     }
     for note in &manifest.notes {
-        let _ = writeln!(out, "\n> {note}");
+        let _ = writeln!(out, "\n> {}", render_note(note, rows, implementations));
     }
+}
+
+fn render_note(
+    note: &str,
+    rows: &[&Aggregate],
+    implementations: &[ImplementationDescriptor],
+) -> String {
+    let version = implementations
+        .iter()
+        .filter(|implementation| implementation.role == ImplementationRole::Reference)
+        .find(|implementation| {
+            rows.iter().any(|row| match &row.subject {
+                Subject::Direct {
+                    initiator,
+                    responder,
+                    relay,
+                } => {
+                    initiator == &implementation.slug
+                        || responder == &implementation.slug
+                        || relay.as_ref() == Some(&implementation.slug)
+                }
+            })
+        })
+        .and_then(|implementation| implementation.pinned_ref.as_deref())
+        .unwrap_or("unknown");
+    note.replace("{reference_version}", version)
+}
+
+fn visible_cell_notes<'a>(
+    manifest: &'a Manifest,
+    rows: &[&Aggregate],
+) -> Vec<&'a ScenarioCellNote> {
+    manifest
+        .cell_notes
+        .iter()
+        .filter(|note| rows.iter().any(|row| row.subject == note.subject))
+        .collect()
 }
 
 fn render_transport_table(
@@ -984,7 +1078,7 @@ fn render_transport_table(
         let _ = writeln!(
             out,
             "| {} | {tcp_policy} | {link_shape} | {} | {} | {} | {wire} | {} | {} | {headroom} |",
-            annotated_subject_label(&row.subject, manifest, implementations),
+            annotated_subject_label(&row.subject, manifest, rows, implementations),
             conformance_cell(row),
             bytes_cell(row.median(Axis::Throughput, "carried_payload_bytes_per_sec")),
             rate_cell(row.median(Axis::Throughput, "forwarded_frames_per_sec")),
@@ -1086,11 +1180,11 @@ fn subject_label(subject: &Subject, implementations: &[ImplementationDescriptor]
 fn annotated_subject_label(
     subject: &Subject,
     manifest: &Manifest,
+    rows: &[&Aggregate],
     implementations: &[ImplementationDescriptor],
 ) -> String {
     let label = subject_label(subject, implementations);
-    manifest
-        .cell_notes
+    visible_cell_notes(manifest, rows)
         .iter()
         .position(|note| &note.subject == subject)
         .map_or(label.clone(), |index| {
@@ -1282,10 +1376,6 @@ impl Manifest {
         self.primary_metric.contains("bytes_per_sec")
     }
 
-    fn exists(scenario: &str) -> bool {
-        scenario_dir(scenario).join("manifest.json").is_file()
-    }
-
     fn load(scenario: &str) -> Self {
         let path = scenario_dir(scenario).join("manifest.json");
         let json: serde_json::Value = serde_json::from_str(
@@ -1349,6 +1439,33 @@ mod tests {
             submitter_id: None,
             provenance: BTreeMap::new(),
         }
+    }
+
+    fn rows_for_current_catalog() -> Vec<ResultRow> {
+        load_catalog()
+            .expect("validated benchmark catalog")
+            .into_iter()
+            .map(|manifest| {
+                let mut result = row(0, Axis::Conformance, "settled_clean", Some(1.0));
+                result.scenario = manifest.name.as_str().to_string();
+                result.scenario_version = manifest.version;
+                result
+            })
+            .collect()
+    }
+
+    #[test]
+    fn only_current_catalog_evidence_is_rendered_with_current_manifests() {
+        let current = rows_for_current_catalog();
+        assert!(host_matches_current_catalog(&current));
+
+        let mut historical = current.clone();
+        historical[0].scenario_version -= 1;
+        assert!(!host_matches_current_catalog(&historical));
+
+        let mut incomplete = current;
+        incomplete.pop();
+        assert!(!host_matches_current_catalog(&incomplete));
     }
 
     #[test]
@@ -1443,7 +1560,7 @@ mod tests {
     #[test]
     fn the_glance_chart_ships_light_and_dark_ratio_bars() {
         let mut rows = Vec::new();
-        for (implementation, rate) in [("personal-rns", 20.0), ("rns-1.4.0-compiled", 5.0)] {
+        for (implementation, rate) in [("personal-rns", 20.0), ("rns-1.4.2-compiled", 5.0)] {
             for sample in 0..3 {
                 let mut result = row(sample, Axis::Throughput, "delivered_per_sec", Some(rate));
                 result.subject = Subject::Direct {
@@ -1456,6 +1573,8 @@ mod tests {
         }
         let mut assets = Vec::new();
         let output = render_host("test-host", &rows, &load_implementations(), &mut assets);
+        assert!(output.contains("RNS 1.4.2 (compiled)"));
+        assert!(!output.contains("RNS 1.4.0 (compiled)"));
         assert!(output.contains("<picture>"));
         assert!(output.contains("assets/at-a-glance-test-host-light.svg"));
         assert!(output.contains("assets/at-a-glance-test-host-dark.svg"));
@@ -1482,11 +1601,55 @@ mod tests {
     }
 
     #[test]
+    fn historical_rows_select_their_historical_reference_descriptor() {
+        let mut rows = Vec::new();
+        for implementation in ["personal-rns", "rns-1.4.0-compiled"] {
+            let mut result = row(0, Axis::Throughput, "delivered_per_sec", Some(20.0));
+            result.subject = Subject::Direct {
+                initiator: implementation.into(),
+                responder: implementation.into(),
+                relay: None,
+            };
+            rows.push(result);
+        }
+        let output = render_host(
+            "historical-host",
+            &rows,
+            &load_implementations(),
+            &mut Vec::new(),
+        );
+        assert!(output.contains("RNS 1.4.0 (compiled)"));
+        assert!(!output.contains("RNS 1.4.2 (compiled)"));
+    }
+
+    #[test]
+    fn manifest_notes_use_the_reference_from_the_result_subject() {
+        let implementations = load_implementations();
+        for (reference, version) in [
+            ("rns-1.4.0-compiled", "1.4.0"),
+            ("rns-1.4.2-compiled", "1.4.2"),
+        ] {
+            let mut result = row(0, Axis::Throughput, "delivered_per_sec", Some(20.0));
+            result.subject = Subject::Direct {
+                initiator: reference.into(),
+                responder: reference.into(),
+                relay: None,
+            };
+            let aggregates = aggregate(&[result]);
+            let rows = aggregates.iter().collect::<Vec<_>>();
+            assert_eq!(
+                render_note("compiled RNS {reference_version}", &rows, &implementations),
+                format!("compiled RNS {version}")
+            );
+        }
+    }
+
+    #[test]
     fn the_memory_chart_ships_per_role_ratios() {
         let mut rows = Vec::new();
         for (implementation, initiator_rss, responder_rss) in [
             ("personal-rns", 10_485_760.0, 20_971_520.0),
-            ("rns-1.4.0-compiled", 104_857_600.0, 52_428_800.0),
+            ("rns-1.4.2-compiled", 104_857_600.0, 52_428_800.0),
         ] {
             for sample in 0..3 {
                 for (metric, value) in [
@@ -1577,31 +1740,36 @@ mod tests {
 
     #[test]
     fn cell_notes_mark_the_exact_subject_and_render_beneath_the_table() {
-        let mut result = row(0, Axis::Throughput, "delivered_per_sec", Some(20.0));
-        result.scenario = "request-response".into();
-        result.subject = Subject::Direct {
-            initiator: "personal-rns".into(),
-            responder: "rns-1.4.0-compiled".into(),
-            relay: None,
-        };
-        let aggregates = aggregate(&[result]);
-        let refs = aggregates.iter().collect::<Vec<_>>();
-        let mut output = String::new();
-        render_scenario(
-            &mut output,
-            &Manifest::load("request-response"),
-            &refs,
-            &load_implementations(),
-        );
-        assert!(output.contains("Prns → RNS 1.4.0 (compiled)<sup>1</sup>"));
-        assert!(output.contains("**Cell context**"));
-        assert!(output.contains("RNS sends a resource advertisement"));
+        for (reference, label) in [
+            ("rns-1.4.0-compiled", "RNS 1.4.0 (compiled)"),
+            ("rns-1.4.2-compiled", "RNS 1.4.2 (compiled)"),
+        ] {
+            let mut result = row(0, Axis::Throughput, "delivered_per_sec", Some(20.0));
+            result.scenario = "request-response".into();
+            result.subject = Subject::Direct {
+                initiator: "personal-rns".into(),
+                responder: reference.into(),
+                relay: None,
+            };
+            let aggregates = aggregate(&[result]);
+            let refs = aggregates.iter().collect::<Vec<_>>();
+            let mut output = String::new();
+            render_scenario(
+                &mut output,
+                &Manifest::load("request-response"),
+                &refs,
+                &load_implementations(),
+            );
+            assert!(output.contains(&format!("Prns → {label}<sup>1</sup>")));
+            assert!(output.contains("**Cell context**"));
+            assert!(output.contains("RNS sends a resource advertisement"));
+        }
     }
 
     #[test]
     fn transport_rendering_uses_relay_subjects_and_exposes_ceiling_evidence() {
         let mut rows = Vec::new();
-        for relay in ["personal-rns", "rns-1.4.0-compiled"] {
+        for relay in ["personal-rns", "rns-1.4.2-compiled"] {
             for sample in 0..3 {
                 for (axis, metric, value) in [
                     (Axis::Conformance, "settled_clean", 1.0),
@@ -1665,7 +1833,7 @@ mod tests {
         );
         for expected in [
             "Prns relay",
-            "RNS 1.4.0 (compiled) relay",
+            "RNS 1.4.2 (compiled) relay",
             "| TCP policy / MTU | Link MTU / payload | Conformance | Payload | Frames |",
             "1 Gbps / 512 KiB",
             "512 / 512 KiB",

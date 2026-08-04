@@ -7,14 +7,14 @@
 # interface at the discounted hop (hops=0) — a genuine RNS-on-the-wire interop check.
 #
 # The Python interpreter is $SMOKE_PYTHON if set (CI points it at a uv-built venv with the pinned
-# rns from benchmarks/reference/requirements.txt), otherwise the local reference venv. Allocates a
+# rns from validation/oracles/requirements.txt), otherwise the local reference venv. Allocates a
 # free loopback port pair. Prints PASS or FAIL and exits accordingly.
 set -u
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 source "$ROOT/validation/interop/lib/cargo-artifacts.sh"
 DAEMON="$(cargo_debug_example "$ROOT/validation/integration/Cargo.toml" local_shared_instance)"
-VENV_PY="${SMOKE_PYTHON:-$ROOT/benchmarks/reference/.venv/bin/python}"
+VENV_PY="${SMOKE_PYTHON:-$ROOT/validation/.venv/rns-1.4.2/bin/python}"
 CLIENT="$ROOT/validation/interop/peers/rns_shared_instance_client.py"
 DAEMON_LOG="$(mktemp)"
 CLIENT_LOG="$(mktemp)"

@@ -11,8 +11,7 @@ pub const STRICT_RATE_LIMIT_HZ: u64 = 3;
 pub const RELAXED_RATE_LIMIT_HZ: u64 = 10;
 /// RNS `Interface.IC_BURST_HOLD` (15 seconds): the minimum a burst stays latched
 pub const BURST_HOLD_MS: u64 = 15 * 1_000;
-/// RNS `Interface.IC_BURST_MIN_SAMPLES` (6): a latched burst may not clear until at least this many samples back the calm reading
-pub const BURST_CLEAR_MIN_SAMPLES: u16 = 6;
+pub const BURST_CLEAR_MIN_SAMPLES: u16 = 2;
 /// Our tumbling rate-measurement window, sized to RNS `Interface.AR_FREQ_DECAY` (10 seconds), the reference's lazy sample-decay horizon
 pub const FREQUENCY_WINDOW_MS: u64 = 10 * 1_000;
 /// RNS `Interface.IC_DEQUE_MIN_SAMPLE` + 1: fewer samples than this reads as zero frequency
@@ -89,7 +88,7 @@ pub struct InterfaceAnnounceLimits<C: InterfaceAnnounceLimitTable> {
 }
 
 impl<C: InterfaceAnnounceLimitTable> InterfaceAnnounceLimits<C> {
-    /// RNS 1.4.0 `Interface.received_announce`
+    /// RNS 1.4.2 `Interface.received_announce`
     pub fn record(&mut self, interface: InterfaceId, now: InstantMillis) {
         let index = self.index_or_insert(interface, now);
         let row = &mut self.table.rows_mut()[index];
@@ -109,7 +108,7 @@ impl<C: InterfaceAnnounceLimitTable> InterfaceAnnounceLimits<C> {
         let _ = self.index_or_insert(interface, now);
     }
 
-    /// RNS 1.4.0 `Interface.should_ingress_limit`: latch or clear the burst and report whether an unknown-destination announce arriving now should be held.
+    /// RNS 1.4.2 `Interface.should_ingress_limit`: latch or clear the burst and report whether an unknown-destination announce arriving now should be held.
     /// [`Self::record`] runs before this for every announce, known or unknown destination, so the announce being judged already counts toward its own reading; only unknown destinations consult this judgment, so known-destination floods raise the rate without touching the latch. Both behaviors mirror the reference's call order.
     pub fn should_limit(&mut self, interface: InterfaceId, now: InstantMillis) -> bool {
         self.should_limit_with_policy(
@@ -372,16 +371,26 @@ mod tests {
         for i in 0..12u64 {
             record_then_judge(&mut limits, iface(1), InstantMillis(i * 8));
         }
-        for second in 20..=25u64 {
-            assert!(
-                record_then_judge(&mut limits, iface(1), InstantMillis(second * 1_000)),
-                "still latched while the calm reading gathers its six samples",
-            );
-        }
         assert!(
-            !record_then_judge(&mut limits, iface(1), InstantMillis(26_000)),
-            "six slow samples proved the calm and the burst cleared on the previous call",
+            record_then_judge(&mut limits, iface(1), InstantMillis(20_000)),
+            "one calm sample cannot clear the burst",
         );
+        assert!(
+            record_then_judge(&mut limits, iface(1), InstantMillis(21_000)),
+            "the second calm sample clears the latch after holding its own arrival",
+        );
+        assert!(
+            !record_then_judge(&mut limits, iface(1), InstantMillis(22_000)),
+            "the next calm arrival sees the cleared latch",
+        );
+    }
+
+    #[test]
+    fn three_samples_are_still_required_to_judge_a_frequency() {
+        let mut limits = limits();
+        assert!(!record_then_judge(&mut limits, iface(1), InstantMillis(0)));
+        assert!(!record_then_judge(&mut limits, iface(1), InstantMillis(1)));
+        assert!(record_then_judge(&mut limits, iface(1), InstantMillis(2)));
     }
 
     #[test]

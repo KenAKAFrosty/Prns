@@ -2,6 +2,7 @@ mod embedded_persistence;
 mod interface_store;
 mod node_facade;
 mod request_runner;
+mod shared_flash;
 
 pub use prns_runtime::runtime::*;
 
@@ -18,3 +19,4 @@ pub use node_facade::{
     InterfaceLane, LaneClaimError, ManifoldLaneSet, ManifoldWiring, OutboundFrame, PrnsNode,
     PrnsNodeHandle, RequestRoutingCapacity, StaticManifoldLane, SupervisorLane,
 };
+pub use shared_flash::SharedNorFlash;

@@ -8,6 +8,30 @@ import Darwin
 #endif
 
 @Test
+func requestByteLimitsStayInTheInteroperableIntegerRange() throws {
+    let destination = DestinationConfig.single(
+        name: DestinationName(appName: "limits", aspects: ["request"]),
+        identity: .hostIdentity,
+        announceAppData: nil,
+        maximumRequestBytes: HostContract.safeUintMax + 1,
+        requestHandlers: []
+    )
+    #expect(throws: StatusFailure.self) {
+        _ = try nativeDestination(destination, arena: NativeArena())
+    }
+    let routing = InterfaceRoutingPolicy(
+        mode: nil,
+        gravity: HostContract.safeIntMax + 1,
+        recursivePathRequests: nil,
+        announcesFromInternal: nil,
+        announcesToInternal: nil
+    )
+    #expect(throws: StatusFailure.self) {
+        _ = try nativeInterfaceRouting(routing)
+    }
+}
+
+@Test
 func everySharedInterfaceFixtureMarshals() throws {
     let fixture = try loadInterfaceFixture()
     let line = SerialLineConfig(
@@ -169,13 +193,16 @@ func nativeHostContract() async throws {
     } catch is CancellationError {
     }
 
-    let attach = try host.execute(
-        .attachInterface(
-            config: .tcpClient(target: "127.0.0.1:9", bitrate: .auto)
+    let attached = try await host.attachInterface(
+        config: .tcpClient(target: "127.0.0.1:9", bitrate: .auto),
+        routing: InterfaceRoutingPolicy(
+            mode: .boundary,
+            gravity: -73,
+            recursivePathRequests: true,
+            announcesFromInternal: false,
+            announcesToInternal: true
         )
     )
-    defer { attach.close() }
-    let attached = try await attach.value()
     guard case .succeeded(.interfaceAttached(let interface)) = attached else {
         Issue.record("attach command did not return an interface")
         return
@@ -193,9 +220,7 @@ func nativeHostContract() async throws {
         return
     }
 
-    let detach = try host.execute(.detachInterface(interface: interface))
-    defer { detach.close() }
-    let detached = try await detach.value()
+    let detached = try await host.detachInterface(interface: interface)
     guard case .succeeded(.interfaceDetached) = detached else {
         Issue.record("detach command did not settle successfully")
         return
@@ -223,6 +248,7 @@ func persistentTwoNodeJourney() async throws {
         ),
         identity: .hostIdentity,
         announceAppData: try decodeHex(fixture.destination.announceAppDataHex),
+        maximumRequestBytes: 1_048_576,
         requestHandlers: [
             RequestHandlerConfig(path: fixture.request.path, policy: .allowAll)
         ]
@@ -253,7 +279,8 @@ func persistentTwoNodeJourney() async throws {
     guard case .interfaceAttached = try await successfulOutcome(
         server,
         .attachInterface(
-            config: .tcpServer(bind: "127.0.0.1:\(port)", bitrate: .auto)
+            config: .tcpServer(bind: "127.0.0.1:\(port)", bitrate: .auto),
+            routing: nil
         )
     ) else {
         Issue.record("server interface attachment returned the wrong outcome")
@@ -262,7 +289,8 @@ func persistentTwoNodeJourney() async throws {
     guard case .interfaceAttached = try await successfulOutcome(
         client,
         .attachInterface(
-            config: .tcpClient(target: "127.0.0.1:\(port)", bitrate: .auto)
+            config: .tcpClient(target: "127.0.0.1:\(port)", bitrate: .auto),
+            routing: nil
         )
     ) else {
         Issue.record("client interface attachment returned the wrong outcome")
@@ -302,7 +330,8 @@ func persistentTwoNodeJourney() async throws {
             linkId: linkId,
             pathHash: try RequestPathHash(decodeHex(fixture.request.pathHashHex)),
             payload: requestPayload,
-            timeout: .exact(millis: fixture.request.timeoutMillis)
+            timeout: .exact(millis: fixture.request.timeoutMillis),
+            maximumResponseBytes: 1_048_576
         )
     )
     defer { requestCommand.close() }

@@ -10,7 +10,7 @@ use crate::routing::links::resources::{
 };
 use crate::routing::links::LinkId;
 
-/// A deliberate bound where RNS 1.4.0 grows `Link.outgoing_resources` and `incoming_resources` without limit: Unlike the row-sized tables that take the unbounded-heap convention, each active slot here materializes its full transfer buffer, so an unbounded table would hand remote peers roughly a mebibyte of allocation per accepted offer.
+/// A deliberate bound where RNS 1.4.2 grows `Link.outgoing_resources` and `incoming_resources` without limit: Unlike the row-sized tables that take the unbounded-heap convention, each active slot here materializes its full transfer buffer, so an unbounded table would hand remote peers roughly a mebibyte of allocation per accepted offer.
 /// Overflow refuses by name on both faces: `SendResourceRejection::TableFull` going out, `IgnoreReason::CapacityExhausted` coming in.
 pub const DEFAULT_MAX_RESOURCES: usize = 64;
 

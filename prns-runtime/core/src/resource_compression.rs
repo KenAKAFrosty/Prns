@@ -1,4 +1,4 @@
-//! RNS 1.4.0 Resource bz2, the half the pure engine leaves to its host. `prns-core`
+//! RNS 1.4.2 Resource bz2, the half the pure engine leaves to its host. `prns-core`
 //! carries a resource as an opaque stream and flags it compressed or not; the codec is
 //! the host's, because bz2 is unavailable on the embedded targets the core also serves.
 //! The tokio host has no such limit, so it compresses every outgoing resource and inflates
@@ -26,7 +26,7 @@ pub fn compress_resource_candidate(data: &[u8], packed_metadata: Option<&[u8]>) 
     compress_if_smaller(&composite)
 }
 
-/// RNS 1.4.0 `Resource.__init__`: `bz2.compress` at level 9 (its default), kept only when
+/// RNS 1.4.2 `Resource.__init__`: `bz2.compress` at level 9 (its default), kept only when
 /// it comes out strictly smaller than the input. `None` is the reference's else-branch: send
 /// the payload as-is with the `c` flag clear. For already-dense bytes bz2 only adds overhead,
 /// so the reference, and we, decline it.
@@ -90,7 +90,7 @@ pub enum DecompressError {
 
 const DECOMPRESS_CHUNK_LEN: usize = 64 * 1024;
 
-/// RNS 1.4.0's bounded bz2 inflate, `BZ2Decompressor(...).decompress(data, max_length=…)` with
+/// RNS 1.4.2's bounded bz2 inflate, `BZ2Decompressor(...).decompress(data, max_length=…)` with
 /// the `eof` check: inflate to at most `max_len`, refusing a stream that would run past it. Both
 /// callers cap `max_len` at host policy (a resource's advertised length, already gated by the
 /// link's `ResourceStrategy`; a stream chunk's channel MDU), so a bz2 bomb can force neither an
@@ -148,7 +148,7 @@ mod tests {
     }
 
     /// The exact input behind the resource family's `CASE1_BZ2` reference vector:
-    /// RNS 1.3.5 minted this 90-byte stream from the 1360-byte payload below; RNS 1.4.0
+    /// RNS 1.3.5 minted this 90-byte stream from the 1360-byte payload below; RNS 1.4.2
     /// revalidates it unchanged.
     fn reference_input() -> Vec<u8> {
         b"reticulum resources ride the link "

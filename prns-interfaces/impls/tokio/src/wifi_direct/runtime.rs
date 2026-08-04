@@ -22,9 +22,9 @@ use prns_core::interfaces::wifi_direct::{
     DiscoveryMode, WifiDirectBackend, WifiDirectEvent, WifiDirectGroup,
 };
 use prns_core::interfaces::wifi_direct::{GroupPolicy, PolicyAction, PolicyInput};
-use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{
-    ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
+    BitrateBps, ConnectionState, EffectiveInterfacePolicy, InterfaceId, InterfaceKind,
+    InterfaceStatus, TransferRates,
 };
 use prns_runtime::manifold::driver::TokioInterfaceStatus;
 use prns_runtime::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
@@ -37,7 +37,7 @@ const BEACON_PERIOD: Duration = Duration::from_secs(2);
 pub struct WifiDirectAuto<B> {
     backend: B,
     intent: GoIntent,
-    bitrate: BitrateBps,
+    interface_policy: EffectiveInterfacePolicy,
     status: WifiDirectStatus,
 }
 
@@ -50,14 +50,24 @@ impl<B: WifiDirectBackend> WifiDirectAuto<B> {
         Self {
             backend,
             intent,
-            bitrate: WIFI_DIRECT_BITRATE_GUESS_BPS,
+            interface_policy: prns_core::interfaces::wifi_direct::defaults_for_bitrate(
+                WIFI_DIRECT_BITRATE_GUESS_BPS,
+            )
+            .configured(Default::default()),
             status,
         }
     }
 
     #[must_use]
     pub fn with_bitrate(mut self, bitrate: BitrateBps) -> Self {
-        self.bitrate = bitrate;
+        self.interface_policy = prns_core::interfaces::wifi_direct::defaults_for_bitrate(bitrate)
+            .configured(Default::default());
+        self
+    }
+
+    #[must_use]
+    pub fn with_policy(mut self, policy: EffectiveInterfacePolicy) -> Self {
+        self.interface_policy = policy;
         self
     }
 
@@ -307,6 +317,10 @@ enum Step<G> {
 impl<B: WifiDirectBackend> InterfaceSupervisor for WifiDirectAuto<B> {
     const KIND: InterfaceKind = InterfaceKind::WifiDirect;
 
+    fn policy(&self) -> EffectiveInterfacePolicy {
+        self.interface_policy
+    }
+
     fn channel_tag(&self) -> &[u8] {
         FAMILY_TAG
     }
@@ -315,7 +329,7 @@ impl<B: WifiDirectBackend> InterfaceSupervisor for WifiDirectAuto<B> {
         let Self {
             mut backend,
             intent,
-            bitrate,
+            interface_policy,
             status,
         } = self;
         if let Some(reason) = backend.blocked() {
@@ -420,7 +434,14 @@ impl<B: WifiDirectBackend> InterfaceSupervisor for WifiDirectAuto<B> {
                     }
                 },
                 Step::Plane(PlaneEvent::Accepted(stream, peer)) => {
-                    admit(stream, peer, bitrate, &fleet, &closed_tx, &mut members);
+                    admit(
+                        stream,
+                        peer,
+                        interface_policy,
+                        &fleet,
+                        &closed_tx,
+                        &mut members,
+                    );
                     policy.handle(
                         PolicyInput::MembersChanged {
                             count: members.len(),
@@ -429,7 +450,14 @@ impl<B: WifiDirectBackend> InterfaceSupervisor for WifiDirectAuto<B> {
                     );
                 }
                 Step::Plane(PlaneEvent::Dialed(stream, target)) => {
-                    admit(stream, target, bitrate, &fleet, &closed_tx, &mut members);
+                    admit(
+                        stream,
+                        target,
+                        interface_policy,
+                        &fleet,
+                        &closed_tx,
+                        &mut members,
+                    );
                     plane = Plane::Linked { target };
                     policy.handle(
                         PolicyInput::MembersChanged {
@@ -525,12 +553,12 @@ async fn apply<B: WifiDirectBackend>(
 fn admit(
     stream: TcpStream,
     peer: SocketAddr,
-    bitrate: BitrateBps,
+    policy: EffectiveInterfacePolicy,
     fleet: &Fleet,
     closed: &mpsc::UnboundedSender<InterfaceId>,
     members: &mut HashMap<InterfaceId, TokioMember>,
 ) {
-    let member = WifiDirectMember::new(peer.to_string().into_bytes(), stream, bitrate)
+    let member = WifiDirectMember::with_policy(peer.to_string().into_bytes(), stream, policy)
         .report_close_to(closed.clone());
     let id = member.id();
     let status = member.status();

@@ -41,7 +41,7 @@ fn encoded_backbone() -> Vec<u8> {
 }
 
 #[test]
-fn python_rns_1_4_0_advertisement_is_byte_identical_and_decodes() {
+fn python_rns_1_4_2_advertisement_is_byte_identical_and_decodes() {
     let packed = bytes_from_hex(PYTHON_BACKBONE);
     assert_eq!(encode_advertisement(&backbone()), Ok(packed.clone()));
     assert_eq!(decode_advertisement(&packed), Ok(backbone()));

@@ -3,7 +3,7 @@ package prns
 const (
 	HostContractABI uint32 = 1
 	HostSchemaVersion uint32 = 1
-	ProductVersion = "0.3.2"
+	ProductVersion = "0.3.3"
 )
 
 const DestinationHashLength = 16
@@ -15,6 +15,8 @@ const RequestIdLength = 16
 const RequestPathHashLength = 16
 const ResourceHashLength = 32
 const IdentitySecretLength = 64
+const SafeIntMin int64 = -9007199254740991
+const SafeIntMax int64 = 9007199254740991
 const SafeUintMax uint64 = 9007199254740991
 const BalancedPendingCommands = 256
 const BalancedApplicationEvents = 1024
@@ -94,6 +96,18 @@ const (
 	InterfaceKindWebSocketClient InterfaceKind = 17
 	InterfaceKindWebSocketServer InterfaceKind = 18
 	InterfaceKindBrowserRendezvous InterfaceKind = 19
+)
+
+type InterfaceMode uint32
+
+const (
+	InterfaceModeFull InterfaceMode = 1
+	InterfaceModePointToPoint InterfaceMode = 2
+	InterfaceModeAccessPoint InterfaceMode = 3
+	InterfaceModeRoaming InterfaceMode = 4
+	InterfaceModeBoundary InterfaceMode = 5
+	InterfaceModeGateway InterfaceMode = 6
+	InterfaceModeInternal InterfaceMode = 7
 )
 
 type InterfaceHealth uint32
@@ -283,6 +297,7 @@ const (
 	CommandFailureKindDeviceUnavailable CommandFailureKind = 38
 	CommandFailureKindConnectFailed CommandFailureKind = 39
 	CommandFailureKindBackendFailed CommandFailureKind = 40
+	CommandFailureKindResponseTooLarge CommandFailureKind = 41
 )
 
 type DeliveryEvidenceKind uint32
@@ -470,6 +485,14 @@ type MultiRNodeMemberConfig struct {
 	Radio RNodeRadioConfig
 	FlowControl bool
 	Outgoing bool
+}
+
+type InterfaceRoutingPolicy struct {
+	Mode *InterfaceMode
+	Gravity *int64
+	RecursivePathRequests *bool
+	AnnouncesFromInternal *bool
+	AnnouncesToInternal *bool
 }
 
 type BackendInfo struct {
@@ -817,6 +840,7 @@ type DestinationConfigSingle struct {
 	Name DestinationName
 	Identity DestinationIdentityConfig
 	AnnounceAppData *[]byte
+	MaximumRequestBytes *uint64
 	RequestHandlers []RequestHandlerConfig
 }
 
@@ -905,6 +929,7 @@ type HostCommandRequest struct {
 	PathHash RequestPathHash
 	Payload []byte
 	Timeout ResponseTimeout
+	MaximumResponseBytes *uint64
 }
 
 func (HostCommandRequest) hostCommand() {}
@@ -959,6 +984,7 @@ func (HostCommandAllowRequester) hostCommand() {}
 
 type HostCommandAttachInterface struct {
 	Config InterfaceConfig
+	Routing *InterfaceRoutingPolicy
 }
 
 func (HostCommandAttachInterface) hostCommand() {}
@@ -1214,6 +1240,10 @@ type CommandFailureBackendFailed struct {
 }
 
 func (CommandFailureBackendFailed) commandFailure() {}
+
+type CommandFailureResponseTooLarge struct{}
+
+func (CommandFailureResponseTooLarge) commandFailure() {}
 
 type ApplicationEvent interface {
 	applicationEvent()
@@ -1578,12 +1608,12 @@ type rawHostProtocol interface {
 	hostRequestPath(host rawHost, destination DestinationHash) rawCallResult[rawOwned[rawIssuedCommand]]
 	hostIdentify(host rawHost, linkId LinkId, identity IdentityHash) rawCallResult[rawOwned[rawIssuedCommand]]
 	hostSendLinkPacket(host rawHost, linkId LinkId, payload []byte) rawCallResult[rawOwned[rawIssuedCommand]]
-	hostRequest(host rawHost, linkId LinkId, pathHash RequestPathHash, payload []byte, timeout ResponseTimeout) rawCallResult[rawOwned[rawIssuedCommand]]
+	hostRequest(host rawHost, linkId LinkId, pathHash RequestPathHash, payload []byte, timeout ResponseTimeout, maximumResponseBytes *uint64) rawCallResult[rawOwned[rawIssuedCommand]]
 	hostRespond(host rawHost, linkId LinkId, requestId RequestId, requestRttMillis uint64, payload []byte) rawCallResult[rawOwned[rawIssuedCommand]]
 	hostSendResource(host rawHost, linkId LinkId, payload []byte, packedMetadata *[]byte, compression ResourceCompression) rawCallResult[rawOwned[rawIssuedCommand]]
 	hostSetLinkResourceStrategy(host rawHost, linkId LinkId, strategy ResourceStrategy) rawCallResult[rawOwned[rawIssuedCommand]]
 	hostSetDestinationResourceStrategy(host rawHost, destination DestinationHash, strategy ResourceStrategy) rawCallResult[rawOwned[rawIssuedCommand]]
 	hostSendChannelMessage(host rawHost, linkId LinkId, messageType uint16, payload []byte) rawCallResult[rawOwned[rawIssuedCommand]]
 	hostAllowRequester(host rawHost, destination DestinationHash, pathHash RequestPathHash, identity IdentityHash) rawCallResult[rawOwned[rawIssuedCommand]]
-	hostAttachInterface(host rawHost, config InterfaceConfig) rawCallResult[rawOwned[rawIssuedCommand]]
+	hostAttachInterface(host rawHost, config InterfaceConfig, routing *InterfaceRoutingPolicy) rawCallResult[rawOwned[rawIssuedCommand]]
 }

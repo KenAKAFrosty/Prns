@@ -63,10 +63,11 @@ pub enum RuntimeOperationOutcome {
     DependencyFailed,
     Backpressure,
     Untrackable,
+    ResponseTooLarge,
 }
 
 impl RuntimeOperationOutcome {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Succeeded,
         Self::Rejected,
         Self::WriteFailed,
@@ -77,6 +78,7 @@ impl RuntimeOperationOutcome {
         Self::DependencyFailed,
         Self::Backpressure,
         Self::Untrackable,
+        Self::ResponseTooLarge,
     ];
 
     const fn index(self) -> usize {
@@ -484,6 +486,7 @@ impl From<&SendRequestFailure> for RuntimeOperationOutcome {
             SendRequestFailure::WriteFailed => Self::WriteFailed,
             SendRequestFailure::Culled => Self::Culled,
             SendRequestFailure::Timeout => Self::Timeout,
+            SendRequestFailure::ResponseTooLarge => Self::ResponseTooLarge,
         }
     }
 }

@@ -87,6 +87,7 @@ impl HopspotFace {
             | UiAction::OpenDocs
             | UiAction::OpenLoRaEditor
             | UiAction::SetLoRaProfile(_)
+            | UiAction::ResetLoRaProfile
             | UiAction::SwapRadioMode => {}
         }
         action
@@ -193,6 +194,8 @@ mod tests {
     ) -> InterfaceSnapshot {
         InterfaceSnapshot {
             id: InterfaceId::new([tag, 0, 0, 0, 0, 0, 0, 0]),
+            mode: personal_rns::interfaces::InterfaceMode::Full,
+            gravity: personal_rns::interfaces::InterfaceGravity::ZERO,
             connection: ConnectionState::Connected,
             failure_reason: None,
             rx_bytes,
