@@ -38,8 +38,8 @@ use crate::routing::links::resources::table::{
 use crate::routing::links::resources::{
     max_outgoing_resource_reaction_frames, max_part_count, sealed_transfer_bytes,
 };
-use crate::routing::links::table::FixedLinkTable;
-use crate::routing::links::transported::FixedTransportedLinkTable;
+use crate::routing::links::table::FixedHeapLinkTable;
+use crate::routing::links::transported::FixedHeapTransportedLinkTable;
 use crate::routing::path_requests::interface_path_request_limit::FixedInterfacePathRequestLimitTable;
 use crate::routing::path_requests::pending::FixedPendingPathRequestTable;
 use crate::routing::path_requests::recent::FixedRecentPathRequestTable;
@@ -57,7 +57,8 @@ use crate::storage::{DisplayedStorageLimits, StorageCapacity, StorageLayout};
 const MAX_TRACKED_DESTINATIONS: usize = 1024;
 const MAX_UPSTREAM_APP_DESTINATIONS: usize = 2;
 const MAX_HELD_IDENTITIES: usize = 1;
-const MAX_CONCURRENT_LINKS: usize = 6;
+const MAX_LINK_SESSIONS: usize = 32;
+const MAX_TRANSPORTED_LINKS: usize = 32;
 const MAX_OUTSTANDING_RECEIPTS: usize = 8;
 const MAX_PACKET_HASHES: usize = 48;
 const MAX_BLACKHOLED_IDENTITIES: usize = 32;
@@ -68,6 +69,7 @@ const MAX_HELD_ANNOUNCES: usize = 512;
 const RETAINED_RATCHETS_PER_DESTINATION: usize = 8;
 /// Cheap: an open channel costs a metadata row; the bulk payloads live in [`CHANNEL_WINDOW_POOL`].
 const MAX_CONCURRENT_CHANNELS: usize = 8;
+const MAX_RESOURCE_ASSEMBLIES: usize = 1;
 /// The real PSRAM dial; a channel that finds the pool dry cannot grow its window until another drains a slot.
 const CHANNEL_WINDOW_POOL: usize = 192;
 /// Incoming resources retain the existing conservative PSRAM bound.
@@ -100,6 +102,10 @@ pub struct Esp32S3<
 >(PhantomData<A>);
 
 impl<A: Allocator, const MAX_REQUEST_HANDLERS: usize> Esp32S3<A, MAX_REQUEST_HANDLERS> {
+    /// Cheap retained sessions outnumber every configured auto-interface fleet member, leaving
+    /// admission room without multiplying resource or channel workspaces.
+    pub const LINK_SESSIONS: usize = MAX_LINK_SESSIONS;
+
     /// The most frames one resource request can synchronously emit for this storage recipe.
     ///
     /// A request names at most `WINDOW_MAX` existing parts, and a response can append one hashmap
@@ -138,7 +144,7 @@ impl<A: Allocator + Default, const MAX_REQUEST_HANDLERS: usize> StorageLayout
         announce_records: StorageCapacity::Fixed(MAX_TRACKED_DESTINATIONS),
         upstream_app_destinations: StorageCapacity::Fixed(MAX_UPSTREAM_APP_DESTINATIONS),
         held_identities: StorageCapacity::Fixed(MAX_HELD_IDENTITIES),
-        links: StorageCapacity::Fixed(MAX_CONCURRENT_LINKS),
+        links: StorageCapacity::Fixed(MAX_LINK_SESSIONS),
         channels: StorageCapacity::Fixed(MAX_CONCURRENT_CHANNELS),
         channel_window_pool: Some(CHANNEL_WINDOW_POOL),
         channel_reorder_depth: StorageCapacity::Fixed(CHANNEL_REORDER_DEPTH),
@@ -195,8 +201,8 @@ impl<A: Allocator + Default, const MAX_REQUEST_HANDLERS: usize> StorageLayout
     >;
     type GroupKeys = FixedGroupKeyTable<MAX_UPSTREAM_APP_DESTINATIONS>;
     type RequestHandlers = FixedRequestHandlerTable<MAX_REQUEST_HANDLERS>;
-    type TransportedLinks = FixedTransportedLinkTable<MAX_CONCURRENT_LINKS>;
-    type Links = FixedLinkTable<MAX_CONCURRENT_LINKS>;
+    type TransportedLinks = FixedHeapTransportedLinkTable<MAX_TRANSPORTED_LINKS, A>;
+    type Links = FixedHeapLinkTable<MAX_LINK_SESSIONS, A>;
     type OutgoingResources = FixedHeapResourceTable<
         OutgoingResourceState,
         1,
@@ -211,8 +217,8 @@ impl<A: Allocator + Default, const MAX_REQUEST_HANDLERS: usize> StorageLayout
         MAX_INCOMING_RESOURCE_PARTS,
         A,
     >;
-    type IncomingAssemblies = FixedIncomingAssemblyTable<MAX_CONCURRENT_LINKS>;
-    type OutgoingAssemblies = FixedStaticOutgoingAssemblyTable<MAX_CONCURRENT_LINKS>;
+    type IncomingAssemblies = FixedIncomingAssemblyTable<MAX_RESOURCE_ASSEMBLIES>;
+    type OutgoingAssemblies = FixedStaticOutgoingAssemblyTable<MAX_RESOURCE_ASSEMBLIES>;
     type Channels = FixedHeapChannelTable<
         MAX_CONCURRENT_CHANNELS,
         CHANNEL_REORDER_DEPTH,
@@ -226,6 +232,12 @@ impl<A: Allocator + Default, const MAX_REQUEST_HANDLERS: usize> StorageLayout
 mod tests {
     use super::Esp32S3;
     use crate::engine::EngineState;
+    use crate::routing::links::channel::table::ChannelTable;
+    use crate::routing::links::resources::assembly::{
+        IncomingAssemblyTable, OutgoingAssemblyTable,
+    };
+    use crate::routing::links::table::LinkTable;
+    use crate::routing::links::transported::TransportedLinkTable;
     use crate::routing::request_handlers::RequestHandlerTable;
     use crate::storage::{StorageCapacity, StorageLayout};
 
@@ -248,6 +260,30 @@ mod tests {
         assert_eq!(
             <L as StorageLayout>::LIMITS.held_identities,
             StorageCapacity::Fixed(super::MAX_HELD_IDENTITIES)
+        );
+        assert_eq!(
+            <L as StorageLayout>::LIMITS.links,
+            StorageCapacity::Fixed(super::MAX_LINK_SESSIONS)
+        );
+        assert_eq!(
+            <L as StorageLayout>::LIMITS.channels,
+            StorageCapacity::Fixed(super::MAX_CONCURRENT_CHANNELS)
+        );
+        assert!(
+            <<L as StorageLayout>::Links as Default>::default().capacity()
+                > <<L as StorageLayout>::Channels as Default>::default().capacity()
+        );
+        assert_eq!(
+            <<L as StorageLayout>::TransportedLinks as Default>::default().capacity(),
+            super::MAX_TRANSPORTED_LINKS
+        );
+        assert_eq!(
+            <<L as StorageLayout>::IncomingAssemblies as Default>::default().capacity(),
+            1
+        );
+        assert_eq!(
+            <<L as StorageLayout>::OutgoingAssemblies as Default>::default().capacity(),
+            1
         );
         let engine = EngineState::<L>::default();
         assert_eq!(
