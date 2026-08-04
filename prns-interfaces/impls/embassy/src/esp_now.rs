@@ -10,7 +10,9 @@ use prns_core::interfaces::esp_now::{
 };
 use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
 use prns_runtime::manifold::driver::EmbassyInterfaceStatus;
-use prns_runtime::manifold::interface_seam::{Interface, InterfaceSeam};
+use prns_runtime::manifold::interface_seam::{
+    Interface, InterfaceSeam, OutboundDisposition, OutboundDropReason,
+};
 use prns_runtime::manifold::throughput::ThroughputLedger;
 
 pub struct EspNowInterface<'a, R> {
@@ -99,12 +101,16 @@ impl<R: EspNowRadio> Interface for EspNowInterface<'_, R> {
                 }
                 Either3::Second(outbound) => {
                     let len = outbound.len().min(ESP_NOW_V2_AIR_MTU);
-                    if radio.broadcast(&outbound[..len]).await {
+                    let disposition = if radio.broadcast(&outbound[..len]).await {
                         let now = InstantMillis(started.elapsed().as_millis());
                         status.add_tx(len as u64);
                         throughput.record_tx(now, len as u64);
                         status.set_transfer_rates(throughput.rates());
-                    }
+                        OutboundDisposition::Sent
+                    } else {
+                        OutboundDisposition::Dropped(OutboundDropReason::TransportFailure)
+                    };
+                    seam.complete_outbound(disposition);
                 }
                 Either3::Third(()) => {}
             }
