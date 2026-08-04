@@ -37,6 +37,12 @@ FLASHER_BOARD_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 FLASHER_PAYLOAD_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 IMAGE_SOURCE_ARCHIVE_PATH = "usr/share/prnsd/source.zip"
 IMAGE_SOURCE_CHECKSUM_PATH = "usr/share/prnsd/source.zip.sha256"
+RELEASE_IMAGE = "ghcr.io/kenakafrosty/prnsd"
+STAGING_IMAGE = "ghcr.io/kenakafrosty/prnsd-staging"
+IMAGE_CANDIDATE_WORKFLOW = ".github/workflows/prnsd-image-candidate.yml"
+RELEASE_QUALIFICATION_WORKFLOW = ".github/workflows/suite-deployment-qualification.yml"
+STAGING_PUBLICATION_WORKFLOW = ".github/workflows/prnsd-staging-publish.yml"
+STAGING_QUALIFICATION_WORKFLOW = ".github/workflows/prnsd-staging-qualification.yml"
 OCI_LAYER_MODES = {
     "application/vnd.oci.image.layer.v1.tar": "r:",
     "application/vnd.oci.image.layer.v1.tar+gzip": "r:gz",
@@ -608,8 +614,8 @@ def write_image_metadata(arguments: argparse.Namespace) -> None:
     if set(platforms) != {"linux/amd64", "linux/arm64"}:
         raise ValueError("image metadata requires exactly linux/amd64 and linux/arm64")
     value = {
-        "candidate": f"ghcr.io/kenakafrosty/prnsd:candidate-{commit}",
-        "image": "ghcr.io/kenakafrosty/prnsd",
+        "candidate": f"{RELEASE_IMAGE}:candidate-{commit}",
+        "image": RELEASE_IMAGE,
         "manifest_digest": manifest,
         "platform_digests": platforms,
         "schema": 1,
@@ -620,11 +626,11 @@ def write_image_metadata(arguments: argparse.Namespace) -> None:
     print(f"wrote {arguments.output} ({sha256(arguments.output)})")
 
 
-def write_railway_contract(arguments: argparse.Namespace) -> None:
-    commit = require_commit(arguments.source_commit)
-    if SHA256_PATTERN.fullmatch(arguments.image_digest) is None:
+def railway_contract(source_commit: str, image_digest: str, image: str) -> dict:
+    commit = require_commit(source_commit)
+    if SHA256_PATTERN.fullmatch(image_digest) is None:
         raise ValueError("Railway image digest must be one OCI SHA-256 digest")
-    value = {
+    return {
         "bootstrap": {
             "operator_environment": {
                 "PRNSD_BACKBONE_DISCOVERABLE": {
@@ -646,7 +652,7 @@ def write_railway_contract(arguments: argparse.Namespace) -> None:
             "http_path": None,
             "readiness_command": "prnsd status --config /var/lib/prnsd --json",
         },
-        "image": f"ghcr.io/kenakafrosty/prnsd@{arguments.image_digest}",
+        "image": f"{image}@{image_digest}",
         "logging": "json",
         "network": {
             "internal_port": 4242,
@@ -666,8 +672,23 @@ def write_railway_contract(arguments: argparse.Namespace) -> None:
             "required": True,
         },
     }
+
+
+def write_railway_contract(arguments: argparse.Namespace) -> None:
+    value = railway_contract(
+        arguments.source_commit, arguments.image_digest, RELEASE_IMAGE
+    )
     arguments.output.write_bytes(canonical_json(value))
     print(f"wrote digest-pinned Railway publication contract {arguments.output}")
+
+
+def write_staging_railway_contract(arguments: argparse.Namespace) -> None:
+    value = railway_contract(
+        arguments.source_commit, arguments.image_digest, STAGING_IMAGE
+    )
+    value["channel"] = "staging"
+    arguments.output.write_bytes(canonical_json(value))
+    print(f"wrote digest-pinned Railway staging contract {arguments.output}")
 
 
 def file_identity(path: Path) -> dict[str, str | int]:
@@ -903,6 +924,123 @@ def verify_image_candidate_index(arguments: argparse.Namespace) -> None:
     print(
         f"verified exact image candidate from workflow run {arguments.workflow_run_id}"
     )
+
+
+def write_staging_metadata(arguments: argparse.Namespace) -> None:
+    commit = require_commit(arguments.source_commit)
+    if SHA256_PATTERN.fullmatch(arguments.manifest_digest) is None:
+        raise ValueError("staging manifest digest must be one OCI SHA-256 digest")
+    if arguments.workflow_run_id <= 0 or arguments.workflow_run_attempt <= 0:
+        raise ValueError("staging publication workflow identity must be positive")
+    _, candidate = load_candidate_index(
+        argparse.Namespace(
+            index=arguments.candidate_index,
+            source_commit=commit,
+            repository=arguments.repository,
+            workflow_run_id=arguments.image_candidate_run_id,
+        ),
+        IMAGE_CANDIDATE_WORKFLOW,
+    )
+    if set(candidate) != {
+        "assets",
+        "platform_digests",
+        "repository",
+        "schema",
+        "source_archive_sha256",
+        "source_commit",
+        "version",
+        "workflow",
+    }:
+        raise ValueError("staging source image candidate has an unsupported shape")
+    value = {
+        "candidate": f"{STAGING_IMAGE}:candidate-{commit}",
+        "channel": "staging",
+        "image": STAGING_IMAGE,
+        "manifest_digest": arguments.manifest_digest,
+        "platform_digests": candidate["platform_digests"],
+        "producer": candidate["workflow"],
+        "repository": arguments.repository,
+        "schema": 1,
+        "source_commit": commit,
+        "version": suite_version(),
+        "visibility": arguments.visibility,
+        "workflow": {
+            "path": STAGING_PUBLICATION_WORKFLOW,
+            "run_attempt": arguments.workflow_run_attempt,
+            "run_id": arguments.workflow_run_id,
+        },
+    }
+    arguments.output.write_bytes(canonical_json(value))
+    print(f"wrote staging image publication metadata {arguments.output}")
+
+
+def verify_staging_metadata(arguments: argparse.Namespace) -> None:
+    commit = require_commit(arguments.source_commit)
+    if SHA256_PATTERN.fullmatch(arguments.image_digest) is None:
+        raise ValueError("staging image digest must be one OCI SHA-256 digest")
+    if arguments.publication_run_id <= 0:
+        raise ValueError("staging publication run identity must be positive")
+    metadata = regular_file(arguments.metadata, "staging image metadata")
+    expected_name = f"prnsd-staging-image-{commit}.json"
+    if metadata.name != expected_name:
+        raise ValueError(f"staging image metadata must be named {expected_name}")
+    value = json.loads(metadata.read_text(encoding="utf-8"))
+    producer = value.get("producer") if isinstance(value, dict) else None
+    workflow = value.get("workflow") if isinstance(value, dict) else None
+    platform_digests = (
+        value.get("platform_digests") if isinstance(value, dict) else None
+    )
+    if (
+        not isinstance(value, dict)
+        or set(value)
+        != {
+            "candidate",
+            "channel",
+            "image",
+            "manifest_digest",
+            "platform_digests",
+            "producer",
+            "repository",
+            "schema",
+            "source_commit",
+            "version",
+            "visibility",
+            "workflow",
+        }
+        or value.get("candidate") != f"{STAGING_IMAGE}:candidate-{commit}"
+        or value.get("channel") != "staging"
+        or value.get("image") != STAGING_IMAGE
+        or value.get("manifest_digest") != arguments.image_digest
+        or value.get("repository") != arguments.repository
+        or value.get("schema") != 1
+        or value.get("source_commit") != commit
+        or value.get("version") != suite_version()
+        or value.get("visibility") != "public"
+        or not isinstance(platform_digests, dict)
+        or set(platform_digests) != {"linux/amd64", "linux/arm64"}
+        or any(
+            not isinstance(digest, str) or SHA256_PATTERN.fullmatch(digest) is None
+            for digest in platform_digests.values()
+        )
+        or not isinstance(producer, dict)
+        or set(producer) != {"path", "run_attempt", "run_id"}
+        or producer.get("path") != IMAGE_CANDIDATE_WORKFLOW
+        or not isinstance(producer.get("run_attempt"), int)
+        or isinstance(producer.get("run_attempt"), bool)
+        or producer["run_attempt"] <= 0
+        or not isinstance(producer.get("run_id"), int)
+        or isinstance(producer.get("run_id"), bool)
+        or producer["run_id"] <= 0
+        or not isinstance(workflow, dict)
+        or set(workflow) != {"path", "run_attempt", "run_id"}
+        or workflow.get("path") != STAGING_PUBLICATION_WORKFLOW
+        or workflow.get("run_id") != arguments.publication_run_id
+        or not isinstance(workflow.get("run_attempt"), int)
+        or isinstance(workflow.get("run_attempt"), bool)
+        or workflow["run_attempt"] <= 0
+    ):
+        raise ValueError("staging image metadata differs from the public publication")
+    print(f"verified public staging image publication {metadata.name}")
 
 
 def create_inventory(arguments: argparse.Namespace) -> None:
@@ -1246,7 +1384,7 @@ def verify_suite_release(arguments: argparse.Namespace) -> None:
     )
 
 
-def write_deployment_evidence(arguments: argparse.Namespace) -> None:
+def deployment_observation(arguments: argparse.Namespace) -> tuple[str, dict, dict]:
     commit = require_commit(arguments.source_commit)
     if SHA256_PATTERN.fullmatch(arguments.image_digest) is None:
         raise ValueError("deployment image digest must be one OCI SHA-256 digest")
@@ -1269,22 +1407,29 @@ def write_deployment_evidence(arguments: argparse.Namespace) -> None:
         ):
             raise ValueError(f"{label} must be one nonempty printable value")
     if arguments.workflow_run_id <= 0 or arguments.workflow_run_attempt <= 0:
-        raise ValueError("deployment qualification run identity must be positive")
+        raise ValueError("deployment workflow identity must be positive")
+    checks = {
+        "backbone_publicly_reachable": True,
+        "digest_pinned": True,
+        "identity_stable": True,
+        "persistence_restored": True,
+        "rollback_completed": True,
+        "single_replica": True,
+    }
+    deployment = {
+        "identity": arguments.identity_before,
+        "public_endpoint": arguments.public_endpoint,
+        "rollback_revision": arguments.rollback_revision,
+        "template_revision": arguments.template_revision,
+    }
+    return commit, checks, deployment
+
+
+def write_deployment_evidence(arguments: argparse.Namespace) -> None:
+    commit, checks, deployment = deployment_observation(arguments)
     value = {
-        "checks": {
-            "backbone_publicly_reachable": True,
-            "digest_pinned": True,
-            "identity_stable": True,
-            "persistence_restored": True,
-            "rollback_completed": True,
-            "single_replica": True,
-        },
-        "deployment": {
-            "identity": arguments.identity_before,
-            "public_endpoint": arguments.public_endpoint,
-            "rollback_revision": arguments.rollback_revision,
-            "template_revision": arguments.template_revision,
-        },
+        "checks": checks,
+        "deployment": deployment,
         "image_digest": arguments.image_digest,
         "observed_at": arguments.observed_at,
         "repository": arguments.repository,
@@ -1292,13 +1437,39 @@ def write_deployment_evidence(arguments: argparse.Namespace) -> None:
         "source_commit": commit,
         "version": suite_version(),
         "workflow": {
-            "path": ".github/workflows/suite-deployment-qualification.yml",
+            "path": RELEASE_QUALIFICATION_WORKFLOW,
             "run_attempt": arguments.workflow_run_attempt,
             "run_id": arguments.workflow_run_id,
         },
     }
     arguments.output.write_bytes(canonical_json(value))
     print(f"wrote protected deployment qualification {arguments.output}")
+
+
+def write_staging_deployment_evidence(arguments: argparse.Namespace) -> None:
+    commit, checks, deployment = deployment_observation(arguments)
+    if arguments.publication_run_id <= 0:
+        raise ValueError("staging publication run identity must be positive")
+    value = {
+        "channel": "staging",
+        "checks": checks,
+        "deployment": deployment,
+        "image": STAGING_IMAGE,
+        "image_digest": arguments.image_digest,
+        "observed_at": arguments.observed_at,
+        "publication_run_id": arguments.publication_run_id,
+        "repository": arguments.repository,
+        "schema": 1,
+        "source_commit": commit,
+        "version": suite_version(),
+        "workflow": {
+            "path": STAGING_QUALIFICATION_WORKFLOW,
+            "run_attempt": arguments.workflow_run_attempt,
+            "run_id": arguments.workflow_run_id,
+        },
+    }
+    arguments.output.write_bytes(canonical_json(value))
+    print(f"wrote public staging deployment evidence {arguments.output}")
 
 
 def verify_deployment_evidence(arguments: argparse.Namespace) -> None:
@@ -1321,16 +1492,42 @@ def verify_deployment_evidence(arguments: argparse.Namespace) -> None:
         "single_replica": True,
     }
     workflow = evidence.get("workflow") if isinstance(evidence, dict) else None
+    deployment = evidence.get("deployment") if isinstance(evidence, dict) else None
     if (
         not isinstance(evidence, dict)
+        or set(evidence)
+        != {
+            "checks",
+            "deployment",
+            "image_digest",
+            "observed_at",
+            "repository",
+            "schema",
+            "source_commit",
+            "version",
+            "workflow",
+        }
+        or not isinstance(deployment, dict)
+        or set(deployment)
+        != {
+            "identity",
+            "public_endpoint",
+            "rollback_revision",
+            "template_revision",
+        }
         or not isinstance(workflow, dict)
+        or set(workflow) != {"path", "run_attempt", "run_id"}
         or evidence.get("schema") != 1
         or evidence.get("version") != suite_version()
         or evidence.get("source_commit") != require_commit(arguments.source_commit)
         or evidence.get("image_digest") != arguments.image_digest
         or evidence.get("repository") != arguments.repository
         or evidence.get("checks") != expected_checks
+        or workflow.get("path") != RELEASE_QUALIFICATION_WORKFLOW
         or workflow.get("run_id") != arguments.workflow_run_id
+        or not isinstance(workflow.get("run_attempt"), int)
+        or isinstance(workflow.get("run_attempt"), bool)
+        or workflow["run_attempt"] <= 0
     ):
         raise ValueError(
             "deployment qualification evidence differs from the required release"
@@ -1386,6 +1583,12 @@ def parser() -> argparse.ArgumentParser:
     railway.add_argument("--output", type=Path, required=True)
     railway.set_defaults(run=write_railway_contract)
 
+    staging_railway = commands.add_parser("staging-railway-contract")
+    staging_railway.add_argument("--source-commit", required=True)
+    staging_railway.add_argument("--image-digest", required=True)
+    staging_railway.add_argument("--output", type=Path, required=True)
+    staging_railway.set_defaults(run=write_staging_railway_contract)
+
     candidate = commands.add_parser("candidate-index")
     candidate.add_argument("--assets", type=Path, required=True)
     candidate.add_argument("--source-commit", required=True)
@@ -1420,6 +1623,30 @@ def parser() -> argparse.ArgumentParser:
     image_candidate_verify.add_argument("--repository", required=True)
     image_candidate_verify.add_argument("--workflow-run-id", type=int, required=True)
     image_candidate_verify.set_defaults(run=verify_image_candidate_index)
+
+    staging_metadata = commands.add_parser("staging-metadata")
+    staging_metadata.add_argument("--candidate-index", type=Path, required=True)
+    staging_metadata.add_argument("--source-commit", required=True)
+    staging_metadata.add_argument("--manifest-digest", required=True)
+    staging_metadata.add_argument("--repository", required=True)
+    staging_metadata.add_argument("--image-candidate-run-id", type=int, required=True)
+    staging_metadata.add_argument("--workflow-run-id", type=int, required=True)
+    staging_metadata.add_argument("--workflow-run-attempt", type=int, required=True)
+    staging_metadata.add_argument(
+        "--visibility", choices=["private", "public"], required=True
+    )
+    staging_metadata.add_argument("--output", type=Path, required=True)
+    staging_metadata.set_defaults(run=write_staging_metadata)
+
+    staging_metadata_verify = commands.add_parser("staging-metadata-verify")
+    staging_metadata_verify.add_argument("--metadata", type=Path, required=True)
+    staging_metadata_verify.add_argument("--source-commit", required=True)
+    staging_metadata_verify.add_argument("--image-digest", required=True)
+    staging_metadata_verify.add_argument("--repository", required=True)
+    staging_metadata_verify.add_argument(
+        "--publication-run-id", type=int, required=True
+    )
+    staging_metadata_verify.set_defaults(run=verify_staging_metadata)
 
     flasher_payloads = commands.add_parser("flasher-payloads")
     flasher_payloads.add_argument("--candidate", type=Path, required=True)
@@ -1475,6 +1702,22 @@ def parser() -> argparse.ArgumentParser:
     deployment_verify.add_argument("--repository", required=True)
     deployment_verify.add_argument("--workflow-run-id", type=int, required=True)
     deployment_verify.set_defaults(run=verify_deployment_evidence)
+
+    staging_deployment = commands.add_parser("staging-deployment-evidence")
+    staging_deployment.add_argument("--source-commit", required=True)
+    staging_deployment.add_argument("--image-digest", required=True)
+    staging_deployment.add_argument("--repository", required=True)
+    staging_deployment.add_argument("--publication-run-id", type=int, required=True)
+    staging_deployment.add_argument("--template-revision", required=True)
+    staging_deployment.add_argument("--rollback-revision", required=True)
+    staging_deployment.add_argument("--public-endpoint", required=True)
+    staging_deployment.add_argument("--identity-before", required=True)
+    staging_deployment.add_argument("--identity-after", required=True)
+    staging_deployment.add_argument("--observed-at", required=True)
+    staging_deployment.add_argument("--workflow-run-id", type=int, required=True)
+    staging_deployment.add_argument("--workflow-run-attempt", type=int, required=True)
+    staging_deployment.add_argument("--output", type=Path, required=True)
+    staging_deployment.set_defaults(run=write_staging_deployment_evidence)
     return root
 
 

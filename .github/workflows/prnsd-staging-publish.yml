@@ -1,0 +1,171 @@
+name: publish reproducible prnsd staging image
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_candidate_run_id:
+        description: Successful reproducible image candidate workflow run ID
+        required: true
+        type: string
+      package_is_public:
+        description: Confirm prnsd-staging visibility was explicitly set public
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  actions: read
+  contents: read
+  packages: write
+
+concurrency:
+  group: prnsd-staging-publication
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Verify and publish exact staging image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: staging-publication
+    env:
+      IMAGE_RUN_ID: ${{ inputs.image_candidate_run_id }}
+      STAGING_IMAGE: ghcr.io/kenakafrosty/prnsd-staging
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Require exact protected staging source
+        env:
+          REF_PROTECTED: ${{ github.ref_protected }}
+        run: |
+          test "$GITHUB_REF" = "refs/heads/trunk"
+          test "$REF_PROTECTED" = "true"
+          test "$GITHUB_SHA" = "$GITHUB_WORKFLOW_SHA"
+          [[ "$IMAGE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          version="$(cat VERSION)"
+          manifest_version="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' prnsd/Cargo.toml | head -n 1)"
+          test "$manifest_version" = "$version"
+      - name: Verify image candidate workflow custody
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${IMAGE_RUN_ID}" > "${RUNNER_TEMP}/image-run.json"
+          test "$(jq -r '.id' "${RUNNER_TEMP}/image-run.json")" = "$IMAGE_RUN_ID"
+          test "$(jq -r '.path' "${RUNNER_TEMP}/image-run.json")" = ".github/workflows/prnsd-image-candidate.yml"
+          test "$(jq -r '.event' "${RUNNER_TEMP}/image-run.json")" = "workflow_dispatch"
+          test "$(jq -r '.status' "${RUNNER_TEMP}/image-run.json")" = "completed"
+          test "$(jq -r '.conclusion' "${RUNNER_TEMP}/image-run.json")" = "success"
+          test "$(jq -r '.head_branch' "${RUNNER_TEMP}/image-run.json")" = "trunk"
+          test "$(jq -r '.head_sha' "${RUNNER_TEMP}/image-run.json")" = "$GITHUB_SHA"
+          test "$(jq -r '.head_repository.full_name' "${RUNNER_TEMP}/image-run.json")" = "$GITHUB_REPOSITORY"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          run-id: ${{ inputs.image_candidate_run_id }}
+          pattern: prnsd-unsigned-image-*-${{ inputs.image_candidate_run_id }}
+          path: target/image
+          merge-multiple: true
+          github-token: ${{ github.token }}
+      - name: Reverify exact reproducible image candidate
+        run: |
+          ./tools/prns release prnsd distribution -- image-candidate-verify \
+            --assets target/image \
+            --index "target/image/prnsd-image-candidate-${GITHUB_SHA}.json" \
+            --source-commit "$GITHUB_SHA" \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow-run-id "$IMAGE_RUN_ID"
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Install registry transport
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes skopeo
+          skopeo --version
+      - name: Push immutable staging platform images
+        run: |
+          check_or_push() {
+            architecture="$1"
+            layout="target/image/prnsd-linux-${architecture}.oci.tar"
+            tag="${STAGING_IMAGE}:candidate-${GITHUB_SHA}-${architecture}"
+            expected="$(./tools/prns release prnsd distribution -- oci-digest --layout "$layout" --platform "linux/${architecture}")"
+            if skopeo inspect --raw "docker://${tag}" > "${RUNNER_TEMP}/${architecture}.json" 2>/dev/null; then
+              actual="sha256:$(sha256sum "${RUNNER_TEMP}/${architecture}.json" | awk '{print $1}')"
+              test "$actual" = "$expected"
+            else
+              skopeo copy \
+                --override-os linux \
+                --override-arch "$architecture" \
+                --preserve-digests \
+                "oci-archive:${layout}" \
+                "docker://${tag}"
+              skopeo inspect --raw "docker://${tag}" > "${RUNNER_TEMP}/${architecture}.json"
+              actual="sha256:$(sha256sum "${RUNNER_TEMP}/${architecture}.json" | awk '{print $1}')"
+              test "$actual" = "$expected"
+            fi
+          }
+          check_or_push amd64
+          check_or_push arm64
+      - name: Publish immutable staging manifest
+        id: image
+        run: |
+          candidate="${STAGING_IMAGE}:candidate-${GITHUB_SHA}"
+          expected_children="$(jq -r '.platform_digests[]' "target/image/prnsd-image-candidate-${GITHUB_SHA}.json" | sort)"
+          if skopeo inspect --raw "docker://${candidate}" > "${RUNNER_TEMP}/candidate.json" 2>/dev/null; then
+            actual_children="$(jq -r '.manifests[].digest' "${RUNNER_TEMP}/candidate.json" | sort)"
+            test "$actual_children" = "$expected_children"
+          else
+            docker manifest create "$candidate" \
+              "${STAGING_IMAGE}:candidate-${GITHUB_SHA}-amd64" \
+              "${STAGING_IMAGE}:candidate-${GITHUB_SHA}-arm64"
+            docker manifest push "$candidate"
+            skopeo inspect --raw "docker://${candidate}" > "${RUNNER_TEMP}/candidate.json"
+          fi
+          manifest_digest="sha256:$(sha256sum "${RUNNER_TEMP}/candidate.json" | awk '{print $1}')"
+          echo "manifest_digest=${manifest_digest}" >> "$GITHUB_OUTPUT"
+      - name: Verify explicitly public staging visibility
+        if: inputs.package_is_public
+        env:
+          MANIFEST_DIGEST: ${{ steps.image.outputs.manifest_digest }}
+        run: |
+          docker logout ghcr.io >/dev/null 2>&1 || true
+          printf '{}\n' > "${RUNNER_TEMP}/anonymous-auth.json"
+          skopeo inspect --authfile "${RUNNER_TEMP}/anonymous-auth.json" --raw "docker://${STAGING_IMAGE}@${MANIFEST_DIGEST}" > "${RUNNER_TEMP}/anonymous.json"
+          test "sha256:$(sha256sum "${RUNNER_TEMP}/anonymous.json" | awk '{print $1}')" = "$MANIFEST_DIGEST"
+      - name: Write staging image and Railway contracts
+        env:
+          MANIFEST_DIGEST: ${{ steps.image.outputs.manifest_digest }}
+          PACKAGE_VISIBILITY: ${{ inputs.package_is_public && 'public' || 'private' }}
+        run: |
+          mkdir -p target/staging
+          ./tools/prns release prnsd distribution -- staging-metadata \
+            --candidate-index "target/image/prnsd-image-candidate-${GITHUB_SHA}.json" \
+            --source-commit "$GITHUB_SHA" \
+            --manifest-digest "$MANIFEST_DIGEST" \
+            --repository "$GITHUB_REPOSITORY" \
+            --image-candidate-run-id "$IMAGE_RUN_ID" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --workflow-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --visibility "$PACKAGE_VISIBILITY" \
+            --output "target/staging/prnsd-staging-image-${GITHUB_SHA}.json"
+          ./tools/prns release prnsd distribution -- staging-railway-contract \
+            --source-commit "$GITHUB_SHA" \
+            --image-digest "$MANIFEST_DIGEST" \
+            --output "target/staging/railway-staging-contract-${GITHUB_SHA}.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: prnsd-staging-publication-${{ github.sha }}-${{ github.run_id }}
+          path: target/staging
+          retention-days: 30
+          if-no-files-found: error
+      - name: Report immutable staging identity
+        env:
+          MANIFEST_DIGEST: ${{ steps.image.outputs.manifest_digest }}
+        run: |
+          echo "### prnsd staging image" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Source: \`${GITHUB_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Image: \`${STAGING_IMAGE}@${MANIFEST_DIGEST}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Publicly verified: \`${{ inputs.package_is_public }}\`" >> "$GITHUB_STEP_SUMMARY"
