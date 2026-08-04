@@ -141,6 +141,7 @@ class CandidateFixture:
         (root / "VERSION").write_text(f"{VERSION}\n", encoding="utf-8")
         (root / "website").mkdir(parents=True)
         (root / "website" / "index.html").write_text("fixture site\n", encoding="utf-8")
+        (root / "website" / "404.html").write_text("fixture site\n", encoding="utf-8")
         flasher_bundle = root / "website" / "assets" / "flasher" / "prns-flash.js"
         flasher_bundle.parent.mkdir(parents=True)
         flasher_bundle.write_text("export const fixture = true;\n", encoding="utf-8")

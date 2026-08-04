@@ -198,6 +198,7 @@ hosted_dist="$root/docs/website/target/dx/reticulum-site/release/web/public"
 test -f "$hosted_dist/index.html"
 mkdir -p "$candidate/website/assets/flasher"
 cp -R "$hosted_dist/." "$candidate/website/"
+cp "$candidate/website/index.html" "$candidate/website/404.html"
 npm --prefix "$root/prns-wasm" ci --ignore-scripts --no-audit --no-fund
 bash "$root/tools/build/stage-wasm-docs-browser-playground.sh" \
     "$candidate/website/browser-node-playground-console"

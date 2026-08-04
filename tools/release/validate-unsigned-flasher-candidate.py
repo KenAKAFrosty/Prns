@@ -59,6 +59,7 @@ REQUIRED_RELEASE_FILES = (
     "qualification/validate-flasher-tester-roster.py",
     "qualification/tester-roster.json",
     "website/index.html",
+    "website/404.html",
     "website/assets/flasher/prns-flash.js",
     "website/source.zip",
     "website/source.zip.sha256",
