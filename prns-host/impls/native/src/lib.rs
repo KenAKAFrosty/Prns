@@ -514,9 +514,9 @@ impl NativeUpload {
         if written.saturating_add(length) > self.declared_length {
             self.finished.store(true, Ordering::Release);
             self.cancelled.store(true, Ordering::Release);
-            chunks.take();
             self.completion
                 .finish(Err(CommandFailure::ResourceLengthOverrun));
+            chunks.take();
             return Err(UploadWriteError::LengthOverrun);
         }
         let sender = chunks.as_ref().ok_or(UploadWriteError::Finished)?;
