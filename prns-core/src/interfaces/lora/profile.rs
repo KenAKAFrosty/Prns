@@ -414,7 +414,7 @@ impl RadioProfile {
 
 pub const DEFAULT_915_PROFILE: RadioProfile = RadioProfile {
     frequency: Frequency::new(915_000_000),
-    modulation: ModemPreset::LongFast.modulation(),
+    modulation: ModemPreset::MediumFast.modulation(),
     tx_power: TxPower::new(22),
     preamble: PreambleSymbols::new(18),
     region: Region::Us915,
@@ -442,7 +442,7 @@ mod tests {
 
     #[test]
     fn time_on_air_matches_the_rnode_firmware_formula() {
-        assert_eq!(DEFAULT_915_PROFILE.time_on_air_us(167), 1_458_734);
+        assert_eq!(DEFAULT_915_PROFILE.time_on_air_us(167), 436_053);
         let long_slow = RadioProfile {
             modulation: ModemPreset::LongSlow.modulation(),
             ..DEFAULT_915_PROFILE
@@ -458,6 +458,14 @@ mod tests {
             ..DEFAULT_915_PROFILE
         };
         assert_eq!(sub_sf7.time_on_air_us(50), 13_834);
+    }
+
+    #[test]
+    fn default_profile_balances_capacity_and_reach_at_medium_fast() {
+        assert_eq!(
+            DEFAULT_915_PROFILE.modulation,
+            ModemPreset::MediumFast.modulation()
+        );
     }
 
     #[test]
