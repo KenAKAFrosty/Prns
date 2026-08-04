@@ -1,7 +1,7 @@
 # Flasher tester rosters
 
 Before building the candidate that will be signed, create `VERSION.json` here from
-`../roster-template.json`. It must contain eight physical board/surface assignments, four
+`../roster-template.json`. It must contain ten physical board/surface assignments, four
 Firefox/Safari fallback assignments, and five published-archive installer assignments. The
 physical assignments collectively cover Linux, macOS, and Windows on both surfaces. Use public
 nonsecret identities such as `github:handle`, not email addresses.

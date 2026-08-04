@@ -229,7 +229,10 @@ def validate_physical_assignments(
                 f"{surface} physical assignments do not cover host OSes: {missing_oses}"
             )
     if len(value) != len(required):
-        errors.append("tester roster must contain exactly eight physical assignments")
+        errors.append(
+            "tester roster must contain exactly "
+            f"{len(required)} physical assignments"
+        )
     return assignments
 
 

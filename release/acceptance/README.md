@@ -3,7 +3,7 @@
 The acceptance record is evidence for one exact signed candidate, not a checklist or a place to
 record intentions. Generate it only after the public prerelease exists. The generator binds the
 manifest, manifest signature, signed-candidate archive, and signed roster by exact identity and
-produces eight physical rows, four unsupported-browser rows, and five native installer rows as
+produces ten physical rows, four unsupported-browser rows, and five native installer rows as
 `not-run`:
 
 ```sh
