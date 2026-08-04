@@ -23,9 +23,7 @@ use personal_rns::interfaces::bluetooth_auto::{Endpoint, LinkCapabilities, Nrf52
 use personal_rns::interfaces::lora::{AirtimePolicy, DEFAULT_915_PROFILE};
 use personal_rns::interfaces::usb_auto::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
 use personal_rns::interfaces::{ConnectionState, InterfaceStatus};
-use personal_rns::lora::{
-    LoRaApplyOutcome, LoRaInterface, LoRaInterfaceInput, LoRaSpectrumStatus, LORA_TX_QUEUE_BYTES,
-};
+use personal_rns::lora::{LoRaApplyOutcome, LoRaInterface, LoRaInterfaceInput, LoRaSpectrumStatus};
 use personal_rns::manifold::embassy::{EmbassyHost, EmbassyInterfaceStatus};
 use personal_rns::manifold::interface_seam::Interface;
 use personal_rns::runtime::{

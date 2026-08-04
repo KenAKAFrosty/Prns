@@ -19,9 +19,11 @@ use personal_rns::routing::links::channel::table::impls::FixedArrayChannelTable;
 use personal_rns::routing::links::resources::assembly::{
     FixedIncomingAssemblyTable, FixedStaticOutgoingAssemblyTable,
 };
-use personal_rns::routing::links::resources::max_part_count;
 use personal_rns::routing::links::resources::table::{
     FixedResourceTable, IncomingResourceState, OutgoingResourceState,
+};
+use personal_rns::routing::links::resources::{
+    max_outgoing_resource_reaction_frames, max_part_count,
 };
 use personal_rns::routing::links::table::FixedLinkTable;
 use personal_rns::routing::links::transported::FixedTransportedLinkTable;
@@ -42,17 +44,24 @@ use personal_rns::storage::{DisplayedStorageLimits, StorageCapacity, StorageLayo
 pub struct TechoStorage;
 
 impl TechoStorage {
-    const TRACKED_DESTINATIONS: usize = 8;
+    // Relationship tables are intentionally independent from transfer workspaces. An idle link is
+    // cheap; channels and resources borrow the smaller shared pools only while doing payload work.
+    const TRACKED_DESTINATIONS: usize = 16;
     const UPSTREAM_APP_DESTINATIONS: usize = 2;
     const REQUEST_HANDLERS: usize =
         <personal_hopspot_core::node_pages::NodePageRoutes as RequestEndpointSet<()>>::REGISTRATIONS
             .len();
-    const LINKS: usize = 2;
+    pub const LINK_SESSIONS: usize = 8;
+    const TRANSPORTED_LINKS: usize = 4;
+    const CHANNELS: usize = 1;
+    const RESOURCE_ASSEMBLIES: usize = 1;
     const BLACKHOLED_IDENTITIES: usize = 0;
     const BLACKHOLE_REASON_BYTES: usize = 0;
     const HELD_ANNOUNCES: usize = 4;
     const HELD_ANNOUNCE_APP_DATA_BYTES: usize = Self::HELD_ANNOUNCES * 64;
     const RESOURCE_TRANSFER_BYTES: usize = 1504;
+    pub const MAX_OUTGOING_RESOURCE_REACTION_FRAMES: usize =
+        max_outgoing_resource_reaction_frames(Self::RESOURCE_TRANSFER_BYTES);
     const CHANNEL_REORDER_DEPTH: usize = 2;
     const LINK_MTU: usize = 1024;
     const CHANNEL_MESSAGE_BYTES: usize = channel_mdu(Self::LINK_MTU);
@@ -74,6 +83,8 @@ impl TechoStorage {
 const _: () = assert!(
     TechoStorage::MAX_COMPACTED_FLASH_JOURNAL_BYTES <= crate::hopspot::persistence::ARENA_BYTES
 );
+const _: () = assert!(TechoStorage::LINK_SESSIONS > TechoStorage::CHANNELS);
+const _: () = assert!(TechoStorage::RESOURCE_ASSEMBLIES == 1);
 
 impl StorageLayout for TechoStorage {
     const LIMITS: DisplayedStorageLimits = DisplayedStorageLimits {
@@ -82,8 +93,8 @@ impl StorageLayout for TechoStorage {
         announce_records: StorageCapacity::Fixed(Self::TRACKED_DESTINATIONS),
         upstream_app_destinations: StorageCapacity::Fixed(Self::UPSTREAM_APP_DESTINATIONS),
         held_identities: StorageCapacity::Fixed(2),
-        links: StorageCapacity::Fixed(Self::LINKS),
-        channels: StorageCapacity::Fixed(Self::LINKS),
+        links: StorageCapacity::Fixed(Self::LINK_SESSIONS),
+        channels: StorageCapacity::Fixed(Self::CHANNELS),
         channel_window_pool: None,
         channel_reorder_depth: StorageCapacity::Fixed(Self::CHANNEL_REORDER_DEPTH),
         link_mtu: StorageCapacity::Fixed(Self::LINK_MTU),
@@ -134,8 +145,8 @@ impl StorageLayout for TechoStorage {
         FixedDestinationAnnounceLimitTable<{ Self::TRACKED_DESTINATIONS }>;
     type GroupKeys = FixedGroupKeyTable<{ Self::UPSTREAM_APP_DESTINATIONS }>;
     type RequestHandlers = FixedRequestHandlerTable<{ Self::REQUEST_HANDLERS }>;
-    type TransportedLinks = FixedTransportedLinkTable<{ Self::LINKS }>;
-    type Links = FixedLinkTable<{ Self::LINKS }>;
+    type TransportedLinks = FixedTransportedLinkTable<{ Self::TRANSPORTED_LINKS }>;
+    type Links = FixedLinkTable<{ Self::LINK_SESSIONS }>;
     type OutgoingResources = FixedResourceTable<
         OutgoingResourceState,
         1,
@@ -148,10 +159,10 @@ impl StorageLayout for TechoStorage {
         { Self::RESOURCE_TRANSFER_BYTES },
         { max_part_count(Self::RESOURCE_TRANSFER_BYTES) },
     >;
-    type IncomingAssemblies = FixedIncomingAssemblyTable<{ Self::LINKS }>;
-    type OutgoingAssemblies = FixedStaticOutgoingAssemblyTable<{ Self::LINKS }>;
+    type IncomingAssemblies = FixedIncomingAssemblyTable<{ Self::RESOURCE_ASSEMBLIES }>;
+    type OutgoingAssemblies = FixedStaticOutgoingAssemblyTable<{ Self::RESOURCE_ASSEMBLIES }>;
     type Channels = FixedArrayChannelTable<
-        { Self::LINKS },
+        { Self::CHANNELS },
         { Self::CHANNEL_REORDER_DEPTH },
         { Self::CHANNEL_MESSAGE_BYTES },
     >;
