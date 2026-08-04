@@ -13,8 +13,8 @@ pub use interface_type::InterfaceKind;
 pub(crate) use interpret::cleaned_number;
 pub use parse::{parse, parse_named};
 pub use types::{
-    RNodeRadio, RNodeSubinterface, ReferenceBlackholeExchange, ReferenceConfig,
-    ReferenceConfigParams, ReferenceDiscoveryConfig, ReferenceInterface,
+    RNodeRadio, RNodeSubinterface, ReferenceAnnounceRateTarget, ReferenceBlackholeExchange,
+    ReferenceConfig, ReferenceConfigParams, ReferenceDiscoveryConfig, ReferenceInterface,
     ReferenceInterfaceDiscovery, ReferenceMode, ReferenceRemoteManagement, ReferenceValue,
 };
 

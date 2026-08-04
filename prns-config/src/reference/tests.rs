@@ -1052,6 +1052,50 @@ fn backbone_role_specific_settings_never_disappear() {
 }
 
 #[test]
+fn a_zero_announce_rate_target_earns_a_gentle_implicit_off_advisory() {
+    let report = parse_named(
+        "/tmp/rns/config",
+        "[reticulum]\ndefault_ar_target = 0\n[interfaces]\n[[Quiet]]\ntype = TCPClientInterface\nenabled = Yes\ntarget_host = host\ntarget_port = 4242\nannounce_rate_target = 0\n",
+    )
+    .unwrap();
+    let advisories = report
+        .warnings
+        .iter()
+        .filter(|diagnostic| diagnostic.code() == ConfigDiagnosticCode::ImplicitOff)
+        .collect::<Vec<_>>();
+    assert_eq!(advisories.len(), 2);
+    assert!(advisories
+        .iter()
+        .any(|advisory| advisory.path().ends_with("default_ar_target")));
+    assert!(advisories
+        .iter()
+        .any(|advisory| advisory.path().ends_with("announce_rate_target")));
+    assert!(advisories.iter().all(|advisory| {
+        advisory
+            .message()
+            .contains("turns announce rate limiting off")
+            && advisory.correction().contains("= off`")
+    }));
+}
+
+#[test]
+fn an_off_announce_rate_target_is_accepted_without_advisories() {
+    let report = parse_named(
+        "/tmp/rns/config",
+        "[reticulum]\ndefault_ar_target = off\n[interfaces]\n[[Quiet]]\ntype = TCPClientInterface\nenabled = Yes\ntarget_host = host\ntarget_port = 4242\nannounce_rate_target = Off\n",
+    )
+    .unwrap();
+    assert!(report
+        .warnings
+        .iter()
+        .all(|diagnostic| diagnostic.code() != ConfigDiagnosticCode::ImplicitOff));
+    assert_eq!(
+        report.value.interfaces[0].announce_rate_target,
+        Some(ReferenceAnnounceRateTarget::Off)
+    );
+}
+
+#[test]
 fn ifac_size_fails_when_its_floored_byte_count_exceeds_the_wire_limit() {
     let errors = parse_named(
         "/tmp/rns/config",

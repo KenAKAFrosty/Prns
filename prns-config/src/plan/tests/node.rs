@@ -260,6 +260,88 @@ fn grouped_global_controls_reach_the_effective_interface_policy() {
 }
 
 #[test]
+fn a_zero_global_announce_rate_target_disables_the_transport_default() {
+    let plan = plan_of(
+        "[reticulum]\n\
+             enable_transport = Yes\n\
+             default_ar_target = 0\n\
+             [interfaces]\n\
+             [[Hub]]\n\
+             type = TCPClientInterface\n\
+             enabled = Yes\n\
+             target_host = hub\n\
+             target_port = 4242\n\
+             [[Pinned]]\n\
+             type = TCPClientInterface\n\
+             enabled = Yes\n\
+             target_host = pinned\n\
+             target_port = 4242\n\
+             announce_rate_target = 120\n",
+    );
+    assert_eq!(named(&plan, "Hub").policy.announce_rate_limit, None);
+    assert_eq!(
+        named(&plan, "Pinned")
+            .policy
+            .announce_rate_limit
+            .unwrap()
+            .target_ms,
+        120_000
+    );
+}
+
+#[test]
+fn an_off_global_announce_rate_target_disables_the_transport_default() {
+    let plan = plan_of(
+        "[reticulum]\n\
+             enable_transport = Yes\n\
+             default_ar_target = off\n\
+             [interfaces]\n\
+             [[Hub]]\n\
+             type = TCPClientInterface\n\
+             enabled = Yes\n\
+             target_host = hub\n\
+             target_port = 4242\n",
+    );
+    assert_eq!(named(&plan, "Hub").policy.announce_rate_limit, None);
+}
+
+#[test]
+fn an_interface_opts_out_of_the_transport_announce_rate_default() {
+    let plan = plan_of(
+        "[reticulum]\n\
+             enable_transport = Yes\n\
+             [interfaces]\n\
+             [[Muted]]\n\
+             type = TCPClientInterface\n\
+             enabled = Yes\n\
+             target_host = muted\n\
+             target_port = 4242\n\
+             announce_rate_target = off\n\
+             [[Zeroed]]\n\
+             type = TCPClientInterface\n\
+             enabled = Yes\n\
+             target_host = zeroed\n\
+             target_port = 4242\n\
+             announce_rate_target = 0\n\
+             [[Defaulted]]\n\
+             type = TCPClientInterface\n\
+             enabled = Yes\n\
+             target_host = defaulted\n\
+             target_port = 4242\n",
+    );
+    assert_eq!(named(&plan, "Muted").policy.announce_rate_limit, None);
+    assert_eq!(named(&plan, "Zeroed").policy.announce_rate_limit, None);
+    assert_eq!(
+        named(&plan, "Defaulted").policy.announce_rate_limit,
+        Some(AnnounceRateLimit {
+            target_ms: 3_600_000,
+            grace: 5,
+            penalty_ms: 0,
+        })
+    );
+}
+
+#[test]
 fn signed_interface_gravity_inherits_and_overrides_the_global_default() {
     let plan = plan_of(
         "[reticulum]\n\

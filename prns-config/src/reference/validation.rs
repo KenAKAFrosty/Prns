@@ -137,6 +137,15 @@ pub(super) fn validate(
                     &mut warnings,
                     &mut errors,
                 );
+                advise_zero_announce_rate_target(
+                    source,
+                    "[reticulum]",
+                    &[section_key::RETICULUM],
+                    global_key::DEFAULT_AR_TARGET,
+                    section,
+                    locations,
+                    &mut warnings,
+                );
             }
             section_key::LOGGING => validate_section(
                 source,
@@ -341,6 +350,39 @@ fn reject_duplicate_singleton_interface<'a>(
     ));
 }
 
+fn advise_zero_announce_rate_target(
+    source: &str,
+    display_path: &str,
+    source_path: &[&str],
+    key: &str,
+    section: &Section,
+    locations: &SourceLocations,
+    warnings: &mut ValidationWarnings,
+) {
+    let Some(value) = section.get(key) else {
+        return;
+    };
+    let is_zero = value
+        .as_scalar()
+        .and_then(|text| parse_integer::<u64>(text).ok())
+        == Some(0);
+    if !is_zero {
+        return;
+    }
+    let mut key_path = source_path.to_vec();
+    key_path.push(key);
+    warnings.push(WarningDiagnostic::new(
+        WarningCode::ImplicitOff,
+        source,
+        location(locations, &key_path),
+        format!("{display_path} > {key}"),
+        Some(value_text(value)),
+        format!("setting {key:?} = 0 turns announce rate limiting off"),
+        Some("off, or a positive integer number of seconds".to_string()),
+        format!("if disabling is intended, prefer `{key} = off`"),
+    ));
+}
+
 #[allow(clippy::too_many_arguments)]
 fn warn_non_effective_settings(
     source: &str,
@@ -494,6 +536,15 @@ fn validate_interface(
     if enabled.as_deref() != Some("true") {
         return;
     }
+    advise_zero_announce_rate_target(
+        source,
+        &interface_path,
+        &interface_source_path,
+        interface_key::ANNOUNCE_RATE_TARGET,
+        section,
+        locations,
+        warnings,
+    );
 
     let type_value = section.get(interface_key::TYPE);
     let Some(type_name) = type_value
@@ -1789,10 +1840,22 @@ fn accepted_for_key(key: &str, kind: ValueKind) -> String {
             "an integer from 0 through {}",
             (usize::MAX as u128).min(i64::MAX as u128)
         ),
-        global_key::DEFAULT_AR_TARGET | global_key::DEFAULT_AR_PENALTY => {
+        global_key::DEFAULT_AR_TARGET => {
+            format!(
+                "off, or an integer from 0 through {} seconds (0 is treated as off)",
+                i64::MAX / 1_000
+            )
+        }
+        global_key::DEFAULT_AR_PENALTY => {
             format!("an integer from 0 through {} seconds", i64::MAX / 1_000)
         }
-        interface_key::ANNOUNCE_RATE_TARGET | interface_key::ANNOUNCE_RATE_PENALTY => {
+        interface_key::ANNOUNCE_RATE_TARGET => {
+            format!(
+                "off, or an integer from 0 through {} seconds (0 is treated as off)",
+                u64::MAX / 1_000
+            )
+        }
+        interface_key::ANNOUNCE_RATE_PENALTY => {
             format!("an integer from 0 through {} seconds", u64::MAX / 1_000)
         }
         global_key::DEFAULT_AR_GRACE | interface_key::ANNOUNCE_RATE_GRACE => "an integer from 0 through 65535".to_string(),
@@ -1914,10 +1977,19 @@ fn semantic_value_is_valid(key: &str, value: &Value, kind: ValueKind) -> bool {
         common_key::IC_MAX_HELD_ANNOUNCES => parse_integer::<i64>(text).is_ok_and(|value| {
             value >= 0 && u128::try_from(value).is_ok_and(|value| value <= usize::MAX as u128)
         }),
-        global_key::DEFAULT_AR_TARGET | global_key::DEFAULT_AR_PENALTY => {
+        global_key::DEFAULT_AR_TARGET => {
+            text.trim().eq_ignore_ascii_case("off")
+                || parse_integer::<i64>(text)
+                    .is_ok_and(|value| (0..=i64::MAX / 1_000).contains(&value))
+        }
+        global_key::DEFAULT_AR_PENALTY => {
             parse_integer::<i64>(text).is_ok_and(|value| (0..=i64::MAX / 1_000).contains(&value))
         }
-        interface_key::ANNOUNCE_RATE_TARGET | interface_key::ANNOUNCE_RATE_PENALTY => {
+        interface_key::ANNOUNCE_RATE_TARGET => {
+            text.trim().eq_ignore_ascii_case("off")
+                || parse_integer::<u64>(text).is_ok_and(|value| value <= u64::MAX / 1_000)
+        }
+        interface_key::ANNOUNCE_RATE_PENALTY => {
             parse_integer::<u64>(text).is_ok_and(|value| value <= u64::MAX / 1_000)
         }
         global_key::DEFAULT_AR_GRACE => {
@@ -1988,6 +2060,13 @@ fn normalized_value(value: &Value, kind: ValueKind) -> Result<String, ()> {
             value.to_string()
         }
         ValueKind::U64 => parse_integer::<u64>(text)?.to_string(),
+        ValueKind::SecondsOrOff => {
+            if text.trim().eq_ignore_ascii_case("off") {
+                "off".to_string()
+            } else {
+                parse_integer::<u64>(text)?.to_string()
+            }
+        }
         ValueKind::U32 => parse_integer::<u32>(text)?.to_string(),
         ValueKind::U16 => parse_integer::<u16>(text)?.to_string(),
         ValueKind::NonZeroU16 => {

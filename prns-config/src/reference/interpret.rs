@@ -12,8 +12,8 @@ use super::keys::{
     common as common_key, global as global_key, interface as interface_key, section as section_key,
 };
 use super::types::{
-    RNodeRadio, RNodeSubinterface, ReferenceBlackholeExchange, ReferenceConfig,
-    ReferenceConfigParams, ReferenceDiscoveryConfig, ReferenceInterface,
+    RNodeRadio, RNodeSubinterface, ReferenceAnnounceRateTarget, ReferenceBlackholeExchange,
+    ReferenceConfig, ReferenceConfigParams, ReferenceDiscoveryConfig, ReferenceInterface,
     ReferenceInterfaceDiscovery, ReferenceMode, ReferenceRemoteManagement, ReferenceValue,
 };
 
@@ -147,7 +147,7 @@ fn interpret_interface(
         &mut rest,
         interface_key::ANNOUNCE_RATE_TARGET,
         name,
-        coerce_u64,
+        coerce_announce_rate_target,
     )?;
     let announce_rate_grace = opt(
         &mut rest,
@@ -889,6 +889,29 @@ fn coerce_list(value: &Value, _interface: &str, _key: &str) -> Result<Vec<String
 
 fn coerce_u64(value: &Value, interface: &str, key: &str) -> Result<u64, ReferenceError> {
     coerce_int(value, interface, key, "expected a non-negative integer")
+}
+
+fn coerce_announce_rate_target(
+    value: &Value,
+    interface: &str,
+    key: &str,
+) -> Result<ReferenceAnnounceRateTarget, ReferenceError> {
+    if scalar_text(value, interface, key)?
+        .trim()
+        .eq_ignore_ascii_case("off")
+    {
+        return Ok(ReferenceAnnounceRateTarget::Off);
+    }
+    let seconds = coerce_int(
+        value,
+        interface,
+        key,
+        "expected off or a non-negative integer number of seconds",
+    )?;
+    Ok(match core::num::NonZeroU64::new(seconds) {
+        None => ReferenceAnnounceRateTarget::Off,
+        Some(seconds) => ReferenceAnnounceRateTarget::Seconds(seconds),
+    })
 }
 
 fn coerce_u32(value: &Value, interface: &str, key: &str) -> Result<u32, ReferenceError> {
