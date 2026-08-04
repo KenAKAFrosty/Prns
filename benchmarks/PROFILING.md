@@ -23,8 +23,8 @@ prints the full resource frame mix plus stage timing for sender advertise,
 receiver pull, sender serve, receiver assemble, and proof settlement:
 
 ```sh
-RUSTFLAGS="-C target-cpu=native --cfg aes_armv8" cargo build --release --bin resource_profile
-./target/release/resource_profile 256 1048575 8
+cargo build --release --example resource_profile
+./target/release/examples/resource_profile 256 1048575 8
 ```
 
 Use this before cutting into resource code: if this number is much higher than a

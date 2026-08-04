@@ -42,7 +42,7 @@ Publication copies the immutable suite under `benchmarks/results/HOST/suites/RUN
 
 The frontend requires Rust/Cargo, `uv`, and a native C compiler. `uv` provisions pinned Python 3.13 and the locked RNS/Cython environment; do not create a Python environment by hand.
 
-Release participants are built for the machine actually being qualified (`-C target-cpu=native`; every AArch64 host also enables RustCrypto's runtime-detected ARMv8 AES backend). Host builds default to the thresholded parallel resource-hash and persistence paths, matching prnsd and Hopspot production hosts. The exact flags and tool versions are captured in suite evidence, so a fast local build cannot masquerade as a portable binary measurement.
+Release participants use the portable Rust target with runtime CPU-feature dispatch, matching the binaries users actually receive; every AArch64 host also enables RustCrypto's runtime-detected ARMv8 AES backend. Host builds default to the thresholded parallel resource-hash and persistence paths, matching prnsd and Hopspot production hosts. The exact flags and tool versions are captured in suite evidence.
 
 - macOS: ordinary runs explain that energy is absent. `cargo benchmark --energy` authorizes `powermetrics` through `sudo`; Cargo, Python, caches, participants, and outputs remain owned by the normal user.
 - Linux: readable RAPL counters are used automatically. `--energy` fails rather than silently omitting required energy.

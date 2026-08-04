@@ -106,6 +106,7 @@ fn main() {
 fn run() -> Result<(), CliError> {
     let options = parse_options(std::env::args().skip(1))?;
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let rustflags = benchmark_rustflags(std::env::var("RUSTFLAGS").unwrap_or_default());
     let suite_id = options
         .resume
         .clone()
@@ -145,7 +146,7 @@ fn run() -> Result<(), CliError> {
     if options.publish {
         require_clean_source()?;
     }
-    build_harness(root)?;
+    build_harness(root, &rustflags)?;
     prepare_reference(root)?;
     std::fs::create_dir_all(&run_dir).map_err(|source| CliError::Io {
         action: "create run directory",
@@ -162,7 +163,7 @@ fn run() -> Result<(), CliError> {
         .arg(&run_dir)
         .arg("--suite-id")
         .arg(&suite_id)
-        .env("BENCHMARK_BUILD_FLAGS", benchmark_rustflags())
+        .env("BENCHMARK_BUILD_FLAGS", &rustflags)
         .env("BENCHMARK_SOURCE_FINGERPRINT", &source.fingerprint);
     if options.smoke {
         runner.arg("--smoke");
@@ -274,10 +275,16 @@ fn preflight(_options: &Options) -> Result<(), CliError> {
     Ok(())
 }
 
-fn build_harness(root: &Path) -> Result<(), CliError> {
+fn build_harness(root: &Path, rustflags: &str) -> Result<(), CliError> {
     println!("\n[1/4] Building release participants and evidence tools");
-    let rustflags = benchmark_rustflags();
-    println!("  rustflags    {rustflags}");
+    println!(
+        "  rustflags    {}",
+        if rustflags.is_empty() {
+            "(portable defaults)"
+        } else {
+            rustflags
+        }
+    );
     checked(
         Command::new("cargo")
             .env("RUSTFLAGS", rustflags)
@@ -302,14 +309,13 @@ fn build_harness(root: &Path) -> Result<(), CliError> {
     )
 }
 
-fn benchmark_rustflags() -> String {
-    let mut flags = std::env::var("RUSTFLAGS").unwrap_or_default();
-    if !flags.is_empty() {
-        flags.push(' ');
-    }
-    flags.push_str("-C target-cpu=native");
+fn benchmark_rustflags(flags: String) -> String {
     #[cfg(target_arch = "aarch64")]
-    flags.push_str(" --cfg aes_armv8");
+    let flags = if flags.is_empty() {
+        "--cfg aes_armv8".into()
+    } else {
+        format!("{flags} --cfg aes_armv8")
+    };
     flags
 }
 
@@ -974,6 +980,24 @@ mod tests {
         assert!(notice.contains("only powermetrics receives sudo"));
         #[cfg(target_os = "linux")]
         assert!(notice.contains("RAPL energy_uj"));
+    }
+
+    #[test]
+    fn benchmark_build_uses_portable_defaults() {
+        let flags = benchmark_rustflags(String::new());
+        #[cfg(target_arch = "aarch64")]
+        assert_eq!(flags, "--cfg aes_armv8");
+        #[cfg(not(target_arch = "aarch64"))]
+        assert!(flags.is_empty());
+    }
+
+    #[test]
+    fn benchmark_build_preserves_explicit_rustflags() {
+        let flags = benchmark_rustflags("-D warnings".into());
+        #[cfg(target_arch = "aarch64")]
+        assert_eq!(flags, "-D warnings --cfg aes_armv8");
+        #[cfg(not(target_arch = "aarch64"))]
+        assert_eq!(flags, "-D warnings");
     }
 
     #[test]
