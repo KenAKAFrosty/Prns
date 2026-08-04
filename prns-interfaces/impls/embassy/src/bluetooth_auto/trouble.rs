@@ -163,6 +163,24 @@ pub type GattServer = AttributeServer<
 pub type GattCharacteristic = Characteristic<GattVec<u8, GATT_VALUE_CAP>>;
 pub type ReticulumAttributeTable = AttributeTable<'static, NoopRawMutex, ATTRIBUTE_TABLE>;
 
+/// Trouble allocates an ATT packet before awaiting its bounded outbound queue. A short GATT burst
+/// can therefore observe the shared packet pool between the controller returning one packet and
+/// the host task reclaiming it. That is backpressure, not a broken connection: yield so the host
+/// can drain, then try again under the caller's operation deadline. Every other error remains
+/// terminal because retrying malformed state or a vanished connection cannot make progress.
+async fn notify_with_backpressure(
+    characteristic: &GattCharacteristic,
+    connection: &GattConnection<'_, '_, DefaultPacketPool>,
+    value: &GattVec<u8, GATT_VALUE_CAP>,
+) -> Result<(), trouble_host::Error> {
+    loop {
+        match characteristic.notify(connection, value).await {
+            Err(trouble_host::Error::OutOfMemory) => yield_now().await,
+            result => return result,
+        }
+    }
+}
+
 fn reticulum_uuid(last: u8) -> Uuid {
     let mut bytes = BLE_SERVICE_UUID_BYTES;
     bytes[15] = last;
@@ -1366,8 +1384,11 @@ async fn serve_peripheral<T: TroubleTransport>(
                 let mut value = GattVec::<u8, GATT_VALUE_CAP>::new();
                 let _ = value.extend_from_slice(&buf[..len]);
                 let activity = hub.begin_busy_operation();
-                let _ =
-                    with_timeout(GATT_OPERATION_TIMEOUT, control.notify(connection, &value)).await;
+                let _ = with_timeout(
+                    GATT_OPERATION_TIMEOUT,
+                    notify_with_backpressure(control, connection, &value),
+                )
+                .await;
                 drop(activity);
             }
         }
@@ -1431,7 +1452,7 @@ async fn serve_peripheral<T: TroubleTransport>(
                         let activity = hub.begin_busy_operation();
                         match with_timeout(
                             GATT_OPERATION_TIMEOUT,
-                            characteristic.notify(connection, &value),
+                            notify_with_backpressure(characteristic, connection, &value),
                         )
                         .await
                         {
