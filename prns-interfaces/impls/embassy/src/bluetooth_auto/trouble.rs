@@ -2,7 +2,7 @@ use core::cell::Cell;
 
 use bt_hci::transport::Transport;
 use bt_hci::FromHciBytesError;
-use embassy_futures::select::{select, select3, select4, Either, Either3};
+use embassy_futures::select::{select, select3, select4, Either, Either3, Either4};
 use embassy_futures::yield_now;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex as BridgeMutex;
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
@@ -10,9 +10,11 @@ use embassy_sync::channel::{Channel, Receiver, Sender};
 use embassy_sync::semaphore::{FairSemaphore, Semaphore, SemaphoreReleaser};
 use embassy_sync::signal::Signal;
 use embassy_sync_07::blocking_mutex::raw::NoopRawMutex;
-use embassy_time::{with_timeout, Duration, Timer};
+use embassy_time::{with_timeout, Duration, Instant, Timer};
 use heapless_09::Vec as GattVec;
 use portable_atomic::{AtomicBool, Ordering};
+#[cfg(not(target_arch = "riscv32"))]
+use portable_atomic::{AtomicU64, AtomicU8};
 use trouble_host::att::{AttClient, AttReq};
 use trouble_host::prelude::*;
 
@@ -87,6 +89,22 @@ const SCAN_WINDOW: Duration = Duration::from_millis(300);
 #[cfg(not(target_arch = "riscv32"))]
 const SCAN_WINDOW: Duration = Duration::from_millis(600);
 const DISCOVERY_TURN_REST: Duration = Duration::from_millis(20);
+#[cfg(not(target_arch = "riscv32"))]
+const CONNECTED_DISCOVERY_QUIET_MS: u64 = 750;
+#[cfg(not(target_arch = "riscv32"))]
+const CONNECTED_DISCOVERY_REST_MS: u64 = 500;
+#[cfg(not(target_arch = "riscv32"))]
+const CONNECTED_DISCOVERY_WINDOW: Duration = Duration::from_millis(60);
+#[cfg(not(target_arch = "riscv32"))]
+const CONNECTED_ADV_INTERVAL_MIN: Duration = Duration::from_millis(30);
+#[cfg(not(target_arch = "riscv32"))]
+const CONNECTED_ADV_INTERVAL_MAX: Duration = Duration::from_millis(40);
+#[cfg(not(target_arch = "riscv32"))]
+const CONNECTED_SCAN_INTERVAL: Duration = Duration::from_millis(60);
+#[cfg(not(target_arch = "riscv32"))]
+const CONNECTED_SCAN_WINDOW: Duration = Duration::from_millis(20);
+#[cfg(not(target_arch = "riscv32"))]
+const CONNECTED_CONNECT_TIMEOUT: Duration = Duration::from_millis(750);
 
 const CONTROL_QUEUE_DEPTH: usize = 2;
 const FRAME_QUEUE_DEPTH: usize = 2;
@@ -106,6 +124,12 @@ const L2CAP_CREDITS: u16 = 1;
 const L2CAP_HANDSHAKE_WINDOW: Duration = Duration::from_secs(5);
 const L2CAP_SETUP_RETRY: Duration = Duration::from_millis(150);
 const PHY_UPDATE_TIMEOUT: Duration = Duration::from_secs(2);
+#[cfg(not(target_arch = "riscv32"))]
+const DATA_LENGTH_OCTETS: u16 = 251;
+// Maximum on-air time for a 251-octet LE data PDU on the 1M PHY. The negotiated value shrinks
+// naturally when both peers move to 2M, while remaining valid if the peer keeps the 1M PHY.
+#[cfg(not(target_arch = "riscv32"))]
+const DATA_LENGTH_TIME_US: u16 = 2_120;
 #[cfg(target_arch = "riscv32")]
 const CONN_PARAM_UPDATE_TIMEOUT: Duration = Duration::from_secs(2);
 /// Retains the address kind needed to whitelist a peer when policy identifies it by six address bytes.
@@ -169,9 +193,74 @@ pub fn columba_identity_uuid() -> Uuid {
     reticulum_uuid(COLUMBA_IDENTITY_UUID_LAST)
 }
 
-fn advertisement_parameters() -> AdvertisementParameters {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DiscoveryWindow {
+    Foreground,
+    #[cfg(not(target_arch = "riscv32"))]
+    Background,
+}
+
+impl DiscoveryWindow {
+    fn advertising_duration(self) -> Duration {
+        match self {
+            Self::Foreground => ADV_WINDOW,
+            #[cfg(not(target_arch = "riscv32"))]
+            Self::Background => CONNECTED_DISCOVERY_WINDOW,
+        }
+    }
+
+    fn scanning_duration(self) -> Duration {
+        match self {
+            Self::Foreground => SCAN_WINDOW,
+            #[cfg(not(target_arch = "riscv32"))]
+            Self::Background => CONNECTED_DISCOVERY_WINDOW,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum DiscoveryRole {
+    Advertise,
+    Scan,
+}
+
+#[cfg(not(target_arch = "riscv32"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DiscoveryDecision {
+    Foreground,
+    Suspended,
+    Wait(u64),
+    Background,
+}
+
+#[cfg(not(target_arch = "riscv32"))]
+fn discovery_decision(
+    live_links: u8,
+    busy_operations: u8,
+    last_activity_ms: u64,
+    last_turn_end_ms: u64,
+    now_ms: u64,
+) -> DiscoveryDecision {
+    if live_links == 0 {
+        return DiscoveryDecision::Foreground;
+    }
+    if usize::from(live_links) >= PEER_CAPACITY || busy_operations > 0 {
+        return DiscoveryDecision::Suspended;
+    }
+    let ready_at = last_activity_ms
+        .saturating_add(CONNECTED_DISCOVERY_QUIET_MS)
+        .max(last_turn_end_ms.saturating_add(CONNECTED_DISCOVERY_REST_MS));
+    if now_ms < ready_at {
+        DiscoveryDecision::Wait(ready_at - now_ms)
+    } else {
+        DiscoveryDecision::Background
+    }
+}
+
+fn advertisement_parameters(window: DiscoveryWindow) -> AdvertisementParameters {
     #[cfg(target_arch = "riscv32")]
     {
+        let _ = window;
         let mut params = AdvertisementParameters::default();
         params.interval_min = Duration::from_millis(240);
         params.interval_max = Duration::from_millis(320);
@@ -179,7 +268,48 @@ fn advertisement_parameters() -> AdvertisementParameters {
     }
     #[cfg(not(target_arch = "riscv32"))]
     {
-        AdvertisementParameters::default()
+        let mut params = AdvertisementParameters::default();
+        if window == DiscoveryWindow::Background {
+            params.interval_min = CONNECTED_ADV_INTERVAL_MIN;
+            params.interval_max = CONNECTED_ADV_INTERVAL_MAX;
+        }
+        params
+    }
+}
+
+fn idle_scan_parameters(window: DiscoveryWindow) -> (Duration, Duration) {
+    #[cfg(target_arch = "riscv32")]
+    {
+        let _ = window;
+        (IDLE_SCAN_INTERVAL, IDLE_SCAN_WINDOW)
+    }
+    #[cfg(not(target_arch = "riscv32"))]
+    {
+        match window {
+            DiscoveryWindow::Foreground => (IDLE_SCAN_INTERVAL, IDLE_SCAN_WINDOW),
+            DiscoveryWindow::Background => (CONNECTED_SCAN_INTERVAL, CONNECTED_SCAN_WINDOW),
+        }
+    }
+}
+
+fn connect_scan_parameters(window: DiscoveryWindow) -> (Duration, Duration, Duration) {
+    #[cfg(target_arch = "riscv32")]
+    {
+        let _ = window;
+        (CONNECT_TIMEOUT, CONNECT_SCAN_INTERVAL, CONNECT_SCAN_WINDOW)
+    }
+    #[cfg(not(target_arch = "riscv32"))]
+    {
+        match window {
+            DiscoveryWindow::Foreground => {
+                (CONNECT_TIMEOUT, CONNECT_SCAN_INTERVAL, CONNECT_SCAN_WINDOW)
+            }
+            DiscoveryWindow::Background => (
+                CONNECTED_CONNECT_TIMEOUT,
+                CONNECTED_SCAN_INTERVAL,
+                CONNECTED_SCAN_WINDOW,
+            ),
+        }
     }
 }
 
@@ -199,6 +329,28 @@ fn preferred_conn_params() -> RequestedConnParams {
     {
         RequestedConnParams::default()
     }
+}
+
+#[cfg(not(target_arch = "riscv32"))]
+async fn tune_connection<T: TroubleTransport>(
+    hub: &BleHub,
+    stack: &TroubleStack<T>,
+    connection: &Connection<'_, DefaultPacketPool>,
+    origin: Origin,
+) {
+    let activity = hub.begin_busy_operation();
+    let data_length = with_timeout(
+        PHY_UPDATE_TIMEOUT,
+        connection.update_data_length(stack, DATA_LENGTH_OCTETS, DATA_LENGTH_TIME_US),
+    )
+    .await;
+    let phy = with_timeout(PHY_UPDATE_TIMEOUT, connection.set_phy(stack, PhyKind::Le2M)).await;
+    drop(activity);
+    crate::diagnostic_log::info!(
+        "ble: {origin:?} link tuning dle_251={} phy_2m={}",
+        matches!(data_length, Ok(Ok(()))),
+        matches!(phy, Ok(Ok(()))),
+    );
 }
 
 #[derive(Debug)]
@@ -320,8 +472,40 @@ pub struct BleHub {
     advertise: Signal<BridgeMutex, bool>,
     scan_enabled: Signal<BridgeMutex, bool>,
     radio_enabled: AtomicBool,
+    #[cfg(not(target_arch = "riscv32"))]
+    live_links: AtomicU8,
+    #[cfg(not(target_arch = "riscv32"))]
+    busy_operations: AtomicU8,
+    #[cfg(not(target_arch = "riscv32"))]
+    last_activity_ms: AtomicU64,
+    #[cfg(not(target_arch = "riscv32"))]
+    last_discovery_end_ms: AtomicU64,
+    #[cfg(not(target_arch = "riscv32"))]
+    advertise_activity: Signal<BridgeMutex, ()>,
+    #[cfg(not(target_arch = "riscv32"))]
+    scan_activity: Signal<BridgeMutex, ()>,
     local_address: BlockingMutex<BridgeMutex, Cell<[u8; 6]>>,
     status: BluetoothAutoStatus<PEER_CAPACITY>,
+}
+
+struct LiveLinkGuard<'a> {
+    hub: &'a BleHub,
+}
+
+impl Drop for LiveLinkGuard<'_> {
+    fn drop(&mut self) {
+        self.hub.finish_live_link();
+    }
+}
+
+struct BusyOperationGuard<'a> {
+    hub: &'a BleHub,
+}
+
+impl Drop for BusyOperationGuard<'_> {
+    fn drop(&mut self) {
+        self.hub.finish_busy_operation();
+    }
 }
 
 impl BleHub {
@@ -340,6 +524,18 @@ impl BleHub {
             advertise: Signal::new(),
             scan_enabled: Signal::new(),
             radio_enabled: AtomicBool::new(false),
+            #[cfg(not(target_arch = "riscv32"))]
+            live_links: AtomicU8::new(0),
+            #[cfg(not(target_arch = "riscv32"))]
+            busy_operations: AtomicU8::new(0),
+            #[cfg(not(target_arch = "riscv32"))]
+            last_activity_ms: AtomicU64::new(0),
+            #[cfg(not(target_arch = "riscv32"))]
+            last_discovery_end_ms: AtomicU64::new(0),
+            #[cfg(not(target_arch = "riscv32"))]
+            advertise_activity: Signal::new(),
+            #[cfg(not(target_arch = "riscv32"))]
+            scan_activity: Signal::new(),
             local_address: BlockingMutex::new(Cell::new([0; 6])),
             status,
         }
@@ -360,6 +556,145 @@ impl BleHub {
 
     fn note_ingress_pressure(&self) {
         self.status.note_ingress_pressure();
+    }
+
+    fn track_live_link(&self) -> LiveLinkGuard<'_> {
+        #[cfg(not(target_arch = "riscv32"))]
+        {
+            let _ = self
+                .live_links
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                    Some(count.saturating_add(1).min(PEER_CAPACITY as u8))
+                });
+            self.note_link_activity();
+        }
+        LiveLinkGuard { hub: self }
+    }
+
+    fn finish_live_link(&self) {
+        #[cfg(not(target_arch = "riscv32"))]
+        {
+            let _ = self
+                .live_links
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                    Some(count.saturating_sub(1))
+                });
+            self.note_link_activity();
+        }
+    }
+
+    fn begin_busy_operation(&self) -> BusyOperationGuard<'_> {
+        #[cfg(not(target_arch = "riscv32"))]
+        {
+            let _ =
+                self.busy_operations
+                    .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                        Some(count.saturating_add(1))
+                    });
+            self.note_link_activity();
+        }
+        BusyOperationGuard { hub: self }
+    }
+
+    fn finish_busy_operation(&self) {
+        #[cfg(not(target_arch = "riscv32"))]
+        {
+            let _ =
+                self.busy_operations
+                    .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                        Some(count.saturating_sub(1))
+                    });
+            self.note_link_activity();
+        }
+    }
+
+    fn note_link_activity(&self) {
+        #[cfg(not(target_arch = "riscv32"))]
+        {
+            self.last_activity_ms
+                .store(Instant::now().as_millis(), Ordering::Release);
+            self.advertise_activity.signal(());
+            self.scan_activity.signal(());
+        }
+    }
+
+    #[cfg(not(target_arch = "riscv32"))]
+    fn activity_signal(&self, role: DiscoveryRole) -> &Signal<BridgeMutex, ()> {
+        match role {
+            DiscoveryRole::Advertise => &self.advertise_activity,
+            DiscoveryRole::Scan => &self.scan_activity,
+        }
+    }
+
+    async fn await_discovery_turn(
+        &self,
+        enabled: &Signal<BridgeMutex, bool>,
+        role: DiscoveryRole,
+    ) -> Result<DiscoveryWindow, bool> {
+        #[cfg(target_arch = "riscv32")]
+        {
+            let _ = (enabled, role);
+            Ok(DiscoveryWindow::Foreground)
+        }
+        #[cfg(not(target_arch = "riscv32"))]
+        {
+            let activity = self.activity_signal(role);
+            loop {
+                activity.reset();
+                let now_ms = Instant::now().as_millis();
+                let decision = discovery_decision(
+                    self.live_links.load(Ordering::Acquire),
+                    self.busy_operations.load(Ordering::Acquire),
+                    self.last_activity_ms.load(Ordering::Acquire),
+                    self.last_discovery_end_ms.load(Ordering::Acquire),
+                    now_ms,
+                );
+                match decision {
+                    DiscoveryDecision::Foreground => return Ok(DiscoveryWindow::Foreground),
+                    DiscoveryDecision::Background => return Ok(DiscoveryWindow::Background),
+                    DiscoveryDecision::Suspended => {
+                        match select(enabled.wait(), activity.wait()).await {
+                            Either::First(state) => return Err(state),
+                            Either::Second(()) => {}
+                        }
+                    }
+                    DiscoveryDecision::Wait(wait_ms) => {
+                        match select3(
+                            Timer::after(Duration::from_millis(wait_ms)),
+                            enabled.wait(),
+                            activity.wait(),
+                        )
+                        .await
+                        {
+                            Either3::First(()) | Either3::Third(()) => {}
+                            Either3::Second(state) => return Err(state),
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    async fn wait_for_discovery_activity(&self, role: DiscoveryRole) {
+        #[cfg(target_arch = "riscv32")]
+        {
+            let _ = role;
+            core::future::pending::<()>().await;
+        }
+        #[cfg(not(target_arch = "riscv32"))]
+        {
+            self.activity_signal(role).wait().await;
+        }
+    }
+
+    fn finish_discovery_turn(&self, window: DiscoveryWindow) {
+        #[cfg(not(target_arch = "riscv32"))]
+        if window == DiscoveryWindow::Background {
+            self.last_discovery_end_ms
+                .store(Instant::now().as_millis(), Ordering::Release);
+        }
+        #[cfg(target_arch = "riscv32")]
+        let _ = window;
     }
 
     pub fn backend(&'static self) -> EmbeddedBleBackend {
@@ -791,6 +1126,7 @@ fn note_inbound_admission(
 }
 
 async fn l2cap_pump<T: TroubleTransport>(
+    hub: &'static BleHub,
     stack: &'static TroubleStack<T>,
     channel: L2capChannel<'static, DefaultPacketPool>,
     inbound_frames: &'static BleFramePool,
@@ -806,7 +1142,10 @@ async fn l2cap_pump<T: TroubleTransport>(
             let Some(len) = encode_stream_frame(&frame, tx.as_mut()) else {
                 continue;
             };
-            if writer.send(stack, &tx[..len]).await.is_err() {
+            let activity = hub.begin_busy_operation();
+            let sent = writer.send(stack, &tx[..len]).await;
+            drop(activity);
+            if sent.is_err() {
                 break;
             }
         }
@@ -818,6 +1157,7 @@ async fn l2cap_pump<T: TroubleTransport>(
                 Ok(read) => read,
                 Err(_) => break,
             };
+            hub.note_link_activity();
             if read < STREAM_FRAME_PREFIX_LEN {
                 continue;
             }
@@ -868,6 +1208,7 @@ async fn serve_peripheral<T: TroubleTransport>(
     connection: &GattConnection<'_, '_, DefaultPacketPool>,
     characteristics: ReticulumGattCharacteristics<'_>,
 ) {
+    let setup_activity = hub.begin_busy_operation();
     let ReticulumGattCharacteristics {
         control,
         data,
@@ -889,6 +1230,7 @@ async fn serve_peripheral<T: TroubleTransport>(
         match connection.next().await {
             GattConnectionEvent::Disconnected { .. } => return,
             GattConnectionEvent::Gatt { event } => {
+                let activity = hub.begin_busy_operation();
                 let protocol = match &event {
                     GattEvent::Write(write) if write.handle() == control.handle => {
                         match Control::decode(write.data()) {
@@ -913,6 +1255,7 @@ async fn serve_peripheral<T: TroubleTransport>(
                     reply.send().await;
                 }
                 if let Some(protocol) = protocol {
+                    drop(activity);
                     break protocol;
                 }
             }
@@ -920,6 +1263,16 @@ async fn serve_peripheral<T: TroubleTransport>(
         }
     };
     slot.set_peer_protocol(peer_protocol);
+    #[cfg(not(target_arch = "riscv32"))]
+    tune_connection(hub, stack, connection.raw(), Origin::Accepted).await;
+    let initial_params = connection.raw().params();
+    crate::diagnostic_log::info!(
+        "ble: accepted GATT link ready protocol={peer_protocol:?} interval_ms={} latency={} supervision_ms={} att_mtu={}",
+        initial_params.conn_interval.as_millis(),
+        initial_params.peripheral_latency,
+        initial_params.supervision_timeout.as_millis(),
+        connection.raw().att_mtu(),
+    );
     hub.ready.send(link.into_ready(Origin::Accepted)).await;
 
     let control_out_rx = slot.control_out.receiver();
@@ -932,7 +1285,23 @@ async fn serve_peripheral<T: TroubleTransport>(
         loop {
             match connection.next().await {
                 GattConnectionEvent::Disconnected { .. } => break,
+                GattConnectionEvent::PhyUpdated { tx_phy, rx_phy } => {
+                    crate::diagnostic_log::info!(
+                        "ble: accepted PHY updated tx={tx_phy:?} rx={rx_phy:?}"
+                    );
+                }
+                GattConnectionEvent::DataLengthUpdated {
+                    max_tx_octets,
+                    max_tx_time,
+                    max_rx_octets,
+                    max_rx_time,
+                } => {
+                    crate::diagnostic_log::info!(
+                        "ble: accepted data length tx={max_tx_octets}B/{max_tx_time}us rx={max_rx_octets}B/{max_rx_time}us"
+                    );
+                }
                 GattConnectionEvent::Gatt { event } => {
+                    let _activity = hub.begin_busy_operation();
                     if let GattEvent::Write(write) = &event {
                         let acknowledged = matches!(
                             write.payload().incoming(),
@@ -996,8 +1365,10 @@ async fn serve_peripheral<T: TroubleTransport>(
             if let Some(len) = message.encode(&mut buf) {
                 let mut value = GattVec::<u8, GATT_VALUE_CAP>::new();
                 let _ = value.extend_from_slice(&buf[..len]);
+                let activity = hub.begin_busy_operation();
                 let _ =
                     with_timeout(GATT_OPERATION_TIMEOUT, control.notify(connection, &value)).await;
+                drop(activity);
             }
         }
     };
@@ -1025,36 +1396,72 @@ async fn serve_peripheral<T: TroubleTransport>(
             },
             _ => None,
         };
+        drop(setup_activity);
         match channel {
             Some(channel) => {
                 crate::diagnostic_log::debug!("ble: L2CAP up (accepted)");
-                l2cap_pump(stack, channel, &hub.inbound_frames, data_out_rx, data_in_tx).await;
+                l2cap_pump(
+                    hub,
+                    stack,
+                    channel,
+                    &hub.inbound_frames,
+                    data_out_rx,
+                    data_in_tx,
+                )
+                .await;
             }
-            None => loop {
-                let frame = data_out_rx.receive().await;
-                let frame = frame.lock().await;
-                let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
-                for fragment in fragments_of(&frame, GATT_FRAGMENT_PAYLOAD) {
-                    let Some(len) = fragment.encode(&mut buf) else {
-                        continue;
-                    };
-                    let mut value = GattVec::<u8, GATT_VALUE_CAP>::new();
-                    let _ = value.extend_from_slice(&buf[..len]);
-                    let characteristic = match peer_protocol {
-                        PeerProtocol::Native => data,
-                        PeerProtocol::Columba => columba_tx,
-                    };
-                    match with_timeout(
-                        GATT_OPERATION_TIMEOUT,
-                        characteristic.notify(connection, &value),
-                    )
-                    .await
-                    {
-                        Ok(Ok(())) => {}
-                        _ => break,
+            None => {
+                let mut profiled_first_frame = false;
+                loop {
+                    let frame = data_out_rx.receive().await;
+                    let frame = frame.lock().await;
+                    let frame_started = Instant::now();
+                    let mut sent_fragments = 0usize;
+                    let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
+                    for fragment in fragments_of(&frame, GATT_FRAGMENT_PAYLOAD) {
+                        let Some(len) = fragment.encode(&mut buf) else {
+                            continue;
+                        };
+                        let mut value = GattVec::<u8, GATT_VALUE_CAP>::new();
+                        let _ = value.extend_from_slice(&buf[..len]);
+                        let characteristic = match peer_protocol {
+                            PeerProtocol::Native => data,
+                            PeerProtocol::Columba => columba_tx,
+                        };
+                        let activity = hub.begin_busy_operation();
+                        match with_timeout(
+                            GATT_OPERATION_TIMEOUT,
+                            characteristic.notify(connection, &value),
+                        )
+                        .await
+                        {
+                            Ok(Ok(())) => sent_fragments += 1,
+                            Ok(Err(error)) => {
+                                crate::diagnostic_log::warn!(
+                                    "ble: accepted GATT notify failed after {sent_fragments} fragments: {error:?}"
+                                );
+                                return;
+                            }
+                            Err(_) => {
+                                crate::diagnostic_log::warn!(
+                                    "ble: accepted GATT notify timed out after {sent_fragments} fragments"
+                                );
+                                return;
+                            }
+                        }
+                        drop(activity);
+                    }
+                    if !profiled_first_frame {
+                        crate::diagnostic_log::info!(
+                            "ble: first accepted GATT frame bytes={} fragments={} submit_ms={}",
+                            frame.len(),
+                            sent_fragments,
+                            frame_started.elapsed().as_millis(),
+                        );
+                        profiled_first_frame = true;
                     }
                 }
-            },
+            }
         }
     });
 
@@ -1076,6 +1483,7 @@ async fn serve_central<T: TroubleTransport>(
     connection: Connection<'static, DefaultPacketPool>,
     uuids: ReticulumGattUuids<'_>,
 ) {
+    let setup_activity = hub.begin_busy_operation();
     let slot = &hub.slots[link.index()];
     let addr = connection.peer_address().into_inner();
     let client = match with_timeout(
@@ -1170,8 +1578,22 @@ async fn serve_central<T: TroubleTransport>(
     if let Some(peer_identity) = peer_identity {
         slot.identity_in.signal(peer_identity);
     }
-    let phy_2m = with_timeout(PHY_UPDATE_TIMEOUT, connection.set_phy(stack, PhyKind::Le2M)).await;
-    crate::diagnostic_log::debug!("ble: 2M PHY request ok={}", matches!(phy_2m, Ok(Ok(()))));
+    #[cfg(not(target_arch = "riscv32"))]
+    tune_connection(hub, stack, &connection, Origin::Dialed).await;
+    #[cfg(target_arch = "riscv32")]
+    {
+        let phy_2m =
+            with_timeout(PHY_UPDATE_TIMEOUT, connection.set_phy(stack, PhyKind::Le2M)).await;
+        crate::diagnostic_log::debug!("ble: 2M PHY request ok={}", matches!(phy_2m, Ok(Ok(()))));
+    }
+    let initial_params = connection.params();
+    crate::diagnostic_log::info!(
+        "ble: dialed GATT link ready protocol={peer_protocol:?} interval_ms={} latency={} supervision_ms={} att_mtu={}",
+        initial_params.conn_interval.as_millis(),
+        initial_params.peripheral_latency,
+        initial_params.supervision_timeout.as_millis(),
+        connection.att_mtu(),
+    );
     let mut reassembler = alloc::boxed::Box::new(Reassembler::<GATT_REASSEMBLY_CAP>::new());
     let control_out_rx = slot.control_out.receiver();
     let data_out_rx = slot.data_out.receiver();
@@ -1185,11 +1607,13 @@ async fn serve_central<T: TroubleTransport>(
             Some(mut control_listener) => loop {
                 match select(control_listener.next(), data_listener.next()).await {
                     Either::First(notification) => {
+                        hub.note_link_activity();
                         if let Some(message) = Control::decode(notification.as_ref()) {
                             control_in_tx.send(message).await;
                         }
                     }
                     Either::Second(notification) => {
+                        hub.note_link_activity();
                         if let Some(fragment) = Fragment::decode(notification.as_ref()) {
                             if let Some(frame) = reassembler.absorb(&fragment) {
                                 note_inbound_admission(
@@ -1207,6 +1631,7 @@ async fn serve_central<T: TroubleTransport>(
             },
             None => loop {
                 let notification = data_listener.next().await;
+                hub.note_link_activity();
                 if let Some(fragment) = Fragment::decode(notification.as_ref()) {
                     if let Some(frame) = reassembler.absorb(&fragment) {
                         note_inbound_admission(
@@ -1222,22 +1647,26 @@ async fn serve_central<T: TroubleTransport>(
     let control_outbound = async {
         if peer_protocol == PeerProtocol::Columba {
             let identity = slot.identity_out.receive().await;
+            let activity = hub.begin_busy_operation();
             let _ = with_timeout(
                 GATT_OPERATION_TIMEOUT,
                 client.write_characteristic(&control, identity.as_bytes()),
             )
             .await;
+            drop(activity);
             core::future::pending::<()>().await;
         }
         loop {
             let message = control_out_rx.receive().await;
             let mut buf = [0u8; CONTROL_MAX_LEN];
             if let Some(len) = message.encode(&mut buf) {
+                let activity = hub.begin_busy_operation();
                 let _ = with_timeout(
                     GATT_OPERATION_TIMEOUT,
                     client.write_characteristic(&control, &buf[..len]),
                 )
                 .await;
+                drop(activity);
             }
         }
     };
@@ -1269,10 +1698,12 @@ async fn serve_central<T: TroubleTransport>(
             }
             _ => None,
         };
+        drop(setup_activity);
         match channel {
             Some(channel) => {
                 crate::diagnostic_log::debug!("ble: L2CAP up (opened)");
                 l2cap_pump(
+                    hub,
                     stack,
                     channel,
                     &hub.inbound_frames,
@@ -1281,36 +1712,68 @@ async fn serve_central<T: TroubleTransport>(
                 )
                 .await;
             }
-            None => loop {
-                let frame = data_out_rx.receive().await;
-                let frame = frame.lock().await;
-                let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
-                for fragment in fragments_of(&frame, GATT_FRAGMENT_PAYLOAD) {
-                    let Some(len) = fragment.encode(&mut buf) else {
-                        continue;
-                    };
-                    let written = match peer_protocol {
-                        PeerProtocol::Native => {
-                            with_timeout(
-                                GATT_OPERATION_TIMEOUT,
-                                client.write_characteristic(&data, &buf[..len]),
-                            )
-                            .await
+            None => {
+                let mut profiled_first_frame = false;
+                loop {
+                    let frame = data_out_rx.receive().await;
+                    let frame = frame.lock().await;
+                    let frame_started = Instant::now();
+                    let mut sent_fragments = 0usize;
+                    let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
+                    for fragment in fragments_of(&frame, GATT_FRAGMENT_PAYLOAD) {
+                        let Some(len) = fragment.encode(&mut buf) else {
+                            continue;
+                        };
+                        let written = match peer_protocol {
+                            PeerProtocol::Native => {
+                                let activity = hub.begin_busy_operation();
+                                let written = with_timeout(
+                                    GATT_OPERATION_TIMEOUT,
+                                    client.write_characteristic(&data, &buf[..len]),
+                                )
+                                .await;
+                                drop(activity);
+                                written
+                            }
+                            PeerProtocol::Columba => {
+                                let activity = hub.begin_busy_operation();
+                                let written = with_timeout(
+                                    GATT_OPERATION_TIMEOUT,
+                                    client
+                                        .write_characteristic_without_response(&data, &buf[..len]),
+                                )
+                                .await;
+                                drop(activity);
+                                written
+                            }
+                        };
+                        match written {
+                            Ok(Ok(())) => sent_fragments += 1,
+                            Ok(Err(error)) => {
+                                crate::diagnostic_log::warn!(
+                                    "ble: dialed GATT write failed after {sent_fragments} fragments: {error:?}"
+                                );
+                                return;
+                            }
+                            Err(_) => {
+                                crate::diagnostic_log::warn!(
+                                    "ble: dialed GATT write timed out after {sent_fragments} fragments"
+                                );
+                                return;
+                            }
                         }
-                        PeerProtocol::Columba => {
-                            with_timeout(
-                                GATT_OPERATION_TIMEOUT,
-                                client.write_characteristic_without_response(&data, &buf[..len]),
-                            )
-                            .await
-                        }
-                    };
-                    match written {
-                        Ok(Ok(())) => {}
-                        _ => break,
+                    }
+                    if !profiled_first_frame {
+                        crate::diagnostic_log::info!(
+                            "ble: first dialed GATT frame bytes={} fragments={} submit_ms={}",
+                            frame.len(),
+                            sent_fragments,
+                            frame_started.elapsed().as_millis(),
+                        );
+                        profiled_first_frame = true;
                     }
                 }
-            },
+            }
         }
     });
 
@@ -1339,6 +1802,7 @@ pub async fn serve_slot<T: TroubleTransport>(
             drop(job);
             continue;
         }
+        let _live_link = hub.track_live_link();
         match job {
             SlotJob::Accept {
                 connection,
@@ -1407,9 +1871,20 @@ pub async fn acceptor<T: TroubleTransport>(
         };
         let idx = lease.index();
         let radio = hub.acquire_radio().await;
+        let window = match hub
+            .await_discovery_turn(&hub.advertise, DiscoveryRole::Advertise)
+            .await
+        {
+            Ok(window) => window,
+            Err(state) => {
+                enabled = state;
+                drop(radio);
+                continue;
+            }
+        };
         let advertiser = match peripheral
             .advertise(
-                &advertisement_parameters(),
+                &advertisement_parameters(window),
                 Advertisement::ConnectableScannableUndirected {
                     adv_data,
                     scan_data: &[],
@@ -1420,19 +1895,21 @@ pub async fn acceptor<T: TroubleTransport>(
             Ok(advertiser) => advertiser,
             Err(error) => {
                 crate::diagnostic_log::warn!("ble advertise failed: {error:?}");
+                hub.finish_discovery_turn(window);
                 drop(radio);
                 Timer::after(Duration::from_millis(500)).await;
                 continue;
             }
         };
-        match select3(
+        match select4(
             advertiser.accept(),
-            Timer::after(ADV_WINDOW),
+            Timer::after(window.advertising_duration()),
             hub.advertise.wait(),
+            hub.wait_for_discovery_activity(DiscoveryRole::Advertise),
         )
         .await
         {
-            Either3::First(Ok(connection)) => {
+            Either4::First(Ok(connection)) => {
                 hub.assign[idx]
                     .send(SlotJob::Accept {
                         connection,
@@ -1440,14 +1917,15 @@ pub async fn acceptor<T: TroubleTransport>(
                     })
                     .await;
             }
-            Either3::First(Err(error)) => {
+            Either4::First(Err(error)) => {
                 crate::diagnostic_log::warn!("ble accept failed: {error:?}");
             }
-            Either3::Second(()) => {}
-            Either3::Third(state) => {
+            Either4::Second(()) | Either4::Fourth(()) => {}
+            Either4::Third(state) => {
                 enabled = state;
             }
         }
+        hub.finish_discovery_turn(window);
         drop(radio);
         Timer::after(DISCOVERY_TURN_REST).await;
     }
@@ -1458,41 +1936,61 @@ pub async fn dialer<T: TroubleTransport>(
     mut central: Central<'static, TroubleController<T>, DefaultPacketPool>,
 ) {
     let mut enabled = false;
+    let mut scan_failure_reported = false;
     loop {
         if !enabled {
             enabled = hub.scan_enabled.wait().await;
             continue;
         }
         let radio = hub.acquire_radio().await;
+        let window = match hub
+            .await_discovery_turn(&hub.scan_enabled, DiscoveryRole::Scan)
+            .await
+        {
+            Ok(window) => window,
+            Err(state) => {
+                enabled = state;
+                drop(radio);
+                continue;
+            }
+        };
+        let (scan_interval, scan_window) = idle_scan_parameters(window);
         let mut scanner = Scanner::new(central);
         let target = {
             match scanner
                 .scan(&ScanConfig {
                     active: false,
-                    interval: IDLE_SCAN_INTERVAL,
-                    window: IDLE_SCAN_WINDOW,
+                    interval: scan_interval,
+                    window: scan_window,
                     ..Default::default()
                 })
                 .await
             {
                 Ok(_session) => {
-                    match select3(
+                    scan_failure_reported = false;
+                    match select4(
                         hub.dial_request.receive(),
-                        Timer::after(SCAN_WINDOW),
+                        Timer::after(window.scanning_duration()),
                         hub.scan_enabled.wait(),
+                        hub.wait_for_discovery_activity(DiscoveryRole::Scan),
                     )
                     .await
                     {
-                        Either3::First(target) => Some(target),
-                        Either3::Second(()) => None,
-                        Either3::Third(state) => {
+                        Either4::First(target) => Some(target),
+                        Either4::Second(()) | Either4::Fourth(()) => None,
+                        Either4::Third(state) => {
                             enabled = state;
                             None
                         }
                     }
                 }
                 Err(error) => {
-                    crate::diagnostic_log::warn!("ble scan failed: {error:?}");
+                    if scan_failure_reported {
+                        crate::diagnostic_log::debug!("ble scan still failing: {error:?}");
+                    } else {
+                        crate::diagnostic_log::warn!("ble scan failed: {error:?}");
+                        scan_failure_reported = true;
+                    }
                     Timer::after(Duration::from_millis(500)).await;
                     None
                 }
@@ -1504,6 +2002,7 @@ pub async fn dialer<T: TroubleTransport>(
                 Ok(Some(lease)) => lease,
                 Ok(None) => {
                     hub.dial_failed.send(target.addr.into_inner()).await;
+                    hub.finish_discovery_turn(window);
                     drop(radio);
                     Timer::after(DISCOVERY_TURN_REST).await;
                     continue;
@@ -1511,6 +2010,7 @@ pub async fn dialer<T: TroubleTransport>(
                 Err(error) => {
                     crate::diagnostic_log::warn!("ble connection slot claim failed: {error:?}");
                     hub.dial_failed.send(target.addr.into_inner()).await;
+                    hub.finish_discovery_turn(window);
                     drop(radio);
                     Timer::after(DISCOVERY_TURN_REST).await;
                     continue;
@@ -1527,11 +2027,19 @@ pub async fn dialer<T: TroubleTransport>(
                 },
                 connect_params: preferred_conn_params(),
             };
-            config.scan_config.timeout = CONNECT_TIMEOUT;
-            config.scan_config.interval = CONNECT_SCAN_INTERVAL;
-            config.scan_config.window = CONNECT_SCAN_WINDOW;
-            match select(central.connect(&config), hub.scan_enabled.wait()).await {
-                Either::First(Ok(connection)) => {
+            let (connect_timeout, connect_interval, connect_window) =
+                connect_scan_parameters(window);
+            config.scan_config.timeout = connect_timeout;
+            config.scan_config.interval = connect_interval;
+            config.scan_config.window = connect_window;
+            match select3(
+                central.connect(&config),
+                hub.scan_enabled.wait(),
+                hub.wait_for_discovery_activity(DiscoveryRole::Scan),
+            )
+            .await
+            {
+                Either3::First(Ok(connection)) => {
                     hub.assign[idx]
                         .send(SlotJob::Dial {
                             connection,
@@ -1539,12 +2047,16 @@ pub async fn dialer<T: TroubleTransport>(
                         })
                         .await;
                 }
-                Either::First(Err(_)) => {
+                Either3::First(Err(_)) => {
                     hub.dial_failed.send(bd.into_inner()).await;
                 }
-                Either::Second(state) => enabled = state,
+                Either3::Second(state) => enabled = state,
+                Either3::Third(()) => {
+                    hub.dial_failed.send(bd.into_inner()).await;
+                }
             }
         }
+        hub.finish_discovery_turn(window);
         drop(radio);
         Timer::after(DISCOVERY_TURN_REST).await;
     }
@@ -1628,5 +2140,104 @@ mod tests {
         note_inbound_admission(&hub, Ok(InboundFrameAdmission::QueueFull));
 
         assert_eq!(status.ingress_pressure_events(), 1);
+    }
+
+    #[cfg(not(target_arch = "riscv32"))]
+    #[test]
+    fn discovery_is_foreground_without_a_live_link() {
+        assert_eq!(
+            discovery_decision(0, 0, 9_000, 9_000, 9_001),
+            DiscoveryDecision::Foreground
+        );
+    }
+
+    #[cfg(not(target_arch = "riscv32"))]
+    #[test]
+    fn live_link_activity_extends_the_quiet_deadline() {
+        assert_eq!(
+            discovery_decision(1, 0, 1_000, 0, 1_749),
+            DiscoveryDecision::Wait(1)
+        );
+        assert_eq!(
+            discovery_decision(1, 0, 1_000, 0, 1_750),
+            DiscoveryDecision::Background
+        );
+        assert_eq!(
+            discovery_decision(1, 0, 1_700, 0, 1_750),
+            DiscoveryDecision::Wait(700)
+        );
+    }
+
+    #[cfg(not(target_arch = "riscv32"))]
+    #[test]
+    fn discovery_roles_share_one_background_rest_deadline() {
+        assert_eq!(
+            discovery_decision(1, 0, 0, 2_000, 2_499),
+            DiscoveryDecision::Wait(1)
+        );
+        assert_eq!(
+            discovery_decision(1, 0, 0, 2_000, 2_500),
+            DiscoveryDecision::Background
+        );
+    }
+
+    #[cfg(not(target_arch = "riscv32"))]
+    #[test]
+    fn busy_operations_and_full_capacity_suspend_discovery() {
+        assert_eq!(
+            discovery_decision(1, 1, 0, 0, 10_000),
+            DiscoveryDecision::Suspended
+        );
+        for links in 1..PEER_CAPACITY as u8 {
+            assert_eq!(
+                discovery_decision(links, 0, 0, 0, 10_000),
+                DiscoveryDecision::Background
+            );
+        }
+        assert_eq!(
+            discovery_decision(PEER_CAPACITY as u8, 0, 0, 0, 10_000),
+            DiscoveryDecision::Suspended
+        );
+    }
+
+    #[cfg(not(target_arch = "riscv32"))]
+    #[test]
+    fn connected_windows_use_the_bounded_radio_budget() {
+        let params = advertisement_parameters(DiscoveryWindow::Background);
+        assert_eq!(params.interval_min, CONNECTED_ADV_INTERVAL_MIN);
+        assert_eq!(params.interval_max, CONNECTED_ADV_INTERVAL_MAX);
+        assert_eq!(
+            DiscoveryWindow::Background.advertising_duration(),
+            CONNECTED_DISCOVERY_WINDOW
+        );
+        assert_eq!(
+            idle_scan_parameters(DiscoveryWindow::Background),
+            (CONNECTED_SCAN_INTERVAL, CONNECTED_SCAN_WINDOW)
+        );
+    }
+
+    #[cfg(not(target_arch = "riscv32"))]
+    #[test]
+    fn live_and_busy_guards_release_their_counts_after_errors() {
+        static SHARED: BluetoothAutoShared<PEER_CAPACITY> =
+            BluetoothAutoShared::new(InterfaceId::new([0x77; 8]));
+        let hub = BleHub::new(BluetoothAutoStatus::new(&SHARED));
+
+        fn fail_while_live(hub: &BleHub) -> Result<(), ()> {
+            let _live = hub.track_live_link();
+            assert_eq!(hub.live_links.load(Ordering::Acquire), 1);
+            Err(())
+        }
+
+        fn fail_while_busy(hub: &BleHub) -> Result<(), ()> {
+            let _busy = hub.begin_busy_operation();
+            assert_eq!(hub.busy_operations.load(Ordering::Acquire), 1);
+            Err(())
+        }
+
+        assert_eq!(fail_while_live(&hub), Err(()));
+        assert_eq!(hub.live_links.load(Ordering::Acquire), 0);
+        assert_eq!(fail_while_busy(&hub), Err(()));
+        assert_eq!(hub.busy_operations.load(Ordering::Acquire), 0);
     }
 }

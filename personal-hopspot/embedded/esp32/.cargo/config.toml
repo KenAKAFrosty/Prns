@@ -14,9 +14,9 @@ rustflags = ["-C", "link-arg=-Tlinkall.x"]
 
 [env]
 # esp-println's logger is off unless `ESP_LOG` is set at build time (init_logger_from_env reads it).
-# Scope it to this crate so the firmware's own lifecycle lines (BLE link/L2CAP/PHY, auto-announce) print
-# without pulling in trouble-host's verbose `log` feature, which would flood the USB-serial-JTAG.
-ESP_LOG = "personal_hopspot_esp32=info,personal_rns=info"
+# Scope output to the firmware, engine, and interface backend so lifecycle lines
+# (BLE link/L2CAP/PHY, auto-announce) print without trouble-host flooding USB-serial-JTAG.
+ESP_LOG = "personal_hopspot_esp32=info,personal_rns=info,prns_interfaces_embassy=info"
 # The dual-role BLE backend's central side subscribes to BOTH the peer's control and data
 # characteristics, so trouble-host's GATT-client notification pubsub needs room for two subscribers
 # (its default is 1). The queue depth follows so a control notification isn't dropped while a data
