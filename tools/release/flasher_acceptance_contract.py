@@ -190,7 +190,10 @@ def scaffold(
         isinstance(target, dict) and isinstance(target.get("board_slug"), str)
         for target in raw_targets
     ):
-        raise ValueError("manifest must contain exactly four well-formed targets")
+        raise ValueError(
+            "manifest must contain exactly "
+            f"{len(SHIPPING_BOARDS)} well-formed targets"
+        )
     targets = {
         target.get("board_slug"): target
         for target in raw_targets
