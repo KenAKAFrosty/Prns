@@ -29,11 +29,21 @@ jobs:
 
   host:
     needs: custody
+    permissions:
+      contents: read
+      id-token: write
     uses: ./.github/workflows/host-sdks.yml
+    with:
+      expected_sha: ${{ inputs.expected_sha }}
 
   javascript:
     needs: custody
+    permissions:
+      contents: read
+      id-token: write
     uses: ./.github/workflows/napi.yml
+    with:
+      expected_sha: ${{ inputs.expected_sha }}
 
   assemble:
     needs: [host, javascript]
