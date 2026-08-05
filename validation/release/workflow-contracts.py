@@ -598,6 +598,33 @@ def validate() -> list[str]:
     if "schema 2 host SDK artifacts" in host_sdk_promotion:
         errors.append("host-sdk-promote.yml hardcodes a stale host schema version")
 
+    host_sdk_stage = (
+        ROOT / ".github" / "workflows" / "host-sdk-stage.yml"
+    ).read_text(encoding="utf-8")
+    for reusable_call in (
+        """  host:
+    needs: custody
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/host-sdks.yml
+    with:
+      expected_sha: ${{ inputs.expected_sha }}""",
+        """  javascript:
+    needs: custody
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/napi.yml
+    with:
+      expected_sha: ${{ inputs.expected_sha }}""",
+    ):
+        if reusable_call not in host_sdk_stage:
+            errors.append(
+                "host-sdk-stage.yml does not delegate exact-SHA OIDC authority "
+                "to both reusable SDK workflows"
+            )
+
     host_sdks = (
         ROOT / ".github" / "workflows" / "host-sdks.yml"
     ).read_text(encoding="utf-8")
