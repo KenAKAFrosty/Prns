@@ -153,7 +153,7 @@ Your network and apps don't change, just your daemon does.
 
 The Prns daemon, `prnsd`, takes the role `rnsd` holds today. It handles your current config and identity, and your apps carry over unchanged.
 
-Among what you gain: brand-new interfaces, a built-in operator CLI, observability out of the box, and [increased throughput](benchmarks/RESULTS.md) you can measure yourself. [Here's the full before-and-after](docs/coming-from-rns.md).
+Among what you gain: brand-new interfaces, a built-in operator CLI, observability out of the box, and [up to 89× the throughput](benchmarks/RESULTS.md) in published benchmarks you can rerun yourself. [Here's the full before-and-after](docs/coming-from-rns.md).
 
 #### Looking for something specific?
 

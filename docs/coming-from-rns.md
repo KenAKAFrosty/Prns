@@ -98,7 +98,7 @@ Once you've got this repo cloned and your toolchain set up, see [the observabili
 
 ## Performance you can measure yourself
 
-The benchmark harness runs Prns and stock RNS side by side on your machine, under identical workloads, and records conformance, throughput, latency, CPU, memory, and optionally energy.
+The benchmark harness runs Prns and stock RNS side by side on your machine, under identical workloads, and records conformance, throughput, latency, CPU, memory, and optionally energy. The [published results](../benchmarks/RESULTS.md) peak at 89× the throughput, 48× smaller peak-memory footprint, and 33× the energy efficiency of stock RNS 1.4.2.
 
 ```console
 ./tools/prns doctor benchmarks
