@@ -15,8 +15,7 @@ cargo test --manifest-path prnsd/Cargo.toml --workspace --all-features --locked
 cargo clippy --manifest-path prns-runtime/impls/tokio/Cargo.toml --all-features --all-targets --locked -- -D warnings
 cargo test --manifest-path prns-runtime/impls/tokio/Cargo.toml --all-features --locked
 cargo clippy --manifest-path prns-runtime/impls/embassy/Cargo.toml --all-targets --locked -- -D warnings
-cargo test --manifest-path prns-runtime/impls/embassy/Cargo.toml --locked -- \
-    --skip a_recipe_node_hears_an_ifac_announce_a_supervisor_stands_a_peer_up_for
+cargo test --manifest-path prns-runtime/impls/embassy/Cargo.toml --locked
 cargo clippy --manifest-path prns-interfaces/impls/tokio/Cargo.toml --all-features --all-targets --locked -- -D warnings
 cargo test --manifest-path prns-interfaces/impls/tokio/Cargo.toml --all-features --locked
 cargo clippy --manifest-path prns-interfaces/impls/embassy/Cargo.toml --all-features --all-targets --locked -- -D warnings

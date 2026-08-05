@@ -348,6 +348,13 @@ mod tests {
             source_page.contains("This compact build doesn't carry the source archive"),
             !SERVES_SOURCE_ARCHIVE
         );
+        assert_eq!(
+            source_page.contains("Source commit:"),
+            SERVES_SOURCE_ARCHIVE
+        );
+        if SERVES_SOURCE_ARCHIVE {
+            assert!(source_page.contains(&BUILD_COMMIT[..12]));
+        }
 
         let coming_from_rns = core::str::from_utf8(COMING_FROM_RNS_PAGE).unwrap();
         assert!(coming_from_rns.contains(">Coming from RNS"));
@@ -381,6 +388,13 @@ mod tests {
             source_page.contains("This compact build doesn't carry the source archive"),
             !SERVES_SOURCE_ARCHIVE
         );
+        assert_eq!(
+            source_page.contains("Source commit:"),
+            SERVES_SOURCE_ARCHIVE
+        );
+        if SERVES_SOURCE_ARCHIVE {
+            assert!(source_page.contains(&BUILD_COMMIT[..12]));
+        }
         assert!(!source_page.contains("{{"));
         assert!(!source_page.contains("prnsd:managed"));
 

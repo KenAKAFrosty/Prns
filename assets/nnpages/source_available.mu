@@ -9,6 +9,7 @@ The complete source archive is hosted right here, no internet required:
 
 `F6eb`_`[source.zip ({{SIZE}})`:/file/source.zip]`_`f
 {{CHECKSUM_LINE}}
+{{SOURCE_COMMIT_LINE}}
 `F999On the web:`f
 `B6eb`F222 https://prns.dev `f`b
 `B6eb`F222 https://reticulum.rs `f`b

@@ -139,7 +139,7 @@ jobs:
         run: cargo clippy --all-targets --locked -- -D warnings
         working-directory: prns-runtime/impls/embassy
       - name: test — prns-runtime-embassy
-        run: cargo test --locked -- --skip a_recipe_node_hears_an_ifac_announce_a_supervisor_stands_a_peer_up_for
+        run: cargo test --locked
         working-directory: prns-runtime/impls/embassy
       - name: doc — prns-runtime-embassy
         run: cargo doc --locked --no-deps --document-private-items --quiet

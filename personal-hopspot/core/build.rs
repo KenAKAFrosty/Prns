@@ -130,13 +130,17 @@ fn main() -> io::Result<()> {
         &tail,
     );
     let source_page = match &source {
-        Some((_, size, _)) => fs::read_to_string(shared.join("source_available.mu"))?
-            .replacen("# prnsd:managed:source-page\n", "", 1)
-            .replace("{{SIZE}}", &format_archive_size(*size as u64))
-            .replace(
-                "{{CHECKSUM_LINE}}\n",
-                "`F999Verify:`f `F6eb`_`[source.zip.sha256`:/file/source.zip.sha256]`_`f\n\n",
-            ),
+        Some((_, size, _)) => {
+            let source_commit_line = format!("`F999Source commit:`f `F6eb{}`f\n\n", &commit[..12]);
+            fs::read_to_string(shared.join("source_available.mu"))?
+                .replacen("# prnsd:managed:source-page\n", "", 1)
+                .replace("{{SIZE}}", &format_archive_size(*size as u64))
+                .replace(
+                    "{{CHECKSUM_LINE}}\n",
+                    "`F999Verify:`f `F6eb`_`[source.zip.sha256`:/file/source.zip.sha256]`_`f\n\n",
+                )
+                .replace("{{SOURCE_COMMIT_LINE}}\n", &source_commit_line)
+        }
         None => fs::read_to_string(manifest.join("src/node_pages/source_missing.mu"))?,
     };
 

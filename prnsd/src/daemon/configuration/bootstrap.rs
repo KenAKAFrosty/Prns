@@ -761,6 +761,7 @@ fn render_source_page(state: SourcePageState) -> String {
             SOURCE_PAGE_AVAILABLE
                 .replace("{{SIZE}}", &format_archive_size(archive_bytes))
                 .replace("{{CHECKSUM_LINE}}\n", checksum_line)
+                .replace("{{SOURCE_COMMIT_LINE}}\n", "")
         }
     }
 }

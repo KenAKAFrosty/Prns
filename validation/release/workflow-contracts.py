@@ -664,6 +664,15 @@ def validate() -> list[str]:
         "release.host-sdk.python.smoke --"
     ):
         errors.append("host-sdks.yml smokes repaired GNU wheels before repair")
+    for apple_gate in (
+        "normalize Apple native binaries",
+        'install_name_tool -id "@rpath/${{ matrix.settings.library }}"',
+        'strip -S "$release/${{ matrix.settings.library }}"',
+        'strip -S "$release/${{ matrix.settings.static }}"',
+        '! grep -a -F -q "$HOME"',
+    ):
+        if apple_gate not in host_sdks:
+            errors.append(f"host-sdks.yml is missing Apple capsule gate {apple_gate!r}")
     for workflow_name in (
         "prnsd-candidate.yml",
         "prnsd-image-candidate.yml",
