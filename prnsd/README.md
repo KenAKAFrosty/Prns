@@ -83,7 +83,7 @@ From a clone, `cargo prnsd` builds the daemon and manages one per-user process w
 ```console
 export PRNSD_STATE_DIR="$PWD/target/quickstart-service"
 ./tools/prns doctor node
-cargo prnsd --debug --detach -- --config target/quickstart-node
+cargo prnsd --detach -- --config target/quickstart-node
 cargo prnsd status --config target/quickstart-node
 cargo prnsd stop
 ```
