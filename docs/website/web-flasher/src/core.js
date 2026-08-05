@@ -35,7 +35,7 @@ const JEDEC_FLASH_CAPACITIES = new Map([
 const RECOVERY_GUIDANCE = Object.freeze({
   invalid_request: "Reload this page to rebuild the signed plan; if it repeats, use the CLI and report the release version.",
   invalid_config: "Correct the local configuration values, then prepare and verify the release again.",
-  unsupported_browser: "Open this page in current Chrome or Edge over HTTPS, or use the standalone CLI.",
+  unsupported_browser: "Open this page over HTTPS in current desktop Chrome, Edge, or Firefox 151 or later, or use the standalone CLI.",
   insecure_context: "Reopen the flasher over HTTPS or localhost before trying again.",
   permission_denied: "Review the selected board, retry, and choose its serial port in the browser prompt.",
   connection_failure: "Disconnect the board, follow its BOOT/RESET preparation steps, reconnect it, and restart the complete operation.",

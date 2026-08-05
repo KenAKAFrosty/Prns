@@ -455,11 +455,11 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                     }
                 } else if browser_android {
                     div { class: "flash-web-install-message mt-5",
-                        "This Android browser provides Web Serial for Bluetooth serial devices only; a board connected over USB cannot be selected yet. Wired serial support waits on a new Android system API that only a limited set of devices provides. Desktop Chrome or Edge, or the standalone CLI, provides the same verified release path."
+                        "This Android browser provides Web Serial for Bluetooth serial devices only; a board connected over USB cannot be selected yet. Wired serial support waits on a new Android system API that only a limited set of devices provides. Desktop Chrome, Edge, or Firefox 151 or later, or the standalone CLI, provides the same verified release path."
                     }
                 } else if browser_blocked {
                     div { class: "flash-web-install-message mt-5",
-                        "Direct ESP flashing requires a secure current Chrome or Edge browser with Web Serial. The standalone CLI provides the same verified release path."
+                        "Direct ESP flashing requires a secure current desktop browser with Web Serial: Chrome, Edge, or Firefox 151 or later. The standalone CLI provides the same verified release path."
                     }
                 }
 
