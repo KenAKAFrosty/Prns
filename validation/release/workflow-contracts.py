@@ -26,6 +26,18 @@ AUTOMATIC_WORKFLOWS = frozenset(
 )
 STANDARD_MATRIX_PARALLELISM_LIMIT = 4
 MATRIX_PARALLELISM_LIMITS = {"release-readiness.yml": 20}
+MAIN_RELEASE_AUTHORITY_WORKFLOWS = (
+    "host-sdk-promote.yml",
+    "host-sdk-public-qualification.yml",
+    "host-sdk-stage.yml",
+    "prnsd-candidate.yml",
+    "prnsd-image-candidate.yml",
+    "prnsd-staging-publish.yml",
+    "prnsd-staging-qualification.yml",
+    "suite-deployment-qualification.yml",
+    "suite-promote.yml",
+    "suite-sign.yml",
+)
 
 
 def workflow_jobs(text: str) -> tuple[tuple[str, str], ...]:
@@ -131,6 +143,17 @@ def validate() -> list[str]:
     unused = sorted(set(actions) - used)
     if unused:
         errors.append(f"action-pins.json contains unused actions: {unused}")
+
+    for workflow_name in MAIN_RELEASE_AUTHORITY_WORKFLOWS:
+        release_workflow = (
+            ROOT / ".github" / "workflows" / workflow_name
+        ).read_text(encoding="utf-8")
+        if 'refs/heads/main' not in release_workflow:
+            errors.append(f"{workflow_name} does not require protected main authority")
+        if "github.ref_protected" not in release_workflow:
+            errors.append(f"{workflow_name} does not require branch protection")
+        if 'refs/heads/trunk' in release_workflow:
+            errors.append(f"{workflow_name} retains conflicting trunk release authority")
 
     candidate = (ROOT / ".github" / "workflows" / "flasher-candidate.yml").read_text(
         encoding="utf-8"
@@ -537,7 +560,10 @@ def validate() -> list[str]:
         "HOST_SDK_IMMUTABLE_RELEASES",
         "HOST_SDK_SSH_SIGNING_KEY",
         "Require exact protected stage authority",
+        'test "$GITHUB_WORKFLOW_SHA" = "$GITHUB_SHA"',
+        "compare/${EXPECTED_SHA}...${GITHUB_SHA}",
         ".github/workflows/host-sdk-stage.yml",
+        'test "${run[1]}" = "main"',
         "host-sdk-stage-${{ inputs.expected_sha }}",
         "release.host-sdk.stage.verify",
         "release.host-sdk.promotion.prepare",
@@ -630,6 +656,8 @@ def validate() -> list[str]:
     ).read_text(encoding="utf-8")
     for qualification_gate in (
         "Verify every public signature, hash, tag, and source commit",
+        'test "$GITHUB_WORKFLOW_SHA" = "$GITHUB_SHA"',
+        "compare/${EXPECTED_SHA}...${GITHUB_SHA}",
         "sha256sum --check SHA256SUMS",
         "ssh-keygen -Y verify",
         "git tag -v",
@@ -767,6 +795,9 @@ def validate() -> list[str]:
         "flasher_acceptance_commit:",
         "flasher_finalization_run_id:",
         "flasher_release_record_sha256:",
+        'test "$GITHUB_WORKFLOW_SHA" = "$GITHUB_SHA"',
+        "compare/${SOURCE_COMMIT}...${{ inputs.flasher_acceptance_commit }}",
+        "compare/${{ inputs.flasher_acceptance_commit }}...${GITHUB_SHA}",
         ".github/workflows/flasher-finalize-evidence.yml",
         "flasher-release-record-v${version}.json",
         "./tools/prns release verify --",
