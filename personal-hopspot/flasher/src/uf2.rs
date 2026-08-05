@@ -4,7 +4,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use prns_flash_manifest::{BoardBuild, BoardCatalog, BoardCatalogEntry, Uf2BoardIdPrefix, Uf2Build};
+use prns_flash_manifest::{
+    BoardBuild, BoardCatalog, BoardCatalogEntry, Uf2BoardIdPrefix, Uf2Build,
+};
 
 use crate::error::AppError;
 use crate::events::{Phase, Reporter};
@@ -48,7 +50,12 @@ pub(crate) fn flash(
             Some(&board.slug),
             &format!("Waiting for {mount_label} to disappear as the device reboots…"),
         );
-        wait_for_reboot(&mount, mount_label, REBOOT_TIMEOUT, Duration::from_millis(200))?;
+        wait_for_reboot(
+            &mount,
+            mount_label,
+            REBOOT_TIMEOUT,
+            Duration::from_millis(200),
+        )?;
     }
     if crate::esp::cancelled() {
         return Err(AppError::Cancelled);
@@ -361,7 +368,9 @@ mod tests {
 
     #[test]
     fn absent_override_is_not_accepted() {
-        assert!(validate_mount(&t_echo_board(), Path::new("/definitely/not/a/techo/mount")).is_err());
+        assert!(
+            validate_mount(&t_echo_board(), Path::new("/definitely/not/a/techo/mount")).is_err()
+        );
     }
 
     #[test]
@@ -500,7 +509,12 @@ mod tests {
         let stuck = temporary_mount("stuck");
         fs::create_dir(&stuck).expect("create stuck mount");
         assert!(matches!(
-            wait_for_reboot(&stuck, "TECHOBOOT", Duration::ZERO, Duration::from_millis(1)),
+            wait_for_reboot(
+                &stuck,
+                "TECHOBOOT",
+                Duration::ZERO,
+                Duration::from_millis(1)
+            ),
             Err(AppError::WriteVerifyReset(_))
         ));
         fs::remove_dir(stuck).expect("remove stuck mount");

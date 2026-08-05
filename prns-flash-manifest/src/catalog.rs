@@ -552,8 +552,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unnormalized_uf2_board_id_prefix_is_rejected() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn an_unnormalized_uf2_board_id_prefix_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
         let mut catalog = board_catalog()?;
         let board = catalog
             .boards
