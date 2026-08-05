@@ -1407,6 +1407,8 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
             f"qualification-evidence-v{VERSION}.tar.gz",
             f"release-record-v{VERSION}.json",
             f"release-record-v{VERSION}.json.minisig",
+            f"flasher-release-record-v{VERSION}.json",
+            f"flasher-release-record-v{VERSION}.json.minisig",
         ):
             (assets / name).write_text(f"fixture {name}\n", encoding="utf-8")
         workflow_run_id = 77

@@ -25,7 +25,7 @@ on:
         default: ""
         type: string
       history_release_record_sha256:
-        description: Lowercase SHA-256 of that version's signed release record; empty only for bootstrap
+        description: Lowercase SHA-256 of that version's signed flasher release record; empty only for bootstrap
         required: false
         default: ""
         type: string
@@ -91,8 +91,8 @@ jobs:
         run: |
           if [[ "$HISTORY_MODE" == bootstrap ]]; then
             # Signed prereleases were never admitted to stable website history. A
-            # release record, or a signed candidate on a stable release, proves
-            # that bootstrap would discard custody and therefore fails closed.
+            # finalized flasher release record, or a signed candidate on a stable
+            # release, proves that bootstrap would discard custody and fails closed.
             mkdir -p target
             gh api --paginate \
               "repos/${GITHUB_REPOSITORY}/releases?per_page=100" |
@@ -119,7 +119,7 @@ jobs:
             candidate="target/history-candidate"
             mkdir -p "$assets"
             gh release download "v${HISTORY_VERSION}" --dir "$assets"
-            record="$assets/release-record-v${HISTORY_VERSION}.json"
+            record="$assets/flasher-release-record-v${HISTORY_VERSION}.json"
             test -f "$record"
             test "$(sha256sum "$record" | awk '{print $1}')" = \
               "$HISTORY_RELEASE_RECORD_SHA256"

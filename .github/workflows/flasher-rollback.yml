@@ -21,7 +21,7 @@ on:
         default: ""
         type: string
       target_release_record_sha256:
-        description: Lowercase SHA-256 of the target version's signed release record
+        description: Lowercase SHA-256 of the target version's signed flasher release record
         required: false
         default: ""
         type: string
@@ -124,7 +124,7 @@ jobs:
           candidate="target/rollback-candidate"
           mkdir -p "$assets"
           gh release download "v${TARGET_VERSION}" --dir "$assets"
-          record="$assets/release-record-v${TARGET_VERSION}.json"
+          record="$assets/flasher-release-record-v${TARGET_VERSION}.json"
           test "$(sha256sum "$record" | awk '{print $1}')" = \
             "$TARGET_RELEASE_RECORD_SHA256"
           gh release view "v${TARGET_VERSION}" \
@@ -206,7 +206,7 @@ jobs:
             candidate="target/withdrawn-candidate"
             mkdir -p "$assets"
             gh release download "v${EXPECTED_LIVE_VERSION}" --dir "$assets"
-            record="$assets/release-record-v${EXPECTED_LIVE_VERSION}.json"
+            record="$assets/flasher-release-record-v${EXPECTED_LIVE_VERSION}.json"
             gh release view "v${EXPECTED_LIVE_VERSION}" \
               --json isDraft,isPrerelease,publishedAt,tagName,targetCommitish \
               > target/withdrawn-release.json

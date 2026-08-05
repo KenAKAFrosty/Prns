@@ -88,13 +88,14 @@ absent; they do not create or weaken those settings.
 
 1. Dispatch **flasher release candidate** on the default branch with the intended channel, pinned
    public key ID, and one explicit website-history mode. `retain` is the default and requires the
-   exact current stable version plus the lowercase SHA-256 of its signed release record. The
+   exact current stable version plus the lowercase SHA-256 of its signed flasher release record. The
    workflow verifies that release, its complete asset set, attestations, and the live signed stable
    descriptor before carrying every immutable `/releases/VERSION` directory forward. Both
    independent candidate builds consume the same hash-verified history archive. `bootstrap` is
-   permitted only when GitHub has no schema-v2 signed candidate/release-record asset and the live
-   stable URL does not contain a canonical schema-1 descriptor; the current coming-soon HTML
-   fallback counts as absent, while a network error fails closed.
+   permitted only when GitHub has no finalized flasher release record or signed candidate on a
+   stable release and the live stable URL does not contain a canonical schema-1 descriptor. Suite
+   release records and unpromoted signed candidates do not establish website history. The current
+   coming-soon HTML fallback counts as absent, while a network error fails closed.
 2. Download `prns-flasher-candidate-vVERSION-unsigned.tar.gz`, calculate its lowercase SHA-256, and
    review the candidate/audit output, `metadata/sparse-sizes.json`, and
    `metadata/reproducibility.json`. Record the workflow run ID and exact hash independently. The
@@ -126,9 +127,9 @@ overwrite a candidate that testers may already have used.
 
 A bootstrap-history candidate may use `ComingSoon` as its promotion baseline only when no other
 stable release exists and the live site exactly matches the repository's canonical coming-soon
-bytes. A retained-history candidate uses `StableRelease`, whose exact version, signed release-record
-hash, and retained-history head must agree. Both variants require a fresh successful recovery
-dry-run before promotion.
+bytes. A retained-history candidate uses `StableRelease`, whose exact version, signed flasher
+release-record hash, and retained-history head must agree. Both variants require a fresh successful
+recovery dry-run before promotion.
 
 ## Qualify and finalize evidence
 
@@ -161,10 +162,10 @@ recorded evidence-archive SHA-256. The workflow:
 - validates eight full transport-aware physical rows, four browser fallbacks, and all five
   installer/exact-version smokes;
 - signs `acceptance-vVERSION.json`;
-- creates and signs `release-record-vVERSION.json`.
+- creates and signs `flasher-release-record-vVERSION.json`.
 
-The release record byte-compares the supplied candidate directory with a safe extraction of the
-signed archive, then binds the release version/channel/source commit/key ID, signed candidate archive,
+The flasher release record byte-compares the supplied candidate directory with a safe extraction of
+the signed archive, then binds the release version/channel/source commit/key ID, signed candidate archive,
 candidate-run evidence hash and parsed repository/workflow/run/attempt/commit identity, manifest and
 signature, channel descriptor and signature, checksum document and signature, build metadata,
 dependency-audit evidence, exact tester-roster hash, acceptance record and
@@ -178,14 +179,14 @@ and approval instant.
 ## Prove rollback readiness
 
 Every signed stable release keeps its complete candidate bundle and complete website as immutable
-GitHub Release assets. A retained candidate additionally carries all prior immutable hosted release
-directories, so a new site never drops old manifest or firmware URLs.
+GitHub Release assets. A retained candidate additionally carries all prior immutable
+hosted release directories, so a new site never drops old manifest or firmware URLs.
 
 Before promotion, dispatch **verify or deploy an exact flasher rollback** in `dry-run` mode. For a
 `StableRelease` baseline supply:
 
 - `target_kind=StableRelease`;
-- the prior signed stable baseline version and exact release-record SHA-256;
+- the prior signed stable baseline version and exact flasher release-record SHA-256;
 - the release being promoted as `expected_live_version` and its signed manifest SHA-256 as
   `expected_live_manifest_sha256`;
 - empty `dry_run_id` and `dry_run_attempt` values.
@@ -205,12 +206,11 @@ artifact, run, protected job, and dry-run record rather than trusting operator-s
 ## Promote
 
 After the signing run's protected public-review job has completed successfully and every stop-ship
-report is resolved,
-calculate the signed release record's SHA-256 and dispatch **promote signed flasher release** with
-the version, that hash, the matching baseline kind and conditional signed-baseline fields, and the
-successful rollback dry-run run ID and exact attempt. The protected workflow independently
+report is resolved, calculate the signed flasher release record's SHA-256 and dispatch **promote
+signed flasher release** with the version, that hash, the matching baseline kind and conditional
+signed-baseline fields, and the successful rollback dry-run run ID and exact attempt. The protected workflow independently
 re-verifies Minisign, all
-candidate hashes, physical acceptance, release-record equality, GitHub attestations, stable
+candidate hashes, physical acceptance, flasher release-record equality, GitHub attestations, stable
 channel, source commit, public release state, protected public-review approval, complete rollback baseline,
 the immutable review artifact plus its exact successful signing workflow/job revision,
 retained-history head, and the successful 15-minute dry-run before deploying the exact website
@@ -232,7 +232,7 @@ verification attempt's artifact names, so retrying failed jobs cannot silently s
 bytes or collide with an earlier artifact.
 
 Promotion never rebuilds or replaces release assets. A missing/tampered acceptance document,
-release record, attestation, signature, expected hash, or physical result blocks deployment.
+flasher release record, attestation, signature, expected hash, or physical result blocks deployment.
 After deployment, the workflow fetches and verifies the live signed channel and manifest, compares
 the deployed website shell and flasher bundle with the signed candidate, downloads and hashes every
 live firmware part, checks the complete release-asset set, and exercises the immutable Linux shell
@@ -241,7 +241,7 @@ installer.
 ## Roll back
 
 To restore a prior release, first run **verify or deploy an exact flasher rollback** in `dry-run`
-mode using the immutable target version/release-record hash and the exact currently live
+mode using the immutable target version/flasher-release-record hash and the exact currently live
 version/manifest hash. After that run succeeds within 15 minutes, dispatch the same workflow in
 `deploy` mode with identical identities, its `dry_run_id`, and its `dry_run_attempt`. The protected workflow re-verifies
 the complete target release and dry-run evidence, then checks the signed live stable descriptor as

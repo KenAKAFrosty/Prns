@@ -105,7 +105,7 @@ def signed_candidate(root: Path, version: str = VERSION) -> tuple[Path, Path]:
         "fixture channel signature\n", encoding="utf-8"
     )
     write_json(root / "metadata" / "release-history.json", bootstrap_metadata())
-    record = root.parent / f"release-record-v{version}.json"
+    record = root.parent / f"flasher-release-record-v{version}.json"
     write_json(
         record,
         {
@@ -133,7 +133,7 @@ def signed_candidate(root: Path, version: str = VERSION) -> tuple[Path, Path]:
 
 
 class FlasherRollbackTests(unittest.TestCase):
-    def test_bootstrap_guard_ignores_only_unpromoted_signed_candidates(self) -> None:
+    def test_bootstrap_guard_distinguishes_suite_and_flasher_custody(self) -> None:
         signed_candidate = {"name": "prns-flasher-candidate-v0.3.0-signed.tar.gz"}
         prerelease = {
             "tag_name": "v0.3.0",
@@ -146,12 +146,18 @@ class FlasherRollbackTests(unittest.TestCase):
         stable = {**prerelease, "prerelease": False}
         self.assertEqual(bootstrap_blocking_custody_tags([stable]), ["v0.3.0"])
 
-        prerelease_record = {
+        suite_record = {
             **prerelease,
             "assets": [{"name": "release-record-v0.3.0.json"}],
         }
+        self.assertEqual(bootstrap_blocking_custody_tags([suite_record]), [])
+
+        finalized_flasher_record = {
+            **prerelease,
+            "assets": [{"name": "flasher-release-record-v0.3.0.json"}],
+        }
         self.assertEqual(
-            bootstrap_blocking_custody_tags([prerelease_record]), ["v0.3.0"]
+            bootstrap_blocking_custody_tags([finalized_flasher_record]), ["v0.3.0"]
         )
 
         with self.assertRaisesRegex(ValueError, "metadata is malformed"):
@@ -667,7 +673,11 @@ class FlasherRollbackTests(unittest.TestCase):
         )
         self.assertIn("default: retain", candidate)
         self.assertIn("guard-bootstrap", candidate)
-        self.assertIn("signed candidate on a stable release", candidate)
+        self.assertIn("finalized flasher release record", candidate)
+        self.assertIn(
+            'record="$assets/flasher-release-record-v${HISTORY_VERSION}.json"',
+            candidate,
+        )
         self.assertLess(
             candidate.index("mkdir -p target"),
             candidate.index("> target/bootstrap-releases.json"),
@@ -680,6 +690,10 @@ class FlasherRollbackTests(unittest.TestCase):
         self.assertIn("PRNS_RELEASE_HISTORY", candidate)
         self.assertIn("targetCommitish", candidate)
         self.assertIn("./tools/prns release historical verify --", candidate)
+        self.assertIn(
+            'record="$assets/flasher-release-record-v${TARGET_VERSION}.json"',
+            rollback,
+        )
         self.assertIn("group: prns-public-pages", rollback)
         self.assertIn("environment: release-rollback", rollback)
         self.assertIn("timeout-minutes: 15", rollback)
@@ -729,6 +743,10 @@ class FlasherRollbackTests(unittest.TestCase):
         self.assertIn(".head.release_record_sha256", promotion)
         self.assertIn("targetCommitish", promotion)
         self.assertIn("./tools/prns release historical verify --", promotion)
+        self.assertIn(
+            'record="target/release/flasher-release-record-v${RELEASE_VERSION}.json"',
+            promotion,
+        )
         self.assertIn("--public-review-evidence", promotion)
         self.assertIn("--public-review-run", promotion)
         self.assertIn("Recheck live promotion CAS immediately before Pages deployment", promotion)
