@@ -110,13 +110,22 @@ The doctor checks your toolchain and installs nothing. The smoke run proves the 
 
 ## Serve NomadNet pages directly from the daemon
 
-The prnsd that owns the routing tables can also host your NomadNet pages. Drop `.mu` files into `nnpages/pages/` under its active Reticulum configuration directory, and each is served from the node's stable `nomadnetwork.node` destination at `/page/<path>`; safe subdirectories become path segments. The `nnpages/files/` tree serves regular downloads at `/file/<path>`. The cloud-server bootstrap seeds `index.mu`, `source.mu`, and `coming-from-rns.mu`; the managed auxiliary pages update only while their first-line marker remains, while `index.mu` is operator-owned immediately. A separate NomadNet process is not required.
+The prnsd that owns your routing tables can host your NomadNet pages too, without a separate NomadNet process. Drop `.mu` files into `nnpages/pages/` under its active Reticulum configuration directory and each one is served from the node's stable `nomadnetwork.node` destination at `/page/<path>`, with subdirectories becoming path segments. 
 
-Serving stays live: file handles are opened beneath those roots for each request and streamed in bounded segments, so edits and deletions take effect immediately without loading a complete download into memory. A light reconciliation every five minutes registers new paths and retires deleted or renamed ones; `prnsd nnpages refresh` runs the same acknowledged reconciliation on demand. Hidden or unsafe path components, symlinks, non-`.mu` files in `nnpages/pages/`, pages larger than 1 MiB, and downloads larger than 32 MiB are never served.
+The `nnpages/files/` tree serves plain downloads at `/file/<path>`. The bootstrapped install starts you with three `.mu` pages: `index.mu` is yours to edit from the first moment, while the others use a first-line marker. Delete the marker and that page becomes yours too.
 
-Automatic announcements are enabled every six hours by default and run only while `index.mu` is serveable. `nnpages/settings.toml` controls that policy only: tune `announce` and `announce_interval_minutes` there. Disabling automatic announcements does not disable serving or `prnsd nnpages announce`, which can still announce on demand whenever `index.mu` is available. Settings changes apply during the five-minute reconciliation or immediately with `prnsd nnpages refresh`.
+Every request opens the file fresh from disk and streams it in bounded pieces, so edits and deletions take effect on the very next request and a large download never has to fit in memory. 
 
-The display name deliberately lives outside the policy file. `prnsd nnpages rename "My Node"` atomically writes the validated, live-read name to `nnpages/name`; when that file is missing or invalid, the destination uses its registered default name. `prnsd nnpages seed` creates the complete editable layout, starter pages, and default `settings.toml` without replacing operator-owned files, while `--source` also stages the exact shipped source bundle. With a managed `prnsd` session these commands select its active configuration automatically; pass `--config` for a nondefault foreground or container daemon. The routing owner that carries your traffic can carry your pages too.
+New pages and files are picked up by a light reconciliation every five minutes, or immediately with `prnsd nnpages refresh`. Some things are never served, on purpose: hidden or unsafe path names, symlinks, non-`.mu` files in `nnpages/pages/`, pages over 1 MiB, and downloads over 32 MiB.
+
+Announcements are automatic: every six hours by default, and only while there is an `index.mu` to serve. `nnpages/settings.toml` governs announcement policy and nothing else, with `announce` and `announce_interval_minutes` as the knobs. Turning automatic announcements off leaves serving untouched, and `prnsd nnpages announce` still announces on demand. Settings changes apply at the next five-minute reconciliation, or immediately with `prnsd nnpages refresh`.
+
+You can change your NomadNet node's name with `prnsd nnpages rename "My Node"`. Changes to the name are live immediately, and persisted to disk.
+
+At any point you can use `prnsd nnpages seed` to re-generate the starter pages along with a default `settings.toml` (without touching anything you've already made yours). If you include the `--source` flag, it will also stage the exact shipped source code bundle. 
+
+By default, `prnsd` will find the active Reticulum configuration automatically; pass `--config` for a nondefault foreground or container daemon.
+
 
 ## Beyond the daemon
 

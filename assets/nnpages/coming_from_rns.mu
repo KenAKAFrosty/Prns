@@ -117,13 +117,21 @@ The benchmark harness runs Prns and stock RNS side by side on your machine, unde
 
 >>`!Serve NomadNet pages directly from the daemon`!
 
-You're reading one right now. The prnsd that owns the routing tables can also host your NomadNet pages. Drop `B333.mu`b files into `B333nnpages/pages/`b under its active Reticulum configuration directory (folders become path segments), and each is served from the node's stable `B333nomadnetwork.node`b destination, with `B333index.mu`b as the landing page. The `B333nnpages/files/`b directory serves downloads. A separate NomadNet process is not required.
+You're reading one right now. The prnsd that owns your routing tables can host your NomadNet pages too, without a separate NomadNet process. Drop `B333.mu`b files into `B333nnpages/pages/`b under its active Reticulum configuration directory (folders become path segments), and each one is served from the node's stable `B333nomadnetwork.node`b destination, with `B333index.mu`b as the landing page.
 
-Serving stays live: files are opened beneath those roots per request and streamed in bounded segments, so edits and deletions take effect immediately without loading a complete download into memory. A light reconciliation every five minutes registers new paths and retires deleted or renamed ones. `B333prnsd nnpages refresh`b runs the same acknowledged reconciliation on demand.
+The `B333nnpages/files/`b directory serves downloads. The bootstrapped install starts you with three `B333.mu`b pages: `B333index.mu`b is yours to edit from the first moment, while the others use a first-line marker. Delete the marker and that page becomes yours too.
 
-Automatic announcements are enabled every six hours by default and run only while `B333index.mu`b is serveable. `B333nnpages/settings.toml`b controls that policy only: tune `B333announce`b and `B333announce_interval_minutes`b there. Turning automatic announcements off leaves serving on, and `B333prnsd nnpages announce`b can still announce on demand whenever `B333index.mu`b is available. Settings changes apply during the five-minute reconciliation or immediately with `B333prnsd nnpages refresh`b.
+Every request opens the file fresh from disk and streams it in bounded pieces, so edits and deletions take effect on the very next request and a large download never has to fit in memory.
 
-The display name deliberately lives outside the policy file. `B333prnsd nnpages rename "My Node"`b atomically writes the validated, live-read name to `B333nnpages/name`b; when that file is missing or invalid, the destination uses its registered default name. `B333prnsd nnpages seed`b creates the complete editable layout, starter pages, and default `B333settings.toml`b without replacing operator-owned files, while `B333--source`b also stages the exact shipped source bundle. With a managed `B333prnsd`b session these commands select its active configuration automatically; pass `B333--config`b for a nondefault foreground or container daemon.
+New pages and files are picked up by a light reconciliation every five minutes, or immediately with `B333prnsd nnpages refresh`b.
+
+Announcements are automatic: every six hours by default, and only while there is an `B333index.mu`b to serve. `B333nnpages/settings.toml`b governs announcement policy and nothing else, with `B333announce`b and `B333announce_interval_minutes`b as the knobs. Turning automatic announcements off leaves serving on, and `B333prnsd nnpages announce`b still announces on demand. Settings changes apply at the next five-minute reconciliation, or immediately with `B333prnsd nnpages refresh`b.
+
+You can change your NomadNet node's name with `B333prnsd nnpages rename "My Node"`b. Changes to the name are live immediately, and persisted to disk.
+
+At any point you can use `B333prnsd nnpages seed`b to re-generate the starter pages along with a default `B333settings.toml`b (without touching anything you've already made yours). If you include the `B333--source`b flag, it will also stage the exact shipped source code bundle.
+
+By default, prnsd will find the active Reticulum configuration automatically; pass `B333--config`b for a nondefault foreground or container daemon.
 
 >>`!Beyond the daemon`!
 
