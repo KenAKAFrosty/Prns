@@ -109,8 +109,8 @@ use prns_interfaces_embassy::bluetooth_auto::PEER_CAPACITY as EMBEDDED_BLE_PEER_
 
 #[cfg(feature = "wifi-auto")]
 use crate::station_recovery::{
-    AccessPoint as StationAccessPoint, ConnectionFailure, ConnectionOutcome, ScanFailure,
-    ScanOutcome, StationAttempt, StationRecovery, StationYield,
+    AccessPoint as StationAccessPoint, ConnectionFailure, ConnectionOutcome, DiscoveryScope,
+    RecoveryDelay, ScanFailure, ScanOutcome, StationAttempt, StationRecovery, StationYield,
 };
 use crate::storage::EngineStorageType;
 
