@@ -159,6 +159,37 @@ struct EmbassyDirectiveEgress<'a, E> {
     now: InstantMillis,
 }
 
+impl<E: ManifoldEgress> EmbassyDirectiveEgress<'_, E> {
+    fn offer_to_fleet_pacer(
+        &mut self,
+        supervisor: InterfaceKind,
+        fan: FanTarget,
+        bytes: &[u8],
+        hops: u8,
+    ) {
+        let Some(lane) = self.egress.fleet_lane(supervisor) else {
+            enqueue_broadcast_for_wire(self.egress, self.ifacs, supervisor, fan, bytes);
+            return;
+        };
+        match self.pacers.iter_mut().find(|entry| entry.id == lane) {
+            Some(entry) => {
+                let _ = entry.pacer.offer_tagged(
+                    bytes,
+                    hops,
+                    self.now,
+                    FrameTarget::Fan(fan),
+                    |frame, target| {
+                        enqueue_paced_for_wire(self.egress, self.ifacs, lane, target, frame)
+                    },
+                );
+            }
+            None => {
+                enqueue_broadcast_for_wire(self.egress, self.ifacs, supervisor, fan, bytes);
+            }
+        }
+    }
+}
+
 impl<E: ManifoldEgress> DirectiveEgress for EmbassyDirectiveEgress<'_, E> {
     fn send(&mut self, target: InterfaceId, bytes: &[u8]) {
         enqueue_for_wire(self.egress, self.ifacs, target, bytes);
@@ -186,16 +217,7 @@ impl<E: ManifoldEgress> DirectiveEgress for EmbassyDirectiveEgress<'_, E> {
         fan: FanTarget,
         announce: AnnounceDirective<'_>,
     ) {
-        offer_to_fleet_pacer(
-            self.pacers,
-            supervisor,
-            fan,
-            announce.bytes(),
-            announce.hops(),
-            self.now,
-            self.egress,
-            self.ifacs,
-        );
+        self.offer_to_fleet_pacer(supervisor, fan, announce.bytes(), announce.hops());
     }
 
     fn emit_frame(
@@ -292,34 +314,6 @@ fn offer_to_pacer(
             );
         }
         None => enqueue_for_wire(egress, ifacs, target, bytes),
-    }
-}
-
-fn offer_to_fleet_pacer(
-    pacers: &mut [InterfacePacer],
-    supervisor: InterfaceKind,
-    fan: FanTarget,
-    bytes: &[u8],
-    hops: u8,
-    now: InstantMillis,
-    egress: &mut impl ManifoldEgress,
-    ifacs: &[InterfaceIfac],
-) {
-    let Some(lane) = egress.fleet_lane(supervisor) else {
-        enqueue_broadcast_for_wire(egress, ifacs, supervisor, fan, bytes);
-        return;
-    };
-    match pacers.iter_mut().find(|entry| entry.id == lane) {
-        Some(entry) => {
-            let _ = entry.pacer.offer_tagged(
-                bytes,
-                hops,
-                now,
-                FrameTarget::Fan(fan),
-                |frame, target| enqueue_paced_for_wire(egress, ifacs, lane, target, frame),
-            );
-        }
-        None => enqueue_broadcast_for_wire(egress, ifacs, supervisor, fan, bytes),
     }
 }
 
