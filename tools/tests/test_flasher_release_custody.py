@@ -49,8 +49,24 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def script_launcher(target: Path) -> list[str]:
+    """Return the interpreter to run `target` with.
+
+    Only Unix executes a script through its shebang, so name the interpreter explicitly. Shell
+    scripts additionally need bash resolved to an absolute path: on Windows a bare "bash" can
+    reach the WSL launcher instead of the Git one, and WSL cannot see a `C:` path.
+    """
+    if target.suffix != ".sh":
+        return [sys.executable]
+    bash = shutil.which("bash")
+    if bash is None:
+        raise RuntimeError("bash is required to run the release shell scripts")
+    return [bash]
+
+
 def run_script(script: str, *arguments: object, environment: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
-    command = [sys.executable, str(SCRIPTS / script), *(str(argument) for argument in arguments)]
+    target = SCRIPTS / script
+    command = [*script_launcher(target), str(target), *(str(argument) for argument in arguments)]
     return subprocess.run(
         command,
         cwd=ROOT,
@@ -601,9 +617,12 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         archive = self.fixture.root / "website" / "source.zip"
         archive.write_bytes(archive.read_bytes() + b"tampered")
         checksum = self.fixture.root / "website" / "source.zip.sha256"
+        # The validator compares these bytes exactly against an LF-built expectation, so keep the
+        # newline out of Windows text-mode translation.
         checksum.write_text(
             f"{sha256(archive)}  source.zip\n",
             encoding="utf-8",
+            newline="",
         )
         report_path = self.fixture.root / "metadata" / "reproducibility.json"
         report = json.loads(report_path.read_text(encoding="utf-8"))
