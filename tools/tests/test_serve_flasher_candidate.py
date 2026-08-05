@@ -21,8 +21,12 @@ class CandidateServerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
-        (self.root / "index.html").write_text("candidate shell\n", encoding="utf-8")
-        (self.root / "app.js").write_text("candidate asset\n", encoding="utf-8")
+        # newline="" keeps the bytes on disk exactly as written. Without it Windows translates
+        # the trailing \n to \r\n, and these tests compare the served bytes exactly.
+        (self.root / "index.html").write_text(
+            "candidate shell\n", encoding="utf-8", newline=""
+        )
+        (self.root / "app.js").write_text("candidate asset\n", encoding="utf-8", newline="")
         self.server = SERVER.create_server(self.root, 0)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
