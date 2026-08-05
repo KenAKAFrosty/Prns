@@ -50,7 +50,7 @@ def sha256(path: Path) -> str:
 
 
 def run_script(script: str, *arguments: object, environment: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
-    command = [str(SCRIPTS / script), *(str(argument) for argument in arguments)]
+    command = [sys.executable, str(SCRIPTS / script), *(str(argument) for argument in arguments)]
     return subprocess.run(
         command,
         cwd=ROOT,
@@ -63,7 +63,7 @@ def run_script(script: str, *arguments: object, environment: dict[str, str] | No
 
 def run_task(*arguments: object) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [str(ROOT / "tools" / "prns"), *(str(argument) for argument in arguments)],
+        [sys.executable, str(ROOT / "tools" / "prns"), *(str(argument) for argument in arguments)],
         cwd=ROOT,
         text=True,
         capture_output=True,
