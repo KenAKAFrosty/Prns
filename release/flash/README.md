@@ -157,7 +157,7 @@ recorded evidence-archive SHA-256. The workflow:
 - revalidates one durable public-review evidence asset against its exact workflow run attempt and
   protected job;
 - extracts the evidence archive safely and recomputes every referenced object's SHA-256;
-- validates eight full transport-aware physical rows, four browser fallbacks, and all five
+- validates ten full transport-aware physical rows, four browser fallbacks, and all five
   installer/exact-version smokes;
 - signs `acceptance-vVERSION.json`;
 - creates and signs `flasher-release-record-vVERSION.json`.
