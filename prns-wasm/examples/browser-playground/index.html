@@ -22,8 +22,8 @@
         <h1>Put a real browser node on your local mesh.</h1>
         <p class="lede">
           This deliberately small playground runs the shared Rust engine in
-          WebAssembly and lets you opt into Auto Wi-Fi or Auto USB when you are
-          ready.
+          WebAssembly and lets you opt into Auto Wi-Fi, WebSocket, or Auto USB
+          when you are ready.
         </p>
         <div class="scope-note">
           <strong>A live demo, not a messaging client.</strong>
@@ -48,6 +48,15 @@
             Waiting
           </strong>
           <span id="auto-wifi-detail" class="status-detail">
+            Waiting for the runtime
+          </span>
+        </article>
+        <article class="status-card">
+          <span class="status-label">WebSocket</span>
+          <strong id="websocket-state" class="status-value" data-state="idle">
+            Waiting
+          </strong>
+          <span id="websocket-detail" class="status-detail">
             Waiting for the runtime
           </span>
         </article>
@@ -96,6 +105,49 @@
             <div id="gateway-list" class="card-list" aria-live="polite">
               <div class="empty-card">No selected gateways yet.</div>
             </div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-heading">
+              <div>
+                <p class="panel-kicker">Direct network transport</p>
+                <h2>WebSocket client</h2>
+              </div>
+              <span class="transport-mark">WS</span>
+            </div>
+            <p class="panel-copy">
+              Connect directly to any Prns WebSocket listener. Secure pages
+              require a certificate-valid <code>wss://</code> endpoint.
+            </p>
+            <form id="websocket-form" class="transport-form">
+              <label class="field-label" for="websocket-url">
+                WebSocket URL
+              </label>
+              <input
+                id="websocket-url"
+                name="websocket-url"
+                type="url"
+                inputmode="url"
+                autocomplete="url"
+                spellcheck="false"
+                placeholder="wss://node.example/prns"
+                required
+                readonly
+              />
+              <div class="button-row">
+                <button id="websocket-connect" type="submit" disabled>
+                  Connect WebSocket
+                </button>
+                <button
+                  id="websocket-close"
+                  class="secondary"
+                  type="button"
+                  disabled
+                >
+                  Close
+                </button>
+              </div>
+            </form>
           </article>
 
           <article class="panel">

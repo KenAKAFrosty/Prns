@@ -8,6 +8,7 @@ pub(super) enum WarningCode {
     RedundantAliases,
     UnsupportedSetting,
     IneffectiveSetting,
+    ImplicitOff,
 }
 
 impl From<WarningCode> for ConfigDiagnosticCode {
@@ -19,6 +20,7 @@ impl From<WarningCode> for ConfigDiagnosticCode {
             WarningCode::RedundantAliases => Self::RedundantAliases,
             WarningCode::UnsupportedSetting => Self::UnsupportedSetting,
             WarningCode::IneffectiveSetting => Self::IneffectiveSetting,
+            WarningCode::ImplicitOff => Self::ImplicitOff,
         }
     }
 }

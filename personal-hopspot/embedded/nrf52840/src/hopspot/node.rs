@@ -20,7 +20,13 @@ use super::bluetooth_auto;
 
 pub(super) const LANE_COUNT: usize = 3;
 pub(super) const LANE_DEPTH: usize = 1;
-const LORA_OUTBOUND_DEPTH: usize = 1;
+/// Two full-size radio records remain behind the active packet. Together with this lane's complete
+/// five-frame reaction, the constrained board retains eight outbound LoRa packets end to end.
+pub(super) const LORA_TX_QUEUE_BYTES: usize = 1024;
+const LORA_OUTBOUND_DEPTH: usize = EngineStorageType::MAX_OUTGOING_RESOURCE_REACTION_FRAMES;
+/// One resource request can synchronously emit every locally materialized part plus one hashmap
+/// update. Keep that complete reaction lossless on page-serving packet interfaces.
+const BLE_OUTBOUND_DEPTH: usize = EngineStorageType::MAX_OUTGOING_RESOURCE_REACTION_FRAMES;
 const INTERFACE_CAPACITY: usize = 2 + bluetooth_auto::MEMBERS;
 pub(super) const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"techousb");
 pub(super) const NOTIFY_CAP: usize = minimum_manifold_notification_capacity(LANE_COUNT, LANE_DEPTH);
@@ -35,6 +41,8 @@ const PACKET_PHY_RETENTION_CAPACITY: usize =
     };
 const PACKET_PHY_INDEX_BUCKETS: usize =
     personal_rns::routing::dedup::dedup_index_buckets(PACKET_PHY_RETENTION_CAPACITY);
+
+const _: () = assert!(EngineStorageType::LINK_SESSIONS > bluetooth_auto::MEMBERS);
 
 pub(super) const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x17Personal Hopspot T-Echo\xc0";
 pub(super) const NODE_ANNOUNCE_APP_DATA: &[u8] = b"Personal Hopspot T-Echo";
@@ -75,8 +83,12 @@ pub(super) static LORA_MANIFOLD_LANE: StaticManifoldLane<
     LANE_DEPTH,
     LORA_OUTBOUND_DEPTH,
 > = StaticManifoldLane::new();
-pub(super) static BLE_MANIFOLD_LANE: StaticManifoldLane<Mtx, BLE_HW_MTU, LANE_DEPTH> =
-    StaticManifoldLane::new();
+pub(super) static BLE_MANIFOLD_LANE: StaticManifoldLane<
+    Mtx,
+    BLE_HW_MTU,
+    LANE_DEPTH,
+    BLE_OUTBOUND_DEPTH,
+> = StaticManifoldLane::new();
 pub(super) static USB_MANIFOLD_LANE: StaticManifoldLane<
     Mtx,
     EMBEDDED_MAX_WIRE_FRAME_LEN,

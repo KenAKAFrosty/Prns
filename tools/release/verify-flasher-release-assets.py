@@ -147,6 +147,8 @@ def verify(
         f"qualification-evidence-v{version}.tar.gz",
         f"release-record-v{version}.json",
         f"release-record-v{version}.json.minisig",
+        f"flasher-release-record-v{version}.json",
+        f"flasher-release-record-v{version}.json.minisig",
     }
     if not assets.is_dir():
         raise ValueError("downloaded GitHub Release asset directory is unavailable")

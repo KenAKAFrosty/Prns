@@ -240,17 +240,7 @@ impl InterfaceStatus for WebSocketServerStatus {
     }
 
     fn connection(&self) -> ConnectionState {
-        let live = match self.shared.members.lock() {
-            Ok(members) => members
-                .iter()
-                .any(|member| matches!(member.connection(), ConnectionState::Connected)),
-            Err(_) => false,
-        };
-        if live {
-            ConnectionState::Connected
-        } else {
-            ConnectionState::Disconnected
-        }
+        ConnectionState::Connected
     }
 
     fn rx_bytes(&self) -> u64 {
@@ -373,12 +363,12 @@ mod tests {
     }
 
     #[test]
-    fn the_aggregate_status_is_dormant_until_a_client_connects() {
+    fn the_listener_status_stays_connected_between_client_sessions() {
         let status = WebSocketServerStatus::new(InterfaceId::from_channel_tag(
             InterfaceKind::WebSocketServer,
             b"127.0.0.1:4242",
         ));
-        assert_eq!(status.connection(), ConnectionState::Disconnected);
+        assert_eq!(status.connection(), ConnectionState::Connected);
         assert_eq!(status.id().kind(), Some(InterfaceKind::WebSocketServer));
 
         let client_status =
@@ -388,7 +378,7 @@ mod tests {
         assert_eq!(status.members().len(), 1);
 
         client_status.set_connection(ConnectionState::Disconnected);
-        assert_eq!(status.connection(), ConnectionState::Disconnected);
+        assert_eq!(status.connection(), ConnectionState::Connected);
     }
 
     #[tokio::test]

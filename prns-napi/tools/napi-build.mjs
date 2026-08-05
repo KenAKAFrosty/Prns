@@ -10,6 +10,7 @@ const target = targetIndex === -1
 const isGnuLinux = target
   ? target.endsWith("-unknown-linux-gnu")
   : process.platform === "linux"
+const isAarch64GnuLinux = target === "aarch64-unknown-linux-gnu"
 const env = { ...process.env }
 
 if (isGnuLinux) {
@@ -18,6 +19,7 @@ if (isGnuLinux) {
   env.CFLAGS = [
     env.CFLAGS,
     "-std=gnu99",
+    isAarch64GnuLinux ? "-D__ARM_ARCH=8" : undefined,
     `-include ${JSON.stringify(header)}`,
   ].filter(Boolean).join(" ")
 }

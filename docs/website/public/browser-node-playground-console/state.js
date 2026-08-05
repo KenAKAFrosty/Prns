@@ -1,12 +1,40 @@
 import { match_into } from "./sdk/index.js";
-export function controlAvailability(autoWifi, usb, snapshot) {
+export function controlAvailability(autoWifi, webSocket, usb, snapshot) {
     return {
         autoWifiStart: autoWifiStartAvailable(autoWifi),
         autoWifiClose: autoWifiCloseAvailable(autoWifi),
+        webSocketConnect: webSocketConnectAvailable(webSocket),
+        webSocketClose: webSocketCloseAvailable(webSocket),
         usbConnect: usbConnectAvailable(usb),
         usbClose: usbCloseAvailable(usb),
         announce: (snapshot?.interfaces.length ?? 0) > 0,
     };
+}
+export function webSocketConnectAvailable(state) {
+    return match_into().from(state, {
+        Waiting: () => false,
+        Ready: () => true,
+        Unavailable: () => false,
+        Connecting: () => false,
+        Connected: () => false,
+        Closing: () => false,
+        ConnectFailed: () => true,
+        Closed: () => true,
+        CloseFailed: () => false,
+    });
+}
+function webSocketCloseAvailable(state) {
+    return match_into().from(state, {
+        Waiting: () => false,
+        Ready: () => false,
+        Unavailable: () => false,
+        Connecting: () => false,
+        Connected: () => true,
+        Closing: () => false,
+        ConnectFailed: () => false,
+        Closed: () => false,
+        CloseFailed: () => true,
+    });
 }
 export function sameAutoWifiStatus(left, right) {
     return match_into().from(left, {

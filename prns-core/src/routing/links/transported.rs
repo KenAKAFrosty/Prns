@@ -645,6 +645,63 @@ impl<const MAX_TRANSIT_LINKS: usize> TransportedLinkTable
     }
 }
 
+/// A fixed number of transported-link rows reserved directly in a caller-selected heap.
+///
+/// ESP32-S3 uses this with its PSRAM allocator so relay capacity does not consume internal SRAM.
+#[cfg(feature = "external-alloc")]
+pub struct FixedHeapTransportedLinkTable<
+    const MAX_TRANSIT_LINKS: usize,
+    A: allocator_api2::alloc::Allocator = allocator_api2::alloc::Global,
+> {
+    entries: allocator_api2::vec::Vec<TransportedLink, A>,
+}
+
+#[cfg(feature = "external-alloc")]
+impl<const MAX_TRANSIT_LINKS: usize, A: allocator_api2::alloc::Allocator + Default> Default
+    for FixedHeapTransportedLinkTable<MAX_TRANSIT_LINKS, A>
+{
+    fn default() -> Self {
+        Self {
+            entries: allocator_api2::vec::Vec::with_capacity_in(MAX_TRANSIT_LINKS, A::default()),
+        }
+    }
+}
+
+#[cfg(feature = "external-alloc")]
+impl<const MAX_TRANSIT_LINKS: usize, A: allocator_api2::alloc::Allocator> TransportedLinkTable
+    for FixedHeapTransportedLinkTable<MAX_TRANSIT_LINKS, A>
+{
+    fn capacity(&self) -> usize {
+        MAX_TRANSIT_LINKS
+    }
+
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    fn entries(&self) -> &[TransportedLink] {
+        &self.entries
+    }
+
+    fn entries_mut(&mut self) -> &mut [TransportedLink] {
+        &mut self.entries
+    }
+
+    fn push(&mut self, entry: TransportedLink) -> Result<(), TablePushError> {
+        if self.len() >= MAX_TRANSIT_LINKS {
+            return Err(TablePushError::TableFull);
+        }
+        self.entries.push(entry);
+        Ok(())
+    }
+
+    fn swap_remove(&mut self, index: usize) {
+        if index < self.entries.len() {
+            self.entries.swap_remove(index);
+        }
+    }
+}
+
 #[cfg(feature = "alloc")]
 mod heap_transit_link_columns {
     use super::{TablePushError, TransportedLink, TransportedLinkTable};

@@ -432,6 +432,18 @@ inputs = ["Cargo.toml", "Cargo.lock", ".cargo/config.toml", "personal-rns/Cargo.
 artifacts = "validation-artifacts/results/guide-rust"
 
 [[suite]]
+id = "alloc-only"
+domain = "native"
+group = "feature-config"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 1200
+command = ["bash", "validation/native/alloc-only.sh"]
+inputs = ["validation/native/alloc-only.sh", "Cargo.toml", "Cargo.lock", "prns-core/Cargo.toml", "prns-core/src"]
+artifacts = "validation-artifacts/results/alloc-only"
+
+[[suite]]
 id = "external-alloc"
 domain = "native"
 group = "feature-config"

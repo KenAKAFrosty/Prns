@@ -171,7 +171,6 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let destination_hashes = destinations
         .destination_hashes()
         .expect("the hopspot destination names are valid");
-    let self_destination = destination_hashes.delivery;
     let node_page_destination = destination_hashes.node_page;
     let ble_identity = Some(ble_bootstrap.into_identity());
 
@@ -627,17 +626,6 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                             ui_state.show_notice(screen::UiNotice::Announcing);
                             notice_until_ms =
                                 Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
-                            let delivery_queued =
-                                handle.issue(PrnsCommand::AnnounceNow(AnnounceNow {
-                                    destination: self_destination,
-                                    target: AnnounceTarget::AllInterfaces,
-                                    app_data: AnnounceAppData::Registered,
-                                }));
-                            boot_stage(BootPhase::AnnounceDeliveryIssueReturned);
-                            log::info!(
-                                "announce-ui destination=delivery queued={}",
-                                delivery_queued.is_some()
-                            );
                             let node_queued = handle.issue(PrnsCommand::AnnounceNow(AnnounceNow {
                                 destination: node_page_destination,
                                 target: AnnounceTarget::AllInterfaces,

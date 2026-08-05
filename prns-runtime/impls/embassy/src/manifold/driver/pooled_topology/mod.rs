@@ -20,8 +20,8 @@ use crate::runtime::{InterfaceInspectionStore, ManifoldPersistence};
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
 
 use super::egress::{
-    flush_due_pacers, ifac_for, owns_dedicated_lane, route_reaction, soonest_pacer_release,
-    InterfacePacer, PooledEgress,
+    flush_due_pacers, ifac_for, route_reaction, soonest_pacer_release, InterfacePacer,
+    ManifoldEgress, PooledEgress,
 };
 use super::packet_phy::retain_packet_phy;
 
@@ -128,8 +128,10 @@ pub(crate) async fn run_pooled<
     for descriptor in descriptors.iter_mut() {
         *descriptor = clamp_to_embedded_ceiling(*descriptor);
         engine.interface_attached(descriptor.id, host.now());
-        if owns_dedicated_lane(inbound, descriptor.id) {
-            let _ = pacers.push(InterfacePacer::from_descriptor(descriptor.id, descriptor));
+        if let Some(lane) = egress.lane_for(descriptor.id) {
+            if !pacers.iter().any(|pacer| pacer.id == lane) {
+                let _ = pacers.push(InterfacePacer::from_descriptor(lane, descriptor));
+            }
         }
     }
     let mut wake_schedules = engine.wake_schedules(AttachedInterfaces::new(&*descriptors));
@@ -284,8 +286,11 @@ pub(crate) async fn run_pooled<
                     if !present {
                         engine.interface_attached(id, host.now());
                         let _ = descriptors.push(descriptor);
-                        if owns_dedicated_lane(inbound, id) {
-                            let _ = pacers.push(InterfacePacer::from_descriptor(id, &descriptor));
+                        if let Some(lane) = egress.lane_for(id) {
+                            if !pacers.iter().any(|pacer| pacer.id == lane) {
+                                let _ =
+                                    pacers.push(InterfacePacer::from_descriptor(lane, &descriptor));
+                            }
                         }
                         wake_schedules =
                             engine.wake_schedules(AttachedInterfaces::new(&*descriptors));
@@ -300,6 +305,7 @@ pub(crate) async fn run_pooled<
                 }
                 InterfaceLifecycle::Remove { id } => {
                     let now = host.now();
+                    let departed_lane = egress.lane_for(id);
                     engine.interface_departed(id, Departure::Forgotten, now);
                     let found = descriptors
                         .iter()
@@ -315,8 +321,15 @@ pub(crate) async fn run_pooled<
                         found.is_some(),
                         descriptors.len()
                     );
-                    if let Some(pos) = pacers.iter().position(|pacer| pacer.id == id) {
-                        let _ = pacers.swap_remove(pos);
+                    if let Some(lane) = departed_lane {
+                        let lane_still_serves_a_descriptor = descriptors
+                            .iter()
+                            .any(|descriptor| egress.lane_for(descriptor.id) == Some(lane));
+                        if !lane_still_serves_a_descriptor {
+                            if let Some(pos) = pacers.iter().position(|pacer| pacer.id == lane) {
+                                let _ = pacers.swap_remove(pos);
+                            }
+                        }
                     }
                     engine.cull_expired_routes(
                         now,
@@ -344,10 +357,10 @@ pub(crate) async fn run_pooled<
                         .position(|existing| existing.id == descriptor.id)
                     {
                         descriptors[slot] = descriptor;
-                        if let Some(pos) = pacers.iter().position(|pacer| pacer.id == descriptor.id)
-                        {
-                            pacers[pos] =
-                                InterfacePacer::from_descriptor(descriptor.id, &descriptor);
+                        if let Some(lane) = egress.lane_for(descriptor.id) {
+                            if let Some(pos) = pacers.iter().position(|pacer| pacer.id == lane) {
+                                pacers[pos] = InterfacePacer::from_descriptor(lane, &descriptor);
+                            }
                         }
                         wake_schedules =
                             engine.wake_schedules(AttachedInterfaces::new(&*descriptors));
@@ -364,6 +377,7 @@ pub(crate) async fn run_pooled<
                         .position(|existing| existing.id == old_id);
                     let collides = descriptors.iter().any(|existing| existing.id == new_id);
                     if let (Some(slot), false) = (present, collides) {
+                        let old_lane = egress.lane_for(old_id);
                         descriptors[slot] = descriptor;
                         egress.retag(old_id, new_id);
                         if let Some(entry) = inbound.iter_mut().find(|(id, _)| *id == old_id) {
@@ -372,8 +386,14 @@ pub(crate) async fn run_pooled<
                         if let Some(entry) = ifacs.iter_mut().find(|entry| entry.id == old_id) {
                             entry.id = new_id;
                         }
-                        if let Some(pos) = pacers.iter().position(|pacer| pacer.id == old_id) {
-                            pacers[pos] = InterfacePacer::from_descriptor(new_id, &descriptor);
+                        if let (Some(old_lane), Some(new_lane)) =
+                            (old_lane, egress.lane_for(new_id))
+                        {
+                            if let Some(pos) = pacers.iter().position(|pacer| pacer.id == old_lane)
+                            {
+                                pacers[pos] =
+                                    InterfacePacer::from_descriptor(new_lane, &descriptor);
+                            }
                         }
                         wake_schedules =
                             engine.wake_schedules(AttachedInterfaces::new(&*descriptors));

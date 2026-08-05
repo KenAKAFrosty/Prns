@@ -68,7 +68,7 @@ pub enum InterfaceAccessPlan {
 pub(super) fn plan_interface(
     interface: &ReferenceInterface,
     global_common: InterfaceCommonPolicy,
-    global_announce_rate: AnnounceRateLimit,
+    global_announce_rate: Option<AnnounceRateLimit>,
     default_gravity: InterfaceGravity,
     transport_enabled: bool,
 ) -> Result<PlannedInterface, PlanErrorKind> {

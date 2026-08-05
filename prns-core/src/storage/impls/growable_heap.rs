@@ -98,6 +98,7 @@ mod tests {
     use crate::routing::announce::stored::AnnounceRecordTable;
     use crate::routing::blackhole::{BlackholeTable, HeapBlackholeTable};
     use crate::routing::dedup::PacketHashHistory;
+    #[cfg(feature = "std")]
     use crate::routing::route_expiry::RouteExpiryIndex;
     use crate::routing::routes::RouteTable;
     use crate::routing::upstream_app_destinations::UpstreamAppDestinationTable;
@@ -125,6 +126,11 @@ mod tests {
             <GrowableHeap as StorageLayout>::LIMITS.blackholed_identities,
             StorageCapacity::Dynamic
         );
+        // The indexed expiry table is the roaring one, and that module is only compiled under
+        // `std`. Without it `RouteExpiries` is the linear fallback, whose `INDEXED` is false, so
+        // asserting unconditionally makes this test fail to compile in the alloc-only shape the
+        // embedded boards ship rather than fail at runtime.
+        #[cfg(feature = "std")]
         const {
             assert!(<<GrowableHeap as StorageLayout>::RouteExpiries as RouteExpiryIndex>::INDEXED);
         }

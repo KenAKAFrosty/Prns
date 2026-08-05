@@ -302,4 +302,29 @@ mod tests {
             .expect("the interface task is alive");
         assert_eq!(received, b"after the reconnect");
     }
+
+    #[tokio::test]
+    async fn the_secure_client_initializes_tls_and_rejects_an_invalid_peer() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("binds an ephemeral test port");
+        let addr = listener.local_addr().expect("the bound address is known");
+        let peer = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accepts the TLS client");
+            drop(stream);
+        });
+
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(2),
+            connect_async_with_config(
+                std::format!("wss://localhost:{}/prns", addr.port()),
+                Some(framing::config()),
+                false,
+            ),
+        )
+        .await
+        .expect("the invalid TLS peer is rejected within the window");
+        assert!(outcome.is_err());
+        peer.await.expect("the test peer exits cleanly");
+    }
 }

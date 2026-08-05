@@ -57,7 +57,6 @@ struct EngineRuntime {
     usb_status: TokioInterfaceStatus,
     wifi_status: AutoWifiStatus,
     ble_status: Option<BluetoothAutoStatus>,
-    destination: DestinationHash,
     node_page_destination: DestinationHash,
 }
 
@@ -424,16 +423,11 @@ pub(crate) fn announce() {
         return;
     };
     let _ = runtime.handle.issue(PrnsCommand::AnnounceNow(AnnounceNow {
-        destination: runtime.destination,
-        target: AnnounceTarget::AllInterfaces,
-        app_data: AnnounceAppData::Registered,
-    }));
-    let _ = runtime.handle.issue(PrnsCommand::AnnounceNow(AnnounceNow {
         destination: runtime.node_page_destination,
         target: AnnounceTarget::AllInterfaces,
         app_data: AnnounceAppData::Registered,
     }));
-    diagnostic("announce", format_args!("destinations=2"));
+    diagnostic("announce", format_args!("destination=nomadnetwork.node"));
 }
 
 pub(crate) fn classify(id: InterfaceId) -> Option<(CardKind, CardLabel)> {
@@ -683,7 +677,6 @@ async fn run_engine(
         usb_status,
         wifi_status: wifi_status.clone(),
         ble_status,
-        destination: destination_hashes.delivery,
         node_page_destination: destination_hashes.node_page,
     };
     let mut persistence_task =

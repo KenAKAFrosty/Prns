@@ -13,10 +13,18 @@ pub use interface_type::InterfaceKind;
 pub(crate) use interpret::cleaned_number;
 pub use parse::{parse, parse_named};
 pub use types::{
-    RNodeRadio, RNodeSubinterface, ReferenceBlackholeExchange, ReferenceConfig,
-    ReferenceConfigParams, ReferenceDiscoveryConfig, ReferenceInterface,
+    RNodeRadio, RNodeSubinterface, ReferenceAnnounceRateTarget, ReferenceBlackholeExchange,
+    ReferenceConfig, ReferenceConfigParams, ReferenceDiscoveryConfig, ReferenceInterface,
     ReferenceInterfaceDiscovery, ReferenceMode, ReferenceRemoteManagement, ReferenceValue,
 };
+pub(crate) use validation::supported_websocket_target;
+
+pub(crate) fn announce_rate_target_is_explicit_off(text: &str) -> bool {
+    matches!(
+        text.trim().to_ascii_lowercase().as_str(),
+        "off" | "no" | "false"
+    )
+}
 
 #[cfg(test)]
 mod tests;

@@ -9,7 +9,7 @@ import re
 import shutil
 
 
-RELEASE_RECORD_NAME = re.compile(r"release-record-v.+\.json")
+FLASHER_RELEASE_RECORD_NAME = re.compile(r"flasher-release-record-v.+\.json")
 SIGNED_CANDIDATE_NAME = re.compile(r"prns-flasher-candidate-v.+-signed\.tar\.gz")
 
 
@@ -146,11 +146,15 @@ def bootstrap_blocking_custody_tags(releases: object) -> list[str]:
             if not isinstance(name, str) or not name:
                 raise ValueError(f"GitHub release asset metadata is malformed for {tag}")
             names.append(name)
-        has_release_record = any(RELEASE_RECORD_NAME.fullmatch(name) for name in names)
+        has_flasher_release_record = any(
+            FLASHER_RELEASE_RECORD_NAME.fullmatch(name) for name in names
+        )
         has_signed_candidate = any(
             SIGNED_CANDIDATE_NAME.fullmatch(name) for name in names
         )
-        if has_release_record or (not draft and not prerelease and has_signed_candidate):
+        if has_flasher_release_record or (
+            not draft and not prerelease and has_signed_candidate
+        ):
             blocking.add(tag)
     return sorted(blocking)
 

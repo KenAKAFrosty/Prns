@@ -430,7 +430,6 @@ pub(super) async fn run(
                 node_persistence,
                 prns_handle.clone(),
                 rotated_rx,
-                cli.persistence_policy,
             ));
         }
     }

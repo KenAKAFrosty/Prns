@@ -81,7 +81,6 @@ pub(super) struct WindowHandles {
     pub(super) tcp_status: Option<TokioInterfaceStatus>,
     pub(super) tcp_id: Option<InterfaceId>,
     pub(super) tcp_target: Option<String>,
-    pub(super) destination: DestinationHash,
     pub(super) node_page_destination: DestinationHash,
 }
 
@@ -180,7 +179,6 @@ fn run_node(ready_tx: Sender<(WindowHandles, persistence::ShutdownFlush)>) {
         let destination_hashes = destinations
             .destination_hashes()
             .expect("the hopspot destination names are valid");
-        let destination = destination_hashes.delivery;
         let node_page_destination = destination_hashes.node_page;
 
         let persistence_store = match persistence::open(&storage_dir) {
@@ -340,7 +338,6 @@ fn run_node(ready_tx: Sender<(WindowHandles, persistence::ShutdownFlush)>) {
                 tcp_status,
                 tcp_id,
                 tcp_target,
-                destination,
                 node_page_destination,
             },
             shutdown_flush,

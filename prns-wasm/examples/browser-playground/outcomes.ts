@@ -10,12 +10,15 @@ import type {
   RuntimeRejected,
   Tag as Tagged,
   UsbAutoConnectOutcome,
+  WebSocketConnectOutcome,
 } from "./sdk/index.js";
 import type { LxmfDeliveryProfileFailure } from "./lxmf.js";
 import { boundedDetail } from "./presentation.js";
 
 export type HostOperation =
   | "Create runtime"
+  | "Connect WebSocket"
+  | "Close WebSocket"
   | "Connect USB Auto"
   | "Close USB Auto"
   | "Close Auto Wi-Fi";
@@ -37,7 +40,12 @@ export type UsbConnectFailure = Exclude<
   Tagged<"Connected", unknown>
 >;
 
-export type UsbCloseFailure = Exclude<
+export type WebSocketConnectFailure = Exclude<
+  WebSocketConnectOutcome,
+  Tagged<"Connected", unknown>
+>;
+
+export type InterfaceCloseFailure = Exclude<
   InterfaceCloseOutcome,
   Tagged<"Closed", unknown>
 >;
@@ -89,8 +97,25 @@ export function describeUsbConnectFailure(
   });
 }
 
-export function describeUsbCloseFailure(
-  outcome: UsbCloseFailure | HostOperationFailed,
+export function describeWebSocketConnectFailure(
+  outcome: WebSocketConnectFailure | HostOperationFailed,
+): string {
+  return match_into<string>().from(outcome, {
+    HostOperationFailed: ({ operation, detail }) => `${operation}: ${detail}`,
+    HostApiUnavailable: ({ api }) => `${api} is unavailable in this browser`,
+    PermissionDenied: ({ stage, detail }) => `${stage}: ${detail}`,
+    Cancelled: ({ stage }) => `Cancelled during ${stage}`,
+    AlreadyActive: ({ target }) => `Already active for ${target}`,
+    InvalidTarget: ({ detail }) => detail,
+    TimedOut: ({ stage, timeoutMs }) =>
+      `${stage} timed out after ${timeoutMs}ms`,
+    ConnectionFailed: ({ stage, detail }) => `${stage}: ${detail}`,
+    RuntimeRejected: ({ operation, detail }) => `${operation}: ${detail}`,
+  });
+}
+
+export function describeInterfaceCloseFailure(
+  outcome: InterfaceCloseFailure | HostOperationFailed,
 ): string {
   return match_into<string>().from(outcome, {
     HostOperationFailed: ({ operation, detail }) => `${operation}: ${detail}`,

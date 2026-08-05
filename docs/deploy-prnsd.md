@@ -1,68 +1,53 @@
 # Deploy prnsd
 
-Official `prnsd` releases provide one complete native archive for each supported
-desktop platform and one cloud-oriented Linux container image. Both products run
-the same daemon. The image merely compiles out tray and locally attached-device
-interfaces that are not useful inside a container.
+The official `prnsd` container runs a persistent Prns backbone with ordinary Reticulum TCP access, WebSocket access for browser clients, the full operator CLI, and optional NomadNet page hosting. Run it anywhere Docker works, or use the Railway template when you would rather have the platform manage the container, storage, TLS, and public endpoints.
 
-The `v0.3.1` release matrix is:
+Both paths run the same daemon and keep its configuration, transport identity, routing state, ratchets, pages, and control endpoint under `/var/lib/prnsd`.
 
-| Artifact | Platform |
-| --- | --- |
-| `prnsd-0.3.1-x86_64-unknown-linux-gnu.tar.gz` | Linux x86_64, glibc |
-| `prnsd-0.3.1-aarch64-unknown-linux-gnu.tar.gz` | Linux ARM64, glibc |
-| `prnsd-0.3.1-x86_64-apple-darwin.tar.gz` | macOS Intel |
-| `prnsd-0.3.1-aarch64-apple-darwin.tar.gz` | macOS Apple silicon |
-| `prnsd-0.3.1-x86_64-pc-windows-msvc.zip` | Windows x86_64 |
+## Docker
 
-Native archives contain the executable, licenses, third-party notices, Minisign
-public key, exact build identity, and the commit-bound `source.zip` plus its
-SHA-256 sidecar. The Linux binaries are built natively on
-Ubuntu 24.04, so glibc 2.39 or newer is the supported baseline for this release.
-The full Linux build statically vendors its `libdbus` code; it does not require
-a separately installed `libdbus-1` shared library. Each release publishes the
-complete `ldd`/`readelf`, `otool -L`, or PE import report as a signed-inventory
-asset rather than relying on an undocumented portability claim.
+### Start the container
 
-## Run the container
-
-Use an exact digest in production. The signed
-`prnsd-image-v0.3.1.json` release asset binds the multi-platform digest to the
-suite version, source commit, and amd64/ARM64 child digests.
+Create a named volume and publish the default Reticulum TCP and WebSocket ports:
 
 ```sh
-export PRNSD_IMAGE='ghcr.io/kenakafrosty/prnsd@sha256:REPLACE_WITH_SIGNED_DIGEST'
-docker pull "$PRNSD_IMAGE"
 docker volume create prnsd-data
+
 docker run -d \
   --name prnsd \
   --restart on-failure \
   --mount type=volume,source=prnsd-data,target=/var/lib/prnsd \
   --publish 4242:4242/tcp \
   --publish 4284:4284/tcp \
-  "$PRNSD_IMAGE"
+  ghcr.io/kenakafrosty/prnsd:0.3.3
 ```
 
-The image runs as UID and GID `65532`. A new server configuration listens for
-Backbone connections on container port `4242` and WebSocket connections on
-container port `4284`; the conventional WebSocket endpoint is
-`ws://HOST:4284/prns`. The daemon emits JSON logs and stores configuration,
-identity, routing state, ratchets, and the control endpoint under
-`/var/lib/prnsd`. That path is not optional: an unwritable or missing persistent
-mount makes startup fail instead of silently using ephemeral state.
+Reticulum TCP clients connect to `HOST:4242`. WebSocket clients connect to `ws://HOST:4284/prns`; browsers served over HTTPS require a certificate-valid `wss://` endpoint, normally supplied by your hosting platform or reverse proxy.
 
-For a public browser-facing deployment, terminate TLS at the platform or reverse
-proxy and forward its `wss://HOST/prns` route to the container's plain WebSocket
-listener on port `4284`.
+The image supports amd64 and ARM64 Linux. [Browse the official image on GHCR](https://github.com/KenAKAFrosty/Prns/pkgs/container/prnsd).
 
-For a bind mount, create and assign the directory before starting the container:
+### Advertise a public Backbone endpoint
+
+The container cannot infer the public address and port created by arbitrary Docker hosts, NAT, or port forwarding. A directly hosted public node can publish its reachable endpoint during first startup:
 
 ```sh
-install -d -m 0700 ./prnsd-data
-sudo chown 65532:65532 ./prnsd-data
+docker run -d \
+  --name prnsd \
+  --restart on-failure \
+  --mount type=volume,source=prnsd-data,target=/var/lib/prnsd \
+  --publish 4242:4242/tcp \
+  --publish 4284:4284/tcp \
+  --env PRNSD_BACKBONE_DISCOVERABLE=Yes \
+  --env PRNSD_REACHABLE_HOST=backbone.example.com \
+  --env PRNSD_REACHABLE_PORT=4242 \
+  ghcr.io/kenakafrosty/prnsd:0.3.3
 ```
 
-Inspect readiness and logs without adding an HTTP service:
+`PRNSD_REACHABLE_PORT` is the external port that other nodes use; it may differ from the container's internal listener port. Discovery remains disabled when no complete public endpoint is available. Partial or malformed endpoint settings fail startup instead of creating an invalid advertisement.
+
+Bootstrap settings are used only when `/var/lib/prnsd/config` does not exist. After that first start, the configuration belongs to you and environment changes do not silently rewrite it. Use `prnsd interfaces` to change a running node.
+
+### Operate it
 
 ```sh
 docker inspect --format '{{json .State.Health}}' prnsd
@@ -71,215 +56,72 @@ docker exec prnsd prnsd interfaces list
 docker logs --follow prnsd
 ```
 
-The Debian slim runtime includes `/bin/sh`, ordinary filesystem and text utilities, and `apt-get`, so `docker exec -it prnsd /bin/sh`, Railway's browser console, and `railway ssh` provide a familiar diagnostic environment. The image normally enters as non-root UID 65532; use `docker exec -u 0 -it prnsd /bin/sh` only when root is needed, such as temporarily installing an optional tool with `apt-get`. Those additions disappear on redeployment. The `prnsd` executable remains available at `/usr/local/bin/prnsd`, and ordinary inspection commands can use the persistent operator configuration directly:
+Open the guided interface editor or a normal Debian shell when you want to work interactively:
 
 ```sh
-prnsd status --config /var/lib/prnsd --json
-prnsd interfaces list --config /var/lib/prnsd
+docker exec -it prnsd prnsd interfaces
+docker exec -it prnsd /bin/sh
 ```
 
-### OTLP metrics and traces
+The image normally runs as non-root UID and GID `65532`. Root is available for exceptional diagnostics through `docker exec -u 0 -it prnsd /bin/sh`; packages installed interactively disappear when the container is replaced.
 
-The official image includes OTLP/HTTP protobuf metrics and traces. The
-capability is dormant by default: without a common or signal-specific endpoint,
-no telemetry provider or runtime reporter task starts. Point the container at a
-collector reachable from its network to activate it:
-
-```sh
-docker run -d \
-  --name prnsd \
-  --restart on-failure \
-  --mount type=volume,source=prnsd-data,target=/var/lib/prnsd \
-  --publish 4242:4242/tcp \
-  --publish 4284:4284/tcp \
-  --env OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318 \
-  --env OTEL_SERVICE_NAME=prnsd \
-  --env OTEL_RESOURCE_ATTRIBUTES=service.instance.id=backbone-1 \
-  "$PRNSD_IMAGE"
-```
-
-`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` and
-`OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` can configure the signals separately.
-`OTEL_SDK_DISABLED=true` is an explicit kill switch. Use a stable, unique
-`service.instance.id` for each daemon that reports to the same backend. Export
-is bounded and does not replace the structured JSON container logs.
-
-The entrypoint publishes `/var/lib/prnsd` as the container's active Prns
-instance. Every `docker exec prnsd prnsd ...` operator command therefore uses
-that configuration automatically. Running bare `prnsd` reports the already
-running daemon instead of starting a second instance or falling back to a
-home-directory configuration. An explicitly isolated second foreground
-instance still requires its own `--config DIR` and state boundary.
-
-Docker owns this foreground service's log attachment and restart lifecycle, so
-use `docker logs` and `docker restart` rather than `prnsd logs` or
-`prnsd restart` inside the container.
-
-Docker sends `SIGTERM` because the image declares it as its stop signal. A
-successful stop waits for acknowledged final routing-state and ratchet flushes:
+Docker owns this foreground process, so use `docker logs`, `docker restart`, and `docker stop` rather than the managed-desktop lifecycle commands. A graceful stop waits for final routing-state and ratchet writes:
 
 ```sh
 docker stop --time 30 prnsd
 ```
 
-The image always uses `--persistence-policy required`. Store initialization
-failure, an unexpected persistence worker exit, or a failed write therefore
-ends the process with a nonzero status. Conventional desktop and manually
-configured daemon runs remain `best-effort` unless the operator chooses
-`--persistence-policy required`.
+The container fails closed when it cannot establish writable persistent storage or its stable transport identity during startup. If a later state or ratchet write fails, the daemon reports the failure and keeps routing from memory. Routing-state writes retry after later changes and at the periodic flush; ratchets remain live in memory and receive another full write during graceful shutdown. State learned after the last successful write can be lost if the instance stops before storage recovers. A failed final shutdown write still returns a nonzero process status.
 
-## One-time server bootstrap
+### Configuration and hosted pages
 
-The image starts with:
+A new volume receives a private server configuration with a Backbone listener on `0.0.0.0:4242` and a WebSocket listener on `0.0.0.0:4284`. It also receives an editable NNPages tree:
 
 ```text
-prnsd run --service --config /var/lib/prnsd --persistence-policy required --bootstrap server --log-format json
+/var/lib/prnsd/nnpages/
+├── files/
+├── pages/
+├── name
+└── settings.toml
 ```
 
-When `/var/lib/prnsd/config` does not exist, `--bootstrap server` atomically
-creates a private `0600` configuration with a Backbone listener on
-`0.0.0.0:4242` and a WebSocket listener on `0.0.0.0:4284`. After that first
-write the configuration is operator-owned: bootstrap never rewrites an
-existing file.
-
-The same first bootstrap creates `/var/lib/prnsd/nnpages`, with hosted
-documents under `pages/`, downloads under `files/`, announcement policy in
-`settings.toml`, and the optional display name in `name`. Every safe `.mu` path
-below `nnpages/pages/` is published at `/page/<path>` on the node's
-`nomadnetwork.node` destination; subdirectories become path segments. Regular
-downloads below `nnpages/files/` are published at `/file/<path>`. Official
-images stage their exact commit-bound source archive and checksum there, and
-the seeded `source.mu` links to them without requiring internet access. File
-handles are opened beneath those roots on each request and streamed one bounded
-segment at a time, so edits and deletions take effect without retaining complete
-downloads in memory.
-Deleting `index.mu` also stops the node-page announcement and is never a daemon
-error. Bootstrap does not recreate a deleted page once `config` exists.
-The hosted page destination announcement is enabled by default and repeats
-every 360 minutes, the conventional six-hour NomadNet cadence. Operators can
-set `announce = false` or change `announce_interval_minutes` in
-`/var/lib/prnsd/nnpages/settings.toml`; serving remains available when
-announcement is disabled.
-
-The daemon lightly reconciles filenames every five minutes. To publish an
-addition, deletion, or rename immediately, run:
+Place `.mu` pages under `pages/` and downloads under `files/`. Changes are discovered periodically; apply them immediately with:
 
 ```sh
 docker exec prnsd prnsd nnpages refresh
 ```
 
-That command uses the configuration-local control lane, so it works with both
-the foreground container daemon and a conventional managed installation.
-Hidden and unsafe path components, symlinks, non-`.mu` files in
-`nnpages/pages/`, pages larger than 1 MiB, and downloads larger than 32 MiB are
-not served. Keep the NNPages tree private and edit it as UID/GID `65532` in the
-container. The initially
-seeded index is a gentle Prns introduction, not immutable product content:
-operators may replace it or remove it to disable the showcase entirely.
-`source.mu` and `coming-from-rns.mu` retain a first-line managed marker and are
-refreshed by `prnsd nnpages seed` only while that marker remains; removing the
-marker makes either page operator-owned. `prnsd nnpages seed --source` stages
-the source bundle shipped beside a native executable or inside the image,
-while `--source-archive /path/to/source.zip` supplies an explicit archive.
-Existing different downloads are never overwritten.
+The most useful first-start settings are:
 
-The bootstrap environment is fail-closed:
+| Variable | Purpose |
+| --- | --- |
+| `PRNSD_BACKBONE_LISTEN_PORT` | Change the internal Backbone listener from `4242` |
+| `PRNSD_REACHABLE_HOST` and `PRNSD_REACHABLE_PORT` | Publish a complete external Backbone endpoint |
+| `PRNSD_BACKBONE_DISCOVERABLE` | Explicitly enable or disable Backbone discovery |
+| `PRNSD_NNPAGES_ANNOUNCE` | Enable or disable the hosted page announcement |
+| `PRNSD_NNPAGES_ANNOUNCE_INTERVAL_MINUTES` | Change the default six-hour announcement interval |
 
-- `PRNSD_BACKBONE_LISTEN_PORT` changes the internal listener port; its default
-  is `4242`.
-- `PRNSD_BACKBONE_DISCOVERABLE=No` suppresses Backbone discovery publication
-  even when a complete public endpoint is present. `Yes` requires a complete
-  endpoint. When omitted, publication is automatic only when that endpoint is
-  complete.
-- A complete `PRNSD_REACHABLE_HOST` and `PRNSD_REACHABLE_PORT` pair publishes
-  the external discovery endpoint.
-- Otherwise, a complete `RAILWAY_TCP_PROXY_DOMAIN` and
-  `RAILWAY_TCP_PROXY_PORT` pair publishes Railway's endpoint.
-- A generic `PRNSD_REACHABLE_*` pair takes precedence over Railway variables.
-- Partial pairs, zero or invalid ports, malformed hosts, and conflicting
-  partial input stop startup.
-- Discovery stays disabled when there is no complete published endpoint.
-- `PRNSD_NNPAGES_ANNOUNCE=No` disables the seeded page's announcement while
-  continuing to serve it by destination hash.
-- `PRNSD_NNPAGES_ANNOUNCE_INTERVAL_MINUTES` selects a positive whole number
-  of minutes and defaults to `360`.
+The [configuration reference](prnsd-config.md) covers every interface and routing setting. [Observability](observability.md) covers structured logs, the shipped dashboard, and optional OTLP/HTTP metrics and traces.
 
-The published port may differ from the listener port. The generated
-`reachable_port` is advertised to peers while `listen_port` remains the local
-socket. Operators can make the same distinction in a hand-written listening
-Backbone or TCP server stanza.
+### Back up and restore
 
-To change bootstrap inputs after creation, edit the Reticulum `config` or
-NNPages `settings.toml` deliberately; restarting with different environment
-variables does not mutate either operator-owned file or recreate deleted pages.
-
-For a running container, Backbone publication is an ordinary interface setting
-and can be changed without a restart:
-
-```sh
-docker exec prnsd prnsd interfaces edit "Cloud Backbone" \
-  --discoverable false \
-  --apply
-```
-
-NNPages policy is independent of the stock Reticulum configuration. Edit the
-sidecar and ask the daemon to reload it:
-
-```toml
-# /var/lib/prnsd/nnpages/settings.toml
-announce = false
-announce_interval_minutes = 360
-```
-
-```sh
-docker exec prnsd prnsd nnpages refresh
-```
-
-## Backup and restore
-
-Stop the daemon first so the backup represents one acknowledged final flush.
-The released image itself can act as a volume carrier:
+Stop the daemon first so the backup includes an acknowledged final flush:
 
 ```sh
 docker stop --time 30 prnsd
 mkdir -p ./prnsd-backup
-docker create \
-  --name prnsd-backup-carrier \
-  --mount type=volume,source=prnsd-data,target=/var/lib/prnsd \
-  "$PRNSD_IMAGE" status --config /var/lib/prnsd --json
-docker cp -a prnsd-backup-carrier:/var/lib/prnsd/. ./prnsd-backup/
-docker rm prnsd-backup-carrier
+docker cp -a prnsd:/var/lib/prnsd/. ./prnsd-backup/
 docker start prnsd
 ```
 
-Keep the directory private: it contains the node identity and ratchets. To
-restore, stop and remove the daemon, mount an empty replacement volume in a
-carrier created from the desired image, copy the saved contents back with
-archive mode, and then recreate the daemon:
+Keep the backup private because it contains the node identity and ratchets. Restore it only into a stopped container or an empty replacement volume, preserve UID/GID `65532`, and never run two replicas from the same identity or writable state directory.
+
+### Upgrade or roll back
+
+Back up the volume, pull the desired release, and recreate the container while retaining the volume:
 
 ```sh
-docker stop --time 30 prnsd
-docker rm prnsd
-docker volume create prnsd-restored
-docker create \
-  --name prnsd-restore-carrier \
-  --mount type=volume,source=prnsd-restored,target=/var/lib/prnsd \
-  "$PRNSD_IMAGE" status --config /var/lib/prnsd --json
-docker cp -a ./prnsd-backup/. prnsd-restore-carrier:/var/lib/prnsd/
-docker rm prnsd-restore-carrier
-```
-
-Inspect that restored files remain owned by `65532:65532` on Linux before
-starting the replacement. Never run two replicas against one copied identity or
-one writable state directory.
-
-## Upgrade and rollback
-
-Back up first, then recreate the container at the newly verified digest while
-retaining the volume:
-
-```sh
-export PRNSD_IMAGE='ghcr.io/kenakafrosty/prnsd@sha256:NEW_SIGNED_DIGEST'
+export PRNSD_IMAGE='ghcr.io/kenakafrosty/prnsd:0.3.3'
 docker pull "$PRNSD_IMAGE"
 docker stop --time 30 prnsd
 docker rm prnsd
@@ -292,162 +134,55 @@ docker run -d \
   "$PRNSD_IMAGE"
 ```
 
-Rollback uses the identical procedure with the previous verified digest and
-the state backup appropriate to that version. Tags `0.3.1` and `latest` are
-convenient discovery aliases, not deployment locks; promotion only moves them
-after independent verification, but an exact digest remains the durable
-operator contract.
-
-## Public staging
-
-The public staging lane exercises the real container and Railway journey without creating a release, tag, signature, prerelease, or promotion record. It republishes the exact reproducible OCI layouts under `ghcr.io/kenakafrosty/prnsd-staging`; the separate package name and its generated metadata identify the artifact as staging while the executable bytes remain eligible to become a later release candidate.
-
-Start from an exact protected `main` commit. Dispatch `prnsd-image-candidate.yml` with that full commit SHA and wait for its primary and reproduction builds to agree for amd64 and ARM64. Then dispatch `prnsd-staging-publish.yml` with the successful image-candidate run ID and leave `package_is_public` false on the first run. The workflow verifies the producer run, rechecks the OCI layouts and their embedded source, preserves the platform manifest digests while copying them, and publishes only immutable `candidate-COMMIT` tags to the staging package.
-
-GitHub creates a new container package as private. Open the `prnsd-staging` package settings and deliberately change its visibility to public only after confirming that this separate package is the intended permanent public staging surface. GitHub does not permit a public package to become private again. Rerun `prnsd-staging-publish.yml` with the same image-candidate run ID and `package_is_public` true; the workflow then proves anonymous digest access and uploads `prnsd-staging-image-COMMIT.json` plus `railway-staging-contract-COMMIT.json`.
-
-The equivalent CLI dispatches are:
-
-```sh
-export SOURCE_COMMIT='FULL_PROTECTED_MAIN_SHA'
-export IMAGE_CANDIDATE_RUN_ID='SUCCESSFUL_IMAGE_CANDIDATE_RUN_ID'
-
-gh workflow run prnsd-image-candidate.yml \
-  --ref main \
-  -f commit_sha="$SOURCE_COMMIT"
-
-gh workflow run prnsd-staging-publish.yml \
-  --ref main \
-  -f image_candidate_run_id="$IMAGE_CANDIDATE_RUN_ID" \
-  -f package_is_public=false
-
-gh workflow run prnsd-staging-publish.yml \
-  --ref main \
-  -f image_candidate_run_id="$IMAGE_CANDIDATE_RUN_ID" \
-  -f package_is_public=true
-```
-
-Create a private Railway project from the exact `ghcr.io/kenakafrosty/prnsd-staging@sha256:...` reference in the generated contract. Apply the same one-volume, one-replica, TCP-port-4242, restart-on-failure shape recorded there; do not override the image entrypoint or configure an HTTP-path health check. Set the fixed Railway service variable `RAILWAY_RUN_UID=0` recorded in the contract because Railway mounts volumes as root while the image normally runs as non-root UID 65532. The public package makes registry credentials unnecessary, while the Railway project and its operator-owned state remain private.
-
-Railway's dashboard and template composer stage the service, volume, variables, and TCP proxy together. When provisioning sequentially with the CLI, create the image service with `PRNSD_BACKBONE_DISCOVERABLE=Yes` and `RAILWAY_RUN_UID=0`, attach the volume, create the TCP proxy, wait for it to become active, and then redeploy the same exact digest. The first start can fail closed while the Railway endpoint variables are incomplete; this prevents bootstrap from writing a permanently undiscoverable or invalid operator configuration before the proxy exists.
-
-After the service is healthy, capture its transport identity directly from the running container, exercise a public Backbone connection, restart it, and confirm that the same identity and persisted routing state return:
-
-```sh
-railway ssh -- \
-  /usr/local/bin/prnsd status \
-  --config /var/lib/prnsd \
-  --json
-```
-
-Running `railway ssh` without a command opens the same Debian shell exposed by Railway's browser console.
-
-Publish an intentional second Railway template revision, roll back to the previous revision, then restore the exact digest under test. Dispatch `prnsd-staging-qualification.yml` with the public endpoint, both observed identity hashes, both template revisions, the public staging publication run ID, and the three explicit confirmations. That workflow anonymously pulls both architectures, checks the live TCP endpoint, verifies the staging publication chain, and emits a staging-only evidence artifact.
-
-Staging evidence is never accepted by suite promotion. After the final source commit is settled, release readiness and every producer workflow run again for that exact SHA; the signed `ghcr.io/kenakafrosty/prnsd` candidate and protected release deployment qualification remain separate authorities.
+Rollback is the same operation with the previous release and its compatible state backup. Version tags are convenient for ordinary use; production operators who need an immutable deployment can replace the tag with the exact multi-platform digest published by the matching GitHub release.
 
 ## Railway
 
-Railway's template composer, rather than a repository file, is the publication
-authority for a Docker-image template. The signed
-`railway-template-contract-v0.3.1.json` release asset records the exact settings
-that must be published:
+The public Prns Railway template is the shortest path to a hosted backbone when you do not want to manage Docker or a server. It creates one `prnsd` service, one persistent `/var/lib/prnsd` volume, a public Reticulum TCP proxy, and a certificate-backed public WebSocket domain.
 
-1. Use `ghcr.io/kenakafrosty/prnsd@sha256:...` from the signed image metadata,
-   never a mutable tag.
-2. Set the fixed service variable `RAILWAY_RUN_UID=0`, then mount one persistent volume at `/var/lib/prnsd`.
-3. Configure one TCP Proxy targeting internal port `4242`.
-4. Run exactly one replica and select restart-on-failure.
-5. Keep JSON logging and do not configure an HTTP-path health check.
-6. Publish a new template revision for an intentional image upgrade rather
-   than mutating the old revision.
+### Deploy and connect
 
-Railway supplies `RAILWAY_TCP_PROXY_DOMAIN` and
-`RAILWAY_TCP_PROXY_PORT`. The one-time bootstrap therefore advertises the
-public proxy port while continuing to listen on `4242` inside the service.
-Expose `PRNSD_BACKBONE_DISCOVERABLE`, `PRNSD_NNPAGES_ANNOUNCE`, and
-`PRNSD_NNPAGES_ANNOUNCE_INTERVAL_MINUTES` as template variables so the initial
-operator-owned Reticulum configuration and NNPages sidecar are
-deployment-controllable.
+Deploy the template into your Railway account and wait for the service to become healthy. Then open the service's **Networking** panel:
 
-Before stable promotion, the protected qualification workflow requires a
-private deployment of the precise template revision, a successful public
-Backbone connection, persistence restoration with the same identity after a
-restart, and an exercised rollback revision. It records those facts as
-release-bound evidence. Making the GHCR package public is also an explicit
-first-publication gate; both architectures must be anonymously pullable.
+- Copy the **TCP Proxy** host and port into an ordinary Reticulum Backbone or TCP client.
 
-## Verify a release
+- Copy the generated public domain and use `wss://YOUR-PUBLIC-DOMAIN/prns` in the Prns browser playground or another WebSocket client.
 
-Download the assets from the exact GitHub release tag. Trust starts with the
-repository's `release/keys/minisign.pub`; compare it through an independent
-channel before first use.
+The generated domain and TCP proxy remain attached across normal deployments and restarts. Deleting and recreating either networking resource can assign a different endpoint.
+
+Railway supplies its external TCP proxy address to the container, so first-start Backbone discovery can advertise the actual public host and assigned port while the daemon continues listening on internal port `4242`.
+
+### Configure and inspect
+
+The template exposes only the useful first-start choices: Backbone discovery, NNPages announcements, and their interval. As with Docker, those values create the initial operator-owned configuration and do not overwrite later edits.
+
+Railway's browser console and `railway ssh` open the shell included in the image. The operator CLI works directly against the active service configuration:
 
 ```sh
-minisign -Vm SHA256SUMS.txt \
-  -x SHA256SUMS.txt.minisig \
-  -p minisign.pub
-minisign -Vm release-record-v0.3.1.json \
-  -x release-record-v0.3.1.json.minisig \
-  -p minisign.pub
-sha256sum --check SHA256SUMS.txt
+prnsd status --json
+prnsd interfaces list
+prnsd interfaces
+prnsd nnpages refresh
 ```
 
-On macOS, use `shasum -a 256 -c SHA256SUMS.txt`. The release record binds the
-native archives, signed flasher candidate, source and image SPDX SBOMs, image
-and platform digests, linkage reports, and GitHub provenance bundles into that
-exact checksum inventory.
+Keep one replica attached to the volume. Scaling a stateful transport identity horizontally would make multiple nodes claim the same identity and is not supported. Resize the volume if your actual routing state, pages, or downloads outgrow its initial capacity.
 
-The unified prerelease then passes two protected evidence tracks before stable
-promotion. Its public-review job reviews the visible suite without access to
-the signing secret. Physical flasher installation and device qualification add
-`qualification-evidence-v0.3.1.tar.gz`, a signed acceptance document, and a
-separately signed `flasher-release-record-v0.3.1.json`. Railway qualification
-adds `deployment-qualification-v0.3.1.json` after its independently supplied
-digest is verified. These post-publication evidence files are narrowly named
-supplements to the immutable suite inventory; promotion rejects every other
-uninventoried asset and independently reverifies their workflow custody,
-Minisign signatures, exact source, artifact digests, and live GitHub
-attestations.
+Use Railway's deployment logs and metrics for the basic service view. If you already operate an OpenTelemetry collector, point the optional OTLP settings at it using the environment variables in the [observability guide](observability.md).
 
-Verify an archive and the immutable OCI subject against GitHub's provenance:
+### Back up and update
+
+Back up the persistent volume before changing image versions, and confirm that the same transport identity returns after a restart or restore. A new template revision affects new deployments; an existing service remains under your control and can be moved deliberately to the exact image tag or digest from a newer release.
+
+Do not remove the volume when redeploying. Do not run a rollback and the current service simultaneously from copied state.
+
+## Verify an exact image
+
+Each stable GitHub release publishes the multi-platform image digest and provenance beside the native archives. To lock a deployment, use the recorded `ghcr.io/kenakafrosty/prnsd@sha256:...` reference instead of a tag. Operators using the GitHub CLI can also verify the immutable OCI subject:
 
 ```sh
-gh attestation verify prnsd-0.3.1-x86_64-unknown-linux-gnu.tar.gz \
-  --repo KenAKAFrosty/Prns
 gh attestation verify \
-  oci://ghcr.io/kenakafrosty/prnsd@sha256:REPLACE_WITH_SIGNED_DIGEST \
+  oci://ghcr.io/kenakafrosty/prnsd@sha256:REPLACE_WITH_RELEASE_DIGEST \
   --repo KenAKAFrosty/Prns
 ```
 
-SPDX files are ordinary JSON and can be inspected without special tooling:
-
-```sh
-jq '.creationInfo, .packages[] | {name, versionInfo, licenseConcluded}' \
-  prnsd-0.3.1-source.spdx.json
-```
-
-The suite uses the existing Minisign trust root and GitHub provenance. macOS
-notarization and Windows Authenticode are not present in `v0.3.1`; do not treat
-the archives as platform-vendor-signed.
-
-## Host feature profiles and persistence events
-
-`tokio-host` remains the complete Tokio host-platform profile: cloud transports,
-tray-capable desktop operation, serial, KISS, AX.25, RNode, Weave, Wi-Fi auto,
-USB, and Bluetooth auto. `tokio-cloud-host` is its cloud-oriented variation. It
-retains configuration, persistence, shared-instance support, TCP, UDP, pipes,
-Backbone, I2P, WebSocket, browser rendezvous, signed artifacts, RNX, and
-parallel work while excluding tray and locally attached-device capabilities.
-Embassy remains the embedded host platform and does not inherit either Tokio
-profile.
-
-Persistence event layering is intentional. The lower-level host worker injects
-`Journaled::PersistenceFlushed` and `Journaled::PersistenceFlushFailed` into the
-ordered engine journal because those notifications must retain their position
-relative to engine work even though the engine performs no storage I/O.
-Recipe-managed restoration and terminal persistence notifications still travel
-through the normal manifold/application event path and its panic boundary.
-Shutdown acknowledgement therefore means the application observed the terminal
-success or failure before the lifecycle future returned; `Journaled` is an
-ordering transport, not a bypass around application events.
+The [GitHub releases page](https://github.com/KenAKAFrosty/Prns/releases) is the authoritative source for a release's digest, checksums, signatures, and provenance.

@@ -1,9 +1,9 @@
 import init, * as wasm from "./pkg/prns_wasm.js";
 import { BrowserLocalStorageIdentityStore, Prns, Tag, match, match_into, } from "./sdk/index.js";
 import { BROWSER_PLAYGROUND_LXMF_DELIVERY, LXMF_DELIVERY_DISPLAY_NAME, } from "./lxmf.js";
-import { describeAutoWifiFailure, describeCommandFailure, describeHostError, describeHostOperationFailure, describeStartupFailure, describeUsbCloseFailure, describeUsbConnectFailure, hostOperationFailed, } from "./outcomes.js";
+import { describeAutoWifiFailure, describeCommandFailure, describeHostError, describeHostOperationFailure, describeInterfaceCloseFailure, describeStartupFailure, describeUsbConnectFailure, describeWebSocketConnectFailure, hostOperationFailed, } from "./outcomes.js";
 import { hex, presentPacketContent } from "./presentation.js";
-import { controlAvailability, sameAutoWifiStatus, } from "./state.js";
+import { controlAvailability, sameAutoWifiStatus, webSocketConnectAvailable, } from "./state.js";
 import { PlaygroundView, bindPlaygroundView, renderBindingFailure, } from "./view.js";
 const POLL_INTERVAL_MS = 250;
 const NODE_PAGE_DISPLAY_NAME = "Prns Browser Playground";
@@ -14,6 +14,7 @@ class BrowserPlayground {
     #destination;
     #pageDestination;
     #autoWifi = Tag("Waiting");
+    #webSocket = Tag("Waiting");
     #usb = Tag("Waiting");
     #snapshot;
     #pollTimer;
@@ -72,21 +73,31 @@ class BrowserPlayground {
             globalThis.clearInterval(this.#pollTimer);
             this.#pollTimer = undefined;
         }
+        const webSocket = webSocketSession(this.#webSocket);
         const usb = usbSession(this.#usb);
         const autoWifi = this.#autoWifi.tag === "Running"
             ? this.#autoWifi.data.controller
             : undefined;
         this.#usb = Tag("Closed");
+        this.#webSocket = Tag("Closed");
         this.#autoWifi = Tag("Closed");
-        await Promise.allSettled([usb?.close(), autoWifi?.close()]);
+        await Promise.allSettled([
+            webSocket?.close(),
+            usb?.close(),
+            autoWifi?.close(),
+        ]);
     }
     #run() {
         this.#autoWifi = Tag("Ready");
+        this.#webSocket = webSocketAvailable()
+            ? Tag("Ready")
+            : Tag("Unavailable", { api: "WebSocket" });
         this.#usb = webUsbAvailable()
             ? Tag("Ready")
             : Tag("Unavailable", { api: "WebUSB" });
         this.#view.renderRuntimeReady(this.#destination);
         this.#view.renderAutoWifi(this.#autoWifi);
+        this.#view.renderWebSocket(this.#webSocket);
         this.#view.renderUsb(this.#usb);
         this.#view.record("Runtime", "Browser node runtime ready", `${LXMF_DELIVERY_DISPLAY_NAME} · lxmf.delivery ${hex(this.#destination)}`);
         this.#view.record("Node page", "Serving /page/index.mu and /page/quickstart.mu over Reticulum", `${NODE_PAGE_DISPLAY_NAME} · nomadnetwork.node ${hex(this.#pageDestination)}`);
@@ -94,6 +105,12 @@ class BrowserPlayground {
             startAutoWifi: () => this.#startAutoWifi(),
             closeAutoWifi: () => {
                 void this.#closeAutoWifi();
+            },
+            connectWebSocket: (url) => {
+                void this.#connectWebSocket(url);
+            },
+            closeWebSocket: () => {
+                void this.#closeWebSocket();
             },
             connectUsb: () => {
                 void this.#connectUsb();
@@ -167,6 +184,81 @@ class BrowserPlayground {
         }
         this.#pollAutoWifi();
         this.#view.renderAutoWifi(this.#autoWifi);
+        this.#syncControls();
+    }
+    async #connectWebSocket(url) {
+        if (!webSocketConnectAvailable(this.#webSocket)) {
+            return;
+        }
+        this.#webSocket = Tag("Connecting", { url });
+        this.#view.renderWebSocket(this.#webSocket);
+        this.#syncControls();
+        this.#view.record("WebSocket", "Opening connection", url || null);
+        let outcome;
+        try {
+            outcome = await this.#prns.interfaces.webSocket.connect(url);
+        }
+        catch (error) {
+            const failure = hostOperationFailed("Connect WebSocket", error);
+            this.#webSocket = Tag("ConnectFailed", failure);
+            this.#view.renderWebSocket(this.#webSocket);
+            this.#view.record("Failure", "WebSocket did not connect", describeHostOperationFailure(failure));
+            this.#syncControls();
+            return;
+        }
+        match(outcome, {
+            Connected: (session) => {
+                this.#webSocket = Tag("Connected", session);
+                this.#view.record("WebSocket", "Session opened", `${session.url} · interface ${hex(session.interfaceId)}`);
+            },
+            HostApiUnavailable: (data) => this.#webSocketConnectFailed(Tag("HostApiUnavailable", data)),
+            PermissionDenied: (data) => this.#webSocketConnectFailed(Tag("PermissionDenied", data)),
+            Cancelled: (data) => this.#webSocketConnectFailed(Tag("Cancelled", data)),
+            AlreadyActive: (data) => this.#webSocketConnectFailed(Tag("AlreadyActive", data)),
+            InvalidTarget: (data) => this.#webSocketConnectFailed(Tag("InvalidTarget", data)),
+            TimedOut: (data) => this.#webSocketConnectFailed(Tag("TimedOut", data)),
+            ConnectionFailed: (data) => this.#webSocketConnectFailed(Tag("ConnectionFailed", data)),
+            RuntimeRejected: (data) => this.#webSocketConnectFailed(Tag("RuntimeRejected", data)),
+        });
+        this.#view.renderWebSocket(this.#webSocket);
+        this.#syncControls();
+    }
+    #webSocketConnectFailed(failure) {
+        this.#webSocket = Tag("ConnectFailed", failure);
+        this.#view.record("Failure", "WebSocket did not connect", describeWebSocketConnectFailure(failure));
+    }
+    async #closeWebSocket() {
+        const session = webSocketClosableSession(this.#webSocket);
+        if (!session) {
+            return;
+        }
+        this.#webSocket = Tag("Closing", session);
+        this.#view.renderWebSocket(this.#webSocket);
+        this.#syncControls();
+        let outcome;
+        try {
+            outcome = await session.close();
+        }
+        catch (error) {
+            const failure = hostOperationFailed("Close WebSocket", error);
+            this.#webSocket = Tag("CloseFailed", { session, failure });
+            this.#view.renderWebSocket(this.#webSocket);
+            this.#view.record("Failure", "WebSocket close failed", describeHostOperationFailure(failure));
+            this.#syncControls();
+            return;
+        }
+        match(outcome, {
+            Closed: () => {
+                this.#webSocket = Tag("Closed");
+                this.#view.record("WebSocket", "Session closed", null);
+            },
+            CloseFailed: (data) => {
+                const failure = Tag("CloseFailed", data);
+                this.#webSocket = Tag("CloseFailed", { session, failure });
+                this.#view.record("Failure", "WebSocket close failed", describeInterfaceCloseFailure(failure));
+            },
+        });
+        this.#view.renderWebSocket(this.#webSocket);
         this.#syncControls();
     }
     async #connectUsb() {
@@ -248,7 +340,7 @@ class BrowserPlayground {
             CloseFailed: (data) => {
                 const failure = Tag("CloseFailed", data);
                 this.#usb = Tag("CloseFailed", { session, failure });
-                this.#view.record("Failure", "USB Auto close failed", describeUsbCloseFailure(failure));
+                this.#view.record("Failure", "USB Auto close failed", describeInterfaceCloseFailure(failure));
             },
         });
         this.#view.renderUsb(this.#usb);
@@ -278,6 +370,7 @@ class BrowserPlayground {
             return;
         }
         this.#pollAutoWifi();
+        this.#pollWebSocket();
         this.#pollUsb();
         this.#pollRuntime();
         this.#syncControls();
@@ -321,6 +414,19 @@ class BrowserPlayground {
                 this.#view.record("Auto Wi-Fi", "Transport closed", null);
             },
         });
+    }
+    #pollWebSocket() {
+        if (this.#webSocket.tag !== "Connected") {
+            return;
+        }
+        const session = this.#webSocket.data;
+        if (session.status.tag === "Closed") {
+            this.#webSocket = Tag("Closed");
+            this.#view.renderWebSocket(this.#webSocket);
+            this.#view.record("WebSocket", "Session closed by the transport", session.url);
+            return;
+        }
+        this.#view.renderWebSocket(this.#webSocket);
     }
     #pollUsb() {
         if (this.#usb.tag !== "Connected") {
@@ -482,7 +588,7 @@ class BrowserPlayground {
         this.#view.record("Failure", summary, detail);
     }
     #syncControls() {
-        this.#view.setControls(controlAvailability(this.#autoWifi, this.#usb, this.#snapshot));
+        this.#view.setControls(controlAvailability(this.#autoWifi, this.#webSocket, this.#usb, this.#snapshot));
     }
 }
 async function boot(document) {
@@ -499,10 +605,13 @@ async function boot(document) {
     }
     view.renderRuntimeFailure(startup);
     view.renderAutoWifi(Tag("Waiting"));
+    view.renderWebSocket(Tag("Waiting"));
     view.renderUsb(Tag("Waiting"));
     view.setControls({
         autoWifiStart: false,
         autoWifiClose: false,
+        webSocketConnect: false,
+        webSocketClose: false,
         usbConnect: false,
         usbClose: false,
         announce: false,
@@ -523,6 +632,32 @@ function usbSession(state) {
     });
 }
 function usbClosableSession(state) {
+    return match_into().from(state, {
+        Waiting: () => undefined,
+        Ready: () => undefined,
+        Unavailable: () => undefined,
+        Connecting: () => undefined,
+        Connected: (session) => session,
+        Closing: () => undefined,
+        ConnectFailed: () => undefined,
+        Closed: () => undefined,
+        CloseFailed: ({ session }) => session,
+    });
+}
+function webSocketSession(state) {
+    return match_into().from(state, {
+        Waiting: () => undefined,
+        Ready: () => undefined,
+        Unavailable: () => undefined,
+        Connecting: () => undefined,
+        Connected: (session) => session,
+        Closing: (session) => session,
+        ConnectFailed: () => undefined,
+        Closed: () => undefined,
+        CloseFailed: ({ session }) => session,
+    });
+}
+function webSocketClosableSession(state) {
     return match_into().from(state, {
         Waiting: () => undefined,
         Ready: () => undefined,
@@ -570,5 +705,8 @@ function wasmModule() {
 }
 function webUsbAvailable() {
     return "usb" in navigator;
+}
+function webSocketAvailable() {
+    return typeof globalThis.WebSocket === "function";
 }
 void boot(document);

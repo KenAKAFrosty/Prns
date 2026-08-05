@@ -660,13 +660,20 @@ fn stock_interface_names_remain_case_sensitive() {
 }
 
 #[test]
-fn websocket_targets_require_a_plain_ws_url() {
-    for target in ["wss://peer.example/prns", "peer.example", "ws://bad target"] {
+fn websocket_targets_require_a_supported_websocket_url() {
+    for target in ["peer.example", "ws://bad target", "wss://bad target"] {
         let errors = parse(&format!(
             "[interfaces]\n[[WebSocket]]\ntype = PrnsWebSocketClient\nenabled = Yes\ntarget = {target}\n"
         ))
         .unwrap_err();
         assert!(has_code(&errors, ConfigDiagnosticCode::InvalidValue));
+    }
+
+    for target in ["ws://peer.example:4284/prns", "wss://peer.example/prns"] {
+        parse(&format!(
+            "[interfaces]\n[[WebSocket]]\ntype = PrnsWebSocketClient\nenabled = Yes\ntarget = {target}\n"
+        ))
+        .expect("supported WebSocket targets parse");
     }
 }
 
@@ -1049,6 +1056,51 @@ fn backbone_role_specific_settings_never_disappear() {
     assert!(warnings
         .iter()
         .any(|warning| warning.path().ends_with("device")));
+}
+
+#[test]
+fn a_zero_announce_rate_target_earns_a_gentle_implicit_off_advisory() {
+    let report = parse_named(
+        "/tmp/rns/config",
+        "[reticulum]\ndefault_ar_target = 0\n[interfaces]\n[[Quiet]]\ntype = TCPClientInterface\nenabled = Yes\ntarget_host = host\ntarget_port = 4242\nannounce_rate_target = 0\n",
+    )
+    .unwrap();
+    let advisories = report
+        .warnings
+        .iter()
+        .filter(|diagnostic| diagnostic.code() == ConfigDiagnosticCode::ImplicitOff)
+        .collect::<Vec<_>>();
+    assert_eq!(advisories.len(), 2);
+    assert!(advisories
+        .iter()
+        .any(|advisory| advisory.path().ends_with("default_ar_target")));
+    assert!(advisories
+        .iter()
+        .any(|advisory| advisory.path().ends_with("announce_rate_target")));
+    assert!(advisories.iter().all(|advisory| {
+        advisory
+            .message()
+            .contains("turns announce rate limiting off")
+            && advisory.correction().contains("= off`")
+    }));
+}
+
+#[test]
+fn explicit_off_announce_rate_target_spellings_are_accepted_without_advisories() {
+    for spelling in ["off", "NO", "False"] {
+        let source = format!(
+            "[reticulum]\ndefault_ar_target = {spelling}\n[interfaces]\n[[Quiet]]\ntype = TCPClientInterface\nenabled = Yes\ntarget_host = host\ntarget_port = 4242\nannounce_rate_target = {spelling}\n"
+        );
+        let report = parse_named("/tmp/rns/config", &source).unwrap();
+        assert!(report
+            .warnings
+            .iter()
+            .all(|diagnostic| diagnostic.code() != ConfigDiagnosticCode::ImplicitOff));
+        assert_eq!(
+            report.value.interfaces[0].announce_rate_target,
+            Some(ReferenceAnnounceRateTarget::Off)
+        );
+    }
 }
 
 #[test]

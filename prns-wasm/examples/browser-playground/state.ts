@@ -7,11 +7,13 @@ import type {
   PrnsSnapshot,
   Tag as Tagged,
   UsbAutoSession,
+  WebSocketSession,
 } from "./sdk/index.js";
 import type {
   HostOperationFailed,
-  UsbCloseFailure,
+  InterfaceCloseFailure,
   UsbConnectFailure,
+  WebSocketConnectFailure,
 } from "./outcomes.js";
 
 export type AutoWifiState =
@@ -39,13 +41,35 @@ export type UsbState =
       "CloseFailed",
       {
         readonly session: UsbAutoSession;
-        readonly failure: UsbCloseFailure | HostOperationFailed;
+        readonly failure: InterfaceCloseFailure | HostOperationFailed;
+      }
+    >;
+
+export type WebSocketState =
+  | Tagged<"Waiting">
+  | Tagged<"Ready">
+  | Tagged<"Unavailable", { readonly api: "WebSocket" }>
+  | Tagged<"Connecting", { readonly url: string }>
+  | Tagged<"Connected", WebSocketSession>
+  | Tagged<"Closing", WebSocketSession>
+  | Tagged<
+      "ConnectFailed",
+      WebSocketConnectFailure | HostOperationFailed
+    >
+  | Tagged<"Closed">
+  | Tagged<
+      "CloseFailed",
+      {
+        readonly session: WebSocketSession;
+        readonly failure: InterfaceCloseFailure | HostOperationFailed;
       }
     >;
 
 export type ControlAvailability = {
   readonly autoWifiStart: boolean;
   readonly autoWifiClose: boolean;
+  readonly webSocketConnect: boolean;
+  readonly webSocketClose: boolean;
   readonly usbConnect: boolean;
   readonly usbClose: boolean;
   readonly announce: boolean;
@@ -53,16 +77,47 @@ export type ControlAvailability = {
 
 export function controlAvailability(
   autoWifi: AutoWifiState,
+  webSocket: WebSocketState,
   usb: UsbState,
   snapshot: PrnsSnapshot | undefined,
 ): ControlAvailability {
   return {
     autoWifiStart: autoWifiStartAvailable(autoWifi),
     autoWifiClose: autoWifiCloseAvailable(autoWifi),
+    webSocketConnect: webSocketConnectAvailable(webSocket),
+    webSocketClose: webSocketCloseAvailable(webSocket),
     usbConnect: usbConnectAvailable(usb),
     usbClose: usbCloseAvailable(usb),
     announce: (snapshot?.interfaces.length ?? 0) > 0,
   };
+}
+
+export function webSocketConnectAvailable(state: WebSocketState): boolean {
+  return match_into<boolean>().from(state, {
+    Waiting: () => false,
+    Ready: () => true,
+    Unavailable: () => false,
+    Connecting: () => false,
+    Connected: () => false,
+    Closing: () => false,
+    ConnectFailed: () => true,
+    Closed: () => true,
+    CloseFailed: () => false,
+  });
+}
+
+function webSocketCloseAvailable(state: WebSocketState): boolean {
+  return match_into<boolean>().from(state, {
+    Waiting: () => false,
+    Ready: () => false,
+    Unavailable: () => false,
+    Connecting: () => false,
+    Connected: () => true,
+    Closing: () => false,
+    ConnectFailed: () => false,
+    Closed: () => false,
+    CloseFailed: () => true,
+  });
 }
 
 export function sameAutoWifiStatus(

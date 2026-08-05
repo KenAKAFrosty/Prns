@@ -1,8 +1,9 @@
 //! Embedded SX126x LoRa transport with bounded spectrum access.
 //!
 //! [`LoRaInterfaceInput`] requires an [`AirtimePolicy`], a
-//! [`LoRaSpectrumStatus`], and [`LORA_TX_QUEUE_BYTES`] of caller-owned transmit
-//! queue storage. Construction validates frequency, transmit power, preamble,
+//! [`LoRaSpectrumStatus`], and caller-owned transmit queue storage, with
+//! [`LORA_TX_QUEUE_BYTES`] as the general-purpose default. Construction validates
+//! frequency, transmit power, preamble,
 //! and any fixed airtime limit before the radio task can start.
 //! [`AirtimePolicy::Regional`] is the normal choice; a fixed policy may tighten
 //! a regional limit but cannot weaken one.
@@ -147,7 +148,7 @@ struct TransmitBacklog<'a> {
 }
 
 impl<'a> TransmitBacklog<'a> {
-    fn new(storage: &'a mut [u8; LORA_TX_QUEUE_BYTES]) -> Self {
+    fn new(storage: &'a mut [u8]) -> Self {
         Self {
             queue: TransmitQueue::new(storage),
             active: ActivePacket::new(),
@@ -802,7 +803,7 @@ pub struct LoRaInterfaceInput<'a, SPI, BUSY, DIO1, RST, DLY> {
     pub radio: Sx126x<SPI, BUSY, DIO1, RST, DLY>,
     pub profile: RadioProfile,
     pub airtime_policy: AirtimePolicy,
-    pub tx_queue: &'a mut [u8; LORA_TX_QUEUE_BYTES],
+    pub tx_queue: &'a mut [u8],
     pub control: &'a LoRaControl,
     pub status: &'a EmbassyInterfaceStatus,
     pub spectrum: &'a LoRaSpectrumStatus,
@@ -816,7 +817,7 @@ pub struct LoRaInterface<'a, SPI, BUSY, DIO1, RST, DLY> {
     airtime_policy: AirtimePolicy,
     duty: Option<AirtimeDutyCycle>,
     tag: HeaplessVec<u8, CHANNEL_TAG_CAP>,
-    tx_queue: &'a mut [u8; LORA_TX_QUEUE_BYTES],
+    tx_queue: &'a mut [u8],
     control: &'a LoRaControl,
     status: &'a EmbassyInterfaceStatus,
     spectrum: &'a LoRaSpectrumStatus,

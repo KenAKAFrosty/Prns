@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       release_record_sha256:
-        description: Lowercase SHA-256 of the signed release-record asset
+        description: Lowercase SHA-256 of the signed flasher release-record asset
         required: true
         type: string
       rollback_baseline_kind:
@@ -23,7 +23,7 @@ on:
         default: ""
         type: string
       rollback_baseline_release_record_sha256:
-        description: Lowercase SHA-256 of the baseline's signed release record
+        description: Lowercase SHA-256 of the baseline's signed flasher release record
         required: false
         default: ""
         type: string
@@ -104,7 +104,7 @@ jobs:
       - name: Bind promotion to the reviewed release record
         run: |
           [[ "$EXPECTED_RELEASE_RECORD_SHA256" =~ ^[0-9a-f]{64}$ ]]
-          record="target/release/release-record-v${RELEASE_VERSION}.json"
+          record="target/release/flasher-release-record-v${RELEASE_VERSION}.json"
           test "$(sha256sum "$record" | awk '{print $1}')" = "$EXPECTED_RELEASE_RECORD_SHA256"
           signing_run_id="$(jq -r '.workflow_run_id' \
             "target/release/prns-flasher-attestation-v${RELEASE_VERSION}.metadata.json")"
@@ -119,7 +119,7 @@ jobs:
           DEFAULT_BRANCH: ${{ steps.repository.outputs.default_branch }}
           PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
         run: |
-          record="target/release/release-record-v${RELEASE_VERSION}.json"
+          record="target/release/flasher-release-record-v${RELEASE_VERSION}.json"
           acceptance_commit="$(jq -r '.acceptance.source_commit' "$record")"
           source_commit="$(jq -r '.release.source_commit' "$record")"
           published_at="$(jq -r '.release.prerelease_published_at' "$record")"
@@ -170,7 +170,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          record="target/release/release-record-v${RELEASE_VERSION}.json"
+          record="target/release/flasher-release-record-v${RELEASE_VERSION}.json"
           source_commit="$(jq -r '.release.source_commit' "$record")"
           test "$(cat VERSION)" = "$RELEASE_VERSION"
           test -f target/signed-candidate/channels/stable.json
@@ -246,7 +246,7 @@ jobs:
           gh release view "v${ROLLBACK_BASELINE_VERSION}" --json assets \
             --jq '[.assets[] | {name, size, digest}] | sort_by(.name)' \
             > target/rollback-baseline-assets-verified.json
-          record="$assets/release-record-v${ROLLBACK_BASELINE_VERSION}.json"
+          record="$assets/flasher-release-record-v${ROLLBACK_BASELINE_VERSION}.json"
           test "$(sha256sum "$record" | awk '{print $1}')" = \
             "$ROLLBACK_BASELINE_RELEASE_RECORD_SHA256"
           gh release view "v${ROLLBACK_BASELINE_VERSION}" \
@@ -643,7 +643,7 @@ jobs:
           ./tools/prns release candidate extract -- \
             "$bundle" \
             target/post-promotion/candidate
-          record="target/post-promotion/release-assets/release-record-v${RELEASE_VERSION}.json"
+          record="target/post-promotion/release-assets/flasher-release-record-v${RELEASE_VERSION}.json"
           acceptance_commit="$(jq -r '.acceptance.source_commit' "$record")"
           published_at="$(jq -r '.release.prerelease_published_at' "$record")"
           ./tools/prns release verify -- \

@@ -207,6 +207,12 @@ pub enum ReferenceConfigParams {
     Unknown,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReferenceAnnounceRateTarget {
+    Off,
+    Seconds(core::num::NonZeroU64),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReferenceInterface {
     pub name: String,
@@ -218,7 +224,7 @@ pub struct ReferenceInterface {
     pub bitrate: Option<u64>,
     pub gravity: Option<i64>,
     pub announce_cap: Option<f64>,
-    pub announce_rate_target: Option<u64>,
+    pub announce_rate_target: Option<ReferenceAnnounceRateTarget>,
     pub announce_rate_grace: Option<u64>,
     pub announce_rate_penalty: Option<u64>,
     pub ingress_control: Option<bool>,

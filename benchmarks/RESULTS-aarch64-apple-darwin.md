@@ -2,7 +2,7 @@
 
 [← All hosts](RESULTS.md)
 
-> **Qualification: COMPLETE.** 34/34 cells; 102/102 conformant samples; exact source `ab5ff5ab0c5591dbe570f96001c590b29c841a1a`; source tree clean.
+> **Qualification: COMPLETE.** 34/34 cells; 102/102 conformant samples; exact source `d18cfb145f9fef114b366f4132da75513feb8022`; source tree clean.
 
 ## Machine and method
 
@@ -14,12 +14,12 @@ Release binaries run over loopback for 30 seconds per sample, three samples per 
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/at-a-glance-aarch64-apple-darwin-dark.svg">
-  <img alt="Bar chart of Prns median throughput as a multiple of RNS 1.4.0 (compiled) for each published scenario" src="assets/at-a-glance-aarch64-apple-darwin-light.svg">
+  <img alt="Bar chart of Prns median throughput as a multiple of RNS 1.4.2 (compiled) for each published scenario" src="assets/at-a-glance-aarch64-apple-darwin-light.svg">
 </picture>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/at-a-glance-memory-aarch64-apple-darwin-dark.svg">
-  <img alt="Bar chart of RNS 1.4.0 (compiled) peak memory as a multiple of Prns for each role and scenario" src="assets/at-a-glance-memory-aarch64-apple-darwin-light.svg">
+  <img alt="Bar chart of RNS 1.4.2 (compiled) peak memory as a multiple of Prns for each role and scenario" src="assets/at-a-glance-memory-aarch64-apple-darwin-light.svg">
 </picture>
 
 <details>
@@ -27,36 +27,36 @@ Release binaries run over loopback for 30 seconds per sample, three samples per 
 
 | Scenario | Prns | Reference | Prns / reference |
 |---|---:|---:|---:|
-| Single-packet throughput | 39.6k/s | 1.8k/s | 22.60× |
-| Link-message throughput | 75.6k/s | 4.7k/s | 16.15× |
-| Request/response | 6.3k/s | 1.1k/s | 5.98× |
-| Maximum resource segment | 302.23 MB/s | 96.66 MB/s | 3.13× |
-| Maximum resource segment · 1 Gbps policy | 301.36 MB/s | 91.87 MB/s | 3.28× |
-| 64 MiB resource stream | 461.93 MB/s | 120.49 MB/s | 3.83× |
-| 64 MiB resource stream · 1 Gbps policy | 459.79 MB/s | 110.96 MB/s | 4.14× |
-| Raw transport throughput | 106.00 MB/s | 11.07 MB/s | 9.57× |
-| Transported resource throughput | 1290.36 MB/s | 146.28 MB/s | 8.82× |
-| Transported resource throughput · 1 Gbps policy | 1201.08 MB/s | 155.61 MB/s | 7.72× |
+| Single-packet throughput | 37.4k/s | 420/s | 89.09× |
+| Link-message throughput | 74.1k/s | 3.1k/s | 23.64× |
+| Request/response | 5.0k/s | 997/s | 5.00× |
+| Maximum resource segment | 302.71 MB/s | 99.08 MB/s | 3.06× |
+| Maximum resource segment · 1 Gbps policy | 301.39 MB/s | 92.41 MB/s | 3.26× |
+| 64-segment resource stream | 464.67 MB/s | 130.17 MB/s | 3.57× |
+| 64-segment resource stream · 1 Gbps policy | 463.10 MB/s | 117.78 MB/s | 3.93× |
+| Raw transport throughput | 249.32 MB/s | 10.97 MB/s | 22.73× |
+| Transported resource throughput | 1313.24 MB/s | 147.67 MB/s | 8.89× |
+| Transported resource throughput · 1 Gbps policy | 1194.50 MB/s | 149.80 MB/s | 7.97× |
 
 | Scenario · role | Prns peak RSS | Reference peak RSS | Reference / Prns |
 |---|---:|---:|---:|
-| Single-packet throughput · initiator | 16.5 MiB | 203.8 MiB | 12.38× |
-| Single-packet throughput · responder | 48.6 MiB | 206.5 MiB | 4.25× |
-| Link-message throughput · initiator | 25.2 MiB | 234.4 MiB | 9.31× |
-| Link-message throughput · responder | 48.3 MiB | 232.0 MiB | 4.80× |
-| Request/response · initiator | 17.8 MiB | 288.3 MiB | 16.17× |
-| Request/response · responder | 45.2 MiB | 341.3 MiB | 7.56× |
-| Maximum resource segment · initiator | 43.7 MiB | 493.3 MiB | 11.28× |
-| Maximum resource segment · responder | 39.9 MiB | 286.9 MiB | 7.19× |
-| Maximum resource segment · 1 Gbps policy · initiator | 74.6 MiB | 402.5 MiB | 5.39× |
-| Maximum resource segment · 1 Gbps policy · responder | 76.1 MiB | 304.1 MiB | 4.00× |
-| 64 MiB resource stream · initiator | 49.2 MiB | 408.4 MiB | 8.30× |
-| 64 MiB resource stream · responder | 40.3 MiB | 397.6 MiB | 9.87× |
-| 64 MiB resource stream · 1 Gbps policy · initiator | 145.6 MiB | 346.9 MiB | 2.38× |
-| 64 MiB resource stream · 1 Gbps policy · responder | 142.9 MiB | 532.0 MiB | 3.72× |
-| Raw transport throughput · relay | 48.9 MiB | 320.1 MiB | 6.55× |
-| Transported resource throughput · relay | 146.7 MiB | 264.0 MiB | 1.80× |
-| Transported resource throughput · 1 Gbps policy · relay | 538.4 MiB | 208.8 MiB | 0.39× |
+| Single-packet throughput · initiator | 4.5 MiB | 196.5 MiB | 43.37× |
+| Single-packet throughput · responder | 49.6 MiB | 196.5 MiB | 3.96× |
+| Link-message throughput · initiator | 4.7 MiB | 227.2 MiB | 48.15× |
+| Link-message throughput · responder | 48.4 MiB | 221.8 MiB | 4.58× |
+| Request/response · initiator | 18.0 MiB | 269.9 MiB | 14.95× |
+| Request/response · responder | 47.5 MiB | 334.6 MiB | 7.04× |
+| Maximum resource segment · initiator | 43.0 MiB | 495.8 MiB | 11.52× |
+| Maximum resource segment · responder | 40.2 MiB | 285.7 MiB | 7.11× |
+| Maximum resource segment · 1 Gbps policy · initiator | 75.2 MiB | 398.1 MiB | 5.30× |
+| Maximum resource segment · 1 Gbps policy · responder | 76.7 MiB | 303.5 MiB | 3.96× |
+| 64-segment resource stream · initiator | 46.1 MiB | 352.6 MiB | 7.65× |
+| 64-segment resource stream · responder | 40.3 MiB | 411.3 MiB | 10.20× |
+| 64-segment resource stream · 1 Gbps policy · initiator | 78.2 MiB | 287.6 MiB | 3.68× |
+| 64-segment resource stream · 1 Gbps policy · responder | 75.9 MiB | 546.8 MiB | 7.20× |
+| Raw transport throughput · relay | 49.5 MiB | 316.8 MiB | 6.40× |
+| Transported resource throughput · relay | 147.1 MiB | 264.7 MiB | 1.80× |
+| Transported resource throughput · 1 Gbps policy · relay | 542.0 MiB | 204.9 MiB | 0.38× |
 
 A dash means no current three-sample release evidence is published for that scenario.
 
@@ -66,143 +66,143 @@ A dash means no current three-sample release evidence is published for that scen
 
 ### Links
 
-#### Link-message throughput (v6)
+#### Link-message throughput (v8)
 
 Sustained delivery of small messages over one established link.
 
-| Subject | Conformance | Rate | Goodput | RTT p50 / p99 | Peak RSS (i / r) |
-|---|---:|---:|---:|---:|---:|
-| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 6811247/6811247 · 3/3 samples | 75.6k/s | 18.16 MB/s | <1.00 / 1.00 ms | i 25.2 MiB / r 48.3 MiB |
-| Prns → RNS 1.4.0 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 776000/776000 · 3/3 samples | 8.6k/s | 2.07 MB/s | 2.00 / 2.00 ms | i 7.5 MiB / r 262.2 MiB |
-| RNS 1.4.0 (compiled) → RNS 1.4.0 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 427865/427865 · 3/3 samples | 4.7k/s | 1.12 MB/s | 1.00 / 2.00 ms | i 234.4 MiB / r 232.0 MiB |
-| RNS 1.4.0 (compiled) → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 295616/295616 · 3/3 samples | 3.3k/s | 781.0 kB/s | <1.00 / 1.00 ms | i 226.1 MiB / r 10.7 MiB |
+| Subject | Conformance | Rate | Goodput | RTT p50 / p99 | Peak RSS (i / r) | Energy / delivery (i / r) |
+|---|---:|---:|---:|---:|---:|---:|
+| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 6669853/6669853 · 3/3 samples | 74.1k/s | 17.78 MB/s | <1.00 / 1.00 ms | i 4.7 MiB / r 48.4 MiB | i 0.15 mJ / r 0.04 mJ |
+| Prns → RNS 1.4.2 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 785443/785443 · 3/3 samples | 8.7k/s | 2.08 MB/s | 2.00 / 2.00 ms | i 4.6 MiB / r 263.3 MiB | i 0.72 mJ / r 0.62 mJ |
+| RNS 1.4.2 (compiled) → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 362583/362583 · 3/3 samples | 4.0k/s | 959.2 kB/s | <1.00 / 1.00 ms | i 232.1 MiB / r 11.6 MiB | i 1.04 mJ / r 0.15 mJ |
+| RNS 1.4.2 (compiled) → RNS 1.4.2 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 286626/286626 · 3/3 samples | 3.1k/s | 752.1 kB/s | <1.00 / 3.00 ms | i 227.2 MiB / r 221.8 MiB | i 1.15 mJ / r 0.80 mJ |
 
 ### Packets
 
-#### Single-packet throughput (v4)
+#### Single-packet throughput (v6)
 
 Sustained proved delivery of varied-size one-shot packets over TCP.
 
-| Subject | Conformance | Rate | Goodput | RTT p50 / p99 | Peak RSS (i / r) |
-|---|---:|---:|---:|---:|---:|
-| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 3556726/3556726 · 3/3 samples | 39.6k/s | 8.70 MB/s | <1.00 / 1.00 ms | i 16.5 MiB / r 48.6 MiB |
-| Prns → RNS 1.4.0 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 371891/371891 · 3/3 samples | 4.1k/s | 908.1 kB/s | 4.00 / 4.00 ms | i 5.3 MiB / r 225.4 MiB |
-| RNS 1.4.0 (compiled) → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 169468/169468 · 3/3 samples | 1.9k/s | 418.5 kB/s | <1.00 / 20.00 ms | i 201.1 MiB / r 7.5 MiB |
-| RNS 1.4.0 (compiled) → RNS 1.4.0 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 160178/160178 · 3/3 samples | 1.8k/s | 385.3 kB/s | 1.00 / 20.00 ms | i 203.8 MiB / r 206.5 MiB |
+| Subject | Conformance | Rate | Goodput | RTT p50 / p99 | Peak RSS (i / r) | Energy / delivery (i / r) |
+|---|---:|---:|---:|---:|---:|---:|
+| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 3360887/3360887 · 3/3 samples | 37.4k/s | 8.23 MB/s | <1.00 / 1.00 ms | i 4.5 MiB / r 49.6 MiB | i 0.27 mJ / r 0.20 mJ |
+| Prns → RNS 1.4.2 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 369499/369499 · 3/3 samples | 4.1k/s | 905.6 kB/s | 4.00 / 4.00 ms | i 4.5 MiB / r 225.6 MiB | i 1.48 mJ / r 1.19 mJ |
+| RNS 1.4.2 (compiled) → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 38177/38177 · 3/3 samples | 423/s | 92.9 kB/s | 38.00 / 38.00 ms | i 196.5 MiB / r 5.3 MiB | i 13.99 mJ / r 1.56 mJ |
+| RNS 1.4.2 (compiled) → RNS 1.4.2 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 38199/38199 · 3/3 samples | 420/s | 92.4 kB/s | 38.00 / 39.00 ms | i 196.5 MiB / r 196.5 MiB | i 14.21 mJ / r 1.41 mJ |
 
 ### Requests
 
-#### Request/response (v11)
+#### Request/response (v12)
 
 Four concurrent small requests with asynchronous 1–4 KiB resource responses over four pre-established links.
 
-| Subject | Conformance | Rate | RTT p50 / p99 | Peak RSS (i / r) |
-|---|---:|---:|---:|---:|
-| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 534293/534293 · 3/3 samples | 6.3k/s | 0.64 / 0.85 ms | i 17.8 MiB / r 45.2 MiB |
-| RNS 1.4.0 (compiled) → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 191080/191080 · 3/3 samples | 2.1k/s | 1.62 / 3.78 ms | i 334.6 MiB / r 37.5 MiB |
-| RNS 1.4.0 (compiled) → RNS 1.4.0 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 95147/95147 · 3/3 samples | 1.1k/s | 1.48 / 14.69 ms | i 288.3 MiB / r 341.3 MiB |
-| Prns → RNS 1.4.0 (compiled)<sup>1</sup> | <img src="assets/check.svg" width="14" alt="conformant" /> 90149/90149 · 3/3 samples | 982/s | 1.11 / 251.69 ms | i 7.6 MiB / r 346.0 MiB |
+| Subject | Conformance | Rate | RTT p50 / p99 | Peak RSS (i / r) | Energy / delivery (i / r) |
+|---|---:|---:|---:|---:|---:|
+| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 451086/451086 · 3/3 samples | 5.0k/s | 0.66 / 1.03 ms | i 18.0 MiB / r 47.5 MiB | i 0.36 mJ / r 2.11 mJ |
+| RNS 1.4.2 (compiled) → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 183254/183254 · 3/3 samples | 2.1k/s | 1.63 / 3.88 ms | i 334.8 MiB / r 37.9 MiB | i 3.21 mJ / r 2.16 mJ |
+| Prns → RNS 1.4.2 (compiled)<sup>1</sup> | <img src="assets/check.svg" width="14" alt="conformant" /> 100582/100582 · 3/3 samples | 1.1k/s | 1.29 / 5.79 ms | i 8.7 MiB / r 370.0 MiB | i 1.15 mJ / r 4.95 mJ |
+| RNS 1.4.2 (compiled) → RNS 1.4.2 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 90660/90660 · 3/3 samples | 997/s | 1.36 / 22.91 ms | i 269.9 MiB / r 334.6 MiB | i 2.57 mJ / r 4.57 mJ |
 
 **Cell context**
 
-1. **Prns → RNS 1.4.0 (compiled)** — RNS sends a resource advertisement before registering that resource internally. Prns can return the first pull so quickly that RNS drops it. Prns then waits for its 250 ms retry deadline. A p99 pinned just above 250 ms is the fingerprint of this race.
+1. **Prns → RNS 1.4.2 (compiled)** — RNS sends a resource advertisement before registering that resource internally. Prns can return the first pull so quickly that RNS drops it. Prns then waits for its 250 ms retry deadline. A p99 pinned just above 250 ms is the fingerprint of this race.
 
 ### Resources
 
-#### 64 MiB resource stream (v9)
+#### 64-segment resource stream (v10)
 
-Stream a 64 MiB incompressible resource with compression disabled.
+Stream 64 maximum-efficient resource segments with compression disabled.
 
-| Subject | Conformance | Rate | Goodput | RTT p50 / p99 | Peak RSS (i / r) |
-|---|---:|---:|---:|---:|---:|
-| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 620/620 · 3/3 samples | 7/s | 461.93 MB/s | 144.00 / 160.00 ms | i 49.2 MiB / r 40.3 MiB |
-| Prns → RNS 1.4.0 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 179/179 · 3/3 samples | 2/s | 132.79 MB/s | 494.00 / 552.00 ms | i 17.2 MiB / r 415.1 MiB |
-| RNS 1.4.0 (compiled) → RNS 1.4.0 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 162/162 · 3/3 samples | 2/s | 120.49 MB/s | 546.00 / 613.00 ms | i 408.4 MiB / r 397.6 MiB |
-| RNS 1.4.0 (compiled) → Prns<sup>1</sup> | <img src="assets/check.svg" width="14" alt="conformant" /> 24/24 · 3/3 samples | 0.24/s | 16.10 MB/s | 4199.00 / 4541.00 ms | i 341.4 MiB / r 9.3 MiB |
-
-**Cell context**
-
-1. **RNS 1.4.0 (compiled) → Prns** — RNS prepares the next 1 MiB segment in a background thread. Prns proves the current segment before that preparation completes, making RNS enter a coarse 50 ms polling loop. A slower stock receiver gives preparation enough time to finish, avoiding that cliff.
-
-> Both implementations carry the same 64 MiB in 65 authenticated protocol segments. RNS 1.4.0 fills 64 maximum-efficient segments and ends with a 64-byte tail; Prns keeps the first 63 at that ceiling and balances the final pair. The protocol-valid rebalance avoids an RNS 1.4.0 receive-side handoff race in which the proof leaves before the retiring receiver is removed and that one untagged tail part can be skipped.
-
-#### 64 MiB resource stream · 1 Gbps policy (v2)
-
-Stream the 64 MiB resource with both endpoint TCP interfaces explicitly configured for the 1 Gbps MTU tier.
-
-| Subject | Conformance | Rate | Goodput | RTT p50 / p99 | Peak RSS (i / r) |
-|---|---:|---:|---:|---:|---:|
-| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 618/618 · 3/3 samples | 7/s | 459.79 MB/s | 145.00 / 163.00 ms | i 145.6 MiB / r 142.9 MiB |
-| Prns → RNS 1.4.0 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 163/163 · 3/3 samples | 2/s | 120.62 MB/s | 547.00 / 583.00 ms | i 145.6 MiB / r 554.7 MiB |
-| RNS 1.4.0 (compiled) → RNS 1.4.0 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 148/148 · 3/3 samples | 2/s | 110.96 MB/s | 598.00 / 635.00 ms | i 346.9 MiB / r 532.0 MiB |
-| RNS 1.4.0 (compiled) → Prns<sup>1</sup> | <img src="assets/check.svg" width="14" alt="conformant" /> 23/23 · 3/3 samples | 0.24/s | 15.97 MB/s | 4086.00 / 4902.00 ms | i 344.8 MiB / r 143.2 MiB |
+| Subject | Conformance | Rate | Goodput | RTT p50 / p99 | Peak RSS (i / r) | Energy / MiB (i / r) |
+|---|---:|---:|---:|---:|---:|---:|
+| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 623/623 · 3/3 samples | 7/s | 464.67 MB/s | 144.00 / 153.00 ms | i 46.1 MiB / r 40.3 MiB | i 7.94 mJ/MiB / r 7.51 mJ/MiB |
+| Prns → RNS 1.4.2 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 183/183 · 3/3 samples | 2/s | 134.59 MB/s | 480.00 / 779.00 ms | i 14.6 MiB / r 412.1 MiB | i 9.66 mJ/MiB / r 32.27 mJ/MiB |
+| RNS 1.4.2 (compiled) → RNS 1.4.2 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 176/176 · 3/3 samples | 2/s | 130.17 MB/s | 503.00 / 538.00 ms | i 352.6 MiB / r 411.3 MiB | i 20.44 mJ/MiB / r 31.35 mJ/MiB |
+| RNS 1.4.2 (compiled) → Prns<sup>1</sup> | <img src="assets/check.svg" width="14" alt="conformant" /> 24/24 · 3/3 samples | 0.25/s | 16.56 MB/s | 4050.00 / 4096.00 ms | i 280.6 MiB / r 9.5 MiB | i 6.59 mJ/MiB / r 2.50 mJ/MiB |
 
 **Cell context**
 
-1. **RNS 1.4.0 (compiled) → Prns** — RNS prepares the next 1 MiB segment in a background thread. Prns proves the current segment before that preparation completes, making RNS enter a coarse 50 ms polling loop. A slower stock receiver gives preparation enough time to finish, avoiding that cliff.
+1. **RNS 1.4.2 (compiled) → Prns** — RNS prepares the next 1 MiB segment in a background thread. Prns proves the current segment before that preparation completes, making RNS enter a coarse 50 ms polling loop. A slower stock receiver gives preparation enough time to finish, avoiding that cliff.
+
+> Both implementations carry the same 67,108,800-byte payload in 64 maximum-efficient protocol segments. This is 64 bytes below 64 MiB and avoids making benchmark completion depend on RNS 1.4.2's timing-sensitive handoff to a 65th 64-byte tail segment.
+
+#### 64-segment resource stream · 1 Gbps policy (v3)
+
+Stream 64 maximum-efficient resource segments with both endpoint TCP interfaces explicitly configured for the 1 Gbps MTU tier.
+
+| Subject | Conformance | Rate | Goodput | RTT p50 / p99 | Peak RSS (i / r) | Energy / MiB (i / r) |
+|---|---:|---:|---:|---:|---:|---:|
+| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 620/620 · 3/3 samples | 7/s | 463.10 MB/s | 144.00 / 161.00 ms | i 78.2 MiB / r 75.9 MiB | i 8.29 mJ/MiB / r 7.65 mJ/MiB |
+| Prns → RNS 1.4.2 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 164/164 · 3/3 samples | 2/s | 121.62 MB/s | 545.00 / 568.00 ms | i 78.2 MiB / r 552.2 MiB | i 10.71 mJ/MiB / r 40.23 mJ/MiB |
+| RNS 1.4.2 (compiled) → RNS 1.4.2 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 158/158 · 3/3 samples | 2/s | 117.78 MB/s | 562.00 / 590.00 ms | i 287.6 MiB / r 546.8 MiB | i 17.23 mJ/MiB / r 39.47 mJ/MiB |
+| RNS 1.4.2 (compiled) → Prns<sup>1</sup> | <img src="assets/check.svg" width="14" alt="conformant" /> 24/24 · 3/3 samples | 0.25/s | 16.62 MB/s | 3995.00 / 4839.00 ms | i 281.0 MiB / r 142.8 MiB | i 10.47 mJ/MiB / r 4.49 mJ/MiB |
+
+**Cell context**
+
+1. **RNS 1.4.2 (compiled) → Prns** — RNS prepares the next 1 MiB segment in a background thread. Prns proves the current segment before that preparation completes, making RNS enter a coarse 50 ms polling loop. A slower stock receiver gives preparation enough time to finish, avoiding that cliff.
 
 > Controlled computational comparison: identical workload and protocol, with only TCP bitrate policy changed.
 
-> Both implementations carry the same 64 MiB in 65 authenticated protocol segments. RNS 1.4.0 fills 64 maximum-efficient segments and ends with a 64-byte tail; Prns keeps the first 63 at that ceiling and balances the final pair. The protocol-valid rebalance avoids an RNS 1.4.0 receive-side handoff race in which the proof leaves before the retiring receiver is removed and that one untagged tail part can be skipped.
+> Both implementations carry the same 67,108,800-byte payload in 64 maximum-efficient protocol segments. This is 64 bytes below 64 MiB and avoids making benchmark completion depend on RNS 1.4.2's timing-sensitive handoff to a 65th 64-byte tail segment.
 
 #### Maximum resource segment (v7)
 
 Repeated transfer of one maximum-efficient resource segment.
 
-| Subject | Conformance | Rate | Goodput | RTT p50 / p99 | Peak RSS (i / r) |
-|---|---:|---:|---:|---:|---:|
-| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 25977/25977 · 3/3 samples | 288/s | 302.23 MB/s | 3.00 / 3.00 ms | i 43.7 MiB / r 39.9 MiB |
-| RNS 1.4.0 (compiled) → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 15206/15206 · 3/3 samples | 169/s | 177.21 MB/s | 6.00 / 6.00 ms | i 711.6 MiB / r 9.8 MiB |
-| Prns → RNS 1.4.0 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 9840/9840 · 3/3 samples | 110/s | 114.85 MB/s | 8.00 / 9.00 ms | i 11.2 MiB / r 296.2 MiB |
-| RNS 1.4.0 (compiled) → RNS 1.4.0 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 8288/8288 · 3/3 samples | 92/s | 96.66 MB/s | 11.00 / 12.00 ms | i 493.3 MiB / r 286.9 MiB |
+| Subject | Conformance | Rate | Goodput | RTT p50 / p99 | Peak RSS (i / r) | Energy / MiB (i / r) |
+|---|---:|---:|---:|---:|---:|---:|
+| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 25958/25958 · 3/3 samples | 289/s | 302.71 MB/s | 3.00 / 3.00 ms | i 43.0 MiB / r 40.2 MiB | i 8.53 mJ/MiB / r 7.45 mJ/MiB |
+| RNS 1.4.2 (compiled) → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 15385/15385 · 3/3 samples | 171/s | 179.50 MB/s | 6.00 / 6.00 ms | i 718.8 MiB / r 10.2 MiB | i 19.89 mJ/MiB / r 10.84 mJ/MiB |
+| Prns → RNS 1.4.2 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 10019/10019 · 3/3 samples | 112/s | 117.13 MB/s | 8.00 / 9.00 ms | i 11.7 MiB / r 296.3 MiB | i 10.32 mJ/MiB / r 33.08 mJ/MiB |
+| RNS 1.4.2 (compiled) → RNS 1.4.2 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 8465/8465 · 3/3 samples | 94/s | 99.08 MB/s | 10.00 / 11.00 ms | i 495.8 MiB / r 285.7 MiB | i 21.28 mJ/MiB / r 35.13 mJ/MiB |
 
 #### Maximum resource segment · 1 Gbps policy (v1)
 
 Repeat maximum-efficient resource transfers with both endpoint TCP interfaces explicitly configured for the 1 Gbps MTU tier.
 
-| Subject | Conformance | Rate | Goodput | RTT p50 / p99 | Peak RSS (i / r) |
-|---|---:|---:|---:|---:|---:|
-| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 25899/25899 · 3/3 samples | 287/s | 301.36 MB/s | 3.00 / 3.00 ms | i 74.6 MiB / r 76.1 MiB |
-| RNS 1.4.0 (compiled) → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 17856/17856 · 3/3 samples | 201/s | 210.42 MB/s | 5.00 / 5.00 ms | i 663.6 MiB / r 109.0 MiB |
-| Prns → RNS 1.4.0 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 8968/8968 · 3/3 samples | 100/s | 104.92 MB/s | 9.00 / 11.00 ms | i 73.9 MiB / r 321.7 MiB |
-| RNS 1.4.0 (compiled) → RNS 1.4.0 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 7875/7875 · 3/3 samples | 88/s | 91.87 MB/s | 11.00 / 13.00 ms | i 402.5 MiB / r 304.1 MiB |
+| Subject | Conformance | Rate | Goodput | RTT p50 / p99 | Peak RSS (i / r) | Energy / MiB (i / r) |
+|---|---:|---:|---:|---:|---:|---:|
+| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 25859/25859 · 3/3 samples | 287/s | 301.39 MB/s | 3.00 / 3.00 ms | i 75.2 MiB / r 76.7 MiB | i 9.00 mJ/MiB / r 7.68 mJ/MiB |
+| RNS 1.4.2 (compiled) → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 18073/18073 · 3/3 samples | 201/s | 210.51 MB/s | 5.00 / 5.00 ms | i 648.7 MiB / r 74.7 MiB | i 15.35 mJ/MiB / r 8.87 mJ/MiB |
+| Prns → RNS 1.4.2 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 8980/8980 · 3/3 samples | 101/s | 106.02 MB/s | 9.00 / 10.00 ms | i 74.2 MiB / r 320.5 MiB | i 11.45 mJ/MiB / r 41.01 mJ/MiB |
+| RNS 1.4.2 (compiled) → RNS 1.4.2 (compiled) | <img src="assets/check.svg" width="14" alt="conformant" /> 7911/7911 · 3/3 samples | 88/s | 92.41 MB/s | 11.00 / 12.00 ms | i 398.1 MiB / r 303.5 MiB | i 15.97 mJ/MiB / r 40.06 mJ/MiB |
 
 > Controlled computational comparison: identical workload and protocol, with only TCP bitrate policy changed.
 
 ### Transport
 
-#### Raw transport throughput (v1)
+#### Raw transport throughput (v2)
 
 Balanced bidirectional switching of opaque packets through a pure transport node.
 
 | Relay | TCP policy / MTU | Link MTU / payload | Conformance | Payload | Frames | Wire in / out | Relay CPU | Relay peak RSS | Harness source / sink / limit |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| Prns relay | 500 Mbps / 128 KiB | — | <img src="assets/check.svg" width="14" alt="conformant" /> 39590257/39590257 · 3/3 samples | 106.00 MB/s | 441.7k/s | 154.20 MB/s / 147.14 MB/s | 42.29 s | 48.9 MiB | — |
-| RNS 1.4.0 (compiled) relay | 10 Mbps / 8 KiB | — | <img src="assets/check.svg" width="14" alt="conformant" /> 4183453/4183453 · 3/3 samples | 11.07 MB/s | 46.1k/s | 16.11 MB/s / 15.37 MB/s | 36.82 s | 320.1 MiB | — |
+| Prns relay | 500 Mbps / 128 KiB | — | <img src="assets/check.svg" width="14" alt="conformant" /> 93543857/93543857 · 3/3 samples | 249.32 MB/s | 1.04M/s | 362.16 MB/s / 345.54 MB/s | 31.63 s | 49.5 MiB | 6.09× / 9.93× / 6.09× |
+| RNS 1.4.2 (compiled) relay | 10 Mbps / 8 KiB | — | <img src="assets/check.svg" width="14" alt="conformant" /> 4103048/4103048 · 3/3 samples | 10.97 MB/s | 45.7k/s | 15.94 MB/s / 15.20 MB/s | 37.24 s | 316.8 MiB | 140.68× / 225.54× / 140.68× |
 
 > Announce signing and verification happen before measurement; the timed path switches opaque transport data.
 
-> This practical profile preserves each implementation's normal TCP policy: 500 Mbps for Prns and 10 Mbps for compiled RNS 1.4.0.
+> This practical profile preserves each implementation's normal TCP policy: 500 Mbps for Prns and 10 Mbps for compiled RNS 1.4.2.
 
-#### Transported resource throughput (v1)
+#### Transported resource throughput (v2)
 
 Relay balanced near-MTU resource parts over one warm transported link using each implementation's default TCP policy.
 
 | Relay | TCP policy / MTU | Link MTU / payload | Conformance | Payload | Frames | Wire in / out | Relay CPU | Relay peak RSS | Harness source / sink / limit |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| Prns relay | 500 Mbps / 128 KiB | 128 / 128 KiB | <img src="assets/check.svg" width="14" alt="conformant" /> 891152/891152 · 3/3 samples | 1290.36 MB/s | 9.8k/s | 1300.76 MB/s / 1300.76 MB/s | 33.04 s | 146.7 MiB | — |
-| RNS 1.4.0 (compiled) relay | 10 Mbps / 8 KiB | 8 / 8 KiB | <img src="assets/check.svg" width="14" alt="conformant" /> 1616021/1616021 · 3/3 samples | 146.28 MB/s | 17.9k/s | 147.71 MB/s / 147.71 MB/s | 32.34 s | 264.0 MiB | — |
+| Prns relay | 500 Mbps / 128 KiB | 128 / 128 KiB | <img src="assets/check.svg" width="14" alt="conformant" /> 902708/902708 · 3/3 samples | 1313.24 MB/s | 10.0k/s | 1323.83 MB/s / 1323.83 MB/s | 32.69 s | 147.1 MiB | 8.71× / 7.38× / 7.38× |
+| RNS 1.4.2 (compiled) relay | 10 Mbps / 8 KiB | 8 / 8 KiB | <img src="assets/check.svg" width="14" alt="conformant" /> 1626911/1626911 · 3/3 samples | 147.67 MB/s | 18.1k/s | 149.11 MB/s / 149.11 MB/s | 32.49 s | 264.7 MiB | 30.46× / 68.71× / 30.46× |
 
 > Default-policy deployment view: Prns and RNS retain their normal TCP bitrate and MTU policy.
 
-#### Transported resource throughput · 1 Gbps policy (v1)
+#### Transported resource throughput · 1 Gbps policy (v2)
 
 Relay the identical transported-resource workload with both relay TCP interfaces explicitly configured for the 1 Gbps MTU tier.
 
 | Relay | TCP policy / MTU | Link MTU / payload | Conformance | Payload | Frames | Wire in / out | Relay CPU | Relay peak RSS | Harness source / sink / limit |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| Prns relay | 1 Gbps / 512 KiB | 512 / 512 KiB | <img src="assets/check.svg" width="14" alt="conformant" /> 206986/206986 · 3/3 samples | 1201.08 MB/s | 2.3k/s | 1210.58 MB/s / 1210.58 MB/s | 32.77 s | 538.4 MiB | — |
-| RNS 1.4.0 (compiled) relay | 1 Gbps / 512 KiB | 512 / 512 KiB | <img src="assets/check.svg" width="14" alt="conformant" /> 26788/26788 · 3/3 samples | 155.61 MB/s | 297/s | 156.84 MB/s / 156.84 MB/s | 33.42 s | 208.8 MiB | — |
+| Prns relay | 1 Gbps / 512 KiB | 512 / 512 KiB | <img src="assets/check.svg" width="14" alt="conformant" /> 204207/204207 · 3/3 samples | 1194.50 MB/s | 2.3k/s | 1203.95 MB/s / 1203.95 MB/s | 32.52 s | 542.0 MiB | 10.68× / 7.80× / 7.80× |
+| RNS 1.4.2 (compiled) relay | 1 Gbps / 512 KiB | 512 / 512 KiB | <img src="assets/check.svg" width="14" alt="conformant" /> 25921/25921 · 3/3 samples | 149.80 MB/s | 286/s | 150.99 MB/s / 150.99 MB/s | 33.62 s | 204.9 MiB | 85.79× / 62.37× / 62.37× |
 
 > Controlled computational comparison: identical transported link and driver, with only TCP bitrate policy changed.
 
@@ -210,7 +210,7 @@ Relay the identical transported-resource workload with both relay TCP interfaces
 
 - **Prns** — Rust, ed25519-dalek 2.2.
 
-- **RNS 1.4.0 (compiled)** — Python, PyCA cryptography / OpenSSL; reference.
+- **RNS 1.4.2 (compiled)** — Python, PyCA cryptography / OpenSSL; reference.
 
 ## Metric legend
 

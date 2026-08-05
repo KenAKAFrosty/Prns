@@ -577,14 +577,6 @@ pub(crate) fn announce() {
     else {
         return;
     };
-    log::info!("hopspot: manual announce -> lxmf.delivery on every interface");
-    let _ = resources
-        .handle
-        .issue(PrnsCommand::AnnounceNow(AnnounceNow {
-            destination: resources.destination,
-            target: AnnounceTarget::AllInterfaces,
-            app_data: AnnounceAppData::Registered,
-        }));
     log::info!("hopspot: manual announce -> nomadnetwork.node on every interface");
     let _ = resources
         .handle

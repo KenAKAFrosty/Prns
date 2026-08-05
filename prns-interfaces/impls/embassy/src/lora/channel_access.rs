@@ -584,8 +584,8 @@ mod tests {
     #[test]
     fn timing_tracks_symbols_and_preserves_profile_bounds() {
         let normal = ChannelTiming::for_profile(DEFAULT_915_PROFILE);
-        assert_eq!(normal.slot_ms(), 99);
-        assert_eq!(normal.sample_ms(), 12);
+        assert_eq!(normal.slot_ms(), 25);
+        assert_eq!(normal.sample_ms(), 6);
 
         let fastest = RadioProfile {
             frequency: Frequency::new(915_000_000),
@@ -753,14 +753,19 @@ mod tests {
         begin(&mut access, u16::MAX / 2 + 1);
         let initial_ticket_ms = 15 * access.timing.slot_ms / 2;
         let difs_ms = access.timing.difs_ms;
+        let ticket_elapsed_ms = access.timing.slot_ms;
         assert_eq!(
-            access.observe(difs_ms + 100, ChannelObservation::Clear, age.backoff_rate()),
+            access.observe(
+                difs_ms + ticket_elapsed_ms,
+                ChannelObservation::Clear,
+                age.backoff_rate()
+            ),
             ChannelAccessAction::Wait
         );
         assert_eq!(
             access.state,
             ChannelAccessState::Backoff {
-                remaining_ms: initial_ticket_ms - 300,
+                remaining_ms: initial_ticket_ms - 3 * ticket_elapsed_ms,
             }
         );
     }

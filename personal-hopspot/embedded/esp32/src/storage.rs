@@ -19,9 +19,9 @@ const NODE_REQUEST_HANDLER_CAPACITY: usize =
     <personal_hopspot_core::node_pages::NodePageRoutes as RequestEndpointSet<()>>::REGISTRATIONS
         .len();
 
-/// The engine's storage recipe: hot/synchronized columns stay inline in SRAM, the cold
-/// per-destination bulk (routes, announces, history, app-data, resource buffers) is boxed
-/// into PSRAM through `PsramAlloc`, each keeping its small index/metadata in SRAM.
+/// The engine's storage recipe: the small coordination shell stays inline in SRAM, while
+/// high-count or bulky columns (including links, routes, announces, history, app-data, and
+/// resource buffers) are placed in PSRAM through `PsramAlloc`.
 #[cfg(target_arch = "xtensa")]
 pub type EngineStorageType = Esp32S3<PsramAlloc, NODE_REQUEST_HANDLER_CAPACITY>;
 
@@ -206,10 +206,15 @@ mod riscv {
     pub struct C6Storage;
 
     impl C6Storage {
+        // Keep cheap relationships abundant while channels and resource continuations borrow
+        // smaller shared tables. None of these counts constrain the eight-peer BLE controller.
         const TRACKED_DESTINATIONS: usize = 36;
         const UPSTREAM_APP_DESTINATIONS: usize = 2;
         const HELD_IDENTITIES: usize = 1;
-        const LINKS: usize = 2;
+        pub const LINK_SESSIONS: usize = 12;
+        const TRANSPORTED_LINKS: usize = 8;
+        const CHANNELS: usize = 2;
+        const RESOURCE_ASSEMBLIES: usize = 1;
         const PACKET_HASHES: usize = 64;
         const BLACKHOLED_IDENTITIES: usize = 16;
         const BLACKHOLE_REASON_BYTES: usize = 64;
@@ -236,6 +241,9 @@ mod riscv {
             + personal_rns::persistence::flash_journal_record_storage_len(0, 4);
     }
 
+    const _: () = assert!(C6Storage::LINK_SESSIONS > C6Storage::CHANNELS);
+    const _: () = assert!(C6Storage::RESOURCE_ASSEMBLIES == 1);
+
     impl StorageLayout for C6Storage {
         const LIMITS: DisplayedStorageLimits = DisplayedStorageLimits {
             tracked_destinations: StorageCapacity::Fixed(Self::TRACKED_DESTINATIONS),
@@ -243,8 +251,8 @@ mod riscv {
             announce_records: StorageCapacity::Fixed(Self::TRACKED_DESTINATIONS),
             upstream_app_destinations: StorageCapacity::Fixed(Self::UPSTREAM_APP_DESTINATIONS),
             held_identities: StorageCapacity::Fixed(Self::HELD_IDENTITIES),
-            links: StorageCapacity::Fixed(Self::LINKS),
-            channels: StorageCapacity::Fixed(Self::LINKS),
+            links: StorageCapacity::Fixed(Self::LINK_SESSIONS),
+            channels: StorageCapacity::Fixed(Self::CHANNELS),
             channel_window_pool: None,
             channel_reorder_depth: StorageCapacity::Fixed(Self::CHANNEL_REORDER_DEPTH),
             link_mtu: StorageCapacity::Fixed(Self::LINK_MTU),
@@ -294,8 +302,8 @@ mod riscv {
             FixedDestinationAnnounceLimitTable<{ Self::TRACKED_DESTINATIONS }>;
         type GroupKeys = FixedGroupKeyTable<{ Self::UPSTREAM_APP_DESTINATIONS }>;
         type RequestHandlers = FixedRequestHandlerTable<{ super::NODE_REQUEST_HANDLER_CAPACITY }>;
-        type TransportedLinks = FixedTransportedLinkTable<{ Self::LINKS }>;
-        type Links = FixedLinkTable<{ Self::LINKS }>;
+        type TransportedLinks = FixedTransportedLinkTable<{ Self::TRANSPORTED_LINKS }>;
+        type Links = FixedLinkTable<{ Self::LINK_SESSIONS }>;
         type OutgoingResources = FixedResourceTable<
             OutgoingResourceState,
             1,
@@ -308,10 +316,10 @@ mod riscv {
             { Self::RESOURCE_TRANSFER_BYTES },
             { max_part_count(Self::RESOURCE_TRANSFER_BYTES) },
         >;
-        type IncomingAssemblies = FixedIncomingAssemblyTable<{ Self::LINKS }>;
-        type OutgoingAssemblies = FixedStaticOutgoingAssemblyTable<{ Self::LINKS }>;
+        type IncomingAssemblies = FixedIncomingAssemblyTable<{ Self::RESOURCE_ASSEMBLIES }>;
+        type OutgoingAssemblies = FixedStaticOutgoingAssemblyTable<{ Self::RESOURCE_ASSEMBLIES }>;
         type Channels = FixedArrayChannelTable<
-            { Self::LINKS },
+            { Self::CHANNELS },
             { Self::CHANNEL_REORDER_DEPTH },
             { Self::CHANNEL_MESSAGE_BYTES },
         >;

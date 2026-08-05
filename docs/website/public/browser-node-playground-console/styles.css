@@ -35,7 +35,8 @@ body {
 }
 
 button,
-a {
+a,
+input {
   font: inherit;
 }
 
@@ -118,7 +119,7 @@ h1 {
 
 .status-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 0.75rem;
   margin-top: 3.25rem;
 }
@@ -247,6 +248,41 @@ h1 {
   flex-wrap: wrap;
   gap: 0.6rem;
   margin-top: 1rem;
+}
+
+.transport-form {
+  margin-top: 1rem;
+}
+
+.field-label {
+  display: block;
+  margin-bottom: 0.45rem;
+  color: var(--mid);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+input {
+  width: 100%;
+  min-height: 2.45rem;
+  padding: 0.58rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 0.48rem;
+  outline: none;
+  background: rgb(11 14 19 / 0.7);
+  color: var(--paper);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+}
+
+input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgb(110 231 183 / 0.12);
+}
+
+input:read-only,
+input:disabled {
+  color: var(--mid);
 }
 
 button {

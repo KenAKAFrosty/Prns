@@ -43,7 +43,7 @@ def main() -> int:
             blocking = bootstrap_blocking_custody_tags(releases)
             if blocking:
                 raise ValueError(
-                    "bootstrap is forbidden after signed stable custody exists: "
+                    "bootstrap is forbidden after finalized flasher custody exists: "
                     + ", ".join(blocking)
                 )
             result = {"stable_custody": []}

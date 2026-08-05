@@ -34,7 +34,8 @@ tokio = { version = "1", optional = true, default-features = false, features = [
 socket2 = { version = "0.6", optional = true, features = ["all"] }
 if-addrs = { version = "0.13", optional = true }
 getrandom = { version = "0.2", optional = true }
-tokio-tungstenite = { version = "0.28", optional = true, default-features = false, features = ["connect", "handshake"] }
+tokio-tungstenite = { version = "0.28", optional = true, default-features = false, features = ["connect", "handshake", "rustls-tls-native-roots"] }
+rustls = { version = "0.23", optional = true, default-features = false, features = ["ring"] }
 futures-util = { version = "0.3", optional = true, default-features = false, features = ["alloc", "sink"] }
 log = { version = "0.4", optional = true, default-features = false }
 tracing = { version = "0.1", optional = true, default-features = false, features = ["std"] }
@@ -78,7 +79,7 @@ ax25 = ["kiss"]
 rnode = ["dep:tokio", "dep:prns-config", "dep:btleplug", "dep:uuid", "dep:futures-util", "dep:bluer", "tokio/rt"]
 pipe = ["dep:tokio", "tokio/process"]
 backbone = ["tcp"]
-websocket = ["dep:tokio", "tokio/net", "dep:tokio-tungstenite", "dep:futures-util"]
+websocket = ["dep:tokio", "tokio/net", "dep:tokio-tungstenite", "dep:rustls", "dep:futures-util"]
 browser-rendezvous = ["websocket", "network-device-selection", "dep:serde", "dep:serde_json", "dep:url", "dep:mdns-sd"]
 i2p = ["dep:tokio", "tokio/net", "dep:socket2", "dep:getrandom", "prns-core/i2p"]
 weave = ["serial", "dep:getrandom"]

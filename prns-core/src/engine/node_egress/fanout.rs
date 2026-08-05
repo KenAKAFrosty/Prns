@@ -1,3 +1,5 @@
+#[cfg(feature = "runtime-metrics")]
+use crate::engine::AnnounceOrigin;
 use crate::engine::{Directive, EngineReaction, FanTarget};
 use crate::interfaces::{AttachedInterfaces, InterfaceKind, InterfaceMode};
 
@@ -67,21 +69,14 @@ fn fan(
                             }));
                         }
                         EmissionKind::Announce => {
-                            #[cfg(feature = "runtime-metrics")]
-                            sink(EngineReaction::Directive(
-                                Directive::SendMeasuredLocalAnnounceToFleet {
-                                    supervisor,
-                                    fan: fanout,
-                                    bytes,
-                                },
-                            ));
-
-                            #[cfg(not(feature = "runtime-metrics"))]
-                            sink(EngineReaction::Directive(Directive::SendToFleet {
+                            sink(EngineReaction::Directive(Directive::SendAnnounceToFleet {
                                 supervisor,
                                 fan: fanout,
                                 bytes,
-                            }));
+                                hops: 0,
+                                #[cfg(feature = "runtime-metrics")]
+                                origin: AnnounceOrigin::Local,
+                            }))
                         }
                     }
                 }
@@ -98,18 +93,13 @@ fn fan(
                         bytes,
                     })),
                     EmissionKind::Announce => {
-                        #[cfg(feature = "runtime-metrics")]
-                        sink(EngineReaction::Directive(
-                            Directive::SendMeasuredLocalAnnounce {
-                                target: descriptor.id,
-                                bytes,
-                            },
-                        ));
-                        #[cfg(not(feature = "runtime-metrics"))]
-                        sink(EngineReaction::Directive(Directive::Send {
+                        sink(EngineReaction::Directive(Directive::SendAnnounce {
                             target: descriptor.id,
                             bytes,
-                        }));
+                            hops: 0,
+                            #[cfg(feature = "runtime-metrics")]
+                            origin: AnnounceOrigin::Local,
+                        }))
                     }
                 }
             }
@@ -165,18 +155,13 @@ mod tests {
             AttachedInterfaces::new(&interfaces),
             FanTarget::All,
             &[0xAB],
-            &mut |reaction| match reaction {
-                #[cfg(feature = "runtime-metrics")]
-                EngineReaction::Directive(Directive::SendMeasuredLocalAnnounce {
-                    target, ..
-                }) => {
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::SendAnnounce {
+                    target, hops: 0, ..
+                }) = reaction
+                {
                     targets.push(target);
                 }
-                #[cfg(not(feature = "runtime-metrics"))]
-                EngineReaction::Directive(Directive::Send { target, .. }) => {
-                    targets.push(target);
-                }
-                _ => {}
             },
         );
 
@@ -190,6 +175,36 @@ mod tests {
                 iface(0xE6),
                 iface(0xE7),
             ],
+        );
+    }
+
+    #[test]
+    fn local_announces_use_one_announce_directive_for_a_supervised_fleet() {
+        let first = InterfaceId::new([InterfaceKind::BluetoothPeer as u8, 0x41, 0, 0, 0, 0, 0, 0]);
+        let second = InterfaceId::new([InterfaceKind::BluetoothPeer as u8, 0x42, 0, 0, 0, 0, 0, 0]);
+        let interfaces = [routable_descriptor(first), routable_descriptor(second)];
+        let mut fleets = std::vec::Vec::new();
+
+        fan_announce(
+            AttachedInterfaces::new(&interfaces),
+            FanTarget::All,
+            &[0xAB],
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::SendAnnounceToFleet {
+                    supervisor,
+                    fan,
+                    hops: 0,
+                    ..
+                }) = reaction
+                {
+                    fleets.push((supervisor, fan));
+                }
+            },
+        );
+
+        assert_eq!(
+            fleets,
+            std::vec![(InterfaceKind::BluetoothAuto, FanTarget::All)]
         );
     }
 

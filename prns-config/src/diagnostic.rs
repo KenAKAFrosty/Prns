@@ -32,6 +32,7 @@ pub enum ConfigDiagnosticCode {
     UnsupportedTransport,
     UnsupportedSetting,
     IneffectiveSetting,
+    ImplicitOff,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,6 +102,7 @@ impl ConfigDiagnosticCode {
             ConfigDiagnosticCode::UnsupportedTransport => "unsupported_transport",
             ConfigDiagnosticCode::UnsupportedSetting => "unsupported_setting",
             ConfigDiagnosticCode::IneffectiveSetting => "ineffective_setting",
+            ConfigDiagnosticCode::ImplicitOff => "implicit_off",
         }
     }
 
@@ -111,7 +113,8 @@ impl ConfigDiagnosticCode {
             | ConfigDiagnosticCode::UnknownSection
             | ConfigDiagnosticCode::RedundantAliases
             | ConfigDiagnosticCode::UnsupportedSetting
-            | ConfigDiagnosticCode::IneffectiveSetting => ConfigSeverity::Warning,
+            | ConfigDiagnosticCode::IneffectiveSetting
+            | ConfigDiagnosticCode::ImplicitOff => ConfigSeverity::Warning,
             ConfigDiagnosticCode::Syntax
             | ConfigDiagnosticCode::MisplacedKey
             | ConfigDiagnosticCode::MissingRequiredKey
@@ -274,6 +277,10 @@ fn default_fixes(code: ConfigDiagnosticCode, path: &str, accepted: Option<&str>)
         ConfigDiagnosticCode::UnsupportedTransport => interface
             .map(|name| vec![ConfigFix::DisableInterface { name }])
             .unwrap_or_default(),
+        ConfigDiagnosticCode::ImplicitOff => vec![ConfigFix::ReplaceValue {
+            path: path.to_string(),
+            accepted: "off".to_string(),
+        }],
         ConfigDiagnosticCode::Syntax
         | ConfigDiagnosticCode::MisplacedKey
         | ConfigDiagnosticCode::UnknownSection

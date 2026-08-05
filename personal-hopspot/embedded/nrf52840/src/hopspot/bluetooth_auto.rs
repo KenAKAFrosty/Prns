@@ -14,7 +14,7 @@ use embassy_time::{with_timeout, Duration, Timer};
 use nrf_softdevice::ble::{
     central, gatt_client, gatt_server, l2cap, peripheral, Address, Connection,
 };
-use nrf_softdevice::{raw, SocEvent, Softdevice};
+use nrf_softdevice::{raw, RawError, SocEvent, Softdevice};
 
 use personal_rns::bluetooth_auto::connection_slots::{
     ConnectionSlotDataOwners, ConnectionSlotLease, ConnectionSlotLinkLease, ConnectionSlotOwners,
@@ -60,9 +60,13 @@ type BleSlotSource = ConnectionSlotSourceLease<Mtx>;
 type BleSlotSink = ConnectionSlotSinkLease<Mtx>;
 type BleReadySlot = ReadyConnectionSlot<Mtx>;
 const GATT_FRAGMENT_PAYLOAD: usize = 180;
-const GATT_REASSEMBLY_CAP: usize = 600;
+const GATT_REASSEMBLY_CAP: usize = BLE_HW_MTU;
 const GATT_ATTRIBUTE_TABLE_BYTES: u32 = 3072;
-const NOTIFY_PACING: Duration = Duration::from_millis(15);
+const NOTIFY_BACKPRESSURE_RETRY: Duration = Duration::from_millis(1);
+const PREFERRED_MIN_CONN_INTERVAL: u16 = 12;
+const PREFERRED_MAX_CONN_INTERVAL: u16 = 24;
+const PREFERRED_SLAVE_LATENCY: u16 = 0;
+const PREFERRED_SUPERVISION_TIMEOUT: u16 = 400;
 const SIGHTING_PACING: Duration = Duration::from_millis(200);
 const SCAN_ERROR_BACKOFF: Duration = Duration::from_millis(500);
 /// One scan window before the scanner releases the central-radio permit (10 ms units), so a pending
@@ -347,6 +351,10 @@ impl LinkChannels {
         self.address.lock(|address| address.set(bytes));
     }
 
+    fn address(&self) -> [u8; 6] {
+        self.address.lock(|address| address.get())
+    }
+
     fn set_peer_protocol(&self, protocol: PeerProtocol) {
         self.peer_protocol
             .lock(|current| current.set(Some(protocol)));
@@ -380,7 +388,7 @@ impl LinkChannels {
             identity_out: self.identity_out.sender(),
             data_plane: &self.data_plane,
             plan: L2capPlan::None,
-            address: self.address.lock(|address| address.get()),
+            address: self.address(),
             slot,
         }
     }
@@ -694,6 +702,69 @@ fn l2cap_config() -> l2cap::Config {
     }
 }
 
+fn preferred_conn_params() -> raw::ble_gap_conn_params_t {
+    raw::ble_gap_conn_params_t {
+        min_conn_interval: PREFERRED_MIN_CONN_INTERVAL,
+        max_conn_interval: PREFERRED_MAX_CONN_INTERVAL,
+        slave_latency: PREFERRED_SLAVE_LATENCY,
+        conn_sup_timeout: PREFERRED_SUPERVISION_TIMEOUT,
+    }
+}
+
+fn initiate_data_length_extension(conn: &mut Connection) {
+    // `None` asks the SoftDevice for the largest data length supported by this build's connection
+    // event and RAM configuration. Peers without DLE support retain the mandatory 27-byte floor.
+    let _ = conn.data_length_update(None);
+}
+
+#[derive(Clone, Copy)]
+enum ServerNotification {
+    Control,
+    NativeData,
+    ColumbaData,
+}
+
+async fn notify_with_backpressure(
+    server: &Server,
+    conn: &Connection,
+    target: ServerNotification,
+    bytes: &[u8],
+) -> Result<(), Closed> {
+    loop {
+        // Keep the 244-byte GATT value inside this synchronous scope. Retaining it across the
+        // retry await would inflate every one of the seven pooled slot futures by that amount.
+        let result = {
+            let value = GattValue::from_slice(bytes).map_err(|_| Closed)?;
+            match target {
+                ServerNotification::Control => server.rns.control_notify(conn, &value),
+                ServerNotification::NativeData => server.rns.data_notify(conn, &value),
+                ServerNotification::ColumbaData => server.rns.columba_tx_notify(conn, &value),
+            }
+        };
+        match result {
+            Ok(()) => return Ok(()),
+            Err(gatt_server::NotifyValueError::Raw(RawError::Resources)) => {
+                // S140's default notification queue is intentionally one entry: increasing it for
+                // all seven reserved connections would consume RAM the T-Echo does not have. Yield
+                // until the next link event drains that entry, then submit this same fragment.
+                Timer::after(NOTIFY_BACKPRESSURE_RETRY).await;
+            }
+            Err(_) => return Err(Closed),
+        }
+    }
+}
+
+fn admit_inbound_frame(
+    data_in_tx: &Sender<'static, Mtx, FrameBytes, DATA_DEPTH>,
+    frame: &[u8],
+    worker: &BleSlotWorker,
+) {
+    let mut bytes = FrameBytes::new();
+    if bytes.extend_from_slice(frame).is_err() || data_in_tx.try_send(bytes).is_err() {
+        worker.request_close();
+    }
+}
+
 async fn l2cap_pump(
     channel: &l2cap::Channel<L2capPacket>,
     data_out_rx: Receiver<'static, Mtx, FrameBytes, DATA_DEPTH>,
@@ -764,10 +835,7 @@ async fn serve_peripheral(
             ReticulumServiceEvent::DataWrite(value) => {
                 if let Some(fragment) = Fragment::decode(&value) {
                     if let Some(frame) = reassembler.absorb(&fragment) {
-                        let mut bytes = FrameBytes::new();
-                        if bytes.extend_from_slice(frame).is_ok() {
-                            let _ = data_in_tx.try_send(bytes);
-                        }
+                        admit_inbound_frame(&data_in_tx, frame, worker);
                     }
                 }
             }
@@ -781,10 +849,7 @@ async fn serve_peripheral(
                 } else if slot.peer_protocol() == Some(PeerProtocol::Columba) {
                     if let Some(fragment) = Fragment::decode(&value) {
                         if let Some(frame) = reassembler.absorb(&fragment) {
-                            let mut bytes = FrameBytes::new();
-                            if bytes.extend_from_slice(frame).is_ok() {
-                                let _ = data_in_tx.try_send(bytes);
-                            }
+                            admit_inbound_frame(&data_in_tx, frame, worker);
                         }
                     }
                 }
@@ -804,8 +869,11 @@ async fn serve_peripheral(
             let ctrl = control_out_rx.receive().await;
             let mut buf = [0u8; CONTROL_MAX_LEN];
             if let Some(n) = ctrl.encode(&mut buf) {
-                if let Ok(value) = GattValue::from_slice(&buf[..n]) {
-                    let _ = server.rns.control_notify(conn, &value);
+                if notify_with_backpressure(server, conn, ServerNotification::Control, &buf[..n])
+                    .await
+                    .is_err()
+                {
+                    return;
                 }
             }
         }
@@ -832,18 +900,17 @@ async fn serve_peripheral(
                 for fragment in fragments_of(&frame, GATT_FRAGMENT_PAYLOAD) {
                     let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
                     if let Some(n) = fragment.encode(&mut buf) {
-                        if let Ok(value) = GattValue::from_slice(&buf[..n]) {
-                            match protocol {
-                                PeerProtocol::Native => {
-                                    let _ = server.rns.data_notify(conn, &value);
-                                }
-                                PeerProtocol::Columba => {
-                                    let _ = server.rns.columba_tx_notify(conn, &value);
-                                }
-                            }
+                        let target = match protocol {
+                            PeerProtocol::Native => ServerNotification::NativeData,
+                            PeerProtocol::Columba => ServerNotification::ColumbaData,
+                        };
+                        if notify_with_backpressure(server, conn, target, &buf[..n])
+                            .await
+                            .is_err()
+                        {
+                            return;
                         }
                     }
-                    Timer::after(NOTIFY_PACING).await;
                 }
             },
         }
@@ -875,8 +942,12 @@ async fn serve_central(
     config.scan_config.timeout = CONNECT_WINDOW_TICKS;
     config.scan_config.interval = CONNECT_SCAN_INTERVAL;
     config.scan_config.window = CONNECT_SCAN_WINDOW;
+    config.conn_params = preferred_conn_params();
     let conn = match select(central::connect(sd, &config), worker.wait_for_close()).await {
-        Either::First(Ok(conn)) => conn,
+        Either::First(Ok(mut conn)) => {
+            initiate_data_length_extension(&mut conn);
+            conn
+        }
         Either::First(Err(_)) => {
             report_dial_failed(hub, worker, addr.bytes()).await;
             return;
@@ -933,8 +1004,11 @@ async fn serve_native_central(
     conn: Connection,
     client: NativeReticulumClient,
 ) {
-    let _ = client.control_cccd_write(true).await;
-    let _ = client.data_cccd_write(true).await;
+    if client.control_cccd_write(true).await.is_err() || client.data_cccd_write(true).await.is_err()
+    {
+        report_dial_failed(hub, worker, slot.address()).await;
+        return;
+    }
     slot.set_peer_protocol(PeerProtocol::Native);
     hub.ready.send(link.into_ready(Origin::Dialed)).await;
 
@@ -955,10 +1029,7 @@ async fn serve_native_central(
         NativeReticulumClientEvent::DataNotification(value) => {
             if let Some(fragment) = Fragment::decode(&value) {
                 if let Some(frame) = reassembler.absorb(&fragment) {
-                    let mut bytes = FrameBytes::new();
-                    if bytes.extend_from_slice(frame).is_ok() {
-                        let _ = data_in_tx.try_send(bytes);
-                    }
+                    admit_inbound_frame(&data_in_tx, frame, worker);
                 }
             }
         }
@@ -970,7 +1041,9 @@ async fn serve_native_central(
             let mut buf = [0u8; CONTROL_MAX_LEN];
             if let Some(n) = ctrl.encode(&mut buf) {
                 if let Ok(value) = GattValue::from_slice(&buf[..n]) {
-                    let _ = client.control_write(&value).await;
+                    if client.control_write(&value).await.is_err() {
+                        return;
+                    }
                 }
             }
         }
@@ -998,10 +1071,11 @@ async fn serve_native_central(
                     let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
                     if let Some(n) = fragment.encode(&mut buf) {
                         if let Ok(value) = GattValue::from_slice(&buf[..n]) {
-                            let _ = client.data_write(&value).await;
+                            if client.data_write(&value).await.is_err() {
+                                return;
+                            }
                         }
                     }
-                    Timer::after(NOTIFY_PACING).await;
                 }
             },
         }
@@ -1056,10 +1130,7 @@ async fn serve_columba_central(
         ColumbaReticulumClientEvent::TxNotification(value) => {
             if let Some(fragment) = Fragment::decode(&value) {
                 if let Some(frame) = reassembler.absorb(&fragment) {
-                    let mut bytes = FrameBytes::new();
-                    if bytes.extend_from_slice(frame).is_ok() {
-                        let _ = data_in_tx.try_send(bytes);
-                    }
+                    admit_inbound_frame(&data_in_tx, frame, worker);
                 }
             }
         }
@@ -1072,10 +1143,11 @@ async fn serve_columba_central(
                 let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
                 if let Some(n) = fragment.encode(&mut buf) {
                     if let Ok(value) = GattValue::from_slice(&buf[..n]) {
-                        let _ = client.rx_write_without_response(&value).await;
+                        if client.rx_write_without_response(&value).await.is_err() {
+                            return;
+                        }
                     }
                 }
-                Timer::after(NOTIFY_PACING).await;
             }
         }
     };

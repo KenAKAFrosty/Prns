@@ -150,7 +150,8 @@ def validate() -> list[str]:
         "./tools/prns release candidate validate-unsigned --",
         "default: retain",
         "./tools/prns release website-history -- guard-bootstrap",
-        "signed candidate on a stable release",
+        "finalized flasher release record",
+        'record="$assets/flasher-release-record-v${HISTORY_VERSION}.json"',
         "./tools/prns release website-history -- probe-stable",
         "flasher-release-history-${{ github.run_id }}",
         "EXPECTED_HISTORY_SHA256",
@@ -835,6 +836,7 @@ def validate() -> list[str]:
         "Recheck live promotion CAS immediately before Pages deployment",
         "targetCommitish",
         "./tools/prns release historical verify --",
+        'record="target/release/flasher-release-record-v${RELEASE_VERSION}.json"',
         "./tools/prns release public-review -- verify",
         ".public_review.evidence.name",
         "actions/runs/${signing_run_id}/attempts/${run_attempt}",
@@ -956,6 +958,7 @@ def validate() -> list[str]:
         "cmp target/assets-before-latest.json target/assets-after-latest.json",
         "targetCommitish",
         "./tools/prns release historical verify --",
+        'record="$assets/flasher-release-record-v${TARGET_VERSION}.json"',
     ):
         if rollback_gate not in rollback:
             errors.append(f"flasher-rollback.yml is missing gate {rollback_gate!r}")

@@ -514,7 +514,6 @@ pub(super) fn run_window(handles: WindowHandles) {
     let tcp_status = handles.tcp_status;
     let tcp_id = handles.tcp_id;
     let tcp_target = handles.tcp_target;
-    let destination = handles.destination;
     let node_page_destination = handles.node_page_destination;
 
     let output = OutputSettingsBuilder::new()
@@ -583,7 +582,7 @@ pub(super) fn run_window(handles: WindowHandles) {
             ui_state.show_notice(screen::UiNotice::Announcing);
             *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
             if let Some(id) = handle.issue(PrnsCommand::AnnounceNow(AnnounceNow {
-                destination,
+                destination: node_page_destination,
                 target: AnnounceTarget::AllInterfaces,
                 app_data: AnnounceAppData::Registered,
             })) {
@@ -591,14 +590,9 @@ pub(super) fn run_window(handles: WindowHandles) {
                 tracing::debug!(
                     event = "manual_announce_issued_detail",
                     command_id = id.0,
-                    destination = ?destination.as_bytes(),
+                    destination = ?node_page_destination.as_bytes(),
                 );
             }
-            let _ = handle.issue(PrnsCommand::AnnounceNow(AnnounceNow {
-                destination: node_page_destination,
-                target: AnnounceTarget::AllInterfaces,
-                app_data: AnnounceAppData::Registered,
-            }));
         }
         UiAction::ToggleSelectedInterface => match selected_id {
             Some(id) if id == USB_INTERFACE_ID => {

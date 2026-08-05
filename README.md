@@ -27,11 +27,13 @@ Its application SDKs come in two stages today:
 - **Paved:** [Rust](personal-rns/README.md) · [TypeScript / JavaScript](prns-js/README.md) (browsers, Node.js, and Bun)
 - **Previews:** [Python](prns-host/bindings/python/README.md) · [.NET & C#](prns-host/bindings/dotnet/README.md) · [Go](prns-host/bindings/go/README.md) · [Swift](prns-host/bindings/swift/README.md) · [Kotlin / Java / Android](prns-host/bindings/jvm/README.md) · [Julia](prns-host/bindings/julia/README.md) · [C & C++](prns-host/abi/c/README.md)
 
-The previews aren't stubs. Each drives the same native Rust engine, with generated types and a live conformance suite.
+**Previews** are not stubs. Each drives the same native Rust engine, with generated types and a live conformance suite.
 
 What's still young is the packaging. Today they run straight from this repository. A proper package on each language's registry, prebuilt binaries included, is the road still being paved.
 
-If one of these ecosystems is home for you, shaping its consumer API and packaging is some of the most valuable contribution work in Prns right now.
+If one of these ecosystems is home for you, shaping its consumer API and packaging is some of the most valuable [contribution work](CONTRIBUTING.md) in Prns right now.
+
+**Paved** means the direction is set and a public package is up. Set is not sealed, though. API design input and contributions are still welcome.
 
 [Choose an SDK and see its exact readiness and installation path](docs/sdks.md).
 
@@ -151,13 +153,13 @@ Your network and apps don't change, just your daemon does.
 
 The Prns daemon, `prnsd`, takes the role `rnsd` holds today. It handles your current config and identity, and your apps carry over unchanged.
 
-Among what you gain: brand-new interfaces, a built-in operator CLI, observability out of the box, and increased throughput you can measure yourself. [Here's the full before-and-after](docs/coming-from-rns.md).
+Among what you gain: brand-new interfaces, a built-in operator CLI, observability out of the box, and [up to 89× the throughput](benchmarks/RESULTS.md) in published benchmarks you can rerun yourself. [Here's the full before-and-after](docs/coming-from-rns.md).
 
 #### Looking for something specific?
 
 - [Start prnsd](prnsd/README.md) for a high-performance shared instance on your machine, which works with Sideband, NomadNet, MeshChat, etc.
 - [Flash a Hopspot](https://prns.dev/flash) to get self-contained Reticulum running on your embedded devices.
-- [Run a high-performance backbone node](docs/prnsd-config.md#minimal-router) to get the most "bang for your buck" on your cloud compute.
+- [Put your own high-performance backbone online](prnsd/README.md#deploy-it) with Docker or Railway.
 - [Measure both implementations side by side](benchmarks/README.md) with the benchmark suite.
 - [Verify the interoperability yourself](docs/validation.md), against real RNS nodes on your own machine.
 

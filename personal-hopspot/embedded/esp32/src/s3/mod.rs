@@ -109,8 +109,8 @@ use prns_interfaces_embassy::bluetooth_auto::PEER_CAPACITY as EMBEDDED_BLE_PEER_
 
 #[cfg(feature = "wifi-auto")]
 use crate::station_recovery::{
-    AccessPoint as StationAccessPoint, ConnectionFailure, ConnectionOutcome, ScanFailure,
-    ScanOutcome, StationAttempt, StationRecovery, StationYield,
+    AccessPoint as StationAccessPoint, ConnectionFailure, ConnectionOutcome, DiscoveryScope,
+    RecoveryDelay, ScanFailure, ScanOutcome, StationAttempt, StationRecovery, StationYield,
 };
 use crate::storage::EngineStorageType;
 
@@ -199,6 +199,7 @@ const LANE_DEPTH: usize = 1;
 /// build can hold only eighteen parts, rather than the protocol-wide seventy-five-part window.
 const OUTBOUND_BURST_DEPTH: usize = EngineStorageType::MAX_OUTGOING_RESOURCE_REACTION_FRAMES;
 pub const NOTIFY_CAP: usize = minimum_manifold_notification_capacity(LANE_COUNT, LANE_DEPTH);
+const _: () = assert!(EngineStorageType::LINK_SESSIONS > MEMBERS + BLE_PEER_CAPACITY);
 const COMMANDS_CAP: usize = 8;
 pub const LIFECYCLE_CAP: usize = 8;
 const COMPLETIONS_CAP: usize = 4;
@@ -369,7 +370,6 @@ pub(crate) enum BootPhase {
     BluetoothReady = 23,
     WatchdogReady = 24,
     AnnounceBegin = 25,
-    AnnounceDeliveryIssueReturned = 26,
     AnnounceNodeIssueReturned = 27,
 }
 
@@ -401,7 +401,6 @@ impl BootPhase {
             Self::BluetoothReady => "bluetooth.ready",
             Self::WatchdogReady => "watchdog.ready",
             Self::AnnounceBegin => "announce.begin",
-            Self::AnnounceDeliveryIssueReturned => "announce.delivery.issue.return",
             Self::AnnounceNodeIssueReturned => "announce.node.issue.return",
         }
     }

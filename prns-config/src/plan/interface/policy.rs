@@ -27,7 +27,8 @@ use crate::reference::keys::{
     common as common_key, global as global_key, interface as interface_key,
 };
 use crate::reference::{
-    ReferenceConfig, ReferenceConfigParams, ReferenceInterface, ReferenceMode, ReferenceValue,
+    announce_rate_target_is_explicit_off, ReferenceAnnounceRateTarget, ReferenceConfig,
+    ReferenceConfigParams, ReferenceInterface, ReferenceMode, ReferenceValue,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,7 +40,7 @@ pub(in crate::plan) enum MemberEgressPolicy {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::plan) struct InheritedInterfacePolicy {
     pub common: InterfaceCommonPolicy,
-    pub announce_rate: AnnounceRateLimit,
+    pub announce_rate: Option<AnnounceRateLimit>,
     pub gravity: InterfaceGravity,
 }
 
@@ -125,12 +126,20 @@ enum AnnounceRateSource {
 
 fn planned_announce_rate_limit(
     interface: &ReferenceInterface,
-    global: AnnounceRateLimit,
+    global: Option<AnnounceRateLimit>,
     transport_enabled: bool,
 ) -> Result<Option<AnnounceRateLimit>, PlanErrorKind> {
     let source = match (interface.announce_rate_target, transport_enabled) {
-        (Some(target_seconds), _) => AnnounceRateSource::Interface { target_seconds },
-        (None, true) => AnnounceRateSource::TransportDefault(global),
+        (Some(ReferenceAnnounceRateTarget::Off), _) => return Ok(None),
+        (Some(ReferenceAnnounceRateTarget::Seconds(target_seconds)), _) => {
+            AnnounceRateSource::Interface {
+                target_seconds: target_seconds.get(),
+            }
+        }
+        (None, true) => match global {
+            Some(defaults) => AnnounceRateSource::TransportDefault(defaults),
+            None => return Ok(None),
+        },
         (None, false) => return Ok(None),
     };
     let (target_ms, default_grace, default_penalty_ms) = match source {
@@ -442,13 +451,24 @@ pub(in crate::plan) fn global_common_policy(
 
 pub(in crate::plan) fn global_announce_rate(
     config: &ReferenceConfig,
-) -> Result<AnnounceRateLimit, GlobalPlanError> {
+) -> Result<Option<AnnounceRateLimit>, GlobalPlanError> {
+    let configured_off = config
+        .globals
+        .get(global_key::DEFAULT_AR_TARGET)
+        .and_then(ReferenceValue::as_scalar)
+        .is_some_and(announce_rate_target_is_explicit_off);
+    if configured_off {
+        return Ok(None);
+    }
     let target_seconds =
         global_nonnegative_integer(&config.globals, global_key::DEFAULT_AR_TARGET, 3_600)?;
+    if target_seconds == 0 {
+        return Ok(None);
+    }
     let grace = global_nonnegative_integer(&config.globals, global_key::DEFAULT_AR_GRACE, 5)?;
     let penalty_seconds =
         global_nonnegative_integer(&config.globals, global_key::DEFAULT_AR_PENALTY, 0)?;
-    Ok(AnnounceRateLimit {
+    Ok(Some(AnnounceRateLimit {
         target_ms: target_seconds.checked_mul(1_000).ok_or(GlobalPlanError {
             key: global_key::DEFAULT_AR_TARGET,
         })?,
@@ -458,7 +478,7 @@ pub(in crate::plan) fn global_announce_rate(
         penalty_ms: penalty_seconds.checked_mul(1_000).ok_or(GlobalPlanError {
             key: global_key::DEFAULT_AR_PENALTY,
         })?,
-    })
+    }))
 }
 
 fn global_nonnegative_integer(

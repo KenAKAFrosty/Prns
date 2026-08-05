@@ -76,6 +76,7 @@ const INTERFACE_STORE_CAP: usize = minimum_interface_store_capacity(INTERFACE_CA
 const PACKET_PHY_RETENTION_CAPACITY: usize = 32;
 const PACKET_PHY_INDEX_BUCKETS: usize =
     personal_rns::routing::dedup::dedup_index_buckets(PACKET_PHY_RETENTION_CAPACITY);
+const _: () = assert!(C6Storage::LINK_SESSIONS > BLE_PEER_CAPACITY);
 #[cfg(feature = "bluetooth-auto")]
 const BLE_START_DELAY: Duration = Duration::from_secs(3);
 #[cfg(feature = "bluetooth-auto")]

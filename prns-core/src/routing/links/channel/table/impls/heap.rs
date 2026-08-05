@@ -387,6 +387,7 @@ mod tests {
         assert_eq!(table.earliest_tx_timeout_at(), Some(InstantMillis(3_000)));
     }
 
+    #[cfg(feature = "std")]
     fn outstanding(byte: u8, command: u64) -> OutstandingSend<'static> {
         OutstandingSend {
             packet_hash: PacketHash::new([byte; 32]),

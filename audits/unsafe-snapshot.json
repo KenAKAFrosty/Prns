@@ -1674,6 +1674,12 @@
       "graphs": {
         "daemon-linux": [
           "parallel"
+        ],
+        "daemon-macos": [
+          "parallel"
+        ],
+        "daemon-windows": [
+          "parallel"
         ]
       },
       "name": "cc",
@@ -1689,7 +1695,9 @@
     },
     {
       "graphs": {
-        "host-c-linux": []
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": []
       },
       "name": "cc",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -2173,7 +2181,15 @@
     },
     {
       "graphs": {
+        "daemon-macos": [
+          "default",
+          "link"
+        ],
         "desktop-macos": [
+          "default",
+          "link"
+        ],
+        "host-c-macos": [
           "default",
           "link"
         ]
@@ -2210,9 +2226,14 @@
     {
       "graphs": {
         "daemon-macos": [
+          "default",
           "link"
         ],
         "desktop-macos": [
+          "default",
+          "link"
+        ],
+        "host-c-macos": [
           "default",
           "link"
         ]
@@ -6661,10 +6682,14 @@
     {
       "graphs": {
         "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
-        "host-c-linux": []
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": []
       },
       "name": "find-msvc-tools",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -9686,7 +9711,9 @@
     },
     {
       "graphs": {
-        "daemon-linux": []
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": []
       },
       "name": "jobserver",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -13594,6 +13621,22 @@
     {
       "graphs": {
         "daemon-linux": [],
+        "host-c-linux": []
+      },
+      "name": "openssl-probe",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 3,
+        "externs": 0,
+        "functions": 2,
+        "impls": 0,
+        "tokens": 5
+      },
+      "version": "0.2.1"
+    },
+    {
+      "graphs": {
+        "daemon-linux": [],
         "desktop-linux": []
       },
       "name": "ordered-stream",
@@ -16511,6 +16554,50 @@
     },
     {
       "graphs": {
+        "daemon-linux": [
+          "alloc",
+          "default",
+          "dev_urandom_fallback"
+        ],
+        "daemon-macos": [
+          "alloc",
+          "default",
+          "dev_urandom_fallback"
+        ],
+        "daemon-windows": [
+          "alloc",
+          "default",
+          "dev_urandom_fallback"
+        ],
+        "host-c-linux": [
+          "alloc",
+          "default",
+          "dev_urandom_fallback"
+        ],
+        "host-c-macos": [
+          "alloc",
+          "default",
+          "dev_urandom_fallback"
+        ],
+        "host-c-windows": [
+          "alloc",
+          "default",
+          "dev_urandom_fallback"
+        ]
+      },
+      "name": "ring",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 180,
+        "externs": 32,
+        "functions": 16,
+        "impls": 0,
+        "tokens": 228
+      },
+      "version": "0.17.14"
+    },
+    {
+      "graphs": {
         "esp32-c6": [
           "default",
           "riscv-macros"
@@ -16863,6 +16950,180 @@
     },
     {
       "graphs": {
+        "daemon-linux": [
+          "ring",
+          "std"
+        ],
+        "daemon-macos": [
+          "ring",
+          "std"
+        ],
+        "daemon-windows": [
+          "ring",
+          "std"
+        ]
+      },
+      "name": "rustls",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.23.42"
+    },
+    {
+      "graphs": {
+        "host-c-linux": [
+          "ring",
+          "std"
+        ],
+        "host-c-macos": [
+          "ring",
+          "std"
+        ],
+        "host-c-windows": [
+          "ring",
+          "std"
+        ]
+      },
+      "name": "rustls",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.23.43"
+    },
+    {
+      "graphs": {
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": []
+      },
+      "name": "rustls-native-certs",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.8.4"
+    },
+    {
+      "graphs": {
+        "daemon-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "daemon-macos": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
+          "alloc",
+          "default",
+          "std"
+        ]
+      },
+      "name": "rustls-pki-types",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 1,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 1
+      },
+      "version": "1.15.0"
+    },
+    {
+      "graphs": {
+        "host-c-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "host-c-macos": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "host-c-windows": [
+          "alloc",
+          "default",
+          "std"
+        ]
+      },
+      "name": "rustls-pki-types",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 1,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 1
+      },
+      "version": "1.15.1"
+    },
+    {
+      "graphs": {
+        "daemon-linux": [
+          "alloc",
+          "ring",
+          "std"
+        ],
+        "daemon-macos": [
+          "alloc",
+          "ring",
+          "std"
+        ],
+        "daemon-windows": [
+          "alloc",
+          "ring",
+          "std"
+        ],
+        "host-c-linux": [
+          "alloc",
+          "ring",
+          "std"
+        ],
+        "host-c-macos": [
+          "alloc",
+          "ring",
+          "std"
+        ],
+        "host-c-windows": [
+          "alloc",
+          "ring",
+          "std"
+        ]
+      },
+      "name": "rustls-webpki",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.103.13"
+    },
+    {
+      "graphs": {
         "desktop-linux": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
@@ -16948,6 +17209,22 @@
         "tokens": 3
       },
       "version": "1.0.6"
+    },
+    {
+      "graphs": {
+        "daemon-windows": [],
+        "host-c-windows": []
+      },
+      "name": "schannel",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 74,
+        "externs": 1,
+        "functions": 12,
+        "impls": 8,
+        "tokens": 95
+      },
+      "version": "0.1.29"
     },
     {
       "graphs": {
@@ -17046,6 +17323,48 @@
         "tokens": 1334
       },
       "version": "0.38.0"
+    },
+    {
+      "graphs": {
+        "daemon-macos": [
+          "OSX_10_14",
+          "alpn",
+          "default",
+          "session-tickets"
+        ],
+        "host-c-macos": [
+          "OSX_10_14",
+          "alpn",
+          "default",
+          "session-tickets"
+        ]
+      },
+      "name": "security-framework",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 366,
+        "externs": 4,
+        "functions": 3,
+        "impls": 28,
+        "tokens": 401
+      },
+      "version": "3.7.0"
+    },
+    {
+      "graphs": {
+        "daemon-macos": [],
+        "host-c-macos": []
+      },
+      "name": "security-framework-sys",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 1,
+        "externs": 3,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 4
+      },
+      "version": "2.17.0"
     },
     {
       "graphs": {
@@ -17868,6 +18187,14 @@
           "default",
           "std"
         ],
+        "daemon-macos": [
+          "default",
+          "std"
+        ],
+        "daemon-windows": [
+          "default",
+          "std"
+        ],
         "desktop-linux": [
           "default",
           "std"
@@ -17881,6 +18208,14 @@
           "std"
         ],
         "host-c-linux": [
+          "default",
+          "std"
+        ],
+        "host-c-macos": [
+          "default",
+          "std"
+        ],
+        "host-c-windows": [
           "default",
           "std"
         ]
@@ -20072,6 +20407,26 @@
     },
     {
       "graphs": {
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": []
+      },
+      "name": "tokio-rustls",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.26.4"
+    },
+    {
+      "graphs": {
         "daemon-linux": [
           "default",
           "sync",
@@ -20141,34 +20496,70 @@
     {
       "graphs": {
         "daemon-linux": [
+          "__rustls-tls",
           "connect",
           "handshake",
-          "stream"
+          "rustls",
+          "rustls-native-certs",
+          "rustls-pki-types",
+          "rustls-tls-native-roots",
+          "stream",
+          "tokio-rustls"
         ],
         "daemon-macos": [
+          "__rustls-tls",
           "connect",
           "handshake",
-          "stream"
+          "rustls",
+          "rustls-native-certs",
+          "rustls-pki-types",
+          "rustls-tls-native-roots",
+          "stream",
+          "tokio-rustls"
         ],
         "daemon-windows": [
+          "__rustls-tls",
           "connect",
           "handshake",
-          "stream"
+          "rustls",
+          "rustls-native-certs",
+          "rustls-pki-types",
+          "rustls-tls-native-roots",
+          "stream",
+          "tokio-rustls"
         ],
         "host-c-linux": [
+          "__rustls-tls",
           "connect",
           "handshake",
-          "stream"
+          "rustls",
+          "rustls-native-certs",
+          "rustls-pki-types",
+          "rustls-tls-native-roots",
+          "stream",
+          "tokio-rustls"
         ],
         "host-c-macos": [
+          "__rustls-tls",
           "connect",
           "handshake",
-          "stream"
+          "rustls",
+          "rustls-native-certs",
+          "rustls-pki-types",
+          "rustls-tls-native-roots",
+          "stream",
+          "tokio-rustls"
         ],
         "host-c-windows": [
+          "__rustls-tls",
           "connect",
           "handshake",
-          "stream"
+          "rustls",
+          "rustls-native-certs",
+          "rustls-pki-types",
+          "rustls-tls-native-roots",
+          "stream",
+          "tokio-rustls"
         ]
       },
       "name": "tokio-tungstenite",
@@ -20949,45 +21340,63 @@
     {
       "graphs": {
         "daemon-linux": [
+          "__rustls-tls",
           "data-encoding",
           "handshake",
           "http",
           "httparse",
+          "rustls",
+          "rustls-pki-types",
           "sha1"
         ],
         "daemon-macos": [
+          "__rustls-tls",
           "data-encoding",
           "handshake",
           "http",
           "httparse",
+          "rustls",
+          "rustls-pki-types",
           "sha1"
         ],
         "daemon-windows": [
+          "__rustls-tls",
           "data-encoding",
           "handshake",
           "http",
           "httparse",
+          "rustls",
+          "rustls-pki-types",
           "sha1"
         ],
         "host-c-linux": [
+          "__rustls-tls",
           "data-encoding",
           "handshake",
           "http",
           "httparse",
+          "rustls",
+          "rustls-pki-types",
           "sha1"
         ],
         "host-c-macos": [
+          "__rustls-tls",
           "data-encoding",
           "handshake",
           "http",
           "httparse",
+          "rustls",
+          "rustls-pki-types",
           "sha1"
         ],
         "host-c-windows": [
+          "__rustls-tls",
           "data-encoding",
           "handshake",
           "http",
           "httparse",
+          "rustls",
+          "rustls-pki-types",
           "sha1"
         ]
       },
@@ -21253,6 +21662,26 @@
         "tokens": 238
       },
       "version": "0.2.11"
+    },
+    {
+      "graphs": {
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": []
+      },
+      "name": "untrusted",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.9.0"
     },
     {
       "graphs": {
@@ -22297,7 +22726,11 @@
           "Win32_Networking",
           "Win32_Networking_WinSock",
           "Win32_Security",
+          "Win32_Security_Authentication",
+          "Win32_Security_Authentication_Identity",
           "Win32_Security_Authorization",
+          "Win32_Security_Credentials",
+          "Win32_Security_Cryptography",
           "Win32_Storage",
           "Win32_Storage_FileSystem",
           "Win32_System",
@@ -22391,6 +22824,10 @@
           "Win32_Networking",
           "Win32_Networking_WinSock",
           "Win32_Security",
+          "Win32_Security_Authentication",
+          "Win32_Security_Authentication_Identity",
+          "Win32_Security_Credentials",
+          "Win32_Security_Cryptography",
           "Win32_Storage",
           "Win32_Storage_FileSystem",
           "Win32_System",
@@ -22399,6 +22836,8 @@
           "Win32_System_Diagnostics",
           "Win32_System_Diagnostics_Debug",
           "Win32_System_IO",
+          "Win32_System_LibraryLoader",
+          "Win32_System_Memory",
           "Win32_System_Pipes",
           "Win32_System_Registry",
           "Win32_System_SystemInformation",
@@ -23044,16 +23483,19 @@
         ],
         "daemon-linux": [
           "alloc",
+          "default",
           "derive",
           "zeroize_derive"
         ],
         "daemon-macos": [
           "alloc",
+          "default",
           "derive",
           "zeroize_derive"
         ],
         "daemon-windows": [
           "alloc",
+          "default",
           "derive",
           "zeroize_derive"
         ],
@@ -23124,16 +23566,19 @@
         ],
         "host-c-linux": [
           "alloc",
+          "default",
           "derive",
           "zeroize_derive"
         ],
         "host-c-macos": [
           "alloc",
+          "default",
           "derive",
           "zeroize_derive"
         ],
         "host-c-windows": [
           "alloc",
+          "default",
           "derive",
           "zeroize_derive"
         ],

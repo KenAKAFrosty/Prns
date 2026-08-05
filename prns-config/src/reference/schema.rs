@@ -13,6 +13,7 @@ pub(super) enum ValueKind {
     Bitrate,
     LinkMtu,
     U64,
+    SecondsOrOff,
     U32,
     U16,
     NonZeroU16,
@@ -46,6 +47,9 @@ impl ValueKind {
             ValueKind::Bitrate => "an integer from 5 through 18446744073709551615 bps",
             ValueKind::LinkMtu => "an integer from 1 through 524288 bytes",
             ValueKind::U64 => "a non-negative integer",
+            ValueKind::SecondsOrOff => {
+                "off, no, false, or a non-negative integer number of seconds"
+            }
             ValueKind::U32 => "an integer from 0 through 4294967295",
             ValueKind::U16 => "an integer from 0 through 65535",
             ValueKind::NonZeroU16 => "an integer from 1 through 65535",
@@ -81,6 +85,7 @@ impl ValueKind {
             ValueKind::Bitrate => "500000000",
             ValueKind::LinkMtu => "131072",
             ValueKind::U64 | ValueKind::U32 => "1000000",
+            ValueKind::SecondsOrOff => "3600",
             ValueKind::U16 => "4242",
             ValueKind::NonZeroU16 => "4242",
             ValueKind::U8 => "8",
@@ -205,7 +210,10 @@ pub(super) const GLOBAL_RULES: &[(&str, KeyRule)] = &[
         Applied(ValueKind::Bool),
     ),
     (global_key::DEFAULT_GRAVITY, Applied(ValueKind::I64)),
-    (global_key::DEFAULT_AR_TARGET, Applied(ValueKind::I64)),
+    (
+        global_key::DEFAULT_AR_TARGET,
+        Applied(ValueKind::SecondsOrOff),
+    ),
     (global_key::DEFAULT_AR_PENALTY, Applied(ValueKind::I64)),
     (global_key::DEFAULT_AR_GRACE, Applied(ValueKind::I64)),
     (common_key::IC_MAX_HELD_ANNOUNCES, Applied(ValueKind::I64)),
@@ -257,9 +265,11 @@ fn common_interface_key_rule(key: &str) -> Option<KeyRule> {
 
         interface_key::GRAVITY => Some(Applied(ValueKind::I64)),
 
-        interface_key::ANNOUNCE_RATE_TARGET
-        | interface_key::ANNOUNCE_RATE_GRACE
-        | interface_key::ANNOUNCE_RATE_PENALTY => Some(Applied(ValueKind::U64)),
+        interface_key::ANNOUNCE_RATE_TARGET => Some(Applied(ValueKind::SecondsOrOff)),
+
+        interface_key::ANNOUNCE_RATE_GRACE | interface_key::ANNOUNCE_RATE_PENALTY => {
+            Some(Applied(ValueKind::U64))
+        }
 
         interface_key::ANNOUNCE_CAP
         | common_key::IC_BURST_HOLD

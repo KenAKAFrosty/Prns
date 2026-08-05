@@ -9,7 +9,8 @@ use crate::{parse_and_plan, ConfigDiagnosticCode, InterfaceKind};
 use super::{
     ConfigEdit, ConfigEditError, ConfigFile, ConfigFileError, ConfigRepairReport,
     InterfaceDefinition, InterfaceName, InterfaceSetting, InterfaceSettingChange,
-    InterfaceSettingKey, InterfaceSettingValue, RNodeMultiRadioDefinition, SecretDisplay,
+    InterfaceSettingInputError, InterfaceSettingInputKind, InterfaceSettingKey,
+    InterfaceSettingValue, RNodeMultiRadioDefinition, SecretDisplay,
 };
 
 const BASE: &str = "[reticulum]\n    enable_transport = Yes\n[interfaces]\n  [[WiFi]]\n    type = AutoInterface\n    interface_enabled = Yes\n";
@@ -303,6 +304,58 @@ fn setting_catalog_parses_typed_values_and_canonicalizes_aliases() {
         .candidate()
         .lines()
         .any(|line| line.trim_start().starts_with("mode =")));
+}
+
+#[test]
+fn announce_rate_target_helper_accepts_numeric_and_explicit_off_values() {
+    let target = InterfaceKind::Auto
+        .setting_specs()
+        .into_iter()
+        .find(|spec| spec.key().as_str() == interface_key::ANNOUNCE_RATE_TARGET)
+        .unwrap_or_else(|| panic!("missing announce rate target setting"));
+
+    assert_eq!(
+        target.input_kind(InterfaceKind::Auto),
+        InterfaceSettingInputKind::Text
+    );
+    assert!(target
+        .accepted(InterfaceKind::Auto)
+        .contains("off, no, false"));
+    for spelling in ["off", "NO", "False"] {
+        let parsed = target
+            .parse(InterfaceKind::Auto, spelling)
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(
+            parsed.value(),
+            &InterfaceSettingValue::Text("off".to_string())
+        );
+        assert_eq!(target.format_value(spelling), "off");
+    }
+    assert_eq!(
+        target
+            .parse(InterfaceKind::Auto, "3_600")
+            .unwrap_or_else(|error| panic!("{error}"))
+            .value(),
+        &InterfaceSettingValue::Unsigned(3_600)
+    );
+    assert_eq!(
+        target.parse(InterfaceKind::Auto, "disabled"),
+        Err(InterfaceSettingInputError::AnnounceRateTarget)
+    );
+
+    let setting = target
+        .parse(InterfaceKind::Auto, "false")
+        .unwrap_or_else(|error| panic!("{error}"));
+    let document = ConfigDocument::parse(BASE).unwrap_or_else(|error| panic!("{error}"));
+    let edited = document
+        .edit(&ConfigEdit::ChangeSettings {
+            name: name("WiFi"),
+            changes: vec![InterfaceSettingChange::Set(setting)],
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert!(edited.candidate().contains("announce_rate_target = off"));
+    let plan = parse_and_plan(edited.candidate()).unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(plan.value.interfaces[0].policy.announce_rate_limit, None);
 }
 
 #[test]

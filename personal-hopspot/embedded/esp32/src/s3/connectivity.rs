@@ -479,7 +479,7 @@ async fn wifi_connect_task(
     let base = StationConfig::default()
         .with_ssid(credentials.ssid.clone())
         .with_password(credentials.password.clone());
-    let mut recovery = StationRecovery::new();
+    let mut recovery = StationRecovery::new(DiscoveryScope::FullBand);
 
     loop {
         let mut resumed = false;
@@ -522,6 +522,28 @@ async fn wifi_connect_task(
             continue;
         }
         WIFI_STATION_JOINED.store(false, Ordering::Relaxed);
+        if ap_enabled {
+            let discovery_scope = match controller.channel() {
+                Ok((channel, _)) => match DiscoveryScope::protected(channel) {
+                    Some(discovery_scope) => Some(discovery_scope),
+                    None => {
+                        log::warn!("wifi: SoftAP channel is outside 2.4 GHz channel={channel}");
+                        None
+                    }
+                },
+                Err(error) => {
+                    log::warn!("wifi: SoftAP channel query failed: {error:?}");
+                    None
+                }
+            };
+            let Some(discovery_scope) = discovery_scope else {
+                apply_station_yield(StationYield::Retry(RecoveryDelay::TwoSeconds), &status).await;
+                continue;
+            };
+            recovery.set_discovery_scope(discovery_scope);
+        } else {
+            recovery.set_discovery_scope(DiscoveryScope::FullBand);
+        }
         let Some(attempt) = recovery.begin_attempt() else {
             Timer::after(DRIVER_STOP_RETRY_DELAY).await;
             continue;
