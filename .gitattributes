@@ -1,5 +1,11 @@
 *.mu -text
 *.sh text eol=lf
+
+# The signed browser fixture is byte-exact: a minisign key ID parsed from a fixed
+# line, a channel document whose manifest_sha256 must equal the manifest bytes, and
+# per-artifact size and sha256 checks. Line-ending translation rewrites those bytes
+# and invalidates every one of those checks, so keep it verbatim on every platform.
+docs/website/web-flasher/browser/fixtures/signed-candidate/** -text
 .githooks/* text eol=lf
 tools/prns text eol=lf
 tools/prns.cmd text eol=crlf
