@@ -276,6 +276,17 @@ jobs:
           else
             cargo build --manifest-path prns-host/abi/c/Cargo.toml --locked --release --target ${{ matrix.settings.target }}
           fi
+      - name: normalize Apple native binaries
+        if: contains(matrix.settings.target, 'apple-darwin')
+        shell: bash
+        run: |
+          release="prns-host/abi/c/target/${{ matrix.settings.target }}/release"
+          install_name_tool -id "@rpath/${{ matrix.settings.library }}" "$release/${{ matrix.settings.library }}"
+          strip -S "$release/${{ matrix.settings.library }}"
+          strip -S "$release/${{ matrix.settings.static }}"
+          test "$(otool -D "$release/${{ matrix.settings.library }}" | tail -n 1)" = "@rpath/${{ matrix.settings.library }}"
+          ! grep -a -F -q "$HOME" "$release/${{ matrix.settings.library }}"
+          ! grep -a -F -q "$HOME" "$release/${{ matrix.settings.static }}"
       - name: verify musl dynamic linkage
         if: contains(matrix.settings.target, 'musl')
         shell: bash
