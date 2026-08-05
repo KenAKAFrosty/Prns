@@ -1200,7 +1200,7 @@ License: Apache License 2.0
 
 Used by: `ring 0.17.14`
 
-Release graphs: engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64
+Release graphs: Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64
 
 ```text
 Apache License
@@ -2073,7 +2073,7 @@ License: ISC License
 
 Used by: `ring 0.17.14`
 
-Release graphs: engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64
+Release graphs: Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64
 
 ```text
 Copyright 2015-2025 Brian Smith.
@@ -2097,7 +2097,7 @@ License: ISC License
 
 Used by: `rustls-webpki 0.103.13`
 
-Release graphs: engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64
+Release graphs: Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64
 
 ```text
 Except as otherwise noted, this project is licensed under the following
@@ -2127,7 +2127,7 @@ License: ISC License
 
 Used by: `untrusted 0.9.0`
 
-Release graphs: engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64
+Release graphs: Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64
 
 ```text
 // Copyright 2015-2016 Brian Smith.
@@ -2879,6 +2879,42 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
+### MIT (1b0258c48739)
+
+License: MIT License
+
+Used by: `tokio-rustls 0.26.4`
+
+Release graphs: Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS
+
+```text
+Copyright (c) 2017 quininer kel
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
 ### MIT (1b58c7ba0218)
 
 License: MIT License
@@ -3007,6 +3043,24 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+```
+
+### MIT (1ecbb241444a)
+
+License: MIT License
+
+Used by: `schannel 0.1.29`
+
+Release graphs: Node addon Windows, daemon Windows
+
+```text
+Copyright (c) 2015 steffengy
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
 ### MIT (2338ac557880)
@@ -3666,6 +3720,37 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
+### MIT (37412fff76e3)
+
+License: MIT License
+
+Used by: `security-framework 3.7.0`, `security-framework-sys 2.17.0`
+
+Release graphs: Node addon macOS, daemon macOS
+
+```text
+The MIT License (MIT)
+
+Copyright (c) 2015 Steven Fackler
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
+
 ### MIT (37fe7ffb6b46)
 
 License: MIT License
@@ -3818,7 +3903,7 @@ License: MIT License
 
 Used by: `core-foundation 0.10.1`, `core-foundation 0.9.4`, `core-foundation-sys 0.8.7`, `core-graphics 0.23.2`, `core-graphics-types 0.1.3`, `euclid 0.22.14`
 
-Release graphs: daemon macOS, desktop macOS, flasher macOS arm64, flasher macOS x86_64, website Rust/WASM
+Release graphs: Node addon macOS, daemon macOS, desktop macOS, flasher macOS arm64, flasher macOS x86_64, website Rust/WASM
 
 ```text
 Copyright (c) 2012-2013 Mozilla Foundation
@@ -5906,7 +5991,7 @@ DEALINGS IN THE SOFTWARE.
 
 License: MIT License
 
-Used by: `cc 1.2.65`, `cc 1.2.67`, `cc 1.3.0`, `cc 1.4.0`, `cfg-if 1.0.4`, `cmake 0.1.58`, `find-msvc-tools 0.1.9`, `js-sys 0.3.103`, `js-sys 0.3.99`, `longest-increasing-subsequence 0.1.0`, `pkg-config 0.3.33`, `socket2 0.6.4`, `socket2 0.6.5`, `wasm-bindgen 0.2.122`, `wasm-bindgen 0.2.126`, `wasm-bindgen-futures 0.4.72`, `wasm-bindgen-macro 0.2.122`, `wasm-bindgen-macro 0.2.126`, `wasm-bindgen-macro-support 0.2.122`, `wasm-bindgen-macro-support 0.2.126`, `wasm-bindgen-shared 0.2.122`, `wasm-bindgen-shared 0.2.126`, `web-sys 0.3.99`
+Used by: `cc 1.2.65`, `cc 1.2.67`, `cc 1.3.0`, `cc 1.4.0`, `cfg-if 1.0.4`, `cmake 0.1.58`, `find-msvc-tools 0.1.9`, `js-sys 0.3.103`, `js-sys 0.3.99`, `longest-increasing-subsequence 0.1.0`, `openssl-probe 0.2.1`, `pkg-config 0.3.33`, `socket2 0.6.4`, `socket2 0.6.5`, `wasm-bindgen 0.2.122`, `wasm-bindgen 0.2.126`, `wasm-bindgen-futures 0.4.72`, `wasm-bindgen-macro 0.2.122`, `wasm-bindgen-macro 0.2.126`, `wasm-bindgen-macro-support 0.2.122`, `wasm-bindgen-macro-support 0.2.126`, `wasm-bindgen-shared 0.2.122`, `wasm-bindgen-shared 0.2.126`, `web-sys 0.3.99`
 
 Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
 
@@ -7050,9 +7135,9 @@ DEALINGS IN THE SOFTWARE.
 
 License: MIT License
 
-Used by: `rustls 0.23.42`
+Used by: `rustls 0.23.42`, `rustls 0.23.43`, `rustls-native-certs 0.8.4`
 
-Release graphs: engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64
+Release graphs: Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64
 
 ```text
 Copyright (c) 2016 Joseph Birr-Pixton <jpixton@gmail.com>
@@ -8134,9 +8219,9 @@ DEALINGS IN THE SOFTWARE.
 
 License: MIT License
 
-Used by: `rustls-pki-types 1.15.0`
+Used by: `rustls-pki-types 1.15.0`, `rustls-pki-types 1.15.1`
 
-Release graphs: engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64
+Release graphs: Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64
 
 ```text
 Copyright (c) 2023 Dirkjan Ochtman <dirkjan@ochtman.nl>
