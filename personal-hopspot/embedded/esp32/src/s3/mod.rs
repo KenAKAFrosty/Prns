@@ -529,7 +529,6 @@ pub(crate) use boot_add_psram_global;
 /// Register the global half before the internal regions so capability-free allocations land externally and leave the small internal regions for the radios, matching the ordering `global_psram_heap` relies on.
 ///
 /// Reserving the whole window privately instead leaves the system on roughly 75 KiB of internal RAM across the reclaimed region and the D-cache window.
-/// The Bluetooth controller cannot allocate its receive buffers from that, and the captive portal's four HTTP tasks each request another 24 KiB.
 macro_rules! boot_add_psram_split {
     ($p:ident, $psram_config:expr) => {{
         let psram = ::esp_hal::psram::Psram::new($p.PSRAM, $psram_config);

@@ -91,7 +91,8 @@ pub(super) async fn dhcp_server_task(stack: Stack<'static>) -> ! {
     let tx_meta: &'static mut [PacketMetadata] = alloc::vec![PacketMetadata::EMPTY; 4].leak();
     let tx_buf: &'static mut [u8] = alloc::vec![0u8; 1024].leak();
     let mut sock = UdpSocket::new(stack, rx_meta, rx_buf, tx_meta, tx_buf);
-    if sock.bind(67u16).is_err() {
+    if let Err(error) = sock.bind(67u16) {
+        log::error!("dhcp: bind failed: {error:?}");
         loop {
             Timer::after(Duration::from_secs(3600)).await;
         }
@@ -99,23 +100,26 @@ pub(super) async fn dhcp_server_task(stack: Stack<'static>) -> ! {
     let req: &'static mut [u8] = alloc::vec![0u8; 600].leak();
     let reply: &'static mut [u8] = alloc::vec![0u8; 512].leak();
     loop {
-        let Ok((len, _meta)) = sock.recv_from(&mut req[..]).await else {
-            continue;
+        let (len, _meta) = match sock.recv_from(&mut req[..]).await {
+            Ok(received) => received,
+            Err(error) => {
+                log::warn!("dhcp: receive failed: {error:?}");
+                continue;
+            }
         };
         // BOOTREQUEST (op=1) with the DHCP magic cookie + a parseable message-type option.
         if len < 240 || req[0] != 1 || req[236..240] != [0x63, 0x82, 0x53, 0x63] {
             continue;
         }
-        let reply_type = match dhcp_message_type(&req[240..len]) {
-            Some(1) => 2, // DISCOVER -> OFFER
-            Some(3) => 5, // REQUEST  -> ACK
+        let (request_name, reply_name, reply_type) = match dhcp_message_type(&req[240..len]) {
+            Some(1) => ("DISCOVER", "OFFER", 2),
+            Some(3) => ("REQUEST", "ACK", 5),
             _ => continue,
         };
         let n = build_dhcp_reply(&req[..len], &mut reply[..], reply_type);
         let m = &req[28..34];
         log::info!(
-            "dhcp: {} 192.168.4.2 -> {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-            if reply_type == 2 { "OFFER" } else { "ACK" },
+            "dhcp: {request_name} from {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
             m[0],
             m[1],
             m[2],
@@ -123,15 +127,46 @@ pub(super) async fn dhcp_server_task(stack: Stack<'static>) -> ! {
             m[4],
             m[5]
         );
-        // The client has no IP yet, so broadcast the reply (build_dhcp_reply sets the broadcast flag).
-        // 255.255.255.255 is the DHCP standard; if smoltcp refuses the limited broadcast, 192.168.4.255
-        // (the directed subnet broadcast) is the fallback.
-        let _ = sock
+        let delivery = match sock
             .send_to(
                 &reply[..n],
                 (IpAddress::Ipv4(Ipv4Address::new(255, 255, 255, 255)), 68u16),
             )
-            .await;
+            .await
+        {
+            Ok(()) => Some("limited-broadcast"),
+            Err(limited_error) => {
+                log::warn!(
+                    "dhcp: {reply_name} limited-broadcast transmission failed: {limited_error:?}"
+                );
+                match sock
+                    .send_to(
+                        &reply[..n],
+                        (IpAddress::Ipv4(Ipv4Address::new(192, 168, 4, 255)), 68u16),
+                    )
+                    .await
+                {
+                    Ok(()) => Some("directed-broadcast"),
+                    Err(directed_error) => {
+                        log::error!(
+                            "dhcp: {reply_name} directed-broadcast transmission failed: {directed_error:?}"
+                        );
+                        None
+                    }
+                }
+            }
+        };
+        if let Some(delivery) = delivery {
+            log::info!(
+                "dhcp: {reply_name} 192.168.4.2 sent via {delivery} to {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                m[0],
+                m[1],
+                m[2],
+                m[3],
+                m[4],
+                m[5]
+            );
+        }
     }
 }
 
@@ -224,7 +259,8 @@ pub(super) async fn dns_server_task(stack: Stack<'static>) -> ! {
     let tx_meta: &'static mut [PacketMetadata] = alloc::vec![PacketMetadata::EMPTY; 4].leak();
     let tx_buf: &'static mut [u8] = alloc::vec![0u8; 512].leak();
     let mut sock = UdpSocket::new(stack, rx_meta, rx_buf, tx_meta, tx_buf);
-    if sock.bind(53u16).is_err() {
+    if let Err(error) = sock.bind(53u16) {
+        log::error!("dns: bind failed: {error:?}");
         loop {
             Timer::after(Duration::from_secs(3600)).await;
         }
@@ -232,13 +268,20 @@ pub(super) async fn dns_server_task(stack: Stack<'static>) -> ! {
     let req: &'static mut [u8] = alloc::vec![0u8; 512].leak();
     let reply: &'static mut [u8] = alloc::vec![0u8; 512].leak();
     loop {
-        let Ok((len, meta)) = sock.recv_from(&mut req[..]).await else {
-            continue;
+        let (len, meta) = match sock.recv_from(&mut req[..]).await {
+            Ok(received) => received,
+            Err(error) => {
+                log::warn!("dns: receive failed: {error:?}");
+                continue;
+            }
         };
         let Some(reply_len) = build_dns_reply(&req[..len], &mut reply[..]) else {
             continue;
         };
-        let _ = sock.send_to(&reply[..reply_len], meta.endpoint).await;
+        match sock.send_to(&reply[..reply_len], meta.endpoint).await {
+            Ok(()) => log::info!("dns: response sent to {:?}", meta.endpoint),
+            Err(error) => log::warn!("dns: response to {:?} failed: {error:?}", meta.endpoint),
+        }
     }
 }
 
@@ -309,36 +352,81 @@ fn dns_question_end(req: &[u8]) -> Option<(usize, u16)> {
 }
 
 #[cfg(feature = "wifi-auto")]
+const HTTP_SOCKET_BUFFER_BYTES: usize = 2048;
+#[cfg(feature = "wifi-auto")]
+const HTTP_REQUEST_BUFFER_BYTES: usize = 1024;
+
+#[cfg(feature = "wifi-auto")]
 #[embassy_executor::task(pool_size = 4)]
 pub(super) async fn http_server_task(stack: Stack<'static>) -> ! {
-    let rx_buffer: &'static mut [u8] = alloc::vec![0u8; 4096].leak();
-    let tx_buffer: &'static mut [u8] = alloc::vec![0u8; 16384].leak();
-    let request_buffer: &'static mut [u8] = alloc::vec![0u8; 4096].leak();
+    let rx_buffer: &'static mut [u8] = alloc::vec![0u8; HTTP_SOCKET_BUFFER_BYTES].leak();
+    let tx_buffer: &'static mut [u8] = alloc::vec![0u8; HTTP_SOCKET_BUFFER_BYTES].leak();
+    let request_buffer: &'static mut [u8] = alloc::vec![0u8; HTTP_REQUEST_BUFFER_BYTES].leak();
     let mut socket = TcpSocket::new(stack, rx_buffer, tx_buffer);
     socket.set_timeout(Some(Duration::from_secs(15)));
 
     loop {
-        if socket.accept(80u16).await.is_err() {
+        if let Err(error) = socket.accept(80u16).await {
+            log::warn!("http: accept failed: {error:?}");
             Timer::after(Duration::from_millis(250)).await;
             continue;
         }
         let peer = socket.remote_endpoint();
-        let _ = serve_site_connection(&mut socket, request_buffer).await;
+        let response = serve_site_connection(&mut socket, request_buffer).await;
         socket.close();
-        let _ = with_timeout(Duration::from_secs(2), socket.flush()).await;
+        let flush = with_timeout(Duration::from_secs(2), socket.flush()).await;
         socket.abort();
-        if let Some(peer) = peer {
-            log::debug!("http: served {peer:?}");
+        match response {
+            Ok(response) => {
+                let complete = response.written && matches!(&flush, Ok(Ok(())));
+                if complete {
+                    log::info!(
+                        "http: method={} path={} response_complete=true peer={peer:?}",
+                        response.method,
+                        response.path
+                    );
+                } else {
+                    log::warn!(
+                        "http: method={} path={} response_complete=false peer={peer:?} write={:?} flush={flush:?}",
+                        response.method,
+                        response.path,
+                        response.written
+                    );
+                }
+            }
+            Err(()) => {
+                log::warn!("http: request failed before response peer={peer:?} flush={flush:?}")
+            }
         }
         Timer::after(Duration::from_millis(50)).await;
     }
 }
 
 #[cfg(feature = "wifi-auto")]
-async fn serve_site_connection(
+struct HttpResponseAttempt<'a> {
+    method: &'a str,
+    path: &'a str,
+    written: bool,
+}
+
+#[cfg(feature = "wifi-auto")]
+fn http_response_attempt<'a>(
+    method: &'a str,
+    path: &'a str,
+    response: Result<(), ()>,
+) -> HttpResponseAttempt<'a> {
+    HttpResponseAttempt {
+        method,
+        path,
+        written: response.is_ok(),
+    }
+}
+
+#[cfg(feature = "wifi-auto")]
+async fn serve_site_connection<'a>(
     socket: &mut TcpSocket<'static>,
-    request_buffer: &mut [u8],
-) -> Result<(), ()> {
+    request_buffer: &'a mut [u8],
+) -> Result<HttpResponseAttempt<'a>, ()> {
     let len = read_http_request(socket, request_buffer).await?;
     let request = core::str::from_utf8(&request_buffer[..len]).map_err(|_| ())?;
     let Some(line) = request.lines().next() else {
@@ -349,28 +437,40 @@ async fn serve_site_connection(
     let raw_path = parts.next().unwrap_or("/");
     let is_head = method == "HEAD";
     if method != "GET" && !is_head {
-        return send_site_response(
-            socket,
-            SiteResponse {
-                status: "405 Method Not Allowed",
-                content_type: "text/plain; charset=utf-8",
-                body: b"method not allowed\n",
-                head_only: is_head,
-                content_encoding: None,
-                vary_accept_encoding: false,
-                cache_control: "no-store",
-                content_disposition: None,
-            },
-        )
-        .await;
+        return Ok(http_response_attempt(
+            method,
+            raw_path,
+            send_site_response(
+                socket,
+                SiteResponse {
+                    status: "405 Method Not Allowed",
+                    content_type: "text/plain; charset=utf-8",
+                    body: b"method not allowed\n",
+                    head_only: is_head,
+                    content_encoding: None,
+                    vary_accept_encoding: false,
+                    cache_control: "no-store",
+                    content_disposition: None,
+                },
+            )
+            .await,
+        ));
     }
 
     let path = normalize_http_path(raw_path);
     if path == "/captive-portal/api" {
-        return send_captive_portal_api(socket, is_head).await;
+        return Ok(http_response_attempt(
+            method,
+            raw_path,
+            send_captive_portal_api(socket, is_head).await,
+        ));
     }
     if is_captive_probe_path(path) {
-        return send_captive_portal_redirect(socket, is_head).await;
+        return Ok(http_response_attempt(
+            method,
+            raw_path,
+            send_captive_portal_redirect(socket, is_head).await,
+        ));
     }
     #[cfg(feature = "source-archive")]
     if let Some((body, content_type)) = match path {
@@ -384,56 +484,68 @@ async fn serve_site_connection(
         )),
         _ => None,
     } {
-        return send_site_response(
-            socket,
-            SiteResponse {
-                status: "200 OK",
-                content_type,
-                body,
-                head_only: is_head,
-                content_encoding: None,
-                vary_accept_encoding: false,
-                cache_control: "no-cache",
-                content_disposition: site_content_disposition(path).as_deref(),
-            },
-        )
-        .await;
+        return Ok(http_response_attempt(
+            method,
+            raw_path,
+            send_site_response(
+                socket,
+                SiteResponse {
+                    status: "200 OK",
+                    content_type,
+                    body,
+                    head_only: is_head,
+                    content_encoding: None,
+                    vary_accept_encoding: false,
+                    cache_control: "no-cache",
+                    content_disposition: site_content_disposition(path).as_deref(),
+                },
+            )
+            .await,
+        ));
     }
     let Some(asset) = find_site_asset(path) else {
-        return send_site_response(
-            socket,
-            SiteResponse {
-                status: "404 Not Found",
-                content_type: "text/plain; charset=utf-8",
-                body: b"not found\n",
-                head_only: is_head,
-                content_encoding: None,
-                vary_accept_encoding: false,
-                cache_control: "no-store",
-                content_disposition: None,
-            },
-        )
-        .await;
+        return Ok(http_response_attempt(
+            method,
+            raw_path,
+            send_site_response(
+                socket,
+                SiteResponse {
+                    status: "404 Not Found",
+                    content_type: "text/plain; charset=utf-8",
+                    body: b"not found\n",
+                    head_only: is_head,
+                    content_encoding: None,
+                    vary_accept_encoding: false,
+                    cache_control: "no-store",
+                    content_disposition: None,
+                },
+            )
+            .await,
+        ));
     };
     let accepts_gzip = request_accepts_gzip(request);
     let (body, content_encoding) = match (accepts_gzip, asset.gzip_bytes) {
         (true, Some(gzip_bytes)) => (gzip_bytes, Some("gzip")),
         _ => (asset.bytes, None),
     };
-    send_site_response(
-        socket,
-        SiteResponse {
-            status: "200 OK",
-            content_type: asset.content_type,
-            body,
-            head_only: is_head,
-            content_encoding,
-            vary_accept_encoding: asset.gzip_bytes.is_some(),
-            cache_control: site_cache_control(asset.path),
-            content_disposition: site_content_disposition(asset.path).as_deref(),
-        },
-    )
-    .await
+    Ok(http_response_attempt(
+        method,
+        raw_path,
+        send_site_response(
+            socket,
+            SiteResponse {
+                status: "200 OK",
+                content_type: asset.content_type,
+                body,
+                head_only: is_head,
+                content_encoding,
+                vary_accept_encoding: asset.gzip_bytes.is_some(),
+                cache_control: site_cache_control(asset.path),
+                content_disposition: site_content_disposition(asset.path).as_deref(),
+            },
+        )
+        .await,
+    ))
 }
 
 #[cfg(feature = "wifi-auto")]
