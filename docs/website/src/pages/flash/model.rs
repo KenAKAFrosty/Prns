@@ -171,7 +171,7 @@ pub(super) fn preparation_guide(
             lead: "The flasher will try the board's cataloged automatic reset strategy first.",
             steps: vec![
                 "Use a USB data cable connected directly to this computer, and close serial monitors using the board.".to_string(),
-                "When asked, choose this board's serial port. Do not identify a board solely by chip family when catalog targets share one.".to_string(),
+                "When asked, choose this board's serial port. Port names come from the chip rather than the board, and different boards can share the same chip, so if you're not sure which port is which, unplug everything else first.".to_string(),
                 "If automatic connection fails, hold BOOT, tap RESET, release BOOT, then restart the complete connect-and-flash step.".to_string(),
             ],
         },

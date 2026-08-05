@@ -48,14 +48,14 @@ pub fn PlatformsPage() -> Element {
                         }
                         if *group == Group::Language {
                             p { class: "mt-4 max-w-3xl text-sm leading-relaxed text-soft",
-                                "Rust and TypeScript/JavaScript are the paved application SDKs. SDK preview means the language adapter and live in-tree conformance journey are implemented while idiomatic public packaging remains active release work. "
-                                a {
-                                    href: format!("{REPOSITORY_BLOB_BASE}/docs/sdks.md"),
-                                    target: "_blank",
-                                    rel: "noopener",
-                                    class: "font-medium text-accent hover:underline underline-offset-2",
-                                    "Choose an SDK and see its exact readiness →"
-                                }
+                                "Rust and TypeScript/JavaScript are the paved application SDKs. SDK preview means the language works today from the source tree, tested and proven. What's left is the paving: publishing each one as a package that feels native to its ecosystem. This is a great time to help shape the API and package design if you know one of these ecosystems inside and out."
+                            }
+                            a {
+                                href: format!("{REPOSITORY_BLOB_BASE}/docs/sdks.md"),
+                                target: "_blank",
+                                rel: "noopener",
+                                class: "mt-2 inline-flex text-sm font-medium text-accent hover:underline underline-offset-2",
+                                "Choose an SDK and see its exact readiness →"
                             }
                         }
                         if *group == Group::Microcontroller {
