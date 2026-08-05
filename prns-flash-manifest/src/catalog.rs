@@ -173,6 +173,14 @@ pub enum CatalogError {
     /// A board slug occurs more than once.
     #[error("duplicate board slug {0:?}")]
     DuplicateSlug(String),
+    /// Two UF2 boards could both claim one mounted bootloader drive.
+    #[error("UF2 board-id prefixes overlap between {first:?} and {second:?}")]
+    OverlappingUf2BoardIdPrefixes {
+        /// One board's slug.
+        first: String,
+        /// The other board's slug.
+        second: String,
+    },
     /// A catalog invariant is invalid.
     #[error("board {board:?}: {message}")]
     InvalidBoard {
@@ -205,6 +213,7 @@ impl BoardCatalog {
             validate_transport(board)?;
             validate_provisioning(board)?;
         }
+        validate_uf2_board_id_prefixes(&self.boards)?;
         let expected = SHIPPING_BOARD_SLUGS
             .into_iter()
             .collect::<std::collections::BTreeSet<_>>();
@@ -310,6 +319,32 @@ fn validate_transport(board: &BoardCatalogEntry) -> Result<(), CatalogError> {
             }
         }
         _ => return Err(invalid(board, "transport and build recipe disagree")),
+    }
+    Ok(())
+}
+
+/// No UF2 board may answer for another's bootloader drive. Detection strips a cataloged prefix and
+/// requires a non-empty revision token after it, so when one prefix begins with another a single
+/// mounted drive satisfies both boards' identity checks and the narrowing `flash` performs stops
+/// being a guarantee. Catalog time is the only place this can be caught, because each prefix is
+/// individually well formed.
+fn validate_uf2_board_id_prefixes(boards: &[BoardCatalogEntry]) -> Result<(), CatalogError> {
+    let prefixes = boards
+        .iter()
+        .filter_map(|board| match &board.build {
+            BoardBuild::Uf2(build) => Some((board.slug.as_str(), build.board_id_prefix.as_str())),
+            BoardBuild::Esp(_) => None,
+        })
+        .collect::<Vec<_>>();
+    for (index, (slug, prefix)) in prefixes.iter().enumerate() {
+        for (other_slug, other_prefix) in &prefixes[index + 1..] {
+            if prefix.starts_with(other_prefix) || other_prefix.starts_with(prefix) {
+                return Err(CatalogError::OverlappingUf2BoardIdPrefixes {
+                    first: (*slug).to_string(),
+                    second: (*other_slug).to_string(),
+                });
+            }
+        }
     }
     Ok(())
 }
@@ -488,6 +523,31 @@ mod tests {
         build.mount_label = "T114BOOT".to_string();
         build.board_id_prefix = "nrf52840-heltec-t114-v".to_string();
         catalog.validate()?;
+        Ok(())
+    }
+
+    #[test]
+    fn one_uf2_board_id_prefix_may_not_begin_with_another() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut catalog = board_catalog()?;
+        let mut second = catalog
+            .boards
+            .iter()
+            .find(|board| board.transport == Transport::Uf2MassStorage)
+            .ok_or("expected a UF2 board")?
+            .clone();
+        second.slug = "nrf52840-second-board".to_string();
+        let BoardBuild::Uf2(build) = &mut second.build else {
+            return Err("expected a UF2 build".into());
+        };
+        // Individually well formed, and a longer prefix that still begins with the first board's,
+        // so one mounted drive would satisfy both boards' identity checks.
+        build.board_id_prefix = format!("{}2-", build.board_id_prefix);
+        catalog.boards.push(second);
+        assert!(matches!(
+            catalog.validate(),
+            Err(CatalogError::OverlappingUf2BoardIdPrefixes { .. })
+        ));
         Ok(())
     }
 
