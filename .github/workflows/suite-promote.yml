@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       source_commit:
-        description: Full protected trunk source commit
+        description: Full protected main source commit
         required: true
         type: string
       image_digest:
@@ -20,7 +20,7 @@ on:
         required: true
         type: string
       flasher_acceptance_commit:
-        description: Reviewed trunk commit containing the physical flasher acceptance record
+        description: Reviewed main commit containing the physical flasher acceptance record
         required: true
         type: string
       flasher_finalization_run_id:
@@ -53,6 +53,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     environment: public-release
+    env:
+      SOURCE_COMMIT: ${{ inputs.source_commit }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -62,10 +64,11 @@ jobs:
         env:
           REF_PROTECTED: ${{ github.ref_protected }}
         run: |
-          test "$GITHUB_REF" = "refs/heads/trunk"
+          test "$GITHUB_REF" = "refs/heads/main"
           test "$REF_PROTECTED" = "true"
-          test "$GITHUB_SHA" = "${{ inputs.source_commit }}"
+          test "$GITHUB_WORKFLOW_SHA" = "$GITHUB_SHA"
           test "${{ inputs.package_is_public }}" = "true"
+          [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
           [[ "${{ inputs.image_digest }}" =~ ^sha256:[0-9a-f]{64}$ ]]
           [[ "${{ inputs.qualification_run_id }}" =~ ^[1-9][0-9]*$ ]]
           [[ "${{ inputs.qualification_evidence_sha256 }}" =~ ^[0-9a-f]{64}$ ]]
@@ -95,12 +98,19 @@ jobs:
           test "$(jq -r '.inputs.acceptance_commit' "${RUNNER_TEMP}/flasher-finalization-run.json")" = \
             "${{ inputs.flasher_acceptance_commit }}"
           gh api \
-            "repos/${GITHUB_REPOSITORY}/compare/${GITHUB_SHA}...${{ inputs.flasher_acceptance_commit }}" \
+            "repos/${GITHUB_REPOSITORY}/compare/${SOURCE_COMMIT}...${{ inputs.flasher_acceptance_commit }}" \
             > "${RUNNER_TEMP}/source-to-acceptance.json"
           status="$(jq -r '.status' "${RUNNER_TEMP}/source-to-acceptance.json")"
           test "$status" = "ahead" || test "$status" = "identical"
           test "$(jq -r '.merge_base_commit.sha' "${RUNNER_TEMP}/source-to-acceptance.json")" = \
-            "$GITHUB_SHA"
+            "$SOURCE_COMMIT"
+          gh api \
+            "repos/${GITHUB_REPOSITORY}/compare/${{ inputs.flasher_acceptance_commit }}...${GITHUB_SHA}" \
+            > "${RUNNER_TEMP}/acceptance-to-authority.json"
+          status="$(jq -r '.status' "${RUNNER_TEMP}/acceptance-to-authority.json")"
+          test "$status" = "ahead" || test "$status" = "identical"
+          test "$(jq -r '.merge_base_commit.sha' "${RUNNER_TEMP}/acceptance-to-authority.json")" = \
+            "${{ inputs.flasher_acceptance_commit }}"
       - name: Verify protected deployment qualification custody
         env:
           GH_TOKEN: ${{ github.token }}
@@ -113,7 +123,7 @@ jobs:
             ".github/workflows/suite-deployment-qualification.yml"
           test "$(jq -r '.event' "${RUNNER_TEMP}/qualification-run.json")" = "workflow_dispatch"
           test "$(jq -r '.conclusion' "${RUNNER_TEMP}/qualification-run.json")" = "success"
-          test "$(jq -r '.head_sha' "${RUNNER_TEMP}/qualification-run.json")" = "$GITHUB_SHA"
+          test "$(jq -r '.head_sha' "${RUNNER_TEMP}/qualification-run.json")" = "$SOURCE_COMMIT"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           run-id: ${{ inputs.qualification_run_id }}
@@ -132,7 +142,7 @@ jobs:
             > target/prerelease.json
           test "$(jq -r '.isDraft' target/prerelease.json)" = "false"
           test "$(jq -r '.isPrerelease' target/prerelease.json)" = "true"
-          test "$(jq -r '.targetCommitish' target/prerelease.json)" = "$GITHUB_SHA"
+          test "$(jq -r '.targetCommitish' target/prerelease.json)" = "$SOURCE_COMMIT"
           mkdir -p target/release-assets
           gh release download "$tag" --dir target/release-assets
           jq '[.assets[] | {name, size, digest}] | sort_by(.name)' \
@@ -156,12 +166,12 @@ jobs:
             -p release/keys/minisign.pub
           ./tools/prns release prnsd distribution -- suite-verify \
             --assets target/release-assets \
-            --source-commit "$GITHUB_SHA" \
+            --source-commit "$SOURCE_COMMIT" \
             --image-digest "${{ inputs.image_digest }}"
           ./tools/prns release prnsd distribution -- deployment-verify \
             --evidence "target/qualification/deployment-qualification-v${version}.json" \
             --evidence-sha256 "${{ inputs.qualification_evidence_sha256 }}" \
-            --source-commit "$GITHUB_SHA" \
+            --source-commit "$SOURCE_COMMIT" \
             --image-digest "${{ inputs.image_digest }}" \
             --repository "$GITHUB_REPOSITORY" \
             --workflow-run-id "${{ inputs.qualification_run_id }}"
@@ -240,7 +250,7 @@ jobs:
             --manifest "$candidate/flash-manifest.json" \
             --repository "$GITHUB_REPOSITORY" \
             --version "$version" \
-            --source-commit "$GITHUB_SHA"
+            --source-commit "$SOURCE_COMMIT"
           flasher_attestation="${assets}/prns-flasher-attestation-v${version}.json"
           flasher_signer="${GITHUB_REPOSITORY}/.github/workflows/flasher-sign.yml"
           gh attestation verify "$bundle" \

@@ -6,7 +6,7 @@ following owner-controlled setup.
 ## GitHub
 
 - Create a protected `host-sdk-release` environment with required approval and
-  allow deployments only from `trunk`.
+  allow deployments only from `main`.
 - Protect stable release tags from movement or deletion.
 - Enable immutable GitHub Releases and set the repository variable
   `HOST_SDK_IMMUTABLE_RELEASES=enabled` only after that policy is active.
@@ -17,7 +17,7 @@ following owner-controlled setup.
   environment variables for the same owner identity.
 - Keep fallback credentials environment-scoped. The publishing jobs request
   GitHub OIDC identities only after the package proofs pass.
-- Run `host-sdk-stage` with the exact approved `trunk` SHA. After its complete
+- Run `host-sdk-stage` with the exact approved `main` SHA. After its complete
   stage passes, dispatch `host-sdk-promote` with that SHA and the successful
   stage run ID. Promotion re-verifies the stage, signs every asset and all four
   ecosystem tags, and refuses to replace an existing release.

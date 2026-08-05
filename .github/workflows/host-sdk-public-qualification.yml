@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       expected_sha:
-        description: "Full promoted trunk commit SHA"
+        description: "Full promoted main commit SHA"
         required: true
         type: string
 
@@ -34,11 +34,19 @@ jobs:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
           GH_TOKEN: ${{ github.token }}
           HOST_SDK_SIGNING_EMAIL: ${{ vars.HOST_SDK_SIGNING_EMAIL }}
+          REF_PROTECTED: ${{ github.ref_protected }}
         shell: bash
         run: |
-          test "$GITHUB_REF" = "refs/heads/trunk"
-          test "$GITHUB_SHA" = "$EXPECTED_SHA"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$REF_PROTECTED" = "true"
+          test "$GITHUB_WORKFLOW_SHA" = "$GITHUB_SHA"
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          gh api "repos/${GITHUB_REPOSITORY}/compare/${EXPECTED_SHA}...${GITHUB_SHA}" \
+            > "${RUNNER_TEMP}/source-to-authority.json"
+          status="$(jq -r '.status' "${RUNNER_TEMP}/source-to-authority.json")"
+          test "$status" = "ahead" || test "$status" = "identical"
+          test "$(jq -r '.merge_base_commit.sha' "${RUNNER_TEMP}/source-to-authority.json")" = \
+            "$EXPECTED_SHA"
           version="$(<VERSION)"
           release_tag="host-sdk-v$version"
           mkdir -p dist/public
