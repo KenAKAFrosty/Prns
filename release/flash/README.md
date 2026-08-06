@@ -9,8 +9,8 @@ The S3 per-board artifact gates are pinned to the previous merged-image baseline
 for Heltec V4 and 7,639,296 bytes for T-Beam Supreme) and reject anything above 40% of those
 totals. The aggregate ESP gate also includes the XIAO ESP32-C6 baseline (1,309,056 bytes) and
 requires at least a 60% reduction across all three ESP boards; XIAO is aggregate-only because its
-old image contained little address-gap padding. The embedded SoftAP build excludes the hosted
-flasher engine and published firmware.
+old image contained little address-gap padding. The embedded captive page is a static firmware
+asset and excludes the hosted Dioxus application, flasher engine, and published firmware.
 
 ## Custody layers
 
@@ -137,10 +137,8 @@ Testers extract the signed candidate. CLI qualification imports/uses only its ve
 contents; web qualification serves `CANDIDATE/website` from localhost and opens `/flash`. The
 hosted website also carries the exact commit-bound `source.zip` and
 `source.zip.sha256`; unsigned-candidate validation reproduces the archive and requires both the
-website and NomadNet page source trees before signing. The Heltec V4 and T-Beam Supreme serve
-those exact embedded bytes at both SoftAP `/source.zip` and NomadNet `/file/source.zip`; the XIAO
-ESP32-C6 and T-Echo page explicitly says the compact build does not carry them. Per-target facts
-and any automatic 1 MiB partition-reserve downgrade are recorded in
+website and NomadNet page source trees before signing. Embedded firmware does not carry or serve
+that archive; every target records the capability as absent in
 `metadata/source-capabilities.json`. Hardware
 results follow `release/acceptance/README.md`. No unsigned or locally rebuilt artifact counts.
 

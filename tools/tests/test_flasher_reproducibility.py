@@ -331,10 +331,6 @@ class FlasherReproducibilityTests(unittest.TestCase):
         self.assertIn("public/source.zip", candidate_build)
         self.assertLess(
             candidate_build.index("package-source-snapshot.py"),
-            candidate_build.index("PRNS_EMBEDDED_SITE=1"),
-        )
-        self.assertLess(
-            candidate_build.index("package-source-snapshot.py"),
             candidate_build.index(
                 'cargo run --locked -p hopspot-flash -- build "$board"'
             ),
@@ -730,18 +726,31 @@ class FlasherReproducibilityTests(unittest.TestCase):
             self.assertIn("--coff-debug-directory", workflow)
             self.assertIn("PDBFileName:", workflow)
 
-    def test_shipping_firmware_reuses_one_embedded_site_build(self) -> None:
+    def test_shipping_firmware_builds_each_shipping_board(self) -> None:
         shipping = (
             ROOT / "validation" / "platforms" / "shipping-firmware.sh"
         ).read_text(encoding="utf-8")
-        first = shipping.index("release firmware build -- heltec-v4")
-        ready = shipping.index("PRNS_EMBEDDED_SITE_READY=1")
-        remaining = shipping.index(
-            "for board in heltec-v4-r8 t-beam-supreme xiao-esp32-c6 t-echo"
+        self.assertIn(
+            "for board in heltec-v4 heltec-v4-r8 t-beam-supreme xiao-esp32-c6 t-echo",
+            shipping,
         )
-        self.assertLess(first, remaining)
-        self.assertLess(remaining, ready)
-        self.assertEqual(shipping.count("PRNS_EMBEDDED_SITE_READY=1"), 1)
+        self.assertNotIn("PRNS_EMBEDDED_SITE", shipping)
+
+    def test_embedded_captive_portal_is_a_bounded_static_asset(self) -> None:
+        portal = (
+            ROOT
+            / "personal-hopspot"
+            / "embedded"
+            / "esp32"
+            / "assets"
+            / "captive-portal.html"
+        ).read_bytes()
+        self.assertLessEqual(len(portal), 2_048)
+        self.assertIn(b"Hopspot is ready", portal)
+        self.assertIn(b"does not provide Internet access", portal)
+        lowered = portal.lower()
+        for forbidden in (b"<script", b"href=", b"src=", b"source.zip", b"dioxus"):
+            self.assertNotIn(forbidden, lowered)
 
     def test_npm_release_graph_keeps_browser_tools_test_only(self) -> None:
         result = run_repository_python(

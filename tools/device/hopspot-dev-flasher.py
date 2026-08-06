@@ -329,8 +329,6 @@ def clean_build_environment() -> dict[str, str]:
             }
         ):
             environment.pop(name)
-    environment.pop("PRNS_EMBEDDED_SITE_READY", None)
-    environment.pop("PRNS_EMBEDDED_SITE", None)
     return environment
 
 
@@ -343,47 +341,12 @@ def clear_dioxus_output() -> Path:
     return output
 
 
-def build_embedded_site(identity: SourceIdentity) -> None:
-    output = clear_dioxus_output()
-    environment = clean_build_environment()
-    environment.update(
-        {
-            "PRNS_EMBEDDED_SITE": "1",
-            "PRNS_BUILD_VERSION": identity.version,
-            "PRNS_BUILD_COMMIT": identity.head,
-            "PRNS_BUILD_CHANNEL": "preview",
-        }
-    )
-    run_process(
-        [
-            "dx",
-            "build",
-            "--platform",
-            "web",
-            "--debug-symbols",
-            "false",
-            "--release",
-            "--locked",
-            "--features",
-            "embedded-site",
-        ],
-        cwd=WEBSITE,
-        environment=environment,
-        label="embedded website build",
-    )
-    if not (output / "index.html").is_file():
-        raise DeveloperFlasherError("embedded website build did not produce index.html")
-
-
 def build_firmware(
     candidate: Path,
     identity: SourceIdentity,
     selection: Selection,
     key_id: str,
 ) -> Path:
-    needs_embedded = any(board in {"heltec-v4", "heltec-v4-r8", "t-beam-supreme"} for board in selection.boards)
-    if needs_embedded:
-        build_embedded_site(identity)
     environment = clean_build_environment()
     environment.update(
         {
@@ -392,8 +355,6 @@ def build_firmware(
             "PRNS_BUILD_VERSION": identity.version,
         }
     )
-    if needs_embedded:
-        environment["PRNS_EMBEDDED_SITE_READY"] = "1"
     for board in selection.boards:
         run_process(
             [

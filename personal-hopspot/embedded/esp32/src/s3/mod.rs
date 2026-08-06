@@ -123,11 +123,6 @@ pub(crate) use board::{
 esp_app_desc!();
 
 #[cfg(feature = "wifi-auto")]
-mod hopspot_site {
-    include!(concat!(env!("OUT_DIR"), "/hopspot_site.rs"));
-}
-
-#[cfg(feature = "wifi-auto")]
 const AP_IPV4: [u8; 4] = [192, 168, 4, 1];
 #[cfg(feature = "wifi-auto")]
 const CAPTIVE_PORTAL_HOST: &str = "192.168.4.1";
