@@ -1,6 +1,6 @@
 use ::core::time::Duration as CoreDuration;
 use embassy_futures::select::{select, select3, Either, Either3};
-use embassy_net::tcp::TcpSocket;
+use embassy_net::tcp::{Error as TcpIoError, TcpSocket};
 use embassy_net::{IpEndpoint, Stack};
 use embassy_time::{with_timeout, Duration, Instant, Timer};
 use embedded_io_async_07::Write;
@@ -22,6 +22,15 @@ pub const SOCKET_TIMEOUT: Duration = Duration::from_secs(24);
 pub const KEEP_ALIVE: Duration = Duration::from_secs(5);
 pub const TCP_DNS_HOSTNAME_MAX_BYTES: usize = 253;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TcpClientExitCause {
+    PeerClosed,
+    ReadFailure(TcpIoError),
+    WriteFailure(TcpIoError),
+    Timeout,
+    Disabled,
+}
+
 pub struct TcpSocketBuffers<'a> {
     pub rx: &'a mut [u8],
     pub tx: &'a mut [u8],
@@ -37,6 +46,7 @@ pub struct TcpClientInput<'a> {
     pub status: &'a EmbassyInterfaceStatus,
 }
 
+#[derive(Debug)]
 pub struct TcpClientTarget {
     endpoint: Option<IpEndpoint>,
     #[cfg(feature = "tcp-dns")]
@@ -154,64 +164,142 @@ impl Interface for TcpClient<'_> {
                 status.wait_until_enabled().await;
                 continue;
             }
+            crate::diagnostic_log::info!("tcp-client [configured]: resolving target={target:?}");
             let resolved_target = select(
                 with_timeout(CONNECT_TIMEOUT, resolve_target(stack, &target)),
                 status.wait_until_disabled(),
             )
             .await;
-            let Either::First(Ok(Some(resolved_target))) = resolved_target else {
-                if status.is_enabled() {
+            let resolved_target = match resolved_target {
+                Either::First(Ok(Some(resolved_target))) => {
+                    crate::diagnostic_log::info!(
+                        "tcp-client [configured]: resolved target={target:?} endpoint={resolved_target:?}"
+                    );
+                    resolved_target
+                }
+                Either::First(Ok(None)) => {
+                    crate::diagnostic_log::warn!(
+                        "tcp-client [configured]: resolution failed target={target:?}"
+                    );
                     status.set_connection(ConnectionState::Disconnected);
                     let reconnect_delay = reconnect.next_delay(|bytes| seam.fill_entropy(bytes));
+                    crate::diagnostic_log::info!(
+                        "tcp-client [configured]: target={target:?} retry_delay_ms={}",
+                        reconnect_delay.as_millis()
+                    );
                     let _ = select(
                         Timer::after(Duration::from_millis(reconnect_delay.as_millis() as u64)),
                         status.wait_until_disabled(),
                     )
                     .await;
+                    continue;
                 }
-                continue;
+                Either::First(Err(_)) => {
+                    crate::diagnostic_log::warn!(
+                        "tcp-client [configured]: resolution failed target={target:?} cause={:?}",
+                        TcpClientExitCause::Timeout
+                    );
+                    status.set_connection(ConnectionState::Disconnected);
+                    let reconnect_delay = reconnect.next_delay(|bytes| seam.fill_entropy(bytes));
+                    crate::diagnostic_log::info!(
+                        "tcp-client [configured]: target={target:?} retry_delay_ms={}",
+                        reconnect_delay.as_millis()
+                    );
+                    let _ = select(
+                        Timer::after(Duration::from_millis(reconnect_delay.as_millis() as u64)),
+                        status.wait_until_disabled(),
+                    )
+                    .await;
+                    continue;
+                }
+                Either::Second(()) => {
+                    status.set_connection(ConnectionState::Disabled);
+                    crate::diagnostic_log::info!(
+                        "tcp-client [configured]: target={target:?} exit={:?}",
+                        TcpClientExitCause::Disabled
+                    );
+                    continue;
+                }
             };
             let mut socket = TcpSocket::new(stack, &mut *rx_buffer, &mut *tx_buffer);
             socket.set_timeout(Some(SOCKET_TIMEOUT));
             socket.set_keep_alive(Some(KEEP_ALIVE));
+            crate::diagnostic_log::info!(
+                "tcp-client [configured]: connecting target={target:?} endpoint={resolved_target:?}"
+            );
             let connected = select(
                 with_timeout(CONNECT_TIMEOUT, socket.connect(resolved_target)),
                 status.wait_until_disabled(),
             )
             .await;
-            if let Either::First(Ok(Ok(()))) = connected {
-                let connected_at = Instant::now();
-                status.set_connection(ConnectionState::Connected);
-                serve(
-                    &mut socket,
-                    &mut seam,
-                    status,
-                    &mut decoder,
-                    &mut read_buf,
-                    &mut frame_buf,
-                    &mut airtime,
-                    &mut throughput,
-                    bitrate,
-                    started,
-                )
-                .await;
-                reconnect.record_connection_lifetime(CoreDuration::from_millis(
-                    connected_at.elapsed().as_millis(),
-                ));
+            match connected {
+                Either::First(Ok(Ok(()))) => {
+                    let connected_at = Instant::now();
+                    reset_decoder_for_connection(&mut decoder);
+                    status.set_connection(ConnectionState::Connected);
+                    crate::diagnostic_log::info!(
+                        "tcp-client [configured]: connected target={target:?} endpoint={resolved_target:?}"
+                    );
+                    let exit = serve(
+                        &mut socket,
+                        &mut seam,
+                        status,
+                        &mut decoder,
+                        &mut read_buf,
+                        &mut frame_buf,
+                        &mut airtime,
+                        &mut throughput,
+                        bitrate,
+                        started,
+                    )
+                    .await;
+                    let lifetime_ms = connected_at.elapsed().as_millis();
+                    reconnect.record_connection_lifetime(CoreDuration::from_millis(lifetime_ms));
+                    crate::diagnostic_log::info!(
+                        "tcp-client [configured]: target={target:?} endpoint={resolved_target:?} exit={exit:?} lifetime_ms={lifetime_ms}"
+                    );
+                }
+                Either::First(Ok(Err(error))) => {
+                    crate::diagnostic_log::warn!(
+                        "tcp-client [configured]: connect failed target={target:?} endpoint={resolved_target:?} error={error:?}"
+                    );
+                }
+                Either::First(Err(_)) => {
+                    crate::diagnostic_log::warn!(
+                        "tcp-client [configured]: connect failed target={target:?} endpoint={resolved_target:?} cause={:?}",
+                        TcpClientExitCause::Timeout
+                    );
+                }
+                Either::Second(()) => {
+                    crate::diagnostic_log::info!(
+                        "tcp-client [configured]: connect stopped target={target:?} endpoint={resolved_target:?} exit={:?}",
+                        TcpClientExitCause::Disabled
+                    );
+                }
             }
             socket.abort();
             // Skip reconnect delay after disable so status changes immediately.
             if status.is_enabled() {
                 status.set_connection(ConnectionState::Disconnected);
                 let reconnect_delay = reconnect.next_delay(|bytes| seam.fill_entropy(bytes));
+                crate::diagnostic_log::info!(
+                    "tcp-client [configured]: target={target:?} retry_delay_ms={}",
+                    reconnect_delay.as_millis()
+                );
                 let _ = select(
                     Timer::after(Duration::from_millis(reconnect_delay.as_millis() as u64)),
                     status.wait_until_disabled(),
                 )
                 .await;
+            } else {
+                status.set_connection(ConnectionState::Disabled);
             }
         }
     }
+}
+
+fn reset_decoder_for_connection(decoder: &mut RnsSerialDecoder<{ tcp::EMBEDDED_FRAME_CAP }>) {
+    decoder.reset();
 }
 
 async fn resolve_target(_stack: Stack<'_>, target: &TcpClientTarget) -> Option<IpEndpoint> {
@@ -254,7 +342,7 @@ async fn serve<Seam: InterfaceSeam>(
     throughput: &mut ThroughputLedger,
     bitrate: BitrateBps,
     started: Instant,
-) {
+) -> TcpClientExitCause {
     let (mut reader, mut writer) = socket.split();
     loop {
         match select3(
@@ -264,10 +352,11 @@ async fn serve<Seam: InterfaceSeam>(
         )
         .await
         {
-            Either3::Third(()) => return,
+            Either3::Third(()) => return TcpClientExitCause::Disabled,
             Either3::First(read) => {
                 let read = match read {
-                    Ok(0) | Err(_) => return,
+                    Ok(0) => return TcpClientExitCause::PeerClosed,
+                    Err(error) => return TcpClientExitCause::ReadFailure(error),
                     Ok(read) => read,
                 };
                 status.add_rx(read as u64);
@@ -277,17 +366,23 @@ async fn serve<Seam: InterfaceSeam>(
                 let mut offset = 0;
                 let chunk = &read_buf[..read];
                 while offset < chunk.len() {
-                    if let Ok(Some(frame)) = decoder.feed_slice_next(chunk, &mut offset) {
-                        if !frame.is_empty() {
-                            seam.next_inbound(frame).await;
+                    match decoder.feed_slice_next(chunk, &mut offset) {
+                        Ok(Some(frame)) => {
+                            if !frame.is_empty() {
+                                seam.next_inbound(frame).await;
+                            }
                         }
+                        Ok(None) => break,
+                        Err(error) => crate::diagnostic_log::warn!(
+                            "tcp-client [configured]: decode failed error={error:?}"
+                        ),
                     }
                 }
             }
-            Either3::Second(outbound) => {
-                if let Ok(framed) = rns_serial_framing::encode(outbound, frame_buf) {
-                    if writer.write_all(&frame_buf[..framed]).await.is_err() {
-                        return;
+            Either3::Second(outbound) => match rns_serial_framing::encode(outbound, frame_buf) {
+                Ok(framed) => {
+                    if let Err(error) = writer.write_all(&frame_buf[..framed]).await {
+                        return TcpClientExitCause::WriteFailure(error);
                     }
                     status.add_tx(framed as u64);
                     let now = InstantMillis(started.elapsed().as_millis());
@@ -296,7 +391,33 @@ async fn serve<Seam: InterfaceSeam>(
                     let frame_airtime = frame_airtime_us(framed, bitrate);
                     status.set_airtime(airtime.record_tx(now, frame_airtime));
                 }
-            }
+                Err(error) => crate::diagnostic_log::warn!(
+                    "tcp-client [configured]: encode failed error={error:?}"
+                ),
+            },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_new_connection_discards_partial_decoder_state() {
+        let mut decoder = RnsSerialDecoder::<{ tcp::EMBEDDED_FRAME_CAP }>::new();
+        let mut encoded = [0u8; tcp::EMBEDDED_FRAMED_LEN];
+        let len = rns_serial_framing::encode(b"second connection", &mut encoded).unwrap();
+        let mut offset = 0;
+        let _ = decoder.feed_slice_next(&encoded[..len / 2], &mut offset);
+
+        reset_decoder_for_connection(&mut decoder);
+        offset = 0;
+        let decoded = decoder
+            .feed_slice_next(&encoded[..len], &mut offset)
+            .unwrap()
+            .expect("the complete frame decodes after reset");
+
+        assert_eq!(decoded, b"second connection");
     }
 }

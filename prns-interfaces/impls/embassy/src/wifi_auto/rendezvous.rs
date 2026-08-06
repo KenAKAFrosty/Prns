@@ -1,10 +1,10 @@
 use embassy_futures::select::{select3, Either3};
-use embassy_net::tcp::TcpSocket;
+use embassy_net::tcp::{Error as TcpIoError, TcpSocket};
 use embassy_net::{IpAddress, IpEndpoint, Stack};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_sync::zerocopy_channel::{Channel, Receiver, Sender};
-use embassy_time::{with_timeout, Duration, Timer};
+use embassy_time::{with_timeout, Duration, Instant, Timer};
 
 use prns_core::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
 use prns_core::interfaces::wifi_auto as contract;
@@ -15,11 +15,26 @@ pub const TCP_RENDEZVOUS_FRAMED_LEN: usize =
     rns_serial_framing::max_encoded_len(TCP_RENDEZVOUS_FRAME_CAP);
 pub const TCP_RENDEZVOUS_READ_BUFFER_BYTES: usize = 1_024;
 pub const TCP_RENDEZVOUS_SOCKET_BUFFER_BYTES: usize = 1_024;
+pub const TCP_RENDEZVOUS_LIVENESS_TIMEOUT: Duration = Duration::from_secs(180);
 
-const SOCKET_TIMEOUT: Duration = Duration::from_secs(24);
 const KEEP_ALIVE: Duration = Duration::from_secs(5);
 const FLUSH_TIMEOUT: Duration = Duration::from_secs(2);
 const ACCEPT_RETRY_DELAY: Duration = Duration::from_millis(250);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TcpRendezvousWriteFailure {
+    Socket(TcpIoError),
+    Closed,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TcpRendezvousExitCause {
+    PeerClosed,
+    ReadFailure(TcpIoError),
+    WriteFailure(TcpRendezvousWriteFailure),
+    Timeout,
+    RequestedDisconnect,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum WireKind {
@@ -235,7 +250,6 @@ impl TcpRendezvousServer<'_> {
             disconnect,
         } = self;
         let mut socket = TcpSocket::new(stack, buffers.rx, buffers.tx);
-        socket.set_timeout(Some(SOCKET_TIMEOUT));
         socket.set_keep_alive(Some(KEEP_ALIVE));
         let mut session = 0u32;
         stack.wait_config_up().await;
@@ -267,7 +281,8 @@ impl TcpRendezvousServer<'_> {
                 "wifi-auto: TCP rendezvous connected peer={peer:?} session={session}"
             );
             send_control_event(&mut events, WireKind::Connected, session, id).await;
-            serve_connection(
+            let connected_at = Instant::now();
+            let exit = serve_connection(
                 &mut socket,
                 buffers.decoder,
                 buffers.read,
@@ -279,10 +294,11 @@ impl TcpRendezvousServer<'_> {
                 id,
             )
             .await;
+            let lifetime_ms = connected_at.elapsed().as_millis();
             socket.abort();
             let flush = with_timeout(FLUSH_TIMEOUT, socket.flush()).await;
             crate::diagnostic_log::info!(
-                "wifi-auto: TCP rendezvous disconnected peer={peer:?} session={session} flush={flush:?}"
+                "wifi-auto: TCP rendezvous disconnected peer={peer:?} session={session} exit={exit:?} lifetime_ms={lifetime_ms} flush={flush:?}"
             );
             send_control_event(&mut events, WireKind::Disconnected, session, id).await;
         }
@@ -314,16 +330,25 @@ async fn serve_connection(
     disconnect: &Signal<CriticalSectionRawMutex, u32>,
     session: u32,
     id: InterfaceId,
-) {
+) -> TcpRendezvousExitCause {
     loop {
-        match select3(
-            socket.read(read_buffer),
-            commands.receive(),
-            disconnect.wait(),
+        let next = with_timeout(
+            TCP_RENDEZVOUS_LIVENESS_TIMEOUT,
+            select3(
+                socket.read(read_buffer),
+                commands.receive(),
+                disconnect.wait(),
+            ),
         )
-        .await
-        {
-            Either3::First(Ok(0) | Err(_)) => return,
+        .await;
+        let Ok(next) = next else {
+            return TcpRendezvousExitCause::Timeout;
+        };
+        match next {
+            Either3::First(Ok(0)) => return TcpRendezvousExitCause::PeerClosed,
+            Either3::First(Err(error)) => {
+                return TcpRendezvousExitCause::ReadFailure(error);
+            }
             Either3::First(Ok(read)) => {
                 let mut offset = 0;
                 let chunk = &read_buffer[..read];
@@ -345,39 +370,42 @@ async fn serve_connection(
                 }
             }
             Either3::Second(command) => {
-                let write_failed = if let Some(bytes) = command.frame_for_session(session) {
+                let write_failure = if let Some(bytes) = command.frame_for_session(session) {
                     match rns_serial_framing::encode(bytes, framed_buffer) {
-                        Ok(framed) => tcp_write_all(socket, &framed_buffer[..framed])
-                            .await
-                            .is_err(),
+                        Ok(framed) => tcp_write_all(socket, &framed_buffer[..framed]).await.err(),
                         Err(_) => {
                             crate::diagnostic_log::warn!("wifi-auto: TCP rendezvous encode failed");
-                            false
+                            None
                         }
                     }
                 } else {
-                    false
+                    None
                 };
                 commands.receive_done();
-                if write_failed {
-                    crate::diagnostic_log::warn!("wifi-auto: TCP rendezvous write failed");
-                    return;
+                if let Some(failure) = write_failure {
+                    return TcpRendezvousExitCause::WriteFailure(failure);
                 }
             }
             Either3::Third(disconnect_session) => {
                 if disconnect_session == session {
-                    return;
+                    return TcpRendezvousExitCause::RequestedDisconnect;
                 }
             }
         }
     }
 }
 
-async fn tcp_write_all(socket: &mut TcpSocket<'_>, mut bytes: &[u8]) -> Result<(), ()> {
+async fn tcp_write_all(
+    socket: &mut TcpSocket<'_>,
+    mut bytes: &[u8],
+) -> Result<(), TcpRendezvousWriteFailure> {
     while !bytes.is_empty() {
-        let written = socket.write(bytes).await.map_err(|_| ())?;
+        let written = socket
+            .write(bytes)
+            .await
+            .map_err(TcpRendezvousWriteFailure::Socket)?;
         if written == 0 {
-            return Err(());
+            return Err(TcpRendezvousWriteFailure::Closed);
         }
         bytes = &bytes[written..];
     }
@@ -462,5 +490,11 @@ mod tests {
 
         assert_eq!(slot.frame_for_session(7), Some(b"current".as_slice()));
         assert_eq!(slot.frame_for_session(8), None);
+    }
+
+    #[test]
+    fn rendezvous_liveness_exceeds_the_idle_resume_window() {
+        assert!(TCP_RENDEZVOUS_LIVENESS_TIMEOUT > Duration::from_secs(120));
+        assert!(KEEP_ALIVE < TCP_RENDEZVOUS_LIVENESS_TIMEOUT);
     }
 }

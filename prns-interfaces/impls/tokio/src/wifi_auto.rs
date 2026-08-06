@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6};
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -362,10 +361,25 @@ pub struct AutoWifiStatus {
 struct AutoWifiShared {
     id: InterfaceId,
     enabled: watch::Sender<bool>,
-    peers: AtomicU32,
-    rx: AtomicU64,
-    tx: AtomicU64,
-    members: Mutex<std::vec::Vec<TokioInterfaceStatus>>,
+    accounting: Mutex<AutoWifiAccounting>,
+}
+
+#[derive(Default)]
+struct CompletedTraffic {
+    rx: u64,
+    tx: u64,
+}
+
+struct AutoWifiAccounting {
+    completed: CompletedTraffic,
+    members: std::vec::Vec<TokioInterfaceStatus>,
+}
+
+impl CompletedTraffic {
+    fn retain(&mut self, member: &TokioInterfaceStatus) {
+        self.rx = self.rx.saturating_add(member.rx_bytes());
+        self.tx = self.tx.saturating_add(member.tx_bytes());
+    }
 }
 
 impl AutoWifiStatus {
@@ -375,10 +389,10 @@ impl AutoWifiStatus {
             shared: Arc::new(AutoWifiShared {
                 id,
                 enabled,
-                peers: AtomicU32::new(0),
-                rx: AtomicU64::new(0),
-                tx: AtomicU64::new(0),
-                members: Mutex::new(std::vec::Vec::new()),
+                accounting: Mutex::new(AutoWifiAccounting {
+                    completed: CompletedTraffic::default(),
+                    members: std::vec::Vec::new(),
+                }),
             }),
         }
     }
@@ -424,19 +438,18 @@ impl AutoWifiStatus {
         let _ = changed.wait_for(|current| *current == enabled).await;
     }
 
-    fn publish(&self, peers: u32, rx: u64, tx: u64, members: std::vec::Vec<TokioInterfaceStatus>) {
-        self.shared.peers.store(peers, Ordering::Relaxed);
-        self.shared.rx.store(rx, Ordering::Relaxed);
-        self.shared.tx.store(tx, Ordering::Relaxed);
-        if let Ok(mut slot) = self.shared.members.lock() {
-            *slot = members;
+    fn publish(&self, completed: &CompletedTraffic, members: std::vec::Vec<TokioInterfaceStatus>) {
+        if let Ok(mut accounting) = self.shared.accounting.lock() {
+            accounting.completed.rx = completed.rx;
+            accounting.completed.tx = completed.tx;
+            accounting.members = members;
         }
     }
 
     #[must_use]
     pub fn members(&self) -> std::vec::Vec<TokioInterfaceStatus> {
-        match self.shared.members.lock() {
-            Ok(members) => members.clone(),
+        match self.shared.accounting.lock() {
+            Ok(accounting) => accounting.members.clone(),
             Err(_) => std::vec::Vec::new(),
         }
     }
@@ -449,31 +462,75 @@ impl InterfaceStatus for AutoWifiStatus {
 
     fn connection(&self) -> ConnectionState {
         if !self.is_enabled() {
-            ConnectionState::Disabled
-        } else if self.shared.peers.load(Ordering::Relaxed) > 0 {
-            ConnectionState::Connected
-        } else {
-            ConnectionState::Disconnected
+            return ConnectionState::Disabled;
         }
+        self.shared
+            .accounting
+            .lock()
+            .ok()
+            .and_then(|accounting| {
+                accounting
+                    .members
+                    .iter()
+                    .map(InterfaceStatus::connection)
+                    .min_by_key(|state| auto_wifi_connection_rank(*state))
+            })
+            .unwrap_or(ConnectionState::Disconnected)
     }
 
     fn rx_bytes(&self) -> u64 {
-        self.shared.rx.load(Ordering::Relaxed)
+        self.shared
+            .accounting
+            .lock()
+            .map(|accounting| {
+                accounting
+                    .members
+                    .iter()
+                    .fold(accounting.completed.rx, |total, member| {
+                        total.saturating_add(member.rx_bytes())
+                    })
+            })
+            .unwrap_or(0)
     }
 
     fn tx_bytes(&self) -> u64 {
-        self.shared.tx.load(Ordering::Relaxed)
+        self.shared
+            .accounting
+            .lock()
+            .map(|accounting| {
+                accounting
+                    .members
+                    .iter()
+                    .fold(accounting.completed.tx, |total, member| {
+                        total.saturating_add(member.tx_bytes())
+                    })
+            })
+            .unwrap_or(0)
     }
 
     fn transfer_rates(&self) -> Option<TransferRates> {
-        let members = self.shared.members.lock().ok()?;
-        members
+        let accounting = self.shared.accounting.lock().ok()?;
+        accounting
+            .members
             .iter()
             .filter_map(InterfaceStatus::transfer_rates)
             .reduce(|acc, rates| TransferRates {
                 rx_bps: acc.rx_bps.saturating_add(rates.rx_bps),
                 tx_bps: acc.tx_bps.saturating_add(rates.tx_bps),
             })
+    }
+}
+
+fn auto_wifi_connection_rank(state: ConnectionState) -> u8 {
+    match state {
+        ConnectionState::Connected => 0,
+        ConnectionState::Degraded => 1,
+        ConnectionState::Initializing => 2,
+        ConnectionState::Reconnecting => 3,
+        ConnectionState::Failed => 4,
+        ConnectionState::Disconnected => 5,
+        ConnectionState::Disabled => 6,
+        ConnectionState::Unknown => 7,
     }
 }
 
@@ -541,6 +598,7 @@ impl InterfaceSupervisor for AutoWifi {
             policy,
             settings: settings.clone(),
             status,
+            completed: CompletedTraffic::default(),
         };
         if enumerate_host_network {
             sup.dial_initial_gateways(&nics);
@@ -696,6 +754,7 @@ struct Supervisor {
     policy: EffectiveInterfacePolicy,
     settings: AutoWifiSettings,
     status: AutoWifiStatus,
+    completed: CompletedTraffic,
 }
 
 struct GatewayDial {
@@ -755,6 +814,7 @@ impl Supervisor {
         let mut accepted = std::vec::Vec::new();
         for member in self.accepted.drain(..) {
             if matches!(member.status.connection(), ConnectionState::Disconnected) {
+                self.completed.retain(&member.status);
                 member.attached.teardown();
             } else {
                 accepted.push(member);
@@ -769,26 +829,27 @@ impl Supervisor {
         statuses.extend(self.gateways.values().map(|dial| dial.status.clone()));
         statuses.extend(self.accepted.iter().map(|member| member.status.clone()));
         statuses.extend(self.mdns_dials.values().map(|dial| dial.status.clone()));
-        let rx = statuses.iter().map(InterfaceStatus::rx_bytes).sum();
-        let tx = statuses.iter().map(InterfaceStatus::tx_bytes).sum();
-        let peers = statuses.len();
-        self.status.publish(peers as u32, rx, tx, statuses);
+        self.status.publish(&self.completed, statuses);
     }
 
     fn disable_members(&mut self) {
         for (_, member) in self.members.drain() {
+            self.completed.retain(&member.status);
             member.attached.teardown();
         }
         for (_, dial) in self.gateways.drain() {
+            self.completed.retain(&dial.status);
             dial.attached.teardown();
         }
         for (_, dial) in self.mdns_dials.drain() {
+            self.completed.retain(&dial.status);
             dial.attached.teardown();
         }
         for member in self.accepted.drain(..) {
+            self.completed.retain(&member.status);
             member.attached.teardown();
         }
-        self.status.publish(0, 0, 0, std::vec::Vec::new());
+        self.status.publish(&self.completed, std::vec::Vec::new());
     }
 
     fn dial_mdns_sighting(&mut self, target: SocketAddr) {
@@ -850,6 +911,7 @@ impl Supervisor {
                 crate::diagnostic_log::debug!(
                     "wifi-auto: peer {addr} retired after missed beacons"
                 );
+                self.completed.retain(&member.status);
                 member.attached.teardown();
             }
         }
@@ -868,6 +930,7 @@ impl Supervisor {
     fn refresh_gateway(&mut self, index: u32, gateway: Option<IpAddr>) {
         if !self.settings.prns_rendezvous_enabled() {
             if let Some(old) = self.gateways.remove(&index) {
+                self.completed.retain(&old.status);
                 old.attached.teardown();
             }
             return;
@@ -880,6 +943,7 @@ impl Supervisor {
                 "wifi-auto: gateway rendezvous removed on ifindex {index} ({})",
                 old.gateway
             );
+            self.completed.retain(&old.status);
             old.attached.teardown();
         }
         if let Some(gateway) = gateway {
@@ -924,6 +988,7 @@ impl Supervisor {
             let _ = discovery.leave_multicast_v6(&discovery_group, index);
             self.brains.remove(&index);
             if let Some(dial) = self.gateways.remove(&index) {
+                self.completed.retain(&dial.status);
                 dial.attached.teardown();
             }
         }
@@ -1474,6 +1539,7 @@ mod tests {
             policy: contract::configured_policy(Default::default()),
             settings,
             status: AutoWifiStatus::new(id),
+            completed: CompletedTraffic::default(),
         };
         (sup, guard)
     }
@@ -1503,7 +1569,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn aggregate_stays_live_while_a_multicast_peer_is_registered() {
+    async fn a_disconnected_multicast_member_does_not_make_the_aggregate_live() {
         let (mut sup, _guard) = test_supervisor();
         let peer = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 0x867c);
 
@@ -1516,13 +1582,13 @@ mod tests {
 
         assert_eq!(
             sup.status.connection(),
-            ConnectionState::Connected,
-            "the aggregate follows the validated peer table, not a transient child-status blip",
+            ConnectionState::Disconnected,
+            "the aggregate follows the live child state",
         );
     }
 
     #[tokio::test]
-    async fn aggregate_stays_live_while_a_rendezvous_peer_is_registered() {
+    async fn a_disconnected_rendezvous_dial_does_not_make_the_aggregate_live() {
         use std::net::Ipv4Addr;
         let (mut sup, _guard) = test_supervisor();
         let peer = SocketAddr::new(
@@ -1537,8 +1603,8 @@ mod tests {
 
         assert_eq!(
             sup.status.connection(),
-            ConnectionState::Connected,
-            "the aggregate follows the rendezvous peer table, not a transient child-status blip",
+            ConnectionState::Disconnected,
+            "an unsuccessful gateway dial remains dormant",
         );
     }
 
@@ -1663,29 +1729,62 @@ mod tests {
     }
 
     #[test]
-    fn the_card_is_dormant_or_live_but_never_failed() {
+    fn the_parent_connection_follows_the_best_live_child_state() {
         let id = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, contract::GROUP_ID);
         let status = AutoWifiStatus::new(id);
-
-        assert_eq!(
-            status.connection(),
-            ConnectionState::Disconnected,
-            "a fresh supervisor with no peers reads Dormant, not Failed",
+        let first = TokioInterfaceStatus::new(
+            InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, b"first"),
+            ConnectionState::Initializing,
         );
+        let second = TokioInterfaceStatus::new(
+            InterfaceId::from_channel_tag(InterfaceKind::TcpClient, b"second"),
+            ConnectionState::Disconnected,
+        );
+        let completed = CompletedTraffic::default();
 
-        status.publish(2, 0, 0, std::vec::Vec::new());
-        assert_eq!(
-            status.connection(),
+        assert_eq!(status.connection(), ConnectionState::Disconnected);
+        status.publish(&completed, vec![first.clone(), second.clone()]);
+        assert_eq!(status.connection(), ConnectionState::Initializing);
+        first.set_connection(ConnectionState::Connected);
+        assert_eq!(status.connection(), ConnectionState::Connected);
+        first.set_connection(ConnectionState::Disconnected);
+        second.set_connection(ConnectionState::Reconnecting);
+        assert_eq!(status.connection(), ConnectionState::Reconnecting);
+        second.set_connection(ConnectionState::Disconnected);
+        assert_eq!(status.connection(), ConnectionState::Disconnected);
+        status.disable();
+        assert_eq!(status.connection(), ConnectionState::Disabled);
+    }
+
+    #[test]
+    fn completed_and_reconnected_member_traffic_is_monotonic() {
+        let id = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, b"accounting");
+        let status = AutoWifiStatus::new(id);
+        let first = TokioInterfaceStatus::new(
+            InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, b"peer"),
             ConnectionState::Connected,
-            "a peer touched makes the card Live",
         );
+        first.add_rx(90);
+        first.add_tx(45);
+        let mut completed = CompletedTraffic::default();
 
-        status.publish(0, 0, 0, std::vec::Vec::new());
-        assert_eq!(
-            status.connection(),
-            ConnectionState::Disconnected,
-            "losing the last peer returns to Dormant, never Failed",
+        status.publish(&completed, vec![first.clone()]);
+        assert_eq!((status.rx_bytes(), status.tx_bytes()), (90, 45));
+        completed.retain(&first);
+        status.publish(&completed, vec![]);
+        assert_eq!((status.rx_bytes(), status.tx_bytes()), (90, 45));
+
+        let reconnected = TokioInterfaceStatus::new(
+            InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, b"peer"),
+            ConnectionState::Connected,
         );
+        reconnected.add_rx(30);
+        reconnected.add_tx(15);
+        status.publish(&completed, vec![reconnected.clone()]);
+        assert_eq!((status.rx_bytes(), status.tx_bytes()), (120, 60));
+        completed.retain(&reconnected);
+        status.publish(&completed, vec![]);
+        assert_eq!((status.rx_bytes(), status.tx_bytes()), (120, 60));
     }
 
     struct MockSeam {

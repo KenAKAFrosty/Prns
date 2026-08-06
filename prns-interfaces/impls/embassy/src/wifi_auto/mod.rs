@@ -23,9 +23,10 @@ use prns_runtime::runtime::EmbassyFleet as Fleet;
 use fanout::{dispatch_fanout, send_beacon, target_includes, FanoutPlan, UdpFanoutSender};
 use rendezvous::TcpRendezvousEvent;
 pub use rendezvous::{
-    tcp_rendezvous, TcpRendezvousBuffers, TcpRendezvousClient, TcpRendezvousServer,
-    TcpRendezvousStorage, TcpRendezvousWireSlot, TCP_RENDEZVOUS_FRAMED_LEN,
-    TCP_RENDEZVOUS_FRAME_CAP, TCP_RENDEZVOUS_READ_BUFFER_BYTES, TCP_RENDEZVOUS_SOCKET_BUFFER_BYTES,
+    tcp_rendezvous, TcpRendezvousBuffers, TcpRendezvousClient, TcpRendezvousExitCause,
+    TcpRendezvousServer, TcpRendezvousStorage, TcpRendezvousWireSlot, TcpRendezvousWriteFailure,
+    TCP_RENDEZVOUS_FRAMED_LEN, TCP_RENDEZVOUS_FRAME_CAP, TCP_RENDEZVOUS_LIVENESS_TIMEOUT,
+    TCP_RENDEZVOUS_READ_BUFFER_BYTES, TCP_RENDEZVOUS_SOCKET_BUFFER_BYTES,
 };
 
 const BEACON_INTERVAL: Duration = Duration::from_millis(1600);
@@ -69,6 +70,8 @@ pub struct WifiMemberStatus {
     connection: AtomicU8,
     rx: AtomicU64,
     tx: AtomicU64,
+    session_rx_start: AtomicU64,
+    session_tx_start: AtomicU64,
     active: AtomicBool,
 }
 
@@ -79,6 +82,8 @@ impl WifiMemberStatus {
             connection: AtomicU8::new(ConnectionState::Disconnected.as_u8()),
             rx: AtomicU64::new(0),
             tx: AtomicU64::new(0),
+            session_rx_start: AtomicU64::new(0),
+            session_tx_start: AtomicU64::new(0),
             active: AtomicBool::new(false),
         }
     }
@@ -87,15 +92,11 @@ impl WifiMemberStatus {
         self.id.lock(|cell| cell.set(id));
         self.connection
             .store(ConnectionState::Connected.as_u8(), Ordering::Relaxed);
-        self.rx.store(0, Ordering::Relaxed);
-        self.tx.store(0, Ordering::Relaxed);
+        self.session_rx_start
+            .store(self.rx.load(Ordering::Relaxed), Ordering::Relaxed);
+        self.session_tx_start
+            .store(self.tx.load(Ordering::Relaxed), Ordering::Relaxed);
         self.active.store(true, Ordering::Relaxed);
-    }
-
-    fn retire(&self) {
-        self.connection
-            .store(ConnectionState::Disconnected.as_u8(), Ordering::Relaxed);
-        self.active.store(false, Ordering::Relaxed);
     }
 
     fn add_rx(&self, bytes: u64) {
@@ -117,11 +118,15 @@ impl InterfaceStatus for WifiMemberStatus {
     }
 
     fn rx_bytes(&self) -> u64 {
-        self.rx.load(Ordering::Relaxed)
+        self.rx
+            .load(Ordering::Relaxed)
+            .saturating_sub(self.session_rx_start.load(Ordering::Relaxed))
     }
 
     fn tx_bytes(&self) -> u64 {
-        self.tx.load(Ordering::Relaxed)
+        self.tx
+            .load(Ordering::Relaxed)
+            .saturating_sub(self.session_tx_start.load(Ordering::Relaxed))
     }
 }
 
@@ -224,6 +229,16 @@ impl<const MEMBERS: usize> AutoWifiStatus<MEMBERS> {
 
     fn member(&self, slot: usize) -> &'static WifiMemberStatus {
         &self.shared.members[slot]
+    }
+
+    fn retire_member(&self, slot: usize) {
+        let member = self.member(slot);
+        if !member.active.swap(false, Ordering::Relaxed) {
+            return;
+        }
+        member
+            .connection
+            .store(ConnectionState::Disconnected.as_u8(), Ordering::Relaxed);
     }
 
     fn republish_peer_count(&self) {
@@ -711,7 +726,7 @@ async fn handle_rendezvous_event<
             };
             if let Some(previous) = tcp_peer.take() {
                 fleet.deregister_member(previous.id).await;
-                status.member(previous.slot).retire();
+                status.retire_member(previous.slot);
             }
             fleet
                 .register_member(contract::descriptor(
@@ -740,7 +755,7 @@ async fn handle_rendezvous_event<
                 return None;
             }
             fleet.deregister_member(id).await;
-            status.member(peer.slot).retire();
+            status.retire_member(peer.slot);
             *tcp_peer = None;
             status.republish_peer_count();
             None
@@ -767,7 +782,7 @@ async fn clear_tcp_member<
         rendezvous.disconnect(peer.session);
     }
     fleet.deregister_member(peer.id).await;
-    status.member(peer.slot).retire();
+    status.retire_member(peer.slot);
     status.republish_peer_count();
 }
 
@@ -894,7 +909,7 @@ async fn clear_members<
         fleet.deregister_member(ids[slot]).await;
         peers[slot] = None;
         peer_on_secondary[slot] = false;
-        status.member(slot).retire();
+        status.retire_member(slot);
         changed = true;
     }
     if changed {
@@ -928,7 +943,7 @@ async fn retire_stale<
         fleet.deregister_member(ids[slot]).await;
         peers[slot] = None;
         peer_on_secondary[slot] = false;
-        status.member(slot).retire();
+        status.retire_member(slot);
     }
     status.republish_peer_count();
 }
@@ -940,6 +955,7 @@ mod tests {
 
     static SHARED: AutoWifiShared<1> = AutoWifiShared::new(InterfaceId::new([0x5B; 8]));
     static LIFECYCLE_SHARED: AutoWifiShared<1> = AutoWifiShared::new(InterfaceId::new([0x5C; 8]));
+    static ACCOUNTING_SHARED: AutoWifiShared<1> = AutoWifiShared::new(InterfaceId::new([0x5D; 8]));
 
     fn id(suffix: u8) -> InterfaceId {
         InterfaceId::new([InterfaceKind::WifiPeer as u8, 0, 0, 0, 0, 0, 0, suffix])
@@ -983,5 +999,35 @@ mod tests {
         assert_eq!(status.connection(), ConnectionState::Degraded);
         status.set_lifecycle(ConnectionState::Failed);
         assert_eq!(status.connection(), ConnectionState::Failed);
+    }
+
+    #[test]
+    fn retired_and_reconnected_member_traffic_is_monotonic() {
+        let status = AutoWifiStatus::new(&ACCOUNTING_SHARED);
+        status.set_lifecycle(ConnectionState::Disconnected);
+        status.member(0).assign(id(1));
+        status.member(0).add_rx(90);
+        status.member(0).add_tx(45);
+
+        assert_eq!((status.rx_bytes(), status.tx_bytes()), (90, 45));
+        assert_eq!(
+            (status.member(0).rx_bytes(), status.member(0).tx_bytes()),
+            (90, 45)
+        );
+        status.retire_member(0);
+        status.republish_peer_count();
+        assert_eq!(status.connection(), ConnectionState::Disconnected);
+        assert_eq!((status.rx_bytes(), status.tx_bytes()), (90, 45));
+
+        status.member(0).assign(id(2));
+        status.republish_peer_count();
+        status.member(0).add_rx(30);
+        status.member(0).add_tx(15);
+        assert_eq!(status.connection(), ConnectionState::Connected);
+        assert_eq!((status.rx_bytes(), status.tx_bytes()), (120, 60));
+        assert_eq!(
+            (status.member(0).rx_bytes(), status.member(0).tx_bytes()),
+            (30, 15)
+        );
     }
 }
