@@ -184,10 +184,11 @@ pub(crate) enum NnPagesControlKind {
     Announce,
 }
 
+/// A control request that has already been claimed: its file is consumed at dequeue, so this
+/// value is the only remaining record of the work and dropping it does not leave one behind.
 pub(crate) struct PendingNnPagesRefresh {
     id: u128,
     kind: NnPagesControlKind,
-    request_path: PathBuf,
     result_path: PathBuf,
 }
 
@@ -724,11 +725,23 @@ pub(crate) async fn next_refresh_request(config_dir: &Path) -> io::Result<Pendin
         };
         let mut requests = entries
             .filter_map(Result::ok)
-            .filter_map(|entry| decode_request(&entry.path()))
+            .filter_map(|entry| {
+                let path = entry.path();
+                decode_request(&path).map(|request| (path, request))
+            })
             .collect::<Vec<_>>();
-        requests.sort_by_key(|request| request.id);
-        if let Some(request) = requests.into_iter().next() {
-            return Ok(request);
+        requests.sort_by_key(|(_, request)| request.id);
+        // Claim the request by consuming its file. This poll re-runs every
+        // CONTROL_POLL_INTERVAL, so a request left on disk while the work it dispatched is
+        // still running gets handed out a second time. Removing it here is atomic: the unlink
+        // either succeeds or reports NotFound because another reader took it first, and it
+        // leaves no bookkeeping behind for a later sweep to reclaim.
+        for (path, request) in requests {
+            match fs::remove_file(&path) {
+                Ok(()) => return Ok(request),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error),
+            }
         }
     }
 }
@@ -743,22 +756,12 @@ impl PendingNnPagesRefresh {
         result: Result<NnPagesRefreshReport, NnPagesRefreshError>,
     ) -> io::Result<()> {
         let encoded = encode_control_result(self.id, result.ok().as_ref());
-        atomic_control_write(&self.result_path, encoded.as_bytes())?;
-        match fs::remove_file(&self.request_path) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error),
-        }
+        atomic_control_write(&self.result_path, encoded.as_bytes())
     }
 
     pub(crate) fn finish_announce(self, succeeded: bool) -> io::Result<()> {
         let encoded = encode_announce_result(self.id, succeeded);
-        atomic_control_write(&self.result_path, encoded.as_bytes())?;
-        match fs::remove_file(&self.request_path) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error),
-        }
+        atomic_control_write(&self.result_path, encoded.as_bytes())
     }
 }
 
@@ -880,7 +883,6 @@ fn decode_request(path: &Path) -> Option<PendingNnPagesRefresh> {
     Some(PendingNnPagesRefresh {
         id,
         kind,
-        request_path: path.to_path_buf(),
         result_path: path.with_file_name(format!("result-{id:032x}")),
     })
 }
@@ -1676,6 +1678,48 @@ mod tests {
             unchanged: 2,
             settings_status: NnPagesSettingsStatus::Loaded,
             settings_changed: true,
+        };
+        pending.finish(Ok(report)).expect("result written");
+        assert_eq!(
+            client.await.expect("client joins").expect("refresh"),
+            report
+        );
+    }
+
+    /// One operator command must produce exactly one dispatch.
+    ///
+    /// The daemon re-enters this poll as soon as it has spawned the work, so while that work is
+    /// still running the request is still pending. Any refresh slower than the poll interval was
+    /// dispatched again, and the extra reconcile absorbed the very change the operator's own
+    /// refresh was waiting to report. The same undeduplicated path also carries announces, where
+    /// a second dispatch puts a second announce on the air.
+    #[tokio::test]
+    async fn a_control_request_is_dispatched_only_once() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let config_dir = directory.path().to_path_buf();
+        let client_dir = config_dir.clone();
+        let client = tokio::spawn(async move { request_refresh(&client_dir).await });
+        let pending =
+            tokio::time::timeout(Duration::from_secs(2), next_refresh_request(&config_dir))
+                .await
+                .expect("request arrives")
+                .expect("request is valid");
+
+        // The dispatched work has not finished, so the request is still in flight here.
+        assert!(
+            tokio::time::timeout(CONTROL_POLL_INTERVAL * 5, next_refresh_request(&config_dir))
+                .await
+                .is_err(),
+            "an in-flight request was dispatched a second time"
+        );
+
+        let report = NnPagesRefreshReport {
+            discovered: 2,
+            added: 0,
+            removed: 1,
+            unchanged: 2,
+            settings_status: NnPagesSettingsStatus::Loaded,
+            settings_changed: false,
         };
         pending.finish(Ok(report)).expect("result written");
         assert_eq!(
