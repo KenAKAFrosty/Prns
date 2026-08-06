@@ -331,6 +331,11 @@ pub(super) struct EspNowAdapter {
 const ESPNOW_SEND_RETRIES: u8 = 8;
 #[cfg(feature = "wifi-auto")]
 const ESPNOW_SEND_RETRY_DELAY: Duration = Duration::from_millis(5);
+#[cfg(feature = "wifi-auto")]
+pub(super) struct EspNowPhySettings {
+    pub(super) driver_rate: WifiPhyRate,
+    pub(super) bitrate: BitrateBps,
+}
 /// The pinned ESP-NOW PHY rate: 802.11g 12 Mbps, QPSK rate-1/2 OFDM. HT/HE *broadcast* RX is
 /// hard-pinned to 1 Mbps DSSS by the closed Wi-Fi blob (no public override) so MCS rates transmit but
 /// never receive; the legacy OFDM-g family is the broadcast-compatible way to keep OFDM's good
@@ -342,9 +347,10 @@ const ESPNOW_SEND_RETRY_DELAY: Duration = Duration::from_millis(5);
 /// (10) equals C `WIFI_PHY_RATE_12M`, so `Rate6m` is what actually selects g-12M. This one spot
 /// localizes the workaround; TODO: patch esp-radio's enum upstream and return `Rate12m`.
 #[cfg(feature = "wifi-auto")]
-const fn espnow_phy_rate() -> WifiPhyRate {
-    WifiPhyRate::Rate6m
-}
+pub(super) const ESPNOW_PHY: EspNowPhySettings = EspNowPhySettings {
+    driver_rate: WifiPhyRate::Rate6m,
+    bitrate: BitrateBps::guess(12_000_000),
+};
 
 #[cfg(feature = "wifi-auto")]
 impl EspNowAdapter {
@@ -363,7 +369,7 @@ impl EspNowAdapter {
     /// `esp_wifi_config_espnow_rate` requires.
     fn ensure_rate(&mut self) {
         if !self.rate_applied {
-            let _ = self.manager.set_rate(espnow_phy_rate());
+            let _ = self.manager.set_rate(ESPNOW_PHY.driver_rate);
             self.rate_applied = true;
         }
     }

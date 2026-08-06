@@ -176,7 +176,7 @@ const HOPSPOT_TCP_TARGET: &str = match option_env!("HOPSPOT_TCP_TARGET") {
 };
 /// The board's claim about its pipe to the LAN node: it sets the declared MTU tier, which the
 /// manifold then clamps to the embedded ceiling. A 2.4 GHz station's honest order of magnitude.
-const TCP_BITRATE_BPS: BitrateBps = BitrateBps::guess(65_000_000);
+const TCP_BITRATE_BPS: BitrateBps = wifi_auto_contract::WIFI_EMBEDDED_BITRATE_CEILING_BPS;
 /// One TCP socket's smoltcp rx/tx buffer — sized for the board's frames, DRAM-frugal over throughput.
 const TCP_SOCKET_BUF: usize = 1_024;
 
@@ -277,7 +277,7 @@ use configuration::{hopspot_wifi_config, HopspotWifiConfig};
 use configuration::{HopspotTcpClientConfig, HopspotTcpClientHost};
 use connectivity::build_tcp;
 #[cfg(feature = "wifi-auto")]
-use connectivity::{build_wifi, espnow_channel_policy, EspNowAdapter};
+use connectivity::{build_wifi, espnow_channel_policy, EspNowAdapter, ESPNOW_PHY};
 #[cfg(feature = "wifi-auto")]
 use display::build_interface_menu_details;
 #[cfg(not(feature = "wifi-auto"))]

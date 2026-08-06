@@ -8,7 +8,9 @@ use prns_core::engine::InstantMillis;
 use prns_core::interfaces::esp_now::{
     self, ChannelPolicy, EspNowRadio, CHANNEL_TAG_CAP, ESP_NOW_HW_MTU, ESP_NOW_V2_AIR_MTU,
 };
-use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
+use prns_core::interfaces::{
+    BitrateBps, ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind,
+};
 use prns_runtime::manifold::driver::EmbassyInterfaceStatus;
 use prns_runtime::manifold::interface_seam::{
     Interface, InterfaceSeam, OutboundDisposition, OutboundDropReason,
@@ -19,17 +21,24 @@ pub struct EspNowInterface<'a, R> {
     id: InterfaceId,
     radio: R,
     policy: ChannelPolicy,
+    bitrate: BitrateBps,
     tag: HeaplessVec<u8, CHANNEL_TAG_CAP>,
     status: &'a EmbassyInterfaceStatus,
 }
 
 impl<'a, R> EspNowInterface<'a, R> {
     #[must_use]
-    pub fn new(radio: R, policy: ChannelPolicy, status: &'a EmbassyInterfaceStatus) -> Self {
+    pub fn new(
+        radio: R,
+        policy: ChannelPolicy,
+        bitrate: BitrateBps,
+        status: &'a EmbassyInterfaceStatus,
+    ) -> Self {
         Self {
             id: esp_now::interface_id(),
             radio,
             policy,
+            bitrate,
             tag: esp_now::channel_tag(),
             status,
         }
@@ -52,7 +61,7 @@ impl<R: EspNowRadio> Interface for EspNowInterface<'_, R> {
     const KIND: InterfaceKind = InterfaceKind::EspNow;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        esp_now::descriptor(self.id)
+        esp_now::descriptor(self.id, self.bitrate)
     }
 
     fn channel_tag(&self) -> &[u8] {

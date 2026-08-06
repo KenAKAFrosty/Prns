@@ -12,7 +12,7 @@ pub const WIFI_BITRATE_GUESS_BPS: BitrateBps = BitrateBps::guess(10_000_000);
 
 pub const WIFI_LAN_BITRATE_BPS: BitrateBps = LOCAL_INTERFACE_BITRATE_ESTIMATE;
 
-pub const WIFI_EMBEDDED_BITRATE_CEILING_BPS: BitrateBps = BitrateBps::guess(125_000_000);
+pub const WIFI_EMBEDDED_BITRATE_CEILING_BPS: BitrateBps = BitrateBps::guess(50_000_000);
 
 pub const WIFI_HW_MTU_CAP: usize = if HARDWARE_MTU < MAX_LINK_MTU {
     HARDWARE_MTU

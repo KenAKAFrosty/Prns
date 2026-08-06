@@ -184,6 +184,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         EspNowInterface::new(
             EspNowAdapter::new(radio),
             espnow_channel_policy(station_configured),
+            ESPNOW_PHY.bitrate,
             espnow_status,
         )
     });
