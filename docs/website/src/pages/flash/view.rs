@@ -9,7 +9,6 @@ use crate::components::PlatformChip;
 use crate::local_development;
 use crate::platforms::{BoardFlashTarget, BoardTarget, PreparationProfile, Tier};
 use crate::routes::Route;
-use crate::site_mode::embedded_docs_mode;
 
 use super::bridge;
 use super::contract::BridgePhase;
@@ -23,7 +22,6 @@ use super::trust;
 
 #[component]
 pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
-    let embedded = embedded_docs_mode();
     let key_ready = trust::key_is_configured();
     let flash_target = target
         .flash_target
@@ -70,7 +68,7 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
     });
 
     use_effect(move || {
-        if is_esp && !embedded {
+        if is_esp {
             spawn(async move {
                 let capability = bridge::web_serial_capability().await;
                 web_serial.set(capability);
@@ -91,7 +89,6 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
     let can_prepare = confirmed()
         && destructive_action_permitted
         && !busy
-        && !embedded
         && key_ready
         && browser_ready
         && (!tcp_enabled() || !tcp_target().trim().is_empty());
@@ -437,15 +434,7 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                     }
                 }
 
-                if embedded {
-                    div { class: "flash-embedded-note mt-5",
-                        "The SoftAP copy intentionally excludes the hosted serial engine. Open "
-                        a { href: "https://reticulum.rs/flash/{target.slug}", class: "text-accent", "the online flasher" }
-                        " or use "
-                        code { class: "flash-local-command", "hopspot-flash flash {target.slug}" }
-                        "."
-                    }
-                } else if !key_ready {
+                if !key_ready {
                     div { class: "flash-web-install-message mt-5",
                         "Release signing custody is not configured yet. The flasher fails closed until the offline Minisign public key is pinned."
                     }

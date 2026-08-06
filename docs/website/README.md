@@ -34,22 +34,15 @@ cargo check --manifest-path docs/website/Cargo.toml
 The tests verify canonical source inclusion, unique guide slugs, relative link
 resolution, fragment preservation, and generated benchmark routes.
 
-## Hosted and embedded boundaries
+## Hosted boundary
 
 The default website includes guides, crate READMEs, benchmark results, and the
 browser playground. A release build also advertises its source archive and
 checksum after the release process stages those files. An ordinary local
 development server does not claim that an unstaged archive exists.
 
-The `embedded-site` feature is the compact SoftAP bundle for constrained
-firmware:
-
-```console
-cargo check --manifest-path docs/website/Cargo.toml --features embedded-site
-```
-
-Repository guide modules are compiled only for the default site. Do not add
-their content, dependencies, or routes to `embedded-site`.
+The embedded Hopspot captive page is a separate static firmware asset under
+`personal-hopspot/embedded/esp32`; it does not embed this Dioxus application.
 
 Release builds use the repository's named release tasks and set source identity
 from the staged candidate. Local development does not manufacture that identity.

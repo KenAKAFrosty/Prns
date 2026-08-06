@@ -7,7 +7,6 @@ use crate::links::{
 };
 use crate::repository_docs::REPOSITORY_BLOB_BASE;
 use crate::routes::Route;
-use crate::site_mode::embedded_docs_mode;
 
 use super::PrnsMark;
 
@@ -16,7 +15,6 @@ pub fn Footer() -> Element {
     let source_zip_download = source_zip_download_name();
     let source_zip_sha256_download = source_zip_sha256_download_name();
     let source_archive_available = source_archive_available();
-    let embedded_docs = embedded_docs_mode();
 
     rsx! {
         footer { class: "mt-auto border-t border-line/60 bg-surface/35",
@@ -63,14 +61,12 @@ pub fn Footer() -> Element {
                                 class: "hover:text-accent transition-colors",
                                 {t!("footer-flash")}
                             }
-                            if !embedded_docs {
-                                a {
-                                    href: "/browser-node-playground-console/",
-                                    target: "_blank",
-                                    rel: "noopener",
-                                    class: "hover:text-accent transition-colors",
-                                    {t!("footer-playground")}
-                                }
+                            a {
+                                href: "/browser-node-playground-console/",
+                                target: "_blank",
+                                rel: "noopener",
+                                class: "hover:text-accent transition-colors",
+                                {t!("footer-playground")}
                             }
                             a {
                                 href: format!("{REPOSITORY_BLOB_BASE}/CONTRIBUTING.md"),
