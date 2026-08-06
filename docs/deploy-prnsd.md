@@ -22,7 +22,7 @@ docker run -d \
   ghcr.io/kenakafrosty/prnsd:0.3.3
 ```
 
-Reticulum TCP clients connect to `HOST:4242`. WebSocket clients connect to `ws://HOST:4284/prns`; browsers served over HTTPS require a certificate-valid `wss://` endpoint, normally supplied by your hosting platform or reverse proxy.
+Reticulum TCP clients connect to `HOST:4242`. WebSocket clients connect to `ws://HOST:4284/prns`; browsers served over HTTPS require a certificate-valid `wss://` endpoint, normally supplied by your hosting platform or reverse proxy. A free tunnel service like Cloudflare Tunnel supplies one from a home machine too, with no port forwarding and no exposed home IP.
 
 The image supports amd64 and ARM64 Linux. [Browse the official image on GHCR](https://github.com/KenAKAFrosty/Prns/pkgs/container/prnsd).
 

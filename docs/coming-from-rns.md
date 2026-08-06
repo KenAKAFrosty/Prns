@@ -14,7 +14,7 @@ Your config, your identity file, and your apps carry over unchanged. The interop
 
 - **`PrnsWebSocketClient` / `PrnsWebSocketServer`**
 
-    Reticulum over WebSockets, dialing out or accepting connections. This gets Reticulum more compatible with the vast web-based ecosystem.
+    Reticulum over WebSockets, dialing out or accepting connections. This gets Reticulum more compatible with the vast web-based ecosystem. And since WebSocket traffic is ordinary web traffic, it passes through free tunnel services like Cloudflare Tunnel: you can host a public node from home with no port forwarding, no exposed home IP, and no rented server.
 
 - **AutoInterface, upgraded**
 
