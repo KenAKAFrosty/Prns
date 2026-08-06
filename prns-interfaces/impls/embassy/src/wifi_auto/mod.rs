@@ -1,10 +1,11 @@
 mod fanout;
+mod rendezvous;
 
 use ::core::cell::Cell;
 use ::core::net::Ipv6Addr;
 
 use embassy_futures::join::join;
-use embassy_futures::select::{select, select5, Either, Either5};
+use embassy_futures::select::{select, select3, select5, Either, Either3, Either5};
 use embassy_net::udp::{RecvError, UdpMetadata, UdpSocket};
 use embassy_net::{IpAddress, Stack};
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex};
@@ -19,7 +20,13 @@ use prns_core::interfaces::{
 };
 use prns_runtime::runtime::EmbassyFleet as Fleet;
 
-use fanout::{dispatch_fanout, send_beacon, FanoutPlan, UdpFanoutSender};
+use fanout::{dispatch_fanout, send_beacon, target_includes, FanoutPlan, UdpFanoutSender};
+use rendezvous::TcpRendezvousEvent;
+pub use rendezvous::{
+    tcp_rendezvous, TcpRendezvousBuffers, TcpRendezvousClient, TcpRendezvousServer,
+    TcpRendezvousStorage, TcpRendezvousWireSlot, TCP_RENDEZVOUS_FRAMED_LEN,
+    TCP_RENDEZVOUS_FRAME_CAP, TCP_RENDEZVOUS_READ_BUFFER_BYTES, TCP_RENDEZVOUS_SOCKET_BUFFER_BYTES,
+};
 
 const BEACON_INTERVAL: Duration = Duration::from_millis(1600);
 const SEND_TIMEOUT: Duration = Duration::from_millis(300);
@@ -299,6 +306,7 @@ pub struct AutoWifiSegment<'a> {
 pub struct AutoWifiTopology<'a> {
     pub primary: AutoWifiSegment<'a>,
     pub secondary: Option<AutoWifiSegment<'a>>,
+    pub rendezvous: Option<TcpRendezvousClient<'a>>,
 }
 
 pub struct AutoWifi<'a, const MEMBERS: usize> {
@@ -307,6 +315,7 @@ pub struct AutoWifi<'a, const MEMBERS: usize> {
     brain: contract::FixedAutoInterfaceProtocol<MEMBERS>,
     status: AutoWifiStatus<MEMBERS>,
     bitrate: BitrateBps,
+    rendezvous: Option<TcpRendezvousClient<'a>>,
 }
 
 impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
@@ -326,6 +335,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
             status: AutoWifiStatus::new(shared),
             bitrate: contract::WIFI_LAN_BITRATE_BPS
                 .min(contract::WIFI_EMBEDDED_BITRATE_CEILING_BPS),
+            rendezvous: topology.rendezvous,
         }
     }
 
@@ -405,6 +415,11 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
         let mut peers: [Option<Ipv6Addr>; MEMBERS] = [None; MEMBERS];
         let mut ids: [InterfaceId; MEMBERS] = [InterfaceId::new([0u8; 8]); MEMBERS];
         let mut peer_on_secondary: [bool; MEMBERS] = [false; MEMBERS];
+        let tcp_slot = self
+            .rendezvous
+            .as_ref()
+            .and_then(|_| MEMBERS.checked_sub(1));
+        let mut tcp_peer = None;
 
         let token = *self.brain.our_peering_token().as_bytes();
         let secondary_token = self.secondary.as_ref().map(|segment| {
@@ -428,6 +443,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                     &fleet,
                 )
                 .await;
+                clear_tcp_member(&mut self.rendezvous, &mut tcp_peer, &self.status, &fleet).await;
                 self.status.wait_until_enabled().await;
             }
             match select(
@@ -440,13 +456,14 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                     beacon.next(),
                     fleet.next_outbound(),
                 ),
-                select(
+                select3(
                     next_secondary_datagram(
                         &self.secondary,
                         &mut sec_discovery_buf,
                         &mut sec_unicast_discovery_buf,
                         &mut sec_data_buf[..],
                     ),
+                    next_rendezvous_event(&mut self.rendezvous),
                     self.status.wait_until_disabled(),
                 ),
             )
@@ -467,6 +484,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                                 &discovery_buf[..len],
                                 Instant::now().as_millis(),
                                 false,
+                                tcp_slot,
                             )
                             .await;
                         }
@@ -487,6 +505,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                                 &unicast_discovery_buf[..len],
                                 Instant::now().as_millis(),
                                 false,
+                                tcp_slot,
                             )
                             .await;
                         }
@@ -551,9 +570,21 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                         };
                         let dispatch = dispatch_fanout(&mut plan, &mut sender, SEND_TIMEOUT);
                         let _ = select(self.status.wait_until_disabled(), dispatch).await;
+                        if let (Some(rendezvous), Some(peer)) = (self.rendezvous.as_mut(), tcp_peer)
+                        {
+                            if target_includes(outbound.target(), peer.id) {
+                                let send = rendezvous.send_frame(peer.session, outbound.bytes());
+                                if matches!(
+                                    select(self.status.wait_until_disabled(), send).await,
+                                    Either::Second(Ok(()))
+                                ) {
+                                    self.status.member(peer.slot).add_tx(outbound.len() as u64);
+                                }
+                            }
+                        }
                     }
                 }
-                Either::Second(Either::First(SecondaryDatagram::Discovery(received))) => {
+                Either::Second(Either3::First(SecondaryDatagram::Discovery(received))) => {
                     if let Ok((len, meta)) = received {
                         if let IpAddress::Ipv6(src) = meta.endpoint.addr {
                             ingest_beacon(
@@ -568,12 +599,13 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                                 &sec_discovery_buf[..len],
                                 Instant::now().as_millis(),
                                 true,
+                                tcp_slot,
                             )
                             .await;
                         }
                     }
                 }
-                Either::Second(Either::First(SecondaryDatagram::UnicastDiscovery(received))) => {
+                Either::Second(Either3::First(SecondaryDatagram::UnicastDiscovery(received))) => {
                     if let Ok((len, meta)) = received {
                         if let IpAddress::Ipv6(src) = meta.endpoint.addr {
                             ingest_beacon(
@@ -588,12 +620,13 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                                 &sec_unicast_discovery_buf[..len],
                                 Instant::now().as_millis(),
                                 true,
+                                tcp_slot,
                             )
                             .await;
                         }
                     }
                 }
-                Either::Second(Either::First(SecondaryDatagram::Data(received))) => {
+                Either::Second(Either3::First(SecondaryDatagram::Data(received))) => {
                     if let Ok((len, meta)) = received {
                         if let IpAddress::Ipv6(src) = meta.endpoint.addr {
                             route_inbound(
@@ -607,7 +640,29 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                         }
                     }
                 }
-                Either::Second(Either::Second(())) => {}
+                Either::Second(Either3::Second(event_slot)) => {
+                    let rejected_session = match event_slot.event() {
+                        Some(event) => {
+                            handle_rendezvous_event(
+                                &mut tcp_peer,
+                                tcp_slot,
+                                &self.status,
+                                &mut fleet,
+                                self.bitrate,
+                                event,
+                            )
+                            .await
+                        }
+                        None => None,
+                    };
+                    if let Some(rendezvous) = self.rendezvous.as_mut() {
+                        rendezvous.event_received();
+                        if let Some(session) = rejected_session {
+                            rendezvous.disconnect(session);
+                        }
+                    }
+                }
+                Either::Second(Either3::Third(())) => {}
             }
         }
     }
@@ -617,6 +672,103 @@ enum SecondaryDatagram {
     Discovery(Result<(usize, UdpMetadata), RecvError>),
     UnicastDiscovery(Result<(usize, UdpMetadata), RecvError>),
     Data(Result<(usize, UdpMetadata), RecvError>),
+}
+
+#[derive(Clone, Copy)]
+struct TcpPeer {
+    session: u32,
+    id: InterfaceId,
+    slot: usize,
+}
+
+async fn next_rendezvous_event<'a>(
+    rendezvous: &'a mut Option<TcpRendezvousClient<'_>>,
+) -> &'a mut TcpRendezvousWireSlot {
+    match rendezvous {
+        Some(rendezvous) => rendezvous.next_event_slot().await,
+        None => ::core::future::pending().await,
+    }
+}
+
+async fn handle_rendezvous_event<
+    M: RawMutex + 'static,
+    const FRAME: usize,
+    const MEMBERS: usize,
+    const NOTIFY: usize,
+    const LIFECYCLE: usize,
+>(
+    tcp_peer: &mut Option<TcpPeer>,
+    tcp_slot: Option<usize>,
+    status: &AutoWifiStatus<MEMBERS>,
+    fleet: &mut Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
+    bitrate: BitrateBps,
+    event: TcpRendezvousEvent<'_>,
+) -> Option<u32> {
+    match event {
+        TcpRendezvousEvent::Connected { session, id } => {
+            let Some(slot) = tcp_slot else {
+                return Some(session);
+            };
+            if let Some(previous) = tcp_peer.take() {
+                fleet.deregister_member(previous.id).await;
+                status.member(previous.slot).retire();
+            }
+            fleet
+                .register_member(contract::descriptor(
+                    id,
+                    contract::policy_for_bitrate(bitrate),
+                ))
+                .await;
+            status.member(slot).assign(id);
+            *tcp_peer = Some(TcpPeer { session, id, slot });
+            status.republish_peer_count();
+            None
+        }
+        TcpRendezvousEvent::Frame { session, id, bytes } => {
+            let peer = (*tcp_peer)?;
+            if peer.session != session || peer.id != id {
+                return None;
+            }
+            if fleet.deliver_inbound(id, bytes).await.is_ok() {
+                status.member(peer.slot).add_rx(bytes.len() as u64);
+            }
+            None
+        }
+        TcpRendezvousEvent::Disconnected { session, id } => {
+            let peer = (*tcp_peer)?;
+            if peer.session != session || peer.id != id {
+                return None;
+            }
+            fleet.deregister_member(id).await;
+            status.member(peer.slot).retire();
+            *tcp_peer = None;
+            status.republish_peer_count();
+            None
+        }
+    }
+}
+
+async fn clear_tcp_member<
+    M: RawMutex + 'static,
+    const FRAME: usize,
+    const MEMBERS: usize,
+    const NOTIFY: usize,
+    const LIFECYCLE: usize,
+>(
+    rendezvous: &mut Option<TcpRendezvousClient<'_>>,
+    tcp_peer: &mut Option<TcpPeer>,
+    status: &AutoWifiStatus<MEMBERS>,
+    fleet: &Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
+) {
+    let Some(peer) = tcp_peer.take() else {
+        return;
+    };
+    if let Some(rendezvous) = rendezvous.as_mut() {
+        rendezvous.disconnect(peer.session);
+    }
+    fleet.deregister_member(peer.id).await;
+    status.member(peer.slot).retire();
+    status.republish_peer_count();
 }
 
 async fn next_secondary_datagram(
@@ -665,6 +817,7 @@ async fn ingest_beacon<
     bytes: &[u8],
     now_ms: u64,
     on_secondary: bool,
+    reserved_slot: Option<usize>,
 ) {
     let verdict = brain.ingest_discovery_datagram(src, bytes, now_ms);
     let contract::BeaconVerdict::Peer(addr) = verdict else {
@@ -674,7 +827,11 @@ async fn ingest_beacon<
         peer_on_secondary[slot] = on_secondary;
         return;
     }
-    let Some(slot) = peers.iter().position(Option::is_none) else {
+    let Some(slot) = peers
+        .iter()
+        .enumerate()
+        .position(|(slot, peer)| peer.is_none() && Some(slot) != reserved_slot)
+    else {
         return;
     };
     let id = InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, &addr.octets());

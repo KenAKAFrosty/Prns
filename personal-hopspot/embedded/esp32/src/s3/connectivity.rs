@@ -4,6 +4,8 @@ use super::captive_portal::station_wifi_mode;
 use super::captive_portal::{build_ap_netif, dhcp_server_task, dns_server_task, http_server_task};
 use super::*;
 #[cfg(feature = "wifi-auto")]
+use alloc::boxed::Box;
+#[cfg(feature = "wifi-auto")]
 use static_cell::ConstStaticCell;
 
 pub(super) fn build_tcp(
@@ -189,6 +191,33 @@ pub(super) fn build_wifi(
         for _ in 0..4 {
             spawner.spawn(http_server_task(ap_stack).expect("http server task fits"));
         }
+        let rendezvous_events = Box::leak(Box::new([TcpRendezvousWireSlot::empty()]));
+        let rendezvous_commands = Box::leak(Box::new([TcpRendezvousWireSlot::empty()]));
+        let rendezvous_storage = Box::leak(Box::new(TcpRendezvousStorage::new(
+            rendezvous_events,
+            rendezvous_commands,
+        )));
+        let rendezvous_rx = Box::leak(Box::new([0u8; TCP_RENDEZVOUS_SOCKET_BUFFER_BYTES]));
+        let rendezvous_tx = Box::leak(Box::new([0u8; TCP_RENDEZVOUS_SOCKET_BUFFER_BYTES]));
+        let rendezvous_read = Box::leak(Box::new([0u8; TCP_RENDEZVOUS_READ_BUFFER_BYTES]));
+        let rendezvous_framed = Box::leak(Box::new([0u8; TCP_RENDEZVOUS_FRAMED_LEN]));
+        let rendezvous_decoder = Box::leak(Box::new(
+            personal_rns::interfaces::rns_serial_framing::RnsSerialDecoder::<
+                TCP_RENDEZVOUS_FRAME_CAP,
+            >::new(),
+        ));
+        let (rendezvous_server, rendezvous_client) = tcp_rendezvous(
+            ap_stack,
+            TcpRendezvousBuffers {
+                rx: rendezvous_rx,
+                tx: rendezvous_tx,
+                read: rendezvous_read,
+                framed: rendezvous_framed,
+                decoder: rendezvous_decoder,
+            },
+            rendezvous_storage,
+        );
+        spawner.spawn(tcp_rendezvous_task(rendezvous_server).expect("TCP rendezvous task fits"));
         let ap_discovery = {
             static RX_META: ConstStaticCell<[PacketMetadata; 8]> =
                 ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
@@ -244,6 +273,7 @@ pub(super) fn build_wifi(
                     mac: ap_mac,
                 },
                 secondary: station_segment,
+                rendezvous: Some(rendezvous_client),
             },
             &WIFI_SHARED,
         );
@@ -256,6 +286,7 @@ pub(super) fn build_wifi(
                 AutoWifiTopology {
                     primary,
                     secondary: None,
+                    rendezvous: None,
                 },
                 &WIFI_SHARED,
             );
@@ -263,6 +294,12 @@ pub(super) fn build_wifi(
         }
         None => (None, None, Some(esp_now)),
     }
+}
+
+#[cfg(feature = "wifi-auto")]
+#[embassy_executor::task]
+async fn tcp_rendezvous_task(server: TcpRendezvousServer<'static>) -> ! {
+    server.run().await
 }
 
 #[cfg(feature = "wifi-auto")]

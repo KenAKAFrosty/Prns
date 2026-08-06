@@ -147,7 +147,7 @@ fn egress_pressure_events(id: InterfaceId) -> u32 {
     match id.kind() {
         Some(InterfaceKind::UsbAutoDevice) => USB_MANIFOLD_LANE.egress_pressure_events(),
         Some(InterfaceKind::TcpClient) => TCP_MANIFOLD_LANE.egress_pressure_events(),
-        Some(InterfaceKind::AutoWifi | InterfaceKind::WifiPeer) => {
+        Some(InterfaceKind::AutoWifi | InterfaceKind::WifiPeer | InterfaceKind::TcpServerPeer) => {
             WIFI_MANIFOLD_LANE.egress_pressure_events()
         }
         Some(InterfaceKind::LoRa) => LORA_MANIFOLD_LANE.egress_pressure_events(),
@@ -165,7 +165,7 @@ fn ingress_pressure_events(id: InterfaceId) -> u32 {
     match id.kind() {
         Some(InterfaceKind::UsbAutoDevice) => USB_MANIFOLD_LANE.ingress_pressure_events(),
         Some(InterfaceKind::TcpClient) => TCP_MANIFOLD_LANE.ingress_pressure_events(),
-        Some(InterfaceKind::AutoWifi | InterfaceKind::WifiPeer) => {
+        Some(InterfaceKind::AutoWifi | InterfaceKind::WifiPeer | InterfaceKind::TcpServerPeer) => {
             WIFI_MANIFOLD_LANE.ingress_pressure_events()
         }
         Some(InterfaceKind::LoRa) => LORA_MANIFOLD_LANE.ingress_pressure_events(),

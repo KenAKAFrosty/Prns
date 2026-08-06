@@ -6,5 +6,8 @@ pub use prns_interfaces_tokio::wifi_auto::{
 
 #[cfg(all(feature = "embassy-host", not(feature = "tokio-host")))]
 pub use prns_interfaces_embassy::wifi_auto::{
-    AutoWifi, AutoWifiSegment, AutoWifiShared, AutoWifiStatus, AutoWifiTopology, WifiMemberStatus,
+    tcp_rendezvous, AutoWifi, AutoWifiSegment, AutoWifiShared, AutoWifiStatus, AutoWifiTopology,
+    TcpRendezvousBuffers, TcpRendezvousClient, TcpRendezvousServer, TcpRendezvousStorage,
+    TcpRendezvousWireSlot, WifiMemberStatus, TCP_RENDEZVOUS_FRAMED_LEN, TCP_RENDEZVOUS_FRAME_CAP,
+    TCP_RENDEZVOUS_READ_BUFFER_BYTES, TCP_RENDEZVOUS_SOCKET_BUFFER_BYTES,
 };
