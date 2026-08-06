@@ -19,6 +19,9 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / "tools" / "release"
 sys.path.insert(0, str(SCRIPTS))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from script_launcher import script_launcher
 
 from flasher_build_metadata import EXPECTED_TOOLS, EXPECTED_WEB_PACKAGES
 from flasher_reproducibility import SEPARATE_ENVELOPES, payload_identity, payload_manifest
@@ -47,21 +50,6 @@ CLI_TARGETS = {
 }
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def script_launcher(target: Path) -> list[str]:
-    """Return the interpreter to run `target` with.
-
-    Only Unix executes a script through its shebang, so name the interpreter explicitly. Shell
-    scripts additionally need bash resolved to an absolute path: on Windows a bare "bash" can
-    reach the WSL launcher instead of the Git one, and WSL cannot see a `C:` path.
-    """
-    if target.suffix != ".sh":
-        return [sys.executable]
-    bash = shutil.which("bash")
-    if bash is None:
-        raise RuntimeError("bash is required to run the release shell scripts")
-    return [bash]
 
 
 def run_script(script: str, *arguments: object, environment: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:

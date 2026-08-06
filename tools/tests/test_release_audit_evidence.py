@@ -4,9 +4,14 @@ import os
 from pathlib import Path
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from script_launcher import script_launcher
 
 ROOT = Path(__file__).resolve().parents[2]
 WRITER = ROOT / "tools" / "release" / "write-release-audit-evidence.sh"
@@ -36,7 +41,7 @@ esac
             environment["PATH"] = f"{tools}{os.pathsep}{environment['PATH']}"
 
             result = subprocess.run(
-                (WRITER, output),
+                [*script_launcher(WRITER), str(WRITER), str(output)],
                 cwd=ROOT,
                 env=environment,
                 text=True,
