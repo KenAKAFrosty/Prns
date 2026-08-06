@@ -1,7 +1,8 @@
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicU8, Ordering};
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use nrf_softdevice::Flash;
+use personal_hopspot_core::PersistenceState;
 use personal_rns::runtime::{
     EmbeddedCompactionPolicy, EmbeddedFlashPersistence, EmbeddedPersistenceDiagnostic,
     EmbeddedPersistencePolicy, FixedRouteSnapshotKeys, SharedNorFlash,
@@ -19,7 +20,7 @@ pub type TechoPersistence = EmbeddedFlashPersistence<
     PENDING,
 >;
 
-static STATE_NOT_SAVED: AtomicBool = AtomicBool::new(false);
+static PERSISTENCE_STATE: AtomicU8 = AtomicU8::new(PersistenceState::Durable.encode());
 
 pub fn new(flash: TechoSharedFlash) -> TechoPersistence {
     EmbeddedFlashPersistence::new(
@@ -33,14 +34,14 @@ pub fn new(flash: TechoSharedFlash) -> TechoPersistence {
     )
 }
 
-pub fn state_not_saved() -> bool {
-    STATE_NOT_SAVED.load(Ordering::Acquire)
+pub fn persistence_state() -> PersistenceState {
+    PersistenceState::decode(PERSISTENCE_STATE.load(Ordering::Acquire))
 }
 
 fn observe(diagnostic: EmbeddedPersistenceDiagnostic) {
     match diagnostic {
         EmbeddedPersistenceDiagnostic::Restored(_) => {
-            STATE_NOT_SAVED.store(false, Ordering::Release);
+            PERSISTENCE_STATE.store(PersistenceState::Durable.encode(), Ordering::Release);
         }
         EmbeddedPersistenceDiagnostic::BatchPersisted {
             state_not_saved, ..
@@ -48,12 +49,19 @@ fn observe(diagnostic: EmbeddedPersistenceDiagnostic) {
         | EmbeddedPersistenceDiagnostic::CompactionCompleted {
             state_not_saved, ..
         } => {
-            STATE_NOT_SAVED.store(state_not_saved, Ordering::Release);
+            let state = if state_not_saved {
+                PersistenceState::Deferred
+            } else {
+                PersistenceState::Durable
+            };
+            PERSISTENCE_STATE.store(state.encode(), Ordering::Release);
         }
         EmbeddedPersistenceDiagnostic::CompactionStarted { .. } => {}
-        EmbeddedPersistenceDiagnostic::DurabilityDeferred { .. }
-        | EmbeddedPersistenceDiagnostic::WriteFailed { .. } => {
-            STATE_NOT_SAVED.store(true, Ordering::Release);
+        EmbeddedPersistenceDiagnostic::DurabilityDeferred { .. } => {
+            PERSISTENCE_STATE.store(PersistenceState::Deferred.encode(), Ordering::Release);
+        }
+        EmbeddedPersistenceDiagnostic::WriteFailed { .. } => {
+            PERSISTENCE_STATE.store(PersistenceState::Failed.encode(), Ordering::Release);
         }
     }
 }

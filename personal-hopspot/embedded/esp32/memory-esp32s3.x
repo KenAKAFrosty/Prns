@@ -22,7 +22,7 @@ MEMORY
   iram_seg ( RX )        : ORIGIN = 0x40370000 + RESERVE_ICACHE + VECTORS_SIZE, len = 328k - VECTORS_SIZE - RESERVE_ICACHE
 
   /* memory available after the 2nd stage bootloader is finished */
-  dram2_seg ( RW )       : ORIGIN = 0x3FCE2B00, len = 0x3FCED710 - 0x3FCE2B00
+  dram2_seg ( RW )       : ORIGIN = 0x3FCDF700, len = 0x3FCED710 - 0x3FCDF700
   dram_seg ( RW )        : ORIGIN = 0x3FC88000 , len = ORIGIN(dram2_seg) - 0x3FC88000
 
   /* external flash

@@ -250,11 +250,12 @@ fn render_shows_selected_interface_menu() {
             id: InterfaceId::new([0; 8]),
             kind: CardKind::Ble,
             label: card_label("BLE"),
-            liveness: Liveness::Live,
+            connection: ConnectionState::Connected,
             failure_reason: None,
             tx_bytes: 0,
             rx_bytes: 0,
             links: 0,
+            peers: Some(0),
             destinations: 0,
             rate_bytes_per_sec: 0,
             last_activity_secs: None,
@@ -297,14 +298,14 @@ fn render_shows_selected_interface_menu() {
 #[test]
 fn interface_menu_draws_detail_rows_below_actions() {
     let mut display = PanelDisplay::new();
-    let mut card = test_card("Wi-Fi/LAN");
+    let mut card = test_card("LAN");
     card.kind = CardKind::Wifi;
     let mut details = InterfaceMenuDetails::empty();
     details.push_info("STA", "None");
     details.push_info("AP", "Hopspot-EW53");
     let _ = details.push_supervisor_peers([(
         InterfaceId::new([0, 0xab, 0xcd, 0, 0, 0, 0, 0]),
-        Liveness::Live,
+        ConnectionState::Connected,
     )]);
 
     draw_interface_menu(&mut display, &card, POWER_MENU_ITEM, details.as_slice());
@@ -321,7 +322,7 @@ fn failed_interface_menu_draws_failure_reason() {
     let mut display = PanelDisplay::new();
     let mut card = test_card("BLE");
     card.kind = CardKind::Ble;
-    card.liveness = Liveness::Failed;
+    card.connection = ConnectionState::Failed;
     card.failure_reason = Some("BlueZ GATT Channels >1; set Channels=1");
 
     draw_interface_menu(&mut display, &card, POWER_MENU_ITEM, &[]);

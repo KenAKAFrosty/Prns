@@ -1,4 +1,4 @@
-use portable_atomic::{AtomicBool, Ordering};
+use portable_atomic::{AtomicU8, Ordering};
 
 #[cfg(target_arch = "xtensa")]
 use allocator_api2::vec::Vec;
@@ -21,6 +21,7 @@ use personal_rns::wire::DestinationHash;
 use crate::flash::EspRomFlash;
 #[cfg(target_arch = "xtensa")]
 use crate::storage::{EngineStorageType, PsramAlloc};
+use personal_hopspot_core::PersistenceState;
 
 #[cfg(target_arch = "riscv32")]
 pub const C6_FLASH_CAPACITY: usize = 4 * 1024 * 1024;
@@ -92,7 +93,7 @@ pub type C6Persistence = EmbeddedFlashPersistence<
     C6_PENDING,
 >;
 
-static STATE_NOT_SAVED: AtomicBool = AtomicBool::new(false);
+static PERSISTENCE_STATE: AtomicU8 = AtomicU8::new(PersistenceState::Durable.encode());
 
 #[cfg(target_arch = "xtensa")]
 pub fn s3(flash: S3SharedFlash, layout: FlashJournalLayout) -> S3Persistence {
@@ -121,14 +122,14 @@ pub fn c6() -> C6Persistence {
 }
 
 #[cfg(target_arch = "xtensa")]
-pub fn state_not_saved() -> bool {
-    STATE_NOT_SAVED.load(Ordering::Acquire)
+pub fn persistence_state() -> PersistenceState {
+    PersistenceState::decode(PERSISTENCE_STATE.load(Ordering::Acquire))
 }
 
 fn observe(diagnostic: EmbeddedPersistenceDiagnostic) {
     match diagnostic {
         EmbeddedPersistenceDiagnostic::Restored(report) => {
-            STATE_NOT_SAVED.store(false, Ordering::Release);
+            PERSISTENCE_STATE.store(PersistenceState::Durable.encode(), Ordering::Release);
             log::info!(
                 "state restored routes={} refused={} ratchets={} warning={:?}",
                 report.route_seeded_count,
@@ -142,7 +143,12 @@ fn observe(diagnostic: EmbeddedPersistenceDiagnostic) {
             at,
             state_not_saved,
         } => {
-            STATE_NOT_SAVED.store(state_not_saved, Ordering::Release);
+            let state = if state_not_saved {
+                PersistenceState::Deferred
+            } else {
+                PersistenceState::Durable
+            };
+            PERSISTENCE_STATE.store(state.encode(), Ordering::Release);
             log::info!("state persisted records={records} at={}", at.0);
         }
         EmbeddedPersistenceDiagnostic::CompactionStarted {
@@ -160,18 +166,23 @@ fn observe(diagnostic: EmbeddedPersistenceDiagnostic) {
             at,
             state_not_saved,
         } => {
-            STATE_NOT_SAVED.store(state_not_saved, Ordering::Release);
+            let state = if state_not_saved {
+                PersistenceState::Deferred
+            } else {
+                PersistenceState::Durable
+            };
+            PERSISTENCE_STATE.store(state.encode(), Ordering::Release);
             log::info!("state compaction completed records={records} at={}", at.0);
         }
         EmbeddedPersistenceDiagnostic::DurabilityDeferred { target, until } => {
-            STATE_NOT_SAVED.store(true, Ordering::Release);
+            PERSISTENCE_STATE.store(PersistenceState::Deferred.encode(), Ordering::Release);
             log::warn!(
                 "state durability deferred target={target:?} until={}",
                 until.0
             );
         }
         EmbeddedPersistenceDiagnostic::WriteFailed { failure, retry_at } => {
-            STATE_NOT_SAVED.store(true, Ordering::Release);
+            PERSISTENCE_STATE.store(PersistenceState::Failed.encode(), Ordering::Release);
             log::error!(
                 "state persistence failed {failure:?}; retry_at={}",
                 retry_at.0

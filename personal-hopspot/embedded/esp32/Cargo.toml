@@ -15,6 +15,9 @@ members = [
 ]
 resolver = "2"
 
+[patch.crates-io]
+esp-radio = { path = "vendor/esp-radio-0.18.0" }
+
 [lib]
 path = "src/lib.rs"
 

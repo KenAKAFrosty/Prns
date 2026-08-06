@@ -56,6 +56,11 @@ const _: () = assert!(
 pub struct PsramAlloc;
 
 #[cfg(target_arch = "xtensa")]
+pub fn allocate_psram<T>(value: T) -> &'static mut T {
+    Box::leak(Box::new_in(value, PsramAlloc))
+}
+
+#[cfg(target_arch = "xtensa")]
 use core::cell::RefCell;
 #[cfg(target_arch = "xtensa")]
 use critical_section::Mutex;

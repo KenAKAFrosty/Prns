@@ -308,10 +308,11 @@ where
         let Some(mut flash) = self.flash.take() else {
             return self.empty_restore_report(raw_now, Some(FlashJournalWarning::Corrupt));
         };
-        let logical_start = FlashJournal::inspect_timebase(&mut flash, self.layout)
+        let timebase_state = FlashJournal::inspect_timebase_state(&mut flash, self.layout)
             .await
-            .ok()
-            .flatten()
+            .ok();
+        let logical_start = timebase_state
+            .and_then(|state| state.high_water)
             .unwrap_or(raw_now);
         let mut scratch = Zeroizing::new([0u8; RECORD_SCRATCH_LEN]);
         let mut report = EmbeddedPersistenceRestoreReport {
@@ -335,10 +336,15 @@ where
         report.warning = restored.warning;
         let initialization_failed =
             restored.active_epoch.is_none() && journal.initialize_empty().await.is_err();
-        self.next_compaction_not_before =
-            Some(InstantMillis(logical_start.0.saturating_add(
-                self.policy.compaction.minimum_interval_millis,
-            )));
+        self.next_compaction_not_before = timebase_state
+            .and_then(|state| state.last_compaction_attempt)
+            .map(|attempt| {
+                InstantMillis(
+                    attempt
+                        .0
+                        .saturating_add(self.policy.compaction.minimum_interval_millis),
+                )
+            });
         self.journal = Some(journal);
         (self.observe_diagnostic)(EmbeddedPersistenceDiagnostic::Restored(report));
         if initialization_failed {
@@ -699,15 +705,6 @@ where
         self.compaction = Some(CompactionPhase::RecordBudget { at: now });
         self.landing_batch = None;
         self.landing_records = 0;
-        let next_allowed_at = InstantMillis(
-            now.0
-                .saturating_add(self.policy.compaction.minimum_interval_millis),
-        );
-        self.next_compaction_not_before = Some(next_allowed_at);
-        (self.observe_diagnostic)(EmbeddedPersistenceDiagnostic::CompactionStarted {
-            at: now,
-            next_allowed_at,
-        });
     }
 
     async fn progress_compaction<S: StorageLayout>(
@@ -722,15 +719,29 @@ where
             return;
         };
         match phase {
-            CompactionPhase::RecordBudget { at } => match journal.record_timebase(at).await {
-                Ok(()) => {
-                    self.last_timebase_success = Some(at);
-                    self.compaction = Some(CompactionPhase::Erase { sector: 0 });
+            CompactionPhase::RecordBudget { at } => {
+                match journal.record_compaction_budget(at).await {
+                    Ok(recorded_at) => {
+                        self.last_timebase_success = Some(at);
+                        let next_allowed_at = InstantMillis(
+                            recorded_at
+                                .0
+                                .saturating_add(self.policy.compaction.minimum_interval_millis),
+                        );
+                        self.next_compaction_not_before = Some(next_allowed_at);
+                        (self.observe_diagnostic)(
+                            EmbeddedPersistenceDiagnostic::CompactionStarted {
+                                at,
+                                next_allowed_at,
+                            },
+                        );
+                        self.compaction = Some(CompactionPhase::Erase { sector: 0 });
+                    }
+                    Err(error) => {
+                        self.note_write_failure(now, failure_from_journal(error));
+                    }
                 }
-                Err(error) => {
-                    self.note_write_failure(now, failure_from_journal(error));
-                }
-            },
+            }
             CompactionPhase::Erase { sector } => {
                 if sector < journal.inactive_sector_count() {
                     match journal.erase_inactive_sector(sector).await {
@@ -1154,7 +1165,7 @@ mod tests {
     use super::*;
     use embedded_storage::nor_flash::{ErrorType, NorFlashError, NorFlashErrorKind};
     use embedded_storage_async::nor_flash::ReadNorFlash;
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
     use std::rc::Rc;
     use std::vec::Vec;
 
@@ -1172,6 +1183,7 @@ mod tests {
     struct TestFlash {
         bytes: [u8; CAPACITY],
         sector_erases: [u32; CAPACITY / ERASE],
+        fail_next_write: Rc<Cell<bool>>,
     }
 
     impl TestFlash {
@@ -1179,7 +1191,14 @@ mod tests {
             Self {
                 bytes: [0xFF; CAPACITY],
                 sector_erases: [0; CAPACITY / ERASE],
+                fail_next_write: Rc::new(Cell::new(false)),
             }
+        }
+
+        fn controlled() -> (Self, Rc<Cell<bool>>) {
+            let flash = Self::new();
+            let control = Rc::clone(&flash.fail_next_write);
+            (flash, control)
         }
     }
 
@@ -1216,6 +1235,9 @@ mod tests {
         const ERASE_SIZE: usize = ERASE;
 
         async fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
+            if self.fail_next_write.replace(false) {
+                return Err(TestFlashError);
+            }
             let start = offset as usize;
             for (stored, written) in self.bytes[start..start + bytes.len()].iter_mut().zip(bytes) {
                 *stored &= *written;
@@ -1245,6 +1267,10 @@ mod tests {
                 .await
                 .unwrap();
             journal.initialize_empty().await.unwrap();
+            journal
+                .record_compaction_budget(InstantMillis(0))
+                .await
+                .unwrap();
             let mut persistence = EmbeddedFlashPersistence::new(
                 TestFlash::new(),
                 LAYOUT,
@@ -1442,7 +1468,7 @@ mod tests {
     }
 
     #[test]
-    fn restored_timebase_delays_the_first_compaction_by_a_full_day() {
+    fn legacy_timebase_allows_one_needed_compaction_then_adopts_the_budget_marker() {
         embassy_futures::block_on(async {
             let (mut journal, _) = {
                 let flash = TestFlash::new();
@@ -1468,15 +1494,30 @@ mod tests {
                 );
             let mut engine = EngineState::<crate::storage::GrowableHeap>::default();
             let report = persistence.restore(&mut engine, InstantMillis(0)).await;
-            assert_eq!(
-                persistence.next_compaction_not_before,
-                Some(InstantMillis(
-                    report
-                        .logical_start
-                        .0
-                        .saturating_add(HOPSPOT_MINIMUM_COMPACTION_INTERVAL_MILLIS)
-                ))
+            assert_eq!(persistence.next_compaction_not_before, None);
+            persistence.require_snapshot(EmbeddedPersistenceTarget::Routes, report.logical_start);
+            persistence.route_dirty_since = Some(InstantMillis(report.logical_start.0 - 2_000));
+            persistence
+                .progress(&mut engine, report.logical_start)
+                .await;
+            persistence
+                .progress(&mut engine, report.logical_start)
+                .await;
+            assert!(matches!(
+                persistence.compaction,
+                Some(CompactionPhase::Erase { sector: 0 })
+            ));
+
+            let flash = persistence.journal.take().unwrap().release();
+            let mut restored = EmbeddedFlashPersistence::<_, FixedRouteSnapshotKeys<8>, _, 4>::new(
+                flash,
+                LAYOUT,
+                EmbeddedPersistencePolicy::hopspot_default(EmbeddedCompactionPolicy::hopspot(0)),
+                FixedRouteSnapshotKeys::new(),
+                (|_| {}) as fn(EmbeddedPersistenceDiagnostic),
             );
+            restored.restore(&mut engine, InstantMillis(0)).await;
+            assert!(restored.next_compaction_not_before.is_some());
         });
     }
 
@@ -1493,8 +1534,9 @@ mod tests {
         persistence.route_dirty_since = Some(InstantMillis(first.0 - 2_000));
         embassy_futures::block_on(persistence.progress(&mut engine, first));
         let second = InstantMillis(first.0 + HOPSPOT_MINIMUM_COMPACTION_INTERVAL_MILLIS);
-        assert_eq!(persistence.next_compaction_not_before, Some(second));
+        assert_eq!(persistence.next_compaction_not_before, Some(first));
         embassy_futures::block_on(persistence.progress(&mut engine, first));
+        assert_eq!(persistence.next_compaction_not_before, Some(second));
         assert_eq!(
             persistence.compaction,
             Some(CompactionPhase::Erase { sector: 0 })
@@ -1510,6 +1552,11 @@ mod tests {
         assert_eq!(
             persistence.compaction,
             Some(CompactionPhase::RecordBudget { at: second })
+        );
+        embassy_futures::block_on(persistence.progress(&mut engine, second));
+        assert_eq!(
+            persistence.compaction,
+            Some(CompactionPhase::Erase { sector: 0 })
         );
 
         let starts = diagnostics
@@ -1550,12 +1597,96 @@ mod tests {
             );
             let report = restored.restore(&mut engine, InstantMillis(0)).await;
             assert!(report.logical_start.0 >= attempt.0);
-            assert!(
-                restored.next_compaction_not_before.unwrap().0
-                    >= attempt
+            assert_eq!(
+                restored.next_compaction_not_before,
+                Some(InstantMillis(
+                    attempt
                         .0
                         .saturating_add(HOPSPOT_MINIMUM_COMPACTION_INTERVAL_MILLIS)
+                ))
             );
+        });
+    }
+
+    #[test]
+    fn marker_write_failure_does_not_consume_the_compaction_budget() {
+        embassy_futures::block_on(async {
+            let (flash, fail_next_write) = TestFlash::controlled();
+            let mut scratch = [0u8; RECORD_SCRATCH_LEN];
+            let (mut journal, _) = FlashJournal::open(flash, LAYOUT, &mut scratch, |_| {})
+                .await
+                .unwrap();
+            journal.initialize_empty().await.unwrap();
+            let mut persistence =
+                EmbeddedFlashPersistence::<_, FixedRouteSnapshotKeys<8>, _, 4>::new(
+                    TestFlash::new(),
+                    LAYOUT,
+                    EmbeddedPersistencePolicy::hopspot_default(EmbeddedCompactionPolicy::hopspot(
+                        0,
+                    )),
+                    FixedRouteSnapshotKeys::new(),
+                    (|_| {}) as fn(EmbeddedPersistenceDiagnostic),
+                );
+            persistence.flash = None;
+            persistence.journal = Some(journal);
+            let mut engine = EngineState::<crate::storage::GrowableHeap>::default();
+            let attempt = InstantMillis(2_000);
+            persistence.require_snapshot(EmbeddedPersistenceTarget::Routes, attempt);
+            persistence.route_dirty_since = Some(InstantMillis(0));
+            persistence.progress(&mut engine, attempt).await;
+            fail_next_write.set(true);
+            persistence.progress(&mut engine, attempt).await;
+            assert_eq!(persistence.next_compaction_not_before, None);
+            assert_eq!(persistence.compaction, None);
+
+            let flash = persistence.journal.take().unwrap().release();
+            let mut restored = EmbeddedFlashPersistence::<_, FixedRouteSnapshotKeys<8>, _, 4>::new(
+                flash,
+                LAYOUT,
+                EmbeddedPersistencePolicy::hopspot_default(EmbeddedCompactionPolicy::hopspot(0)),
+                FixedRouteSnapshotKeys::new(),
+                (|_| {}) as fn(EmbeddedPersistenceDiagnostic),
+            );
+            restored.restore(&mut engine, InstantMillis(0)).await;
+            assert_eq!(restored.next_compaction_not_before, None);
+        });
+    }
+
+    #[test]
+    fn timebase_writes_and_repeated_reboots_do_not_move_the_compaction_deadline() {
+        embassy_futures::block_on(async {
+            let mut persistence = ready();
+            let deadline = persistence.next_compaction_not_before;
+            persistence
+                .journal
+                .as_mut()
+                .unwrap()
+                .record_timebase(InstantMillis(3 * 60 * 60 * 1_000))
+                .await
+                .unwrap();
+            let flash = persistence.journal.take().unwrap().release();
+            let mut engine = EngineState::<crate::storage::GrowableHeap>::default();
+
+            let mut first = EmbeddedFlashPersistence::<_, FixedRouteSnapshotKeys<8>, _, 4>::new(
+                flash,
+                LAYOUT,
+                EmbeddedPersistencePolicy::hopspot_default(EmbeddedCompactionPolicy::hopspot(0)),
+                FixedRouteSnapshotKeys::new(),
+                (|_| {}) as fn(EmbeddedPersistenceDiagnostic),
+            );
+            first.restore(&mut engine, InstantMillis(0)).await;
+            assert_eq!(first.next_compaction_not_before, deadline);
+
+            let flash = first.journal.take().unwrap().release();
+            let mut second = EmbeddedFlashPersistence::<_, FixedRouteSnapshotKeys<8>, _, 4>::new(
+                flash,
+                LAYOUT,
+                EmbeddedPersistencePolicy::hopspot_default(EmbeddedCompactionPolicy::hopspot(0)),
+                FixedRouteSnapshotKeys::new(),
+                (|_| {}) as fn(EmbeddedPersistenceDiagnostic),
+            );
+            second.restore(&mut engine, InstantMillis(0)).await;
+            assert_eq!(second.next_compaction_not_before, deadline);
         });
     }
 

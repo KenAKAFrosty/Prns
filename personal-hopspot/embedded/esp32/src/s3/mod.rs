@@ -203,6 +203,7 @@ pub const LIFECYCLE_CAP: usize = 8;
 const COMPLETIONS_CAP: usize = 4;
 
 const CORE1_STACK_BYTES: usize = 72 * 1024;
+const RECLAIMED_HEAP_BYTES: usize = 56 * 1024;
 
 const RENDER_INTERVAL: Duration = Duration::from_millis(500);
 const RENDER_TICKS_PER_BATTERY: u8 = 4;
@@ -490,7 +491,7 @@ macro_rules! boot_common {
     ($p:ident, $banner:expr, $psram_config:expr, global_psram_heap) => {{
         ::esp_println::logger::init_logger_from_env();
         $crate::s3::boot_add_psram_global!($p, $psram_config);
-        ::esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 43 * 1024);
+        ::esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: $crate::s3::RECLAIMED_HEAP_BYTES);
         $crate::s3::reclaim_dcache_region();
         $crate::s3::boot_psram_probe!();
         $crate::s3::boot_rtos_tail!($p, $banner)
@@ -498,7 +499,7 @@ macro_rules! boot_common {
     ($p:ident, $banner:expr, $psram_config:expr, split_psram_heap) => {{
         ::esp_println::logger::init_logger_from_env();
         $crate::s3::boot_add_psram_split!($p, $psram_config);
-        ::esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 43 * 1024);
+        ::esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: $crate::s3::RECLAIMED_HEAP_BYTES);
         $crate::s3::reclaim_dcache_region();
         $crate::s3::boot_psram_probe!();
         $crate::s3::boot_rtos_tail!($p, $banner)

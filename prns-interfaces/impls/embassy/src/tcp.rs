@@ -1,5 +1,5 @@
 use ::core::time::Duration as CoreDuration;
-use embassy_futures::select::{select, select3, Either, Either3};
+use embassy_futures::select::{select, select4, Either, Either4};
 use embassy_net::tcp::{Error as TcpIoError, TcpSocket};
 use embassy_net::{IpEndpoint, Stack};
 use embassy_time::{with_timeout, Duration, Instant, Timer};
@@ -28,7 +28,28 @@ pub enum TcpClientExitCause {
     ReadFailure(TcpIoError),
     WriteFailure(TcpIoError),
     Timeout,
+    NetworkUnavailable,
     Disabled,
+}
+
+enum TcpConnectionAttempt {
+    Initial,
+    Retry,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TcpNetworkFamily {
+    Ipv4,
+    Ipv6,
+}
+
+impl TcpConnectionAttempt {
+    const fn connection_state(&self) -> ConnectionState {
+        match self {
+            TcpConnectionAttempt::Initial => ConnectionState::Initializing,
+            TcpConnectionAttempt::Retry => ConnectionState::Reconnecting,
+        }
+    }
 }
 
 pub struct TcpSocketBuffers<'a> {
@@ -64,6 +85,13 @@ impl TcpClientTarget {
             hostname: heapless::String::new(),
             #[cfg(feature = "tcp-dns")]
             port: endpoint.port,
+        }
+    }
+
+    fn network_family(&self) -> TcpNetworkFamily {
+        match self.endpoint.map(|endpoint| endpoint.addr) {
+            Some(embassy_net::IpAddress::Ipv4(_)) | None => TcpNetworkFamily::Ipv4,
+            Some(embassy_net::IpAddress::Ipv6(_)) => TcpNetworkFamily::Ipv6,
         }
     }
 
@@ -157,11 +185,24 @@ impl Interface for TcpClient<'_> {
         let mut throughput = ThroughputLedger::new();
         let started = Instant::now();
         let mut reconnect = reconnect_policy.schedule();
+        let mut connection_attempt = TcpConnectionAttempt::Initial;
 
         loop {
             if !status.is_enabled() {
                 status.set_connection(ConnectionState::Disabled);
                 status.wait_until_enabled().await;
+                continue;
+            }
+            status.set_connection(connection_attempt.connection_state());
+            connection_attempt = TcpConnectionAttempt::Retry;
+            let network_family = target.network_family();
+            let network_ready = select(
+                wait_until_network_ready(stack, network_family),
+                status.wait_until_disabled(),
+            )
+            .await;
+            if matches!(network_ready, Either::Second(())) {
+                status.set_connection(ConnectionState::Disabled);
                 continue;
             }
             crate::diagnostic_log::info!("tcp-client [configured]: resolving target={target:?}");
@@ -251,6 +292,8 @@ impl Interface for TcpClient<'_> {
                         &mut throughput,
                         bitrate,
                         started,
+                        stack,
+                        network_family,
                     )
                     .await;
                     let lifetime_ms = connected_at.elapsed().as_millis();
@@ -327,6 +370,28 @@ async fn resolve_target(_stack: Stack<'_>, target: &TcpClientTarget) -> Option<I
     None
 }
 
+fn network_ready(stack: Stack<'_>, family: TcpNetworkFamily) -> bool {
+    if !stack.is_link_up() {
+        return false;
+    }
+    match family {
+        TcpNetworkFamily::Ipv4 => stack.config_v4().is_some(),
+        TcpNetworkFamily::Ipv6 => stack.config_v6().is_some(),
+    }
+}
+
+async fn wait_until_network_ready(stack: Stack<'_>, family: TcpNetworkFamily) {
+    while !network_ready(stack, family) {
+        Timer::after(Duration::from_millis(100)).await;
+    }
+}
+
+async fn wait_until_network_unavailable(stack: Stack<'_>, family: TcpNetworkFamily) {
+    while network_ready(stack, family) {
+        Timer::after(Duration::from_millis(100)).await;
+    }
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "embedded serve-loop internals pass the loop's split-borrowed locals; bundling awaits an on-hardware validation pass"
@@ -342,18 +407,22 @@ async fn serve<Seam: InterfaceSeam>(
     throughput: &mut ThroughputLedger,
     bitrate: BitrateBps,
     started: Instant,
+    stack: Stack<'_>,
+    network_family: TcpNetworkFamily,
 ) -> TcpClientExitCause {
     let (mut reader, mut writer) = socket.split();
     loop {
-        match select3(
+        match select4(
             reader.read(read_buf),
             seam.next_outbound(),
             status.wait_until_disabled(),
+            wait_until_network_unavailable(stack, network_family),
         )
         .await
         {
-            Either3::Third(()) => return TcpClientExitCause::Disabled,
-            Either3::First(read) => {
+            Either4::Fourth(()) => return TcpClientExitCause::NetworkUnavailable,
+            Either4::Third(()) => return TcpClientExitCause::Disabled,
+            Either4::First(read) => {
                 let read = match read {
                     Ok(0) => return TcpClientExitCause::PeerClosed,
                     Err(error) => return TcpClientExitCause::ReadFailure(error),
@@ -379,7 +448,7 @@ async fn serve<Seam: InterfaceSeam>(
                     }
                 }
             }
-            Either3::Second(outbound) => match rns_serial_framing::encode(outbound, frame_buf) {
+            Either4::Second(outbound) => match rns_serial_framing::encode(outbound, frame_buf) {
                 Ok(framed) => {
                     if let Err(error) = writer.write_all(&frame_buf[..framed]).await {
                         return TcpClientExitCause::WriteFailure(error);
@@ -419,5 +488,31 @@ mod tests {
             .expect("the complete frame decodes after reset");
 
         assert_eq!(decoded, b"second connection");
+    }
+
+    #[test]
+    fn connection_attempts_distinguish_initialization_from_retries() {
+        assert_eq!(
+            TcpConnectionAttempt::Initial.connection_state(),
+            ConnectionState::Initializing
+        );
+        assert_eq!(
+            TcpConnectionAttempt::Retry.connection_state(),
+            ConnectionState::Reconnecting
+        );
+    }
+
+    #[test]
+    fn tcp_targets_select_their_required_network_family() {
+        let v4 = TcpClientTarget::endpoint(IpEndpoint::new(
+            embassy_net::Ipv4Address::new(192, 0, 2, 1).into(),
+            4242,
+        ));
+        let v6 = TcpClientTarget::endpoint(IpEndpoint::new(
+            embassy_net::Ipv6Address::LOCALHOST.into(),
+            4242,
+        ));
+        assert_eq!(v4.network_family(), TcpNetworkFamily::Ipv4);
+        assert_eq!(v6.network_family(), TcpNetworkFamily::Ipv6);
     }
 }

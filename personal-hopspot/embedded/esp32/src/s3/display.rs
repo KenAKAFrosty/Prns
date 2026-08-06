@@ -14,7 +14,7 @@ fn classify_card(
     } else if id == lora_id {
         Some((screen::CardKind::LoRa, screen::card_label("LoRa")))
     } else if Some(id) == wifi_id {
-        Some((screen::CardKind::Wifi, screen::card_label("Wi-Fi/LAN")))
+        Some((screen::CardKind::Wifi, screen::card_label("LAN")))
     } else if Some(id) == espnow_id {
         Some((screen::CardKind::EspNow, screen::card_label("ESP-NOW")))
     } else if Some(id) == tcp_id {
@@ -237,6 +237,27 @@ pub(super) fn build_interface_menu_details(
         Some(screen::CardKind::Usb) => screen::usb_interface_menu_details(usb.connection()),
         Some(screen::CardKind::Ble) => {
             screen::snapshots_to_interface_menu_details(selected_card, snapshots)
+        }
+        Some(screen::CardKind::Tcp) => {
+            let mut details = screen::InterfaceMenuDetails::empty();
+            if let Some(tcp) = wifi_config.tcp_client.as_ref() {
+                match &tcp.host {
+                    HopspotTcpClientHost::Ipv4(address) => {
+                        let mut target = heapless::String::<15>::new();
+                        let octets = address.octets();
+                        let _ = write!(
+                            target,
+                            "{}.{}.{}.{}",
+                            octets[0], octets[1], octets[2], octets[3]
+                        );
+                        details.push_tcp_target(target.as_str(), tcp.port);
+                    }
+                    HopspotTcpClientHost::Hostname(hostname) => {
+                        details.push_tcp_target(hostname, tcp.port);
+                    }
+                }
+            }
+            details
         }
         _ => screen::InterfaceMenuDetails::empty(),
     };

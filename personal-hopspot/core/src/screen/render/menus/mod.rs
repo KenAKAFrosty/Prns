@@ -9,9 +9,10 @@ use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::Rectangle;
 use embedded_graphics::text::{Baseline, Text};
 use heapless::String as HString;
+use personal_rns::interfaces::ConnectionState;
 
 use crate::screen::limits::{limit_page_count, LimitRow, LimitValue, LIMITS_PER_PAGE};
-use crate::screen::model::{Card, InterfaceMenuDetailKind, InterfaceMenuDetailRow, Liveness};
+use crate::screen::model::{Card, InterfaceMenuDetailKind, InterfaceMenuDetailRow};
 use crate::screen::state::{
     interface_menu_items, AccessPointState, UiNotice, UiState, POWER_MENU_ITEM,
 };
@@ -294,12 +295,31 @@ pub(super) fn draw_sleeping<D: DrawTarget<Color = BinaryColor>>(display: &mut D)
 }
 
 pub(super) fn draw_notice<D: DrawTarget<Color = BinaryColor>>(display: &mut D, notice: UiNotice) {
-    let label = notice.label();
-    let char_count = label.chars().count() as i32;
-    let x = ((WIDTH - char_count * FONT_5X8_CHAR_W) / 2).max(0);
-    let style = MonoTextStyle::new(&FONT_5X8, BinaryColor::On);
-    let _ = Text::with_baseline(label, Point::new(x, CARD_TOP + 27), style, Baseline::Top)
+    let lines = notice.lines();
+    let line_count = lines.as_slice().len() as i32;
+    let multiline = line_count > 1;
+    let line_step = if multiline { 9 } else { 11 };
+    let char_width = if multiline {
+        FONT_4X6_CHAR_W
+    } else {
+        FONT_5X8_CHAR_W
+    };
+    let first_y = CARD_TOP + 27 - ((line_count - 1) * line_step) / 2;
+    let style = MonoTextStyle::new(
+        if multiline { &FONT_4X6 } else { &FONT_5X8 },
+        BinaryColor::On,
+    );
+    for (index, label) in lines.as_slice().iter().enumerate() {
+        let char_count = label.chars().count() as i32;
+        let x = ((WIDTH - char_count * char_width) / 2).max(0);
+        let _ = Text::with_baseline(
+            label,
+            Point::new(x, first_y + index as i32 * line_step),
+            style,
+            Baseline::Top,
+        )
         .draw(display);
+    }
 }
 
 pub(in crate::screen) fn draw_interface_menu<D: DrawTarget<Color = BinaryColor>>(
@@ -341,7 +361,7 @@ pub(in crate::screen) fn draw_interface_menu<D: DrawTarget<Color = BinaryColor>>
     let items = interface_menu_items(card.kind);
     for (index, item) in items.iter().enumerate() {
         let label = if index == POWER_MENU_ITEM {
-            if card.liveness == Liveness::Disabled {
+            if card.connection == ConnectionState::Disabled {
                 "Turn On"
             } else {
                 "Turn Off"
@@ -360,7 +380,7 @@ pub(in crate::screen) fn draw_interface_menu<D: DrawTarget<Color = BinaryColor>>
     if !details.is_empty() {
         detail_y = draw_interface_menu_details(display, detail_y, details);
     }
-    if card.liveness.is_failed() {
+    if card.connection == ConnectionState::Failed {
         if let Some(reason) = card.failure_reason {
             draw_failure_reason(display, detail_y - 1, reason);
         }

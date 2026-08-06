@@ -332,9 +332,9 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
         let mut displayed_hash = None;
         let mut activity = hopspot::CardActivityTracker::<{ MEMBERS + 4 }>::new();
         let mut notice_until_ms =
-            startup_notice.map(|_| embassy_time::Instant::now().as_millis() + 5_000);
+            startup_notice.map(|notice| (embassy_time::Instant::now().as_millis() + 5_000, notice));
         let mut battery_gauge = hopspot::BatteryGauge::lipo();
-        let mut persistence_notice_visible = false;
+        let mut persistence_notice = hopspot::PersistenceNotice::new();
         loop {
             let mut adc = [0i16; 1];
             saadc.sample(&mut adc).await;
@@ -351,24 +351,26 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                 local_docs: None,
             };
             ui_state.sync(content);
-            let state_not_saved = super::persistence::state_not_saved();
-            if state_not_saved {
-                ui_state.show_notice(hopspot::UiNotice::StateNotSaved);
-                notice_until_ms = None;
-                persistence_notice_visible = true;
-            } else if persistence_notice_visible {
-                ui_state.clear_notice();
-                persistence_notice_visible = false;
-            }
-            if notice_until_ms.is_some_and(|until| now_ms >= until) {
-                if let Some(notice) = pending_startup_notice.take() {
-                    ui_state.show_notice(notice);
-                    notice_until_ms = Some(now_ms + 5_000);
-                } else {
-                    ui_state.clear_notice();
-                    notice_until_ms = None;
-                }
+            if persistence_notice.update(
+                &mut ui_state,
+                super::persistence::persistence_state(),
+                now_ms,
+            ) {
                 refresh_urgency = hopspot::EinkRefreshUrgency::Immediate;
+            }
+            if let Some((until, owner)) = notice_until_ms {
+                if now_ms >= until {
+                    notice_until_ms = None;
+                    if ui_state.clear_notice_if(owner) {
+                        if let Some(notice) = pending_startup_notice.take() {
+                            ui_state.show_notice(notice);
+                            notice_until_ms = Some((now_ms + 5_000, notice));
+                        }
+                    } else {
+                        pending_startup_notice = None;
+                    }
+                    refresh_urgency = hopspot::EinkRefreshUrgency::Immediate;
+                }
             }
 
             let _ = panel.clear(EpdColor::White);
@@ -439,8 +441,10 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                     match action {
                         hopspot::UiAction::Sleep => {
                             ui_state.show_notice(hopspot::UiNotice::Sleeping);
-                            notice_until_ms =
-                                Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
+                            notice_until_ms = Some((
+                                embassy_time::Instant::now().as_millis() + NOTICE_MS,
+                                hopspot::UiNotice::Sleeping,
+                            ));
                             lora_status.disable();
                             usb_status.disable();
                             let status = BluetoothAutoStatus::new(&BLE_SHARED);
@@ -448,8 +452,10 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                         }
                         hopspot::UiAction::Wake => {
                             ui_state.show_notice(hopspot::UiNotice::Awake);
-                            notice_until_ms =
-                                Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
+                            notice_until_ms = Some((
+                                embassy_time::Instant::now().as_millis() + NOTICE_MS,
+                                hopspot::UiNotice::Awake,
+                            ));
                             lora_status.enable();
                             usb_status.enable();
                             let status = BluetoothAutoStatus::new(&BLE_SHARED);
@@ -457,8 +463,10 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                         }
                         hopspot::UiAction::Announce => {
                             ui_state.show_notice(hopspot::UiNotice::Announcing);
-                            notice_until_ms =
-                                Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
+                            notice_until_ms = Some((
+                                embassy_time::Instant::now().as_millis() + NOTICE_MS,
+                                hopspot::UiNotice::Announcing,
+                            ));
                             let _ = ui_handle.issue(PrnsCommand::AnnounceNow(AnnounceNow {
                                 destination: node_page_destination,
                                 target: AnnounceTarget::AllInterfaces,
@@ -468,32 +476,41 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                         hopspot::UiAction::ToggleSelectedInterface => {
                             if let Some(card) = ui_state.selected_card(content.cards) {
                                 if card.id() == lora_status.id() {
-                                    ui_state.show_notice(if lora_status.is_enabled() {
+                                    let notice = if lora_status.is_enabled() {
                                         hopspot::UiNotice::TurningOff
                                     } else {
                                         hopspot::UiNotice::TurningOn
-                                    });
-                                    notice_until_ms =
-                                        Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
+                                    };
+                                    ui_state.show_notice(notice);
+                                    notice_until_ms = Some((
+                                        embassy_time::Instant::now().as_millis() + NOTICE_MS,
+                                        notice,
+                                    ));
                                     lora_status.toggle_enabled();
                                 } else if card.id() == usb_status.id() {
-                                    ui_state.show_notice(if usb_status.is_enabled() {
+                                    let notice = if usb_status.is_enabled() {
                                         hopspot::UiNotice::TurningOff
                                     } else {
                                         hopspot::UiNotice::TurningOn
-                                    });
-                                    notice_until_ms =
-                                        Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
+                                    };
+                                    ui_state.show_notice(notice);
+                                    notice_until_ms = Some((
+                                        embassy_time::Instant::now().as_millis() + NOTICE_MS,
+                                        notice,
+                                    ));
                                     usb_status.toggle_enabled();
                                 } else if card.id() == BLE_SUPERVISOR_ID {
                                     let status = BluetoothAutoStatus::new(&BLE_SHARED);
-                                    ui_state.show_notice(if status.is_enabled() {
+                                    let notice = if status.is_enabled() {
                                         hopspot::UiNotice::TurningOff
                                     } else {
                                         hopspot::UiNotice::TurningOn
-                                    });
-                                    notice_until_ms =
-                                        Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
+                                    };
+                                    ui_state.show_notice(notice);
+                                    notice_until_ms = Some((
+                                        embassy_time::Instant::now().as_millis() + NOTICE_MS,
+                                        notice,
+                                    ));
                                     status.toggle_enabled();
                                 }
                             }
@@ -512,9 +529,12 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                             if result.applied() {
                                 working_lora_profile = profile;
                             }
-                            ui_state.show_notice(result.notice());
-                            notice_until_ms =
-                                Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
+                            let notice = result.notice();
+                            ui_state.show_notice(notice);
+                            notice_until_ms = Some((
+                                embassy_time::Instant::now().as_millis() + NOTICE_MS,
+                                notice,
+                            ));
                         }
                         hopspot::UiAction::ResetLoRaProfile => {
                             let result = hopspot::apply_and_persist_radio_profile(
@@ -528,9 +548,12 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                             if result.applied() {
                                 working_lora_profile = DEFAULT_915_PROFILE;
                             }
-                            ui_state.show_notice(result.notice());
-                            notice_until_ms =
-                                Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
+                            let notice = result.notice();
+                            ui_state.show_notice(notice);
+                            notice_until_ms = Some((
+                                embassy_time::Instant::now().as_millis() + NOTICE_MS,
+                                notice,
+                            ));
                         }
                         hopspot::UiAction::OpenDocs => {}
                         hopspot::UiAction::SwapRadioMode => {}

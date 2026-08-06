@@ -31,6 +31,7 @@ pub use rendezvous::{
 
 const BEACON_INTERVAL: Duration = Duration::from_millis(1600);
 const SEND_TIMEOUT: Duration = Duration::from_millis(300);
+const BEACON_FAILURES_BEFORE_DEGRADED: u8 = 3;
 
 async fn wait_for_stack<const MEMBERS: usize>(stack: &Stack<'_>, status: AutoWifiStatus<MEMBERS>) {
     loop {
@@ -263,6 +264,10 @@ impl<const MEMBERS: usize> AutoWifiStatus<MEMBERS> {
             .iter()
             .filter(|member| member.active.load(Ordering::Relaxed))
     }
+
+    pub fn peer_count(&self) -> u32 {
+        self.shared.peers.load(Ordering::Relaxed)
+    }
 }
 
 impl<const MEMBERS: usize> InterfaceStatus for AutoWifiStatus<MEMBERS> {
@@ -274,23 +279,7 @@ impl<const MEMBERS: usize> InterfaceStatus for AutoWifiStatus<MEMBERS> {
         if !self.is_enabled() {
             return ConnectionState::Disabled;
         }
-        let lifecycle = ConnectionState::from_u8(self.shared.lifecycle.load(Ordering::Relaxed));
-        match lifecycle {
-            ConnectionState::Initializing
-            | ConnectionState::Degraded
-            | ConnectionState::Reconnecting
-            | ConnectionState::Failed
-            | ConnectionState::Unknown => lifecycle,
-            ConnectionState::Connected
-            | ConnectionState::Disconnected
-            | ConnectionState::Disabled => {
-                if self.shared.peers.load(Ordering::Relaxed) > 0 {
-                    ConnectionState::Connected
-                } else {
-                    ConnectionState::Disconnected
-                }
-            }
-        }
+        ConnectionState::from_u8(self.shared.lifecycle.load(Ordering::Relaxed))
     }
 
     fn rx_bytes(&self) -> u64 {
@@ -420,12 +409,12 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
             "wifi-auto: secondary segment {}",
             if secondary_ok { "up" } else { "down" }
         );
-        self.status
-            .set_lifecycle(if secondary_configured && !secondary_ok {
-                ConnectionState::Degraded
-            } else {
-                ConnectionState::Disconnected
-            });
+        let topology_degraded = secondary_configured && !secondary_ok;
+        self.status.set_lifecycle(if topology_degraded {
+            ConnectionState::Degraded
+        } else {
+            ConnectionState::Connected
+        });
 
         let mut peers: [Option<Ipv6Addr>; MEMBERS] = [None; MEMBERS];
         let mut ids: [InterfaceId; MEMBERS] = [InterfaceId::new([0u8; 8]); MEMBERS];
@@ -447,6 +436,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
         let mut unicast_discovery_buf = [0u8; 64];
         let mut sec_discovery_buf = [0u8; 64];
         let mut sec_unicast_discovery_buf = [0u8; 64];
+        let mut consecutive_beacon_failures = 0u8;
 
         loop {
             if !self.status.is_enabled() {
@@ -551,11 +541,25 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                             ),
                         ),
                     );
-                    if matches!(
-                        select(self.status.wait_until_disabled(), sends).await,
-                        Either::First(())
-                    ) {
-                        continue;
+                    let sent = match select(self.status.wait_until_disabled(), sends).await {
+                        Either::First(()) => continue,
+                        Either::Second(Ok((primary, secondary))) => {
+                            primary && (!secondary_configured || secondary)
+                        }
+                        Either::Second(Err(_)) => false,
+                    };
+                    if sent {
+                        consecutive_beacon_failures = 0;
+                        self.status.set_lifecycle(if topology_degraded {
+                            ConnectionState::Degraded
+                        } else {
+                            ConnectionState::Connected
+                        });
+                    } else {
+                        consecutive_beacon_failures = consecutive_beacon_failures.saturating_add(1);
+                        if consecutive_beacon_failures >= BEACON_FAILURES_BEFORE_DEGRADED {
+                            self.status.set_lifecycle(ConnectionState::Degraded);
+                        }
                     }
                     retire_stale(
                         &mut self.brain,
@@ -982,14 +986,18 @@ mod tests {
     }
 
     #[test]
-    fn aggregate_status_preserves_initialization_degradation_and_failure() {
+    fn aggregate_status_keeps_network_health_separate_from_peer_count() {
         let status = AutoWifiStatus::new(&LIFECYCLE_SHARED);
 
         assert_eq!(status.connection(), ConnectionState::Initializing);
         status.set_lifecycle(ConnectionState::Disconnected);
         assert_eq!(status.connection(), ConnectionState::Disconnected);
+        assert_eq!(status.peer_count(), 0);
         status.member(0).assign(id(1));
         status.republish_peer_count();
+        assert_eq!(status.connection(), ConnectionState::Disconnected);
+        assert_eq!(status.peer_count(), 1);
+        status.set_lifecycle(ConnectionState::Connected);
         assert_eq!(status.connection(), ConnectionState::Connected);
         status.set_lifecycle(ConnectionState::Degraded);
         assert_eq!(status.connection(), ConnectionState::Degraded);
@@ -1004,7 +1012,7 @@ mod tests {
     #[test]
     fn retired_and_reconnected_member_traffic_is_monotonic() {
         let status = AutoWifiStatus::new(&ACCOUNTING_SHARED);
-        status.set_lifecycle(ConnectionState::Disconnected);
+        status.set_lifecycle(ConnectionState::Connected);
         status.member(0).assign(id(1));
         status.member(0).add_rx(90);
         status.member(0).add_tx(45);
@@ -1016,7 +1024,8 @@ mod tests {
         );
         status.retire_member(0);
         status.republish_peer_count();
-        assert_eq!(status.connection(), ConnectionState::Disconnected);
+        assert_eq!(status.connection(), ConnectionState::Connected);
+        assert_eq!(status.peer_count(), 0);
         assert_eq!((status.rx_bytes(), status.tx_bytes()), (90, 45));
 
         status.member(0).assign(id(2));
@@ -1024,6 +1033,7 @@ mod tests {
         status.member(0).add_rx(30);
         status.member(0).add_tx(15);
         assert_eq!(status.connection(), ConnectionState::Connected);
+        assert_eq!(status.peer_count(), 1);
         assert_eq!((status.rx_bytes(), status.tx_bytes()), (120, 60));
         assert_eq!(
             (status.member(0).rx_bytes(), status.member(0).tx_bytes()),
