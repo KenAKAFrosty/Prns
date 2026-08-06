@@ -234,14 +234,6 @@ pub(super) fn draw_footer<D: DrawTarget<Color = BinaryColor>>(
     );
     draw_footer_line(
         display,
-        "docs @",
-        top + FOOTER_THIRD_LINE_OFFSET,
-        &FONT_6X10,
-        FONT_6X10_CHAR_W,
-        selected,
-    );
-    draw_footer_line(
-        display,
         local_docs.docs_host,
         top + FOOTER_FOURTH_LINE_OFFSET,
         &FONT_5X8,
