@@ -263,6 +263,33 @@ fn duplicate_attached_interface_ids_are_rejected() {
     ));
 }
 
+/// Resolve a fixture executable this test just wrote, waiting out a transient `ETXTBSY`.
+///
+/// Linux refuses to execute a file that any process still holds open for writing. These tests
+/// write the script they then run, and a sibling test thread that forks for its own unrelated
+/// child inherits the open write descriptor for the moment before its `exec` drops it. Measured on
+/// Ubuntu 24.04: with no sibling forker, 300 write-then-exec rounds gave 0 failures; with one,
+/// 49 of 300 failed this way. Production never writes the operator's `reachable-on` script, so the
+/// window belongs to the fixture and the wait belongs here rather than in `resolve_reachable_on`.
+#[cfg(unix)]
+async fn resolve_reachable_on_settled(
+    path: &str,
+    interface: InterfaceId,
+    interface_name: &str,
+) -> Result<String, DiscoveryAdvertisementResolutionError> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let outcome = resolve_reachable_on(path, interface, interface_name).await;
+        match &outcome {
+            Err(DiscoveryAdvertisementResolutionError::Execute { source, .. })
+                if source.kind() == std::io::ErrorKind::ExecutableFileBusy
+                    && std::time::Instant::now() < deadline => {}
+            _ => return outcome,
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn executable_reachable_on_is_re_evaluated_for_each_advertisement() {
@@ -281,7 +308,7 @@ async fn executable_reachable_on_is_re_evaluated_for_each_advertisement() {
     let id = interface_id(0x51);
 
     assert_eq!(
-        resolve_reachable_on(
+        resolve_reachable_on_settled(
             executable.to_str().expect("the fixture path is UTF-8"),
             id,
             "Public TCP",
@@ -300,7 +327,7 @@ async fn executable_reachable_on_is_re_evaluated_for_each_advertisement() {
     fs::set_permissions(&replacement, permissions).expect("the replacement can be made executable");
     fs::rename(&replacement, &executable).expect("the fixture executable can change");
     assert_eq!(
-        resolve_reachable_on(
+        resolve_reachable_on_settled(
             executable.to_str().expect("the fixture path is UTF-8"),
             id,
             "Public TCP",
@@ -327,7 +354,7 @@ async fn failed_reachable_on_executable_is_typed() {
     fs::set_permissions(&executable, permissions).expect("the fixture can be made executable");
 
     assert!(matches!(
-        resolve_reachable_on(
+        resolve_reachable_on_settled(
             executable.to_str().expect("the fixture path is UTF-8"),
             interface_id(0x51),
             "Public TCP",
