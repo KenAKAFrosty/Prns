@@ -1,8 +1,8 @@
 >>`!Why Prns?`!
 
-`F6eb•`f `F6eb`!Faster`!`f
+`F6eb•`f `F6eb`!Efficiency`!`f
 >>>
-Up to 89× the throughput, 48× smaller peak-memory footprint, and 33× the energy efficiency of stock RNS 1.4.2. Faster in every measured scenario, in published, reproducible benchmarks.
+Faster in every measured scenario, in benchmarks that you can easily rerun yourself. The published benchmarks show up to 89× the throughput, 48× smaller peak-memory footprint, and 33× the energy efficiency of stock RNS 1.4.2. 
 
 >>
 `F6eb•`f `F6eb`!Drop-in`!`f

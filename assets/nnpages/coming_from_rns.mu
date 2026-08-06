@@ -113,7 +113,7 @@ OTLP-capable builds can export to an OpenTelemetry collector. The source include
 >>
 >>`!Performance you can measure yourself`!
 
-The benchmark harness runs Prns and stock RNS side by side on your machine, under identical workloads, and records conformance, throughput, latency, CPU, memory, and optionally energy. The published results peak at 89× the throughput, 48× smaller peak-memory footprint, and 33× the energy efficiency of stock RNS 1.4.2. The harness provisions the pinned RNS reference environment itself, and every number it prints is made on your hardware, against the same RNS version the interoperability suite pins.
+The benchmark harness runs Prns and stock RNS side by side on your machine, under identical workloads, and records conformance, throughput, latency, CPU, memory, and optionally energy. The published results peak at 89× the throughput, 48× smaller peak-memory footprint, and 33× the energy efficiency of stock RNS 1.4.2. The harness provisions the pinned RNS reference environment, and every number it prints is made on your hardware.
 
 >>`!Serve NomadNet pages directly from the daemon`!
 
