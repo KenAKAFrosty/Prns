@@ -102,6 +102,8 @@ pub struct Esp32S3<
 >(PhantomData<A>);
 
 impl<A: Allocator, const MAX_REQUEST_HANDLERS: usize> Esp32S3<A, MAX_REQUEST_HANDLERS> {
+    pub const TRACKED_DESTINATIONS: usize = MAX_TRACKED_DESTINATIONS;
+
     /// Cheap retained sessions outnumber every configured auto-interface fleet member, leaving
     /// admission room without multiplying resource or channel workspaces.
     pub const LINK_SESSIONS: usize = MAX_LINK_SESSIONS;
@@ -117,6 +119,13 @@ impl<A: Allocator, const MAX_REQUEST_HANDLERS: usize> Esp32S3<A, MAX_REQUEST_HAN
 
 #[cfg(feature = "flash")]
 impl<A: Allocator, const MAX_REQUEST_HANDLERS: usize> Esp32S3<A, MAX_REQUEST_HANDLERS> {
+    pub const MAX_CRITICAL_FLASH_JOURNAL_BYTES: usize = MAX_UPSTREAM_APP_DESTINATIONS
+        * flash_journal_record_storage_len(
+            crate::wire::TRUNCATED_HASH_BYTE_LEN
+                + self_ratchets_snapshot_len(RETAINED_RATCHETS_PER_DESTINATION),
+            4,
+        );
+
     pub const MAX_COMPACTED_FLASH_JOURNAL_BYTES: usize = MAX_TRACKED_DESTINATIONS
         * (flash_journal_record_storage_len(maximum_route_upsert_payload_len(0, 0), 4) + 3)
         + RETAINED_ANNOUNCE_APP_DATA_BYTES

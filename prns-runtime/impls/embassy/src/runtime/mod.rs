@@ -7,8 +7,9 @@ mod shared_flash;
 pub use prns_runtime::runtime::*;
 
 pub use embedded_persistence::{
-    EmbeddedFlashPersistence, EmbeddedPersistenceDiagnostic, EmbeddedPersistenceFailure,
-    EmbeddedPersistencePolicy, EmbeddedPersistenceRestoreReport,
+    EmbeddedCompactionPolicy, EmbeddedFlashPersistence, EmbeddedPersistenceDiagnostic,
+    EmbeddedPersistenceFailure, EmbeddedPersistencePolicy, EmbeddedPersistenceRestoreReport,
+    EmbeddedPersistenceTarget, FixedRouteSnapshotKeys, RouteSnapshotKeyError, RouteSnapshotKeys,
 };
 pub(crate) use embedded_persistence::{ManifoldPersistence, NoManifoldPersistence};
 pub use interface_store::{minimum_interface_store_capacity, EmbassyInterfaceStore};

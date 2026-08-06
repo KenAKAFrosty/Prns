@@ -297,6 +297,17 @@ impl<S: StorageLayout> EngineState<S> {
         self.routing_table.persisted_rows()
     }
 
+    pub fn persisted_route_destinations(&self) -> impl Iterator<Item = DestinationHash> + '_ {
+        self.routing_table.persisted_destinations()
+    }
+
+    pub fn persisted_route_row(
+        &self,
+        destination: &DestinationHash,
+    ) -> Option<PersistedRouteRow<'_>> {
+        self.routing_table.persisted_row(destination)
+    }
+
     /// Boot-restore for one snapshot row, refusing what storage may have forged: the address binding re-derives and the announce signature re-verifies before anything lands.
     /// RNS 1.4.2's load path instead re-reads the cached announce packet and counts the cache read as a hop (`announce_packet.hops += 1`); seeding writes the row directly, so `hops` carries verbatim.
     /// A seeded row's interface gets the departed grace (`Departure::MayReturn`), holding the route warm until the medium re-derives the same id at attach.

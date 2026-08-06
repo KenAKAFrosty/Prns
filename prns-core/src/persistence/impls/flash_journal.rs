@@ -257,6 +257,22 @@ impl<F: NorFlash> FlashJournal<F> {
         self.active.map(|cursor| cursor.epoch)
     }
 
+    #[must_use]
+    pub fn active_remaining_bytes(&self) -> Option<usize> {
+        self.active.map(|cursor| {
+            (self.layout.arenas[cursor.index].end as usize)
+                .saturating_sub(cursor.append_at as usize)
+        })
+    }
+
+    #[must_use]
+    pub fn active_can_fit(&self, payload_len: usize, reserve_bytes: usize) -> bool {
+        let required = flash_journal_record_storage_len(payload_len, F::WRITE_SIZE)
+            .saturating_add(reserve_bytes);
+        self.active_remaining_bytes()
+            .is_some_and(|remaining| remaining >= required)
+    }
+
     pub async fn initialize_empty(&mut self) -> Result<(), FlashJournalError<F::Error>> {
         if self.active.is_some() {
             return Ok(());
@@ -1192,6 +1208,22 @@ mod tests {
             let (_, report, records) = open(journal.release()).await;
             assert_eq!(report.restored_records as usize, written);
             assert_eq!(records.len(), written);
+        });
+    }
+
+    #[test]
+    fn active_capacity_accounts_for_the_complete_record_and_reserve() {
+        embassy_futures::block_on(async {
+            let (mut journal, _, _) = open(FakeFlash::new()).await;
+            journal.initialize_empty().await.unwrap();
+            assert_eq!(journal.active_remaining_bytes(), Some(480));
+            assert!(journal.active_can_fit(4, 444));
+            assert!(!journal.active_can_fit(4, 445));
+            journal
+                .append(FlashJournalRecordKind::RouteRemoval, &[0; 4])
+                .await
+                .unwrap();
+            assert_eq!(journal.active_remaining_bytes(), Some(444));
         });
     }
 

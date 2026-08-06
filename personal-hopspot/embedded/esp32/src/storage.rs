@@ -208,7 +208,7 @@ mod riscv {
     impl C6Storage {
         // Keep cheap relationships abundant while channels and resource continuations borrow
         // smaller shared tables. None of these counts constrain the eight-peer BLE controller.
-        const TRACKED_DESTINATIONS: usize = 36;
+        pub(crate) const TRACKED_DESTINATIONS: usize = 36;
         const UPSTREAM_APP_DESTINATIONS: usize = 2;
         const HELD_IDENTITIES: usize = 1;
         pub const LINK_SESSIONS: usize = 12;
@@ -239,6 +239,12 @@ mod riscv {
                     4,
                 )
             + personal_rns::persistence::flash_journal_record_storage_len(0, 4);
+        pub(crate) const MAX_CRITICAL_FLASH_JOURNAL_BYTES: usize = Self::UPSTREAM_APP_DESTINATIONS
+            * personal_rns::persistence::flash_journal_record_storage_len(
+                personal_rns::wire::TRUNCATED_HASH_BYTE_LEN
+                    + personal_rns::persistence::self_ratchets_snapshot_len(8),
+                4,
+            );
     }
 
     const _: () = assert!(C6Storage::LINK_SESSIONS > C6Storage::CHANNELS);

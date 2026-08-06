@@ -46,7 +46,7 @@ pub struct TechoStorage;
 impl TechoStorage {
     // Relationship tables are intentionally independent from transfer workspaces. An idle link is
     // cheap; channels and resources borrow the smaller shared pools only while doing payload work.
-    const TRACKED_DESTINATIONS: usize = 16;
+    pub(crate) const TRACKED_DESTINATIONS: usize = 16;
     const UPSTREAM_APP_DESTINATIONS: usize = 2;
     const REQUEST_HANDLERS: usize =
         <personal_hopspot_core::node_pages::NodePageRoutes as RequestEndpointSet<()>>::REGISTRATIONS
@@ -78,6 +78,12 @@ impl TechoStorage {
                 4,
             )
         + personal_rns::persistence::flash_journal_record_storage_len(0, 4);
+    pub(crate) const MAX_CRITICAL_FLASH_JOURNAL_BYTES: usize = Self::UPSTREAM_APP_DESTINATIONS
+        * personal_rns::persistence::flash_journal_record_storage_len(
+            personal_rns::wire::TRUNCATED_HASH_BYTE_LEN
+                + personal_rns::persistence::self_ratchets_snapshot_len(4),
+            4,
+        );
 }
 
 const _: () = assert!(
