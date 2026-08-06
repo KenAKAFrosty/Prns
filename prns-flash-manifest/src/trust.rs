@@ -101,6 +101,17 @@ mod tests {
     }
 
     #[test]
+    fn pinned_public_key_is_stored_with_line_feed_endings() {
+        assert!(
+            !PINNED_MINISIGN_PUBLIC_KEY.contains('\r'),
+            "release/keys/minisign.pub must be checked out with line-feed endings. `include_str!` \
+             bakes the working-tree bytes into every release binary, and a signed candidate always \
+             ships its key with line-feed endings, so a carriage return here makes the byte-exact \
+             candidate key comparison reject the correct key."
+        );
+    }
+
+    #[test]
     fn tampering_is_rejected() {
         assert!(matches!(
             verify_minisign(b"tampered", TEST_SIGNATURE, TEST_PUBLIC_KEY),

@@ -1,4 +1,5 @@
 *.mu -text
+*.pub -text
 *.sh text eol=lf
 
 docs/website/web-flasher/browser/fixtures/signed-candidate/** -text
