@@ -2,6 +2,23 @@
 use super::connectivity::net_task;
 use super::*;
 
+#[cfg(feature = "wifi-auto")]
+pub(super) const HTTP_SERVER_WORKERS: usize = 4;
+#[cfg(feature = "wifi-auto")]
+const EMBASSY_INTERNAL_SOCKET_COUNT: usize = 1;
+#[cfg(feature = "wifi-auto")]
+const WIFI_AUTO_UDP_SOCKET_COUNT: usize = 3;
+#[cfg(feature = "wifi-auto")]
+const CAPTIVE_PORTAL_UDP_SOCKET_COUNT: usize = 2;
+#[cfg(feature = "wifi-auto")]
+const TCP_RENDEZVOUS_SOCKET_COUNT: usize = 1;
+#[cfg(feature = "wifi-auto")]
+const AP_STACK_SOCKET_CAPACITY: usize = EMBASSY_INTERNAL_SOCKET_COUNT
+    + WIFI_AUTO_UDP_SOCKET_COUNT
+    + CAPTIVE_PORTAL_UDP_SOCKET_COUNT
+    + HTTP_SERVER_WORKERS
+    + TCP_RENDEZVOUS_SOCKET_COUNT;
+
 /// A random per-boot SoftAP SSID suffix, cached so every `set_config` within a boot reuses the same
 /// name (regenerating per call would flap the SSID). 0 = unset. Random rather than MAC-derived so the
 /// AP name leaks no device identity; it re-rolls on reboot, which is acceptable (preferred, even).
@@ -67,7 +84,10 @@ pub(super) fn build_ap_netif(
         gateway: None,
         dns_servers: Default::default(),
     });
-    let ap_resources = mk_static!(StackResources<10>, StackResources::new());
+    let ap_resources = mk_static!(
+        StackResources<AP_STACK_SOCKET_CAPACITY>,
+        StackResources::new()
+    );
     let ap_seed = {
         let mut b = [0u8; 8];
         Rng::new().read(&mut b);
@@ -359,7 +379,7 @@ const HTTP_SOCKET_BUFFER_BYTES: usize = 2048;
 const HTTP_REQUEST_BUFFER_BYTES: usize = 1024;
 
 #[cfg(feature = "wifi-auto")]
-#[embassy_executor::task(pool_size = 4)]
+#[embassy_executor::task(pool_size = HTTP_SERVER_WORKERS)]
 pub(super) async fn http_server_task(stack: Stack<'static>) -> ! {
     let rx_buffer: &'static mut [u8] = alloc::vec![0u8; HTTP_SOCKET_BUFFER_BYTES].leak();
     let tx_buffer: &'static mut [u8] = alloc::vec![0u8; HTTP_SOCKET_BUFFER_BYTES].leak();

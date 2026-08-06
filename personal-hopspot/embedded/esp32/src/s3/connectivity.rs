@@ -1,7 +1,9 @@
 #[cfg(feature = "wifi-auto")]
 use super::captive_portal::station_wifi_mode;
 #[cfg(feature = "wifi-auto")]
-use super::captive_portal::{build_ap_netif, dhcp_server_task, dns_server_task, http_server_task};
+use super::captive_portal::{
+    build_ap_netif, dhcp_server_task, dns_server_task, http_server_task, HTTP_SERVER_WORKERS,
+};
 use super::*;
 #[cfg(feature = "wifi-auto")]
 use alloc::boxed::Box;
@@ -188,7 +190,7 @@ pub(super) fn build_wifi(
         // client auto-dials the TCP rendezvous on the gateway (multicast can't cross the SoftAP).
         spawner.spawn(dhcp_server_task(ap_stack).expect("dhcp server task fits"));
         spawner.spawn(dns_server_task(ap_stack).expect("dns server task fits"));
-        for _ in 0..4 {
+        for _ in 0..HTTP_SERVER_WORKERS {
             spawner.spawn(http_server_task(ap_stack).expect("http server task fits"));
         }
         let rendezvous_events = Box::leak(Box::new([TcpRendezvousWireSlot::empty()]));
