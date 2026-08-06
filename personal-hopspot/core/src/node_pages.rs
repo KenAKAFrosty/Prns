@@ -345,7 +345,7 @@ mod tests {
             SERVES_SOURCE_ARCHIVE
         );
         assert_eq!(
-            source_page.contains("This compact build doesn't carry the source archive"),
+            source_page.contains("does not carry the multi-megabyte source archive"),
             !SERVES_SOURCE_ARCHIVE
         );
         assert_eq!(
@@ -385,7 +385,7 @@ mod tests {
             SERVES_SOURCE_ARCHIVE
         );
         assert_eq!(
-            source_page.contains("This compact build doesn't carry the source archive"),
+            source_page.contains("does not carry the multi-megabyte source archive"),
             !SERVES_SOURCE_ARCHIVE
         );
         assert_eq!(
