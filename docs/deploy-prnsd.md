@@ -15,12 +15,14 @@ docker volume create prnsd-data
 
 docker run -d \
   --name prnsd \
-  --restart on-failure \
+  --restart unless-stopped \
   --mount type=volume,source=prnsd-data,target=/var/lib/prnsd \
   --publish 4242:4242/tcp \
   --publish 4284:4284/tcp \
   ghcr.io/kenakafrosty/prnsd:0.3.3
 ```
+
+The `unless-stopped` policy restarts the node with Docker after a host reboot, and still honors a manual `docker stop`.
 
 Reticulum TCP clients connect to `HOST:4242`. WebSocket clients connect to `ws://HOST:4284/prns`; browsers served over HTTPS require a certificate-valid `wss://` endpoint, normally supplied by your hosting platform or reverse proxy. A free tunnel service like Cloudflare Tunnel supplies one from a home machine too, with no port forwarding and no exposed home IP.
 
@@ -33,7 +35,7 @@ The container cannot infer the public address and port created by arbitrary Dock
 ```sh
 docker run -d \
   --name prnsd \
-  --restart on-failure \
+  --restart unless-stopped \
   --mount type=volume,source=prnsd-data,target=/var/lib/prnsd \
   --publish 4242:4242/tcp \
   --publish 4284:4284/tcp \
@@ -127,7 +129,7 @@ docker stop --time 30 prnsd
 docker rm prnsd
 docker run -d \
   --name prnsd \
-  --restart on-failure \
+  --restart unless-stopped \
   --mount type=volume,source=prnsd-data,target=/var/lib/prnsd \
   --publish 4242:4242/tcp \
   --publish 4284:4284/tcp \

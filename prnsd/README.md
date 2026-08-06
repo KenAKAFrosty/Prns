@@ -59,7 +59,7 @@ docker volume create prnsd-data
 
 docker run -d \
   --name prnsd \
-  --restart on-failure \
+  --restart unless-stopped \
   --mount type=volume,source=prnsd-data,target=/var/lib/prnsd \
   --publish 4242:4242/tcp \
   --publish 4284:4284/tcp \
