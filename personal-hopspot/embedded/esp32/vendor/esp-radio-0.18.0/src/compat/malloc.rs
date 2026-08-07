@@ -14,6 +14,8 @@ unsafe extern "C" {
 
     pub fn free_internal(ptr: *mut u8);
 
+    pub fn realloc(ptr: *mut u8, size: usize) -> *mut u8;
+
     pub fn realloc_internal(ptr: *mut u8, size: usize) -> *mut u8;
 
     pub fn calloc(number: u32, size: usize) -> *mut u8;

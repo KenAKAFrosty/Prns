@@ -68,3 +68,5 @@ pub mod s3;
 mod station_recovery;
 #[cfg(any(target_arch = "riscv32", target_arch = "xtensa"))]
 mod storage;
+#[cfg(any(test, target_arch = "xtensa"))]
+mod wifi_rx_recovery;

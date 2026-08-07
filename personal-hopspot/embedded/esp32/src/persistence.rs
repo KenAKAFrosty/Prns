@@ -131,9 +131,10 @@ fn observe(diagnostic: EmbeddedPersistenceDiagnostic) {
         EmbeddedPersistenceDiagnostic::Restored(report) => {
             PERSISTENCE_STATE.store(PersistenceState::Durable.encode(), Ordering::Release);
             log::info!(
-                "state restored routes={} refused={} ratchets={} warning={:?}",
+                "state restored route_records_seeded={} route_records_refused={} route_records_dropped={} ratchets={} warning={:?}",
                 report.route_seeded_count,
                 report.route_refused_count,
+                report.route_dropped_count,
                 report.ratchet_seeded_count,
                 report.warning
             );

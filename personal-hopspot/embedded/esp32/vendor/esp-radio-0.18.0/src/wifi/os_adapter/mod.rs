@@ -791,7 +791,7 @@ pub unsafe extern "C" fn wifi_apb80m_release() {
 /// *************************************************************************
 pub unsafe extern "C" fn phy_disable() {
     trace!("phy_disable");
-    esp_phy::disable_phy();
+    esp_phy::disable_phy_with_wifi_rx();
 }
 
 /// **************************************************************************
@@ -810,7 +810,7 @@ pub unsafe extern "C" fn phy_disable() {
 pub unsafe extern "C" fn phy_enable() {
     // quite some code needed here
     trace!("phy_enable");
-    core::mem::forget(esp_phy::enable_phy());
+    esp_phy::enable_phy_with_wifi_rx();
 }
 
 /// **************************************************************************
@@ -1293,6 +1293,9 @@ pub unsafe extern "C" fn zalloc_internal(size: usize) -> *mut c_void {
 ///
 /// *************************************************************************
 pub unsafe extern "C" fn wifi_malloc(size: usize) -> *mut c_void {
+    if crate::wifi::wifi_allocations_prefer_external() {
+        return unsafe { crate::compat::malloc::malloc(size).cast() };
+    }
     unsafe { malloc_internal(size) }
 }
 
@@ -1311,6 +1314,9 @@ pub unsafe extern "C" fn wifi_malloc(size: usize) -> *mut c_void {
 ///
 /// *************************************************************************
 pub unsafe extern "C" fn wifi_realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
+    if crate::wifi::wifi_allocations_prefer_external() {
+        return unsafe { crate::compat::malloc::realloc(ptr.cast(), size).cast() };
+    }
     unsafe { realloc_internal(ptr, size) }
 }
 
@@ -1330,6 +1336,9 @@ pub unsafe extern "C" fn wifi_realloc(ptr: *mut c_void, size: usize) -> *mut c_v
 /// *************************************************************************
 pub unsafe extern "C" fn wifi_calloc(n: usize, size: usize) -> *mut c_void {
     trace!("wifi_calloc {} {}", n, size);
+    if crate::wifi::wifi_allocations_prefer_external() {
+        return unsafe { crate::compat::malloc::calloc(n as u32, size).cast() };
+    }
     unsafe { calloc_internal(n as u32, size) as *mut c_void }
 }
 

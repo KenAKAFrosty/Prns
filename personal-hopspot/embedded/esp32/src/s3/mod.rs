@@ -184,6 +184,8 @@ const LANE_COUNT: usize =
 const MEMBERS: usize = 24;
 #[cfg(feature = "bluetooth-auto")]
 pub const BLE_PEER_CAPACITY: usize = EMBEDDED_BLE_PEER_CAPACITY;
+#[cfg(feature = "bluetooth-auto")]
+pub const BLE_CONTROLLER_ACTIVITY_CAPACITY: u8 = (BLE_PEER_CAPACITY + 1) as u8;
 #[cfg(not(feature = "bluetooth-auto"))]
 pub const BLE_PEER_CAPACITY: usize = 0;
 const INTERFACE_CAPACITY: usize =
@@ -197,12 +199,14 @@ const LANE_DEPTH: usize = 1;
 const OUTBOUND_BURST_DEPTH: usize = EngineStorageType::MAX_OUTGOING_RESOURCE_REACTION_FRAMES;
 pub const NOTIFY_CAP: usize = minimum_manifold_notification_capacity(LANE_COUNT, LANE_DEPTH);
 const _: () = assert!(EngineStorageType::LINK_SESSIONS > MEMBERS + BLE_PEER_CAPACITY);
+#[cfg(feature = "bluetooth-auto")]
+const _: () = assert!(BLE_CONTROLLER_ACTIVITY_CAPACITY <= 10);
 const COMMANDS_CAP: usize = 8;
 pub const LIFECYCLE_CAP: usize = 8;
 const COMPLETIONS_CAP: usize = 4;
 
 const CORE1_STACK_BYTES: usize = 72 * 1024;
-const RECLAIMED_HEAP_BYTES: usize = 56 * 1024;
+const RECLAIMED_HEAP_BYTES: usize = 72 * 1024;
 
 const RENDER_INTERVAL: Duration = Duration::from_millis(500);
 const RENDER_TICKS_PER_BATTERY: u8 = 4;
@@ -331,6 +335,9 @@ const PACKET_PHY_INDEX_BUCKETS: usize =
 
 #[cfg(feature = "wifi-auto")]
 static WIFI_STATION_JOINED: AtomicBool = AtomicBool::new(false);
+#[cfg(feature = "wifi-auto")]
+static WIFI_STATION_RX_DEGRADED: AtomicBool = AtomicBool::new(false);
+static WIFI_RX_RESTART_REQUESTED: AtomicBool = AtomicBool::new(false);
 static CORE_ONE_HEARTBEAT: AtomicU64 = AtomicU64::new(0);
 
 fn hardware_entropy(bytes: &mut [u8]) {

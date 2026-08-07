@@ -17,6 +17,8 @@ resolver = "2"
 
 [patch.crates-io]
 esp-radio = { path = "vendor/esp-radio-0.18.0" }
+esp-phy = { path = "vendor/esp-phy-0.2.0" }
+bt-hci = { git = "https://github.com/embassy-rs/bt-hci", rev = "adae58af86d241237ba52ed27d0d9dc9588155ee" }
 
 [lib]
 path = "src/lib.rs"
@@ -54,6 +56,7 @@ static_cell = "2"
 portable-atomic = { version = "1", default-features = false }
 log = { version = "0.4", features = ["release_max_level_info"] }
 esp-hal = { version = "1.1", features = ["esp32s3", "unstable"] }
+esp-phy = "0.2.0"
 esp-backtrace = { version = "0.19", default-features = false, features = ["esp32s3", "panic-handler", "println"] }
 esp-println = { version = "0.17", default-features = false, features = ["esp32s3", "jtag-serial", "log-04"] }
 esp-bootloader-esp-idf = { version = "0.5", features = ["esp32s3"] }

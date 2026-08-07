@@ -62,7 +62,7 @@ use esp_hal::system::Cpu;
 use esp_hal::time::{Duration, Instant};
 use esp_sync::NonReentrantMutex;
 use event::EVENT_CHANNEL;
-use portable_atomic::{AtomicUsize, Ordering};
+use portable_atomic::{AtomicBool, AtomicUsize, Ordering};
 use procmacros::BuilderLite;
 
 pub(crate) use self::os_adapter::*;
@@ -867,12 +867,125 @@ pub enum AccessPointStationEventInfo {
 
 static RX_QUEUE_SIZE: AtomicUsize = AtomicUsize::new(0);
 static TX_QUEUE_SIZE: AtomicUsize = AtomicUsize::new(0);
+static STA_RX_ADMITTED: AtomicUsize = AtomicUsize::new(0);
+static STA_RX_REFUSED: AtomicUsize = AtomicUsize::new(0);
+static STA_RX_DELIVERED: AtomicUsize = AtomicUsize::new(0);
+static AP_RX_ADMITTED: AtomicUsize = AtomicUsize::new(0);
+static AP_RX_REFUSED: AtomicUsize = AtomicUsize::new(0);
+static AP_RX_DELIVERED: AtomicUsize = AtomicUsize::new(0);
+static RX_BLOCKED_BY_TX_CAPACITY: AtomicUsize = AtomicUsize::new(0);
+static TX_SUBMITTED: AtomicUsize = AtomicUsize::new(0);
+static TX_SUBMIT_REFUSED: AtomicUsize = AtomicUsize::new(0);
+static TX_COMPLETED: AtomicUsize = AtomicUsize::new(0);
+static TX_COMPLETION_FAILED: AtomicUsize = AtomicUsize::new(0);
+static WIFI_ALLOCATIONS_PREFER_EXTERNAL: AtomicBool = AtomicBool::new(false);
+
+const WIFI_TX_BUFFER_TYPE_STATIC: i32 = 0;
+const WIFI_TX_BUFFER_TYPE_DYNAMIC: i32 = 1;
+
+fn wifi_allocations_prefer_external() -> bool {
+    WIFI_ALLOCATIONS_PREFER_EXTERNAL.load(Ordering::Relaxed)
+}
 
 pub(crate) static DATA_QUEUE_RX_AP: NonReentrantMutex<VecDeque<PacketBuffer>> =
     NonReentrantMutex::new(VecDeque::new());
 
 pub(crate) static DATA_QUEUE_RX_STA: NonReentrantMutex<VecDeque<PacketBuffer>> =
     NonReentrantMutex::new(VecDeque::new());
+
+#[derive(Debug, Eq, PartialEq)]
+/// A point-in-time view of Wi-Fi data-path occupancy and cumulative progress counters.
+pub struct DataPathDiagnostics {
+    station_rx_queue_depth: usize,
+    access_point_rx_queue_depth: usize,
+    rx_queue_capacity: usize,
+    tx_inflight: usize,
+    tx_queue_capacity: usize,
+    station_rx_admitted: usize,
+    station_rx_refused: usize,
+    station_rx_delivered: usize,
+    access_point_rx_admitted: usize,
+    access_point_rx_refused: usize,
+    access_point_rx_delivered: usize,
+    rx_blocked_by_tx_capacity: usize,
+    tx_submitted: usize,
+    tx_submit_refused: usize,
+    tx_completed: usize,
+    tx_completion_failed: usize,
+}
+
+impl DataPathDiagnostics {
+    /// Returns whether the station receive callback made progress since an earlier snapshot.
+    pub fn station_receive_progressed_since(&self, earlier: &Self) -> bool {
+        self.station_rx_admitted != earlier.station_rx_admitted
+            || self.station_rx_refused != earlier.station_rx_refused
+    }
+
+    /// Returns whether receive delivery remained blocked behind saturated transmit capacity since an earlier snapshot.
+    pub fn receive_delivery_blocked_by_transmit_capacity_since(&self, earlier: &Self) -> bool {
+        let was_saturated = earlier.tx_queue_capacity != 0
+            && earlier.tx_inflight >= earlier.tx_queue_capacity;
+        let remains_saturated = self.tx_queue_capacity != 0
+            && self.tx_inflight >= self.tx_queue_capacity;
+        was_saturated
+            && remains_saturated
+            && self.tx_completed == earlier.tx_completed
+            && self.rx_blocked_by_tx_capacity != earlier.rx_blocked_by_tx_capacity
+    }
+
+    /// Returns whether transmit progress occurred without station receive progress since an earlier snapshot.
+    pub fn transmit_progressed_without_station_receive_since(&self, earlier: &Self) -> bool {
+        let transmit_progressed = self.tx_submitted != earlier.tx_submitted;
+        transmit_progressed && !self.station_receive_progressed_since(earlier)
+    }
+}
+
+impl core::fmt::Display for DataPathDiagnostics {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            formatter,
+            "sta_rx_queue={}/{} ap_rx_queue={} sta_admitted={} sta_delivered={} sta_refused={} ap_admitted={} ap_delivered={} ap_refused={} tx_inflight={}/{} tx_submitted={} tx_completed={} tx_submit_refused={} tx_completion_failed={} rx_tx_blocked={}",
+            self.station_rx_queue_depth,
+            self.rx_queue_capacity,
+            self.access_point_rx_queue_depth,
+            self.station_rx_admitted,
+            self.station_rx_delivered,
+            self.station_rx_refused,
+            self.access_point_rx_admitted,
+            self.access_point_rx_delivered,
+            self.access_point_rx_refused,
+            self.tx_inflight,
+            self.tx_queue_capacity,
+            self.tx_submitted,
+            self.tx_completed,
+            self.tx_submit_refused,
+            self.tx_completion_failed,
+            self.rx_blocked_by_tx_capacity
+        )
+    }
+}
+
+/// Captures the current Wi-Fi data-path diagnostics.
+pub fn data_path_diagnostics() -> DataPathDiagnostics {
+    DataPathDiagnostics {
+        station_rx_queue_depth: DATA_QUEUE_RX_STA.with(|queue| queue.len()),
+        access_point_rx_queue_depth: DATA_QUEUE_RX_AP.with(|queue| queue.len()),
+        rx_queue_capacity: RX_QUEUE_SIZE.load(Ordering::Relaxed),
+        tx_inflight: WIFI_TX_INFLIGHT.load(Ordering::SeqCst),
+        tx_queue_capacity: TX_QUEUE_SIZE.load(Ordering::Relaxed),
+        station_rx_admitted: STA_RX_ADMITTED.load(Ordering::Relaxed),
+        station_rx_refused: STA_RX_REFUSED.load(Ordering::Relaxed),
+        station_rx_delivered: STA_RX_DELIVERED.load(Ordering::Relaxed),
+        access_point_rx_admitted: AP_RX_ADMITTED.load(Ordering::Relaxed),
+        access_point_rx_refused: AP_RX_REFUSED.load(Ordering::Relaxed),
+        access_point_rx_delivered: AP_RX_DELIVERED.load(Ordering::Relaxed),
+        rx_blocked_by_tx_capacity: RX_BLOCKED_BY_TX_CAPACITY.load(Ordering::Relaxed),
+        tx_submitted: TX_SUBMITTED.load(Ordering::Relaxed),
+        tx_submit_refused: TX_SUBMIT_REFUSED.load(Ordering::Relaxed),
+        tx_completed: TX_COMPLETED.load(Ordering::Relaxed),
+        tx_completion_failed: TX_COMPLETION_FAILED.load(Ordering::Relaxed),
+    }
+}
 
 /// Common errors.
 #[derive(Display, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -924,7 +1037,7 @@ impl WifiError {
 impl core::error::Error for WifiError {}
 
 #[cfg(esp32)]
-fn set_mac_time_update_cb(_wifi: crate::hal::peripherals::WIFI<'_>) {
+fn set_mac_time_update_cb() {
     use crate::sys::include::esp_wifi_internal_update_mac_time;
     unsafe {
         esp_phy::set_mac_time_update_cb(|duration| {
@@ -933,9 +1046,9 @@ fn set_mac_time_update_cb(_wifi: crate::hal::peripherals::WIFI<'_>) {
     }
 }
 
-pub(crate) fn wifi_init(_wifi: crate::hal::peripherals::WIFI<'_>) -> Result<(), WifiError> {
+fn wifi_driver_init() -> Result<(), WifiError> {
     #[cfg(esp32)]
-    set_mac_time_update_cb(_wifi);
+    set_mac_time_update_cb();
     unsafe {
         #[cfg(feature = "coex")]
         esp_wifi_result!(coex_init())?;
@@ -960,6 +1073,10 @@ pub(crate) fn wifi_init(_wifi: crate::hal::peripherals::WIFI<'_>) -> Result<(), 
 
         Ok(())
     }
+}
+
+pub(crate) fn wifi_init(_wifi: crate::hal::peripherals::WIFI<'_>) -> Result<(), WifiError> {
+    wifi_driver_init()
 }
 
 #[cfg(feature = "coex")]
@@ -1022,10 +1139,12 @@ unsafe extern "C" fn recv_cb_sta(
         }
     }) {
         Ok(()) => {
+            STA_RX_ADMITTED.fetch_add(1, Ordering::Relaxed);
             embassy::STA_RECEIVE_WAKER.wake();
             include::ESP_OK as esp_err_t
         }
         _ => {
+            STA_RX_REFUSED.fetch_add(1, Ordering::Relaxed);
             debug!("RX QUEUE FULL");
             include::ESP_ERR_NO_MEM as esp_err_t
         }
@@ -1053,10 +1172,12 @@ unsafe extern "C" fn recv_cb_ap(
         }
     }) {
         Ok(()) => {
+            AP_RX_ADMITTED.fetch_add(1, Ordering::Relaxed);
             embassy::AP_RECEIVE_WAKER.wake();
             include::ESP_OK as esp_err_t
         }
         _ => {
+            AP_RX_REFUSED.fetch_add(1, Ordering::Relaxed);
             debug!("RX QUEUE FULL");
             include::ESP_ERR_NO_MEM as esp_err_t
         }
@@ -1078,10 +1199,14 @@ unsafe extern "C" fn esp_wifi_tx_done_cb(
     _ifidx: u8,
     _data: *mut u8,
     _data_len: *mut u16,
-    _tx_status: bool,
+    tx_status: bool,
 ) {
     trace!("esp_wifi_tx_done_cb");
 
+    TX_COMPLETED.fetch_add(1, Ordering::Relaxed);
+    if !tx_status {
+        TX_COMPLETION_FAILED.fetch_add(1, Ordering::Relaxed);
+    }
     decrement_inflight_counter();
 
     embassy::TRANSMIT_WAKER.wake();
@@ -1246,6 +1371,9 @@ impl InterfaceType {
 
     fn rx_token(&self) -> Option<(WifiRxToken, WifiTxToken)> {
         let is_empty = self.data_queue_rx().with(|q| q.is_empty());
+        if !is_empty && !self.can_send() {
+            RX_BLOCKED_BY_TX_CAPACITY.fetch_add(1, Ordering::Relaxed);
+        }
         if is_empty || !self.can_send() {
             // TODO: use an OS queue with a short timeout
             crate::preempt::yield_task();
@@ -1684,6 +1812,15 @@ impl WifiRxToken {
             )
         });
 
+        match self.mode {
+            InterfaceType::Station => {
+                STA_RX_DELIVERED.fetch_add(1, Ordering::Relaxed);
+            }
+            InterfaceType::AccessPoint => {
+                AP_RX_DELIVERED.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
         // We handle the received data outside of the lock because
         // PacketBuffer::drop must not be called in a critical section.
         // Dropping an PacketBuffer will call `esp_wifi_internal_free_rx_buffer`
@@ -1749,9 +1886,11 @@ pub(crate) fn esp_wifi_send_data(interface: wifi_interface_t, data: &mut [u8]) {
         let len = data.len() as u16;
         let ptr = data.as_mut_ptr().cast();
 
+        TX_SUBMITTED.fetch_add(1, Ordering::Relaxed);
         let res = unsafe { esp_wifi_internal_tx(interface, ptr, len) };
 
         if res != include::ESP_OK as i32 {
+            TX_SUBMIT_REFUSED.fetch_add(1, Ordering::Relaxed);
             warn!("esp_wifi_internal_tx returned error: {}", res);
             decrement_inflight_counter();
         }
@@ -2224,13 +2363,19 @@ pub fn new<'d>(
     );
 
     unsafe {
+        let uses_static_tx_buffers = config.static_tx_buf_num > 0 && config.dynamic_tx_buf_num == 0;
+        WIFI_ALLOCATIONS_PREFER_EXTERNAL.store(uses_static_tx_buffers, Ordering::Relaxed);
         internal::G_CONFIG = wifi_init_config_t {
             osi_funcs: (&raw const internal::__ESP_RADIO_G_WIFI_OSI_FUNCS).cast_mut(),
 
             wpa_crypto_funcs: g_wifi_default_wpa_crypto_funcs,
             static_rx_buf_num: config.static_rx_buf_num as _,
             dynamic_rx_buf_num: config.dynamic_rx_buf_num as _,
-            tx_buf_type: crate::sys::include::CONFIG_ESP_WIFI_TX_BUFFER_TYPE as i32,
+            tx_buf_type: if uses_static_tx_buffers {
+                WIFI_TX_BUFFER_TYPE_STATIC
+            } else {
+                WIFI_TX_BUFFER_TYPE_DYNAMIC
+            },
             static_tx_buf_num: config.static_tx_buf_num as _,
             dynamic_tx_buf_num: config.dynamic_tx_buf_num as _,
             rx_mgmt_buf_type: crate::sys::include::CONFIG_ESP_WIFI_DYNAMIC_RX_MGMT_BUF as i32,
@@ -2274,6 +2419,10 @@ pub fn new<'d>(
     let mut controller = WifiController {
         _guard,
         _phantom: Default::default(),
+        driver_state: WifiDriverState::Initialized,
+        config: config.initial_config.clone(),
+        country_info: config.country_info,
+        power_save_mode: PowerSaveMode::default(),
     };
 
     controller.set_country_info(&config.country_info)?;
@@ -2313,13 +2462,25 @@ pub fn new<'d>(
 pub struct WifiController<'d> {
     _guard: RadioRefGuard,
     _phantom: PhantomData<&'d ()>,
+    driver_state: WifiDriverState,
+    config: Config,
+    country_info: CountryInfo,
+    power_save_mode: PowerSaveMode,
+}
+
+#[derive(Debug)]
+enum WifiDriverState {
+    Initialized,
+    Uninitialized,
 }
 
 impl Drop for WifiController<'_> {
     fn drop(&mut self) {
         state::locked(|| {
-            if let Err(e) = crate::wifi::wifi_deinit() {
-                warn!("Failed to cleanly deinit wifi: {:?}", e);
+            if matches!(self.driver_state, WifiDriverState::Initialized) {
+                if let Err(e) = crate::wifi::wifi_deinit() {
+                    warn!("Failed to cleanly deinit wifi: {:?}", e);
+                }
             }
 
             set_access_point_state(WifiAccessPointState::Uninitialized);
@@ -2414,7 +2575,9 @@ impl WifiController<'_> {
     /// ```
     #[instability::unstable]
     pub fn set_power_saving(&mut self, ps: PowerSaveMode) -> Result<(), WifiError> {
-        apply_power_saving(ps)
+        apply_power_saving(ps)?;
+        self.power_save_mode = ps;
+        Ok(())
     }
 
     fn set_country_info(&mut self, country: &CountryInfo) -> Result<(), WifiError> {
@@ -2422,6 +2585,7 @@ impl WifiController<'_> {
             let country = country.into_blob();
             esp_wifi_result!(esp_wifi_set_country(&country))?;
         }
+        self.country_info = *country;
         Ok(())
     }
 
@@ -2607,6 +2771,7 @@ impl WifiController<'_> {
             esp_wifi_result!(unsafe { esp_wifi_start() })?;
         }
 
+        self.config = conf.clone();
         reset_mode_on_error.defuse();
 
         Ok(())
@@ -2733,7 +2898,34 @@ ignored."
         set_access_point_state(WifiAccessPointState::Stopping);
         set_station_state(WifiStationState::Stopping);
 
-        esp_wifi_result!(unsafe { esp_wifi_stop() })
+        esp_wifi_result!(unsafe { esp_wifi_stop() })?;
+        WIFI_TX_INFLIGHT.store(0, Ordering::SeqCst);
+        embassy::TRANSMIT_WAKER.wake();
+        Ok(())
+    }
+
+    /// Restarts the configured Wi-Fi mode without deinitializing the shared radio.
+    pub fn restart(&mut self) -> Result<(), WifiError> {
+        let config = self.config.clone();
+        let country_info = self.country_info;
+        let power_save_mode = self.power_save_mode;
+        if matches!(self.driver_state, WifiDriverState::Initialized) {
+            let station_packets = DATA_QUEUE_RX_STA.with(core::mem::take);
+            let access_point_packets = DATA_QUEUE_RX_AP.with(core::mem::take);
+            drop(station_packets);
+            drop(access_point_packets);
+
+            wifi_deinit()?;
+            self.driver_state = WifiDriverState::Uninitialized;
+            WIFI_TX_INFLIGHT.store(0, Ordering::SeqCst);
+            embassy::TRANSMIT_WAKER.wake();
+        }
+
+        wifi_driver_init()?;
+        self.driver_state = WifiDriverState::Initialized;
+        self.set_country_info(&country_info)?;
+        self.set_config(&config)?;
+        self.set_power_saving(power_save_mode)
     }
 
     fn connect_impl(&mut self) -> Result<(), WifiError> {

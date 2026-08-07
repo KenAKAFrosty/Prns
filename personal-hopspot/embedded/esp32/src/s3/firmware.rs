@@ -4,7 +4,8 @@ pub(crate) async fn run<B: Esp32S3Board>(spawner: Spawner) {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let p = esp_hal::init(config);
     let bringup = B::bringup(p).await;
-    run_core::<B>(spawner, bringup).await;
+    allocator_api2::boxed::Box::pin_in(run_core::<B>(spawner, bringup), crate::storage::PsramAlloc)
+        .await;
 }
 
 #[allow(clippy::too_many_lines)]
@@ -806,7 +807,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         bluetooth,
         esp_radio::ble::Config::default()
             .with_task_stack_size(4096)
-            .with_max_connections(BLE_PEER_CAPACITY as u8),
+            .with_max_activities(BLE_CONTROLLER_ACTIVITY_CAPACITY),
     )
     .expect("ble connector");
     #[cfg(all(feature = "bluetooth-auto", not(feature = "wifi-auto")))]
@@ -858,7 +859,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                     bluetooth,
                     esp_radio::ble::Config::default()
                         .with_task_stack_size(4096)
-                        .with_max_connections(BLE_PEER_CAPACITY as u8),
+                        .with_max_activities(BLE_CONTROLLER_ACTIVITY_CAPACITY),
                 )
                 .expect("ble connector");
                 boot_stage(BootPhase::BluetoothReady);
@@ -891,7 +892,7 @@ async fn espnow_task(interface: S3EspNowInterface, seam: S3EspNowSeam) {
 
 #[embassy_executor::task]
 async fn tcp_task(interface: TcpClient<'static>, seam: S3TcpSeam) {
-    interface.run(seam).await
+    allocator_api2::boxed::Box::pin_in(interface.run(seam), crate::storage::PsramAlloc).await
 }
 
 #[cfg(feature = "wifi-auto")]

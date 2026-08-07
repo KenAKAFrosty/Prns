@@ -367,10 +367,10 @@ pub struct Config {
     #[cfg(multi_core)]
     task_cpu: Cpu,
 
-    /// The maximum number of simultaneous connections.
+    /// The maximum number of concurrent controller activities.
     ///
     /// Range: 1 - 10
-    max_connections: u8,
+    max_activities: u8,
 
     /// Enable QA test mode.
     qa_test_mode: bool,
@@ -465,7 +465,7 @@ impl Default for Config {
             task_stack_size: 8192, // 4096?
             #[cfg(multi_core)]
             task_cpu: Cpu::ProCpu,
-            max_connections: 6,
+            max_activities: 6,
             qa_test_mode: false,
             scan_duplicate_list_count: 100,
             scan_duplicate_refresh_period: 0,
@@ -500,7 +500,7 @@ impl Config {
             0,
             crate::preempt::max_task_priority().min(255) as u8
         );
-        crate::ble::validate_range!(self, max_connections, 1, 10);
+        crate::ble::validate_range!(self, max_activities, 1, 10);
         crate::ble::validate_range!(self, scan_duplicate_list_count, 10, 1000);
         crate::ble::validate_range!(self, scan_duplicate_refresh_period, 0, 1000);
         crate::ble::validate_range!(self, cca_threshold, 20, 100);
@@ -523,7 +523,7 @@ pub(crate) fn create_ble_config(config: &Config) -> esp_bt_controller_config_t {
 
         bluetooth_mode: esp_bt_mode_t_ESP_BT_MODE_BLE as _,
 
-        ble_max_act: config.max_connections,
+        ble_max_act: config.max_activities,
         sleep_mode: 0,
         sleep_clock: 0,
         ble_st_acl_tx_buf_nb: 0,

@@ -6,6 +6,10 @@ use super::captive_portal::{
 };
 use super::*;
 #[cfg(feature = "wifi-auto")]
+use crate::wifi_rx_recovery::{
+    StationReceptionAction, StationReceptionRecovery, StationReceptionWindow,
+};
+#[cfg(feature = "wifi-auto")]
 use alloc::boxed::Box;
 
 #[cfg(feature = "wifi-auto")]
@@ -33,9 +37,13 @@ const WIFI_DYNAMIC_RX_BUFFERS: u16 = 12;
 #[cfg(feature = "wifi-auto")]
 const WIFI_RX_BA_WINDOW: u8 = 6;
 #[cfg(feature = "wifi-auto")]
+const WIFI_RX_QUEUE_FRAMES: usize = 8;
+#[cfg(feature = "wifi-auto")]
 const WIFI_TX_QUEUE_FRAMES: usize = 3;
 #[cfg(feature = "wifi-auto")]
-const WIFI_DYNAMIC_TX_BUFFERS: u16 = 6;
+const WIFI_STATIC_TX_BUFFERS: u8 = 6;
+#[cfg(feature = "wifi-auto")]
+const WIFI_DYNAMIC_TX_BUFFERS: u16 = 0;
 #[cfg(feature = "wifi-auto")]
 const WIFI_DATA_SOCKET_BUFFER_BYTES: usize = 4 * 1_024;
 #[cfg(feature = "wifi-auto")]
@@ -45,7 +53,7 @@ const _: () = assert!(WIFI_STATIC_RX_BUFFERS >= WIFI_RX_BA_WINDOW);
 #[cfg(feature = "wifi-auto")]
 const _: () = assert!(WIFI_DYNAMIC_RX_BUFFERS > WIFI_RX_BA_WINDOW as u16);
 #[cfg(feature = "wifi-auto")]
-const _: () = assert!(WIFI_DYNAMIC_TX_BUFFERS >= WIFI_TX_QUEUE_FRAMES as u16);
+const _: () = assert!(WIFI_STATIC_TX_BUFFERS >= WIFI_TX_QUEUE_FRAMES as u8);
 
 pub(super) fn build_tcp(
     stack: Stack<'static>,
@@ -118,17 +126,21 @@ pub(super) fn build_wifi(
         .with_static_rx_buf_num(WIFI_STATIC_RX_BUFFERS)
         .with_dynamic_rx_buf_num(WIFI_DYNAMIC_RX_BUFFERS)
         .with_rx_ba_win(WIFI_RX_BA_WINDOW)
+        .with_rx_queue_size(WIFI_RX_QUEUE_FRAMES)
         .with_tx_queue_size(WIFI_TX_QUEUE_FRAMES)
+        .with_static_tx_buf_num(WIFI_STATIC_TX_BUFFERS)
         .with_dynamic_tx_buf_num(WIFI_DYNAMIC_TX_BUFFERS);
     let Ok((mut controller, interfaces)) = esp_radio::wifi::new(wifi, wifi_config) else {
         return (None, None, None);
     };
     log::info!(
-        "wifi: rx profile static={} dynamic={} ba={} tx_queue={} tx_dynamic={}",
+        "wifi: rx profile static={} dynamic={} ba={} queue={} tx_queue={} tx_static={} tx_dynamic={}",
         WIFI_STATIC_RX_BUFFERS,
         WIFI_DYNAMIC_RX_BUFFERS,
         WIFI_RX_BA_WINDOW,
+        WIFI_RX_QUEUE_FRAMES,
         WIFI_TX_QUEUE_FRAMES,
+        WIFI_STATIC_TX_BUFFERS,
         WIFI_DYNAMIC_TX_BUFFERS
     );
     let esp_now = interfaces.esp_now;
@@ -399,6 +411,8 @@ pub(super) async fn net_task(mut runner: Runner<'static, WifiStaDevice<'static>>
 #[embassy_executor::task]
 async fn network_ready_task(stack: Stack<'static>) -> ! {
     let mut previous_state = None;
+    let mut previous_data_path = None;
+    let mut station_reception_recovery = StationReceptionRecovery::new();
     let mut samples_until_report = 0;
     let mut internal_free_low_water = usize::MAX;
     loop {
@@ -421,6 +435,19 @@ async fn network_ready_task(stack: Stack<'static>) -> ! {
         }
         if state_changed || samples_until_report == 0 {
             let heap = esp_alloc::HEAP.stats();
+            let data_path = esp_radio::wifi::data_path_diagnostics();
+            let station_ready = associated && ready;
+            let reception_window = previous_data_path.as_ref().map(|earlier| {
+                if data_path.receive_delivery_blocked_by_transmit_capacity_since(earlier) {
+                    StationReceptionWindow::TransmitCapacityBlocked
+                } else if data_path.station_receive_progressed_since(earlier) {
+                    StationReceptionWindow::ReceiveProgress
+                } else if data_path.transmit_progressed_without_station_receive_since(earlier) {
+                    StationReceptionWindow::TransmitWithoutReceive
+                } else {
+                    StationReceptionWindow::NoProgress
+                }
+            });
             log::info!(
                 "wifi-health: associated={} link_up={} ipv4={:?} internal_free={} internal_low={} external_free={} heap_free={} heap_used={} heap_high={}",
                 associated,
@@ -433,6 +460,34 @@ async fn network_ready_task(stack: Stack<'static>) -> ! {
                 heap.current_usage,
                 heap.max_usage
             );
+            log::info!("wifi-data: {}", data_path);
+            if station_ready {
+                if let Some(reception_window) = reception_window {
+                    if matches!(&reception_window, StationReceptionWindow::ReceiveProgress) {
+                        WIFI_STATION_RX_DEGRADED.store(false, Ordering::Release);
+                    }
+                    match station_reception_recovery.observe(reception_window) {
+                        StationReceptionAction::Continue => {}
+                        StationReceptionAction::Reassert { count } => {
+                            WIFI_STATION_RX_DEGRADED.store(true, Ordering::Release);
+                            esp_phy::reassert_wifi_rx_enabled();
+                            log::warn!(
+                                "wifi-health: station RX stalled while TX progressed; reasserted reception count={count}"
+                            );
+                        }
+                        StationReceptionAction::RestartDriver { count } => {
+                            WIFI_STATION_RX_DEGRADED.store(true, Ordering::Release);
+                            WIFI_RX_RESTART_REQUESTED.store(true, Ordering::Release);
+                            log::warn!(
+                                "wifi-health: station RX remained stalled after reassertion; requested driver restart count={count}"
+                            );
+                        }
+                    }
+                }
+            } else {
+                station_reception_recovery.station_unavailable();
+            }
+            previous_data_path = if station_ready { Some(data_path) } else { None };
             samples_until_report = WIFI_HEALTH_SAMPLES_BETWEEN_REPORTS;
         } else {
             samples_until_report = samples_until_report.saturating_sub(1);
@@ -531,6 +586,8 @@ async fn wifi_connect_task(
     loop {
         let mut resumed = false;
         while !status.is_station_uplink_enabled() {
+            WIFI_STATION_RX_DEGRADED.store(false, Ordering::Release);
+            WIFI_RX_RESTART_REQUESTED.store(false, Ordering::Release);
             if controller.is_connected() {
                 let _ = controller.disconnect_async().await;
             }
@@ -540,6 +597,18 @@ async fn wifi_connect_task(
         }
         if resumed {
             recovery.resume_now();
+        }
+        if WIFI_RX_RESTART_REQUESTED.swap(false, Ordering::AcqRel) {
+            log::warn!("wifi: restarting driver after RX recovery escalation");
+            if let Err(error) = controller.restart() {
+                WIFI_RX_RESTART_REQUESTED.store(true, Ordering::Release);
+                log::warn!("wifi: RX recovery driver restart failed: {error:?}");
+                Timer::after(DRIVER_STOP_RETRY_DELAY).await;
+                continue;
+            }
+            WIFI_STATION_JOINED.store(false, Ordering::Relaxed);
+            recovery.resume_now();
+            continue;
         }
         if controller.is_connected() {
             WIFI_STATION_JOINED.store(true, Ordering::Relaxed);
@@ -640,6 +709,7 @@ async fn wifi_connect_task(
                 let next = match connected {
                     embassy_futures::select::Either::First(Ok(Ok(connected))) => {
                         WIFI_STATION_JOINED.store(true, Ordering::Relaxed);
+                        WIFI_STATION_RX_DEGRADED.store(false, Ordering::Release);
                         boot_stage(BootPhase::WifiAssociated);
                         log::info!(
                             "wifi: station connected channel={} elapsed_ms={}",

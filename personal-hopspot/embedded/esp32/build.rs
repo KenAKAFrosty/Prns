@@ -10,8 +10,6 @@ fn main() {
     println!("cargo:rerun-if-env-changed=PRNS_BUILD_SOURCE_DIGEST");
     println!("cargo:rerun-if-env-changed=PRNS_SOURCE_SHA256");
     track_git_head();
-    let out = PathBuf::from(env::var("OUT_DIR").unwrap());
-    let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
     let build_commit_short = git_commit_short();
     let build_version = env::var("PRNS_BUILD_VERSION")
         .ok()
@@ -38,23 +36,6 @@ fn main() {
     println!(
         "cargo:rustc-env=HOPSPOT_BUILD_IDENTITY=version={build_version} source={build_source_digest}"
     );
-
-    // Only the ESP32-S3 (xtensa) overrides the linker's memory layout. The C6 (riscv32) takes
-    // esp-hal's bundled esp32c6 memory.x; a generically-named package-root memory.x would shadow it
-    // via the linker's CWD search, so the S3's is memory-esp32s3.x, copied to OUT_DIR for xtensa only.
-    if target_arch == "xtensa" {
-        // app/memory.x overrides esp-hal's bundled esp32s3 memory.x: the linker's `INCLUDE memory.x`
-        // (from esp-hal's linkall.x) resolves it from the package root, ahead of esp-hal's copy. It
-        // raises ORIGIN(dram2_seg) so the core-0 construction stack grows into the reclaimed heap
-        // region — needed for the full Wi-Fi + LoRa + Bluetooth LE coexistence firmware, harmless to
-        // Wi-Fi-only and Bluetooth LE-only builds (no Bluetooth reserve or Wi-Fi controller leaves
-        // them DRAM to spare). Copied to
-        // OUT_DIR + put on the link search path as the explicit mechanism; rerun-if-changed relinks
-        // when memory.x is edited.
-        fs::copy("memory-esp32s3.x", out.join("memory.x")).unwrap();
-        println!("cargo:rustc-link-search={}", out.display());
-        println!("cargo:rerun-if-changed=memory-esp32s3.x");
-    }
 }
 
 fn git_commit_short() -> String {

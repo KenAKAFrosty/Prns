@@ -109,14 +109,25 @@ pub(super) fn build_snapshots(
         }
     }
     let mut snapshots: HVec<InterfaceSnapshot, 8> = HVec::new();
+    let wifi_id = wifi.map(InterfaceStatus::id);
     for (status, membership) in &entries {
         let id = status.id();
         let counts = INTERFACE_STORE.counts(id);
+        let connection = if Some(id) == wifi_id && WIFI_STATION_RX_DEGRADED.load(Ordering::Acquire)
+        {
+            if WIFI_STATION_JOINED.load(Ordering::Relaxed) {
+                ConnectionState::Degraded
+            } else {
+                ConnectionState::Reconnecting
+            }
+        } else {
+            status.connection()
+        };
         let _ = snapshots.push(InterfaceSnapshot {
             id,
             mode: personal_rns::interfaces::InterfaceMode::Full,
             gravity: personal_rns::interfaces::InterfaceGravity::ZERO,
-            connection: status.connection(),
+            connection,
             failure_reason: status.failure_reason(),
             rx_bytes: status.rx_bytes(),
             tx_bytes: status.tx_bytes(),
