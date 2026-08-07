@@ -177,8 +177,7 @@ const HOPSPOT_TCP_TARGET: &str = match option_env!("HOPSPOT_TCP_TARGET") {
 /// The board's claim about its pipe to the LAN node: it sets the declared MTU tier, which the
 /// manifold then clamps to the embedded ceiling. A 2.4 GHz station's honest order of magnitude.
 const TCP_BITRATE_BPS: BitrateBps = wifi_auto_contract::WIFI_EMBEDDED_BITRATE_CEILING_BPS;
-/// One TCP socket's smoltcp rx/tx buffer — sized for the board's frames, DRAM-frugal over throughput.
-const TCP_SOCKET_BUF: usize = 1_024;
+const TCP_SOCKET_BUFFER_BYTES: usize = 4 * 1_024;
 
 const LANE_COUNT: usize =
     4 + cfg!(feature = "bluetooth-auto") as usize + cfg!(feature = "esp-now") as usize;

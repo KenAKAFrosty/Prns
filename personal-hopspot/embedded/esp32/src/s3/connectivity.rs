@@ -37,6 +37,8 @@ const WIFI_TX_QUEUE_FRAMES: usize = 3;
 #[cfg(feature = "wifi-auto")]
 const WIFI_DYNAMIC_TX_BUFFERS: u16 = 6;
 #[cfg(feature = "wifi-auto")]
+const WIFI_DATA_SOCKET_BUFFER_BYTES: usize = 4 * 1_024;
+#[cfg(feature = "wifi-auto")]
 const WIFI_HEALTH_SAMPLES_BETWEEN_REPORTS: u8 = 4;
 #[cfg(feature = "wifi-auto")]
 const _: () = assert!(WIFI_STATIC_RX_BUFFERS >= WIFI_RX_BA_WINDOW);
@@ -81,8 +83,10 @@ pub(super) fn build_tcp(
         EmbassyInterfaceStatus,
         EmbassyInterfaceStatus::new(id, ConnectionState::Initializing)
     );
-    let rx_buffer: &'static mut [u8] = crate::storage::allocate_psram([0u8; TCP_SOCKET_BUF]);
-    let tx_buffer: &'static mut [u8] = crate::storage::allocate_psram([0u8; TCP_SOCKET_BUF]);
+    let rx_buffer: &'static mut [u8] =
+        crate::storage::allocate_psram([0u8; TCP_SOCKET_BUFFER_BYTES]);
+    let tx_buffer: &'static mut [u8] =
+        crate::storage::allocate_psram([0u8; TCP_SOCKET_BUFFER_BYTES]);
     let tcp = TcpClient::new(TcpClientInput {
         stack,
         target,
@@ -154,7 +158,10 @@ pub(super) fn build_wifi(
         let (stack, runner) = embassy_net::new(interfaces.station, net_config, resources, seed);
         let discovery = psram_udp_socket::<8, 128, 8, 128>(stack);
         let unicast_discovery = psram_udp_socket::<8, 128, 1, 1>(stack);
-        let data = psram_udp_socket::<8, 1280, 8, 1280>(stack);
+        let data =
+            psram_udp_socket::<8, WIFI_DATA_SOCKET_BUFFER_BYTES, 8, WIFI_DATA_SOCKET_BUFFER_BYTES>(
+                stack,
+            );
         let wifi_status = AutoWifiStatus::new(&WIFI_SHARED);
         let station_credentials = StationCredentials {
             ssid: config.ssid.clone(),
@@ -225,7 +232,10 @@ pub(super) fn build_wifi(
         spawner.spawn(tcp_rendezvous_task(rendezvous_server).expect("TCP rendezvous task fits"));
         let ap_discovery = psram_udp_socket::<8, 512, 8, 512>(ap_stack);
         let ap_unicast_discovery = psram_udp_socket::<8, 128, 1, 1>(ap_stack);
-        let ap_data = psram_udp_socket::<8, 2048, 8, 2048>(ap_stack);
+        let ap_data =
+            psram_udp_socket::<8, WIFI_DATA_SOCKET_BUFFER_BYTES, 8, WIFI_DATA_SOCKET_BUFFER_BYTES>(
+                ap_stack,
+            );
         let wifi = AutoWifi::new(
             AutoWifiTopology {
                 primary: AutoWifiSegment {
@@ -403,6 +413,7 @@ async fn network_ready_task(stack: Stack<'static>) -> ! {
             .unwrap_or(false);
         let ready = link_up && has_ipv4;
         let internal_free = esp_alloc::HEAP.free_caps(esp_alloc::MemoryCapability::Internal.into());
+        let external_free = esp_alloc::HEAP.free_caps(esp_alloc::MemoryCapability::External.into());
         internal_free_low_water = internal_free_low_water.min(internal_free);
 
         if ready && !was_ready {
@@ -411,12 +422,14 @@ async fn network_ready_task(stack: Stack<'static>) -> ! {
         if state_changed || samples_until_report == 0 {
             let heap = esp_alloc::HEAP.stats();
             log::info!(
-                "wifi-health: associated={} link_up={} ipv4={:?} internal_free={} internal_low={} heap_used={} heap_high={}",
+                "wifi-health: associated={} link_up={} ipv4={:?} internal_free={} internal_low={} external_free={} heap_free={} heap_used={} heap_high={}",
                 associated,
                 link_up,
                 ipv4,
                 internal_free,
                 internal_free_low_water,
+                external_free,
+                heap.size.saturating_sub(heap.current_usage),
                 heap.current_usage,
                 heap.max_usage
             );

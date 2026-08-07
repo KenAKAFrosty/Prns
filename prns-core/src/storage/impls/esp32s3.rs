@@ -54,10 +54,10 @@ use crate::routing::upstream_app_destinations::FixedUpstreamAppDestinationTable;
 use crate::routing::warmth::FixedDepartedInterfaceTable;
 use crate::storage::{DisplayedStorageLimits, StorageCapacity, StorageLayout};
 
-const MAX_TRACKED_DESTINATIONS: usize = 1024;
+const MAX_TRACKED_DESTINATIONS: usize = 512;
 const MAX_UPSTREAM_APP_DESTINATIONS: usize = 2;
 const MAX_HELD_IDENTITIES: usize = 1;
-const MAX_LINK_SESSIONS: usize = 32;
+const MAX_LINK_SESSIONS: usize = 512;
 const MAX_TRANSPORTED_LINKS: usize = 32;
 const MAX_OUTSTANDING_RECEIPTS: usize = 8;
 const MAX_PACKET_HASHES: usize = 48;
@@ -241,13 +241,13 @@ impl<A: Allocator + Default, const MAX_REQUEST_HANDLERS: usize> StorageLayout
 mod tests {
     use super::Esp32S3;
     use crate::engine::EngineState;
-    use crate::routing::links::channel::table::ChannelTable;
     use crate::routing::links::resources::assembly::{
         IncomingAssemblyTable, OutgoingAssemblyTable,
     };
     use crate::routing::links::table::LinkTable;
     use crate::routing::links::transported::TransportedLinkTable;
     use crate::routing::request_handlers::RequestHandlerTable;
+    use crate::routing::routes::RouteTable;
     use crate::storage::{StorageCapacity, StorageLayout};
 
     #[test]
@@ -263,6 +263,10 @@ mod tests {
     fn limits_report_the_storage_constants() {
         type L = Esp32S3;
         assert_eq!(
+            <L as StorageLayout>::LIMITS.tracked_destinations,
+            StorageCapacity::Fixed(512)
+        );
+        assert_eq!(
             <L as StorageLayout>::LIMITS.upstream_app_destinations,
             StorageCapacity::Fixed(super::MAX_UPSTREAM_APP_DESTINATIONS)
         );
@@ -272,19 +276,24 @@ mod tests {
         );
         assert_eq!(
             <L as StorageLayout>::LIMITS.links,
-            StorageCapacity::Fixed(super::MAX_LINK_SESSIONS)
+            StorageCapacity::Fixed(512)
         );
         assert_eq!(
             <L as StorageLayout>::LIMITS.channels,
-            StorageCapacity::Fixed(super::MAX_CONCURRENT_CHANNELS)
+            StorageCapacity::Fixed(8)
         );
-        assert!(
-            <<L as StorageLayout>::Links as Default>::default().capacity()
-                > <<L as StorageLayout>::Channels as Default>::default().capacity()
+        assert_eq!(<L as StorageLayout>::LIMITS.channel_window_pool, Some(192));
+        assert_eq!(
+            <<L as StorageLayout>::Routes as Default>::default().capacity(),
+            512
+        );
+        assert_eq!(
+            <<L as StorageLayout>::Links as Default>::default().capacity(),
+            512
         );
         assert_eq!(
             <<L as StorageLayout>::TransportedLinks as Default>::default().capacity(),
-            super::MAX_TRANSPORTED_LINKS
+            32
         );
         assert_eq!(
             <<L as StorageLayout>::IncomingAssemblies as Default>::default().capacity(),
