@@ -46,8 +46,6 @@ pub struct BoardCatalogEntry {
     pub expected_chip: Option<String>,
     /// Physical flash capacity in bytes, when applicable.
     pub flash_size: Option<u32>,
-    /// Whether a release build may carry the commit-bound source archive when capacity permits.
-    pub source_archive_capable: bool,
     /// Stable instruction profile used by localized clients.
     pub preparation_profile: String,
     /// Optional local provisioning slot.
@@ -284,7 +282,6 @@ fn validate_transport(board: &BoardCatalogEntry) -> Result<(), CatalogError> {
                 || !build.partition_table.ends_with(".csv")
                 || (build.chip == "esp32s3" && build.rust_target != "xtensa-esp32s3-none-elf")
                 || (build.chip == "esp32c6" && build.rust_target != "riscv32imac-unknown-none-elf")
-                || board.source_archive_capable != (build.chip == "esp32s3")
             {
                 return Err(invalid(
                     board,
@@ -295,7 +292,6 @@ fn validate_transport(board: &BoardCatalogEntry) -> Result<(), CatalogError> {
         (Transport::Uf2MassStorage, BoardBuild::Uf2(build)) => {
             if board.expected_chip.is_some()
                 || board.flash_size.is_some()
-                || board.source_archive_capable
                 || PreparationProfile::parse(&board.preparation_profile)
                     != Ok(PreparationProfile::TechoUf2)
                 || build.mount_label != "TECHOBOOT"
@@ -397,19 +393,6 @@ mod tests {
                 "t-echo"
             ]
         );
-        Ok(())
-    }
-
-    #[test]
-    fn embedded_catalog_names_the_nominal_source_capability_matrix() -> Result<(), CatalogError> {
-        let catalog = board_catalog()?;
-        let capable = catalog
-            .boards
-            .iter()
-            .filter(|board| board.source_archive_capable)
-            .map(|board| board.slug.as_str())
-            .collect::<Vec<_>>();
-        assert_eq!(capable, ["heltec-v4", "heltec-v4-r8", "t-beam-supreme"]);
         Ok(())
     }
 

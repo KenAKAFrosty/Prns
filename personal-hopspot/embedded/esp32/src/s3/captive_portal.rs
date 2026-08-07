@@ -2,6 +2,23 @@
 use super::connectivity::net_task;
 use super::*;
 
+#[cfg(feature = "wifi-auto")]
+pub(super) const HTTP_SERVER_WORKERS: usize = 4;
+#[cfg(feature = "wifi-auto")]
+const EMBASSY_INTERNAL_SOCKET_COUNT: usize = 1;
+#[cfg(feature = "wifi-auto")]
+const WIFI_AUTO_UDP_SOCKET_COUNT: usize = 3;
+#[cfg(feature = "wifi-auto")]
+const CAPTIVE_PORTAL_UDP_SOCKET_COUNT: usize = 2;
+#[cfg(feature = "wifi-auto")]
+const TCP_RENDEZVOUS_SOCKET_COUNT: usize = 1;
+#[cfg(feature = "wifi-auto")]
+const AP_STACK_SOCKET_CAPACITY: usize = EMBASSY_INTERNAL_SOCKET_COUNT
+    + WIFI_AUTO_UDP_SOCKET_COUNT
+    + CAPTIVE_PORTAL_UDP_SOCKET_COUNT
+    + HTTP_SERVER_WORKERS
+    + TCP_RENDEZVOUS_SOCKET_COUNT;
+
 /// A random per-boot SoftAP SSID suffix, cached so every `set_config` within a boot reuses the same
 /// name (regenerating per call would flap the SSID). 0 = unset. Random rather than MAC-derived so the
 /// AP name leaks no device identity; it re-rolls on reboot, which is acceptable (preferred, even).
@@ -67,7 +84,10 @@ pub(super) fn build_ap_netif(
         gateway: None,
         dns_servers: Default::default(),
     });
-    let ap_resources = mk_static!(StackResources<10>, StackResources::new());
+    let ap_resources = mk_static!(
+        StackResources<AP_STACK_SOCKET_CAPACITY>,
+        StackResources::new()
+    );
     let ap_seed = {
         let mut b = [0u8; 8];
         Rng::new().read(&mut b);
@@ -91,7 +111,8 @@ pub(super) async fn dhcp_server_task(stack: Stack<'static>) -> ! {
     let tx_meta: &'static mut [PacketMetadata] = alloc::vec![PacketMetadata::EMPTY; 4].leak();
     let tx_buf: &'static mut [u8] = alloc::vec![0u8; 1024].leak();
     let mut sock = UdpSocket::new(stack, rx_meta, rx_buf, tx_meta, tx_buf);
-    if sock.bind(67u16).is_err() {
+    if let Err(error) = sock.bind(67u16) {
+        log::error!("dhcp: bind failed: {error:?}");
         loop {
             Timer::after(Duration::from_secs(3600)).await;
         }
@@ -99,23 +120,26 @@ pub(super) async fn dhcp_server_task(stack: Stack<'static>) -> ! {
     let req: &'static mut [u8] = alloc::vec![0u8; 600].leak();
     let reply: &'static mut [u8] = alloc::vec![0u8; 512].leak();
     loop {
-        let Ok((len, _meta)) = sock.recv_from(&mut req[..]).await else {
-            continue;
+        let (len, _meta) = match sock.recv_from(&mut req[..]).await {
+            Ok(received) => received,
+            Err(error) => {
+                log::warn!("dhcp: receive failed: {error:?}");
+                continue;
+            }
         };
         // BOOTREQUEST (op=1) with the DHCP magic cookie + a parseable message-type option.
         if len < 240 || req[0] != 1 || req[236..240] != [0x63, 0x82, 0x53, 0x63] {
             continue;
         }
-        let reply_type = match dhcp_message_type(&req[240..len]) {
-            Some(1) => 2, // DISCOVER -> OFFER
-            Some(3) => 5, // REQUEST  -> ACK
+        let (request_name, reply_name, reply_type) = match dhcp_message_type(&req[240..len]) {
+            Some(1) => ("DISCOVER", "OFFER", 2),
+            Some(3) => ("REQUEST", "ACK", 5),
             _ => continue,
         };
         let n = build_dhcp_reply(&req[..len], &mut reply[..], reply_type);
         let m = &req[28..34];
         log::info!(
-            "dhcp: {} 192.168.4.2 -> {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-            if reply_type == 2 { "OFFER" } else { "ACK" },
+            "dhcp: {request_name} from {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
             m[0],
             m[1],
             m[2],
@@ -123,15 +147,46 @@ pub(super) async fn dhcp_server_task(stack: Stack<'static>) -> ! {
             m[4],
             m[5]
         );
-        // The client has no IP yet, so broadcast the reply (build_dhcp_reply sets the broadcast flag).
-        // 255.255.255.255 is the DHCP standard; if smoltcp refuses the limited broadcast, 192.168.4.255
-        // (the directed subnet broadcast) is the fallback.
-        let _ = sock
+        let delivery = match sock
             .send_to(
                 &reply[..n],
                 (IpAddress::Ipv4(Ipv4Address::new(255, 255, 255, 255)), 68u16),
             )
-            .await;
+            .await
+        {
+            Ok(()) => Some("limited-broadcast"),
+            Err(limited_error) => {
+                log::warn!(
+                    "dhcp: {reply_name} limited-broadcast transmission failed: {limited_error:?}"
+                );
+                match sock
+                    .send_to(
+                        &reply[..n],
+                        (IpAddress::Ipv4(Ipv4Address::new(192, 168, 4, 255)), 68u16),
+                    )
+                    .await
+                {
+                    Ok(()) => Some("directed-broadcast"),
+                    Err(directed_error) => {
+                        log::error!(
+                            "dhcp: {reply_name} directed-broadcast transmission failed: {directed_error:?}"
+                        );
+                        None
+                    }
+                }
+            }
+        };
+        if let Some(delivery) = delivery {
+            log::info!(
+                "dhcp: {reply_name} 192.168.4.2 sent via {delivery} to {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                m[0],
+                m[1],
+                m[2],
+                m[3],
+                m[4],
+                m[5]
+            );
+        }
     }
 }
 
@@ -224,7 +279,8 @@ pub(super) async fn dns_server_task(stack: Stack<'static>) -> ! {
     let tx_meta: &'static mut [PacketMetadata] = alloc::vec![PacketMetadata::EMPTY; 4].leak();
     let tx_buf: &'static mut [u8] = alloc::vec![0u8; 512].leak();
     let mut sock = UdpSocket::new(stack, rx_meta, rx_buf, tx_meta, tx_buf);
-    if sock.bind(53u16).is_err() {
+    if let Err(error) = sock.bind(53u16) {
+        log::error!("dns: bind failed: {error:?}");
         loop {
             Timer::after(Duration::from_secs(3600)).await;
         }
@@ -232,13 +288,20 @@ pub(super) async fn dns_server_task(stack: Stack<'static>) -> ! {
     let req: &'static mut [u8] = alloc::vec![0u8; 512].leak();
     let reply: &'static mut [u8] = alloc::vec![0u8; 512].leak();
     loop {
-        let Ok((len, meta)) = sock.recv_from(&mut req[..]).await else {
-            continue;
+        let (len, meta) = match sock.recv_from(&mut req[..]).await {
+            Ok(received) => received,
+            Err(error) => {
+                log::warn!("dns: receive failed: {error:?}");
+                continue;
+            }
         };
         let Some(reply_len) = build_dns_reply(&req[..len], &mut reply[..]) else {
             continue;
         };
-        let _ = sock.send_to(&reply[..reply_len], meta.endpoint).await;
+        match sock.send_to(&reply[..reply_len], meta.endpoint).await {
+            Ok(()) => log::info!("dns: response sent to {:?}", meta.endpoint),
+            Err(error) => log::warn!("dns: response to {:?} failed: {error:?}", meta.endpoint),
+        }
     }
 }
 
@@ -309,36 +372,70 @@ fn dns_question_end(req: &[u8]) -> Option<(usize, u16)> {
 }
 
 #[cfg(feature = "wifi-auto")]
-#[embassy_executor::task(pool_size = 4)]
+const CAPTIVE_PORTAL_PAGE: &[u8] = include_bytes!("../../assets/captive-portal.html");
+#[cfg(feature = "wifi-auto")]
+const HTTP_SOCKET_BUFFER_BYTES: usize = 2048;
+#[cfg(feature = "wifi-auto")]
+const HTTP_REQUEST_BUFFER_BYTES: usize = 1024;
+
+#[cfg(feature = "wifi-auto")]
+#[embassy_executor::task(pool_size = HTTP_SERVER_WORKERS)]
 pub(super) async fn http_server_task(stack: Stack<'static>) -> ! {
-    let rx_buffer: &'static mut [u8] = alloc::vec![0u8; 4096].leak();
-    let tx_buffer: &'static mut [u8] = alloc::vec![0u8; 16384].leak();
-    let request_buffer: &'static mut [u8] = alloc::vec![0u8; 4096].leak();
+    let rx_buffer: &'static mut [u8] = alloc::vec![0u8; HTTP_SOCKET_BUFFER_BYTES].leak();
+    let tx_buffer: &'static mut [u8] = alloc::vec![0u8; HTTP_SOCKET_BUFFER_BYTES].leak();
+    let request_buffer: &'static mut [u8] = alloc::vec![0u8; HTTP_REQUEST_BUFFER_BYTES].leak();
     let mut socket = TcpSocket::new(stack, rx_buffer, tx_buffer);
     socket.set_timeout(Some(Duration::from_secs(15)));
 
     loop {
-        if socket.accept(80u16).await.is_err() {
+        if let Err(error) = socket.accept(80u16).await {
+            log::warn!("http: accept failed: {error:?}");
             Timer::after(Duration::from_millis(250)).await;
             continue;
         }
         let peer = socket.remote_endpoint();
-        let _ = serve_site_connection(&mut socket, request_buffer).await;
+        let response = serve_site_connection(&mut socket, request_buffer).await;
         socket.close();
-        let _ = with_timeout(Duration::from_secs(2), socket.flush()).await;
+        let flush = with_timeout(Duration::from_secs(2), socket.flush()).await;
         socket.abort();
-        if let Some(peer) = peer {
-            log::debug!("http: served {peer:?}");
+        match response {
+            Ok(response) => {
+                let complete = response.written && matches!(&flush, Ok(Ok(())));
+                if complete {
+                    log::info!(
+                        "http: method={} path={} response_complete=true peer={peer:?}",
+                        response.method,
+                        response.path
+                    );
+                } else {
+                    log::warn!(
+                        "http: method={} path={} response_complete=false peer={peer:?} write={:?} flush={flush:?}",
+                        response.method,
+                        response.path,
+                        response.written
+                    );
+                }
+            }
+            Err(()) => {
+                log::warn!("http: request failed before response peer={peer:?} flush={flush:?}")
+            }
         }
         Timer::after(Duration::from_millis(50)).await;
     }
 }
 
 #[cfg(feature = "wifi-auto")]
-async fn serve_site_connection(
+struct HttpResponseAttempt<'a> {
+    method: &'a str,
+    path: &'a str,
+    written: bool,
+}
+
+#[cfg(feature = "wifi-auto")]
+async fn serve_site_connection<'a>(
     socket: &mut TcpSocket<'static>,
-    request_buffer: &mut [u8],
-) -> Result<(), ()> {
+    request_buffer: &'a mut [u8],
+) -> Result<HttpResponseAttempt<'a>, ()> {
     let len = read_http_request(socket, request_buffer).await?;
     let request = core::str::from_utf8(&request_buffer[..len]).map_err(|_| ())?;
     let Some(line) = request.lines().next() else {
@@ -348,92 +445,52 @@ async fn serve_site_connection(
     let method = parts.next().unwrap_or("");
     let raw_path = parts.next().unwrap_or("/");
     let is_head = method == "HEAD";
-    if method != "GET" && !is_head {
-        return send_site_response(
+    let response = if method != "GET" && !is_head {
+        send_site_response(
             socket,
             SiteResponse {
                 status: "405 Method Not Allowed",
                 content_type: "text/plain; charset=utf-8",
                 body: b"method not allowed\n",
                 head_only: is_head,
-                content_encoding: None,
-                vary_accept_encoding: false,
-                cache_control: "no-store",
-                content_disposition: None,
             },
         )
-        .await;
-    }
-
-    let path = normalize_http_path(raw_path);
-    if path == "/captive-portal/api" {
-        return send_captive_portal_api(socket, is_head).await;
-    }
-    if is_captive_probe_path(path) {
-        return send_captive_portal_redirect(socket, is_head).await;
-    }
-    #[cfg(feature = "source-archive")]
-    if let Some((body, content_type)) = match path {
-        "/source.zip" => Some((
-            personal_hopspot_core::node_pages::SOURCE_ARCHIVE,
-            "application/zip",
-        )),
-        "/source.zip.sha256" => Some((
-            personal_hopspot_core::node_pages::SOURCE_CHECKSUM,
-            "text/plain; charset=utf-8",
-        )),
-        _ => None,
-    } {
-        return send_site_response(
-            socket,
-            SiteResponse {
-                status: "200 OK",
-                content_type,
-                body,
-                head_only: is_head,
-                content_encoding: None,
-                vary_accept_encoding: false,
-                cache_control: "no-cache",
-                content_disposition: site_content_disposition(path).as_deref(),
-            },
-        )
-        .await;
-    }
-    let Some(asset) = find_site_asset(path) else {
-        return send_site_response(
-            socket,
-            SiteResponse {
-                status: "404 Not Found",
-                content_type: "text/plain; charset=utf-8",
-                body: b"not found\n",
-                head_only: is_head,
-                content_encoding: None,
-                vary_accept_encoding: false,
-                cache_control: "no-store",
-                content_disposition: None,
-            },
-        )
-        .await;
+        .await
+    } else {
+        let path = normalize_http_path(raw_path);
+        if path == "/captive-portal/api" {
+            send_captive_portal_api(socket, is_head).await
+        } else if is_captive_probe_path(path) {
+            send_captive_portal_redirect(socket, is_head).await
+        } else if path == "/index.html" {
+            send_site_response(
+                socket,
+                SiteResponse {
+                    status: "200 OK",
+                    content_type: "text/html; charset=utf-8",
+                    body: CAPTIVE_PORTAL_PAGE,
+                    head_only: is_head,
+                },
+            )
+            .await
+        } else {
+            send_site_response(
+                socket,
+                SiteResponse {
+                    status: "404 Not Found",
+                    content_type: "text/plain; charset=utf-8",
+                    body: b"not found\n",
+                    head_only: is_head,
+                },
+            )
+            .await
+        }
     };
-    let accepts_gzip = request_accepts_gzip(request);
-    let (body, content_encoding) = match (accepts_gzip, asset.gzip_bytes) {
-        (true, Some(gzip_bytes)) => (gzip_bytes, Some("gzip")),
-        _ => (asset.bytes, None),
-    };
-    send_site_response(
-        socket,
-        SiteResponse {
-            status: "200 OK",
-            content_type: asset.content_type,
-            body,
-            head_only: is_head,
-            content_encoding,
-            vary_accept_encoding: asset.gzip_bytes.is_some(),
-            cache_control: site_cache_control(asset.path),
-            content_disposition: site_content_disposition(asset.path).as_deref(),
-        },
-    )
-    .await
+    Ok(HttpResponseAttempt {
+        method,
+        path: raw_path,
+        written: response.is_ok(),
+    })
 }
 
 #[cfg(feature = "wifi-auto")]
@@ -502,71 +559,6 @@ fn is_captive_probe_path(path: &str) -> bool {
 }
 
 #[cfg(feature = "wifi-auto")]
-fn find_site_asset(path: &str) -> Option<&'static hopspot_site::SiteAsset> {
-    hopspot_site::SITE_ASSETS
-        .iter()
-        .find(|asset| asset.path == path)
-        .or_else(|| {
-            let leaf = path.rsplit('/').next().unwrap_or(path);
-            if leaf.contains('.') {
-                None
-            } else {
-                hopspot_site::SITE_ASSETS
-                    .iter()
-                    .find(|asset| asset.path == "/index.html")
-            }
-        })
-}
-
-#[cfg(feature = "wifi-auto")]
-fn request_accepts_gzip(request: &str) -> bool {
-    request.lines().any(|line| {
-        let Some((name, value)) = line.split_once(':') else {
-            return false;
-        };
-        name.trim().eq_ignore_ascii_case("accept-encoding")
-            && value.split(',').any(|encoding| {
-                let encoding = encoding
-                    .split_once(';')
-                    .map_or(encoding, |(encoding, _)| encoding)
-                    .trim();
-                encoding.eq_ignore_ascii_case("gzip")
-            })
-    })
-}
-
-#[cfg(feature = "wifi-auto")]
-fn site_cache_control(path: &str) -> &'static str {
-    if path == "/index.html" || path == "/source.zip" || path == "/source.zip.sha256" {
-        "no-cache"
-    } else if path.contains("-dxh") {
-        "public, max-age=31536000, immutable"
-    } else {
-        "public, max-age=3600"
-    }
-}
-
-#[cfg(feature = "wifi-auto")]
-fn site_content_disposition(path: &str) -> Option<alloc::string::String> {
-    match path {
-        "/source.zip" => Some(alloc::format!(
-            "attachment; filename=\"{}\"",
-            source_zip_download_name()
-        )),
-        "/source.zip.sha256" => Some(alloc::format!(
-            "attachment; filename=\"{}.sha256\"",
-            source_zip_download_name()
-        )),
-        _ => None,
-    }
-}
-
-#[cfg(feature = "wifi-auto")]
-fn source_zip_download_name() -> alloc::string::String {
-    alloc::string::String::from("source.zip")
-}
-
-#[cfg(feature = "wifi-auto")]
 async fn send_captive_portal_api(
     socket: &mut TcpSocket<'static>,
     head_only: bool,
@@ -579,10 +571,6 @@ async fn send_captive_portal_api(
             content_type: "application/captive+json",
             body,
             head_only,
-            content_encoding: None,
-            vary_accept_encoding: false,
-            cache_control: "no-store",
-            content_disposition: None,
         },
     )
     .await
@@ -611,10 +599,6 @@ struct SiteResponse<'a> {
     content_type: &'a str,
     body: &'a [u8],
     head_only: bool,
-    content_encoding: Option<&'a str>,
-    vary_accept_encoding: bool,
-    cache_control: &'a str,
-    content_disposition: Option<&'a str>,
 }
 
 #[cfg(feature = "wifi-auto")]
@@ -627,29 +611,11 @@ async fn send_site_response(
         content_type,
         body,
         head_only,
-        content_encoding,
-        vary_accept_encoding,
-        cache_control,
-        content_disposition,
     } = response;
-    let mut header = alloc::format!(
-        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: {cache_control}\r\n",
+    let header = alloc::format!(
+        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
         body.len()
     );
-    if let Some(encoding) = content_encoding {
-        header.push_str("Content-Encoding: ");
-        header.push_str(encoding);
-        header.push_str("\r\n");
-    }
-    if vary_accept_encoding {
-        header.push_str("Vary: Accept-Encoding\r\n");
-    }
-    if let Some(disposition) = content_disposition {
-        header.push_str("Content-Disposition: ");
-        header.push_str(disposition);
-        header.push_str("\r\n");
-    }
-    header.push_str("Connection: close\r\n\r\n");
     tcp_write_all(socket, header.as_bytes()).await?;
     if !head_only {
         tcp_write_all(socket, body).await?;

@@ -490,15 +490,6 @@ html, body {
 .flash-local-panel {
     max-width: 44rem;
 }
-.flash-embedded-note {
-    border: 1px solid rgb(165 172 184 / 0.16);
-    border-radius: 0.58rem;
-    background: rgb(11 14 19 / 0.28);
-    padding: 0.85rem 0.95rem;
-    color: var(--color-soft);
-    font-size: 0.86rem;
-    line-height: 1.45;
-}
 .flash-artifact-panel,
 .flash-plan-panel {
     border: 1px solid rgb(165 172 184 / 0.16);

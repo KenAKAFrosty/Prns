@@ -11,9 +11,8 @@ description = "Public-facing docs site for the Personal Reticulum Suite, served 
 
 [features]
 default = []
-embedded-site = []
 # Deterministic browser qualification only. This swaps the trust root, but never
-# bypasses Minisign or manifest validation, and is forbidden with embedded-site.
+# bypasses Minisign or manifest validation.
 browser-test-fixture = []
 local-dev-flasher = []
 

@@ -48,3 +48,4 @@ benchmarks/.benchmark-runs/
 /personal-km/
 # Reticulum runtime storage (per-node identity + state); regenerated at runtime
 **/.reticulum/
+**/.wrangler/

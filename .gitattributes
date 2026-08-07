@@ -1,5 +1,7 @@
 *.mu -text
 *.sh text eol=lf
+
+docs/website/web-flasher/browser/fixtures/signed-candidate/** -text
 .githooks/* text eol=lf
 tools/prns text eol=lf
 tools/prns.cmd text eol=crlf

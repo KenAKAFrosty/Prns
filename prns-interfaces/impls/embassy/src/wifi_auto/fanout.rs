@@ -11,6 +11,14 @@ use prns_runtime::manifold::grant::FrameTarget;
 
 use super::AutoWifiStatus;
 
+pub(super) fn target_includes(target: FrameTarget, id: InterfaceId) -> bool {
+    match target {
+        FrameTarget::Direct(target) | FrameTarget::Fan(FanTarget::Only(target)) => target == id,
+        FrameTarget::Fan(FanTarget::All) => true,
+        FrameTarget::Fan(FanTarget::AllExcept(excluded)) => excluded != id,
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum FanoutCompletion {
     Complete,
@@ -235,6 +243,21 @@ mod tests {
             )),
             [3, 0]
         );
+    }
+
+    #[test]
+    fn target_membership_covers_direct_and_fan_variants() {
+        assert!(target_includes(FrameTarget::Direct(id(1)), id(1)));
+        assert!(!target_includes(FrameTarget::Direct(id(2)), id(1)));
+        assert!(target_includes(
+            FrameTarget::Fan(FanTarget::Only(id(1))),
+            id(1)
+        ));
+        assert!(target_includes(FrameTarget::Fan(FanTarget::All), id(1)));
+        assert!(!target_includes(
+            FrameTarget::Fan(FanTarget::AllExcept(id(1))),
+            id(1)
+        ));
     }
 
     #[test]

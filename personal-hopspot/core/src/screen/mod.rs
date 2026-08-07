@@ -7,16 +7,17 @@ mod render;
 mod state;
 
 pub use eink::{EinkRefresh, EinkRefreshPolicy, EinkRefreshUrgency};
+pub(crate) use model::sort_cards_for_display;
 pub use model::{
     card_label, tcp_card_label, Card, CardActivityTracker, CardKind, CardLabel,
-    InterfaceMenuDetails, Liveness, LoRaSpectrumMenuDetails, LocalDocsAccess, ScreenContent,
-    WifiNetworkStatus,
+    InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess, ScreenContent,
+    WifiNetworkStatus, WifiStationStatus,
 };
-pub(crate) use model::{liveness_from_connection, sort_cards_for_display};
+pub use render::cards::card_label_max_chars;
 pub use render::{render, splash, RenderFrame, SplashContent};
 pub use state::{
     apply_and_persist_radio_profile, AccessPointState, DisplayPowerControl, InputEvent,
-    RadioProfileChangeResult, UiAction, UiConfiguration, UiNotice, UiState,
+    PersistenceNotice, RadioProfileChangeResult, UiAction, UiConfiguration, UiNotice, UiState,
 };
 
 #[cfg(test)]

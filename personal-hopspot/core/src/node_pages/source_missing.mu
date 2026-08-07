@@ -4,7 +4,7 @@
 
 Prns is free and open source, MIT / Apache-2.0.
 
-Every Prns node can host its own source code and serve it right over this connection. This compact build doesn't carry the source archive.
+Embedded release firmware does not carry the multi-megabyte source archive. The exact release source remains available from the hosted project and release pages.
 
 `F999On the web:`f
 `B6eb`F222 https://prns.dev `f`b

@@ -1,6 +1,58 @@
 use super::*;
 
 #[test]
+fn cards_name_each_connection_state_without_a_dormant_bucket() {
+    let states = [
+        (
+            CardKind::Tcp,
+            ConnectionState::Initializing,
+            Some("Initializing"),
+        ),
+        (CardKind::Tcp, ConnectionState::Connected, None),
+        (CardKind::Tcp, ConnectionState::Degraded, Some("Degraded")),
+        (
+            CardKind::Tcp,
+            ConnectionState::Reconnecting,
+            Some("Reconnecting"),
+        ),
+        (CardKind::Tcp, ConnectionState::Failed, Some("Failed")),
+        (
+            CardKind::Tcp,
+            ConnectionState::Disconnected,
+            Some("Disconnected"),
+        ),
+        (CardKind::Tcp, ConnectionState::Disabled, Some("Off")),
+        (CardKind::Tcp, ConnectionState::Unknown, Some("Unknown")),
+        (
+            CardKind::Wifi,
+            ConnectionState::Disconnected,
+            Some("LAN Down"),
+        ),
+        (
+            CardKind::Usb,
+            ConnectionState::Disconnected,
+            Some("Waiting"),
+        ),
+    ];
+
+    let labels: HVec<Option<&str>, 10> = states
+        .iter()
+        .map(|(kind, connection, _)| connection_status_label(*kind, *connection))
+        .collect();
+    let expected: HVec<Option<&str>, 10> =
+        states.iter().map(|(_, _, expected)| *expected).collect();
+
+    assert_eq!(labels, expected);
+}
+
+#[test]
+fn card_label_budgets_follow_the_rendered_font_and_slot() {
+    assert_eq!(card_label_max_chars(CardKind::Wifi), 8);
+    assert_eq!(card_label_max_chars(CardKind::Tcp), 8);
+    assert_eq!(card_label_max_chars(CardKind::Peer), 10);
+}
+
+#[test]
 fn card_stacks_traffic_and_moves_peers_right() {
     let mut display = MockDisplay::new();
     display.set_allow_overdraw(true);
@@ -8,11 +60,12 @@ fn card_stacks_traffic_and_moves_peers_right() {
         id: InterfaceId::new([0; 8]),
         kind: CardKind::Usb,
         label: card_label("USB"),
-        liveness: Liveness::Live,
+        connection: ConnectionState::Connected,
         failure_reason: None,
         tx_bytes: 123,
         rx_bytes: 456,
         links: 5,
+        peers: None,
         destinations: 7,
         rate_bytes_per_sec: 12_345,
         last_activity_secs: Some(3),
@@ -44,11 +97,12 @@ fn large_link_and_peer_counts_fit_right_column() {
         id: InterfaceId::new([0; 8]),
         kind: CardKind::Wifi,
         label: card_label("Wi-Fi"),
-        liveness: Liveness::Live,
+        connection: ConnectionState::Connected,
         failure_reason: None,
         tx_bytes: 999_999_999,
         rx_bytes: 999_999_999,
         links: 999_999,
+        peers: Some(12),
         destinations: 1_234_567_890,
         rate_bytes_per_sec: 999_999_999,
         last_activity_secs: Some(3599),
@@ -71,11 +125,12 @@ fn offline_card_centers_status_and_hides_metrics() {
         id: InterfaceId::new([0; 8]),
         kind: CardKind::EspNow,
         label: card_label("ESP-NOW"),
-        liveness: Liveness::Failed,
+        connection: ConnectionState::Failed,
         failure_reason: Some("BlueZ GATT Channels >1; set Channels=1"),
         tx_bytes: 123,
         rx_bytes: 456,
         links: 5,
+        peers: None,
         destinations: 7,
         rate_bytes_per_sec: 123,
         last_activity_secs: Some(12),
@@ -103,11 +158,12 @@ fn selected_card_inverts_name_content() {
         id: InterfaceId::new([0; 8]),
         kind: CardKind::Wifi,
         label: card_label("Wi-Fi"),
-        liveness: Liveness::Live,
+        connection: ConnectionState::Connected,
         failure_reason: None,
         tx_bytes: 0,
         rx_bytes: 0,
         links: 0,
+        peers: Some(0),
         destinations: 0,
         rate_bytes_per_sec: 0,
         last_activity_secs: None,

@@ -632,17 +632,17 @@ pub(crate) fn classify(id: InterfaceId) -> Option<(CardKind, CardLabel)> {
         return Some((CardKind::Usb, card_label("USB")));
     }
     match id.kind() {
-        Some(InterfaceKind::AutoWifi) => Some((CardKind::Wifi, card_label("Wi-Fi/LAN"))),
+        Some(InterfaceKind::AutoWifi) => Some((CardKind::Wifi, card_label("LAN"))),
         Some(InterfaceKind::LocalServer) => Some((CardKind::Tcp, card_label("Local"))),
         Some(InterfaceKind::LocalClient) => Some((CardKind::Peer, card_label("App"))),
         Some(InterfaceKind::BluetoothAuto) => Some((CardKind::Ble, card_label("BLE"))),
-        Some(InterfaceKind::WifiDirect) => Some((CardKind::Wifi, card_label("Wi-Fi Direct"))),
-        Some(InterfaceKind::WifiAware) => Some((CardKind::Wifi, card_label("Wi-Fi Aware"))),
+        Some(InterfaceKind::WifiDirect) => Some((CardKind::Wifi, card_label("Direct"))),
+        Some(InterfaceKind::WifiAware) => Some((CardKind::Wifi, card_label("Aware"))),
         kind => {
             let bytes = id.as_bytes();
             let (card_kind, tag) = match kind {
                 Some(InterfaceKind::BluetoothPeer) => (CardKind::Ble, "BLE"),
-                Some(InterfaceKind::WifiDirectPeer) => (CardKind::Wifi, "Direct"),
+                Some(InterfaceKind::WifiDirectPeer) => (CardKind::Wifi, "WD"),
                 Some(InterfaceKind::WifiAwarePeer) => (CardKind::Wifi, "P2P"),
                 _ => (CardKind::Peer, "Peer"),
             };
@@ -656,12 +656,36 @@ pub(crate) fn classify(id: InterfaceId) -> Option<(CardKind, CardLabel)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use personal_hopspot_core::card_label_max_chars;
 
     #[test]
     fn wifi_direct_is_presented_as_a_lab_transport() {
         let id = InterfaceId::from_channel_tag(InterfaceKind::WifiDirect, b"wifi-direct");
         let (_, label) = classify(id).expect("Wi-Fi Direct has a card");
-        assert_eq!(label.as_str(), "Wi-Fi Direct");
+        assert_eq!(label.as_str(), "Direct");
+    }
+
+    #[test]
+    fn every_android_interface_label_fits_its_card() {
+        let kinds = [
+            InterfaceKind::AutoWifi,
+            InterfaceKind::LocalServer,
+            InterfaceKind::LocalClient,
+            InterfaceKind::BluetoothAuto,
+            InterfaceKind::WifiDirect,
+            InterfaceKind::WifiAware,
+            InterfaceKind::BluetoothPeer,
+            InterfaceKind::WifiDirectPeer,
+            InterfaceKind::WifiAwarePeer,
+        ];
+        for kind in kinds {
+            let id = InterfaceId::from_channel_tag(kind, b"label-fit");
+            let (card_kind, label) = classify(id).expect("known interface has a card");
+            assert!(
+                label.chars().count() <= card_label_max_chars(card_kind),
+                "{kind:?} label {label:?} exceeds its card"
+            );
+        }
     }
 
     #[test]

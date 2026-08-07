@@ -101,7 +101,7 @@ fn FlashExperience(selected_slug: Option<String>) -> Element {
                 "Flash a Personal Hopspot"
             }
             p { class: "mt-4 max-w-3xl leading-relaxed text-soft",
-                "Choose the exact board and verify the signed release locally. Standard updates preserve device data; Fresh install is a separately confirmed full-chip erase for ESP targets."
+                "Choose your exact board and flash a signed release straight from your browser: every byte is verified locally before it touches the device. Update keeps your device's data. Fresh install erases everything, and asks for its own confirmation first."
             }
         }
 

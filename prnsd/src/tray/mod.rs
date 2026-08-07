@@ -3,6 +3,8 @@ mod icon;
 
 use crate::daemon::DaemonStatus;
 
+const DAEMON_DISPLAY_NAME: &str = "Prns Daemon";
+
 fn status_label(status: DaemonStatus, managed: bool, stopping: bool) -> String {
     if stopping {
         return "Stopping prnsd…".into();
@@ -64,7 +66,7 @@ mod platform {
     use crate::shutdown::{self, ShutdownRequest, ShutdownSignal};
 
     use super::actions::{TrayAction, TrayActionContext};
-    use super::{icon, status_label};
+    use super::{icon, status_label, DAEMON_DISPLAY_NAME};
 
     pub(crate) struct RunningTray {
         handle: ksni::Handle<LinuxTray>,
@@ -84,7 +86,7 @@ mod platform {
         }
 
         fn title(&self) -> String {
-            "Personal RNS Daemon".into()
+            DAEMON_DISPLAY_NAME.into()
         }
 
         fn icon_pixmap(&self) -> Vec<ksni::Icon> {
@@ -99,7 +101,7 @@ mod platform {
             ksni::ToolTip {
                 icon_name: String::new(),
                 icon_pixmap: self.icon_pixmap(),
-                title: "Personal RNS Daemon".into(),
+                title: DAEMON_DISPLAY_NAME.into(),
                 description: status_label(
                     self.status,
                     self.actions.can_attach_terminal(),
@@ -111,7 +113,7 @@ mod platform {
         fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
             vec![
                 StandardItem {
-                    label: format!("Personal RNS Daemon · v{}", env!("CARGO_PKG_VERSION")),
+                    label: format!("{DAEMON_DISPLAY_NAME} · v{}", env!("CARGO_PKG_VERSION")),
                     enabled: false,
                     ..Default::default()
                 }
@@ -256,7 +258,7 @@ mod platform {
     use crate::{cli, daemon};
 
     use super::actions::{TrayAction, TrayActionContext};
-    use super::{icon, status_label};
+    use super::{icon, status_label, DAEMON_DISPLAY_NAME};
 
     enum TrayEvent {
         DaemonReady {
@@ -285,7 +287,7 @@ mod platform {
                 .map_err(|error| format!("tray actions unavailable: {error}"))?;
             let managed = actions.can_attach_terminal();
             let heading = MenuItem::new(
-                format!("Personal RNS Daemon · v{}", env!("CARGO_PKG_VERSION")),
+                format!("{DAEMON_DISPLAY_NAME} · v{}", env!("CARGO_PKG_VERSION")),
                 false,
                 None,
             );
@@ -321,7 +323,7 @@ mod platform {
                 .map_err(|error| format!("tray icon pixels invalid: {error}"))?;
             let icon = TrayIconBuilder::new()
                 .with_menu(Box::new(menu))
-                .with_tooltip("Personal RNS Daemon is running")
+                .with_tooltip(format!("{DAEMON_DISPLAY_NAME} is running"))
                 .with_icon(tray_icon)
                 .with_menu_on_left_click(true)
                 .build()
@@ -358,7 +360,7 @@ mod platform {
             self.status_item.set_text(&label);
             let _ = self
                 .icon
-                .set_tooltip(Some(format!("Personal RNS Daemon · {label}")));
+                .set_tooltip(Some(format!("{DAEMON_DISPLAY_NAME} · {label}")));
         }
 
         fn perform(&self, action: TrayAction) {
@@ -377,7 +379,7 @@ mod platform {
             self.stop_item.set_enabled(false);
             let _ = self
                 .icon
-                .set_tooltip(Some("Personal RNS Daemon is stopping"));
+                .set_tooltip(Some(format!("{DAEMON_DISPLAY_NAME} is stopping")));
         }
     }
 

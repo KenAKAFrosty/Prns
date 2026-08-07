@@ -6,6 +6,7 @@ fn classify_card(
     wifi_id: Option<InterfaceId>,
     tcp_id: Option<InterfaceId>,
     tcp_client: Option<&HopspotTcpClientConfig>,
+    wifi_kind: screen::CardKind,
     lora_id: InterfaceId,
     espnow_id: Option<InterfaceId>,
 ) -> Option<(screen::CardKind, screen::CardLabel)> {
@@ -14,7 +15,7 @@ fn classify_card(
     } else if id == lora_id {
         Some((screen::CardKind::LoRa, screen::card_label("LoRa")))
     } else if Some(id) == wifi_id {
-        Some((screen::CardKind::Wifi, screen::card_label("Wi-Fi/LAN")))
+        Some((wifi_kind, screen::card_label("LAN")))
     } else if Some(id) == espnow_id {
         Some((screen::CardKind::EspNow, screen::card_label("ESP-NOW")))
     } else if Some(id) == tcp_id {
@@ -135,11 +136,22 @@ pub(super) fn build_cards(
     wifi_id: Option<InterfaceId>,
     tcp_id: Option<InterfaceId>,
     tcp_client: Option<&HopspotTcpClientConfig>,
+    wifi: Option<&AutoWifiStatus<MEMBERS>>,
+    wifi_config: &HopspotWifiConfig,
     lora_id: InterfaceId,
     espnow_id: Option<InterfaceId>,
 ) -> HVec<screen::Card, 8> {
+    let wifi_kind = if !wifi_config.has_station() {
+        screen::CardKind::Wifi
+    } else if wifi.is_some_and(|status| status.is_station_uplink_enabled()) {
+        screen::CardKind::WifiStation
+    } else {
+        screen::CardKind::WifiStationDisabled
+    };
     screen::snapshots_to_cards(snapshots, |id| {
-        classify_card(id, usb_id, wifi_id, tcp_id, tcp_client, lora_id, espnow_id)
+        classify_card(
+            id, usb_id, wifi_id, tcp_id, tcp_client, wifi_kind, lora_id, espnow_id,
+        )
     })
 }
 
@@ -147,7 +159,7 @@ fn egress_pressure_events(id: InterfaceId) -> u32 {
     match id.kind() {
         Some(InterfaceKind::UsbAutoDevice) => USB_MANIFOLD_LANE.egress_pressure_events(),
         Some(InterfaceKind::TcpClient) => TCP_MANIFOLD_LANE.egress_pressure_events(),
-        Some(InterfaceKind::AutoWifi | InterfaceKind::WifiPeer) => {
+        Some(InterfaceKind::AutoWifi | InterfaceKind::WifiPeer | InterfaceKind::TcpServerPeer) => {
             WIFI_MANIFOLD_LANE.egress_pressure_events()
         }
         Some(InterfaceKind::LoRa) => LORA_MANIFOLD_LANE.egress_pressure_events(),
@@ -165,7 +177,7 @@ fn ingress_pressure_events(id: InterfaceId) -> u32 {
     match id.kind() {
         Some(InterfaceKind::UsbAutoDevice) => USB_MANIFOLD_LANE.ingress_pressure_events(),
         Some(InterfaceKind::TcpClient) => TCP_MANIFOLD_LANE.ingress_pressure_events(),
-        Some(InterfaceKind::AutoWifi | InterfaceKind::WifiPeer) => {
+        Some(InterfaceKind::AutoWifi | InterfaceKind::WifiPeer | InterfaceKind::TcpServerPeer) => {
             WIFI_MANIFOLD_LANE.ingress_pressure_events()
         }
         Some(InterfaceKind::LoRa) => LORA_MANIFOLD_LANE.ingress_pressure_events(),
@@ -217,17 +229,28 @@ pub(super) fn build_interface_menu_details(
     snapshots: &[InterfaceSnapshot],
     usb: &EmbassyInterfaceStatus,
     lora_spectrum: &LoRaSpectrumStatus,
+    wifi: Option<&AutoWifiStatus<MEMBERS>>,
     wifi_config: &HopspotWifiConfig,
     ap_ssid: Option<&str>,
 ) -> screen::InterfaceMenuDetails {
     let mut details = match selected_card.map(|card| card.kind()) {
-        Some(screen::CardKind::Wifi) => {
-            let station_ssid = (wifi_config.has_station()
-                && WIFI_STATION_JOINED.load(Ordering::Relaxed))
-            .then_some(wifi_config.ssid.as_str());
+        Some(
+            screen::CardKind::Wifi
+            | screen::CardKind::WifiStation
+            | screen::CardKind::WifiStationDisabled,
+        ) => {
+            let station = if !wifi_config.has_station() {
+                screen::WifiStationStatus::Unconfigured
+            } else if wifi.is_some_and(|status| !status.is_station_uplink_enabled()) {
+                screen::WifiStationStatus::Disabled
+            } else if WIFI_STATION_JOINED.load(Ordering::Relaxed) {
+                screen::WifiStationStatus::Connected(wifi_config.ssid.as_str())
+            } else {
+                screen::WifiStationStatus::Joining
+            };
             screen::wifi_interface_menu_details(
                 screen::WifiNetworkStatus {
-                    station_ssid,
+                    station,
                     access_point_ssid: ap_ssid,
                 },
                 selected_card,
@@ -237,6 +260,27 @@ pub(super) fn build_interface_menu_details(
         Some(screen::CardKind::Usb) => screen::usb_interface_menu_details(usb.connection()),
         Some(screen::CardKind::Ble) => {
             screen::snapshots_to_interface_menu_details(selected_card, snapshots)
+        }
+        Some(screen::CardKind::Tcp) => {
+            let mut details = screen::InterfaceMenuDetails::empty();
+            if let Some(tcp) = wifi_config.tcp_client.as_ref() {
+                match &tcp.host {
+                    HopspotTcpClientHost::Ipv4(address) => {
+                        let mut target = heapless::String::<15>::new();
+                        let octets = address.octets();
+                        let _ = write!(
+                            target,
+                            "{}.{}.{}.{}",
+                            octets[0], octets[1], octets[2], octets[3]
+                        );
+                        details.push_tcp_target(target.as_str(), tcp.port);
+                    }
+                    HopspotTcpClientHost::Hostname(hostname) => {
+                        details.push_tcp_target(hostname, tcp.port);
+                    }
+                }
+            }
+            details
         }
         _ => screen::InterfaceMenuDetails::empty(),
     };

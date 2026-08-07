@@ -637,6 +637,7 @@ pub(super) fn run_window(handles: WindowHandles) {
             }
             _ => {}
         },
+        UiAction::ToggleStationUplink => {}
         UiAction::OpenLoRaEditor => ui_state.open_lora_editor(*working_lora_profile),
         UiAction::SetLoRaProfile(profile) => {
             ui_state.show_notice(screen::UiNotice::Saved);

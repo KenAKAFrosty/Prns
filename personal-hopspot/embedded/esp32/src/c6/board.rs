@@ -50,6 +50,7 @@ impl XiaoEsp32C6 {
     pub(crate) fn bringup() -> C6Hardware {
         esp_println::logger::init_logger_from_env();
         esp_alloc::heap_allocator!(size: HEAP_BYTES);
+        esp_println::println!("XIAO ESP32-C6 boot {}", env!("HOPSPOT_BUILD_IDENTITY"));
 
         let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
         let peripherals = esp_hal::init(config);

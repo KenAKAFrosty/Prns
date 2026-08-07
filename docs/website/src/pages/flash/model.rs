@@ -59,10 +59,10 @@ impl WebSerialCapability {
         match self {
             Self::Checking | Self::Supported => None,
             Self::AndroidBluetoothOnly => Some(
-                "Web Serial on this Android browser reaches Bluetooth serial devices only, so a USB-connected board never appears in the port picker. Use desktop Chrome or Edge, or the standalone CLI.",
+                "Web Serial on this Android browser reaches Bluetooth serial devices only, so a USB-connected board never appears in the port picker. Use desktop Chrome, Edge, or Firefox 151 or later, or the standalone CLI.",
             ),
             Self::Unavailable => Some(
-                "Web Serial is unavailable in this browser or context. Open this page in current Chrome or Edge over HTTPS, or use the standalone CLI.",
+                "Web Serial is unavailable in this browser or context. Open this page over HTTPS in current desktop Chrome, Edge, or Firefox 151 or later, or use the standalone CLI.",
             ),
         }
     }
@@ -171,7 +171,7 @@ pub(super) fn preparation_guide(
             lead: "The flasher will try the board's cataloged automatic reset strategy first.",
             steps: vec![
                 "Use a USB data cable connected directly to this computer, and close serial monitors using the board.".to_string(),
-                "When asked, choose this board's serial port. Do not identify a board solely by chip family when catalog targets share one.".to_string(),
+                "When asked, choose this board's serial port. Port names come from the chip rather than the board, and different boards can share the same chip, so if you're not sure which port is which, unplug everything else first.".to_string(),
                 "If automatic connection fails, hold BOOT, tap RESET, release BOOT, then restart the complete connect-and-flash step.".to_string(),
             ],
         },
@@ -386,7 +386,7 @@ mod tests {
         let unavailable = WebSerialCapability::Unavailable
             .blocked_explanation()
             .expect("the unavailable capability explains itself");
-        assert!(unavailable.contains("Chrome or Edge"));
+        assert!(unavailable.contains("Chrome, Edge, or Firefox"));
         assert!(unavailable.contains("CLI"));
     }
 }
