@@ -7,20 +7,20 @@
     <title>Prns is coming soon</title>
     <meta name="description" content="Prns is preparing public docs for a high-performance Rust implementation of Reticulum.">
     <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg">
-    <link rel="canonical" href="https://reticulum.rs/">
+    <link rel="canonical" href="https://prns.dev/">
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="Prns">
     <meta property="og:title" content="Prns is coming soon">
     <meta property="og:description" content="Public docs for a high-performance Rust implementation of Reticulum are being staged.">
-    <meta property="og:url" content="https://reticulum.rs/">
-    <meta property="og:image" content="https://reticulum.rs/assets/og.png">
+    <meta property="og:url" content="https://prns.dev/">
+    <meta property="og:image" content="https://prns.dev/assets/og.png">
     <meta property="og:image:type" content="image/png">
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="Prns is coming soon">
     <meta name="twitter:description" content="Public docs for a high-performance Rust implementation of Reticulum are being staged.">
-    <meta name="twitter:image" content="https://reticulum.rs/assets/og.png">
+    <meta name="twitter:image" content="https://prns.dev/assets/og.png">
     <style>
       :root {
         color-scheme: dark;
@@ -193,6 +193,26 @@
         line-height: 1.7;
       }
 
+      .repo-note {
+        max-width: 620px;
+        margin: 18px 0 0;
+        color: var(--mid);
+        font-size: 1rem;
+        line-height: 1.6;
+      }
+
+      .repo-note a {
+        border-bottom: 1px solid rgb(110 231 183 / 0.35);
+        color: var(--accent);
+        text-decoration: none;
+        transition: border-color 0.15s ease;
+      }
+
+      .repo-note a:hover,
+      .repo-note a:focus-visible {
+        border-bottom-color: var(--accent-strong);
+      }
+
       .launch-strip {
         display: flex;
         flex-wrap: wrap;
@@ -333,9 +353,10 @@
         <section class="hero-inner" aria-labelledby="coming-soon-title">
           <p class="kicker">Mesh networking that's yours</p>
           <h1 id="coming-soon-title">Prns is<br><span class="accent">coming soon.</span></h1>
-          <p class="lead">The public documentation and API references are being prepared. They land here when Prns goes public.</p>
+          <p class="lead">The public website is being prepared.<br>It lands here when Prns goes public.</p>
+          <p class="repo-note">Can't wait? <a href="https://github.com/KenAKAFrosty/Prns">The source is already in the open on GitHub&nbsp;&rarr;</a></p>
           <div class="launch-strip" aria-label="Design principles">
-            <span class="pill">Correct</span>
+            <span class="pill">Safe</span>
             <span class="pill">Robust</span>
             <span class="pill">Fast</span>
             <span class="pill">Any device</span>
@@ -360,7 +381,6 @@
       </main>
       <footer class="footer">
         <span><strong>prns.dev &middot; reticulum.rs</strong> &middot; MIT / Apache 2.0</span>
-        <span>Docs &middot; API reference</span>
       </footer>
     </div>
   </body>
