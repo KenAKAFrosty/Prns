@@ -11,7 +11,6 @@ use prns_flash_manifest::{
 };
 
 const REPO_VERSION_PATH: &str = "../../VERSION";
-const EMBEDDED_SITE_ENV: &str = "PRNS_EMBEDDED_SITE";
 const SOURCE_ARCHIVE_ENV: &str = "PRNS_SOURCE_ARCHIVE";
 const API_DOCS_ENV: &str = "PRNS_API_DOCS_STAGED";
 const LOCAL_DEV_PUBLIC_KEY_ENV: &str = "PRNS_LOCAL_DEV_PUBLIC_KEY";
@@ -56,7 +55,6 @@ fn main() {
     println!("cargo:rerun-if-env-changed=PRNS_BUILD_COMMIT");
     println!("cargo:rerun-if-env-changed=PRNS_BUILD_COMMIT_SHORT");
     println!("cargo:rerun-if-env-changed=PRNS_BUILD_CHANNEL");
-    println!("cargo:rerun-if-env-changed={EMBEDDED_SITE_ENV}");
     println!("cargo:rerun-if-env-changed={SOURCE_ARCHIVE_ENV}");
     println!("cargo:rerun-if-env-changed={API_DOCS_ENV}");
     println!("cargo:rerun-if-env-changed={LOCAL_DEV_PUBLIC_KEY_ENV}");
@@ -90,9 +88,7 @@ fn configure_local_development(version: &str, commit: &str) {
         }
         return;
     }
-    if env::var_os("CARGO_FEATURE_EMBEDDED_SITE").is_some()
-        || env::var_os("CARGO_FEATURE_BROWSER_TEST_FIXTURE").is_some()
-    {
+    if env::var_os("CARGO_FEATURE_BROWSER_TEST_FIXTURE").is_some() {
         panic!("local-dev-flasher is mutually exclusive with every other website profile");
     }
     let key_path = required_environment_path(LOCAL_DEV_PUBLIC_KEY_ENV);

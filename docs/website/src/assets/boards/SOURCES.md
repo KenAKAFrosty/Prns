@@ -1,8 +1,8 @@
 # Board Thumbnails
 
-These thumbnails are intentionally tiny because the docs site is also bundled
-for embedded Hopspot SoftAP serving. `build.rs` embeds them as `data:` URIs so
-the flash board catalog needs no separate image requests.
+These thumbnails are intentionally tiny so the hosted flash board catalog loads
+quickly. `build.rs` embeds them as `data:` URIs so the catalog needs no separate
+image requests.
 
 Format: **WebP with alpha**, 160 px on the long edge. Each board renders on a
 transparent background inside a dark "slot" (`.flash-board-slot--inset` in

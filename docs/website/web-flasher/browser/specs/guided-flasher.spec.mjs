@@ -611,7 +611,7 @@ test("browser support is feature-detected and T-Echo stays on the signed UF2 rou
   await selectBoard(page, "xiao-esp32-c6");
 
   await expect(page.locator("#flash-status")).toContainText(/Web Serial is unavailable/i);
-  await expect(page.getByText(/requires a secure current Chrome or Edge browser with Web Serial/i)).toBeVisible();
+  await expect(page.getByText(/requires a secure current desktop browser with Web Serial/i)).toBeVisible();
   await page.getByRole("checkbox").check();
   await expect(page.getByRole("button", { name: "Prepare and verify release" })).toBeDisabled();
   await expect(page.getByText(/cannot distinguish cataloged boards that share that family/i)).toHaveCount(0);
@@ -667,8 +667,8 @@ test("a Web Serial detection failure keeps ESP preparation and connection fail c
   const status = page.locator("#flash-status");
   await expect(status).toHaveAttribute("aria-live", "polite");
   await expect(status).toHaveAttribute("aria-atomic", "true");
-  await expect(status).toContainText(/Web Serial is unavailable.*Chrome or Edge.*CLI/i);
-  await expect(page.getByText(/requires a secure current Chrome or Edge browser with Web Serial/i)).toBeVisible();
+  await expect(status).toContainText(/Web Serial is unavailable.*Chrome, Edge, or Firefox.*CLI/i);
+  await expect(page.getByText(/requires a secure current desktop browser with Web Serial/i)).toBeVisible();
   await page.getByRole("checkbox").check();
   await expect(page.getByRole("button", { name: "Prepare and verify release" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Connect and flash" })).toBeDisabled();

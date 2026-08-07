@@ -23,7 +23,7 @@ use super::super::{
     EmbassyInterfaceStore, EmbeddedFlashPersistence, EmbeddedPersistenceDiagnostic,
     EmbeddedPersistenceRestoreReport, InterfaceInspectionStore, ManifoldPersistence,
     ManuallyAttached, NoInterfaceInspectionStore, NoManifoldPersistence, PreConfiguredDestination,
-    PrnsEvent, PrnsNodeRecipe,
+    PrnsEvent, PrnsNodeRecipe, RouteSnapshotKeys,
 };
 use super::command_handle::PrnsNodeHandle;
 use prns_runtime::runtime::placement::assemble_node_in_place;
@@ -434,6 +434,7 @@ where
 
     pub async fn run_manifold_with_persistence_and_interface_store<
         Fl,
+        Keys,
         Observe,
         const PENDING: usize,
         const INTERFACES: usize,
@@ -442,10 +443,11 @@ where
     >(
         &mut self,
         store: &EmbassyInterfaceStore<M, INTERFACES, PACKET_PHY_CAPACITY, PACKET_PHY_INDEX_BUCKETS>,
-        persistence: &mut EmbeddedFlashPersistence<Fl, Observe, PENDING>,
+        persistence: &mut EmbeddedFlashPersistence<Fl, Keys, Observe, PENDING>,
     ) where
         M: Sync,
         Fl: NorFlash,
+        Keys: RouteSnapshotKeys,
         Observe: FnMut(EmbeddedPersistenceDiagnostic),
     {
         const {
@@ -458,12 +460,13 @@ where
             .await;
     }
 
-    pub async fn restore_embedded_persistence<Fl, Observe, const PENDING: usize>(
+    pub async fn restore_embedded_persistence<Fl, Keys, Observe, const PENDING: usize>(
         &mut self,
-        persistence: &mut EmbeddedFlashPersistence<Fl, Observe, PENDING>,
+        persistence: &mut EmbeddedFlashPersistence<Fl, Keys, Observe, PENDING>,
     ) -> EmbeddedPersistenceRestoreReport
     where
         Fl: NorFlash,
+        Keys: RouteSnapshotKeys,
         Observe: FnMut(EmbeddedPersistenceDiagnostic),
         H: ResumableHost,
     {

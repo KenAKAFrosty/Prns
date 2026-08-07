@@ -5,12 +5,15 @@ use core::future::Future;
 use personal_rns::interfaces::lora::RadioProfile;
 use personal_rns::storage::DisplayedStorageLimits;
 
+use crate::PersistenceState;
+
 use super::limits::storage_limit_page_count;
 use super::model::{Card, CardKind, ScreenContent};
 use lora::{lora_editor_hold, lora_editor_tap, region_index, LoRaHold, LoRaScreen};
 
 const INITIAL_VISIBLE_FOCUS_ITEMS: usize = 3;
 const SCROLLED_VISIBLE_FOCUS_ITEMS: usize = 2;
+const PERSISTENCE_NOTICE_MILLIS: u64 = 5_000;
 pub(in crate::screen) const GLOBAL_MENU_ITEMS: &[&str] = &["Announce", "Limits", "Sleep", "Back"];
 pub(in crate::screen) const GLOBAL_MENU_ITEMS_DISPLAY: &[&str] =
     &["Announce", "Limits", "OLED Off", "Sleep", "Back"];
@@ -27,6 +30,8 @@ const SLEEP_MENU_ITEM_NO_DISPLAY: usize = 2;
 pub(in crate::screen) const RADIO_MENU_ITEM_NO_DISPLAY: usize = 3;
 pub(in crate::screen) const POWER_MENU_ITEM: usize = 0;
 pub(in crate::screen) const POWER_ONLY_MENU_ITEMS: &[&str] = &["Power", "Back"];
+pub(in crate::screen) const WIFI_MENU_ITEMS: &[&str] = &["Power", "Station", "Back"];
+pub(in crate::screen) const STATION_UPLINK_MENU_ITEM: usize = 1;
 const LORA_MENU_ITEMS: &[&str] = &["Power", "Tune", "Reset", "Back"];
 pub(in crate::screen) const LORA_TUNE_MENU_ITEM: usize = 1;
 pub(in crate::screen) const LORA_RESET_MENU_ITEM: usize = 2;
@@ -34,6 +39,7 @@ pub(in crate::screen) const LORA_RESET_MENU_ITEM: usize = 2;
 pub(in crate::screen) fn interface_menu_items(kind: CardKind) -> &'static [&'static str] {
     match kind {
         CardKind::LoRa => LORA_MENU_ITEMS,
+        CardKind::WifiStation | CardKind::WifiStationDisabled => WIFI_MENU_ITEMS,
         CardKind::Wifi
         | CardKind::Peer
         | CardKind::Usb
@@ -59,6 +65,7 @@ pub enum UiAction {
     Wake,
     /// Flip the selected card's interface off or back on, keyed by the card's [`id`](crate::screen::Card::id).
     ToggleSelectedInterface,
+    ToggleStationUplink,
     OpenLoRaEditor,
     SetLoRaProfile(RadioProfile),
     ResetLoRaProfile,
@@ -72,6 +79,8 @@ pub enum UiNotice {
     OledOff,
     TurningOff,
     TurningOn,
+    DisconnectingAp,
+    ReconnectingAp,
     Sleeping,
     Awake,
     Saved,
@@ -81,7 +90,8 @@ pub enum UiNotice {
     ProfileReset,
     IdentityReset,
     IdentityUnstable,
-    StateNotSaved,
+    SaveDeferred,
+    SaveFailed,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -126,23 +136,130 @@ where
 }
 
 impl UiNotice {
-    pub(in crate::screen) fn label(self) -> &'static str {
+    #[cfg(test)]
+    pub(in crate::screen) const ALL: [Self; 17] = [
+        Self::Announcing,
+        Self::OledOff,
+        Self::TurningOff,
+        Self::TurningOn,
+        Self::DisconnectingAp,
+        Self::ReconnectingAp,
+        Self::Sleeping,
+        Self::Awake,
+        Self::Saved,
+        Self::ApplyFailed,
+        Self::ProfileNotSaved,
+        Self::ProfileRecovered,
+        Self::ProfileReset,
+        Self::IdentityReset,
+        Self::IdentityUnstable,
+        Self::SaveDeferred,
+        Self::SaveFailed,
+    ];
+
+    pub(in crate::screen) const fn lines(self) -> NoticeLines {
         match self {
-            Self::Announcing => "Announcing",
-            Self::OledOff => "OLED Off",
-            Self::TurningOff => "Turning Off",
-            Self::TurningOn => "Turning On",
-            Self::Sleeping => "Sleeping",
-            Self::Awake => "Awake",
-            Self::Saved => "Saved",
-            Self::ApplyFailed => "Apply Failed",
-            Self::ProfileNotSaved => "Profile Not Saved",
-            Self::ProfileRecovered => "Profile Recovered",
-            Self::ProfileReset => "Profile Reset",
-            Self::IdentityReset => "Identity Reset",
-            Self::IdentityUnstable => "Identity Unstable",
-            Self::StateNotSaved => "State Not Saved",
+            Self::Announcing => NoticeLines::one("Announcing"),
+            Self::OledOff => NoticeLines::one("OLED Off"),
+            Self::TurningOff => NoticeLines::one("Turning Off"),
+            Self::TurningOn => NoticeLines::one("Turning On"),
+            Self::DisconnectingAp => NoticeLines::two("Disconnecting", "AP"),
+            Self::ReconnectingAp => NoticeLines::two("Reconnecting", "AP"),
+            Self::Sleeping => NoticeLines::one("Sleeping"),
+            Self::Awake => NoticeLines::one("Awake"),
+            Self::Saved => NoticeLines::one("Saved"),
+            Self::ApplyFailed => NoticeLines::one("Apply Failed"),
+            Self::ProfileNotSaved => NoticeLines::two("Profile", "Not saved"),
+            Self::ProfileRecovered => NoticeLines::two("Profile", "Recovered"),
+            Self::ProfileReset => NoticeLines::two("Profile", "Reset"),
+            Self::IdentityReset => NoticeLines::two("Identity", "Reset"),
+            Self::IdentityUnstable => NoticeLines::two("Identity", "Unstable"),
+            Self::SaveDeferred => {
+                NoticeLines::three("Save deferred", "Flash cooldown", "Auto retry")
+            }
+            Self::SaveFailed => NoticeLines::three("Save failed", "Flash error", "Auto retry"),
         }
+    }
+}
+
+pub(in crate::screen) struct NoticeLines {
+    lines: [&'static str; 3],
+    len: usize,
+}
+
+impl NoticeLines {
+    const fn one(first: &'static str) -> Self {
+        Self {
+            lines: [first, "", ""],
+            len: 1,
+        }
+    }
+
+    const fn two(first: &'static str, second: &'static str) -> Self {
+        Self {
+            lines: [first, second, ""],
+            len: 2,
+        }
+    }
+
+    const fn three(first: &'static str, second: &'static str, third: &'static str) -> Self {
+        Self {
+            lines: [first, second, third],
+            len: 3,
+        }
+    }
+
+    pub(in crate::screen) fn as_slice(&self) -> &[&'static str] {
+        &self.lines[..self.len]
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PersistenceNotice {
+    observed: PersistenceState,
+    visible_until: Option<(u64, UiNotice)>,
+}
+
+impl PersistenceNotice {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            observed: PersistenceState::Durable,
+            visible_until: None,
+        }
+    }
+
+    pub fn update(
+        &mut self,
+        ui_state: &mut UiState,
+        persistence: PersistenceState,
+        now_millis: u64,
+    ) -> bool {
+        let mut changed = false;
+        if let Some((until, notice)) = self.visible_until {
+            if now_millis >= until {
+                changed = ui_state.clear_notice_if(notice);
+                self.visible_until = None;
+            }
+        }
+        if persistence == self.observed {
+            return changed;
+        }
+        let notice = match persistence {
+            PersistenceState::Durable => UiNotice::Saved,
+            PersistenceState::Deferred => UiNotice::SaveDeferred,
+            PersistenceState::Failed => UiNotice::SaveFailed,
+        };
+        self.observed = persistence;
+        self.visible_until = Some((now_millis.saturating_add(PERSISTENCE_NOTICE_MILLIS), notice));
+        ui_state.show_notice(notice);
+        true
+    }
+}
+
+impl Default for PersistenceNotice {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -218,6 +335,14 @@ impl UiState {
 
     pub fn clear_notice(&mut self) {
         self.notice = None;
+    }
+
+    pub fn clear_notice_if(&mut self, notice: UiNotice) -> bool {
+        if self.notice != Some(notice) {
+            return false;
+        }
+        self.notice = None;
+        true
     }
 
     pub(in crate::screen) fn notice(&self) -> Option<UiNotice> {
@@ -339,6 +464,10 @@ impl UiState {
     }
 
     pub fn handle_input(&mut self, event: InputEvent, content: ScreenContent<'_, '_>) -> UiAction {
+        if event == InputEvent::ShortPress && self.notice.take().is_some() {
+            self.sync(content);
+            return UiAction::None;
+        }
         let card_count = content.cards.len();
         self.notice = None;
         self.sync(content);
@@ -452,6 +581,10 @@ impl UiState {
                 self.mode = UiMode::Cards;
                 match (kind, selected_item) {
                     (_, POWER_MENU_ITEM) => UiAction::ToggleSelectedInterface,
+                    (
+                        CardKind::WifiStation | CardKind::WifiStationDisabled,
+                        STATION_UPLINK_MENU_ITEM,
+                    ) => UiAction::ToggleStationUplink,
                     (CardKind::LoRa, LORA_TUNE_MENU_ITEM) => UiAction::OpenLoRaEditor,
                     (CardKind::LoRa, LORA_RESET_MENU_ITEM) => UiAction::ResetLoRaProfile,
                     _ => UiAction::None,

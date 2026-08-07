@@ -6,6 +6,8 @@ use personal_rns::interfaces::{ConnectionState, InterfaceId};
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CardKind {
     Wifi,
+    WifiStation,
+    WifiStationDisabled,
     Usb,
     Ble,
     LoRa,
@@ -13,34 +15,6 @@ pub enum CardKind {
     Tcp,
     /// A fleet member a supervisor stood up (a Wi-Fi/USB peer), not an interface a node configured itself. Renders one font-size down — fits its id tag and reads as subordinate to its parent.
     Peer,
-}
-
-/// How alive an interface's card reads. `Live` is a confirmed link: the full card with numbers. `Dormant` is up and watching with no confirmed link yet (the USB discoverer with nothing plugged): the *live* icon over a "Dormant" body, so a card never pretends to carry traffic it has none of. `Failed` is a genuinely failed interface: the offline icon and a "Failed" body.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Liveness {
-    Failed,
-    Dormant,
-    Live,
-    /// Deliberately turned off from the UI: keeps its own interface icon (not the failure slash) over an "Off" body, so an interface a user switched off never reads as one that broke.
-    Disabled,
-}
-
-impl Liveness {
-    pub(in crate::screen) fn is_failed(self) -> bool {
-        matches!(self, Liveness::Failed)
-    }
-}
-
-#[must_use]
-pub(crate) const fn liveness_from_connection(connection: ConnectionState) -> Liveness {
-    match connection {
-        ConnectionState::Connected | ConnectionState::Degraded => Liveness::Live,
-        ConnectionState::Failed | ConnectionState::Unknown => Liveness::Failed,
-        ConnectionState::Disabled => Liveness::Disabled,
-        ConnectionState::Initializing
-        | ConnectionState::Reconnecting
-        | ConnectionState::Disconnected => Liveness::Dormant,
-    }
 }
 
 /// The card label's backing buffer: owned, not `&'static str`, so a face can format a runtime tag into it (a discovered peer's id). Truncated to the cap; the panel clips past its width.
@@ -58,7 +32,7 @@ pub fn card_label(text: &str) -> CardLabel {
     label
 }
 
-const INTERFACE_MENU_DETAIL_TEXT_CAP: usize = 16;
+const INTERFACE_MENU_DETAIL_TEXT_CAP: usize = 15;
 const INTERFACE_MENU_DETAIL_ROWS_CAP: usize = 8;
 type InterfaceMenuDetailText = HString<INTERFACE_MENU_DETAIL_TEXT_CAP>;
 
@@ -91,8 +65,16 @@ pub struct LoRaSpectrumMenuDetails {
     pub radio_recoveries: u32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WifiStationStatus<'a> {
+    Unconfigured,
+    Joining,
+    Connected(&'a str),
+    Disabled,
+}
+
 pub struct WifiNetworkStatus<'a> {
-    pub station_ssid: Option<&'a str>,
+    pub station: WifiStationStatus<'a>,
     pub access_point_ssid: Option<&'a str>,
 }
 
@@ -138,6 +120,34 @@ impl InterfaceMenuDetails {
         self.rows.as_slice()
     }
 
+    pub fn push_tcp_target(&mut self, target: &str, port: u16) {
+        let _ = self.rows.push(InterfaceMenuDetailRow::from_text(
+            InterfaceMenuDetailKind::Info,
+            "Host",
+        ));
+        let mut remaining = target.chars();
+        while self.rows.len() + 1 < INTERFACE_MENU_DETAIL_ROWS_CAP {
+            let mut row = InterfaceMenuDetailText::new();
+            for _ in 0..INTERFACE_MENU_DETAIL_TEXT_CAP {
+                let Some(c) = remaining.next() else { break };
+                let _ = row.push(c);
+            }
+            if row.is_empty() {
+                break;
+            }
+            let _ = self.rows.push(InterfaceMenuDetailRow {
+                text: row,
+                kind: InterfaceMenuDetailKind::Info,
+            });
+        }
+        let mut port_text = InterfaceMenuDetailText::new();
+        let _ = write!(port_text, "Port {port}");
+        let _ = self.rows.push(InterfaceMenuDetailRow {
+            text: port_text,
+            kind: InterfaceMenuDetailKind::Info,
+        });
+    }
+
     pub(crate) fn push_info(&mut self, label: &str, value: &str) {
         let _ = self.rows.push(InterfaceMenuDetailRow::info(label, value));
     }
@@ -157,7 +167,7 @@ impl InterfaceMenuDetails {
         }
         let mut value = InterfaceMenuDetailText::new();
         let _ = write!(value, "{events}");
-        self.push_info("Ingress drops", value.as_str());
+        self.push_info("RX drops", value.as_str());
     }
 
     pub fn push_lora_spectrum(&mut self, spectrum: LoRaSpectrumMenuDetails) {
@@ -206,7 +216,7 @@ impl InterfaceMenuDetails {
 
     pub(crate) fn push_supervisor_peers<I>(&mut self, peers: I) -> usize
     where
-        I: IntoIterator<Item = (InterfaceId, Liveness)>,
+        I: IntoIterator<Item = (InterfaceId, ConnectionState)>,
     {
         let count_index = self.rows.len();
         let _ = self.rows.push(InterfaceMenuDetailRow::from_text(
@@ -214,7 +224,7 @@ impl InterfaceMenuDetails {
             "Peers 0",
         ));
         let mut count = 0usize;
-        for (id, liveness) in peers {
+        for (id, connection) in peers {
             count = count.saturating_add(1);
             let mut text = InterfaceMenuDetailText::new();
             let bytes = id.as_bytes();
@@ -223,7 +233,7 @@ impl InterfaceMenuDetails {
                 "P {:02x}{:02x} {}",
                 bytes[1],
                 bytes[2],
-                liveness_short_label(liveness)
+                connection_short_label(connection)
             );
             let _ = self.rows.push(InterfaceMenuDetailRow {
                 text,
@@ -237,20 +247,24 @@ impl InterfaceMenuDetails {
         count
     }
 
-    pub(crate) fn push_named_peer(&mut self, label: &str, liveness: Option<Liveness>) -> usize {
-        let count = usize::from(liveness.is_some());
+    pub(crate) fn push_named_peer(
+        &mut self,
+        label: &str,
+        connection: Option<ConnectionState>,
+    ) -> usize {
+        let count = usize::from(connection.is_some());
         let mut count_text = InterfaceMenuDetailText::new();
         let _ = write!(count_text, "Peers {count}");
         let _ = self.rows.push(InterfaceMenuDetailRow {
             text: count_text,
             kind: InterfaceMenuDetailKind::Info,
         });
-        if let Some(liveness) = liveness {
+        if let Some(connection) = connection {
             let mut text = InterfaceMenuDetailText::new();
             let _ = text.push_str("P ");
             push_truncated(&mut text, label);
             let _ = text.push(' ');
-            let _ = text.push_str(liveness_short_label(liveness));
+            let _ = text.push_str(connection_short_label(connection));
             let _ = self.rows.push(InterfaceMenuDetailRow {
                 text,
                 kind: InterfaceMenuDetailKind::Peer,
@@ -268,26 +282,23 @@ fn push_truncated<const N: usize>(text: &mut HString<N>, value: &str) {
     }
 }
 
-const fn liveness_short_label(liveness: Liveness) -> &'static str {
-    match liveness {
-        Liveness::Live => "Live",
-        Liveness::Dormant => "Dorm",
-        Liveness::Disabled => "Off",
-        Liveness::Failed => "Fail",
+const fn connection_short_label(connection: ConnectionState) -> &'static str {
+    match connection {
+        ConnectionState::Initializing => "Init",
+        ConnectionState::Connected => "Live",
+        ConnectionState::Degraded => "Degr",
+        ConnectionState::Reconnecting => "Retry",
+        ConnectionState::Failed => "Fail",
+        ConnectionState::Disconnected => "Disc",
+        ConnectionState::Disabled => "Off",
+        ConnectionState::Unknown => "Unkn",
     }
 }
 
-/// `TCP ` plus as much of the dial target as fits, so several clients are told apart by where they point (`TCP 162.255.87` vs `TCP schttopup.c`) rather than all reading a bare `TCP`.
 #[must_use]
 pub fn tcp_card_label(target: &str) -> CardLabel {
-    let mut label = CardLabel::new();
-    let _ = label.push_str("TCP ");
-    for c in target.chars() {
-        if label.push(c).is_err() {
-            break;
-        }
-    }
-    label
+    let _ = target;
+    card_label("TCP")
 }
 
 /// One interface's card: identity from the host, live numbers from the interface's status handle.
@@ -296,11 +307,12 @@ pub struct Card {
     pub(crate) id: InterfaceId,
     pub(crate) kind: CardKind,
     pub(crate) label: CardLabel,
-    pub(crate) liveness: Liveness,
+    pub(crate) connection: ConnectionState,
     pub(crate) failure_reason: Option<&'static str>,
     pub(crate) tx_bytes: u64,
     pub(crate) rx_bytes: u64,
     pub(crate) links: u32,
+    pub(crate) peers: Option<u32>,
     /// Routing-table destinations reachable via this interface.
     pub(crate) destinations: u32,
     pub(crate) rate_bytes_per_sec: u32,
@@ -319,8 +331,13 @@ impl Card {
     }
 
     #[must_use]
-    pub const fn liveness(&self) -> Liveness {
-        self.liveness
+    pub const fn connection(&self) -> ConnectionState {
+        self.connection
+    }
+
+    #[must_use]
+    pub const fn peers(&self) -> Option<u32> {
+        self.peers
     }
 }
 
@@ -336,7 +353,7 @@ pub(crate) fn sort_cards_for_display<const N: usize>(cards: &mut HVec<Card, N>) 
 const fn card_display_rank(kind: CardKind) -> u8 {
     match kind {
         CardKind::LoRa => 0,
-        CardKind::Wifi => 1,
+        CardKind::Wifi | CardKind::WifiStation | CardKind::WifiStationDisabled => 1,
         CardKind::Ble => 2,
         CardKind::EspNow => 3,
         CardKind::Tcp => 4,
@@ -347,10 +364,11 @@ const fn card_display_rank(kind: CardKind) -> u8 {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct CardActivitySignature {
-    liveness: Liveness,
+    connection: ConnectionState,
     tx_bytes: u64,
     rx_bytes: u64,
     links: u32,
+    peers: Option<u32>,
     destinations: u32,
     rate_bytes_per_sec: u32,
 }
@@ -358,17 +376,22 @@ struct CardActivitySignature {
 impl CardActivitySignature {
     fn of(card: &Card) -> Self {
         Self {
-            liveness: card.liveness,
+            connection: card.connection,
             tx_bytes: card.tx_bytes,
             rx_bytes: card.rx_bytes,
             links: card.links,
+            peers: card.peers,
             destinations: card.destinations,
             rate_bytes_per_sec: card.rate_bytes_per_sec,
         }
     }
 
     fn observed_active(self) -> bool {
-        self.liveness == Liveness::Live || self.links > 0 || self.rate_bytes_per_sec > 0
+        matches!(
+            self.connection,
+            ConnectionState::Connected | ConnectionState::Degraded
+        ) || self.links > 0
+            || self.rate_bytes_per_sec > 0
     }
 }
 

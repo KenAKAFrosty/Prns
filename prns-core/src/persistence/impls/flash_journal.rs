@@ -15,6 +15,12 @@ const CHECKSUM_PREFIX_LEN: usize = 20;
 const COMMIT_OFFSET: usize = 28;
 const IO_CHUNK_LEN: usize = 256;
 const TIMEBASE_SLOT_LEN: usize = 32;
+const COMPACTION_BUDGET_OFFSET: usize = 24;
+const COMPACTION_BUDGET_LEN: usize = TIMEBASE_SLOT_LEN - COMPACTION_BUDGET_OFFSET;
+const COMPACTION_BUDGET_MINUTE_MILLIS: u64 = 60_000;
+const COMPACTION_BUDGET_DOMAIN: [u8; 4] = *b"PCB1";
+const _: () = assert!(COMPACTION_BUDGET_LEN == 8);
+const _: () = assert!(TIMEBASE_SNAPSHOT_LEN <= COMPACTION_BUDGET_OFFSET);
 
 pub const FLASH_JOURNAL_RECORD_OVERHEAD: usize = HEADER_LEN;
 
@@ -102,6 +108,12 @@ pub struct FlashJournalRestoreReport {
     pub warning: Option<FlashJournalWarning>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FlashJournalTimebaseState {
+    pub high_water: Option<InstantMillis>,
+    pub last_compaction_attempt: Option<InstantMillis>,
+}
+
 pub struct FlashJournalRecord<'a> {
     pub epoch: u64,
     pub kind: FlashJournalRecordKind,
@@ -146,6 +158,7 @@ struct RecordHeader {
 struct TimebaseRegionState {
     append_at: Option<usize>,
     newest: Option<u64>,
+    last_compaction_attempt: Option<u64>,
     any_used: bool,
 }
 
@@ -161,7 +174,19 @@ impl<F: NorFlash> FlashJournal<F> {
         flash: &mut F,
         layout: FlashJournalLayout,
     ) -> Result<Option<InstantMillis>, FlashJournalError<F::Error>> {
-        let mut newest = None;
+        Ok(Self::inspect_timebase_state(flash, layout)
+            .await?
+            .high_water)
+    }
+
+    pub async fn inspect_timebase_state(
+        flash: &mut F,
+        layout: FlashJournalLayout,
+    ) -> Result<FlashJournalTimebaseState, FlashJournalError<F::Error>> {
+        let mut state = FlashJournalTimebaseState {
+            high_water: None,
+            last_compaction_attempt: None,
+        };
         for region in layout.timebase_regions {
             if !(region as usize).is_multiple_of(F::ERASE_SIZE) {
                 return Err(FlashJournalError::Misaligned);
@@ -172,10 +197,17 @@ impl<F: NorFlash> FlashJournal<F> {
             if end > flash.capacity() {
                 return Err(FlashJournalError::OutOfBounds);
             }
-            let state = scan_timebase_region::<F>(flash, region).await?;
-            newest = max_millis(newest, state.newest);
+            let region_state = scan_timebase_region::<F>(flash, region).await?;
+            state.high_water =
+                max_millis(state.high_water.map(|value| value.0), region_state.newest)
+                    .map(InstantMillis);
+            state.last_compaction_attempt = max_millis(
+                state.last_compaction_attempt.map(|value| value.0),
+                region_state.last_compaction_attempt,
+            )
+            .map(InstantMillis);
         }
-        Ok(newest.map(InstantMillis))
+        Ok(state)
     }
 
     pub async fn open(
@@ -255,6 +287,22 @@ impl<F: NorFlash> FlashJournal<F> {
     #[must_use]
     pub fn active_epoch(&self) -> Option<u64> {
         self.active.map(|cursor| cursor.epoch)
+    }
+
+    #[must_use]
+    pub fn active_remaining_bytes(&self) -> Option<usize> {
+        self.active.map(|cursor| {
+            (self.layout.arenas[cursor.index].end as usize)
+                .saturating_sub(cursor.append_at as usize)
+        })
+    }
+
+    #[must_use]
+    pub fn active_can_fit(&self, payload_len: usize, reserve_bytes: usize) -> bool {
+        let required = flash_journal_record_storage_len(payload_len, F::WRITE_SIZE)
+            .saturating_add(reserve_bytes);
+        self.active_remaining_bytes()
+            .is_some_and(|remaining| remaining >= required)
     }
 
     pub async fn initialize_empty(&mut self) -> Result<(), FlashJournalError<F::Error>> {
@@ -404,12 +452,9 @@ impl<F: NorFlash> FlashJournal<F> {
     pub async fn timebase_high_water(
         &mut self,
     ) -> Result<Option<InstantMillis>, FlashJournalError<F::Error>> {
-        let mut newest = None;
-        for region in self.layout.timebase_regions {
-            let state = scan_timebase_region::<F>(&mut self.flash, region).await?;
-            newest = max_millis(newest, state.newest);
-        }
-        Ok(newest.map(InstantMillis))
+        Ok(Self::inspect_timebase_state(&mut self.flash, self.layout)
+            .await?
+            .high_water)
     }
 
     pub async fn record_timebase(
@@ -425,18 +470,56 @@ impl<F: NorFlash> FlashJournal<F> {
         if newest.is_some_and(|stored| stored >= value) {
             return Ok(());
         }
-        let active = match (states[0].newest, states[1].newest) {
-            (Some(first), Some(second)) if second > first => 1,
-            (None, Some(_)) => 1,
-            _ => 0,
-        };
+        let last_compaction_attempt = max_millis(
+            states[0].last_compaction_attempt,
+            states[1].last_compaction_attempt,
+        );
+        self.write_timebase_state(&states, value, last_compaction_attempt)
+            .await
+    }
+
+    pub async fn record_compaction_budget(
+        &mut self,
+        attempted_at: InstantMillis,
+    ) -> Result<InstantMillis, FlashJournalError<F::Error>> {
+        let rounded_attempt = round_compaction_attempt_up(attempted_at)?;
+        let states = [
+            scan_timebase_region::<F>(&mut self.flash, self.layout.timebase_regions[0]).await?,
+            scan_timebase_region::<F>(&mut self.flash, self.layout.timebase_regions[1]).await?,
+        ];
+        let last_compaction_attempt = max_millis(
+            states[0].last_compaction_attempt,
+            states[1].last_compaction_attempt,
+        );
+        if let Some(stored) = last_compaction_attempt.filter(|stored| *stored >= rounded_attempt.0)
+        {
+            return Ok(InstantMillis(stored));
+        }
+        let high_water = max_millis(
+            max_millis(states[0].newest, states[1].newest),
+            Some(attempted_at.0.saturating_add(TIMEBASE_HEADROOM_MILLIS)),
+        )
+        .unwrap_or(attempted_at.0);
+        self.write_timebase_state(&states, high_water, Some(rounded_attempt.0))
+            .await?;
+        Ok(rounded_attempt)
+    }
+
+    async fn write_timebase_state(
+        &mut self,
+        states: &[TimebaseRegionState; 2],
+        high_water: u64,
+        last_compaction_attempt: Option<u64>,
+    ) -> Result<(), FlashJournalError<F::Error>> {
+        let active = newer_timebase_region(states);
         match states[active].append_at {
             Some(slot) => {
                 write_timebase_slot::<F>(
                     &mut self.flash,
                     self.layout.timebase_regions[active],
                     slot,
-                    value,
+                    high_water,
+                    last_compaction_attempt,
                 )
                 .await
             }
@@ -453,7 +536,8 @@ impl<F: NorFlash> FlashJournal<F> {
                     &mut self.flash,
                     self.layout.timebase_regions[other],
                     0,
-                    value,
+                    high_water,
+                    last_compaction_attempt,
                 )
                 .await
             }
@@ -761,6 +845,7 @@ async fn scan_timebase_region<F: NorFlash>(
     region: u32,
 ) -> Result<TimebaseRegionState, FlashJournalError<F::Error>> {
     let mut newest = None;
+    let mut last_compaction_attempt = None;
     let mut last_used = None;
     for slot in 0..F::ERASE_SIZE / TIMEBASE_SLOT_LEN {
         let mut bytes = AlignedTimebase([0u8; TIMEBASE_SLOT_LEN]);
@@ -774,6 +859,10 @@ async fn scan_timebase_region<F: NorFlash>(
         last_used = Some(slot);
         if let Ok(value) = read_timebase_snapshot(&bytes.0) {
             newest = max_millis(newest, Some(value.0));
+            last_compaction_attempt = max_millis(
+                last_compaction_attempt,
+                read_compaction_budget(&bytes.0[COMPACTION_BUDGET_OFFSET..]),
+            );
         }
     }
     let append_at = match last_used {
@@ -784,6 +873,7 @@ async fn scan_timebase_region<F: NorFlash>(
     Ok(TimebaseRegionState {
         append_at,
         newest,
+        last_compaction_attempt,
         any_used: last_used.is_some(),
     })
 }
@@ -793,19 +883,80 @@ async fn write_timebase_slot<F: NorFlash>(
     region: u32,
     slot: usize,
     value: u64,
+    last_compaction_attempt: Option<u64>,
 ) -> Result<(), FlashJournalError<F::Error>> {
     let mut sealed = AlignedTimebase([0xFF; TIMEBASE_SLOT_LEN]);
     write_timebase_snapshot(InstantMillis(value), &mut sealed.0[..TIMEBASE_SNAPSHOT_LEN])
         .map_err(|_| FlashJournalError::PayloadTooLarge)?;
-    let write_len =
-        align_up(TIMEBASE_SNAPSHOT_LEN, F::WRITE_SIZE).ok_or(FlashJournalError::PayloadTooLarge)?;
+    if let Some(attempt) = last_compaction_attempt {
+        write_compaction_budget(attempt, &mut sealed.0[COMPACTION_BUDGET_OFFSET..])?;
+    }
     flash
-        .write(
-            region + (slot * TIMEBASE_SLOT_LEN) as u32,
-            &sealed.0[..write_len],
-        )
+        .write(region + (slot * TIMEBASE_SLOT_LEN) as u32, &sealed.0)
         .await
         .map_err(FlashJournalError::Flash)
+}
+
+fn newer_timebase_region(states: &[TimebaseRegionState; 2]) -> usize {
+    let first = (states[0].newest, states[0].last_compaction_attempt);
+    let second = (states[1].newest, states[1].last_compaction_attempt);
+    match (first, second) {
+        ((Some(first_high), first_attempt), (Some(second_high), second_attempt)) => {
+            if second_high > first_high
+                || (second_high == first_high && second_attempt > first_attempt)
+            {
+                1
+            } else {
+                0
+            }
+        }
+        ((None, first_attempt), (None, second_attempt)) if second_attempt > first_attempt => 1,
+        ((None, _), (Some(_), _)) => 1,
+        _ => 0,
+    }
+}
+
+fn round_compaction_attempt_up<E>(
+    attempted_at: InstantMillis,
+) -> Result<InstantMillis, FlashJournalError<E>> {
+    let minutes = attempted_at.0 / COMPACTION_BUDGET_MINUTE_MILLIS;
+    let rounded_minutes = minutes.saturating_add(u64::from(
+        !attempted_at
+            .0
+            .is_multiple_of(COMPACTION_BUDGET_MINUTE_MILLIS),
+    ));
+    let encoded = u32::try_from(rounded_minutes).map_err(|_| FlashJournalError::PayloadTooLarge)?;
+    Ok(InstantMillis(
+        u64::from(encoded).saturating_mul(COMPACTION_BUDGET_MINUTE_MILLIS),
+    ))
+}
+
+fn write_compaction_budget<E>(
+    attempted_at: u64,
+    out: &mut [u8],
+) -> Result<(), FlashJournalError<E>> {
+    let minutes = u32::try_from(attempted_at / COMPACTION_BUDGET_MINUTE_MILLIS)
+        .map_err(|_| FlashJournalError::PayloadTooLarge)?;
+    let encoded = minutes.to_le_bytes();
+    out[..4].copy_from_slice(&encoded);
+    out[4..].copy_from_slice(&compaction_budget_checksum(encoded).to_le_bytes());
+    Ok(())
+}
+
+fn read_compaction_budget(bytes: &[u8]) -> Option<u64> {
+    let encoded: [u8; 4] = bytes.get(..4)?.try_into().ok()?;
+    let checksum = u32::from_le_bytes(bytes.get(4..8)?.try_into().ok()?);
+    if checksum != compaction_budget_checksum(encoded) {
+        return None;
+    }
+    Some(u64::from(u32::from_le_bytes(encoded)) * COMPACTION_BUDGET_MINUTE_MILLIS)
+}
+
+fn compaction_budget_checksum(encoded: [u8; 4]) -> u32 {
+    let mut bytes = [0u8; 8];
+    bytes[..4].copy_from_slice(&COMPACTION_BUDGET_DOMAIN);
+    bytes[4..].copy_from_slice(&encoded);
+    crc32(&bytes)
 }
 
 fn max_millis(first: Option<u64>, second: Option<u64>) -> Option<u64> {
@@ -1196,6 +1347,22 @@ mod tests {
     }
 
     #[test]
+    fn active_capacity_accounts_for_the_complete_record_and_reserve() {
+        embassy_futures::block_on(async {
+            let (mut journal, _, _) = open(FakeFlash::new()).await;
+            journal.initialize_empty().await.unwrap();
+            assert_eq!(journal.active_remaining_bytes(), Some(480));
+            assert!(journal.active_can_fit(4, 444));
+            assert!(!journal.active_can_fit(4, 445));
+            journal
+                .append(FlashJournalRecordKind::RouteRemoval, &[0; 4])
+                .await
+                .unwrap();
+            assert_eq!(journal.active_remaining_bytes(), Some(444));
+        });
+    }
+
+    #[test]
     fn corruption_and_unknown_schema_warn_without_blocking_open() {
         embassy_futures::block_on(async {
             let (mut journal, _, _) = open(FakeFlash::new()).await;
@@ -1253,6 +1420,123 @@ mod tests {
             assert_eq!(
                 journal.timebase_high_water().await.unwrap(),
                 Some(InstantMillis(5_000 + TIMEBASE_HEADROOM_MILLIS))
+            );
+        });
+    }
+
+    #[test]
+    fn legacy_timebase_slots_decode_without_a_compaction_budget() {
+        embassy_futures::block_on(async {
+            let mut flash = FakeFlash::new();
+            let mut slot = [0xFF; TIMEBASE_SLOT_LEN];
+            write_timebase_snapshot(InstantMillis(42_000), &mut slot[..TIMEBASE_SNAPSHOT_LEN])
+                .unwrap();
+            flash.bytes[..TIMEBASE_SNAPSHOT_LEN].copy_from_slice(&slot[..TIMEBASE_SNAPSHOT_LEN]);
+
+            assert_eq!(
+                FlashJournal::inspect_timebase_state(&mut flash, LAYOUT)
+                    .await
+                    .unwrap(),
+                FlashJournalTimebaseState {
+                    high_water: Some(InstantMillis(42_000)),
+                    last_compaction_attempt: None,
+                }
+            );
+        });
+    }
+
+    #[test]
+    fn compaction_budget_markers_round_trip_and_round_up_to_minutes() {
+        embassy_futures::block_on(async {
+            let (mut journal, _, _) = open(FakeFlash::new()).await;
+            assert_eq!(
+                journal
+                    .record_compaction_budget(InstantMillis(120_001))
+                    .await
+                    .unwrap(),
+                InstantMillis(180_000)
+            );
+            let mut flash = journal.release();
+            assert_eq!(
+                FlashJournal::inspect_timebase_state(&mut flash, LAYOUT)
+                    .await
+                    .unwrap(),
+                FlashJournalTimebaseState {
+                    high_water: Some(InstantMillis(120_001 + TIMEBASE_HEADROOM_MILLIS)),
+                    last_compaction_attempt: Some(InstantMillis(180_000)),
+                }
+            );
+        });
+    }
+
+    #[test]
+    fn corrupt_and_partial_compaction_budget_markers_are_ignored() {
+        embassy_futures::block_on(async {
+            let (mut journal, _, _) = open(FakeFlash::new()).await;
+            journal
+                .record_compaction_budget(InstantMillis(120_001))
+                .await
+                .unwrap();
+            let mut corrupt = journal.release();
+            corrupt.bytes[COMPACTION_BUDGET_OFFSET + 4] ^= 1;
+            assert_eq!(
+                FlashJournal::inspect_timebase_state(&mut corrupt, LAYOUT)
+                    .await
+                    .unwrap()
+                    .last_compaction_attempt,
+                None
+            );
+
+            let mut partial = FakeFlash::new();
+            let mut slot = [0xFF; TIMEBASE_SLOT_LEN];
+            write_timebase_snapshot(InstantMillis(42_000), &mut slot[..TIMEBASE_SNAPSHOT_LEN])
+                .unwrap();
+            slot[COMPACTION_BUDGET_OFFSET..COMPACTION_BUDGET_OFFSET + 4]
+                .copy_from_slice(&3u32.to_le_bytes());
+            partial.bytes[..TIMEBASE_SLOT_LEN].copy_from_slice(&slot);
+            assert_eq!(
+                FlashJournal::inspect_timebase_state(&mut partial, LAYOUT)
+                    .await
+                    .unwrap()
+                    .last_compaction_attempt,
+                None
+            );
+        });
+    }
+
+    #[test]
+    fn compaction_budget_rounding_never_shortens_the_interval_floor() {
+        for attempted_at in [0, 1, 59_999, 60_000, 60_001, 3_600_001] {
+            let rounded = round_compaction_attempt_up::<FakeError>(InstantMillis(attempted_at))
+                .unwrap()
+                .0;
+            assert!(rounded >= attempted_at);
+            assert!(rounded.saturating_sub(attempted_at) < COMPACTION_BUDGET_MINUTE_MILLIS);
+        }
+    }
+
+    #[test]
+    fn ordinary_timebase_rotation_preserves_the_compaction_budget_without_advancing_it() {
+        embassy_futures::block_on(async {
+            let (mut journal, _, _) = open(FakeFlash::new()).await;
+            let attempt = journal
+                .record_compaction_budget(InstantMillis(1))
+                .await
+                .unwrap();
+            let step = TIMEBASE_HEADROOM_MILLIS + 1;
+            for index in 1..=20 {
+                journal
+                    .record_timebase(InstantMillis(index * step))
+                    .await
+                    .unwrap();
+            }
+            let mut flash = journal.release();
+            assert_eq!(
+                FlashJournal::inspect_timebase_state(&mut flash, LAYOUT)
+                    .await
+                    .unwrap()
+                    .last_compaction_attempt,
+                Some(attempt)
             );
         });
     }

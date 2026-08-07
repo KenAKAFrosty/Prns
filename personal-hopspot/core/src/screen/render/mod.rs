@@ -89,7 +89,7 @@ pub fn render<D: DrawTarget<Color = BinaryColor>>(display: &mut D, frame: Render
                 display,
                 selected_card,
                 selected_item,
-                interface_menu_details.as_slice(),
+                interface_menu_details,
             );
             return;
         }

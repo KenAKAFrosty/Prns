@@ -184,6 +184,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         EspNowInterface::new(
             EspNowAdapter::new(radio),
             espnow_channel_policy(station_configured),
+            ESPNOW_PHY.bitrate,
             espnow_status,
         )
     });
@@ -417,13 +418,13 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         let mut ticks_to_battery: u8 = 0;
         let mut activity = screen::CardActivityTracker::<8>::new();
         let mut notice_until_ms =
-            startup_notice.map(|_| embassy_time::Instant::now().as_millis() + 5_000);
+            startup_notice.map(|notice| (embassy_time::Instant::now().as_millis() + 5_000, notice));
         let mut oled_awake = true;
         let mut oled_off_at_ms: Option<u64> = None;
         let mut oled_sleep_at_ms: Option<u64> = None;
         let mut render_tick = Ticker::every(RENDER_INTERVAL);
         let mut settle_after_draw = false;
-        let mut persistence_notice_visible = false;
+        let mut persistence_notice = screen::PersistenceNotice::new();
         let mut first_render_pending = true;
         loop {
             if ticks_to_battery == 0 {
@@ -448,6 +449,8 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 wifi_id,
                 tcp_id,
                 tcp_card_config,
+                wifi_status.as_ref(),
+                &wifi_config,
                 lora_status.id(),
                 espnow_card_id,
             );
@@ -466,6 +469,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 &snapshots,
                 usb_status,
                 lora_spectrum,
+                wifi_status.as_ref(),
                 &wifi_config,
                 menu_ap_ssid,
             );
@@ -481,22 +485,22 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 details
             };
             ui_state.sync(content);
-            let state_not_saved = crate::persistence::state_not_saved();
-            if state_not_saved {
-                ui_state.show_notice(screen::UiNotice::StateNotSaved);
-                notice_until_ms = None;
-                persistence_notice_visible = true;
-            } else if persistence_notice_visible {
-                ui_state.clear_notice();
-                persistence_notice_visible = false;
-            }
-            if notice_until_ms.is_some_and(|until| now_ms >= until) {
-                if let Some(notice) = pending_startup_notice.take() {
-                    ui_state.show_notice(notice);
-                    notice_until_ms = Some(now_ms + 5_000);
-                } else {
-                    ui_state.clear_notice();
+            persistence_notice.update(
+                &mut ui_state,
+                crate::persistence::persistence_state(),
+                now_ms,
+            );
+            if let Some((until, owner)) = notice_until_ms {
+                if now_ms >= until {
                     notice_until_ms = None;
+                    if ui_state.clear_notice_if(owner) {
+                        if let Some(notice) = pending_startup_notice.take() {
+                            ui_state.show_notice(notice);
+                            notice_until_ms = Some((now_ms + 5_000, notice));
+                        }
+                    } else {
+                        pending_startup_notice = None;
+                    }
                 }
             }
             if let Some(off_at) = oled_off_at_ms {
@@ -504,7 +508,9 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                     B::set_display_awake(&mut display, false);
                     oled_awake = false;
                     oled_off_at_ms = None;
-                    ui_state.clear_notice();
+                    if let Some((_, owner)) = notice_until_ms {
+                        ui_state.clear_notice_if(owner);
+                    }
                     notice_until_ms = None;
                 }
             }
@@ -564,24 +570,26 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                         }
                         oled_off_at_ms = None;
                         ui_state.show_notice(screen::UiNotice::Awake);
-                        notice_until_ms = Some(now_ms + NOTICE_MS);
+                        notice_until_ms = Some((now_ms + NOTICE_MS, screen::UiNotice::Awake));
                         continue;
                     }
                     oled_off_at_ms = None;
                     match ui_state.handle_input(event, content) {
                         screen::UiAction::OledOff => {
                             ui_state.show_notice(screen::UiNotice::OledOff);
-                            notice_until_ms = Some(now_ms + NOTICE_MS);
+                            notice_until_ms = Some((now_ms + NOTICE_MS, screen::UiNotice::OledOff));
                             oled_off_at_ms = Some(now_ms + NOTICE_MS);
                         }
                         screen::UiAction::Sleep => {
                             ui_state.show_notice(screen::UiNotice::Sleeping);
-                            notice_until_ms = Some(now_ms + NOTICE_MS);
+                            notice_until_ms =
+                                Some((now_ms + NOTICE_MS, screen::UiNotice::Sleeping));
                             oled_sleep_at_ms = Some(now_ms + OLED_SLEEP_DELAY_MS);
                             usb_status.disable();
                             lora_status.disable();
                             if let Some(status) = wifi_status.as_ref() {
                                 status.disable();
+                                status.disable_station_uplink();
                             }
                             if let Some(status) = espnow_card_status {
                                 status.disable();
@@ -603,10 +611,11 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                 oled_awake = true;
                             }
                             ui_state.show_notice(screen::UiNotice::Awake);
-                            notice_until_ms = Some(now_ms + NOTICE_MS);
+                            notice_until_ms = Some((now_ms + NOTICE_MS, screen::UiNotice::Awake));
                             usb_status.enable();
                             lora_status.enable();
                             if let Some(status) = wifi_status.as_ref() {
+                                status.enable_station_uplink();
                                 status.enable();
                             }
                             if let Some(status) = espnow_card_status {
@@ -624,8 +633,10 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                         screen::UiAction::Announce => {
                             boot_stage(BootPhase::AnnounceBegin);
                             ui_state.show_notice(screen::UiNotice::Announcing);
-                            notice_until_ms =
-                                Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
+                            notice_until_ms = Some((
+                                embassy_time::Instant::now().as_millis() + NOTICE_MS,
+                                screen::UiNotice::Announcing,
+                            ));
                             let node_queued = handle.issue(PrnsCommand::AnnounceNow(AnnounceNow {
                                 destination: node_page_destination,
                                 target: AnnounceTarget::AllInterfaces,
@@ -641,13 +652,16 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                             if let Some(card) = ui_state.selected_card(content.cards) {
                                 let mut handled = false;
                                 let mut show_toggle_notice = |enabled: bool| {
-                                    ui_state.show_notice(if enabled {
+                                    let notice = if enabled {
                                         screen::UiNotice::TurningOff
                                     } else {
                                         screen::UiNotice::TurningOn
-                                    });
-                                    notice_until_ms =
-                                        Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
+                                    };
+                                    ui_state.show_notice(notice);
+                                    notice_until_ms = Some((
+                                        embassy_time::Instant::now().as_millis() + NOTICE_MS,
+                                        notice,
+                                    ));
                                 };
                                 if card.id() == usb_status.id() {
                                     show_toggle_notice(usb_status.is_enabled());
@@ -695,6 +709,21 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                 }
                             }
                         }
+                        screen::UiAction::ToggleStationUplink => {
+                            if let Some(status) = wifi_status.as_ref() {
+                                let notice = if status.is_station_uplink_enabled() {
+                                    screen::UiNotice::DisconnectingAp
+                                } else {
+                                    screen::UiNotice::ReconnectingAp
+                                };
+                                ui_state.show_notice(notice);
+                                notice_until_ms = Some((
+                                    embassy_time::Instant::now().as_millis() + NOTICE_MS,
+                                    notice,
+                                ));
+                                status.toggle_station_uplink();
+                            }
+                        }
                         screen::UiAction::OpenLoRaEditor => {
                             ui_state.open_lora_editor(working_lora_profile);
                         }
@@ -717,9 +746,12 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                             if result.applied() {
                                 working_lora_profile = profile;
                             }
-                            ui_state.show_notice(result.notice());
-                            notice_until_ms =
-                                Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
+                            let notice = result.notice();
+                            ui_state.show_notice(notice);
+                            notice_until_ms = Some((
+                                embassy_time::Instant::now().as_millis() + NOTICE_MS,
+                                notice,
+                            ));
                         }
                         screen::UiAction::ResetLoRaProfile => {
                             let result = screen::apply_and_persist_radio_profile(
@@ -741,9 +773,12 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                             if result.applied() {
                                 working_lora_profile = DEFAULT_915_PROFILE;
                             }
-                            ui_state.show_notice(result.notice());
-                            notice_until_ms =
-                                Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
+                            let notice = result.notice();
+                            ui_state.show_notice(notice);
+                            notice_until_ms = Some((
+                                embassy_time::Instant::now().as_millis() + NOTICE_MS,
+                                notice,
+                            ));
                         }
                         screen::UiAction::SwapRadioMode => {
                             #[cfg(feature = "wifi-auto")]

@@ -55,6 +55,78 @@ fn radio_profile_save_result_distinguishes_apply_and_persistence_failures() {
 }
 
 #[test]
+fn persistence_notices_are_brief_across_deferred_failed_and_recovered_states() {
+    let mut state = test_ui_state();
+    let mut persistence = PersistenceNotice::new();
+
+    assert!(!persistence.update(&mut state, PersistenceState::Durable, 0));
+    assert_eq!(state.notice(), None);
+    assert!(persistence.update(&mut state, PersistenceState::Deferred, 1_000));
+    assert_eq!(state.notice(), Some(UiNotice::SaveDeferred));
+    assert!(!persistence.update(&mut state, PersistenceState::Deferred, 5_999));
+    assert_eq!(state.notice(), Some(UiNotice::SaveDeferred));
+    assert!(persistence.update(&mut state, PersistenceState::Deferred, 6_000));
+    assert_eq!(state.notice(), None);
+
+    assert!(persistence.update(&mut state, PersistenceState::Failed, 7_000));
+    assert_eq!(state.notice(), Some(UiNotice::SaveFailed));
+    assert!(persistence.update(&mut state, PersistenceState::Durable, 8_000));
+    assert_eq!(state.notice(), Some(UiNotice::Saved));
+    assert!(persistence.update(&mut state, PersistenceState::Durable, 13_000));
+    assert_eq!(state.notice(), None);
+}
+
+#[test]
+fn persistence_timer_only_clears_the_notice_it_owns() {
+    let mut state = test_ui_state();
+    let mut persistence = PersistenceNotice::new();
+
+    persistence.update(&mut state, PersistenceState::Failed, 1_000);
+    state.show_notice(UiNotice::Announcing);
+    assert!(!persistence.update(&mut state, PersistenceState::Failed, 6_000));
+    assert_eq!(state.notice(), Some(UiNotice::Announcing));
+    assert!(!state.clear_notice_if(UiNotice::SaveFailed));
+    assert_eq!(state.notice(), Some(UiNotice::Announcing));
+    assert!(state.clear_notice_if(UiNotice::Announcing));
+    assert_eq!(state.notice(), None);
+}
+
+#[test]
+fn every_notice_line_fits_its_rendered_font() {
+    for notice in UiNotice::ALL {
+        let lines = notice.lines();
+        let char_width = if lines.as_slice().len() > 1 {
+            FONT_4X6_CHAR_W
+        } else {
+            FONT_5X8_CHAR_W
+        };
+        let max_chars = (WIDTH / char_width) as usize;
+        assert!(
+            lines
+                .as_slice()
+                .iter()
+                .all(|line| line.chars().count() <= max_chars),
+            "{notice:?} exceeds {max_chars} characters"
+        );
+    }
+}
+
+#[test]
+fn short_press_dismisses_notice_without_moving_focus() {
+    let cards = test_cards::<2>(CardKind::Wifi);
+    let content = test_content(&cards);
+    let mut state = test_ui_state();
+    state.show_notice(UiNotice::SaveDeferred);
+
+    assert_eq!(
+        state.handle_input(InputEvent::ShortPress, content),
+        UiAction::None
+    );
+    assert_eq!(state.notice(), None);
+    assert!(state.global_selected());
+}
+
+#[test]
 fn short_press_cycles_global_then_cards_and_pages_visible_window() {
     let cards = test_cards::<5>(CardKind::Usb);
     let content = test_content(&cards);
@@ -285,6 +357,40 @@ fn non_lora_interface_menus_cycle_power_and_back_only() {
     assert_eq!(state.interface_menu_selected_item(), Some(1));
     state.handle_input(InputEvent::ShortPress, content);
     assert_eq!(state.interface_menu_selected_item(), Some(0));
+}
+
+#[test]
+fn configured_wifi_menu_exposes_station_uplink_action() {
+    let cards = test_cards::<1>(CardKind::WifiStation);
+    let content = test_content(&cards);
+    let mut state = test_ui_state();
+    state.handle_input(InputEvent::ShortPress, content);
+    state.handle_input(InputEvent::LongPress, content);
+
+    assert_eq!(state.interface_menu_selected_item(), Some(POWER_MENU_ITEM));
+    state.handle_input(InputEvent::ShortPress, content);
+    assert_eq!(
+        state.interface_menu_selected_item(),
+        Some(STATION_UPLINK_MENU_ITEM)
+    );
+    assert_eq!(
+        state.handle_input(InputEvent::LongPress, content),
+        UiAction::ToggleStationUplink
+    );
+}
+
+#[test]
+fn unconfigured_wifi_menu_keeps_power_and_back_only() {
+    let cards = test_cards::<1>(CardKind::Wifi);
+    let content = test_content(&cards);
+    let mut state = test_ui_state();
+    state.handle_input(InputEvent::ShortPress, content);
+    state.handle_input(InputEvent::LongPress, content);
+
+    state.handle_input(InputEvent::ShortPress, content);
+    assert_eq!(state.interface_menu_selected_item(), Some(1));
+    state.handle_input(InputEvent::ShortPress, content);
+    assert_eq!(state.interface_menu_selected_item(), Some(POWER_MENU_ITEM));
 }
 
 #[test]

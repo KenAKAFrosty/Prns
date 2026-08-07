@@ -12,10 +12,16 @@ pub const ESP_NOW_HW_MTU: usize = ESP_NOW_V2_AIR_MTU - IFAC_MAX_SIZE;
 pub const ESP_NOW_BITRATE_BPS: BitrateBps = BitrateBps::guess(1_000_000);
 
 #[must_use]
-pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
-    DEFAULTS
-        .configured(ConfiguredInterfacePolicy::default())
-        .descriptor(id)
+pub fn descriptor(id: InterfaceId, bitrate: BitrateBps) -> InterfaceDescriptor {
+    policy_for_bitrate(bitrate).descriptor(id)
+}
+
+#[must_use]
+pub fn policy_for_bitrate(bitrate: BitrateBps) -> crate::interfaces::EffectiveInterfacePolicy {
+    DEFAULTS.configured(ConfiguredInterfacePolicy {
+        bitrate: Some(bitrate),
+        ..ConfiguredInterfacePolicy::default()
+    })
 }
 
 pub const DEFAULTS: InterfaceDefaults = InterfaceDefaults {
@@ -31,3 +37,16 @@ pub const DEFAULTS: InterfaceDefaults = InterfaceDefaults {
     announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
     airtime_duty_cycle: None,
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn descriptor_uses_the_selected_phy_bitrate() {
+        let id = InterfaceId::new([9; 8]);
+        let bitrate = BitrateBps::guess(12_000_000);
+
+        assert_eq!(descriptor(id, bitrate).bitrate, bitrate);
+    }
+}

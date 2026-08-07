@@ -10,7 +10,6 @@
       "transport": "esp-serial",
       "expected_chip": "esp32s3",
       "flash_size": 16777216,
-      "source_archive_capable": true,
       "preparation_profile": "esp-usb-boot",
       "provisioning": {
         "format": "HSPCFG1",
@@ -49,7 +48,6 @@
       "transport": "esp-serial",
       "expected_chip": "esp32s3",
       "flash_size": 16777216,
-      "source_archive_capable": true,
       "preparation_profile": "esp-usb-boot",
       "provisioning": {
         "format": "HSPCFG1",
@@ -88,7 +86,6 @@
       "transport": "esp-serial",
       "expected_chip": "esp32s3",
       "flash_size": 8388608,
-      "source_archive_capable": true,
       "preparation_profile": "esp-usb-boot",
       "provisioning": {
         "format": "HSPCFG1",
@@ -127,7 +124,6 @@
       "transport": "esp-serial",
       "expected_chip": "esp32c6",
       "flash_size": 4194304,
-      "source_archive_capable": false,
       "preparation_profile": "esp-usb-boot",
       "provisioning": null,
       "build": {
@@ -153,7 +149,6 @@
       "transport": "uf2-mass-storage",
       "expected_chip": null,
       "flash_size": null,
-      "source_archive_capable": false,
       "preparation_profile": "techo-uf2",
       "provisioning": null,
       "build": {

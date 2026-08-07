@@ -23,7 +23,7 @@ results, and any candidate identity that differs from those three exact files.
 
 ## Physical runs
 
-`runs` contains exactly one result for every shipping board and surface (`web` or `cli`): eight
+`runs` contains exactly one result for every shipping board and surface (`web` or `cli`): ten
 rows. The signed roster assigns each row to one supported host, with Linux, macOS, and Windows
 collectively represented on both surfaces. One person may hold multiple or all assignments; an
 assignment is a coverage obligation, not a distinct-person requirement. Each row records:

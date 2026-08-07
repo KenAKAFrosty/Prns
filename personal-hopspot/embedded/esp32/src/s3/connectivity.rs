@@ -1,10 +1,49 @@
 #[cfg(feature = "wifi-auto")]
 use super::captive_portal::station_wifi_mode;
 #[cfg(feature = "wifi-auto")]
-use super::captive_portal::{build_ap_netif, dhcp_server_task, dns_server_task, http_server_task};
+use super::captive_portal::{
+    build_ap_netif, dhcp_server_task, dns_server_task, http_server_task, HTTP_SERVER_WORKERS,
+};
 use super::*;
 #[cfg(feature = "wifi-auto")]
-use static_cell::ConstStaticCell;
+use alloc::boxed::Box;
+
+#[cfg(feature = "wifi-auto")]
+fn psram_udp_socket<
+    const RX_META: usize,
+    const RX_BYTES: usize,
+    const TX_META: usize,
+    const TX_BYTES: usize,
+>(
+    stack: Stack<'static>,
+) -> UdpSocket<'static> {
+    UdpSocket::new(
+        stack,
+        crate::storage::allocate_psram([PacketMetadata::EMPTY; RX_META]),
+        crate::storage::allocate_psram([0u8; RX_BYTES]),
+        crate::storage::allocate_psram([PacketMetadata::EMPTY; TX_META]),
+        crate::storage::allocate_psram([0u8; TX_BYTES]),
+    )
+}
+
+#[cfg(feature = "wifi-auto")]
+const WIFI_STATIC_RX_BUFFERS: u8 = 6;
+#[cfg(feature = "wifi-auto")]
+const WIFI_DYNAMIC_RX_BUFFERS: u16 = 12;
+#[cfg(feature = "wifi-auto")]
+const WIFI_RX_BA_WINDOW: u8 = 6;
+#[cfg(feature = "wifi-auto")]
+const WIFI_TX_QUEUE_FRAMES: usize = 3;
+#[cfg(feature = "wifi-auto")]
+const WIFI_DYNAMIC_TX_BUFFERS: u16 = 6;
+#[cfg(feature = "wifi-auto")]
+const WIFI_HEALTH_SAMPLES_BETWEEN_REPORTS: u8 = 4;
+#[cfg(feature = "wifi-auto")]
+const _: () = assert!(WIFI_STATIC_RX_BUFFERS >= WIFI_RX_BA_WINDOW);
+#[cfg(feature = "wifi-auto")]
+const _: () = assert!(WIFI_DYNAMIC_RX_BUFFERS > WIFI_RX_BA_WINDOW as u16);
+#[cfg(feature = "wifi-auto")]
+const _: () = assert!(WIFI_DYNAMIC_TX_BUFFERS >= WIFI_TX_QUEUE_FRAMES as u16);
 
 pub(super) fn build_tcp(
     stack: Stack<'static>,
@@ -14,7 +53,7 @@ pub(super) fn build_tcp(
     &'static EmbassyInterfaceStatus,
     InterfaceId,
 )> {
-    let channel_tag = mk_static!([u8; 256], [0u8; 256]);
+    let channel_tag = crate::storage::allocate_psram([0u8; 256]);
     let (target, target_len) = match &config.host {
         HopspotTcpClientHost::Ipv4(address) => {
             channel_tag[0] = 1;
@@ -42,8 +81,8 @@ pub(super) fn build_tcp(
         EmbassyInterfaceStatus,
         EmbassyInterfaceStatus::new(id, ConnectionState::Initializing)
     );
-    let rx_buffer: &'static mut [u8] = mk_static!([u8; TCP_SOCKET_BUF], [0u8; TCP_SOCKET_BUF]);
-    let tx_buffer: &'static mut [u8] = mk_static!([u8; TCP_SOCKET_BUF], [0u8; TCP_SOCKET_BUF]);
+    let rx_buffer: &'static mut [u8] = crate::storage::allocate_psram([0u8; TCP_SOCKET_BUF]);
+    let tx_buffer: &'static mut [u8] = crate::storage::allocate_psram([0u8; TCP_SOCKET_BUF]);
     let tcp = TcpClient::new(TcpClientInput {
         stack,
         target,
@@ -72,12 +111,22 @@ pub(super) fn build_wifi(
     Option<EspNow<'static>>,
 ) {
     let wifi_config = ControllerConfig::default()
-        .with_static_rx_buf_num(3)
-        .with_dynamic_rx_buf_num(3)
-        .with_rx_ba_win(2);
+        .with_static_rx_buf_num(WIFI_STATIC_RX_BUFFERS)
+        .with_dynamic_rx_buf_num(WIFI_DYNAMIC_RX_BUFFERS)
+        .with_rx_ba_win(WIFI_RX_BA_WINDOW)
+        .with_tx_queue_size(WIFI_TX_QUEUE_FRAMES)
+        .with_dynamic_tx_buf_num(WIFI_DYNAMIC_TX_BUFFERS);
     let Ok((mut controller, interfaces)) = esp_radio::wifi::new(wifi, wifi_config) else {
         return (None, None, None);
     };
+    log::info!(
+        "wifi: rx profile static={} dynamic={} ba={} tx_queue={} tx_dynamic={}",
+        WIFI_STATIC_RX_BUFFERS,
+        WIFI_DYNAMIC_RX_BUFFERS,
+        WIFI_RX_BA_WINDOW,
+        WIFI_TX_QUEUE_FRAMES,
+        WIFI_DYNAMIC_TX_BUFFERS
+    );
     let esp_now = interfaces.esp_now;
 
     // In SoftAP mode, APSTA brings the AP up whether or not a station uplink is configured;
@@ -103,51 +152,9 @@ pub(super) fn build_wifi(
             u64::from_le_bytes(bytes)
         };
         let (stack, runner) = embassy_net::new(interfaces.station, net_config, resources, seed);
-        let discovery = {
-            static RX_META: ConstStaticCell<[PacketMetadata; 8]> =
-                ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
-            static RX_BUF: ConstStaticCell<[u8; 128]> = ConstStaticCell::new([0u8; 128]);
-            static TX_META: ConstStaticCell<[PacketMetadata; 8]> =
-                ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
-            static TX_BUF: ConstStaticCell<[u8; 128]> = ConstStaticCell::new([0u8; 128]);
-            UdpSocket::new(
-                stack,
-                RX_META.take(),
-                RX_BUF.take(),
-                TX_META.take(),
-                TX_BUF.take(),
-            )
-        };
-        let unicast_discovery = {
-            static RX_META: ConstStaticCell<[PacketMetadata; 8]> =
-                ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
-            static RX_BUF: ConstStaticCell<[u8; 128]> = ConstStaticCell::new([0u8; 128]);
-            static TX_META: ConstStaticCell<[PacketMetadata; 1]> =
-                ConstStaticCell::new([PacketMetadata::EMPTY; 1]);
-            static TX_BUF: ConstStaticCell<[u8; 1]> = ConstStaticCell::new([0u8; 1]);
-            UdpSocket::new(
-                stack,
-                RX_META.take(),
-                RX_BUF.take(),
-                TX_META.take(),
-                TX_BUF.take(),
-            )
-        };
-        let data = {
-            static RX_META: ConstStaticCell<[PacketMetadata; 8]> =
-                ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
-            static RX_BUF: ConstStaticCell<[u8; 1280]> = ConstStaticCell::new([0u8; 1280]);
-            static TX_META: ConstStaticCell<[PacketMetadata; 8]> =
-                ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
-            static TX_BUF: ConstStaticCell<[u8; 1280]> = ConstStaticCell::new([0u8; 1280]);
-            UdpSocket::new(
-                stack,
-                RX_META.take(),
-                RX_BUF.take(),
-                TX_META.take(),
-                TX_BUF.take(),
-            )
-        };
+        let discovery = psram_udp_socket::<8, 128, 8, 128>(stack);
+        let unicast_discovery = psram_udp_socket::<8, 128, 1, 1>(stack);
+        let data = psram_udp_socket::<8, 1280, 8, 1280>(stack);
         let wifi_status = AutoWifiStatus::new(&WIFI_SHARED);
         let station_credentials = StationCredentials {
             ssid: config.ssid.clone(),
@@ -186,54 +193,39 @@ pub(super) fn build_wifi(
         // client auto-dials the TCP rendezvous on the gateway (multicast can't cross the SoftAP).
         spawner.spawn(dhcp_server_task(ap_stack).expect("dhcp server task fits"));
         spawner.spawn(dns_server_task(ap_stack).expect("dns server task fits"));
-        for _ in 0..4 {
+        for _ in 0..HTTP_SERVER_WORKERS {
             spawner.spawn(http_server_task(ap_stack).expect("http server task fits"));
         }
-        let ap_discovery = {
-            static RX_META: ConstStaticCell<[PacketMetadata; 8]> =
-                ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
-            static RX_BUF: ConstStaticCell<[u8; 512]> = ConstStaticCell::new([0u8; 512]);
-            static TX_META: ConstStaticCell<[PacketMetadata; 8]> =
-                ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
-            static TX_BUF: ConstStaticCell<[u8; 512]> = ConstStaticCell::new([0u8; 512]);
-            UdpSocket::new(
-                ap_stack,
-                RX_META.take(),
-                RX_BUF.take(),
-                TX_META.take(),
-                TX_BUF.take(),
-            )
-        };
-        let ap_unicast_discovery = {
-            static RX_META: ConstStaticCell<[PacketMetadata; 8]> =
-                ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
-            static RX_BUF: ConstStaticCell<[u8; 128]> = ConstStaticCell::new([0u8; 128]);
-            static TX_META: ConstStaticCell<[PacketMetadata; 1]> =
-                ConstStaticCell::new([PacketMetadata::EMPTY; 1]);
-            static TX_BUF: ConstStaticCell<[u8; 1]> = ConstStaticCell::new([0u8; 1]);
-            UdpSocket::new(
-                ap_stack,
-                RX_META.take(),
-                RX_BUF.take(),
-                TX_META.take(),
-                TX_BUF.take(),
-            )
-        };
-        let ap_data = {
-            static RX_META: ConstStaticCell<[PacketMetadata; 8]> =
-                ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
-            static RX_BUF: ConstStaticCell<[u8; 2048]> = ConstStaticCell::new([0u8; 2048]);
-            static TX_META: ConstStaticCell<[PacketMetadata; 8]> =
-                ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
-            static TX_BUF: ConstStaticCell<[u8; 2048]> = ConstStaticCell::new([0u8; 2048]);
-            UdpSocket::new(
-                ap_stack,
-                RX_META.take(),
-                RX_BUF.take(),
-                TX_META.take(),
-                TX_BUF.take(),
-            )
-        };
+        let rendezvous_events = Box::leak(Box::new([TcpRendezvousWireSlot::empty()]));
+        let rendezvous_commands = Box::leak(Box::new([TcpRendezvousWireSlot::empty()]));
+        let rendezvous_storage = Box::leak(Box::new(TcpRendezvousStorage::new(
+            rendezvous_events,
+            rendezvous_commands,
+        )));
+        let rendezvous_rx = Box::leak(Box::new([0u8; TCP_RENDEZVOUS_SOCKET_BUFFER_BYTES]));
+        let rendezvous_tx = Box::leak(Box::new([0u8; TCP_RENDEZVOUS_SOCKET_BUFFER_BYTES]));
+        let rendezvous_read = Box::leak(Box::new([0u8; TCP_RENDEZVOUS_READ_BUFFER_BYTES]));
+        let rendezvous_framed = Box::leak(Box::new([0u8; TCP_RENDEZVOUS_FRAMED_LEN]));
+        let rendezvous_decoder = Box::leak(Box::new(
+            personal_rns::interfaces::rns_serial_framing::RnsSerialDecoder::<
+                TCP_RENDEZVOUS_FRAME_CAP,
+            >::new(),
+        ));
+        let (rendezvous_server, rendezvous_client) = tcp_rendezvous(
+            ap_stack,
+            TcpRendezvousBuffers {
+                rx: rendezvous_rx,
+                tx: rendezvous_tx,
+                read: rendezvous_read,
+                framed: rendezvous_framed,
+                decoder: rendezvous_decoder,
+            },
+            rendezvous_storage,
+        );
+        spawner.spawn(tcp_rendezvous_task(rendezvous_server).expect("TCP rendezvous task fits"));
+        let ap_discovery = psram_udp_socket::<8, 512, 8, 512>(ap_stack);
+        let ap_unicast_discovery = psram_udp_socket::<8, 128, 1, 1>(ap_stack);
+        let ap_data = psram_udp_socket::<8, 2048, 8, 2048>(ap_stack);
         let wifi = AutoWifi::new(
             AutoWifiTopology {
                 primary: AutoWifiSegment {
@@ -244,6 +236,7 @@ pub(super) fn build_wifi(
                     mac: ap_mac,
                 },
                 secondary: station_segment,
+                rendezvous: Some(rendezvous_client),
             },
             &WIFI_SHARED,
         );
@@ -256,6 +249,7 @@ pub(super) fn build_wifi(
                 AutoWifiTopology {
                     primary,
                     secondary: None,
+                    rendezvous: None,
                 },
                 &WIFI_SHARED,
             );
@@ -263,6 +257,12 @@ pub(super) fn build_wifi(
         }
         None => (None, None, Some(esp_now)),
     }
+}
+
+#[cfg(feature = "wifi-auto")]
+#[embassy_executor::task]
+async fn tcp_rendezvous_task(server: TcpRendezvousServer<'static>) -> ! {
+    server.run().await
 }
 
 #[cfg(feature = "wifi-auto")]
@@ -292,6 +292,11 @@ pub(super) struct EspNowAdapter {
 const ESPNOW_SEND_RETRIES: u8 = 8;
 #[cfg(feature = "wifi-auto")]
 const ESPNOW_SEND_RETRY_DELAY: Duration = Duration::from_millis(5);
+#[cfg(feature = "wifi-auto")]
+pub(super) struct EspNowPhySettings {
+    pub(super) driver_rate: WifiPhyRate,
+    pub(super) bitrate: BitrateBps,
+}
 /// The pinned ESP-NOW PHY rate: 802.11g 12 Mbps, QPSK rate-1/2 OFDM. HT/HE *broadcast* RX is
 /// hard-pinned to 1 Mbps DSSS by the closed Wi-Fi blob (no public override) so MCS rates transmit but
 /// never receive; the legacy OFDM-g family is the broadcast-compatible way to keep OFDM's good
@@ -303,9 +308,10 @@ const ESPNOW_SEND_RETRY_DELAY: Duration = Duration::from_millis(5);
 /// (10) equals C `WIFI_PHY_RATE_12M`, so `Rate6m` is what actually selects g-12M. This one spot
 /// localizes the workaround; TODO: patch esp-radio's enum upstream and return `Rate12m`.
 #[cfg(feature = "wifi-auto")]
-const fn espnow_phy_rate() -> WifiPhyRate {
-    WifiPhyRate::Rate6m
-}
+pub(super) const ESPNOW_PHY: EspNowPhySettings = EspNowPhySettings {
+    driver_rate: WifiPhyRate::Rate6m,
+    bitrate: BitrateBps::guess(12_000_000),
+};
 
 #[cfg(feature = "wifi-auto")]
 impl EspNowAdapter {
@@ -324,7 +330,7 @@ impl EspNowAdapter {
     /// `esp_wifi_config_espnow_rate` requires.
     fn ensure_rate(&mut self) {
         if !self.rate_applied {
-            let _ = self.manager.set_rate(espnow_phy_rate());
+            let _ = self.manager.set_rate(ESPNOW_PHY.driver_rate);
             self.rate_applied = true;
         }
     }
@@ -382,16 +388,44 @@ pub(super) async fn net_task(mut runner: Runner<'static, WifiStaDevice<'static>>
 #[cfg(feature = "wifi-auto")]
 #[embassy_executor::task]
 async fn network_ready_task(stack: Stack<'static>) -> ! {
+    let mut previous_state = None;
+    let mut samples_until_report = 0;
+    let mut internal_free_low_water = usize::MAX;
     loop {
-        stack.wait_link_up().await;
-        while stack.config_v4().is_none() {
-            Timer::after(Duration::from_millis(100)).await;
+        let associated = WIFI_STATION_JOINED.load(Ordering::Relaxed);
+        let link_up = stack.is_link_up();
+        let ipv4 = stack.config_v4();
+        let has_ipv4 = ipv4.is_some();
+        let state = (associated, link_up, has_ipv4);
+        let state_changed = previous_state != Some(state);
+        let was_ready = previous_state
+            .map(|(_, previous_link, previous_ipv4)| previous_link && previous_ipv4)
+            .unwrap_or(false);
+        let ready = link_up && has_ipv4;
+        let internal_free = esp_alloc::HEAP.free_caps(esp_alloc::MemoryCapability::Internal.into());
+        internal_free_low_water = internal_free_low_water.min(internal_free);
+
+        if ready && !was_ready {
+            boot_stage(BootPhase::NetworkReady);
         }
-        boot_stage(BootPhase::NetworkReady);
-        log::info!("wifi: IPv4 network configuration ready");
-        while stack.is_link_up() && stack.config_v4().is_some() {
-            Timer::after(WIFI_LINK_CHECK_INTERVAL).await;
+        if state_changed || samples_until_report == 0 {
+            let heap = esp_alloc::HEAP.stats();
+            log::info!(
+                "wifi-health: associated={} link_up={} ipv4={:?} internal_free={} internal_low={} heap_used={} heap_high={}",
+                associated,
+                link_up,
+                ipv4,
+                internal_free,
+                internal_free_low_water,
+                heap.current_usage,
+                heap.max_usage
+            );
+            samples_until_report = WIFI_HEALTH_SAMPLES_BETWEEN_REPORTS;
+        } else {
+            samples_until_report = samples_until_report.saturating_sub(1);
         }
+        previous_state = Some(state);
+        Timer::after(WIFI_LINK_CHECK_INTERVAL).await;
     }
 }
 
@@ -483,12 +517,12 @@ async fn wifi_connect_task(
 
     loop {
         let mut resumed = false;
-        while !status.is_enabled() {
+        while !status.is_station_uplink_enabled() {
             if controller.is_connected() {
                 let _ = controller.disconnect_async().await;
             }
             WIFI_STATION_JOINED.store(false, Ordering::Relaxed);
-            status.wait_until_radio_enabled().await;
+            status.wait_until_station_uplink_enabled().await;
             resumed = true;
         }
         if resumed {
@@ -498,7 +532,7 @@ async fn wifi_connect_task(
             WIFI_STATION_JOINED.store(true, Ordering::Relaxed);
             match select3(
                 controller.wait_for_disconnect_async(),
-                status.wait_until_radio_disabled(),
+                status.wait_until_station_uplink_disabled(),
                 Timer::after(WIFI_LINK_CHECK_INTERVAL),
             )
             .await
@@ -573,7 +607,7 @@ async fn wifi_connect_task(
                     apply_station_yield(next, &status).await;
                     continue;
                 }
-                if !status.is_enabled() {
+                if !status.is_station_uplink_enabled() {
                     let next = recovery.finish_connection(attempt, ConnectionOutcome::Cancelled);
                     recovery.resume_now();
                     apply_station_yield(next, &status).await;
@@ -587,7 +621,7 @@ async fn wifi_connect_task(
                 );
                 let connected = embassy_futures::select::select(
                     with_timeout(WIFI_CONNECT_TIMEOUT, controller.connect_async()),
-                    status.wait_until_radio_disabled(),
+                    status.wait_until_station_uplink_disabled(),
                 )
                 .await;
                 let next = match connected {
@@ -678,7 +712,7 @@ async fn wifi_connect_task(
                         WIFI_CHANNEL_SCAN_TIMEOUT,
                         controller.scan_async(&scan_config),
                     ),
-                    status.wait_until_radio_disabled(),
+                    status.wait_until_station_uplink_disabled(),
                 )
                 .await;
                 let next = match scan {
@@ -759,7 +793,7 @@ async fn apply_station_yield(next: StationYield, status: &AutoWifiStatus<MEMBERS
         StationYield::InterChannel => {
             let _ = embassy_futures::select::select(
                 Timer::after(WIFI_INTER_CHANNEL_DELAY),
-                status.wait_until_radio_disabled(),
+                status.wait_until_station_uplink_disabled(),
             )
             .await;
         }
@@ -768,7 +802,7 @@ async fn apply_station_yield(next: StationYield, status: &AutoWifiStatus<MEMBERS
             log::info!("wifi: station recovery delay_secs={delay_seconds}");
             let _ = embassy_futures::select::select(
                 Timer::after(Duration::from_secs(delay_seconds)),
-                status.wait_until_radio_disabled(),
+                status.wait_until_station_uplink_disabled(),
             )
             .await;
         }

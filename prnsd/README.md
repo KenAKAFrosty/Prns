@@ -59,7 +59,7 @@ docker volume create prnsd-data
 
 docker run -d \
   --name prnsd \
-  --restart on-failure \
+  --restart unless-stopped \
   --mount type=volume,source=prnsd-data,target=/var/lib/prnsd \
   --publish 4242:4242/tcp \
   --publish 4284:4284/tcp \
@@ -83,7 +83,7 @@ From a clone, `cargo prnsd` builds the daemon and manages one per-user process w
 ```console
 export PRNSD_STATE_DIR="$PWD/target/quickstart-service"
 ./tools/prns doctor node
-cargo prnsd --debug --detach -- --config target/quickstart-node
+cargo prnsd --detach -- --config target/quickstart-node
 cargo prnsd status --config target/quickstart-node
 cargo prnsd stop
 ```

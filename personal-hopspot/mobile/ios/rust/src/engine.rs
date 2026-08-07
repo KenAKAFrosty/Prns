@@ -432,7 +432,7 @@ pub(crate) fn announce() {
 
 pub(crate) fn classify(id: InterfaceId) -> Option<(CardKind, CardLabel)> {
     match id.kind() {
-        Some(InterfaceKind::AutoWifi) => Some((CardKind::Wifi, card_label("Wi-Fi/LAN"))),
+        Some(InterfaceKind::AutoWifi) => Some((CardKind::Wifi, card_label("LAN"))),
         Some(InterfaceKind::UsbAutoDevice) => Some((CardKind::Usb, card_label("USB"))),
         Some(InterfaceKind::BluetoothAuto) => Some((CardKind::Ble, card_label("BLE"))),
         Some(InterfaceKind::TcpServerPeer | InterfaceKind::TcpClient | InterfaceKind::WifiPeer) => {
@@ -965,6 +965,27 @@ const fn decode_failure(code: i32) -> MobileEngineFailure {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_ios_interface_label_fits_its_card() {
+        let kinds = [
+            InterfaceKind::AutoWifi,
+            InterfaceKind::UsbAutoDevice,
+            InterfaceKind::BluetoothAuto,
+            InterfaceKind::TcpServerPeer,
+            InterfaceKind::TcpClient,
+            InterfaceKind::WifiPeer,
+            InterfaceKind::BluetoothPeer,
+        ];
+        for kind in kinds {
+            let id = InterfaceId::from_channel_tag(kind, b"label-fit");
+            let (card_kind, label) = classify(id).expect("known interface has a card");
+            assert!(
+                label.chars().count() <= personal_hopspot_core::card_label_max_chars(card_kind),
+                "{kind:?} label {label:?} exceeds its card"
+            );
+        }
+    }
     use std::sync::atomic::AtomicBool;
     use std::sync::Arc;
 

@@ -16,8 +16,8 @@ Release builds should stamp both a version and a commit:
 The docs footer displays the public version and the short source snapshot. The
 full commit is kept in the footer title text. The release candidate process
 packages that exact commit directly into the hosted website as `source.zip`
-plus `source.zip.sha256`; ordinary Dioxus and embedded-site builds never write
-or inherit those release artifacts.
+plus `source.zip.sha256`; ordinary Dioxus builds never write or inherit those
+release artifacts.
 
 The ZIP is the one authoritative full-repository source snapshot. It includes
 the website implementation under `docs/website/` and the NomadNet page source
@@ -41,27 +41,18 @@ cargo tools release source package -- --output target/source.zip
 Official candidate creation performs this packaging before any website, browser
 playground, or firmware release build. It also writes
 `metadata/source.json`, containing the canonical version, full commit, byte
-length, SHA-256, and NomadNet routes. Source-enabled consumers receive that
-identity through `PRNS_SOURCE_ARCHIVE`, `PRNS_SOURCE_VERSION`,
-`PRNS_SOURCE_COMMIT`, `PRNS_SOURCE_SIZE`, and `PRNS_SOURCE_SHA256`; enabling the
-`source-archive` Cargo feature without all five matching values fails the build.
+length, SHA-256, and NomadNet routes. The hosted website, browser, desktop,
+Android, and iOS release builds receive that identity through
+`PRNS_SOURCE_ARCHIVE`, `PRNS_SOURCE_VERSION`, `PRNS_SOURCE_COMMIT`,
+`PRNS_SOURCE_SIZE`, and `PRNS_SOURCE_SHA256`; enabling their `source-archive`
+Cargo feature without all five matching values fails the build.
 
-Heltec V4 and T-Beam Supreme candidates first build the compact application and
-preflight its measured size plus the archive, a 64 KiB embedding allowance, and
-the mandatory 1 MiB factory-partition reserve. A passing target is then rebuilt
-with the archive as one flash-backed static, shared by SoftAP `/source.zip` and
-the NomadNet `/file/source.zip` route. The completed source-enabled image is
-measured again. If either capacity check fails, the builder keeps the compact
-image, serves the non-source NomadNet page, omits its source metadata, and
-records `capacity-downgrade` in `metadata/source-capabilities.json`. XIAO
-ESP32-C6 and T-Echo always use the non-source route set and do not compile the
-named-file response branch or larger outgoing window. Source-enabled browser,
-desktop, Android, and iOS release builds use the same feature and archive
-identity; ordinary development and hot reload builds leave the feature off.
-Native transfers retain only the static flash/archive borrow and continuation
-offsets between proofs. They copy, encrypt, transmit, and retry at most one
-256 KiB plaintext segment, then reuse that window after its proof; the full ZIP
-is never copied into RAM.
+Embedded Hopspot firmware deliberately remains compact and does not embed or
+serve the multi-megabyte source archive. Every board omits embedded source
+metadata from its flash target and records `status: "absent"` in
+`metadata/source-capabilities.json`. The exact archive remains available from
+the hosted release surfaces. This keeps embedded resource memory bounded and
+preserves flash capacity for dual-slot OTA work.
 
 ## Build the portable daemon
 

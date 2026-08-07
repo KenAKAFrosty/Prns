@@ -7,26 +7,32 @@ use heapless::Vec as HVec;
 use personal_rns::interfaces::lora::{
     Frequency, ModemPreset, RadioProfile, Region, DEFAULT_915_PROFILE,
 };
-use personal_rns::interfaces::InterfaceId;
+use personal_rns::interfaces::{ConnectionState, InterfaceId};
 use personal_rns::storage::{DisplayedStorageLimits, StorageCapacity};
 
 use crate::battery::{BatteryPercent, BatteryState};
+use crate::PersistenceState;
 
 use super::limits::{build_limit_rows, LimitValue};
 use super::model::InterfaceMenuDetailKind;
-use super::render::cards::draw_card_with_selection;
+use super::render::cards::{
+    card_label_max_chars, connection_status_label, draw_card_with_selection,
+};
 use super::render::glyphs::{
     draw_battery, draw_clock, draw_interface_icon, draw_link, draw_person,
 };
 use super::render::layout::{
-    ACTIVITY_TEXT_X, CARD_H, CARD_SLOT_STEP, CARD_TOP, FIRST_CARD_WITH_GLOBAL_TOP,
-    FOOTER_FOURTH_LINE_OFFSET, FOOTER_SECOND_LINE_OFFSET, GLOBAL_BACKING_H, GLOBAL_BACKING_X,
-    GLOBAL_BACKING_Y, GLOBAL_ICON_X, GLOBAL_ROW_H, GLOBAL_ROW_TOP, HEIGHT, MENU_BACKING_X,
-    MENU_DIVIDER_Y, MENU_HEADER_Y, MENU_ITEM_STEP, MENU_ITEM_TOP, MENU_MARK_X, MENU_REASON_X,
-    NAME_BACKING_X, NAME_BACKING_Y, NAME_ICON_X, NAME_LINE_Y, STAT_ICON_X, STAT_TEXT_X, WIDTH,
+    ACTIVITY_TEXT_X, CARD_H, CARD_SLOT_STEP, CARD_TOP, FIRST_CARD_WITH_GLOBAL_TOP, FONT_4X6_CHAR_W,
+    FONT_5X8_CHAR_W, FOOTER_FOURTH_LINE_OFFSET, FOOTER_SECOND_LINE_OFFSET, GLOBAL_BACKING_H,
+    GLOBAL_BACKING_X, GLOBAL_BACKING_Y, GLOBAL_ICON_X, GLOBAL_ROW_H, GLOBAL_ROW_TOP, HEIGHT,
+    MENU_BACKING_X, MENU_DIVIDER_Y, MENU_HEADER_Y, MENU_ITEM_STEP, MENU_ITEM_TOP, MENU_MARK_X,
+    MENU_REASON_X, NAME_BACKING_X, NAME_BACKING_Y, NAME_ICON_X, NAME_LINE_Y, STAT_ICON_X,
+    STAT_TEXT_X, WIDTH,
 };
-use super::render::menus::draw_interface_menu;
 use super::render::menus::lora::{LORA_DOT_X, LORA_EDITOR_TOP};
+use super::render::menus::{
+    draw_interface_menu, menu_item_text_right, station_uplink_action_label,
+};
 use super::render::metrics::{
     compact_numeric_width, draw_compact_number, fmt_activity_age, fmt_count, fmt_rate_bytes_per_sec,
 };
@@ -37,11 +43,12 @@ use super::state::lora::{
 use super::state::{
     UiMode, ANNOUNCE_MENU_ITEM, LORA_RESET_MENU_ITEM, LORA_TUNE_MENU_ITEM, OLED_OFF_MENU_ITEM,
     POWER_MENU_ITEM, POWER_ONLY_MENU_ITEMS, RADIO_MENU_ITEM_NO_DISPLAY, SLEEP_MENU_ITEM,
+    STATION_UPLINK_MENU_ITEM, WIFI_MENU_ITEMS,
 };
 use super::{
     apply_and_persist_radio_profile, card_label, render as render_screen, sort_cards_for_display,
     AccessPointState, Card, CardActivityTracker, CardKind, DisplayPowerControl, InputEvent,
-    InterfaceMenuDetails, Liveness, LoRaSpectrumMenuDetails, LocalDocsAccess,
+    InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess, PersistenceNotice,
     RadioProfileChangeResult, RenderFrame, ScreenContent, UiAction, UiConfiguration, UiNotice,
     UiState,
 };
@@ -138,11 +145,12 @@ fn test_card(label: &'static str) -> Card {
         id: InterfaceId::new([0; 8]),
         kind: CardKind::Usb,
         label: card_label(label),
-        liveness: Liveness::Live,
+        connection: ConnectionState::Connected,
         failure_reason: None,
         tx_bytes: 0,
         rx_bytes: 0,
         links: 0,
+        peers: None,
         destinations: 0,
         rate_bytes_per_sec: 0,
         last_activity_secs: None,

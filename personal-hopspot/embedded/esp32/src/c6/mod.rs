@@ -17,7 +17,7 @@ use personal_rns::engine::IssuedCommand;
 #[cfg(feature = "bluetooth-auto")]
 use personal_rns::interfaces::bluetooth_auto::{BleIdentity, BLE_HW_MTU};
 use personal_rns::interfaces::usb_auto::device_descriptor;
-use personal_rns::interfaces::{ConnectionState, InterfaceId};
+use personal_rns::interfaces::{BitrateBps, ConnectionState, InterfaceId};
 use personal_rns::manifold::embassy::{
     EmbassyHost, EmbassyInterfaceSeam, EmbassyInterfaceStatus, InterfaceLifecycle,
 };
@@ -202,9 +202,16 @@ const ESPNOW_SEND_RETRIES: u8 = 8;
 const ESPNOW_SEND_RETRY_DELAY: Duration = Duration::from_millis(5);
 
 #[cfg(feature = "esp-now")]
-const fn espnow_phy_rate() -> WifiPhyRate {
-    WifiPhyRate::Rate6m
+struct EspNowPhySettings {
+    driver_rate: WifiPhyRate,
+    bitrate: BitrateBps,
 }
+
+#[cfg(feature = "esp-now")]
+const ESPNOW_PHY: EspNowPhySettings = EspNowPhySettings {
+    driver_rate: WifiPhyRate::Rate6m,
+    bitrate: BitrateBps::guess(12_000_000),
+};
 
 #[cfg(feature = "bluetooth-auto")]
 #[embassy_executor::task]
@@ -249,7 +256,7 @@ impl EspNowAdapter {
 
     fn ensure_rate(&mut self) {
         if !self.rate_applied {
-            let _ = self.manager.set_rate(espnow_phy_rate());
+            let _ = self.manager.set_rate(ESPNOW_PHY.driver_rate);
             self.rate_applied = true;
         }
     }

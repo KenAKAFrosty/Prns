@@ -37,7 +37,7 @@ The center of the firmware is a `PrnsNodeRecipe`: transport identity, applicatio
 
 ## Understand the bounded choices
 
-The C6 deliberately uses a small fixed storage profile. It carries the NomadNet index and quickstart but does not embed the multi-megabyte release source archive. Source-capable S3 boards use flash-backed archive bytes and a larger outgoing resource window. That capability difference is selected during the release build and changes both the registered file routes and the page language.
+Every embedded board deliberately uses a bounded storage profile. Firmware carries the NomadNet index and quickstart, but it does not embed the multi-megabyte release source archive or register its file routes. The exact source snapshot remains available from the hosted release surfaces.
 
 When adapting the recipe to a new board, decide these explicitly:
 

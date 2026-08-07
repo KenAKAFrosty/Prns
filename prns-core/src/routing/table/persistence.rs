@@ -79,7 +79,21 @@ where
     I: RouteExpiryIndex,
 {
     pub fn persisted_rows(&self) -> impl Iterator<Item = PersistedRouteRow<'_>> + '_ {
-        (0..self.routes.len()).map(move |i| PersistedRouteRow {
+        (0..self.routes.len()).map(move |i| self.persisted_row_at(i))
+    }
+
+    pub fn persisted_destinations(&self) -> impl Iterator<Item = DestinationHash> + '_ {
+        self.routes.destinations().iter().copied()
+    }
+
+    pub fn persisted_row(&self, destination: &DestinationHash) -> Option<PersistedRouteRow<'_>> {
+        self.routes
+            .index_of(destination)
+            .map(|index| self.persisted_row_at(index))
+    }
+
+    fn persisted_row_at(&self, i: usize) -> PersistedRouteRow<'_> {
+        PersistedRouteRow {
             destination: self.routes.destinations()[i],
             entry: self.path_row_at(i),
             public_keys: self.announce_records.public_keys()[i],
@@ -90,7 +104,7 @@ where
             app_data: self.announce_records.app_data_handles()[i]
                 .map_or(&[][..], |handle| self.announce_app_data.get(handle)),
             announce_id_ring: AnnounceIdRing::Table(self.announce_id_history.history(i)),
-        })
+        }
     }
 
     pub fn seed_route(&mut self, row: &PersistedRouteRow<'_>) -> SeedRouteOutcome {

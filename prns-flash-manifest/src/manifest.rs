@@ -472,6 +472,20 @@ mod tests {
     }
 
     #[test]
+    fn embedded_targets_reject_source_archives() -> Result<(), Box<dyn std::error::Error>> {
+        let catalog = board_catalog()?;
+        let mut manifest = valid_manifest()?;
+        manifest.targets[0].source = Some(SourceArchiveIdentity {
+            route: "/file/source.zip".to_string(),
+            checksum_route: "/file/source.zip.sha256".to_string(),
+            size: 1,
+            sha256: "a".repeat(64),
+        });
+        assert!(manifest.validate(&catalog).is_err());
+        Ok(())
+    }
+
+    #[test]
     fn production_and_local_target_set_policies_remain_distinct(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let catalog = board_catalog()?;

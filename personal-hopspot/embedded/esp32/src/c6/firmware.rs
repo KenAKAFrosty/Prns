@@ -35,6 +35,7 @@ pub async fn run(spawner: Spawner) {
         let espnow = EspNowInterface::new(
             EspNowAdapter::new(esp_now_radio),
             espnow_channel_policy(),
+            ESPNOW_PHY.bitrate,
             espnow_status,
         );
         (controller, espnow, espnow_status)
