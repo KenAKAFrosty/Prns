@@ -584,3 +584,5 @@ features = ["build"]
 [build-dependencies.esp-metadata-generated]
 version = "0.4.0"
 features = ["build-script"]
+
+[workspace]

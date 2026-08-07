@@ -150,14 +150,7 @@ pub(super) fn build_cards(
     };
     screen::snapshots_to_cards(snapshots, |id| {
         classify_card(
-            id,
-            usb_id,
-            wifi_id,
-            tcp_id,
-            tcp_client,
-            wifi_kind,
-            lora_id,
-            espnow_id,
+            id, usb_id, wifi_id, tcp_id, tcp_client, wifi_kind, lora_id, espnow_id,
         )
     })
 }
