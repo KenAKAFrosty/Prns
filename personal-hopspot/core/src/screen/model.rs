@@ -6,6 +6,8 @@ use personal_rns::interfaces::{ConnectionState, InterfaceId};
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CardKind {
     Wifi,
+    WifiStation,
+    WifiStationDisabled,
     Usb,
     Ble,
     LoRa,
@@ -63,8 +65,16 @@ pub struct LoRaSpectrumMenuDetails {
     pub radio_recoveries: u32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WifiStationStatus<'a> {
+    Unconfigured,
+    Joining,
+    Connected(&'a str),
+    Disabled,
+}
+
 pub struct WifiNetworkStatus<'a> {
-    pub station_ssid: Option<&'a str>,
+    pub station: WifiStationStatus<'a>,
     pub access_point_ssid: Option<&'a str>,
 }
 
@@ -343,7 +353,7 @@ pub(crate) fn sort_cards_for_display<const N: usize>(cards: &mut HVec<Card, N>) 
 const fn card_display_rank(kind: CardKind) -> u8 {
     match kind {
         CardKind::LoRa => 0,
-        CardKind::Wifi => 1,
+        CardKind::Wifi | CardKind::WifiStation | CardKind::WifiStationDisabled => 1,
         CardKind::Ble => 2,
         CardKind::EspNow => 3,
         CardKind::Tcp => 4,

@@ -56,7 +56,9 @@ pub(in crate::screen) const fn connection_status_label(
         ConnectionState::Reconnecting => Some("Reconnecting"),
         ConnectionState::Failed => Some("Failed"),
         ConnectionState::Disconnected => match kind {
-            CardKind::Wifi => Some("LAN Down"),
+            CardKind::Wifi | CardKind::WifiStation | CardKind::WifiStationDisabled => {
+                Some("LAN Down")
+            }
             CardKind::Ble => Some("No Peers"),
             CardKind::Usb => Some("Waiting"),
             CardKind::LoRa | CardKind::EspNow | CardKind::Tcp | CardKind::Peer => {

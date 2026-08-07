@@ -52,6 +52,9 @@ const TELEMETRY_MIN_INTERVAL_MS: u64 = 5_000;
 const STATS_POLL: Duration = Duration::from_secs(1);
 const EINK_ANIMATION_MS: u64 = 0;
 const NOTICE_MS: u64 = 900;
+const USB_CONFIG_DESCRIPTOR_BYTES: usize = 64;
+const USB_BOS_DESCRIPTOR_BYTES: usize = 64;
+const USB_MSOS_DESCRIPTOR_BYTES: usize = 192;
 
 #[embassy_executor::task]
 async fn manifold_task(
@@ -91,16 +94,16 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
     usb_config.product = Some("Personal Hopspot (T-Echo)");
     usb_config.serial_number = Some("PERSONAL-RNS-TECHO-HOP");
     usb_config.max_packet_size_0 = 64;
-    static CONFIG_DESC: StaticCell<[u8; 256]> = StaticCell::new();
-    static BOS_DESC: StaticCell<[u8; 256]> = StaticCell::new();
-    static MSOS_DESC: StaticCell<[u8; 256]> = StaticCell::new();
+    static CONFIG_DESC: StaticCell<[u8; USB_CONFIG_DESCRIPTOR_BYTES]> = StaticCell::new();
+    static BOS_DESC: StaticCell<[u8; USB_BOS_DESCRIPTOR_BYTES]> = StaticCell::new();
+    static MSOS_DESC: StaticCell<[u8; USB_MSOS_DESCRIPTOR_BYTES]> = StaticCell::new();
     static CONTROL_BUF: StaticCell<[u8; 64]> = StaticCell::new();
     let mut builder = Builder::new(
         usb_driver,
         usb_config,
-        CONFIG_DESC.init([0; 256]),
-        BOS_DESC.init([0; 256]),
-        MSOS_DESC.init([0; 256]),
+        CONFIG_DESC.init([0; USB_CONFIG_DESCRIPTOR_BYTES]),
+        BOS_DESC.init([0; USB_BOS_DESCRIPTOR_BYTES]),
+        MSOS_DESC.init([0; USB_MSOS_DESCRIPTOR_BYTES]),
         CONTROL_BUF.init([0; 64]),
     );
     builder.msos_descriptor(0x0603_0000, 0x20);
@@ -557,6 +560,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                         }
                         hopspot::UiAction::OpenDocs => {}
                         hopspot::UiAction::SwapRadioMode => {}
+                        hopspot::UiAction::ToggleStationUplink => {}
                         hopspot::UiAction::OledOff => {}
                         hopspot::UiAction::None => {}
                     }

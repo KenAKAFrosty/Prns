@@ -135,7 +135,8 @@ pub struct AutoWifiShared<const MEMBERS: usize> {
     id: InterfaceId,
     enabled: AtomicBool,
     enabled_changed: Signal<CriticalSectionRawMutex, bool>,
-    radio_enabled_changed: Signal<CriticalSectionRawMutex, bool>,
+    station_uplink_enabled: AtomicBool,
+    station_uplink_enabled_changed: Signal<CriticalSectionRawMutex, bool>,
     lifecycle: AtomicU8,
     peers: AtomicU32,
     members: [WifiMemberStatus; MEMBERS],
@@ -148,7 +149,8 @@ impl<const MEMBERS: usize> AutoWifiShared<MEMBERS> {
             id,
             enabled: AtomicBool::new(true),
             enabled_changed: Signal::new(),
-            radio_enabled_changed: Signal::new(),
+            station_uplink_enabled: AtomicBool::new(true),
+            station_uplink_enabled_changed: Signal::new(),
             lifecycle: AtomicU8::new(ConnectionState::Initializing.as_u8()),
             peers: AtomicU32::new(0),
             members: [const { WifiMemberStatus::new() }; MEMBERS],
@@ -178,13 +180,11 @@ impl<const MEMBERS: usize> AutoWifiStatus<MEMBERS> {
     pub fn toggle_enabled(&self) {
         let enabled = !self.shared.enabled.fetch_xor(true, Ordering::Relaxed);
         self.shared.enabled_changed.signal(enabled);
-        self.shared.radio_enabled_changed.signal(enabled);
     }
 
     fn update_enabled(&self, enabled: bool) {
         if self.shared.enabled.swap(enabled, Ordering::Relaxed) != enabled {
             self.shared.enabled_changed.signal(enabled);
-            self.shared.radio_enabled_changed.signal(enabled);
         }
     }
 
@@ -194,32 +194,70 @@ impl<const MEMBERS: usize> AutoWifiStatus<MEMBERS> {
     }
 
     pub async fn wait_until_enabled(&self) {
-        self.wait_for_enabled_state(true, &self.shared.enabled_changed)
-            .await;
+        Self::wait_for_state(true, &self.shared.enabled, &self.shared.enabled_changed).await;
     }
 
     pub async fn wait_until_disabled(&self) {
-        self.wait_for_enabled_state(false, &self.shared.enabled_changed)
-            .await;
+        Self::wait_for_state(false, &self.shared.enabled, &self.shared.enabled_changed).await;
     }
 
-    pub async fn wait_until_radio_enabled(&self) {
-        self.wait_for_enabled_state(true, &self.shared.radio_enabled_changed)
-            .await;
+    pub fn enable_station_uplink(&self) {
+        self.update_station_uplink_enabled(true);
     }
 
-    pub async fn wait_until_radio_disabled(&self) {
-        self.wait_for_enabled_state(false, &self.shared.radio_enabled_changed)
-            .await;
+    pub fn disable_station_uplink(&self) {
+        self.update_station_uplink_enabled(false);
     }
 
-    async fn wait_for_enabled_state(
-        &self,
+    pub fn toggle_station_uplink(&self) {
+        let enabled = !self
+            .shared
+            .station_uplink_enabled
+            .fetch_xor(true, Ordering::Relaxed);
+        self.shared.station_uplink_enabled_changed.signal(enabled);
+    }
+
+    fn update_station_uplink_enabled(&self, enabled: bool) {
+        if self
+            .shared
+            .station_uplink_enabled
+            .swap(enabled, Ordering::Relaxed)
+            != enabled
+        {
+            self.shared.station_uplink_enabled_changed.signal(enabled);
+        }
+    }
+
+    #[must_use]
+    pub fn is_station_uplink_enabled(&self) -> bool {
+        self.shared.station_uplink_enabled.load(Ordering::Relaxed)
+    }
+
+    pub async fn wait_until_station_uplink_enabled(&self) {
+        Self::wait_for_state(
+            true,
+            &self.shared.station_uplink_enabled,
+            &self.shared.station_uplink_enabled_changed,
+        )
+        .await;
+    }
+
+    pub async fn wait_until_station_uplink_disabled(&self) {
+        Self::wait_for_state(
+            false,
+            &self.shared.station_uplink_enabled,
+            &self.shared.station_uplink_enabled_changed,
+        )
+        .await;
+    }
+
+    async fn wait_for_state(
         enabled: bool,
+        state: &AtomicBool,
         changed: &Signal<CriticalSectionRawMutex, bool>,
     ) {
         loop {
-            if self.is_enabled() == enabled {
+            if state.load(Ordering::Relaxed) == enabled {
                 return;
             }
             if changed.wait().await == enabled {
@@ -955,9 +993,10 @@ async fn retire_stale<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use embassy_futures::{block_on, join::join3};
+    use embassy_futures::{block_on, join::join};
 
     static SHARED: AutoWifiShared<1> = AutoWifiShared::new(InterfaceId::new([0x5B; 8]));
+    static UPLINK_SHARED: AutoWifiShared<1> = AutoWifiShared::new(InterfaceId::new([0x5E; 8]));
     static LIFECYCLE_SHARED: AutoWifiShared<1> = AutoWifiShared::new(InterfaceId::new([0x5C; 8]));
     static ACCOUNTING_SHARED: AutoWifiShared<1> = AutoWifiShared::new(InterfaceId::new([0x5D; 8]));
 
@@ -966,23 +1005,37 @@ mod tests {
     }
 
     #[test]
-    fn enabled_state_changes_wake_all_waiters() {
+    fn interface_enablement_does_not_change_station_uplink() {
         let status = AutoWifiStatus::new(&SHARED);
+        status.enable();
+        status.enable_station_uplink();
 
         block_on(async {
-            join3(
-                status.wait_until_disabled(),
-                status.wait_until_radio_disabled(),
-                async { status.disable() },
-            )
+            join(status.wait_until_disabled(), async { status.disable() }).await;
+            join(status.wait_until_enabled(), async { status.enable() }).await;
+        });
+
+        assert!(status.is_station_uplink_enabled());
+    }
+
+    #[test]
+    fn station_uplink_enablement_does_not_change_interface() {
+        let status = AutoWifiStatus::new(&UPLINK_SHARED);
+        status.enable();
+        status.enable_station_uplink();
+
+        block_on(async {
+            join(status.wait_until_station_uplink_disabled(), async {
+                status.disable_station_uplink()
+            })
             .await;
-            join3(
-                status.wait_until_enabled(),
-                status.wait_until_radio_enabled(),
-                async { status.enable() },
-            )
+            join(status.wait_until_station_uplink_enabled(), async {
+                status.enable_station_uplink()
+            })
             .await;
         });
+
+        assert!(status.is_enabled());
     }
 
     #[test]

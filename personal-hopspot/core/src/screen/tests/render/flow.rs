@@ -299,22 +299,39 @@ fn render_shows_selected_interface_menu() {
 fn interface_menu_draws_detail_rows_below_actions() {
     let mut display = PanelDisplay::new();
     let mut card = test_card("LAN");
-    card.kind = CardKind::Wifi;
+    card.kind = CardKind::WifiStation;
     let mut details = InterfaceMenuDetails::empty();
-    details.push_info("STA", "None");
+    details.push_info("STA", "Joining");
     details.push_info("AP", "Hopspot-EW53");
     let _ = details.push_supervisor_peers([(
         InterfaceId::new([0, 0xab, 0xcd, 0, 0, 0, 0, 0]),
         ConnectionState::Connected,
     )]);
 
-    draw_interface_menu(&mut display, &card, POWER_MENU_ITEM, details.as_slice());
+    draw_interface_menu(&mut display, &card, POWER_MENU_ITEM, &details);
 
-    let detail_top = MENU_ITEM_TOP + POWER_ONLY_MENU_ITEMS.len() as i32 * MENU_ITEM_STEP + 1;
+    let detail_top = MENU_ITEM_TOP + WIFI_MENU_ITEMS.len() as i32 * MENU_ITEM_STEP + 1;
     assert!(
         has_on_pixel(&display, MENU_REASON_X..WIDTH, detail_top..HEIGHT),
         "interface menus should render supplied detail rows below the actions"
     );
+}
+
+#[test]
+fn station_uplink_menu_labels_follow_requested_state() {
+    assert_eq!(station_uplink_action_label(CardKind::Wifi), None);
+    assert_eq!(
+        station_uplink_action_label(CardKind::WifiStation),
+        Some("Disconnect AP")
+    );
+    assert_eq!(
+        station_uplink_action_label(CardKind::WifiStationDisabled),
+        Some("Reconnect AP")
+    );
+
+    for label in ["Disconnect AP", "Reconnect AP"] {
+        assert!(menu_item_text_right(label) <= WIDTH);
+    }
 }
 
 #[test]
@@ -325,7 +342,8 @@ fn failed_interface_menu_draws_failure_reason() {
     card.connection = ConnectionState::Failed;
     card.failure_reason = Some("BlueZ GATT Channels >1; set Channels=1");
 
-    draw_interface_menu(&mut display, &card, POWER_MENU_ITEM, &[]);
+    let details = InterfaceMenuDetails::empty();
+    draw_interface_menu(&mut display, &card, POWER_MENU_ITEM, &details);
 
     let reason_top = MENU_ITEM_TOP + POWER_ONLY_MENU_ITEMS.len() as i32 * MENU_ITEM_STEP - 1;
     assert!(

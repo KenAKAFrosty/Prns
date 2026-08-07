@@ -50,7 +50,7 @@ pub use screen::{
     DisplayPowerControl, EinkRefresh, EinkRefreshPolicy, EinkRefreshUrgency, InputEvent,
     InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess, PersistenceNotice,
     RadioProfileChangeResult, RenderFrame, ScreenContent, SplashContent, UiAction, UiConfiguration,
-    UiNotice, UiState, WifiNetworkStatus,
+    UiNotice, UiState, WifiNetworkStatus, WifiStationStatus,
 };
 
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceSnapshot, Membership};
@@ -162,7 +162,13 @@ pub fn wifi_interface_menu_details(
     snapshots: &[InterfaceSnapshot],
 ) -> InterfaceMenuDetails {
     let mut details = InterfaceMenuDetails::empty();
-    details.push_info("STA", status.station_ssid.unwrap_or("None"));
+    let station_label = match status.station {
+        WifiStationStatus::Unconfigured => "None",
+        WifiStationStatus::Joining => "Joining",
+        WifiStationStatus::Connected(ssid) => ssid,
+        WifiStationStatus::Disabled => "Off",
+    };
+    details.push_info("STA", station_label);
     details.push_info("AP", status.access_point_ssid.unwrap_or("None"));
     let _ = push_snapshot_supervisor_peer_rows(&mut details, selected_card, snapshots);
     details
@@ -329,7 +335,7 @@ mod tests {
 
         let details = wifi_interface_menu_details(
             WifiNetworkStatus {
-                station_ssid: None,
+                station: WifiStationStatus::Unconfigured,
                 access_point_ssid: Some("Hopspot-EW53"),
             },
             cards.first(),
@@ -342,6 +348,28 @@ mod tests {
         assert_eq!(rows[1].text(), "AP Hopspot-EW53");
         assert_eq!(rows[2].text(), "Peers 1");
         assert_eq!(rows[3].text(), "P 1234 Live");
+    }
+
+    #[test]
+    fn wifi_details_distinguish_station_uplink_states() {
+        let cases = [
+            (WifiStationStatus::Unconfigured, "STA None"),
+            (WifiStationStatus::Joining, "STA Joining"),
+            (WifiStationStatus::Connected("DeskNet"), "STA DeskNet"),
+            (WifiStationStatus::Disabled, "STA Off"),
+        ];
+
+        for (station, expected_row) in cases {
+            let details = wifi_interface_menu_details(
+                WifiNetworkStatus {
+                    station,
+                    access_point_ssid: None,
+                },
+                None,
+                &[],
+            );
+            assert_eq!(details.as_slice()[0].text(), expected_row);
+        }
     }
 
     #[test]

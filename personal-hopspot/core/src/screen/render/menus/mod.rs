@@ -12,9 +12,12 @@ use heapless::String as HString;
 use personal_rns::interfaces::ConnectionState;
 
 use crate::screen::limits::{limit_page_count, LimitRow, LimitValue, LIMITS_PER_PAGE};
-use crate::screen::model::{Card, InterfaceMenuDetailKind, InterfaceMenuDetailRow};
+use crate::screen::model::{
+    Card, CardKind, InterfaceMenuDetailKind, InterfaceMenuDetailRow, InterfaceMenuDetails,
+};
 use crate::screen::state::{
     interface_menu_items, AccessPointState, UiNotice, UiState, POWER_MENU_ITEM,
+    STATION_UPLINK_MENU_ITEM,
 };
 
 use super::glyphs::{draw_global_icon, draw_interface_icon, draw_menu_cursor};
@@ -23,15 +26,47 @@ use super::metrics::{fmt_bytes, fmt_rate_bytes_per_sec};
 use super::primitives::{fill, line};
 
 fn menu_item_backing_width(label: &str) -> u32 {
-    let text_right = MENU_TEXT_X + label.chars().count() as i32 * FONT_5X8_CHAR_W + 1;
-    (text_right - MENU_BACKING_X).max(0) as u32
+    (menu_item_text_right(label) + 1 - MENU_BACKING_X).max(0) as u32
 }
+
+pub(in crate::screen) const fn station_uplink_action_label(kind: CardKind) -> Option<&'static str> {
+    match kind {
+        CardKind::WifiStation => Some("Disconnect AP"),
+        CardKind::WifiStationDisabled => Some("Reconnect AP"),
+        CardKind::Wifi
+        | CardKind::Usb
+        | CardKind::Ble
+        | CardKind::LoRa
+        | CardKind::EspNow
+        | CardKind::Tcp
+        | CardKind::Peer => None,
+    }
+}
+
+pub(in crate::screen) fn menu_item_char_width(label: &str) -> i32 {
+    if MENU_TEXT_X + label.chars().count() as i32 * FONT_5X8_CHAR_W > WIDTH {
+        FONT_4X6_CHAR_W
+    } else {
+        FONT_5X8_CHAR_W
+    }
+}
+
+pub(in crate::screen) fn menu_item_text_right(label: &str) -> i32 {
+    MENU_TEXT_X + label.chars().count() as i32 * menu_item_char_width(label)
+}
+
 fn draw_menu_item<D: DrawTarget<Color = BinaryColor>>(
     display: &mut D,
     y: i32,
     label: &str,
     selected: bool,
 ) {
+    let char_width = menu_item_char_width(label);
+    let font = if char_width == FONT_4X6_CHAR_W {
+        &FONT_4X6
+    } else {
+        &FONT_5X8
+    };
     let color = if selected {
         let _ = Rectangle::new(
             Point::new(MENU_BACKING_X, y - 1),
@@ -43,7 +78,7 @@ fn draw_menu_item<D: DrawTarget<Color = BinaryColor>>(
     } else {
         BinaryColor::On
     };
-    let style = MonoTextStyle::new(&FONT_5X8, color);
+    let style = MonoTextStyle::new(font, color);
     draw_menu_cursor(display, MENU_MARK_X, y, color);
     let _ =
         Text::with_baseline(label, Point::new(MENU_TEXT_X, y), style, Baseline::Top).draw(display);
@@ -326,7 +361,7 @@ pub(in crate::screen) fn draw_interface_menu<D: DrawTarget<Color = BinaryColor>>
     display: &mut D,
     card: &Card,
     selected_item: usize,
-    details: &[InterfaceMenuDetailRow],
+    details: &InterfaceMenuDetails,
 ) {
     draw_interface_icon(
         display,
@@ -366,6 +401,8 @@ pub(in crate::screen) fn draw_interface_menu<D: DrawTarget<Color = BinaryColor>>
             } else {
                 "Turn Off"
             }
+        } else if index == STATION_UPLINK_MENU_ITEM {
+            station_uplink_action_label(card.kind).unwrap_or(item)
         } else {
             item
         };
@@ -377,8 +414,8 @@ pub(in crate::screen) fn draw_interface_menu<D: DrawTarget<Color = BinaryColor>>
         );
     }
     let mut detail_y = MENU_ITEM_TOP + items.len() as i32 * MENU_ITEM_STEP + 1;
-    if !details.is_empty() {
-        detail_y = draw_interface_menu_details(display, detail_y, details);
+    if !details.as_slice().is_empty() {
+        detail_y = draw_interface_menu_details(display, detail_y, details.as_slice());
     }
     if card.connection == ConnectionState::Failed {
         if let Some(reason) = card.failure_reason {

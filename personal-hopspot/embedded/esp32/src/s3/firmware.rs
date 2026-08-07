@@ -449,6 +449,8 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 wifi_id,
                 tcp_id,
                 tcp_card_config,
+                wifi_status.as_ref(),
+                &wifi_config,
                 lora_status.id(),
                 espnow_card_id,
             );
@@ -467,6 +469,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 &snapshots,
                 usb_status,
                 lora_spectrum,
+                wifi_status.as_ref(),
                 &wifi_config,
                 menu_ap_ssid,
             );
@@ -586,6 +589,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                             lora_status.disable();
                             if let Some(status) = wifi_status.as_ref() {
                                 status.disable();
+                                status.disable_station_uplink();
                             }
                             if let Some(status) = espnow_card_status {
                                 status.disable();
@@ -611,6 +615,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                             usb_status.enable();
                             lora_status.enable();
                             if let Some(status) = wifi_status.as_ref() {
+                                status.enable_station_uplink();
                                 status.enable();
                             }
                             if let Some(status) = espnow_card_status {
@@ -702,6 +707,21 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                     show_toggle_notice(status.is_enabled());
                                     status.toggle_enabled();
                                 }
+                            }
+                        }
+                        screen::UiAction::ToggleStationUplink => {
+                            if let Some(status) = wifi_status.as_ref() {
+                                let notice = if status.is_station_uplink_enabled() {
+                                    screen::UiNotice::DisconnectingAp
+                                } else {
+                                    screen::UiNotice::ReconnectingAp
+                                };
+                                ui_state.show_notice(notice);
+                                notice_until_ms = Some((
+                                    embassy_time::Instant::now().as_millis() + NOTICE_MS,
+                                    notice,
+                                ));
+                                status.toggle_station_uplink();
                             }
                         }
                         screen::UiAction::OpenLoRaEditor => {

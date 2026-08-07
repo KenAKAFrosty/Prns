@@ -244,7 +244,7 @@ pub(in crate::screen) fn draw_interface_icon<D: DrawTarget<Color = BinaryColor>>
     color: BinaryColor,
 ) {
     match kind {
-        CardKind::Wifi | CardKind::Peer => {
+        CardKind::Wifi | CardKind::WifiStation | CardKind::WifiStationDisabled | CardKind::Peer => {
             draw_pattern_colored(
                 display,
                 x,

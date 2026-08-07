@@ -360,6 +360,40 @@ fn non_lora_interface_menus_cycle_power_and_back_only() {
 }
 
 #[test]
+fn configured_wifi_menu_exposes_station_uplink_action() {
+    let cards = test_cards::<1>(CardKind::WifiStation);
+    let content = test_content(&cards);
+    let mut state = test_ui_state();
+    state.handle_input(InputEvent::ShortPress, content);
+    state.handle_input(InputEvent::LongPress, content);
+
+    assert_eq!(state.interface_menu_selected_item(), Some(POWER_MENU_ITEM));
+    state.handle_input(InputEvent::ShortPress, content);
+    assert_eq!(
+        state.interface_menu_selected_item(),
+        Some(STATION_UPLINK_MENU_ITEM)
+    );
+    assert_eq!(
+        state.handle_input(InputEvent::LongPress, content),
+        UiAction::ToggleStationUplink
+    );
+}
+
+#[test]
+fn unconfigured_wifi_menu_keeps_power_and_back_only() {
+    let cards = test_cards::<1>(CardKind::Wifi);
+    let content = test_content(&cards);
+    let mut state = test_ui_state();
+    state.handle_input(InputEvent::ShortPress, content);
+    state.handle_input(InputEvent::LongPress, content);
+
+    state.handle_input(InputEvent::ShortPress, content);
+    assert_eq!(state.interface_menu_selected_item(), Some(1));
+    state.handle_input(InputEvent::ShortPress, content);
+    assert_eq!(state.interface_menu_selected_item(), Some(POWER_MENU_ITEM));
+}
+
+#[test]
 fn lora_interface_menu_keeps_tune_and_reset() {
     let cards = test_cards::<1>(CardKind::LoRa);
     let content = test_content(&cards);

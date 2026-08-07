@@ -517,12 +517,12 @@ async fn wifi_connect_task(
 
     loop {
         let mut resumed = false;
-        while !status.is_enabled() {
+        while !status.is_station_uplink_enabled() {
             if controller.is_connected() {
                 let _ = controller.disconnect_async().await;
             }
             WIFI_STATION_JOINED.store(false, Ordering::Relaxed);
-            status.wait_until_radio_enabled().await;
+            status.wait_until_station_uplink_enabled().await;
             resumed = true;
         }
         if resumed {
@@ -532,7 +532,7 @@ async fn wifi_connect_task(
             WIFI_STATION_JOINED.store(true, Ordering::Relaxed);
             match select3(
                 controller.wait_for_disconnect_async(),
-                status.wait_until_radio_disabled(),
+                status.wait_until_station_uplink_disabled(),
                 Timer::after(WIFI_LINK_CHECK_INTERVAL),
             )
             .await
@@ -607,7 +607,7 @@ async fn wifi_connect_task(
                     apply_station_yield(next, &status).await;
                     continue;
                 }
-                if !status.is_enabled() {
+                if !status.is_station_uplink_enabled() {
                     let next = recovery.finish_connection(attempt, ConnectionOutcome::Cancelled);
                     recovery.resume_now();
                     apply_station_yield(next, &status).await;
@@ -621,7 +621,7 @@ async fn wifi_connect_task(
                 );
                 let connected = embassy_futures::select::select(
                     with_timeout(WIFI_CONNECT_TIMEOUT, controller.connect_async()),
-                    status.wait_until_radio_disabled(),
+                    status.wait_until_station_uplink_disabled(),
                 )
                 .await;
                 let next = match connected {
@@ -712,7 +712,7 @@ async fn wifi_connect_task(
                         WIFI_CHANNEL_SCAN_TIMEOUT,
                         controller.scan_async(&scan_config),
                     ),
-                    status.wait_until_radio_disabled(),
+                    status.wait_until_station_uplink_disabled(),
                 )
                 .await;
                 let next = match scan {
@@ -793,7 +793,7 @@ async fn apply_station_yield(next: StationYield, status: &AutoWifiStatus<MEMBERS
         StationYield::InterChannel => {
             let _ = embassy_futures::select::select(
                 Timer::after(WIFI_INTER_CHANNEL_DELAY),
-                status.wait_until_radio_disabled(),
+                status.wait_until_station_uplink_disabled(),
             )
             .await;
         }
@@ -802,7 +802,7 @@ async fn apply_station_yield(next: StationYield, status: &AutoWifiStatus<MEMBERS
             log::info!("wifi: station recovery delay_secs={delay_seconds}");
             let _ = embassy_futures::select::select(
                 Timer::after(Duration::from_secs(delay_seconds)),
-                status.wait_until_radio_disabled(),
+                status.wait_until_station_uplink_disabled(),
             )
             .await;
         }

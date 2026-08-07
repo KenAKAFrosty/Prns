@@ -11,7 +11,7 @@ pub(crate) use model::sort_cards_for_display;
 pub use model::{
     card_label, tcp_card_label, Card, CardActivityTracker, CardKind, CardLabel,
     InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess, ScreenContent,
-    WifiNetworkStatus,
+    WifiNetworkStatus, WifiStationStatus,
 };
 pub use render::cards::card_label_max_chars;
 pub use render::{render, splash, RenderFrame, SplashContent};

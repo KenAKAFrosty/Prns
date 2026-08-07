@@ -155,6 +155,8 @@ The Prns daemon, `prnsd`, takes the role `rnsd` holds today. It handles your cur
 
 Among what you gain: brand-new interfaces, a built-in operator CLI, observability out of the box, and [up to 89× the throughput](benchmarks/RESULTS.md) in published benchmarks you can rerun yourself. [Here's the full before-and-after](docs/coming-from-rns.md).
 
+> 89× is the best published result (single-packet throughput on macOS), but most scenarios land between 3× and 20× depending on host and workload
+
 #### Looking for something specific?
 
 - [Start prnsd](prnsd/README.md) for a high-performance shared instance on your machine, which works with Sideband, NomadNet, MeshChat, etc.

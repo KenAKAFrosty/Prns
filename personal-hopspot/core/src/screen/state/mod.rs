@@ -30,6 +30,8 @@ const SLEEP_MENU_ITEM_NO_DISPLAY: usize = 2;
 pub(in crate::screen) const RADIO_MENU_ITEM_NO_DISPLAY: usize = 3;
 pub(in crate::screen) const POWER_MENU_ITEM: usize = 0;
 pub(in crate::screen) const POWER_ONLY_MENU_ITEMS: &[&str] = &["Power", "Back"];
+pub(in crate::screen) const WIFI_MENU_ITEMS: &[&str] = &["Power", "Station", "Back"];
+pub(in crate::screen) const STATION_UPLINK_MENU_ITEM: usize = 1;
 const LORA_MENU_ITEMS: &[&str] = &["Power", "Tune", "Reset", "Back"];
 pub(in crate::screen) const LORA_TUNE_MENU_ITEM: usize = 1;
 pub(in crate::screen) const LORA_RESET_MENU_ITEM: usize = 2;
@@ -37,6 +39,7 @@ pub(in crate::screen) const LORA_RESET_MENU_ITEM: usize = 2;
 pub(in crate::screen) fn interface_menu_items(kind: CardKind) -> &'static [&'static str] {
     match kind {
         CardKind::LoRa => LORA_MENU_ITEMS,
+        CardKind::WifiStation | CardKind::WifiStationDisabled => WIFI_MENU_ITEMS,
         CardKind::Wifi
         | CardKind::Peer
         | CardKind::Usb
@@ -62,6 +65,7 @@ pub enum UiAction {
     Wake,
     /// Flip the selected card's interface off or back on, keyed by the card's [`id`](crate::screen::Card::id).
     ToggleSelectedInterface,
+    ToggleStationUplink,
     OpenLoRaEditor,
     SetLoRaProfile(RadioProfile),
     ResetLoRaProfile,
@@ -75,6 +79,8 @@ pub enum UiNotice {
     OledOff,
     TurningOff,
     TurningOn,
+    DisconnectingAp,
+    ReconnectingAp,
     Sleeping,
     Awake,
     Saved,
@@ -131,11 +137,13 @@ where
 
 impl UiNotice {
     #[cfg(test)]
-    pub(in crate::screen) const ALL: [Self; 15] = [
+    pub(in crate::screen) const ALL: [Self; 17] = [
         Self::Announcing,
         Self::OledOff,
         Self::TurningOff,
         Self::TurningOn,
+        Self::DisconnectingAp,
+        Self::ReconnectingAp,
         Self::Sleeping,
         Self::Awake,
         Self::Saved,
@@ -155,6 +163,8 @@ impl UiNotice {
             Self::OledOff => NoticeLines::one("OLED Off"),
             Self::TurningOff => NoticeLines::one("Turning Off"),
             Self::TurningOn => NoticeLines::one("Turning On"),
+            Self::DisconnectingAp => NoticeLines::two("Disconnecting", "AP"),
+            Self::ReconnectingAp => NoticeLines::two("Reconnecting", "AP"),
             Self::Sleeping => NoticeLines::one("Sleeping"),
             Self::Awake => NoticeLines::one("Awake"),
             Self::Saved => NoticeLines::one("Saved"),
@@ -571,6 +581,10 @@ impl UiState {
                 self.mode = UiMode::Cards;
                 match (kind, selected_item) {
                     (_, POWER_MENU_ITEM) => UiAction::ToggleSelectedInterface,
+                    (
+                        CardKind::WifiStation | CardKind::WifiStationDisabled,
+                        STATION_UPLINK_MENU_ITEM,
+                    ) => UiAction::ToggleStationUplink,
                     (CardKind::LoRa, LORA_TUNE_MENU_ITEM) => UiAction::OpenLoRaEditor,
                     (CardKind::LoRa, LORA_RESET_MENU_ITEM) => UiAction::ResetLoRaProfile,
                     _ => UiAction::None,

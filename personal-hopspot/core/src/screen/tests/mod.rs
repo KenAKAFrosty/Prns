@@ -29,8 +29,10 @@ use super::render::layout::{
     MENU_REASON_X, NAME_BACKING_X, NAME_BACKING_Y, NAME_ICON_X, NAME_LINE_Y, STAT_ICON_X,
     STAT_TEXT_X, WIDTH,
 };
-use super::render::menus::draw_interface_menu;
 use super::render::menus::lora::{LORA_DOT_X, LORA_EDITOR_TOP};
+use super::render::menus::{
+    draw_interface_menu, menu_item_text_right, station_uplink_action_label,
+};
 use super::render::metrics::{
     compact_numeric_width, draw_compact_number, fmt_activity_age, fmt_count, fmt_rate_bytes_per_sec,
 };
@@ -41,6 +43,7 @@ use super::state::lora::{
 use super::state::{
     UiMode, ANNOUNCE_MENU_ITEM, LORA_RESET_MENU_ITEM, LORA_TUNE_MENU_ITEM, OLED_OFF_MENU_ITEM,
     POWER_MENU_ITEM, POWER_ONLY_MENU_ITEMS, RADIO_MENU_ITEM_NO_DISPLAY, SLEEP_MENU_ITEM,
+    STATION_UPLINK_MENU_ITEM, WIFI_MENU_ITEMS,
 };
 use super::{
     apply_and_persist_radio_profile, card_label, render as render_screen, sort_cards_for_display,

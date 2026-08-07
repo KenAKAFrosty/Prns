@@ -6,6 +6,7 @@ fn classify_card(
     wifi_id: Option<InterfaceId>,
     tcp_id: Option<InterfaceId>,
     tcp_client: Option<&HopspotTcpClientConfig>,
+    wifi_kind: screen::CardKind,
     lora_id: InterfaceId,
     espnow_id: Option<InterfaceId>,
 ) -> Option<(screen::CardKind, screen::CardLabel)> {
@@ -14,7 +15,7 @@ fn classify_card(
     } else if id == lora_id {
         Some((screen::CardKind::LoRa, screen::card_label("LoRa")))
     } else if Some(id) == wifi_id {
-        Some((screen::CardKind::Wifi, screen::card_label("LAN")))
+        Some((wifi_kind, screen::card_label("LAN")))
     } else if Some(id) == espnow_id {
         Some((screen::CardKind::EspNow, screen::card_label("ESP-NOW")))
     } else if Some(id) == tcp_id {
@@ -135,11 +136,29 @@ pub(super) fn build_cards(
     wifi_id: Option<InterfaceId>,
     tcp_id: Option<InterfaceId>,
     tcp_client: Option<&HopspotTcpClientConfig>,
+    wifi: Option<&AutoWifiStatus<MEMBERS>>,
+    wifi_config: &HopspotWifiConfig,
     lora_id: InterfaceId,
     espnow_id: Option<InterfaceId>,
 ) -> HVec<screen::Card, 8> {
+    let wifi_kind = if !wifi_config.has_station() {
+        screen::CardKind::Wifi
+    } else if wifi.is_some_and(|status| status.is_station_uplink_enabled()) {
+        screen::CardKind::WifiStation
+    } else {
+        screen::CardKind::WifiStationDisabled
+    };
     screen::snapshots_to_cards(snapshots, |id| {
-        classify_card(id, usb_id, wifi_id, tcp_id, tcp_client, lora_id, espnow_id)
+        classify_card(
+            id,
+            usb_id,
+            wifi_id,
+            tcp_id,
+            tcp_client,
+            wifi_kind,
+            lora_id,
+            espnow_id,
+        )
     })
 }
 
@@ -217,17 +236,28 @@ pub(super) fn build_interface_menu_details(
     snapshots: &[InterfaceSnapshot],
     usb: &EmbassyInterfaceStatus,
     lora_spectrum: &LoRaSpectrumStatus,
+    wifi: Option<&AutoWifiStatus<MEMBERS>>,
     wifi_config: &HopspotWifiConfig,
     ap_ssid: Option<&str>,
 ) -> screen::InterfaceMenuDetails {
     let mut details = match selected_card.map(|card| card.kind()) {
-        Some(screen::CardKind::Wifi) => {
-            let station_ssid = (wifi_config.has_station()
-                && WIFI_STATION_JOINED.load(Ordering::Relaxed))
-            .then_some(wifi_config.ssid.as_str());
+        Some(
+            screen::CardKind::Wifi
+            | screen::CardKind::WifiStation
+            | screen::CardKind::WifiStationDisabled,
+        ) => {
+            let station = if !wifi_config.has_station() {
+                screen::WifiStationStatus::Unconfigured
+            } else if wifi.is_some_and(|status| !status.is_station_uplink_enabled()) {
+                screen::WifiStationStatus::Disabled
+            } else if WIFI_STATION_JOINED.load(Ordering::Relaxed) {
+                screen::WifiStationStatus::Connected(wifi_config.ssid.as_str())
+            } else {
+                screen::WifiStationStatus::Joining
+            };
             screen::wifi_interface_menu_details(
                 screen::WifiNetworkStatus {
-                    station_ssid,
+                    station,
                     access_point_ssid: ap_ssid,
                 },
                 selected_card,
