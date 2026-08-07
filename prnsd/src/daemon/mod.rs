@@ -25,6 +25,7 @@ use personal_rns::browser_rendezvous::{AutoWifiDevicePolicy, BrowserRendezvous};
 use personal_rns::config::{SharedInstance, TransportIdentityPolicy};
 use personal_rns::engine::{
     EngineProtocolPolicy, LinkMtuDiscovery, LocalHopCountOverride, ProofForm,
+    RecursivePathRequestDefault,
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::IdentitySigner;
@@ -280,6 +281,7 @@ pub(super) async fn run(
         } else {
             LocalHopCountOverride::Disabled
         },
+        recursive_path_request_default: RecursivePathRequestDefault::Disabled,
     };
 
     let node_persistence = match NodePersistence::in_reticulum_dir(&config_dir) {

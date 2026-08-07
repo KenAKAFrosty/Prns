@@ -1,6 +1,8 @@
 use std::fmt;
 
-use prns_core::interfaces::{AnnounceBandwidthCap, EgressCapability, InterfaceMode};
+use prns_core::interfaces::{
+    AnnounceBandwidthCap, EgressCapability, InterfaceMode, RecursivePathRequestPolicy,
+};
 
 use crate::reference::{
     announce_rate_target_is_explicit_off,
@@ -843,7 +845,11 @@ impl InterfaceSettingSpec {
                 planned.lifecycle,
                 ConfiguredInterfaceLifecycle::BootstrapOnly
             ))),
-            interface_key::RECURSIVE_PRS => Some(yes_no(common.forwarding.recursive_path_requests)),
+            interface_key::RECURSIVE_PRS => match common.forwarding.recursive_path_requests {
+                RecursivePathRequestPolicy::InheritNode => None,
+                RecursivePathRequestPolicy::Enabled => Some(yes_no(true)),
+                RecursivePathRequestPolicy::Disabled => Some(yes_no(false)),
+            },
             interface_key::ANNOUNCES_FROM_INTERNAL => {
                 Some(yes_no(common.forwarding.announces_from_internal))
             }

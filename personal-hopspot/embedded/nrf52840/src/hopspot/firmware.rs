@@ -141,7 +141,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
         hopspot::RadioProfileLoadNotice::Reset => hopspot::UiNotice::ProfileReset,
     });
     if let Some(identity) = ble_identity {
-        super::bluetooth_auto::set_columba_identity(server, identity);
+        super::bluetooth_auto::set_columba_identity(sd, server, identity);
     }
     if ble_identity.is_some() {
         for idx in 0..POOL {
@@ -264,6 +264,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
     };
     let (node, persistence) =
         PrnsNode::init_static_with_persistence(&NODE, recipe, manifold_wiring, host);
+    node.set_protocol_policy(personal_hopspot_core::EMBEDDED_HOPSPOT_PROTOCOL_POLICY);
     static PERSISTENCE: StaticCell<super::persistence::TechoPersistence> = StaticCell::new();
     let persistence = PERSISTENCE.init(persistence);
     spawner.spawn(manifold_task(node, persistence).expect("manifold task fits"));
@@ -381,6 +382,18 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                 ui_state.selected_card(content.cards),
                 &snapshots,
             );
+            if ui_state
+                .selected_card(content.cards)
+                .is_some_and(|card| card.id() == BLE_SUPERVISOR_ID)
+            {
+                interface_menu_details.push_ingress_pressure(
+                    BLE_MANIFOLD_LANE.ingress_pressure_events().saturating_add(
+                        BluetoothAutoStatus::new(&BLE_SHARED).ingress_pressure_events(),
+                    ),
+                );
+                interface_menu_details
+                    .push_egress_pressure(BLE_MANIFOLD_LANE.egress_pressure_events());
+            }
             if ui_state
                 .selected_card(content.cards)
                 .is_some_and(|card| card.id() == lora_status.id())

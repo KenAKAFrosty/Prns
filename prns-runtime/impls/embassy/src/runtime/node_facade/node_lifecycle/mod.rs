@@ -305,6 +305,10 @@ where
         }
     }
 
+    pub fn set_protocol_policy(&mut self, policy: crate::engine::EngineProtocolPolicy) {
+        self.node.engine.set_protocol_policy(policy);
+    }
+
     #[must_use]
     pub fn handle(&self) -> PrnsNodeHandle<'static, M, COMMANDS, COMPLETIONS> {
         self.handle

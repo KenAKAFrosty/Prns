@@ -303,6 +303,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         static NODE: StaticCell<S3Node> = StaticCell::new();
         let (node, persistence) =
             PrnsNode::init_static_with_persistence(&NODE, recipe, manifold_wiring, host);
+        node.set_protocol_policy(personal_hopspot_core::EMBEDDED_HOPSPOT_PROTOCOL_POLICY);
         static PERSISTENCE: StaticCell<crate::persistence::S3Persistence> = StaticCell::new();
         let persistence = PERSISTENCE.init(persistence);
 

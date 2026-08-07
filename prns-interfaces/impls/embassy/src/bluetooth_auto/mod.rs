@@ -1,14 +1,17 @@
 pub mod connection_slots;
 #[cfg(feature = "bluetooth-auto-trouble")]
 mod cooperative_transport;
-#[cfg(feature = "bluetooth-auto-trouble")]
 mod frame_pool;
 mod runtime;
 
 #[cfg(feature = "bluetooth-auto-trouble")]
 mod trouble;
 
-pub use runtime::{BluetoothAuto, BluetoothAutoShared, BluetoothAutoStatus, BluetoothMemberStatus};
+pub use frame_pool::{FrameLease, FramePoolError, SharedFramePool};
+pub use runtime::{
+    BluetoothAuto, BluetoothAutoShared, BluetoothAutoStatus, BluetoothMemberStatus,
+    BluetoothRecoveryReason,
+};
 
 #[cfg(feature = "bluetooth-auto-trouble")]
 pub use cooperative_transport::CooperativeTransport;

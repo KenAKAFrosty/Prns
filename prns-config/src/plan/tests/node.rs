@@ -400,7 +400,10 @@ fn internal_outgoing_and_common_controls_form_one_effective_policy() {
         prns_core::interfaces::IngressCapability::Enabled
     );
     assert_eq!(policy.capabilities.egress, EgressCapability::Disabled);
-    assert!(policy.common.forwarding.recursive_path_requests);
+    assert_eq!(
+        policy.common.forwarding.recursive_path_requests,
+        prns_core::interfaces::RecursivePathRequestPolicy::Enabled
+    );
     assert!(!policy.common.forwarding.announces_from_internal);
     assert!(policy.common.forwarding.announces_to_internal);
     assert!(!policy.common.ingress_control.enabled);
@@ -411,6 +414,41 @@ fn internal_outgoing_and_common_controls_form_one_effective_policy() {
     );
     assert!(policy.common.path_request_egress.enabled);
     assert_eq!(policy.common.path_request_egress.frequency.get(), 0);
+}
+
+#[test]
+fn recursive_path_configuration_distinguishes_inheritance_from_disable() {
+    let plan = plan_of(
+        "[interfaces]\n\
+             [[Inherited]]\n\
+             type = TCPClientInterface\n\
+             enabled = Yes\n\
+             target_host = inherited\n\
+             target_port = 4242\n\
+             [[Disabled]]\n\
+             type = TCPClientInterface\n\
+             enabled = Yes\n\
+             target_host = disabled\n\
+             target_port = 4242\n\
+             recursive_prs = No\n",
+    );
+
+    assert_eq!(
+        named(&plan, "Inherited")
+            .policy
+            .common
+            .forwarding
+            .recursive_path_requests,
+        prns_core::interfaces::RecursivePathRequestPolicy::InheritNode
+    );
+    assert_eq!(
+        named(&plan, "Disabled")
+            .policy
+            .common
+            .forwarding
+            .recursive_path_requests,
+        prns_core::interfaces::RecursivePathRequestPolicy::Disabled
+    );
 }
 
 #[test]

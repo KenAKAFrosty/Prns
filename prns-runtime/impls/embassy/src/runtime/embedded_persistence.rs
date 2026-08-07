@@ -1820,6 +1820,55 @@ mod tests {
     }
 
     #[test]
+    fn sixteen_route_records_restore_eight_and_report_capacity_drops() {
+        type EightRouteStorage =
+            crate::storage::TestFixedStorage<8, 8, 256, 2, 2, 16, 4, 4, 4, 4, 4, 16>;
+        let now = InstantMillis(1_000);
+        let mut engine = EngineState::<EightRouteStorage>::default();
+        let mut report = EmbeddedPersistenceRestoreReport {
+            logical_start: now,
+            route_seeded_count: 0,
+            route_refused_count: 0,
+            route_dropped_count: 0,
+            ratchet_seeded_count: 0,
+            ratchet_refused_count: 0,
+            warning: None,
+        };
+
+        for secret in 1..=16 {
+            let row = signed_route(secret, &[]);
+            let required = routing_table_snapshot_len(core::iter::once(row.clone()));
+            let mut scratch = [0u8; RECORD_SCRATCH_LEN];
+            let written =
+                write_routing_table_snapshot(core::iter::once(row), &mut scratch[..required])
+                    .unwrap();
+            apply_record(
+                &mut engine,
+                now,
+                FlashJournalRecord {
+                    epoch: 1,
+                    kind: FlashJournalRecordKind::RouteUpsert,
+                    payload: &scratch[..written],
+                },
+                &mut report,
+            );
+        }
+
+        assert_eq!(
+            report,
+            EmbeddedPersistenceRestoreReport {
+                logical_start: now,
+                route_seeded_count: 8,
+                route_refused_count: 0,
+                route_dropped_count: 8,
+                ratchet_seeded_count: 0,
+                ratchet_refused_count: 0,
+                warning: None,
+            }
+        );
+    }
+
+    #[test]
     fn thirty_days_of_pressure_erase_each_arena_sector_at_most_fifteen_times() {
         let diagnostics = Rc::new(RefCell::new(Vec::new()));
         let observed = Rc::clone(&diagnostics);

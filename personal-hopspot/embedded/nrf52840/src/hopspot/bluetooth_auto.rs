@@ -6,13 +6,13 @@ use embassy_futures::yield_now;
 use embassy_nrf::usb::vbus_detect::SoftwareVbusDetect;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
-use embassy_sync::channel::{Channel, Receiver, Sender};
+use embassy_sync::channel::{Channel, Receiver, Sender, TrySendError};
 use embassy_sync::semaphore::{FairSemaphore, Semaphore, SemaphoreReleaser};
 use embassy_sync::signal::Signal;
 use embassy_time::{with_timeout, Duration, Timer};
 
 use nrf_softdevice::ble::{
-    central, gatt_client, gatt_server, l2cap, peripheral, Address, Connection,
+    central, gatt_client, gatt_server, l2cap, peripheral, Address, Connection, GattError,
 };
 use nrf_softdevice::{raw, RawError, SocEvent, Softdevice};
 
@@ -21,7 +21,9 @@ use personal_rns::bluetooth_auto::connection_slots::{
     ConnectionSlotPool, ConnectionSlotSinkLease, ConnectionSlotSourceLease,
     ConnectionSlotWorkerLease, ReadyConnectionSlot, ReadyConnectionSlotParts,
 };
-use personal_rns::bluetooth_auto::BluetoothAutoShared;
+use personal_rns::bluetooth_auto::{
+    BluetoothAutoShared, BluetoothAutoStatus, FrameLease, FramePoolError, SharedFramePool,
+};
 use personal_rns::interfaces::bluetooth_auto::{
     columba_connection_role, columba_role_capabilities, contains_service, encode_advertisement,
     encode_stream_frame, fragments_of, BleAddress, BleIdentity, BleRoleCapabilities,
@@ -34,8 +36,10 @@ use personal_rns::interfaces::bluetooth_auto::{
 };
 use personal_rns::interfaces::{InterfaceId, InterfaceKind};
 
+pub(super) use super::bluetooth_gatt_server::Server;
+use super::bluetooth_gatt_server::{ServerWrite, WriteDelivery, WriteTarget};
+
 type Mtx = CriticalSectionRawMutex;
-type FrameBytes = heapless09::Vec<u8, BLE_HW_MTU>;
 type GattValue = heapless09::Vec<u8, 244>;
 
 pub(super) const MEMBERS: usize = NrfBleBackend::MAX_PEERS;
@@ -46,7 +50,9 @@ pub(super) const POOL: usize = MEMBERS + 2;
 const _: () = assert!(POOL == 7, "serve_slot pool_size must equal POOL");
 
 const CTRL_DEPTH: usize = 4;
-const DATA_DEPTH: usize = 1;
+const DATA_TOKEN_DEPTH: usize = 2;
+const SHARED_FRAME_CAPACITY: usize = MEMBERS;
+const SHARED_FRAME_WAITERS: usize = POOL;
 const SIGHTING_DEPTH: usize = 4;
 const SEEN_CAP: usize = 8;
 const CENTRAL_RADIO_WAITERS: usize = POOL + 1;
@@ -59,6 +65,8 @@ type BleSlotLink = ConnectionSlotLinkLease<Mtx>;
 type BleSlotSource = ConnectionSlotSourceLease<Mtx>;
 type BleSlotSink = ConnectionSlotSinkLease<Mtx>;
 type BleReadySlot = ReadyConnectionSlot<Mtx>;
+type SharedFrameLease = FrameLease<Mtx, BLE_HW_MTU, SHARED_FRAME_CAPACITY, SHARED_FRAME_WAITERS>;
+type SharedFrames = SharedFramePool<Mtx, BLE_HW_MTU, SHARED_FRAME_CAPACITY, SHARED_FRAME_WAITERS>;
 const GATT_FRAGMENT_PAYLOAD: usize = 180;
 const GATT_REASSEMBLY_CAP: usize = BLE_HW_MTU;
 const GATT_ATTRIBUTE_TABLE_BYTES: u32 = 3072;
@@ -185,6 +193,23 @@ pub(super) static OUTBOUND_WAKE: Signal<Mtx, ()> = Signal::new();
 
 pub(super) static BLE_SHARED: BluetoothAutoShared<MEMBERS> =
     BluetoothAutoShared::new(BLE_SUPERVISOR_ID);
+static INBOUND_FRAMES: SharedFrames = SharedFramePool::new();
+static OUTBOUND_FRAMES: SharedFrames = SharedFramePool::new();
+
+#[derive(Debug, PartialEq, Eq)]
+enum IngressPressure {
+    SharedPoolExhausted,
+    TokenQueueFull,
+    ControlQueueFull,
+    FrameTooLarge,
+    PoolUnavailable,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum IngressAdmission {
+    Admitted,
+    Pressured(IngressPressure),
+}
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Closed;
@@ -201,37 +226,6 @@ pub(super) async fn softdevice_task(
         _ => {}
     })
     .await
-}
-
-mod reticulum_service {
-    #![allow(clippy::enum_variant_names)]
-
-    use super::GattValue;
-
-    #[nrf_softdevice::gatt_service(uuid = "37145b00-442d-4a94-917f-8f42c5da28e3")]
-    pub(in crate::hopspot) struct ReticulumService {
-        #[characteristic(uuid = "37145b00-442d-4a94-917f-8f42c5da28e4", read, notify)]
-        pub(super) columba_tx: GattValue,
-        #[characteristic(
-            uuid = "37145b00-442d-4a94-917f-8f42c5da28e5",
-            write,
-            write_without_response
-        )]
-        pub(super) columba_rx: GattValue,
-        #[characteristic(uuid = "37145b00-442d-4a94-917f-8f42c5da28e6", read)]
-        pub(super) columba_identity: GattValue,
-        #[characteristic(uuid = "37145b00-442d-4a94-917f-8f42c5da28e7", write, notify)]
-        pub(super) control: GattValue,
-        #[characteristic(uuid = "37145b00-442d-4a94-917f-8f42c5da28e8", write, notify)]
-        pub(super) data: GattValue,
-    }
-}
-
-use reticulum_service::{ReticulumService, ReticulumServiceEvent};
-
-#[nrf_softdevice::gatt_server]
-pub(super) struct Server {
-    rns: ReticulumService,
 }
 
 #[nrf_softdevice::gatt_client(uuid = "37145b00-442d-4a94-917f-8f42c5da28e3")]
@@ -252,10 +246,8 @@ struct ColumbaReticulumClient {
     identity: GattValue,
 }
 
-pub(super) fn set_columba_identity(server: &Server, identity: BleIdentity) {
-    if let Ok(value) = GattValue::from_slice(identity.as_bytes()) {
-        let _ = server.rns.columba_identity_set(&value);
-    }
+pub(super) fn set_columba_identity(sd: &Softdevice, server: &Server, identity: BleIdentity) {
+    let _ = server.set_columba_identity(sd, identity.as_bytes());
 }
 
 pub(super) fn softdevice_config() -> nrf_softdevice::Config {
@@ -316,8 +308,9 @@ struct SeenPeer {
 struct LinkChannels {
     control_in: Channel<Mtx, Control, CTRL_DEPTH>,
     control_out: Channel<Mtx, Control, CTRL_DEPTH>,
-    data_in: Channel<Mtx, FrameBytes, DATA_DEPTH>,
-    data_out: Channel<Mtx, FrameBytes, DATA_DEPTH>,
+    data_in: Channel<Mtx, SharedFrameLease, DATA_TOKEN_DEPTH>,
+    data_out: Channel<Mtx, SharedFrameLease, DATA_TOKEN_DEPTH>,
+    acknowledged_writes: Channel<Mtx, ServerWrite, 1>,
     identity_in: Signal<Mtx, BleIdentity>,
     identity_out: Channel<Mtx, BleIdentity, 1>,
     data_plane: Signal<Mtx, L2capPlan>,
@@ -338,6 +331,7 @@ impl LinkChannels {
             control_out: Channel::new(),
             data_in: Channel::new(),
             data_out: Channel::new(),
+            acknowledged_writes: Channel::new(),
             identity_in: Signal::new(),
             identity_out: Channel::new(),
             data_plane: Signal::new(),
@@ -373,6 +367,7 @@ impl LinkChannels {
         self.control_out.clear();
         self.data_in.clear();
         self.data_out.clear();
+        self.acknowledged_writes.clear();
         self.identity_in.reset();
         self.identity_out.clear();
     }
@@ -583,8 +578,8 @@ pub(super) struct NrfBleLink {
     peer_protocol: PeerProtocol,
     control_in: Receiver<'static, Mtx, Control, CTRL_DEPTH>,
     control_out: Sender<'static, Mtx, Control, CTRL_DEPTH>,
-    data_in: Receiver<'static, Mtx, FrameBytes, DATA_DEPTH>,
-    data_out: Sender<'static, Mtx, FrameBytes, DATA_DEPTH>,
+    data_in: Receiver<'static, Mtx, SharedFrameLease, DATA_TOKEN_DEPTH>,
+    data_out: Sender<'static, Mtx, SharedFrameLease, DATA_TOKEN_DEPTH>,
     identity_in: &'static Signal<Mtx, BleIdentity>,
     identity_out: Sender<'static, Mtx, BleIdentity, 1>,
     data_plane: &'static Signal<Mtx, L2capPlan>,
@@ -659,7 +654,7 @@ impl BleLink for NrfBleLink {
 }
 
 pub(super) struct NrfBleSource {
-    data_in: Receiver<'static, Mtx, FrameBytes, DATA_DEPTH>,
+    data_in: Receiver<'static, Mtx, SharedFrameLease, DATA_TOKEN_DEPTH>,
     slot: BleSlotSource,
 }
 
@@ -669,6 +664,7 @@ impl BleSource for NrfBleSource {
     async fn recv_frame(&mut self, out: &mut [u8]) -> Result<usize, Closed> {
         match select(self.data_in.receive(), self.slot.wait_for_close()).await {
             Either::First(frame) => {
+                let frame = frame.lock().await;
                 let len = frame.len().min(out.len());
                 out[..len].copy_from_slice(&frame[..len]);
                 Ok(len)
@@ -679,7 +675,7 @@ impl BleSource for NrfBleSource {
 }
 
 pub(super) struct NrfBleSink {
-    data_out: Sender<'static, Mtx, FrameBytes, DATA_DEPTH>,
+    data_out: Sender<'static, Mtx, SharedFrameLease, DATA_TOKEN_DEPTH>,
     slot: BleSlotSink,
 }
 
@@ -687,10 +683,14 @@ impl BleSink for NrfBleSink {
     type Error = Closed;
 
     async fn send_frame(&mut self, frame: &[u8]) -> Result<(), Closed> {
-        let mut bytes = FrameBytes::new();
-        bytes.extend_from_slice(frame).map_err(|_| Closed)?;
-        match select(self.data_out.send(bytes), self.slot.wait_for_close()).await {
-            Either::First(()) => Ok(()),
+        let admission = async {
+            let lease = OUTBOUND_FRAMES.lease().await.map_err(|_| Closed)?;
+            lease.fill(frame).await.map_err(|_| Closed)?;
+            self.data_out.send(lease).await;
+            Ok(())
+        };
+        match select(admission, self.slot.wait_for_close()).await {
+            Either::First(result) => result,
             Either::Second(()) => Err(Closed),
         }
     }
@@ -736,9 +736,9 @@ async fn notify_with_backpressure(
         let result = {
             let value = GattValue::from_slice(bytes).map_err(|_| Closed)?;
             match target {
-                ServerNotification::Control => server.rns.control_notify(conn, &value),
-                ServerNotification::NativeData => server.rns.data_notify(conn, &value),
-                ServerNotification::ColumbaData => server.rns.columba_tx_notify(conn, &value),
+                ServerNotification::Control => server.notify_control(conn, &value),
+                ServerNotification::NativeData => server.notify_native_data(conn, &value),
+                ServerNotification::ColumbaData => server.notify_columba_data(conn, &value),
             }
         };
         match result {
@@ -754,25 +754,178 @@ async fn notify_with_backpressure(
     }
 }
 
+fn record_ingress_pressure(pressure: IngressPressure) -> IngressAdmission {
+    BluetoothAutoStatus::new(&BLE_SHARED).note_ingress_pressure();
+    IngressAdmission::Pressured(pressure)
+}
+
 fn admit_inbound_frame(
-    data_in_tx: &Sender<'static, Mtx, FrameBytes, DATA_DEPTH>,
+    data_in_tx: &Sender<'static, Mtx, SharedFrameLease, DATA_TOKEN_DEPTH>,
     frame: &[u8],
-    worker: &BleSlotWorker,
-) {
-    let mut bytes = FrameBytes::new();
-    if bytes.extend_from_slice(frame).is_err() || data_in_tx.try_send(bytes).is_err() {
-        worker.request_close();
+) -> IngressAdmission {
+    let lease = match INBOUND_FRAMES.try_lease() {
+        Ok(Some(lease)) => lease,
+        Ok(None) => return record_ingress_pressure(IngressPressure::SharedPoolExhausted),
+        Err(_) => return record_ingress_pressure(IngressPressure::PoolUnavailable),
+    };
+    if let Err(error) = lease.try_fill(frame) {
+        let pressure = match error {
+            FramePoolError::FrameTooLarge { .. } => IngressPressure::FrameTooLarge,
+            FramePoolError::SlotBusy
+            | FramePoolError::WaitQueueFull
+            | FramePoolError::PermitWithoutAvailableSlot => IngressPressure::PoolUnavailable,
+        };
+        return record_ingress_pressure(pressure);
+    }
+    if data_in_tx.try_send(lease).is_err() {
+        return record_ingress_pressure(IngressPressure::TokenQueueFull);
+    }
+    BluetoothAutoStatus::new(&BLE_SHARED).note_successful_admission();
+    IngressAdmission::Admitted
+}
+
+async fn admit_inbound_frame_with_backpressure(
+    data_in_tx: &Sender<'static, Mtx, SharedFrameLease, DATA_TOKEN_DEPTH>,
+    frame: &[u8],
+) -> Result<(), Closed> {
+    let lease = match INBOUND_FRAMES.try_lease() {
+        Ok(Some(lease)) => lease,
+        Ok(None) => {
+            BluetoothAutoStatus::new(&BLE_SHARED).note_ingress_pressure();
+            INBOUND_FRAMES.lease().await.map_err(|_| Closed)?
+        }
+        Err(_) => {
+            BluetoothAutoStatus::new(&BLE_SHARED).note_ingress_pressure();
+            return Err(Closed);
+        }
+    };
+    lease.fill(frame).await.map_err(|_| Closed)?;
+    if let Err(TrySendError::Full(lease)) = data_in_tx.try_send(lease) {
+        BluetoothAutoStatus::new(&BLE_SHARED).note_ingress_pressure();
+        data_in_tx.send(lease).await;
+    }
+    BluetoothAutoStatus::new(&BLE_SHARED).note_successful_admission();
+    Ok(())
+}
+
+fn process_unacknowledged_write(
+    write: &ServerWrite,
+    slot: &'static LinkChannels,
+    control_in_tx: &Sender<'static, Mtx, Control, CTRL_DEPTH>,
+    data_in_tx: &Sender<'static, Mtx, SharedFrameLease, DATA_TOKEN_DEPTH>,
+    reassembler: &mut Reassembler<GATT_REASSEMBLY_CAP>,
+) -> IngressAdmission {
+    match write.target() {
+        WriteTarget::Control => {
+            let Some(control) = Control::decode(write.value()) else {
+                return IngressAdmission::Admitted;
+            };
+            if slot.peer_protocol().is_none() {
+                slot.set_peer_protocol(PeerProtocol::Native);
+            }
+            if control_in_tx.try_send(control).is_err() {
+                return record_ingress_pressure(IngressPressure::ControlQueueFull);
+            }
+        }
+        WriteTarget::Data => {
+            let Some(fragment) = Fragment::decode(write.value()) else {
+                return IngressAdmission::Admitted;
+            };
+            if let Some(frame) = reassembler.absorb(&fragment) {
+                return admit_inbound_frame(data_in_tx, frame);
+            }
+        }
+        WriteTarget::ColumbaRx => {
+            if slot.peer_protocol().is_none() && write.value().len() == 16 {
+                let mut bytes = [0u8; 16];
+                bytes.copy_from_slice(write.value());
+                slot.identity_in.signal(BleIdentity::new(bytes));
+                slot.set_peer_protocol(PeerProtocol::Columba);
+            } else if slot.peer_protocol() == Some(PeerProtocol::Columba) {
+                let Some(fragment) = Fragment::decode(write.value()) else {
+                    return IngressAdmission::Admitted;
+                };
+                if let Some(frame) = reassembler.absorb(&fragment) {
+                    return admit_inbound_frame(data_in_tx, frame);
+                }
+            }
+        }
+    }
+    BluetoothAutoStatus::new(&BLE_SHARED).note_successful_admission();
+    IngressAdmission::Admitted
+}
+
+async fn process_acknowledged_writes(slot: &'static LinkChannels) {
+    let control_in_tx = slot.control_in.sender();
+    let data_in_tx = slot.data_in.sender();
+    let mut reassembler: Reassembler<GATT_REASSEMBLY_CAP> = Reassembler::new();
+    loop {
+        let write = slot.acknowledged_writes.receive().await;
+        let admitted = match write.target() {
+            WriteTarget::Control => {
+                if let Some(control) = Control::decode(write.value()) {
+                    if slot.peer_protocol().is_none() {
+                        slot.set_peer_protocol(PeerProtocol::Native);
+                    }
+                    control_in_tx.send(control).await;
+                }
+                true
+            }
+            WriteTarget::Data => {
+                if let Some(fragment) = Fragment::decode(write.value()) {
+                    match reassembler.absorb(&fragment) {
+                        Some(frame) => admit_inbound_frame_with_backpressure(&data_in_tx, frame)
+                            .await
+                            .is_ok(),
+                        None => true,
+                    }
+                } else {
+                    true
+                }
+            }
+            WriteTarget::ColumbaRx => {
+                if slot.peer_protocol().is_none() && write.value().len() == 16 {
+                    let mut bytes = [0u8; 16];
+                    bytes.copy_from_slice(write.value());
+                    slot.identity_in.signal(BleIdentity::new(bytes));
+                    slot.set_peer_protocol(PeerProtocol::Columba);
+                    true
+                } else if slot.peer_protocol() == Some(PeerProtocol::Columba) {
+                    if let Some(fragment) = Fragment::decode(write.value()) {
+                        match reassembler.absorb(&fragment) {
+                            Some(frame) => {
+                                admit_inbound_frame_with_backpressure(&data_in_tx, frame)
+                                    .await
+                                    .is_ok()
+                            }
+                            None => true,
+                        }
+                    } else {
+                        true
+                    }
+                } else {
+                    true
+                }
+            }
+        };
+        if admitted {
+            BluetoothAutoStatus::new(&BLE_SHARED).note_successful_admission();
+            write.accept();
+        } else {
+            write.reject(GattError::ATTERR_INSUF_RESOURCES);
+        }
     }
 }
 
 async fn l2cap_pump(
     channel: &l2cap::Channel<L2capPacket>,
-    data_out_rx: Receiver<'static, Mtx, FrameBytes, DATA_DEPTH>,
-    data_in_tx: Sender<'static, Mtx, FrameBytes, DATA_DEPTH>,
+    data_out_rx: Receiver<'static, Mtx, SharedFrameLease, DATA_TOKEN_DEPTH>,
+    data_in_tx: Sender<'static, Mtx, SharedFrameLease, DATA_TOKEN_DEPTH>,
 ) {
     let outbound = async {
         loop {
             let frame = data_out_rx.receive().await;
+            let frame = frame.lock().await;
             if let Some(packet) = L2capPacket::from_frame(&frame) {
                 if channel.tx(packet).await.is_err() {
                     break;
@@ -795,9 +948,11 @@ async fn l2cap_pump(
             if frame.len() < len {
                 continue;
             }
-            let mut bytes = FrameBytes::new();
-            if bytes.extend_from_slice(&frame[..len]).is_ok() {
-                data_in_tx.send(bytes).await;
+            if admit_inbound_frame_with_backpressure(&data_in_tx, &frame[..len])
+                .await
+                .is_err()
+            {
+                break;
             }
         }
     };
@@ -817,46 +972,27 @@ async fn serve_peripheral(
     let data_out_rx = slot.data_out.receiver();
     let control_in_tx = slot.control_in.sender();
     let data_in_tx = slot.data_in.sender();
-    let mut reassembler: Reassembler<GATT_REASSEMBLY_CAP> = Reassembler::new();
+    let mut unacknowledged_reassembler: Reassembler<GATT_REASSEMBLY_CAP> = Reassembler::new();
 
-    let inbound = gatt_server::run(conn, server, |event| match event {
-        ServerEvent::Rns(rns) => match rns {
-            ReticulumServiceEvent::ControlWrite(value) => {
-                if let Some(ctrl) = Control::decode(&value) {
-                    if slot.peer_protocol().is_none() {
-                        slot.set_peer_protocol(PeerProtocol::Native);
-                    }
-                    if control_in_tx.try_send(ctrl).is_err() {
-                        worker.request_close();
-                    }
-                }
+    let inbound = gatt_server::run(conn, server, |write| match write.delivery() {
+        WriteDelivery::Acknowledged => {
+            if let Err(TrySendError::Full(write)) = slot.acknowledged_writes.try_send(write) {
+                BluetoothAutoStatus::new(&BLE_SHARED).note_ingress_pressure();
+                write.reject(GattError::ATTERR_INSUF_RESOURCES);
             }
-            ReticulumServiceEvent::ControlCccdWrite { .. } => {}
-            ReticulumServiceEvent::DataWrite(value) => {
-                if let Some(fragment) = Fragment::decode(&value) {
-                    if let Some(frame) = reassembler.absorb(&fragment) {
-                        admit_inbound_frame(&data_in_tx, frame, worker);
-                    }
-                }
-            }
-            ReticulumServiceEvent::DataCccdWrite { .. } => {}
-            ReticulumServiceEvent::ColumbaRxWrite(value) => {
-                if slot.peer_protocol().is_none() && value.len() == 16 {
-                    let mut bytes = [0u8; 16];
-                    bytes.copy_from_slice(&value);
-                    slot.identity_in.signal(BleIdentity::new(bytes));
-                    slot.set_peer_protocol(PeerProtocol::Columba);
-                } else if slot.peer_protocol() == Some(PeerProtocol::Columba) {
-                    if let Some(fragment) = Fragment::decode(&value) {
-                        if let Some(frame) = reassembler.absorb(&fragment) {
-                            admit_inbound_frame(&data_in_tx, frame, worker);
-                        }
-                    }
-                }
-            }
-            ReticulumServiceEvent::ColumbaTxCccdWrite { .. } => {}
-        },
+        }
+        WriteDelivery::Unacknowledged => {
+            let _ = process_unacknowledged_write(
+                &write,
+                slot,
+                &control_in_tx,
+                &data_in_tx,
+                &mut unacknowledged_reassembler,
+            );
+            write.accept();
+        }
     });
+    let acknowledged = process_acknowledged_writes(slot);
 
     let ready = async {
         let _ = slot.profile_ready.wait().await;
@@ -897,6 +1033,7 @@ async fn serve_peripheral(
             Some(channel) => l2cap_pump(&channel, data_out_rx, data_in_tx).await,
             None => loop {
                 let frame = data_out_rx.receive().await;
+                let frame = frame.lock().await;
                 for fragment in fragments_of(&frame, GATT_FRAGMENT_PAYLOAD) {
                     let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
                     if let Some(n) = fragment.encode(&mut buf) {
@@ -917,7 +1054,7 @@ async fn serve_peripheral(
     };
 
     let _ = select4(
-        select(inbound, ready),
+        select(select(inbound, acknowledged), ready),
         control_outbound,
         data,
         worker.wait_for_close(),
@@ -1022,14 +1159,16 @@ async fn serve_native_central(
         NativeReticulumClientEvent::ControlNotification(value) => {
             if let Some(ctrl) = Control::decode(&value) {
                 if control_in_tx.try_send(ctrl).is_err() {
-                    worker.request_close();
+                    let _ = record_ingress_pressure(IngressPressure::ControlQueueFull);
+                } else {
+                    BluetoothAutoStatus::new(&BLE_SHARED).note_successful_admission();
                 }
             }
         }
         NativeReticulumClientEvent::DataNotification(value) => {
             if let Some(fragment) = Fragment::decode(&value) {
                 if let Some(frame) = reassembler.absorb(&fragment) {
-                    admit_inbound_frame(&data_in_tx, frame, worker);
+                    let _ = admit_inbound_frame(&data_in_tx, frame);
                 }
             }
         }
@@ -1067,6 +1206,7 @@ async fn serve_native_central(
             Some(channel) => l2cap_pump(&channel, data_out_rx, data_in_tx).await,
             None => loop {
                 let frame = data_out_rx.receive().await;
+                let frame = frame.lock().await;
                 for fragment in fragments_of(&frame, GATT_FRAGMENT_PAYLOAD) {
                     let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
                     if let Some(n) = fragment.encode(&mut buf) {
@@ -1130,7 +1270,7 @@ async fn serve_columba_central(
         ColumbaReticulumClientEvent::TxNotification(value) => {
             if let Some(fragment) = Fragment::decode(&value) {
                 if let Some(frame) = reassembler.absorb(&fragment) {
-                    admit_inbound_frame(&data_in_tx, frame, worker);
+                    let _ = admit_inbound_frame(&data_in_tx, frame);
                 }
             }
         }
@@ -1139,6 +1279,7 @@ async fn serve_columba_central(
         let _ = slot.data_plane.wait().await;
         loop {
             let frame = data_out_rx.receive().await;
+            let frame = frame.lock().await;
             for fragment in fragments_of(&frame, GATT_FRAGMENT_PAYLOAD) {
                 let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
                 if let Some(n) = fragment.encode(&mut buf) {

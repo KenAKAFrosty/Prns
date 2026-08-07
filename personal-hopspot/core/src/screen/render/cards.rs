@@ -53,7 +53,7 @@ pub(in crate::screen) const fn connection_status_label(
         ConnectionState::Initializing => Some("Initializing"),
         ConnectionState::Connected => None,
         ConnectionState::Degraded => Some("Degraded"),
-        ConnectionState::Reconnecting => Some("Reconnecting"),
+        ConnectionState::Reconnecting => Some("Retrying"),
         ConnectionState::Failed => Some("Failed"),
         ConnectionState::Disconnected => match kind {
             CardKind::Wifi | CardKind::WifiStation | CardKind::WifiStationDisabled => {

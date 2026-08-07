@@ -53,7 +53,18 @@ pub use screen::{
     UiNotice, UiState, WifiNetworkStatus, WifiStationStatus,
 };
 
+use personal_rns::engine::{
+    EngineProtocolPolicy, LinkMtuDiscovery, LocalHopCountOverride, ProofForm,
+    RecursivePathRequestDefault,
+};
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceSnapshot, Membership};
+
+pub const EMBEDDED_HOPSPOT_PROTOCOL_POLICY: EngineProtocolPolicy = EngineProtocolPolicy {
+    proof_form: ProofForm::Implicit,
+    link_mtu_discovery: LinkMtuDiscovery::Enabled,
+    local_hop_count_override: LocalHopCountOverride::Disabled,
+    recursive_path_request_default: RecursivePathRequestDefault::Enabled,
+};
 
 /// The faces' redraw-coalescing window, in milliseconds. A burst of engine changes inside this span
 /// folds into one repaint (~30 fps). It bounds how fast a face repaints when things change; it is not

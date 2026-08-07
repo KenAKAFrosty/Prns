@@ -55,6 +55,12 @@ pub enum LinkMtuDiscovery {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecursivePathRequestDefault {
+    Disabled,
+    Enabled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LocalOriginHopCount(u8);
 
 impl LocalOriginHopCount {
@@ -107,6 +113,7 @@ pub struct EngineProtocolPolicy {
     pub proof_form: ProofForm,
     pub link_mtu_discovery: LinkMtuDiscovery,
     pub local_hop_count_override: LocalHopCountOverride,
+    pub recursive_path_request_default: RecursivePathRequestDefault,
 }
 
 impl Default for EngineProtocolPolicy {
@@ -115,6 +122,7 @@ impl Default for EngineProtocolPolicy {
             proof_form: ProofForm::Implicit,
             link_mtu_discovery: LinkMtuDiscovery::Enabled,
             local_hop_count_override: LocalHopCountOverride::Disabled,
+            recursive_path_request_default: RecursivePathRequestDefault::Disabled,
         }
     }
 }
@@ -495,6 +503,14 @@ mod tests {
         let state = EngineState::<TestStorageLayout>::default();
 
         assert!(state.identity_blackholes.is_empty());
+    }
+
+    #[test]
+    fn default_protocol_policy_keeps_host_recursive_discovery_disabled() {
+        assert_eq!(
+            EngineProtocolPolicy::default().recursive_path_request_default,
+            RecursivePathRequestDefault::Disabled,
+        );
     }
 
     #[test]

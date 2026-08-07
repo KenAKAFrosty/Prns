@@ -73,7 +73,7 @@ pub use registration::{
 };
 pub use state::{
     EngineProtocolPolicy, EngineState, LinkMtuDiscovery, LocalHopCountOverride,
-    LocalOriginHopCount, ProofForm,
+    LocalOriginHopCount, ProofForm, RecursivePathRequestDefault,
 };
 pub use tunnel::WriteTunnelSynthesizeError;
 pub use wake::{NextWake, WakeReason, WakeSchedule, WakeSchedules};

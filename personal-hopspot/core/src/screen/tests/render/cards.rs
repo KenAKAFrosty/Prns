@@ -13,7 +13,7 @@ fn cards_name_each_connection_state_without_a_dormant_bucket() {
         (
             CardKind::Tcp,
             ConnectionState::Reconnecting,
-            Some("Reconnecting"),
+            Some("Retrying"),
         ),
         (CardKind::Tcp, ConnectionState::Failed, Some("Failed")),
         (
