@@ -113,11 +113,7 @@
         "daemon-macos": [],
         "desktop-linux": [],
         "desktop-macos": [],
-        "desktop-windows": [],
-        "esp32-c6": [],
-        "esp32-s3-heltec": [],
-        "esp32-s3-heltec-r8": [],
-        "esp32-s3-tbeam": []
+        "desktop-windows": []
       },
       "name": "adler2",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -4445,6 +4441,7 @@
         "android": [
           "medium-ethernet",
           "multicast",
+          "proto-ipv4",
           "proto-ipv6",
           "tcp",
           "udp"
@@ -4452,6 +4449,7 @@
         "daemon-linux": [
           "medium-ethernet",
           "multicast",
+          "proto-ipv4",
           "proto-ipv6",
           "tcp",
           "udp"
@@ -4459,6 +4457,7 @@
         "daemon-macos": [
           "medium-ethernet",
           "multicast",
+          "proto-ipv4",
           "proto-ipv6",
           "tcp",
           "udp"
@@ -4466,6 +4465,7 @@
         "daemon-windows": [
           "medium-ethernet",
           "multicast",
+          "proto-ipv4",
           "proto-ipv6",
           "tcp",
           "udp"
@@ -4473,6 +4473,7 @@
         "desktop-linux": [
           "medium-ethernet",
           "multicast",
+          "proto-ipv4",
           "proto-ipv6",
           "tcp",
           "udp"
@@ -4480,6 +4481,7 @@
         "desktop-macos": [
           "medium-ethernet",
           "multicast",
+          "proto-ipv4",
           "proto-ipv6",
           "tcp",
           "udp"
@@ -4487,6 +4489,7 @@
         "desktop-windows": [
           "medium-ethernet",
           "multicast",
+          "proto-ipv4",
           "proto-ipv6",
           "tcp",
           "udp"
@@ -4534,6 +4537,7 @@
         "host-c-linux": [
           "medium-ethernet",
           "multicast",
+          "proto-ipv4",
           "proto-ipv6",
           "tcp",
           "udp"
@@ -4541,6 +4545,7 @@
         "host-c-macos": [
           "medium-ethernet",
           "multicast",
+          "proto-ipv4",
           "proto-ipv6",
           "tcp",
           "udp"
@@ -4548,6 +4553,7 @@
         "host-c-windows": [
           "medium-ethernet",
           "multicast",
+          "proto-ipv4",
           "proto-ipv6",
           "tcp",
           "udp"
@@ -4555,6 +4561,7 @@
         "ios": [
           "medium-ethernet",
           "multicast",
+          "proto-ipv4",
           "proto-ipv6",
           "tcp",
           "udp"
@@ -6051,7 +6058,7 @@
         ]
       },
       "name": "esp-radio",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "source": "personal-hopspot/embedded/esp32/vendor/esp-radio-0.18.0",
       "unsafe": {
         "blocks": 431,
         "externs": 508,
@@ -6740,26 +6747,6 @@
         "desktop-windows": [
           "any_impl",
           "default",
-          "miniz_oxide",
-          "rust_backend"
-        ],
-        "esp32-c6": [
-          "any_impl",
-          "miniz_oxide",
-          "rust_backend"
-        ],
-        "esp32-s3-heltec": [
-          "any_impl",
-          "miniz_oxide",
-          "rust_backend"
-        ],
-        "esp32-s3-heltec-r8": [
-          "any_impl",
-          "miniz_oxide",
-          "rust_backend"
-        ],
-        "esp32-s3-tbeam": [
-          "any_impl",
           "miniz_oxide",
           "rust_backend"
         ]
@@ -10843,26 +10830,6 @@
           "simd",
           "simd-adler32",
           "with-alloc"
-        ],
-        "esp32-c6": [
-          "simd",
-          "simd-adler32",
-          "with-alloc"
-        ],
-        "esp32-s3-heltec": [
-          "simd",
-          "simd-adler32",
-          "with-alloc"
-        ],
-        "esp32-s3-heltec-r8": [
-          "simd",
-          "simd-adler32",
-          "with-alloc"
-        ],
-        "esp32-s3-tbeam": [
-          "simd",
-          "simd-adler32",
-          "with-alloc"
         ]
       },
       "name": "miniz_oxide",
@@ -13934,11 +13901,11 @@
       "name": "personal-hopspot-esp32",
       "source": "personal-hopspot/embedded/esp32",
       "unsafe": {
-        "blocks": 18,
-        "externs": 0,
-        "functions": 2,
-        "impls": 2,
-        "tokens": 22
+        "blocks": 449,
+        "externs": 508,
+        "functions": 14,
+        "impls": 5,
+        "tokens": 1034
       },
       "version": "0.1.0"
     },
@@ -18319,11 +18286,7 @@
           "const-generics",
           "default",
           "std"
-        ],
-        "esp32-c6": [],
-        "esp32-s3-heltec": [],
-        "esp32-s3-heltec-r8": [],
-        "esp32-s3-tbeam": []
+        ]
       },
       "name": "simd-adler32",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -18488,6 +18451,7 @@
           "async",
           "medium-ethernet",
           "multicast",
+          "proto-ipv4",
           "proto-ipv6",
           "socket",
           "socket-tcp",
@@ -18497,6 +18461,7 @@
           "async",
           "medium-ethernet",
           "multicast",
+          "proto-ipv4",
           "proto-ipv6",
           "socket",
           "socket-tcp",
@@ -18506,6 +18471,7 @@
           "async",
           "medium-ethernet",
           "multicast",
+          "proto-ipv4",
           "proto-ipv6",
           "socket",
           "socket-tcp",
@@ -18515,6 +18481,7 @@
           "async",
           "medium-ethernet",
           "multicast",
+          "proto-ipv4",
           "proto-ipv6",
           "socket",
           "socket-tcp",
@@ -18524,6 +18491,7 @@
           "async",
           "medium-ethernet",
           "multicast",
+          "proto-ipv4",
           "proto-ipv6",
           "socket",
           "socket-tcp",
@@ -18533,6 +18501,7 @@
           "async",
           "medium-ethernet",
           "multicast",
+          "proto-ipv4",
           "proto-ipv6",
           "socket",
           "socket-tcp",
@@ -18542,6 +18511,7 @@
           "async",
           "medium-ethernet",
           "multicast",
+          "proto-ipv4",
           "proto-ipv6",
           "socket",
           "socket-tcp",
@@ -18607,6 +18577,7 @@
           "async",
           "medium-ethernet",
           "multicast",
+          "proto-ipv4",
           "proto-ipv6",
           "socket",
           "socket-tcp",
@@ -18616,6 +18587,7 @@
           "async",
           "medium-ethernet",
           "multicast",
+          "proto-ipv4",
           "proto-ipv6",
           "socket",
           "socket-tcp",
@@ -18625,6 +18597,7 @@
           "async",
           "medium-ethernet",
           "multicast",
+          "proto-ipv4",
           "proto-ipv6",
           "socket",
           "socket-tcp",
@@ -18634,6 +18607,7 @@
           "async",
           "medium-ethernet",
           "multicast",
+          "proto-ipv4",
           "proto-ipv6",
           "socket",
           "socket-tcp",
