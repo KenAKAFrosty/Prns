@@ -19,6 +19,9 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / "tools" / "release"
 sys.path.insert(0, str(SCRIPTS))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from script_launcher import script_launcher
 
 from flasher_build_metadata import EXPECTED_TOOLS, EXPECTED_WEB_PACKAGES
 from flasher_reproducibility import SEPARATE_ENVELOPES, payload_identity, payload_manifest
@@ -50,7 +53,8 @@ def sha256(path: Path) -> str:
 
 
 def run_script(script: str, *arguments: object, environment: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
-    command = [str(SCRIPTS / script), *(str(argument) for argument in arguments)]
+    target = SCRIPTS / script
+    command = [*script_launcher(target), str(target), *(str(argument) for argument in arguments)]
     return subprocess.run(
         command,
         cwd=ROOT,
@@ -63,7 +67,7 @@ def run_script(script: str, *arguments: object, environment: dict[str, str] | No
 
 def run_task(*arguments: object) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [str(ROOT / "tools" / "prns"), *(str(argument) for argument in arguments)],
+        [sys.executable, str(ROOT / "tools" / "prns"), *(str(argument) for argument in arguments)],
         cwd=ROOT,
         text=True,
         capture_output=True,
@@ -601,9 +605,12 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         archive = self.fixture.root / "website" / "source.zip"
         archive.write_bytes(archive.read_bytes() + b"tampered")
         checksum = self.fixture.root / "website" / "source.zip.sha256"
+        # The validator compares these bytes exactly against an LF-built expectation, so keep the
+        # newline out of Windows text-mode translation.
         checksum.write_text(
             f"{sha256(archive)}  source.zip\n",
             encoding="utf-8",
+            newline="",
         )
         report_path = self.fixture.root / "metadata" / "reproducibility.json"
         report = json.loads(report_path.read_text(encoding="utf-8"))

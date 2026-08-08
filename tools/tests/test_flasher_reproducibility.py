@@ -505,7 +505,11 @@ class FlasherReproducibilityTests(unittest.TestCase):
             Path("target/flasher-candidate"),
             cwd=repository,
         )
-        self.assertEqual(resolved, repository / "target" / "flasher-candidate")
+        # resolve_output resolves its result, and resolving a driveless path on Windows adds the
+        # current drive. Compare against the same resolution, not the literal fixture path.
+        self.assertEqual(
+            resolved, repository.resolve() / "target" / "flasher-candidate"
+        )
         with self.assertRaisesRegex(ValueError, "beneath target"):
             resolve_output(
                 repository,
