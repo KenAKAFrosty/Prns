@@ -1500,6 +1500,7 @@ class BleLink(private val context: Context) {
         }
     }
 
+    @Synchronized
     private fun startAdvertise(adapter: BluetoothAdapter) {
         if (!running || !radioActive || !advertisingWanted || advertiser != null) {
             return
