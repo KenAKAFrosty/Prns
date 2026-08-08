@@ -144,7 +144,7 @@ Make sure to read the first portion of this README. Once you have, all that's le
 
    (If you want to keep reading first, [there's a second helping of concepts here](docs/more-concepts.md#packet).)
 
-2) [Follow the Getting Started guide](docs/getting-started.md#getting-started) and experience one real result at a time.
+2) [Follow the Getting Started guide](docs/getting-started.md#getting-started) and experience one real result at a time. (Cloning on Windows? Run `git config --global core.longpaths true` first — some benchmark evidence paths exceed the default 260-character limit.)
 3) [Browse the example catalog](docs/examples.md) for the next step up.
 
 ## Coming from RNS

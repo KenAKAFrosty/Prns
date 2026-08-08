@@ -41,6 +41,8 @@ The fastest source-checkout journey creates two real nodes, connects them over T
 cargo tools guide rust-basics
 ```
 
+(On Windows, run the doctor as `.\tools\prns.cmd doctor getting-started`.)
+
 Continue through the [Rust example ladder](examples.md#rust), or open the [`personal-rns` crate guide](../personal-rns/README.md) for runtime and feature selection.
 
 ## TypeScript and JavaScript

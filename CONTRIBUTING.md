@@ -106,10 +106,10 @@ corroborated evidence.
 
 The repository has two deliberate control planes:
 
-- `./tools/prns` discovers and runs supported build, guide, release, device,
-  and repository operations. Start with `./tools/prns doctor getting-started`,
-  list tasks with `./tools/prns list`, and explain one with
-  `./tools/prns explain TASK_ID`.
+- `./tools/prns` (on Windows: `.\tools\prns.cmd`) discovers and runs supported
+  build, guide, release, device, and repository operations. Start with
+  `./tools/prns doctor getting-started`, list tasks with `./tools/prns list`,
+  and explain one with `./tools/prns explain TASK_ID`.
 - `python3 validation/run.py` (`python` on Windows) discovers and runs tests,
   proofs, interoperability checks, and release-readiness evidence. Use
   `--platform current` for portable plus current-host suites.

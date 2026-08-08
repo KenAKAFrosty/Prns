@@ -88,6 +88,6 @@ cargo prnsd status --config target/quickstart-node
 cargo prnsd stop
 ```
 
-(PowerShell uses `$env:PRNSD_STATE_DIR="$PWD\target\quickstart-service"`.)
+(PowerShell uses `$env:PRNSD_STATE_DIR="$PWD\target\quickstart-service"` and `.\tools\prns.cmd doctor node` in place of `./tools/prns doctor node`.)
 
 If `target/quickstart-node/config` does not exist, `prnsd` materializes the built-in configuration under that isolated directory, with transport and the supported automatic interfaces enabled. `cargo prnsd build` produces the locked release-profile artifact, and `cargo prnsd -- --help` prints the daemon's direct options without starting a managed session.

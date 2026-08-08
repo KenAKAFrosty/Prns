@@ -39,6 +39,9 @@ OTEL_METRIC_EXPORT_INTERVAL=5000 \
     --config "$HOME/.reticulum" --log-format json
 ```
 
+(On Windows, set the `$env:` variables as in the PowerShell block above;
+PowerShell's own `$HOME` works in the `--config` argument.)
+
 Open [the Prns health dashboard](http://127.0.0.1:3000/d/prns-observability/prns-health). The preset view includes:
 
 - daemon liveness
@@ -91,6 +94,10 @@ Invalid filters fail startup. Levels mean: `error` is a hard failure requiring a
 
 ```sh
 RUST_LOG=debug,prns.runtime=info cargo prnsd restart
+```
+
+```powershell
+$env:RUST_LOG = 'debug,prns.runtime=info'; cargo prnsd restart
 ```
 
 The built executable accepts the same lifecycle commands without Cargo. `prnsd run` is the explicit foreground mode for terminals and future native service managers. The portable managed session survives terminal exit, but does not start at login or boot and does not restart after a crash.

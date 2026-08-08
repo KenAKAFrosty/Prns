@@ -6,7 +6,8 @@ It does not read `config.toml`.
 Pass `--config DIR` to use `DIR/config`. Without an override, Unix hosts prefer
 `/etc/reticulum/config`, then `$HOME/.config/reticulum/config`, and finally
 `$HOME/.reticulum/config`. Non-Unix hosts use the corresponding home-directory locations and do
-not probe `/etc/reticulum`.
+not probe `/etc/reticulum`; on Windows that means `%USERPROFILE%\.config\reticulum\config`, then
+`%USERPROFILE%\.reticulum\config`.
 
 Settings belong under the stock sections:
 
@@ -365,7 +366,8 @@ pairing, services, and characteristics produce repair-focused interface errors. 
 seconds.
 
 RNodeMulti radios are nested beneath their physical device. Each enabled child requires a unique
-`vport` and complete radio configuration:
+`vport` and complete radio configuration. Serial `port` values are platform-native device names:
+`/dev/ttyACM0`-style paths on Linux and macOS, `COM3`-style names on Windows.
 
 ```ini
 [interfaces]

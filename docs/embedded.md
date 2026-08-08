@@ -73,6 +73,9 @@ cargo build --locked -p personal-rns --no-default-features \
 bash validation/platforms/no-std-esp-build.sh
 ```
 
+(The last rung is a bash script; on Windows run it from Git Bash, which
+installs with Git for Windows.)
+
 The Linux `embedded-builds` validation suite adds the Embassy interface cross-builds and T-Echo firmware:
 
 ```console

@@ -54,6 +54,8 @@ prnsd cp --listen -a 00112233445566778899aabbccddeeff --save ~/received
 prnsd cp report.bin DESTINATION_HASH
 ```
 
+(In PowerShell, pass the save directory as `--save "$HOME\received"`.)
+
 ## Remote execution security
 
 Start an execution endpoint with `x --listen`. Its default also permits nobody. Supply each allowed
@@ -68,6 +70,9 @@ hosts can plug in their own typed handler without providing a shell, process API
 prnsd x --listen -a 00112233445566778899aabbccddeeff
 prnsd x DESTINATION_HASH "uname -a"
 ```
+
+(The command runs on the listener's host, so pick one that exists there — for
+a Windows listener, for example, `prnsd x DESTINATION_HASH "cmd /c ver"`.)
 
 `--noid` suppresses client identification and is distinct from the listener's `--noauth` policy.
 

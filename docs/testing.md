@@ -81,12 +81,13 @@ When changing repository commands or guides, also run:
 ```console
 ./tools/prns verify
 python3 validation/run.py verify
-cargo test --locked -p docs
+cargo test --locked --manifest-path docs/website/Cargo.toml
 ```
 
+(On Windows: `.\tools\prns.cmd verify` and `python validation/run.py verify`.)
+
 The tool and validation registries reject missing or unowned implementations.
-Website tests reject unresolved canonical Markdown links and dead local guide
-routes.
+Website tests reject benchmark-results link regressions and route drift.
 
 ## Benchmarks are evidence, not unit tests
 

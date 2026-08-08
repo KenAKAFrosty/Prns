@@ -106,6 +106,8 @@ cargo benchmark --smoke
 cargo benchmark
 ```
 
+(On Windows, run the doctor as `.\tools\prns.cmd doctor benchmarks`.)
+
 The doctor checks your toolchain and installs nothing. The smoke run proves the machinery with reduced work, and the full run works the whole matrix one cell at a time, provisioning the pinned RNS reference environment itself. Every number it prints was made on your hardware, against the same RNS version the interoperability suite pins.
 
 ## Serve NomadNet pages directly from the daemon

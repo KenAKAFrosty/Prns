@@ -44,6 +44,10 @@ Desktop, from `desktop/`:
 
     cargo desktop
 
+On Windows the desktop build compiles SDL2 from the bundled source and links it
+statically, which requires CMake and the Visual Studio Build Tools C++ workload
+(MSVC). On macOS it links Homebrew's `sdl2` (`brew install sdl2`).
+
 ESP32 firmware, from `embedded/esp32/` with the board on USB:
 
     cargo heltec-v4-flash

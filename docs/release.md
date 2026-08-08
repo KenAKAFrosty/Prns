@@ -231,7 +231,9 @@ minisign -Vm release-record-v0.3.3.json \
 sha256sum --check SHA256SUMS.txt
 ```
 
-On macOS, use `shasum -a 256 -c SHA256SUMS.txt`. The release record binds native archives, signed flasher candidate, source and image SPDX SBOMs, image and platform digests, linkage reports, and GitHub provenance bundles into the exact checksum inventory.
+On macOS, use `shasum -a 256 -c SHA256SUMS.txt`. On Windows, compare
+`(Get-FileHash ARCHIVE -Algorithm SHA256).Hash` against the matching
+`SHA256SUMS.txt` entry. The release record binds native archives, signed flasher candidate, source and image SPDX SBOMs, image and platform digests, linkage reports, and GitHub provenance bundles into the exact checksum inventory.
 
 The unified prerelease passes two protected evidence tracks before stable promotion. Physical flasher qualification adds `qualification-evidence-v0.3.3.tar.gz`, a signed acceptance document, and `flasher-release-record-v0.3.3.json`. Railway qualification adds `deployment-qualification-v0.3.3.json`. Promotion accepts only these narrowly named supplements and independently reverifies workflow custody, Minisign signatures, exact source, artifact digests, and live GitHub attestations.
 
