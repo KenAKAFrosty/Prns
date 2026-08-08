@@ -91,7 +91,7 @@ impl PreflightError {
                 "Reconnect the device in bootloader mode and verify the selected board before retrying."
             }
             Self::Uf2Mount(_) => {
-                "Double-tap RESET, wait for exactly one TECHOBOOT drive, then retry."
+                "Double-tap RESET, wait for exactly one bootloader drive, then retry."
             }
             Self::Monitor(_) => {
                 "Close other serial tools, reconnect the device, and start monitoring again."
@@ -158,7 +158,7 @@ impl WriteVerifyResetError {
     const fn recovery(&self) -> &'static str {
         match self {
             Self::Uf2Delivery(_) => {
-                "Return the T-Echo to TECHOBOOT, then copy the complete verified UF2 again."
+                "Return the board to its bootloader drive, then copy the complete verified UF2 again."
             }
             Self::Write(_) | Self::Verify(_) | Self::Reset(_) | Self::DeviceLost(_) => {
                 "Hold BOOT, tap RESET, release BOOT, then restart the complete sparse flash operation."

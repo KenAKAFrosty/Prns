@@ -157,7 +157,8 @@
         "rust_target": "thumbv7em-none-eabihf",
         "family_id": "0xADA52840",
         "base_address": "0x27000",
-        "mount_label": "TECHOBOOT"
+        "mount_label": "TECHOBOOT",
+        "board_id_prefix": "nrf52840-techo-v"
       }
     }
   ]
