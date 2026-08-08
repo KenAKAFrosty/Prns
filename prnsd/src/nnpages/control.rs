@@ -1,4 +1,4 @@
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -507,7 +507,7 @@ fn sync_parent_directory(path: &Path) -> io::Result<()> {
             "atomic target has no parent directory",
         )
     })?;
-    File::open(parent)?.sync_all()
+    fs::File::open(parent)?.sync_all()
 }
 
 #[cfg(not(unix))]
