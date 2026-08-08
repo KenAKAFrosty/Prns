@@ -126,7 +126,16 @@ impl<Src: BleSource, Snk: BleSink> Interface for BluetoothPeer<Src, Snk> {
         loop {
             tokio::select! {
                 received = self.source.recv_frame(&mut buf) => {
-                    let Ok(len) = received else { break };
+                    let len = match received {
+                        Ok(len) => len,
+                        Err(error) => {
+                            crate::diagnostic_log::warn!(
+                                "bluetooth: peer {:?} receive closed: {error:?}",
+                                self.identity
+                            );
+                            break;
+                        }
+                    };
                     if len == 0 {
                         continue;
                     }
@@ -138,7 +147,11 @@ impl<Src: BleSource, Snk: BleSink> Interface for BluetoothPeer<Src, Snk> {
                         continue;
                     }
                     let outbound_len = outbound.len();
-                    if self.sink.send_frame(outbound).await.is_err() {
+                    if let Err(error) = self.sink.send_frame(outbound).await {
+                        crate::diagnostic_log::warn!(
+                            "bluetooth: peer {:?} send closed: {error:?}",
+                            self.identity
+                        );
                         break;
                     }
                     self.status.add_tx(outbound_len as u64);

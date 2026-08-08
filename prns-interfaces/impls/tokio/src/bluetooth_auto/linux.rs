@@ -149,6 +149,9 @@ pub enum BluerError {
     FrameTooLarge,
     DialTimeout,
     L2capTimeout,
+    GattNotificationsEnded,
+    GattWriteChannelEnded,
+    GattDataReaderUnavailable,
     Closed,
 }
 
@@ -276,7 +279,6 @@ struct PendingData {
 }
 
 struct AwaitingDataReader {
-    opened_at: Instant,
     sender: oneshot::Sender<CharacteristicReader>,
 }
 
@@ -303,12 +305,6 @@ impl PendingData {
         }
     }
 
-    fn expired(&self, now: Instant) -> bool {
-        now.saturating_duration_since(self.opened_at) >= GATT_HALF_OPEN_TIMEOUT
-    }
-}
-
-impl AwaitingDataReader {
     fn expired(&self, now: Instant) -> bool {
         now.saturating_duration_since(self.opened_at) >= GATT_HALF_OPEN_TIMEOUT
     }
@@ -369,7 +365,7 @@ enum ServerData {
         writer: CharacteristicWriter,
         reader: DataRead,
     },
-    SingleChar,
+    Columba,
 }
 
 type ConnectFuture = Pin<Box<dyn Future<Output = (Address, Result<BluerLink, BluerError>)> + Send>>;
@@ -549,6 +545,33 @@ impl BluerBackend {
         let name = device.name().await.ok().flatten();
         let manufacturer_data = device.manufacturer_data().await.ok().flatten();
         identifies_prns_fallback(name.as_deref(), manufacturer_data.as_ref())
+    }
+
+    async fn release_stale_prns_links(&self) {
+        let Ok(addresses) = self.adapter.device_addresses().await else {
+            return;
+        };
+        for address in addresses {
+            if address == self.address {
+                continue;
+            }
+            let Ok(device) = self.adapter.device(address) else {
+                continue;
+            };
+            if !device.is_connected().await.unwrap_or(false)
+                || !self.advertises_our_service(address).await
+            {
+                continue;
+            }
+            match self.adapter.remove_device(address).await {
+                Ok(()) => crate::diagnostic_log::debug!(
+                    "bluetooth: released stale Prns link {address} from the previous process generation"
+                ),
+                Err(error) => crate::diagnostic_log::warn!(
+                    "bluetooth: stale Prns link {address} could not be released: {error}"
+                ),
+            }
+        }
     }
 
     async fn should_dial(&self, address: Address) -> bool {
@@ -747,8 +770,6 @@ impl BluerBackend {
         self.pending_columba
             .retain(|_, pending| !pending.expired(now));
         self.pending_data.retain(|_, pending| !pending.expired(now));
-        self.awaiting_data_reader
-            .retain(|_, pending| !pending.expired(now));
     }
 
     fn recover_gatt_server(&mut self) {
@@ -828,6 +849,32 @@ impl BluerBackend {
         if !ready {
             return None;
         }
+        self.take_ready_accepted_link(protocol, address)
+    }
+
+    fn take_ready_accepted_link(
+        &mut self,
+        protocol: PeerProtocol,
+        address: Address,
+    ) -> Option<AcceptedLink> {
+        let pending = match protocol {
+            PeerProtocol::Native => &mut self.pending,
+            PeerProtocol::Columba => &mut self.pending_columba,
+        };
+        if !pending
+            .get(&address)
+            .is_some_and(|entry| entry.reader.is_some() && entry.writer.is_some())
+        {
+            return None;
+        }
+        let data = match protocol {
+            PeerProtocol::Native => self.take_server_data(address)?,
+            PeerProtocol::Columba => ServerData::Columba,
+        };
+        let pending = match protocol {
+            PeerProtocol::Native => &mut self.pending,
+            PeerProtocol::Columba => &mut self.pending_columba,
+        };
         let Some(PendingHalves {
             reader: Some(reader),
             writer: Some(writer),
@@ -836,9 +883,9 @@ impl BluerBackend {
         else {
             return None;
         };
-        let (data, l2cap) = match protocol {
-            PeerProtocol::Native => (self.take_server_data(address), self.register_l2cap(address)),
-            PeerProtocol::Columba => (ServerData::SingleChar, None),
+        let l2cap = match protocol {
+            PeerProtocol::Native => self.register_l2cap(address),
+            PeerProtocol::Columba => None,
         };
         Some(AcceptedLink {
             peer_protocol: protocol,
@@ -857,36 +904,28 @@ impl BluerBackend {
         Some(router.register(address))
     }
 
-    fn take_server_data(&mut self, address: Address) -> ServerData {
-        let data = self
-            .pending_data
-            .remove(&address)
-            .unwrap_or_else(PendingData::new);
-        match data.writer {
-            Some(writer) => {
-                let reader = match data.reader {
-                    Some(reader) => DataRead::Ready(reader),
-                    None => {
-                        let (tx, rx) = oneshot::channel();
-                        if can_admit_address(&self.awaiting_data_reader, address) {
-                            self.awaiting_data_reader.insert(
-                                address,
-                                AwaitingDataReader {
-                                    opened_at: Instant::now(),
-                                    sender: tx,
-                                },
-                            );
-                        }
-                        DataRead::Pending(rx)
-                    }
-                };
-                ServerData::TwoChar { writer, reader }
-            }
-            None => ServerData::SingleChar,
+    fn take_server_data(&mut self, address: Address) -> Option<ServerData> {
+        let needs_reader = self.pending_data.get(&address)?.reader.is_none();
+        if needs_reader && !can_admit_address(&self.awaiting_data_reader, address) {
+            return None;
         }
+        let data = self.pending_data.get_mut(&address)?;
+        let writer = data.writer.take()?;
+        let reader = data.reader.take();
+        self.pending_data.remove(&address);
+        let reader = match reader {
+            Some(reader) => DataRead::Ready(reader),
+            None => {
+                let (tx, rx) = oneshot::channel();
+                self.awaiting_data_reader
+                    .insert(address, AwaitingDataReader { sender: tx });
+                DataRead::Pending(rx)
+            }
+        };
+        Some(ServerData::TwoChar { writer, reader })
     }
 
-    fn admit_data_half(&mut self, address: Address, half: Half) {
+    fn admit_data_half(&mut self, address: Address, half: Half) -> Option<AcceptedLink> {
         match half {
             Half::Writer(writer) => {
                 if can_admit_address(&self.pending_data, address) {
@@ -899,6 +938,7 @@ impl BluerBackend {
             Half::Reader(reader) => match self.awaiting_data_reader.remove(&address) {
                 Some(pending) => {
                     let _ = pending.sender.send(reader);
+                    return None;
                 }
                 None => {
                     if can_admit_address(&self.pending_data, address) {
@@ -910,6 +950,7 @@ impl BluerBackend {
                 }
             },
         }
+        self.take_ready_accepted_link(PeerProtocol::Native, address)
     }
 }
 
@@ -1092,6 +1133,7 @@ impl BleBackend<{ BluerBackend::MAX_PEERS }> for BluerBackend {
             return Ok(());
         }
         self.adapter.set_powered(true).await?;
+        self.release_stale_prns_links().await;
         self.radio_power = RadioPower::On;
         crate::diagnostic_log::debug!("bluetooth: Linux BLE radio resources up");
         self.reconcile_advertisement().await
@@ -1254,7 +1296,15 @@ impl BleBackend<{ BluerBackend::MAX_PEERS }> for BluerBackend {
                 }
                 Observed::DataHalf { address, half } => {
                     self.prune_half_open_gatt(Instant::now());
-                    self.admit_data_half(address, half);
+                    if let Some(link) = self.admit_data_half(address, half) {
+                        let peer_rssi = self.peer_rssi(address).await;
+                        crate::diagnostic_log::debug!("bluetooth: inbound link from {address}");
+                        return BleEvent::LinkReady {
+                            link: BluerLink::Accepted(Box::new(link)),
+                            origin: Origin::Accepted,
+                            peer_rssi,
+                        };
+                    }
                 }
                 Observed::DiscoveryEnded => {
                     let now = Instant::now();
@@ -1736,11 +1786,11 @@ impl BleLink for AcceptedLink {
                     ServerData::TwoChar { writer, reader } => {
                         let rx = match reader {
                             DataRead::Ready(reader) => GattRx::Reader(reader),
-                            DataRead::Pending(pending) => GattRx::Pending(Some(pending)),
+                            DataRead::Pending(pending) => GattRx::Pending(pending),
                         };
                         (rx, GattTx::Writer(writer))
                     }
-                    ServerData::SingleChar => {
+                    ServerData::Columba => {
                         (GattRx::Reader(self.reader), GattTx::Writer(self.writer))
                     }
                 };
@@ -1837,7 +1887,7 @@ impl BleSink for BluerSink {
 enum GattRx {
     Notify(Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>),
     Reader(CharacteristicReader),
-    Pending(Option<oneshot::Receiver<CharacteristicReader>>),
+    Pending(oneshot::Receiver<CharacteristicReader>),
 }
 
 enum GattTx {
@@ -1866,18 +1916,22 @@ impl BleSource for GattSource {
     async fn recv_frame(&mut self, out: &mut [u8]) -> Result<usize, BluerError> {
         loop {
             let chunk = match &mut self.rx {
-                GattRx::Notify(notify) => notify.next().await.ok_or(BluerError::Closed)?,
+                GattRx::Notify(notify) => notify
+                    .next()
+                    .await
+                    .ok_or(BluerError::GattNotificationsEnded)?,
                 GattRx::Reader(reader) => {
                     let mut scratch = [0u8; BLE_HW_MTU];
                     let read = reader.read(&mut scratch).await?;
                     if read == 0 {
-                        return Err(BluerError::Closed);
+                        return Err(BluerError::GattWriteChannelEnded);
                     }
                     scratch[..read].to_vec()
                 }
-                GattRx::Pending(slot) => {
-                    let pending = slot.take().ok_or(BluerError::Closed)?;
-                    let reader = pending.await.map_err(|_| BluerError::Closed)?;
+                GattRx::Pending(pending) => {
+                    let reader = pending
+                        .await
+                        .map_err(|_| BluerError::GattDataReaderUnavailable)?;
                     self.rx = GattRx::Reader(reader);
                     continue;
                 }
@@ -1997,6 +2051,30 @@ mod tests {
 
         assert!(can_admit_address(&entries, Address::new([0; 6])));
         assert!(!can_admit_address(&entries, Address::new([0xff; 6])));
+    }
+
+    #[tokio::test]
+    async fn pending_data_reader_survives_a_cancelled_receive() {
+        let (sender, receiver) = oneshot::channel::<CharacteristicReader>();
+        let mut source = GattSource {
+            rx: GattRx::Pending(receiver),
+            reassembler: Reassembler::new(),
+        };
+        let mut out = [0u8; BLE_HW_MTU];
+
+        {
+            let mut receive = Box::pin(source.recv_frame(&mut out));
+            assert!(matches!(
+                futures_util::poll!(&mut receive),
+                std::task::Poll::Pending
+            ));
+        }
+
+        drop(sender);
+        assert!(matches!(
+            source.recv_frame(&mut out).await,
+            Err(BluerError::GattDataReaderUnavailable)
+        ));
     }
 
     #[test]
