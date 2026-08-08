@@ -1,6 +1,7 @@
 mod backend;
 mod bridge;
 mod link;
+mod outbound;
 
 #[cfg(test)]
 mod tests;

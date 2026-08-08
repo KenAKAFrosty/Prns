@@ -92,6 +92,7 @@ class BleLink(private val context: Context) {
     private val workers = CopyOnWriteArraySet<Thread>()
     private val radioWorkers = CopyOnWriteArraySet<Thread>()
     private val linkWorkers = ConcurrentHashMap<Int, CopyOnWriteArraySet<Thread>>()
+    private val l2capOpening = ConcurrentHashMap.newKeySet<Int>()
 
     private enum class BlePeerProtocol {
         Native,
@@ -150,6 +151,9 @@ class BleLink(private val context: Context) {
 
         @Volatile
         var l2capSocket: BluetoothSocket? = null
+
+        @Volatile
+        var openingL2capSocket: BluetoothSocket? = null
 
         @Synchronized
         fun beginGattOperation(operation: PendingGattOperation): Boolean {
@@ -322,6 +326,9 @@ class BleLink(private val context: Context) {
                     else -> BluetoothGatt.GATT_FAILURE
                 }
                 gattServer?.sendResponse(device, requestId, status, offset, null)
+            }
+            if (admission == NativeBridge.BLE_INGRESS_CLOSED) {
+                inboundByAddr[device.address]?.let(::closeLink)
             }
         }
 
@@ -956,27 +963,61 @@ class BleLink(private val context: Context) {
                     Log.w(TAG, "l2cap open[$connId] psm=$psm but no device")
                     continue
                 }
-                var attempt = 0
-                var opened = false
-                while (attempt < L2CAP_OPEN_RETRIES && !opened && running && radioActive && links.containsKey(connId)) {
-                    try {
-                        val socket = device.createInsecureL2capChannel(psm)
-                        socket.connect()
-                        Log.i(TAG, "l2cap client[$connId] connected to psm=$psm attempt=$attempt")
-                        link.l2capSocket = socket
-                        NativeBridge.nativeBleL2capUp(connId)
-                        startL2capPumps(connId, socket)
-                        opened = true
-                    } catch (e: Exception) {
-                        attempt++
-                        Log.w(TAG, "l2cap client[$connId] psm=$psm attempt=$attempt failed: $e")
-                        if (attempt < L2CAP_OPEN_RETRIES) {
-                            Thread.sleep(L2CAP_OPEN_RETRY_MS)
-                        }
-                    }
+                if (!l2capOpening.add(connId)) {
+                    continue
                 }
-                if (!opened) {
-                    Log.w(TAG, "l2cap client[$connId] psm=$psm gave up after $attempt attempts; staying on GATT")
+                startLinkWorker(connId, "l2cap-open-$connId") {
+                    var attempt = 0
+                    var opened = false
+                    try {
+                        while (attempt < L2CAP_OPEN_RETRIES &&
+                            !opened &&
+                            running &&
+                            radioActive &&
+                            links.containsKey(connId)
+                        ) {
+                            val socket = try {
+                                device.createInsecureL2capChannel(psm)
+                            } catch (e: Exception) {
+                                attempt++
+                                Log.w(TAG, "l2cap client[$connId] psm=$psm attempt=$attempt failed: $e")
+                                if (attempt < L2CAP_OPEN_RETRIES) {
+                                    Thread.sleep(L2CAP_OPEN_RETRY_MS)
+                                }
+                                continue
+                            }
+                            link.openingL2capSocket = socket
+                            try {
+                                socket.connect()
+                                if (!running || !radioActive || !links.containsKey(connId)) {
+                                    runCatching { socket.close() }
+                                    break
+                                }
+                                Log.i(TAG, "l2cap client[$connId] connected to psm=$psm attempt=$attempt")
+                                link.openingL2capSocket = null
+                                link.l2capSocket = socket
+                                NativeBridge.nativeBleL2capUp(connId)
+                                startL2capPumps(connId, socket)
+                                opened = true
+                            } catch (e: Exception) {
+                                attempt++
+                                runCatching { socket.close() }
+                                Log.w(TAG, "l2cap client[$connId] psm=$psm attempt=$attempt failed: $e")
+                                if (attempt < L2CAP_OPEN_RETRIES) {
+                                    Thread.sleep(L2CAP_OPEN_RETRY_MS)
+                                }
+                            } finally {
+                                if (link.openingL2capSocket === socket) {
+                                    link.openingL2capSocket = null
+                                }
+                            }
+                        }
+                    } finally {
+                        l2capOpening.remove(connId)
+                    }
+                    if (!opened && running && radioActive && links.containsKey(connId)) {
+                        Log.w(TAG, "l2cap client[$connId] psm=$psm gave up after $attempt attempts; staying on GATT")
+                    }
                 }
             }
         }
@@ -1258,7 +1299,9 @@ class BleLink(private val context: Context) {
                 }
                 val dataLane = characteristic.uuid == NATIVE_DATA || characteristic.uuid == COLUMBA_TX
                 Log.i(TAG, "dialer[$connId] notify ${if (dataLane) "DATA" else "CONTROL"} ${value.size}B")
-                deliverGattInbound(connId, dataLane, value)
+                if (deliverGattInbound(connId, dataLane, value) == NativeBridge.BLE_INGRESS_CLOSED) {
+                    closeLink(connId)
+                }
             }
         }
 
@@ -1352,7 +1395,12 @@ class BleLink(private val context: Context) {
         columbaSubscribedCentrals.remove(link.address)
         dialingAddrs.remove(link.address)
         connectedAddrs.remove(link.address)
+        runCatching { link.openingL2capSocket?.close() }
         runCatching { link.l2capSocket?.close() }
+        if (!link.dialed) {
+            link.central?.let { central -> runCatching { gattServer?.cancelConnection(central) } }
+        }
+        runCatching { link.clientGatt?.disconnect() }
         runCatching { link.clientGatt?.close() }
         ownedWorkers.forEach(Thread::interrupt)
         NativeBridge.nativeBleDisconnected(connId)
@@ -1536,6 +1584,7 @@ class BleLink(private val context: Context) {
         dialingAddrs.clear()
         connectedAddrs.clear()
         linkedConnIds.clear()
+        l2capOpening.clear()
         val current = Thread.currentThread()
         radioWorkers.filter { it !== current }.forEach(Thread::interrupt)
     }

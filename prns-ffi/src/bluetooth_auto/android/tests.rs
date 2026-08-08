@@ -61,8 +61,8 @@ fn inbound_link_queues_are_bounded() {
     assert_eq!(bridge.ingress_pressure_events(), 2);
 }
 
-#[test]
-fn outbound_messages_remain_owned_until_commit() {
+#[tokio::test]
+async fn outbound_messages_remain_owned_until_commit() {
     let bridge = AndroidBleBridge::new();
     assert!(bridge.link_up(9, [1, 2, 3, 4, 5, 7], None, true));
     let (control, data) = {
@@ -70,8 +70,8 @@ fn outbound_messages_remain_owned_until_commit() {
         let endpoints = links.get(&9).unwrap();
         (endpoints.control_out.clone(), endpoints.data_out.clone())
     };
-    control.lock().unwrap().extend([vec![1, 2], vec![3, 4, 5]]);
-    data.lock().unwrap().extend([vec![6, 7], vec![8, 9, 10]]);
+    control.push(vec![vec![1, 2], vec![3, 4, 5]]).await.unwrap();
+    data.push(vec![vec![6, 7], vec![8, 9, 10]]).await.unwrap();
 
     let mut out = [0u8; 8];
     assert_eq!(bridge.control_out(9, &mut out), 2);
@@ -89,6 +89,79 @@ fn outbound_messages_remain_owned_until_commit() {
     assert!(bridge.commit_data_out(9));
     assert_eq!(bridge.data_out(9, &mut out), 3);
     assert_eq!(&out[..3], &[8, 9, 10]);
+}
+
+#[tokio::test]
+async fn outbound_pressure_waits_for_commit_and_link_closure_wakes_waiters() {
+    let bridge = AndroidBleBridge::new();
+    assert!(bridge.link_up(10, [1, 2, 3, 4, 5, 8], None, true));
+    let data = {
+        let links = bridge.shared.links.lock().unwrap();
+        links.get(&10).unwrap().data_out.clone()
+    };
+    data.push((0..16).map(|byte| vec![byte]).collect())
+        .await
+        .unwrap();
+
+    let waiting_data = data.clone();
+    let mut waiting = tokio::spawn(async move { waiting_data.push(vec![vec![17]]).await });
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), &mut waiting)
+            .await
+            .is_err()
+    );
+
+    let mut out = [0u8; 8];
+    assert_eq!(bridge.data_out(10, &mut out), 1);
+    assert!(bridge.commit_data_out(10));
+    assert!(tokio::time::timeout(Duration::from_secs(1), waiting)
+        .await
+        .unwrap()
+        .unwrap()
+        .is_ok());
+
+    let waiting_data = data.clone();
+    let mut waiting = tokio::spawn(async move { waiting_data.push(vec![vec![18]]).await });
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), &mut waiting)
+            .await
+            .is_err()
+    );
+    bridge.disconnected(10);
+    assert!(matches!(
+        tokio::time::timeout(Duration::from_secs(1), waiting)
+            .await
+            .unwrap()
+            .unwrap(),
+        Err(super::outbound::OutboundQueueError::Closed)
+    ));
+}
+
+#[tokio::test]
+async fn outbound_stream_pressure_waits_for_drain() {
+    let queue = std::sync::Arc::new(super::outbound::BoundedByteQueue::new(2));
+    queue.push(&[1, 2]).await.unwrap();
+
+    let waiting_queue = queue.clone();
+    let mut waiting = tokio::spawn(async move { waiting_queue.push(&[3]).await });
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), &mut waiting)
+            .await
+            .is_err()
+    );
+
+    let mut out = [0u8; 1];
+    assert_eq!(queue.drain(&mut out), 1);
+    assert_eq!(out, [1]);
+    assert!(tokio::time::timeout(Duration::from_secs(1), waiting)
+        .await
+        .unwrap()
+        .unwrap()
+        .is_ok());
+    assert_eq!(queue.drain(&mut out), 1);
+    assert_eq!(out, [2]);
+    assert_eq!(queue.drain(&mut out), 1);
+    assert_eq!(out, [3]);
 }
 
 #[test]

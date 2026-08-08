@@ -12,14 +12,13 @@ use prns_core::interfaces::bluetooth_auto::{
 use prns_core::interfaces::bluetooth_auto::{BleLink, BleSink, BleSource};
 
 use super::bridge::{LinkSignal, WorkSignal};
+use super::outbound::{BoundedByteQueue, BoundedMessageQueue, OutboundQueueError};
 use super::AndroidBleError;
 
 const L2CAP_SDU_LEN: usize = STREAM_FRAME_PREFIX_LEN + BLE_HW_MTU;
 const GATT_REASSEMBLY_CAP: usize = 600;
 const GATT_FRAGMENT_PAYLOAD: usize = 180;
 const MERGED_IN_DEPTH: usize = 16;
-const OUTBOUND_BYTE_CAP: usize = 8 * BLE_HW_MTU;
-const OUTBOUND_FRAME_DEPTH: usize = 16;
 
 pub struct AndroidBleLink {
     pub(super) conn_id: u32,
@@ -29,9 +28,9 @@ pub struct AndroidBleLink {
     pub(super) control_in: Receiver<Vec<u8>>,
     pub(super) l2cap_in: Option<Receiver<Vec<u8>>>,
     pub(super) data_in: Option<Receiver<Vec<u8>>>,
-    pub(super) control_out: Arc<Mutex<VecDeque<Vec<u8>>>>,
-    pub(super) l2cap_out: Arc<Mutex<VecDeque<u8>>>,
-    pub(super) data_out: Arc<Mutex<VecDeque<Vec<u8>>>>,
+    pub(super) control_out: Arc<BoundedMessageQueue>,
+    pub(super) l2cap_out: Arc<BoundedByteQueue>,
+    pub(super) data_out: Arc<BoundedMessageQueue>,
     pub(super) l2cap_up: Arc<LinkSignal>,
     pub(super) l2cap_opens: Arc<Mutex<VecDeque<(u32, u16)>>>,
     pub(super) work: Arc<WorkSignal>,
@@ -54,12 +53,10 @@ impl BleLink for AndroidBleLink {
         &mut self,
         identity: BleIdentity,
     ) -> Result<(), AndroidBleError> {
-        let mut out = self.data_out.lock().map_err(|_| AndroidBleError::Closed)?;
-        if out.len() >= OUTBOUND_FRAME_DEPTH {
-            return Err(AndroidBleError::QueueFull);
-        }
-        out.push_back(identity.as_bytes().to_vec());
-        drop(out);
+        self.data_out
+            .push(vec![identity.as_bytes().to_vec()])
+            .await
+            .map_err(queue_error)?;
         self.work.wake();
         Ok(())
     }
@@ -73,16 +70,10 @@ impl BleLink for AndroidBleLink {
         let len = msg
             .encode(&mut buf)
             .ok_or(AndroidBleError::ControlTooLarge)?;
-        let mut out = self
-            .control_out
-            .lock()
-            .map_err(|_| AndroidBleError::Closed)?;
-        let queued_bytes = out.iter().map(Vec::len).sum::<usize>();
-        if queued_bytes.saturating_add(len) > OUTBOUND_BYTE_CAP {
-            return Err(AndroidBleError::QueueFull);
-        }
-        out.push_back(buf[..len].to_vec());
-        drop(out);
+        self.control_out
+            .push(vec![buf[..len].to_vec()])
+            .await
+            .map_err(queue_error)?;
         self.work.wake();
         Ok(())
     }
@@ -187,8 +178,8 @@ impl BleSource for AndroidBleSource {
 }
 
 pub struct AndroidBleSink {
-    l2cap_out: Arc<Mutex<VecDeque<u8>>>,
-    gatt_out: Arc<Mutex<VecDeque<Vec<u8>>>>,
+    l2cap_out: Arc<BoundedByteQueue>,
+    gatt_out: Arc<BoundedMessageQueue>,
     l2cap_up: Arc<LinkSignal>,
     work: Arc<WorkSignal>,
 }
@@ -201,26 +192,29 @@ impl BleSink for AndroidBleSink {
             let mut framed = [0u8; L2CAP_SDU_LEN];
             let len =
                 encode_stream_frame(frame, &mut framed).ok_or(AndroidBleError::FrameTooLarge)?;
-            let mut out = self.l2cap_out.lock().map_err(|_| AndroidBleError::Closed)?;
-            if out.len().saturating_add(len) > OUTBOUND_BYTE_CAP {
-                return Err(AndroidBleError::QueueFull);
-            }
-            out.extend(framed[..len].iter().copied());
+            self.l2cap_out
+                .push(&framed[..len])
+                .await
+                .map_err(queue_error)?;
         } else {
-            let fragment_count = frame.len().div_ceil(GATT_FRAGMENT_PAYLOAD);
-            let mut out = self.gatt_out.lock().map_err(|_| AndroidBleError::Closed)?;
-            if out.len().saturating_add(fragment_count) > OUTBOUND_FRAME_DEPTH {
-                return Err(AndroidBleError::QueueFull);
-            }
             let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
+            let mut messages = Vec::with_capacity(frame.len().div_ceil(GATT_FRAGMENT_PAYLOAD));
             for fragment in fragments_of(frame, GATT_FRAGMENT_PAYLOAD) {
                 let len = fragment
                     .encode(&mut buf)
                     .ok_or(AndroidBleError::FrameTooLarge)?;
-                out.push_back(buf[..len].to_vec());
+                messages.push(buf[..len].to_vec());
             }
+            self.gatt_out.push(messages).await.map_err(queue_error)?;
         }
         self.work.wake();
         Ok(())
+    }
+}
+
+fn queue_error(error: OutboundQueueError) -> AndroidBleError {
+    match error {
+        OutboundQueueError::Closed => AndroidBleError::Closed,
+        OutboundQueueError::ItemTooLarge => AndroidBleError::FrameTooLarge,
     }
 }
