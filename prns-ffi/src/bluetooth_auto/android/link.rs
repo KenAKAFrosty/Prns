@@ -29,7 +29,7 @@ pub struct AndroidBleLink {
     pub(super) control_in: Receiver<Vec<u8>>,
     pub(super) l2cap_in: Option<Receiver<Vec<u8>>>,
     pub(super) data_in: Option<Receiver<Vec<u8>>>,
-    pub(super) control_out: Arc<Mutex<VecDeque<u8>>>,
+    pub(super) control_out: Arc<Mutex<VecDeque<Vec<u8>>>>,
     pub(super) l2cap_out: Arc<Mutex<VecDeque<u8>>>,
     pub(super) data_out: Arc<Mutex<VecDeque<Vec<u8>>>>,
     pub(super) l2cap_up: Arc<LinkSignal>,
@@ -77,10 +77,11 @@ impl BleLink for AndroidBleLink {
             .control_out
             .lock()
             .map_err(|_| AndroidBleError::Closed)?;
-        if out.len().saturating_add(len) > OUTBOUND_BYTE_CAP {
+        let queued_bytes = out.iter().map(Vec::len).sum::<usize>();
+        if queued_bytes.saturating_add(len) > OUTBOUND_BYTE_CAP {
             return Err(AndroidBleError::QueueFull);
         }
-        out.extend(buf[..len].iter().copied());
+        out.push_back(buf[..len].to_vec());
         drop(out);
         self.work.wake();
         Ok(())
@@ -105,7 +106,15 @@ impl BleLink for AndroidBleLink {
         }
         if let L2capPlan::Open { psm } = plan {
             if let Ok(mut opens) = self.l2cap_opens.lock() {
+                if opens.iter().any(|(conn_id, _)| *conn_id == self.conn_id) {
+                    return Ok(());
+                }
+                if opens.len() >= super::bridge::PEER_CAPACITY {
+                    return Err(AndroidBleError::QueueFull);
+                }
                 opens.push_back((self.conn_id, psm.get()));
+            } else {
+                return Err(AndroidBleError::Closed);
             }
             self.work.wake();
         }
