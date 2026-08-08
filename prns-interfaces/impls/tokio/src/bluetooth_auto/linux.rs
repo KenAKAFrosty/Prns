@@ -1365,14 +1365,20 @@ impl BleBackend<{ BluerBackend::MAX_PEERS }> for BluerBackend {
         if self.connecting.contains(&target) {
             return DialOutcome::Started;
         }
+        self.discovery = None;
+        self.discovery_health.retry_at = None;
         self.connecting.insert(target);
         let adapter = self.adapter.clone();
+        let cleanup_adapter = adapter.clone();
         self.connects.push(Box::pin(async move {
             let result =
                 match tokio::time::timeout(CONNECT_TIMEOUT, connect_link(adapter, target)).await {
                     Ok(result) => result,
                     Err(_) => Err(BluerError::DialTimeout),
                 };
+            if result.is_err() {
+                let _ = cleanup_adapter.remove_device(target).await;
+            }
             (target, result)
         }));
         DialOutcome::Started
