@@ -124,6 +124,14 @@ fn lower_dual_role_address_dials_and_higher_address_accepts() {
 }
 
 #[test]
+fn hci_addresses_compare_in_display_order() {
+    assert_eq!(
+        BleAddress::from_hci_bytes([0x17, 0x27, 0x0c, 0x6a, 0x46, 0xfd]),
+        BleAddress::new([0xfd, 0x46, 0x6a, 0x0c, 0x27, 0x17])
+    );
+}
+
+#[test]
 fn dual_role_peer_dials_a_peripheral_only_peer() {
     assert_eq!(
         columba_connection_role(

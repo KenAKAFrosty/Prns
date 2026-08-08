@@ -460,7 +460,7 @@ impl EventHandler for ScanFunnel {
     fn on_adv_reports(&self, reports: LeAdvReportsIter) {
         for report in reports {
             let Ok(report) = report else { continue };
-            let peer_address = BleAddress::new(report.addr.into_inner());
+            let peer_address = BleAddress::from_hci_bytes(report.addr.into_inner());
             let capabilities =
                 columba_role_capabilities(report.data).unwrap_or(BleRoleCapabilities::DualRole);
             let should_dial = columba_connection_role(

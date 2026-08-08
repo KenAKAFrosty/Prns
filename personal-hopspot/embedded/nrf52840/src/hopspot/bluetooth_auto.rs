@@ -1384,7 +1384,7 @@ pub(super) async fn acceptor(sd: &'static Softdevice, hub: &'static BleHub) -> !
 
 pub(super) async fn scanner(sd: &'static Softdevice, hub: &'static BleHub) -> ! {
     let sightings = hub.sightings.sender();
-    let local_address = BleAddress::new(nrf_softdevice::ble::get_address(sd).bytes());
+    let local_address = BleAddress::from_hci_bytes(nrf_softdevice::ble::get_address(sd).bytes());
     let mut enabled = false;
     loop {
         if !enabled {
@@ -1415,7 +1415,7 @@ pub(super) async fn scanner(sd: &'static Softdevice, hub: &'static BleHub) -> ! 
             let should_dial = columba_connection_role(
                 local_address,
                 BleRoleCapabilities::DualRole,
-                BleAddress::new(address.bytes()),
+                BleAddress::from_hci_bytes(address.bytes()),
                 capabilities,
             ) == ColumbaConnectionRole::Dial;
             if contains_service(data) && should_dial {

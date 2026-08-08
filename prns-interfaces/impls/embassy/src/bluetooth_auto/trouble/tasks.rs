@@ -287,7 +287,7 @@ pub async fn host_runner<T: TroubleTransport>(
 ) {
     let funnel = ScanFunnel {
         sightings: hub.sightings.sender(),
-        local_address: BleAddress::new(hub.local_address.lock(|cell| cell.get())),
+        local_address: BleAddress::from_hci_bytes(hub.local_address.lock(|cell| cell.get())),
     };
     loop {
         if let Err(error) = runner.run_with_handler(&funnel).await {

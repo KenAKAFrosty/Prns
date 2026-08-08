@@ -54,6 +54,19 @@ const CONTROL_PLANE_RETRY_INTERVAL: Duration = Duration::from_secs(5);
 const DISCOVERY_DEGRADED_AFTER: Duration = Duration::from_secs(15);
 
 const EATT_BLOCKED_REASON: &str = "BlueZ GATT Channels >1; set Channels=1";
+const PRNS_DEVICE_NAME: &str = "Prns";
+
+fn identifies_prns_fallback(
+    name: Option<&str>,
+    manufacturer_data: Option<&HashMap<u16, Vec<u8>>>,
+) -> bool {
+    name == Some(PRNS_DEVICE_NAME)
+        && manufacturer_data.is_some_and(|data| {
+            data.iter().any(|(company_id, value)| {
+                columba_role_capabilities_from_manufacturer(*company_id, value).is_some()
+            })
+        })
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum EattRisk {
@@ -524,10 +537,18 @@ impl BluerBackend {
         let Ok(device) = self.adapter.device(address) else {
             return false;
         };
-        match device.uuids().await {
-            Ok(Some(uuids)) => uuids.contains(&uuid_of(BLE_SERVICE_UUID)),
-            _ => false,
+        if device
+            .uuids()
+            .await
+            .ok()
+            .flatten()
+            .is_some_and(|uuids| uuids.contains(&uuid_of(BLE_SERVICE_UUID)))
+        {
+            return true;
         }
+        let name = device.name().await.ok().flatten();
+        let manufacturer_data = device.manufacturer_data().await.ok().flatten();
+        identifies_prns_fallback(name.as_deref(), manufacturer_data.as_ref())
     }
 
     async fn should_dial(&self, address: Address) -> bool {
@@ -1910,6 +1931,20 @@ impl BleSink for GattSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prns_name_and_role_marker_recover_a_missing_bluez_uuid() {
+        let manufacturer_data = HashMap::from([(u16::MAX, vec![3, 0])]);
+
+        assert!(identifies_prns_fallback(
+            Some(PRNS_DEVICE_NAME),
+            Some(&manufacturer_data)
+        ));
+        assert!(!identifies_prns_fallback(
+            Some("Other"),
+            Some(&manufacturer_data)
+        ));
+    }
 
     #[test]
     fn gatt_channels_one_is_safe() {
