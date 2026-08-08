@@ -73,34 +73,6 @@ pub(super) fn classify(
     }
 }
 
-#[cfg(test)]
-mod label_tests {
-    use super::*;
-
-    #[test]
-    fn every_desktop_interface_label_fits_its_card() {
-        let wifi_id = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, b"wifi");
-        let tcp_id = InterfaceId::from_channel_tag(InterfaceKind::TcpClient, b"tcp");
-        let ids = [
-            USB_INTERFACE_ID,
-            wifi_id,
-            tcp_id,
-            InterfaceId::from_channel_tag(InterfaceKind::BluetoothAuto, b"ble"),
-            InterfaceId::from_channel_tag(InterfaceKind::WifiDirect, b"direct"),
-            InterfaceId::from_channel_tag(InterfaceKind::BluetoothPeer, b"ble-peer"),
-            InterfaceId::from_channel_tag(InterfaceKind::WifiDirectPeer, b"direct-peer"),
-        ];
-        for id in ids {
-            let (kind, label) = classify(id, wifi_id, Some(tcp_id), Some("rns.michmesh.net"))
-                .expect("known interface has a card");
-            assert!(
-                label.chars().count() <= screen::card_label_max_chars(kind),
-                "{label:?} exceeds its card"
-            );
-        }
-    }
-}
-
 pub(super) struct WindowHandles {
     pub(super) handle: PrnsNodeHandle,
     pub(super) usb_status: TokioInterfaceStatus,
@@ -413,6 +385,34 @@ async fn watch_hotplug(rescan: Arc<Notify>) {
     while let Some(event) = events.next().await {
         if event.is_ok() {
             rescan.notify_one();
+        }
+    }
+}
+
+#[cfg(test)]
+mod label_tests {
+    use super::*;
+
+    #[test]
+    fn every_desktop_interface_label_fits_its_card() {
+        let wifi_id = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, b"wifi");
+        let tcp_id = InterfaceId::from_channel_tag(InterfaceKind::TcpClient, b"tcp");
+        let ids = [
+            USB_INTERFACE_ID,
+            wifi_id,
+            tcp_id,
+            InterfaceId::from_channel_tag(InterfaceKind::BluetoothAuto, b"ble"),
+            InterfaceId::from_channel_tag(InterfaceKind::WifiDirect, b"direct"),
+            InterfaceId::from_channel_tag(InterfaceKind::BluetoothPeer, b"ble-peer"),
+            InterfaceId::from_channel_tag(InterfaceKind::WifiDirectPeer, b"direct-peer"),
+        ];
+        for id in ids {
+            let (kind, label) = classify(id, wifi_id, Some(tcp_id), Some("rns.michmesh.net"))
+                .expect("known interface has a card");
+            assert!(
+                label.chars().count() <= screen::card_label_max_chars(kind),
+                "{label:?} exceeds its card"
+            );
         }
     }
 }
