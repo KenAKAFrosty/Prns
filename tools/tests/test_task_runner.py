@@ -220,7 +220,7 @@ class TaskRegistryTests(unittest.TestCase):
 
     def test_verify_output_explains_guarantees(self) -> None:
         result = subprocess.run(
-            [str(RUNNER_PATH), "verify"],
+            [sys.executable, str(RUNNER_PATH), "verify"],
             cwd=ROOT,
             check=True,
             capture_output=True,
