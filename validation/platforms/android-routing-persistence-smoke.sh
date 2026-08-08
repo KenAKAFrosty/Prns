@@ -145,9 +145,7 @@ fi
 
 initial_pid="$(process_id)"
 echo "[android-routing-persistence] inject process death after durable route flush"
-set +e
-adb_cmd shell am crash org.personal.hopspot >/dev/null 2>&1
-set -e
+adb_cmd shell run-as org.personal.hopspot kill -9 "${initial_pid}"
 
 recreated=0
 for ((attempt = 1; attempt <= 20; attempt += 1)); do
