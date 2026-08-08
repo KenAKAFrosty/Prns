@@ -85,12 +85,11 @@ fn index_markup() -> String {
     rewrite_index(INDEX_MD)
 }
 
-/// Repoint the index's result links at site routes and drop its own title, which the page
-/// supplies itself.
+/// Repoint the index's result links at site routes and drop its own title, which the page supplies itself.
 ///
-/// The source is `include_str!`d from a checkout, so its newlines are whatever Git wrote: `\n`
-/// on Linux and macOS, `\r\n` on a default Windows clone. Normalise once here rather than
-/// spelling both forms into every pattern below.
+/// The source is `include_str!`d from a checkout, so its newlines are whatever Git wrote: `\n` on Linux and macOS, `\r\n` on a default Windows clone.
+///
+/// Normalise once here rather than spelling both forms into every pattern below.
 fn rewrite_index(source: &str) -> String {
     let source = source.replace("\r\n", "\n");
     let mut out = String::with_capacity(source.len());
@@ -115,8 +114,9 @@ fn rewrite_index(source: &str) -> String {
     out.replacen("# Benchmark results\n\n", "", 1)
 }
 
-/// Repoint a host page's back-link at the site index, and make asset URLs absolute
-/// (relative assets would resolve under `/benchmarks/<host>/`, not `/assets/`).
+/// Repoint a host page's back-link at the site index and make asset URLs absolute.
+///
+/// Relative assets would resolve under `/benchmarks/<host>/`, not `/assets/`.
 fn host_markup(md: &str) -> String {
     md.replace("](RESULTS.md)", "](/benchmarks)")
         .replace("src=\"assets/", "src=\"/assets/")
@@ -140,9 +140,9 @@ mod tests {
         assert!(!md.contains("# Benchmark results"));
     }
 
-    /// A Windows checkout hands `include_str!` CRLF newlines, which used to defeat the title
-    /// strip and leave the page rendering its heading twice. Assert it directly so the guarantee
-    /// does not depend on which platform ran the suite.
+    /// A Windows checkout hands `include_str!` CRLF newlines, which used to defeat the title strip and leave the page rendering its heading twice.
+    ///
+    /// Assert it directly so the guarantee does not depend on which platform ran the suite.
     #[test]
     fn rewrites_the_index_whatever_newlines_the_checkout_used() {
         const SOURCE: &str = "<!-- generated -->\n# Benchmark results\n\nSee [macOS](RESULTS-aarch64-apple-darwin.md).\n";
