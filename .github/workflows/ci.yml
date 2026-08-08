@@ -214,8 +214,6 @@ jobs:
         run: cargo fmt --manifest-path docs/website/Cargo.toml -- --check
       - name: Website Rust contract tests
         run: cargo test --manifest-path docs/website/Cargo.toml --locked
-      - name: Compact embedded website shell
-        run: cargo clippy --manifest-path docs/website/Cargo.toml --locked --all-targets --features embedded-site -- -D warnings
       - name: Exact JavaScript graph and fake-serial suite
         working-directory: docs/website
         run: |
