@@ -147,6 +147,14 @@ mod platform {
                 }
                 .into(),
                 StandardItem {
+                    label: "Announce NNPages Now".into(),
+                    activate: Box::new(|tray: &mut LinuxTray| {
+                        tray.perform(TrayAction::AnnounceNnPages);
+                    }),
+                    ..Default::default()
+                }
+                .into(),
+                StandardItem {
                     label: "Manage Interfaces…".into(),
                     activate: Box::new(|tray: &mut LinuxTray| {
                         tray.perform(TrayAction::ManageInterfaces);
@@ -275,6 +283,7 @@ mod platform {
         status_item: MenuItem,
         open_terminal_item: MenuItem,
         show_status_item: MenuItem,
+        announce_nnpages_item: MenuItem,
         manage_interfaces_item: MenuItem,
         open_config_item: MenuItem,
         stop_item: MenuItem,
@@ -296,6 +305,8 @@ mod platform {
                 MenuItem::with_id("prnsd-open-terminal", "Open Prns Terminal", managed, None);
             let show_status_item =
                 MenuItem::with_id("prnsd-show-status", "Show Network Status", true, None);
+            let announce_nnpages_item =
+                MenuItem::with_id("prnsd-announce-nnpages", "Announce NNPages Now", true, None);
             let manage_interfaces_item =
                 MenuItem::with_id("prnsd-manage-interfaces", "Manage Interfaces…", true, None);
             let open_config_item =
@@ -310,6 +321,7 @@ mod platform {
                 &status_separator,
                 &open_terminal_item,
                 &show_status_item,
+                &announce_nnpages_item,
                 &manage_interfaces_item,
                 &tools_separator,
                 &open_config_item,
@@ -333,6 +345,7 @@ mod platform {
                 status_item,
                 open_terminal_item,
                 show_status_item,
+                announce_nnpages_item,
                 manage_interfaces_item,
                 open_config_item,
                 stop_item,
@@ -345,6 +358,8 @@ mod platform {
                 Some(TrayAction::OpenTerminal)
             } else if id == self.show_status_item.id() {
                 Some(TrayAction::ShowStatus)
+            } else if id == self.announce_nnpages_item.id() {
+                Some(TrayAction::AnnounceNnPages)
             } else if id == self.manage_interfaces_item.id() {
                 Some(TrayAction::ManageInterfaces)
             } else if id == self.open_config_item.id() {
