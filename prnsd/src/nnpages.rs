@@ -50,8 +50,11 @@ const MAX_HOSTED_DEPTH: usize = 32;
 const MAX_HOSTED_ROUTES: usize = 4096;
 const MAX_SCAN_ENTRIES: usize = 65_536;
 const CONTROL_DIRECTORY_NAME: &str = ".prnsd-control/nnpages";
-const CONTROL_VERSION: &str = "prnsd-nnpages-refresh-v1";
-const CONTROL_ANNOUNCE_VERSION: &str = "prnsd-nnpages-announce-v1";
+const CONTROL_REFRESH_VERSION: &str = "prnsd-nnpages-refresh-v2";
+const CONTROL_ANNOUNCE_VERSION: &str = "prnsd-nnpages-announce-v2";
+const CONTROL_REQUEST_PREFIX: &str = "request-";
+const CONTROL_INFLIGHT_PREFIX: &str = "inflight-";
+const CONTROL_RESULT_PREFIX: &str = "result-";
 const CONTROL_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -127,8 +130,12 @@ pub(crate) enum NnPagesCliError {
     CommandContext(crate::command_context::CommandContextError),
     Control(io::Error),
     TimedOut,
-    RefreshFailed,
-    AnnounceFailed,
+    OperationFailed {
+        kind: NnPagesControlKind,
+        failure: NnPagesControlFailure,
+    },
+    OperationAborted(NnPagesControlKind),
+    OperationIndeterminate(NnPagesControlKind),
     Seed(crate::daemon::configuration::ServerBootstrapError),
     InvalidName,
     NameTooLong,
@@ -143,11 +150,17 @@ impl core::fmt::Display for NnPagesCliError {
             Self::TimedOut => {
                 formatter.write_str("the daemon did not acknowledge the request within 10 seconds")
             }
-            Self::RefreshFailed => {
-                formatter.write_str("the daemon could not refresh its NNPages catalog")
+            Self::OperationFailed { kind, failure } => {
+                write!(formatter, "the daemon could not {}: {}", kind.action(), failure.description())
             }
-            Self::AnnounceFailed => {
-                formatter.write_str("the daemon could not announce the page destination")
+            Self::OperationAborted(kind) => {
+                write!(formatter, "the daemon aborted the NNPages {} before it could acknowledge completion; retry the request", kind.noun())
+            }
+            Self::OperationIndeterminate(NnPagesControlKind::Refresh) => {
+                formatter.write_str("the daemon restarted while the NNPages refresh was in flight; its outcome is unknown, and it is safe to retry")
+            }
+            Self::OperationIndeterminate(NnPagesControlKind::Announce) => {
+                formatter.write_str("the daemon restarted while the NNPages announcement was in flight; it may already have aired, so retrying may send a duplicate")
             }
             Self::Seed(error) => write!(formatter, "could not seed the starter page: {error}"),
             Self::InvalidName => {
@@ -169,8 +182,9 @@ impl std::error::Error for NnPagesCliError {
             Self::Control(error) => Some(error),
             Self::Seed(error) => Some(error),
             Self::TimedOut
-            | Self::RefreshFailed
-            | Self::AnnounceFailed
+            | Self::OperationFailed { .. }
+            | Self::OperationAborted(_)
+            | Self::OperationIndeterminate(_)
             | Self::InvalidName
             | Self::NameTooLong
             | Self::InvalidResult => None,
@@ -184,12 +198,129 @@ pub(crate) enum NnPagesControlKind {
     Announce,
 }
 
-/// A control request that has already been claimed: its file is consumed at dequeue, so this
-/// value is the only remaining record of the work and dropping it does not leave one behind.
-pub(crate) struct PendingNnPagesRefresh {
+impl NnPagesControlKind {
+    const fn version(self) -> &'static str {
+        match self {
+            Self::Refresh => CONTROL_REFRESH_VERSION,
+            Self::Announce => CONTROL_ANNOUNCE_VERSION,
+        }
+    }
+
+    const fn action(self) -> &'static str {
+        match self {
+            Self::Refresh => "refresh its NNPages catalog",
+            Self::Announce => "announce the hosted page destination",
+        }
+    }
+
+    const fn noun(self) -> &'static str {
+        match self {
+            Self::Refresh => "refresh",
+            Self::Announce => "announcement",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NnPagesControlFailure {
+    Scan,
+    SourcePage,
+    RouteUpdate,
+    CatalogUnavailable,
+    DestinationUnavailable,
+    IndexUnavailable,
+    AnnounceSend,
+}
+
+impl NnPagesControlFailure {
+    const fn code(self) -> &'static str {
+        match self {
+            Self::Scan => "scan",
+            Self::SourcePage => "source-page",
+            Self::RouteUpdate => "route-update",
+            Self::CatalogUnavailable => "catalog-unavailable",
+            Self::DestinationUnavailable => "destination-unavailable",
+            Self::IndexUnavailable => "index-unavailable",
+            Self::AnnounceSend => "announce-send",
+        }
+    }
+
+    fn from_code(code: &str) -> Option<Self> {
+        match code {
+            "scan" => Some(Self::Scan),
+            "source-page" => Some(Self::SourcePage),
+            "route-update" => Some(Self::RouteUpdate),
+            "catalog-unavailable" => Some(Self::CatalogUnavailable),
+            "destination-unavailable" => Some(Self::DestinationUnavailable),
+            "index-unavailable" => Some(Self::IndexUnavailable),
+            "announce-send" => Some(Self::AnnounceSend),
+            _ => None,
+        }
+    }
+
+    const fn valid_for(self, kind: NnPagesControlKind) -> bool {
+        match kind {
+            NnPagesControlKind::Refresh => matches!(
+                self,
+                Self::Scan
+                    | Self::SourcePage
+                    | Self::RouteUpdate
+                    | Self::CatalogUnavailable
+                    | Self::DestinationUnavailable
+            ),
+            NnPagesControlKind::Announce => matches!(
+                self,
+                Self::DestinationUnavailable | Self::IndexUnavailable | Self::AnnounceSend
+            ),
+        }
+    }
+
+    const fn description(self) -> &'static str {
+        match self {
+            Self::Scan => "the hosted directories could not be scanned",
+            Self::SourcePage => "the bundled source page could not be refreshed",
+            Self::RouteUpdate => "a hosted route could not be updated",
+            Self::CatalogUnavailable => "the NNPages catalog was unavailable",
+            Self::DestinationUnavailable => "this daemon does not own the hosted page destination",
+            Self::IndexUnavailable => "nnpages/pages/index.mu is not serveable",
+            Self::AnnounceSend => "the announcement could not be sent",
+        }
+    }
+}
+
+impl NnPagesRefreshError {
+    const fn control_failure(&self) -> NnPagesControlFailure {
+        match self {
+            Self::Scan(_) => NnPagesControlFailure::Scan,
+            Self::SourcePage(_) => NnPagesControlFailure::SourcePage,
+            Self::Runtime { .. } => NnPagesControlFailure::RouteUpdate,
+            Self::CatalogPoisoned => NnPagesControlFailure::CatalogUnavailable,
+            Self::DestinationUnavailable => NnPagesControlFailure::DestinationUnavailable,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NnPagesControlOutcome {
+    Refreshed(NnPagesRefreshReport),
+    Announced,
+    Failed(NnPagesControlFailure),
+    Aborted,
+    Indeterminate,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DecodedNnPagesControlRequest {
     id: u128,
     kind: NnPagesControlKind,
+}
+
+/// A control request whose durable marker has moved out of the pending namespace.
+pub(crate) struct ClaimedNnPagesControlRequest {
+    request: DecodedNnPagesControlRequest,
+    inflight_path: PathBuf,
     result_path: PathBuf,
+    terminal_committed: bool,
 }
 
 impl core::fmt::Display for NnPagesRefreshError {
@@ -714,7 +845,9 @@ fn print_refresh_report(report: &NnPagesRefreshReport) {
     }
 }
 
-pub(crate) async fn next_refresh_request(config_dir: &Path) -> io::Result<PendingNnPagesRefresh> {
+pub(crate) async fn next_control_request(
+    config_dir: &Path,
+) -> io::Result<ClaimedNnPagesControlRequest> {
     let control = control_root(config_dir);
     loop {
         tokio::time::sleep(CONTROL_POLL_INTERVAL).await;
@@ -727,18 +860,24 @@ pub(crate) async fn next_refresh_request(config_dir: &Path) -> io::Result<Pendin
             .filter_map(Result::ok)
             .filter_map(|entry| {
                 let path = entry.path();
-                decode_request(&path).map(|request| (path, request))
+                decode_control_request(&path, CONTROL_REQUEST_PREFIX).map(|request| (path, request))
             })
             .collect::<Vec<_>>();
         requests.sort_by_key(|(_, request)| request.id);
-        // Claim the request by consuming its file. This poll re-runs every
-        // CONTROL_POLL_INTERVAL, so a request left on disk while the work it dispatched is
-        // still running gets handed out a second time. Removing it here is atomic: the unlink
-        // either succeeds or reports NotFound because another reader took it first, and it
-        // leaves no bookkeeping behind for a later sweep to reclaim.
+
+        // Moving the file out of the pending namespace is the durable claim. Later polls only inspect request-* files, while inflight-* remains available for cancellation and restart recovery.
         for (path, request) in requests {
-            match fs::remove_file(&path) {
-                Ok(()) => return Ok(request),
+            let inflight_path = control_path(&control, CONTROL_INFLIGHT_PREFIX, request.id);
+            match fs::rename(&path, &inflight_path) {
+                Ok(()) => {
+                    sync_parent_directory(&inflight_path)?;
+                    return Ok(ClaimedNnPagesControlRequest {
+                        request,
+                        inflight_path,
+                        result_path: control_path(&control, CONTROL_RESULT_PREFIX, request.id),
+                        terminal_committed: false,
+                    });
+                }
                 Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
                 Err(error) => return Err(error),
             }
@@ -746,50 +885,149 @@ pub(crate) async fn next_refresh_request(config_dir: &Path) -> io::Result<Pendin
     }
 }
 
-impl PendingNnPagesRefresh {
+impl ClaimedNnPagesControlRequest {
     pub(crate) fn kind(&self) -> NnPagesControlKind {
-        self.kind
+        self.request.kind
     }
 
     pub(crate) fn finish(
-        self,
+        mut self,
         result: Result<NnPagesRefreshReport, NnPagesRefreshError>,
     ) -> io::Result<()> {
-        let encoded = encode_control_result(self.id, result.ok().as_ref());
-        atomic_control_write(&self.result_path, encoded.as_bytes())
+        let outcome = match result {
+            Ok(report) => NnPagesControlOutcome::Refreshed(report),
+            Err(error) => NnPagesControlOutcome::Failed(error.control_failure()),
+        };
+        self.commit(outcome)
     }
 
-    pub(crate) fn finish_announce(self, succeeded: bool) -> io::Result<()> {
-        let encoded = encode_announce_result(self.id, succeeded);
-        atomic_control_write(&self.result_path, encoded.as_bytes())
+    pub(crate) fn finish_announce(
+        mut self,
+        result: Result<(), NnPagesControlFailure>,
+    ) -> io::Result<()> {
+        let outcome = match result {
+            Ok(()) => NnPagesControlOutcome::Announced,
+            Err(failure) => NnPagesControlOutcome::Failed(failure),
+        };
+        self.commit(outcome)
+    }
+
+    fn commit(&mut self, outcome: NnPagesControlOutcome) -> io::Result<()> {
+        let encoded = encode_control_outcome(self.request.kind, self.request.id, outcome)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "invalid NNPages control outcome",
+                )
+            })?;
+        if let Err(error) = atomic_control_write(&self.result_path, encoded.as_bytes()) {
+            self.terminal_committed = control_file_matches(&self.result_path, encoded.as_bytes());
+            return Err(error);
+        }
+        self.terminal_committed = true;
+        remove_control_file(&self.inflight_path)
+    }
+}
+
+impl Drop for ClaimedNnPagesControlRequest {
+    fn drop(&mut self) {
+        if self.terminal_committed {
+            return;
+        }
+        let Some(encoded) = encode_control_outcome(
+            self.request.kind,
+            self.request.id,
+            NnPagesControlOutcome::Aborted,
+        ) else {
+            return;
+        };
+        if let Err(error) = atomic_control_write(&self.result_path, encoded.as_bytes()) {
+            self.terminal_committed = control_file_matches(&self.result_path, encoded.as_bytes());
+            tracing::warn!(
+                event = "nnpages_control_abort_result_failed",
+                kind = ?self.request.kind,
+                error = %error,
+            );
+            return;
+        }
+        self.terminal_committed = true;
+        if let Err(error) = remove_control_file(&self.inflight_path) {
+            tracing::warn!(
+                event = "nnpages_control_abort_cleanup_failed",
+                kind = ?self.request.kind,
+                error = %error,
+            );
+        }
     }
 }
 
 async fn request_refresh(config_dir: &Path) -> Result<NnPagesRefreshReport, NnPagesCliError> {
+    match request_control(config_dir, NnPagesControlKind::Refresh).await? {
+        NnPagesControlOutcome::Refreshed(report) => Ok(report),
+        NnPagesControlOutcome::Failed(failure) => Err(NnPagesCliError::OperationFailed {
+            kind: NnPagesControlKind::Refresh,
+            failure,
+        }),
+        NnPagesControlOutcome::Aborted => Err(NnPagesCliError::OperationAborted(
+            NnPagesControlKind::Refresh,
+        )),
+        NnPagesControlOutcome::Indeterminate => Err(NnPagesCliError::OperationIndeterminate(
+            NnPagesControlKind::Refresh,
+        )),
+        NnPagesControlOutcome::Announced => Err(NnPagesCliError::InvalidResult),
+    }
+}
+
+async fn request_announce(config_dir: &Path) -> Result<(), NnPagesCliError> {
+    match request_control(config_dir, NnPagesControlKind::Announce).await? {
+        NnPagesControlOutcome::Announced => Ok(()),
+        NnPagesControlOutcome::Failed(failure) => Err(NnPagesCliError::OperationFailed {
+            kind: NnPagesControlKind::Announce,
+            failure,
+        }),
+        NnPagesControlOutcome::Aborted => Err(NnPagesCliError::OperationAborted(
+            NnPagesControlKind::Announce,
+        )),
+        NnPagesControlOutcome::Indeterminate => Err(NnPagesCliError::OperationIndeterminate(
+            NnPagesControlKind::Announce,
+        )),
+        NnPagesControlOutcome::Refreshed(_) => Err(NnPagesCliError::InvalidResult),
+    }
+}
+
+async fn request_control(
+    config_dir: &Path,
+    kind: NnPagesControlKind,
+) -> Result<NnPagesControlOutcome, NnPagesCliError> {
     let control = control_root(config_dir);
     fs::create_dir_all(&control).map_err(NnPagesCliError::Control)?;
     let id = next_control_id();
-    let request_path = control.join(format!("request-{id:032x}"));
-    let result_path = control.join(format!("result-{id:032x}"));
-    let request = format!("{CONTROL_VERSION}\n{id:032x}\n");
-    create_control_request(&request_path, request.as_bytes()).map_err(NnPagesCliError::Control)?;
+    let request_path = control_path(&control, CONTROL_REQUEST_PREFIX, id);
+    let inflight_path = control_path(&control, CONTROL_INFLIGHT_PREFIX, id);
+    let result_path = control_path(&control, CONTROL_RESULT_PREFIX, id);
+    let request = format!("{}\n{id:032x}\n", kind.version());
+    atomic_control_write(&request_path, request.as_bytes()).map_err(NnPagesCliError::Control)?;
 
     let deadline = tokio::time::Instant::now() + CONTROL_TIMEOUT;
     loop {
         match fs::read_to_string(&result_path) {
             Ok(text) => {
-                let _ = fs::remove_file(&result_path);
-                let _ = fs::remove_file(&request_path);
-                return decode_control_result(id, &text);
+                let outcome = decode_control_outcome(kind, id, &text);
+                let _ = remove_control_file(&result_path);
+                let _ = remove_control_file(&request_path);
+                if outcome.is_some() {
+                    let _ = remove_control_file(&inflight_path);
+                }
+                return outcome.ok_or(NnPagesCliError::InvalidResult);
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => {
-                let _ = fs::remove_file(&request_path);
+                let _ = remove_control_file(&request_path);
                 return Err(NnPagesCliError::Control(error));
             }
         }
         if tokio::time::Instant::now() >= deadline {
-            let _ = fs::remove_file(&request_path);
+            let _ = remove_control_file(&request_path);
             return Err(NnPagesCliError::TimedOut);
         }
         tokio::time::sleep(CONTROL_POLL_INTERVAL).await;
@@ -798,6 +1036,122 @@ async fn request_refresh(config_dir: &Path) -> Result<NnPagesRefreshReport, NnPa
 
 fn control_root(config_dir: &Path) -> PathBuf {
     config_dir.join(CONTROL_DIRECTORY_NAME)
+}
+
+fn control_path(control: &Path, prefix: &str, id: u128) -> PathBuf {
+    control.join(format!("{prefix}{id:032x}"))
+}
+
+fn remove_control_file(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+fn control_file_matches(path: &Path, expected: &[u8]) -> bool {
+    fs::read(path).is_ok_and(|actual| actual == expected)
+}
+
+/// Converts work left by a previous daemon into terminal results without replaying external effects.
+pub(crate) fn recover_control_state(config_dir: &Path) -> io::Result<()> {
+    let control = control_root(config_dir);
+    let entries = match fs::read_dir(&control) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    let mut requests = Vec::new();
+    let mut inflight = Vec::new();
+    let mut results = Vec::new();
+    for entry in entries {
+        let path = entry?.path();
+        if control_file_id(&path, CONTROL_REQUEST_PREFIX).is_some() {
+            requests.push(path);
+        } else if control_file_id(&path, CONTROL_INFLIGHT_PREFIX).is_some() {
+            inflight.push(path);
+        } else if control_file_id(&path, CONTROL_RESULT_PREFIX).is_some() {
+            results.push(path);
+        }
+    }
+
+    for path in inflight {
+        let Some(request) = decode_control_request(&path, CONTROL_INFLIGHT_PREFIX) else {
+            discard_control_artifact(&path, "unsupported_or_malformed_inflight")?;
+            continue;
+        };
+        recover_inflight_request(&control, &path, request)?;
+    }
+    for path in requests {
+        if decode_control_request(&path, CONTROL_REQUEST_PREFIX).is_none() {
+            discard_control_artifact(&path, "unsupported_or_malformed_request")?;
+        }
+    }
+    for path in results {
+        if decode_control_result_file(&path).is_none() {
+            discard_control_artifact(&path, "unsupported_or_malformed_result")?;
+        }
+    }
+    Ok(())
+}
+
+fn recover_inflight_request(
+    control: &Path,
+    inflight_path: &Path,
+    request: DecodedNnPagesControlRequest,
+) -> io::Result<()> {
+    let result_path = control_path(control, CONTROL_RESULT_PREFIX, request.id);
+    match fs::read_to_string(&result_path) {
+        Ok(text) if decode_control_outcome(request.kind, request.id, &text).is_some() => {
+            remove_control_file(inflight_path)?;
+            tracing::info!(
+                event = "nnpages_control_recovered",
+                kind = ?request.kind,
+                outcome = "terminal_result_preserved",
+            );
+            return Ok(());
+        }
+        Ok(_) => {
+            tracing::warn!(
+                event = "nnpages_control_result_replaced",
+                kind = ?request.kind,
+                cause = "invalid_result",
+            );
+            remove_control_file(&result_path)?;
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+
+    let encoded = encode_control_outcome(
+        request.kind,
+        request.id,
+        NnPagesControlOutcome::Indeterminate,
+    )
+    .ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid NNPages recovery outcome",
+        )
+    })?;
+    atomic_control_write(&result_path, encoded.as_bytes())?;
+    remove_control_file(inflight_path)?;
+    tracing::warn!(
+        event = "nnpages_control_recovered",
+        kind = ?request.kind,
+        outcome = "indeterminate",
+    );
+    Ok(())
+}
+
+fn discard_control_artifact(path: &Path, cause: &'static str) -> io::Result<()> {
+    tracing::warn!(
+        event = "nnpages_control_artifact_discarded",
+        path = %path.display(),
+        cause,
+    );
+    remove_control_file(path)
 }
 
 fn next_control_id() -> u128 {
@@ -867,141 +1221,128 @@ pub(crate) fn replace_file(temporary: &Path, destination: &Path) -> io::Result<(
         .map_err(|error| error.error)
 }
 
-fn decode_request(path: &Path) -> Option<PendingNnPagesRefresh> {
-    let file_name = path.file_name()?.to_str()?;
-    let id = u128::from_str_radix(file_name.strip_prefix("request-")?, 16).ok()?;
+fn control_file_id(path: &Path, prefix: &str) -> Option<u128> {
+    let encoded = path.file_name()?.to_str()?.strip_prefix(prefix)?;
+    if encoded.len() != 32 {
+        return None;
+    }
+    u128::from_str_radix(encoded, 16).ok()
+}
+
+fn control_kind_from_version(version: &str) -> Option<NnPagesControlKind> {
+    match version {
+        CONTROL_REFRESH_VERSION => Some(NnPagesControlKind::Refresh),
+        CONTROL_ANNOUNCE_VERSION => Some(NnPagesControlKind::Announce),
+        _ => None,
+    }
+}
+
+fn decode_control_request(path: &Path, prefix: &str) -> Option<DecodedNnPagesControlRequest> {
+    let id = control_file_id(path, prefix)?;
     let text = fs::read_to_string(path).ok()?;
     let mut lines = text.lines();
-    let kind = match lines.next()? {
-        CONTROL_VERSION => NnPagesControlKind::Refresh,
-        CONTROL_ANNOUNCE_VERSION => NnPagesControlKind::Announce,
-        _ => return None,
-    };
+    let kind = control_kind_from_version(lines.next()?)?;
     if u128::from_str_radix(lines.next()?, 16).ok()? != id || lines.next().is_some() {
         return None;
     }
-    Some(PendingNnPagesRefresh {
-        id,
-        kind,
-        result_path: path.with_file_name(format!("result-{id:032x}")),
-    })
+    Some(DecodedNnPagesControlRequest { id, kind })
 }
 
-async fn request_announce(config_dir: &Path) -> Result<(), NnPagesCliError> {
-    let control = control_root(config_dir);
-    fs::create_dir_all(&control).map_err(NnPagesCliError::Control)?;
-    let id = next_control_id();
-    let request_path = control.join(format!("request-{id:032x}"));
-    let result_path = control.join(format!("result-{id:032x}"));
-    let request = format!("{CONTROL_ANNOUNCE_VERSION}\n{id:032x}\n");
-    create_control_request(&request_path, request.as_bytes()).map_err(NnPagesCliError::Control)?;
+fn decode_control_result_file(path: &Path) -> Option<NnPagesControlOutcome> {
+    let id = control_file_id(path, CONTROL_RESULT_PREFIX)?;
+    let text = fs::read_to_string(path).ok()?;
+    let kind = control_kind_from_version(text.lines().next()?)?;
+    decode_control_outcome(kind, id, &text)
+}
 
-    let deadline = tokio::time::Instant::now() + CONTROL_TIMEOUT;
-    loop {
-        match fs::read_to_string(&result_path) {
-            Ok(text) => {
-                let _ = fs::remove_file(&result_path);
-                let _ = fs::remove_file(&request_path);
-                return decode_announce_result(id, &text);
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => {
-                let _ = fs::remove_file(&request_path);
-                return Err(NnPagesCliError::Control(error));
-            }
+fn encode_control_outcome(
+    kind: NnPagesControlKind,
+    id: u128,
+    outcome: NnPagesControlOutcome,
+) -> Option<String> {
+    match outcome {
+        NnPagesControlOutcome::Refreshed(report) if kind == NnPagesControlKind::Refresh => {
+            Some(format!(
+                "{}\n{id:032x}\nok\n{}\n{}\n{}\n{}\n{}\n{}\n",
+                kind.version(),
+                report.discovered,
+                report.added,
+                report.removed,
+                report.unchanged,
+                report.settings_status.as_control_value(),
+                if report.settings_changed {
+                    "changed"
+                } else {
+                    "unchanged"
+                },
+            ))
         }
-        if tokio::time::Instant::now() >= deadline {
-            let _ = fs::remove_file(&request_path);
-            return Err(NnPagesCliError::TimedOut);
+        NnPagesControlOutcome::Announced if kind == NnPagesControlKind::Announce => {
+            Some(format!("{}\n{id:032x}\nok\n", kind.version()))
         }
-        tokio::time::sleep(CONTROL_POLL_INTERVAL).await;
+        NnPagesControlOutcome::Failed(failure) if failure.valid_for(kind) => Some(format!(
+            "{}\n{id:032x}\nfailed\n{}\n",
+            kind.version(),
+            failure.code(),
+        )),
+        NnPagesControlOutcome::Aborted => Some(format!("{}\n{id:032x}\naborted\n", kind.version())),
+        NnPagesControlOutcome::Indeterminate => {
+            Some(format!("{}\n{id:032x}\nindeterminate\n", kind.version()))
+        }
+        NnPagesControlOutcome::Refreshed(_)
+        | NnPagesControlOutcome::Announced
+        | NnPagesControlOutcome::Failed(_) => None,
     }
 }
 
-fn encode_announce_result(id: u128, succeeded: bool) -> String {
-    match succeeded {
-        true => format!("{CONTROL_ANNOUNCE_VERSION}\n{id:032x}\nok\n"),
-        false => format!("{CONTROL_ANNOUNCE_VERSION}\n{id:032x}\nfailed\n"),
-    }
-}
-
-fn decode_announce_result(id: u128, text: &str) -> Result<(), NnPagesCliError> {
+fn decode_control_outcome(
+    kind: NnPagesControlKind,
+    id: u128,
+    text: &str,
+) -> Option<NnPagesControlOutcome> {
     let mut lines = text.lines();
-    if lines.next() != Some(CONTROL_ANNOUNCE_VERSION)
-        || lines
-            .next()
-            .and_then(|value| u128::from_str_radix(value, 16).ok())
-            != Some(id)
-    {
-        return Err(NnPagesCliError::InvalidResult);
-    }
-    match (lines.next(), lines.next()) {
-        (Some("ok"), None) => Ok(()),
-        (Some("failed"), None) => Err(NnPagesCliError::AnnounceFailed),
-        _ => Err(NnPagesCliError::InvalidResult),
-    }
-}
-
-fn encode_control_result(id: u128, report: Option<&NnPagesRefreshReport>) -> String {
-    match report {
-        Some(report) => format!(
-            "{CONTROL_VERSION}\n{id:032x}\nok\n{}\n{}\n{}\n{}\n{}\n{}\n",
-            report.discovered,
-            report.added,
-            report.removed,
-            report.unchanged,
-            report.settings_status.as_control_value(),
-            if report.settings_changed {
-                "changed"
-            } else {
-                "unchanged"
-            },
-        ),
-        None => format!("{CONTROL_VERSION}\n{id:032x}\nfailed\n"),
-    }
-}
-
-fn decode_control_result(id: u128, text: &str) -> Result<NnPagesRefreshReport, NnPagesCliError> {
-    let mut lines = text.lines();
-    if lines.next() != Some(CONTROL_VERSION)
-        || lines
-            .next()
-            .and_then(|value| u128::from_str_radix(value, 16).ok())
-            != Some(id)
-    {
-        return Err(NnPagesCliError::InvalidResult);
+    if lines.next()? != kind.version() || u128::from_str_radix(lines.next()?, 16).ok()? != id {
+        return None;
     }
     match lines.next() {
-        Some("failed") if lines.next().is_none() => Err(NnPagesCliError::RefreshFailed),
-        Some("ok") => {
-            let report = NnPagesRefreshReport {
+        Some("ok") if kind == NnPagesControlKind::Refresh => {
+            let outcome = NnPagesControlOutcome::Refreshed(NnPagesRefreshReport {
                 discovered: parse_control_count(lines.next())?,
                 added: parse_control_count(lines.next())?,
                 removed: parse_control_count(lines.next())?,
                 unchanged: parse_control_count(lines.next())?,
-                settings_status: lines
-                    .next()
-                    .and_then(NnPagesSettingsStatus::from_control_value)
-                    .ok_or(NnPagesCliError::InvalidResult)?,
-                settings_changed: match lines.next() {
-                    Some("changed") => true,
-                    Some("unchanged") => false,
-                    _ => return Err(NnPagesCliError::InvalidResult),
+                settings_status: NnPagesSettingsStatus::from_control_value(lines.next()?)?,
+                settings_changed: match lines.next()? {
+                    "changed" => true,
+                    "unchanged" => false,
+                    _ => return None,
                 },
-            };
+            });
             if lines.next().is_some() {
-                return Err(NnPagesCliError::InvalidResult);
+                return None;
             }
-            Ok(report)
+            Some(outcome)
         }
-        _ => Err(NnPagesCliError::InvalidResult),
+        Some("ok") if kind == NnPagesControlKind::Announce && lines.next().is_none() => {
+            Some(NnPagesControlOutcome::Announced)
+        }
+        Some("failed") => {
+            let failure = NnPagesControlFailure::from_code(lines.next()?)?;
+            if !failure.valid_for(kind) || lines.next().is_some() {
+                return None;
+            }
+            Some(NnPagesControlOutcome::Failed(failure))
+        }
+        Some("aborted") if lines.next().is_none() => Some(NnPagesControlOutcome::Aborted),
+        Some("indeterminate") if lines.next().is_none() => {
+            Some(NnPagesControlOutcome::Indeterminate)
+        }
+        _ => None,
     }
 }
 
-fn parse_control_count(value: Option<&str>) -> Result<usize, NnPagesCliError> {
-    value
-        .and_then(|value| value.parse().ok())
-        .ok_or(NnPagesCliError::InvalidResult)
+fn parse_control_count(value: Option<&str>) -> Option<usize> {
+    value?.parse().ok()
 }
 
 pub(crate) fn root(config_dir: &Path) -> PathBuf {
@@ -1423,26 +1764,13 @@ mod tests {
     }
 
     #[test]
-    fn announce_control_results_round_trip() {
-        let id = 7u128;
-        assert!(matches!(
-            decode_announce_result(id, &encode_announce_result(id, true)),
-            Ok(())
-        ));
-        assert!(matches!(
-            decode_announce_result(id, &encode_announce_result(id, false)),
-            Err(NnPagesCliError::AnnounceFailed)
-        ));
-    }
-
-    #[test]
     fn announce_requests_decode_with_their_own_version() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let id = 0x2au128;
-        let path = directory.path().join(format!("request-{id:032x}"));
+        let path = control_path(directory.path(), CONTROL_REQUEST_PREFIX, id);
         fs::write(&path, format!("{CONTROL_ANNOUNCE_VERSION}\n{id:032x}\n")).expect("request");
-        let request = decode_request(&path).expect("decodes");
-        assert_eq!(request.kind(), NnPagesControlKind::Announce);
+        let request = decode_control_request(&path, CONTROL_REQUEST_PREFIX).expect("decodes");
+        assert_eq!(request.kind, NnPagesControlKind::Announce);
     }
     use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
     use personal_rns::routing::links::resources::ResourceStrategy;
@@ -1667,7 +1995,7 @@ mod tests {
         let client_dir = config_dir.clone();
         let client = tokio::spawn(async move { request_refresh(&client_dir).await });
         let pending =
-            tokio::time::timeout(Duration::from_secs(2), next_refresh_request(&config_dir))
+            tokio::time::timeout(Duration::from_secs(2), next_control_request(&config_dir))
                 .await
                 .expect("request arrives")
                 .expect("request is valid");
@@ -1688,11 +2016,8 @@ mod tests {
 
     /// One operator command must produce exactly one dispatch.
     ///
-    /// The daemon re-enters this poll as soon as it has spawned the work, so while that work is
-    /// still running the request is still pending. Any refresh slower than the poll interval was
-    /// dispatched again, and the extra reconcile absorbed the very change the operator's own
-    /// refresh was waiting to report. The same undeduplicated path also carries announces, where
-    /// a second dispatch puts a second announce on the air.
+    /// The daemon re-enters this poll as soon as it has spawned the work, so a request left in the pending namespace can be dispatched again while the first task is still running.
+    /// The duplicate refresh absorbed the change the operator's own refresh was waiting to report, and the same control path could put a duplicate announcement on the air.
     #[tokio::test]
     async fn a_control_request_is_dispatched_only_once() {
         let directory = tempfile::tempdir().expect("temporary directory");
@@ -1700,14 +2025,14 @@ mod tests {
         let client_dir = config_dir.clone();
         let client = tokio::spawn(async move { request_refresh(&client_dir).await });
         let pending =
-            tokio::time::timeout(Duration::from_secs(2), next_refresh_request(&config_dir))
+            tokio::time::timeout(Duration::from_secs(2), next_control_request(&config_dir))
                 .await
                 .expect("request arrives")
                 .expect("request is valid");
 
-        // The dispatched work has not finished, so the request is still in flight here.
+        // The dispatched work has not finished, but the request is no longer pending.
         assert!(
-            tokio::time::timeout(CONTROL_POLL_INTERVAL * 5, next_refresh_request(&config_dir))
+            tokio::time::timeout(CONTROL_POLL_INTERVAL * 5, next_control_request(&config_dir))
                 .await
                 .is_err(),
             "an in-flight request was dispatched a second time"
@@ -1729,7 +2054,7 @@ mod tests {
     }
 
     #[test]
-    fn control_results_reject_wrong_identity_and_failure_is_typed() {
+    fn v2_control_outcomes_round_trip_success_and_every_failure_code() {
         let report = NnPagesRefreshReport {
             discovered: 1,
             added: 1,
@@ -1738,19 +2063,422 @@ mod tests {
             settings_status: NnPagesSettingsStatus::InvalidDefaults,
             settings_changed: false,
         };
+        let refreshed = NnPagesControlOutcome::Refreshed(report);
         assert_eq!(
-            decode_control_result(7, &encode_control_result(7, Some(&report)))
-                .expect("valid report"),
-            report
+            decode_control_outcome(
+                NnPagesControlKind::Refresh,
+                7,
+                &encode_control_outcome(NnPagesControlKind::Refresh, 7, refreshed)
+                    .expect("refresh encodes"),
+            ),
+            Some(refreshed)
         );
+        assert_eq!(
+            decode_control_outcome(
+                NnPagesControlKind::Announce,
+                8,
+                &encode_control_outcome(
+                    NnPagesControlKind::Announce,
+                    8,
+                    NnPagesControlOutcome::Announced,
+                )
+                .expect("announce encodes"),
+            ),
+            Some(NnPagesControlOutcome::Announced)
+        );
+
+        for failure in [
+            NnPagesControlFailure::Scan,
+            NnPagesControlFailure::SourcePage,
+            NnPagesControlFailure::RouteUpdate,
+            NnPagesControlFailure::CatalogUnavailable,
+            NnPagesControlFailure::DestinationUnavailable,
+        ] {
+            let outcome = NnPagesControlOutcome::Failed(failure);
+            let encoded = encode_control_outcome(NnPagesControlKind::Refresh, 9, outcome)
+                .expect("refresh failure encodes");
+            assert_eq!(
+                decode_control_outcome(NnPagesControlKind::Refresh, 9, &encoded),
+                Some(outcome)
+            );
+        }
+        for failure in [
+            NnPagesControlFailure::DestinationUnavailable,
+            NnPagesControlFailure::IndexUnavailable,
+            NnPagesControlFailure::AnnounceSend,
+        ] {
+            let outcome = NnPagesControlOutcome::Failed(failure);
+            let encoded = encode_control_outcome(NnPagesControlKind::Announce, 10, outcome)
+                .expect("announce failure encodes");
+            assert_eq!(
+                decode_control_outcome(NnPagesControlKind::Announce, 10, &encoded),
+                Some(outcome)
+            );
+        }
+        for outcome in [
+            NnPagesControlOutcome::Aborted,
+            NnPagesControlOutcome::Indeterminate,
+        ] {
+            let encoded = encode_control_outcome(NnPagesControlKind::Refresh, 11, outcome)
+                .expect("terminal state encodes");
+            assert_eq!(
+                decode_control_outcome(NnPagesControlKind::Refresh, 11, &encoded),
+                Some(outcome)
+            );
+        }
+    }
+
+    #[test]
+    fn v2_control_outcomes_reject_wrong_identity_version_status_and_code() {
+        let report = NnPagesControlOutcome::Refreshed(NnPagesRefreshReport {
+            discovered: 1,
+            added: 1,
+            removed: 0,
+            unchanged: 0,
+            settings_status: NnPagesSettingsStatus::Loaded,
+            settings_changed: false,
+        });
+        let encoded =
+            encode_control_outcome(NnPagesControlKind::Refresh, 7, report).expect("report encodes");
+        assert_eq!(
+            decode_control_outcome(NnPagesControlKind::Refresh, 8, &encoded),
+            None
+        );
+        assert_eq!(
+            decode_control_outcome(
+                NnPagesControlKind::Refresh,
+                7,
+                "prnsd-nnpages-refresh-v1\n00000000000000000000000000000007\naborted\n",
+            ),
+            None
+        );
+        assert_eq!(
+            decode_control_outcome(
+                NnPagesControlKind::Refresh,
+                7,
+                "prnsd-nnpages-refresh-v2\n00000000000000000000000000000007\nunknown\n",
+            ),
+            None
+        );
+        assert_eq!(
+            decode_control_outcome(
+                NnPagesControlKind::Refresh,
+                7,
+                "prnsd-nnpages-refresh-v2\n00000000000000000000000000000007\nfailed\nunknown\n",
+            ),
+            None
+        );
+        assert_eq!(
+            decode_control_outcome(
+                NnPagesControlKind::Refresh,
+                7,
+                "prnsd-nnpages-refresh-v2\n00000000000000000000000000000007\nfailed\nindex-unavailable\n",
+            ),
+            None
+        );
+    }
+
+    fn write_test_control_request(
+        config_dir: &Path,
+        kind: NnPagesControlKind,
+        id: u128,
+    ) -> (PathBuf, PathBuf, PathBuf) {
+        let control = control_root(config_dir);
+        fs::create_dir_all(&control).expect("control directory");
+        let request_path = control_path(&control, CONTROL_REQUEST_PREFIX, id);
+        let inflight_path = control_path(&control, CONTROL_INFLIGHT_PREFIX, id);
+        let result_path = control_path(&control, CONTROL_RESULT_PREFIX, id);
+        atomic_control_write(
+            &request_path,
+            format!("{}\n{id:032x}\n", kind.version()).as_bytes(),
+        )
+        .expect("control request");
+        (request_path, inflight_path, result_path)
+    }
+
+    #[tokio::test]
+    async fn known_failures_reach_the_cli_with_specific_codes() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let config_dir = directory.path().to_path_buf();
+        let client_dir = config_dir.clone();
+        let client = tokio::spawn(async move { request_refresh(&client_dir).await });
+        let request =
+            tokio::time::timeout(Duration::from_secs(2), next_control_request(&config_dir))
+                .await
+                .expect("refresh arrives")
+                .expect("refresh is valid");
+        request
+            .finish(Err(NnPagesRefreshError::DestinationUnavailable))
+            .expect("refresh failure result");
         assert!(matches!(
-            decode_control_result(8, &encode_control_result(7, Some(&report))),
-            Err(NnPagesCliError::InvalidResult)
+            client.await.expect("refresh client joins"),
+            Err(NnPagesCliError::OperationFailed {
+                kind: NnPagesControlKind::Refresh,
+                failure: NnPagesControlFailure::DestinationUnavailable,
+            })
         ));
+
+        let client_dir = config_dir.clone();
+        let client = tokio::spawn(async move { request_announce(&client_dir).await });
+        let request =
+            tokio::time::timeout(Duration::from_secs(2), next_control_request(&config_dir))
+                .await
+                .expect("announce arrives")
+                .expect("announce is valid");
+        request
+            .finish_announce(Err(NnPagesControlFailure::IndexUnavailable))
+            .expect("announce failure result");
         assert!(matches!(
-            decode_control_result(7, &encode_control_result(7, None)),
-            Err(NnPagesCliError::RefreshFailed)
+            client.await.expect("announce client joins"),
+            Err(NnPagesCliError::OperationFailed {
+                kind: NnPagesControlKind::Announce,
+                failure: NnPagesControlFailure::IndexUnavailable,
+            })
         ));
+    }
+
+    #[tokio::test]
+    async fn dropping_claimed_work_reports_aborted_and_removes_its_marker() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let config_dir = directory.path().to_path_buf();
+        let client_dir = config_dir.clone();
+        let client = tokio::spawn(async move { request_refresh(&client_dir).await });
+        let request =
+            tokio::time::timeout(Duration::from_secs(2), next_control_request(&config_dir))
+                .await
+                .expect("request arrives")
+                .expect("request is valid");
+        let inflight_path = request.inflight_path.clone();
+        assert!(inflight_path.is_file());
+
+        drop(request);
+
+        assert!(matches!(
+            client.await.expect("client joins"),
+            Err(NnPagesCliError::OperationAborted(
+                NnPagesControlKind::Refresh
+            ))
+        ));
+        assert!(!inflight_path.exists());
+    }
+
+    #[tokio::test]
+    async fn an_unwritable_result_leaves_the_inflight_marker_for_recovery() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let config_dir = directory.path().to_path_buf();
+        let id = 0x31u128;
+        let (_, inflight_path, result_path) =
+            write_test_control_request(&config_dir, NnPagesControlKind::Refresh, id);
+        let request =
+            tokio::time::timeout(Duration::from_secs(2), next_control_request(&config_dir))
+                .await
+                .expect("request arrives")
+                .expect("request is valid");
+        fs::create_dir(&result_path).expect("blocking result directory");
+        let report = NnPagesRefreshReport {
+            discovered: 1,
+            added: 1,
+            removed: 0,
+            unchanged: 0,
+            settings_status: NnPagesSettingsStatus::Loaded,
+            settings_changed: false,
+        };
+
+        request.finish(Ok(report)).expect_err("result write fails");
+
+        assert!(inflight_path.is_file());
+        assert!(result_path.is_dir());
+    }
+
+    #[tokio::test]
+    async fn an_unremovable_marker_does_not_overwrite_a_committed_result() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let config_dir = directory.path().to_path_buf();
+        let id = 0x32u128;
+        let (_, inflight_path, result_path) =
+            write_test_control_request(&config_dir, NnPagesControlKind::Refresh, id);
+        let request =
+            tokio::time::timeout(Duration::from_secs(2), next_control_request(&config_dir))
+                .await
+                .expect("request arrives")
+                .expect("request is valid");
+        fs::remove_file(&inflight_path).expect("replace marker");
+        fs::create_dir(&inflight_path).expect("blocking marker directory");
+        let report = NnPagesRefreshReport {
+            discovered: 1,
+            added: 1,
+            removed: 0,
+            unchanged: 0,
+            settings_status: NnPagesSettingsStatus::Loaded,
+            settings_changed: false,
+        };
+
+        request
+            .finish(Ok(report))
+            .expect_err("marker cleanup fails");
+
+        assert_eq!(
+            decode_control_outcome(
+                NnPagesControlKind::Refresh,
+                id,
+                &fs::read_to_string(result_path).expect("committed result"),
+            ),
+            Some(NnPagesControlOutcome::Refreshed(report))
+        );
+    }
+
+    #[tokio::test]
+    async fn recovery_preserves_a_committed_result_and_only_clears_its_marker() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let config_dir = directory.path().to_path_buf();
+        let id = 0x41u128;
+        let (_, inflight_path, result_path) =
+            write_test_control_request(&config_dir, NnPagesControlKind::Refresh, id);
+        let request =
+            tokio::time::timeout(Duration::from_secs(2), next_control_request(&config_dir))
+                .await
+                .expect("request arrives")
+                .expect("request is valid");
+        let outcome = NnPagesControlOutcome::Refreshed(NnPagesRefreshReport {
+            discovered: 2,
+            added: 1,
+            removed: 0,
+            unchanged: 1,
+            settings_status: NnPagesSettingsStatus::Loaded,
+            settings_changed: false,
+        });
+        let encoded = encode_control_outcome(NnPagesControlKind::Refresh, id, outcome)
+            .expect("result encodes");
+        atomic_control_write(&result_path, encoded.as_bytes()).expect("result commits");
+        std::mem::forget(request);
+
+        recover_control_state(&config_dir).expect("control recovery");
+
+        assert!(!inflight_path.exists());
+        assert_eq!(
+            decode_control_outcome(
+                NnPagesControlKind::Refresh,
+                id,
+                &fs::read_to_string(result_path).expect("result remains"),
+            ),
+            Some(outcome)
+        );
+    }
+
+    #[tokio::test]
+    async fn recovery_marks_refresh_and_announce_indeterminate_without_replaying_them() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let config_dir = directory.path().to_path_buf();
+        let controls = [
+            (0x51u128, NnPagesControlKind::Refresh),
+            (0x52u128, NnPagesControlKind::Announce),
+        ];
+        for (id, kind) in controls {
+            write_test_control_request(&config_dir, kind, id);
+            let request =
+                tokio::time::timeout(Duration::from_secs(2), next_control_request(&config_dir))
+                    .await
+                    .expect("request arrives")
+                    .expect("request is valid");
+            assert_eq!(request.kind(), kind);
+            std::mem::forget(request);
+        }
+
+        recover_control_state(&config_dir).expect("control recovery");
+
+        let control = control_root(&config_dir);
+        for (id, kind) in controls {
+            let result_path = control_path(&control, CONTROL_RESULT_PREFIX, id);
+            assert_eq!(
+                decode_control_outcome(
+                    kind,
+                    id,
+                    &fs::read_to_string(result_path).expect("recovery result"),
+                ),
+                Some(NnPagesControlOutcome::Indeterminate)
+            );
+        }
+        assert!(
+            tokio::time::timeout(CONTROL_POLL_INTERVAL * 5, next_control_request(&config_dir),)
+                .await
+                .is_err(),
+            "recovery replayed an in-flight request"
+        );
+    }
+
+    #[test]
+    fn recovery_discards_unsupported_and_malformed_exact_control_artifacts() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let config_dir = directory.path();
+        let control = control_root(config_dir);
+        fs::create_dir_all(&control).expect("control directory");
+        let legacy_request = control_path(&control, CONTROL_REQUEST_PREFIX, 0x61);
+        let legacy_inflight = control_path(&control, CONTROL_INFLIGHT_PREFIX, 0x62);
+        let legacy_result = control_path(&control, CONTROL_RESULT_PREFIX, 0x63);
+        let malformed_request = control_path(&control, CONTROL_REQUEST_PREFIX, 0x64);
+        let valid_request = control_path(&control, CONTROL_REQUEST_PREFIX, 0x65);
+        fs::write(
+            &legacy_request,
+            "prnsd-nnpages-refresh-v1\n00000000000000000000000000000061\n",
+        )
+        .expect("legacy request");
+        fs::write(
+            &legacy_inflight,
+            "prnsd-nnpages-announce-v1\n00000000000000000000000000000062\n",
+        )
+        .expect("legacy inflight");
+        fs::write(
+            &legacy_result,
+            "prnsd-nnpages-refresh-v1\n00000000000000000000000000000063\nfailed\n",
+        )
+        .expect("legacy result");
+        fs::write(
+            &malformed_request,
+            "prnsd-nnpages-refresh-v2\n000000000000000000000000000000ff\n",
+        )
+        .expect("malformed request");
+        fs::write(
+            &valid_request,
+            "prnsd-nnpages-refresh-v2\n00000000000000000000000000000065\n",
+        )
+        .expect("valid request");
+
+        recover_control_state(config_dir).expect("control recovery");
+
+        for path in [
+            legacy_request,
+            legacy_inflight,
+            legacy_result,
+            malformed_request,
+        ] {
+            assert!(!path.exists(), "{} was not discarded", path.display());
+        }
+        assert!(valid_request.is_file());
+    }
+
+    #[test]
+    fn cli_errors_distinguish_known_aborted_and_indeterminate_outcomes() {
+        assert!(NnPagesCliError::OperationFailed {
+            kind: NnPagesControlKind::Announce,
+            failure: NnPagesControlFailure::IndexUnavailable,
+        }
+        .to_string()
+        .contains("index.mu is not serveable"));
+        assert!(
+            NnPagesCliError::OperationAborted(NnPagesControlKind::Refresh)
+                .to_string()
+                .contains("aborted")
+        );
+        assert!(
+            NnPagesCliError::OperationIndeterminate(NnPagesControlKind::Refresh)
+                .to_string()
+                .contains("safe to retry")
+        );
+        assert!(
+            NnPagesCliError::OperationIndeterminate(NnPagesControlKind::Announce)
+                .to_string()
+                .contains("may already have aired")
+        );
     }
 
     #[cfg(unix)]
