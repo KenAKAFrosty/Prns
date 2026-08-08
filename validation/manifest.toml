@@ -476,7 +476,7 @@ platform = "any"
 toolchain = "python"
 timeout_seconds = 600
 command = ["bash", "validation/release/contracts.sh"]
-inputs = ["tools/tests", "tools/release", "prnsd/Cargo.toml", "validation/release/contracts.sh", "validation/release/prnsd-feature-contracts.py", "validation/release/workflow-contracts.py"]
+inputs = ["tools/tests", "tools/release", "prnsd/Cargo.toml", "validation/release/contracts.sh", "validation/release/prnsd-feature-contracts.py", "validation/release/workflow-contracts.py", "validation/release/acceptance-doc-contracts.py", "release/acceptance/README.md", "release/acceptance/QUALIFICATION.md", "release/acceptance/rosters/README.md", "release/flash/README.md", "docs/release-dependency-audit.md"]
 artifacts = "validation-artifacts/results/release-contracts"
 
 [[suite]]
