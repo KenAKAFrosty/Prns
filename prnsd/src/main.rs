@@ -45,9 +45,12 @@ fn main() -> ExitCode {
     };
     let command = match command {
         cli::Command::Run(args) if !args.service => {
-            let managed = match tray::managed_process() {
+            let managed = match run_process_context(&args) {
                 Ok(managed) => managed,
-                Err(exit_code) => return exit_code,
+                Err(error) => {
+                    eprintln!("prnsd: {error}");
+                    return ExitCode::FAILURE;
+                }
             };
             tray::run(args.daemon, managed);
         }

@@ -242,7 +242,6 @@ mod platform {
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod platform {
-    use std::process::ExitCode;
     use std::time::Duration;
 
     use prnsd_control::ManagedProcess;
@@ -569,13 +568,6 @@ mod platform {
             eprintln!("prnsd: desktop event loop failed: {error}");
         }
         std::process::exit(1)
-    }
-
-    pub(crate) fn managed_process() -> Result<Option<ManagedProcess>, ExitCode> {
-        ManagedProcess::from_environment().map_err(|error| {
-            eprintln!("prnsd: {error}");
-            ExitCode::FAILURE
-        })
     }
 }
 
