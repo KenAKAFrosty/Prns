@@ -1441,7 +1441,7 @@ class BleLink(private val context: Context) {
         val scanner = adapter.bluetoothLeScanner ?: return
         val filters = listOf(ScanFilter.Builder().setServiceUuid(ParcelUuid(PRNS_SERVICE)).build())
         val settings = ScanSettings.Builder()
-            .setScanMode(ScanSettings.SCAN_MODE_LOW_POWER)
+            .setScanMode(ScanSettings.SCAN_MODE_BALANCED)
             .build()
         try {
             scanner.startScan(filters, settings, scanCallback)
