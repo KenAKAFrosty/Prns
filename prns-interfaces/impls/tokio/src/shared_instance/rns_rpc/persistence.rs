@@ -179,6 +179,8 @@ pub fn reticulum_storage_dir() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|| {
             std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
+                .filter(|home| !home.is_empty())
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from("."))
                 .join(".reticulum")

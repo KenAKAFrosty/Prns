@@ -1172,7 +1172,10 @@ fn rnode_multi_rejects_uri_transports_as_one_serial_device_requirement() {
     assert!(diagnostic
         .to_string()
         .contains("RNodeMulti requires one local serial device"));
-    assert!(diagnostic.to_string().contains("port = /dev/ttyUSB0"));
+    let example = if cfg!(windows) { "COM3" } else { "/dev/ttyUSB0" };
+    assert!(diagnostic
+        .to_string()
+        .contains(&format!("port = {example}")));
 }
 
 #[test]
