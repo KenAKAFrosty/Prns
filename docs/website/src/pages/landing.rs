@@ -77,8 +77,7 @@ pub fn Landing() -> Element {
                         }
                         span { class: "kicker-rotator__rule", "{resting_word}" }
                     }
-                    // The animation is decorative; expose the resting word to
-                    // screen readers so the phrase still reads "…for the people".
+                    // The animation is decorative; expose the resting word to screen readers so the phrase still reads "…that's yours".
                     span { class: "kicker-sr-only", "{resting_word}" }
                 } else {
                     {t!("landing-kicker")}

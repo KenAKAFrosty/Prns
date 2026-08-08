@@ -39,7 +39,7 @@ interfaces-cable-label = Kabel + Packet Radio
 interfaces-cable-headline = Kabel, TNCs und Funkmodems
 interfaces-cable-body = USB Auto-interface, serielles Framing, KISS, AX.25 und RNode bringen kleine Geräte und Packet-Radio-Hardware in dasselbe Mesh.
 
-interfaces-host-label = Geroutetes IP
+interfaces-host-label = Geroutete IP-Netze
 interfaces-host-headline = Internet-, WAN- und Backbone-Links
 interfaces-host-body = TCP Client/Server, UDP, WebSocket und Backbone lassen entfernte Peers über private WANs, VPNs, öffentliche Internet-Relays und Browser-Integrationen am Mesh teilnehmen.
 
