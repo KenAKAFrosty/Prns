@@ -25,7 +25,7 @@ mod advertisement;
 
 #[cfg(all(test, unix))]
 use advertisement::expand_user_path;
-#[cfg(test)]
+#[cfg(all(test, unix))]
 use advertisement::resolve_reachable_on;
 use advertisement::{security_name, DiscoveryAdvertisementResolutionError, PublicationSource};
 

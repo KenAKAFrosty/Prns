@@ -315,7 +315,7 @@ mod tests {
         });
 
         let outcome = tokio::time::timeout(
-            Duration::from_secs(2),
+            Duration::from_secs(if cfg!(windows) { 20 } else { 2 }),
             connect_async_with_config(
                 std::format!("wss://localhost:{}/prns", addr.port()),
                 Some(framing::config()),

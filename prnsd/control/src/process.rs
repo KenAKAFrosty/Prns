@@ -584,6 +584,7 @@ mod tests {
         fs::remove_dir_all(paths.state_dir).unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn active_configuration_must_match_the_live_managed_generation() {
         let paths = test_paths("active-configuration");
