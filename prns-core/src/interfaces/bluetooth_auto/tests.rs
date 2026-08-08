@@ -470,9 +470,9 @@ fn only_the_designated_opener_stuck_as_peripheral_redials() {
     assert!(!needs_redial(opens_android, HandshakeRole::Listener, mac()));
     assert!(!needs_redial(opens_android, HandshakeRole::Dialer, mac()));
 
-    let either = l2cap_arrangement(mac(), linux());
-    assert!(!needs_redial(either, HandshakeRole::Listener, mac()));
-    assert!(!needs_redial(either, HandshakeRole::Dialer, mac()));
+    let either = l2cap_arrangement(linux(), android());
+    assert!(!needs_redial(either, HandshakeRole::Listener, linux()));
+    assert!(!needs_redial(either, HandshakeRole::Dialer, linux()));
 }
 
 #[test]
