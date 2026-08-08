@@ -10,7 +10,7 @@ mod trouble;
 pub use frame_pool::{FrameLease, FramePoolError, SharedFramePool};
 pub use runtime::{
     BluetoothAuto, BluetoothAutoShared, BluetoothAutoStatus, BluetoothMemberStatus,
-    BluetoothRecoveryReason,
+    BluetoothRecoveryCounters, BluetoothRecoveryReason,
 };
 
 #[cfg(feature = "bluetooth-auto-trouble")]

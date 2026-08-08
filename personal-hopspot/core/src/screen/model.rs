@@ -52,6 +52,13 @@ pub struct InterfaceMenuDetails {
     rows: HVec<InterfaceMenuDetailRow, INTERFACE_MENU_DETAIL_ROWS_CAP>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BluetoothRecoveryMenuDetails {
+    pub receive_pressure: u32,
+    pub setup_failures: u32,
+    pub transport_closures: u32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LoRaSpectrumMenuDetails {
     pub channel_busy_per_mille: u16,
@@ -170,6 +177,25 @@ impl InterfaceMenuDetails {
         self.push_info("RX drops", value.as_str());
     }
 
+    pub fn push_bluetooth_recovery(&mut self, recovery: BluetoothRecoveryMenuDetails) {
+        if recovery.receive_pressure == 0
+            && recovery.setup_failures == 0
+            && recovery.transport_closures == 0
+        {
+            return;
+        }
+        let mut text = InterfaceMenuDetailText::new();
+        push_recovery_count(&mut text, 'R', recovery.receive_pressure);
+        let _ = text.push('/');
+        push_recovery_count(&mut text, 'S', recovery.setup_failures);
+        let _ = text.push('/');
+        push_recovery_count(&mut text, 'C', recovery.transport_closures);
+        let _ = self.rows.push(InterfaceMenuDetailRow {
+            text,
+            kind: InterfaceMenuDetailKind::Info,
+        });
+    }
+
     pub fn push_lora_spectrum(&mut self, spectrum: LoRaSpectrumMenuDetails) {
         let mut value = InterfaceMenuDetailText::new();
         let _ = write!(
@@ -279,6 +305,15 @@ fn push_truncated<const N: usize>(text: &mut HString<N>, value: &str) {
         if text.push(c).is_err() {
             break;
         }
+    }
+}
+
+fn push_recovery_count(text: &mut InterfaceMenuDetailText, label: char, count: u32) {
+    let _ = text.push(label);
+    if count > 99 {
+        let _ = text.push_str("99+");
+    } else {
+        let _ = write!(text, "{count}");
     }
 }
 

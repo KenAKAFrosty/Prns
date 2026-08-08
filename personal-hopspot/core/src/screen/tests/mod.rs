@@ -47,10 +47,10 @@ use super::state::{
 };
 use super::{
     apply_and_persist_radio_profile, card_label, render as render_screen, sort_cards_for_display,
-    AccessPointState, Card, CardActivityTracker, CardKind, DisplayPowerControl, InputEvent,
-    InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess, PersistenceNotice,
-    RadioProfileChangeResult, RenderFrame, ScreenContent, UiAction, UiConfiguration, UiNotice,
-    UiState,
+    AccessPointState, BluetoothRecoveryMenuDetails, Card, CardActivityTracker, CardKind,
+    DisplayPowerControl, InputEvent, InterfaceMenuDetails, LoRaSpectrumMenuDetails,
+    LocalDocsAccess, PersistenceNotice, RadioProfileChangeResult, RenderFrame, ScreenContent,
+    UiAction, UiConfiguration, UiNotice, UiState,
 };
 
 const TEST_WIDTH: usize = WIDTH as usize;
