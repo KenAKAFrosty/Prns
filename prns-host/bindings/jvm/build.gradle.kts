@@ -7,7 +7,7 @@ plugins {
     signing
 }
 
-group = "io.reticulum"
+group = "rs.reticulum"
 version = "0.3.3"
 
 repositories {

@@ -1,4 +1,4 @@
-package io.reticulum.prns
+package rs.reticulum.prns
 
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.cancelAndJoin

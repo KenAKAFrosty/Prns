@@ -1,4 +1,4 @@
-package io.reticulum.prns
+package rs.reticulum.prns
 
 import java.nio.file.Path
 
