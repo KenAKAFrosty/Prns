@@ -6,8 +6,8 @@ use super::captive_portal::{
 };
 use super::*;
 #[cfg(feature = "wifi-auto")]
-use crate::wifi_rx_recovery::{
-    StationReceptionAction, StationReceptionRecovery, StationReceptionWindow,
+use crate::wifi_data_path_recovery::{
+    StationDataPathAction, StationDataPathRecovery, StationDataPathWindow,
 };
 #[cfg(feature = "wifi-auto")]
 use alloc::boxed::Box;
@@ -412,7 +412,7 @@ pub(super) async fn net_task(mut runner: Runner<'static, WifiStaDevice<'static>>
 async fn network_ready_task(stack: Stack<'static>) -> ! {
     let mut previous_state = None;
     let mut previous_data_path = None;
-    let mut station_reception_recovery = StationReceptionRecovery::new();
+    let mut station_data_path_recovery = StationDataPathRecovery::new();
     let mut samples_until_report = 0;
     let mut internal_free_low_water = usize::MAX;
     loop {
@@ -437,17 +437,17 @@ async fn network_ready_task(stack: Stack<'static>) -> ! {
             let heap = esp_alloc::HEAP.stats();
             let data_path = esp_radio::wifi::data_path_diagnostics();
             let station_ready = associated && ready;
-            let reception_window = previous_data_path.as_ref().map(|earlier| {
+            let data_path_window = previous_data_path.as_ref().map(|earlier| {
                 if data_path.transmit_submission_stalled_since(earlier) {
-                    StationReceptionWindow::TransmitSubmissionStalled
+                    StationDataPathWindow::TransmitSubmissionStalled
                 } else if data_path.receive_delivery_blocked_by_transmit_capacity_since(earlier) {
-                    StationReceptionWindow::TransmitCapacityBlocked
+                    StationDataPathWindow::TransmitCapacityBlocked
                 } else if data_path.station_receive_progressed_since(earlier) {
-                    StationReceptionWindow::ReceiveProgress
+                    StationDataPathWindow::ReceiveProgress
                 } else if data_path.transmit_progressed_without_station_receive_since(earlier) {
-                    StationReceptionWindow::TransmitWithoutReceive
+                    StationDataPathWindow::TransmitWithoutReceive
                 } else {
-                    StationReceptionWindow::NoProgress
+                    StationDataPathWindow::NoProgress
                 }
             });
             log::info!(
@@ -464,13 +464,13 @@ async fn network_ready_task(stack: Stack<'static>) -> ! {
             );
             log::info!("wifi-data: {}", data_path);
             if station_ready {
-                if let Some(reception_window) = reception_window {
-                    if matches!(&reception_window, StationReceptionWindow::ReceiveProgress) {
+                if let Some(data_path_window) = data_path_window {
+                    if matches!(&data_path_window, StationDataPathWindow::ReceiveProgress) {
                         WIFI_STATION_DATA_PATH_DEGRADED.store(false, Ordering::Release);
                     }
-                    match station_reception_recovery.observe(reception_window) {
-                        StationReceptionAction::Continue => {}
-                        StationReceptionAction::RestartDriver { count, cause } => {
+                    match station_data_path_recovery.observe(data_path_window) {
+                        StationDataPathAction::Continue => {}
+                        StationDataPathAction::RestartDriver { count, cause } => {
                             WIFI_STATION_DATA_PATH_DEGRADED.store(true, Ordering::Release);
                             WIFI_DRIVER_RESTART_REQUESTED.store(true, Ordering::Release);
                             log::warn!("wifi-radio-trace: {data_path:?}");
@@ -481,7 +481,7 @@ async fn network_ready_task(stack: Stack<'static>) -> ! {
                     }
                 }
             } else {
-                station_reception_recovery.station_unavailable();
+                station_data_path_recovery.station_unavailable();
             }
             previous_data_path = if station_ready { Some(data_path) } else { None };
             samples_until_report = WIFI_HEALTH_SAMPLES_BETWEEN_REPORTS;

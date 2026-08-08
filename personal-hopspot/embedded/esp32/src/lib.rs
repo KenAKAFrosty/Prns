@@ -69,4 +69,4 @@ mod station_recovery;
 #[cfg(any(target_arch = "riscv32", target_arch = "xtensa"))]
 mod storage;
 #[cfg(any(test, target_arch = "xtensa"))]
-mod wifi_rx_recovery;
+mod wifi_data_path_recovery;
