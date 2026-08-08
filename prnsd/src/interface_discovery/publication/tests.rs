@@ -265,12 +265,12 @@ fn duplicate_attached_interface_ids_are_rejected() {
 
 /// Resolve a fixture executable this test just wrote, waiting out a transient `ETXTBSY`.
 ///
-/// Linux refuses to execute a file that any process still holds open for writing. These tests
-/// write the script they then run, and a sibling test thread that forks for its own unrelated
-/// child inherits the open write descriptor for the moment before its `exec` drops it. Measured on
-/// Ubuntu 24.04: with no sibling forker, 300 write-then-exec rounds gave 0 failures; with one,
-/// 49 of 300 failed this way. Production never writes the operator's `reachable-on` script, so the
-/// window belongs to the fixture and the wait belongs here rather than in `resolve_reachable_on`.
+/// Linux refuses to execute a file that any process still holds open for writing.
+/// These tests write the script they then run, and a sibling test thread that forks for its own unrelated child inherits the open write descriptor for the moment before its `exec` drops it.
+///
+/// Measured on Ubuntu 24.04: with no sibling forker, 300 write-then-exec rounds gave 0 failures; with one, 49 of 300 failed this way.
+///
+/// Production never writes the operator's `reachable-on` script, so the window belongs to the fixture and the wait belongs here rather than in `resolve_reachable_on`.
 #[cfg(unix)]
 async fn resolve_reachable_on_settled(
     path: &str,
