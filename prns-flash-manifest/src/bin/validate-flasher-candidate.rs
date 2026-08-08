@@ -590,12 +590,12 @@ fn digest_file(path: &Path, limit: u64) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use super::walk_payload_files;
     use super::{
         read_limited, utc_timestamp, validate_build_metadata, validate_candidate,
         MAX_CANDIDATE_FILE_BYTES,
     };
-    #[cfg(unix)]
-    use super::walk_payload_files;
     use serde_json::{json, Value};
     use std::fs::{self, File};
     use std::path::{Path, PathBuf};
