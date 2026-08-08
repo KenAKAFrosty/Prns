@@ -31,17 +31,17 @@ fn psram_udp_socket<
 }
 
 #[cfg(feature = "wifi-auto")]
-const WIFI_STATIC_RX_BUFFERS: u8 = 6;
+const WIFI_STATIC_RX_BUFFERS: u8 = 10;
 #[cfg(feature = "wifi-auto")]
-const WIFI_DYNAMIC_RX_BUFFERS: u16 = 12;
+const WIFI_DYNAMIC_RX_BUFFERS: u16 = 32;
 #[cfg(feature = "wifi-auto")]
 const WIFI_RX_BA_WINDOW: u8 = 6;
 #[cfg(feature = "wifi-auto")]
-const WIFI_RX_QUEUE_FRAMES: usize = 8;
+const WIFI_RX_QUEUE_FRAMES: usize = WIFI_DYNAMIC_RX_BUFFERS as usize;
 #[cfg(feature = "wifi-auto")]
 const WIFI_TX_QUEUE_FRAMES: usize = 3;
 #[cfg(feature = "wifi-auto")]
-const WIFI_STATIC_TX_BUFFERS: u8 = 6;
+const WIFI_STATIC_TX_BUFFERS: u8 = 16;
 #[cfg(feature = "wifi-auto")]
 const WIFI_DYNAMIC_TX_BUFFERS: u16 = 0;
 #[cfg(feature = "wifi-auto")]
@@ -438,7 +438,9 @@ async fn network_ready_task(stack: Stack<'static>) -> ! {
             let data_path = esp_radio::wifi::data_path_diagnostics();
             let station_ready = associated && ready;
             let reception_window = previous_data_path.as_ref().map(|earlier| {
-                if data_path.receive_delivery_blocked_by_transmit_capacity_since(earlier) {
+                if data_path.transmit_submission_stalled_since(earlier) {
+                    StationReceptionWindow::TransmitSubmissionStalled
+                } else if data_path.receive_delivery_blocked_by_transmit_capacity_since(earlier) {
                     StationReceptionWindow::TransmitCapacityBlocked
                 } else if data_path.station_receive_progressed_since(earlier) {
                     StationReceptionWindow::ReceiveProgress
@@ -464,22 +466,16 @@ async fn network_ready_task(stack: Stack<'static>) -> ! {
             if station_ready {
                 if let Some(reception_window) = reception_window {
                     if matches!(&reception_window, StationReceptionWindow::ReceiveProgress) {
-                        WIFI_STATION_RX_DEGRADED.store(false, Ordering::Release);
+                        WIFI_STATION_DATA_PATH_DEGRADED.store(false, Ordering::Release);
                     }
                     match station_reception_recovery.observe(reception_window) {
                         StationReceptionAction::Continue => {}
-                        StationReceptionAction::Reassert { count } => {
-                            WIFI_STATION_RX_DEGRADED.store(true, Ordering::Release);
-                            esp_phy::reassert_wifi_rx_enabled();
+                        StationReceptionAction::RestartDriver { count, cause } => {
+                            WIFI_STATION_DATA_PATH_DEGRADED.store(true, Ordering::Release);
+                            WIFI_DRIVER_RESTART_REQUESTED.store(true, Ordering::Release);
+                            log::warn!("wifi-radio-trace: {data_path:?}");
                             log::warn!(
-                                "wifi-health: station RX stalled while TX progressed; reasserted reception count={count}"
-                            );
-                        }
-                        StationReceptionAction::RestartDriver { count } => {
-                            WIFI_STATION_RX_DEGRADED.store(true, Ordering::Release);
-                            WIFI_RX_RESTART_REQUESTED.store(true, Ordering::Release);
-                            log::warn!(
-                                "wifi-health: station RX remained stalled after reassertion; requested driver restart count={count}"
+                                "wifi-health: station data path stalled cause={cause:?}; requested driver restart count={count}"
                             );
                         }
                     }
@@ -586,8 +582,8 @@ async fn wifi_connect_task(
     loop {
         let mut resumed = false;
         while !status.is_station_uplink_enabled() {
-            WIFI_STATION_RX_DEGRADED.store(false, Ordering::Release);
-            WIFI_RX_RESTART_REQUESTED.store(false, Ordering::Release);
+            WIFI_STATION_DATA_PATH_DEGRADED.store(false, Ordering::Release);
+            WIFI_DRIVER_RESTART_REQUESTED.store(false, Ordering::Release);
             if controller.is_connected() {
                 let _ = controller.disconnect_async().await;
             }
@@ -598,11 +594,11 @@ async fn wifi_connect_task(
         if resumed {
             recovery.resume_now();
         }
-        if WIFI_RX_RESTART_REQUESTED.swap(false, Ordering::AcqRel) {
-            log::warn!("wifi: restarting driver after RX recovery escalation");
+        if WIFI_DRIVER_RESTART_REQUESTED.swap(false, Ordering::AcqRel) {
+            log::warn!("wifi: restarting driver after data-path recovery escalation");
             if let Err(error) = controller.restart() {
-                WIFI_RX_RESTART_REQUESTED.store(true, Ordering::Release);
-                log::warn!("wifi: RX recovery driver restart failed: {error:?}");
+                WIFI_DRIVER_RESTART_REQUESTED.store(true, Ordering::Release);
+                log::warn!("wifi: data-path recovery driver restart failed: {error:?}");
                 Timer::after(DRIVER_STOP_RETRY_DELAY).await;
                 continue;
             }
@@ -709,7 +705,7 @@ async fn wifi_connect_task(
                 let next = match connected {
                     embassy_futures::select::Either::First(Ok(Ok(connected))) => {
                         WIFI_STATION_JOINED.store(true, Ordering::Relaxed);
-                        WIFI_STATION_RX_DEGRADED.store(false, Ordering::Release);
+                        WIFI_STATION_DATA_PATH_DEGRADED.store(false, Ordering::Release);
                         boot_stage(BootPhase::WifiAssociated);
                         log::info!(
                             "wifi: station connected channel={} elapsed_ms={}",

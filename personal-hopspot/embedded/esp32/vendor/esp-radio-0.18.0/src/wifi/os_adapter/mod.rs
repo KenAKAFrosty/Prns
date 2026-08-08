@@ -20,6 +20,7 @@ use crate::{
         common::{str_from_c, thread_sem_get},
         malloc::{InternalMemory, calloc_internal},
     },
+    radio_trace,
     sys::c_types::*,
     time::{blob_ticks_to_micros, millis_to_blob_ticks},
 };
@@ -791,6 +792,7 @@ pub unsafe extern "C" fn wifi_apb80m_release() {
 /// *************************************************************************
 pub unsafe extern "C" fn phy_disable() {
     trace!("phy_disable");
+    radio_trace::record_wifi_phy_state(false);
     esp_phy::disable_phy_with_wifi_rx();
 }
 
@@ -810,6 +812,7 @@ pub unsafe extern "C" fn phy_disable() {
 pub unsafe extern "C" fn phy_enable() {
     // quite some code needed here
     trace!("phy_enable");
+    radio_trace::record_wifi_phy_state(true);
     esp_phy::enable_phy_with_wifi_rx();
 }
 

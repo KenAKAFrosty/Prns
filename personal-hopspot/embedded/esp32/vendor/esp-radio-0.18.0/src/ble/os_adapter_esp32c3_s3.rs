@@ -54,7 +54,7 @@ pub(super) struct osi_funcs_s {
         ) -> i32,
     >,
     task_delete: Option<unsafe extern "C" fn(*mut ())>,
-    is_in_isr: Option<unsafe extern "C" fn() -> i32>,
+    is_in_isr: Option<unsafe extern "C" fn() -> bool>,
     cause_sw_intr_to_core: Option<unsafe extern "C" fn(i32, i32) -> i32>,
     malloc: Option<unsafe extern "C" fn(u32) -> *mut c_void>,
     malloc_internal: Option<unsafe extern "C" fn(u32) -> *mut c_void>,
@@ -62,32 +62,32 @@ pub(super) struct osi_funcs_s {
     read_efuse_mac: Option<unsafe extern "C" fn(*const ()) -> i32>,
     srand: Option<unsafe extern "C" fn(u32)>,
     rand: Option<unsafe extern "C" fn() -> i32>,
-    btdm_lpcycles_2_hus: Option<unsafe extern "C" fn(u32, u32) -> u32>,
+    btdm_lpcycles_2_hus: Option<unsafe extern "C" fn(u32, *mut u32) -> u32>,
     btdm_hus_2_lpcycles: Option<unsafe extern "C" fn(u32) -> u32>,
-    btdm_sleep_check_duration: Option<unsafe extern "C" fn(i32) -> i32>,
-    btdm_sleep_enter_phase1: Option<unsafe extern "C" fn(i32)>,
+    btdm_sleep_check_duration: Option<unsafe extern "C" fn(*mut i32) -> bool>,
+    btdm_sleep_enter_phase1: Option<unsafe extern "C" fn(u32)>,
     btdm_sleep_enter_phase2: Option<unsafe extern "C" fn()>,
     btdm_sleep_exit_phase1: Option<unsafe extern "C" fn()>,
     btdm_sleep_exit_phase2: Option<unsafe extern "C" fn()>,
     btdm_sleep_exit_phase3: Option<unsafe extern "C" fn()>,
-    coex_wifi_sleep_set: Option<unsafe extern "C" fn(i32)>,
-    coex_core_ble_conn_dyn_prio_get: Option<unsafe extern "C" fn(*mut i32, *mut i32) -> i32>,
+    coex_wifi_sleep_set: Option<unsafe extern "C" fn(bool)>,
+    coex_core_ble_conn_dyn_prio_get: Option<unsafe extern "C" fn(*mut bool, *mut bool) -> i32>,
     coex_schm_register_btdm_callback: Option<unsafe extern "C" fn(*mut c_void) -> i32>,
     coex_schm_status_bit_set: Option<unsafe extern "C" fn(i32, i32)>,
     coex_schm_status_bit_clear: Option<unsafe extern "C" fn(i32, i32)>,
     coex_schm_interval_get: Option<unsafe extern "C" fn() -> u32>,
     coex_schm_curr_period_get: Option<unsafe extern "C" fn() -> u8>,
     coex_schm_curr_phase_get: Option<unsafe extern "C" fn() -> *mut c_void>,
-    interrupt_on: Option<unsafe extern "C" fn(i32) -> i32>,
-    interrupt_off: Option<unsafe extern "C" fn(i32) -> i32>,
+    interrupt_on: Option<unsafe extern "C" fn(*mut c_void) -> i32>,
+    interrupt_off: Option<unsafe extern "C" fn(*mut c_void) -> i32>,
     esp_hw_power_down: Option<unsafe extern "C" fn()>,
     esp_hw_power_up: Option<unsafe extern "C" fn()>,
-    ets_backup_dma_copy: Option<unsafe extern "C" fn(u32, u32, u32, i32)>,
+    ets_backup_dma_copy: Option<unsafe extern "C" fn(u32, u32, u32, bool)>,
     ets_delay_us: Option<unsafe extern "C" fn(u32)>,
     btdm_rom_table_ready: Option<unsafe extern "C" fn()>,
-    coex_bt_wakeup_request: Option<unsafe extern "C" fn()>,
+    coex_bt_wakeup_request: Option<unsafe extern "C" fn() -> bool>,
     coex_bt_wakeup_request_end: Option<unsafe extern "C" fn()>,
-    get_time_us: Option<unsafe extern "C" fn() -> u64>,
+    get_time_us: Option<unsafe extern "C" fn() -> i64>,
     assert: Option<unsafe extern "C" fn()>,
 }
 
@@ -119,7 +119,7 @@ pub(super) static G_OSI_FUNCS: osi_funcs_s = osi_funcs_s {
     queue_recv_from_isr: Some(queue_recv_from_isr),
     task_create: Some(task_create),
     task_delete: Some(task_delete),
-    is_in_isr: Some(is_in_isr),
+    is_in_isr: Some(is_in_isr_wrapper),
     cause_sw_intr_to_core: None,
     malloc: Some(crate::ble::malloc),
     malloc_internal: Some(crate::ble::malloc_internal),
@@ -127,16 +127,16 @@ pub(super) static G_OSI_FUNCS: osi_funcs_s = osi_funcs_s {
     read_efuse_mac: Some(read_efuse_mac),
     srand: Some(crate::ble::btdm::srand),
     rand: Some(crate::ble::btdm::rand),
-    btdm_lpcycles_2_hus: Some(btdm_lpcycles_2_hus),
+    btdm_lpcycles_2_hus: Some(btdm_lpcycles_2_hus_wrapper),
     btdm_hus_2_lpcycles: Some(btdm_hus_2_lpcycles),
-    btdm_sleep_check_duration: Some(btdm_sleep_check_duration),
-    btdm_sleep_enter_phase1: Some(btdm_sleep_enter_phase1),
+    btdm_sleep_check_duration: Some(btdm_sleep_check_duration_wrapper),
+    btdm_sleep_enter_phase1: Some(btdm_sleep_enter_phase1_wrapper),
     btdm_sleep_enter_phase2: Some(btdm_sleep_enter_phase2),
     btdm_sleep_exit_phase1: Some(btdm_sleep_exit_phase1),
     btdm_sleep_exit_phase2: Some(btdm_sleep_exit_phase2),
     btdm_sleep_exit_phase3: Some(btdm_sleep_exit_phase3),
     coex_wifi_sleep_set: Some(coex_wifi_sleep_set),
-    coex_core_ble_conn_dyn_prio_get: Some(coex_core_ble_conn_dyn_prio_get),
+    coex_core_ble_conn_dyn_prio_get: None,
     coex_schm_register_btdm_callback: Some(coex_schm_register_btdm_callback),
     coex_schm_status_bit_set: Some(coex_schm_status_bit_set),
     coex_schm_status_bit_clear: Some(coex_schm_status_bit_clear),
@@ -156,17 +156,12 @@ pub(super) static G_OSI_FUNCS: osi_funcs_s = osi_funcs_s {
     assert: Some(assert_wrapper),
 };
 
-extern "C" fn get_time_us_wrapper() -> u64 {
-    // Get time in microseconds since boot
-    crate::preempt::now()
+extern "C" fn get_time_us_wrapper() -> i64 {
+    crate::preempt::now() as i64
 }
 
 extern "C" fn assert_wrapper() {
     panic!("assert_wrapper called - inspect the logs");
-}
-
-extern_coex_fns! {
-    fn coex_core_ble_conn_dyn_prio_get(low: *mut i32, high: *mut i32) -> i32;
 }
 
 coex_fns! {
@@ -190,16 +185,9 @@ extern "C" fn coex_schm_register_btdm_callback(_callback: *mut c_void) -> i32 {
     }
 }
 
-extern "C" fn coex_bt_wakeup_request() {
+extern "C" fn coex_bt_wakeup_request() -> bool {
     trace!("coex_bt_wakeup_request");
-
-    unsafe extern "C" {
-        fn btdm_wakeup_request();
-    }
-
-    unsafe {
-        btdm_wakeup_request();
-    }
+    false
 }
 
 extern "C" fn coex_bt_wakeup_request_end() {
@@ -581,14 +569,32 @@ pub(crate) fn create_ble_config(config: &Config) -> esp_bt_controller_config_t {
     }
 }
 
-pub(crate) unsafe extern "C" fn interrupt_on(intr_num: i32) -> i32 {
-    trace!("interrupt_on {}", intr_num);
+unsafe extern "C" fn is_in_isr_wrapper() -> bool {
+    unsafe { is_in_isr() != 0 }
+}
 
-    // NO-OP
+unsafe extern "C" fn btdm_lpcycles_2_hus_wrapper(
+    cycles: u32,
+    error_correction: *mut u32,
+) -> u32 {
+    unsafe { btdm_lpcycles_2_hus(cycles, error_correction as u32) }
+}
+
+unsafe extern "C" fn btdm_sleep_check_duration_wrapper(slot_count: *mut i32) -> bool {
+    unsafe { btdm_sleep_check_duration(slot_count as i32) != 0 }
+}
+
+unsafe extern "C" fn btdm_sleep_enter_phase1_wrapper(low_power_cycles: u32) {
+    unsafe { btdm_sleep_enter_phase1(low_power_cycles as i32) }
+}
+
+pub(crate) unsafe extern "C" fn interrupt_on(handle: *mut c_void) -> i32 {
+    trace!("interrupt_on {:?}", handle);
+
     0
 }
 
-pub(crate) unsafe extern "C" fn interrupt_off(_intr_num: i32) -> i32 {
+pub(crate) unsafe extern "C" fn interrupt_off(_handle: *mut c_void) -> i32 {
     todo!();
 }
 
@@ -656,7 +662,7 @@ pub(crate) unsafe extern "C" fn interrupt_handler_set(
     }
 }
 
-pub(crate) unsafe extern "C" fn coex_wifi_sleep_set(sleep: i32) {
+pub(crate) unsafe extern "C" fn coex_wifi_sleep_set(sleep: bool) {
     trace!(
         "ignored coex_wifi_sleep_set {} - because original implementation does the same",
         sleep
@@ -675,7 +681,7 @@ pub(crate) unsafe extern "C" fn ets_backup_dma_copy(
     _reg: u32,
     _mem_addr: u32,
     _num: u32,
-    _to_rem: i32,
+    _to_rem: bool,
 ) {
     todo!();
 }

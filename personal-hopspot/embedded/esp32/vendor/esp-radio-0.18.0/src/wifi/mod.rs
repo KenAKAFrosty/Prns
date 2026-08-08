@@ -81,6 +81,7 @@ use self::{
 use crate::{
     RadioRefGuard,
     hal::ram,
+    radio_trace::{self, RadioEventKind, RadioTraceSnapshot},
     sys::{
         c_types,
         include::{self, *},
@@ -878,10 +879,16 @@ static TX_SUBMITTED: AtomicUsize = AtomicUsize::new(0);
 static TX_SUBMIT_REFUSED: AtomicUsize = AtomicUsize::new(0);
 static TX_COMPLETED: AtomicUsize = AtomicUsize::new(0);
 static TX_COMPLETION_FAILED: AtomicUsize = AtomicUsize::new(0);
+static TX_CREDITS_RECOVERED: AtomicUsize = AtomicUsize::new(0);
+static TX_SUBMISSION_BLOCKED: AtomicBool = AtomicBool::new(false);
 static WIFI_ALLOCATIONS_PREFER_EXTERNAL: AtomicBool = AtomicBool::new(false);
+static RX_BLOCKED_ON_TX: AtomicBool = AtomicBool::new(false);
+static TX_SATURATED: AtomicBool = AtomicBool::new(false);
+static TX_SATURATED_SINCE_US: AtomicUsize = AtomicUsize::new(0);
 
 const WIFI_TX_BUFFER_TYPE_STATIC: i32 = 0;
 const WIFI_TX_BUFFER_TYPE_DYNAMIC: i32 = 1;
+const TX_CREDIT_RECOVERY_TIMEOUT_US: usize = 1_000_000;
 
 fn wifi_allocations_prefer_external() -> bool {
     WIFI_ALLOCATIONS_PREFER_EXTERNAL.load(Ordering::Relaxed)
@@ -912,9 +919,17 @@ pub struct DataPathDiagnostics {
     tx_submit_refused: usize,
     tx_completed: usize,
     tx_completion_failed: usize,
+    tx_credits_recovered: usize,
+    tx_submission_blocked: bool,
+    radio_trace: RadioTraceSnapshot,
 }
 
 impl DataPathDiagnostics {
+    /// Returns whether transmit submission remains blocked without completion progress since an earlier snapshot.
+    pub fn transmit_submission_stalled_since(&self, earlier: &Self) -> bool {
+        self.tx_submission_blocked && self.tx_completed == earlier.tx_completed
+    }
+
     /// Returns whether the station receive callback made progress since an earlier snapshot.
     pub fn station_receive_progressed_since(&self, earlier: &Self) -> bool {
         self.station_rx_admitted != earlier.station_rx_admitted
@@ -944,7 +959,7 @@ impl core::fmt::Display for DataPathDiagnostics {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             formatter,
-            "sta_rx_queue={}/{} ap_rx_queue={} sta_admitted={} sta_delivered={} sta_refused={} ap_admitted={} ap_delivered={} ap_refused={} tx_inflight={}/{} tx_submitted={} tx_completed={} tx_submit_refused={} tx_completion_failed={} rx_tx_blocked={}",
+            "sta_rx_queue={}/{} ap_rx_queue={} sta_admitted={} sta_delivered={} sta_refused={} ap_admitted={} ap_delivered={} ap_refused={} tx_inflight={}/{} tx_submitted={} tx_completed={} tx_submit_refused={} tx_completion_failed={} tx_credits_recovered={} tx_submission_blocked={} rx_tx_blocked={}",
             self.station_rx_queue_depth,
             self.rx_queue_capacity,
             self.access_point_rx_queue_depth,
@@ -960,6 +975,8 @@ impl core::fmt::Display for DataPathDiagnostics {
             self.tx_completed,
             self.tx_submit_refused,
             self.tx_completion_failed,
+            self.tx_credits_recovered,
+            self.tx_submission_blocked,
             self.rx_blocked_by_tx_capacity
         )
     }
@@ -984,6 +1001,9 @@ pub fn data_path_diagnostics() -> DataPathDiagnostics {
         tx_submit_refused: TX_SUBMIT_REFUSED.load(Ordering::Relaxed),
         tx_completed: TX_COMPLETED.load(Ordering::Relaxed),
         tx_completion_failed: TX_COMPLETION_FAILED.load(Ordering::Relaxed),
+        tx_credits_recovered: TX_CREDITS_RECOVERED.load(Ordering::Relaxed),
+        tx_submission_blocked: TX_SUBMISSION_BLOCKED.load(Ordering::Relaxed),
+        radio_trace: radio_trace::snapshot(),
     }
 }
 
@@ -1047,6 +1067,7 @@ fn set_mac_time_update_cb() {
 }
 
 fn wifi_driver_init() -> Result<(), WifiError> {
+    radio_trace::record(RadioEventKind::WifiDriverInitStarted, 0);
     #[cfg(esp32)]
     set_mac_time_update_cb();
     unsafe {
@@ -1071,6 +1092,7 @@ fn wifi_driver_init() -> Result<(), WifiError> {
             Some(recv_cb_ap)
         ))?;
 
+        radio_trace::record(RadioEventKind::WifiDriverInitialized, 0);
         Ok(())
     }
 }
@@ -1112,9 +1134,27 @@ pub(crate) unsafe extern "C" fn coex_init() -> i32 {
 }
 
 fn wifi_deinit() -> Result<(), crate::WifiError> {
+    radio_trace::record(RadioEventKind::WifiDriverDeinitStarted, 0);
     esp_wifi_result!(unsafe { esp_wifi_stop() })?;
-    esp_wifi_result!(unsafe { esp_wifi_deinit_internal() })?;
+    let station_callback = unsafe {
+        esp_wifi_internal_reg_rxcb(esp_interface_t_ESP_IF_WIFI_STA, None)
+    };
+    let access_point_callback = unsafe {
+        esp_wifi_internal_reg_rxcb(esp_interface_t_ESP_IF_WIFI_AP, None)
+    };
+    if station_callback != ESP_OK as i32 || access_point_callback != ESP_OK as i32 {
+        warn!(
+            "Failed to unregister Wi-Fi receive callbacks: station={} access_point={}",
+            station_callback, access_point_callback
+        );
+    }
+    let station_packets = DATA_QUEUE_RX_STA.with(core::mem::take);
+    let access_point_packets = DATA_QUEUE_RX_AP.with(core::mem::take);
+    drop(station_packets);
+    drop(access_point_packets);
     esp_wifi_result!(unsafe { esp_supplicant_deinit() })?;
+    esp_wifi_result!(unsafe { esp_wifi_deinit_internal() })?;
+    radio_trace::record(RadioEventKind::WifiDriverDeinitialized, 0);
     Ok(())
 }
 
@@ -1186,12 +1226,59 @@ unsafe extern "C" fn recv_cb_ap(
 
 pub(crate) static WIFI_TX_INFLIGHT: AtomicUsize = AtomicUsize::new(0);
 
-fn decrement_inflight_counter() {
-    unwrap!(
+fn decrement_inflight_counter() -> usize {
+    let previous = unwrap!(
         WIFI_TX_INFLIGHT.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |x| {
             Some(x.saturating_sub(1))
         })
     );
+    if previous >= TX_QUEUE_SIZE.load(Ordering::Relaxed) {
+        TX_SATURATED_SINCE_US.store(0, Ordering::SeqCst);
+        if TX_SATURATED.swap(false, Ordering::Relaxed) {
+            radio_trace::record(RadioEventKind::WifiTxAvailable, previous);
+        }
+    }
+    previous
+}
+
+fn recover_stalled_transmit_credit() {
+    let capacity = TX_QUEUE_SIZE.load(Ordering::Relaxed);
+    let inflight = WIFI_TX_INFLIGHT.load(Ordering::SeqCst);
+    if capacity == 0 || inflight < capacity {
+        return;
+    }
+    let now = esp_hal::time::Instant::now()
+        .duration_since_epoch()
+        .as_micros() as usize;
+    let saturated_since = TX_SATURATED_SINCE_US.load(Ordering::SeqCst);
+    if saturated_since == 0 {
+        let _ = TX_SATURATED_SINCE_US.compare_exchange(
+            0,
+            now.max(1),
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        );
+        return;
+    }
+    if now.wrapping_sub(saturated_since) < TX_CREDIT_RECOVERY_TIMEOUT_US {
+        return;
+    }
+    if WIFI_TX_INFLIGHT
+        .compare_exchange(
+            inflight,
+            inflight - 1,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        )
+        .is_err()
+    {
+        return;
+    }
+    TX_SATURATED_SINCE_US.store(0, Ordering::SeqCst);
+    TX_SATURATED.store(false, Ordering::Relaxed);
+    TX_CREDITS_RECOVERED.fetch_add(1, Ordering::Relaxed);
+    radio_trace::record(RadioEventKind::WifiTxCreditRecovered, inflight);
+    embassy::TRANSMIT_WAKER.wake();
 }
 
 #[ram]
@@ -1206,9 +1293,13 @@ unsafe extern "C" fn esp_wifi_tx_done_cb(
     TX_COMPLETED.fetch_add(1, Ordering::Relaxed);
     if !tx_status {
         TX_COMPLETION_FAILED.fetch_add(1, Ordering::Relaxed);
+        radio_trace::record(RadioEventKind::WifiTxCompletionFailed, 0);
     }
-    decrement_inflight_counter();
-
+    TX_SUBMISSION_BLOCKED.store(false, Ordering::Relaxed);
+    let previous_inflight = decrement_inflight_counter();
+    if previous_inflight == 0 {
+        radio_trace::record(RadioEventKind::WifiTxCompletionUnmatched, 0);
+    }
     embassy::TRANSMIT_WAKER.wake();
 }
 
@@ -1346,11 +1437,25 @@ impl InterfaceType {
     }
 
     fn can_send(&self) -> bool {
-        WIFI_TX_INFLIGHT.load(Ordering::SeqCst) < TX_QUEUE_SIZE.load(Ordering::Relaxed)
+        if TX_SUBMISSION_BLOCKED.load(Ordering::Relaxed) {
+            return false;
+        }
+        recover_stalled_transmit_credit();
+        !TX_SUBMISSION_BLOCKED.load(Ordering::Relaxed)
+            && WIFI_TX_INFLIGHT.load(Ordering::SeqCst) < TX_QUEUE_SIZE.load(Ordering::Relaxed)
     }
 
     fn increase_in_flight_counter(&self) {
-        WIFI_TX_INFLIGHT.fetch_add(1, Ordering::SeqCst);
+        let inflight = WIFI_TX_INFLIGHT.fetch_add(1, Ordering::SeqCst) + 1;
+        if inflight >= TX_QUEUE_SIZE.load(Ordering::Relaxed)
+            && !TX_SATURATED.swap(true, Ordering::Relaxed)
+        {
+            let now = esp_hal::time::Instant::now()
+                .duration_since_epoch()
+                .as_micros() as usize;
+            TX_SATURATED_SINCE_US.store(now.max(1), Ordering::SeqCst);
+            radio_trace::record(RadioEventKind::WifiTxSaturated, inflight);
+        }
     }
 
     fn tx_token(&self) -> Option<WifiTxToken> {
@@ -1373,6 +1478,11 @@ impl InterfaceType {
         let is_empty = self.data_queue_rx().with(|q| q.is_empty());
         if !is_empty && !self.can_send() {
             RX_BLOCKED_BY_TX_CAPACITY.fetch_add(1, Ordering::Relaxed);
+            if !RX_BLOCKED_ON_TX.swap(true, Ordering::Relaxed) {
+                radio_trace::record(RadioEventKind::WifiRxBlockedByTx, 0);
+            }
+        } else if RX_BLOCKED_ON_TX.swap(false, Ordering::Relaxed) {
+            radio_trace::record(RadioEventKind::WifiRxUnblockedByTx, 0);
         }
         if is_empty || !self.can_send() {
             // TODO: use an OS queue with a short timeout
@@ -1891,6 +2001,8 @@ pub(crate) fn esp_wifi_send_data(interface: wifi_interface_t, data: &mut [u8]) {
 
         if res != include::ESP_OK as i32 {
             TX_SUBMIT_REFUSED.fetch_add(1, Ordering::Relaxed);
+            TX_SUBMISSION_BLOCKED.store(true, Ordering::Relaxed);
+            radio_trace::record(RadioEventKind::WifiTxSubmitRefused, res as usize);
             warn!("esp_wifi_internal_tx returned error: {}", res);
             decrement_inflight_counter();
         }
@@ -2769,6 +2881,7 @@ impl WifiController<'_> {
 
             // `esp_wifi_start` is actually not async - i.e. we get the even before it returns
             esp_wifi_result!(unsafe { esp_wifi_start() })?;
+            radio_trace::record(RadioEventKind::WifiDriverStarted, 0);
         }
 
         self.config = conf.clone();
@@ -2899,27 +3012,28 @@ ignored."
         set_station_state(WifiStationState::Stopping);
 
         esp_wifi_result!(unsafe { esp_wifi_stop() })?;
+        radio_trace::record(RadioEventKind::WifiDriverStopped, 0);
         WIFI_TX_INFLIGHT.store(0, Ordering::SeqCst);
+        TX_SATURATED_SINCE_US.store(0, Ordering::SeqCst);
+        TX_SATURATED.store(false, Ordering::Relaxed);
+        TX_SUBMISSION_BLOCKED.store(false, Ordering::Relaxed);
         embassy::TRANSMIT_WAKER.wake();
         Ok(())
     }
 
-    /// Restarts the configured Wi-Fi mode without deinitializing the shared radio.
+    /// Reinitializes the Wi-Fi driver and restores the controller's configuration.
     pub fn restart(&mut self) -> Result<(), WifiError> {
         let config = self.config.clone();
         let country_info = self.country_info;
         let power_save_mode = self.power_save_mode;
-        if matches!(self.driver_state, WifiDriverState::Initialized) {
-            let station_packets = DATA_QUEUE_RX_STA.with(core::mem::take);
-            let access_point_packets = DATA_QUEUE_RX_AP.with(core::mem::take);
-            drop(station_packets);
-            drop(access_point_packets);
 
-            wifi_deinit()?;
-            self.driver_state = WifiDriverState::Uninitialized;
-            WIFI_TX_INFLIGHT.store(0, Ordering::SeqCst);
-            embassy::TRANSMIT_WAKER.wake();
-        }
+        wifi_deinit()?;
+        self.driver_state = WifiDriverState::Uninitialized;
+        WIFI_TX_INFLIGHT.store(0, Ordering::SeqCst);
+        TX_SATURATED_SINCE_US.store(0, Ordering::SeqCst);
+        TX_SATURATED.store(false, Ordering::Relaxed);
+        TX_SUBMISSION_BLOCKED.store(false, Ordering::Relaxed);
+        embassy::TRANSMIT_WAKER.wake();
 
         wifi_driver_init()?;
         self.driver_state = WifiDriverState::Initialized;

@@ -336,8 +336,8 @@ const PACKET_PHY_INDEX_BUCKETS: usize =
 #[cfg(feature = "wifi-auto")]
 static WIFI_STATION_JOINED: AtomicBool = AtomicBool::new(false);
 #[cfg(feature = "wifi-auto")]
-static WIFI_STATION_RX_DEGRADED: AtomicBool = AtomicBool::new(false);
-static WIFI_RX_RESTART_REQUESTED: AtomicBool = AtomicBool::new(false);
+static WIFI_STATION_DATA_PATH_DEGRADED: AtomicBool = AtomicBool::new(false);
+static WIFI_DRIVER_RESTART_REQUESTED: AtomicBool = AtomicBool::new(false);
 static CORE_ONE_HEARTBEAT: AtomicU64 = AtomicU64::new(0);
 
 fn hardware_entropy(bytes: &mut [u8]) {

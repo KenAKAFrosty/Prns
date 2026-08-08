@@ -14,6 +14,7 @@ use crate::{
     },
     compat::common::str_from_c,
     hal::ram,
+    radio_trace::{self, RadioEventKind},
     sys::{c_types::*, include::*},
 };
 
@@ -254,6 +255,7 @@ unsafe extern "C" fn btdm_sleep_exit_phase3() {
 
 unsafe extern "C" fn coex_schm_status_bit_set(_typ: i32, status: i32) {
     trace!("coex_schm_status_bit_set {} {}", _typ, status);
+    radio_trace::record_ble_coex_status(true, _typ, status);
     #[cfg(feature = "coex")]
     unsafe {
         crate::sys::include::coex_schm_status_bit_set(_typ as u32, status as u32)
@@ -262,6 +264,7 @@ unsafe extern "C" fn coex_schm_status_bit_set(_typ: i32, status: i32) {
 
 unsafe extern "C" fn coex_schm_status_bit_clear(_typ: i32, status: i32) {
     trace!("coex_schm_status_bit_clear {} {}", _typ, status);
+    radio_trace::record_ble_coex_status(false, _typ, status);
     #[cfg(feature = "coex")]
     unsafe {
         crate::sys::include::coex_schm_status_bit_clear(_typ as u32, status as u32)
@@ -297,6 +300,7 @@ unsafe extern "C" fn custom_queue_create(
 }
 
 pub(crate) fn ble_init(config: &Config) -> PhyInitGuard<'static> {
+    radio_trace::record(RadioEventKind::BleControllerInitStarted, 0);
     let phy_init_guard;
     unsafe {
         (*addr_of_mut!(HCI_OUT_COLLECTOR)).write(HciOutCollector::new());
@@ -344,6 +348,7 @@ pub(crate) fn ble_init(config: &Config) -> PhyInitGuard<'static> {
         ); // see btdm_config_mask_load for mask
 
         assert!(res == 0, "btdm_controller_init returned {}", res);
+        radio_trace::record(RadioEventKind::BleControllerInitialized, 0);
 
         debug!("The btdm_controller_init was initialized");
 
@@ -369,6 +374,7 @@ pub(crate) fn ble_init(config: &Config) -> PhyInitGuard<'static> {
         coex_enable();
 
         btdm_controller_enable(esp_bt_mode_t_ESP_BT_MODE_BLE);
+        radio_trace::record(RadioEventKind::BleControllerEnabled, 0);
 
         API_vhci_host_register_callback(&VHCI_HOST_CALLBACK);
     }
@@ -390,6 +396,7 @@ pub(crate) fn ble_deinit() {
     unsafe {
         btdm_controller_deinit();
     }
+    radio_trace::record(RadioEventKind::BleControllerDeinitialized, 0);
     // Disabling the PHY happens automatically, when the BLEController gets dropped.
 }
 /// Sends HCI data to the BLE controller.

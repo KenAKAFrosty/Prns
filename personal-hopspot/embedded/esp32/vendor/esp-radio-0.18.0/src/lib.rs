@@ -209,6 +209,7 @@ macro_rules! unstable_module {
 mod asynch;
 mod compat;
 mod interrupt_dispatch;
+mod radio_trace;
 mod radio_clocks;
 mod refcount;
 mod time;

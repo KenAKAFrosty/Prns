@@ -113,16 +113,16 @@ pub(super) fn build_snapshots(
     for (status, membership) in &entries {
         let id = status.id();
         let counts = INTERFACE_STORE.counts(id);
-        let connection = if Some(id) == wifi_id && WIFI_STATION_RX_DEGRADED.load(Ordering::Acquire)
-        {
-            if WIFI_STATION_JOINED.load(Ordering::Relaxed) {
-                ConnectionState::Degraded
+        let connection =
+            if Some(id) == wifi_id && WIFI_STATION_DATA_PATH_DEGRADED.load(Ordering::Acquire) {
+                if WIFI_STATION_JOINED.load(Ordering::Relaxed) {
+                    ConnectionState::Degraded
+                } else {
+                    ConnectionState::Reconnecting
+                }
             } else {
-                ConnectionState::Reconnecting
-            }
-        } else {
-            status.connection()
-        };
+                status.connection()
+            };
         let _ = snapshots.push(InterfaceSnapshot {
             id,
             mode: personal_rns::interfaces::InterfaceMode::Full,
