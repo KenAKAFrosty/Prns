@@ -1157,6 +1157,32 @@
     },
     {
       "graphs": {
+        "esp32-c6": [
+          "uuid"
+        ],
+        "esp32-s3-heltec": [
+          "uuid"
+        ],
+        "esp32-s3-heltec-r8": [
+          "uuid"
+        ],
+        "esp32-s3-tbeam": [
+          "uuid"
+        ]
+      },
+      "name": "bt-hci",
+      "source": "git+https://github.com/embassy-rs/bt-hci?rev=adae58af86d241237ba52ed27d0d9dc9588155ee#adae58af86d241237ba52ed27d0d9dc9588155ee",
+      "unsafe": {
+        "blocks": 11,
+        "externs": 0,
+        "functions": 1,
+        "impls": 35,
+        "tokens": 49
+      },
+      "version": "0.8.1"
+    },
+    {
+      "graphs": {
         "android": [
           "uuid"
         ],
@@ -1176,18 +1202,6 @@
           "uuid"
         ],
         "desktop-windows": [
-          "uuid"
-        ],
-        "esp32-c6": [
-          "uuid"
-        ],
-        "esp32-s3-heltec": [
-          "uuid"
-        ],
-        "esp32-s3-heltec-r8": [
-          "uuid"
-        ],
-        "esp32-s3-tbeam": [
           "uuid"
         ]
       },
@@ -5958,13 +5972,13 @@
         ]
       },
       "name": "esp-phy",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "source": "personal-hopspot/embedded/esp32/vendor/esp-phy-0.2.0",
       "unsafe": {
-        "blocks": 23,
+        "blocks": 25,
         "externs": 6,
         "functions": 0,
         "impls": 0,
-        "tokens": 33
+        "tokens": 35
       },
       "version": "0.2.0"
     },
@@ -6060,11 +6074,11 @@
       "name": "esp-radio",
       "source": "personal-hopspot/embedded/esp32/vendor/esp-radio-0.18.0",
       "unsafe": {
-        "blocks": 431,
-        "externs": 508,
+        "blocks": 439,
+        "externs": 511,
         "functions": 12,
         "impls": 3,
-        "tokens": 1012
+        "tokens": 1023
       },
       "version": "0.18.0"
     },
@@ -13901,11 +13915,11 @@
       "name": "personal-hopspot-esp32",
       "source": "personal-hopspot/embedded/esp32",
       "unsafe": {
-        "blocks": 449,
-        "externs": 508,
+        "blocks": 482,
+        "externs": 517,
         "functions": 14,
         "impls": 5,
-        "tokens": 1034
+        "tokens": 1080
       },
       "version": "0.1.0"
     },
