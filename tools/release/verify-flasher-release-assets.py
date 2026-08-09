@@ -5,11 +5,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
+import shutil
+import subprocess
 import sys
 
 from flasher_public_review import discover_evidence, sha256
 
+
+SUITE_INVENTORY_ASSETS = ("SHA256SUMS.txt", "SHA256SUMS.txt.minisig")
 
 CLI_TARGETS = {
     "aarch64-apple-darwin": ".tar.gz",
@@ -31,6 +36,27 @@ def files_equal(first: Path, second: Path) -> bool:
                 return False
             if not left_chunk:
                 return True
+
+
+def verify_suite_inventory_signature(assets: Path, public_key: Path) -> None:
+    signer = os.environ.get("PRNS_MINISIGN_BIN", "minisign")
+    signer_path = shutil.which(signer)
+    if signer_path is None:
+        raise ValueError(f"configured Minisign executable is unavailable: {signer}")
+    verification = subprocess.run(
+        [
+            signer_path,
+            "-Vm",
+            str(assets / "SHA256SUMS.txt"),
+            "-x",
+            str(assets / "SHA256SUMS.txt.minisig"),
+            "-p",
+            str(public_key),
+        ],
+        capture_output=True,
+    )
+    if verification.returncode != 0:
+        raise ValueError("suite custody inventory signature verification failed")
 
 
 def suite_custody_inventory(assets: Path) -> dict[str, str]:
@@ -224,9 +250,30 @@ def verify(
             "GitHub Release asset inventory is missing signed release assets: "
             f"{sorted(missing)}"
         )
+    suite_inventory_replaces_candidate_copy = any(
+        not files_equal(candidate_sources[name], assets / name)
+        for name in SUITE_INVENTORY_ASSETS
+    )
+    inventory = None
+    if suite_inventory_replaces_candidate_copy:
+        verify_suite_inventory_signature(assets, candidate_sources["minisign.pub"])
+        inventory = suite_custody_inventory(assets)
+        contradictions = sorted(
+            name
+            for name, source in candidate_sources.items()
+            if name not in SUITE_INVENTORY_ASSETS
+            and name in inventory
+            and inventory[name] != sha256(source)
+        )
+        if contradictions:
+            raise ValueError(
+                "signed suite custody inventory contradicts the signed candidate: "
+                f"{contradictions}"
+            )
     extras = actual_names - expected_names
     if extras:
-        inventory = suite_custody_inventory(assets)
+        if inventory is None:
+            inventory = suite_custody_inventory(assets)
         unaccounted = sorted(
             name for name in extras if inventory.get(name) != sha256(assets / name)
         )
@@ -236,6 +283,8 @@ def verify(
                 f"signed suite custody inventory: {unaccounted}"
             )
     for name, source in candidate_sources.items():
+        if suite_inventory_replaces_candidate_copy and name in SUITE_INVENTORY_ASSETS:
+            continue
         if not files_equal(source, assets / name):
             raise ValueError(f"GitHub Release asset bytes differ from the candidate: {name}")
     if remote_inventory is not None:
