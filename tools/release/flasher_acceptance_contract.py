@@ -96,6 +96,8 @@ UF2_CLI_SCENARIOS = {
 }
 
 PER_RUN_BASELINE_SCENARIOS = {"fresh-install", "post-flash-boot"}
+ACCEPTANCE_SCHEMA = 3
+MAINTAINER_OVERRIDE_SCHEMA = 4
 NOT_RUN = "NOT_RUN"
 UTC_TIMESTAMP = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
 
