@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify a signed release with the verifier frozen at its signed source commit."""
+"""Verify a signed release with the verifier frozen at its signed acceptance policy commit."""
 
 from __future__ import annotations
 
@@ -96,8 +96,18 @@ def main() -> int:
         prerelease_published_at = release.get("prerelease_published_at")
         if not isinstance(prerelease_published_at, str) or not prerelease_published_at:
             raise ValueError("signed release record has no prerelease publication time")
+        acceptance_record = record.get("acceptance")
+        policy_commit = (
+            acceptance_record.get("source_commit")
+            if isinstance(acceptance_record, dict)
+            else None
+        )
+        if not isinstance(policy_commit, str) or COMMIT.fullmatch(policy_commit) is None:
+            policy_commit = source_commit
         run(["git", "-C", str(ROOT), "cat-file", "-e", f"{source_commit}^{{commit}}"])
         run(["git", "-C", str(ROOT), "merge-base", "--is-ancestor", source_commit, "HEAD"])
+        run(["git", "-C", str(ROOT), "cat-file", "-e", f"{policy_commit}^{{commit}}"])
+        run(["git", "-C", str(ROOT), "merge-base", "--is-ancestor", policy_commit, "HEAD"])
 
         assets = existing(arguments.assets, "release assets", directory=True)
         paths = {
@@ -129,7 +139,7 @@ def main() -> int:
         }
         with tempfile.TemporaryDirectory(prefix="prns-historical-verifier-") as temporary:
             snapshot = Path(temporary)
-            extract_source(source_commit, snapshot)
+            extract_source(policy_commit, snapshot)
             historical_key = existing(
                 snapshot / "release/keys/minisign.pub", "historical release public key"
             )
@@ -231,7 +241,9 @@ def main() -> int:
     ) as error:
         print(f"historical flasher release verification failed: {error}", file=sys.stderr)
         return 1
-    print(f"verified historical flasher release {arguments.version} at its signed source policy")
+    print(
+        f"verified historical flasher release {arguments.version} at its signed acceptance policy"
+    )
     return 0
 
 
