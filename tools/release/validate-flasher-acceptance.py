@@ -17,8 +17,10 @@ if str(SCRIPT_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIRECTORY))
 
 from flasher_acceptance_contract import (  # noqa: E402
+    ACCEPTANCE_SCHEMA,
     CLI_TARGETS,
     FALLBACK_SCENARIOS,
+    MAINTAINER_OVERRIDE_SCHEMA,
     OS_ARCHITECTURES,
     REQUIRED_FALLBACKS,
     SHIPPING_BOARDS,
@@ -36,6 +38,8 @@ from flasher_tester_roster import (  # noqa: E402
 )
 
 TOP_LEVEL_FIELDS = {"schema", "candidate", "runs", "browser_fallbacks", "installation_smoke"}
+OVERRIDE_TOP_LEVEL_FIELDS = {"schema", "candidate", "maintainer_override"}
+OVERRIDE_FIELDS = {"basis", "approved_by", "approved_at"}
 CANDIDATE_FIELDS = {
     "version",
     "channel",
@@ -633,6 +637,59 @@ def validate_installation_smokes(
         errors.append(f"missing native installation/version smokes: {missing}")
 
 
+def validate_maintainer_override(
+    acceptance: dict,
+    raw_roster: object,
+    manifest: dict,
+    arguments: argparse.Namespace,
+    prerelease_published_at: datetime,
+    now: datetime,
+) -> list[str]:
+    errors: list[str] = []
+    reject_unknown_fields(acceptance, OVERRIDE_TOP_LEVEL_FIELDS, "acceptance", errors)
+    version, _ = validate_candidate_identity(
+        acceptance,
+        manifest,
+        arguments.manifest,
+        arguments.manifest_signature,
+        arguments.signed_bundle,
+        arguments.prerelease_published_at,
+        errors,
+    )
+    if version.partition(".")[0] != "0":
+        errors.append(
+            "maintainer override is a pre-1.0 provision and cannot approve this version"
+        )
+    override = acceptance.get("maintainer_override")
+    if not isinstance(override, dict):
+        errors.append("maintainer_override must be an object")
+        return errors
+    reject_unknown_fields(override, OVERRIDE_FIELDS, "maintainer_override", errors)
+    if not is_evidence_text(override.get("basis")):
+        errors.append("maintainer_override basis must state the approval grounds")
+    release_owner = raw_roster.get("release_owner") if isinstance(raw_roster, dict) else None
+    approved_by = override.get("approved_by")
+    if not is_evidence_text(approved_by) or approved_by != release_owner:
+        errors.append(
+            "maintainer_override approved_by must be the signed roster release_owner"
+        )
+    try:
+        approved_at = parse_utc_timestamp(
+            override.get("approved_at"), "maintainer_override approved_at"
+        )
+    except ValueError as error:
+        errors.append(str(error))
+    else:
+        if approved_at < prerelease_published_at:
+            errors.append(
+                "maintainer_override approved_at predates the exact public prerelease"
+            )
+        if approved_at > now:
+            errors.append("maintainer_override approved_at cannot be in the future")
+    EvidenceStore(arguments.evidence_root).validate_inventory(errors)
+    return errors
+
+
 def validate(arguments: argparse.Namespace, now: datetime | None = None) -> list[str]:
     errors: list[str] = []
     acceptance = json.loads(arguments.acceptance.read_text(encoding="utf-8"))
@@ -656,9 +713,16 @@ def validate(arguments: argparse.Namespace, now: datetime | None = None) -> list
     version = version_value.get("version") if isinstance(version_value, dict) else ""
     tester_roster, roster_errors = validate_roster(roster, str(version))
     errors.extend(f"signed tester roster: {error}" for error in roster_errors)
+    if acceptance.get("schema") == MAINTAINER_OVERRIDE_SCHEMA:
+        errors.extend(
+            validate_maintainer_override(
+                acceptance, roster, manifest, arguments, published_at, current
+            )
+        )
+        return errors
     evidence_store = EvidenceStore(arguments.evidence_root)
     reject_unknown_fields(acceptance, TOP_LEVEL_FIELDS, "acceptance", errors)
-    if acceptance.get("schema") != 3:
+    if acceptance.get("schema") != ACCEPTANCE_SCHEMA:
         errors.append("acceptance schema must be 3")
     version, targets = validate_candidate_identity(
         acceptance,
@@ -720,7 +784,11 @@ def main() -> int:
         for error in errors:
             print(f"acceptance validation failed: {error}", file=sys.stderr)
         return 1
-    print("physical flasher acceptance matrix is complete for the exact signed candidate")
+    document = json.loads(arguments.acceptance.read_text(encoding="utf-8"))
+    if isinstance(document, dict) and document.get("schema") == MAINTAINER_OVERRIDE_SCHEMA:
+        print("pre-1.0 maintainer override is bound to the exact signed candidate")
+    else:
+        print("physical flasher acceptance matrix is complete for the exact signed candidate")
     return 0
 
 
