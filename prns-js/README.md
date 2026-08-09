@@ -6,13 +6,13 @@ The root export selects the native backend in Node.js and Bun and the cooperativ
 
 ## Install
 
-For the announced release:
+For a published registry release:
 
 ```console
 npm install personal-rns
 ```
 
-Prns is still completing its first announced release. Until the release notice in the [project README](../README.md) is removed, use the [source-checkout instructions](../docs/sdks.md#typescript-and-javascript) when you need the exact `0.3.3` candidate rather than assuming a registry listing contains it.
+Prns 0.3.4 is available as a public GitHub prerelease. Registry publication has an independent qualification gate, so use the [source-checkout instructions](../docs/sdks.md#typescript-and-javascript) when you need the exact candidate before that gate completes.
 
 ## Create a host
 

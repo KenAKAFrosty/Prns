@@ -346,6 +346,7 @@ jobs:
 
   napi-release-critical:
     needs:
+      - host-contract
       - napi-clippy
       - napi-build
       - napi-test
@@ -358,6 +359,7 @@ jobs:
     steps:
       - name: require every napi lane to succeed
         run: |
+          test "${{ needs.host-contract.result }}" = success
           test "${{ needs.napi-clippy.result }}" = success
           test "${{ needs.napi-build.result }}" = success
           test "${{ needs.napi-test.result }}" = success

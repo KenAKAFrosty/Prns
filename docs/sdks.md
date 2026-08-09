@@ -18,17 +18,17 @@ The implementations are at two different stages of their user journey:
 
 Here, **paved** means the API, examples, and package structure form the route we expect application developers to take. **SDK preview** does not mean a mock or an unfinished protocol port. These adapters already call the same native Rust host, project the same schema-1 contract, and exercise the same persistent two-node journey in the repository. What remains young is their ecosystem fit and public delivery: idiomatic package structure, registry publication, native artifact installation, and more feedback from experienced developers in each language.
 
-Prns is still completing its first announced release. Until the release notice at the top of the [project README](../README.md) is removed, source-checkout commands are the authority for the current `0.3.3` candidate. No registry listing should be assumed to contain these exact candidate bytes.
+Prns 0.3.4 is the first publicly announced prerelease. Its immutable GitHub release artifacts and exact source commit are authoritative for the candidate bytes. Registry packages become authoritative only after their independent publication qualification completes.
 
 ## Rust
 
-For an application using the announced release:
+For an application using a published registry release:
 
 ```console
 cargo add personal-rns --features tokio-host,tcp
 ```
 
-During the current pre-release window, use this repository as the dependency when you need the exact candidate:
+To use the exact source behind the public 0.3.4 prerelease before registry qualification completes:
 
 ```console
 cargo add personal-rns --git https://github.com/KenAKAFrosty/Prns --features tokio-host,tcp
@@ -57,7 +57,7 @@ npm install personal-rns
 - `personal-rns/native` fixes the native backend.
 - `personal-rns/browser` fixes the cooperative WebAssembly backend.
 
-During the pre-release window, the exact candidate is exercised from a source checkout:
+The exact public prerelease can also be exercised from a source checkout:
 
 ```console
 npm --prefix prns-napi ci

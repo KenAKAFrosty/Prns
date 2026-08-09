@@ -476,7 +476,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "prns-core"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "aes",
  "cbc",
@@ -499,7 +499,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "bzip2",
  "cfg-if",
@@ -509,7 +509,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime-tokio"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "futures-util",
  "getrandom",

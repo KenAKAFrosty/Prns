@@ -493,7 +493,7 @@ dependencies = [
 
 [[package]]
 name = "prns-core"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "aes",
  "allocator-api2",
@@ -515,7 +515,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "cfg-if",
  "heapless 0.8.0",
@@ -524,7 +524,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime-embassy"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "critical-section",
  "embassy-futures",

@@ -1875,7 +1875,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "personal-rns"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "cfg-if",
  "prns-core",
@@ -1965,7 +1965,7 @@ dependencies = [
 
 [[package]]
 name = "prns-config"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "home",
  "prns-core",
@@ -1975,7 +1975,7 @@ dependencies = [
 
 [[package]]
 name = "prns-core"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "aes",
  "base64",
@@ -2000,7 +2000,7 @@ dependencies = [
 
 [[package]]
 name = "prns-ffi"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "cfg-if",
  "dispatch2",
@@ -2016,14 +2016,14 @@ dependencies = [
 
 [[package]]
 name = "prns-host"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "prns-runtime",
 ]
 
 [[package]]
 name = "prns-host-native"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "dbus",
  "personal-rns",
@@ -2033,7 +2033,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-embassy"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "embassy-futures",
  "embassy-net",
@@ -2050,7 +2050,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-tokio"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "bluer",
  "btleplug",
@@ -2079,7 +2079,7 @@ dependencies = [
 
 [[package]]
 name = "prns-napi"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "dbus",
  "napi",
@@ -2093,7 +2093,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "bzip2",
  "cfg-if",
@@ -2103,7 +2103,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime-embassy"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "embassy-futures",
  "embassy-sync",
@@ -2118,7 +2118,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime-tokio"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "futures-util",
  "getrandom 0.2.17",
