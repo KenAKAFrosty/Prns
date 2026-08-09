@@ -185,7 +185,7 @@ def verify(
         repository=repository,
         version=version,
         source_commit=source_commit,
-        workflow_run_id=workflow_run_id,
+        workflow_run_id=None,
         signed_candidate_sha256=sha256(signed_bundle),
         manifest_sha256=sha256(manifest_path),
     )
