@@ -13,7 +13,10 @@ reference-implementation scenarios. Pick by the question you're asking:
 | **iai-callgrind** | Exactly how many instructions / cache hits / branches per function, reproducibly? | deterministic | `cargo install iai-callgrind-runner` + `valgrind` |
 | **dhat** | How many heap allocations / bytes per operation? Which call sites? | deterministic | built in (dev-dep) |
 
-All commands run from `benchmarks/`.
+All commands run from `benchmarks/`, and the walkthroughs below are
+Linux/macOS-shaped (`pprof` and `iai-callgrind` are not available on Windows;
+on Windows, `samply` and `dhat` work, and built executables live at
+`target\release\examples\NAME.exe`).
 
 ## Resource transfer split — engine-only bulk resources
 

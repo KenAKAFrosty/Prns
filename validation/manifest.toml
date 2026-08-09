@@ -33,6 +33,9 @@ cargo_manifests = [
     "personal-hopspot/embedded/esp32/boards/heltec-v4-r8/Cargo.toml",
     "personal-hopspot/embedded/esp32/boards/t-beam-supreme/Cargo.toml",
     "personal-hopspot/embedded/esp32/boards/xiao-esp32-c6/Cargo.toml",
+    "personal-hopspot/embedded/esp32/vendor/esp-phy-0.2.0/Cargo.toml",
+    "personal-hopspot/embedded/esp32/vendor/esp-radio-0.18.0/Cargo.toml",
+    "personal-hopspot/embedded/esp32/vendor/trouble-host-0.6.0/Cargo.toml",
     "personal-hopspot/embedded/nrf52840/Cargo.toml",
     "personal-hopspot/flasher/Cargo.toml",
     "personal-hopspot/mobile/android/rust/Cargo.toml",
@@ -99,7 +102,7 @@ tiers = ["pr", "release", "scheduled"]
 platform = "any"
 toolchain = "python"
 timeout_seconds = 60
-command = ["./tools/prns", "run", "repo.host-contract.check"]
+command = ["__RUNNER_PYTHON__", "tools/prns", "run", "repo.host-contract.check"]
 inputs = [
   "tools/repo/generate-host-contract.py",
   "prns-host/schema/host-contract-v1.json",
@@ -111,11 +114,11 @@ inputs = [
   "prns-host/bindings/julia/src/HostContract.generated.jl",
   "prns-host/bindings/julia/src/PersonalRns.jl",
   "prns-host/bindings/julia/src/command.jl",
-  "prns-host/bindings/jvm/src/main/kotlin/io/reticulum/prns/Command.kt",
-  "prns-host/bindings/jvm/src/main/kotlin/io/reticulum/prns/Events.kt",
-  "prns-host/bindings/jvm/src/main/kotlin/io/reticulum/prns/HostContract.generated.kt",
-  "prns-host/bindings/jvm/src/main/kotlin/io/reticulum/prns/Host.kt",
-  "prns-host/bindings/jvm/src/main/kotlin/io/reticulum/prns/ResourceUpload.kt",
+  "prns-host/bindings/jvm/src/main/kotlin/rs/reticulum/prns/Command.kt",
+  "prns-host/bindings/jvm/src/main/kotlin/rs/reticulum/prns/Events.kt",
+  "prns-host/bindings/jvm/src/main/kotlin/rs/reticulum/prns/HostContract.generated.kt",
+  "prns-host/bindings/jvm/src/main/kotlin/rs/reticulum/prns/Host.kt",
+  "prns-host/bindings/jvm/src/main/kotlin/rs/reticulum/prns/ResourceUpload.kt",
   "prns-host/bindings/python/src/personal_rns/generated.py",
   "prns-host/bindings/swift/Sources/CPrnsHost/include/prns_host.h",
   "prns-host/bindings/swift/Sources/PersonalRns/HostContract.generated.swift",
@@ -171,7 +174,7 @@ tiers = ["pr", "release", "scheduled"]
 platform = "any"
 toolchain = "python"
 timeout_seconds = 60
-command = ["./tools/prns", "run", "release.host-sdk.distribution.check"]
+command = ["__RUNNER_PYTHON__", "tools/prns", "run", "release.host-sdk.distribution.check"]
 inputs = [
   "VERSION",
   "prns-host/distribution/RUST_PACKAGE.md",
@@ -296,7 +299,7 @@ tiers = ["pr", "release", "scheduled"]
 platform = "any"
 toolchain = "stable"
 timeout_seconds = 60
-command = ["python3", "validation/run.py", "verify"]
+command = ["__RUNNER_PYTHON__", "validation/run.py", "verify"]
 inputs = ["validation/manifest.toml", "validation/run.py", "validation/evidence-schema.json", "validation/BASELINE.md", "validation/mutation/triage.toml", "validation/oracles/requirements.lock", "validation/oracles/requirements.txt", "validation/oracles/tests/support/mod.rs"]
 artifacts = "validation-artifacts/results/registry"
 
@@ -306,8 +309,8 @@ domain = "hygiene"
 tiers = ["pr", "release", "scheduled"]
 platform = "any"
 toolchain = "python"
-timeout_seconds = 120
-command = ["python3", "-m", "unittest", "discover", "-s", "validation/tests", "-p", "test_*.py", "-v"]
+timeout_seconds = 300
+command = ["__RUNNER_PYTHON__", "-m", "unittest", "discover", "-s", "validation/tests", "-p", "test_*.py", "-v"]
 inputs = ["validation/run.py", "validation/tests/test_runner.py"]
 artifacts = "validation-artifacts/results/validation-self-tests"
 
@@ -318,7 +321,7 @@ tiers = ["pr", "release", "scheduled"]
 platform = "any"
 toolchain = "python"
 timeout_seconds = 120
-command = ["python3", "tools/prns", "verify"]
+command = ["__RUNNER_PYTHON__", "tools/prns", "verify"]
 inputs = ["tools/prns", "tools/tasks.toml", "tools/README.md", ".githooks/pre-push"]
 artifacts = "validation-artifacts/results/tool-registry"
 
@@ -326,7 +329,7 @@ artifacts = "validation-artifacts/results/tool-registry"
 id = "format-docs"
 domain = "hygiene"
 tiers = ["pr", "release", "scheduled"]
-platform = "any"
+platform = "linux"
 toolchain = "stable"
 timeout_seconds = 1200
 command = ["bash", "validation/hygiene/fmt-docs.sh"]
@@ -340,7 +343,7 @@ tiers = ["pr", "release", "scheduled"]
 platform = "any"
 toolchain = "python"
 timeout_seconds = 300
-command = ["python3", "validation/hygiene/no-personal-paths.py"]
+command = ["__RUNNER_PYTHON__", "validation/hygiene/no-personal-paths.py"]
 inputs = ["validation/hygiene/no-personal-paths.py", ".githooks/pre-push"]
 artifacts = "validation-artifacts/results/personal-path-hygiene"
 
@@ -351,7 +354,7 @@ tiers = ["pr", "release", "scheduled"]
 platform = "any"
 toolchain = "python"
 timeout_seconds = 600
-command = ["python3", "-m", "unittest", "tools.tests.test_runtime_ownership"]
+command = ["__RUNNER_PYTHON__", "-m", "unittest", "tools.tests.test_runtime_ownership"]
 inputs = [
   "tools/tests/test_runtime_ownership.py",
   "prns-napi/Cargo.toml",
@@ -436,7 +439,7 @@ id = "alloc-only"
 domain = "native"
 group = "feature-config"
 tiers = ["pr", "release", "scheduled"]
-platform = "any"
+platform = "linux"
 toolchain = "stable"
 timeout_seconds = 1200
 command = ["bash", "validation/native/alloc-only.sh"]
@@ -448,7 +451,7 @@ id = "external-alloc"
 domain = "native"
 group = "feature-config"
 tiers = ["pr", "release", "scheduled"]
-platform = "any"
+platform = "linux"
 toolchain = "stable"
 timeout_seconds = 1200
 command = ["bash", "validation/native/external-alloc.sh"]
@@ -470,7 +473,7 @@ artifacts = "validation-artifacts/results/integration-capstones"
 id = "release-contracts"
 domain = "release"
 tiers = ["pr", "release", "scheduled"]
-platform = "any"
+platform = "linux"
 toolchain = "python"
 timeout_seconds = 600
 command = ["bash", "validation/release/contracts.sh"]

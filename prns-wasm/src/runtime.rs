@@ -14,7 +14,7 @@ use personal_rns::interfaces::bluetooth_auto as bluetooth_contract;
 use personal_rns::interfaces::{
     AnnounceBandwidthCap, BitrateBps, Capabilities, InboundPacket, InterfaceCapabilities,
     InterfaceCommonPolicy, InterfaceDescriptor, InterfaceGravity, InterfaceId, InterfaceKind,
-    InterfaceMode,
+    InterfaceMode, RecursivePathRequestPolicy,
 };
 use personal_rns::routing::links::channel::MessageType;
 use personal_rns::routing::links::request::RequestId;
@@ -151,7 +151,8 @@ impl PrnsRuntime {
             .unwrap_or(InterfaceGravity::ZERO);
         let mut common = InterfaceCommonPolicy::RNS_DEFAULT;
         if let Some(value) = optional_bool(&options, "recursivePathRequests")? {
-            common.forwarding.recursive_path_requests = value;
+            common.forwarding.recursive_path_requests =
+                RecursivePathRequestPolicy::from_configured(value);
         }
         if let Some(value) = optional_bool(&options, "announcesFromInternal")? {
             common.forwarding.announces_from_internal = value;

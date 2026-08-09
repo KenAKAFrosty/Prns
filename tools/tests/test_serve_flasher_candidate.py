@@ -21,8 +21,10 @@ class CandidateServerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
-        (self.root / "index.html").write_text("candidate shell\n", encoding="utf-8")
-        (self.root / "app.js").write_text("candidate asset\n", encoding="utf-8")
+        (self.root / "index.html").write_text(
+            "candidate shell\n", encoding="utf-8", newline=""
+        )
+        (self.root / "app.js").write_text("candidate asset\n", encoding="utf-8", newline="")
         self.server = SERVER.create_server(self.root, 0)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()

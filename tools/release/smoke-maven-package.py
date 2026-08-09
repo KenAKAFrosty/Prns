@@ -58,7 +58,7 @@ def main():
             "}\n"
             "\n"
             "dependencies {\n"
-            f'    implementation("io.reticulum:personal-rns:{version}")\n'
+            f'    implementation("rs.reticulum:personal-rns:{version}")\n'
             "}\n"
             "\n"
             "application {\n"
@@ -69,11 +69,11 @@ def main():
             "}\n"
         )
         (source / "PackageSmoke.java").write_text(
-            "import io.reticulum.prns.Host;\n"
-            "import io.reticulum.prns.HostOptions;\n"
-            "import io.reticulum.prns.HostRole;\n"
-            "import io.reticulum.prns.IdentityConfigGenerateEphemeral;\n"
-            "import io.reticulum.prns.Limits;\n"
+            "import rs.reticulum.prns.Host;\n"
+            "import rs.reticulum.prns.HostOptions;\n"
+            "import rs.reticulum.prns.HostRole;\n"
+            "import rs.reticulum.prns.IdentityConfigGenerateEphemeral;\n"
+            "import rs.reticulum.prns.Limits;\n"
             "import java.util.Collections;\n"
             "\n"
             "public final class PackageSmoke {\n"

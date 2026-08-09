@@ -66,7 +66,7 @@ fn display_sort_gives_same_kind_cards_one_fixed_order() {
 fn activity_tracker_stamps_age_when_a_card_changes() {
     let mut tracker = CardActivityTracker::<2>::new();
     let mut cards = [test_card("USB")];
-    cards[0].liveness = Liveness::Dormant;
+    cards[0].connection = ConnectionState::Disconnected;
 
     tracker.update(&mut cards, 10);
     assert_eq!(cards[0].last_activity_secs, None);
@@ -86,11 +86,11 @@ fn supervisor_peer_rows_format_count_and_compact_peer_statuses() {
     let count = details.push_supervisor_peers([
         (
             InterfaceId::new([0, 0xab, 0xcd, 0, 0, 0, 0, 0]),
-            Liveness::Live,
+            ConnectionState::Connected,
         ),
         (
             InterfaceId::new([0, 0x12, 0x34, 0, 0, 0, 0, 0]),
-            Liveness::Dormant,
+            ConnectionState::Disconnected,
         ),
     ]);
     let rows = details.as_slice();
@@ -99,7 +99,7 @@ fn supervisor_peer_rows_format_count_and_compact_peer_statuses() {
     assert_eq!(rows[0].text(), "AP Hopspot-EW53");
     assert_eq!(rows[1].text(), "Peers 2");
     assert_eq!(rows[2].text(), "P abcd Live");
-    assert_eq!(rows[3].text(), "P 1234 Dorm");
+    assert_eq!(rows[3].text(), "P 1234 Disc");
     assert_eq!(rows[2].kind(), InterfaceMenuDetailKind::Peer);
 }
 
@@ -120,7 +120,46 @@ fn ingress_pressure_is_hidden_until_a_drop_is_observed() {
     assert!(details.as_slice().is_empty());
 
     details.push_ingress_pressure(17);
-    assert_eq!(details.as_slice()[0].text(), "Ingress drops 17");
+    assert_eq!(details.as_slice()[0].text(), "RX drops 17");
+}
+
+#[test]
+fn bluetooth_recovery_is_one_compact_bounded_row() {
+    let mut details = InterfaceMenuDetails::empty();
+    details.push_bluetooth_recovery(BluetoothRecoveryMenuDetails {
+        receive_pressure: 0,
+        setup_failures: 0,
+        transport_closures: 0,
+    });
+    assert!(details.as_slice().is_empty());
+
+    details.push_bluetooth_recovery(BluetoothRecoveryMenuDetails {
+        receive_pressure: 7,
+        setup_failures: 12,
+        transport_closures: u32::MAX,
+    });
+    assert_eq!(details.as_slice()[0].text(), "R7/S12/C99+");
+}
+
+#[test]
+fn bluetooth_recovery_coexists_with_five_peer_rows() {
+    let mut details = InterfaceMenuDetails::empty();
+    let peers = (0..5).map(|index| {
+        (
+            InterfaceId::new([0, index, index, 0, 0, 0, 0, 0]),
+            ConnectionState::Connected,
+        )
+    });
+    details.push_supervisor_peers(peers);
+    details.push_bluetooth_recovery(BluetoothRecoveryMenuDetails {
+        receive_pressure: 1,
+        setup_failures: 2,
+        transport_closures: 3,
+    });
+
+    let rows = details.as_slice();
+    assert_eq!(rows.len(), 7);
+    assert_eq!(rows[6].text(), "R1/S2/C3");
 }
 
 #[test]
@@ -149,7 +188,7 @@ fn lora_spectrum_details_keep_the_common_case_compact() {
 #[test]
 fn named_peer_rows_format_single_link_interfaces() {
     let mut details = InterfaceMenuDetails::empty();
-    let count = details.push_named_peer("USB", Some(Liveness::Live));
+    let count = details.push_named_peer("USB", Some(ConnectionState::Connected));
     let rows = details.as_slice();
 
     assert_eq!(count, 1);

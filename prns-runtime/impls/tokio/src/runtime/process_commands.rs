@@ -162,7 +162,7 @@ fn return_code(status: std::process::ExitStatus) -> Option<i32> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::super::rnx::HeapRnxOutput;
     use super::*;

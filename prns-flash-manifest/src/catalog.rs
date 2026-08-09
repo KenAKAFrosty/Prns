@@ -3,8 +3,8 @@ use thiserror::Error;
 
 use crate::{
     AfterResetStrategy, BeforeResetStrategy, BoardId, ChipFamily, PreparationProfile,
-    ProvisioningFormat, CONFIG_OFFSET, CONFIG_PASSWORD_MAX_BYTES, CONFIG_SIZE,
-    CONFIG_SSID_MAX_BYTES, CONFIG_VERSION,
+    ProvisioningFormat, Uf2BoardIdPrefix, Uf2MountLabel, CONFIG_OFFSET, CONFIG_PASSWORD_MAX_BYTES,
+    CONFIG_SIZE, CONFIG_SSID_MAX_BYTES, CONFIG_VERSION,
 };
 
 const CATALOG_JSON: &str = include_str!("../../release/flash/boards.json");
@@ -46,8 +46,6 @@ pub struct BoardCatalogEntry {
     pub expected_chip: Option<String>,
     /// Physical flash capacity in bytes, when applicable.
     pub flash_size: Option<u32>,
-    /// Whether a release build may carry the commit-bound source archive when capacity permits.
-    pub source_archive_capable: bool,
     /// Stable instruction profile used by localized clients.
     pub preparation_profile: String,
     /// Optional local provisioning slot.
@@ -159,6 +157,8 @@ pub struct Uf2Build {
     pub base_address: String,
     /// Bootloader volume label.
     pub mount_label: String,
+    /// Normalized `Board-ID` prefix this bootloader publishes in `INFO_UF2.TXT`.
+    pub board_id_prefix: String,
 }
 
 /// Catalog loading or invariant failure.
@@ -173,6 +173,14 @@ pub enum CatalogError {
     /// A board slug occurs more than once.
     #[error("duplicate board slug {0:?}")]
     DuplicateSlug(String),
+    /// Two UF2 boards could both claim one mounted bootloader drive.
+    #[error("UF2 board-id prefixes overlap between {first:?} and {second:?}")]
+    OverlappingUf2BoardIdPrefixes {
+        /// One board's slug.
+        first: String,
+        /// The other board's slug.
+        second: String,
+    },
     /// A catalog invariant is invalid.
     #[error("board {board:?}: {message}")]
     InvalidBoard {
@@ -205,6 +213,7 @@ impl BoardCatalog {
             validate_transport(board)?;
             validate_provisioning(board)?;
         }
+        validate_uf2_board_id_prefixes(&self.boards)?;
         let expected = SHIPPING_BOARD_SLUGS
             .into_iter()
             .collect::<std::collections::BTreeSet<_>>();
@@ -284,7 +293,6 @@ fn validate_transport(board: &BoardCatalogEntry) -> Result<(), CatalogError> {
                 || !build.partition_table.ends_with(".csv")
                 || (build.chip == "esp32s3" && build.rust_target != "xtensa-esp32s3-none-elf")
                 || (build.chip == "esp32c6" && build.rust_target != "riscv32imac-unknown-none-elf")
-                || board.source_archive_capable != (build.chip == "esp32s3")
             {
                 return Err(invalid(
                     board,
@@ -295,10 +303,10 @@ fn validate_transport(board: &BoardCatalogEntry) -> Result<(), CatalogError> {
         (Transport::Uf2MassStorage, BoardBuild::Uf2(build)) => {
             if board.expected_chip.is_some()
                 || board.flash_size.is_some()
-                || board.source_archive_capable
                 || PreparationProfile::parse(&board.preparation_profile)
                     != Ok(PreparationProfile::TechoUf2)
-                || build.mount_label != "TECHOBOOT"
+                || Uf2MountLabel::parse(build.mount_label.clone()).is_err()
+                || Uf2BoardIdPrefix::parse(build.board_id_prefix.clone()).is_err()
                 || build.package.trim().is_empty()
                 || build.rust_target != "thumbv7em-none-eabihf"
                 || parse_hex_u32(&build.family_id).is_none()
@@ -311,6 +319,28 @@ fn validate_transport(board: &BoardCatalogEntry) -> Result<(), CatalogError> {
             }
         }
         _ => return Err(invalid(board, "transport and build recipe disagree")),
+    }
+    Ok(())
+}
+
+/// Reject nested UF2 Board-ID prefixes so one drive can never identify as multiple boards.
+fn validate_uf2_board_id_prefixes(boards: &[BoardCatalogEntry]) -> Result<(), CatalogError> {
+    let prefixes = boards
+        .iter()
+        .filter_map(|board| match &board.build {
+            BoardBuild::Uf2(build) => Some((board.slug.as_str(), build.board_id_prefix.as_str())),
+            BoardBuild::Esp(_) => None,
+        })
+        .collect::<Vec<_>>();
+    for (index, (slug, prefix)) in prefixes.iter().enumerate() {
+        for (other_slug, other_prefix) in &prefixes[index + 1..] {
+            if prefix.starts_with(other_prefix) || other_prefix.starts_with(prefix) {
+                return Err(CatalogError::OverlappingUf2BoardIdPrefixes {
+                    first: (*slug).to_string(),
+                    second: (*other_slug).to_string(),
+                });
+            }
+        }
     }
     Ok(())
 }
@@ -401,19 +431,6 @@ mod tests {
     }
 
     #[test]
-    fn embedded_catalog_names_the_nominal_source_capability_matrix() -> Result<(), CatalogError> {
-        let catalog = board_catalog()?;
-        let capable = catalog
-            .boards
-            .iter()
-            .filter(|board| board.source_archive_capable)
-            .map(|board| board.slug.as_str())
-            .collect::<Vec<_>>();
-        assert_eq!(capable, ["heltec-v4", "heltec-v4-r8", "t-beam-supreme"]);
-        Ok(())
-    }
-
-    #[test]
     fn embedded_catalog_has_exact_physical_flash_contracts() -> Result<(), CatalogError> {
         let catalog = board_catalog()?;
         let contracts = catalog
@@ -482,6 +499,85 @@ mod tests {
             .pop();
         assert!(matches!(
             BoardCatalog::from_json(&serde_json::to_vec(&value)?),
+            Err(CatalogError::InvalidBoard { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn a_uf2_board_is_not_tied_to_one_bootloader_volume() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut catalog = board_catalog()?;
+        let board = catalog
+            .boards
+            .iter_mut()
+            .find(|board| board.transport == Transport::Uf2MassStorage)
+            .ok_or("expected a UF2 board")?;
+        let BoardBuild::Uf2(build) = &mut board.build else {
+            return Err("expected a UF2 build".into());
+        };
+        build.mount_label = "T114BOOT".to_string();
+        build.board_id_prefix = "nrf52840-heltec-t114-v".to_string();
+        catalog.validate()?;
+        Ok(())
+    }
+
+    #[test]
+    fn one_uf2_board_id_prefix_may_not_begin_with_another() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut catalog = board_catalog()?;
+        let mut second = catalog
+            .boards
+            .iter()
+            .find(|board| board.transport == Transport::Uf2MassStorage)
+            .ok_or("expected a UF2 board")?
+            .clone();
+        second.slug = "nrf52840-second-board".to_string();
+        let BoardBuild::Uf2(build) = &mut second.build else {
+            return Err("expected a UF2 build".into());
+        };
+        build.board_id_prefix = format!("{}2", build.board_id_prefix);
+        catalog.boards.push(second);
+        assert!(matches!(
+            catalog.validate(),
+            Err(CatalogError::OverlappingUf2BoardIdPrefixes { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn an_unnormalized_uf2_board_id_prefix_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
+        let mut catalog = board_catalog()?;
+        let board = catalog
+            .boards
+            .iter_mut()
+            .find(|board| board.transport == Transport::Uf2MassStorage)
+            .ok_or("expected a UF2 board")?;
+        let BoardBuild::Uf2(build) = &mut board.build else {
+            return Err("expected a UF2 build".into());
+        };
+        build.board_id_prefix = "nRF52840_TEcho_v".to_string();
+        assert!(matches!(
+            catalog.validate(),
+            Err(CatalogError::InvalidBoard { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn a_malformed_uf2_mount_label_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
+        let mut catalog = board_catalog()?;
+        let board = catalog
+            .boards
+            .iter_mut()
+            .find(|board| board.transport == Transport::Uf2MassStorage)
+            .ok_or("expected a UF2 board")?;
+        let BoardBuild::Uf2(build) = &mut board.build else {
+            return Err("expected a UF2 build".into());
+        };
+        build.mount_label = "../TECHOBOOT".to_string();
+        assert!(matches!(
+            catalog.validate(),
             Err(CatalogError::InvalidBoard { .. })
         ));
         Ok(())

@@ -1,3 +1,4 @@
+use embassy_futures::yield_now;
 use embedded_storage::nor_flash::{
     check_erase, check_read, check_write, ErrorType, NorFlash, NorFlashError, NorFlashErrorKind,
     ReadNorFlash,
@@ -147,7 +148,9 @@ impl AsyncReadNorFlash for EspRomFlash {
     const READ_SIZE: usize = WORD_LEN;
 
     async fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
-        ReadNorFlash::read(self, offset, bytes)
+        let result = ReadNorFlash::read(self, offset, bytes);
+        yield_now().await;
+        result
     }
 
     fn capacity(&self) -> usize {
@@ -160,11 +163,21 @@ impl AsyncNorFlash for EspRomFlash {
     const ERASE_SIZE: usize = SECTOR_LEN;
 
     async fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
-        NorFlash::erase(self, from, to)
+        check_erase(self, from, to).map_err(EspRomFlashError::Contract)?;
+        for sector in from as usize / SECTOR_LEN..to as usize / SECTOR_LEN {
+            let sector = sector as u32;
+            if !sector_is_erased(sector)? {
+                erase_sector(sector)?;
+            }
+            yield_now().await;
+        }
+        Ok(())
     }
 
     async fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
-        NorFlash::write(self, offset, bytes)
+        let result = NorFlash::write(self, offset, bytes);
+        yield_now().await;
+        result
     }
 }
 

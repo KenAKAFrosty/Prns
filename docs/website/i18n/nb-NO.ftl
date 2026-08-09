@@ -1,7 +1,7 @@
 # Navigasjon
 nav-benchmarks = Benchmarker
 nav-contributing = Bidra
-site-early-english-note = Prns er fortsatt tidlig ute: den fulle dokumentasjonen ligger på GitHub og i kildekoden og er foreløpig kun på engelsk.
+site-early-english-note = Prns er fortsatt i en tidlig fase: den fulle dokumentasjonen ligger på GitHub og i kildekoden og er foreløpig kun på engelsk.
 
 # Bunntekst
 footer-tagline = Levert av KenAKAFrosty og Personal/Prns-teamet.
@@ -74,7 +74,7 @@ start-daemon-code = Drop-in for standardapper
 start-daemon-target = Kjør Prnsd
 
 start-embedded-headline = Flash en Hopspot
-start-embedded-body = Velg et støttet kort, flash det rett fra nettleseren, og ha en dedikert mesh-enhet på få minutter.
+start-embedded-body = Velg et støttet kort, flash det rett fra nettleseren, og du har en dedikert mesh-enhet på få minutter.
 start-embedded-code = Kortmatrise
     Web-flasher
     Lokal flash

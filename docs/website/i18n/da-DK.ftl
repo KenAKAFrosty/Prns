@@ -1,7 +1,7 @@
 # Navigation
 nav-benchmarks = Benchmarks
 nav-contributing = Bidrag
-site-early-english-note = Prns er stadig tidligt på vej: den fulde dokumentation findes på GitHub og i kildekoden og er indtil videre kun på engelsk.
+site-early-english-note = Prns er stadig i en tidlig fase: den fulde dokumentation findes på GitHub og i kildekoden og er indtil videre kun på engelsk.
 
 # Footer
 footer-tagline = Bragt til dig af KenAKAFrosty og Personal/Prns-teamet.
@@ -74,7 +74,7 @@ start-daemon-code = Drop-in for standardapps
 start-daemon-target = Kør Prnsd
 
 start-embedded-headline = Flash en Hopspot
-start-embedded-body = Vælg et understøttet board, flash det direkte fra browseren, og hav en dedikeret mesh-enhed på få minutter.
+start-embedded-body = Vælg et understøttet board, flash det direkte fra browseren, og du har en dedikeret mesh-enhed på få minutter.
 start-embedded-code = Board-matrix
     Web-flasher
     Lokal flash

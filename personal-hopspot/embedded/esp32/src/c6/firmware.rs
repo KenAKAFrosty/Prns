@@ -35,6 +35,7 @@ pub async fn run(spawner: Spawner) {
         let espnow = EspNowInterface::new(
             EspNowAdapter::new(esp_now_radio),
             espnow_channel_policy(),
+            ESPNOW_PHY.bitrate,
             espnow_status,
         );
         (controller, espnow, espnow_status)
@@ -102,6 +103,7 @@ pub async fn run(spawner: Spawner) {
     static NODE: StaticCell<Node> = StaticCell::new();
     let (node, persistence) =
         PrnsNode::init_static_with_persistence(&NODE, recipe, manifold_wiring, host);
+    node.set_protocol_policy(personal_hopspot_core::EMBEDDED_HOPSPOT_PROTOCOL_POLICY);
     static PERSISTENCE: StaticCell<crate::persistence::C6Persistence> = StaticCell::new();
     let persistence = PERSISTENCE.init(persistence);
     spawner.spawn(manifold_task(node, persistence).expect("manifold task fits"));

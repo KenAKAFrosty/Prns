@@ -1,6 +1,6 @@
 [package]
 name = "prns-interfaces-embassy"
-version = "0.3.3"
+version = "0.3.4"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/KenAKAFrosty/Prns"
@@ -20,8 +20,8 @@ include = ["src/**", "tests/**", "!tests/**/__pycache__/**", "!tests/**/*.pyc", 
 path = "src/lib.rs"
 
 [dependencies]
-prns-core = { version = "=0.3.3", path = "../../../prns-core", default-features = false, features = ["embassy-host"] }
-prns-runtime = { package = "prns-runtime-embassy", version = "=0.3.3", path = "../../../prns-runtime/impls/embassy", default-features = false }
+prns-core = { version = "=0.3.4", path = "../../../prns-core", default-features = false, features = ["embassy-host"] }
+prns-runtime = { package = "prns-runtime-embassy", version = "=0.3.4", path = "../../../prns-runtime/impls/embassy", default-features = false }
 embassy-sync = { version = "0.8.0", default-features = false }
 embassy-time = { version = "0.5", default-features = false }
 embassy-futures = { version = "0.1", default-features = false }
@@ -41,15 +41,15 @@ log = { version = "0.4", optional = true, default-features = false }
 # embassy-sync 0.7 and heapless 0.9 while the rest of this crate is on 0.8; the aliases below
 # feed trouble its own versions across the boundary, keeping the dual-version island contained
 # to this backend. Boards pick the packet-pool size feature themselves (it is board policy).
-trouble-host = { version = "0.6.0", optional = true, default-features = false, features = ["central", "scan", "peripheral", "gatt", "derive", "default-packet-pool-mtu-255"] }
+trouble-host = { version = "0.6.0", optional = true, default-features = false, features = ["central", "scan", "peripheral", "gatt", "derive", "default-packet-pool-mtu-512"] }
 bt-hci = { version = "0.8", optional = true, default-features = false }
 embassy-sync-07 = { package = "embassy-sync", version = "0.7", default-features = false, optional = true }
 heapless-09 = { package = "heapless", version = "0.9", default-features = false, optional = true }
 cfg-if = { version = "1", optional = true }
 
 [dev-dependencies]
-prns-core = { version = "=0.3.3", path = "../../../prns-core", default-features = false, features = ["std", "embassy-host"] }
-prns-runtime = { package = "prns-runtime-embassy", version = "=0.3.3", path = "../../../prns-runtime/impls/embassy", default-features = false, features = ["std"] }
+prns-core = { version = "=0.3.4", path = "../../../prns-core", default-features = false, features = ["std", "embassy-host"] }
+prns-runtime = { package = "prns-runtime-embassy", version = "=0.3.4", path = "../../../prns-runtime/impls/embassy", default-features = false, features = ["std"] }
 critical-section = { version = "1", features = ["std"] }
 embassy-time = { version = "0.5", default-features = false, features = ["std", "generic-queue-8"] }
 
@@ -58,7 +58,7 @@ default = []
 log = ["dep:log", "trouble-host?/log"]
 tcp = ["dep:embassy-net", "dep:embedded-io-async-07"]
 tcp-dns = ["tcp", "embassy-net/dns", "embassy-net/proto-ipv4"]
-wifi-auto = ["dep:embassy-net", "dep:embedded-io-async-07"]
+wifi-auto = ["dep:embassy-net", "dep:embedded-io-async-07", "embassy-net/proto-ipv4"]
 lora = ["dep:embedded-hal", "dep:embedded-hal-async"]
 esp-now = ["prns-core/alloc", "prns-runtime/alloc"]
 bluetooth-auto = []

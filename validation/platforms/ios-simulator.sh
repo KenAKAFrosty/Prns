@@ -41,6 +41,7 @@ derived_data="$(mktemp -d "${TMPDIR:-/tmp}/prns-ios-simulator-derived.XXXXXX")"
 trap 'echo "ios-simulator: command failed at line $LINENO" >&2' ERR
 trap 'rm -rf "$derived_data"' EXIT
 app="$derived_data/Build/Products/Debug-iphonesimulator/PersonalHopspot.app"
+screenshot="$derived_data/screenshot.png"
 source_icon="personal-hopspot/mobile/ios/app/PersonalHopspot/Assets.xcassets/AppIcon.appiconset/AppIcon.png"
 crash_root="$simulator_data_path/data/Library/Logs/CrashReporter"
 
@@ -175,7 +176,9 @@ while ((SECONDS < lifecycle_deadline)); do
   sleep "$lifecycle_poll_seconds"
 done
 
-xcrun simctl io "$simulator_id" screenshot "$artifact_dir/screenshot.png" || true
+xcrun simctl io "$simulator_id" screenshot "$screenshot"
+test -s "$screenshot"
+cp "$screenshot" "$artifact_dir/screenshot.png"
 record_crashes "$artifact_dir/crashes-after.txt"
 if comm -13 "$artifact_dir/crashes-before.txt" "$artifact_dir/crashes-after.txt" |
   tee "$artifact_dir/new-crashes.txt" |

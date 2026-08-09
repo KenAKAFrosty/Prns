@@ -102,7 +102,10 @@ use personal_rns::tcp::{
 };
 use personal_rns::usb_auto::{UsbAutoDevice, UsbAutoDeviceInput};
 use personal_rns::wifi_auto::{
-    AutoWifi, AutoWifiSegment, AutoWifiShared, AutoWifiStatus, AutoWifiTopology,
+    tcp_rendezvous, AutoWifi, AutoWifiSegment, AutoWifiShared, AutoWifiStatus, AutoWifiTopology,
+    TcpRendezvousBuffers, TcpRendezvousServer, TcpRendezvousStorage, TcpRendezvousWireSlot,
+    TCP_RENDEZVOUS_FRAMED_LEN, TCP_RENDEZVOUS_FRAME_CAP, TCP_RENDEZVOUS_READ_BUFFER_BYTES,
+    TCP_RENDEZVOUS_SOCKET_BUFFER_BYTES,
 };
 #[cfg(feature = "bluetooth-auto")]
 use prns_interfaces_embassy::bluetooth_auto::PEER_CAPACITY as EMBEDDED_BLE_PEER_CAPACITY;
@@ -121,11 +124,6 @@ pub(crate) use board::{
 };
 
 esp_app_desc!();
-
-#[cfg(feature = "wifi-auto")]
-mod hopspot_site {
-    include!(concat!(env!("OUT_DIR"), "/hopspot_site.rs"));
-}
 
 #[cfg(feature = "wifi-auto")]
 const AP_IPV4: [u8; 4] = [192, 168, 4, 1];
@@ -178,15 +176,16 @@ const HOPSPOT_TCP_TARGET: &str = match option_env!("HOPSPOT_TCP_TARGET") {
 };
 /// The board's claim about its pipe to the LAN node: it sets the declared MTU tier, which the
 /// manifold then clamps to the embedded ceiling. A 2.4 GHz station's honest order of magnitude.
-const TCP_BITRATE_BPS: BitrateBps = BitrateBps::guess(65_000_000);
-/// One TCP socket's smoltcp rx/tx buffer — sized for the board's frames, DRAM-frugal over throughput.
-const TCP_SOCKET_BUF: usize = 1_024;
+const TCP_BITRATE_BPS: BitrateBps = wifi_auto_contract::WIFI_EMBEDDED_BITRATE_CEILING_BPS;
+const TCP_SOCKET_BUFFER_BYTES: usize = 4 * 1_024;
 
 const LANE_COUNT: usize =
     4 + cfg!(feature = "bluetooth-auto") as usize + cfg!(feature = "esp-now") as usize;
 const MEMBERS: usize = 24;
 #[cfg(feature = "bluetooth-auto")]
 pub const BLE_PEER_CAPACITY: usize = EMBEDDED_BLE_PEER_CAPACITY;
+#[cfg(feature = "bluetooth-auto")]
+pub const BLE_CONTROLLER_ACTIVITY_CAPACITY: u8 = (BLE_PEER_CAPACITY + 1) as u8;
 #[cfg(not(feature = "bluetooth-auto"))]
 pub const BLE_PEER_CAPACITY: usize = 0;
 const INTERFACE_CAPACITY: usize =
@@ -200,11 +199,14 @@ const LANE_DEPTH: usize = 1;
 const OUTBOUND_BURST_DEPTH: usize = EngineStorageType::MAX_OUTGOING_RESOURCE_REACTION_FRAMES;
 pub const NOTIFY_CAP: usize = minimum_manifold_notification_capacity(LANE_COUNT, LANE_DEPTH);
 const _: () = assert!(EngineStorageType::LINK_SESSIONS > MEMBERS + BLE_PEER_CAPACITY);
+#[cfg(feature = "bluetooth-auto")]
+const _: () = assert!(BLE_CONTROLLER_ACTIVITY_CAPACITY <= 10);
 const COMMANDS_CAP: usize = 8;
 pub const LIFECYCLE_CAP: usize = 8;
 const COMPLETIONS_CAP: usize = 4;
 
 const CORE1_STACK_BYTES: usize = 72 * 1024;
+const RECLAIMED_HEAP_BYTES: usize = 72 * 1024;
 
 const RENDER_INTERVAL: Duration = Duration::from_millis(500);
 const RENDER_TICKS_PER_BATTERY: u8 = 4;
@@ -279,7 +281,7 @@ use configuration::{hopspot_wifi_config, HopspotWifiConfig};
 use configuration::{HopspotTcpClientConfig, HopspotTcpClientHost};
 use connectivity::build_tcp;
 #[cfg(feature = "wifi-auto")]
-use connectivity::{build_wifi, espnow_channel_policy, EspNowAdapter};
+use connectivity::{build_wifi, espnow_channel_policy, EspNowAdapter, ESPNOW_PHY};
 #[cfg(feature = "wifi-auto")]
 use display::build_interface_menu_details;
 #[cfg(not(feature = "wifi-auto"))]
@@ -333,6 +335,9 @@ const PACKET_PHY_INDEX_BUCKETS: usize =
 
 #[cfg(feature = "wifi-auto")]
 static WIFI_STATION_JOINED: AtomicBool = AtomicBool::new(false);
+#[cfg(feature = "wifi-auto")]
+static WIFI_STATION_DATA_PATH_DEGRADED: AtomicBool = AtomicBool::new(false);
+static WIFI_DRIVER_RESTART_REQUESTED: AtomicBool = AtomicBool::new(false);
 static CORE_ONE_HEARTBEAT: AtomicU64 = AtomicU64::new(0);
 
 fn hardware_entropy(bytes: &mut [u8]) {
@@ -492,7 +497,7 @@ macro_rules! boot_common {
     ($p:ident, $banner:expr, $psram_config:expr, global_psram_heap) => {{
         ::esp_println::logger::init_logger_from_env();
         $crate::s3::boot_add_psram_global!($p, $psram_config);
-        ::esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 43 * 1024);
+        ::esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: $crate::s3::RECLAIMED_HEAP_BYTES);
         $crate::s3::reclaim_dcache_region();
         $crate::s3::boot_psram_probe!();
         $crate::s3::boot_rtos_tail!($p, $banner)
@@ -500,7 +505,7 @@ macro_rules! boot_common {
     ($p:ident, $banner:expr, $psram_config:expr, split_psram_heap) => {{
         ::esp_println::logger::init_logger_from_env();
         $crate::s3::boot_add_psram_split!($p, $psram_config);
-        ::esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 43 * 1024);
+        ::esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: $crate::s3::RECLAIMED_HEAP_BYTES);
         $crate::s3::reclaim_dcache_region();
         $crate::s3::boot_psram_probe!();
         $crate::s3::boot_rtos_tail!($p, $banner)
@@ -529,7 +534,6 @@ pub(crate) use boot_add_psram_global;
 /// Register the global half before the internal regions so capability-free allocations land externally and leave the small internal regions for the radios, matching the ordering `global_psram_heap` relies on.
 ///
 /// Reserving the whole window privately instead leaves the system on roughly 75 KiB of internal RAM across the reclaimed region and the D-cache window.
-/// The Bluetooth controller cannot allocate its receive buffers from that, and the captive portal's four HTTP tasks each request another 24 KiB.
 macro_rules! boot_add_psram_split {
     ($p:ident, $psram_config:expr) => {{
         let psram = ::esp_hal::psram::Psram::new($p.PSRAM, $psram_config);

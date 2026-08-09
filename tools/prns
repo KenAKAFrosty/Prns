@@ -383,13 +383,13 @@ def doctor(tasks: list[dict]) -> bool:
 
 
 def command_path(command: str) -> str | None:
-    if command == "python":
+    if command in ("python", "python3"):
         return sys.executable
     return shutil.which(command)
 
 
 def command_version(command: str, path: str) -> tuple[int, int, int] | None:
-    if command == "python":
+    if command in ("python", "python3"):
         return sys.version_info[:3]
     arguments = [path, "--version"]
     if command == "cl":
@@ -481,7 +481,7 @@ def run_task(task: dict, arguments: list[str]) -> int:
     # `python` denotes the interpreter already executing this control plane.
     # That is portable across Unix (`python3`) and Windows (`python.exe`) and
     # prevents a release task from silently selecting a different interpreter.
-    if command[0] == "python":
+    if command[0] in ("python", "python3"):
         command[0] = sys.executable
     print(
         f"[tool] task={task['id']} effect={task['effect']} platform={host}; "

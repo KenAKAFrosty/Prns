@@ -4,6 +4,8 @@ This guide takes you from a fresh clone of the repo, to a running Reticulum node
 
 Everything here works on an ordinary laptop or desktop. You don't need special hardware.
 
+On Windows, enable long paths once before cloning — `git config --global core.longpaths true` — or clone into a short directory such as `C:\prns`. Some benchmark evidence files in the repository exceed Windows' default 260-character path limit, and without this setting the clone stops partway through checkout.
+
 ## Check your setup
 
 From the repository root:
@@ -12,7 +14,7 @@ From the repository root:
 ./tools/prns doctor getting-started
 ```
 
-The doctor checks for the handful of tools this guide uses, and tells you what's missing and how to get it. It only reports; it never installs or changes anything on your machine. (On Windows, use `tools\prns.cmd` instead of `./tools/prns`.)
+The doctor checks for the handful of tools this guide uses, and tells you what's missing and how to get it. It only reports; it never installs or changes anything on your machine. (On Windows, use `.\tools\prns.cmd` instead of `./tools/prns`.)
 
 This is also your first look at `./tools/prns`, the repository's task runner. `./tools/prns list` shows everything else it can do. None of that additional functionality is necessary for this guide, though.
 

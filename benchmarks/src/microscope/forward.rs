@@ -97,7 +97,10 @@ impl Forward {
                 SETUP_NOW,
                 &mut |bytes| upstream_entropy.fill(bytes),
                 &mut |reaction| {
-                    if let EngineReaction::Directive(Directive::Send { bytes, .. }) = reaction {
+                    if let EngineReaction::Directive(
+                        Directive::Send { bytes, .. } | Directive::SendAnnounce { bytes, .. },
+                    ) = reaction
+                    {
                         announce.extend_from_slice(bytes);
                     }
                 },

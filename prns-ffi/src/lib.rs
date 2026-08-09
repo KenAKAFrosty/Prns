@@ -31,6 +31,12 @@ pub mod wifi_direct;
 pub mod usb_serial;
 
 #[cfg(target_os = "windows")]
+pub mod console;
+
+#[cfg(target_os = "windows")]
+pub mod detached_spawn;
+
+#[cfg(target_os = "windows")]
 pub mod serial;
 
 #[cfg(target_os = "windows")]

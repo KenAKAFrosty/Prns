@@ -126,20 +126,14 @@ impl<Label> FoldedInterface<Label> {
             .map(|snapshot| snapshot.gravity)
             .or(self.member_gravity)
             .unwrap_or(InterfaceGravity::ZERO);
-        let (rx_bytes, tx_bytes, transfer_rates) = if self.has_members {
-            (
-                self.member_rx_bytes,
-                self.member_tx_bytes,
-                self.member_rates,
-            )
+        let root_rx_bytes = self.root.map_or(0, |snapshot| snapshot.rx_bytes);
+        let root_tx_bytes = self.root.map_or(0, |snapshot| snapshot.tx_bytes);
+        let rx_bytes = root_rx_bytes.max(self.member_rx_bytes);
+        let tx_bytes = root_tx_bytes.max(self.member_tx_bytes);
+        let transfer_rates = if self.has_members {
+            self.member_rates
         } else {
-            self.root.map_or((0, 0, None), |snapshot| {
-                (
-                    snapshot.rx_bytes,
-                    snapshot.tx_bytes,
-                    snapshot.transfer_rates,
-                )
-            })
+            self.root.and_then(|snapshot| snapshot.transfer_rates)
         };
         InterfaceInventoryEntry {
             name: self.name,
@@ -285,7 +279,7 @@ mod tests {
             snapshot(
                 supervisor,
                 Membership::Independent,
-                100,
+                10,
                 0,
                 0,
                 Some("Public server"),
@@ -303,6 +297,32 @@ mod tests {
         assert_eq!(logical[0].snapshot.destinations, 5);
         assert_eq!(logical[0].snapshot.links, 3);
         assert_eq!(logical[0].snapshot.membership, Membership::Independent);
+    }
+
+    #[test]
+    fn retained_supervisor_traffic_is_not_readded_to_live_members() {
+        let supervisor = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, b"default");
+        let peer = InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, b"peer");
+        let membership = Membership::FleetMember {
+            supervisor_id: supervisor,
+        };
+        let mut snapshots = [
+            snapshot(
+                supervisor,
+                Membership::Independent,
+                120,
+                0,
+                0,
+                Some("Default Interface"),
+            ),
+            snapshot(peer, membership, 30, 0, 0, None),
+        ];
+
+        let logical = fold_logical_interface_inventory(&mut snapshots);
+
+        assert_eq!(logical.len(), 1);
+        assert_eq!(logical[0].snapshot.rx_bytes, 120);
+        assert_eq!(logical[0].snapshot.tx_bytes, 60);
     }
 
     #[test]

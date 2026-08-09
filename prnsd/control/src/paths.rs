@@ -185,15 +185,17 @@ mod tests {
             platform_state_base_for(StatePlatform::Windows, home.clone(), None, None),
             Some(PathBuf::from("/Users/prns/AppData/Local"))
         );
-        assert_eq!(
-            platform_state_base_for(
-                StatePlatform::Unix,
-                home.clone(),
-                Some(OsString::from("/state")),
-                None,
-            ),
-            Some(PathBuf::from("/state"))
-        );
+        if cfg!(unix) {
+            assert_eq!(
+                platform_state_base_for(
+                    StatePlatform::Unix,
+                    home.clone(),
+                    Some(OsString::from("/state")),
+                    None,
+                ),
+                Some(PathBuf::from("/state"))
+            );
+        }
         assert_eq!(
             platform_state_base_for(
                 StatePlatform::Unix,

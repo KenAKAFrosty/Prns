@@ -3217,6 +3217,7 @@ mod tests {
         if default_policy.mode != personal_rns::interfaces::InterfaceMode::Full
             || default_policy.gravity.get() != 0
             || default_policy.common.forwarding.recursive_path_requests
+                != personal_rns::interfaces::RecursivePathRequestPolicy::InheritNode
             || !default_policy.common.forwarding.announces_from_internal
             || default_policy.common.forwarding.announces_to_internal
         {
@@ -3240,7 +3241,8 @@ mod tests {
             .policy;
         if policy.mode != personal_rns::interfaces::InterfaceMode::Boundary
             || policy.gravity.get() != -73
-            || !policy.common.forwarding.recursive_path_requests
+            || policy.common.forwarding.recursive_path_requests
+                != personal_rns::interfaces::RecursivePathRequestPolicy::Enabled
             || policy.common.forwarding.announces_from_internal
             || !policy.common.forwarding.announces_to_internal
         {
@@ -3276,7 +3278,8 @@ mod tests {
                 let policy = interface.policy;
                 policy.mode != personal_rns::interfaces::InterfaceMode::Boundary
                     || policy.gravity.get() != -73
-                    || !policy.common.forwarding.recursive_path_requests
+                    || policy.common.forwarding.recursive_path_requests
+                        != personal_rns::interfaces::RecursivePathRequestPolicy::Enabled
                     || policy.common.forwarding.announces_from_internal
                     || !policy.common.forwarding.announces_to_internal
             })

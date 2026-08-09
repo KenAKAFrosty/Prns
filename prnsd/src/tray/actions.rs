@@ -19,6 +19,7 @@ static SCRIPT_ID: AtomicU64 = AtomicU64::new(0);
 pub(crate) enum TrayAction {
     OpenTerminal,
     ShowStatus,
+    AnnounceNnPages,
     ManageInterfaces,
     OpenConfigDirectory,
 }
@@ -28,6 +29,7 @@ impl TrayAction {
         match self {
             Self::OpenTerminal => "open_terminal",
             Self::ShowStatus => "show_status",
+            Self::AnnounceNnPages => "announce_nnpages",
             Self::ManageInterfaces => "manage_interfaces",
             Self::OpenConfigDirectory => "open_config_directory",
         }
@@ -80,6 +82,7 @@ impl TrayActionContext {
                 self.open_terminal(TerminalCommand::Attach)
             }
             TrayAction::ShowStatus => self.open_terminal(TerminalCommand::Status),
+            TrayAction::AnnounceNnPages => self.open_terminal(TerminalCommand::AnnounceNnPages),
             TrayAction::ManageInterfaces => self.open_terminal(TerminalCommand::Interfaces),
             TrayAction::OpenConfigDirectory => open_directory(&self.config_dir),
         }
@@ -90,6 +93,12 @@ impl TrayActionContext {
             TerminalCommand::Attach => Vec::new(),
             TerminalCommand::Status => vec![
                 OsString::from("status"),
+                OsString::from("--config"),
+                self.config_dir.as_os_str().to_owned(),
+            ],
+            TerminalCommand::AnnounceNnPages => vec![
+                OsString::from("nnpages"),
+                OsString::from("announce"),
                 OsString::from("--config"),
                 self.config_dir.as_os_str().to_owned(),
             ],
@@ -183,6 +192,7 @@ impl std::error::Error for TrayActionError {}
 enum TerminalCommand {
     Attach,
     Status,
+    AnnounceNnPages,
     Interfaces,
 }
 
@@ -193,6 +203,7 @@ impl TerminalCommand {
                 "Attaching to prnsd. Press Ctrl-C to detach while leaving the daemon running."
             }
             Self::Status => "Reading live Reticulum network status from prnsd.",
+            Self::AnnounceNnPages => "Asking prnsd to announce the hosted NNPages destination now.",
             Self::Interfaces => "Opening the guided Reticulum interface editor.",
         }
     }
@@ -201,6 +212,7 @@ impl TerminalCommand {
         match self {
             Self::Attach => "attach",
             Self::Status => "status",
+            Self::AnnounceNnPages => "announce-nnpages",
             Self::Interfaces => "interfaces",
         }
     }
@@ -506,5 +518,17 @@ mod tests {
 
         assert!(managed.can_attach_terminal());
         assert!(!foreground.can_attach_terminal());
+    }
+
+    #[test]
+    fn announcement_targets_the_hosted_destination_for_the_exact_config() {
+        let context = TrayActionContext::new_for_test("/opt/prnsd", "/config", None);
+
+        assert_eq!(
+            context.command_arguments(TerminalCommand::AnnounceNnPages),
+            ["nnpages", "announce", "--config", "/config"]
+                .map(OsString::from)
+                .to_vec(),
+        );
     }
 }

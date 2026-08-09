@@ -3,12 +3,6 @@
 version = 4
 
 [[package]]
-name = "adler2"
-version = "2.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
-
-[[package]]
 name = "aes"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -158,8 +152,7 @@ dependencies = [
 [[package]]
 name = "bt-hci"
 version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "211713d2e9fb4793ce4360a712c0764264aff6be48932ccf02ca2a331c0436a9"
+source = "git+https://github.com/embassy-rs/bt-hci?rev=adae58af86d241237ba52ed27d0d9dc9588155ee#adae58af86d241237ba52ed27d0d9dc9588155ee"
 dependencies = [
  "btuuid",
  "embassy-sync 0.8.0",
@@ -1218,8 +1211,6 @@ checksum = "42c2ee95b945a4780796e4359e72c033aed3b45073880e8029458f538532db8a"
 [[package]]
 name = "esp-phy"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7c0a29815cd105ae1a02f3d0c6e7aafda9504a41effae17fac4c3f827719228"
 dependencies = [
  "cfg-if",
  "document-features",
@@ -1250,8 +1241,6 @@ dependencies = [
 [[package]]
 name = "esp-radio"
 version = "0.18.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23fbff98b06a96b6ce3791ecec5c668524052a068e23aacd23afe17ddba844ce"
 dependencies = [
  "allocator-api2",
  "bt-hci",
@@ -1461,16 +1450,6 @@ name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
-
-[[package]]
-name = "flate2"
-version = "1.1.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "843fba2746e448b37e26a819579957415c8cef339bf08564fe8b7ddbd959573c"
-dependencies = [
- "crc32fast",
- "miniz_oxide",
-]
 
 [[package]]
 name = "float-cmp"
@@ -2054,16 +2033,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3c8dda44ff03a2f238717214da50f65d5a53b45cd213a7370424ffdb6fae815"
 
 [[package]]
-name = "miniz_oxide"
-version = "0.8.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fa76a2c86f704bdb222d66965fb3d63269ce38518b83cb0575fca855ebb6316"
-dependencies = [
- "adler2",
- "simd-adler32",
-]
-
-[[package]]
 name = "mio"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2172,7 +2141,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2365,10 +2334,10 @@ dependencies = [
  "esp-backtrace",
  "esp-bootloader-esp-idf",
  "esp-hal",
+ "esp-phy",
  "esp-println",
  "esp-radio",
  "esp-rtos",
- "flate2",
  "heapless 0.8.0",
  "log",
  "personal-hopspot-core",
@@ -2382,7 +2351,7 @@ dependencies = [
 
 [[package]]
 name = "personal-rns"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "cfg-if",
  "prns-core",
@@ -2484,7 +2453,7 @@ checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
 
 [[package]]
 name = "prns-core"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "aes",
  "allocator-api2",
@@ -2505,7 +2474,7 @@ dependencies = [
 
 [[package]]
 name = "prns-ffi"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "cfg-if",
  "dispatch2",
@@ -2522,7 +2491,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-embassy"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "bt-hci",
  "cfg-if",
@@ -2548,7 +2517,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-tokio"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "bluer",
  "cfg-if",
@@ -2567,7 +2536,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "bzip2",
  "cfg-if",
@@ -2577,7 +2546,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime-embassy"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "embassy-futures",
  "embassy-sync 0.8.0",
@@ -2593,7 +2562,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime-tokio"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "futures-util",
  "getrandom 0.2.17",
@@ -2968,12 +2937,6 @@ name = "signature"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77549399552de45a898a580c1b41d445bf730df867cc44e6c0233bbc4b8329de"
-
-[[package]]
-name = "simd-adler32"
-version = "0.3.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "703d5c7ef118737c72f1af64ad2f6f8c5e1921f818cdcb97b8fe6fc69bf66214"
 
 [[package]]
 name = "slab"
@@ -3354,8 +3317,6 @@ dependencies = [
 [[package]]
 name = "trouble-host"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1df7817cead4b83dfbeeaa59736ecbc97c30b21dc3bfc0cc2ce8a6687f70b37a"
 dependencies = [
  "bt-hci",
  "embassy-futures",
@@ -3555,7 +3516,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

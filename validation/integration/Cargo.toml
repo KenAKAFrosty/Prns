@@ -1,6 +1,6 @@
 [package]
 name = "prns-integration-tests"
-version = "0.3.3"
+version = "0.3.4"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/KenAKAFrosty/Prns"
@@ -22,6 +22,8 @@ prns-core = { path = "../../prns-core" }
 prns-ffi = { path = "../../prns-ffi" }
 prns-interfaces-tokio = { path = "../../prns-interfaces/impls/tokio", features = ["bluetooth-auto", "log", "shared-instance", "tcp", "wifi-direct"] }
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util"] }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
 zbus = "4"
 
 [lints.clippy]

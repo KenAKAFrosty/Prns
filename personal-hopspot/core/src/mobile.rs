@@ -58,6 +58,7 @@ impl MobileActionCode {
             | UiAction::Sleep
             | UiAction::Wake
             | UiAction::ToggleSelectedInterface
+            | UiAction::ToggleStationUplink
             | UiAction::OpenDocs
             | UiAction::OpenLoRaEditor
             | UiAction::SetLoRaProfile(_)

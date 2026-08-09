@@ -75,9 +75,11 @@ test("the exact staged production bundle performs a hardware-free sparse flash",
     const writes = [];
     let disconnected = false;
     let requestedPorts = 0;
-    let reset = null;
+    const reset = [];
     class FakeTransport {
       setDeviceLostCallback() {}
+      async setDTR(state) { reset.push(["dtr", state]); }
+      async setRTS(state) { reset.push(["rts", state]); }
       async disconnect() {
         disconnected = true;
       }
@@ -85,6 +87,9 @@ test("the exact staged production bundle performs a hardware-free sparse flash",
     class FakeLoader {
       chip = { CHIP_NAME: "ESP32-C6" };
 
+      constructor({ transport }) {
+        this.transport = transport;
+      }
       async main(beforeReset) {
         if (beforeReset !== "default_reset") throw new Error("unexpected before-reset mode");
         return "ESP32-C6 (revision v0.1)";
@@ -102,9 +107,6 @@ test("the exact staged production bundle performs a hardware-free sparse flash",
           size: bytes.byteLength,
         });
         options.reportProgress(0, bytes.byteLength, bytes.byteLength);
-      }
-      async after(...args) {
-        reset = args;
       }
     }
 
@@ -125,7 +127,8 @@ test("the exact staged production bundle performs a hardware-free sparse flash",
       },
       TransportImpl: FakeTransport,
       LoaderImpl: FakeLoader,
-      proveReset: async (_serial, _port, resetDevice) => resetDevice(),
+      proveReset: async () => { throw new Error("C6 must not require browser reset evidence"); },
+      resetSleep: async (milliseconds) => reset.push(["sleep", milliseconds]),
     });
     return { bundleHash, disconnected, phases, requestedPorts, reset, writes };
   }, expectedHash);
@@ -133,7 +136,15 @@ test("the exact staged production bundle performs a hardware-free sparse flash",
   expect(evidence.bundleHash).toBe(expectedHash);
   expect(evidence.requestedPorts).toBe(1);
   expect(evidence.disconnected).toBe(true);
-  expect(evidence.reset).toEqual(["hard_reset"]);
+  expect(evidence.reset).toEqual([
+    ["dtr", false],
+    ["sleep", 100],
+    ["rts", true],
+    ["dtr", false],
+    ["rts", true],
+    ["sleep", 100],
+    ["rts", false],
+  ]);
   expect(evidence.writes).toHaveLength(3);
   expect(evidence.writes.map(({ address }) => address)).toEqual([0, 0x8000, 0x10000]);
   expect(evidence.writes.every(({ compressed, eraseAll }) => compressed && !eraseAll)).toBe(true);
@@ -202,11 +213,14 @@ test("the exact staged production bundle traps same-document Back during an acti
     window.__prnsProductionHistory = control;
     class FakeTransport {
       setDeviceLostCallback() {}
+      async setDTR() {}
+      async setRTS() {}
       async disconnect() {}
     }
     class PausedLoader {
       chip = { CHIP_NAME: "ESP32-C6" };
 
+      constructor({ transport }) { this.transport = transport; }
       async main() {}
       async readFlashId() { return 0x1640ef; }
       async writeFlash() {
@@ -217,7 +231,6 @@ test("the exact staged production bundle traps same-document Back during an acti
           control.resume = null;
         }
       }
-      async after() {}
     }
 
     await production.prepare(request, (event) => control.phases.push(event.phase), {
@@ -228,7 +241,8 @@ test("the exact staged production bundle traps same-document Back during an acti
       serial: { requestPort: async () => ({}) },
       TransportImpl: FakeTransport,
       LoaderImpl: PausedLoader,
-      proveReset: async (_serial, _port, resetDevice) => resetDevice(),
+      proveReset: async () => { throw new Error("C6 must not require browser reset evidence"); },
+      resetSleep: async () => {},
     }).then(() => {
       control.done = true;
     }).catch((error) => {
@@ -611,7 +625,7 @@ test("browser support is feature-detected and T-Echo stays on the signed UF2 rou
   await selectBoard(page, "xiao-esp32-c6");
 
   await expect(page.locator("#flash-status")).toContainText(/Web Serial is unavailable/i);
-  await expect(page.getByText(/requires a secure current Chrome or Edge browser with Web Serial/i)).toBeVisible();
+  await expect(page.getByText(/requires a secure current desktop browser with Web Serial/i)).toBeVisible();
   await page.getByRole("checkbox").check();
   await expect(page.getByRole("button", { name: "Prepare and verify release" })).toBeDisabled();
   await expect(page.getByText(/cannot distinguish cataloged boards that share that family/i)).toHaveCount(0);
@@ -667,8 +681,8 @@ test("a Web Serial detection failure keeps ESP preparation and connection fail c
   const status = page.locator("#flash-status");
   await expect(status).toHaveAttribute("aria-live", "polite");
   await expect(status).toHaveAttribute("aria-atomic", "true");
-  await expect(status).toContainText(/Web Serial is unavailable.*Chrome or Edge.*CLI/i);
-  await expect(page.getByText(/requires a secure current Chrome or Edge browser with Web Serial/i)).toBeVisible();
+  await expect(status).toContainText(/Web Serial is unavailable.*Chrome, Edge, or Firefox.*CLI/i);
+  await expect(page.getByText(/requires a secure current desktop browser with Web Serial/i)).toBeVisible();
   await page.getByRole("checkbox").check();
   await expect(page.getByRole("button", { name: "Prepare and verify release" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Connect and flash" })).toBeDisabled();

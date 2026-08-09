@@ -14,4 +14,3 @@ esp-rtos = { version = "0.3.0", features = ["esp32s3", "embassy", "esp-radio"] }
 
 [features]
 default = []
-source-archive = ["personal-hopspot-esp32/source-archive"]

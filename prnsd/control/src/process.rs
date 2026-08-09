@@ -2,14 +2,13 @@ use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, TryLockError};
 use std::io::{self};
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
 
 use crate::active_config::{self, ActiveConfigRecord};
 use crate::logs::{open_log, rotate_log};
@@ -278,28 +277,16 @@ pub fn start(paths: &ServicePaths, launch: LaunchSpec<'_>) -> Result<StartOutcom
         operation: "could not duplicate the prnsd log handle",
         source,
     })?;
-    let mut command = Command::new(binary);
-    command
-        .args(launch.args)
-        .current_dir(launch.working_dir)
-        .env_remove(MANAGED_STATE_DIR)
-        .env_remove(MANAGED_GENERATION)
-        .env_remove(MANAGED_SIGNATURE)
-        .env_remove(MANAGED_LOG_LANE)
-        .env_remove(MANAGED_VERSION)
-        .env(MANAGED_STATE_DIR, &paths.state_dir)
-        .env(MANAGED_GENERATION, generation.to_string())
-        .env(MANAGED_SIGNATURE, launch.signature.to_string())
-        .env(MANAGED_LOG_LANE, launch.log_lane.as_str())
-        .env(MANAGED_VERSION, launch.version)
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(stdout))
-        .stderr(Stdio::from(stderr));
-    #[cfg(unix)]
-    command.process_group(0);
-    #[cfg(windows)]
-    command.creation_flags(windows_sys::Win32::System::Threading::DETACHED_PROCESS);
-    let mut child = command.spawn().map_err(|source| ServiceError::Io {
+    let environment = managed_environment(paths, generation, &launch);
+    let mut child = spawn_managed(
+        &binary,
+        launch.args,
+        launch.working_dir,
+        &environment,
+        stdout,
+        stderr,
+    )
+    .map_err(|source| ServiceError::Io {
         operation: "could not launch the managed prnsd process",
         source,
     })?;
@@ -332,6 +319,80 @@ pub fn start(paths: &ServicePaths, launch: LaunchSpec<'_>) -> Result<StartOutcom
         }
         thread::sleep(POLL_INTERVAL);
     }
+}
+
+fn managed_environment(
+    paths: &ServicePaths,
+    generation: u128,
+    launch: &LaunchSpec<'_>,
+) -> Vec<(OsString, OsString)> {
+    let managed_keys = [
+        MANAGED_STATE_DIR,
+        MANAGED_GENERATION,
+        MANAGED_SIGNATURE,
+        MANAGED_LOG_LANE,
+        MANAGED_VERSION,
+    ];
+    let mut environment: Vec<(OsString, OsString)> = std::env::vars_os()
+        .filter(|(key, _)| {
+            !managed_keys
+                .iter()
+                .any(|managed| key == OsStr::new(managed))
+        })
+        .collect();
+    environment.push((
+        MANAGED_STATE_DIR.into(),
+        paths.state_dir.clone().into_os_string(),
+    ));
+    environment.push((MANAGED_GENERATION.into(), generation.to_string().into()));
+    environment.push((
+        MANAGED_SIGNATURE.into(),
+        launch.signature.to_string().into(),
+    ));
+    environment.push((MANAGED_LOG_LANE.into(), launch.log_lane.as_str().into()));
+    environment.push((MANAGED_VERSION.into(), launch.version.into()));
+    environment
+}
+
+#[cfg(unix)]
+fn spawn_managed(
+    binary: &Path,
+    args: &[OsString],
+    working_dir: &Path,
+    environment: &[(OsString, OsString)],
+    stdout: File,
+    stderr: File,
+) -> io::Result<std::process::Child> {
+    let mut command = Command::new(binary);
+    command
+        .args(args)
+        .current_dir(working_dir)
+        .env_clear()
+        .envs(environment.iter().map(|(key, value)| (key, value)))
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(stderr));
+    command.process_group(0);
+    command.spawn()
+}
+
+#[cfg(windows)]
+fn spawn_managed(
+    binary: &Path,
+    args: &[OsString],
+    working_dir: &Path,
+    environment: &[(OsString, OsString)],
+    stdout: File,
+    stderr: File,
+) -> io::Result<prns_ffi::detached_spawn::DetachedChild> {
+    prns_ffi::detached_spawn::spawn(prns_ffi::detached_spawn::DetachedSpawn {
+        binary,
+        arguments: args,
+        working_directory: working_dir,
+        environment,
+        stdout,
+        stderr,
+    })
 }
 
 pub fn running(paths: &ServicePaths) -> Result<Option<ServiceRecord>, ServiceError> {
@@ -584,6 +645,7 @@ mod tests {
         fs::remove_dir_all(paths.state_dir).unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn active_configuration_must_match_the_live_managed_generation() {
         let paths = test_paths("active-configuration");

@@ -16,9 +16,26 @@ impl FrequencyMilliHertz {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InterfaceForwardingPolicy {
-    pub recursive_path_requests: bool,
+    pub recursive_path_requests: RecursivePathRequestPolicy,
     pub announces_from_internal: bool,
     pub announces_to_internal: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecursivePathRequestPolicy {
+    InheritNode,
+    Enabled,
+    Disabled,
+}
+
+impl RecursivePathRequestPolicy {
+    pub const fn from_configured(enabled: bool) -> Self {
+        if enabled {
+            Self::Enabled
+        } else {
+            Self::Disabled
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,7 +68,7 @@ pub struct InterfaceCommonPolicy {
 impl InterfaceCommonPolicy {
     pub const RNS_DEFAULT: Self = Self {
         forwarding: InterfaceForwardingPolicy {
-            recursive_path_requests: false,
+            recursive_path_requests: RecursivePathRequestPolicy::InheritNode,
             announces_from_internal: true,
             announces_to_internal: false,
         },

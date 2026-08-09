@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::AtomicU64;
 use std::sync::mpsc as sync_mpsc;
 use std::sync::Arc;
@@ -29,13 +29,26 @@ use super::{guid_of, Event, Radio, ScanIntent, WindowsBleError};
 const POWER_ON_TIMEOUT: Duration = Duration::from_secs(35);
 const ADAPTER_ATTEMPTS: usize = 12;
 const ADAPTER_RETRY_DELAY: Duration = Duration::from_secs(2);
+const RADIO_REBUILD_RETRY_DELAY: Duration = Duration::from_secs(30);
+
+struct RaisedRadio {
+    radio: Radio,
+    events: tokio_mpsc::UnboundedReceiver<Event>,
+    keepalive: sync_mpsc::Sender<()>,
+}
 
 pub struct WindowsBleBackend {
-    _keepalive: sync_mpsc::Sender<()>,
+    identity: BleIdentity,
+    keepalive: sync_mpsc::Sender<()>,
     events: tokio_mpsc::UnboundedReceiver<Event>,
+    events_closed: bool,
+    rebuild_at: Option<tokio::time::Instant>,
+    advertising: AdvertisingMode,
+    scanning: ScanningMode,
     radio: Radio,
     watcher_heartbeat: JoinHandle<()>,
     dials: JoinSet<Result<WinGattLink, BleAddress>>,
+    dial_queue: VecDeque<(BleAddress, BluetoothAddressType)>,
     seen_address_types: HashMap<BleAddress, BluetoothAddressType>,
 }
 
@@ -43,39 +56,70 @@ impl WindowsBleBackend {
     pub const MAX_PEERS: usize = 8;
 
     pub async fn new(identity: BleIdentity) -> Result<Self, WindowsBleError> {
-        let (events_tx, events_rx) = tokio_mpsc::unbounded_channel::<Event>();
-        let (keepalive, shutdown_rx) = sync_mpsc::channel::<()>();
-        let (ready_tx, ready_rx) = oneshot::channel::<Result<Radio, WindowsBleError>>();
-
-        std::thread::Builder::new()
-            .name("prns-ble-winrt".into())
-            .spawn(move || {
-                let _ = ready_tx.send(winrt_setup(events_tx, identity));
-                let _ = shutdown_rx.recv();
-            })
-            .map_err(|_| WindowsBleError::Closed)?;
-
-        match tokio::time::timeout(POWER_ON_TIMEOUT, ready_rx).await {
-            Ok(Ok(Ok(radio))) => {
-                let watcher_heartbeat = spawn_watcher_heartbeat(
-                    radio.watcher.clone(),
-                    radio.adverts.clone(),
-                    radio.scan_intent.clone(),
-                );
-                Ok(Self {
-                    _keepalive: keepalive,
-                    events: events_rx,
-                    radio,
-                    watcher_heartbeat,
-                    dials: JoinSet::new(),
-                    seen_address_types: HashMap::new(),
-                })
-            }
-            Ok(Ok(Err(error))) => Err(error),
-            Ok(Err(_)) => Err(WindowsBleError::Closed),
-            Err(_) => Err(WindowsBleError::PowerOnTimeout),
-        }
+        let raised = raise_radio(identity).await?;
+        let watcher_heartbeat = spawn_watcher_heartbeat(
+            raised.radio.watcher.clone(),
+            raised.radio.adverts.clone(),
+            raised.radio.scan_intent.clone(),
+        );
+        Ok(Self {
+            identity,
+            keepalive: raised.keepalive,
+            events: raised.events,
+            events_closed: false,
+            rebuild_at: None,
+            advertising: AdvertisingMode::Off,
+            scanning: ScanningMode::Off,
+            radio: raised.radio,
+            watcher_heartbeat,
+            dials: JoinSet::new(),
+            dial_queue: VecDeque::new(),
+            seen_address_types: HashMap::new(),
+        })
     }
+}
+
+async fn raise_radio(identity: BleIdentity) -> Result<RaisedRadio, WindowsBleError> {
+    let (events_tx, events_rx) = tokio_mpsc::unbounded_channel::<Event>();
+    let (keepalive, shutdown_rx) = sync_mpsc::channel::<()>();
+    let (ready_tx, ready_rx) = oneshot::channel::<Result<Radio, WindowsBleError>>();
+
+    std::thread::Builder::new()
+        .name("prns-ble-winrt".into())
+        .spawn(move || {
+            let _ = ready_tx.send(winrt_setup(events_tx, identity));
+            let _ = shutdown_rx.recv();
+        })
+        .map_err(|_| WindowsBleError::Closed)?;
+
+    match tokio::time::timeout(POWER_ON_TIMEOUT, ready_rx).await {
+        Ok(Ok(Ok(radio))) => Ok(RaisedRadio {
+            radio,
+            events: events_rx,
+            keepalive,
+        }),
+        Ok(Ok(Err(error))) => Err(error),
+        Ok(Err(_)) => Err(WindowsBleError::Closed),
+        Err(_) => Err(WindowsBleError::PowerOnTimeout),
+    }
+}
+
+fn apply_advertising(radio: &Radio, mode: AdvertisingMode) -> Result<(), WindowsBleError> {
+    if mode.is_on() {
+        // Connectable + discoverable: WinRT folds the service's 128-bit UUID into the
+        // advertisement automatically when discoverable, so we do not hand-roll the AD bytes.
+        let parameters = GattServiceProviderAdvertisingParameters::new()?;
+        parameters.SetIsConnectable(true)?;
+        parameters.SetIsDiscoverable(true)?;
+        radio.provider.StartAdvertisingWithParameters(&parameters)?;
+        crate::diagnostic_log::debug!(
+            "bluetooth: advertising the Prns service (connectable + discoverable)"
+        );
+    } else {
+        radio.provider.StopAdvertising()?;
+        crate::diagnostic_log::debug!("bluetooth: stopped advertising");
+    }
+    Ok(())
 }
 
 fn winrt_setup(
@@ -170,7 +214,7 @@ fn try_adapter() -> Result<(), WindowsBleError> {
 
 impl Drop for WindowsBleBackend {
     fn drop(&mut self) {
-        self.radio.scan_intent.set(false);
+        self.radio.scan_intent.request(ScanningMode::Off);
         self.watcher_heartbeat.abort();
         let _ = self.radio.watcher.Stop();
         let _ = self.radio.provider.StopAdvertising();
@@ -182,48 +226,22 @@ impl BleBackend<{ WindowsBleBackend::MAX_PEERS }> for WindowsBleBackend {
     type Link = WinGattLink;
 
     async fn set_advertising(&mut self, mode: AdvertisingMode) -> Result<(), WindowsBleError> {
-        if mode.is_on() {
-            // Connectable + discoverable: WinRT folds the service's 128-bit UUID into the
-            // advertisement automatically when discoverable, so we do not hand-roll the AD bytes.
-            let parameters = GattServiceProviderAdvertisingParameters::new()?;
-            parameters.SetIsConnectable(true)?;
-            parameters.SetIsDiscoverable(true)?;
-            self.radio
-                .provider
-                .StartAdvertisingWithParameters(&parameters)?;
-            crate::diagnostic_log::debug!(
-                "bluetooth: advertising the Prns service (connectable + discoverable)"
-            );
-        } else {
-            self.radio.provider.StopAdvertising()?;
-            crate::diagnostic_log::debug!("bluetooth: stopped advertising");
-        }
-        Ok(())
+        self.advertising = mode;
+        apply_advertising(&self.radio, mode)
     }
 
     async fn set_scanning(&mut self, mode: ScanningMode) -> Result<(), WindowsBleError> {
-        let requested = mode.is_on();
-        self.radio.scan_intent.set(requested);
-        let status = self.radio.watcher.Status()?;
-        match scan_action(requested, status) {
-            ScanAction::Start => {
-                self.radio.watcher.Start()?;
-                crate::diagnostic_log::debug!("bluetooth: scanning for Prns peers");
-            }
-            ScanAction::Stop => {
-                self.radio.watcher.Stop()?;
-                crate::diagnostic_log::debug!("bluetooth: scanning stopped by supervisor policy");
-            }
-            ScanAction::None => {}
-        }
-        Ok(())
+        self.scanning = mode;
+        self.radio.scan_intent.request(mode);
+        self.apply_scan_state()
     }
 
     async fn next_event(&mut self) -> BleEvent<WinGattLink> {
         loop {
             let pending_dials = !self.dials.is_empty();
+            let rebuild_at = self.rebuild_at;
             tokio::select! {
-                event = self.events.recv() => match event {
+                event = self.events.recv(), if !self.events_closed => match event {
                     Some(Event::Sighting {
                         address,
                         address_type,
@@ -237,9 +255,27 @@ impl BleBackend<{ WindowsBleBackend::MAX_PEERS }> for WindowsBleBackend {
                         return BleEvent::Sighting { address, rssi };
                     }
                     Some(Event::Inbound(link)) => return BleEvent::Inbound(link),
-                    None => core::future::pending().await,
+                    None => {
+                        crate::diagnostic_log::warn!(
+                            "bluetooth: WinRT radio lane closed; scheduling a rebuild"
+                        );
+                        self.events_closed = true;
+                        self.rebuild_at = Some(tokio::time::Instant::now());
+                    }
                 },
+                () = tokio::time::sleep_until(rebuild_at.unwrap_or_else(tokio::time::Instant::now)), if rebuild_at.is_some() => {
+                    self.attempt_radio_rebuild().await;
+                }
                 Some(joined) = self.dials.join_next(), if pending_dials => {
+                    if self.dials.is_empty() {
+                        match self.dial_queue.pop_front() {
+                            Some((address, address_type)) => self.begin_dial(address, address_type),
+                            None => {
+                                self.radio.scan_intent.release_dial_hold();
+                                let _ = self.apply_scan_state();
+                            }
+                        }
+                    }
                     match joined {
                         Ok(Ok(link)) => {
                             return BleEvent::LinkReady {
@@ -262,6 +298,82 @@ impl BleBackend<{ WindowsBleBackend::MAX_PEERS }> for WindowsBleBackend {
             .get(&address)
             .copied()
             .unwrap_or(BluetoothAddressType::Unspecified);
+        if self.dials.is_empty() {
+            self.begin_dial(address, address_type);
+        } else if !self.dial_queue.iter().any(|(queued, _)| *queued == address) {
+            crate::diagnostic_log::debug!(
+                "bluetooth: dial to {:02x?} queued behind the in-flight dial",
+                address.octets()
+            );
+            self.dial_queue.push_back((address, address_type));
+        }
+        DialOutcome::Started
+    }
+}
+
+impl WindowsBleBackend {
+    async fn attempt_radio_rebuild(&mut self) {
+        crate::diagnostic_log::warn!("bluetooth: rebuilding the WinRT radio lane");
+        match raise_radio(self.identity).await {
+            Ok(raised) => {
+                self.watcher_heartbeat.abort();
+                let _ = self.radio.watcher.Stop();
+                let _ = self.radio.provider.StopAdvertising();
+                self.radio = raised.radio;
+                self.events = raised.events;
+                self.keepalive = raised.keepalive;
+                self.events_closed = false;
+                self.rebuild_at = None;
+                self.watcher_heartbeat = spawn_watcher_heartbeat(
+                    self.radio.watcher.clone(),
+                    self.radio.adverts.clone(),
+                    self.radio.scan_intent.clone(),
+                );
+                self.radio.scan_intent.request(self.scanning);
+                if !self.dials.is_empty() {
+                    self.radio.scan_intent.hold_for_dial();
+                }
+                if let Err(error) = apply_advertising(&self.radio, self.advertising) {
+                    crate::diagnostic_log::warn!(
+                        "bluetooth: could not reapply advertising after the rebuild ({error:?})"
+                    );
+                }
+                if let Err(error) = self.apply_scan_state() {
+                    crate::diagnostic_log::warn!(
+                        "bluetooth: could not reapply scanning after the rebuild ({error:?})"
+                    );
+                }
+                crate::diagnostic_log::warn!("bluetooth: WinRT radio lane rebuilt");
+            }
+            Err(error) => {
+                crate::diagnostic_log::warn!(
+                    "bluetooth: radio rebuild failed ({error:?}); retrying in {}s",
+                    RADIO_REBUILD_RETRY_DELAY.as_secs()
+                );
+                self.rebuild_at = Some(tokio::time::Instant::now() + RADIO_REBUILD_RETRY_DELAY);
+            }
+        }
+    }
+
+    fn apply_scan_state(&self) -> Result<(), WindowsBleError> {
+        let status = self.radio.watcher.Status()?;
+        match scan_action(self.radio.scan_intent.is_effective(), status) {
+            ScanAction::Start => {
+                self.radio.watcher.Start()?;
+                crate::diagnostic_log::debug!("bluetooth: scanning for Prns peers");
+            }
+            ScanAction::Stop => {
+                self.radio.watcher.Stop()?;
+                crate::diagnostic_log::debug!("bluetooth: scanning paused");
+            }
+            ScanAction::None => {}
+        }
+        Ok(())
+    }
+
+    fn begin_dial(&mut self, address: BleAddress, address_type: BluetoothAddressType) {
+        self.radio.scan_intent.hold_for_dial();
+        let _ = self.apply_scan_state();
         crate::diagnostic_log::debug!(
             "bluetooth: dialling {:02x?} type={address_type:?} over LE (central role)",
             address.octets()
@@ -277,6 +389,5 @@ impl BleBackend<{ WindowsBleBackend::MAX_PEERS }> for WindowsBleBackend {
                     Err(address)
                 }
             });
-        DialOutcome::Started
     }
 }

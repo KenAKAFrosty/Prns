@@ -1,8 +1,9 @@
 use super::classification::DataPacket;
 use super::outcome::{IgnoreReason, IngestPacketOutcome};
-use crate::engine::{EngineState, InstantMillis};
+use crate::engine::{EngineState, InstantMillis, RecursivePathRequestDefault};
 use crate::interfaces::{
     AttachedInterfaces, InterfaceCommonPolicy, InterfaceId, InterfaceKind, InterfaceMode,
+    RecursivePathRequestPolicy,
 };
 use crate::routing::announce::defaults::{PATH_REQUEST_GRACE_MS, PATH_REQUEST_ROAMING_GRACE_MS};
 use crate::routing::announce::schedule::{ScheduleOutcome, ScheduledAnnounceQueue};
@@ -200,15 +201,25 @@ impl<S: StorageLayout> EngineState<S> {
         interfaces: AttachedInterfaces<'_>,
     ) -> IngestPacketOutcome<'p> {
         let source_descriptor = interfaces.descriptor_for(source_interface);
-        let explicitly_forwards_recursively = source_descriptor
-            .is_some_and(|descriptor| descriptor.common.forwarding.recursive_path_requests);
+        let recursive_policy = source_descriptor
+            .map_or(RecursivePathRequestPolicy::InheritNode, |descriptor| {
+                descriptor.common.forwarding.recursive_path_requests
+            });
+        let explicitly_forwards_recursively =
+            recursive_policy == RecursivePathRequestPolicy::Enabled;
         let forwards_recursively = self.network_transport_enabled()
-            && source_descriptor.is_some_and(|descriptor| {
-                descriptor.mode.recursively_forwards_unknown_paths()
-                    || explicitly_forwards_recursively
+            && source_descriptor.is_some_and(|descriptor| match recursive_policy {
+                RecursivePathRequestPolicy::InheritNode => {
+                    self.protocol.recursive_path_request_default
+                        == RecursivePathRequestDefault::Enabled
+                        || descriptor.mode.recursively_forwards_unknown_paths()
+                }
+                RecursivePathRequestPolicy::Enabled => true,
+                RecursivePathRequestPolicy::Disabled => false,
             });
         let forwards_across_boundary = self.network_transport_enabled()
             && !explicitly_forwards_recursively
+            && recursive_policy != RecursivePathRequestPolicy::Disabled
             && source_descriptor
                 .is_some_and(|descriptor| descriptor.mode == InterfaceMode::Boundary);
         if (forwards_recursively || forwards_across_boundary)
@@ -552,6 +563,125 @@ mod tests {
     }
 
     #[test]
+    fn node_default_enables_unknown_path_recursion_on_full_interfaces() {
+        let stranger = DestinationHash::new([0x44; 16]);
+        let source = iface(0xA1);
+        let mut relay = transporting_node();
+        relay.set_protocol_policy(crate::engine::EngineProtocolPolicy {
+            recursive_path_request_default: RecursivePathRequestDefault::Enabled,
+            ..Default::default()
+        });
+        let interfaces = [discovering_descriptor(source, InterfaceMode::Full)];
+        let mut wire = stranger_path_request([0x55; 16]);
+
+        assert_eq!(
+            relay.ingest_packet_with(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: source,
+                    bytes: &mut wire,
+                },
+                &mut |_| {},
+                AttachedInterfaces::new(&interfaces),
+                &mut |_| {},
+                None,
+            ),
+            IngestPacketOutcome::ForwardRecursivePathRequest {
+                destination: stranger,
+                id: [0x55; 16],
+            },
+        );
+    }
+
+    #[test]
+    fn node_default_carries_recursive_discovery_across_two_full_mode_relays() {
+        let stranger = DestinationHash::new([0x44; 16]);
+        let first_ingress = iface(0xA1);
+        let first_egress = iface(0xB2);
+        let second_egress = iface(0xC3);
+        let policy = crate::engine::EngineProtocolPolicy {
+            recursive_path_request_default: RecursivePathRequestDefault::Enabled,
+            ..Default::default()
+        };
+        let mut first = transporting_node();
+        first.set_protocol_policy(policy);
+        let mut second = transporting_node();
+        second.set_protocol_policy(policy);
+        let mut first_wire = stranger_path_request([0x55; 16]);
+        let mut second_wire = first_wire.clone();
+
+        assert_eq!(
+            first.ingest_packet_with(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: first_ingress,
+                    bytes: &mut first_wire,
+                },
+                &mut |_| {},
+                AttachedInterfaces::new(&[
+                    discovering_descriptor(first_ingress, InterfaceMode::Full),
+                    discovering_descriptor(first_egress, InterfaceMode::Full),
+                ]),
+                &mut |_| {},
+                None,
+            ),
+            IngestPacketOutcome::ForwardRecursivePathRequest {
+                destination: stranger,
+                id: [0x55; 16],
+            },
+        );
+        assert_eq!(
+            second.ingest_packet_with(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_001),
+                    source_interface: first_egress,
+                    bytes: &mut second_wire,
+                },
+                &mut |_| {},
+                AttachedInterfaces::new(&[
+                    discovering_descriptor(first_egress, InterfaceMode::Full),
+                    discovering_descriptor(second_egress, InterfaceMode::Full),
+                ]),
+                &mut |_| {},
+                None,
+            ),
+            IngestPacketOutcome::ForwardRecursivePathRequest {
+                destination: stranger,
+                id: [0x55; 16],
+            },
+        );
+    }
+
+    #[test]
+    fn explicit_interface_disable_wins_over_node_default_and_mode() {
+        let source = iface(0xA1);
+        let mut relay = transporting_node();
+        relay.set_protocol_policy(crate::engine::EngineProtocolPolicy {
+            recursive_path_request_default: RecursivePathRequestDefault::Enabled,
+            ..Default::default()
+        });
+        let mut descriptor = discovering_descriptor(source, InterfaceMode::Gateway);
+        descriptor.common.forwarding.recursive_path_requests = RecursivePathRequestPolicy::Disabled;
+        let interfaces = [descriptor];
+        let mut wire = stranger_path_request([0x55; 16]);
+
+        assert_eq!(
+            relay.ingest_packet_with(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: source,
+                    bytes: &mut wire,
+                },
+                &mut |_| {},
+                AttachedInterfaces::new(&interfaces),
+                &mut |_| {},
+                None,
+            ),
+            IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
+        );
+    }
+
+    #[test]
     fn a_boundary_path_request_recurses_only_over_boundary_and_gateway_interfaces() {
         let source = iface(0xA1);
         let boundary = iface(0xB2);
@@ -609,7 +739,8 @@ mod tests {
         let full = iface(0xB2);
         let gateway = iface(0xC3);
         let mut source_descriptor = discovering_descriptor(source, InterfaceMode::Boundary);
-        source_descriptor.common.forwarding.recursive_path_requests = true;
+        source_descriptor.common.forwarding.recursive_path_requests =
+            RecursivePathRequestPolicy::Enabled;
         let interfaces = [
             source_descriptor,
             discovering_descriptor(full, InterfaceMode::Full),

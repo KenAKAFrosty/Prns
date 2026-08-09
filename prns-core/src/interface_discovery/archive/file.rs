@@ -1,6 +1,4 @@
 use std::fs;
-#[cfg(not(unix))]
-use std::io::ErrorKind;
 use std::io::Write;
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
@@ -55,18 +53,7 @@ fn stage(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     file.sync_all()
 }
 
-#[cfg(unix)]
 fn replace_file(staging: &Path, final_path: &Path) -> std::io::Result<()> {
-    fs::rename(staging, final_path)
-}
-
-#[cfg(not(unix))]
-fn replace_file(staging: &Path, final_path: &Path) -> std::io::Result<()> {
-    match fs::remove_file(final_path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
-    }
     fs::rename(staging, final_path)
 }
 

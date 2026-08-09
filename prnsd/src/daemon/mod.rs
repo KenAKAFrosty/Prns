@@ -25,6 +25,7 @@ use personal_rns::browser_rendezvous::{AutoWifiDevicePolicy, BrowserRendezvous};
 use personal_rns::config::{SharedInstance, TransportIdentityPolicy};
 use personal_rns::engine::{
     EngineProtocolPolicy, LinkMtuDiscovery, LocalHopCountOverride, ProofForm,
+    RecursivePathRequestDefault,
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::IdentitySigner;
@@ -193,6 +194,9 @@ pub(super) async fn run(
             nnpages::NnPagesCatalog::empty(&config_dir)
         }
     };
+    if let Err(error) = nnpages::recover_control_state(&config_dir) {
+        tracing::warn!(event = "nnpages_control_recovery_failed", error = %error);
+    }
     let network_identity =
         match identity::load_or_seed_network_identity(plan.network_identity_path.as_deref()) {
             Ok(identity) => identity,
@@ -280,6 +284,7 @@ pub(super) async fn run(
         } else {
             LocalHopCountOverride::Disabled
         },
+        recursive_path_request_default: RecursivePathRequestDefault::Disabled,
     };
 
     let node_persistence = match NodePersistence::in_reticulum_dir(&config_dir) {
@@ -623,7 +628,7 @@ pub(super) async fn run(
                     .as_mut()
                     .reset(tokio::time::Instant::now() + NNPAGES_REFRESH_INTERVAL);
             }
-            request = nnpages::next_refresh_request(&config_dir) => {
+            request = nnpages::next_control_request(&config_dir) => {
                 match request {
                     Ok(request) => {
                         let nnpages = nnpages.clone();
@@ -664,7 +669,7 @@ pub(super) async fn run(
                                     }
                                 }
                                 nnpages::NnPagesControlKind::Announce => {
-                                    let succeeded = match node_page_destination {
+                                    let result = match node_page_destination {
                                         Some(destination)
                                             if nnpages::is_page_available(&nnpages.index_path()) =>
                                         {
@@ -675,14 +680,14 @@ pub(super) async fn run(
                                                 ))
                                                 .await
                                             {
-                                                Ok(_) => true,
+                                                Ok(_) => Ok(()),
                                                 Err(error) => {
                                                     tracing::warn!(
                                                         event = "nnpages_announce_failed",
                                                         cause = "operator",
                                                         error = ?error,
                                                     );
-                                                    false
+                                                    Err(nnpages::NnPagesControlFailure::AnnounceSend)
                                                 }
                                             }
                                         }
@@ -691,23 +696,23 @@ pub(super) async fn run(
                                                 event = "nnpages_announce_failed",
                                                 cause = "index_unavailable",
                                             );
-                                            false
+                                            Err(nnpages::NnPagesControlFailure::IndexUnavailable)
                                         }
                                         None => {
                                             tracing::warn!(
                                                 event = "nnpages_announce_failed",
                                                 cause = "destination_unavailable",
                                             );
-                                            false
+                                            Err(nnpages::NnPagesControlFailure::DestinationUnavailable)
                                         }
                                     };
-                                    if succeeded {
+                                    if result.is_ok() {
                                         tracing::info!(
                                             event = "nnpages_announced",
                                             cause = "operator",
                                         );
                                     }
-                                    if let Err(error) = request.finish_announce(succeeded) {
+                                    if let Err(error) = request.finish_announce(result) {
                                         tracing::warn!(
                                             event = "nnpages_announce_result_failed",
                                             error = %error,

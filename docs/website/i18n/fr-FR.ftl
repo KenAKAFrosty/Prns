@@ -35,7 +35,7 @@ interfaces-lan-label = LAN
 interfaces-lan-headline = Pairs de lien local découverts automatiquement
 interfaces-lan-body = Wi-Fi Auto-interface utilise le multicast, mDNS et le rendez-vous passerelle pour trouver les nœuds proches et intégrer un réseau local au mesh.
 
-interfaces-cable-label = Filaire + radio paquet
+interfaces-cable-label = Filaire + packet radio
 interfaces-cable-headline = Câbles, TNC et modems radio
 interfaces-cable-body = USB Auto-interface, le framing série, KISS, AX.25 et RNode relient les petits appareils et le matériel radio paquet au même mesh.
 

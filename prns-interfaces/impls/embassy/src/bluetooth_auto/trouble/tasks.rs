@@ -2,7 +2,7 @@ use super::backend::{BleHub, ScanFunnel, SlotJob};
 use super::discovery::{
     advertisement_parameters, connect_scan_parameters, idle_scan_parameters, DiscoveryRole,
 };
-use super::sessions::{serve_central, serve_peripheral};
+use super::sessions::{serve_central, serve_peripheral, CentralGattSetup};
 use super::*;
 
 pub async fn serve_slot<T: TroubleTransport>(
@@ -53,11 +53,20 @@ pub async fn serve_slot<T: TroubleTransport>(
             SlotJob::Dial {
                 connection,
                 slot: lease,
+                target,
             } => {
                 let ConnectionSlotOwners { worker, link } = lease.activate();
                 let _ = select(
                     slot.shutdown.wait(),
-                    serve_central(hub, stack, link, &worker, connection, uuids),
+                    serve_central(
+                        hub,
+                        stack,
+                        CentralGattSetup { server, uuids },
+                        link,
+                        &worker,
+                        connection,
+                        target,
+                    ),
                 )
                 .await;
             }
@@ -89,7 +98,7 @@ pub async fn acceptor<T: TroubleTransport>(
             }
         };
         let idx = lease.index();
-        let radio = hub.acquire_radio().await;
+        let turn = hub.acquire_discovery_turn().await;
         let window = match hub
             .await_discovery_turn(&hub.advertise, DiscoveryRole::Advertise)
             .await
@@ -97,10 +106,10 @@ pub async fn acceptor<T: TroubleTransport>(
             Ok(window) => window,
             Err(state) => {
                 enabled = state;
-                drop(radio);
                 continue;
             }
         };
+        let radio = hub.acquire_radio().await;
         let advertiser = match peripheral
             .advertise(
                 &advertisement_parameters(window),
@@ -116,19 +125,19 @@ pub async fn acceptor<T: TroubleTransport>(
                 crate::diagnostic_log::warn!("ble advertise failed: {error:?}");
                 hub.finish_discovery_turn(window);
                 drop(radio);
+                drop(turn);
                 Timer::after(Duration::from_millis(500)).await;
                 continue;
             }
         };
-        match select4(
+        match select3(
             advertiser.accept(),
             Timer::after(window.advertising_duration()),
             hub.advertise.wait(),
-            hub.wait_for_discovery_activity(DiscoveryRole::Advertise),
         )
         .await
         {
-            Either4::First(Ok(connection)) => {
+            Either3::First(Ok(connection)) => {
                 hub.assign[idx]
                     .send(SlotJob::Accept {
                         connection,
@@ -136,16 +145,17 @@ pub async fn acceptor<T: TroubleTransport>(
                     })
                     .await;
             }
-            Either4::First(Err(error)) => {
+            Either3::First(Err(error)) => {
                 crate::diagnostic_log::warn!("ble accept failed: {error:?}");
             }
-            Either4::Second(()) | Either4::Fourth(()) => {}
-            Either4::Third(state) => {
+            Either3::Second(()) => {}
+            Either3::Third(state) => {
                 enabled = state;
             }
         }
         hub.finish_discovery_turn(window);
         drop(radio);
+        drop(turn);
         Timer::after(DISCOVERY_TURN_REST).await;
     }
 }
@@ -161,7 +171,7 @@ pub async fn dialer<T: TroubleTransport>(
             enabled = hub.scan_enabled.wait().await;
             continue;
         }
-        let radio = hub.acquire_radio().await;
+        let turn = hub.acquire_discovery_turn().await;
         let window = match hub
             .await_discovery_turn(&hub.scan_enabled, DiscoveryRole::Scan)
             .await
@@ -169,10 +179,10 @@ pub async fn dialer<T: TroubleTransport>(
             Ok(window) => window,
             Err(state) => {
                 enabled = state;
-                drop(radio);
                 continue;
             }
         };
+        let radio = hub.acquire_radio().await;
         let (scan_interval, scan_window) = idle_scan_parameters(window);
         let mut scanner = Scanner::new(central);
         let target = {
@@ -187,17 +197,16 @@ pub async fn dialer<T: TroubleTransport>(
             {
                 Ok(_session) => {
                     scan_failure_reported = false;
-                    match select4(
+                    match select3(
                         hub.dial_request.receive(),
                         Timer::after(window.scanning_duration()),
                         hub.scan_enabled.wait(),
-                        hub.wait_for_discovery_activity(DiscoveryRole::Scan),
                     )
                     .await
                     {
-                        Either4::First(target) => Some(target),
-                        Either4::Second(()) | Either4::Fourth(()) => None,
-                        Either4::Third(state) => {
+                        Either3::First(target) => Some(target),
+                        Either3::Second(()) => None,
+                        Either3::Third(state) => {
                             enabled = state;
                             None
                         }
@@ -223,6 +232,7 @@ pub async fn dialer<T: TroubleTransport>(
                     hub.dial_failed.send(target.addr.into_inner()).await;
                     hub.finish_discovery_turn(window);
                     drop(radio);
+                    drop(turn);
                     Timer::after(DISCOVERY_TURN_REST).await;
                     continue;
                 }
@@ -231,6 +241,7 @@ pub async fn dialer<T: TroubleTransport>(
                     hub.dial_failed.send(target.addr.into_inner()).await;
                     hub.finish_discovery_turn(window);
                     drop(radio);
+                    drop(turn);
                     Timer::after(DISCOVERY_TURN_REST).await;
                     continue;
                 }
@@ -251,32 +262,46 @@ pub async fn dialer<T: TroubleTransport>(
             config.scan_config.timeout = connect_timeout;
             config.scan_config.interval = connect_interval;
             config.scan_config.window = connect_window;
-            match select3(
-                central.connect(&config),
+            match select(
+                with_timeout(connect_timeout, central.connect(&config)),
                 hub.scan_enabled.wait(),
-                hub.wait_for_discovery_activity(DiscoveryRole::Scan),
             )
             .await
             {
-                Either3::First(Ok(connection)) => {
+                Either::First(Ok(Ok(connection))) => {
+                    crate::diagnostic_log::debug!(
+                        "ble: physical dial connected addr={:?}",
+                        bd.into_inner(),
+                    );
                     hub.assign[idx]
                         .send(SlotJob::Dial {
                             connection,
                             slot: lease,
+                            target,
                         })
                         .await;
                 }
-                Either3::First(Err(_)) => {
+                Either::First(Ok(Err(error))) => {
+                    crate::diagnostic_log::warn!(
+                        "ble: physical dial failed addr={:?}: {error:?}",
+                        bd.into_inner(),
+                    );
                     hub.dial_failed.send(bd.into_inner()).await;
                 }
-                Either3::Second(state) => enabled = state,
-                Either3::Third(()) => {
+                Either::First(Err(_)) => {
+                    crate::diagnostic_log::warn!(
+                        "ble: physical dial timed out addr={:?} timeout_ms={}",
+                        bd.into_inner(),
+                        connect_timeout.as_millis(),
+                    );
                     hub.dial_failed.send(bd.into_inner()).await;
                 }
+                Either::Second(state) => enabled = state,
             }
         }
         hub.finish_discovery_turn(window);
         drop(radio);
+        drop(turn);
         Timer::after(DISCOVERY_TURN_REST).await;
     }
 }
@@ -286,8 +311,8 @@ pub async fn host_runner<T: TroubleTransport>(
     mut runner: Runner<'static, TroubleController<T>, DefaultPacketPool>,
 ) {
     let funnel = ScanFunnel {
-        sightings: hub.sightings.sender(),
-        local_address: BleAddress::new(hub.local_address.lock(|cell| cell.get())),
+        hub,
+        local_address: BleAddress::from_hci_bytes(hub.local_address.lock(|cell| cell.get())),
     };
     loop {
         if let Err(error) = runner.run_with_handler(&funnel).await {

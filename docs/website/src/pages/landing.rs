@@ -11,7 +11,6 @@ use crate::links::{
 use crate::platforms::LANDING_PLATFORM_CHIPS;
 use crate::repository_docs::REPOSITORY_BLOB_BASE;
 use crate::routes::Route;
-use crate::site_mode::embedded_docs_mode;
 
 /// The eyebrow's last word animates. It opens on "yours" (plain), rotates
 /// through seven qualities, then rests back on "yours" (underlined). The first
@@ -56,7 +55,6 @@ pub fn Landing() -> Element {
     // word both phrases differently, so they get the plain kicker and title.
     let i18n = i18n();
     let is_english = i18n.language() == langid!("en-US");
-    let embedded_docs = embedded_docs_mode();
     let resting_word = KICKER_WORDS.last().copied().unwrap_or("yours");
 
     rsx! {
@@ -79,8 +77,7 @@ pub fn Landing() -> Element {
                         }
                         span { class: "kicker-rotator__rule", "{resting_word}" }
                     }
-                    // The animation is decorative; expose the resting word to
-                    // screen readers so the phrase still reads "…for the people".
+                    // The animation is decorative; expose the resting word to screen readers so the phrase still reads "…that's yours".
                     span { class: "kicker-sr-only", "{resting_word}" }
                 } else {
                     {t!("landing-kicker")}
@@ -279,17 +276,15 @@ pub fn Landing() -> Element {
                             href: format!("{REPOSITORY_BLOB_BASE}/prnsd/README.md"),
                         },
                     }
-                    if !embedded_docs {
-                        UseCaseCard {
-                            glyph: UseGlyph::Browser,
-                            headline: t!("start-web-headline"),
-                            body: t!("start-web-body"),
-                            chips: t!("start-web-code"),
-                            target: UseCaseTarget::NewTab {
-                                label: t!("start-web-target"),
-                                href: "/browser-node-playground-console/".to_string(),
-                            },
-                        }
+                    UseCaseCard {
+                        glyph: UseGlyph::Browser,
+                        headline: t!("start-web-headline"),
+                        body: t!("start-web-body"),
+                        chips: t!("start-web-code"),
+                        target: UseCaseTarget::NewTab {
+                            label: t!("start-web-target"),
+                            href: "/browser-node-playground-console/".to_string(),
+                        },
                     }
                     UseCaseCard {
                         glyph: UseGlyph::Build,

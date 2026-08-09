@@ -1,10 +1,5 @@
 # Prns
 
-> [!IMPORTANT]
-> **YOU FOUND PRNS A DAY OR FEW EARLY.**
->
-> We are completing final release validation, packaging, and documentation. The repository is public for early review, but this is not the announced release yet. Expect a little movement before the first public release.
-
 <p align="center">
   <a href="https://prns.dev" target="_blank">
   <img src="docs/website/public/assets/og.png" alt="Prns: high-performance Reticulum (RNS), built to run on any device." width="800" />
@@ -144,7 +139,7 @@ Make sure to read the first portion of this README. Once you have, all that's le
 
    (If you want to keep reading first, [there's a second helping of concepts here](docs/more-concepts.md#packet).)
 
-2) [Follow the Getting Started guide](docs/getting-started.md#getting-started) and experience one real result at a time.
+2) [Follow the Getting Started guide](docs/getting-started.md#getting-started) and experience one real result at a time. (Cloning on Windows? Run `git config --global core.longpaths true` first — some benchmark evidence paths exceed the default 260-character limit.)
 3) [Browse the example catalog](docs/examples.md) for the next step up.
 
 ## Coming from RNS
@@ -154,6 +149,8 @@ Your network and apps don't change, just your daemon does.
 The Prns daemon, `prnsd`, takes the role `rnsd` holds today. It handles your current config and identity, and your apps carry over unchanged.
 
 Among what you gain: brand-new interfaces, a built-in operator CLI, observability out of the box, and [up to 89× the throughput](benchmarks/RESULTS.md) in published benchmarks you can rerun yourself. [Here's the full before-and-after](docs/coming-from-rns.md).
+
+> 89× is the best published result (single-packet throughput on macOS), but most scenarios land between 3× and 20× depending on host and workload
 
 #### Looking for something specific?
 

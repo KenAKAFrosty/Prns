@@ -49,7 +49,7 @@ pub(super) fn classify(
     if id == USB_INTERFACE_ID {
         Some((CardKind::Usb, screen::card_label("USB")))
     } else if id == wifi_id {
-        Some((CardKind::Wifi, screen::card_label("Wi-Fi/LAN")))
+        Some((CardKind::Wifi, screen::card_label("LAN")))
     } else if Some(id) == tcp_id {
         Some((
             CardKind::Tcp,
@@ -58,7 +58,7 @@ pub(super) fn classify(
     } else if id.kind() == Some(InterfaceKind::BluetoothAuto) {
         Some((CardKind::Ble, screen::card_label("BLE")))
     } else if id.kind() == Some(InterfaceKind::WifiDirect) {
-        Some((CardKind::Wifi, screen::card_label("Wi-Fi Direct")))
+        Some((CardKind::Wifi, screen::card_label("Direct")))
     } else {
         let bytes = id.as_bytes();
         let (kind, tag) = match id.kind() {
@@ -385,6 +385,34 @@ async fn watch_hotplug(rescan: Arc<Notify>) {
     while let Some(event) = events.next().await {
         if event.is_ok() {
             rescan.notify_one();
+        }
+    }
+}
+
+#[cfg(test)]
+mod label_tests {
+    use super::*;
+
+    #[test]
+    fn every_desktop_interface_label_fits_its_card() {
+        let wifi_id = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, b"wifi");
+        let tcp_id = InterfaceId::from_channel_tag(InterfaceKind::TcpClient, b"tcp");
+        let ids = [
+            USB_INTERFACE_ID,
+            wifi_id,
+            tcp_id,
+            InterfaceId::from_channel_tag(InterfaceKind::BluetoothAuto, b"ble"),
+            InterfaceId::from_channel_tag(InterfaceKind::WifiDirect, b"direct"),
+            InterfaceId::from_channel_tag(InterfaceKind::BluetoothPeer, b"ble-peer"),
+            InterfaceId::from_channel_tag(InterfaceKind::WifiDirectPeer, b"direct-peer"),
+        ];
+        for id in ids {
+            let (kind, label) = classify(id, wifi_id, Some(tcp_id), Some("rns.michmesh.net"))
+                .expect("known interface has a card");
+            assert!(
+                label.chars().count() <= screen::card_label_max_chars(kind),
+                "{label:?} exceeds its card"
+            );
         }
     }
 }

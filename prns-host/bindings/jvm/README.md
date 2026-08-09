@@ -13,7 +13,7 @@ On Linux, the registered suite builds the matching native capsule and runs the c
 python3 validation/run.py run --suite host-jvm-contract
 ```
 
-The intended public delivery is an `io.reticulum:personal-rns` Maven package paired with desktop and Android native assets. Until those packages have completed public qualification, do not assume Maven Central contains the adapter from this checkout. See the [SDK guide](../../../docs/sdks.md#native-sdk-previews) for the shared release posture and contribution path.
+The intended public delivery is an `rs.reticulum:personal-rns` Maven package paired with desktop and Android native assets. Until those packages have completed public qualification, do not assume Maven Central contains the adapter from this checkout. See the [SDK guide](../../../docs/sdks.md#native-sdk-previews) for the shared release posture and contribution path.
 
 ## API shape
 
@@ -59,7 +59,7 @@ Source-built desktop applications provide `libprns_host` through the dynamic loa
 Android applications use the same API and bytecode. After public package promotion, the intended Gradle shape adds JNA's Android artifact, excludes the desktop JNA runtime selected by the Maven POM, and places the Personal RNS libraries from the Android release artifact in the normal ABI directories:
 
 ```kotlin
-implementation("io.reticulum:personal-rns:0.3.3") {
+implementation("rs.reticulum:personal-rns:0.3.4") {
     exclude(group = "net.java.dev.jna", module = "jna")
 }
 implementation("net.java.dev.jna:jna:5.19.1@aar")

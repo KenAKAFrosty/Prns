@@ -16,8 +16,8 @@ Release builds should stamp both a version and a commit:
 The docs footer displays the public version and the short source snapshot. The
 full commit is kept in the footer title text. The release candidate process
 packages that exact commit directly into the hosted website as `source.zip`
-plus `source.zip.sha256`; ordinary Dioxus and embedded-site builds never write
-or inherit those release artifacts.
+plus `source.zip.sha256`; ordinary Dioxus builds never write or inherit those
+release artifacts.
 
 The ZIP is the one authoritative full-repository source snapshot. It includes
 the website implementation under `docs/website/` and the NomadNet page source
@@ -41,27 +41,18 @@ cargo tools release source package -- --output target/source.zip
 Official candidate creation performs this packaging before any website, browser
 playground, or firmware release build. It also writes
 `metadata/source.json`, containing the canonical version, full commit, byte
-length, SHA-256, and NomadNet routes. Source-enabled consumers receive that
-identity through `PRNS_SOURCE_ARCHIVE`, `PRNS_SOURCE_VERSION`,
-`PRNS_SOURCE_COMMIT`, `PRNS_SOURCE_SIZE`, and `PRNS_SOURCE_SHA256`; enabling the
-`source-archive` Cargo feature without all five matching values fails the build.
+length, SHA-256, and NomadNet routes. The hosted website, browser, desktop,
+Android, and iOS release builds receive that identity through
+`PRNS_SOURCE_ARCHIVE`, `PRNS_SOURCE_VERSION`, `PRNS_SOURCE_COMMIT`,
+`PRNS_SOURCE_SIZE`, and `PRNS_SOURCE_SHA256`; enabling their `source-archive`
+Cargo feature without all five matching values fails the build.
 
-Heltec V4 and T-Beam Supreme candidates first build the compact application and
-preflight its measured size plus the archive, a 64 KiB embedding allowance, and
-the mandatory 1 MiB factory-partition reserve. A passing target is then rebuilt
-with the archive as one flash-backed static, shared by SoftAP `/source.zip` and
-the NomadNet `/file/source.zip` route. The completed source-enabled image is
-measured again. If either capacity check fails, the builder keeps the compact
-image, serves the non-source NomadNet page, omits its source metadata, and
-records `capacity-downgrade` in `metadata/source-capabilities.json`. XIAO
-ESP32-C6 and T-Echo always use the non-source route set and do not compile the
-named-file response branch or larger outgoing window. Source-enabled browser,
-desktop, Android, and iOS release builds use the same feature and archive
-identity; ordinary development and hot reload builds leave the feature off.
-Native transfers retain only the static flash/archive borrow and continuation
-offsets between proofs. They copy, encrypt, transmit, and retry at most one
-256 KiB plaintext segment, then reuse that window after its proof; the full ZIP
-is never copied into RAM.
+Embedded Hopspot firmware deliberately remains compact and does not embed or
+serve the multi-megabyte source archive. Every board omits embedded source
+metadata from its flash target and records `status: "absent"` in
+`metadata/source-capabilities.json`. The exact archive remains available from
+the hosted release surfaces. This keeps embedded resource memory bounded and
+preserves flash capacity for dual-slot OTA work.
 
 ## Build the portable daemon
 
@@ -152,15 +143,15 @@ The active native artifact matrix is:
 
 | Artifact | Platform |
 | --- | --- |
-| `prnsd-0.3.3-x86_64-unknown-linux-gnu.tar.gz` | Linux x86_64, glibc |
-| `prnsd-0.3.3-aarch64-unknown-linux-gnu.tar.gz` | Linux ARM64, glibc |
-| `prnsd-0.3.3-x86_64-apple-darwin.tar.gz` | macOS Intel |
-| `prnsd-0.3.3-aarch64-apple-darwin.tar.gz` | macOS Apple silicon |
-| `prnsd-0.3.3-x86_64-pc-windows-msvc.zip` | Windows x86_64 |
+| `prnsd-0.3.4-x86_64-unknown-linux-gnu.tar.gz` | Linux x86_64, glibc |
+| `prnsd-0.3.4-aarch64-unknown-linux-gnu.tar.gz` | Linux ARM64, glibc |
+| `prnsd-0.3.4-x86_64-apple-darwin.tar.gz` | macOS Intel |
+| `prnsd-0.3.4-aarch64-apple-darwin.tar.gz` | macOS Apple silicon |
+| `prnsd-0.3.4-x86_64-pc-windows-msvc.zip` | Windows x86_64 |
 
 Native archives contain the executable, licenses, third-party notices, Minisign public key, exact build identity, and the commit-bound `source.zip` plus its SHA-256 sidecar. Linux binaries are built natively on Ubuntu 24.04, making glibc 2.39 the supported baseline for this release. The full Linux build statically vendors its `libdbus` code. Every platform archive carries its complete linkage or import report as a signed-inventory asset.
 
-The signed `prnsd-image-v0.3.3.json` asset binds the multi-platform OCI digest to the suite version, source commit, and amd64 and ARM64 child digests. `railway-template-contract-v0.3.3.json` binds the Railway publication to that exact image.
+The signed `prnsd-image-v0.3.4.json` asset binds the multi-platform OCI digest to the suite version, source commit, and amd64 and ARM64 child digests. `railway-template-contract-v0.3.4.json` binds the Railway publication to that exact image.
 
 ### Public staging
 
@@ -234,25 +225,27 @@ The release checksum inventory and record are verified with the repository's Min
 minisign -Vm SHA256SUMS.txt \
   -x SHA256SUMS.txt.minisig \
   -p minisign.pub
-minisign -Vm release-record-v0.3.3.json \
-  -x release-record-v0.3.3.json.minisig \
+minisign -Vm release-record-v0.3.4.json \
+  -x release-record-v0.3.4.json.minisig \
   -p minisign.pub
 sha256sum --check SHA256SUMS.txt
 ```
 
-On macOS, use `shasum -a 256 -c SHA256SUMS.txt`. The release record binds native archives, signed flasher candidate, source and image SPDX SBOMs, image and platform digests, linkage reports, and GitHub provenance bundles into the exact checksum inventory.
+On macOS, use `shasum -a 256 -c SHA256SUMS.txt`. On Windows, compare
+`(Get-FileHash ARCHIVE -Algorithm SHA256).Hash` against the matching
+`SHA256SUMS.txt` entry. The release record binds native archives, signed flasher candidate, source and image SPDX SBOMs, image and platform digests, linkage reports, and GitHub provenance bundles into the exact checksum inventory.
 
-The unified prerelease passes two protected evidence tracks before stable promotion. Physical flasher qualification adds `qualification-evidence-v0.3.3.tar.gz`, a signed acceptance document, and `flasher-release-record-v0.3.3.json`. Railway qualification adds `deployment-qualification-v0.3.3.json`. Promotion accepts only these narrowly named supplements and independently reverifies workflow custody, Minisign signatures, exact source, artifact digests, and live GitHub attestations.
+The unified prerelease passes two protected evidence tracks before stable promotion. Physical flasher qualification adds `qualification-evidence-v0.3.4.tar.gz`, a signed acceptance document, and `flasher-release-record-v0.3.4.json`. Railway qualification adds `deployment-qualification-v0.3.4.json`. Promotion accepts only these narrowly named supplements and independently reverifies workflow custody, Minisign signatures, exact source, artifact digests, and live GitHub attestations.
 
 ```sh
-gh attestation verify prnsd-0.3.3-x86_64-unknown-linux-gnu.tar.gz \
+gh attestation verify prnsd-0.3.4-x86_64-unknown-linux-gnu.tar.gz \
   --repo KenAKAFrosty/Prns
 gh attestation verify \
   oci://ghcr.io/kenakafrosty/prnsd@sha256:REPLACE_WITH_SIGNED_DIGEST \
   --repo KenAKAFrosty/Prns
 ```
 
-The suite uses the existing Minisign trust root and GitHub provenance. macOS notarization and Windows Authenticode are not present in `v0.3.3`; the archives are not platform-vendor-signed.
+The suite uses the existing Minisign trust root and GitHub provenance. macOS notarization and Windows Authenticode are not present in `v0.3.4`; the archives are not platform-vendor-signed.
 
 ## Pre-1.0 semver
 

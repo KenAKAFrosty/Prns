@@ -31,9 +31,9 @@ import android.util.Log
 import java.nio.ByteBuffer
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.Semaphore
-import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 @TargetApi(Build.VERSION_CODES.Q)
@@ -42,6 +42,8 @@ class BleLink(private val context: Context) {
     private val bluetoothManager =
         context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
     private val adapter: BluetoothAdapter? = bluetoothManager?.adapter
+    private val peerCapacity = NativeBridge.nativeBlePeerCapacity().coerceAtLeast(1)
+    private val deviceCacheCapacity = 2 * peerCapacity
 
     @Volatile
     private var scanner: BluetoothLeScanner? = null
@@ -87,11 +89,35 @@ class BleLink(private val context: Context) {
     private val inboundByAddr = ConcurrentHashMap<String, Int>()
     private val columbaSubscribedCentrals = ConcurrentHashMap<String, BluetoothDevice>()
     private val devices = ConcurrentHashMap<String, BluetoothDevice>()
+    private val workers = CopyOnWriteArraySet<Thread>()
+    private val radioWorkers = CopyOnWriteArraySet<Thread>()
+    private val linkWorkers = ConcurrentHashMap<Int, CopyOnWriteArraySet<Thread>>()
+    private val l2capOpening = ConcurrentHashMap.newKeySet<Int>()
 
     private enum class BlePeerProtocol {
         Native,
         Columba,
     }
+
+    private enum class GattOperationKind {
+        Mtu,
+        ServiceDiscovery,
+        CharacteristicRead,
+        DescriptorWrite,
+        ClientWrite,
+        ServerNotify,
+    }
+
+    private enum class OutboundAdmission {
+        Accepted,
+        Busy,
+        Terminal,
+    }
+
+    private data class PendingGattOperation(
+        val kind: GattOperationKind,
+        val characteristic: UUID?,
+    )
 
     private class LinkState(
         val connId: Int,
@@ -99,8 +125,11 @@ class BleLink(private val context: Context) {
         val dialed: Boolean,
         @Volatile var peerProtocol: BlePeerProtocol,
     ) {
-        val sendGate = Semaphore(1)
+        private val operationGate = Semaphore(1)
         val servicesRequested = AtomicBoolean(false)
+
+        @Volatile
+        private var pendingGattOperation: PendingGattOperation? = null
 
         @Volatile
         var central: BluetoothDevice? = null
@@ -122,6 +151,40 @@ class BleLink(private val context: Context) {
 
         @Volatile
         var l2capSocket: BluetoothSocket? = null
+
+        @Volatile
+        var openingL2capSocket: BluetoothSocket? = null
+
+        @Synchronized
+        fun beginGattOperation(operation: PendingGattOperation): Boolean {
+            if (!operationGate.tryAcquire()) {
+                return false
+            }
+            pendingGattOperation = operation
+            return true
+        }
+
+        @Synchronized
+        fun completeGattOperation(kind: GattOperationKind, characteristic: UUID? = null): Boolean {
+            val pending = pendingGattOperation ?: return false
+            if (pending.kind != kind ||
+                characteristic != null && pending.characteristic != characteristic
+            ) {
+                return false
+            }
+            pendingGattOperation = null
+            operationGate.release()
+            return true
+        }
+
+        @Synchronized
+        fun cancelGattOperation(operation: PendingGattOperation) {
+            if (pendingGattOperation != operation) {
+                return
+            }
+            pendingGattOperation = null
+            operationGate.release()
+        }
     }
 
     private val scanCallback = object : ScanCallback() {
@@ -130,7 +193,10 @@ class BleLink(private val context: Context) {
                 return
             }
             val device = result.device
-            devices[device.address] = device
+            if (!rememberDevice(device)) {
+                Log.w(TAG, "sighting cache full; ignored ${device.address}")
+                return
+            }
             val octets = parseMac(device.address) ?: return
             if (!shouldDial(octets, result)) {
                 return
@@ -237,7 +303,7 @@ class BleLink(private val context: Context) {
             if (!running || !radioActive) {
                 return
             }
-            val accepted = when (characteristic.uuid) {
+            val admission = when (characteristic.uuid) {
                 NATIVE_CONTROL,
                 NATIVE_DATA,
                 -> inboundByAddr[device.address]?.let { connId ->
@@ -246,17 +312,23 @@ class BleLink(private val context: Context) {
                         characteristic.uuid == NATIVE_DATA,
                         value,
                     )
-                } ?: false
+                } ?: NativeBridge.BLE_INGRESS_CLOSED
                 COLUMBA_RX -> handleColumbaRxWrite(device, value)
                 else -> {
                     Log.w(TAG, "server write to unknown characteristic ${characteristic.uuid}")
-                    false
+                    NativeBridge.BLE_INGRESS_CLOSED
                 }
             }
             if (responseNeeded) {
-                val status =
-                    if (accepted) BluetoothGatt.GATT_SUCCESS else BluetoothGatt.GATT_FAILURE
+                val status = when (admission) {
+                    NativeBridge.BLE_INGRESS_ACCEPTED -> BluetoothGatt.GATT_SUCCESS
+                    NativeBridge.BLE_INGRESS_FULL -> ATT_INSUFFICIENT_RESOURCES
+                    else -> BluetoothGatt.GATT_FAILURE
+                }
                 gattServer?.sendResponse(device, requestId, status, offset, null)
+            }
+            if (admission == NativeBridge.BLE_INGRESS_CLOSED) {
+                inboundByAddr[device.address]?.let(::closeLink)
             }
         }
 
@@ -273,10 +345,18 @@ class BleLink(private val context: Context) {
                 return
             }
             val subscribing = value.isNotEmpty() && value[0].toInt() != 0
+            var responseStatus = BluetoothGatt.GATT_SUCCESS
             if (descriptor.characteristic.uuid == COLUMBA_TX) {
                 if (subscribing) {
-                    columbaSubscribedCentrals[device.address] = device
-                    Log.i(TAG, "columba central ${device.address} subscribed; awaiting identity")
+                    if (columbaSubscribedCentrals.containsKey(device.address) ||
+                        columbaSubscribedCentrals.size < peerCapacity
+                    ) {
+                        columbaSubscribedCentrals[device.address] = device
+                        Log.i(TAG, "columba central ${device.address} subscribed; awaiting identity")
+                    } else {
+                        responseStatus = ATT_INSUFFICIENT_RESOURCES
+                        Log.w(TAG, "columba subscription capacity rejected ${device.address}")
+                    }
                 } else {
                     columbaSubscribedCentrals.remove(device.address)
                 }
@@ -285,21 +365,32 @@ class BleLink(private val context: Context) {
                 descriptor.characteristic.uuid == NATIVE_CONTROL &&
                 inboundByAddr[device.address] == null
             ) {
-                val connId = nextConnId.getAndIncrement()
-                val link = LinkState(connId, device.address, dialed = false, peerProtocol = BlePeerProtocol.Native)
-                link.central = device
-                links[connId] = link
-                inboundByAddr[device.address] = connId
-                Log.i(TAG, "listener[$connId] ${device.address} subscribed")
-                val octets = parseMac(device.address)
-                if (octets != null) {
-                    val direct = ByteBuffer.allocateDirect(6)
-                    direct.put(octets)
-                    NativeBridge.nativeBleLinkUp(connId, direct, RSSI_NONE, false)
+                if (links.size >= peerCapacity) {
+                    responseStatus = ATT_INSUFFICIENT_RESOURCES
+                } else {
+                    val connId = nextConnId.getAndIncrement()
+                    val link = LinkState(connId, device.address, dialed = false, peerProtocol = BlePeerProtocol.Native)
+                    link.central = device
+                    links[connId] = link
+                    inboundByAddr[device.address] = connId
+                    Log.i(TAG, "listener[$connId] ${device.address} subscribed")
+                    val octets = parseMac(device.address)
+                    if (octets == null) {
+                        responseStatus = BluetoothGatt.GATT_FAILURE
+                        closeLink(connId)
+                    } else {
+                        val direct = ByteBuffer.allocateDirect(6)
+                        direct.put(octets)
+                        if (!NativeBridge.nativeBleLinkUp(connId, direct, RSSI_NONE, false)) {
+                            Log.w(TAG, "listener[$connId] lifecycle admission rejected")
+                            responseStatus = ATT_INSUFFICIENT_RESOURCES
+                            closeLink(connId)
+                        }
+                    }
                 }
             }
             if (responseNeeded) {
-                gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, null)
+                gattServer?.sendResponse(device, requestId, responseStatus, offset, null)
             }
         }
 
@@ -307,19 +398,27 @@ class BleLink(private val context: Context) {
             if (!running || !radioActive) {
                 return
             }
-            inboundByAddr[device.address]?.let { links[it]?.sendGate?.release() }
+            val connId = inboundByAddr[device.address] ?: return
+            val link = links[connId] ?: return
+            if (link.completeGattOperation(GattOperationKind.ServerNotify)) {
+                NativeBridge.nativeBleWakePumps()
+                if (status != BluetoothGatt.GATT_SUCCESS) {
+                    Log.w(TAG, "notification failed[$connId] status=$status")
+                    closeLink(connId)
+                }
+            }
         }
     }
 
-    private fun handleColumbaRxWrite(device: BluetoothDevice, value: ByteArray): Boolean {
+    private fun handleColumbaRxWrite(device: BluetoothDevice, value: ByteArray): Int {
         val address = device.address
         val existingConnId = inboundByAddr[address]
         if (existingConnId == null) {
             if (value.size != COLUMBA_IDENTITY_LEN) {
                 Log.w(TAG, "columba RX from $address before identity (${value.size}B), dropping")
-                return false
+                return NativeBridge.BLE_INGRESS_CLOSED
             }
-            val octets = parseMac(address) ?: return false
+            val octets = parseMac(address) ?: return NativeBridge.BLE_INGRESS_CLOSED
             val connId = nextConnId.getAndIncrement()
             val link = LinkState(connId, address, dialed = false, peerProtocol = BlePeerProtocol.Columba)
             link.central = columbaSubscribedCentrals[address] ?: device
@@ -327,14 +426,19 @@ class BleLink(private val context: Context) {
             links[connId] = link
             inboundByAddr[address] = connId
             Log.i(TAG, "columba listener[$connId] $address identity ${value.size}B")
-            NativeBridge.nativeBleColumbaLinkUp(
+            val admitted = NativeBridge.nativeBleColumbaLinkUp(
                 connId,
                 directBufferOf(octets),
                 RSSI_NONE,
                 false,
                 directBufferOf(value),
             )
-            return true
+            if (!admitted) {
+                Log.w(TAG, "columba listener[$connId] lifecycle admission rejected")
+                closeLink(connId)
+                return NativeBridge.BLE_INGRESS_CLOSED
+            }
+            return NativeBridge.BLE_INGRESS_ACCEPTED
         }
 
         val link = links[existingConnId]
@@ -343,25 +447,26 @@ class BleLink(private val context: Context) {
             link.peerIdentity?.contentEquals(value) == true
         ) {
             Log.i(TAG, "columba listener[$existingConnId] duplicate identity consumed")
-            return true
+            return NativeBridge.BLE_INGRESS_ACCEPTED
         }
 
         return deliverGattInbound(existingConnId, true, value)
     }
 
-    private fun deliverGattInbound(connId: Int, dataLane: Boolean, value: ByteArray): Boolean {
+    private fun deliverGattInbound(connId: Int, dataLane: Boolean, value: ByteArray): Int {
         val direct = ByteBuffer.allocateDirect(value.size)
         direct.put(value)
-        val accepted =
+        val admission =
             if (dataLane) {
                 NativeBridge.nativeBleDataIn(connId, direct, value.size)
             } else {
                 NativeBridge.nativeBleControlIn(connId, direct, value.size)
             }
-        if (!accepted) {
-            Log.w(TAG, "inbound Bluetooth LE queue full or closed[$connId] ${value.size} B")
+        if (admission != NativeBridge.BLE_INGRESS_ACCEPTED) {
+            val reason = if (admission == NativeBridge.BLE_INGRESS_FULL) "full" else "closed"
+            Log.w(TAG, "inbound Bluetooth LE queue $reason[$connId] ${value.size} B")
         }
-        return accepted
+        return admission
     }
 
     private fun localBleIdentity(): ByteArray? {
@@ -382,6 +487,22 @@ class BleLink(private val context: Context) {
         return direct
     }
 
+    private fun rememberDevice(device: BluetoothDevice): Boolean {
+        val address = device.address
+        if (devices.containsKey(address) || devices.size < deviceCacheCapacity) {
+            devices[address] = device
+            return true
+        }
+        val victim = devices.keys.firstOrNull {
+            !inboundByAddr.containsKey(it) &&
+                !dialingAddrs.contains(it) &&
+                !connectedAddrs.contains(it)
+        } ?: return false
+        devices.remove(victim)
+        devices[address] = device
+        return true
+    }
+
     fun start() {
         val adapter = adapter
         if (adapter == null) {
@@ -397,8 +518,55 @@ class BleLink(private val context: Context) {
         startL2capOpenPump()
     }
 
+    private fun startWorker(name: String, task: () -> Unit) {
+        startOwnedWorker(name, false, null, task)
+    }
+
+    private fun startRadioWorker(name: String, task: () -> Unit) {
+        startOwnedWorker(name, true, null, task)
+    }
+
+    private fun startLinkWorker(connId: Int, name: String, task: () -> Unit) {
+        startOwnedWorker(name, true, connId, task)
+    }
+
+    private fun startOwnedWorker(
+        name: String,
+        radioScoped: Boolean,
+        connId: Int?,
+        task: () -> Unit,
+    ) {
+        val worker = Thread {
+            try {
+                task()
+            } catch (_: InterruptedException) {
+            } finally {
+                val current = Thread.currentThread()
+                workers.remove(current)
+                radioWorkers.remove(current)
+                if (connId != null) {
+                    linkWorkers[connId]?.let { owned ->
+                        owned.remove(current)
+                        if (owned.isEmpty()) {
+                            linkWorkers.remove(connId, owned)
+                        }
+                    }
+                }
+            }
+        }
+        worker.name = "HopspotBle-$name"
+        workers.add(worker)
+        if (radioScoped) {
+            radioWorkers.add(worker)
+        }
+        if (connId != null) {
+            linkWorkers.computeIfAbsent(connId) { CopyOnWriteArraySet() }.add(worker)
+        }
+        worker.start()
+    }
+
     private fun startRadioStatePump() {
-        Thread {
+        startWorker("radio-state") {
             var lastState = Int.MIN_VALUE
             var generation = NativeBridge.nativeBleWorkGeneration()
             while (running) {
@@ -415,7 +583,7 @@ class BleLink(private val context: Context) {
                 generation = NativeBridge.nativeBleWaitForWork(generation, RADIO_STATE_RETRY_MS)
             }
             applyDesiredRadioState(0)
-        }.start()
+        }
     }
 
     @Synchronized
@@ -469,7 +637,7 @@ class BleLink(private val context: Context) {
         val psm = server.psm
         Log.i(TAG, "l2cap listener published psm=$psm")
         NativeBridge.nativeBleSetPsm(psm)
-        Thread {
+        startRadioWorker("l2cap-listener") {
             while (running && radioActive) {
                 val socket = try {
                     server.accept()
@@ -493,12 +661,12 @@ class BleLink(private val context: Context) {
                 NativeBridge.nativeBleL2capUp(connId)
                 startL2capPumps(connId, socket)
             }
-        }.start()
+        }
         return true
     }
 
     private fun startL2capPumps(connId: Int, socket: BluetoothSocket) {
-        Thread {
+        startLinkWorker(connId, "l2cap-in-$connId") {
             val input = socket.inputStream
             val buf = ByteArray(L2CAP_CHUNK)
             val direct = ByteBuffer.allocateDirect(L2CAP_CHUNK)
@@ -519,8 +687,8 @@ class BleLink(private val context: Context) {
                 }
             }
             closeLink(connId)
-        }.start()
-        Thread {
+        }
+        startLinkWorker(connId, "l2cap-out-$connId") {
             val output = socket.outputStream
             val direct = ByteBuffer.allocateDirect(L2CAP_CHUNK)
             val scratch = ByteArray(L2CAP_CHUNK)
@@ -541,11 +709,11 @@ class BleLink(private val context: Context) {
                     generation = NativeBridge.nativeBleWaitForWork(generation, 0)
                 }
             }
-        }.start()
+        }
     }
 
     private fun startControlOutPump() {
-        Thread {
+        startWorker("control-out") {
             val direct = ByteBuffer.allocateDirect(CONTROL_CHUNK)
             val scratch = ByteArray(CONTROL_CHUNK)
             var generation = NativeBridge.nativeBleWorkGeneration()
@@ -554,89 +722,124 @@ class BleLink(private val context: Context) {
                     generation = NativeBridge.nativeBleWaitForWork(generation, 0)
                     continue
                 }
-                var any = false
+                var pending = false
+                var progressed = false
                 for (link in links.values) {
                     direct.clear()
                     val n = NativeBridge.nativeBleControlOut(link.connId, direct)
                     if (n > 0) {
-                        any = true
+                        pending = true
                         direct.position(0)
                         direct.get(scratch, 0, n)
-                        deliverControl(link, scratch.copyOf(n))
+                        when (deliverControl(link, scratch.copyOf(n))) {
+                            OutboundAdmission.Accepted -> {
+                                progressed = NativeBridge.nativeBleCommitControlOut(link.connId)
+                                if (!progressed) {
+                                    Log.w(TAG, "control ownership commit failed[${link.connId}]")
+                                    closeLink(link.connId)
+                                }
+                            }
+                            OutboundAdmission.Busy -> {}
+                            OutboundAdmission.Terminal -> closeLink(link.connId)
+                        }
                     }
                 }
-                if (!any) {
-                    generation = NativeBridge.nativeBleWaitForWork(generation, 0)
+                if (!progressed) {
+                    generation = NativeBridge.nativeBleWaitForWork(
+                        generation,
+                        if (pending) GATT_BUSY_RETRY_MS else 0,
+                    )
                 }
             }
-        }.start()
+        }
     }
 
-    private fun deliverControl(link: LinkState, payload: ByteArray) {
+    private fun deliverControl(link: LinkState, payload: ByteArray): OutboundAdmission {
         if (link.peerProtocol == BlePeerProtocol.Columba) {
-            return
+            Log.w(TAG, "control queued for Columba link[${link.connId}]")
+            return OutboundAdmission.Terminal
         }
         if (link.dialed) {
-            val char = link.clientControl ?: return
-            gatedClientWrite(link, char, payload, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT, "control")
-        } else {
-            val char = controlChar ?: return
-            gatedServerNotify(link, char, payload, "control")
+            val char = link.clientControl ?: return OutboundAdmission.Terminal
+            return clientWriteAdmission(
+                link,
+                char,
+                payload,
+                BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT,
+                "control",
+            )
         }
+        val char = controlChar ?: return OutboundAdmission.Terminal
+        return serverNotifyAdmission(link, char, payload, "control")
     }
 
-    private fun gatedClientWrite(
+    private fun clientWriteAdmission(
         link: LinkState,
         char: BluetoothGattCharacteristic,
         payload: ByteArray,
         type: Int,
         lane: String,
-    ) {
-        val gatt = link.clientGatt ?: return
-        if (!link.sendGate.tryAcquire(SEND_GATE_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
-            Log.w(TAG, "$lane write gate timeout[${link.connId}]")
-            return
+    ): OutboundAdmission {
+        val gatt = link.clientGatt ?: return OutboundAdmission.Terminal
+        val responseBearing = type == BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+        val operation = PendingGattOperation(GattOperationKind.ClientWrite, char.uuid)
+        if (responseBearing && !link.beginGattOperation(operation)) {
+            return OutboundAdmission.Busy
         }
         val result = try {
             writeGattCharacteristic(gatt, char, payload, type)
         } catch (e: Exception) {
-            link.sendGate.release()
+            if (responseBearing) {
+                link.cancelGattOperation(operation)
+            }
             Log.w(TAG, "$lane write[${link.connId}]: $e")
-            return
+            return OutboundAdmission.Terminal
         }
-        if (result != BluetoothGatt.GATT_SUCCESS) {
-            link.sendGate.release()
-            Log.w(TAG, "$lane write rejected[${link.connId}] result=$result")
+        if (result == BluetoothGatt.GATT_SUCCESS) {
+            return OutboundAdmission.Accepted
         }
+        if (responseBearing) {
+            link.cancelGattOperation(operation)
+        }
+        if (result == ERROR_GATT_WRITE_REQUEST_BUSY) {
+            return OutboundAdmission.Busy
+        }
+        Log.w(TAG, "$lane write rejected[${link.connId}] result=$result")
+        return OutboundAdmission.Terminal
     }
 
-    private fun gatedServerNotify(
+    private fun serverNotifyAdmission(
         link: LinkState,
         char: BluetoothGattCharacteristic,
         payload: ByteArray,
         lane: String,
-    ) {
-        val central = link.central ?: return
-        val server = gattServer ?: return
-        if (!link.sendGate.tryAcquire(SEND_GATE_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
-            Log.w(TAG, "$lane notify gate timeout[${link.connId}]")
-            return
+    ): OutboundAdmission {
+        val central = link.central ?: return OutboundAdmission.Terminal
+        val server = gattServer ?: return OutboundAdmission.Terminal
+        val operation = PendingGattOperation(GattOperationKind.ServerNotify, char.uuid)
+        if (!link.beginGattOperation(operation)) {
+            return OutboundAdmission.Busy
         }
         val result = try {
             notifyGattCharacteristic(server, central, char, payload)
         } catch (e: Exception) {
-            link.sendGate.release()
+            link.cancelGattOperation(operation)
             Log.w(TAG, "$lane notify[${link.connId}]: $e")
-            return
+            return OutboundAdmission.Terminal
         }
-        if (result != BluetoothGatt.GATT_SUCCESS) {
-            link.sendGate.release()
-            Log.w(TAG, "$lane notify rejected[${link.connId}] result=$result")
+        if (result == BluetoothGatt.GATT_SUCCESS) {
+            return OutboundAdmission.Accepted
         }
+        link.cancelGattOperation(operation)
+        if (result == ERROR_GATT_WRITE_REQUEST_BUSY) {
+            return OutboundAdmission.Busy
+        }
+        Log.w(TAG, "$lane notify rejected[${link.connId}] result=$result")
+        return OutboundAdmission.Terminal
     }
 
     private fun startDataOutPump() {
-        Thread {
+        startWorker("data-out") {
             val direct = ByteBuffer.allocateDirect(DATA_CHUNK)
             val scratch = ByteArray(DATA_CHUNK)
             var generation = NativeBridge.nativeBleWorkGeneration()
@@ -645,72 +848,57 @@ class BleLink(private val context: Context) {
                     generation = NativeBridge.nativeBleWaitForWork(generation, 0)
                     continue
                 }
-                var any = false
+                var pending = false
+                var progressed = false
                 for (link in links.values) {
                     direct.clear()
                     val n = NativeBridge.nativeBleDataOut(link.connId, direct)
                     if (n > 0) {
-                        any = true
+                        pending = true
                         Log.i(TAG, "data out[${link.connId}] ${n}B")
                         direct.position(0)
                         direct.get(scratch, 0, n)
-                        deliverData(link, scratch.copyOf(n))
+                        when (deliverData(link, scratch.copyOf(n))) {
+                            OutboundAdmission.Accepted -> {
+                                progressed = NativeBridge.nativeBleCommitDataOut(link.connId)
+                                if (!progressed) {
+                                    Log.w(TAG, "data ownership commit failed[${link.connId}]")
+                                    closeLink(link.connId)
+                                }
+                            }
+                            OutboundAdmission.Busy -> {}
+                            OutboundAdmission.Terminal -> closeLink(link.connId)
+                        }
                     }
                 }
-                if (!any) {
-                    generation = NativeBridge.nativeBleWaitForWork(generation, 0)
+                if (!progressed) {
+                    generation = NativeBridge.nativeBleWaitForWork(
+                        generation,
+                        if (pending) GATT_BUSY_RETRY_MS else 0,
+                    )
                 }
             }
-        }.start()
+        }
     }
 
-    private fun deliverData(link: LinkState, payload: ByteArray) {
+    private fun deliverData(link: LinkState, payload: ByteArray): OutboundAdmission {
         if (link.dialed) {
-            val char = link.clientData ?: return
-            val gatt = link.clientGatt ?: return
+            val char = link.clientData ?: return OutboundAdmission.Terminal
             val writeType =
                 if (link.peerProtocol == BlePeerProtocol.Columba && payload.size == COLUMBA_IDENTITY_LEN) {
                     BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
                 } else {
                     BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
                 }
-            var attempts = 0
-            while (attempts < DATA_WRITE_RETRIES) {
-                val result = try {
-                    writeGattCharacteristic(
-                        gatt,
-                        char,
-                        payload,
-                        writeType,
-                    )
-                } catch (e: Exception) {
-                    Log.w(TAG, "data write[${link.connId}]: $e")
-                    return
-                }
-                if (result == BluetoothGatt.GATT_SUCCESS) {
-                    Log.i(TAG, "data write ok[${link.connId}] retries=$attempts")
-                    return
-                }
-                if (result == ERROR_GATT_WRITE_REQUEST_BUSY) {
-                    Thread.sleep(DATA_WRITE_RETRY_MS)
-                    attempts++
-                    continue
-                }
-                Log.w(TAG, "data write rejected[${link.connId}] result=$result")
-                return
-            }
-            Log.w(TAG, "data write gave up[${link.connId}] after busy retries")
-        } else {
-            val char = if (link.peerProtocol == BlePeerProtocol.Columba) columbaTxChar else dataChar
-            if (char == null) {
-                return
-            }
-            gatedServerNotify(link, char, payload, "data")
+            return clientWriteAdmission(link, char, payload, writeType, "data")
         }
+        val char = if (link.peerProtocol == BlePeerProtocol.Columba) columbaTxChar else dataChar
+        char ?: return OutboundAdmission.Terminal
+        return serverNotifyAdmission(link, char, payload, "data")
     }
 
     private fun startDialPump() {
-        Thread {
+        startWorker("dial") {
             val direct = ByteBuffer.allocateDirect(6)
             val octets = ByteArray(6)
             var generation = NativeBridge.nativeBleWorkGeneration()
@@ -744,11 +932,11 @@ class BleLink(private val context: Context) {
                 links[connId] = LinkState(connId, address, dialed = true, peerProtocol = BlePeerProtocol.Native)
                 device.connectGatt(context, false, clientCallback(connId, address), BluetoothDevice.TRANSPORT_LE)
             }
-        }.start()
+        }
     }
 
     private fun startL2capOpenPump() {
-        Thread {
+        startWorker("l2cap-open") {
             val direct = ByteBuffer.allocateDirect(6)
             val raw = ByteArray(6)
             var generation = NativeBridge.nativeBleWorkGeneration()
@@ -775,30 +963,64 @@ class BleLink(private val context: Context) {
                     Log.w(TAG, "l2cap open[$connId] psm=$psm but no device")
                     continue
                 }
-                var attempt = 0
-                var opened = false
-                while (attempt < L2CAP_OPEN_RETRIES && !opened && running && radioActive && links.containsKey(connId)) {
+                if (!l2capOpening.add(connId)) {
+                    continue
+                }
+                startLinkWorker(connId, "l2cap-open-$connId") {
+                    var attempt = 0
+                    var opened = false
                     try {
-                        val socket = device.createInsecureL2capChannel(psm)
-                        socket.connect()
-                        Log.i(TAG, "l2cap client[$connId] connected to psm=$psm attempt=$attempt")
-                        link.l2capSocket = socket
-                        NativeBridge.nativeBleL2capUp(connId)
-                        startL2capPumps(connId, socket)
-                        opened = true
-                    } catch (e: Exception) {
-                        attempt++
-                        Log.w(TAG, "l2cap client[$connId] psm=$psm attempt=$attempt failed: $e")
-                        if (attempt < L2CAP_OPEN_RETRIES) {
-                            Thread.sleep(L2CAP_OPEN_RETRY_MS)
+                        while (attempt < L2CAP_OPEN_RETRIES &&
+                            !opened &&
+                            running &&
+                            radioActive &&
+                            links.containsKey(connId)
+                        ) {
+                            val socket = try {
+                                device.createInsecureL2capChannel(psm)
+                            } catch (e: Exception) {
+                                attempt++
+                                Log.w(TAG, "l2cap client[$connId] psm=$psm attempt=$attempt failed: $e")
+                                if (attempt < L2CAP_OPEN_RETRIES) {
+                                    Thread.sleep(L2CAP_OPEN_RETRY_MS)
+                                }
+                                continue
+                            }
+                            link.openingL2capSocket = socket
+                            try {
+                                socket.connect()
+                                if (!running || !radioActive || !links.containsKey(connId)) {
+                                    runCatching { socket.close() }
+                                    break
+                                }
+                                Log.i(TAG, "l2cap client[$connId] connected to psm=$psm attempt=$attempt")
+                                link.openingL2capSocket = null
+                                link.l2capSocket = socket
+                                NativeBridge.nativeBleL2capUp(connId)
+                                startL2capPumps(connId, socket)
+                                opened = true
+                            } catch (e: Exception) {
+                                attempt++
+                                runCatching { socket.close() }
+                                Log.w(TAG, "l2cap client[$connId] psm=$psm attempt=$attempt failed: $e")
+                                if (attempt < L2CAP_OPEN_RETRIES) {
+                                    Thread.sleep(L2CAP_OPEN_RETRY_MS)
+                                }
+                            } finally {
+                                if (link.openingL2capSocket === socket) {
+                                    link.openingL2capSocket = null
+                                }
+                            }
                         }
+                    } finally {
+                        l2capOpening.remove(connId)
+                    }
+                    if (!opened && running && radioActive && links.containsKey(connId)) {
+                        Log.w(TAG, "l2cap client[$connId] psm=$psm gave up after $attempt attempts; staying on GATT")
                     }
                 }
-                if (!opened) {
-                    Log.w(TAG, "l2cap client[$connId] psm=$psm gave up after $attempt attempts; staying on GATT")
-                }
             }
-        }.start()
+        }
     }
 
     private fun clientCallback(connId: Int, address: String): BluetoothGattCallback =
@@ -818,9 +1040,12 @@ class BleLink(private val context: Context) {
                     }
                     link.clientGatt = gatt
                     connectedAddrs.add(address)
-                    val mtuRequested = runCatching { gatt.requestMtu(MAX_ATT_MTU) }.getOrDefault(false)
+                    val mtuOperation = PendingGattOperation(GattOperationKind.Mtu, null)
+                    val mtuRequested = link.beginGattOperation(mtuOperation) &&
+                        runCatching { gatt.requestMtu(MAX_ATT_MTU) }.getOrDefault(false)
                     Log.i(TAG, "dialer[$connId] connected; requested mtu=$mtuRequested")
                     if (!mtuRequested) {
+                        link.cancelGattOperation(mtuOperation)
                         requestClientServices(gatt, link, "mtu request rejected")
                     }
                     scheduleClientOpenFallback(connId, address, gatt)
@@ -830,7 +1055,9 @@ class BleLink(private val context: Context) {
                         parseMac(address)?.let { octets ->
                             val direct = ByteBuffer.allocateDirect(6)
                             direct.put(octets)
-                            NativeBridge.nativeBleDialFailed(direct)
+                            if (!NativeBridge.nativeBleDialFailed(direct)) {
+                                Log.w(TAG, "dialer[$connId] failure event admission rejected")
+                            }
                         }
                     }
                     dialingAddrs.remove(address)
@@ -845,6 +1072,7 @@ class BleLink(private val context: Context) {
                 if (!running || !radioActive) {
                     return
                 }
+                links[connId]?.completeGattOperation(GattOperationKind.Mtu)
                 Log.i(TAG, "dialer[$connId] att mtu=$mtu status=$status")
                 links[connId]?.let { requestClientServices(gatt, it, "mtu changed") }
             }
@@ -853,6 +1081,7 @@ class BleLink(private val context: Context) {
                 if (!running || !radioActive) {
                     return
                 }
+                links[connId]?.completeGattOperation(GattOperationKind.ServiceDiscovery)
                 if (status != BluetoothGatt.GATT_SUCCESS) {
                     Log.w(TAG, "dialer[$connId] service discovery failed status=$status")
                     runCatching { gatt.disconnect() }
@@ -875,7 +1104,9 @@ class BleLink(private val context: Context) {
                     gatt.setCharacteristicNotification(nativeControl, true)
                     val cccd = nativeControl.getDescriptor(CCCD)
                     if (cccd != null) {
-                        writeGattDescriptor(gatt, cccd, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
+                        if (!startDescriptorWrite(connId, gatt, cccd)) {
+                            runCatching { gatt.disconnect() }
+                        }
                     }
                     return
                 }
@@ -894,7 +1125,7 @@ class BleLink(private val context: Context) {
                     clientColumbaTx = columbaTx
                 }
                 Log.i(TAG, "dialer[$connId] found Columba profile; reading identity")
-                if (!gatt.readCharacteristic(columbaIdentity)) {
+                if (!startCharacteristicRead(connId, gatt, columbaIdentity)) {
                     Log.w(TAG, "dialer[$connId] Columba identity read did not start")
                     runCatching { gatt.disconnect() }
                 }
@@ -939,6 +1170,10 @@ class BleLink(private val context: Context) {
                 if (characteristic.uuid != COLUMBA_IDENTITY) {
                     return
                 }
+                links[connId]?.completeGattOperation(
+                    GattOperationKind.CharacteristicRead,
+                    characteristic.uuid,
+                )
                 if (status != BluetoothGatt.GATT_SUCCESS || value.size != COLUMBA_IDENTITY_LEN) {
                     Log.w(
                         TAG,
@@ -958,7 +1193,9 @@ class BleLink(private val context: Context) {
                 gatt.setCharacteristicNotification(tx, true)
                 val cccd = tx.getDescriptor(CCCD)
                 if (cccd != null) {
-                    writeGattDescriptor(gatt, cccd, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
+                    if (!startDescriptorWrite(connId, gatt, cccd)) {
+                        runCatching { gatt.disconnect() }
+                    }
                 } else {
                     Log.w(TAG, "dialer[$connId] Columba TX CCCD null")
                     runCatching { gatt.disconnect() }
@@ -973,14 +1210,23 @@ class BleLink(private val context: Context) {
                 if (!running || !radioActive) {
                     return
                 }
+                links[connId]?.completeGattOperation(
+                    GattOperationKind.DescriptorWrite,
+                    descriptor.characteristic.uuid,
+                )
                 Log.i(
                     TAG,
                     "dialer[$connId] cccd ${descriptor.characteristic.uuid} status=$status",
                 )
+                if (status != BluetoothGatt.GATT_SUCCESS) {
+                    Log.w(TAG, "dialer[$connId] subscription failed status=$status")
+                    runCatching { gatt.disconnect() }
+                    return
+                }
                 if (descriptor.characteristic.uuid == COLUMBA_TX) {
                     val link = links[connId] ?: return
                     val identity = link.peerIdentity
-                    if (status != BluetoothGatt.GATT_SUCCESS || identity == null) {
+                    if (identity == null) {
                         Log.w(TAG, "dialer[$connId] Columba TX subscribe failed status=$status")
                         runCatching { gatt.disconnect() }
                         return
@@ -989,24 +1235,25 @@ class BleLink(private val context: Context) {
                     linkedConnIds.add(connId)
                     val octets = parseMac(address)
                     if (octets != null) {
-                        NativeBridge.nativeBleColumbaLinkUp(
+                        if (!NativeBridge.nativeBleColumbaLinkUp(
                             connId,
                             directBufferOf(octets),
                             RSSI_NONE,
                             true,
                             directBufferOf(identity),
-                        )
+                        )) {
+                            Log.w(TAG, "dialer[$connId] Columba lifecycle admission rejected")
+                            closeLink(connId)
+                        }
                     }
                     return
                 }
                 if (descriptor.characteristic.uuid == NATIVE_CONTROL) {
                     val dataCccd = links[connId]?.clientData?.getDescriptor(CCCD)
                     if (dataCccd != null) {
-                        writeGattDescriptor(
-                            gatt,
-                            dataCccd,
-                            BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE,
-                        )
+                        if (!startDescriptorWrite(connId, gatt, dataCccd)) {
+                            runCatching { gatt.disconnect() }
+                        }
                         return
                     }
                     Log.w(TAG, "dialer[$connId] data CCCD null — DATA notifications NOT enabled")
@@ -1017,7 +1264,10 @@ class BleLink(private val context: Context) {
                 if (octets != null) {
                     val direct = ByteBuffer.allocateDirect(6)
                     direct.put(octets)
-                    NativeBridge.nativeBleLinkUp(connId, direct, RSSI_NONE, true)
+                    if (!NativeBridge.nativeBleLinkUp(connId, direct, RSSI_NONE, true)) {
+                        Log.w(TAG, "dialer[$connId] lifecycle admission rejected")
+                        closeLink(connId)
+                    }
                 }
             }
 
@@ -1029,8 +1279,13 @@ class BleLink(private val context: Context) {
                 if (!running || !radioActive) {
                     return
                 }
-                if (characteristic.uuid == NATIVE_CONTROL) {
-                    links[connId]?.sendGate?.release()
+                val link = links[connId] ?: return
+                if (link.completeGattOperation(GattOperationKind.ClientWrite, characteristic.uuid)) {
+                    NativeBridge.nativeBleWakePumps()
+                    if (status != BluetoothGatt.GATT_SUCCESS) {
+                        Log.w(TAG, "write completion failed[$connId] status=$status")
+                        closeLink(connId)
+                    }
                 }
             }
 
@@ -1044,7 +1299,9 @@ class BleLink(private val context: Context) {
                 }
                 val dataLane = characteristic.uuid == NATIVE_DATA || characteristic.uuid == COLUMBA_TX
                 Log.i(TAG, "dialer[$connId] notify ${if (dataLane) "DATA" else "CONTROL"} ${value.size}B")
-                deliverGattInbound(connId, dataLane, value)
+                if (deliverGattInbound(connId, dataLane, value) == NativeBridge.BLE_INGRESS_CLOSED) {
+                    closeLink(connId)
+                }
             }
         }
 
@@ -1052,18 +1309,69 @@ class BleLink(private val context: Context) {
         if (!link.servicesRequested.compareAndSet(false, true)) {
             return
         }
+        val operation = PendingGattOperation(GattOperationKind.ServiceDiscovery, null)
+        if (!link.beginGattOperation(operation)) {
+            link.servicesRequested.set(false)
+            return
+        }
         val started = runCatching { gatt.discoverServices() }.getOrDefault(false)
         Log.i(TAG, "dialer[${link.connId}] discovering services after $reason started=$started")
         if (!started) {
+            link.cancelGattOperation(operation)
             runCatching { gatt.disconnect() }
         }
     }
 
+    private fun startCharacteristicRead(
+        connId: Int,
+        gatt: BluetoothGatt,
+        characteristic: BluetoothGattCharacteristic,
+    ): Boolean {
+        val link = links[connId] ?: return false
+        val operation = PendingGattOperation(
+            GattOperationKind.CharacteristicRead,
+            characteristic.uuid,
+        )
+        if (!link.beginGattOperation(operation)) {
+            return false
+        }
+        if (runCatching { gatt.readCharacteristic(characteristic) }.getOrDefault(false)) {
+            return true
+        }
+        link.cancelGattOperation(operation)
+        return false
+    }
+
+    private fun startDescriptorWrite(
+        connId: Int,
+        gatt: BluetoothGatt,
+        descriptor: BluetoothGattDescriptor,
+    ): Boolean {
+        val link = links[connId] ?: return false
+        val operation = PendingGattOperation(
+            GattOperationKind.DescriptorWrite,
+            descriptor.characteristic.uuid,
+        )
+        if (!link.beginGattOperation(operation)) {
+            return false
+        }
+        val result = runCatching {
+            writeGattDescriptor(gatt, descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
+        }.getOrDefault(BluetoothGatt.GATT_FAILURE)
+        if (result == BluetoothGatt.GATT_SUCCESS) {
+            return true
+        }
+        link.cancelGattOperation(operation)
+        Log.w(TAG, "dialer[$connId] descriptor write rejected result=$result")
+        return false
+    }
+
     private fun scheduleClientOpenFallback(connId: Int, address: String, gatt: BluetoothGatt) {
-        Thread {
+        startLinkWorker(connId, "client-fallback-$connId") {
             Thread.sleep(MTU_DISCOVERY_FALLBACK_MS)
             val link = links[connId]
             if (running && radioActive && link != null && !linkedConnIds.contains(connId)) {
+                link.cancelGattOperation(PendingGattOperation(GattOperationKind.Mtu, null))
                 requestClientServices(gatt, link, "mtu callback timeout")
             }
             Thread.sleep(CLIENT_LINK_READY_TIMEOUT_MS - MTU_DISCOVERY_FALLBACK_MS)
@@ -1072,17 +1380,29 @@ class BleLink(private val context: Context) {
                 runCatching { gatt.disconnect() }
                 closeLink(connId)
             }
-        }.start()
+        }
     }
 
     private fun closeLink(connId: Int) {
-        val link = links.remove(connId) ?: return
+        val link = links.remove(connId)
+        val current = Thread.currentThread()
+        val ownedWorkers = linkWorkers.remove(connId).orEmpty().filter { it !== current }
+        if (link == null) {
+            ownedWorkers.forEach(Thread::interrupt)
+            return
+        }
         inboundByAddr.remove(link.address, connId)
         columbaSubscribedCentrals.remove(link.address)
         dialingAddrs.remove(link.address)
         connectedAddrs.remove(link.address)
+        runCatching { link.openingL2capSocket?.close() }
         runCatching { link.l2capSocket?.close() }
+        if (!link.dialed) {
+            link.central?.let { central -> runCatching { gattServer?.cancelConnection(central) } }
+        }
+        runCatching { link.clientGatt?.disconnect() }
         runCatching { link.clientGatt?.close() }
+        ownedWorkers.forEach(Thread::interrupt)
         NativeBridge.nativeBleDisconnected(connId)
     }
 
@@ -1169,7 +1489,7 @@ class BleLink(private val context: Context) {
         val scanner = adapter.bluetoothLeScanner ?: return
         val filters = listOf(ScanFilter.Builder().setServiceUuid(ParcelUuid(PRNS_SERVICE)).build())
         val settings = ScanSettings.Builder()
-            .setScanMode(ScanSettings.SCAN_MODE_LOW_POWER)
+            .setScanMode(ScanSettings.SCAN_MODE_BALANCED)
             .build()
         try {
             scanner.startScan(filters, settings, scanCallback)
@@ -1180,6 +1500,7 @@ class BleLink(private val context: Context) {
         }
     }
 
+    @Synchronized
     private fun startAdvertise(adapter: BluetoothAdapter) {
         if (!running || !radioActive || !advertisingWanted || advertiser != null) {
             return
@@ -1220,6 +1541,21 @@ class BleLink(private val context: Context) {
         running = false
         NativeBridge.nativeBleWakePumps()
         stopRadio()
+        val current = Thread.currentThread()
+        val stopping = workers.filter { it !== current }
+        stopping.forEach(Thread::interrupt)
+        val deadline = System.nanoTime() + WORKER_SHUTDOWN_TIMEOUT_MS * 1_000_000
+        for (worker in stopping) {
+            val remainingNanos = deadline - System.nanoTime()
+            if (remainingNanos <= 0) {
+                break
+            }
+            worker.join((remainingNanos / 1_000_000).coerceAtLeast(1))
+        }
+        val remaining = workers.count { it !== current && it.isAlive }
+        if (remaining > 0) {
+            Log.w(TAG, "$remaining Bluetooth LE workers remained after shutdown deadline")
+        }
     }
 
     @Synchronized
@@ -1249,6 +1585,9 @@ class BleLink(private val context: Context) {
         dialingAddrs.clear()
         connectedAddrs.clear()
         linkedConnIds.clear()
+        l2capOpening.clear()
+        val current = Thread.currentThread()
+        radioWorkers.filter { it !== current }.forEach(Thread::interrupt)
     }
 
     private fun parseMac(addr: String): ByteArray? {
@@ -1349,16 +1688,16 @@ class BleLink(private val context: Context) {
         private const val TAG = "HopspotBle"
         private const val L2CAP_CHUNK = 2048
         private const val CONTROL_CHUNK = 64
-        private const val SEND_GATE_TIMEOUT_MS = 1000L
         private const val DATA_CHUNK = 512
         private const val RADIO_STATE_RETRY_MS = 1_000L
         private const val RSSI_NONE = 127
         private const val MAX_ATT_MTU = 517
         private const val MTU_DISCOVERY_FALLBACK_MS = 750L
         private const val CLIENT_LINK_READY_TIMEOUT_MS = 8_000L
-        private const val DATA_WRITE_RETRIES = 60
-        private const val DATA_WRITE_RETRY_MS = 4L
+        private const val WORKER_SHUTDOWN_TIMEOUT_MS = 2_000L
+        private const val GATT_BUSY_RETRY_MS = 4L
         private const val ERROR_GATT_WRITE_REQUEST_BUSY = 201
+        private const val ATT_INSUFFICIENT_RESOURCES = 0x11
         private const val L2CAP_OPEN_RETRIES = 5
         private const val L2CAP_OPEN_RETRY_MS = 200L
         private const val PRNS_ROLE_COMPANY_ID = 0xFFFF

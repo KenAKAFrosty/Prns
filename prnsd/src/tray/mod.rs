@@ -3,6 +3,8 @@ mod icon;
 
 use crate::daemon::DaemonStatus;
 
+const DAEMON_DISPLAY_NAME: &str = "Prns Daemon";
+
 fn status_label(status: DaemonStatus, managed: bool, stopping: bool) -> String {
     if stopping {
         return "Stopping prnsd…".into();
@@ -64,7 +66,7 @@ mod platform {
     use crate::shutdown::{self, ShutdownRequest, ShutdownSignal};
 
     use super::actions::{TrayAction, TrayActionContext};
-    use super::{icon, status_label};
+    use super::{icon, status_label, DAEMON_DISPLAY_NAME};
 
     pub(crate) struct RunningTray {
         handle: ksni::Handle<LinuxTray>,
@@ -84,7 +86,7 @@ mod platform {
         }
 
         fn title(&self) -> String {
-            "Personal RNS Daemon".into()
+            DAEMON_DISPLAY_NAME.into()
         }
 
         fn icon_pixmap(&self) -> Vec<ksni::Icon> {
@@ -99,7 +101,7 @@ mod platform {
             ksni::ToolTip {
                 icon_name: String::new(),
                 icon_pixmap: self.icon_pixmap(),
-                title: "Personal RNS Daemon".into(),
+                title: DAEMON_DISPLAY_NAME.into(),
                 description: status_label(
                     self.status,
                     self.actions.can_attach_terminal(),
@@ -111,7 +113,7 @@ mod platform {
         fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
             vec![
                 StandardItem {
-                    label: format!("Personal RNS Daemon · v{}", env!("CARGO_PKG_VERSION")),
+                    label: format!("{DAEMON_DISPLAY_NAME} · v{}", env!("CARGO_PKG_VERSION")),
                     enabled: false,
                     ..Default::default()
                 }
@@ -140,6 +142,14 @@ mod platform {
                     label: "Show Network Status".into(),
                     activate: Box::new(|tray: &mut LinuxTray| {
                         tray.perform(TrayAction::ShowStatus);
+                    }),
+                    ..Default::default()
+                }
+                .into(),
+                StandardItem {
+                    label: "Announce NNPages Now".into(),
+                    activate: Box::new(|tray: &mut LinuxTray| {
+                        tray.perform(TrayAction::AnnounceNnPages);
                     }),
                     ..Default::default()
                 }
@@ -240,7 +250,6 @@ mod platform {
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod platform {
-    use std::process::ExitCode;
     use std::time::Duration;
 
     use prnsd_control::ManagedProcess;
@@ -256,7 +265,7 @@ mod platform {
     use crate::{cli, daemon};
 
     use super::actions::{TrayAction, TrayActionContext};
-    use super::{icon, status_label};
+    use super::{icon, status_label, DAEMON_DISPLAY_NAME};
 
     enum TrayEvent {
         DaemonReady {
@@ -274,6 +283,7 @@ mod platform {
         status_item: MenuItem,
         open_terminal_item: MenuItem,
         show_status_item: MenuItem,
+        announce_nnpages_item: MenuItem,
         manage_interfaces_item: MenuItem,
         open_config_item: MenuItem,
         stop_item: MenuItem,
@@ -285,7 +295,7 @@ mod platform {
                 .map_err(|error| format!("tray actions unavailable: {error}"))?;
             let managed = actions.can_attach_terminal();
             let heading = MenuItem::new(
-                format!("Personal RNS Daemon · v{}", env!("CARGO_PKG_VERSION")),
+                format!("{DAEMON_DISPLAY_NAME} · v{}", env!("CARGO_PKG_VERSION")),
                 false,
                 None,
             );
@@ -295,6 +305,8 @@ mod platform {
                 MenuItem::with_id("prnsd-open-terminal", "Open Prns Terminal", managed, None);
             let show_status_item =
                 MenuItem::with_id("prnsd-show-status", "Show Network Status", true, None);
+            let announce_nnpages_item =
+                MenuItem::with_id("prnsd-announce-nnpages", "Announce NNPages Now", true, None);
             let manage_interfaces_item =
                 MenuItem::with_id("prnsd-manage-interfaces", "Manage Interfaces…", true, None);
             let open_config_item =
@@ -309,6 +321,7 @@ mod platform {
                 &status_separator,
                 &open_terminal_item,
                 &show_status_item,
+                &announce_nnpages_item,
                 &manage_interfaces_item,
                 &tools_separator,
                 &open_config_item,
@@ -321,7 +334,7 @@ mod platform {
                 .map_err(|error| format!("tray icon pixels invalid: {error}"))?;
             let icon = TrayIconBuilder::new()
                 .with_menu(Box::new(menu))
-                .with_tooltip("Personal RNS Daemon is running")
+                .with_tooltip(format!("{DAEMON_DISPLAY_NAME} is running"))
                 .with_icon(tray_icon)
                 .with_menu_on_left_click(true)
                 .build()
@@ -332,6 +345,7 @@ mod platform {
                 status_item,
                 open_terminal_item,
                 show_status_item,
+                announce_nnpages_item,
                 manage_interfaces_item,
                 open_config_item,
                 stop_item,
@@ -344,6 +358,8 @@ mod platform {
                 Some(TrayAction::OpenTerminal)
             } else if id == self.show_status_item.id() {
                 Some(TrayAction::ShowStatus)
+            } else if id == self.announce_nnpages_item.id() {
+                Some(TrayAction::AnnounceNnPages)
             } else if id == self.manage_interfaces_item.id() {
                 Some(TrayAction::ManageInterfaces)
             } else if id == self.open_config_item.id() {
@@ -358,7 +374,7 @@ mod platform {
             self.status_item.set_text(&label);
             let _ = self
                 .icon
-                .set_tooltip(Some(format!("Personal RNS Daemon · {label}")));
+                .set_tooltip(Some(format!("{DAEMON_DISPLAY_NAME} · {label}")));
         }
 
         fn perform(&self, action: TrayAction) {
@@ -377,7 +393,7 @@ mod platform {
             self.stop_item.set_enabled(false);
             let _ = self
                 .icon
-                .set_tooltip(Some("Personal RNS Daemon is stopping"));
+                .set_tooltip(Some(format!("{DAEMON_DISPLAY_NAME} is stopping")));
         }
     }
 
@@ -463,10 +479,15 @@ mod platform {
                 .with_activation_policy(ActivationPolicy::Accessory)
                 .with_default_menu(false);
         }
-        let event_loop = event_loop_builder.build().unwrap_or_else(|error| {
-            eprintln!("prnsd: desktop event loop initialization failed: {error}");
-            std::process::exit(1);
-        });
+        let event_loop = match event_loop_builder.build() {
+            Ok(event_loop) => event_loop,
+            Err(error) => {
+                eprintln!(
+                    "prnsd: desktop event loop unavailable ({error}); running without a tray"
+                );
+                run_without_tray(args, managed);
+            }
+        };
         event_loop.set_control_flow(ControlFlow::Wait);
 
         let menu_proxy = event_loop.create_proxy();
@@ -566,14 +587,29 @@ mod platform {
         if let Err(error) = event_loop.run_app(&mut application) {
             eprintln!("prnsd: desktop event loop failed: {error}");
         }
-        std::process::exit(1)
+        loop {
+            std::thread::park();
+        }
     }
 
-    pub(crate) fn managed_process() -> Result<Option<ManagedProcess>, ExitCode> {
-        ManagedProcess::from_environment().map_err(|error| {
-            eprintln!("prnsd: {error}");
-            ExitCode::FAILURE
-        })
+    fn run_without_tray(args: cli::DaemonArgs, managed: Option<ManagedProcess>) -> ! {
+        let exit_code = match tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(runtime) => match runtime.block_on(daemon::run(args, managed, None, None)) {
+                Ok(()) => 0,
+                Err(error) => {
+                    eprintln!("prnsd: {error}");
+                    1
+                }
+            },
+            Err(error) => {
+                eprintln!("prnsd: async runtime initialization failed: {error}");
+                1
+            }
+        };
+        std::process::exit(exit_code)
     }
 }
 

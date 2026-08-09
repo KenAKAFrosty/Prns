@@ -38,6 +38,58 @@ const OUTBOUND_TIMEOUT: Duration = Duration::from_secs(2);
 const ACTION_OVERFLOW_REASON: &str = "BLE policy action capacity exceeded";
 const DIAL_INVARIANT_REASON: &str = "BLE dial admission invariant failed";
 const RADIO_CONTROL_REASON: &str = "BLE radio control failed";
+const INGRESS_PRESSURE_REASON: &str = "BLE receive pressure";
+const SETUP_FAILURE_REASON: &str = "BLE setup failed; retrying";
+const TRANSPORT_CLOSURE_REASON: &str = "BLE transport closed; retrying";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BluetoothRecoveryReason {
+    IngressPressure,
+    SetupFailure,
+    TransportClosure,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BluetoothRecoveryCounters {
+    pub ingress_pressure: u32,
+    pub setup_failures: u32,
+    pub transport_closures: u32,
+}
+
+impl BluetoothRecoveryCounters {
+    const ZERO: Self = Self {
+        ingress_pressure: 0,
+        setup_failures: 0,
+        transport_closures: 0,
+    };
+}
+
+impl BluetoothRecoveryReason {
+    const fn as_u8(self) -> u8 {
+        match self {
+            Self::IngressPressure => 1,
+            Self::SetupFailure => 2,
+            Self::TransportClosure => 3,
+        }
+    }
+
+    fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            1 => Some(Self::IngressPressure),
+            2 => Some(Self::SetupFailure),
+            3 => Some(Self::TransportClosure),
+            _ => None,
+        }
+    }
+
+    const fn description(self) -> &'static str {
+        match self {
+            Self::IngressPressure => INGRESS_PRESSURE_REASON,
+            Self::SetupFailure => SETUP_FAILURE_REASON,
+            Self::TransportClosure => TRANSPORT_CLOSURE_REASON,
+        }
+    }
+}
 
 pub struct BluetoothMemberStatus {
     id: CriticalSectionMutex<Cell<InterfaceId>>,
@@ -106,9 +158,10 @@ pub struct BluetoothAutoShared<const MEMBERS: usize> {
     enabled_changed: Signal<CriticalSectionRawMutex, bool>,
     up: AtomicBool,
     failed: AtomicBool,
-    failure_reason: CriticalSectionMutex<Cell<Option<&'static str>>>,
+    fatal_failure_reason: CriticalSectionMutex<Cell<Option<&'static str>>>,
+    recovery_reason: AtomicU8,
     peers: AtomicU32,
-    ingress_pressure_events: AtomicU32,
+    recovery_counters: CriticalSectionMutex<Cell<BluetoothRecoveryCounters>>,
     members: [BluetoothMemberStatus; MEMBERS],
 }
 
@@ -121,9 +174,12 @@ impl<const MEMBERS: usize> BluetoothAutoShared<MEMBERS> {
             enabled_changed: Signal::new(),
             up: AtomicBool::new(false),
             failed: AtomicBool::new(false),
-            failure_reason: CriticalSectionMutex::new(Cell::new(None)),
+            fatal_failure_reason: CriticalSectionMutex::new(Cell::new(None)),
+            recovery_reason: AtomicU8::new(0),
             peers: AtomicU32::new(0),
-            ingress_pressure_events: AtomicU32::new(0),
+            recovery_counters: CriticalSectionMutex::new(Cell::new(
+                BluetoothRecoveryCounters::ZERO,
+            )),
             members: [const { BluetoothMemberStatus::new() }; MEMBERS],
         }
     }
@@ -140,18 +196,84 @@ impl<const MEMBERS: usize> BluetoothAutoStatus<MEMBERS> {
         Self { shared }
     }
 
-    #[cfg(feature = "bluetooth-auto-trouble")]
-    pub(crate) fn note_ingress_pressure(&self) {
-        let _ = self.shared.ingress_pressure_events.fetch_update(
+    fn increment_recovery_counter(&self, reason: BluetoothRecoveryReason) {
+        self.shared.recovery_counters.lock(|slot| {
+            let mut counters = slot.get();
+            match reason {
+                BluetoothRecoveryReason::IngressPressure => {
+                    counters.ingress_pressure = counters.ingress_pressure.saturating_add(1);
+                }
+                BluetoothRecoveryReason::SetupFailure => {
+                    counters.setup_failures = counters.setup_failures.saturating_add(1);
+                }
+                BluetoothRecoveryReason::TransportClosure => {
+                    counters.transport_closures = counters.transport_closures.saturating_add(1);
+                }
+            }
+            slot.set(counters);
+        });
+    }
+
+    pub fn note_ingress_pressure(&self) {
+        self.increment_recovery_counter(BluetoothRecoveryReason::IngressPressure);
+        self.shared.recovery_reason.store(
+            BluetoothRecoveryReason::IngressPressure.as_u8(),
             Ordering::Relaxed,
-            Ordering::Relaxed,
-            |count| Some(count.saturating_add(1)),
         );
+    }
+
+    pub fn note_successful_admission(&self) {
+        let _ = self.shared.recovery_reason.compare_exchange(
+            BluetoothRecoveryReason::IngressPressure.as_u8(),
+            0,
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        );
+    }
+
+    pub fn note_setup_failure(&self) {
+        self.increment_recovery_counter(BluetoothRecoveryReason::SetupFailure);
+        self.shared.recovery_reason.store(
+            BluetoothRecoveryReason::SetupFailure.as_u8(),
+            Ordering::Relaxed,
+        );
+    }
+
+    pub fn note_transport_closure(&self) {
+        self.increment_recovery_counter(BluetoothRecoveryReason::TransportClosure);
+        self.shared.recovery_reason.store(
+            BluetoothRecoveryReason::TransportClosure.as_u8(),
+            Ordering::Relaxed,
+        );
+    }
+
+    fn note_settled_link(&self) {
+        self.shared.recovery_reason.store(0, Ordering::Relaxed);
+    }
+
+    #[must_use]
+    pub fn recovery_reason(&self) -> Option<BluetoothRecoveryReason> {
+        BluetoothRecoveryReason::from_u8(self.shared.recovery_reason.load(Ordering::Relaxed))
+    }
+
+    #[must_use]
+    pub fn recovery_counters(&self) -> BluetoothRecoveryCounters {
+        self.shared.recovery_counters.lock(Cell::get)
     }
 
     #[must_use]
     pub fn ingress_pressure_events(&self) -> u32 {
-        self.shared.ingress_pressure_events.load(Ordering::Relaxed)
+        self.recovery_counters().ingress_pressure
+    }
+
+    #[must_use]
+    pub fn setup_failure_events(&self) -> u32 {
+        self.recovery_counters().setup_failures
+    }
+
+    #[must_use]
+    pub fn transport_closure_events(&self) -> u32 {
+        self.recovery_counters().transport_closures
     }
 
     fn mark_up(&self) {
@@ -160,7 +282,7 @@ impl<const MEMBERS: usize> BluetoothAutoStatus<MEMBERS> {
 
     fn mark_failed(&self, reason: &'static str) {
         self.shared
-            .failure_reason
+            .fatal_failure_reason
             .lock(|slot| slot.set(Some(reason)));
         self.shared.failed.store(true, Ordering::Relaxed);
     }
@@ -246,6 +368,15 @@ impl<const MEMBERS: usize> InterfaceStatus for BluetoothAutoStatus<MEMBERS> {
             ConnectionState::Failed
         } else if !self.shared.up.load(Ordering::Relaxed) {
             ConnectionState::Initializing
+        } else if matches!(
+            self.recovery_reason(),
+            Some(BluetoothRecoveryReason::IngressPressure)
+        ) && self.shared.peers.load(Ordering::Relaxed) > 0
+        {
+            ConnectionState::Degraded
+        } else if self.recovery_reason().is_some() && self.shared.peers.load(Ordering::Relaxed) == 0
+        {
+            ConnectionState::Reconnecting
         } else if self.shared.peers.load(Ordering::Relaxed) > 0 {
             ConnectionState::Connected
         } else {
@@ -270,7 +401,13 @@ impl<const MEMBERS: usize> InterfaceStatus for BluetoothAutoStatus<MEMBERS> {
     }
 
     fn failure_reason(&self) -> Option<&'static str> {
-        self.shared.failure_reason.lock(Cell::get)
+        self.shared
+            .fatal_failure_reason
+            .lock(Cell::get)
+            .or_else(|| {
+                self.recovery_reason()
+                    .map(BluetoothRecoveryReason::description)
+            })
     }
 }
 
@@ -556,6 +693,7 @@ where
                         .await;
                     }
                     Err(_) => {
+                        status.note_setup_failure();
                         manager.handle(
                             PolicyInput::HandshakeFailed { address, origin },
                             &mut |action| pending.push(action),
@@ -608,6 +746,7 @@ where
                     .await;
                 }
                 SupervisorStep::Backend(BleEvent::DialFailed { address }) => {
+                    status.note_setup_failure();
                     manager.handle(PolicyInput::DialFailed { address, now_ms }, &mut |action| {
                         pending.push(action)
                     });
@@ -1185,6 +1324,7 @@ async fn send_outbound<
             SendState::NotSelected => {}
             SendState::Sent => status.member(slot).add_tx(frame.len() as u64),
             SendState::Pending | SendState::Failed => {
+                status.note_transport_closure();
                 close_member(slot, manager, pending, status, fleet, backend, members).await;
             }
         }
@@ -1229,6 +1369,7 @@ async fn deliver_inbound<
             }
         }
         Err(()) => {
+            status.note_transport_closure();
             close_member(index, manager, pending, status, fleet, backend, members).await;
         }
     }
@@ -1288,6 +1429,7 @@ async fn apply_settled<
                         .await;
                     status.member(slot).assign(id);
                     status.republish_peer_count();
+                    status.note_settled_link();
                     members[slot] = Some(Active {
                         identity,
                         id,
@@ -1557,5 +1699,137 @@ mod tests {
         assert_eq!(status.connection(), ConnectionState::Disabled);
         status.enable();
         assert_eq!(status.connection(), ConnectionState::Failed);
+    }
+
+    fn recovery_view<const MEMBERS: usize>(
+        status: &BluetoothAutoStatus<MEMBERS>,
+    ) -> (
+        ConnectionState,
+        Option<BluetoothRecoveryReason>,
+        BluetoothRecoveryCounters,
+        Option<&'static str>,
+    ) {
+        (
+            status.connection(),
+            status.recovery_reason(),
+            status.recovery_counters(),
+            status.failure_reason(),
+        )
+    }
+
+    #[test]
+    fn recovery_status_distinguishes_pressure_setup_and_closure() {
+        static SHARED: BluetoothAutoShared<2> = BluetoothAutoShared::new(InterfaceId::new([10; 8]));
+        let status = BluetoothAutoStatus::new(&SHARED);
+
+        assert_eq!(
+            recovery_view(&status),
+            (
+                ConnectionState::Initializing,
+                None,
+                BluetoothRecoveryCounters::ZERO,
+                None,
+            )
+        );
+        status.mark_up();
+        assert_eq!(
+            recovery_view(&status),
+            (
+                ConnectionState::Disconnected,
+                None,
+                BluetoothRecoveryCounters::ZERO,
+                None,
+            )
+        );
+
+        status.note_setup_failure();
+        assert_eq!(
+            recovery_view(&status),
+            (
+                ConnectionState::Reconnecting,
+                Some(BluetoothRecoveryReason::SetupFailure),
+                BluetoothRecoveryCounters {
+                    ingress_pressure: 0,
+                    setup_failures: 1,
+                    transport_closures: 0,
+                },
+                Some(SETUP_FAILURE_REASON),
+            )
+        );
+
+        status.member(0).assign(InterfaceId::new([11; 8]));
+        status.republish_peer_count();
+        assert_eq!(status.connection(), ConnectionState::Connected);
+        assert_eq!(status.failure_reason(), Some(SETUP_FAILURE_REASON));
+        status.note_settled_link();
+        assert_eq!(status.connection(), ConnectionState::Connected);
+
+        status.note_ingress_pressure();
+        assert_eq!(
+            recovery_view(&status),
+            (
+                ConnectionState::Degraded,
+                Some(BluetoothRecoveryReason::IngressPressure),
+                BluetoothRecoveryCounters {
+                    ingress_pressure: 1,
+                    setup_failures: 1,
+                    transport_closures: 0,
+                },
+                Some(INGRESS_PRESSURE_REASON),
+            )
+        );
+        status.note_successful_admission();
+        assert_eq!(status.connection(), ConnectionState::Connected);
+        assert_eq!(status.failure_reason(), None);
+
+        status.note_transport_closure();
+        assert_eq!(status.connection(), ConnectionState::Connected);
+        assert_eq!(status.failure_reason(), Some(TRANSPORT_CLOSURE_REASON));
+        status.member(0).retire();
+        status.republish_peer_count();
+        assert_eq!(status.connection(), ConnectionState::Reconnecting);
+
+        status.member(1).assign(InterfaceId::new([12; 8]));
+        status.republish_peer_count();
+        status.note_settled_link();
+        assert_eq!(
+            recovery_view(&status),
+            (
+                ConnectionState::Connected,
+                None,
+                BluetoothRecoveryCounters {
+                    ingress_pressure: 1,
+                    setup_failures: 1,
+                    transport_closures: 1,
+                },
+                None,
+            )
+        );
+    }
+
+    #[test]
+    fn recovery_counters_saturate_as_one_snapshot() {
+        static SHARED: BluetoothAutoShared<1> = BluetoothAutoShared::new(InterfaceId::new([13; 8]));
+        let status = BluetoothAutoStatus::new(&SHARED);
+        SHARED.recovery_counters.lock(|slot| {
+            slot.set(BluetoothRecoveryCounters {
+                ingress_pressure: u32::MAX,
+                setup_failures: u32::MAX,
+                transport_closures: u32::MAX,
+            });
+        });
+
+        status.note_ingress_pressure();
+        status.note_setup_failure();
+        status.note_transport_closure();
+
+        assert_eq!(
+            status.recovery_counters(),
+            BluetoothRecoveryCounters {
+                ingress_pressure: u32::MAX,
+                setup_failures: u32::MAX,
+                transport_closures: u32::MAX,
+            }
+        );
     }
 }

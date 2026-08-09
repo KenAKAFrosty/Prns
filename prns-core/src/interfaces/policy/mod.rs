@@ -10,7 +10,7 @@ pub use capabilities::{
 pub use common::{
     AirtimeDutyCycle, AnnounceBandwidthCap, AnnounceRateLimit, FrequencyMilliHertz,
     IngressControlPolicy, InterfaceCommonPolicy, InterfaceForwardingPolicy,
-    PathRequestEgressControl,
+    PathRequestEgressControl, RecursivePathRequestPolicy,
 };
 pub use gravity::InterfaceGravity;
 pub use mode::InterfaceMode;

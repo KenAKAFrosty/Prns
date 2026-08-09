@@ -12,7 +12,9 @@ machinery; only a complete qualified publication supports a release claim.
 cargo benchmark --smoke
 ```
 
-The doctor checks Rust 1.90+, Python 3.11+, `uv`, and the platform C compiler.
+The doctor checks Rust 1.90+, Python 3.11+, `uv`, and the platform C compiler
+(on Windows that is MSVC's `cl`, from the Visual Studio Build Tools C++
+workload; run the doctor as `.\tools\prns.cmd doctor benchmarks`).
 It reports setup guidance and installs nothing. The smoke run exercises
 participants, reference provisioning, calibration, measurement, and result
 validation with reduced work.

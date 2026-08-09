@@ -161,6 +161,7 @@ class PrnsdDistributionTests(unittest.TestCase):
             source_checksum.write_text(
                 f"{hashlib.sha256(source.read_bytes()).hexdigest()}  source.zip\n",
                 encoding="utf-8",
+                newline="",
             )
             first = root / "first" / f"prnsd-{VERSION}-x86_64-unknown-linux-gnu.tar.gz"
             second = root / "second" / first.name

@@ -9,7 +9,7 @@ The Swift package is a thin adapter over the stable Personal RNS C capsule. The 
 
 ## Evaluate the current source
 
-On Linux, the registered suite builds a relocatable native capsule, exposes its pkg-config metadata, and runs the complete persistent two-node journey:
+On Linux, the registered suite builds a relocatable native capsule, exposes its pkg-config metadata, and runs the complete persistent two-node journey. The same source smoke runs directly on macOS 15 or newer; the package's generated contract uses Swift's native `UInt128`:
 
 ```console
 python3 validation/run.py run --suite host-swift-contract

@@ -35,7 +35,7 @@ SWIFT_C_HEADER_PATH = (
 )
 KOTLIN_PATH = (
     ROOT
-    / "prns-host/bindings/jvm/src/main/kotlin/io/reticulum/prns/HostContract.generated.kt"
+    / "prns-host/bindings/jvm/src/main/kotlin/rs/reticulum/prns/HostContract.generated.kt"
 )
 JULIA_PATH = (
     ROOT
@@ -45,16 +45,16 @@ VECTORS_PATH = ROOT / "prns-host/conformance/host-contract-v1.json"
 GO_HOST_PATH = ROOT / "prns-host/bindings/go/convenience.go"
 SWIFT_HOST_PATH = ROOT / "prns-host/bindings/swift/Sources/PersonalRns/Host.swift"
 KOTLIN_HOST_PATH = (
-    ROOT / "prns-host/bindings/jvm/src/main/kotlin/io/reticulum/prns/Host.kt"
+    ROOT / "prns-host/bindings/jvm/src/main/kotlin/rs/reticulum/prns/Host.kt"
 )
 KOTLIN_EVENTS_PATH = (
-    ROOT / "prns-host/bindings/jvm/src/main/kotlin/io/reticulum/prns/Events.kt"
+    ROOT / "prns-host/bindings/jvm/src/main/kotlin/rs/reticulum/prns/Events.kt"
 )
 KOTLIN_UPLOAD_PATH = (
-    ROOT / "prns-host/bindings/jvm/src/main/kotlin/io/reticulum/prns/ResourceUpload.kt"
+    ROOT / "prns-host/bindings/jvm/src/main/kotlin/rs/reticulum/prns/ResourceUpload.kt"
 )
 KOTLIN_COMMAND_PATH = (
-    ROOT / "prns-host/bindings/jvm/src/main/kotlin/io/reticulum/prns/Command.kt"
+    ROOT / "prns-host/bindings/jvm/src/main/kotlin/rs/reticulum/prns/Command.kt"
 )
 JULIA_COMMAND_PATH = ROOT / "prns-host/bindings/julia/src/command.jl"
 JULIA_MODULE_PATH = ROOT / "prns-host/bindings/julia/src/PersonalRns.jl"
@@ -1791,7 +1791,7 @@ def kotlin_record(record):
 
 def kotlin_output(schema):
     lines = [
-        "package io.reticulum.prns",
+        "package rs.reticulum.prns",
         "",
         "import java.math.BigInteger",
         "",

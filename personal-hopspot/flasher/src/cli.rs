@@ -95,7 +95,7 @@ pub(crate) enum CommandMode {
             conflicts_with_all = ["version", "offline", "local_build"]
         )]
         candidate: Option<PathBuf>,
-        /// Explicit mounted TECHOBOOT directory.
+        /// Explicit mounted UF2 bootloader directory.
         #[arg(long, value_name = "DIR", hide = true)]
         mount: Option<PathBuf>,
     },

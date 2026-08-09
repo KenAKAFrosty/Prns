@@ -299,7 +299,10 @@ mod tests {
         assert_eq!(low.policy.mode, InterfaceMode::Internal);
         assert_eq!(high.policy.mode, InterfaceMode::Internal);
         assert_eq!(low.policy.common, high.policy.common);
-        assert!(low.policy.common.forwarding.recursive_path_requests);
+        assert_eq!(
+            low.policy.common.forwarding.recursive_path_requests,
+            prns_core::interfaces::RecursivePathRequestPolicy::Enabled
+        );
         assert!(!low.policy.common.forwarding.announces_from_internal);
         assert!(low.policy.common.forwarding.announces_to_internal);
         assert!(!low.policy.common.ingress_control.enabled);

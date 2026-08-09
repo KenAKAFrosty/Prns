@@ -19,7 +19,7 @@ landing-cta-ethos = 在 Prns 中找到你的路
 landing-cta-standards = 我们的标准
 # 引文
 landing-quote-label = 我们正在构建的方向
-landing-quote-body = Reticulum 是通向一个光明未来的基础通信设施，只要我们所有人一起构建，那个未来就可以实现。这是 Personal 团队的努力：把 RNS 交到更多 builder 手中，帮助那个未来成真。
+landing-quote-body = Reticulum 是通向一个光明未来的通信基础设施，只要我们所有人一起构建，那个未来就可以实现。这是 Personal 团队的努力：把 RNS 交到更多 builder 手中，帮助那个未来成真。
 
 # 接口
 interfaces-section-label = 接口

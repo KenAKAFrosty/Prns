@@ -7,8 +7,8 @@ plugins {
     signing
 }
 
-group = "io.reticulum"
-version = "0.3.3"
+group = "rs.reticulum"
+version = "0.3.4"
 
 repositories {
     mavenCentral()

@@ -1,5 +1,5 @@
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
@@ -9,10 +9,22 @@ use tokio::sync::Notify;
 use prns_core::interfaces::bluetooth_auto::{AdvertisingMode, RadioMode, ScanningMode};
 use prns_core::interfaces::bluetooth_auto::{BleAddress, BleIdentity, PeerProtocol};
 
+use super::outbound::{BoundedByteQueue, BoundedMessageQueue};
 use super::{RADIO_ADVERTISING, RADIO_ENABLED, RADIO_SCANNING};
 
 const CONTROL_IN_DEPTH: usize = 8;
 const DATA_IN_DEPTH: usize = 16;
+const OUTBOUND_BYTE_CAP: usize = 8 * prns_core::interfaces::bluetooth_auto::BLE_HW_MTU;
+const OUTBOUND_FRAME_DEPTH: usize = 16;
+pub(super) const PEER_CAPACITY: usize = 7;
+const LIFECYCLE_EVENT_DEPTH: usize = 3 * PEER_CAPACITY;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AndroidBleIngressAdmission {
+    Accepted,
+    Full,
+    Closed,
+}
 
 pub(super) struct LinkSignal {
     pub(super) is_up: AtomicBool,
@@ -64,10 +76,18 @@ pub(super) struct Endpoints {
     control_in_tx: Sender<Vec<u8>>,
     l2cap_in_tx: Sender<Vec<u8>>,
     data_in_tx: Sender<Vec<u8>>,
-    control_out: Arc<Mutex<VecDeque<u8>>>,
-    l2cap_out: Arc<Mutex<VecDeque<u8>>>,
-    data_out: Arc<Mutex<VecDeque<Vec<u8>>>>,
+    pub(super) control_out: Arc<BoundedMessageQueue>,
+    l2cap_out: Arc<BoundedByteQueue>,
+    pub(super) data_out: Arc<BoundedMessageQueue>,
     l2cap_up: Arc<LinkSignal>,
+}
+
+impl Endpoints {
+    fn close(&self) {
+        self.control_out.close();
+        self.l2cap_out.close();
+        self.data_out.close();
+    }
 }
 
 pub(super) struct PendingLink {
@@ -80,9 +100,9 @@ pub(super) struct PendingLink {
     pub(super) control_in: Receiver<Vec<u8>>,
     pub(super) l2cap_in: Receiver<Vec<u8>>,
     pub(super) data_in: Receiver<Vec<u8>>,
-    pub(super) control_out: Arc<Mutex<VecDeque<u8>>>,
-    pub(super) l2cap_out: Arc<Mutex<VecDeque<u8>>>,
-    pub(super) data_out: Arc<Mutex<VecDeque<Vec<u8>>>>,
+    pub(super) control_out: Arc<BoundedMessageQueue>,
+    pub(super) l2cap_out: Arc<BoundedByteQueue>,
+    pub(super) data_out: Arc<BoundedMessageQueue>,
     pub(super) l2cap_up: Arc<LinkSignal>,
     pub(super) l2cap_opens: Arc<Mutex<VecDeque<(u32, u16)>>>,
     pub(super) work: Arc<WorkSignal>,
@@ -132,6 +152,7 @@ pub(super) struct Shared {
     pub(super) dial_requests: Mutex<VecDeque<[u8; 6]>>,
     pub(super) l2cap_opens: Arc<Mutex<VecDeque<(u32, u16)>>>,
     work: Arc<WorkSignal>,
+    ingress_pressure_events: AtomicU64,
 }
 
 pub struct AndroidBleBridge {
@@ -161,6 +182,7 @@ impl AndroidBleBridge {
                 dial_requests: Mutex::new(VecDeque::new()),
                 l2cap_opens: Arc::new(Mutex::new(VecDeque::new())),
                 work: Arc::new(WorkSignal::default()),
+                ingress_pressure_events: AtomicU64::new(0),
             }),
         }
     }
@@ -243,6 +265,7 @@ impl AndroidBleBridge {
             *slot = None;
         }
         if let Ok(mut links) = self.shared.links.lock() {
+            links.values().for_each(Endpoints::close);
             links.clear();
         }
         if let Ok(mut events) = self.shared.events.lock() {
@@ -276,25 +299,45 @@ impl AndroidBleBridge {
 
     pub fn sighting(&self, address: [u8; 6], rssi: Option<i8>) {
         if let Ok(mut events) = self.shared.events.lock() {
-            events.push_back(Event::Sighting {
-                address: BleAddress::new(address),
-                rssi,
-            });
+            let address = BleAddress::new(address);
+            if let Some(Event::Sighting {
+                rssi: existing_rssi,
+                ..
+            }) = events.iter_mut().find(|event| {
+                matches!(event, Event::Sighting { address: existing, .. } if *existing == address)
+            }) {
+                *existing_rssi = rssi;
+                return;
+            }
+            if events.len() >= LIFECYCLE_EVENT_DEPTH {
+                return;
+            }
+            events.push_back(Event::Sighting { address, rssi });
         }
         self.shared.events_ready.notify_one();
     }
 
-    pub fn dial_failed(&self, address: [u8; 6]) {
+    pub fn dial_failed(&self, address: [u8; 6]) -> bool {
         if let Ok(mut events) = self.shared.events.lock() {
-            events.push_back(Event::DialFailed {
-                address: BleAddress::new(address),
-            });
+            let address = BleAddress::new(address);
+            if events.iter().any(
+                |event| matches!(event, Event::DialFailed { address: existing } if *existing == address),
+            ) {
+                return true;
+            }
+            if events.len() >= LIFECYCLE_EVENT_DEPTH && !remove_oldest_sighting(&mut events) {
+                return false;
+            }
+            events.push_back(Event::DialFailed { address });
+        } else {
+            return false;
         }
         self.shared.events_ready.notify_one();
+        true
     }
 
-    pub fn link_up(&self, conn_id: u32, address: [u8; 6], rssi: Option<i8>, dialed: bool) {
-        self.link_up_with_protocol(conn_id, address, rssi, dialed, PeerProtocol::Native, None);
+    pub fn link_up(&self, conn_id: u32, address: [u8; 6], rssi: Option<i8>, dialed: bool) -> bool {
+        self.link_up_with_protocol(conn_id, address, rssi, dialed, PeerProtocol::Native, None)
     }
 
     pub fn columba_link_up(
@@ -304,7 +347,7 @@ impl AndroidBleBridge {
         rssi: Option<i8>,
         dialed: bool,
         peer_identity: [u8; 16],
-    ) {
+    ) -> bool {
         self.link_up_with_protocol(
             conn_id,
             address,
@@ -312,7 +355,7 @@ impl AndroidBleBridge {
             dialed,
             PeerProtocol::Columba,
             Some(peer_identity),
-        );
+        )
     }
 
     fn link_up_with_protocol(
@@ -323,20 +366,23 @@ impl AndroidBleBridge {
         dialed: bool,
         peer_protocol: PeerProtocol,
         peer_identity: Option<[u8; 16]>,
-    ) {
+    ) -> bool {
         let (control_tx, control_rx) = channel::<Vec<u8>>(CONTROL_IN_DEPTH);
         let (l2cap_tx, l2cap_rx) = channel::<Vec<u8>>(DATA_IN_DEPTH);
         let (data_tx, data_rx) = channel::<Vec<u8>>(DATA_IN_DEPTH);
-        let control_out = Arc::new(Mutex::new(VecDeque::new()));
-        let l2cap_out = Arc::new(Mutex::new(VecDeque::new()));
-        let data_out = Arc::new(Mutex::new(VecDeque::new()));
+        let control_out = Arc::new(BoundedMessageQueue::with_byte_limit(OUTBOUND_BYTE_CAP));
+        let l2cap_out = Arc::new(BoundedByteQueue::new(OUTBOUND_BYTE_CAP));
+        let data_out = Arc::new(BoundedMessageQueue::with_count_limit(OUTBOUND_FRAME_DEPTH));
         let l2cap_up = Arc::new(LinkSignal {
             is_up: AtomicBool::new(false),
             notify: Notify::new(),
         });
         let peer_identity = peer_identity.map(BleIdentity::new);
         if let Ok(mut links) = self.shared.links.lock() {
-            links.insert(
+            if links.len() >= PEER_CAPACITY && !links.contains_key(&conn_id) {
+                return false;
+            }
+            if let Some(replaced) = links.insert(
                 conn_id,
                 Endpoints {
                     control_in_tx: control_tx,
@@ -347,9 +393,21 @@ impl AndroidBleBridge {
                     data_out: Arc::clone(&data_out),
                     l2cap_up: Arc::clone(&l2cap_up),
                 },
-            );
+            ) {
+                replaced.close();
+            }
+        } else {
+            return false;
         }
         if let Ok(mut events) = self.shared.events.lock() {
+            if events.len() >= LIFECYCLE_EVENT_DEPTH && !remove_oldest_sighting(&mut events) {
+                if let Ok(mut links) = self.shared.links.lock() {
+                    if let Some(link) = links.remove(&conn_id) {
+                        link.close();
+                    }
+                }
+                return false;
+            }
             events.push_back(Event::Link(PendingLink {
                 conn_id,
                 address: BleAddress::new(address),
@@ -367,61 +425,65 @@ impl AndroidBleBridge {
                 l2cap_opens: Arc::clone(&self.shared.l2cap_opens),
                 work: Arc::clone(&self.shared.work),
             }));
+        } else {
+            if let Ok(mut links) = self.shared.links.lock() {
+                if let Some(link) = links.remove(&conn_id) {
+                    link.close();
+                }
+            }
+            return false;
         }
         self.shared.events_ready.notify_one();
+        true
     }
 
-    pub fn control_in(&self, conn_id: u32, bytes: &[u8]) -> bool {
+    pub fn control_in(&self, conn_id: u32, bytes: &[u8]) -> AndroidBleIngressAdmission {
         if let Ok(links) = self.shared.links.lock() {
             if let Some(ep) = links.get(&conn_id) {
-                return ep
-                    .control_in_tx
-                    .try_reserve()
-                    .map(|permit| permit.send(bytes.to_vec()))
-                    .is_ok();
+                return self.try_ingress(&ep.control_in_tx, bytes);
             }
         }
-        false
+        AndroidBleIngressAdmission::Closed
     }
 
     pub fn control_out(&self, conn_id: u32, out: &mut [u8]) -> usize {
-        match self.out_queue(conn_id, |ep| Arc::clone(&ep.control_out)) {
-            Some(queue) => drain(&queue, out),
+        match self.out_message_queue(conn_id, |ep| Arc::clone(&ep.control_out)) {
+            Some(queue) => queue.peek(out),
             None => 0,
+        }
+    }
+
+    pub fn commit_control_out(&self, conn_id: u32) -> bool {
+        match self.out_message_queue(conn_id, |ep| Arc::clone(&ep.control_out)) {
+            Some(queue) => queue.commit(),
+            None => false,
         }
     }
 
     pub fn l2cap_in(&self, conn_id: u32, bytes: &[u8]) -> bool {
-        if let Ok(links) = self.shared.links.lock() {
-            if let Some(ep) = links.get(&conn_id) {
-                return ep
-                    .l2cap_in_tx
-                    .try_reserve()
-                    .map(|permit| permit.send(bytes.to_vec()))
-                    .is_ok();
-            }
-        }
-        false
+        let sender = self
+            .shared
+            .links
+            .lock()
+            .ok()
+            .and_then(|links| links.get(&conn_id).map(|ep| ep.l2cap_in_tx.clone()));
+        sender.is_some_and(|sender| sender.blocking_send(bytes.to_vec()).is_ok())
     }
 
     pub fn l2cap_out(&self, conn_id: u32, out: &mut [u8]) -> usize {
-        match self.out_queue(conn_id, |ep| Arc::clone(&ep.l2cap_out)) {
-            Some(queue) => drain(&queue, out),
+        match self.out_byte_queue(conn_id, |ep| Arc::clone(&ep.l2cap_out)) {
+            Some(queue) => queue.drain(out),
             None => 0,
         }
     }
 
-    pub fn data_in(&self, conn_id: u32, bytes: &[u8]) -> bool {
+    pub fn data_in(&self, conn_id: u32, bytes: &[u8]) -> AndroidBleIngressAdmission {
         if let Ok(links) = self.shared.links.lock() {
             if let Some(ep) = links.get(&conn_id) {
-                return ep
-                    .data_in_tx
-                    .try_reserve()
-                    .map(|permit| permit.send(bytes.to_vec()))
-                    .is_ok();
+                return self.try_ingress(&ep.data_in_tx, bytes);
             }
         }
-        false
+        AndroidBleIngressAdmission::Closed
     }
 
     pub fn data_out(&self, conn_id: u32, out: &mut [u8]) -> usize {
@@ -434,15 +496,20 @@ impl AndroidBleBridge {
         let Some(queue) = queue else {
             return 0;
         };
-        let Ok(mut queue) = queue.lock() else {
-            return 0;
-        };
-        let Some(message) = queue.pop_front() else {
-            return 0;
-        };
-        let n = message.len().min(out.len());
-        out[..n].copy_from_slice(&message[..n]);
-        n
+        queue.peek(out)
+    }
+
+    pub fn commit_data_out(&self, conn_id: u32) -> bool {
+        let queue = self
+            .shared
+            .links
+            .lock()
+            .ok()
+            .and_then(|links| links.get(&conn_id).map(|ep| Arc::clone(&ep.data_out)));
+        match queue {
+            Some(queue) => queue.commit(),
+            None => false,
+        }
     }
 
     pub fn l2cap_up(&self, conn_id: u32) {
@@ -455,16 +522,27 @@ impl AndroidBleBridge {
 
     pub fn disconnected(&self, conn_id: u32) {
         if let Ok(mut links) = self.shared.links.lock() {
-            links.remove(&conn_id);
+            if let Some(link) = links.remove(&conn_id) {
+                link.close();
+            }
         }
         self.shared.work.wake();
     }
 
-    pub fn push_dial(&self, address: [u8; 6]) {
+    pub fn push_dial(&self, address: [u8; 6]) -> bool {
         if let Ok(mut requests) = self.shared.dial_requests.lock() {
+            if requests.contains(&address) {
+                return true;
+            }
+            if requests.len() >= PEER_CAPACITY {
+                return false;
+            }
             requests.push_back(address);
+        } else {
+            return false;
         }
         self.shared.work.wake();
+        true
     }
 
     pub fn next_dial(&self, out: &mut [u8]) -> bool {
@@ -502,11 +580,47 @@ impl AndroidBleBridge {
         }
     }
 
-    fn out_queue(
+    pub fn ingress_pressure_events(&self) -> u64 {
+        self.shared.ingress_pressure_events.load(Ordering::Relaxed)
+    }
+
+    fn try_ingress(&self, sender: &Sender<Vec<u8>>, bytes: &[u8]) -> AndroidBleIngressAdmission {
+        match sender.try_reserve() {
+            Ok(permit) => {
+                permit.send(bytes.to_vec());
+                AndroidBleIngressAdmission::Accepted
+            }
+            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                let _ = self.shared.ingress_pressure_events.fetch_update(
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                    |count| Some(count.saturating_add(1)),
+                );
+                AndroidBleIngressAdmission::Full
+            }
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                AndroidBleIngressAdmission::Closed
+            }
+        }
+    }
+
+    fn out_message_queue(
         &self,
         conn_id: u32,
-        pick: impl Fn(&Endpoints) -> Arc<Mutex<VecDeque<u8>>>,
-    ) -> Option<Arc<Mutex<VecDeque<u8>>>> {
+        pick: impl Fn(&Endpoints) -> Arc<BoundedMessageQueue>,
+    ) -> Option<Arc<BoundedMessageQueue>> {
+        self.shared
+            .links
+            .lock()
+            .ok()
+            .and_then(|links| links.get(&conn_id).map(pick))
+    }
+
+    fn out_byte_queue(
+        &self,
+        conn_id: u32,
+        pick: impl Fn(&Endpoints) -> Arc<BoundedByteQueue>,
+    ) -> Option<Arc<BoundedByteQueue>> {
         self.shared
             .links
             .lock()
@@ -529,17 +643,13 @@ impl Default for AndroidBleBridge {
     }
 }
 
-fn drain(queue: &Mutex<VecDeque<u8>>, out: &mut [u8]) -> usize {
-    let Ok(mut queue) = queue.lock() else {
-        return 0;
+fn remove_oldest_sighting(events: &mut VecDeque<Event>) -> bool {
+    let Some(index) = events
+        .iter()
+        .position(|event| matches!(event, Event::Sighting { .. }))
+    else {
+        return false;
     };
-    let mut written = 0;
-    for slot in out.iter_mut() {
-        let Some(byte) = queue.pop_front() else {
-            break;
-        };
-        *slot = byte;
-        written += 1;
-    }
-    written
+    events.remove(index);
+    true
 }

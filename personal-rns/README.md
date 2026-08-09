@@ -16,7 +16,7 @@ For a Tokio application using TCP:
 cargo add personal-rns --features tokio-host,tcp
 ```
 
-For the exact source candidate before its announced release:
+For the exact source behind the public 0.3.4 prerelease:
 
 ```console
 cargo add personal-rns --git https://github.com/KenAKAFrosty/Prns --features tokio-host,tcp
@@ -32,6 +32,8 @@ From a source checkout:
 ./tools/prns doctor getting-started
 cargo tools guide rust-basics
 ```
+
+(On Windows, run the doctor as `.\tools\prns.cmd doctor getting-started`.)
 
 That example creates two nodes, binds an isolated local TCP connection, announces a real destination, verifies the signed announce on the second node, and exits on a bounded success condition. Its complete source is [`examples/node_basics.rs`](examples/node_basics.rs).
 

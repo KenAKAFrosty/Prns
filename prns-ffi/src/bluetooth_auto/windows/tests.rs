@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use prns_core::interfaces::bluetooth_auto::{
-    fragments_of, BleAddress, BleUuid, BLE_SERVICE_UUID, FRAGMENT_HEADER_LEN, NATIVE_CONTROL_UUID,
-    NATIVE_DATA_UUID,
+    fragments_of, BleAddress, BleUuid, ScanningMode, BLE_SERVICE_UUID, FRAGMENT_HEADER_LEN,
+    NATIVE_CONTROL_UUID, NATIVE_DATA_UUID,
 };
 use windows::core::GUID;
 use windows::Devices::Bluetooth::GenericAttributeProfile::GattCommunicationStatus;
@@ -88,11 +88,25 @@ fn scratch_buffer_holds_a_max_payload_fragment() {
 #[test]
 fn scan_intent_round_trips_policy_state() {
     let intent = ScanIntent::new();
-    assert!(!intent.is_requested());
-    intent.set(true);
-    assert!(intent.is_requested());
-    intent.set(false);
-    assert!(!intent.is_requested());
+    assert!(!intent.is_effective());
+    intent.request(ScanningMode::On);
+    assert!(intent.is_effective());
+    intent.request(ScanningMode::Off);
+    assert!(!intent.is_effective());
+}
+
+#[test]
+fn a_dial_hold_suspends_scanning_until_released() {
+    let intent = ScanIntent::new();
+    intent.request(ScanningMode::On);
+    intent.hold_for_dial();
+    assert!(!intent.is_effective());
+    intent.release_dial_hold();
+    assert!(intent.is_effective());
+    intent.hold_for_dial();
+    intent.request(ScanningMode::Off);
+    intent.release_dial_hold();
+    assert!(!intent.is_effective());
 }
 
 #[test]

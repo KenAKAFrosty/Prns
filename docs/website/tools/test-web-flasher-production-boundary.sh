@@ -7,6 +7,7 @@ test_root="$website/target/browser-tests"
 dioxus_dist="$website/target/dx/reticulum-site/release/web/public"
 hosted="$test_root/production-hosted"
 embedded="$test_root/production-embedded"
+captive_page="$workspace/personal-hopspot/embedded/esp32/assets/captive-portal.html"
 public_isolation="$(mktemp -d "${TMPDIR:-/tmp}/prns-web-boundary.XXXXXX")"
 hosted_public_paths=(
     "public/firmware"
@@ -81,45 +82,29 @@ cp -R "$dioxus_dist/." "$hosted/"
 mkdir -p "$hosted/assets/flasher"
 cp "$website/target/hosted-assets/prns-flash.js" "$hosted/assets/flasher/prns-flash.js"
 
-rm -rf -- "$dioxus_dist" "$embedded"
-PRNS_EMBEDDED_SITE=1 \
-PRNS_BUILD_CHANNEL=stable \
-dx build --platform web --debug-symbols false --release --locked --features embedded-site
-test -f "$dioxus_dist/index.html"
+test -f "$captive_page"
+rm -rf -- "$embedded"
 mkdir -p "$embedded"
-cp -R "$dioxus_dist/." "$embedded/"
+cp "$captive_page" "$embedded/index.html"
 
 invalid_features_log="$test_root/invalid-production-feature-combination.log"
-if cargo check --locked --features 'embedded-site browser-test-fixture' >"$invalid_features_log" 2>&1; then
-    echo "embedded-site unexpectedly compiled with browser-test-fixture" >&2
-    exit 1
-fi
-if ! grep -qF 'browser-test-fixture is forbidden in embedded production builds' "$invalid_features_log"; then
-    echo "the invalid production feature combination failed for an unexpected reason" >&2
-    exit 1
-fi
-
 local_key="$website/web-flasher/browser/fixtures/signed-candidate/minisign.pub"
 local_digest="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 local_version="0.3.1-dev.clean.$local_digest"
 local_commit="0123456789abcdef0123456789abcdef01234567"
-for invalid_features in \
-    "embedded-site local-dev-flasher" \
-    "browser-test-fixture local-dev-flasher"; do
-    if PRNS_BUILD_VERSION="$local_version" \
-        PRNS_BUILD_COMMIT="$local_commit" \
-        PRNS_LOCAL_DEV_PUBLIC_KEY="$local_key" \
-        PRNS_LOCAL_DEV_BOARDS="heltec-v4" \
-        PRNS_LOCAL_DEV_SOURCE_DIGEST="$local_digest" \
-        PRNS_LOCAL_DEV_SOURCE_STATE="clean" \
-        cargo check --locked --features "$invalid_features" \
-        >"$invalid_features_log" 2>&1; then
-        echo "invalid website features unexpectedly compiled: $invalid_features" >&2
-        exit 1
-    fi
-    grep -qF 'local-dev-flasher is mutually exclusive with every other website profile' \
-        "$invalid_features_log"
-done
+if PRNS_BUILD_VERSION="$local_version" \
+    PRNS_BUILD_COMMIT="$local_commit" \
+    PRNS_LOCAL_DEV_PUBLIC_KEY="$local_key" \
+    PRNS_LOCAL_DEV_BOARDS="heltec-v4" \
+    PRNS_LOCAL_DEV_SOURCE_DIGEST="$local_digest" \
+    PRNS_LOCAL_DEV_SOURCE_STATE="clean" \
+    cargo check --locked --features "browser-test-fixture local-dev-flasher" \
+    >"$invalid_features_log" 2>&1; then
+    echo "invalid website features unexpectedly compiled" >&2
+    exit 1
+fi
+grep -qF 'local-dev-flasher is mutually exclusive with every other website profile' \
+    "$invalid_features_log"
 if PRNS_LOCAL_DEV_PUBLIC_KEY="$local_key" cargo check --locked \
     >"$invalid_features_log" 2>&1; then
     echo "production website unexpectedly accepted local development build inputs" >&2

@@ -995,10 +995,19 @@ fn report_unavailable_rnode_multi_transport(
         "RNodeMulti requires one local serial device for all of its radios",
         Some("a local serial device path".to_string()),
         format!(
-            "set `{port_key} = /dev/ttyUSB0` for [[{}]], or set `{enabled_key} = No`",
+            "set `{port_key} = {}` for [[{}]], or set `{enabled_key} = No`",
+            serial_port_example(),
             context.interface
         ),
     ));
+}
+
+fn serial_port_example() -> &'static str {
+    if cfg!(windows) {
+        "COM3"
+    } else {
+        "/dev/ttyUSB0"
+    }
 }
 
 fn validate_medium_requirements(
@@ -1101,8 +1110,9 @@ fn validate_medium_requirements(
                     alternatives: &[],
                     accepted: "a serial device path",
                     correction: format!(
-                        "add `{} = /dev/ttyUSB0` under [[{interface}]]",
-                        interface_key::PORT
+                        "add `{} = {}` under [[{interface}]]",
+                        interface_key::PORT,
+                        serial_port_example()
                     ),
                 },
                 errors,
@@ -1119,8 +1129,9 @@ fn validate_medium_requirements(
                     alternatives: &[],
                     accepted: "a serial device path",
                     correction: format!(
-                        "add `{} = /dev/ttyUSB0` under [[{interface}]]",
-                        interface_key::PORT
+                        "add `{} = {}` under [[{interface}]]",
+                        interface_key::PORT,
+                        serial_port_example()
                     ),
                 },
                 errors,
@@ -1156,8 +1167,9 @@ fn validate_medium_requirements(
                     alternatives: &[],
                     accepted: "a local serial device path or tcp:// followed by a host",
                     correction: format!(
-                        "add `{} = /dev/ttyUSB0` or `{} = tcp://radio.example` under [[{interface}]]",
+                        "add `{} = {}` or `{} = tcp://radio.example` under [[{interface}]]",
                         interface_key::PORT,
+                        serial_port_example(),
                         interface_key::PORT
                     ),
                 },
@@ -1220,8 +1232,9 @@ fn validate_medium_requirements(
                     alternatives: &[],
                     accepted: "a local serial device path",
                     correction: format!(
-                        "add `{} = /dev/ttyUSB0` under [[{interface}]]",
-                        interface_key::PORT
+                        "add `{} = {}` under [[{interface}]]",
+                        interface_key::PORT,
+                        serial_port_example()
                     ),
                 },
                 errors,

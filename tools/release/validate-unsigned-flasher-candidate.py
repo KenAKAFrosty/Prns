@@ -8,7 +8,6 @@ import hashlib
 import json
 from pathlib import Path, PurePosixPath
 import subprocess
-import struct
 import sys
 
 from flasher_build_metadata import validate_metadata
@@ -27,13 +26,6 @@ CLI_TARGETS = {
     "x86_64-pc-windows-msvc": ".zip",
 }
 SHIPPING_BOARDS = {"heltec-v4", "heltec-v4-r8", "t-beam-supreme", "xiao-esp32-c6", "t-echo"}
-S3_SOURCE_BOARDS = {"heltec-v4", "heltec-v4-r8", "t-beam-supreme"}
-ESP_PARTITION_ENTRY = struct.Struct("<HBBII16sI")
-ESP_PARTITION_MAGIC = 0x50AA
-ESP_PARTITION_MD5_MAGIC = 0xEBEB
-ESP_APPLICATION_TYPE = 0x00
-ESP_FACTORY_APPLICATION_SUBTYPE = 0x00
-SOURCE_APPLICATION_HEADROOM = 1024 * 1024
 REQUIRED_RELEASE_FILES = (
     "VERSION",
     "flash-manifest.json",
@@ -96,44 +88,6 @@ def safe_path(root: Path, relative: str) -> Path:
     ):
         raise ValueError(f"unsafe candidate path {relative!r}")
     return root.joinpath(*pure.parts)
-
-
-def factory_application_partition(partition_table: Path) -> tuple[int, int]:
-    payload = partition_table.read_bytes()
-    if not payload or len(payload) % ESP_PARTITION_ENTRY.size != 0:
-        raise ValueError("ESP partition table has a truncated entry")
-    factories: list[tuple[int, int]] = []
-    for entry_index in range(0, len(payload), ESP_PARTITION_ENTRY.size):
-        entry = payload[entry_index : entry_index + ESP_PARTITION_ENTRY.size]
-        magic = int.from_bytes(entry[:2], "little")
-        if magic in {0xFFFF, ESP_PARTITION_MD5_MAGIC}:
-            break
-        if magic != ESP_PARTITION_MAGIC:
-            raise ValueError(
-                f"ESP partition table entry {entry_index // ESP_PARTITION_ENTRY.size} "
-                f"has invalid magic 0x{magic:04x}"
-            )
-        (
-            _magic,
-            partition_type,
-            subtype,
-            offset,
-            size,
-            _label,
-            _flags,
-        ) = ESP_PARTITION_ENTRY.unpack(entry)
-        if (
-            partition_type == ESP_APPLICATION_TYPE
-            and subtype == ESP_FACTORY_APPLICATION_SUBTYPE
-        ):
-            if offset <= 0 or size <= 0:
-                raise ValueError("ESP factory application partition has an invalid extent")
-            factories.append((offset, size))
-    if len(factories) != 1:
-        raise ValueError(
-            "ESP partition table must contain exactly one factory application partition"
-        )
-    return factories[0]
 
 
 def payload_files(root: Path) -> set[str]:
@@ -330,12 +284,6 @@ def verify(arguments: argparse.Namespace) -> dict:
     source_metadata = json.loads(
         (root / "metadata" / "source.json").read_text(encoding="utf-8")
     )
-    source_identity = {
-        "route": "/file/source.zip",
-        "checksum_route": "/file/source.zip.sha256",
-        "size": source_metadata["size"],
-        "sha256": source_metadata["sha256"],
-    }
     source_archive = (root / "website" / "source.zip").read_bytes()
     browser_wasm = (
         root
@@ -387,35 +335,8 @@ def verify(arguments: argparse.Namespace) -> dict:
             raise ValueError(f"candidate target {target.get('board_slug')!r} has no firmware parts")
         board_slug = target.get("board_slug")
         source = target.get("source")
-        if board_slug in {"xiao-esp32-c6", "t-echo"} and source is not None:
-            raise ValueError(f"constrained target {board_slug} must not carry source metadata")
-        if (
-            board_slug in S3_SOURCE_BOARDS
-            and source is not None
-            and source != source_identity
-        ):
-            raise ValueError(f"target {board_slug} has the wrong embedded source identity")
         if source is not None:
-            applications = [
-                part
-                for part in parts
-                if isinstance(part, dict) and part.get("kind") == "application"
-            ]
-            partition_tables = [
-                part
-                for part in parts
-                if isinstance(part, dict) and part.get("kind") == "partition-table"
-            ]
-            if len(applications) != 1 or len(partition_tables) != 1:
-                raise ValueError(
-                    f"source-enabled target {board_slug} must carry exactly one "
-                    "application and partition table"
-                )
-            application = applications[0]
-            partition_table = partition_tables[0]
-        else:
-            application = None
-            partition_table = None
+            raise ValueError(f"embedded target {board_slug} must not carry source metadata")
         for part in parts:
             if not isinstance(part, dict):
                 raise ValueError("candidate manifest contains a malformed firmware part")
@@ -435,61 +356,9 @@ def verify(arguments: argparse.Namespace) -> dict:
                 raise ValueError(f"candidate firmware part does not match manifest: {relative}")
             if not hosted.is_file() or hosted.read_bytes() != artifact.read_bytes():
                 raise ValueError(f"hosted firmware part differs from candidate payload: {relative}")
-        if application is not None:
-            partition_offset, partition_capacity = factory_application_partition(
-                safe_path(root, partition_table["path"])
-            )
-            application_offset = application.get("offset")
-            application_size = application.get("size")
-            if (
-                not isinstance(application_offset, int)
-                or isinstance(application_offset, bool)
-                or application_offset != partition_offset
-            ):
+            if part.get("kind") == "application" and source_archive in artifact.read_bytes():
                 raise ValueError(
-                    f"target {board_slug} application offset disagrees with its "
-                    "factory partition"
-                )
-            if (
-                not isinstance(application_size, int)
-                or isinstance(application_size, bool)
-                or application_size + SOURCE_APPLICATION_HEADROOM
-                > partition_capacity
-            ):
-                raise ValueError(
-                    f"target {board_slug} does not retain 1 MiB application headroom"
-                )
-            application_bytes = safe_path(root, application["path"]).read_bytes()
-            if application_bytes.count(source_archive) != 1:
-                raise ValueError(
-                    f"target {board_slug} must embed the exact source.zip bytes exactly once"
-                )
-            for marker in (
-                version.encode(),
-                source_metadata["sha256"].encode(),
-                arguments.expected_commit[:12].encode(),
-                b"/file/source.zip",
-                b"/file/source.zip.sha256",
-            ):
-                if marker not in application_bytes:
-                    raise ValueError(
-                        f"target {board_slug} source page does not carry the candidate identity"
-                    )
-        elif board_slug in S3_SOURCE_BOARDS:
-            application_part = next(
-                (
-                    part
-                    for part in parts
-                    if isinstance(part, dict) and part.get("kind") == "application"
-                ),
-                None,
-            )
-            if (
-                application_part is not None
-                and source_archive in safe_path(root, application_part["path"]).read_bytes()
-            ):
-                raise ValueError(
-                    f"target {board_slug} claims no source capability but embeds source.zip"
+                    f"embedded target {board_slug} must not embed source.zip"
                 )
 
     capability_metadata = json.loads(
@@ -509,32 +378,16 @@ def verify(arguments: argparse.Namespace) -> dict:
     }
     if set(capability_by_board) != SHIPPING_BOARDS:
         raise ValueError("source capability metadata has a malformed board set")
-    target_by_board = {target["board_slug"]: target for target in targets}
     for board_slug, capability in capability_by_board.items():
-        expected_nominal = board_slug in S3_SOURCE_BOARDS
-        if capability.get("nominally_capable") is not expected_nominal:
+        if capability.get("nominally_capable") is not False:
             raise ValueError(
                 f"{board_slug} source capability metadata disagrees with the board catalog"
             )
-    for board_slug in S3_SOURCE_BOARDS:
-        capability = capability_by_board[board_slug]
-        status = capability.get("status")
-        if status == "serving":
-            if target_by_board[board_slug].get("source") != source_identity:
-                raise ValueError(f"{board_slug} serving claim disagrees with its target metadata")
-            if capability.get("reserve_bytes") != SOURCE_APPLICATION_HEADROOM:
-                raise ValueError(
-                    f"{board_slug} serving claim does not record the required reserve"
-                )
-        elif status == "capacity-downgrade":
-            if target_by_board[board_slug].get("source") is not None:
-                raise ValueError(f"{board_slug} downgrade still claims an embedded archive")
-            if capability.get("reserve_bytes") is not None:
-                raise ValueError(f"{board_slug} downgrade must not claim reserved bytes")
-        else:
-            raise ValueError(f"{board_slug} has an invalid source capability status")
-    for board_slug in {"xiao-esp32-c6", "t-echo"}:
-        if capability_by_board[board_slug].get("status") != "absent":
+        if (
+            capability.get("status") != "absent"
+            or capability.get("source") is not None
+            or capability.get("reserve_bytes") is not None
+        ):
             raise ValueError(f"{board_slug} must explicitly record source capability as absent")
 
     channel_directory = root / "channels"

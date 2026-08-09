@@ -8,7 +8,7 @@ pub use target::{
 pub use values::{
     AfterResetStrategy, BeforeResetStrategy, BoardId, ChipFamily, DomainValueError, FlashFrequency,
     FlashMode, ImmutableArtifactPath, KeyId, PreparationProfile, ProvisioningFormat,
-    ProvisioningSlot, ReleaseVersion, Sha256Digest,
+    ProvisioningSlot, ReleaseVersion, Sha256Digest, Uf2BoardIdPrefix, Uf2MountLabel,
 };
 
 pub(crate) use target::TargetIdentity;

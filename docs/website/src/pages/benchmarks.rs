@@ -82,8 +82,18 @@ pub fn BenchmarksHostPage(host: String) -> Element {
 }
 
 fn index_markup() -> String {
-    let mut out = String::with_capacity(INDEX_MD.len());
-    let mut rest = INDEX_MD;
+    rewrite_index(INDEX_MD)
+}
+
+/// Repoint the index's result links at site routes and drop its own title, which the page supplies itself.
+///
+/// The source is `include_str!`d from a checkout, so its newlines are whatever Git wrote: `\n` on Linux and macOS, `\r\n` on a default Windows clone.
+///
+/// Normalise once here rather than spelling both forms into every pattern below.
+fn rewrite_index(source: &str) -> String {
+    let source = source.replace("\r\n", "\n");
+    let mut out = String::with_capacity(source.len());
+    let mut rest = source.as_str();
     const PREFIX: &str = "](RESULTS-";
     const SUFFIX: &str = ".md)";
 
@@ -104,8 +114,9 @@ fn index_markup() -> String {
     out.replacen("# Benchmark results\n\n", "", 1)
 }
 
-/// Repoint a host page's back-link at the site index, and make asset URLs absolute
-/// (relative assets would resolve under `/benchmarks/<host>/`, not `/assets/`).
+/// Repoint a host page's back-link at the site index and make asset URLs absolute.
+///
+/// Relative assets would resolve under `/benchmarks/<host>/`, not `/assets/`.
 fn host_markup(md: &str) -> String {
     md.replace("](RESULTS.md)", "](/benchmarks)")
         .replace("src=\"assets/", "src=\"/assets/")
@@ -127,6 +138,29 @@ mod tests {
         assert!(md.contains("](/benchmarks/x86_64-unknown-linux-gnu)"));
         assert!(!md.contains("](RESULTS-aarch64-apple-darwin.md)"));
         assert!(!md.contains("# Benchmark results"));
+    }
+
+    /// A Windows checkout hands `include_str!` CRLF newlines, which used to defeat the title strip and leave the page rendering its heading twice.
+    ///
+    /// Assert it directly so the guarantee does not depend on which platform ran the suite.
+    #[test]
+    fn rewrites_the_index_whatever_newlines_the_checkout_used() {
+        const SOURCE: &str = "<!-- generated -->\n# Benchmark results\n\nSee [macOS](RESULTS-aarch64-apple-darwin.md).\n";
+
+        for (label, source) in [
+            ("lf", SOURCE.to_string()),
+            ("crlf", SOURCE.replace('\n', "\r\n")),
+        ] {
+            let md = rewrite_index(&source);
+            assert!(
+                !md.contains("# Benchmark results"),
+                "{label}: the page supplies its own title, so the document's must be removed"
+            );
+            assert!(
+                md.contains("](/benchmarks/aarch64-apple-darwin)"),
+                "{label}: result links must point at site routes"
+            );
+        }
     }
 
     #[test]

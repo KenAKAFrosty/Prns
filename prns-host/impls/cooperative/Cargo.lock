@@ -273,7 +273,7 @@ checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
 name = "prns-core"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "aes",
  "cbc",
@@ -289,21 +289,21 @@ dependencies = [
 
 [[package]]
 name = "prns-host"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "prns-runtime",
 ]
 
 [[package]]
 name = "prns-host-cooperative"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "prns-host",
 ]
 
 [[package]]
 name = "prns-runtime"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "cfg-if",
  "heapless",

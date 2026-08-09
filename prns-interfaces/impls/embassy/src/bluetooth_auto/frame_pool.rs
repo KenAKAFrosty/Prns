@@ -9,7 +9,7 @@ use portable_atomic::{AtomicBool, Ordering};
 
 type Availability<M, const WAITERS: usize> = FairSemaphore<M, WAITERS>;
 
-pub(super) struct SharedFramePool<
+pub struct SharedFramePool<
     M: RawMutex + 'static,
     const FRAME: usize,
     const CAPACITY: usize,
@@ -111,7 +111,7 @@ impl<M: RawMutex + 'static, const FRAME: usize, const CAPACITY: usize, const WAI
 }
 
 #[must_use]
-pub(super) struct FrameLease<
+pub struct FrameLease<
     M: RawMutex + 'static,
     const FRAME: usize,
     const CAPACITY: usize,
@@ -170,6 +170,44 @@ impl<M: RawMutex + 'static, const FRAME: usize, const CAPACITY: usize, const WAI
                 capacity: FRAME,
             })
     }
+
+    pub async fn append(&self, bytes: &[u8]) -> Result<(), FramePoolError> {
+        let mut frame = self.lock().await;
+        let len = frame.len().saturating_add(bytes.len());
+        if len > FRAME {
+            return Err(FramePoolError::FrameTooLarge {
+                len,
+                capacity: FRAME,
+            });
+        }
+        frame
+            .extend_from_slice(bytes)
+            .map_err(|_| FramePoolError::FrameTooLarge {
+                len,
+                capacity: FRAME,
+            })
+    }
+
+    pub fn try_append(&self, bytes: &[u8]) -> Result<(), FramePoolError> {
+        let mut frame = self
+            .slot()
+            .frame
+            .try_lock()
+            .map_err(|_| FramePoolError::SlotBusy)?;
+        let len = frame.len().saturating_add(bytes.len());
+        if len > FRAME {
+            return Err(FramePoolError::FrameTooLarge {
+                len,
+                capacity: FRAME,
+            });
+        }
+        frame
+            .extend_from_slice(bytes)
+            .map_err(|_| FramePoolError::FrameTooLarge {
+                len,
+                capacity: FRAME,
+            })
+    }
 }
 
 impl<M: RawMutex + 'static, const FRAME: usize, const CAPACITY: usize, const WAITERS: usize> Drop
@@ -182,7 +220,7 @@ impl<M: RawMutex + 'static, const FRAME: usize, const CAPACITY: usize, const WAI
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub(super) enum FramePoolError {
+pub enum FramePoolError {
     FrameTooLarge { len: usize, capacity: usize },
     SlotBusy,
     WaitQueueFull,
@@ -191,7 +229,9 @@ pub(super) enum FramePoolError {
 
 #[cfg(test)]
 mod tests {
-    use core::future::ready;
+    use core::future::{poll_fn, ready, Future};
+    use core::pin::pin;
+    use core::task::Poll;
 
     use embassy_futures::block_on;
     use embassy_futures::select::{select, select3, Either, Either3};
@@ -224,6 +264,13 @@ mod tests {
             assert!(lease.is_ok());
             if let Ok(lease) = lease {
                 assert_eq!(lease.fill(b"prns").await, Ok(()));
+                assert_eq!(
+                    lease.append(b"!").await,
+                    Err(FramePoolError::FrameTooLarge {
+                        len: 5,
+                        capacity: 4,
+                    })
+                );
                 {
                     let frame = lease.lock().await;
                     assert_eq!(frame.as_slice(), b"prns");
@@ -243,8 +290,9 @@ mod tests {
                 if let Ok(reused) = reused {
                     assert!(reused.lock().await.is_empty());
                     assert_eq!(reused.fill(b"rns").await, Ok(()));
+                    assert_eq!(reused.try_append(b"!"), Ok(()));
                     let frame = reused.lock().await;
-                    assert_eq!(frame.as_slice(), b"rns");
+                    assert_eq!(frame.as_slice(), b"rns!");
                 }
             }
         });
@@ -280,5 +328,31 @@ mod tests {
         });
         drop(held);
         assert_eq!(POOL.try_lease().map(|lease| lease.is_some()), Ok(true));
+    }
+
+    #[test]
+    fn waiters_receive_released_capacity_in_registration_order() {
+        static POOL: SharedFramePool<CriticalSectionRawMutex, 4, 1, 2> = SharedFramePool::new();
+
+        let held = POOL.try_lease().ok().flatten();
+        assert!(held.is_some());
+        block_on(async {
+            let mut first = pin!(POOL.lease());
+            let mut second = pin!(POOL.lease());
+            poll_fn(|cx| {
+                assert!(first.as_mut().poll(cx).is_pending());
+                assert!(second.as_mut().poll(cx).is_pending());
+                Poll::Ready(())
+            })
+            .await;
+            drop(held);
+
+            let winner = select(first.as_mut(), second.as_mut()).await;
+            assert!(matches!(&winner, Either::First(Ok(_))));
+            if let Either::First(Ok(first_lease)) = winner {
+                drop(first_lease);
+                assert!(second.await.is_ok());
+            }
+        });
     }
 }

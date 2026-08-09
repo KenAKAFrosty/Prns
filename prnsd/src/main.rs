@@ -45,9 +45,12 @@ fn main() -> ExitCode {
     };
     let command = match command {
         cli::Command::Run(args) if !args.service => {
-            let managed = match tray::managed_process() {
+            let managed = match run_process_context(&args) {
                 Ok(managed) => managed,
-                Err(exit_code) => return exit_code,
+                Err(error) => {
+                    eprintln!("prnsd: {error}");
+                    return ExitCode::FAILURE;
+                }
             };
             tray::run(args.daemon, managed);
         }
@@ -68,6 +71,8 @@ fn main() -> ExitCode {
 }
 
 fn command_from_environment() -> Result<Option<cli::Command>, ExitCode> {
+    #[cfg(windows)]
+    prns_ffi::console::enable_ansi_sequences();
     let args: Vec<_> = std::env::args_os().collect();
     if args.len() == 2 && args.get(1).is_some_and(|arg| arg == "--print-banner") {
         splash::print_daemon();

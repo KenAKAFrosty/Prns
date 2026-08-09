@@ -5,7 +5,9 @@ use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
 use embedded_graphics::text::{Baseline, Text};
 
-use crate::screen::{Card, CardKind, Liveness, LocalDocsAccess};
+use personal_rns::interfaces::ConnectionState;
+
+use crate::screen::{Card, CardKind, LocalDocsAccess};
 
 use super::glyphs::{
     draw_arrow, draw_clock, draw_global_icon, draw_interface_icon, draw_link, draw_offline_icon,
@@ -22,11 +24,15 @@ fn name_font(kind: CardKind) -> &'static MonoFont<'static> {
     }
 }
 
-fn name_char_w(kind: CardKind) -> i32 {
+const fn name_char_w(kind: CardKind) -> i32 {
     match kind {
         CardKind::Peer => FONT_5X8_CHAR_W,
         _ => FONT_6X10_CHAR_W,
     }
+}
+
+pub const fn card_label_max_chars(kind: CardKind) -> usize {
+    ((WIDTH - NAME_TEXT_X) / name_char_w(kind)) as usize
 }
 fn selected_name_backing_width(label: &str, char_w: i32) -> u32 {
     let label_right = NAME_TEXT_X + label.chars().count() as i32 * char_w + 1;
@@ -38,6 +44,32 @@ fn global_row_backing_width() -> u32 {
     let label_right = GLOBAL_TEXT_X + GLOBAL_LABEL.chars().count() as i32 * FONT_6X10_CHAR_W + 2;
     (label_right - GLOBAL_BACKING_X).max(0) as u32
 }
+
+pub(in crate::screen) const fn connection_status_label(
+    kind: CardKind,
+    connection: ConnectionState,
+) -> Option<&'static str> {
+    match connection {
+        ConnectionState::Initializing => Some("Initializing"),
+        ConnectionState::Connected => None,
+        ConnectionState::Degraded => Some("Degraded"),
+        ConnectionState::Reconnecting => Some("Retrying"),
+        ConnectionState::Failed => Some("Failed"),
+        ConnectionState::Disconnected => match kind {
+            CardKind::Wifi | CardKind::WifiStation | CardKind::WifiStationDisabled => {
+                Some("LAN Down")
+            }
+            CardKind::Ble => Some("No Peers"),
+            CardKind::Usb => Some("Waiting"),
+            CardKind::LoRa | CardKind::EspNow | CardKind::Tcp | CardKind::Peer => {
+                Some("Disconnected")
+            }
+        },
+        ConnectionState::Disabled => Some("Off"),
+        ConnectionState::Unknown => Some("Unknown"),
+    }
+}
+
 pub(in crate::screen) fn draw_card_with_selection<D: DrawTarget<Color = BinaryColor>>(
     display: &mut D,
     top: i32,
@@ -68,7 +100,10 @@ pub(in crate::screen) fn draw_card_with_selection<D: DrawTarget<Color = BinaryCo
     let label_style = MonoTextStyle::new(name_font(card.kind), name_color);
     let num_style = MonoTextStyle::new(&FONT_5X8, BinaryColor::On);
 
-    if card.liveness.is_failed() {
+    if matches!(
+        card.connection,
+        ConnectionState::Failed | ConnectionState::Unknown
+    ) {
         draw_offline_icon(display, NAME_ICON_X, top + NAME_LINE_Y + 1, name_color);
     } else {
         draw_interface_icon(
@@ -90,14 +125,9 @@ pub(in crate::screen) fn draw_card_with_selection<D: DrawTarget<Color = BinaryCo
     let tx_y = top + 13;
     let rx_y = top + 22;
     let live_y = top + 31;
-    let whole_card_word = match card.liveness {
-        Liveness::Failed => Some("Failed"),
-        Liveness::Dormant => Some("Dormant"),
-        Liveness::Disabled => Some("Off"),
-        Liveness::Live => None,
-    };
+    let whole_card_word = connection_status_label(card.kind, card.connection);
     if let Some(word) = whole_card_word {
-        let _ = Text::with_baseline(word, Point::new(16, top + 20), num_style, Baseline::Top)
+        let _ = Text::with_baseline(word, Point::new(2, top + 20), num_style, Baseline::Top)
             .draw(display);
         return;
     }
@@ -120,10 +150,10 @@ pub(in crate::screen) fn draw_card_with_selection<D: DrawTarget<Color = BinaryCo
     );
 
     draw_person(display, STAT_ICON_X, tx_y + 1);
-    let destinations = fmt_count(card.destinations);
+    let people = fmt_count(card.peers.unwrap_or(card.destinations));
     draw_compact_number(
         display,
-        destinations.as_str(),
+        people.as_str(),
         Point::new(STAT_TEXT_X, tx_y),
         BinaryColor::On,
     );
@@ -190,7 +220,10 @@ fn draw_card_peek_to<D: DrawTarget<Color = BinaryColor>>(
         BinaryColor::On
     };
     let label_style = MonoTextStyle::new(name_font(card.kind), name_color);
-    if card.liveness.is_failed() {
+    if matches!(
+        card.connection,
+        ConnectionState::Failed | ConnectionState::Unknown
+    ) {
         draw_offline_icon(display, NAME_ICON_X, top + NAME_LINE_Y + 1, name_color);
     } else {
         draw_interface_icon(
@@ -230,14 +263,6 @@ pub(super) fn draw_footer<D: DrawTarget<Color = BinaryColor>>(
         top + FOOTER_SECOND_LINE_OFFSET,
         &FONT_5X8,
         FONT_5X8_CHAR_W,
-        selected,
-    );
-    draw_footer_line(
-        display,
-        "docs @",
-        top + FOOTER_THIRD_LINE_OFFSET,
-        &FONT_6X10,
-        FONT_6X10_CHAR_W,
         selected,
     );
     draw_footer_line(

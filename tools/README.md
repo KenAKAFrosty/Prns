@@ -14,6 +14,8 @@ Start with:
 ./tools/prns verify
 ```
 
+On Windows, substitute `.\tools\prns.cmd` wherever `./tools/prns` appears.
+
 `./tools/prns` is the canonical bootstrap and automation entrypoint. It can
 inspect the environment and identify a missing Cargo installation without
 requiring Cargo itself. After Cargo is installed, the repository-local

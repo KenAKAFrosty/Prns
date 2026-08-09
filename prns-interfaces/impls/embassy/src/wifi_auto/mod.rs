@@ -1,10 +1,11 @@
 mod fanout;
+mod rendezvous;
 
 use ::core::cell::Cell;
 use ::core::net::Ipv6Addr;
 
 use embassy_futures::join::join;
-use embassy_futures::select::{select, select5, Either, Either5};
+use embassy_futures::select::{select, select3, select5, Either, Either3, Either5};
 use embassy_net::udp::{RecvError, UdpMetadata, UdpSocket};
 use embassy_net::{IpAddress, Stack};
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex};
@@ -19,10 +20,18 @@ use prns_core::interfaces::{
 };
 use prns_runtime::runtime::EmbassyFleet as Fleet;
 
-use fanout::{dispatch_fanout, send_beacon, FanoutPlan, UdpFanoutSender};
+use fanout::{dispatch_fanout, send_beacon, target_includes, FanoutPlan, UdpFanoutSender};
+use rendezvous::TcpRendezvousEvent;
+pub use rendezvous::{
+    tcp_rendezvous, TcpRendezvousBuffers, TcpRendezvousClient, TcpRendezvousExitCause,
+    TcpRendezvousServer, TcpRendezvousStorage, TcpRendezvousWireSlot, TcpRendezvousWriteFailure,
+    TCP_RENDEZVOUS_FRAMED_LEN, TCP_RENDEZVOUS_FRAME_CAP, TCP_RENDEZVOUS_LIVENESS_TIMEOUT,
+    TCP_RENDEZVOUS_READ_BUFFER_BYTES, TCP_RENDEZVOUS_SOCKET_BUFFER_BYTES,
+};
 
 const BEACON_INTERVAL: Duration = Duration::from_millis(1600);
 const SEND_TIMEOUT: Duration = Duration::from_millis(300);
+const BEACON_FAILURES_BEFORE_DEGRADED: u8 = 3;
 
 async fn wait_for_stack<const MEMBERS: usize>(stack: &Stack<'_>, status: AutoWifiStatus<MEMBERS>) {
     loop {
@@ -62,6 +71,8 @@ pub struct WifiMemberStatus {
     connection: AtomicU8,
     rx: AtomicU64,
     tx: AtomicU64,
+    session_rx_start: AtomicU64,
+    session_tx_start: AtomicU64,
     active: AtomicBool,
 }
 
@@ -72,6 +83,8 @@ impl WifiMemberStatus {
             connection: AtomicU8::new(ConnectionState::Disconnected.as_u8()),
             rx: AtomicU64::new(0),
             tx: AtomicU64::new(0),
+            session_rx_start: AtomicU64::new(0),
+            session_tx_start: AtomicU64::new(0),
             active: AtomicBool::new(false),
         }
     }
@@ -80,15 +93,11 @@ impl WifiMemberStatus {
         self.id.lock(|cell| cell.set(id));
         self.connection
             .store(ConnectionState::Connected.as_u8(), Ordering::Relaxed);
-        self.rx.store(0, Ordering::Relaxed);
-        self.tx.store(0, Ordering::Relaxed);
+        self.session_rx_start
+            .store(self.rx.load(Ordering::Relaxed), Ordering::Relaxed);
+        self.session_tx_start
+            .store(self.tx.load(Ordering::Relaxed), Ordering::Relaxed);
         self.active.store(true, Ordering::Relaxed);
-    }
-
-    fn retire(&self) {
-        self.connection
-            .store(ConnectionState::Disconnected.as_u8(), Ordering::Relaxed);
-        self.active.store(false, Ordering::Relaxed);
     }
 
     fn add_rx(&self, bytes: u64) {
@@ -110,11 +119,15 @@ impl InterfaceStatus for WifiMemberStatus {
     }
 
     fn rx_bytes(&self) -> u64 {
-        self.rx.load(Ordering::Relaxed)
+        self.rx
+            .load(Ordering::Relaxed)
+            .saturating_sub(self.session_rx_start.load(Ordering::Relaxed))
     }
 
     fn tx_bytes(&self) -> u64 {
-        self.tx.load(Ordering::Relaxed)
+        self.tx
+            .load(Ordering::Relaxed)
+            .saturating_sub(self.session_tx_start.load(Ordering::Relaxed))
     }
 }
 
@@ -122,7 +135,8 @@ pub struct AutoWifiShared<const MEMBERS: usize> {
     id: InterfaceId,
     enabled: AtomicBool,
     enabled_changed: Signal<CriticalSectionRawMutex, bool>,
-    radio_enabled_changed: Signal<CriticalSectionRawMutex, bool>,
+    station_uplink_enabled: AtomicBool,
+    station_uplink_enabled_changed: Signal<CriticalSectionRawMutex, bool>,
     lifecycle: AtomicU8,
     peers: AtomicU32,
     members: [WifiMemberStatus; MEMBERS],
@@ -135,7 +149,8 @@ impl<const MEMBERS: usize> AutoWifiShared<MEMBERS> {
             id,
             enabled: AtomicBool::new(true),
             enabled_changed: Signal::new(),
-            radio_enabled_changed: Signal::new(),
+            station_uplink_enabled: AtomicBool::new(true),
+            station_uplink_enabled_changed: Signal::new(),
             lifecycle: AtomicU8::new(ConnectionState::Initializing.as_u8()),
             peers: AtomicU32::new(0),
             members: [const { WifiMemberStatus::new() }; MEMBERS],
@@ -165,13 +180,11 @@ impl<const MEMBERS: usize> AutoWifiStatus<MEMBERS> {
     pub fn toggle_enabled(&self) {
         let enabled = !self.shared.enabled.fetch_xor(true, Ordering::Relaxed);
         self.shared.enabled_changed.signal(enabled);
-        self.shared.radio_enabled_changed.signal(enabled);
     }
 
     fn update_enabled(&self, enabled: bool) {
         if self.shared.enabled.swap(enabled, Ordering::Relaxed) != enabled {
             self.shared.enabled_changed.signal(enabled);
-            self.shared.radio_enabled_changed.signal(enabled);
         }
     }
 
@@ -181,32 +194,70 @@ impl<const MEMBERS: usize> AutoWifiStatus<MEMBERS> {
     }
 
     pub async fn wait_until_enabled(&self) {
-        self.wait_for_enabled_state(true, &self.shared.enabled_changed)
-            .await;
+        Self::wait_for_state(true, &self.shared.enabled, &self.shared.enabled_changed).await;
     }
 
     pub async fn wait_until_disabled(&self) {
-        self.wait_for_enabled_state(false, &self.shared.enabled_changed)
-            .await;
+        Self::wait_for_state(false, &self.shared.enabled, &self.shared.enabled_changed).await;
     }
 
-    pub async fn wait_until_radio_enabled(&self) {
-        self.wait_for_enabled_state(true, &self.shared.radio_enabled_changed)
-            .await;
+    pub fn enable_station_uplink(&self) {
+        self.update_station_uplink_enabled(true);
     }
 
-    pub async fn wait_until_radio_disabled(&self) {
-        self.wait_for_enabled_state(false, &self.shared.radio_enabled_changed)
-            .await;
+    pub fn disable_station_uplink(&self) {
+        self.update_station_uplink_enabled(false);
     }
 
-    async fn wait_for_enabled_state(
-        &self,
+    pub fn toggle_station_uplink(&self) {
+        let enabled = !self
+            .shared
+            .station_uplink_enabled
+            .fetch_xor(true, Ordering::Relaxed);
+        self.shared.station_uplink_enabled_changed.signal(enabled);
+    }
+
+    fn update_station_uplink_enabled(&self, enabled: bool) {
+        if self
+            .shared
+            .station_uplink_enabled
+            .swap(enabled, Ordering::Relaxed)
+            != enabled
+        {
+            self.shared.station_uplink_enabled_changed.signal(enabled);
+        }
+    }
+
+    #[must_use]
+    pub fn is_station_uplink_enabled(&self) -> bool {
+        self.shared.station_uplink_enabled.load(Ordering::Relaxed)
+    }
+
+    pub async fn wait_until_station_uplink_enabled(&self) {
+        Self::wait_for_state(
+            true,
+            &self.shared.station_uplink_enabled,
+            &self.shared.station_uplink_enabled_changed,
+        )
+        .await;
+    }
+
+    pub async fn wait_until_station_uplink_disabled(&self) {
+        Self::wait_for_state(
+            false,
+            &self.shared.station_uplink_enabled,
+            &self.shared.station_uplink_enabled_changed,
+        )
+        .await;
+    }
+
+    async fn wait_for_state(
         enabled: bool,
+        state: &AtomicBool,
         changed: &Signal<CriticalSectionRawMutex, bool>,
     ) {
         loop {
-            if self.is_enabled() == enabled {
+            if state.load(Ordering::Relaxed) == enabled {
                 return;
             }
             if changed.wait().await == enabled {
@@ -217,6 +268,16 @@ impl<const MEMBERS: usize> AutoWifiStatus<MEMBERS> {
 
     fn member(&self, slot: usize) -> &'static WifiMemberStatus {
         &self.shared.members[slot]
+    }
+
+    fn retire_member(&self, slot: usize) {
+        let member = self.member(slot);
+        if !member.active.swap(false, Ordering::Relaxed) {
+            return;
+        }
+        member
+            .connection
+            .store(ConnectionState::Disconnected.as_u8(), Ordering::Relaxed);
     }
 
     fn republish_peer_count(&self) {
@@ -241,6 +302,10 @@ impl<const MEMBERS: usize> AutoWifiStatus<MEMBERS> {
             .iter()
             .filter(|member| member.active.load(Ordering::Relaxed))
     }
+
+    pub fn peer_count(&self) -> u32 {
+        self.shared.peers.load(Ordering::Relaxed)
+    }
 }
 
 impl<const MEMBERS: usize> InterfaceStatus for AutoWifiStatus<MEMBERS> {
@@ -252,23 +317,7 @@ impl<const MEMBERS: usize> InterfaceStatus for AutoWifiStatus<MEMBERS> {
         if !self.is_enabled() {
             return ConnectionState::Disabled;
         }
-        let lifecycle = ConnectionState::from_u8(self.shared.lifecycle.load(Ordering::Relaxed));
-        match lifecycle {
-            ConnectionState::Initializing
-            | ConnectionState::Degraded
-            | ConnectionState::Reconnecting
-            | ConnectionState::Failed
-            | ConnectionState::Unknown => lifecycle,
-            ConnectionState::Connected
-            | ConnectionState::Disconnected
-            | ConnectionState::Disabled => {
-                if self.shared.peers.load(Ordering::Relaxed) > 0 {
-                    ConnectionState::Connected
-                } else {
-                    ConnectionState::Disconnected
-                }
-            }
-        }
+        ConnectionState::from_u8(self.shared.lifecycle.load(Ordering::Relaxed))
     }
 
     fn rx_bytes(&self) -> u64 {
@@ -299,6 +348,7 @@ pub struct AutoWifiSegment<'a> {
 pub struct AutoWifiTopology<'a> {
     pub primary: AutoWifiSegment<'a>,
     pub secondary: Option<AutoWifiSegment<'a>>,
+    pub rendezvous: Option<TcpRendezvousClient<'a>>,
 }
 
 pub struct AutoWifi<'a, const MEMBERS: usize> {
@@ -307,6 +357,7 @@ pub struct AutoWifi<'a, const MEMBERS: usize> {
     brain: contract::FixedAutoInterfaceProtocol<MEMBERS>,
     status: AutoWifiStatus<MEMBERS>,
     bitrate: BitrateBps,
+    rendezvous: Option<TcpRendezvousClient<'a>>,
 }
 
 impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
@@ -326,6 +377,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
             status: AutoWifiStatus::new(shared),
             bitrate: contract::WIFI_LAN_BITRATE_BPS
                 .min(contract::WIFI_EMBEDDED_BITRATE_CEILING_BPS),
+            rendezvous: topology.rendezvous,
         }
     }
 
@@ -395,16 +447,21 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
             "wifi-auto: secondary segment {}",
             if secondary_ok { "up" } else { "down" }
         );
-        self.status
-            .set_lifecycle(if secondary_configured && !secondary_ok {
-                ConnectionState::Degraded
-            } else {
-                ConnectionState::Disconnected
-            });
+        let topology_degraded = secondary_configured && !secondary_ok;
+        self.status.set_lifecycle(if topology_degraded {
+            ConnectionState::Degraded
+        } else {
+            ConnectionState::Connected
+        });
 
         let mut peers: [Option<Ipv6Addr>; MEMBERS] = [None; MEMBERS];
         let mut ids: [InterfaceId; MEMBERS] = [InterfaceId::new([0u8; 8]); MEMBERS];
         let mut peer_on_secondary: [bool; MEMBERS] = [false; MEMBERS];
+        let tcp_slot = self
+            .rendezvous
+            .as_ref()
+            .and_then(|_| MEMBERS.checked_sub(1));
+        let mut tcp_peer = None;
 
         let token = *self.brain.our_peering_token().as_bytes();
         let secondary_token = self.secondary.as_ref().map(|segment| {
@@ -417,6 +474,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
         let mut unicast_discovery_buf = [0u8; 64];
         let mut sec_discovery_buf = [0u8; 64];
         let mut sec_unicast_discovery_buf = [0u8; 64];
+        let mut consecutive_beacon_failures = 0u8;
 
         loop {
             if !self.status.is_enabled() {
@@ -428,6 +486,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                     &fleet,
                 )
                 .await;
+                clear_tcp_member(&mut self.rendezvous, &mut tcp_peer, &self.status, &fleet).await;
                 self.status.wait_until_enabled().await;
             }
             match select(
@@ -440,13 +499,14 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                     beacon.next(),
                     fleet.next_outbound(),
                 ),
-                select(
+                select3(
                     next_secondary_datagram(
                         &self.secondary,
                         &mut sec_discovery_buf,
                         &mut sec_unicast_discovery_buf,
                         &mut sec_data_buf[..],
                     ),
+                    next_rendezvous_event(&mut self.rendezvous),
                     self.status.wait_until_disabled(),
                 ),
             )
@@ -467,6 +527,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                                 &discovery_buf[..len],
                                 Instant::now().as_millis(),
                                 false,
+                                tcp_slot,
                             )
                             .await;
                         }
@@ -487,6 +548,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                                 &unicast_discovery_buf[..len],
                                 Instant::now().as_millis(),
                                 false,
+                                tcp_slot,
                             )
                             .await;
                         }
@@ -517,11 +579,25 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                             ),
                         ),
                     );
-                    if matches!(
-                        select(self.status.wait_until_disabled(), sends).await,
-                        Either::First(())
-                    ) {
-                        continue;
+                    let sent = match select(self.status.wait_until_disabled(), sends).await {
+                        Either::First(()) => continue,
+                        Either::Second(Ok((primary, secondary))) => {
+                            primary && (!secondary_configured || secondary)
+                        }
+                        Either::Second(Err(_)) => false,
+                    };
+                    if sent {
+                        consecutive_beacon_failures = 0;
+                        self.status.set_lifecycle(if topology_degraded {
+                            ConnectionState::Degraded
+                        } else {
+                            ConnectionState::Connected
+                        });
+                    } else {
+                        consecutive_beacon_failures = consecutive_beacon_failures.saturating_add(1);
+                        if consecutive_beacon_failures >= BEACON_FAILURES_BEFORE_DEGRADED {
+                            self.status.set_lifecycle(ConnectionState::Degraded);
+                        }
                     }
                     retire_stale(
                         &mut self.brain,
@@ -551,9 +627,21 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                         };
                         let dispatch = dispatch_fanout(&mut plan, &mut sender, SEND_TIMEOUT);
                         let _ = select(self.status.wait_until_disabled(), dispatch).await;
+                        if let (Some(rendezvous), Some(peer)) = (self.rendezvous.as_mut(), tcp_peer)
+                        {
+                            if target_includes(outbound.target(), peer.id) {
+                                let send = rendezvous.send_frame(peer.session, outbound.bytes());
+                                if matches!(
+                                    select(self.status.wait_until_disabled(), send).await,
+                                    Either::Second(Ok(()))
+                                ) {
+                                    self.status.member(peer.slot).add_tx(outbound.len() as u64);
+                                }
+                            }
+                        }
                     }
                 }
-                Either::Second(Either::First(SecondaryDatagram::Discovery(received))) => {
+                Either::Second(Either3::First(SecondaryDatagram::Discovery(received))) => {
                     if let Ok((len, meta)) = received {
                         if let IpAddress::Ipv6(src) = meta.endpoint.addr {
                             ingest_beacon(
@@ -568,12 +656,13 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                                 &sec_discovery_buf[..len],
                                 Instant::now().as_millis(),
                                 true,
+                                tcp_slot,
                             )
                             .await;
                         }
                     }
                 }
-                Either::Second(Either::First(SecondaryDatagram::UnicastDiscovery(received))) => {
+                Either::Second(Either3::First(SecondaryDatagram::UnicastDiscovery(received))) => {
                     if let Ok((len, meta)) = received {
                         if let IpAddress::Ipv6(src) = meta.endpoint.addr {
                             ingest_beacon(
@@ -588,12 +677,13 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                                 &sec_unicast_discovery_buf[..len],
                                 Instant::now().as_millis(),
                                 true,
+                                tcp_slot,
                             )
                             .await;
                         }
                     }
                 }
-                Either::Second(Either::First(SecondaryDatagram::Data(received))) => {
+                Either::Second(Either3::First(SecondaryDatagram::Data(received))) => {
                     if let Ok((len, meta)) = received {
                         if let IpAddress::Ipv6(src) = meta.endpoint.addr {
                             route_inbound(
@@ -607,7 +697,29 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                         }
                     }
                 }
-                Either::Second(Either::Second(())) => {}
+                Either::Second(Either3::Second(event_slot)) => {
+                    let rejected_session = match event_slot.event() {
+                        Some(event) => {
+                            handle_rendezvous_event(
+                                &mut tcp_peer,
+                                tcp_slot,
+                                &self.status,
+                                &mut fleet,
+                                self.bitrate,
+                                event,
+                            )
+                            .await
+                        }
+                        None => None,
+                    };
+                    if let Some(rendezvous) = self.rendezvous.as_mut() {
+                        rendezvous.event_received();
+                        if let Some(session) = rejected_session {
+                            rendezvous.disconnect(session);
+                        }
+                    }
+                }
+                Either::Second(Either3::Third(())) => {}
             }
         }
     }
@@ -617,6 +729,103 @@ enum SecondaryDatagram {
     Discovery(Result<(usize, UdpMetadata), RecvError>),
     UnicastDiscovery(Result<(usize, UdpMetadata), RecvError>),
     Data(Result<(usize, UdpMetadata), RecvError>),
+}
+
+#[derive(Clone, Copy)]
+struct TcpPeer {
+    session: u32,
+    id: InterfaceId,
+    slot: usize,
+}
+
+async fn next_rendezvous_event<'a>(
+    rendezvous: &'a mut Option<TcpRendezvousClient<'_>>,
+) -> &'a mut TcpRendezvousWireSlot {
+    match rendezvous {
+        Some(rendezvous) => rendezvous.next_event_slot().await,
+        None => ::core::future::pending().await,
+    }
+}
+
+async fn handle_rendezvous_event<
+    M: RawMutex + 'static,
+    const FRAME: usize,
+    const MEMBERS: usize,
+    const NOTIFY: usize,
+    const LIFECYCLE: usize,
+>(
+    tcp_peer: &mut Option<TcpPeer>,
+    tcp_slot: Option<usize>,
+    status: &AutoWifiStatus<MEMBERS>,
+    fleet: &mut Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
+    bitrate: BitrateBps,
+    event: TcpRendezvousEvent<'_>,
+) -> Option<u32> {
+    match event {
+        TcpRendezvousEvent::Connected { session, id } => {
+            let Some(slot) = tcp_slot else {
+                return Some(session);
+            };
+            if let Some(previous) = tcp_peer.take() {
+                fleet.deregister_member(previous.id).await;
+                status.retire_member(previous.slot);
+            }
+            fleet
+                .register_member(contract::descriptor(
+                    id,
+                    contract::policy_for_bitrate(bitrate),
+                ))
+                .await;
+            status.member(slot).assign(id);
+            *tcp_peer = Some(TcpPeer { session, id, slot });
+            status.republish_peer_count();
+            None
+        }
+        TcpRendezvousEvent::Frame { session, id, bytes } => {
+            let peer = (*tcp_peer)?;
+            if peer.session != session || peer.id != id {
+                return None;
+            }
+            if fleet.deliver_inbound(id, bytes).await.is_ok() {
+                status.member(peer.slot).add_rx(bytes.len() as u64);
+            }
+            None
+        }
+        TcpRendezvousEvent::Disconnected { session, id } => {
+            let peer = (*tcp_peer)?;
+            if peer.session != session || peer.id != id {
+                return None;
+            }
+            fleet.deregister_member(id).await;
+            status.retire_member(peer.slot);
+            *tcp_peer = None;
+            status.republish_peer_count();
+            None
+        }
+    }
+}
+
+async fn clear_tcp_member<
+    M: RawMutex + 'static,
+    const FRAME: usize,
+    const MEMBERS: usize,
+    const NOTIFY: usize,
+    const LIFECYCLE: usize,
+>(
+    rendezvous: &mut Option<TcpRendezvousClient<'_>>,
+    tcp_peer: &mut Option<TcpPeer>,
+    status: &AutoWifiStatus<MEMBERS>,
+    fleet: &Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
+) {
+    let Some(peer) = tcp_peer.take() else {
+        return;
+    };
+    if let Some(rendezvous) = rendezvous.as_mut() {
+        rendezvous.disconnect(peer.session);
+    }
+    fleet.deregister_member(peer.id).await;
+    status.retire_member(peer.slot);
+    status.republish_peer_count();
 }
 
 async fn next_secondary_datagram(
@@ -665,6 +874,7 @@ async fn ingest_beacon<
     bytes: &[u8],
     now_ms: u64,
     on_secondary: bool,
+    reserved_slot: Option<usize>,
 ) {
     let verdict = brain.ingest_discovery_datagram(src, bytes, now_ms);
     let contract::BeaconVerdict::Peer(addr) = verdict else {
@@ -674,7 +884,11 @@ async fn ingest_beacon<
         peer_on_secondary[slot] = on_secondary;
         return;
     }
-    let Some(slot) = peers.iter().position(Option::is_none) else {
+    let Some(slot) = peers
+        .iter()
+        .enumerate()
+        .position(|(slot, peer)| peer.is_none() && Some(slot) != reserved_slot)
+    else {
         return;
     };
     let id = InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, &addr.octets());
@@ -737,7 +951,7 @@ async fn clear_members<
         fleet.deregister_member(ids[slot]).await;
         peers[slot] = None;
         peer_on_secondary[slot] = false;
-        status.member(slot).retire();
+        status.retire_member(slot);
         changed = true;
     }
     if changed {
@@ -771,7 +985,7 @@ async fn retire_stale<
         fleet.deregister_member(ids[slot]).await;
         peers[slot] = None;
         peer_on_secondary[slot] = false;
-        status.member(slot).retire();
+        status.retire_member(slot);
     }
     status.republish_peer_count();
 }
@@ -779,44 +993,64 @@ async fn retire_stale<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use embassy_futures::{block_on, join::join3};
+    use embassy_futures::{block_on, join::join};
 
     static SHARED: AutoWifiShared<1> = AutoWifiShared::new(InterfaceId::new([0x5B; 8]));
+    static UPLINK_SHARED: AutoWifiShared<1> = AutoWifiShared::new(InterfaceId::new([0x5E; 8]));
     static LIFECYCLE_SHARED: AutoWifiShared<1> = AutoWifiShared::new(InterfaceId::new([0x5C; 8]));
+    static ACCOUNTING_SHARED: AutoWifiShared<1> = AutoWifiShared::new(InterfaceId::new([0x5D; 8]));
 
     fn id(suffix: u8) -> InterfaceId {
         InterfaceId::new([InterfaceKind::WifiPeer as u8, 0, 0, 0, 0, 0, 0, suffix])
     }
 
     #[test]
-    fn enabled_state_changes_wake_all_waiters() {
+    fn interface_enablement_does_not_change_station_uplink() {
         let status = AutoWifiStatus::new(&SHARED);
+        status.enable();
+        status.enable_station_uplink();
 
         block_on(async {
-            join3(
-                status.wait_until_disabled(),
-                status.wait_until_radio_disabled(),
-                async { status.disable() },
-            )
-            .await;
-            join3(
-                status.wait_until_enabled(),
-                status.wait_until_radio_enabled(),
-                async { status.enable() },
-            )
-            .await;
+            join(status.wait_until_disabled(), async { status.disable() }).await;
+            join(status.wait_until_enabled(), async { status.enable() }).await;
         });
+
+        assert!(status.is_station_uplink_enabled());
     }
 
     #[test]
-    fn aggregate_status_preserves_initialization_degradation_and_failure() {
+    fn station_uplink_enablement_does_not_change_interface() {
+        let status = AutoWifiStatus::new(&UPLINK_SHARED);
+        status.enable();
+        status.enable_station_uplink();
+
+        block_on(async {
+            join(status.wait_until_station_uplink_disabled(), async {
+                status.disable_station_uplink()
+            })
+            .await;
+            join(status.wait_until_station_uplink_enabled(), async {
+                status.enable_station_uplink()
+            })
+            .await;
+        });
+
+        assert!(status.is_enabled());
+    }
+
+    #[test]
+    fn aggregate_status_keeps_network_health_separate_from_peer_count() {
         let status = AutoWifiStatus::new(&LIFECYCLE_SHARED);
 
         assert_eq!(status.connection(), ConnectionState::Initializing);
         status.set_lifecycle(ConnectionState::Disconnected);
         assert_eq!(status.connection(), ConnectionState::Disconnected);
+        assert_eq!(status.peer_count(), 0);
         status.member(0).assign(id(1));
         status.republish_peer_count();
+        assert_eq!(status.connection(), ConnectionState::Disconnected);
+        assert_eq!(status.peer_count(), 1);
+        status.set_lifecycle(ConnectionState::Connected);
         assert_eq!(status.connection(), ConnectionState::Connected);
         status.set_lifecycle(ConnectionState::Degraded);
         assert_eq!(status.connection(), ConnectionState::Degraded);
@@ -826,5 +1060,37 @@ mod tests {
         assert_eq!(status.connection(), ConnectionState::Degraded);
         status.set_lifecycle(ConnectionState::Failed);
         assert_eq!(status.connection(), ConnectionState::Failed);
+    }
+
+    #[test]
+    fn retired_and_reconnected_member_traffic_is_monotonic() {
+        let status = AutoWifiStatus::new(&ACCOUNTING_SHARED);
+        status.set_lifecycle(ConnectionState::Connected);
+        status.member(0).assign(id(1));
+        status.member(0).add_rx(90);
+        status.member(0).add_tx(45);
+
+        assert_eq!((status.rx_bytes(), status.tx_bytes()), (90, 45));
+        assert_eq!(
+            (status.member(0).rx_bytes(), status.member(0).tx_bytes()),
+            (90, 45)
+        );
+        status.retire_member(0);
+        status.republish_peer_count();
+        assert_eq!(status.connection(), ConnectionState::Connected);
+        assert_eq!(status.peer_count(), 0);
+        assert_eq!((status.rx_bytes(), status.tx_bytes()), (90, 45));
+
+        status.member(0).assign(id(2));
+        status.republish_peer_count();
+        status.member(0).add_rx(30);
+        status.member(0).add_tx(15);
+        assert_eq!(status.connection(), ConnectionState::Connected);
+        assert_eq!(status.peer_count(), 1);
+        assert_eq!((status.rx_bytes(), status.tx_bytes()), (120, 60));
+        assert_eq!(
+            (status.member(0).rx_bytes(), status.member(0).tx_bytes()),
+            (30, 15)
+        );
     }
 }

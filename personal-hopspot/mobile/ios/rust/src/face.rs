@@ -64,7 +64,8 @@ impl HopspotFace {
             UiAction::ToggleSelectedInterface => {
                 if let Some(card) = self.state.selected_card(content.cards) {
                     let id = card.id();
-                    let turning_on = card.liveness() == personal_hopspot_core::Liveness::Disabled;
+                    let turning_on =
+                        card.connection() == personal_rns::interfaces::ConnectionState::Disabled;
                     self.show_notice(if turning_on {
                         UiNotice::TurningOn
                     } else {
@@ -84,6 +85,7 @@ impl HopspotFace {
             UiAction::Announce => self.show_notice(UiNotice::Announcing),
             UiAction::None
             | UiAction::OledOff
+            | UiAction::ToggleStationUplink
             | UiAction::OpenLoRaEditor
             | UiAction::OpenDocs
             | UiAction::SetLoRaProfile(_)

@@ -66,8 +66,8 @@ following owner-controlled setup.
 ## Maven Central
 
 - Create a Central Portal publisher account.
-- Verify ownership of the `io.reticulum` namespace. If that namespace cannot be
-  verified, change the group ID before the first public publication; a released
+- Verify ownership of the `rs.reticulum` namespace via a DNS TXT record on
+  `reticulum.rs`. The group ID must stay one we can verify; a released
   coordinate cannot be renamed in place.
 - Create a release-only OpenPGP signing key whose public identity is published.
 - Generate a Central Portal user token. Store the token, armored private signing

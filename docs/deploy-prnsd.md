@@ -15,14 +15,16 @@ docker volume create prnsd-data
 
 docker run -d \
   --name prnsd \
-  --restart on-failure \
+  --restart unless-stopped \
   --mount type=volume,source=prnsd-data,target=/var/lib/prnsd \
   --publish 4242:4242/tcp \
   --publish 4284:4284/tcp \
-  ghcr.io/kenakafrosty/prnsd:0.3.3
+  ghcr.io/kenakafrosty/prnsd:0.3.4
 ```
 
-Reticulum TCP clients connect to `HOST:4242`. WebSocket clients connect to `ws://HOST:4284/prns`; browsers served over HTTPS require a certificate-valid `wss://` endpoint, normally supplied by your hosting platform or reverse proxy.
+The `unless-stopped` policy restarts the node with Docker after a host reboot, and still honors a manual `docker stop`.
+
+Reticulum TCP clients connect to `HOST:4242`. WebSocket clients connect to `ws://HOST:4284/prns`; browsers served over HTTPS require a certificate-valid `wss://` endpoint, normally supplied by your hosting platform or reverse proxy. A free tunnel service like Cloudflare Tunnel supplies one from a home machine too, with no port forwarding and no exposed home IP.
 
 The image supports amd64 and ARM64 Linux. [Browse the official image on GHCR](https://github.com/KenAKAFrosty/Prns/pkgs/container/prnsd).
 
@@ -33,14 +35,14 @@ The container cannot infer the public address and port created by arbitrary Dock
 ```sh
 docker run -d \
   --name prnsd \
-  --restart on-failure \
+  --restart unless-stopped \
   --mount type=volume,source=prnsd-data,target=/var/lib/prnsd \
   --publish 4242:4242/tcp \
   --publish 4284:4284/tcp \
   --env PRNSD_BACKBONE_DISCOVERABLE=Yes \
   --env PRNSD_REACHABLE_HOST=backbone.example.com \
   --env PRNSD_REACHABLE_PORT=4242 \
-  ghcr.io/kenakafrosty/prnsd:0.3.3
+  ghcr.io/kenakafrosty/prnsd:0.3.4
 ```
 
 `PRNSD_REACHABLE_PORT` is the external port that other nodes use; it may differ from the container's internal listener port. Discovery remains disabled when no complete public endpoint is available. Partial or malformed endpoint settings fail startup instead of creating an invalid advertisement.
@@ -121,13 +123,13 @@ Keep the backup private because it contains the node identity and ratchets. Rest
 Back up the volume, pull the desired release, and recreate the container while retaining the volume:
 
 ```sh
-export PRNSD_IMAGE='ghcr.io/kenakafrosty/prnsd:0.3.3'
+export PRNSD_IMAGE='ghcr.io/kenakafrosty/prnsd:0.3.4'
 docker pull "$PRNSD_IMAGE"
 docker stop --time 30 prnsd
 docker rm prnsd
 docker run -d \
   --name prnsd \
-  --restart on-failure \
+  --restart unless-stopped \
   --mount type=volume,source=prnsd-data,target=/var/lib/prnsd \
   --publish 4242:4242/tcp \
   --publish 4284:4284/tcp \

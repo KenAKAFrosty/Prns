@@ -636,13 +636,19 @@ def ci_matrix(suites: list[dict]) -> dict:
     return {"include": include}
 
 
+def venv_python(venv: Path) -> Path:
+    if os.name == "nt":
+        return venv / "Scripts" / "python.exe"
+    return venv / "bin" / "python"
+
+
 def resolve_interpreter(manifest: dict, name: str) -> str:
     specification = manifest.get("interpreters", {}).get(name)
     if not isinstance(specification, dict):
         raise ValidationError(f"unknown interpreter {name!r}")
     environment = specification["environment"]
     configured = os.environ.get(environment)
-    candidate = Path(configured) if configured else ROOT / specification["venv"] / "bin" / "python"
+    candidate = Path(configured) if configured else venv_python(ROOT / specification["venv"])
     if not candidate.is_file() or not os.access(candidate, os.X_OK):
         raise ValidationError(
             f"{environment} does not name an executable RNS interpreter; run "
@@ -809,7 +815,7 @@ def run_suite(manifest: dict, suite: dict, expected_sha: str | None, fuzz_second
     stderr = b""
     try:
         process = subprocess.Popen(
-            command,
+            [shutil.which(command[0]) or command[0], *command[1:]],
             cwd=ROOT / suite.get("working_directory", "."),
             env=environment,
             stdout=subprocess.PIPE,
@@ -1411,7 +1417,7 @@ def prepare_oracles(manifest: dict) -> None:
                 "pip",
                 "install",
                 "--python",
-                str(venv / "bin" / "python"),
+                str(venv_python(venv)),
                 "-r",
                 str(ROOT / specification["requirements"]),
             ],

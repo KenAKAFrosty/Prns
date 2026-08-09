@@ -146,9 +146,10 @@ npm run build:css
 npm run build:flasher
 git -C "$root" diff --exit-code -- docs/website/public/assets/tailwind.css
 
-embedded_dist="$root/docs/website/target/dx/reticulum-site/release/web/public"
+dioxus_dist="$root/docs/website/target/dx/reticulum-site/release/web/public"
+captive_page="$root/personal-hopspot/embedded/esp32/assets/captive-portal.html"
 boundary_root="$root/docs/website/target/flasher-production-boundary"
-case "$embedded_dist" in
+case "$dioxus_dist" in
     "$root/docs/website/target/dx/reticulum-site/"*) ;;
     *) echo "refusing to clear unexpected Dioxus output path" >&2; exit 2 ;;
 esac
@@ -156,29 +157,22 @@ case "$boundary_root" in
     "$root/docs/website/target/flasher-production-boundary") ;;
     *) echo "refusing unexpected production-boundary path" >&2; exit 2 ;;
 esac
-rm -rf -- "$embedded_dist"
-PRNS_EMBEDDED_SITE=1 \
-PRNS_BUILD_VERSION="$version" \
-PRNS_BUILD_COMMIT="$commit" \
-PRNS_BUILD_CHANNEL="$channel" \
-dx build --platform web --debug-symbols false --release --locked --features embedded-site
-
-test -f "$embedded_dist/index.html"
+test -f "$captive_page"
 rm -rf -- "$boundary_root"
 mkdir -p "$boundary_root/embedded"
-cp -R "$embedded_dist/." "$boundary_root/embedded/"
-if grep -R -a -l -i -E 'esptool-js|esp-web-install-button|unpkg|prns-flash\.js' "$embedded_dist"; then
+cp "$captive_page" "$boundary_root/embedded/index.html"
+if grep -R -a -l -i -E 'esptool-js|esp-web-install-button|unpkg|prns-flash\.js' "$boundary_root/embedded"; then
     echo "embedded SoftAP site unexpectedly contains hosted flashing JavaScript" >&2
     exit 1
 fi
-if find "$embedded_dist" \( -path '*/firmware/*' -o -path '*/assets/flasher/*' \) -print -quit | grep -q .; then
+if find "$boundary_root/embedded" \( -path '*/firmware/*' -o -path '*/assets/flasher/*' \) -print -quit | grep -q .; then
     echo "embedded SoftAP site unexpectedly contains hosted firmware or flasher assets" >&2
     exit 1
 fi
 
 cd "$root"
 for board in heltec-v4 heltec-v4-r8 t-beam-supreme xiao-esp32-c6 t-echo; do
-    PRNS_EMBEDDED_SITE_READY=1 cargo run --locked -p hopspot-flash -- build "$board" --out-root "$candidate"
+    cargo run --locked -p hopspot-flash -- build "$board" --out-root "$candidate"
 done
 cargo run --locked -p hopspot-flash -- assemble-manifest \
     --out-root "$candidate" \
@@ -187,14 +181,14 @@ cargo run --locked -p hopspot-flash -- assemble-manifest \
     --key-id "$key_id"
 
 cd "$root/docs/website"
-rm -rf -- "$embedded_dist"
+rm -rf -- "$dioxus_dist"
 PRNS_BUILD_VERSION="$version" \
 PRNS_BUILD_COMMIT="$commit" \
 PRNS_BUILD_CHANNEL="$channel" \
 PRNS_API_DOCS_STAGED=1 \
 dx build --platform web --debug-symbols false --release --locked
 
-hosted_dist="$root/docs/website/target/dx/reticulum-site/release/web/public"
+hosted_dist="$dioxus_dist"
 test -f "$hosted_dist/index.html"
 mkdir -p "$candidate/website/assets/flasher"
 cp -R "$hosted_dist/." "$candidate/website/"

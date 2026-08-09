@@ -7,7 +7,8 @@ use prns_core::interfaces::bluetooth_auto::{
 use tokio::sync::{mpsc as tokio_mpsc, watch};
 use windows::Devices::Bluetooth::GenericAttributeProfile::{
     GattCharacteristic, GattClientCharacteristicConfigurationDescriptorValue,
-    GattCommunicationStatus, GattSession, GattValueChangedEventArgs, GattWriteOption,
+    GattCommunicationStatus, GattDeviceService, GattSession, GattValueChangedEventArgs,
+    GattWriteOption,
 };
 use windows::Devices::Bluetooth::{
     BluetoothAddressType, BluetoothCacheMode, BluetoothConnectionStatus, BluetoothLEDevice,
@@ -66,13 +67,62 @@ pub(super) fn connect_blocking(
         )?
         .get()?
     };
+    match establish(&device, address) {
+        Ok(link) => Ok(link),
+        Err(error) => {
+            let _ = device.Close();
+            Err(error)
+        }
+    }
+}
 
-    // Pin the connection up. WinRT otherwise drops an idle GATT client link shortly after discovery,
-    // which is the "connected then dormant" flakiness; MaintainConnection holds it for the session's
-    // (== link's) lifetime.
+fn establish(
+    device: &BluetoothLEDevice,
+    address: BleAddress,
+) -> Result<WinGattLink, WindowsBleError> {
+    let profile = qualify(device, address)?;
+    // Pin the connection up only once the peer is a qualified Prns speaker. WinRT otherwise drops
+    // an idle GATT client link shortly after discovery, which is the "connected then dormant"
+    // flakiness; MaintainConnection holds it for the session's (== link's) lifetime.
     let session = GattSession::FromDeviceIdAsync(&device.BluetoothDeviceId()?)?.get()?;
+    match wire(device, session.clone(), profile, address) {
+        Ok(link) => Ok(link),
+        Err(error) => {
+            let _ = session.Close();
+            Err(error)
+        }
+    }
+}
+
+fn qualify(
+    device: &BluetoothLEDevice,
+    address: BleAddress,
+) -> Result<DialProfile, WindowsBleError> {
+    let mut attempt = 1;
+    loop {
+        match discover_profile(device) {
+            Ok(profile) => return Ok(profile),
+            Err(error) if attempt < DIAL_DISCOVERY_ATTEMPTS => {
+                crate::diagnostic_log::debug!(
+                    "bluetooth: discovery attempt {attempt}/{DIAL_DISCOVERY_ATTEMPTS} for {:02x?} failed ({error:?}); retrying",
+                    address.octets()
+                );
+                attempt += 1;
+                std::thread::sleep(DIAL_DISCOVERY_RETRY_DELAY);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn wire(
+    device: &BluetoothLEDevice,
+    session: GattSession,
+    profile: DialProfile,
+    address: BleAddress,
+) -> Result<WinGattLink, WindowsBleError> {
     session.SetMaintainConnection(true)?;
-    let connection_request = request_throughput(&device);
+    let connection_request = request_throughput(device);
 
     let (closed_tx, closed_rx) = watch::channel(false);
     device.ConnectionStatusChanged(&TypedEventHandler::new(
@@ -93,24 +143,6 @@ pub(super) fn connect_blocking(
         },
     ))?;
 
-    let profile = {
-        let mut attempt = 1;
-        loop {
-            let discovered = discover_profile(&device);
-            match discovered {
-                Ok(profile) => break profile,
-                Err(error) if attempt < DIAL_DISCOVERY_ATTEMPTS => {
-                    crate::diagnostic_log::debug!(
-                        "bluetooth: discovery attempt {attempt}/{DIAL_DISCOVERY_ATTEMPTS} for {:02x?} failed ({error:?}); retrying",
-                        address.octets()
-                    );
-                    attempt += 1;
-                    std::thread::sleep(DIAL_DISCOVERY_RETRY_DELAY);
-                }
-                Err(error) => return Err(error),
-            }
-        }
-    };
     let (control_char, data_char, service, peer_protocol, peer_identity, control_rx, data_rx) =
         match profile {
             DialProfile::Native { control, data } => {
@@ -168,7 +200,7 @@ pub(super) fn connect_blocking(
         plane: LinkPlane::Central {
             control_char,
             data_char,
-            device,
+            device: device.clone(),
             service,
             session,
             connection_request,
@@ -227,6 +259,17 @@ fn discover_characteristic(
             return Err(WindowsBleError::DialFailed);
         }
     };
+    let characteristic = characteristic_of(&service, uuid);
+    if characteristic.is_err() {
+        let _ = service.Close();
+    }
+    characteristic
+}
+
+fn characteristic_of(
+    service: &GattDeviceService,
+    uuid: BleUuid,
+) -> Result<GattCharacteristic, WindowsBleError> {
     let chars = service
         .GetCharacteristicsForUuidWithCacheModeAsync(guid_of(uuid), BluetoothCacheMode::Uncached)?
         .get()?;

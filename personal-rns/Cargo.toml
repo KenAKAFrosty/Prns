@@ -1,6 +1,6 @@
 [package]
 name = "personal-rns"
-version = "0.3.3"
+version = "0.3.4"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -99,12 +99,12 @@ esp-now = ["prns-interfaces-embassy?/esp-now"]
 
 [dependencies]
 cfg-if = "1.0"
-prns-core = { version = "=0.3.3", path = "../prns-core", default-features = false }
-prns-runtime = { version = "=0.3.3", path = "../prns-runtime/core", default-features = false }
-prns-runtime-tokio = { version = "=0.3.3", path = "../prns-runtime/impls/tokio", optional = true, default-features = false }
-prns-runtime-embassy = { version = "=0.3.3", path = "../prns-runtime/impls/embassy", optional = true, default-features = false }
-prns-interfaces-tokio = { version = "=0.3.3", path = "../prns-interfaces/impls/tokio", optional = true, default-features = false }
-prns-interfaces-embassy = { version = "=0.3.3", path = "../prns-interfaces/impls/embassy", optional = true, default-features = false }
+prns-core = { version = "=0.3.4", path = "../prns-core", default-features = false }
+prns-runtime = { version = "=0.3.4", path = "../prns-runtime/core", default-features = false }
+prns-runtime-tokio = { version = "=0.3.4", path = "../prns-runtime/impls/tokio", optional = true, default-features = false }
+prns-runtime-embassy = { version = "=0.3.4", path = "../prns-runtime/impls/embassy", optional = true, default-features = false }
+prns-interfaces-tokio = { version = "=0.3.4", path = "../prns-interfaces/impls/tokio", optional = true, default-features = false }
+prns-interfaces-embassy = { version = "=0.3.4", path = "../prns-interfaces/impls/embassy", optional = true, default-features = false }
 
 [dev-dependencies]
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "sync", "time"] }

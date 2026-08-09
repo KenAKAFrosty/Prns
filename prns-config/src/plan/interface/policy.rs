@@ -14,7 +14,7 @@ use prns_core::interfaces::{
     tcp, udp, websocket, AnnounceBandwidthCap, AnnounceRateLimit, BitrateBps,
     ConfiguredInterfacePolicy, EffectiveInterfacePolicy, EgressCapability, FrequencyMilliHertz,
     IngressCapability, InterfaceCommonPolicy, InterfaceDefaults, InterfaceForwardingPolicy,
-    InterfaceGravity, InterfaceMode, MtuBytes, MtuPolicy,
+    InterfaceGravity, InterfaceMode, MtuBytes, MtuPolicy, RecursivePathRequestPolicy,
 };
 use prns_core::routing::links::MAX_LINK_MTU;
 
@@ -290,9 +290,10 @@ fn interface_common_policy(
 ) -> Result<InterfaceCommonPolicy, PlanErrorKind> {
     let mut common = global;
     common.forwarding = InterfaceForwardingPolicy {
-        recursive_path_requests: interface
-            .recursive_prs
-            .unwrap_or(common.forwarding.recursive_path_requests),
+        recursive_path_requests: interface.recursive_prs.map_or(
+            common.forwarding.recursive_path_requests,
+            RecursivePathRequestPolicy::from_configured,
+        ),
         announces_from_internal: interface
             .announces_from_internal
             .unwrap_or(common.forwarding.announces_from_internal),

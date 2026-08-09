@@ -11,6 +11,8 @@ python3 validation/run.py verify
 python3 validation/run.py list
 ```
 
+(Use `python` instead of `python3` on Windows.)
+
 `manifest.toml` is the executable inventory; `run.py` is the dependency-free
 operator and CI interface. See `docs/validation.md` for tiers, evidence,
 mutation-triage policy, stock-RNS setup, and exact-SHA release qualification.

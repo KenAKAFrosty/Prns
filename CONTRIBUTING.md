@@ -38,6 +38,7 @@ corroborated evidence.
 - Do not allow "Stringly-typed" errors. Use an enum.
 - Do not use `anyhow` in repo code. Prefer typed error enums with `thiserror`
   or an explicit domain error type so callers can preserve structure.
+- Be very careful using `Option`s. They are a sensible choice when the semantics are "Either a thing, or some only-one-variant failure; especially when that outcome is not fair to be described as a 'failure' (e.g, a lookup in a key-value data structure)" . In most cases, a proper Result or just custom outcome enum is a far superior choice and should be preferred.
 - Don't blindly add derived traits like `Copy`. Assume no derived traits, and only add them once they're truly needed.
 - Avoid nesting as much as possible. Prefer early returns, which also pair very well with the aforementioned newtypes and named enums
 - Prefer self-documenting APIs. Avoid callsites like `foo(false)` or `bar(None)`
@@ -106,10 +107,10 @@ corroborated evidence.
 
 The repository has two deliberate control planes:
 
-- `./tools/prns` discovers and runs supported build, guide, release, device,
-  and repository operations. Start with `./tools/prns doctor getting-started`,
-  list tasks with `./tools/prns list`, and explain one with
-  `./tools/prns explain TASK_ID`.
+- `./tools/prns` (on Windows: `.\tools\prns.cmd`) discovers and runs supported
+  build, guide, release, device, and repository operations. Start with
+  `./tools/prns doctor getting-started`, list tasks with `./tools/prns list`,
+  and explain one with `./tools/prns explain TASK_ID`.
 - `python3 validation/run.py` (`python` on Windows) discovers and runs tests,
   proofs, interoperability checks, and release-readiness evidence. Use
   `--platform current` for portable plus current-host suites.
