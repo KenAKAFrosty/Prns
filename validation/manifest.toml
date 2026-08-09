@@ -35,6 +35,7 @@ cargo_manifests = [
     "personal-hopspot/embedded/esp32/boards/xiao-esp32-c6/Cargo.toml",
     "personal-hopspot/embedded/esp32/vendor/esp-phy-0.2.0/Cargo.toml",
     "personal-hopspot/embedded/esp32/vendor/esp-radio-0.18.0/Cargo.toml",
+    "personal-hopspot/embedded/esp32/vendor/trouble-host-0.6.0/Cargo.toml",
     "personal-hopspot/embedded/nrf52840/Cargo.toml",
     "personal-hopspot/flasher/Cargo.toml",
     "personal-hopspot/mobile/android/rust/Cargo.toml",

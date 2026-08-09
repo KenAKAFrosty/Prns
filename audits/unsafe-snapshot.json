@@ -13915,11 +13915,11 @@
       "name": "personal-hopspot-esp32",
       "source": "personal-hopspot/embedded/esp32",
       "unsafe": {
-        "blocks": 482,
+        "blocks": 491,
         "externs": 517,
-        "functions": 14,
-        "impls": 5,
-        "tokens": 1080
+        "functions": 15,
+        "impls": 15,
+        "tokens": 1100
       },
       "version": "0.1.0"
     },
@@ -21159,87 +21159,10 @@
     },
     {
       "graphs": {
-        "android": [
-          "central",
-          "default-packet-pool",
-          "default-packet-pool-mtu-255",
-          "derive",
-          "gatt",
-          "log",
-          "peripheral",
-          "scan",
-          "trouble-host-macros"
-        ],
-        "daemon-linux": [
-          "central",
-          "default-packet-pool",
-          "default-packet-pool-mtu-255",
-          "derive",
-          "gatt",
-          "log",
-          "peripheral",
-          "scan",
-          "trouble-host-macros"
-        ],
-        "daemon-macos": [
-          "central",
-          "default-packet-pool",
-          "default-packet-pool-mtu-255",
-          "derive",
-          "gatt",
-          "log",
-          "peripheral",
-          "scan",
-          "trouble-host-macros"
-        ],
-        "daemon-windows": [
-          "central",
-          "default-packet-pool",
-          "default-packet-pool-mtu-255",
-          "derive",
-          "gatt",
-          "log",
-          "peripheral",
-          "scan",
-          "trouble-host-macros"
-        ],
-        "desktop-linux": [
-          "central",
-          "default-packet-pool",
-          "default-packet-pool-mtu-255",
-          "derive",
-          "gatt",
-          "log",
-          "peripheral",
-          "scan",
-          "trouble-host-macros"
-        ],
-        "desktop-macos": [
-          "central",
-          "default-packet-pool",
-          "default-packet-pool-mtu-255",
-          "derive",
-          "gatt",
-          "log",
-          "peripheral",
-          "scan",
-          "trouble-host-macros"
-        ],
-        "desktop-windows": [
-          "central",
-          "default-packet-pool",
-          "default-packet-pool-mtu-255",
-          "derive",
-          "gatt",
-          "log",
-          "peripheral",
-          "scan",
-          "trouble-host-macros"
-        ],
         "esp32-c6": [
           "central",
           "default-packet-pool",
-          "default-packet-pool-mtu-255",
+          "default-packet-pool-mtu-512",
           "default-packet-pool-size-32",
           "default-packet-pool-size-8",
           "derive",
@@ -21252,7 +21175,7 @@
         "esp32-s3-heltec": [
           "central",
           "default-packet-pool",
-          "default-packet-pool-mtu-255",
+          "default-packet-pool-mtu-512",
           "default-packet-pool-size-32",
           "default-packet-pool-size-8",
           "derive",
@@ -21265,7 +21188,7 @@
         "esp32-s3-heltec-r8": [
           "central",
           "default-packet-pool",
-          "default-packet-pool-mtu-255",
+          "default-packet-pool-mtu-512",
           "default-packet-pool-size-32",
           "default-packet-pool-size-8",
           "derive",
@@ -21278,9 +21201,100 @@
         "esp32-s3-tbeam": [
           "central",
           "default-packet-pool",
-          "default-packet-pool-mtu-255",
+          "default-packet-pool-mtu-512",
           "default-packet-pool-size-32",
           "default-packet-pool-size-8",
+          "derive",
+          "gatt",
+          "log",
+          "peripheral",
+          "scan",
+          "trouble-host-macros"
+        ]
+      },
+      "name": "trouble-host",
+      "source": "personal-hopspot/embedded/esp32/vendor/trouble-host-0.6.0",
+      "unsafe": {
+        "blocks": 9,
+        "externs": 0,
+        "functions": 1,
+        "impls": 10,
+        "tokens": 20
+      },
+      "version": "0.6.0"
+    },
+    {
+      "graphs": {
+        "android": [
+          "central",
+          "default-packet-pool",
+          "default-packet-pool-mtu-512",
+          "derive",
+          "gatt",
+          "log",
+          "peripheral",
+          "scan",
+          "trouble-host-macros"
+        ],
+        "daemon-linux": [
+          "central",
+          "default-packet-pool",
+          "default-packet-pool-mtu-512",
+          "derive",
+          "gatt",
+          "log",
+          "peripheral",
+          "scan",
+          "trouble-host-macros"
+        ],
+        "daemon-macos": [
+          "central",
+          "default-packet-pool",
+          "default-packet-pool-mtu-512",
+          "derive",
+          "gatt",
+          "log",
+          "peripheral",
+          "scan",
+          "trouble-host-macros"
+        ],
+        "daemon-windows": [
+          "central",
+          "default-packet-pool",
+          "default-packet-pool-mtu-512",
+          "derive",
+          "gatt",
+          "log",
+          "peripheral",
+          "scan",
+          "trouble-host-macros"
+        ],
+        "desktop-linux": [
+          "central",
+          "default-packet-pool",
+          "default-packet-pool-mtu-512",
+          "derive",
+          "gatt",
+          "log",
+          "peripheral",
+          "scan",
+          "trouble-host-macros"
+        ],
+        "desktop-macos": [
+          "central",
+          "default-packet-pool",
+          "default-packet-pool-mtu-512",
+          "derive",
+          "gatt",
+          "log",
+          "peripheral",
+          "scan",
+          "trouble-host-macros"
+        ],
+        "desktop-windows": [
+          "central",
+          "default-packet-pool",
+          "default-packet-pool-mtu-512",
           "derive",
           "gatt",
           "log",

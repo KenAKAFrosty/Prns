@@ -55,12 +55,13 @@ cfg_if! {
             if live_links == 0 {
                 return DiscoveryDecision::Foreground;
             }
-            if usize::from(live_links) >= PEER_CAPACITY || busy_operations > 0 {
+            if usize::from(live_links) >= PEER_CAPACITY.saturating_sub(1) || busy_operations > 0 {
                 return DiscoveryDecision::Suspended;
             }
             let ready_at = last_activity_ms
                 .saturating_add(CONNECTED_DISCOVERY_QUIET_MS)
-                .max(last_turn_end_ms.saturating_add(CONNECTED_DISCOVERY_REST_MS));
+                .max(last_turn_end_ms.saturating_add(CONNECTED_DISCOVERY_REST_MS))
+                .min(last_turn_end_ms.saturating_add(CONNECTED_DISCOVERY_MAX_REST_MS));
             if now_ms < ready_at {
                 DiscoveryDecision::Wait(ready_at - now_ms)
             } else {
@@ -265,10 +266,6 @@ cfg_if! {
         }
     }
 
-    pub(super) async fn wait_for_activity(&self, role: DiscoveryRole) {
-        self.activity_signal(role).wait().await;
-    }
-
     pub(super) fn finish_turn(&self, window: DiscoveryWindow) {
         if window == DiscoveryWindow::Background {
             self.last_discovery_end_ms
@@ -305,11 +302,6 @@ cfg_if! {
     ) -> Result<DiscoveryWindow, bool> {
         let _ = (enabled, role);
         Ok(DiscoveryWindow::Foreground)
-    }
-
-    pub(super) async fn wait_for_activity(&self, role: DiscoveryRole) {
-        let _ = role;
-        core::future::pending::<()>().await;
     }
 
     pub(super) fn finish_turn(&self, window: DiscoveryWindow) {
@@ -360,19 +352,31 @@ mod tests {
     }
 
     #[test]
+    fn continuous_activity_cannot_defer_discovery_forever() {
+        assert_eq!(
+            discovery_decision(1, 0, 4_900, 0, 4_999),
+            DiscoveryDecision::Wait(1)
+        );
+        assert_eq!(
+            discovery_decision(1, 0, 4_900, 0, 5_000),
+            DiscoveryDecision::Background
+        );
+    }
+
+    #[test]
     fn busy_operations_and_full_capacity_suspend_discovery() {
         assert_eq!(
             discovery_decision(1, 1, 0, 0, 10_000),
             DiscoveryDecision::Suspended
         );
-        for links in 1..PEER_CAPACITY as u8 {
+        for links in 1..PEER_CAPACITY.saturating_sub(1) as u8 {
             assert_eq!(
                 discovery_decision(links, 0, 0, 0, 10_000),
                 DiscoveryDecision::Background
             );
         }
         assert_eq!(
-            discovery_decision(PEER_CAPACITY as u8, 0, 0, 0, 10_000),
+            discovery_decision(PEER_CAPACITY.saturating_sub(1) as u8, 0, 0, 0, 10_000,),
             DiscoveryDecision::Suspended
         );
     }

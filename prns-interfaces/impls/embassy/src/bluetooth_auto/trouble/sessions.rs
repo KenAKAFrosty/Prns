@@ -1,4 +1,4 @@
-use super::backend::{BleHub, SlotChannels};
+use super::backend::{BleHub, DialTarget, SlotChannels, TransientClientRetryOutcome};
 use super::*;
 
 /// Trouble allocates an ATT packet before awaiting its bounded outbound queue. A short GATT burst
@@ -195,7 +195,7 @@ async fn l2cap_pump<T: TroubleTransport>(
     inbound_frames: &'static BleFramePool,
     data_out_rx: Receiver<'static, BridgeMutex, BleFrameLease, FRAME_QUEUE_DEPTH>,
     data_in_tx: Sender<'static, BridgeMutex, BleFrameLease, FRAME_QUEUE_DEPTH>,
-) {
+) -> L2capPumpExit {
     let (mut writer, mut reader) = channel.split();
     let outbound = async {
         let mut tx = alloc::boxed::Box::new([0u8; L2CAP_SDU_LEN]);
@@ -208,8 +208,9 @@ async fn l2cap_pump<T: TroubleTransport>(
             let activity = hub.begin_busy_operation();
             let sent = writer.send(stack, &tx[..len]).await;
             drop(activity);
-            if sent.is_err() {
-                break;
+            if let Err(error) = sent {
+                crate::diagnostic_log::warn!("ble: L2CAP send failed: {error:?}");
+                return L2capPumpExit::Outbound;
             }
         }
     };
@@ -218,7 +219,10 @@ async fn l2cap_pump<T: TroubleTransport>(
         loop {
             let read = match reader.receive(stack, rx.as_mut()).await {
                 Ok(read) => read,
-                Err(_) => break,
+                Err(error) => {
+                    crate::diagnostic_log::warn!("ble: L2CAP receive failed: {error:?}");
+                    return L2capPumpExit::Inbound;
+                }
             };
             hub.note_link_activity();
             if read < STREAM_FRAME_PREFIX_LEN {
@@ -233,7 +237,7 @@ async fn l2cap_pump<T: TroubleTransport>(
                 Ok(frame) => frame,
                 Err(error) => {
                     crate::diagnostic_log::warn!("ble L2CAP frame lease failed: {error:?}");
-                    break;
+                    return L2capPumpExit::FramePool;
                 }
             };
             if frame.fill(&body[..len]).await.is_ok() {
@@ -241,7 +245,32 @@ async fn l2cap_pump<T: TroubleTransport>(
             }
         }
     };
-    let _ = select(outbound, inbound).await;
+    match select(outbound, inbound).await {
+        Either::First(exit) | Either::Second(exit) => exit,
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum L2capPumpExit {
+    Outbound,
+    Inbound,
+    FramePool,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum SessionExit {
+    ClientTask,
+    GattServerTask,
+    Inbound,
+    ControlOutbound,
+    DataPlane,
+    WorkerClosed,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum GattServerExit {
+    Disconnected,
+    RequestFailed,
 }
 
 #[derive(Clone, Copy)]
@@ -260,6 +289,48 @@ pub struct ReticulumGattUuids<'a> {
     pub columba_rx: &'a Uuid,
     pub columba_tx: &'a Uuid,
     pub columba_identity: &'a Uuid,
+}
+
+pub(super) struct CentralGattSetup<'a> {
+    pub(super) server: &'a GattServer,
+    pub(super) uuids: ReticulumGattUuids<'a>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum CentralSetupFailure {
+    AttributeServerBinding,
+    ClientCreation,
+    ServiceDiscovery,
+    NativeCharacteristicDiscovery,
+    ColumbaFallbackDiscovery,
+    IdentityRead,
+    Subscription,
+}
+
+async fn serve_peer_gatt_requests(
+    hub: &'static BleHub,
+    connection: &GattConnection<'_, '_, DefaultPacketPool>,
+) -> GattServerExit {
+    loop {
+        match connection.next().await {
+            GattConnectionEvent::Disconnected { .. } => return GattServerExit::Disconnected,
+            GattConnectionEvent::Gatt { event } => {
+                let activity = hub.begin_busy_operation();
+                let reply = match event.accept() {
+                    Ok(reply) => reply,
+                    Err(error) => {
+                        crate::diagnostic_log::warn!(
+                            "ble: dialed peer GATT request failed: {error:?}"
+                        );
+                        return GattServerExit::RequestFailed;
+                    }
+                };
+                reply.send().await;
+                drop(activity);
+            }
+            _ => {}
+        }
+    }
 }
 
 pub(super) async fn serve_peripheral<T: TroubleTransport>(
@@ -456,7 +527,7 @@ pub(super) async fn serve_peripheral<T: TroubleTransport>(
         match channel {
             Some(channel) => {
                 crate::diagnostic_log::debug!("ble: L2CAP up (accepted)");
-                l2cap_pump(
+                let exit = l2cap_pump(
                     hub,
                     stack,
                     channel,
@@ -465,6 +536,7 @@ pub(super) async fn serve_peripheral<T: TroubleTransport>(
                     data_in_tx,
                 )
                 .await;
+                crate::diagnostic_log::warn!("ble: accepted L2CAP pump ended: {exit:?}");
             }
             None => {
                 let mut profiled_first_frame = false;
@@ -521,29 +593,48 @@ pub(super) async fn serve_peripheral<T: TroubleTransport>(
         }
     });
 
-    let _ = select4(
+    let exit = match select4(
         inbound,
         control_outbound,
         data_lane,
         worker.wait_for_close(),
     )
-    .await;
+    .await
+    {
+        Either4::First(()) => SessionExit::Inbound,
+        Either4::Second(()) => SessionExit::ControlOutbound,
+        Either4::Third(()) => SessionExit::DataPlane,
+        Either4::Fourth(()) => SessionExit::WorkerClosed,
+    };
+    crate::diagnostic_log::warn!("ble: accepted session ended: {exit:?}");
 }
 
-/// The per-dial GATT client is boxed because its notification pubsub would otherwise inflate the task frame; a discovery failure reports `dial_failed` so policy can back off.
 pub(super) async fn serve_central<T: TroubleTransport>(
     hub: &'static BleHub,
     stack: &'static TroubleStack<T>,
+    gatt: CentralGattSetup<'_>,
     link: BleSlotLink,
     worker: &BleSlotWorker,
     connection: Connection<'static, DefaultPacketPool>,
-    uuids: ReticulumGattUuids<'_>,
+    target: DialTarget,
 ) {
     let setup_activity = hub.begin_busy_operation();
     let slot = &hub.slots[link.index()];
     let addr = connection.peer_address().into_inner();
+    let peer_gatt = match connection.clone().with_attribute_server(gatt.server) {
+        Ok(connection) => connection,
+        Err(error) => {
+            crate::diagnostic_log::warn!(
+                "ble: dialed GATT setup failed addr={addr:?}: {:?}: {error:?}",
+                CentralSetupFailure::AttributeServerBinding,
+            );
+            connection.disconnect();
+            hub.dial_failed.send(addr).await;
+            return;
+        }
+    };
     let client = match with_timeout(
-        GATT_SETUP_TIMEOUT,
+        GATT_OPERATION_TIMEOUT,
         GattClient::<TroubleController<T>, DefaultPacketPool, MAX_SERVICES>::new(
             stack,
             &connection,
@@ -552,78 +643,162 @@ pub(super) async fn serve_central<T: TroubleTransport>(
     .await
     {
         Ok(Ok(client)) => alloc::boxed::Box::new(client),
-        _ => {
+        Ok(Err(trouble_host::BleHostError::BleHost(trouble_host::Error::Disconnected))) => {
+            connection.disconnect();
+            match hub.retry_transient_client_disconnect(target) {
+                TransientClientRetryOutcome::Queued => {
+                    crate::diagnostic_log::debug!(
+                        "ble: transient dialed GATT client disconnect retry queued addr={addr:?}"
+                    );
+                }
+                TransientClientRetryOutcome::Exhausted => {
+                    crate::diagnostic_log::warn!(
+                        "ble: dialed GATT setup failed addr={addr:?}: {:?}: Disconnected after transient retries exhausted",
+                        CentralSetupFailure::ClientCreation,
+                    );
+                    hub.dial_failed.send(addr).await;
+                }
+                TransientClientRetryOutcome::QueueBusy => {
+                    crate::diagnostic_log::warn!(
+                        "ble: dialed GATT setup failed addr={addr:?}: {:?}: Disconnected with transient retry queue busy",
+                        CentralSetupFailure::ClientCreation,
+                    );
+                    hub.dial_failed.send(addr).await;
+                }
+            }
+            return;
+        }
+        Ok(Err(error)) => {
+            crate::diagnostic_log::warn!(
+                "ble: dialed GATT setup failed addr={addr:?}: {:?}: {error:?}",
+                CentralSetupFailure::ClientCreation,
+            );
+            connection.disconnect();
+            hub.dial_failed.send(addr).await;
+            return;
+        }
+        Err(_) => {
+            crate::diagnostic_log::warn!(
+                "ble: dialed GATT setup failed addr={addr:?}: {:?}: Timeout",
+                CentralSetupFailure::ClientCreation,
+            );
+            connection.disconnect();
             hub.dial_failed.send(addr).await;
             return;
         }
     };
 
+    let setup_stage = Cell::new(CentralSetupFailure::ServiceDiscovery);
     let discovered = with_timeout(GATT_SETUP_TIMEOUT, async {
         let discover = async {
-            let services = client.services_by_uuid(uuids.service).await.ok()?;
-            let service = services.first()?.clone();
-            let native_control: Option<Characteristic<GattVec<u8, GATT_VALUE_CAP>>> = client
-                .characteristic_by_uuid(&service, uuids.control)
+            let services = client
+                .services_by_uuid(gatt.uuids.service)
                 .await
-                .ok();
-            if let Some(control) = native_control {
-                let data: Characteristic<GattVec<u8, GATT_VALUE_CAP>> = client
-                    .characteristic_by_uuid(&service, uuids.data)
-                    .await
-                    .ok()?;
-                let control_listener = client.subscribe(&control, false).await.ok()?;
-                let data_listener = client.subscribe(&data, false).await.ok()?;
-                Some((
-                    PeerProtocol::Native,
-                    control,
-                    data,
-                    Some(control_listener),
-                    data_listener,
-                    None,
-                ))
-            } else {
-                let rx: Characteristic<GattVec<u8, GATT_VALUE_CAP>> = client
-                    .characteristic_by_uuid(&service, uuids.columba_rx)
-                    .await
-                    .ok()?;
-                let tx: Characteristic<GattVec<u8, GATT_VALUE_CAP>> = client
-                    .characteristic_by_uuid(&service, uuids.columba_tx)
-                    .await
-                    .ok()?;
-                let identity: Characteristic<GattVec<u8, GATT_VALUE_CAP>> = client
-                    .characteristic_by_uuid(&service, uuids.columba_identity)
-                    .await
-                    .ok()?;
-                let mut bytes = [0u8; 16];
-                let read = client
-                    .read_characteristic(&identity, &mut bytes)
-                    .await
-                    .ok()?;
-                if read != bytes.len() {
-                    return None;
+                .map_err(|_| CentralSetupFailure::ServiceDiscovery)?;
+            let service = services
+                .first()
+                .cloned()
+                .ok_or(CentralSetupFailure::ServiceDiscovery)?;
+            setup_stage.set(CentralSetupFailure::NativeCharacteristicDiscovery);
+            let native_control: Result<
+                Characteristic<GattVec<u8, GATT_VALUE_CAP>>,
+                trouble_host::BleHostError<T::Error>,
+            > = client
+                .characteristic_by_uuid(&service, gatt.uuids.control)
+                .await;
+            match native_control {
+                Ok(control) => {
+                    let data: Characteristic<GattVec<u8, GATT_VALUE_CAP>> = client
+                        .characteristic_by_uuid(&service, gatt.uuids.data)
+                        .await
+                        .map_err(|_| CentralSetupFailure::NativeCharacteristicDiscovery)?;
+                    setup_stage.set(CentralSetupFailure::Subscription);
+                    let control_listener = client
+                        .subscribe(&control, false)
+                        .await
+                        .map_err(|_| CentralSetupFailure::Subscription)?;
+                    let data_listener = client
+                        .subscribe(&data, false)
+                        .await
+                        .map_err(|_| CentralSetupFailure::Subscription)?;
+                    Ok((
+                        PeerProtocol::Native,
+                        control,
+                        data,
+                        Some(control_listener),
+                        data_listener,
+                        None,
+                    ))
                 }
-                let data_listener = client.subscribe(&tx, false).await.ok()?;
-                Some((
-                    PeerProtocol::Columba,
-                    rx.clone(),
-                    rx,
-                    None,
-                    data_listener,
-                    Some(BleIdentity::new(bytes)),
-                ))
+                Err(trouble_host::BleHostError::BleHost(trouble_host::Error::NotFound)) => {
+                    setup_stage.set(CentralSetupFailure::ColumbaFallbackDiscovery);
+                    let rx: Characteristic<GattVec<u8, GATT_VALUE_CAP>> = client
+                        .characteristic_by_uuid(&service, gatt.uuids.columba_rx)
+                        .await
+                        .map_err(|_| CentralSetupFailure::ColumbaFallbackDiscovery)?;
+                    let tx: Characteristic<GattVec<u8, GATT_VALUE_CAP>> = client
+                        .characteristic_by_uuid(&service, gatt.uuids.columba_tx)
+                        .await
+                        .map_err(|_| CentralSetupFailure::ColumbaFallbackDiscovery)?;
+                    let identity: Characteristic<GattVec<u8, GATT_VALUE_CAP>> = client
+                        .characteristic_by_uuid(&service, gatt.uuids.columba_identity)
+                        .await
+                        .map_err(|_| CentralSetupFailure::ColumbaFallbackDiscovery)?;
+                    setup_stage.set(CentralSetupFailure::IdentityRead);
+                    let mut bytes = [0u8; 16];
+                    let read = client
+                        .read_characteristic(&identity, &mut bytes)
+                        .await
+                        .map_err(|_| CentralSetupFailure::IdentityRead)?;
+                    if read != bytes.len() {
+                        return Err(CentralSetupFailure::IdentityRead);
+                    }
+                    setup_stage.set(CentralSetupFailure::Subscription);
+                    let data_listener = client
+                        .subscribe(&tx, false)
+                        .await
+                        .map_err(|_| CentralSetupFailure::Subscription)?;
+                    Ok((
+                        PeerProtocol::Columba,
+                        rx.clone(),
+                        rx,
+                        None,
+                        data_listener,
+                        Some(BleIdentity::new(bytes)),
+                    ))
+                }
+                Err(_) => Err(CentralSetupFailure::NativeCharacteristicDiscovery),
             }
         };
-        // ATT responses require the client's receive task to run during discovery.
-        match select(discover, client.task()).await {
-            Either::First(Some(parts)) => Some(parts),
-            _ => None,
+        match select3(
+            discover,
+            client.task(),
+            serve_peer_gatt_requests(hub, &peer_gatt),
+        )
+        .await
+        {
+            Either3::First(result) => result,
+            Either3::Second(_) | Either3::Third(_) => Err(setup_stage.get()),
         }
     })
     .await;
     let (peer_protocol, control, data, control_listener, mut data_listener, peer_identity) =
         match discovered {
-            Ok(Some(parts)) => parts,
-            _ => {
+            Ok(Ok(parts)) => parts,
+            Ok(Err(failure)) => {
+                crate::diagnostic_log::warn!(
+                    "ble: dialed GATT setup failed addr={addr:?}: {failure:?}"
+                );
+                connection.disconnect();
+                hub.dial_failed.send(addr).await;
+                return;
+            }
+            Err(_) => {
+                let failure = setup_stage.get();
+                crate::diagnostic_log::warn!(
+                    "ble: dialed GATT setup failed addr={addr:?}: {failure:?}"
+                );
+                connection.disconnect();
                 hub.dial_failed.send(addr).await;
                 return;
             }
@@ -637,7 +812,7 @@ pub(super) async fn serve_central<T: TroubleTransport>(
     tune_dialed_connection(hub, stack, &connection).await;
     let initial_params = connection.params();
     crate::diagnostic_log::info!(
-        "ble: dialed GATT link ready protocol={peer_protocol:?} interval_ms={} latency={} supervision_ms={} att_mtu={}",
+        "ble: dialed GATT link ready addr={addr:?} protocol={peer_protocol:?} interval_ms={} latency={} supervision_ms={} att_mtu={}",
         initial_params.conn_interval.as_millis(),
         initial_params.peripheral_latency,
         initial_params.supervision_timeout.as_millis(),
@@ -751,7 +926,7 @@ pub(super) async fn serve_central<T: TroubleTransport>(
         match channel {
             Some(channel) => {
                 crate::diagnostic_log::debug!("ble: L2CAP up (opened)");
-                l2cap_pump(
+                let exit = l2cap_pump(
                     hub,
                     stack,
                     channel,
@@ -760,6 +935,7 @@ pub(super) async fn serve_central<T: TroubleTransport>(
                     data_in_tx_l2cap,
                 )
                 .await;
+                crate::diagnostic_log::warn!("ble: dialed L2CAP pump ended: {exit:?}");
             }
             None => {
                 let mut profiled_first_frame = false;
@@ -826,13 +1002,32 @@ pub(super) async fn serve_central<T: TroubleTransport>(
         }
     });
 
-    let _ = select4(
-        client.task(),
+    let exit = match select4(
+        select(client.task(), serve_peer_gatt_requests(hub, &peer_gatt)),
         inbound,
         select(control_outbound, data_lane),
         worker.wait_for_close(),
     )
-    .await;
+    .await
+    {
+        Either4::First(Either::First(result)) => {
+            crate::diagnostic_log::warn!(
+                "ble: dialed GATT client task ended addr={addr:?}: {result:?}"
+            );
+            SessionExit::ClientTask
+        }
+        Either4::First(Either::Second(exit)) => {
+            crate::diagnostic_log::warn!(
+                "ble: dialed peer GATT server task ended addr={addr:?}: {exit:?}"
+            );
+            SessionExit::GattServerTask
+        }
+        Either4::Second(()) => SessionExit::Inbound,
+        Either4::Third(Either::First(())) => SessionExit::ControlOutbound,
+        Either4::Third(Either::Second(())) => SessionExit::DataPlane,
+        Either4::Fourth(()) => SessionExit::WorkerClosed,
+    };
+    crate::diagnostic_log::warn!("ble: dialed session ended addr={addr:?}: {exit:?}");
 }
 
 #[cfg(test)]
@@ -845,6 +1040,17 @@ mod tests {
 
     use super::*;
     use crate::bluetooth_auto::BluetoothAutoShared;
+
+    #[test]
+    fn initial_credits_cover_exactly_one_largest_l2cap_sdu() {
+        let required_wire_bytes = L2CAP_SDU_LEN + usize::from(L2CAP_SDU_LENGTH_PREFIX_LEN);
+        let credited_wire_bytes = usize::from(L2CAP_CREDITS) * usize::from(L2CAP_MPS);
+        let one_fewer_credit = usize::from(L2CAP_CREDITS - 1) * usize::from(L2CAP_MPS);
+
+        assert!(credited_wire_bytes >= required_wire_bytes);
+        assert!(one_fewer_credit < required_wire_bytes);
+        assert_eq!(l2cap_config().initial_credits, Some(L2CAP_CREDITS));
+    }
 
     #[test]
     fn acknowledged_admission_waits_for_owned_capacity() {

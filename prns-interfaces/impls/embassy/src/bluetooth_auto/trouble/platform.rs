@@ -73,17 +73,18 @@ cfg_if! {
         pub(super) const CONNECT_SCAN_INTERVAL: Duration = Duration::from_millis(100);
         pub(super) const CONNECT_SCAN_WINDOW: Duration = Duration::from_millis(80);
         pub(super) const IDLE_SCAN_INTERVAL: Duration = Duration::from_secs(1);
-        pub(super) const IDLE_SCAN_WINDOW: Duration = Duration::from_millis(50);
+        pub(super) const IDLE_SCAN_WINDOW: Duration = Duration::from_millis(200);
         pub(super) const SCAN_WINDOW: Duration = Duration::from_millis(600);
 
         pub(super) const CONNECTED_DISCOVERY_QUIET_MS: u64 = 750;
         pub(super) const CONNECTED_DISCOVERY_REST_MS: u64 = 500;
+        pub(super) const CONNECTED_DISCOVERY_MAX_REST_MS: u64 = 5_000;
         pub(super) const CONNECTED_DISCOVERY_WINDOW: Duration = Duration::from_millis(60);
         pub(super) const CONNECTED_ADV_INTERVAL_MIN: Duration = Duration::from_millis(30);
         pub(super) const CONNECTED_ADV_INTERVAL_MAX: Duration = Duration::from_millis(40);
         pub(super) const CONNECTED_SCAN_INTERVAL: Duration = Duration::from_millis(60);
-        pub(super) const CONNECTED_SCAN_WINDOW: Duration = Duration::from_millis(20);
-        pub(super) const CONNECTED_CONNECT_TIMEOUT: Duration = Duration::from_millis(750);
+        pub(super) const CONNECTED_SCAN_WINDOW: Duration = Duration::from_millis(60);
+        pub(super) const CONNECTED_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 
         pub(super) const L2CAP_MPS: u16 = 247;
         pub(super) const DATA_LENGTH_OCTETS: u16 = 251;

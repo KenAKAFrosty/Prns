@@ -60,6 +60,13 @@ static BT_STATE: NonReentrantMutex<BleState> = NonReentrantMutex::new(BleState {
 
 static mut HCI_OUT_COLLECTOR: MaybeUninit<HciOutCollector> = MaybeUninit::uninit();
 
+pub(crate) fn clear_hci_rx_state() {
+    BT_STATE.with(|state| {
+        state.rx_queue.clear();
+        state.hci_read_data.clear();
+    });
+}
+
 #[derive(PartialEq, Debug)]
 enum HciOutType {
     Unknown,
