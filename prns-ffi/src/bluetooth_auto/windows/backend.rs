@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::AtomicU64;
 use std::sync::mpsc as sync_mpsc;
 use std::sync::Arc;
@@ -36,6 +36,7 @@ pub struct WindowsBleBackend {
     radio: Radio,
     watcher_heartbeat: JoinHandle<()>,
     dials: JoinSet<Result<WinGattLink, BleAddress>>,
+    dial_queue: VecDeque<(BleAddress, BluetoothAddressType)>,
     seen_address_types: HashMap<BleAddress, BluetoothAddressType>,
 }
 
@@ -68,6 +69,7 @@ impl WindowsBleBackend {
                     radio,
                     watcher_heartbeat,
                     dials: JoinSet::new(),
+                    dial_queue: VecDeque::new(),
                     seen_address_types: HashMap::new(),
                 })
             }
@@ -170,7 +172,7 @@ fn try_adapter() -> Result<(), WindowsBleError> {
 
 impl Drop for WindowsBleBackend {
     fn drop(&mut self) {
-        self.radio.scan_intent.set(false);
+        self.radio.scan_intent.request(ScanningMode::Off);
         self.watcher_heartbeat.abort();
         let _ = self.radio.watcher.Stop();
         let _ = self.radio.provider.StopAdvertising();
@@ -202,21 +204,8 @@ impl BleBackend<{ WindowsBleBackend::MAX_PEERS }> for WindowsBleBackend {
     }
 
     async fn set_scanning(&mut self, mode: ScanningMode) -> Result<(), WindowsBleError> {
-        let requested = mode.is_on();
-        self.radio.scan_intent.set(requested);
-        let status = self.radio.watcher.Status()?;
-        match scan_action(requested, status) {
-            ScanAction::Start => {
-                self.radio.watcher.Start()?;
-                crate::diagnostic_log::debug!("bluetooth: scanning for Prns peers");
-            }
-            ScanAction::Stop => {
-                self.radio.watcher.Stop()?;
-                crate::diagnostic_log::debug!("bluetooth: scanning stopped by supervisor policy");
-            }
-            ScanAction::None => {}
-        }
-        Ok(())
+        self.radio.scan_intent.request(mode);
+        self.apply_scan_state()
     }
 
     async fn next_event(&mut self) -> BleEvent<WinGattLink> {
@@ -240,6 +229,15 @@ impl BleBackend<{ WindowsBleBackend::MAX_PEERS }> for WindowsBleBackend {
                     None => core::future::pending().await,
                 },
                 Some(joined) = self.dials.join_next(), if pending_dials => {
+                    if self.dials.is_empty() {
+                        match self.dial_queue.pop_front() {
+                            Some((address, address_type)) => self.begin_dial(address, address_type),
+                            None => {
+                                self.radio.scan_intent.release_dial_hold();
+                                let _ = self.apply_scan_state();
+                            }
+                        }
+                    }
                     match joined {
                         Ok(Ok(link)) => {
                             return BleEvent::LinkReady {
@@ -262,6 +260,39 @@ impl BleBackend<{ WindowsBleBackend::MAX_PEERS }> for WindowsBleBackend {
             .get(&address)
             .copied()
             .unwrap_or(BluetoothAddressType::Unspecified);
+        if self.dials.is_empty() {
+            self.begin_dial(address, address_type);
+        } else if !self.dial_queue.iter().any(|(queued, _)| *queued == address) {
+            crate::diagnostic_log::debug!(
+                "bluetooth: dial to {:02x?} queued behind the in-flight dial",
+                address.octets()
+            );
+            self.dial_queue.push_back((address, address_type));
+        }
+        DialOutcome::Started
+    }
+}
+
+impl WindowsBleBackend {
+    fn apply_scan_state(&self) -> Result<(), WindowsBleError> {
+        let status = self.radio.watcher.Status()?;
+        match scan_action(self.radio.scan_intent.is_effective(), status) {
+            ScanAction::Start => {
+                self.radio.watcher.Start()?;
+                crate::diagnostic_log::debug!("bluetooth: scanning for Prns peers");
+            }
+            ScanAction::Stop => {
+                self.radio.watcher.Stop()?;
+                crate::diagnostic_log::debug!("bluetooth: scanning paused");
+            }
+            ScanAction::None => {}
+        }
+        Ok(())
+    }
+
+    fn begin_dial(&mut self, address: BleAddress, address_type: BluetoothAddressType) {
+        self.radio.scan_intent.hold_for_dial();
+        let _ = self.apply_scan_state();
         crate::diagnostic_log::debug!(
             "bluetooth: dialling {:02x?} type={address_type:?} over LE (central role)",
             address.octets()
@@ -277,6 +308,5 @@ impl BleBackend<{ WindowsBleBackend::MAX_PEERS }> for WindowsBleBackend {
                     Err(address)
                 }
             });
-        DialOutcome::Started
     }
 }

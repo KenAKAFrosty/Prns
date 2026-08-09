@@ -10,7 +10,7 @@ mod tests;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
-use prns_core::interfaces::bluetooth_auto::{BleAddress, BleUuid};
+use prns_core::interfaces::bluetooth_auto::{BleAddress, BleUuid, ScanningMode};
 use windows::core::GUID;
 use windows::Devices::Bluetooth::Advertisement::BluetoothLEAdvertisementWatcher;
 use windows::Devices::Bluetooth::BluetoothAddressType;
@@ -63,19 +63,33 @@ struct Radio {
 }
 
 #[derive(Clone)]
-struct ScanIntent(Arc<AtomicBool>);
+struct ScanIntent {
+    requested: Arc<AtomicBool>,
+    dial_hold: Arc<AtomicBool>,
+}
 
 impl ScanIntent {
     fn new() -> Self {
-        Self(Arc::new(AtomicBool::new(false)))
+        Self {
+            requested: Arc::new(AtomicBool::new(false)),
+            dial_hold: Arc::new(AtomicBool::new(false)),
+        }
     }
 
-    fn set(&self, requested: bool) {
-        self.0.store(requested, Ordering::Release);
+    fn request(&self, mode: ScanningMode) {
+        self.requested.store(mode.is_on(), Ordering::Release);
     }
 
-    fn is_requested(&self) -> bool {
-        self.0.load(Ordering::Acquire)
+    fn hold_for_dial(&self) {
+        self.dial_hold.store(true, Ordering::Release);
+    }
+
+    fn release_dial_hold(&self) {
+        self.dial_hold.store(false, Ordering::Release);
+    }
+
+    fn is_effective(&self) -> bool {
+        self.requested.load(Ordering::Acquire) && !self.dial_hold.load(Ordering::Acquire)
     }
 }
 

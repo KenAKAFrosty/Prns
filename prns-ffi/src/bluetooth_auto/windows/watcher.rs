@@ -71,7 +71,7 @@ pub(super) fn build_watcher(
         move |sender: &Option<BluetoothLEAdvertisementWatcher>,
               args: &Option<BluetoothLEAdvertisementWatcherStoppedEventArgs>| {
             let error = args.as_ref().and_then(|args| args.Error().ok());
-            if !scan_intent.is_requested() {
+            if !scan_intent.is_effective() {
                 crate::diagnostic_log::debug!(
                     "bluetooth: advertisement watcher stopped intentionally"
                 );
@@ -115,7 +115,7 @@ pub(super) fn spawn_watcher_heartbeat(
         loop {
             tick.tick().await;
             let seen = adverts.load(Ordering::Relaxed);
-            if !scan_intent.is_requested() {
+            if !scan_intent.is_effective() {
                 last_seen = seen;
                 quiet_ticks = 0;
                 continue;
@@ -124,9 +124,11 @@ pub(super) fn spawn_watcher_heartbeat(
                 Ok(status) => status,
                 Err(error) => {
                     crate::diagnostic_log::warn!(
-                        "bluetooth: scanner status unreadable ({error:?})"
+                        "bluetooth: scanner status unreadable ({error:?}); retrying next heartbeat"
                     );
-                    break;
+                    last_seen = seen;
+                    quiet_ticks = 0;
+                    continue;
                 }
             };
             crate::diagnostic_log::debug!(
