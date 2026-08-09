@@ -24,7 +24,7 @@ def main():
     if repository is not None:
         jar = (
             repository
-            / "io"
+            / "rs"
             / "reticulum"
             / "personal-rns"
             / version
