@@ -3236,9 +3236,9 @@ name = "prnsd-control"
 version = "0.1.0"
 dependencies = [
  "home",
+ "prns-ffi",
  "sha2 0.10.9",
  "tempfile",
- "windows-sys 0.59.0",
 ]
 
 [[package]]
