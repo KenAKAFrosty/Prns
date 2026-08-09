@@ -637,7 +637,7 @@ jobs:
             --no-daemon
           version="$(<../../../VERSION)"
           repository="$PWD/build/staging-repository"
-          release="$repository/io/reticulum/personal-rns/$version"
+          release="$repository/rs/reticulum/personal-rns/$version"
           test -d "$release"
           mapfile -d '' signable < <(
             find "$release" -type f \
@@ -652,7 +652,7 @@ jobs:
           bundle="$GITHUB_WORKSPACE/dist/personal-rns-$version-maven-central.zip"
           (
             cd "$repository"
-            zip -q -r "$bundle" "io/reticulum/personal-rns/$version"
+            zip -q -r "$bundle" "rs/reticulum/personal-rns/$version"
           )
         working-directory: prns-host/bindings/jvm
       - name: publish Maven Central bundle

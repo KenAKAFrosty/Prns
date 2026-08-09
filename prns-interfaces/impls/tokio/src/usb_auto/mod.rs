@@ -549,6 +549,9 @@ mod tests {
     use tokio::io::AsyncRead;
     use tokio::sync::mpsc::unbounded_channel;
 
+    const FRAME_ARRIVAL_TIMEOUT: Duration =
+        LIVENESS_PROBE_INTERVAL.saturating_add(Duration::from_secs(1));
+
     fn host_id() -> InterfaceId {
         InterfaceId::new([0xD0; 8])
     }
@@ -563,7 +566,7 @@ mod tests {
     {
         let mut buf = [0u8; 64];
         loop {
-            let n = tokio::time::timeout(Duration::from_secs(2), wire.read(&mut buf))
+            let n = tokio::time::timeout(FRAME_ARRIVAL_TIMEOUT, wire.read(&mut buf))
                 .await
                 .expect("a frame arrives within the window")
                 .expect("the device wire stays open");

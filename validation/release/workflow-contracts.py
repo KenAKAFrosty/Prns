@@ -628,6 +628,13 @@ def validate() -> list[str]:
     host_sdks = (
         ROOT / ".github" / "workflows" / "host-sdks.yml"
     ).read_text(encoding="utf-8")
+    maven_repository_path = "rs/reticulum/personal-rns/$version"
+    if host_sdks.count(maven_repository_path) != 2:
+        errors.append(
+            "host-sdks.yml does not use the declared Maven group for staging and bundling"
+        )
+    if "io/reticulum/personal-rns" in host_sdks:
+        errors.append("host-sdks.yml retains the obsolete Maven repository path")
     for target, zig_target, wheel in (
         (
             "x86_64-unknown-linux-gnu",
