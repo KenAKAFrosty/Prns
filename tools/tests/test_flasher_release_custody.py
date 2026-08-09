@@ -1356,7 +1356,19 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         (assets / "unexpected.bin").write_bytes(b"unexpected")
         unexpected = run_script("verify-flasher-release-assets.py", *arguments)
         self.assertNotEqual(unexpected.returncode, 0)
-        self.assertIn("asset inventory differs", unexpected.stderr)
+        self.assertIn(
+            "outside both the signed candidate and the signed suite custody inventory",
+            unexpected.stderr,
+        )
+        (assets / "unexpected.bin").unlink()
+
+        removed = assets / "install.sh"
+        expected_install = removed.read_bytes()
+        removed.unlink()
+        missing = run_script("verify-flasher-release-assets.py", *arguments)
+        self.assertNotEqual(missing.returncode, 0)
+        self.assertIn("missing signed release assets", missing.stderr)
+        removed.write_bytes(expected_install)
 
     def test_workflows_preserve_exact_candidate_custody_boundaries(self) -> None:
         candidate = (ROOT / ".github/workflows/flasher-candidate.yml").read_text()

@@ -33,6 +33,30 @@ def files_equal(first: Path, second: Path) -> bool:
                 return True
 
 
+def suite_custody_inventory(assets: Path) -> dict[str, str]:
+    checksums = assets / "SHA256SUMS.txt"
+    if not checksums.is_file():
+        raise ValueError("signed suite custody inventory is unavailable")
+    inventory: dict[str, str] = {}
+    for line in checksums.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        digest, _, name = line.partition("  ")
+        name = name.strip()
+        if (
+            len(digest) != 64
+            or any(character not in "0123456789abcdef" for character in digest)
+            or not name
+        ):
+            raise ValueError("signed suite custody inventory entry is invalid")
+        if name in inventory:
+            raise ValueError(f"signed suite custody inventory repeats {name}")
+        inventory[name] = digest
+    if not inventory:
+        raise ValueError("signed suite custody inventory is empty")
+    return inventory
+
+
 def expected_candidate_assets(candidate: Path, version: str) -> dict[str, Path]:
     manifest = json.loads((candidate / "flash-manifest.json").read_text(encoding="utf-8"))
     release = manifest.get("release") if isinstance(manifest, dict) else None
@@ -185,7 +209,7 @@ def verify(
         repository=repository,
         version=version,
         source_commit=source_commit,
-        workflow_run_id=workflow_run_id,
+        workflow_run_id=None,
         signed_candidate_sha256=sha256(signed_bundle),
         manifest_sha256=sha256(manifest_path),
     )
@@ -194,12 +218,23 @@ def verify(
         | custody_names
         | {path.name for path in public_review_assets}
     )
-    if actual_names != expected_names:
+    missing = expected_names - actual_names
+    if missing:
         raise ValueError(
-            "GitHub Release asset inventory differs from the signed release; "
-            f"missing={sorted(expected_names - actual_names)}, "
-            f"unexpected={sorted(actual_names - expected_names)}"
+            "GitHub Release asset inventory is missing signed release assets: "
+            f"{sorted(missing)}"
         )
+    extras = actual_names - expected_names
+    if extras:
+        inventory = suite_custody_inventory(assets)
+        unaccounted = sorted(
+            name for name in extras if inventory.get(name) != sha256(assets / name)
+        )
+        if unaccounted:
+            raise ValueError(
+                "GitHub Release assets are outside both the signed candidate and the "
+                f"signed suite custody inventory: {unaccounted}"
+            )
     for name, source in candidate_sources.items():
         if not files_equal(source, assets / name):
             raise ValueError(f"GitHub Release asset bytes differ from the candidate: {name}")
