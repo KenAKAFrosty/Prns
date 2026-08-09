@@ -1,5 +1,5 @@
 use core::time::Duration;
-use std::collections::{HashMap, HashSet};
+use std::collections::{hash_map::Entry, HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -18,10 +18,10 @@ use bluer::l2cap::{
     Security, SecurityLevel, SeqPacket, SeqPacketListener, Socket, SocketAddr as L2capSocketAddr,
 };
 use bluer::{
-    Adapter, AdapterEvent, Address, AddressType, Device, DiscoveryFilter, DiscoveryTransport,
-    Session, Uuid,
+    Adapter, AdapterEvent, Address, AddressType, Device, DeviceEvent, DeviceProperty,
+    DiscoveryFilter, DiscoveryTransport, Session, Uuid,
 };
-use futures_util::stream::FuturesUnordered;
+use futures_util::stream::{FuturesUnordered, SelectAll};
 use futures_util::{Stream, StreamExt};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::oneshot;
@@ -43,6 +43,8 @@ const L2CAP_SDU_LEN: usize = STREAM_FRAME_PREFIX_LEN + BLE_HW_MTU;
 const GATT_FRAGMENT_PAYLOAD: usize = 180;
 const GATT_REASSEMBLY_CAP: usize = 600;
 const GATT_HALF_OPEN_TIMEOUT: Duration = super::runtime::HANDSHAKE_TIMEOUT;
+const INBOUND_GATT_SETUP_TIMEOUT: Duration = Duration::from_secs(4);
+const ADVERTISEMENT_CONSUMER_TTL: Duration = Duration::from_secs(60);
 
 const SCAN_STOP_POLL: Duration = Duration::from_millis(20);
 const SCAN_STOP_ATTEMPTS: usize = 25;
@@ -52,9 +54,27 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const L2CAP_UPGRADE_TIMEOUT: Duration = Duration::from_secs(5);
 const CONTROL_PLANE_RETRY_INTERVAL: Duration = Duration::from_secs(5);
 const DISCOVERY_DEGRADED_AFTER: Duration = Duration::from_secs(15);
+const ADVERTISING_INTERVAL_MIN: Duration = Duration::from_millis(100);
+const ADVERTISING_INTERVAL_MAX: Duration = Duration::from_millis(150);
 
 const EATT_BLOCKED_REASON: &str = "BlueZ GATT Channels >1; set Channels=1";
 const PRNS_DEVICE_NAME: &str = "Prns";
+
+struct ResweepSchedule {
+    due_at: Instant,
+}
+
+impl ResweepSchedule {
+    fn new(now: Instant) -> Self {
+        Self {
+            due_at: now + RESWEEP_INTERVAL,
+        }
+    }
+
+    fn restart(&mut self, now: Instant) {
+        self.due_at = now + RESWEEP_INTERVAL;
+    }
+}
 
 fn identifies_prns_fallback(
     name: Option<&str>,
@@ -152,6 +172,7 @@ pub enum BluerError {
     GattNotificationsEnded,
     GattWriteChannelEnded,
     GattDataReaderUnavailable,
+    GattDataWriterUnavailable,
     Closed,
 }
 
@@ -282,6 +303,10 @@ struct AwaitingDataReader {
     sender: oneshot::Sender<CharacteristicReader>,
 }
 
+struct AwaitingDataWriter {
+    sender: oneshot::Sender<CharacteristicWriter>,
+}
+
 impl PendingHalves {
     fn new() -> Self {
         Self {
@@ -355,20 +380,36 @@ enum Half {
     Writer(CharacteristicWriter),
 }
 
+enum GattAdmission {
+    Pending,
+    Ready(Box<AcceptedLink>),
+    ActiveLinkUpdated,
+    ActiveLinkEventIgnored,
+    AtCapacity,
+}
+
+enum ServerDataAdmission {
+    Ready(ServerData),
+    AtCapacity,
+}
+
 enum DataRead {
     Ready(CharacteristicReader),
     Pending(oneshot::Receiver<CharacteristicReader>),
 }
 
+enum DataWrite {
+    Ready(CharacteristicWriter),
+    Pending(oneshot::Receiver<CharacteristicWriter>),
+}
+
 enum ServerData {
-    TwoChar {
-        writer: CharacteristicWriter,
-        reader: DataRead,
-    },
+    TwoChar { writer: DataWrite, reader: DataRead },
     Columba,
 }
 
 type ConnectFuture = Pin<Box<dyn Future<Output = (Address, Result<BluerLink, BluerError>)> + Send>>;
+type DeviceEventStream = Pin<Box<dyn Stream<Item = (Address, DeviceEvent)> + Send>>;
 
 enum Observed {
     Candidate(Address),
@@ -384,10 +425,34 @@ enum Observed {
     DiscoveryEnded,
     GattServerEnded,
     L2capFailed(BluerError),
+    DeviceAdded(Address),
+    DeviceRemoved(Address),
+    DeviceConnection {
+        address: Address,
+        state: DeviceConnectionState,
+    },
+    InboundSetupExpired(Address),
+    AdapterEventsEnded,
     GattRetry,
     Connected(Address, Result<BluerLink, BluerError>),
     Resweep,
     Idle,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DeviceConnectionState {
+    Disconnected,
+    Connected,
+}
+
+impl DeviceConnectionState {
+    fn from_connected(connected: bool) -> Self {
+        if connected {
+            Self::Connected
+        } else {
+            Self::Disconnected
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -410,29 +475,123 @@ impl RadioPower {
     }
 }
 
-enum AdvertisementState {
-    Off,
+#[derive(Debug, Eq, PartialEq)]
+enum AdvertisementRegistration<H = AdvertisementHandle> {
+    Unwanted,
     Wanted,
-    Published { _handle: AdvertisementHandle },
+    Registered(H),
 }
 
-impl AdvertisementState {
-    fn wants_airtime(&self) -> bool {
-        matches!(self, Self::Wanted | Self::Published { .. })
+impl<H> AdvertisementRegistration<H> {
+    const fn new() -> Self {
+        Self::Unwanted
     }
 
-    fn is_published(&self) -> bool {
-        matches!(self, Self::Published { .. })
+    fn wants_airtime(&self) -> bool {
+        matches!(self, Self::Wanted | Self::Registered(_))
+    }
+
+    fn is_registered(&self) -> bool {
+        matches!(self, Self::Registered(_))
     }
 
     fn want(&mut self) {
-        if !self.is_published() {
+        if matches!(self, Self::Unwanted) {
+            *self = Self::Wanted;
+        }
+    }
+
+    fn register(&mut self, handle: H) {
+        if matches!(self, Self::Wanted | Self::Registered(_)) {
+            *self = Self::Registered(handle);
+        }
+    }
+
+    fn republish(&mut self) {
+        if matches!(self, Self::Registered(_)) {
             *self = Self::Wanted;
         }
     }
 
     fn stop(&mut self) {
-        *self = Self::Off;
+        *self = Self::Unwanted;
+    }
+}
+
+struct AdvertisementConsumers {
+    opened_at: HashMap<Address, Instant>,
+}
+
+impl AdvertisementConsumers {
+    fn new() -> Self {
+        Self {
+            opened_at: HashMap::new(),
+        }
+    }
+
+    fn begin(&mut self, address: Address, now: Instant) -> bool {
+        if self.opened_at.contains_key(&address) || !can_admit_address(&self.opened_at, address) {
+            return false;
+        }
+        self.opened_at.insert(address, now);
+        true
+    }
+
+    fn prune(&mut self, now: Instant) {
+        self.opened_at
+            .retain(|_, opened_at| now.duration_since(*opened_at) < ADVERTISEMENT_CONSUMER_TTL);
+    }
+
+    fn close(&mut self, address: Address) -> bool {
+        self.opened_at.remove(&address).is_some()
+    }
+
+    fn clear(&mut self) {
+        self.opened_at.clear();
+    }
+}
+
+struct ActiveLinkGenerations {
+    counts: HashMap<Address, usize>,
+}
+
+enum LinkClosure {
+    LastActiveGeneration,
+    SupersededGeneration,
+    Untracked,
+}
+
+impl ActiveLinkGenerations {
+    fn new() -> Self {
+        Self {
+            counts: HashMap::new(),
+        }
+    }
+
+    fn contains(&self, address: Address) -> bool {
+        self.counts.contains_key(&address)
+    }
+
+    fn activate(&mut self, address: Address) {
+        *self.counts.entry(address).or_insert(0) += 1;
+    }
+
+    fn close(&mut self, address: Address) -> LinkClosure {
+        match self.counts.entry(address) {
+            Entry::Occupied(mut entry) if *entry.get() > 1 => {
+                *entry.get_mut() -= 1;
+                LinkClosure::SupersededGeneration
+            }
+            Entry::Occupied(entry) => {
+                entry.remove();
+                LinkClosure::LastActiveGeneration
+            }
+            Entry::Vacant(_) => LinkClosure::Untracked,
+        }
+    }
+
+    fn clear(&mut self) {
+        self.counts.clear();
     }
 }
 
@@ -444,10 +603,16 @@ pub struct BluerBackend {
     identity: BleIdentity,
     radio_power: RadioPower,
     connecting: HashSet<Address>,
+    active_links: ActiveLinkGenerations,
+    connected_devices: HashSet<Address>,
     connects: FuturesUnordered<ConnectFuture>,
     pending: HashMap<Address, PendingHalves>,
     scan_enabled: bool,
     resweep_next: usize,
+    resweep_schedule: ResweepSchedule,
+    adapter_events: Option<Pin<Box<dyn Stream<Item = AdapterEvent> + Send>>>,
+    device_events: SelectAll<DeviceEventStream>,
+    observed_devices: HashSet<Address>,
     discovery: Option<Pin<Box<dyn Stream<Item = AdapterEvent> + Send>>>,
     discovery_health: DiscoveryHealth,
     control: Option<Pin<Box<CharacteristicControl>>>,
@@ -457,11 +622,14 @@ pub struct BluerBackend {
     pending_columba: HashMap<Address, PendingHalves>,
     pending_data: HashMap<Address, PendingData>,
     awaiting_data_reader: HashMap<Address, AwaitingDataReader>,
+    awaiting_data_writer: HashMap<Address, AwaitingDataWriter>,
     listener: Option<Arc<SeqPacketListener>>,
     l2cap_acceptor: Option<tokio::task::JoinHandle<()>>,
     l2cap_failure: Option<oneshot::Receiver<BluerError>>,
     l2cap_router: Arc<std::sync::Mutex<AcceptRouter<SeqPacket>>>,
-    advertisement: AdvertisementState,
+    advertisement: AdvertisementRegistration,
+    advertisement_consumers: AdvertisementConsumers,
+    inbound_setups: HashMap<Address, Instant>,
     gatt_retry_at: Option<Instant>,
     _application: Option<ApplicationHandle>,
     blocked: Option<&'static str>,
@@ -484,6 +652,7 @@ impl BluerBackend {
         adapter.set_powered(true).await?;
         let address = adapter.address().await?;
         let address_type = adapter.address_type().await?;
+        let adapter_events = Box::pin(adapter.events().await?);
         let blocked = if eatt_is_risky() {
             crate::diagnostic_log::error!(
                 "bluetooth: NOT starting — BlueZ Enhanced ATT (EATT) is enabled, so nearby \
@@ -497,7 +666,7 @@ impl BluerBackend {
         } else {
             None
         };
-        Ok(Self {
+        let mut backend = Self {
             adapter,
             address,
             address_type,
@@ -505,10 +674,16 @@ impl BluerBackend {
             identity,
             radio_power: RadioPower::Off,
             connecting: HashSet::new(),
+            active_links: ActiveLinkGenerations::new(),
+            connected_devices: HashSet::new(),
             connects: FuturesUnordered::new(),
             pending: HashMap::new(),
             scan_enabled: false,
             resweep_next: 0,
+            resweep_schedule: ResweepSchedule::new(Instant::now()),
+            adapter_events: Some(adapter_events),
+            device_events: SelectAll::new(),
+            observed_devices: HashSet::new(),
             discovery: None,
             discovery_health: DiscoveryHealth::default(),
             control: None,
@@ -518,15 +693,42 @@ impl BluerBackend {
             pending_columba: HashMap::new(),
             pending_data: HashMap::new(),
             awaiting_data_reader: HashMap::new(),
+            awaiting_data_writer: HashMap::new(),
             listener: None,
             l2cap_acceptor: None,
             l2cap_failure: None,
             l2cap_router: Arc::new(std::sync::Mutex::new(AcceptRouter::new())),
-            advertisement: AdvertisementState::Off,
+            advertisement: AdvertisementRegistration::new(),
+            advertisement_consumers: AdvertisementConsumers::new(),
+            inbound_setups: HashMap::new(),
             gatt_retry_at: None,
             _application: None,
             blocked,
-        })
+        };
+        for address in backend.adapter.device_addresses().await? {
+            let _ = backend.observe_device(address).await;
+        }
+        Ok(backend)
+    }
+
+    async fn observe_device(
+        &mut self,
+        address: Address,
+    ) -> Result<DeviceConnectionState, BluerError> {
+        if self.observed_devices.contains(&address) {
+            let device = self.adapter.device(address)?;
+            return Ok(DeviceConnectionState::from_connected(
+                device.is_connected().await?,
+            ));
+        }
+        let device = self.adapter.device(address)?;
+        let events = device.events().await?;
+        self.device_events
+            .push(Box::pin(events.map(move |event| (address, event))));
+        self.observed_devices.insert(address);
+        Ok(DeviceConnectionState::from_connected(
+            device.is_connected().await?,
+        ))
     }
 
     async fn advertises_our_service(&self, address: Address) -> bool {
@@ -627,6 +829,8 @@ impl BluerBackend {
             service_uuids: [uuid_of(BLE_SERVICE_UUID)].into_iter().collect(),
             manufacturer_data: [(0xffff, vec![0x03, 0x00])].into_iter().collect(),
             discoverable: Some(true),
+            min_interval: Some(ADVERTISING_INTERVAL_MIN),
+            max_interval: Some(ADVERTISING_INTERVAL_MAX),
             ..Default::default()
         }
     }
@@ -653,7 +857,7 @@ impl BluerBackend {
         if !self.radio_power.is_on() || !self.advertisement.wants_airtime() {
             return Ok(());
         }
-        if self.advertisement.is_published() {
+        if self.advertisement.is_registered() {
             return Ok(());
         }
         if let Some(retry_at) = self.gatt_retry_at {
@@ -664,9 +868,7 @@ impl BluerBackend {
         }
         self.ensure_gatt_server().await?;
         let advertisement = self.adapter.advertise(Self::advertisement()).await?;
-        self.advertisement = AdvertisementState::Published {
-            _handle: advertisement,
-        };
+        self.advertisement.register(advertisement);
         self.gatt_retry_at = None;
         crate::diagnostic_log::debug!(
             "bluetooth: advertising Reticulum BLE, control PSM {:#x}, listener {}",
@@ -743,6 +945,9 @@ impl BluerBackend {
         self.pending_columba.clear();
         self.pending_data.clear();
         self.awaiting_data_reader.clear();
+        self.awaiting_data_writer.clear();
+        self.advertisement_consumers.clear();
+        self.inbound_setups.clear();
         if let Some(acceptor) = self.l2cap_acceptor.take() {
             acceptor.abort();
         }
@@ -760,6 +965,8 @@ impl BluerBackend {
         self.advertisement.stop();
         self.stop_gatt_server();
         self.connecting.clear();
+        self.active_links.clear();
+        self.connected_devices.clear();
         self.connects = FuturesUnordered::new();
         self.resweep_next = 0;
         self.gatt_retry_at = None;
@@ -770,6 +977,39 @@ impl BluerBackend {
         self.pending_columba
             .retain(|_, pending| !pending.expired(now));
         self.pending_data.retain(|_, pending| !pending.expired(now));
+        self.advertisement_consumers.prune(now);
+    }
+
+    fn begin_inbound_setup(&mut self, address: Address) {
+        if !self.connecting.contains(&address) && can_admit_address(&self.inbound_setups, address) {
+            self.inbound_setups
+                .entry(address)
+                .or_insert_with(|| Instant::now() + INBOUND_GATT_SETUP_TIMEOUT);
+        }
+    }
+
+    fn begin_physical_connection(&mut self, address: Address) {
+        if self.connected_devices.insert(address) {
+            self.begin_inbound_setup(address);
+        }
+    }
+
+    fn end_physical_connection(&mut self, address: Address) -> bool {
+        self.connected_devices.remove(&address);
+        self.clear_inbound_state(address)
+    }
+
+    fn clear_inbound_state(&mut self, address: Address) -> bool {
+        self.pending.remove(&address);
+        self.pending_columba.remove(&address);
+        self.pending_data.remove(&address);
+        self.awaiting_data_reader.remove(&address);
+        self.awaiting_data_writer.remove(&address);
+        self.inbound_setups.remove(&address);
+        if let Ok(mut router) = self.l2cap_router.lock() {
+            router.cancel(&address);
+        }
+        self.advertisement_consumers.close(address)
     }
 
     fn recover_gatt_server(&mut self) {
@@ -778,6 +1018,23 @@ impl BluerBackend {
         self.stop_gatt_server();
         if resume_advertising {
             self.advertisement.want();
+        }
+    }
+
+    async fn republish_advertisement(&mut self) {
+        self.advertisement.republish();
+        if let Err(error) = self.reconcile_advertisement().await {
+            self.gatt_retry_at
+                .get_or_insert(Instant::now() + CONTROL_PLANE_RETRY_INTERVAL);
+            crate::diagnostic_log::warn!(
+                "bluetooth: advertising restart after inbound connection failed: {error:?}"
+            );
+        }
+    }
+
+    async fn consume_advertisement(&mut self, address: Address) {
+        if self.advertisement_consumers.begin(address, Instant::now()) {
+            self.republish_advertisement().await;
         }
     }
 
@@ -830,24 +1087,21 @@ impl BluerBackend {
         protocol: PeerProtocol,
         address: Address,
         half: Half,
-    ) -> Option<AcceptedLink> {
+    ) -> GattAdmission {
+        if self.active_links.contains(address) && !self.inbound_setups.contains_key(&address) {
+            return GattAdmission::ActiveLinkEventIgnored;
+        }
         let pending = match protocol {
             PeerProtocol::Native => &mut self.pending,
             PeerProtocol::Columba => &mut self.pending_columba,
         };
         if !can_admit_address(pending, address) {
-            return None;
+            return GattAdmission::AtCapacity;
         }
-        let ready = {
-            let entry = pending.entry(address).or_insert_with(PendingHalves::new);
-            match half {
-                Half::Reader(reader) => entry.reader = Some(reader),
-                Half::Writer(writer) => entry.writer = Some(writer),
-            }
-            entry.reader.is_some() && entry.writer.is_some()
-        };
-        if !ready {
-            return None;
+        let entry = pending.entry(address).or_insert_with(PendingHalves::new);
+        match half {
+            Half::Reader(reader) => entry.reader = Some(reader),
+            Half::Writer(writer) => entry.writer = Some(writer),
         }
         self.take_ready_accepted_link(protocol, address)
     }
@@ -856,7 +1110,7 @@ impl BluerBackend {
         &mut self,
         protocol: PeerProtocol,
         address: Address,
-    ) -> Option<AcceptedLink> {
+    ) -> GattAdmission {
         let pending = match protocol {
             PeerProtocol::Native => &mut self.pending,
             PeerProtocol::Columba => &mut self.pending_columba,
@@ -865,10 +1119,13 @@ impl BluerBackend {
             .get(&address)
             .is_some_and(|entry| entry.reader.is_some() && entry.writer.is_some())
         {
-            return None;
+            return GattAdmission::Pending;
         }
         let data = match protocol {
-            PeerProtocol::Native => self.take_server_data(address)?,
+            PeerProtocol::Native => match self.take_server_data(address) {
+                ServerDataAdmission::Ready(data) => data,
+                ServerDataAdmission::AtCapacity => return GattAdmission::AtCapacity,
+            },
             PeerProtocol::Columba => ServerData::Columba,
         };
         let pending = match protocol {
@@ -881,13 +1138,14 @@ impl BluerBackend {
             ..
         }) = pending.remove(&address)
         else {
-            return None;
+            return GattAdmission::Pending;
         };
         let l2cap = match protocol {
             PeerProtocol::Native => self.register_l2cap(address),
             PeerProtocol::Columba => None,
         };
-        Some(AcceptedLink {
+        self.active_links.activate(address);
+        GattAdmission::Ready(Box::new(AcceptedLink {
             peer_protocol: protocol,
             reader,
             writer,
@@ -895,7 +1153,7 @@ impl BluerBackend {
             l2cap,
             socket: None,
             data,
-        })
+        }))
     }
 
     fn register_l2cap(&mut self, address: Address) -> Option<oneshot::Receiver<SeqPacket>> {
@@ -904,15 +1162,32 @@ impl BluerBackend {
         Some(router.register(address))
     }
 
-    fn take_server_data(&mut self, address: Address) -> Option<ServerData> {
-        let needs_reader = self.pending_data.get(&address)?.reader.is_none();
-        if needs_reader && !can_admit_address(&self.awaiting_data_reader, address) {
-            return None;
+    fn take_server_data(&mut self, address: Address) -> ServerDataAdmission {
+        let (needs_writer, needs_reader) = match self.pending_data.get(&address) {
+            Some(pending) => (pending.writer.is_none(), pending.reader.is_none()),
+            None => (true, true),
+        };
+        if needs_writer && !can_admit_address(&self.awaiting_data_writer, address) {
+            return ServerDataAdmission::AtCapacity;
         }
-        let data = self.pending_data.get_mut(&address)?;
-        let writer = data.writer.take()?;
+        if needs_reader && !can_admit_address(&self.awaiting_data_reader, address) {
+            return ServerDataAdmission::AtCapacity;
+        }
+        let mut data = self
+            .pending_data
+            .remove(&address)
+            .unwrap_or_else(PendingData::new);
+        let writer = data.writer.take();
         let reader = data.reader.take();
-        self.pending_data.remove(&address);
+        let writer = match writer {
+            Some(writer) => DataWrite::Ready(writer),
+            None => {
+                let (tx, rx) = oneshot::channel();
+                self.awaiting_data_writer
+                    .insert(address, AwaitingDataWriter { sender: tx });
+                DataWrite::Pending(rx)
+            }
+        };
         let reader = match reader {
             Some(reader) => DataRead::Ready(reader),
             None => {
@@ -922,33 +1197,47 @@ impl BluerBackend {
                 DataRead::Pending(rx)
             }
         };
-        Some(ServerData::TwoChar { writer, reader })
+        ServerDataAdmission::Ready(ServerData::TwoChar { writer, reader })
     }
 
-    fn admit_data_half(&mut self, address: Address, half: Half) -> Option<AcceptedLink> {
+    fn admit_data_half(&mut self, address: Address, half: Half) -> GattAdmission {
+        if self.active_links.contains(address) && !self.inbound_setups.contains_key(&address) {
+            return match half {
+                Half::Writer(writer) => match self.awaiting_data_writer.remove(&address) {
+                    Some(pending) => match pending.sender.send(writer) {
+                        Ok(()) => GattAdmission::ActiveLinkUpdated,
+                        Err(_) => GattAdmission::ActiveLinkEventIgnored,
+                    },
+                    None => GattAdmission::ActiveLinkEventIgnored,
+                },
+                Half::Reader(reader) => match self.awaiting_data_reader.remove(&address) {
+                    Some(pending) => match pending.sender.send(reader) {
+                        Ok(()) => GattAdmission::ActiveLinkUpdated,
+                        Err(_) => GattAdmission::ActiveLinkEventIgnored,
+                    },
+                    None => GattAdmission::ActiveLinkEventIgnored,
+                },
+            };
+        }
         match half {
             Half::Writer(writer) => {
-                if can_admit_address(&self.pending_data, address) {
-                    self.pending_data
-                        .entry(address)
-                        .or_insert_with(PendingData::new)
-                        .writer = Some(writer);
+                if !can_admit_address(&self.pending_data, address) {
+                    return GattAdmission::AtCapacity;
                 }
+                self.pending_data
+                    .entry(address)
+                    .or_insert_with(PendingData::new)
+                    .writer = Some(writer);
             }
-            Half::Reader(reader) => match self.awaiting_data_reader.remove(&address) {
-                Some(pending) => {
-                    let _ = pending.sender.send(reader);
-                    return None;
+            Half::Reader(reader) => {
+                if !can_admit_address(&self.pending_data, address) {
+                    return GattAdmission::AtCapacity;
                 }
-                None => {
-                    if can_admit_address(&self.pending_data, address) {
-                        self.pending_data
-                            .entry(address)
-                            .or_insert_with(PendingData::new)
-                            .reader = Some(reader);
-                    }
-                }
-            },
+                self.pending_data
+                    .entry(address)
+                    .or_insert_with(PendingData::new)
+                    .reader = Some(reader);
+            }
         }
         self.take_ready_accepted_link(PeerProtocol::Native, address)
     }
@@ -976,6 +1265,23 @@ async fn next_connect(
 ) -> (Address, Result<BluerLink, BluerError>) {
     match connects.next().await {
         Some(done) => done,
+        None => core::future::pending().await,
+    }
+}
+
+async fn next_device_event(events: &mut SelectAll<DeviceEventStream>) -> (Address, DeviceEvent) {
+    match events.next().await {
+        Some(event) => event,
+        None => core::future::pending().await,
+    }
+}
+
+async fn next_inbound_setup_expiration(setups: &HashMap<Address, Instant>) -> Address {
+    match setups.iter().min_by_key(|(_, deadline)| *deadline) {
+        Some((&address, &deadline)) => {
+            tokio::time::sleep_until(deadline.into()).await;
+            address
+        }
         None => core::future::pending().await,
     }
 }
@@ -1152,6 +1458,9 @@ impl BleBackend<{ BluerBackend::MAX_PEERS }> for BluerBackend {
 
     async fn set_scanning(&mut self, mode: ScanningMode) -> Result<(), BluerError> {
         let enabled = mode.is_on();
+        if enabled && !self.scan_enabled {
+            self.resweep_schedule.restart(Instant::now());
+        }
         self.scan_enabled = enabled;
         if !enabled || !self.radio_power.is_on() {
             self.discovery = None;
@@ -1182,6 +1491,9 @@ impl BleBackend<{ BluerBackend::MAX_PEERS }> for BluerBackend {
             }
             let observed = {
                 let discovery = self.discovery.as_mut();
+                let adapter_events = self.adapter_events.as_mut();
+                let device_events = &mut self.device_events;
+                let inbound_setups = &self.inbound_setups;
                 let control = self.control.as_mut();
                 let data_control = self.data_control.as_mut();
                 let columba_rx_control = self.columba_rx_control.as_mut();
@@ -1189,7 +1501,26 @@ impl BleBackend<{ BluerBackend::MAX_PEERS }> for BluerBackend {
                 let l2cap_failure = self.l2cap_failure.as_mut();
                 let connects = &mut self.connects;
                 let gatt_retry_at = self.gatt_retry_at;
+                let resweep_at = self.resweep_schedule.due_at;
                 tokio::select! {
+                    event = next_or_pending(adapter_events) => match event {
+                        Some(AdapterEvent::DeviceAdded(address)) => Observed::DeviceAdded(address),
+                        Some(AdapterEvent::DeviceRemoved(address)) => Observed::DeviceRemoved(address),
+                        Some(AdapterEvent::PropertyChanged(_)) => Observed::Idle,
+                        None => Observed::AdapterEventsEnded,
+                    },
+                    (address, event) = next_device_event(device_events) => match event {
+                        DeviceEvent::PropertyChanged(DeviceProperty::Connected(connected)) => {
+                            Observed::DeviceConnection {
+                                address,
+                                state: DeviceConnectionState::from_connected(connected),
+                            }
+                        }
+                        _ => Observed::Idle,
+                    },
+                    address = next_inbound_setup_expiration(inbound_setups) => {
+                        Observed::InboundSetupExpired(address)
+                    },
                     event = next_or_pending(discovery) => match event {
                         Some(AdapterEvent::DeviceAdded(address)) => Observed::Candidate(address),
                         Some(_) => Observed::Idle,
@@ -1258,7 +1589,7 @@ impl BleBackend<{ BluerBackend::MAX_PEERS }> for BluerBackend {
                     (target, result) = next_connect(connects) => Observed::Connected(target, result),
                     failure = next_l2cap_failure(l2cap_failure) => Observed::L2capFailed(failure),
                     () = retry_or_pending(gatt_retry_at) => Observed::GattRetry,
-                    () = tokio::time::sleep(RESWEEP_INTERVAL), if want_discovery => Observed::Resweep,
+                    () = tokio::time::sleep_until(resweep_at.into()), if want_discovery => Observed::Resweep,
                 }
             };
             match observed {
@@ -1283,27 +1614,47 @@ impl BleBackend<{ BluerBackend::MAX_PEERS }> for BluerBackend {
                     address,
                     half,
                 } => {
+                    self.consume_advertisement(address).await;
                     self.prune_half_open_gatt(Instant::now());
-                    if let Some(link) = self.admit_greeting(protocol, address, half) {
-                        let peer_rssi = self.peer_rssi(address).await;
-                        crate::diagnostic_log::debug!("bluetooth: inbound link from {address}");
-                        return BleEvent::LinkReady {
-                            link: BluerLink::Accepted(Box::new(link)),
-                            origin: Origin::Accepted,
-                            peer_rssi,
-                        };
+                    match self.admit_greeting(protocol, address, half) {
+                        GattAdmission::Ready(link) => {
+                            self.inbound_setups.remove(&address);
+                            let peer_rssi = self.peer_rssi(address).await;
+                            crate::diagnostic_log::debug!("bluetooth: inbound link from {address}");
+                            return BleEvent::LinkReady {
+                                link: BluerLink::Accepted(link),
+                                origin: Origin::Accepted,
+                                peer_rssi,
+                            };
+                        }
+                        GattAdmission::ActiveLinkUpdated => {
+                            self.inbound_setups.remove(&address);
+                        }
+                        GattAdmission::Pending
+                        | GattAdmission::ActiveLinkEventIgnored
+                        | GattAdmission::AtCapacity => {}
                     }
                 }
                 Observed::DataHalf { address, half } => {
+                    self.consume_advertisement(address).await;
                     self.prune_half_open_gatt(Instant::now());
-                    if let Some(link) = self.admit_data_half(address, half) {
-                        let peer_rssi = self.peer_rssi(address).await;
-                        crate::diagnostic_log::debug!("bluetooth: inbound link from {address}");
-                        return BleEvent::LinkReady {
-                            link: BluerLink::Accepted(Box::new(link)),
-                            origin: Origin::Accepted,
-                            peer_rssi,
-                        };
+                    match self.admit_data_half(address, half) {
+                        GattAdmission::Ready(link) => {
+                            self.inbound_setups.remove(&address);
+                            let peer_rssi = self.peer_rssi(address).await;
+                            crate::diagnostic_log::debug!("bluetooth: inbound link from {address}");
+                            return BleEvent::LinkReady {
+                                link: BluerLink::Accepted(link),
+                                origin: Origin::Accepted,
+                                peer_rssi,
+                            };
+                        }
+                        GattAdmission::ActiveLinkUpdated => {
+                            self.inbound_setups.remove(&address);
+                        }
+                        GattAdmission::Pending
+                        | GattAdmission::ActiveLinkEventIgnored
+                        | GattAdmission::AtCapacity => {}
                     }
                 }
                 Observed::DiscoveryEnded => {
@@ -1321,11 +1672,54 @@ impl BleBackend<{ BluerBackend::MAX_PEERS }> for BluerBackend {
                     self.recover_gatt_server();
                     self.gatt_retry_at = Some(Instant::now() + CONTROL_PLANE_RETRY_INTERVAL);
                 }
+                Observed::DeviceAdded(address) => match self.observe_device(address).await {
+                    Ok(DeviceConnectionState::Connected) => {
+                        self.begin_physical_connection(address);
+                        self.consume_advertisement(address).await;
+                    }
+                    Ok(DeviceConnectionState::Disconnected) => {}
+                    Err(error) => crate::diagnostic_log::warn!(
+                        "bluetooth: could not observe {address} connection state: {error:?}"
+                    ),
+                },
+                Observed::DeviceRemoved(address) => {
+                    self.observed_devices.remove(&address);
+                    self.end_physical_connection(address);
+                }
+                Observed::DeviceConnection {
+                    address,
+                    state: DeviceConnectionState::Connected,
+                } => {
+                    self.begin_physical_connection(address);
+                    self.consume_advertisement(address).await;
+                }
+                Observed::DeviceConnection {
+                    address,
+                    state: DeviceConnectionState::Disconnected,
+                } => {
+                    self.end_physical_connection(address);
+                }
+                Observed::InboundSetupExpired(address) => {
+                    if self.inbound_setups.contains_key(&address) {
+                        self.clear_inbound_state(address);
+                        match self.adapter.remove_device(address).await {
+                            Ok(()) => crate::diagnostic_log::warn!(
+                                "bluetooth: inbound GATT setup from {address} expired; stale physical link removed"
+                            ),
+                            Err(error) => crate::diagnostic_log::warn!(
+                                "bluetooth: inbound GATT setup from {address} expired and could not be removed: {error:?}"
+                            ),
+                        }
+                        self.republish_advertisement().await;
+                    }
+                }
+                Observed::AdapterEventsEnded => self.adapter_events = None,
                 Observed::GattRetry => self.gatt_retry_at = None,
                 Observed::Connected(target, result) => {
                     self.connecting.remove(&target);
                     match result {
                         Ok(link) => {
+                            self.active_links.activate(target);
                             let peer_rssi = self.peer_rssi(target).await;
                             return BleEvent::LinkReady {
                                 link,
@@ -1344,6 +1738,7 @@ impl BleBackend<{ BluerBackend::MAX_PEERS }> for BluerBackend {
                     }
                 }
                 Observed::Resweep => {
+                    self.resweep_schedule.restart(Instant::now());
                     if let Some(address) = self.resweep_sighting().await {
                         let rssi = self.peer_rssi(address).await;
                         return BleEvent::Sighting {
@@ -1387,14 +1782,20 @@ impl BleBackend<{ BluerBackend::MAX_PEERS }> for BluerBackend {
     async fn on_link_closed(&mut self, address: BleAddress) {
         let target = Address::new(*address.octets());
         self.connecting.remove(&target);
-        self.pending.remove(&target);
-        self.pending_columba.remove(&target);
-        self.pending_data.remove(&target);
-        self.awaiting_data_reader.remove(&target);
-        if let Ok(mut router) = self.l2cap_router.lock() {
-            router.cancel(&target);
+        if matches!(
+            self.active_links.close(target),
+            LinkClosure::SupersededGeneration
+        ) {
+            crate::diagnostic_log::debug!(
+                "bluetooth: {target} older link generation released; replacement remains active"
+            );
+            return;
         }
+        let consumed_advertisement = self.clear_inbound_state(target);
         let _ = self.adapter.remove_device(target).await;
+        if consumed_advertisement {
+            self.republish_advertisement().await;
+        }
         crate::diagnostic_log::debug!(
             "bluetooth: {target} link released; will re-sight if it returns"
         );
@@ -1629,6 +2030,7 @@ impl BleLink for DialedLink {
                 BluerSource::L2cap(Box::new(L2capSource {
                     socket: Some(socket.clone()),
                     deframer: StreamDeframer::new(),
+                    _gatt_lifetime: L2capGattLifetime::Dialed,
                 })),
                 BluerSink::L2cap(L2capSink(Some(socket))),
             ),
@@ -1778,27 +2180,42 @@ impl BleLink for AcceptedLink {
     }
 
     fn into_data(self) -> (BluerSource, BluerSink) {
-        match self.socket {
+        let Self {
+            reader,
+            writer,
+            address,
+            socket,
+            data,
+            ..
+        } = self;
+        match socket {
             Some(socket) => (
                 BluerSource::L2cap(Box::new(L2capSource {
                     socket: Some(socket.clone()),
                     deframer: StreamDeframer::new(),
+                    _gatt_lifetime: L2capGattLifetime::Accepted {
+                        _control_reader: reader,
+                        _control_writer: writer,
+                        _data: Box::new(data),
+                    },
                 })),
                 BluerSink::L2cap(L2capSink(Some(socket))),
             ),
             None => {
-                crate::diagnostic_log::debug!("bluetooth: {} GATT data plane up", self.address);
-                let (rx, tx) = match self.data {
+                crate::diagnostic_log::debug!("bluetooth: {address} GATT data plane up");
+                let (rx, tx) = match data {
                     ServerData::TwoChar { writer, reader } => {
                         let rx = match reader {
                             DataRead::Ready(reader) => GattRx::Reader(reader),
                             DataRead::Pending(pending) => GattRx::Pending(pending),
                         };
-                        (rx, GattTx::Writer(writer))
+                        let tx = match writer {
+                            DataWrite::Ready(writer) => GattTx::Writer(writer),
+                            DataWrite::Pending(pending) => GattTx::Pending(pending),
+                        };
+                        (rx, tx)
                     }
-                    ServerData::Columba => {
-                        (GattRx::Reader(self.reader), GattTx::Writer(self.writer))
-                    }
+                    ServerData::Columba => (GattRx::Reader(reader), GattTx::Writer(writer)),
                 };
                 (
                     BluerSource::Gatt(Box::new(GattSource {
@@ -1812,9 +2229,19 @@ impl BleLink for AcceptedLink {
     }
 }
 
+enum L2capGattLifetime {
+    Dialed,
+    Accepted {
+        _control_reader: CharacteristicReader,
+        _control_writer: CharacteristicWriter,
+        _data: Box<ServerData>,
+    },
+}
+
 pub struct L2capSource {
     socket: Option<Arc<SeqPacket>>,
     deframer: StreamDeframer<{ 2 * L2CAP_SDU_LEN }>,
+    _gatt_lifetime: L2capGattLifetime,
 }
 
 impl BleSource for L2capSource {
@@ -1900,6 +2327,7 @@ enum GattTx {
     RemoteRequest(RemoteCharacteristic),
     RemoteCommand(RemoteCharacteristic),
     Writer(CharacteristicWriter),
+    Pending(oneshot::Receiver<CharacteristicWriter>),
 }
 
 impl GattTx {
@@ -1971,17 +2399,27 @@ impl BleSink for GattSink {
         let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
         for fragment in fragments_of(frame, GATT_FRAGMENT_PAYLOAD) {
             let n = fragment.encode(&mut buf).ok_or(BluerError::FrameTooLarge)?;
-            match &mut self.tx {
-                GattTx::RemoteRequest(remote) => {
-                    remote.write_ext(&buf[..n], &acknowledged_write()).await?;
+            loop {
+                match &mut self.tx {
+                    GattTx::RemoteRequest(remote) => {
+                        remote.write_ext(&buf[..n], &acknowledged_write()).await?;
+                    }
+                    GattTx::RemoteCommand(remote) => {
+                        remote.write(&buf[..n]).await?;
+                    }
+                    GattTx::Writer(writer) => {
+                        writer.write_all(&buf[..n]).await?;
+                        writer.flush().await?;
+                    }
+                    GattTx::Pending(pending) => {
+                        let writer = pending
+                            .await
+                            .map_err(|_| BluerError::GattDataWriterUnavailable)?;
+                        self.tx = GattTx::Writer(writer);
+                        continue;
+                    }
                 }
-                GattTx::RemoteCommand(remote) => {
-                    remote.write(&buf[..n]).await?;
-                }
-                GattTx::Writer(writer) => {
-                    writer.write_all(&buf[..n]).await?;
-                    writer.flush().await?;
-                }
+                break;
             }
         }
         Ok(())
@@ -2004,6 +2442,89 @@ mod tests {
             Some("Other"),
             Some(&manufacturer_data)
         ));
+    }
+
+    #[test]
+    fn an_inbound_connection_republishes_without_losing_advertising_demand() {
+        let mut state = AdvertisementRegistration::<u8>::new();
+        state.want();
+        state.register(7);
+        state.republish();
+
+        assert_eq!(state, AdvertisementRegistration::Wanted);
+    }
+
+    #[test]
+    fn advertisement_republishing_is_coalesced_by_inbound_address() {
+        let now = Instant::now();
+        let address = Address::new([0xAA; 6]);
+        let mut consumers = AdvertisementConsumers::new();
+
+        let first = consumers.begin(address, now);
+        let duplicate = consumers.begin(address, now);
+        let closed = consumers.close(address);
+        let after_close = consumers.begin(address, now);
+        let duplicate_after_close = consumers.begin(address, now);
+        consumers.prune(now + ADVERTISEMENT_CONSUMER_TTL);
+        let after_timeout = consumers.begin(address, now + ADVERTISEMENT_CONSUMER_TTL);
+
+        assert_eq!(
+            [
+                first,
+                duplicate,
+                closed,
+                after_close,
+                duplicate_after_close,
+                after_timeout,
+            ],
+            [true, false, true, true, false, true],
+        );
+    }
+
+    #[test]
+    fn an_older_link_generation_cannot_release_its_replacement() {
+        let address = Address::new([0xAA; 6]);
+        let mut links = ActiveLinkGenerations::new();
+        links.activate(address);
+        links.activate(address);
+
+        assert!(matches!(
+            links.close(address),
+            LinkClosure::SupersededGeneration
+        ));
+        assert!(links.contains(address));
+        assert!(matches!(
+            links.close(address),
+            LinkClosure::LastActiveGeneration
+        ));
+        assert!(!links.contains(address));
+        assert!(matches!(links.close(address), LinkClosure::Untracked));
+    }
+
+    #[test]
+    fn advertising_interval_meets_the_recovery_boundary() {
+        let advertisement = BluerBackend::advertisement();
+
+        assert_eq!(
+            (advertisement.min_interval, advertisement.max_interval),
+            (
+                Some(ADVERTISING_INTERVAL_MIN),
+                Some(ADVERTISING_INTERVAL_MAX)
+            )
+        );
+    }
+
+    #[test]
+    fn resweep_schedule_retains_its_deadline_until_restarted() {
+        let now = Instant::now();
+        let mut schedule = ResweepSchedule::new(now);
+        let first_deadline = schedule.due_at;
+
+        assert_eq!(schedule.due_at, first_deadline);
+
+        schedule.restart(first_deadline);
+
+        assert_eq!(schedule.due_at, first_deadline + RESWEEP_INTERVAL);
     }
 
     #[test]
@@ -2080,6 +2601,28 @@ mod tests {
         assert!(matches!(
             source.recv_frame(&mut out).await,
             Err(BluerError::GattDataReaderUnavailable)
+        ));
+    }
+
+    #[tokio::test]
+    async fn pending_data_writer_survives_a_cancelled_send() {
+        let (sender, receiver) = oneshot::channel::<CharacteristicWriter>();
+        let mut sink = GattSink {
+            tx: GattTx::Pending(receiver),
+        };
+
+        {
+            let mut send = Box::pin(sink.send_frame(&[0xAA]));
+            assert!(matches!(
+                futures_util::poll!(&mut send),
+                std::task::Poll::Pending
+            ));
+        }
+
+        drop(sender);
+        assert!(matches!(
+            sink.send_frame(&[0xAA]).await,
+            Err(BluerError::GattDataWriterUnavailable)
         ));
     }
 
