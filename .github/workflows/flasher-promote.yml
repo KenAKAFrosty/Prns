@@ -735,7 +735,7 @@ jobs:
       - name: Enable full public site only after every promotion smoke passes
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh variable set PRNS_PUBLIC_SITE_PROMOTED --body true
+        run: gh variable set PRNS_PUBLIC_SITE_PROMOTED --body true --repo "$GITHUB_REPOSITORY"
 
   restore-baseline-on-failure:
     name: Automatically restore the verified baseline after promotion failure
