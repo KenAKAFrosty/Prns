@@ -724,18 +724,17 @@ jobs:
             "hopspot-flash ${RELEASE_VERSION}"
 
   mark-promoted:
-    name: Enable future full-site deployments
+    name: Confirm future full-site deployments are enabled
     needs: post-promotion-smoke
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
-      actions: write
       contents: read
     steps:
-      - name: Enable full public site only after every promotion smoke passes
+      - name: Require the release owner's promoted-site flag after every promotion smoke passes
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh variable set PRNS_PUBLIC_SITE_PROMOTED --body true --repo "$GITHUB_REPOSITORY"
+          PRNS_PUBLIC_SITE_PROMOTED: ${{ vars.PRNS_PUBLIC_SITE_PROMOTED }}
+        run: test "$PRNS_PUBLIC_SITE_PROMOTED" = true
 
   restore-baseline-on-failure:
     name: Automatically restore the verified baseline after promotion failure
