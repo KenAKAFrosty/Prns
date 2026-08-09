@@ -561,9 +561,13 @@ mod tests {
     where
         R: AsyncRead + Unpin,
     {
+        // The slowest frame this helper waits for is the next liveness Hello, one LIVENESS_PROBE_INTERVAL away.
+        // Matching that interval exactly leaves only a few milliseconds of slack, so keep whole periods of headroom.
+        const WINDOW: Duration = LIVENESS_PROBE_INTERVAL.saturating_mul(3);
+
         let mut buf = [0u8; 64];
         loop {
-            let n = tokio::time::timeout(Duration::from_secs(2), wire.read(&mut buf))
+            let n = tokio::time::timeout(WINDOW, wire.read(&mut buf))
                 .await
                 .expect("a frame arrives within the window")
                 .expect("the device wire stays open");
