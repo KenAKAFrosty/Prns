@@ -479,10 +479,15 @@ mod platform {
                 .with_activation_policy(ActivationPolicy::Accessory)
                 .with_default_menu(false);
         }
-        let event_loop = event_loop_builder.build().unwrap_or_else(|error| {
-            eprintln!("prnsd: desktop event loop initialization failed: {error}");
-            std::process::exit(1);
-        });
+        let event_loop = match event_loop_builder.build() {
+            Ok(event_loop) => event_loop,
+            Err(error) => {
+                eprintln!(
+                    "prnsd: desktop event loop unavailable ({error}); running without a tray"
+                );
+                run_without_tray(args, managed);
+            }
+        };
         event_loop.set_control_flow(ControlFlow::Wait);
 
         let menu_proxy = event_loop.create_proxy();
@@ -582,7 +587,29 @@ mod platform {
         if let Err(error) = event_loop.run_app(&mut application) {
             eprintln!("prnsd: desktop event loop failed: {error}");
         }
-        std::process::exit(1)
+        loop {
+            std::thread::park();
+        }
+    }
+
+    fn run_without_tray(args: cli::DaemonArgs, managed: Option<ManagedProcess>) -> ! {
+        let exit_code = match tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(runtime) => match runtime.block_on(daemon::run(args, managed, None, None)) {
+                Ok(()) => 0,
+                Err(error) => {
+                    eprintln!("prnsd: {error}");
+                    1
+                }
+            },
+            Err(error) => {
+                eprintln!("prnsd: async runtime initialization failed: {error}");
+                1
+            }
+        };
+        std::process::exit(exit_code)
     }
 }
 
