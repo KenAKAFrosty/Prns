@@ -176,7 +176,7 @@ pub(super) fn preparation_guide(
             ],
         },
         PreparationProfile::TechoUf2 => PreparationGuide {
-            lead: "T-Echo uses its UF2 bootloader; the website only verifies and downloads the UF2 file.",
+            lead: "This board uses its UF2 bootloader; the website only verifies and downloads the UF2 file.",
             steps: match target {
                 BoardFlashTarget::Uf2MassStorage { mount_label } => vec![
                     "Prepare the verified UF2 here before entering bootloader mode.".to_string(),

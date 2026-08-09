@@ -4,12 +4,21 @@ use thiserror::Error;
 
 use crate::{ProvisioningDescriptor, TcpClientProvisioningDescriptor};
 
+const UF2_MOUNT_LABEL_MAX_BYTES: usize = 32;
+const UF2_BOARD_ID_PREFIX_MAX_BYTES: usize = 128;
+
 /// Failure to construct one of the validated release-domain values.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum DomainValueError {
     /// A stable board identifier is malformed.
     #[error("board ID {0:?} must use lowercase ASCII, digits, and hyphens")]
     BoardId(String),
+    /// A UF2 bootloader volume label is malformed.
+    #[error("UF2 mount label {0:?} is not a canonical cross-platform volume label")]
+    Uf2MountLabel(String),
+    /// A UF2 bootloader identity prefix is not in canonical form.
+    #[error("UF2 Board-ID prefix {0:?} is not a bounded canonical ASCII prefix")]
+    Uf2BoardIdPrefix(String),
     /// An immutable release version is malformed.
     #[error("release version {0:?} is not an immutable path-safe identifier")]
     ReleaseVersion(String),
@@ -87,6 +96,60 @@ impl BoardId {
 }
 
 validated_string!(BoardId);
+
+/// Validated UF2 bootloader volume label.
+#[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Uf2MountLabel(String);
+
+impl Uf2MountLabel {
+    /// Validate the cross-platform mount-label shape accepted by the browser bridge.
+    pub fn parse(value: impl Into<String>) -> Result<Self, DomainValueError> {
+        let value = value.into();
+        let valid = (1..=UF2_MOUNT_LABEL_MAX_BYTES).contains(&value.len())
+            && value
+                .bytes()
+                .next()
+                .is_some_and(|byte| byte.is_ascii_alphanumeric())
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'));
+        valid
+            .then_some(Self(value.clone()))
+            .ok_or(DomainValueError::Uf2MountLabel(value))
+    }
+}
+
+validated_string!(Uf2MountLabel);
+
+/// Validated `Board-ID` prefix a UF2 bootloader publishes in `INFO_UF2.TXT`.
+#[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Uf2BoardIdPrefix(String);
+
+impl Uf2BoardIdPrefix {
+    /// Fold a bootloader-reported identity into the one spelling the catalog stores.
+    pub fn normalize(value: &str) -> String {
+        value.trim().to_ascii_lowercase().replace('_', "-")
+    }
+
+    /// Require the catalog to store one bounded, already-normalized ASCII prefix.
+    pub fn parse(value: impl Into<String>) -> Result<Self, DomainValueError> {
+        let value = value.into();
+        let valid = (1..=UF2_BOARD_ID_PREFIX_MAX_BYTES).contains(&value.len())
+            && value == Self::normalize(&value)
+            && value
+                .bytes()
+                .next()
+                .is_some_and(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+            && value.bytes().all(|byte| {
+                byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'-')
+            });
+        valid
+            .then_some(Self(value.clone()))
+            .ok_or(DomainValueError::Uf2BoardIdPrefix(value))
+    }
+}
+
+validated_string!(Uf2BoardIdPrefix);
 
 /// Validated immutable release version.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -435,6 +498,34 @@ mod tests {
         assert!(KeyId::parse("short").is_err());
         assert!(Sha256Digest::parse("a".repeat(64)).is_ok());
         assert!(Sha256Digest::parse("A".repeat(64)).is_err());
+    }
+
+    #[test]
+    fn uf2_bootloader_identity_values_are_strict() {
+        for valid in ["TECHOBOOT", "T114_BOOT", "UF2.1"] {
+            assert!(Uf2MountLabel::parse(valid).is_ok(), "{valid}");
+        }
+        for invalid in ["", ".UF2", "BAD LABEL", "../UF2", "UF2/BOOT"] {
+            assert!(Uf2MountLabel::parse(invalid).is_err(), "{invalid}");
+        }
+        assert!(Uf2MountLabel::parse("A".repeat(UF2_MOUNT_LABEL_MAX_BYTES + 1)).is_err());
+
+        assert_eq!(
+            Uf2BoardIdPrefix::normalize(" nRF52840_TEcho_v2.1 "),
+            "nrf52840-techo-v2.1"
+        );
+        assert!(Uf2BoardIdPrefix::parse("nrf52840-techo-v").is_ok());
+        for invalid in [
+            "",
+            "nRF52840_TEcho_v",
+            "-nrf52840-techo-v",
+            "nrf52840 techo v",
+            "nrf52840/techo/v",
+            "nrf52840-téchō-v",
+        ] {
+            assert!(Uf2BoardIdPrefix::parse(invalid).is_err(), "{invalid}");
+        }
+        assert!(Uf2BoardIdPrefix::parse("a".repeat(UF2_BOARD_ID_PREFIX_MAX_BYTES + 1)).is_err());
     }
 
     #[test]

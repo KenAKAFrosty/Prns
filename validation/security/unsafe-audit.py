@@ -78,6 +78,7 @@ UNSAFE_EXCEPTIONS = {
     "personal-hopspot-esp32",
 }
 UNDOCUMENTED_UNSAFE_POLICY_EXCEPTIONS = {"prns-host-c"}
+VENDOR_DIR_NAME = "vendor"
 
 
 def run_metadata(manifest: str, target: str) -> dict:
@@ -217,10 +218,15 @@ def display_source(package: dict, manifest_path: Path) -> str:
 
 def assert_first_party_policy(package: dict, manifest_path: Path) -> None:
     try:
-        manifest_path.relative_to(ROOT)
+        relative_manifest = manifest_path.relative_to(ROOT)
     except ValueError:
         return
     if package.get("source") is not None:
+        return
+    # Cargo reports path-patched vendored crates with no source, just like first-party packages.
+    # Vendoring an upstream dependency does not make it first-party code.
+    # Its unsafe surface remains visible in the generated snapshot.
+    if VENDOR_DIR_NAME in relative_manifest.parts:
         return
     name = package["name"]
     targets = [target for target in package["targets"] if target["kind"][0] in {"lib", "bin", "cdylib", "staticlib"}]
