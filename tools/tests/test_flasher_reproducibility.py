@@ -505,7 +505,9 @@ class FlasherReproducibilityTests(unittest.TestCase):
             Path("target/flasher-candidate"),
             cwd=repository,
         )
-        self.assertEqual(resolved, repository / "target" / "flasher-candidate")
+        self.assertEqual(
+            resolved, repository.resolve() / "target" / "flasher-candidate"
+        )
         with self.assertRaisesRegex(ValueError, "beneath target"):
             resolve_output(
                 repository,
