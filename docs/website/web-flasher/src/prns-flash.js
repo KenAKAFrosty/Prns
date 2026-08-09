@@ -31,6 +31,10 @@ const ESP32S3_WDT_CONFIG0 = 0x60008098;
 const ESP32S3_WDT_CONFIG1 = 0x6000809c;
 const ESP32S3_WDT_WRITE_KEY = 0x50d83aa1;
 const ESP32S3_WDT_RESET_FLAGS = 0xd0000104;
+const ESP32C6_CHIP_NAME = "ESP32-C6";
+const ESP32C6_SPI_REGISTER_BASE = 0x60003000;
+const ESP32C6_RESET_SIGNAL_DELAY_MS = 100;
+const ESP32C6_RESET_COMPLETION_MESSAGE = "Finished — Verified serial flash complete. The C6 reset signal was sent. Because this USB path does not provide reliable browser re-enumeration evidence, press RESET once if Personal Hopspot does not start automatically. You can close this page.";
 
 function operationEvents(emit, operation) {
   const sequence = new BridgeEventSequence(operation);
@@ -403,6 +407,9 @@ export async function flash(emit = () => {}, dependencies = {}) {
         `Wrong chip family: selected ${prepared.expectedChip}, detected ${chipName}.`,
       );
     }
+    if (normalizeChipName(chipName) === normalizeChipName(ESP32C6_CHIP_NAME)) {
+      loader.chip.SPI_REG_BASE = ESP32C6_SPI_REGISTER_BASE;
+    }
     let flashId;
     try {
       flashId = await loader.readFlashId();
@@ -411,9 +418,12 @@ export async function flash(emit = () => {}, dependencies = {}) {
     }
     const detectedFlashSize = jedecFlashSizeBytes(flashId);
     if (detectedFlashSize === null) {
+      const flashIdLabel = Number.isSafeInteger(flashId)
+        ? `0x${(flashId >>> 0).toString(16).padStart(8, "0")}`
+        : String(flashId);
       throw new FlashBridgeError(
         "connection_failure",
-        "The device returned an unknown JEDEC flash-capacity identifier.",
+        `The device returned an unknown JEDEC flash-capacity identifier: ${flashIdLabel}.`,
       );
     }
     if (detectedFlashSize !== prepared.flashSize) {
@@ -491,20 +501,27 @@ export async function flash(emit = () => {}, dependencies = {}) {
         throw new FlashBridgeError("cancelled", "Flashing stopped at a verified part boundary.");
       }
     }
+    cancellationLocked = false;
     events.emit({ phase: "verifying_flash", current: total, total });
     events.emit({ phase: "resetting" });
+    const c6HardReset = prepared.afterReset === "hard-reset"
+      && normalizeChipName(chipName) === normalizeChipName(ESP32C6_CHIP_NAME);
     try {
-      const proveReset = dependencies.proveReset ?? proveUsbReset;
-      await proveReset(
-        serial,
-        port,
-        () => resetEspDevice(loader, prepared.afterReset),
-        {
-          timeoutMs: dependencies.resetEnumerationTimeoutMs,
-          setTimeoutImpl: dependencies.setTimeoutImpl,
-          clearTimeoutImpl: dependencies.clearTimeoutImpl,
-        },
-      );
+      if (c6HardReset) {
+        await resetEspDevice(loader, prepared.afterReset, dependencies.resetSleep);
+      } else {
+        const proveReset = dependencies.proveReset ?? proveUsbReset;
+        await proveReset(
+          serial,
+          port,
+          () => resetEspDevice(loader, prepared.afterReset, dependencies.resetSleep),
+          {
+            timeoutMs: dependencies.resetEnumerationTimeoutMs,
+            setTimeoutImpl: dependencies.setTimeoutImpl,
+            clearTimeoutImpl: dependencies.clearTimeoutImpl,
+          },
+        );
+      }
     } catch (error) {
       throw new FlashBridgeError(
         "reset_failure",
@@ -518,7 +535,12 @@ export async function flash(emit = () => {}, dependencies = {}) {
         "Cancellation was requested during writing; verification and reset finished safely, but success was not reported.",
       );
     }
-    events.emit({ phase: "success", current: total, total });
+    events.emit({
+      phase: "success",
+      current: total,
+      total,
+      ...(c6HardReset ? { message: ESP32C6_RESET_COMPLETION_MESSAGE } : {}),
+    });
     return { success: true };
   } catch (error) {
     const resetFailure = error instanceof FlashBridgeError && error.code === "reset_failure";
@@ -617,8 +639,12 @@ function mapBeforeReset(value) {
   return value === "usb-reset" ? "usb_reset" : "default_reset";
 }
 
-async function resetEspDevice(loader, afterReset) {
+async function resetEspDevice(loader, afterReset, sleepImpl = sleep) {
   if (afterReset === "hard-reset") {
+    if (normalizeChipName(loader.chip?.CHIP_NAME) === normalizeChipName(ESP32C6_CHIP_NAME)) {
+      await resetEsp32C6UsbJtag(loader.transport, sleepImpl);
+      return;
+    }
     await loader.after("hard_reset");
     return;
   }
@@ -635,6 +661,20 @@ async function resetEspDevice(loader, afterReset) {
   await loader.writeReg(ESP32S3_WDT_CONFIG1, 2000);
   await loader.writeReg(ESP32S3_WDT_CONFIG0, ESP32S3_WDT_RESET_FLAGS);
   await loader.writeReg(ESP32S3_WDT_WPROTECT, 0);
+}
+
+async function resetEsp32C6UsbJtag(transport, sleepImpl) {
+  await transport.setDTR(false);
+  await sleepImpl(ESP32C6_RESET_SIGNAL_DELAY_MS);
+  await transport.setRTS(true);
+  await transport.setDTR(false);
+  await transport.setRTS(true);
+  await sleepImpl(ESP32C6_RESET_SIGNAL_DELAY_MS);
+  await transport.setRTS(false);
+}
+
+function sleep(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 async function proveUsbReset(serial, selectedPort, reset, options = {}) {

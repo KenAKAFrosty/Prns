@@ -377,7 +377,7 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                                     span {
                                         "Connect one outbound Reticulum TCP client"
                                         span { class: "mt-1 block text-xs text-mid",
-                                            "Use an IPv4 address, DNS hostname, or URL. The S3 resolves hostnames with the Wi-Fi network's DHCP-provided DNS server and refreshes them when reconnecting."
+                                            "Use an IPv4 address, DNS hostname, or URL."
                                         }
                                     }
                                 }

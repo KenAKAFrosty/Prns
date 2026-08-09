@@ -210,13 +210,13 @@ pub(super) const fn guided_steps(
             "Confirm the exact board pictured above.",
             "Prepare the release. Every part is downloaded and verified before the flasher touches your device.",
             "Connect with a USB data cable and choose the board's serial port.",
-            "Flash. Each part is verified again on the device, then the board restarts on its own.",
+            "Flash. Each part is verified again on the device, then the flasher requests a board restart.",
         ],
         (BoardFlashTarget::EspSerial { .. }, InstallMode::EraseAll) => &[
             "Confirm the exact board and the full-chip erase warning.",
             "Prepare the release. Every replacement part is downloaded and verified before the flasher touches your device.",
             "Connect with a USB data cable and choose the board's serial port.",
-            "Erase and flash. Success is reported only after every part verifies on the device and the board restarts on its own.",
+            "Erase and flash. Success is reported only after every replacement part verifies on the device and the final reset request completes.",
         ],
     }
 }

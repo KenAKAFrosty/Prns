@@ -930,6 +930,63 @@ test("fresh target failures and missing confirmation cannot reach full-chip eras
   assert.equal(testing.prepared(), null);
 });
 
+test("C6 completion verifies identity and flash before sending its USB-JTAG reset signal", async () => {
+  const { value, payloads } = request();
+  value.boardSlug = "xiao-esp32-c6";
+  value.displayName = "Seeed XIAO ESP32-C6";
+  value.expectedChip = "esp32c6";
+  value.flashSize = 4 * 1024 * 1024;
+  value.afterReset = "hard-reset";
+  let fetchIndex = 0;
+  await prepare(value, () => {}, {
+    loadEsptool: false,
+    cryptoImpl: webcrypto,
+    fetchImpl: async () => streamedResponse(payloads[fetchIndex++]),
+  });
+  let registerBaseAtIdentityRead;
+  const resetSignals = [];
+  class FakeTransport {
+    setDeviceLostCallback() {}
+    async disconnect() {}
+    async setDTR(state) { resetSignals.push(["dtr", state]); }
+    async setRTS(state) { resetSignals.push(["rts", state]); }
+  }
+  class FakeLoader {
+    chip = { CHIP_NAME: "ESP32-C6", SPI_REG_BASE: 0x60002000 };
+
+    constructor({ transport }) { this.transport = transport; }
+    async main() { return "ESP32-C6 (revision 2)"; }
+    async readFlashId() {
+      registerBaseAtIdentityRead = this.chip.SPI_REG_BASE;
+      return FLASH_ID_4_MB;
+    }
+    async writeFlash() {}
+    async after() {}
+  }
+  const events = [];
+  await flash((event) => events.push(event), {
+    environment: environment(),
+    serial: { requestPort: async () => ({}) },
+    TransportImpl: FakeTransport,
+    LoaderImpl: FakeLoader,
+    proveReset: async () => assert.fail("C6 completion must not require browser USB lifecycle evidence"),
+    resetSleep: async (milliseconds) => resetSignals.push(["sleep", milliseconds]),
+  });
+  assert.equal(registerBaseAtIdentityRead, 0x60003000);
+  assert.deepEqual(resetSignals, [
+    ["dtr", false],
+    ["sleep", 100],
+    ["rts", true],
+    ["dtr", false],
+    ["rts", true],
+    ["sleep", 100],
+    ["rts", false],
+  ]);
+  assert.equal(events.at(-1).phase, "success");
+  assert.match(events.at(-1).message, /reset signal was sent/i);
+  assert.doesNotMatch(events.at(-1).message, /disconnected and re-enumerated/i);
+});
+
 test("fresh erasure locks cancellation and device loss requires complete reinstall", async () => {
   await prepareFresh();
   let writes = 0;
@@ -1087,6 +1144,7 @@ test("typed ESP failures emit once, clean up, and never reset after an incomplet
     assert.equal(configurationBytes.every((byte) => byte === 0), true, scenario.name);
     if (scenario.name === "unknown JEDEC flash capacity") {
       assert.match(events.at(-1).message, /unknown JEDEC flash-capacity identifier/i);
+      assert.match(events.at(-1).message, /0x009940ef/i);
       assert.match(events.at(-1).message, /BOOT\/RESET preparation steps/i);
     }
   }
@@ -1297,7 +1355,7 @@ test("reset failure is reported only after writes verify", async () => {
   assert.equal(configurationBytes.every((byte) => byte === 0), true);
 });
 
-test("reset enumeration timeout cannot emit success after verified writes", async () => {
+test("reset enumeration timeout after a verified fresh install does not claim the device is blank", async () => {
   await prepareFresh();
   let erases = 0;
   let writes = 0;
@@ -1332,8 +1390,10 @@ test("reset enumeration timeout cannot emit success after verified writes", asyn
     terminalEvents(events).map(({ phase, code }) => ({ phase, code })),
     [{ phase: "failed", code: "reset_failure" }],
   );
-  assert.match(events.at(-1).message, /device may be blank/i);
-  assert.match(events.at(-1).message, /complete fresh-install plan/i);
+  assert.match(events.at(-1).message, /firmware bytes are verified/i);
+  assert.match(events.at(-1).message, /press reset/i);
+  assert.doesNotMatch(events.at(-1).message, /device may be blank/i);
+  assert.doesNotMatch(events.at(-1).message, /complete fresh-install plan/i);
   assert.equal(events.some(({ phase }) => phase === "success"), false);
 });
 
