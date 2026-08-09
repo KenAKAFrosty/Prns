@@ -270,18 +270,7 @@ fn stage(path: &Path, bytes: &[u8]) -> Result<(), RnsBlackholeFileError> {
     Ok(())
 }
 
-#[cfg(unix)]
 fn replace_file(staging: &Path, final_path: &Path) -> std::io::Result<()> {
-    fs::rename(staging, final_path)
-}
-
-#[cfg(not(unix))]
-fn replace_file(staging: &Path, final_path: &Path) -> std::io::Result<()> {
-    match fs::remove_file(final_path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
-    }
     fs::rename(staging, final_path)
 }
 
