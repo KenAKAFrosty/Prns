@@ -496,6 +496,7 @@ jobs:
           EXPECTED_ASSET_INVENTORY_SHA256: ${{ needs.verify.outputs.release_asset_inventory_sha256 }}
           GH_TOKEN: ${{ github.token }}
         run: |
+          mkdir -p target
           gh release view "v${RELEASE_VERSION}" --json assets \
             --jq '[.assets[] | {name, size, digest}] | sort_by(.name)' \
             > target/assets-before-deployment.json
