@@ -758,7 +758,11 @@ class FlasherRollbackTests(unittest.TestCase):
         )
         self.assertLess(
             historical.index('"-Vm"'),
-            historical.index("extract_source(source_commit, snapshot)"),
+            historical.index("extract_source(policy_commit, snapshot)"),
+        )
+        self.assertLess(
+            historical.index('"-Vm"'),
+            historical.index('acceptance_record.get("source_commit")'),
         )
         self.assertIn('"merge-base", "--is-ancestor"', historical)
         self.assertIn("historical verifier uses a different release trust root", historical)
