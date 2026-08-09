@@ -14875,11 +14875,11 @@
       "name": "prns-ffi",
       "source": "prns-ffi",
       "unsafe": {
-        "blocks": 117,
+        "blocks": 119,
         "externs": 3,
         "functions": 0,
         "impls": 22,
-        "tokens": 175
+        "tokens": 177
       },
       "version": "0.3.3"
     },
@@ -22203,6 +22203,7 @@
           "Win32_Security",
           "Win32_System",
           "Win32_System_Com",
+          "Win32_System_Console",
           "Win32_System_Threading",
           "default",
           "std"
@@ -22229,6 +22230,7 @@
           "Win32_Security",
           "Win32_System",
           "Win32_System_Com",
+          "Win32_System_Console",
           "Win32_System_Threading",
           "default",
           "std"
@@ -22255,6 +22257,7 @@
           "Win32_Security",
           "Win32_System",
           "Win32_System_Com",
+          "Win32_System_Console",
           "Win32_System_Threading",
           "default",
           "std"

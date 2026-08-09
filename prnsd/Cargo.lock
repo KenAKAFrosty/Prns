@@ -3206,6 +3206,7 @@ dependencies = [
  "opentelemetry_sdk",
  "personal-rns",
  "prns-config",
+ "prns-ffi",
  "prnsd-control",
  "rustix 1.1.4",
  "serde",
