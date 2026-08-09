@@ -2,7 +2,8 @@
 
 ## Status and release boundary
 
-iOS is not production-supported until a macOS contributor returns both:
+iOS is publicly available as a pre-1.0 **Shipping** surface, but it is not
+formally production-qualified until a macOS contributor returns both:
 
 1. one commit implementing every requirement in this document; and
 2. a completed record-only evidence commit in a separate Markdown file whose
@@ -11,7 +12,8 @@ iOS is not production-supported until a macOS contributor returns both:
    both SHA fields inside the record name the implementation commit.
 
 The deliverable is a signed direct-install build. App Store and TestFlight work
-is outside this gate.
+is outside this gate. Shipping also does not claim continuous background
+execution or completed iPhone evidence.
 
 The implementation must preserve the shared `lxmf.delivery` and
 `nomadnetwork.node` destinations and the node and Bluetooth identities across
@@ -290,8 +292,8 @@ finish. Fail on crash, native worker loss, unbounded memory growth, thermal
 shutdown, identity change, listener loss that does not recover, or a transport
 remaining falsely online after permission revocation.
 
-During stabilization before the first supported iOS release, the product owner
-may authorize focused requalification after an implementation change. The
+During stabilization before formal iOS production qualification, the product
+owner may authorize focused requalification after an implementation change. The
 evidence must name the earlier implementation SHA, enumerate every
 carried-forward row, explain why each row is materially unaffected, and run
 every row touched by the change against the new clean SHA. Permission,
