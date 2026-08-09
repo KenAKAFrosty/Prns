@@ -1,0 +1,18 @@
+{
+  "candidate": {
+    "channel": "stable",
+    "manifest_sha256": "e954ed3a5c94990f5ee2c074d7521e41cec803718d3dafaf123cdf14f0abcf0a",
+    "manifest_signature_sha256": "560cae3173290ddd3444b77e922055a33dc9794cdb0d6ef678385b21dc5789e5",
+    "prerelease_published_at": "2026-08-09T08:38:54Z",
+    "signed_candidate_sha256": "d43a11ef8ffd4f669af49c54955ab12992f818dfe77e4b5cb1a9ac159fbceb7a",
+    "signing_key_id": "1BF5C4D8B140811A",
+    "source_commit": "fba40b292422d04614f4fbeb7427bac1a12fc8d5",
+    "version": "0.3.4"
+  },
+  "maintainer_override": {
+    "approved_at": "2026-08-09T09:17:41Z",
+    "approved_by": "github:KenAKAFrosty",
+    "basis": "Pre-1.0 prerelease approved by the release owner on the basis of continuous physical hardware validation across the shipping board set throughout development of this exact candidate line; the post-publication physical acceptance matrix is deliberately waived for 0.3.4."
+  },
+  "schema": 4
+}
