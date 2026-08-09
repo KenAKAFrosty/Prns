@@ -136,6 +136,20 @@ pub(super) fn spawn_watcher_heartbeat(
             );
 
             let started = status == BluetoothLEAdvertisementWatcherStatus::Started;
+            if matches!(
+                status,
+                BluetoothLEAdvertisementWatcherStatus::Created
+                    | BluetoothLEAdvertisementWatcherStatus::Stopped
+            ) {
+                crate::diagnostic_log::warn!(
+                    "bluetooth: scanner idle while scanning is wanted — starting it"
+                );
+                if let Err(error) = watcher.Start() {
+                    crate::diagnostic_log::warn!(
+                        "bluetooth: scanner restart failed ({error:?}); retrying next heartbeat"
+                    );
+                }
+            }
             quiet_ticks = if started && seen == last_seen {
                 quiet_ticks + 1
             } else {
