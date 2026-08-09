@@ -1,4 +1,4 @@
-package io.reticulum.prns
+package rs.reticulum.prns
 
 import com.sun.jna.Pointer
 import kotlinx.coroutines.CancellationException

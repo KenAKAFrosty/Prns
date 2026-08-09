@@ -199,7 +199,7 @@
     },
     {
       "ecosystem": "maven",
-      "name": "io.reticulum:personal-rns",
+      "name": "rs.reticulum:personal-rns",
       "manifest": "prns-host/bindings/jvm/build.gradle.kts"
     },
     {

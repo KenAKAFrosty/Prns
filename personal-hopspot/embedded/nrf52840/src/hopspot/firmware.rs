@@ -386,10 +386,13 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                 .selected_card(content.cards)
                 .is_some_and(|card| card.id() == BLE_SUPERVISOR_ID)
             {
-                interface_menu_details.push_ingress_pressure(
-                    BLE_MANIFOLD_LANE.ingress_pressure_events().saturating_add(
-                        BluetoothAutoStatus::new(&BLE_SHARED).ingress_pressure_events(),
-                    ),
+                let recovery = BluetoothAutoStatus::new(&BLE_SHARED).recovery_counters();
+                interface_menu_details.push_bluetooth_recovery(
+                    hopspot::BluetoothRecoveryMenuDetails {
+                        receive_pressure: recovery.ingress_pressure,
+                        setup_failures: recovery.setup_failures,
+                        transport_closures: recovery.transport_closures,
+                    },
                 );
                 interface_menu_details
                     .push_egress_pressure(BLE_MANIFOLD_LANE.egress_pressure_events());

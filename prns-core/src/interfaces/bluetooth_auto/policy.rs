@@ -266,16 +266,21 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionPolicy<MAX_PEERS
             emit(PolicyAction::Reject { address, dialed });
             return;
         };
-        let lane = match (keeper, established.transport) {
-            (true, EstablishedTransport::Native { capabilities, .. }) => l2cap_plan(
-                plan,
-                role,
-                self.local.endpoint,
-                &self.local.capabilities,
-                &capabilities,
-            ),
-            (_, EstablishedTransport::ColumbaGatt)
-            | (false, EstablishedTransport::Native { .. }) => L2capPlan::None,
+        let lane = match established.transport {
+            EstablishedTransport::Native { capabilities, .. }
+                if keeper || matches!(plan, super::handshake::L2capArrangement::EitherOpens) =>
+            {
+                l2cap_plan(
+                    plan,
+                    role,
+                    self.local.endpoint,
+                    &self.local.capabilities,
+                    &capabilities,
+                )
+            }
+            EstablishedTransport::Native { .. } | EstablishedTransport::ColumbaGatt => {
+                L2capPlan::None
+            }
         };
         self.settled[slot] = Some(SettledSlot {
             identity,
@@ -803,7 +808,7 @@ mod tests {
     }
 
     #[test]
-    fn only_the_keeper_connection_opens_the_l2cap_fast_lane() {
+    fn either_opens_uses_both_physical_roles_and_keeper_wins_duplicate() {
         use crate::interfaces::bluetooth_auto::{Esp32Host, Psm};
         let l2cap_caps = LinkCapabilities {
             l2cap: Psm::new(0x0080),
@@ -839,11 +844,11 @@ mod tests {
             matches!(
                 admit[0],
                 PolicyAction::Admit {
-                    lane: L2capPlan::None,
+                    lane: L2capPlan::Accept,
                     ..
                 }
             ),
-            "the non-keeper (accepted) link must not open L2CAP"
+            "the accepted EitherOpens link accepts the central's L2CAP fast lane"
         );
 
         let resolve = collect(

@@ -46,9 +46,9 @@ pub use radio_profile_store::{
 };
 pub use screen::{
     apply_and_persist_radio_profile, card_label, card_label_max_chars, render, splash,
-    tcp_card_label, AccessPointState, Card, CardActivityTracker, CardKind, CardLabel,
-    DisplayPowerControl, EinkRefresh, EinkRefreshPolicy, EinkRefreshUrgency, InputEvent,
-    InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess, PersistenceNotice,
+    tcp_card_label, AccessPointState, BluetoothRecoveryMenuDetails, Card, CardActivityTracker,
+    CardKind, CardLabel, DisplayPowerControl, EinkRefresh, EinkRefreshPolicy, EinkRefreshUrgency,
+    InputEvent, InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess, PersistenceNotice,
     RadioProfileChangeResult, RenderFrame, ScreenContent, SplashContent, UiAction, UiConfiguration,
     UiNotice, UiState, WifiNetworkStatus, WifiStationStatus,
 };

@@ -207,6 +207,21 @@ pub(super) fn add_manifold_pressure(
     selected_card: Option<&screen::Card>,
 ) {
     if let Some(card) = selected_card {
+        #[cfg(feature = "bluetooth-auto")]
+        if matches!(
+            card.id().kind(),
+            Some(InterfaceKind::BluetoothAuto | InterfaceKind::BluetoothPeer)
+        ) {
+            let recovery = BluetoothAutoStatus::new(&BLE_SHARED).recovery_counters();
+            details.push_bluetooth_recovery(screen::BluetoothRecoveryMenuDetails {
+                receive_pressure: recovery.ingress_pressure,
+                setup_failures: recovery.setup_failures,
+                transport_closures: recovery.transport_closures,
+            });
+        } else {
+            details.push_ingress_pressure(ingress_pressure_events(card.id()));
+        }
+        #[cfg(not(feature = "bluetooth-auto"))]
         details.push_ingress_pressure(ingress_pressure_events(card.id()));
         details.push_egress_pressure(egress_pressure_events(card.id()));
     }

@@ -9,8 +9,8 @@ mod state;
 pub use eink::{EinkRefresh, EinkRefreshPolicy, EinkRefreshUrgency};
 pub(crate) use model::sort_cards_for_display;
 pub use model::{
-    card_label, tcp_card_label, Card, CardActivityTracker, CardKind, CardLabel,
-    InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess, ScreenContent,
+    card_label, tcp_card_label, BluetoothRecoveryMenuDetails, Card, CardActivityTracker, CardKind,
+    CardLabel, InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess, ScreenContent,
     WifiNetworkStatus, WifiStationStatus,
 };
 pub use render::cards::card_label_max_chars;

@@ -12,6 +12,10 @@ impl BleAddress {
         Self(octets)
     }
 
+    pub const fn from_hci_bytes(bytes: [u8; 6]) -> Self {
+        Self([bytes[5], bytes[4], bytes[3], bytes[2], bytes[1], bytes[0]])
+    }
+
     pub const fn octets(&self) -> &[u8; 6] {
         &self.0
     }

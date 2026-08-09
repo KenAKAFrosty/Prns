@@ -1,4 +1,4 @@
-package io.reticulum.prns;
+package rs.reticulum.prns;
 
 import java.util.Collections;
 import java.util.HashSet;

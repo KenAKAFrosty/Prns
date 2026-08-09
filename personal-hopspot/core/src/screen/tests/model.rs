@@ -124,6 +124,45 @@ fn ingress_pressure_is_hidden_until_a_drop_is_observed() {
 }
 
 #[test]
+fn bluetooth_recovery_is_one_compact_bounded_row() {
+    let mut details = InterfaceMenuDetails::empty();
+    details.push_bluetooth_recovery(BluetoothRecoveryMenuDetails {
+        receive_pressure: 0,
+        setup_failures: 0,
+        transport_closures: 0,
+    });
+    assert!(details.as_slice().is_empty());
+
+    details.push_bluetooth_recovery(BluetoothRecoveryMenuDetails {
+        receive_pressure: 7,
+        setup_failures: 12,
+        transport_closures: u32::MAX,
+    });
+    assert_eq!(details.as_slice()[0].text(), "R7/S12/C99+");
+}
+
+#[test]
+fn bluetooth_recovery_coexists_with_five_peer_rows() {
+    let mut details = InterfaceMenuDetails::empty();
+    let peers = (0..5).map(|index| {
+        (
+            InterfaceId::new([0, index, index, 0, 0, 0, 0, 0]),
+            ConnectionState::Connected,
+        )
+    });
+    details.push_supervisor_peers(peers);
+    details.push_bluetooth_recovery(BluetoothRecoveryMenuDetails {
+        receive_pressure: 1,
+        setup_failures: 2,
+        transport_closures: 3,
+    });
+
+    let rows = details.as_slice();
+    assert_eq!(rows.len(), 7);
+    assert_eq!(rows[6].text(), "R1/S2/C3");
+}
+
+#[test]
 fn lora_spectrum_details_keep_the_common_case_compact() {
     let mut details = InterfaceMenuDetails::empty();
     details.push_lora_spectrum(LoRaSpectrumMenuDetails {

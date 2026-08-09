@@ -1,12 +1,13 @@
 mod backend;
 mod bridge;
 mod link;
+mod outbound;
 
 #[cfg(test)]
 mod tests;
 
 pub use backend::AndroidBleBackend;
-pub use bridge::AndroidBleBridge;
+pub use bridge::{AndroidBleBridge, AndroidBleIngressAdmission};
 pub use link::{AndroidBleLink, AndroidBleSink, AndroidBleSource};
 
 pub const RADIO_ENABLED: u32 = 0x01;

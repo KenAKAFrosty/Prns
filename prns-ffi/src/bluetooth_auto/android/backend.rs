@@ -3,7 +3,7 @@ use prns_core::interfaces::bluetooth_auto::{
 };
 use prns_core::interfaces::bluetooth_auto::{BleAddress, LinkCapabilities, Psm};
 
-use super::bridge::{AndroidBleBridge, Event};
+use super::bridge::{AndroidBleBridge, Event, PEER_CAPACITY};
 use super::link::AndroidBleLink;
 use super::AndroidBleError;
 
@@ -12,7 +12,7 @@ pub struct AndroidBleBackend {
 }
 
 impl AndroidBleBackend {
-    pub const MAX_PEERS: usize = 7;
+    pub const MAX_PEERS: usize = PEER_CAPACITY;
 
     #[must_use]
     pub fn new(bridge: AndroidBleBridge) -> Self {
@@ -97,7 +97,10 @@ impl BleBackend<{ AndroidBleBackend::MAX_PEERS }> for AndroidBleBackend {
     }
 
     async fn dial(&mut self, address: BleAddress) -> DialOutcome {
-        self.bridge.push_dial(*address.octets());
-        DialOutcome::Started
+        if self.bridge.push_dial(*address.octets()) {
+            DialOutcome::Started
+        } else {
+            DialOutcome::Busy
+        }
     }
 }
