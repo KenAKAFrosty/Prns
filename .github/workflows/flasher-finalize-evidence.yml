@@ -153,14 +153,26 @@ jobs:
           published_at="$(jq -r '.publishedAt' target/release/prerelease.json)"
           source_commit="$(jq -r '.release.commit' target/candidate/flash-manifest.json)"
           test "$(jq -r '.targetCommitish' target/release/prerelease.json)" = "$source_commit"
-          python3 target/candidate/qualification/validate-flasher-acceptance.py \
-            --acceptance "target/release/acceptance-v${RELEASE_VERSION}.json" \
-            --manifest target/candidate/flash-manifest.json \
-            --manifest-signature target/candidate/flash-manifest.json.minisig \
-            --signed-bundle "target/release/prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz" \
-            --tester-roster target/candidate/qualification/tester-roster.json \
-            --evidence-root target/qualification-evidence \
-            --prerelease-published-at "$published_at"
+          acceptance="target/release/acceptance-v${RELEASE_VERSION}.json"
+          if [[ "$(jq -r '.schema' "$acceptance")" = "4" ]]; then
+            ./tools/prns run release.acceptance.validate -- \
+              --acceptance "$acceptance" \
+              --manifest target/candidate/flash-manifest.json \
+              --manifest-signature target/candidate/flash-manifest.json.minisig \
+              --signed-bundle "target/release/prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz" \
+              --tester-roster target/candidate/qualification/tester-roster.json \
+              --evidence-root target/qualification-evidence \
+              --prerelease-published-at "$published_at"
+          else
+            python3 target/candidate/qualification/validate-flasher-acceptance.py \
+              --acceptance "$acceptance" \
+              --manifest target/candidate/flash-manifest.json \
+              --manifest-signature target/candidate/flash-manifest.json.minisig \
+              --signed-bundle "target/release/prns-flasher-candidate-v${RELEASE_VERSION}-signed.tar.gz" \
+              --tester-roster target/candidate/qualification/tester-roster.json \
+              --evidence-root target/qualification-evidence \
+              --prerelease-published-at "$published_at"
+          fi
       - name: Verify GitHub provenance for every published binary
         env:
           GH_TOKEN: ${{ github.token }}

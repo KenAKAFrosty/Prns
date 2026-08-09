@@ -503,6 +503,90 @@ class AcceptanceValidatorTests(unittest.TestCase):
         self.assertTrue(any("not a required Safari/Firefox fallback" in error for error in errors))
         self.assertTrue(any("unknown published target" in error for error in errors))
 
+    def override_acceptance(self) -> dict:
+        return {
+            "schema": 4,
+            "candidate": deepcopy(self.acceptance["candidate"]),
+            "maintainer_override": {
+                "basis": "prerelease approved on continuous hardware validation through development",
+                "approved_by": "github:release-owner",
+                "approved_at": COMPLETED_AT,
+            },
+        }
+
+    def clear_evidence_root(self) -> None:
+        for path in self.evidence_root.iterdir():
+            path.unlink()
+
+    def test_maintainer_override_binds_candidate_and_release_owner(self) -> None:
+        self.clear_evidence_root()
+        self.assertEqual(self.validate(self.override_acceptance()), [])
+
+    def test_maintainer_override_requires_the_release_owner(self) -> None:
+        self.clear_evidence_root()
+        record = self.override_acceptance()
+        record["maintainer_override"]["approved_by"] = "github:solo-fixture"
+        self.assertTrue(
+            any("release_owner" in error for error in self.validate(record))
+        )
+
+    def test_maintainer_override_still_binds_the_exact_candidate(self) -> None:
+        self.clear_evidence_root()
+        record = self.override_acceptance()
+        record["candidate"]["signed_candidate_sha256"] = "0" * 64
+        self.assertTrue(
+            any(
+                "signed_candidate_sha256 does not match the exact signed candidate archive" in error
+                for error in self.validate(record)
+            )
+        )
+
+    def test_maintainer_override_is_pre_1_0_only(self) -> None:
+        self.clear_evidence_root()
+        self.manifest_document["release"]["version"] = "1.0.0"
+        self.manifest_path.write_text(
+            json.dumps(self.manifest_document, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        record = self.override_acceptance()
+        record["candidate"]["version"] = "1.0.0"
+        record["candidate"]["manifest_sha256"] = hashlib.sha256(
+            self.manifest_path.read_bytes()
+        ).hexdigest()
+        self.assertTrue(
+            any(
+                "pre-1.0 provision and cannot approve this version" in error
+                for error in self.validate(record)
+            )
+        )
+
+    def test_maintainer_override_rejects_stray_evidence_objects(self) -> None:
+        record = self.override_acceptance()
+        self.assertTrue(
+            any("unreferenced objects" in error for error in self.validate(record))
+        )
+
+    def test_maintainer_override_rejects_unknown_and_placeholder_fields(self) -> None:
+        self.clear_evidence_root()
+        record = self.override_acceptance()
+        record["runs"] = []
+        record["maintainer_override"]["basis"] = "TODO"
+        record["maintainer_override"]["approved_at"] = "9999-12-31T23:59:59Z"
+        errors = self.validate(record)
+        self.assertTrue(any("unknown fields: ['runs']" in error for error in errors))
+        self.assertTrue(any("basis must state the approval grounds" in error for error in errors))
+        self.assertTrue(any("approved_at cannot be in the future" in error for error in errors))
+
+    def test_maintainer_override_approval_cannot_predate_the_prerelease(self) -> None:
+        self.clear_evidence_root()
+        record = self.override_acceptance()
+        record["maintainer_override"]["approved_at"] = "2026-07-20T11:00:00Z"
+        self.assertTrue(
+            any(
+                "approved_at predates the exact public prerelease" in error
+                for error in self.validate(record)
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
