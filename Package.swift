@@ -5,7 +5,7 @@ import PackageDescription
 let package = Package(
     name: "PersonalRns",
     platforms: [
-        .macOS(.v11),
+        .macOS(.v15),
     ],
     products: [
         .library(name: "PersonalRns", targets: ["PersonalRns"]),
