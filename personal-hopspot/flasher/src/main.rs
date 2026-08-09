@@ -6,8 +6,8 @@ mod esp;
 mod events;
 mod release;
 mod splash;
-mod techo;
 mod toolchain;
+mod uf2;
 mod ui;
 mod wifi;
 
@@ -279,11 +279,12 @@ fn execute_flash(
         ),
         (Transport::Uf2MassStorage, PreparedTarget::Uf2(prepared)) => {
             if !matches!(request.provisioning, ProvisioningAction::Preserve) {
-                return Err(AppError::unsupported_operation(
-                    "T-Echo does not support Wi-Fi provisioning",
-                ));
+                return Err(AppError::unsupported_operation(format!(
+                    "{} does not support Wi-Fi provisioning",
+                    board.display_name
+                )));
             }
-            techo::flash(board, &prepared, request.mount, reporter)
+            uf2::flash(board, &prepared, request.mount, reporter)
         }
         _ => Err(AppError::trust_identity(
             "prepared artifact transport does not match the selected board",
@@ -495,7 +496,7 @@ fn doctor(
         && requested_port.is_some()
     {
         return Err(AppError::unsupported_operation(
-            "--port applies only to ESP serial boards; T-Echo uses the TECHOBOOT drive",
+            "--port applies only to ESP serial boards; UF2 boards use a bootloader drive",
         ));
     }
     if board.is_some() {
@@ -507,7 +508,7 @@ fn doctor(
     } else {
         esp::diagnostic_ports()?
     };
-    let detected_mounts = techo::detect_mounts();
+    let detected_mounts = uf2::detect_any_uf2_mounts(catalog);
     let check = match board {
         Some(board) if board.transport == Transport::EspSerial => {
             if !json {
@@ -533,8 +534,8 @@ fn doctor(
                 note,
             })
         }
-        Some(_board) => {
-            let mount = techo::doctor_mount_from(detected_mounts.clone())?;
+        Some(board) => {
+            let mount = uf2::doctor_mount_from(detected_mounts.clone(), board)?;
             Some(DoctorCheck::Uf2MassStorage {
                 mount: mount.display().to_string(),
             })
@@ -600,7 +601,7 @@ fn human_doctor_output(
         }
     }
     if board.is_none_or(|board| board.transport == Transport::Uf2MassStorage) {
-        rendered.push_str("TECHOBOOT mounts:\n");
+        rendered.push_str("UF2 bootloader mounts:\n");
         if output.techo_mounts.is_empty() {
             rendered.push_str("  none\n");
         }
@@ -626,7 +627,7 @@ fn human_doctor_output(
         }
         Some(DoctorCheck::Uf2MassStorage { mount }) => {
             rendered.push_str("non-writing UF2 preflight: passed\n");
-            rendered.push_str(&format!("  identifiable TECHOBOOT mount: {mount}\n"));
+            rendered.push_str(&format!("  identifiable UF2 bootloader mount: {mount}\n"));
         }
         None => {}
     }
@@ -725,7 +726,7 @@ mod doctor_tests {
         let catalog = board_catalog().expect("catalog");
         assert!(matches!(
             doctor(&catalog, Some("t-echo"), Some("unused-port"), true),
-            Err(AppError::Usage(message)) if message.to_string().contains("TECHOBOOT")
+            Err(AppError::Usage(message)) if message.to_string().contains("bootloader drive")
         ));
     }
 
@@ -843,7 +844,7 @@ mod doctor_tests {
 
         assert_eq!(
             human_doctor_output(&output, Some(board), None),
-            "board: t-echo\nTECHOBOOT mounts:\n  /media/operator/TECHOBOOT\nnon-writing UF2 preflight: passed\n  identifiable TECHOBOOT mount: /media/operator/TECHOBOOT\n"
+            "board: t-echo\nUF2 bootloader mounts:\n  /media/operator/TECHOBOOT\nnon-writing UF2 preflight: passed\n  identifiable UF2 bootloader mount: /media/operator/TECHOBOOT\n"
         );
     }
 }
