@@ -216,6 +216,8 @@ jobs:
             --source-commit "$source_commit" \
             --allow-promoted
       - name: Verify the complete prerelease asset inventory before deployment
+        env:
+          PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
         run: |
           ./tools/prns release assets verify -- \
             --candidate target/signed-candidate \
