@@ -1370,6 +1370,70 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         self.assertIn("missing signed release assets", missing.stderr)
         removed.write_bytes(expected_install)
 
+        suite_sums = assets / "SHA256SUMS.txt"
+        suite_signature = assets / "SHA256SUMS.txt.minisig"
+        candidate_sums = suite_sums.read_bytes()
+        candidate_signature = suite_signature.read_bytes()
+        suite_extra = assets / f"prns-host-sdk-v{VERSION}.tar.gz"
+        suite_extra.write_bytes(b"suite asset")
+
+        def sign_suite_inventory(lines: list[str]) -> None:
+            suite_sums.write_text("".join(lines), encoding="utf-8")
+            signed = subprocess.run(
+                [str(self.signer), "-S", "-m", str(suite_sums), "-x", str(suite_signature)],
+                capture_output=True,
+            )
+            self.assertEqual(signed.returncode, 0)
+
+        inventory_lines = [
+            f"{sha256(suite_extra)}  {suite_extra.name}\n",
+            f"{sha256(assets / 'install.sh')}  install.sh\n",
+            f"{sha256(assets / 'flash-manifest.json')}  flash-manifest.json\n",
+        ]
+        sign_suite_inventory(inventory_lines)
+        suite_verified = run_script(
+            "verify-flasher-release-assets.py", *arguments, environment=self.environment
+        )
+        self.assertEqual(suite_verified.returncode, 0, suite_verified.stderr)
+
+        contradicting_lines = list(inventory_lines)
+        contradicting_lines[1] = f"{'0' * 64}  install.sh\n"
+        sign_suite_inventory(contradicting_lines)
+        contradicted = run_script(
+            "verify-flasher-release-assets.py", *arguments, environment=self.environment
+        )
+        self.assertNotEqual(contradicted.returncode, 0)
+        self.assertIn("contradicts the signed candidate", contradicted.stderr)
+
+        sign_suite_inventory(inventory_lines)
+        suite_extra.write_bytes(b"tampered suite asset")
+        tampered_extra = run_script(
+            "verify-flasher-release-assets.py", *arguments, environment=self.environment
+        )
+        self.assertNotEqual(tampered_extra.returncode, 0)
+        self.assertIn(
+            "outside both the signed candidate and the signed suite custody inventory",
+            tampered_extra.stderr,
+        )
+
+        refusing_signer = self.workspace / "refusing-minisign"
+        refusing_signer.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
+        refusing_signer.chmod(refusing_signer.stat().st_mode | stat.S_IXUSR)
+        refusing_environment = dict(self.environment)
+        refusing_environment["PRNS_MINISIGN_BIN"] = str(refusing_signer)
+        rejected_signature = run_script(
+            "verify-flasher-release-assets.py", *arguments, environment=refusing_environment
+        )
+        self.assertNotEqual(rejected_signature.returncode, 0)
+        self.assertIn(
+            "suite custody inventory signature verification failed",
+            rejected_signature.stderr,
+        )
+
+        suite_extra.unlink()
+        suite_sums.write_bytes(candidate_sums)
+        suite_signature.write_bytes(candidate_signature)
+
     def test_workflows_preserve_exact_candidate_custody_boundaries(self) -> None:
         candidate = (ROOT / ".github/workflows/flasher-candidate.yml").read_text()
         signing = (ROOT / ".github/workflows/flasher-sign.yml").read_text()
