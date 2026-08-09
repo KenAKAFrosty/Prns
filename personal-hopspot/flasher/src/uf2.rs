@@ -207,8 +207,8 @@ fn wait_for_reboot(
     }
     if mount.exists() {
         return Err(AppError::uf2_delivery(format!(
-            "UF2 was synchronized, but {} did not disappear within 20 seconds",
-            board.mount_label()
+            "UF2 was synchronized, but {} did not disappear within {timeout:?}",
+            board.mount_label(),
         )));
     }
     Ok(())
@@ -560,10 +560,13 @@ mod tests {
 
         let stuck = temporary_mount("stuck");
         fs::create_dir(&stuck).expect("create stuck mount");
-        assert!(matches!(
-            wait_for_reboot(&stuck, &board, Duration::ZERO, Duration::from_millis(1)),
-            Err(AppError::WriteVerifyReset(_))
-        ));
+        let error = wait_for_reboot(&stuck, &board, Duration::ZERO, Duration::from_millis(1))
+            .expect_err("persistent mount must time out");
+        assert!(matches!(&error, AppError::WriteVerifyReset(_)));
+        assert_eq!(
+            error.to_string(),
+            "UF2 was synchronized, but TECHOBOOT did not disappear within 0ns"
+        );
         fs::remove_dir(stuck).expect("remove stuck mount");
     }
 
