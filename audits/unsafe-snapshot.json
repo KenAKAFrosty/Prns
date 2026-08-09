@@ -14875,11 +14875,11 @@
       "name": "prns-ffi",
       "source": "prns-ffi",
       "unsafe": {
-        "blocks": 105,
+        "blocks": 117,
         "externs": 3,
         "functions": 0,
         "impls": 22,
-        "tokens": 163
+        "tokens": 175
       },
       "version": "0.3.3"
     },
@@ -22200,8 +22200,10 @@
           "Win32_Devices_Communication",
           "Win32_Devices_DeviceAndDriverInstallation",
           "Win32_Foundation",
+          "Win32_Security",
           "Win32_System",
           "Win32_System_Com",
+          "Win32_System_Threading",
           "default",
           "std"
         ],
@@ -22224,8 +22226,10 @@
           "Win32_Devices_Communication",
           "Win32_Devices_DeviceAndDriverInstallation",
           "Win32_Foundation",
+          "Win32_Security",
           "Win32_System",
           "Win32_System_Com",
+          "Win32_System_Threading",
           "default",
           "std"
         ],
@@ -22248,8 +22252,10 @@
           "Win32_Devices_Communication",
           "Win32_Devices_DeviceAndDriverInstallation",
           "Win32_Foundation",
+          "Win32_Security",
           "Win32_System",
           "Win32_System_Com",
+          "Win32_System_Threading",
           "default",
           "std"
         ]
