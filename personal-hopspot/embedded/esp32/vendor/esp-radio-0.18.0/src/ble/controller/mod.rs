@@ -58,9 +58,11 @@ impl<'d> BleConnector<'d> {
         let _guard = RadioRefGuard::new();
 
         config.validate()?;
+        let phy_init_guard = crate::ble::ble_init(&config);
+        crate::ble::clear_hci_rx_state();
 
         Ok(Self {
-            _phy_init_guard: crate::ble::ble_init(&config),
+            _phy_init_guard: phy_init_guard,
             _device: device,
             _guard,
         })

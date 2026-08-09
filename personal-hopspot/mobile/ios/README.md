@@ -138,21 +138,21 @@ xcrun devicectl device process launch \
   --device "$DEVICE_ID" com.personal.hopspot
 ```
 
-Start desktop Hopspot normally from the app crate. On macOS, the desktop USB
+Start desktop Hopspot normally from the repository root. On macOS, the desktop USB
 host discovers USB-attached iOS devices, starts the `iproxy`/usbmux forwarder,
 uses that local byte pipe as a USB Auto target, and tears the helper process
 down when the USB stream closes:
 
 ```sh
-cd ../app
-cargo desktop
+cargo run --manifest-path personal-hopspot/desktop/Cargo.toml --locked
 ```
 
 The manual socket path remains available as a diagnostic override when you want
 to provide your own forwarding process:
 
 ```sh
-HOPSPOT_USBMUX_TARGET=127.0.0.1:42700 cargo desktop
+HOPSPOT_USBMUX_TARGET=127.0.0.1:42700 \
+  cargo run --manifest-path personal-hopspot/desktop/Cargo.toml --locked
 ```
 
 ## Host-side checks (no Xcode or simulator required)
@@ -163,7 +163,13 @@ From `rust/`:
 cargo test
 ```
 
-The simulator gate is automated, but iOS remains unsupported for release until
-the complete physical iPhone and iPad matrix in
-`validation/platforms/ios-production-hardware.md` has passed and its separate
-record-only evidence commit is present.
+The iOS app is publicly available as a pre-1.0 **Shipping** surface. The
+automated simulator gate covers its baseline build and launch behavior, and a
+current-commit iPad smoke covers the immediate device, persistence, and
+Bluetooth path.
+
+Formal production qualification remains open until the complete physical
+iPhone and iPad matrix in `validation/platforms/ios-production-hardware.md` has
+passed and its separate record-only evidence commit is present. Shipping does
+not imply App Store or TestFlight availability, continuous background
+execution, completed iPhone evidence, or completion of that qualification.

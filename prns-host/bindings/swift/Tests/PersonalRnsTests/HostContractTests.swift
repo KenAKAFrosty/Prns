@@ -568,7 +568,11 @@ private func decodeHex(_ value: String) throws -> [UInt8] {
 }
 
 private func reserveLoopbackPort() throws -> UInt16 {
+#if canImport(Glibc)
     let descriptor = socket(AF_INET, Int32(SOCK_STREAM.rawValue), 0)
+#else
+    let descriptor = socket(AF_INET, SOCK_STREAM, 0)
+#endif
     guard descriptor >= 0 else {
         throw JourneyFailure.socket(errno)
     }

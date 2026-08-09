@@ -41,7 +41,7 @@ log = { version = "0.4", optional = true, default-features = false }
 # embassy-sync 0.7 and heapless 0.9 while the rest of this crate is on 0.8; the aliases below
 # feed trouble its own versions across the boundary, keeping the dual-version island contained
 # to this backend. Boards pick the packet-pool size feature themselves (it is board policy).
-trouble-host = { version = "0.6.0", optional = true, default-features = false, features = ["central", "scan", "peripheral", "gatt", "derive", "default-packet-pool-mtu-255"] }
+trouble-host = { version = "0.6.0", optional = true, default-features = false, features = ["central", "scan", "peripheral", "gatt", "derive", "default-packet-pool-mtu-512"] }
 bt-hci = { version = "0.8", optional = true, default-features = false }
 embassy-sync-07 = { package = "embassy-sync", version = "0.7", default-features = false, optional = true }
 heapless-09 = { package = "heapless", version = "0.9", default-features = false, optional = true }

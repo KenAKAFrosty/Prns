@@ -18,6 +18,7 @@ resolver = "2"
 [patch.crates-io]
 esp-radio = { path = "vendor/esp-radio-0.18.0" }
 esp-phy = { path = "vendor/esp-phy-0.2.0" }
+trouble-host = { path = "vendor/trouble-host-0.6.0" }
 bt-hci = { git = "https://github.com/embassy-rs/bt-hci", rev = "adae58af86d241237ba52ed27d0d9dc9588155ee" }
 
 [lib]

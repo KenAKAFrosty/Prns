@@ -4,7 +4,7 @@ mod platform;
 mod sessions;
 mod tasks;
 
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
 
 use bt_hci::transport::Transport;
 use bt_hci::FromHciBytesError;
@@ -73,12 +73,15 @@ const FRAME_QUEUE_DEPTH: usize = 2;
 const FRAME_POOL_CAPACITY: usize = PEER_CAPACITY;
 const FRAME_POOL_WAITERS: usize = PEER_CAPACITY + 1;
 const SIGHTING_DEPTH: usize = PEER_CAPACITY * 2;
+const SIGHTING_COALESCE_MS: u64 = 2_000;
 const RADIO_WAITERS: usize = 2;
 
 /// One L2CAP SDU carries one length-prefixed stream frame; modest credits and MPS keep two RX reservations inside the packet pool alongside GATT and TX.
 pub const L2CAP_PSM: u16 = 0x0080;
 const L2CAP_SDU_LEN: usize = STREAM_FRAME_PREFIX_LEN + BLE_HW_MTU;
-const L2CAP_CREDITS: u16 = 1;
+const L2CAP_SDU_LENGTH_PREFIX_LEN: u16 = size_of::<u16>() as u16;
+const L2CAP_CREDITS: u16 = (L2CAP_SDU_LEN as u16 + L2CAP_SDU_LENGTH_PREFIX_LEN).div_ceil(L2CAP_MPS);
+const _: () = assert!(L2CAP_SDU_LEN <= <DefaultPacketPool as trouble_host::PacketPool>::MTU);
 const L2CAP_HANDSHAKE_WINDOW: Duration = Duration::from_secs(5);
 const L2CAP_SETUP_RETRY: Duration = Duration::from_millis(150);
 const PHY_UPDATE_TIMEOUT: Duration = Duration::from_secs(2);
@@ -88,6 +91,8 @@ const FRAME_CAP: usize = BLE_HW_MTU;
 
 type RadioArbiter = FairSemaphore<BridgeMutex, RADIO_WAITERS>;
 type RadioPermit<'a> = SemaphoreReleaser<'a, RadioArbiter>;
+type DiscoveryTurnArbiter = FairSemaphore<BridgeMutex, RADIO_WAITERS>;
+type DiscoveryTurnPermit<'a> = SemaphoreReleaser<'a, DiscoveryTurnArbiter>;
 type BleSlotPool = ConnectionSlotPool<BridgeMutex, PEER_CAPACITY>;
 type BleSlotLease = ConnectionSlotLease<BridgeMutex>;
 type BleSlotWorker = ConnectionSlotWorkerLease<BridgeMutex>;

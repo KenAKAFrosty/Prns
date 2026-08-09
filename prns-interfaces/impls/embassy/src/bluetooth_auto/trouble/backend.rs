@@ -17,6 +17,115 @@ pub(super) struct SeenPeer {
 pub(super) struct DialTarget {
     pub(super) kind: AddrKind,
     pub(super) addr: BdAddr,
+    transient_client_retries: TransientClientRetries,
+}
+
+#[derive(Clone, Copy)]
+enum TransientClientRetries {
+    EightRemaining,
+    SevenRemaining,
+    SixRemaining,
+    FiveRemaining,
+    FourRemaining,
+    ThreeRemaining,
+    TwoRemaining,
+    OneRemaining,
+    Exhausted,
+}
+
+enum TransientClientRetry {
+    Retry(DialTarget),
+    Backoff,
+}
+
+pub(super) enum TransientClientRetryOutcome {
+    Queued,
+    Exhausted,
+    QueueBusy,
+}
+
+#[derive(Clone, Copy)]
+struct RecentSighting {
+    address: [u8; 6],
+    emitted_at_ms: u64,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum SightingAdmissionOutcome {
+    Admit,
+    Coalesce,
+}
+
+struct SightingAdmission {
+    recent: [Option<RecentSighting>; SIGHTING_DEPTH],
+}
+
+impl SightingAdmission {
+    const fn new() -> Self {
+        Self {
+            recent: [None; SIGHTING_DEPTH],
+        }
+    }
+
+    fn classify(&mut self, address: [u8; 6], now_ms: u64) -> SightingAdmissionOutcome {
+        if let Some(recent) = self
+            .recent
+            .iter_mut()
+            .flatten()
+            .find(|recent| recent.address == address)
+        {
+            if now_ms.saturating_sub(recent.emitted_at_ms) < SIGHTING_COALESCE_MS {
+                return SightingAdmissionOutcome::Coalesce;
+            }
+            recent.emitted_at_ms = now_ms;
+            return SightingAdmissionOutcome::Admit;
+        }
+        let sighting = RecentSighting {
+            address,
+            emitted_at_ms: now_ms,
+        };
+        if let Some(slot) = self.recent.iter_mut().find(|entry| entry.is_none()) {
+            *slot = Some(sighting);
+            return SightingAdmissionOutcome::Admit;
+        }
+        if let Some(slot) = self.recent.iter_mut().min_by_key(|entry| {
+            entry
+                .as_ref()
+                .map_or(u64::MAX, |recent| recent.emitted_at_ms)
+        }) {
+            *slot = Some(sighting);
+        }
+        SightingAdmissionOutcome::Admit
+    }
+}
+
+impl DialTarget {
+    fn new(kind: AddrKind, addr: BdAddr) -> Self {
+        Self {
+            kind,
+            addr,
+            transient_client_retries: TransientClientRetries::EightRemaining,
+        }
+    }
+
+    fn after_transient_client_disconnect(self) -> TransientClientRetry {
+        let transient_client_retries = match self.transient_client_retries {
+            TransientClientRetries::EightRemaining => TransientClientRetries::SevenRemaining,
+            TransientClientRetries::SevenRemaining => TransientClientRetries::SixRemaining,
+            TransientClientRetries::SixRemaining => TransientClientRetries::FiveRemaining,
+            TransientClientRetries::FiveRemaining => TransientClientRetries::FourRemaining,
+            TransientClientRetries::FourRemaining => TransientClientRetries::ThreeRemaining,
+            TransientClientRetries::ThreeRemaining => TransientClientRetries::TwoRemaining,
+            TransientClientRetries::TwoRemaining => TransientClientRetries::OneRemaining,
+            TransientClientRetries::OneRemaining => TransientClientRetries::Exhausted,
+            TransientClientRetries::Exhausted => return TransientClientRetry::Backoff,
+        };
+        TransientClientRetry::Retry(Self {
+            kind: self.kind,
+            addr: self.addr,
+            transient_client_retries,
+        })
+    }
 }
 
 pub(super) enum SlotJob {
@@ -27,6 +136,7 @@ pub(super) enum SlotJob {
     Dial {
         connection: Connection<'static, DefaultPacketPool>,
         slot: BleSlotLease,
+        target: DialTarget,
     },
 }
 
@@ -118,7 +228,9 @@ pub struct BleHub {
     pub(super) dial_request: Channel<BridgeMutex, DialTarget, PEER_CAPACITY>,
     pub(super) inbound_frames: BleFramePool,
     pub(super) outbound_frames: BleFramePool,
+    sighting_admission: BlockingMutex<BridgeMutex, RefCell<SightingAdmission>>,
     radio: RadioArbiter,
+    discovery_turn: DiscoveryTurnArbiter,
     pub(super) advertise: Signal<BridgeMutex, bool>,
     pub(super) scan_enabled: Signal<BridgeMutex, bool>,
     pub(super) radio_enabled: AtomicBool,
@@ -139,7 +251,9 @@ impl BleHub {
             dial_request: Channel::new(),
             inbound_frames: SharedFramePool::new(),
             outbound_frames: SharedFramePool::new(),
+            sighting_admission: BlockingMutex::new(RefCell::new(SightingAdmission::new())),
             radio: FairSemaphore::new(1),
+            discovery_turn: FairSemaphore::new(1),
             advertise: Signal::new(),
             scan_enabled: Signal::new(),
             radio_enabled: AtomicBool::new(false),
@@ -162,6 +276,20 @@ impl BleHub {
         }
     }
 
+    fn admit_sighting(&self, address: [u8; 6], now_ms: u64) -> SightingAdmissionOutcome {
+        self.sighting_admission
+            .lock(|admission| admission.borrow_mut().classify(address, now_ms))
+    }
+
+    pub(super) async fn acquire_discovery_turn(&self) -> DiscoveryTurnPermit<'_> {
+        loop {
+            match self.discovery_turn.acquire(1).await {
+                Ok(permit) => return permit,
+                Err(_) => yield_now().await,
+            }
+        }
+    }
+
     pub(super) fn note_ingress_pressure(&self) {
         self.status.note_ingress_pressure();
     }
@@ -178,16 +306,26 @@ impl BleHub {
         self.discovery.note_link_activity();
     }
 
+    pub(super) fn retry_transient_client_disconnect(
+        &self,
+        target: DialTarget,
+    ) -> TransientClientRetryOutcome {
+        let target = match target.after_transient_client_disconnect() {
+            TransientClientRetry::Retry(target) => target,
+            TransientClientRetry::Backoff => return TransientClientRetryOutcome::Exhausted,
+        };
+        match self.dial_request.try_send(target) {
+            Ok(()) => TransientClientRetryOutcome::Queued,
+            Err(_) => TransientClientRetryOutcome::QueueBusy,
+        }
+    }
+
     pub(super) async fn await_discovery_turn(
         &self,
         enabled: &Signal<BridgeMutex, bool>,
         role: DiscoveryRole,
     ) -> Result<DiscoveryWindow, bool> {
         self.discovery.await_turn(enabled, role).await
-    }
-
-    pub(super) async fn wait_for_discovery_activity(&self, role: DiscoveryRole) {
-        self.discovery.wait_for_activity(role).await;
     }
 
     pub(super) fn finish_discovery_turn(&self, window: DiscoveryWindow) {
@@ -217,10 +355,7 @@ pub struct EmbeddedBleBackend {
 
 impl EmbeddedBleBackend {
     fn remember(&mut self, peer: SeenPeer) {
-        let target = DialTarget {
-            kind: peer.kind,
-            addr: peer.addr,
-        };
+        let target = DialTarget::new(peer.kind, peer.addr);
         if self
             .seen
             .iter()
@@ -452,7 +587,7 @@ impl BleSink for EmbeddedBleSink {
 }
 
 pub(super) struct ScanFunnel {
-    pub(super) sightings: Sender<'static, BridgeMutex, SeenPeer, SIGHTING_DEPTH>,
+    pub(super) hub: &'static BleHub,
     pub(super) local_address: BleAddress,
 }
 
@@ -470,12 +605,62 @@ impl EventHandler for ScanFunnel {
                 capabilities,
             ) == ColumbaConnectionRole::Dial;
             if contains_service(report.data) && should_dial {
-                let _ = self.sightings.try_send(SeenPeer {
-                    kind: report.addr_kind,
-                    addr: report.addr,
-                    rssi: report.rssi,
-                });
+                let address = report.addr.into_inner();
+                let outcome = self.hub.admit_sighting(address, Instant::now().as_millis());
+                if outcome == SightingAdmissionOutcome::Admit {
+                    let _ = self.hub.sightings.try_send(SeenPeer {
+                        kind: report.addr_kind,
+                        addr: report.addr,
+                        rssi: report.rssi,
+                    });
+                }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transient_client_disconnect_retry_is_bounded() {
+        let mut target = DialTarget::new(AddrKind::PUBLIC, BdAddr::new([1, 2, 3, 4, 5, 6]));
+
+        for _ in 0..8 {
+            target = match target.after_transient_client_disconnect() {
+                TransientClientRetry::Retry(target) => target,
+                TransientClientRetry::Backoff => panic!("transient retry exhausted early"),
+            };
+        }
+
+        assert!(matches!(
+            target.after_transient_client_disconnect(),
+            TransientClientRetry::Backoff
+        ));
+    }
+
+    #[test]
+    fn sightings_coalesce_per_address_until_the_retry_window() {
+        let mut admission = SightingAdmission::new();
+        let first = [1, 2, 3, 4, 5, 6];
+        let second = [6, 5, 4, 3, 2, 1];
+
+        assert_eq!(
+            admission.classify(first, 1_000),
+            SightingAdmissionOutcome::Admit
+        );
+        assert_eq!(
+            admission.classify(first, 2_999),
+            SightingAdmissionOutcome::Coalesce
+        );
+        assert_eq!(
+            admission.classify(second, 2_999),
+            SightingAdmissionOutcome::Admit
+        );
+        assert_eq!(
+            admission.classify(first, 3_000),
+            SightingAdmissionOutcome::Admit
+        );
     }
 }
