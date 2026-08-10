@@ -1,3 +1,5 @@
+//! GATT service used by the shared nRF52 Bluetooth Auto transport.
+
 use heapless09::Vec as GattValue;
 use nrf_softdevice::ble::gatt_server::builder::ServiceBuilder;
 use nrf_softdevice::ble::gatt_server::characteristic::{Attribute, Metadata, Properties};

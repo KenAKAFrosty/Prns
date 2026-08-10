@@ -15,7 +15,7 @@ const PENDING: usize = 8;
 pub type TechoSharedFlash = SharedNorFlash<'static, CriticalSectionRawMutex, Flash>;
 pub type TechoPersistence = EmbeddedFlashPersistence<
     TechoSharedFlash,
-    FixedRouteSnapshotKeys<{ crate::storage::TechoStorage::TRACKED_DESTINATIONS }>,
+    FixedRouteSnapshotKeys<{ super::storage::TechoStorage::TRACKED_DESTINATIONS }>,
     fn(EmbeddedPersistenceDiagnostic),
     PENDING,
 >;
@@ -27,7 +27,7 @@ pub fn new(flash: TechoSharedFlash) -> TechoPersistence {
         flash,
         personal_hopspot_core::T_ECHO_JOURNAL_LAYOUT,
         EmbeddedPersistencePolicy::hopspot_default(EmbeddedCompactionPolicy::hopspot(
-            crate::storage::TechoStorage::MAX_CRITICAL_FLASH_JOURNAL_BYTES,
+            super::storage::TechoStorage::MAX_CRITICAL_FLASH_JOURNAL_BYTES,
         )),
         FixedRouteSnapshotKeys::new(),
         observe as fn(EmbeddedPersistenceDiagnostic),

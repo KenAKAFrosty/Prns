@@ -7646,7 +7646,7 @@ License: MIT License
 
 Used by: `ppv-lite86 0.2.21`
 
-Release graphs: Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS
+Release graphs: Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, nRF52840
 
 ```text
 Copyright (c) 2019 The CryptoCorrosion Contributors

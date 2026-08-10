@@ -14623,6 +14623,9 @@
         "host-c-windows": [
           "simd",
           "std"
+        ],
+        "nrf52840": [
+          "simd"
         ]
       },
       "name": "ppv-lite86",
@@ -16178,7 +16181,8 @@
         ],
         "host-c-windows": [
           "std"
-        ]
+        ],
+        "nrf52840": []
       },
       "name": "rand_chacha",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -19605,7 +19609,10 @@
     },
     {
       "graphs": {
-        "nrf52840": []
+        "nrf52840": [
+          "board-t-echo",
+          "default"
+        ]
       },
       "name": "t-echo",
       "source": "personal-hopspot/embedded/nrf52840",

@@ -86,9 +86,8 @@ impl TechoStorage {
         );
 }
 
-const _: () = assert!(
-    TechoStorage::MAX_COMPACTED_FLASH_JOURNAL_BYTES <= crate::hopspot::persistence::ARENA_BYTES
-);
+const _: () =
+    assert!(TechoStorage::MAX_COMPACTED_FLASH_JOURNAL_BYTES <= super::persistence::ARENA_BYTES);
 const _: () = assert!(TechoStorage::LINK_SESSIONS > TechoStorage::CHANNELS);
 const _: () = assert!(TechoStorage::RESOURCE_ASSEMBLIES == 1);
 

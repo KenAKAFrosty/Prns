@@ -8,9 +8,18 @@ description = "LilyGo T-Echo (nRF52840 + SX1262 + 200x200 SSD1681 e-ink) Persona
 
 [workspace]
 
+[features]
+default = ["board-t-echo"]
+board-t-echo = []
+
+[lib]
+name = "personal_hopspot_nrf52840"
+path = "src/lib.rs"
+
 [[bin]]
 name = "t-echo"
 path = "src/main.rs"
+required-features = ["board-t-echo"]
 
 [dependencies]
 personal-rns = { path = "../../../personal-rns", default-features = false, features = ["embassy-host", "flash", "lora", "bluetooth-auto", "usb"] }
@@ -44,6 +53,7 @@ embedded-io-async = "0.6"
 nrf-softdevice = { git = "https://github.com/embassy-rs/nrf-softdevice", rev = "47d6121c6e823120e8b883a7ac75f44ce7daa3aa", features = ["nrf52840", "s140", "ble-central", "ble-peripheral", "ble-gatt-server", "ble-gatt-client", "ble-l2cap", "ble-l2cap-credit-workaround", "evt-max-size-512", "critical-section-impl"] }
 # nrf-softdevice's GATT characteristics use heapless 0.9; the rest of the firmware is on 0.8.
 heapless09 = { package = "heapless", version = "0.9" }
+rand_chacha = { version = "0.9", default-features = false }
 
 [profile.release]
 codegen-units = 1

@@ -1,5 +1,3 @@
-use core::sync::atomic::{AtomicU32, Ordering};
-
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 
@@ -28,7 +26,6 @@ const LORA_OUTBOUND_DEPTH: usize = EngineStorageType::MAX_OUTGOING_RESOURCE_REAC
 /// update. Keep that complete reaction lossless on page-serving packet interfaces.
 const BLE_OUTBOUND_DEPTH: usize = EngineStorageType::MAX_OUTGOING_RESOURCE_REACTION_FRAMES;
 const INTERFACE_CAPACITY: usize = 2 + bluetooth_auto::MEMBERS;
-pub(super) const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"techousb");
 pub(super) const NOTIFY_CAP: usize = minimum_manifold_notification_capacity(LANE_COUNT, LANE_DEPTH);
 const COMMANDS_CAP: usize = 2;
 pub(super) const LIFECYCLE_CAP: usize = bluetooth_auto::MEMBERS;
@@ -44,11 +41,8 @@ const PACKET_PHY_INDEX_BUCKETS: usize =
 
 const _: () = assert!(EngineStorageType::LINK_SESSIONS > bluetooth_auto::MEMBERS);
 
-pub(super) const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x17Personal Hopspot T-Echo\xc0";
-pub(super) const NODE_ANNOUNCE_APP_DATA: &[u8] = b"Personal Hopspot T-Echo";
-
-pub(super) type Mtx = CriticalSectionRawMutex;
-type EngineStorageType = crate::storage::TechoStorage;
+pub(crate) type Mtx = CriticalSectionRawMutex;
+type EngineStorageType = crate::boards::selected::Storage;
 type InterfaceStore = EmbassyInterfaceStore<
     Mtx,
     INTERFACE_STORE_CAP,
@@ -94,18 +88,5 @@ pub(super) static USB_MANIFOLD_LANE: StaticManifoldLane<
     EMBEDDED_MAX_WIRE_FRAME_LEN,
     LANE_DEPTH,
 > = StaticManifoldLane::new();
-
-pub(super) static ENTROPY_STATE: AtomicU32 = AtomicU32::new(0x9e37_79b9);
-
-pub(super) fn seeded_entropy(bytes: &mut [u8]) {
-    let mut state = ENTROPY_STATE.load(Ordering::Relaxed);
-    for byte in bytes {
-        state ^= state << 13;
-        state ^= state >> 17;
-        state ^= state << 5;
-        *byte = (state >> 24) as u8;
-    }
-    ENTROPY_STATE.store(state, Ordering::Relaxed);
-}
 
 pub(super) fn ignore_events(_event: PrnsEvent<'_>, _state: &()) {}
