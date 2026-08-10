@@ -79,6 +79,7 @@ impl Esp32S3Board for HeltecV3Board {
     const BOOT_BANNER: &'static str = "HOPSPOT_HELTECV3";
     const USB_INTERFACE_ID: InterfaceId = USB_INTERFACE_ID;
     const FLASH_LAYOUT: screen::HopspotS3FlashLayout = screen::S3_8_MIB_FLASH_LAYOUT;
+    const OUTBOUND_BURST_DEPTH: usize = 2;
     type Display = HeltecV3Display;
     type Battery = HeltecV3Battery;
 

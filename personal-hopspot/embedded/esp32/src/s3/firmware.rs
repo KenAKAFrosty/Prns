@@ -149,8 +149,16 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     // node moves to core 1 — activating the TCP slot is a core-0-only act.
     #[cfg(feature = "wifi-auto")]
     boot_stage(BootPhase::WifiBegin);
-    #[cfg(feature = "wifi-auto")]
+    #[cfg(all(feature = "wifi-auto", feature = "esp-now"))]
     let (wifi, tcp_stack, esp_now) = build_wifi(
+        &spawner,
+        wifi_hardware,
+        mac_octets,
+        &wifi_config,
+        radio_mode == RadioMode::AccessPoint,
+    );
+    #[cfg(all(feature = "wifi-auto", not(feature = "esp-now")))]
+    let (wifi, tcp_stack, _) = build_wifi(
         &spawner,
         wifi_hardware,
         mac_octets,
@@ -243,7 +251,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let has_wifi = wifi.is_some();
 
     let usb_outbound = crate::storage::allocate_manifold_outbound::<EMBEDDED_MAX_WIRE_FRAME_LEN>(
-        OUTBOUND_BURST_DEPTH,
+        B::OUTBOUND_BURST_DEPTH,
     );
     let usb_lane = manifold_lanes
         .claim_interface_with_outbound_buffer(
@@ -254,7 +262,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         .expect("USB lane is available");
     let tcp_lane = tcp_cfg.map(|descriptor| {
         let outbound = crate::storage::allocate_manifold_outbound::<EMBEDDED_MAX_WIRE_FRAME_LEN>(
-            OUTBOUND_BURST_DEPTH,
+            B::OUTBOUND_BURST_DEPTH,
         );
         manifold_lanes
             .claim_interface_with_outbound_buffer(&TCP_MANIFOLD_LANE, descriptor, outbound)
@@ -264,7 +272,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let wifi_supervisor_lane = has_wifi.then(|| {
         let outbound = crate::storage::allocate_manifold_outbound::<
             { wifi_auto_contract::HARDWARE_MTU },
-        >(OUTBOUND_BURST_DEPTH);
+        >(B::OUTBOUND_BURST_DEPTH);
         manifold_lanes
             .claim_supervisor_with_outbound_buffer(
                 &WIFI_MANIFOLD_LANE,
@@ -276,7 +284,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     });
     #[cfg(feature = "lora")]
     let lora_outbound =
-        crate::storage::allocate_manifold_outbound::<LORA_MAX_PAYLOAD>(OUTBOUND_BURST_DEPTH);
+        crate::storage::allocate_manifold_outbound::<LORA_MAX_PAYLOAD>(B::OUTBOUND_BURST_DEPTH);
     #[cfg(feature = "lora")]
     let lora_lane = manifold_lanes
         .claim_interface_with_outbound_buffer(&LORA_MANIFOLD_LANE, lora_cfg, lora_outbound)
@@ -284,7 +292,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     #[cfg(feature = "bluetooth-auto")]
     let ble_supervisor_lane = (radio_mode == RadioMode::Ble && ble_identity.is_some()).then(|| {
         let outbound =
-            crate::storage::allocate_manifold_outbound::<BLE_HW_MTU>(OUTBOUND_BURST_DEPTH);
+            crate::storage::allocate_manifold_outbound::<BLE_HW_MTU>(B::OUTBOUND_BURST_DEPTH);
         manifold_lanes
             .claim_supervisor_with_outbound_buffer(
                 &BLE_MANIFOLD_LANE,
@@ -297,7 +305,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     #[cfg(feature = "esp-now")]
     let espnow_lane = espnow_cfg.map(|descriptor| {
         let outbound =
-            crate::storage::allocate_manifold_outbound::<ESP_NOW_V2_AIR_MTU>(OUTBOUND_BURST_DEPTH);
+            crate::storage::allocate_manifold_outbound::<ESP_NOW_V2_AIR_MTU>(B::OUTBOUND_BURST_DEPTH);
         manifold_lanes
             .claim_interface_with_outbound_buffer(&ESPNOW_MANIFOLD_LANE, descriptor, outbound)
             .expect("ESP-NOW lane is available")
@@ -874,6 +882,8 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 interface.run(seam).await;
             }
         };
+        #[cfg(not(feature = "esp-now"))]
+        let espnow_run = async {};
         match tcp {
             Some((tcp, tcp_seam)) => {
                 join(join(join(lora_run, espnow_run), tcp.run(tcp_seam)), render).await;

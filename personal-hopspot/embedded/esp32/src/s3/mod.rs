@@ -24,6 +24,8 @@ use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
 use esp_hal::Async;
 
 use embassy_executor::Spawner;
+#[cfg(all(feature = "wifi-auto", not(feature = "bluetooth-auto")))]
+use embassy_futures::join::join;
 use embassy_futures::select::{select3, Either3};
 #[cfg(feature = "wifi-auto")]
 use embassy_net::tcp::TcpSocket;
@@ -65,18 +67,18 @@ use esp_radio::wifi::{
     PowerSaveMode, WifiController, WifiError,
 };
 
-#[cfg(feature = "wifi-auto")]
+#[cfg(all(feature = "wifi-auto", feature = "esp-now"))]
 use esp_radio::esp_now::{
     EspNow, EspNowManager, EspNowReceiver, EspNowSender, WifiPhyRate, BROADCAST_ADDRESS,
 };
 #[cfg(feature = "bluetooth-auto")]
 use personal_rns::bluetooth_auto::{BluetoothAutoShared, BluetoothAutoStatus};
 use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand};
-#[cfg(feature = "wifi-auto")]
+#[cfg(all(feature = "wifi-auto", feature = "esp-now"))]
 use personal_rns::esp_now::EspNowInterface;
 #[cfg(feature = "bluetooth-auto")]
 use personal_rns::interfaces::bluetooth_auto::{BleIdentity, BLE_HW_MTU};
-#[cfg(feature = "wifi-auto")]
+#[cfg(all(feature = "wifi-auto", feature = "esp-now"))]
 use personal_rns::interfaces::esp_now::{
     self as espnow_core, Channel as EspNowChannel, ChannelPolicy, ESP_NOW_V2_AIR_MTU,
 };
@@ -192,6 +194,9 @@ const LANE_COUNT: usize = 3
     + cfg!(feature = "lora") as usize
     + cfg!(feature = "bluetooth-auto") as usize
     + cfg!(feature = "esp-now") as usize;
+#[cfg(feature = "compact-s3-storage")]
+const MEMBERS: usize = 8;
+#[cfg(not(feature = "compact-s3-storage"))]
 const MEMBERS: usize = 24;
 #[cfg(feature = "bluetooth-auto")]
 pub const BLE_PEER_CAPACITY: usize = EMBEDDED_BLE_PEER_CAPACITY;
@@ -207,7 +212,8 @@ const LANE_DEPTH: usize = 1;
 /// A resource request is one inbound frame that synchronously emits its parts and, at most, one
 /// hashmap update. Derive every S3 lane's PSRAM backlog from the engine storage recipe: the compact
 /// build can hold only eighteen parts, rather than the protocol-wide seventy-five-part window.
-const OUTBOUND_BURST_DEPTH: usize = EngineStorageType::MAX_OUTGOING_RESOURCE_REACTION_FRAMES;
+const DEFAULT_OUTBOUND_BURST_DEPTH: usize =
+    EngineStorageType::MAX_OUTGOING_RESOURCE_REACTION_FRAMES;
 pub const NOTIFY_CAP: usize = minimum_manifold_notification_capacity(LANE_COUNT, LANE_DEPTH);
 const _: () = assert!(EngineStorageType::LINK_SESSIONS > MEMBERS + BLE_PEER_CAPACITY);
 #[cfg(feature = "bluetooth-auto")]
@@ -292,7 +298,9 @@ use configuration::{hopspot_wifi_config, HopspotWifiConfig};
 use configuration::{HopspotTcpClientConfig, HopspotTcpClientHost};
 use connectivity::build_tcp;
 #[cfg(feature = "wifi-auto")]
-use connectivity::{build_wifi, espnow_channel_policy, EspNowAdapter, ESPNOW_PHY};
+use connectivity::build_wifi;
+#[cfg(all(feature = "wifi-auto", feature = "esp-now"))]
+use connectivity::{espnow_channel_policy, EspNowAdapter, ESPNOW_PHY};
 #[cfg(all(not(feature = "wifi-auto"), feature = "lora"))]
 use display::add_lora_spectrum;
 #[cfg(not(feature = "wifi-auto"))]
@@ -454,7 +462,7 @@ pub(crate) fn boot_stage(phase: BootPhase) {
 
 const DCACHE_FREE_BASE: usize = 0x3FCF_0000;
 const DCACHE_FREE_LEN: usize = 32 * 1024;
-const NO_PSRAM_HEAP_BYTES: usize = 64 * 1024;
+const NO_PSRAM_HEAP_BYTES: usize = 72 * 1024;
 
 pub(crate) fn reclaim_dcache_region() {
     // SAFETY: On this PSRAM-enabled ESP32-S3 layout, 0x3FCF0000..0x3FCF8000 is the documented
@@ -506,7 +514,6 @@ macro_rules! boot_common {
         ::esp_println::logger::init_logger_from_env();
         $crate::storage::set_psram_available(false);
         ::esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: $crate::s3::NO_PSRAM_HEAP_BYTES);
-        ::esp_println::println!("PSRAM unavailable; using internal heap");
         $crate::s3::boot_rtos_tail!($p, $banner)
     }};
     ($p:ident, $banner:expr) => {

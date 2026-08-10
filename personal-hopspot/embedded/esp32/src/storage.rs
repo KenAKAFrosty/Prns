@@ -13,7 +13,7 @@ use portable_atomic::{AtomicBool, Ordering};
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use personal_rns::runtime::request_endpoints::RequestEndpointSet;
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "compact-s3-storage")))]
 use personal_rns::storage::Esp32S3;
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
@@ -24,12 +24,10 @@ const NODE_REQUEST_HANDLER_CAPACITY: usize =
 /// The engine's storage recipe: the small coordination shell stays inline in SRAM, while
 /// high-count or bulky columns (including links, routes, announces, history, app-data, and
 /// resource buffers) are placed in PSRAM through `PsramAlloc`.
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "compact-s3-storage")))]
 pub type EngineStorageType = Esp32S3<PsramAlloc, NODE_REQUEST_HANDLER_CAPACITY>;
 
-#[cfg(target_arch = "riscv32")]
-pub use riscv::C6Storage;
-#[cfg(target_arch = "riscv32")]
+#[cfg(any(target_arch = "riscv32", feature = "compact-s3-storage"))]
 pub type EngineStorageType = riscv::C6Storage;
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
@@ -175,7 +173,7 @@ unsafe impl Allocator for PsramAlloc {
     }
 }
 
-#[cfg(target_arch = "riscv32")]
+#[cfg(any(target_arch = "riscv32", feature = "compact-s3-storage"))]
 mod riscv {
     use personal_rns::crypto::ratchets::FixedSelfRatchetTable;
     use personal_rns::identity::destination_identity::{
@@ -223,6 +221,7 @@ mod riscv {
     /// The XIAO ESP32-C6 Hopspot's storage profile, sized to its internal SRAM and application role.
     ///
     /// This board is a headless USB/ESP-NOW/BLE mesh bridge. The intent is to keep one local app identity, bias the budget toward heard destinations, and leave links, resources, and channel windows modest.
+    #[derive(Default)]
     pub struct C6Storage;
 
     impl C6Storage {

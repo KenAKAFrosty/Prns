@@ -28,11 +28,12 @@ path = "src/lib.rs"
 [features]
 default = []
 bluetooth-auto = ["dep:trouble-host", "dep:prns-interfaces-embassy", "esp-radio/ble", "esp-radio/coex", "esp-rtos/esp-radio", "personal-rns/bluetooth-auto"]
-wifi-auto = ["esp-radio/wifi", "esp-radio/coex", "esp-rtos/esp-radio", "personal-rns/wifi-auto"]
+wifi-auto = ["esp-radio/wifi", "esp-rtos/esp-radio", "personal-rns/wifi-auto"]
 esp-now = ["esp-radio/esp-now", "esp-radio/coex", "esp-rtos/esp-radio", "personal-rns/esp-now"]
 lora = ["personal-rns/lora"]
 usb = ["personal-rns/usb"]
 tcp = ["wifi-auto", "personal-rns/tcp-dns", "embassy-net/dns"]
+compact-s3-storage = []
 
 [dependencies]
 cfg-if = "1.0"
@@ -60,7 +61,7 @@ log = { version = "0.4", features = ["release_max_level_info"] }
 esp-hal = { version = "1.1", features = ["esp32s3", "unstable"] }
 esp-phy = "0.2.0"
 esp-backtrace = { version = "0.19", default-features = false, features = ["esp32s3", "panic-handler", "println"] }
-esp-println = { version = "0.17", default-features = false, features = ["esp32s3", "jtag-serial", "log-04"] }
+esp-println = { version = "0.17", default-features = false, features = ["esp32s3", "uart", "log-04"] }
 esp-bootloader-esp-idf = { version = "0.5", features = ["esp32s3"] }
 ssd1306 = "0.9"
 esp-rtos = { version = "0.3.0", features = ["esp32s3", "embassy", "esp-radio"] }

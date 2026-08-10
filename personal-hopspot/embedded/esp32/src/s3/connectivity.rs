@@ -111,6 +111,13 @@ pub(super) fn build_tcp(
 }
 
 #[cfg(feature = "wifi-auto")]
+#[cfg(feature = "esp-now")]
+type EspNowHardware = EspNow<'static>;
+#[cfg(feature = "wifi-auto")]
+#[cfg(not(feature = "esp-now"))]
+type EspNowHardware = ();
+
+#[cfg(feature = "wifi-auto")]
 pub(super) fn build_wifi(
     spawner: &Spawner,
     wifi: esp_hal::peripherals::WIFI<'static>,
@@ -120,7 +127,7 @@ pub(super) fn build_wifi(
 ) -> (
     Option<AutoWifi<'static, MEMBERS>>,
     Option<Stack<'static>>,
-    Option<EspNow<'static>>,
+    Option<EspNowHardware>,
 ) {
     let wifi_config = ControllerConfig::default()
         .with_static_rx_buf_num(WIFI_STATIC_RX_BUFFERS)
@@ -143,7 +150,10 @@ pub(super) fn build_wifi(
         WIFI_STATIC_TX_BUFFERS,
         WIFI_DYNAMIC_TX_BUFFERS
     );
-    let esp_now = interfaces.esp_now;
+    #[cfg(feature = "esp-now")]
+    let esp_now = Some(interfaces.esp_now);
+    #[cfg(not(feature = "esp-now"))]
+    let esp_now: Option<EspNowHardware> = None;
 
     // In SoftAP mode, APSTA brings the AP up whether or not a station uplink is configured;
     // set_config calls esp_wifi_start, so the AP is live here on core 0.
@@ -262,7 +272,7 @@ pub(super) fn build_wifi(
             },
             &WIFI_SHARED,
         );
-        return (Some(wifi), tcp_stack, Some(esp_now));
+        return (Some(wifi), tcp_stack, esp_now);
     }
 
     match station_segment {
@@ -275,9 +285,9 @@ pub(super) fn build_wifi(
                 },
                 &WIFI_SHARED,
             );
-            (Some(wifi), tcp_stack, Some(esp_now))
+            (Some(wifi), tcp_stack, esp_now)
         }
-        None => (None, None, Some(esp_now)),
+        None => (None, None, esp_now),
     }
 }
 
@@ -302,7 +312,7 @@ async fn wifi_radio_keepalive_task(_controller: WifiController<'static>) -> ! {
 /// side of the boundary, the way the SX1262 driver sits behind `SpiDevice`. Broadcast-only; a
 /// transient `NO_MEM` while the radio is off serving a BLE connection event is retried a few times
 /// before the frame is dropped for the engine to resend.
-#[cfg(feature = "wifi-auto")]
+#[cfg(all(feature = "wifi-auto", feature = "esp-now"))]
 pub(super) struct EspNowAdapter {
     manager: EspNowManager<'static>,
     sender: EspNowSender<'static>,
@@ -310,11 +320,11 @@ pub(super) struct EspNowAdapter {
     rate_applied: bool,
 }
 
-#[cfg(feature = "wifi-auto")]
+#[cfg(all(feature = "wifi-auto", feature = "esp-now"))]
 const ESPNOW_SEND_RETRIES: u8 = 8;
-#[cfg(feature = "wifi-auto")]
+#[cfg(all(feature = "wifi-auto", feature = "esp-now"))]
 const ESPNOW_SEND_RETRY_DELAY: Duration = Duration::from_millis(5);
-#[cfg(feature = "wifi-auto")]
+#[cfg(all(feature = "wifi-auto", feature = "esp-now"))]
 pub(super) struct EspNowPhySettings {
     pub(super) driver_rate: WifiPhyRate,
     pub(super) bitrate: BitrateBps,
@@ -329,13 +339,13 @@ pub(super) struct EspNowPhySettings {
 /// gap programs the rate one slot below its name (`Rate12m` -> C 24M). The discriminant of `Rate6m`
 /// (10) equals C `WIFI_PHY_RATE_12M`, so `Rate6m` is what actually selects g-12M. This one spot
 /// localizes the workaround; TODO: patch esp-radio's enum upstream and return `Rate12m`.
-#[cfg(feature = "wifi-auto")]
+#[cfg(all(feature = "wifi-auto", feature = "esp-now"))]
 pub(super) const ESPNOW_PHY: EspNowPhySettings = EspNowPhySettings {
     driver_rate: WifiPhyRate::Rate6m,
     bitrate: BitrateBps::guess(12_000_000),
 };
 
-#[cfg(feature = "wifi-auto")]
+#[cfg(all(feature = "wifi-auto", feature = "esp-now"))]
 impl EspNowAdapter {
     pub(super) fn new(esp_now: EspNow<'static>) -> Self {
         let (manager, sender, receiver) = esp_now.split();
@@ -358,7 +368,7 @@ impl EspNowAdapter {
     }
 }
 
-#[cfg(feature = "wifi-auto")]
+#[cfg(all(feature = "wifi-auto", feature = "esp-now"))]
 impl espnow_core::EspNowRadio for EspNowAdapter {
     fn set_channel(&mut self, channel: EspNowChannel) {
         let _ = self.manager.set_channel(channel.as_u8());
@@ -392,7 +402,7 @@ impl espnow_core::EspNowRadio for EspNowAdapter {
 /// A node pinned to a Wi-Fi access point is channel-locked to it (ESP-NOW must follow the station's
 /// channel, never retune and break the association); a node with no Wi-Fi configured is free to sit on
 /// the default rendezvous channel. The locked/free seam a future scan-and-follow layer extends.
-#[cfg(feature = "wifi-auto")]
+#[cfg(all(feature = "wifi-auto", feature = "esp-now"))]
 pub(super) fn espnow_channel_policy(station_configured: bool) -> ChannelPolicy {
     if station_configured {
         ChannelPolicy::FollowStation
