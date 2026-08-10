@@ -8,11 +8,14 @@ use esp_backtrace as _;
 use esp_bootloader_esp_idf::esp_app_desc;
 use esp_hal::clock::CpuClock;
 use esp_hal::efuse::base_mac_address;
-use esp_hal::gpio::{Input, Output};
+use esp_hal::gpio::Input;
+#[cfg(feature = "lora")]
+use esp_hal::gpio::Output;
 use esp_hal::peripherals::USB_DEVICE;
 use esp_hal::rng::Rng;
 #[cfg(feature = "wifi-auto")]
 use esp_hal::rom::spiflash::esp_rom_spiflash_read;
+#[cfg(feature = "lora")]
 use esp_hal::spi::master::Spi;
 use esp_hal::system::Stack as CpuStack;
 #[cfg(feature = "wifi-auto")]
@@ -37,9 +40,12 @@ use embassy_sync::mutex::Mutex;
 use embassy_sync::signal::Signal;
 #[cfg(feature = "wifi-auto")]
 use embassy_time::with_timeout;
-use embassy_time::{Delay, Duration, Ticker, Timer};
+#[cfg(feature = "lora")]
+use embassy_time::Delay;
+use embassy_time::{Duration, Ticker, Timer};
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::BinaryColor;
+#[cfg(feature = "lora")]
 use embedded_hal_bus::spi::ExclusiveDevice;
 use heapless::Vec as HVec;
 #[cfg(feature = "wifi-auto")]
@@ -74,6 +80,7 @@ use personal_rns::interfaces::bluetooth_auto::{BleIdentity, BLE_HW_MTU};
 use personal_rns::interfaces::esp_now::{
     self as espnow_core, Channel as EspNowChannel, ChannelPolicy, ESP_NOW_V2_AIR_MTU,
 };
+#[cfg(feature = "lora")]
 use personal_rns::interfaces::lora::{AirtimePolicy, DEFAULT_915_PROFILE, LORA_MAX_PAYLOAD};
 use personal_rns::interfaces::usb_auto::device_descriptor;
 use personal_rns::interfaces::wifi_auto as wifi_auto_contract;
@@ -82,6 +89,7 @@ use personal_rns::interfaces::{
     ConnectionState, InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus, MacAddress,
     Membership,
 };
+#[cfg(feature = "lora")]
 use personal_rns::lora::{
     LoRaApplyOutcome, LoRaControl, LoRaInterface, LoRaInterfaceInput, LoRaSpectrumStatus,
 };
@@ -90,6 +98,7 @@ use personal_rns::manifold::embassy::{
 };
 use personal_rns::manifold::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
 use personal_rns::manifold::reconnect::ReconnectPolicy;
+#[cfg(feature = "lora")]
 use personal_rns::radios::sx126x::Sx126x;
 use personal_rns::runtime::{
     minimum_interface_store_capacity, minimum_manifold_notification_capacity, CompletionPool,
@@ -179,8 +188,10 @@ const HOPSPOT_TCP_TARGET: &str = match option_env!("HOPSPOT_TCP_TARGET") {
 const TCP_BITRATE_BPS: BitrateBps = wifi_auto_contract::WIFI_EMBEDDED_BITRATE_CEILING_BPS;
 const TCP_SOCKET_BUFFER_BYTES: usize = 4 * 1_024;
 
-const LANE_COUNT: usize =
-    4 + cfg!(feature = "bluetooth-auto") as usize + cfg!(feature = "esp-now") as usize;
+const LANE_COUNT: usize = 3
+    + cfg!(feature = "lora") as usize
+    + cfg!(feature = "bluetooth-auto") as usize
+    + cfg!(feature = "esp-now") as usize;
 const MEMBERS: usize = 24;
 #[cfg(feature = "bluetooth-auto")]
 pub const BLE_PEER_CAPACITY: usize = EMBEDDED_BLE_PEER_CAPACITY;
@@ -282,10 +293,12 @@ use configuration::{HopspotTcpClientConfig, HopspotTcpClientHost};
 use connectivity::build_tcp;
 #[cfg(feature = "wifi-auto")]
 use connectivity::{build_wifi, espnow_channel_policy, EspNowAdapter, ESPNOW_PHY};
+#[cfg(all(not(feature = "wifi-auto"), feature = "lora"))]
+use display::add_lora_spectrum;
+#[cfg(not(feature = "wifi-auto"))]
+use display::add_manifold_pressure;
 #[cfg(feature = "wifi-auto")]
 use display::build_interface_menu_details;
-#[cfg(not(feature = "wifi-auto"))]
-use display::{add_lora_spectrum, add_manifold_pressure};
 use display::{build_cards, build_snapshots, button_task};
 
 static WIFI_SHARED: AutoWifiShared<MEMBERS> = AutoWifiShared::new(WIFI_SUPERVISOR_ID);
@@ -296,6 +309,7 @@ const BLE_SUPERVISOR_ID: InterfaceId =
 #[cfg(feature = "bluetooth-auto")]
 static BLE_SHARED: BluetoothAutoShared<BLE_PEER_CAPACITY> =
     BluetoothAutoShared::new(BLE_SUPERVISOR_ID);
+#[cfg(feature = "lora")]
 static LORA_CONTROL: LoRaControl = LoRaControl::new();
 static USB_MANIFOLD_LANE: StaticManifoldLane<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, LANE_DEPTH, 0> =
     StaticManifoldLane::new();
@@ -307,6 +321,7 @@ static WIFI_MANIFOLD_LANE: StaticManifoldLane<
     LANE_DEPTH,
     0,
 > = StaticManifoldLane::new();
+#[cfg(feature = "lora")]
 static LORA_MANIFOLD_LANE: StaticManifoldLane<Mtx, LORA_MAX_PAYLOAD, LANE_DEPTH, 0> =
     StaticManifoldLane::new();
 #[cfg(feature = "bluetooth-auto")]
@@ -350,8 +365,12 @@ const BOOT_PHASE_MAGIC: u32 = 0x5052_0000;
 
 #[derive(Clone, Copy)]
 pub(crate) enum BootPhase {
+    // Only boards with a panel emit the OLED stages; a headless-only build constructs none of them.
+    #[allow(dead_code)]
     OledBegin = 1,
+    #[allow(dead_code)]
     OledReady = 2,
+    #[allow(dead_code)]
     OledFailed = 3,
     WifiBegin = 4,
     WifiReady = 5,
@@ -513,6 +532,9 @@ macro_rules! boot_common {
 }
 pub(crate) use boot_common;
 
+// Only the global-heap boards expand this arm; a build whose board set is all split-heap
+// leaves it unexpanded.
+#[allow(unused_macros)]
 macro_rules! boot_add_psram_global {
     ($p:ident, $psram_config:expr) => {{
         let psram = ::esp_hal::psram::Psram::new($p.PSRAM, $psram_config);
@@ -528,6 +550,7 @@ macro_rules! boot_add_psram_global {
         }
     }};
 }
+#[allow(unused_imports)]
 pub(crate) use boot_add_psram_global;
 
 /// Split a board's PSRAM into two disjoint windows: a private low half owned solely by [`crate::storage::PsramAlloc`] for engine construction, and a high half handed to `esp_alloc`.
