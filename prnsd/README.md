@@ -12,7 +12,7 @@ Download the [latest release](https://github.com/KenAKAFrosty/Prns/releases) for
 prnsd
 ```
 
-The `v0.3.4` archives are not platform-vendor-signed, so the first launch of a downloaded binary may trigger Windows SmartScreen. Do **More info → Run anyway**. On macOS, Gatekeeper wants a right-click **Open** the first time. Every release is checksummed, Minisign-signed, and GitHub-attested instead. [Verify release artifacts](../docs/release.md#verify-release-artifacts) walks the whole chain, including the Windows `Get-FileHash` comparison against `SHA256SUMS.txt`. If security software later asks about `prnsd-managed.exe`, that is the daemon's own staged copy of its binary, part of the managed lifecycle.
+The `v0.3.5` archives are not platform-vendor-signed, so the first launch of a downloaded binary may trigger Windows SmartScreen. Do **More info → Run anyway**. On macOS, Gatekeeper wants a right-click **Open** the first time. Every release is checksummed, Minisign-signed, and GitHub-attested instead. [Verify release artifacts](../docs/release.md#verify-release-artifacts) walks the whole chain, including the Windows `Get-FileHash` comparison against `SHA256SUMS.txt`. If security software later asks about `prnsd-managed.exe`, that is the daemon's own staged copy of its binary, part of the managed lifecycle.
 
 It starts with your existing Reticulum configuration from the standard location, and writes its built-in one there first if the machine has never had one. Running `prnsd` again attaches to the daemon already running, and Ctrl-C detaches without stopping it. Three more verbs round out the lifecycle:
 
@@ -54,7 +54,7 @@ Official releases ship one native archive per desktop platform and a cloud-orien
 
 ### Docker
 
-If Docker is already part of your toolkit, this starts one persistent Prns backbone from the official `0.3.4` image:
+If Docker is already part of your toolkit, this starts one persistent Prns backbone from the official `0.3.5` image:
 
 ```sh
 docker volume create prnsd-data
@@ -65,7 +65,7 @@ docker run -d \
   --mount type=volume,source=prnsd-data,target=/var/lib/prnsd \
   --publish 4242:4242/tcp \
   --publish 4284:4284/tcp \
-  ghcr.io/kenakafrosty/prnsd:0.3.4
+  ghcr.io/kenakafrosty/prnsd:0.3.5
 ```
 
 Reticulum TCP clients can connect to `HOST:4242`, and WebSocket clients can connect to `ws://HOST:4284/prns`. Public browser deployments need a certificate-valid `wss://` endpoint, normally supplied by the hosting platform or a reverse proxy.
