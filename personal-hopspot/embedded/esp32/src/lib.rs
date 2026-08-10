@@ -8,14 +8,13 @@ extern crate alloc;
     not(all(
         feature = "bluetooth-auto",
         feature = "esp-now",
-        feature = "lora",
         feature = "tcp",
         feature = "usb",
         feature = "wifi-auto"
     ))
 ))]
 compile_error!(
-    "ESP32-S3 firmware is built through a board package, which selects bluetooth-auto, esp-now, lora, tcp, usb, and wifi-auto"
+    "ESP32-S3 firmware is built through a board package, which selects bluetooth-auto, esp-now, tcp, usb, and wifi-auto (plus lora on boards with an SX1262)"
 );
 
 #[cfg(all(
@@ -58,7 +57,6 @@ mod persistence;
     target_arch = "xtensa",
     feature = "bluetooth-auto",
     feature = "esp-now",
-    feature = "lora",
     feature = "tcp",
     feature = "usb",
     feature = "wifi-auto"
