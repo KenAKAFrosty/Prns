@@ -149,7 +149,53 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     // node moves to core 1 — activating the TCP slot is a core-0-only act.
     #[cfg(feature = "wifi-auto")]
     boot_stage(BootPhase::WifiBegin);
-    #[cfg(all(feature = "wifi-auto", feature = "esp-now"))]
+    #[cfg(all(feature = "wifi-auto", feature = "compact-s3-storage", feature = "esp-now"))]
+    let (wifi, tcp_stack, esp_now) = if radio_mode == RadioMode::AccessPoint {
+        build_wifi(
+            &spawner,
+            wifi_hardware,
+            mac_octets,
+            &wifi_config,
+            false,
+        )
+    } else {
+        (None, None, None)
+    };
+    #[cfg(all(
+        feature = "wifi-auto",
+        feature = "compact-s3-storage",
+        feature = "bluetooth-auto",
+        not(feature = "esp-now")
+    ))]
+    let (wifi, tcp_stack, _) = if radio_mode == RadioMode::AccessPoint {
+        build_wifi(
+            &spawner,
+            wifi_hardware,
+            mac_octets,
+            &wifi_config,
+            false,
+        )
+    } else {
+        (None, None, None)
+    };
+    #[cfg(all(
+        feature = "wifi-auto",
+        feature = "compact-s3-storage",
+        not(feature = "bluetooth-auto"),
+        not(feature = "esp-now")
+    ))]
+    let (wifi, tcp_stack, _) = build_wifi(
+        &spawner,
+        wifi_hardware,
+        mac_octets,
+        &wifi_config,
+        false,
+    );
+    #[cfg(all(
+        feature = "wifi-auto",
+        not(feature = "compact-s3-storage"),
+        feature = "esp-now"
+    ))]
     let (wifi, tcp_stack, esp_now) = build_wifi(
         &spawner,
         wifi_hardware,
@@ -157,7 +203,11 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         &wifi_config,
         radio_mode == RadioMode::AccessPoint,
     );
-    #[cfg(all(feature = "wifi-auto", not(feature = "esp-now")))]
+    #[cfg(all(
+        feature = "wifi-auto",
+        not(feature = "compact-s3-storage"),
+        not(feature = "esp-now")
+    ))]
     let (wifi, tcp_stack, _) = build_wifi(
         &spawner,
         wifi_hardware,
@@ -311,6 +361,14 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             .expect("ESP-NOW lane is available")
     });
 
+    #[cfg(all(feature = "bluetooth-auto", feature = "wifi-auto"))]
+    let ble = ble_identity
+        .zip(ble_supervisor_lane)
+        .map(|(identity, lane)| {
+            let fleet: S3BleFleet = lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());
+            (identity, fleet)
+        });
+
     let handle: Handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
     let manifold_wiring = manifold_lanes.into_manifold_wiring(
         NOTIFY.receiver(),
@@ -337,6 +395,15 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             .run(|spawner| {
                 spawner.spawn(manifold_task(node, persistence).expect("manifold task fits"));
                 spawner.spawn(core_one_liveness_task().expect("core-one liveness task fits"));
+                #[cfg(all(feature = "bluetooth-auto", feature = "wifi-auto"))]
+                if radio_mode == RadioMode::Ble {
+                    if let Some((identity, fleet)) = ble {
+                        spawner.spawn(
+                            ble_boot_task(spawner, bluetooth, mac_octets, identity, fleet)
+                                .expect("Bluetooth task fits"),
+                        );
+                    }
+                }
             })
     });
     boot_stage(BootPhase::CoreOneStartReady);
@@ -364,7 +431,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         let fleet: S3WifiFleet = lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());
         (interface, fleet)
     });
-    #[cfg(feature = "bluetooth-auto")]
+    #[cfg(all(feature = "bluetooth-auto", not(feature = "wifi-auto")))]
     let ble = ble_identity
         .zip(ble_supervisor_lane)
         .map(|(identity, lane)| {
@@ -897,33 +964,12 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     {
         #[cfg(feature = "lora")]
         spawner.spawn(lora_task(lora, lora_seam).expect("LoRa task fits"));
+        #[cfg(feature = "esp-now")]
         if let Some((interface, seam)) = espnow {
             spawner.spawn(espnow_task(interface, seam).expect("ESP-NOW task fits"));
         }
         if let Some((interface, seam)) = tcp {
             spawner.spawn(tcp_task(interface, seam).expect("TCP task fits"));
-        }
-        match radio_mode {
-            RadioMode::Ble => {
-                boot_stage(BootPhase::BluetoothBegin);
-                let ble_connector = esp_radio::ble::controller::BleConnector::new(
-                    bluetooth,
-                    esp_radio::ble::Config::default()
-                        .with_task_stack_size(4096)
-                        .with_max_activities(BLE_CONTROLLER_ACTIVITY_CAPACITY),
-                )
-                .expect("ble connector");
-                boot_stage(BootPhase::BluetoothReady);
-                if let Some((identity, fleet)) = ble {
-                    spawner.spawn(
-                        ble_task(spawner, ble_connector, mac_octets, identity, fleet)
-                            .expect("Bluetooth task fits"),
-                    );
-                }
-            }
-            RadioMode::AccessPoint => {
-                let _ = (bluetooth, ble);
-            }
         }
         render.await;
     }
@@ -1018,4 +1064,25 @@ async fn ble_task(
     fleet: S3BleFleet,
 ) {
     crate::bluetooth_auto::run(connector, mac, identity, fleet, &BLE_SHARED, spawner).await
+}
+
+#[cfg(all(feature = "bluetooth-auto", feature = "wifi-auto"))]
+#[embassy_executor::task]
+async fn ble_boot_task(
+    spawner: Spawner,
+    bluetooth: esp_hal::peripherals::BT<'static>,
+    mac: [u8; 6],
+    identity: BleIdentity,
+    fleet: S3BleFleet,
+) {
+    boot_stage(BootPhase::BluetoothBegin);
+    let connector = esp_radio::ble::controller::BleConnector::new(
+        bluetooth,
+        esp_radio::ble::Config::default()
+            .with_task_stack_size(4096)
+            .with_max_activities(BLE_CONTROLLER_ACTIVITY_CAPACITY),
+    )
+    .expect("ble connector");
+    boot_stage(BootPhase::BluetoothReady);
+    crate::bluetooth_auto::run(connector, mac, identity, fleet, &BLE_SHARED, spawner).await;
 }

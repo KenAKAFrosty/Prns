@@ -1,6 +1,6 @@
-#[cfg(feature = "wifi-auto")]
+#[cfg(all(feature = "wifi-auto", not(feature = "compact-s3-storage")))]
 use super::captive_portal::station_wifi_mode;
-#[cfg(feature = "wifi-auto")]
+#[cfg(all(feature = "wifi-auto", not(feature = "compact-s3-storage")))]
 use super::captive_portal::{
     build_ap_netif, dhcp_server_task, dns_server_task, http_server_task, HTTP_SERVER_WORKERS,
 };
@@ -9,7 +9,7 @@ use super::*;
 use crate::wifi_data_path_recovery::{
     StationDataPathAction, StationDataPathRecovery, StationDataPathWindow,
 };
-#[cfg(feature = "wifi-auto")]
+#[cfg(all(feature = "wifi-auto", not(feature = "compact-s3-storage")))]
 use alloc::boxed::Box;
 
 #[cfg(feature = "wifi-auto")]
@@ -30,21 +30,29 @@ fn psram_udp_socket<
     )
 }
 
-#[cfg(feature = "wifi-auto")]
+#[cfg(all(feature = "wifi-auto", feature = "compact-s3-storage"))]
+const WIFI_STATIC_RX_BUFFERS: u8 = 3;
+#[cfg(all(feature = "wifi-auto", not(feature = "compact-s3-storage")))]
 const WIFI_STATIC_RX_BUFFERS: u8 = 10;
-#[cfg(feature = "wifi-auto")]
+#[cfg(all(feature = "wifi-auto", feature = "compact-s3-storage"))]
+const WIFI_DYNAMIC_RX_BUFFERS: u16 = 3;
+#[cfg(all(feature = "wifi-auto", not(feature = "compact-s3-storage")))]
 const WIFI_DYNAMIC_RX_BUFFERS: u16 = 32;
 #[cfg(feature = "wifi-auto")]
-const WIFI_RX_BA_WINDOW: u8 = 6;
+const WIFI_RX_BA_WINDOW: u8 = 2;
 #[cfg(feature = "wifi-auto")]
 const WIFI_RX_QUEUE_FRAMES: usize = WIFI_DYNAMIC_RX_BUFFERS as usize;
 #[cfg(feature = "wifi-auto")]
-const WIFI_TX_QUEUE_FRAMES: usize = 3;
-#[cfg(feature = "wifi-auto")]
+const WIFI_TX_QUEUE_FRAMES: usize = 2;
+#[cfg(all(feature = "wifi-auto", feature = "compact-s3-storage"))]
+const WIFI_STATIC_TX_BUFFERS: u8 = 2;
+#[cfg(all(feature = "wifi-auto", not(feature = "compact-s3-storage")))]
 const WIFI_STATIC_TX_BUFFERS: u8 = 16;
 #[cfg(feature = "wifi-auto")]
 const WIFI_DYNAMIC_TX_BUFFERS: u16 = 0;
-#[cfg(feature = "wifi-auto")]
+#[cfg(all(feature = "wifi-auto", feature = "compact-s3-storage"))]
+const WIFI_DATA_SOCKET_BUFFER_BYTES: usize = 512;
+#[cfg(all(feature = "wifi-auto", not(feature = "compact-s3-storage")))]
 const WIFI_DATA_SOCKET_BUFFER_BYTES: usize = 4 * 1_024;
 #[cfg(feature = "wifi-auto")]
 const WIFI_HEALTH_SAMPLES_BETWEEN_REPORTS: u8 = 4;
@@ -123,7 +131,7 @@ pub(super) fn build_wifi(
     wifi: esp_hal::peripherals::WIFI<'static>,
     mac: [u8; 6],
     config: &HopspotWifiConfig,
-    ap_enabled: bool,
+    requested_ap: bool,
 ) -> (
     Option<AutoWifi<'static, MEMBERS>>,
     Option<Stack<'static>>,
@@ -137,8 +145,12 @@ pub(super) fn build_wifi(
         .with_tx_queue_size(WIFI_TX_QUEUE_FRAMES)
         .with_static_tx_buf_num(WIFI_STATIC_TX_BUFFERS)
         .with_dynamic_tx_buf_num(WIFI_DYNAMIC_TX_BUFFERS);
-    let Ok((mut controller, interfaces)) = esp_radio::wifi::new(wifi, wifi_config) else {
-        return (None, None, None);
+    let (mut controller, interfaces) = match esp_radio::wifi::new(wifi, wifi_config) {
+        Ok(wifi) => wifi,
+        Err(error) => {
+            log::error!("Wi-Fi driver initialization failed: {error:?}");
+            return (None, None, None);
+        }
     };
     log::info!(
         "wifi: rx profile static={} dynamic={} ba={} queue={} tx_queue={} tx_static={} tx_dynamic={}",
@@ -155,8 +167,16 @@ pub(super) fn build_wifi(
     #[cfg(not(feature = "esp-now"))]
     let esp_now: Option<EspNowHardware> = None;
 
+    #[cfg(feature = "compact-s3-storage")]
+    let ap_enabled = false;
+    #[cfg(not(feature = "compact-s3-storage"))]
+    let ap_enabled = requested_ap;
+
     // In SoftAP mode, APSTA brings the AP up whether or not a station uplink is configured;
     // set_config calls esp_wifi_start, so the AP is live here on core 0.
+    #[cfg(feature = "compact-s3-storage")]
+    let _ = controller.set_config(&WifiConfig::Station(StationConfig::default()));
+    #[cfg(not(feature = "compact-s3-storage"))]
     let _ = controller.set_config(&station_wifi_mode(StationConfig::default(), ap_enabled));
 
     // Opportunistic station uplink: only a configured SSID stands a station netif up and runs
@@ -213,7 +233,7 @@ pub(super) fn build_wifi(
     // in as the opportunistic secondary. The AP link-local is the station MAC + 1 (build_ap_netif
     // derives it from `mac`), and the supervisor hashes its peering token over that AP link-local, so
     // it takes `ap_mac`.
-    #[cfg(feature = "wifi-auto")]
+    #[cfg(all(feature = "wifi-auto", not(feature = "compact-s3-storage")))]
     if ap_enabled {
         let mut ap_mac = mac;
         ap_mac[5] = ap_mac[5].wrapping_add(1);
@@ -678,6 +698,9 @@ async fn wifi_connect_task(
                     .with_bssid(access_point.bssid)
                     .with_channel(access_point.channel);
                 let configured = {
+                    #[cfg(feature = "compact-s3-storage")]
+                    let mode = WifiConfig::Station(station);
+                    #[cfg(not(feature = "compact-s3-storage"))]
                     let mode = station_wifi_mode(station, ap_enabled);
                     match controller.set_config(&mode) {
                         Ok(()) => true,

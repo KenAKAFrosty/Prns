@@ -27,8 +27,8 @@ path = "src/lib.rs"
 
 [features]
 default = []
-bluetooth-auto = ["dep:trouble-host", "dep:prns-interfaces-embassy", "esp-radio/ble", "esp-radio/coex", "esp-rtos/esp-radio", "personal-rns/bluetooth-auto"]
-wifi-auto = ["esp-radio/wifi", "esp-rtos/esp-radio", "personal-rns/wifi-auto"]
+bluetooth-auto = ["dep:trouble-host", "dep:prns-interfaces-embassy", "esp-radio/ble", "esp-rtos/esp-radio", "personal-rns/bluetooth-auto"]
+wifi-auto = ["esp-radio/wifi", "esp-radio/coex", "esp-rtos/esp-radio", "personal-rns/wifi-auto"]
 esp-now = ["esp-radio/esp-now", "esp-radio/coex", "esp-rtos/esp-radio", "personal-rns/esp-now"]
 lora = ["personal-rns/lora"]
 usb = ["personal-rns/usb"]

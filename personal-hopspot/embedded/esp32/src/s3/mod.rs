@@ -118,7 +118,10 @@ use personal_rns::wifi_auto::{
     TCP_RENDEZVOUS_FRAMED_LEN, TCP_RENDEZVOUS_FRAME_CAP, TCP_RENDEZVOUS_READ_BUFFER_BYTES,
     TCP_RENDEZVOUS_SOCKET_BUFFER_BYTES,
 };
-#[cfg(feature = "bluetooth-auto")]
+#[cfg(all(
+    feature = "bluetooth-auto",
+    not(all(feature = "compact-s3-storage", target_arch = "xtensa"))
+))]
 use prns_interfaces_embassy::bluetooth_auto::PEER_CAPACITY as EMBEDDED_BLE_PEER_CAPACITY;
 
 #[cfg(feature = "wifi-auto")]
@@ -188,6 +191,9 @@ const HOPSPOT_TCP_TARGET: &str = match option_env!("HOPSPOT_TCP_TARGET") {
 /// The board's claim about its pipe to the LAN node: it sets the declared MTU tier, which the
 /// manifold then clamps to the embedded ceiling. A 2.4 GHz station's honest order of magnitude.
 const TCP_BITRATE_BPS: BitrateBps = wifi_auto_contract::WIFI_EMBEDDED_BITRATE_CEILING_BPS;
+#[cfg(feature = "compact-s3-storage")]
+const TCP_SOCKET_BUFFER_BYTES: usize = 1 * 1_024;
+#[cfg(not(feature = "compact-s3-storage"))]
 const TCP_SOCKET_BUFFER_BYTES: usize = 4 * 1_024;
 
 const LANE_COUNT: usize = 3
@@ -195,10 +201,19 @@ const LANE_COUNT: usize = 3
     + cfg!(feature = "bluetooth-auto") as usize
     + cfg!(feature = "esp-now") as usize;
 #[cfg(feature = "compact-s3-storage")]
-const MEMBERS: usize = 8;
+const MEMBERS: usize = 7;
 #[cfg(not(feature = "compact-s3-storage"))]
 const MEMBERS: usize = 24;
-#[cfg(feature = "bluetooth-auto")]
+#[cfg(all(
+    feature = "bluetooth-auto",
+    feature = "compact-s3-storage",
+    target_arch = "xtensa"
+))]
+pub const BLE_PEER_CAPACITY: usize = 4;
+#[cfg(all(
+    feature = "bluetooth-auto",
+    not(all(feature = "compact-s3-storage", target_arch = "xtensa"))
+))]
 pub const BLE_PEER_CAPACITY: usize = EMBEDDED_BLE_PEER_CAPACITY;
 #[cfg(feature = "bluetooth-auto")]
 pub const BLE_CONTROLLER_ACTIVITY_CAPACITY: u8 = (BLE_PEER_CAPACITY + 1) as u8;
