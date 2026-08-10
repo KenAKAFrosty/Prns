@@ -1,0 +1,3 @@
+[submodule "rtnode-heltecv4"]
+	path = references/rtnode-heltecv4
+	url = https://github.com/jrl290/RTNode-HeltecV4.git

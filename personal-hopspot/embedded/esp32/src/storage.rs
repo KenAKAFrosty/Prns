@@ -8,6 +8,8 @@ use allocator_api2::vec::Vec;
 use core::alloc::Layout;
 #[cfg(target_arch = "xtensa")]
 use core::ptr::NonNull;
+#[cfg(target_arch = "xtensa")]
+use portable_atomic::{AtomicBool, Ordering};
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use personal_rns::runtime::request_endpoints::RequestEndpointSet;
@@ -78,6 +80,13 @@ unsafe impl Send for PsramBump {}
 
 #[cfg(target_arch = "xtensa")]
 static PRIVATE_PSRAM: Mutex<RefCell<Option<PsramBump>>> = Mutex::new(RefCell::new(None));
+#[cfg(target_arch = "xtensa")]
+static PSRAM_AVAILABLE: AtomicBool = AtomicBool::new(false);
+
+#[cfg(target_arch = "xtensa")]
+pub fn set_psram_available(available: bool) {
+    PSRAM_AVAILABLE.store(available, Ordering::Release);
+}
 
 /// Install a PSRAM bump allocator used only by [`PsramAlloc`]. Do not also register the same
 /// range with `esp_alloc::HEAP`. Deallocate is a no-op (boot/engine construction is allocate-heavy);
@@ -146,7 +155,13 @@ unsafe impl Allocator for PsramAlloc {
                 Ok(NonNull::slice_from_raw_parts(ptr, layout.size()))
             })
         });
-        private_allocation.unwrap_or_else(|| esp_alloc::ExternalMemory.allocate(layout))
+        private_allocation.unwrap_or_else(|| {
+            if PSRAM_AVAILABLE.load(Ordering::Acquire) {
+                esp_alloc::ExternalMemory.allocate(layout)
+            } else {
+                esp_alloc::InternalMemory.allocate(layout)
+            }
+        })
     }
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
         let private = critical_section::with(|cs| PRIVATE_PSRAM.borrow_ref(cs).is_some());

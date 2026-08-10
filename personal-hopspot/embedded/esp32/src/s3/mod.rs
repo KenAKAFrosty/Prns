@@ -454,6 +454,7 @@ pub(crate) fn boot_stage(phase: BootPhase) {
 
 const DCACHE_FREE_BASE: usize = 0x3FCF_0000;
 const DCACHE_FREE_LEN: usize = 32 * 1024;
+const NO_PSRAM_HEAP_BYTES: usize = 64 * 1024;
 
 pub(crate) fn reclaim_dcache_region() {
     // SAFETY: On this PSRAM-enabled ESP32-S3 layout, 0x3FCF0000..0x3FCF8000 is the documented
@@ -494,14 +495,20 @@ async fn usb_device_task(
     device.run(seam).await
 }
 
-/// The identical ESP32-S3 early boot every board's `bringup` runs first: allocators (PSRAM +
-/// internal + the reclaimed D-cache region), the RTOS timer, and the RTC with its watchdogs disabled
-/// for the slow PSRAM-backed engine construction. A block expression (so its bindings escape
-/// macro hygiene) owning `$p`'s early peripherals, yielding `(software_interrupt1, timebase, rtc)`.
+/// The ESP32-S3 early boot every board's `bringup` runs first: allocators, the RTOS timer, and the
+/// RTC with its watchdogs disabled. A block expression (so its bindings escape macro hygiene)
+/// owning `$p`'s early peripherals, yielding `(software_interrupt1, timebase, rtc)`.
 ///
 /// Heap region order is load-bearing for Wi-Fi boards: PSRAM must register first so capability-free boot allocations land externally and leave the small internal regions for the radio.
 /// Heltec V4-R8 (Octal) passes a custom `PsramConfig` and uses `split_psram_heap`, which gives engine construction a private freelist without starving the rest of the system.
 macro_rules! boot_common {
+    ($p:ident, $banner:expr, no_psram) => {{
+        ::esp_println::logger::init_logger_from_env();
+        $crate::storage::set_psram_available(false);
+        ::esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: $crate::s3::NO_PSRAM_HEAP_BYTES);
+        ::esp_println::println!("PSRAM unavailable; using internal heap");
+        $crate::s3::boot_rtos_tail!($p, $banner)
+    }};
     ($p:ident, $banner:expr) => {
         $crate::s3::boot_common!(
             $p,
@@ -515,6 +522,7 @@ macro_rules! boot_common {
     };
     ($p:ident, $banner:expr, $psram_config:expr, global_psram_heap) => {{
         ::esp_println::logger::init_logger_from_env();
+        $crate::storage::set_psram_available(true);
         $crate::s3::boot_add_psram_global!($p, $psram_config);
         ::esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: $crate::s3::RECLAIMED_HEAP_BYTES);
         $crate::s3::reclaim_dcache_region();
@@ -523,6 +531,7 @@ macro_rules! boot_common {
     }};
     ($p:ident, $banner:expr, $psram_config:expr, split_psram_heap) => {{
         ::esp_println::logger::init_logger_from_env();
+        $crate::storage::set_psram_available(true);
         $crate::s3::boot_add_psram_split!($p, $psram_config);
         ::esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: $crate::s3::RECLAIMED_HEAP_BYTES);
         $crate::s3::reclaim_dcache_region();

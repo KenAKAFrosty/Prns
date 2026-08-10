@@ -1692,6 +1692,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "hopspot-heltec-v3"
+version = "0.1.0"
+dependencies = [
+ "embassy-executor",
+ "esp-hal",
+ "esp-rtos",
+ "personal-hopspot-esp32",
+]
+
+[[package]]
 name = "hopspot-heltec-v4"
 version = "0.1.0"
 dependencies = [
