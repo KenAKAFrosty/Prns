@@ -11,7 +11,6 @@ pub enum ConnectionState {
     Unknown,
 }
 
-#[cfg(any(feature = "tokio-host", feature = "embassy-host"))]
 impl ConnectionState {
     pub const fn is_online(self) -> bool {
         matches!(self, Self::Connected | Self::Degraded)

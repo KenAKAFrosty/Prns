@@ -483,6 +483,10 @@ async fn serve_port<S>(
                                 let _ = notify.send(key);
                             }
                         }
+                        // Not stored yet: the vitals store and the surface that reads it are the
+                        // other half of this seam. Until they exist, a report proves the link
+                        // works and nothing else.
+                        HostInbound::Vitals(_) => {}
                         HostInbound::Ignore => {}
                     }
                 }

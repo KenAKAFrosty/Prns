@@ -24,6 +24,9 @@ pub struct TransferRates {
 pub struct FrameAccounting {
     /// Frames taken off the medium, after any self-addressed echo is filtered out.
     pub frames_in: u64,
+    /// Air frames the medium accepted for transmission. Says the driver asked and the hardware
+    /// took it — not that anything left the antenna, which only an outside observer can attest.
+    pub frames_out: u64,
     /// Frames whose delivery header did not parse, so no sender could be attributed.
     pub malformed: u64,
     /// Frames that parsed but whose stream segment failed to decode. Discarded at resync.
