@@ -4,7 +4,11 @@ pub(crate) async fn run<B: Esp32S3Board>(spawner: Spawner) {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let p = esp_hal::init(config);
     let bringup = B::bringup(p).await;
-    allocator_api2::boxed::Box::pin_in(run_core::<B>(spawner, bringup), crate::storage::PsramAlloc)
+    // Pin into esp_alloc's global external heap, not `PsramAlloc`. On Heltec V4-R8, `PsramAlloc` is
+    // the private bump that `reinit_private_psram_heap` resets inside `run_core` before the LoRa
+    // queue lands — pinning here would place the live future (OLED/I2C state) in that window and
+    // get overwritten, which zeroed I2C Config.frequency after radio bring-up.
+    allocator_api2::boxed::Box::pin_in(run_core::<B>(spawner, bringup), esp_alloc::ExternalMemory)
         .await;
 }
 
