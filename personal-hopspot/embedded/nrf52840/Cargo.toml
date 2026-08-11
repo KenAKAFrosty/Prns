@@ -11,6 +11,7 @@ description = "LilyGo T-Echo (nRF52840 + SX1262 + 200x200 SSD1681 e-ink) Persona
 [features]
 default = ["board-t-echo"]
 board-t-echo = []
+board-t096 = []
 
 [lib]
 name = "personal_hopspot_nrf52840"
@@ -20,6 +21,11 @@ path = "src/lib.rs"
 name = "t-echo"
 path = "src/main.rs"
 required-features = ["board-t-echo"]
+
+[[bin]]
+name = "t096"
+path = "src/bin/t096.rs"
+required-features = ["board-t096"]
 
 [dependencies]
 personal-rns = { path = "../../../personal-rns", default-features = false, features = ["embassy-host", "flash", "lora", "bluetooth-auto", "usb"] }
