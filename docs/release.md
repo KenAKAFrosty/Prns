@@ -143,15 +143,15 @@ The active native artifact matrix is:
 
 | Artifact | Platform |
 | --- | --- |
-| `prnsd-0.3.5-x86_64-unknown-linux-gnu.tar.gz` | Linux x86_64, glibc |
-| `prnsd-0.3.5-aarch64-unknown-linux-gnu.tar.gz` | Linux ARM64, glibc |
-| `prnsd-0.3.5-x86_64-apple-darwin.tar.gz` | macOS Intel |
-| `prnsd-0.3.5-aarch64-apple-darwin.tar.gz` | macOS Apple silicon |
-| `prnsd-0.3.5-x86_64-pc-windows-msvc.zip` | Windows x86_64 |
+| `prnsd-0.3.6-x86_64-unknown-linux-gnu.tar.gz` | Linux x86_64, glibc |
+| `prnsd-0.3.6-aarch64-unknown-linux-gnu.tar.gz` | Linux ARM64, glibc |
+| `prnsd-0.3.6-x86_64-apple-darwin.tar.gz` | macOS Intel |
+| `prnsd-0.3.6-aarch64-apple-darwin.tar.gz` | macOS Apple silicon |
+| `prnsd-0.3.6-x86_64-pc-windows-msvc.zip` | Windows x86_64 |
 
 Native archives contain the executable, licenses, third-party notices, Minisign public key, exact build identity, and the commit-bound `source.zip` plus its SHA-256 sidecar. Linux binaries are built natively on Ubuntu 24.04, making glibc 2.39 the supported baseline for this release. The full Linux build statically vendors its `libdbus` code. Every platform archive carries its complete linkage or import report as a signed-inventory asset.
 
-The signed `prnsd-image-v0.3.5.json` asset binds the multi-platform OCI digest to the suite version, source commit, and amd64 and ARM64 child digests. `railway-template-contract-v0.3.5.json` binds the Railway publication to that exact image.
+The signed `prnsd-image-v0.3.6.json` asset binds the multi-platform OCI digest to the suite version, source commit, and amd64 and ARM64 child digests. `railway-template-contract-v0.3.6.json` binds the Railway publication to that exact image.
 
 ### Public staging
 
@@ -225,8 +225,8 @@ The release checksum inventory and record are verified with the repository's Min
 minisign -Vm SHA256SUMS.txt \
   -x SHA256SUMS.txt.minisig \
   -p minisign.pub
-minisign -Vm release-record-v0.3.5.json \
-  -x release-record-v0.3.5.json.minisig \
+minisign -Vm release-record-v0.3.6.json \
+  -x release-record-v0.3.6.json.minisig \
   -p minisign.pub
 sha256sum --check SHA256SUMS.txt
 ```
@@ -235,17 +235,17 @@ On macOS, use `shasum -a 256 -c SHA256SUMS.txt`. On Windows, compare
 `(Get-FileHash ARCHIVE -Algorithm SHA256).Hash` against the matching
 `SHA256SUMS.txt` entry. The release record binds native archives, signed flasher candidate, source and image SPDX SBOMs, image and platform digests, linkage reports, and GitHub provenance bundles into the exact checksum inventory.
 
-The unified prerelease passes two protected evidence tracks before stable promotion. Physical flasher qualification adds `qualification-evidence-v0.3.5.tar.gz`, a signed acceptance document, and `flasher-release-record-v0.3.5.json`. Railway qualification adds `deployment-qualification-v0.3.5.json`. Promotion accepts only these narrowly named supplements and independently reverifies workflow custody, Minisign signatures, exact source, artifact digests, and live GitHub attestations.
+The unified prerelease passes two protected evidence tracks before stable promotion. Physical flasher qualification adds `qualification-evidence-v0.3.6.tar.gz`, a signed acceptance document, and `flasher-release-record-v0.3.6.json`. Railway qualification adds `deployment-qualification-v0.3.6.json`. Promotion accepts only these narrowly named supplements and independently reverifies workflow custody, Minisign signatures, exact source, artifact digests, and live GitHub attestations.
 
 ```sh
-gh attestation verify prnsd-0.3.5-x86_64-unknown-linux-gnu.tar.gz \
+gh attestation verify prnsd-0.3.6-x86_64-unknown-linux-gnu.tar.gz \
   --repo KenAKAFrosty/Prns
 gh attestation verify \
   oci://ghcr.io/kenakafrosty/prnsd@sha256:REPLACE_WITH_SIGNED_DIGEST \
   --repo KenAKAFrosty/Prns
 ```
 
-The suite uses the existing Minisign trust root and GitHub provenance. macOS notarization and Windows Authenticode are not present in `v0.3.5`; the archives are not platform-vendor-signed.
+The suite uses the existing Minisign trust root and GitHub provenance. macOS notarization and Windows Authenticode are not present in `v0.3.6`; the archives are not platform-vendor-signed.
 
 ## Pre-1.0 semver
 

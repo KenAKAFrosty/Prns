@@ -774,7 +774,7 @@ dependencies = [
 
 [[package]]
 name = "prns-core"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "aes",
  "cbc",
@@ -794,7 +794,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-embassy"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "bt-hci",
  "cfg-if",
@@ -821,7 +821,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "cfg-if",
  "heapless 0.8.0",
@@ -830,7 +830,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime-embassy"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "embassy-futures",
  "embassy-sync 0.8.0",
