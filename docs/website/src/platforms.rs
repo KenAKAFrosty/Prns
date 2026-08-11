@@ -242,7 +242,7 @@ pub const UPCOMING_BOARD_TARGETS: &[BoardTarget] = &[
         name: "RAK WisBlock Starter Kit",
         slug: "rak-wisblock-starter-kit",
         silicon: "RAK19007 + RAK4631, nRF52840 + SX1262",
-        tier: Tier::Roadmap,
+        tier: Tier::BringUp,
         interfaces: &[],
         icon: Some("nordicsemiconductor"),
         preparation_profile: None,
@@ -251,6 +251,16 @@ pub const UPCOMING_BOARD_TARGETS: &[BoardTarget] = &[
     BoardTarget {
         name: "Seeed Wio Tracker L1",
         slug: "seeed-wio-tracker-l1",
+        silicon: "nRF52840 + SX1262",
+        tier: Tier::Roadmap,
+        interfaces: &[],
+        icon: Some("nordicsemiconductor"),
+        preparation_profile: None,
+        flash_target: None,
+    },
+    BoardTarget {
+        name: "SenseCAP Solar Node P1",
+        slug: "seeed-sensecap-solar-node-p1",
         silicon: "nRF52840 + SX1262",
         tier: Tier::Roadmap,
         interfaces: &[],
@@ -675,6 +685,7 @@ mod tests {
                 "Heltec Wireless Stick Lite V3",
                 "Raspberry Pi Zero 2 W",
                 "SenseCAP Card Tracker T1000-E",
+                "RAK WisBlock Starter Kit",
             ]
         );
         assert!(

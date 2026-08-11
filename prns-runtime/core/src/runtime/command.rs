@@ -20,14 +20,10 @@ pub struct ClearAnnounceQueuesOutcome {
 /// Why an awaited send never reached `Delivered`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SendError<F> {
-    /// The payload was larger than a single packet's MDU — rejected before the wire.
     PayloadTooLarge,
-    /// The node has stopped: the command channel is closed (host) or the bounded lane is gone.
     NodeStopped,
-    /// More awaited sends are in flight than the platform tracks at once — the embedded
-    /// `CompletionPool` is full. The unbounded host path never returns it.
+    /// More awaited sends are in flight than the platform tracks at once
     Busy,
-    /// The engine settled the send as a typed failure (`SendSinglePacketFailure`, …).
     Failed(F),
 }
 
@@ -89,17 +85,19 @@ pub trait DestinationIdentityRetentionControl {
     > + Send;
 }
 
-/// The high-level API shared by every platform's node handle. Tokio carries commands over an unbounded channel with per-command oneshots; Embassy uses a bounded channel and static completion pool. [`issue`](Self::issue) returns a minted [`CommandId`] immediately, while awaited operations settle through that id. Platform-specific capabilities remain inherent methods on the concrete handle.
+/// The high-level API shared by every platform's node handle. Tokio carries commands over an unbounded channel with per-command oneshots; Embassy uses a bounded channel and static completion pool.
+///
+/// [`issue`](Self::issue) returns a minted [`CommandId`] immediately, while awaited operations settle through that id. Platform-specific capabilities remain inherent methods on the concrete handle.
 #[allow(async_fn_in_trait)]
 pub trait PrnsNodeApi {
-    /// Queue an engine command and return the [`CommandId`] it was minted under — watch the event
-    /// stream for the settlement tagged with it. `None` once the node has stopped (or the bounded
-    /// embedded lane is full). The fire-and-forget escape hatch.
+    /// Queues an engine command and returns the [`CommandId`] it was minted under. If you're looking for its settlement, watch the event stream for the settlement tagged with that CommandId.
+    ///
+    /// You may not ever need this, since many operations have their own convenience methods, usually `await`able.
     fn issue(&self, command: PrnsCommand) -> Option<CommandId>;
 
-    /// Announce `destination` on every interface with its registered app_data: RNS 1.4.2
-    /// `Destination.announce()` with no arguments. `None` once the node has stopped. For one
-    /// interface or explicit app_data, [`issue`](Self::issue) a custom [`AnnounceNow`].
+    /// Announce `destination` on every interface with its registered app_data: RNS 1.4.2 `Destination.announce()` with no arguments.
+    ///
+    /// Returns `None` if the node has stopped. If you want to target a specific interface or provide explicit app_data, [`issue`](Self::issue) a custom [`AnnounceNow`]. Some platform implementations may provide an awaitable convenience method, specifically for `announce_now`, on top of this.
     fn announce(&self, destination: DestinationHash) -> Option<CommandId> {
         self.issue(PrnsCommand::AnnounceNow(AnnounceNow {
             destination,
@@ -108,8 +106,6 @@ pub trait PrnsNodeApi {
         }))
     }
 
-    /// Send one Single data packet to `destination` and await its delivery proof — `Ok(Delivered)`
-    /// with the measured round trip, or the typed reason it did not deliver.
     async fn send_single_packet(
         &self,
         destination: DestinationHash,
@@ -118,6 +114,5 @@ pub trait PrnsNodeApi {
 
     fn respond_packed(&self, responder: RespondToken, packed: &[u8]) -> bool;
 
-    /// Sever an active link. Returns `false` once the node has stopped.
     fn close_link(&self, link_id: LinkId) -> bool;
 }

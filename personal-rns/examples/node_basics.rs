@@ -75,6 +75,13 @@ async fn main() {
         let mut ticker = tokio::time::interval(Duration::from_millis(200));
         loop {
             ticker.tick().await;
+
+            //Since this is a destination with registered app data, and we're just announcing to every interface, we could also use the simple convenience method of `announcer.announce(destination_a_hash);`
+            //This example uses the `.issue` + `PrnsCommand` approach because
+            // (a) it shows you this is possible and provides you a "catalog of actions", to so speak, in the form of the PrnsCommand enum; and
+            // (b) announcing doesn't have meaningful data to await for anyway, so a fire-and-forget command is especially appropriate here.
+            //
+            // As you continue to work through the example ladder you'll see the use of other APIs that stay awaitable-method-focused instead of using this command issuance approach.
             if announcer
                 .issue(PrnsCommand::AnnounceNow(AnnounceNow {
                     destination: destination_a_hash,

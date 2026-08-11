@@ -1,3 +1,5 @@
+//! nRF52 Bluetooth Auto transport shared by supported board targets.
+
 use core::cell::{Cell, UnsafeCell};
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -745,7 +747,7 @@ async fn notify_with_backpressure(
             Ok(()) => return Ok(()),
             Err(gatt_server::NotifyValueError::Raw(RawError::Resources)) => {
                 // S140's default notification queue is intentionally one entry: increasing it for
-                // all seven reserved connections would consume RAM the T-Echo does not have. Yield
+                // all seven reserved connections would exceed this target's RAM budget. Yield
                 // until the next link event drains that entry, then submit this same fragment.
                 Timer::after(NOTIFY_BACKPRESSURE_RETRY).await;
             }

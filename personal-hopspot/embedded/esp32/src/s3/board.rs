@@ -1,5 +1,6 @@
 use super::*;
 
+#[cfg(feature = "lora")]
 pub(crate) type LoraRadio = Sx126x<
     ExclusiveDevice<Spi<'static, esp_hal::Async>, Output<'static>, Delay>,
     Input<'static>,

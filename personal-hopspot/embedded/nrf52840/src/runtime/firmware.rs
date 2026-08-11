@@ -33,17 +33,20 @@ use personal_rns::storage::StorageLayout;
 use personal_rns::usb_auto::{UsbAutoDevice, UsbAutoDeviceInput};
 use personal_rns::usb_auto::{WebUsbAutoClass, WebUsbAutoState, WEBUSB_AUTO_PACKET_SIZE};
 
+use crate::boards::selected as board;
+use board::{
+    Board, Controls, DisplayHardware, EarlyHardware, EinkScreen, FaceHardware, RuntimeHardware,
+    Storage, UsbHardware, ANNOUNCE_APP_DATA, NODE_ANNOUNCE_APP_DATA, USB_INTERFACE_ID,
+    USB_MANUFACTURER, USB_PRODUCT, USB_SERIAL_NUMBER,
+};
+
 use super::bluetooth_auto::{
     acceptor, scanner, serve_slot, softdevice_config, softdevice_task, usb_vbus_present,
     L2capPacket, NrfBleBackend, Server, BLE_SHARED, BLE_SUPERVISOR_ID, HUB, MEMBERS, OUTBOUND_WAKE,
     POOL,
 };
-use super::board::{
-    TechoBoard, TechoControls, TechoDisplayHardware, TechoEarlyHardware, TechoFaceHardware,
-    TechoRuntimeHardware, TechoUsbHardware,
-};
-use super::display::{build_cards, build_snapshots, frame_hash, EinkScreen};
-use super::input;
+use super::entropy::{initialize_runtime_entropy, runtime_entropy, RUNTIME_ENTROPY_SEED_LEN};
+use super::interface_cards::{build_cards, build_snapshots};
 use super::node::*;
 
 const PARTIAL_REFRESH_LIMIT: u32 = 64;
@@ -57,42 +60,44 @@ const USB_BOS_DESCRIPTOR_BYTES: usize = 64;
 const USB_MSOS_DESCRIPTOR_BYTES: usize = 192;
 
 #[embassy_executor::task]
-async fn manifold_task(
-    node: &'static mut Node,
-    persistence: &'static mut super::persistence::TechoPersistence,
-) {
+async fn manifold_task(node: &'static mut Node, persistence: &'static mut board::Persistence) {
     let _ = node.restore_embedded_persistence(persistence).await;
     node.run_manifold_with_persistence_and_interface_store(&INTERFACE_STORE, persistence)
         .await
 }
 
 #[allow(clippy::too_many_lines)]
-pub(crate) async fn run(spawner: Spawner) -> ! {
-    let ((node_bootstrap, ble_bootstrap), early_hardware) =
-        TechoBoard::initialize_identities(|nvmc, rng| {
+pub async fn run(spawner: Spawner) -> ! {
+    let ((node_bootstrap, ble_bootstrap, runtime_entropy_seed), early_hardware) =
+        Board::initialize_identities(|nvmc, rng| {
             let mut fill_entropy = |bytes: &mut [u8]| rng.blocking_fill_bytes(bytes);
-            let node_bootstrap = super::identity::bootstrap_node_identity(nvmc, &mut fill_entropy);
-            let ble_bootstrap = super::identity::bootstrap_ble_identity(nvmc, &mut fill_entropy);
-            (node_bootstrap, ble_bootstrap)
+            let node_bootstrap = board::bootstrap_node_identity(nvmc, &mut fill_entropy);
+            let ble_bootstrap = board::bootstrap_ble_identity(nvmc, &mut fill_entropy);
+            let mut runtime_entropy_seed =
+                personal_rns::identity::Zeroizing::new([0u8; RUNTIME_ENTROPY_SEED_LEN]);
+            fill_entropy(&mut runtime_entropy_seed[..]);
+            (node_bootstrap, ble_bootstrap, runtime_entropy_seed)
         });
+    initialize_runtime_entropy(&runtime_entropy_seed);
+    drop(runtime_entropy_seed);
     let identity_startup_notice =
-        super::identity::startup_notice(node_bootstrap.persistence(), ble_bootstrap.persistence());
+        board::identity_startup_notice(node_bootstrap.persistence(), ble_bootstrap.persistence());
     let node_identity = node_bootstrap.into_identity();
     let ble_identity = Some(ble_bootstrap.into_identity());
 
-    let TechoEarlyHardware {
+    let EarlyHardware {
         usb,
         face,
         deferred,
     } = early_hardware;
-    let TechoUsbHardware {
+    let UsbHardware {
         driver: usb_driver,
         vbus,
     } = usb;
     let mut usb_config = UsbConfig::new(WEBUSB_VENDOR_ID, WEBUSB_PRODUCT_ID);
-    usb_config.manufacturer = Some("Stay Personal");
-    usb_config.product = Some("Personal Hopspot (T-Echo)");
-    usb_config.serial_number = Some("PERSONAL-RNS-TECHO-HOP");
+    usb_config.manufacturer = Some(USB_MANUFACTURER);
+    usb_config.product = Some(USB_PRODUCT);
+    usb_config.serial_number = Some(USB_SERIAL_NUMBER);
     usb_config.max_packet_size_0 = 64;
     static CONFIG_DESC: StaticCell<[u8; USB_CONFIG_DESCRIPTOR_BYTES]> = StaticCell::new();
     static BOS_DESC: StaticCell<[u8; USB_BOS_DESCRIPTOR_BYTES]> = StaticCell::new();
@@ -127,7 +132,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
     let flash = FLASH_STORAGE.init(Mutex::new(flash));
     let shared_flash = SharedNorFlash::new(flash, 1024 * 1024);
     let mut lora_profile_store =
-        hopspot::RadioProfileStore::new(shared_flash, hopspot::T_ECHO_RADIO_PROFILE_PAGES);
+        hopspot::RadioProfileStore::new(shared_flash, board::RADIO_PROFILE_PAGES);
     let loaded_lora_profile = match lora_profile_store.load(DEFAULT_915_PROFILE).await {
         Ok(loaded) => loaded,
         Err(_) => hopspot::LoadedRadioProfile {
@@ -149,18 +154,18 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
         }
     }
 
-    let TechoRuntimeHardware {
+    let RuntimeHardware {
         radio,
         display,
         controls,
     } = deferred.finish().await;
-    let TechoDisplayHardware {
+    let DisplayHardware {
         driver: eink,
         mut panel,
         _rail: _eink_rail,
     } = display;
-    let TechoControls { button, frontlight } = controls;
-    let TechoFaceHardware {
+    let Controls { button, frontlight } = controls;
+    let FaceHardware {
         battery: saadc,
         status_led: mut led,
     } = face;
@@ -174,13 +179,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
     )
     .destination_hashes()
     .expect("the hopspot destination names are valid");
-    let self_destination = destination_hashes.delivery;
     let node_page_destination = destination_hashes.node_page;
-    let seed = self_destination.as_bytes();
-    ENTROPY_STATE.store(
-        u32::from_le_bytes([seed[0], seed[1], seed[2], seed[3]]) | 1,
-        core::sync::atomic::Ordering::Relaxed,
-    );
     let mut manifold_lanes = ManifoldLanes::new();
     let lora_profile = loaded_lora_profile.profile;
     let lora_id = LoRaInterface::<
@@ -245,7 +244,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
         LIFECYCLE.receiver(),
         handle,
     );
-    let host = EmbassyHost::new(seeded_entropy as fn(&mut [u8]));
+    let host = EmbassyHost::new(runtime_entropy as fn(&mut [u8]));
     static NODE: StaticCell<Node> = StaticCell::new();
     let recipe = PrnsNodeRecipe {
         transport_identity: Some(transport_secret),
@@ -256,21 +255,21 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
         )
         .into_preconfigured_destinations(),
         app_state: (),
-        storage: crate::storage::TechoStorage,
+        storage: Storage,
         request_endpoints: hopspot::node_pages::NodePageRoutes,
         interfaces: personal_rns::runtime::ManuallyAttached,
-        persistence: super::persistence::new(shared_flash),
+        persistence: board::new_persistence(shared_flash),
         on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
     };
     let (node, persistence) =
         PrnsNode::init_static_with_persistence(&NODE, recipe, manifold_wiring, host);
     node.set_protocol_policy(personal_hopspot_core::EMBEDDED_HOPSPOT_PROTOCOL_POLICY);
-    static PERSISTENCE: StaticCell<super::persistence::TechoPersistence> = StaticCell::new();
+    static PERSISTENCE: StaticCell<board::Persistence> = StaticCell::new();
     let persistence = PERSISTENCE.init(persistence);
     spawner.spawn(manifold_task(node, persistence).expect("manifold task fits"));
-    let lora_seam = lora_lane.into_seam(NOTIFY.sender(), seeded_entropy);
+    let lora_seam = lora_lane.into_seam(NOTIFY.sender(), runtime_entropy);
 
-    let usb_seam = usb_lane.into_seam(NOTIFY.sender(), seeded_entropy);
+    let usb_seam = usb_lane.into_seam(NOTIFY.sender(), runtime_entropy);
 
     let backend = NrfBleBackend::new(&HUB);
     let bluetooth = ble_identity
@@ -314,7 +313,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
             None => core::future::pending().await,
         };
         let mut ui_state = hopspot::UiState::new(hopspot::UiConfiguration {
-            storage_limits: <crate::storage::TechoStorage as StorageLayout>::LIMITS,
+            storage_limits: <Storage as StorageLayout>::LIMITS,
             display_power_control: hopspot::DisplayPowerControl::Unavailable,
             access_point: hopspot::AccessPointState::Unsupported,
         });
@@ -355,11 +354,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                 local_docs: None,
             };
             ui_state.sync(content);
-            if persistence_notice.update(
-                &mut ui_state,
-                super::persistence::persistence_state(),
-                now_ms,
-            ) {
+            if persistence_notice.update(&mut ui_state, board::persistence_state(), now_ms) {
                 refresh_urgency = hopspot::EinkRefreshUrgency::Immediate;
             }
             if let Some((until, owner)) = notice_until_ms {
@@ -424,7 +419,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
                     animation_ms: EINK_ANIMATION_MS,
                 },
             );
-            let hash = frame_hash(panel.buffer());
+            let hash = board::frame_hash(panel.buffer());
             if displayed_hash != Some(hash) {
                 match refresh_policy.for_changed_frame(now_ms, &refresh_urgency) {
                     hopspot::EinkRefresh::Deferred => {}
@@ -448,7 +443,7 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
             }
 
             match select3(
-                input::EVENTS.receive(),
+                board::INPUT_EVENTS.receive(),
                 INTERFACE_STORE.changed(),
                 Timer::after(STATS_POLL),
             )
@@ -595,8 +590,8 @@ pub(crate) async fn run(spawner: Spawner) -> ! {
         usb_fut,
         usb_dev.run(usb_seam),
         heartbeat,
-        input::drive_button(button),
-        input::drive_frontlight(frontlight),
+        board::drive_button(button),
+        board::drive_frontlight(frontlight),
     );
     let ble_plane = async move {
         match bluetooth {

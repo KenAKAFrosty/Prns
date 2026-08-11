@@ -283,8 +283,7 @@ impl PrnsNodeHandle {
         }
     }
 
-    /// Register or replace a request path while the node is running. This
-    /// resolves only after the manifold has applied the mutation.
+    /// Register or replace a request path while the node is running. This resolves only after the manifold has applied the mutation.
     pub async fn register_request_path(
         &self,
         destination: DestinationHash,
@@ -307,8 +306,7 @@ impl PrnsNodeHandle {
         }
     }
 
-    /// Remove a request path while the node is running. `Ok(false)` means the
-    /// route was already absent.
+    /// Remove a request path while the node is running. `Ok(false)` means the route was already absent.
     pub async fn unregister_request_path(
         &self,
         destination: DestinationHash,

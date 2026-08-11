@@ -1,3 +1,5 @@
+//! T-Echo SSD1681 e-ink panel driver.
+
 use embedded_hal::delay::DelayNs;
 use embedded_hal::digital::{InputPin, OutputPin};
 use embedded_hal::spi::SpiDevice;

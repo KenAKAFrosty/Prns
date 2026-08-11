@@ -66,14 +66,11 @@ pub(super) async fn run_core<B: Esp32S3Board>(
 
     let mut manifold_lanes = ManifoldLanes::new();
 
-    #[cfg(feature = "lora")]
     static FLASH: StaticCell<Mutex<CriticalSectionRawMutex, crate::flash::EspRomFlash>> =
         StaticCell::new();
-    #[cfg(feature = "lora")]
     let flash = FLASH.init(Mutex::new(crate::flash::EspRomFlash::new(
         B::FLASH_LAYOUT.flash_capacity,
     )));
-    #[cfg(feature = "lora")]
     let shared_flash = SharedNorFlash::new(flash, B::FLASH_LAYOUT.flash_capacity);
     #[cfg(feature = "lora")]
     let mut lora_profile_store =
@@ -97,6 +94,9 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         screen::RadioProfileLoadNotice::Recovered => screen::UiNotice::ProfileRecovered,
         screen::RadioProfileLoadNotice::Reset => screen::UiNotice::ProfileReset,
     });
+    #[cfg(not(feature = "lora"))]
+    let profile_startup_notice: Option<screen::UiNotice> = None;
+    #[cfg(feature = "lora")]
     let lora_id = LoRaInterface::<
         ExclusiveDevice<Spi<'static, esp_hal::Async>, Output<'static>, Delay>,
         Input<'static>,
@@ -104,12 +104,26 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         Output<'static>,
         Delay,
     >::interface_id(&lora_profile);
+    #[cfg(feature = "lora")]
     let lora_status: &'static EmbassyInterfaceStatus = mk_static!(
         EmbassyInterfaceStatus,
         EmbassyInterfaceStatus::new(lora_id, ConnectionState::Initializing)
     );
+    #[cfg(feature = "lora")]
     let lora_spectrum: &'static LoRaSpectrumStatus =
         mk_static!(LoRaSpectrumStatus, LoRaSpectrumStatus::new());
+    // The Option shims mirror ESP-NOW's: boards without an SX1262 keep every downstream card,
+    // toggle, and sleep path compiling against `None` instead of forking the render loop.
+    #[cfg(feature = "lora")]
+    let (lora_card_id, lora_card_status): (
+        Option<InterfaceId>,
+        Option<&'static EmbassyInterfaceStatus>,
+    ) = (Some(lora_id), Some(lora_status));
+    #[cfg(not(feature = "lora"))]
+    let (lora_card_id, lora_card_status): (
+        Option<InterfaceId>,
+        Option<&'static EmbassyInterfaceStatus>,
+    ) = (None, None);
     // Reclaim the private R8 probe allocation before placing the live LoRa queue in PSRAM.
     // This is a no-op on boards whose PSRAM belongs to the global heap.
     #[cfg(feature = "lora")]
@@ -403,6 +417,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         if let Some(notice) = startup_notice {
             ui_state.show_notice(notice);
         }
+        #[cfg(feature = "lora")]
         let mut working_lora_profile = lora_profile;
         let mut battery_state = screen::BatteryState::Unknown;
         let mut battery_gauge = screen::BatteryGauge::lipo();
@@ -438,7 +453,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 usb_status,
                 wifi_status.as_ref(),
                 tcp_status,
-                lora_status,
+                lora_card_status,
                 espnow_card_status,
             );
             #[cfg(feature = "wifi-auto")]
@@ -453,7 +468,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 tcp_card_config,
                 wifi_status.as_ref(),
                 &wifi_config,
-                lora_status.id(),
+                lora_card_id,
                 espnow_card_id,
             );
             let now_ms = embassy_time::Instant::now().as_millis();
@@ -465,7 +480,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             };
             #[cfg(feature = "wifi-auto")]
             let menu_ap_ssid = active_ap_ssid.as_deref();
-            #[cfg(feature = "wifi-auto")]
+            #[cfg(all(feature = "wifi-auto", feature = "lora"))]
             let interface_menu_details = build_interface_menu_details(
                 ui_state.selected_card(content.cards),
                 &snapshots,
@@ -475,9 +490,19 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 &wifi_config,
                 menu_ap_ssid,
             );
+            #[cfg(all(feature = "wifi-auto", not(feature = "lora")))]
+            let interface_menu_details = build_interface_menu_details(
+                ui_state.selected_card(content.cards),
+                &snapshots,
+                usb_status,
+                wifi_status.as_ref(),
+                &wifi_config,
+                menu_ap_ssid,
+            );
             #[cfg(not(feature = "wifi-auto"))]
             let interface_menu_details = {
                 let mut details = screen::InterfaceMenuDetails::empty();
+                #[cfg(feature = "lora")]
                 add_lora_spectrum(
                     &mut details,
                     ui_state.selected_card(content.cards),
@@ -588,7 +613,9 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                 Some((now_ms + NOTICE_MS, screen::UiNotice::Sleeping));
                             oled_sleep_at_ms = Some(now_ms + OLED_SLEEP_DELAY_MS);
                             usb_status.disable();
-                            lora_status.disable();
+                            if let Some(status) = lora_card_status {
+                                status.disable();
+                            }
                             if let Some(status) = wifi_status.as_ref() {
                                 status.disable();
                                 status.disable_station_uplink();
@@ -615,7 +642,9 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                             ui_state.show_notice(screen::UiNotice::Awake);
                             notice_until_ms = Some((now_ms + NOTICE_MS, screen::UiNotice::Awake));
                             usb_status.enable();
-                            lora_status.enable();
+                            if let Some(status) = lora_card_status {
+                                status.enable();
+                            }
                             if let Some(status) = wifi_status.as_ref() {
                                 status.enable_station_uplink();
                                 status.enable();
@@ -670,10 +699,12 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                     usb_status.toggle_enabled();
                                     handled = true;
                                 }
-                                if !handled && card.id() == lora_status.id() {
-                                    show_toggle_notice(lora_status.is_enabled());
-                                    lora_status.toggle_enabled();
-                                    handled = true;
+                                if !handled && Some(card.id()) == lora_card_id {
+                                    if let Some(status) = lora_card_status {
+                                        show_toggle_notice(status.is_enabled());
+                                        status.toggle_enabled();
+                                        handled = true;
+                                    }
                                 }
                                 if !handled {
                                     if let Some(status) = wifi_status.as_ref() {
@@ -727,8 +758,13 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                             }
                         }
                         screen::UiAction::OpenLoRaEditor => {
+                            #[cfg(feature = "lora")]
                             ui_state.open_lora_editor(working_lora_profile);
                         }
+                        #[cfg(not(feature = "lora"))]
+                        screen::UiAction::SetLoRaProfile(_)
+                        | screen::UiAction::ResetLoRaProfile => {}
+                        #[cfg(feature = "lora")]
                         screen::UiAction::SetLoRaProfile(profile) => {
                             let result = screen::apply_and_persist_radio_profile(
                                 async {
@@ -755,6 +791,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                 notice,
                             ));
                         }
+                        #[cfg(feature = "lora")]
                         screen::UiAction::ResetLoRaProfile => {
                             let result = screen::apply_and_persist_radio_profile(
                                 async {
@@ -828,7 +865,10 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     }
     #[cfg(all(feature = "wifi-auto", not(feature = "bluetooth-auto")))]
     {
+        #[cfg(feature = "lora")]
         let lora_run = lora.run(lora_seam);
+        #[cfg(not(feature = "lora"))]
+        let lora_run = async {};
         let espnow_run = async {
             if let Some((interface, seam)) = espnow {
                 interface.run(seam).await;
@@ -845,6 +885,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     }
     #[cfg(all(feature = "bluetooth-auto", feature = "wifi-auto"))]
     {
+        #[cfg(feature = "lora")]
         spawner.spawn(lora_task(lora, lora_seam).expect("LoRa task fits"));
         if let Some((interface, seam)) = espnow {
             spawner.spawn(espnow_task(interface, seam).expect("ESP-NOW task fits"));

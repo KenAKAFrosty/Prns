@@ -97,7 +97,7 @@ pub unsafe fn init_private_psram_heap(start: *mut u8, size: usize) {
 
 /// Reset the private PSRAM bump cursor over the window from [`init_private_psram_heap`].
 /// No-op when this board uses the global `esp_alloc` external region instead.
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", feature = "lora"))]
 pub fn reinit_private_psram_heap() {
     critical_section::with(|cs| {
         if let Some(bump) = PRIVATE_PSRAM.borrow_ref_mut(cs).as_mut() {
@@ -106,7 +106,7 @@ pub fn reinit_private_psram_heap() {
     });
 }
 
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", feature = "lora"))]
 pub fn allocate_lora_tx_queue() -> &'static mut [u8; personal_rns::lora::LORA_TX_QUEUE_BYTES] {
     let mut storage = Vec::with_capacity_in(personal_rns::lora::LORA_TX_QUEUE_BYTES, PsramAlloc);
     storage.resize(personal_rns::lora::LORA_TX_QUEUE_BYTES, 0);

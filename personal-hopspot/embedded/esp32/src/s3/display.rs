@@ -7,12 +7,12 @@ fn classify_card(
     tcp_id: Option<InterfaceId>,
     tcp_client: Option<&HopspotTcpClientConfig>,
     wifi_kind: screen::CardKind,
-    lora_id: InterfaceId,
+    lora_id: Option<InterfaceId>,
     espnow_id: Option<InterfaceId>,
 ) -> Option<(screen::CardKind, screen::CardLabel)> {
     if id == usb_id {
         Some((screen::CardKind::Usb, screen::card_label("USB")))
-    } else if id == lora_id {
+    } else if Some(id) == lora_id {
         Some((screen::CardKind::LoRa, screen::card_label("LoRa")))
     } else if Some(id) == wifi_id {
         Some((wifi_kind, screen::card_label("LAN")))
@@ -72,14 +72,16 @@ pub(super) fn build_snapshots(
     usb: &EmbassyInterfaceStatus,
     wifi: Option<&AutoWifiStatus<MEMBERS>>,
     tcp: Option<&EmbassyInterfaceStatus>,
-    lora: &EmbassyInterfaceStatus,
+    lora: Option<&EmbassyInterfaceStatus>,
     espnow: Option<&EmbassyInterfaceStatus>,
 ) -> HVec<InterfaceSnapshot, 8> {
     use personal_rns::interfaces::InterfaceStatus;
     #[cfg(feature = "bluetooth-auto")]
     let ble = BluetoothAutoStatus::new(&BLE_SHARED);
     let mut entries: HVec<(&dyn InterfaceStatus, Membership), 8> = HVec::new();
-    let _ = entries.push((lora, Membership::Independent));
+    if let Some(lora) = lora {
+        let _ = entries.push((lora, Membership::Independent));
+    }
     #[cfg(feature = "bluetooth-auto")]
     {
         let _ = entries.push((&ble, Membership::Independent));
@@ -149,7 +151,7 @@ pub(super) fn build_cards(
     tcp_client: Option<&HopspotTcpClientConfig>,
     wifi: Option<&AutoWifiStatus<MEMBERS>>,
     wifi_config: &HopspotWifiConfig,
-    lora_id: InterfaceId,
+    lora_id: Option<InterfaceId>,
     espnow_id: Option<InterfaceId>,
 ) -> HVec<screen::Card, 8> {
     let wifi_kind = if !wifi_config.has_station() {
@@ -173,6 +175,7 @@ fn egress_pressure_events(id: InterfaceId) -> u32 {
         Some(InterfaceKind::AutoWifi | InterfaceKind::WifiPeer | InterfaceKind::TcpServerPeer) => {
             WIFI_MANIFOLD_LANE.egress_pressure_events()
         }
+        #[cfg(feature = "lora")]
         Some(InterfaceKind::LoRa) => LORA_MANIFOLD_LANE.egress_pressure_events(),
         #[cfg(feature = "bluetooth-auto")]
         Some(InterfaceKind::BluetoothAuto | InterfaceKind::BluetoothPeer) => {
@@ -191,6 +194,7 @@ fn ingress_pressure_events(id: InterfaceId) -> u32 {
         Some(InterfaceKind::AutoWifi | InterfaceKind::WifiPeer | InterfaceKind::TcpServerPeer) => {
             WIFI_MANIFOLD_LANE.ingress_pressure_events()
         }
+        #[cfg(feature = "lora")]
         Some(InterfaceKind::LoRa) => LORA_MANIFOLD_LANE.ingress_pressure_events(),
         #[cfg(feature = "bluetooth-auto")]
         Some(InterfaceKind::BluetoothAuto | InterfaceKind::BluetoothPeer) => BLE_MANIFOLD_LANE
@@ -227,6 +231,7 @@ pub(super) fn add_manifold_pressure(
     }
 }
 
+#[cfg(feature = "lora")]
 pub(super) fn add_lora_spectrum(
     details: &mut screen::InterfaceMenuDetails,
     selected_card: Option<&screen::Card>,
@@ -254,7 +259,7 @@ pub(super) fn build_interface_menu_details(
     selected_card: Option<&screen::Card>,
     snapshots: &[InterfaceSnapshot],
     usb: &EmbassyInterfaceStatus,
-    lora_spectrum: &LoRaSpectrumStatus,
+    #[cfg(feature = "lora")] lora_spectrum: &LoRaSpectrumStatus,
     wifi: Option<&AutoWifiStatus<MEMBERS>>,
     wifi_config: &HopspotWifiConfig,
     ap_ssid: Option<&str>,
@@ -310,6 +315,7 @@ pub(super) fn build_interface_menu_details(
         }
         _ => screen::InterfaceMenuDetails::empty(),
     };
+    #[cfg(feature = "lora")]
     add_lora_spectrum(&mut details, selected_card, lora_spectrum);
     add_manifold_pressure(&mut details, selected_card);
     details

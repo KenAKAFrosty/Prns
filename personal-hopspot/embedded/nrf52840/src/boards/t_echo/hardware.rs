@@ -26,7 +26,7 @@ type TechoSpiDevice = ExclusiveDevice<Spim<'static>, Output<'static>, Delay>;
 pub(crate) type TechoRadio =
     Sx126x<TechoSpiDevice, Input<'static>, Input<'static>, Output<'static>, Delay>;
 
-pub(crate) type TechoEink = crate::ssd1681::Ssd1681<
+pub(crate) type TechoEink = super::ssd1681::Ssd1681<
     TechoSpiDevice,
     Input<'static>,
     Output<'static>,
@@ -220,7 +220,7 @@ impl TechoDeferredHardware {
         let eink_spi = ExclusiveDevice::new(eink_bus, eink_cs, Delay).unwrap();
         let panel = Display1in54::default();
         let eink =
-            crate::ssd1681::Ssd1681::new(eink_spi, eink_busy, eink_dc, eink_reset, Delay).ok();
+            super::ssd1681::Ssd1681::new(eink_spi, eink_busy, eink_dc, eink_reset, Delay).ok();
 
         TechoRuntimeHardware {
             radio,
