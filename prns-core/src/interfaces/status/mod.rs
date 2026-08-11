@@ -16,6 +16,22 @@ pub struct TransferRates {
     pub tx_bps: u32,
 }
 
+/// Frame-level receive accounting, for telling "nothing arrived" apart from "something arrived
+/// and was thrown away". Byte counters cannot make that distinction: a frame discarded before
+/// reassembly still moves `rx_bytes`, so a silent decode failure and a healthy link look alike
+/// from outside.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FrameAccounting {
+    /// Frames taken off the medium, after any self-addressed echo is filtered out.
+    pub frames_in: u64,
+    /// Frames whose delivery header did not parse, so no sender could be attributed.
+    pub malformed: u64,
+    /// Frames that parsed but whose stream segment failed to decode. Discarded at resync.
+    pub undecodable: u64,
+    /// Wire frames fully reassembled and handed upward to the engine.
+    pub delivered: u64,
+}
+
 pub trait InterfaceStatus {
     fn id(&self) -> InterfaceId;
     fn connection(&self) -> ConnectionState;
@@ -30,6 +46,13 @@ pub trait InterfaceStatus {
     }
 
     fn transfer_rates(&self) -> Option<TransferRates> {
+        None
+    }
+
+    /// Frame-level receive accounting, when the family keeps it. `None` means the family does
+    /// not account for frames, which a caller must not read as all-zero: unaccounted and
+    /// "nothing arrived" are different answers.
+    fn frame_accounting(&self) -> Option<FrameAccounting> {
         None
     }
 }
@@ -142,5 +165,9 @@ impl<T: InterfaceStatus + ?Sized> InterfaceStatus for &T {
 
     fn transfer_rates(&self) -> Option<TransferRates> {
         (**self).transfer_rates()
+    }
+
+    fn frame_accounting(&self) -> Option<FrameAccounting> {
+        (**self).frame_accounting()
     }
 }
