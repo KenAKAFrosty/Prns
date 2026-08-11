@@ -3,7 +3,8 @@ use embassy_sync::signal::Signal;
 use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 use crate::interfaces::{
-    AirtimeUtilization, ConnectionState, InterfaceId, InterfaceStatus, TransferRates,
+    AirtimeUtilization, ConnectionState, FrameAccounting, InterfaceId, InterfaceStatus,
+    TransferRates,
 };
 
 pub struct EmbassyInterfaceStatus {
@@ -15,6 +16,11 @@ pub struct EmbassyInterfaceStatus {
     transfer_rates: AtomicU64,
     enabled: AtomicBool,
     enabled_changed: Signal<CriticalSectionRawMutex, bool>,
+    accounts_frames: AtomicBool,
+    frames_in: AtomicU64,
+    frames_malformed: AtomicU64,
+    frames_undecodable: AtomicU64,
+    frames_delivered: AtomicU64,
 }
 
 const AIRTIME_UNPUBLISHED: u32 = u32::MAX;
@@ -32,6 +38,11 @@ impl EmbassyInterfaceStatus {
             transfer_rates: AtomicU64::new(RATES_UNPUBLISHED),
             enabled: AtomicBool::new(true),
             enabled_changed: Signal::new(),
+            accounts_frames: AtomicBool::new(false),
+            frames_in: AtomicU64::new(0),
+            frames_malformed: AtomicU64::new(0),
+            frames_undecodable: AtomicU64::new(0),
+            frames_delivered: AtomicU64::new(0),
         }
     }
 
@@ -105,6 +116,29 @@ impl EmbassyInterfaceStatus {
         let packed = (u64::from(rates.rx_bps) << 32) | u64::from(rates.tx_bps);
         self.transfer_rates.store(packed, Ordering::Relaxed);
     }
+
+    /// Declare that this interface counts frames, so a reader can tell an idle accounted link
+    /// (all-zero) from a family that never counted (`None`). A driver calls this once at bring-up,
+    /// before the first frame, and the counters publish from then on.
+    pub fn account_frames(&self) {
+        self.accounts_frames.store(true, Ordering::Relaxed);
+    }
+
+    pub fn count_frame_in(&self) {
+        self.frames_in.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn count_frame_malformed(&self) {
+        self.frames_malformed.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn count_frame_undecodable(&self) {
+        self.frames_undecodable.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn count_frame_delivered(&self) {
+        self.frames_delivered.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 impl InterfaceStatus for EmbassyInterfaceStatus {
@@ -148,6 +182,18 @@ impl InterfaceStatus for EmbassyInterfaceStatus {
             tx_bps: packed as u32,
         })
     }
+
+    fn frame_accounting(&self) -> Option<FrameAccounting> {
+        if !self.accounts_frames.load(Ordering::Relaxed) {
+            return None;
+        }
+        Some(FrameAccounting {
+            frames_in: self.frames_in.load(Ordering::Relaxed),
+            malformed: self.frames_malformed.load(Ordering::Relaxed),
+            undecodable: self.frames_undecodable.load(Ordering::Relaxed),
+            delivered: self.frames_delivered.load(Ordering::Relaxed),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -175,5 +221,35 @@ mod tests {
         assert!(!status.is_enabled());
         status.enable();
         assert!(status.is_enabled());
+    }
+
+    #[test]
+    fn frame_accounting_stays_unpublished_until_declared() {
+        let status =
+            EmbassyInterfaceStatus::new(InterfaceId::new([0x5A; 8]), ConnectionState::Connected);
+
+        // Counting before declaring must not publish: a family that never declares stays None,
+        // and None must remain distinguishable from an idle link's all-zero.
+        status.count_frame_in();
+        assert_eq!(status.frame_accounting(), None);
+
+        status.account_frames();
+        let counts = status.frame_accounting().unwrap();
+        assert_eq!(counts.frames_in, 1);
+
+        status.count_frame_in();
+        status.count_frame_malformed();
+        status.count_frame_undecodable();
+        status.count_frame_delivered();
+        let counts = status.frame_accounting().unwrap();
+        assert_eq!(
+            (
+                counts.frames_in,
+                counts.malformed,
+                counts.undecodable,
+                counts.delivered
+            ),
+            (2, 1, 1, 1)
+        );
     }
 }
