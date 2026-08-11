@@ -944,6 +944,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         let lora_run = lora.run(lora_seam);
         #[cfg(not(feature = "lora"))]
         let lora_run = async {};
+        #[cfg(feature = "esp-now")]
         let espnow_run = async {
             if let Some((interface, seam)) = espnow {
                 interface.run(seam).await;
