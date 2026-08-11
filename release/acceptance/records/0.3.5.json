@@ -1,0 +1,18 @@
+{
+  "candidate": {
+    "channel": "stable",
+    "manifest_sha256": "15957baa675b67eac92d792cf89517eb1c945bc959b85458772307409f675b58",
+    "manifest_signature_sha256": "5f739e3714123ee41c1861fce188508ee095659e7504f83ef5a1214171ce1e07",
+    "prerelease_published_at": "2026-08-11T00:41:07Z",
+    "signed_candidate_sha256": "8450fbe8aa8886cce7fbcbe27da679c0302acbb96e0739278d1fd76fba3e5ace",
+    "signing_key_id": "1BF5C4D8B140811A",
+    "source_commit": "d6164aaf97a5ccd55aa46c4d7b9136b01807cf92",
+    "version": "0.3.5"
+  },
+  "maintainer_override": {
+    "approved_at": "2026-08-11T00:43:05Z",
+    "approved_by": "github:KenAKAFrosty",
+    "basis": "Pre-1.0 maintenance release approved by the release owner for the exact public 0.3.5 candidate. Full post-publication physical board qualification is deliberately deferred to re-attestation and is not a gate for this mechanical patch release; no synthetic board evidence is claimed."
+  },
+  "schema": 4
+}
