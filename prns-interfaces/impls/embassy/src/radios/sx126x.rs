@@ -8,11 +8,12 @@ use embedded_hal_async::delay::DelayNs;
 use embedded_hal_async::digital::Wait;
 use embedded_hal_async::spi::{Operation, SpiDevice};
 
-use prns_core::interfaces::{PacketPhyStats, RssiDbm, SnrQuarterDb};
 use prns_core::interfaces::lora::{
-    CodingRate as ProfileCodingRate, LoraBandwidth as ProfileBandwidth, Modulation as ProfileModulation,
-    RadioProfile, RNODE_LORA_SYNC_WORD, SpreadingFactor as ProfileSpreadingFactor,
+    CodingRate as ProfileCodingRate, LoraBandwidth as ProfileBandwidth,
+    Modulation as ProfileModulation, RadioProfile, SpreadingFactor as ProfileSpreadingFactor,
+    RNODE_LORA_SYNC_WORD,
 };
+use prns_core::interfaces::{PacketPhyStats, RssiDbm, SnrQuarterDb};
 
 use crate::radios::Radio;
 

@@ -86,9 +86,8 @@ impl T1000eStorage {
         );
 }
 
-const _: () = assert!(
-    T1000eStorage::MAX_COMPACTED_FLASH_JOURNAL_BYTES <= super::persistence::ARENA_BYTES
-);
+const _: () =
+    assert!(T1000eStorage::MAX_COMPACTED_FLASH_JOURNAL_BYTES <= super::persistence::ARENA_BYTES);
 const _: () = assert!(T1000eStorage::LINK_SESSIONS > T1000eStorage::CHANNELS);
 const _: () = assert!(T1000eStorage::RESOURCE_ASSEMBLIES == 1);
 

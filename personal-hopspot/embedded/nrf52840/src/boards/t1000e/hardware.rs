@@ -53,7 +53,10 @@ impl T1000eEink {
     pub(crate) fn full_update(&mut self, _frame: &[u8]) -> Result<(), core::convert::Infallible> {
         Ok(())
     }
-    pub(crate) fn partial_update(&mut self, _frame: &[u8]) -> Result<(), core::convert::Infallible> {
+    pub(crate) fn partial_update(
+        &mut self,
+        _frame: &[u8],
+    ) -> Result<(), core::convert::Infallible> {
         Ok(())
     }
 }

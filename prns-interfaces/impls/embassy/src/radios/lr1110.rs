@@ -23,11 +23,12 @@ use embedded_hal_async::delay::DelayNs;
 use embedded_hal_async::digital::Wait;
 use embedded_hal_async::spi::{Operation, SpiDevice};
 
-use prns_core::interfaces::{PacketPhyStats, RssiDbm, SnrQuarterDb};
 use prns_core::interfaces::lora::{
-    CodingRate as ProfileCodingRate, LoraBandwidth as ProfileBandwidth, Modulation as ProfileModulation,
-    RadioProfile, RNODE_LORA_SYNC_WORD, SpreadingFactor as ProfileSpreadingFactor,
+    CodingRate as ProfileCodingRate, LoraBandwidth as ProfileBandwidth,
+    Modulation as ProfileModulation, RadioProfile, SpreadingFactor as ProfileSpreadingFactor,
+    RNODE_LORA_SYNC_WORD,
 };
+use prns_core::interfaces::{PacketPhyStats, RssiDbm, SnrQuarterDb};
 
 use crate::radios::Radio;
 
@@ -318,7 +319,14 @@ where
     RST: OutputPin,
     DLY: DelayNs,
 {
-    pub fn new(spi: SPI, busy: BUSY, dio1: DIO1, reset: RST, delay: DLY, config: BoardConfig) -> Self {
+    pub fn new(
+        spi: SPI,
+        busy: BUSY,
+        dio1: DIO1,
+        reset: RST,
+        delay: DLY,
+        config: BoardConfig,
+    ) -> Self {
         Self {
             spi,
             busy,
@@ -501,8 +509,11 @@ where
     async fn wait_for_lr1110(&mut self) -> Result<(), Error> {
         let mut version = [0u8; 4]; // [hw, type, fw_hi, fw_lo]
         for _ in 0..200 {
-            self.read_command(&[(op::GET_VERSION >> 8) as u8, op::GET_VERSION as u8], &mut version)
-                .await?;
+            self.read_command(
+                &[(op::GET_VERSION >> 8) as u8, op::GET_VERSION as u8],
+                &mut version,
+            )
+            .await?;
             if version[1] == LR1110_VERSION_TYPE {
                 return Ok(());
             }
@@ -560,14 +571,8 @@ where
         self.clear_irq(irq::LORA_ROUTE | irq::TIMEOUT).await?;
         // SetTx with timeout 0 = single shot, no chip timeout — the TxDone wait
         // is bounded here ([`TX_DONE_TIMEOUT_MS`]).
-        self.command(&[
-            (op::SET_TX >> 8) as u8,
-            op::SET_TX as u8,
-            0x00,
-            0x00,
-            0x00,
-        ])
-        .await?;
+        self.command(&[(op::SET_TX >> 8) as u8, op::SET_TX as u8, 0x00, 0x00, 0x00])
+            .await?;
         {
             let Self { dio1, delay, .. } = self;
             deadline(
@@ -593,14 +598,8 @@ where
         self.standby_rc().await?;
         self.set_packet_params(0xFF).await?;
         self.clear_irq(irq::LORA_ROUTE | irq::TIMEOUT).await?;
-        self.command(&[
-            (op::SET_RX >> 8) as u8,
-            op::SET_RX as u8,
-            0xFF,
-            0xFF,
-            0xFF,
-        ])
-        .await
+        self.command(&[(op::SET_RX >> 8) as u8, op::SET_RX as u8, 0xFF, 0xFF, 0xFF])
+            .await
     }
 
     /// Wait for one receive-side IRQ event on an already
@@ -633,7 +632,10 @@ where
             IrqEventKind::Frame => {
                 let mut status = [0u8; 2]; // [pld_len_in_bytes, buffer_start_pointer]
                 self.read_command(
-                    &[(op::GET_RX_BUFFER_STATUS >> 8) as u8, op::GET_RX_BUFFER_STATUS as u8],
+                    &[
+                        (op::GET_RX_BUFFER_STATUS >> 8) as u8,
+                        op::GET_RX_BUFFER_STATUS as u8,
+                    ],
                     &mut status,
                 )
                 .await?;
@@ -706,7 +708,10 @@ where
             &mut rssi,
         )
         .await?;
-        Ok(antenna_referred_rssi_dbm(rssi[0], self.config.external_rx_gain_db))
+        Ok(antenna_referred_rssi_dbm(
+            rssi[0],
+            self.config.external_rx_gain_db,
+        ))
     }
 
     async fn standby_rc(&mut self) -> Result<(), Error> {
@@ -731,13 +736,13 @@ where
             (op::SET_DIO_AS_RF_SWITCH >> 8) as u8,
             op::SET_DIO_AS_RF_SWITCH as u8,
             RFSW0 | RFSW1 | RFSW2 | RFSW3, // enable
-            0,                              // standby
-            RFSW0,                          // rx
-            RFSW0 | RFSW1,                  // tx
-            RFSW1,                          // tx_hp
-            0,                              // tx_hf
-            RFSW2,                          // gnss
-            RFSW3,                          // wifi
+            0,                             // standby
+            RFSW0,                         // rx
+            RFSW0 | RFSW1,                 // tx
+            RFSW1,                         // tx_hp
+            0,                             // tx_hf
+            RFSW2,                         // gnss
+            RFSW3,                         // wifi
         ])
         .await
     }

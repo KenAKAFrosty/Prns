@@ -10,8 +10,9 @@ use personal_rns::interfaces::InterfaceId;
 pub(crate) use display::{frame_hash, EinkScreen};
 pub(crate) use hardware::{
     T1000eBoard as Board, T1000eControls as Controls, T1000eDisplayHardware as DisplayHardware,
-    T1000eEarlyHardware as EarlyHardware, T1000eFaceHardware as FaceHardware, T1000eRadio as LoraRadio,
-    T1000eRuntimeHardware as RuntimeHardware, T1000eUsbHardware as UsbHardware,
+    T1000eEarlyHardware as EarlyHardware, T1000eFaceHardware as FaceHardware,
+    T1000eRadio as LoraRadio, T1000eRuntimeHardware as RuntimeHardware,
+    T1000eUsbHardware as UsbHardware,
 };
 pub(crate) use identity::{
     bootstrap_ble_identity, bootstrap_node_identity, startup_notice as identity_startup_notice,

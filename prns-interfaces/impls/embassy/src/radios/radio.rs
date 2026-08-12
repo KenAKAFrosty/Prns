@@ -42,6 +42,13 @@ pub enum RadioEvent {
 /// `Config` and `Error` are associated types because each chip speaks its own
 /// register/config vocabulary and reports its own fault set; `RadioEvent` is
 /// shared so the interface state machine need not be generic over the event.
+//
+// `async fn` in a trait hides auto-trait bounds (notably `Send`), which rustc
+// flags. This trait is consumed only by the single-threaded embassy executor in
+// `LoRaInterface` — there is no cross-thread handoff of the future — so a `Send`
+// bound would be wrong, not missing. Allow the lint at the trait rather than
+// rewriting every method as `-> impl Future<...>`.
+#[allow(async_fn_in_trait)]
 pub trait Radio {
     /// Chip-specific radio configuration (frequency, modulation, packet shape,
     /// TX power, sync word).

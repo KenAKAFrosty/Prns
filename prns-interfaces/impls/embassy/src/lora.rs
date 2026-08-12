@@ -62,9 +62,9 @@ use prns_runtime::manifold::interface_seam::{
 };
 use prns_runtime::manifold::throughput::ThroughputLedger;
 
-use crate::radios::{Radio, RadioEvent};
 #[cfg(test)]
 use crate::radios::ReceivedAirFrame;
+use crate::radios::{Radio, RadioEvent};
 
 mod airtime_quantum;
 mod channel_access;
