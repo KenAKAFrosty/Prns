@@ -49,6 +49,32 @@ When adapting the recipe to a new board, decide these explicitly:
 
 Start from the nearest shipped board instead of copying the native two-node example and guessing at these obligations.
 
+## A headless nRF52840 reference
+
+The Heltec Mesh Node T114 Rev. 2.x target is the small nRF52840 counterpart to
+the T-Echo. It uses the same bounded node recipe and SX1262 interface, but owns
+only two lanes: LoRa and USB Auto. It does not start the resident SoftDevice,
+compile the display surface, or persist learned routing state. It does persist
+its transport and destination identity in a board-owned flash page that sparse
+bootloader updates preserve.
+
+Build it from `personal-hopspot/embedded/nrf52840/`:
+
+```console
+cargo build --release --locked --no-default-features \
+  --features board-t114 --bin heltec-t114
+```
+
+`src/boards/t114/` owns clocks, pins, hardware SPI, USB, radio reset, identity,
+and fixed storage. `src/runtime/t114.rs` owns the two interface lanes and node
+recipe. `memory-t114.x` owns the recovery-compatible flash and RAM bounds. The
+target is hardware-qualified for USB Auto plus bidirectional single and split
+RNode air framing against stock RNS 1.4.2. This is not the separate multi-node
+CSMA/collision qualification. The board is also not yet a public signed-flasher
+target; adding it to that catalog requires the normal release acceptance roster
+and recovery receipts. The exact hardware boundary is recorded in the
+[LoRa qualification](../validation/lora-csma-qualification.md).
+
 ## Flash only when you mean to
 
 Building does not require a board. Flashing does, and writes the selected device. Install the pinned flasher, connect a XIAO ESP32-C6, verify the target, then opt into the flash command:
@@ -76,7 +102,8 @@ bash validation/platforms/no-std-esp-build.sh
 (The last rung is a bash script; on Windows run it from Git Bash, which
 installs with Git for Windows.)
 
-The Linux `embedded-builds` validation suite adds the Embassy interface cross-builds and T-Echo firmware:
+The Linux `embedded-builds` validation suite adds the Embassy interface
+cross-builds plus the T-Echo and T114 firmware:
 
 ```console
 python3 validation/run.py run --suite embedded-builds --platform linux

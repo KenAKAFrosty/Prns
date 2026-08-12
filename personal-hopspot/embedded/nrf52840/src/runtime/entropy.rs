@@ -1,13 +1,12 @@
 use core::cell::RefCell;
 
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use rand_chacha::rand_core::{RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 
-use super::node::Mtx;
-
 pub(super) const RUNTIME_ENTROPY_SEED_LEN: usize = 32;
-static RUNTIME_ENTROPY: BlockingMutex<Mtx, RefCell<Option<ChaCha20Rng>>> =
+static RUNTIME_ENTROPY: BlockingMutex<CriticalSectionRawMutex, RefCell<Option<ChaCha20Rng>>> =
     BlockingMutex::new(RefCell::new(None));
 
 /// Seed the runtime CSPRNG from an independent, full-width hardware RNG draw before SoftDevice takes ownership of the nRF RNG peripheral.

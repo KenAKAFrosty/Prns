@@ -59,6 +59,23 @@ T-Echo firmware:
 
     ./tools/prns device techo flash
 
+Heltec Mesh Node T114 Rev. 2.x firmware, from `embedded/nrf52840/`:
+
+    cargo build --release --locked --no-default-features --features board-t114 --bin heltec-t114
+
+The T114 target is headless and exposes LoRa plus USB Auto. It preserves the
+resident Adafruit bootloader and SoftDevice recovery image, starts at
+`0x26000`, and keeps its node identity in the dedicated page at `0xEB000`.
+The public signed-flasher catalog does not carry the T114 yet. A developer UF2
+can be produced with the repository's `tools/device/bin2uf2.py` using base
+address `0x26000` and family id `0xADA52840`, then copied to the `HT-n5262`
+bootloader volume after a double reset.
+
+The developer target has a physical USB and bidirectional RNode-framing receipt,
+including maximum first fragments and stock RNS 1.4.2 signature validation. See
+the [LoRa qualification](../validation/lora-csma-qualification.md) for the proven
+boundary and remaining CSMA/collision work.
+
 ## Embedded flash-layout upgrade
 
 LoRa-capable firmware persists the selected radio profile in a dedicated two-page store. Reset records a durable choice to follow the firmware default, while an explicitly saved profile remains fixed across updates. Sparse firmware updates preserve the profile store; a full-chip erase clears it.

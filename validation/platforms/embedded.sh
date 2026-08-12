@@ -18,6 +18,7 @@ cargo build \
 (
     cd personal-hopspot/embedded/nrf52840
     cargo build --release --locked
+    cargo build --release --locked --no-default-features --features board-t114 --bin heltec-t114
 )
 
 echo "EMBEDDED_BUILD_GATE_OK"

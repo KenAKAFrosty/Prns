@@ -2,7 +2,7 @@ mod device;
 
 pub use device::{
     WebUsbAutoClass, WebUsbAutoError, WebUsbAutoRx, WebUsbAutoState, WebUsbAutoTx,
-    WEBUSB_AUTO_PACKET_SIZE,
+    WEBUSB_AUTO_CONTROL_BUFFER_BYTES, WEBUSB_AUTO_MSOS_DESCRIPTOR_BYTES, WEBUSB_AUTO_PACKET_SIZE,
 };
 
 use embassy_futures::select::{select, select3, Either, Either3};

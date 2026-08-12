@@ -4,14 +4,15 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 publish = false
-description = "LilyGo T-Echo (nRF52840 + SX1262 + 200x200 SSD1681 e-ink) Personal Hopspot face: drives the Personal Reticulum engine on bare metal and renders the shared Hopspot screen on e-ink."
+description = "Personal Hopspot firmware for supported nRF52840 and SX1262 boards."
 
 [workspace]
 
 [features]
 default = ["board-t-echo"]
-board-t-echo = []
+board-t-echo = ["dep:nrf-softdevice"]
 board-t096 = []
+board-t114 = ["cortex-m/critical-section-single-core"]
 
 [lib]
 name = "personal_hopspot_nrf52840"
@@ -26,6 +27,11 @@ required-features = ["board-t-echo"]
 name = "t096"
 path = "src/bin/t096.rs"
 required-features = ["board-t096"]
+
+[[bin]]
+name = "heltec-t114"
+path = "src/t114_main.rs"
+required-features = ["board-t114"]
 
 [dependencies]
 personal-rns = { path = "../../../personal-rns", default-features = false, features = ["embassy-host", "flash", "lora", "bluetooth-auto", "usb"] }
@@ -56,7 +62,7 @@ embedded-io-async = "0.6"
 # evt-max-size-512: our att_mtu is 247, so a single GATT write/notification event reaches ~258 bytes —
 # past the 128-byte default and the 256 tier. Without this the SoftDevice's event read overflows and
 # nrf-softdevice panics ("BLE_EVT_MAX_SIZE is too low") the instant a peer sends a full-MTU payload.
-nrf-softdevice = { git = "https://github.com/embassy-rs/nrf-softdevice", rev = "47d6121c6e823120e8b883a7ac75f44ce7daa3aa", features = ["nrf52840", "s140", "ble-central", "ble-peripheral", "ble-gatt-server", "ble-gatt-client", "ble-l2cap", "ble-l2cap-credit-workaround", "evt-max-size-512", "critical-section-impl"] }
+nrf-softdevice = { git = "https://github.com/embassy-rs/nrf-softdevice", rev = "47d6121c6e823120e8b883a7ac75f44ce7daa3aa", optional = true, features = ["nrf52840", "s140", "ble-central", "ble-peripheral", "ble-gatt-server", "ble-gatt-client", "ble-l2cap", "ble-l2cap-credit-workaround", "evt-max-size-512", "critical-section-impl"] }
 # nrf-softdevice's GATT characteristics use heapless 0.9; the rest of the firmware is on 0.8.
 heapless09 = { package = "heapless", version = "0.9" }
 rand_chacha = { version = "0.9", default-features = false }

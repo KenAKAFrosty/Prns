@@ -302,6 +302,9 @@ jobs:
       - name: t-echo firmware — cross-build (nRF52840 / thumbv7em)
         run: cargo build --release --locked
         working-directory: personal-hopspot/embedded/nrf52840
+      - name: heltec t114 firmware — cross-build (nRF52840 / thumbv7em)
+        run: cargo build --release --locked --no-default-features --features board-t114 --bin heltec-t114
+        working-directory: personal-hopspot/embedded/nrf52840
 
   android-service:
     # Android is now more than a foreground Activity shell: the Hopspot app packages a foreground

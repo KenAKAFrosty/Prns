@@ -39,9 +39,42 @@ storage; the linked growth is code and read-only data only.
 - `release.firmware.build` produces final Heltec V4 and T-Echo shipping
   artifacts.
 
-## Hardware qualification
+## Hardware framing qualification
 
-Not yet run. No serial or USB radios were attached during this qualification,
-so bidirectional PRNS/RNode framing, measured over-the-air burst duration,
-airtime shares, collision behavior, and physical queue drainage still require
-two PRNS radios and one matching-profile RNode.
+The scheduler qualification above still has no collision or airtime-share
+receipt. A separate framing receipt ran on 2026-08-10 for the Heltec Mesh Node
+T114 Rev. 2.x port, using the worktree based on `72b6b30d` and the
+`prns-t114-hopspot-v24` application:
+
+- T114 production USB enumerated as `1209:0001`, product
+  `Personal Hopspot (Heltec T114)`, serial `PERSONAL-RNS-T114-HOP`, and completed
+  the USB Auto `Hello`/`HelloAck` exchange with node tag `t114-usb`.
+- Two Heltec V4 RNodes running firmware 1.86 supplied the RF oracle at 915 MHz,
+  250 kHz bandwidth, SF9, CR4:5, and an 18-symbol preamble. The inspection
+  harness explicitly selected promiscuous mode to expose the one-byte RNode air
+  header, stripped or reassembled that framing, then handed the packet to stock
+  RNS 1.4.2 for signature and announce validation.
+- V4 to T114: a 214-byte signed announce forced into 100/114-byte split
+  payloads reassembled and crossed USB. A second 354-byte signed announce used
+  the canonical 254/100-byte split and crossed USB as one 370-byte transported
+  announce.
+- T114 to V4: a 358-byte signed announce injected over USB became a 374-byte
+  transported announce. The V4 exposed two frames with the same `0x01` header
+  and 254/120-byte payloads; stock RNS 1.4.2 reassembled them, validated the
+  signature, and delivered the exact 194-byte application data.
+- Without rebooting after that split transmission, the T114 received and
+  forwarded both a fresh single frame and a fresh canonical 254/100-byte split.
+- The T114 also passed single-frame signed announces in both directions. The
+  stateful receipt found three shared SX1262 driver defects: packet-parameter
+  writes reset the IQ-polarity errata register; this receiver required an
+  explicit RX re-arm after `RxDone`; and RX re-entry after transmit had to wait
+  for DIO1 to drop after clearing `TxDone`. All corrections live at the shared
+  radio boundary rather than in the board module.
+
+The tested UF2 SHA-256 is
+`aade7577bf2f6412a8df3700638421b21c52db532dcd7ca8cd19e4690e219990`.
+This proves bidirectional single and split RNode air framing, USB carriage, and
+stock-RNS packet validation. Because the V4s were used as promiscuous framing
+oracles, it does not claim stock RNode normal-mode end to end. Measured
+contention fairness, collision behavior, and physical multi-node queue drainage
+remain open for the airtime-quantum scheduler.
