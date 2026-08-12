@@ -47,6 +47,17 @@ pub const T_ECHO_JOURNAL_LAYOUT: FlashJournalLayout = FlashJournalLayout::new(
     ],
 );
 
+// Seeed SenseCAP Wio Tracker T1000-E: same nRF52840 + S140 SoftDevice + memory.x
+// as the T-Echo, so the on-chip flash partitioning is byte-identical. The board
+// references these aliases so the intent ("T1000-E layout") reads clearly at the
+// call site without implying a separate layout was laid down.
+#[allow(dead_code)] // consumed by the t1000e board (personal-hopspot nrf52840 face)
+pub const T1000E_RADIO_PROFILE_PAGES: [u32; 2] = T_ECHO_RADIO_PROFILE_PAGES;
+#[allow(dead_code)] // consumed by the t1000e board (personal-hopspot nrf52840 face)
+pub const T1000E_MIN_ARENA_BYTES: usize = T_ECHO_MIN_ARENA_BYTES;
+#[allow(dead_code)] // consumed by the t1000e board (personal-hopspot nrf52840 face)
+pub const T1000E_JOURNAL_LAYOUT: FlashJournalLayout = T_ECHO_JOURNAL_LAYOUT;
+
 const _: () = {
     const PAGE: u32 = HOPSPOT_FLASH_PAGE_BYTES as u32;
     assert!(S3_8_MIB_FLASH_LAYOUT.factory_end == S3_8_MIB_FLASH_LAYOUT.radio_profile_pages[0]);

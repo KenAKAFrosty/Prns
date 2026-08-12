@@ -12,6 +12,11 @@ description = "LilyGo T-Echo (nRF52840 + SX1262 + 200x200 SSD1681 e-ink) Persona
 default = ["board-t-echo"]
 board-t-echo = []
 board-t096 = []
+# Seeed SenseCAP Wio Tracker T1000-E: nRF52840 + Semtech LR1110, no display.
+# The shared nrf52840 runtime still links the display deps (the T-Echo face uses
+# them and the runtime is display-coupled); the T1000-E board returns the
+# `None`/Unavailable display path so the display code is inert at runtime.
+board-t1000e = []
 
 [lib]
 name = "personal_hopspot_nrf52840"
@@ -26,6 +31,11 @@ required-features = ["board-t-echo"]
 name = "t096"
 path = "src/bin/t096.rs"
 required-features = ["board-t096"]
+
+[[bin]]
+name = "t1000e"
+path = "src/bin/t1000e.rs"
+required-features = ["board-t1000e"]
 
 [dependencies]
 personal-rns = { path = "../../../personal-rns", default-features = false, features = ["embassy-host", "flash", "lora", "bluetooth-auto", "usb"] }

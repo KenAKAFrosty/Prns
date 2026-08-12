@@ -198,6 +198,16 @@ pub async fn run(spawner: Spawner) -> ! {
     static LORA_TX_QUEUE: ConstStaticCell<[u8; LORA_TX_QUEUE_BYTES]> =
         ConstStaticCell::new([0; LORA_TX_QUEUE_BYTES]);
     let lora_tx_queue = LORA_TX_QUEUE.take();
+    #[cfg(feature = "board-t1000e")]
+    {
+        // T1000-E bring-up boundary: `LoRaInterface` is hard-wired to the SX1262;
+        // the T1000-E's LR1110 can't be wired into `LoRaInterfaceInput` until
+        // `personal_rns::lora` is generalized over a `Radio` trait. The LR1110 driver
+        // (`personal_rns::radios::lr1110`) is complete; only this final seam is gated.
+        // See T1000E_HOPSPOT_PORT.md.
+        compile_error!("T1000-E bring-up: LoRaInterface is hard-wired to Sx126x; Lr1110 integration pending a Radio trait generalization of personal_rns::lora. See T1000E_HOPSPOT_PORT.md.");
+    }
+    #[cfg(not(feature = "board-t1000e"))]
     let lora = match LoRaInterface::new(LoRaInterfaceInput {
         radio,
         profile: lora_profile,
@@ -225,6 +235,7 @@ pub async fn run(spawner: Spawner) -> ! {
         host_present: || true,
     });
 
+    #[cfg(not(feature = "board-t1000e"))]
     let lora_lane = manifold_lanes
         .claim_interface(&LORA_MANIFOLD_LANE, lora.descriptor())
         .expect("LoRa lane is available");
@@ -267,6 +278,7 @@ pub async fn run(spawner: Spawner) -> ! {
     static PERSISTENCE: StaticCell<board::Persistence> = StaticCell::new();
     let persistence = PERSISTENCE.init(persistence);
     spawner.spawn(manifold_task(node, persistence).expect("manifold task fits"));
+    #[cfg(not(feature = "board-t1000e"))]
     let lora_seam = lora_lane.into_seam(NOTIFY.sender(), runtime_entropy);
 
     let usb_seam = usb_lane.into_seam(NOTIFY.sender(), runtime_entropy);
@@ -601,7 +613,20 @@ pub async fn run(spawner: Spawner) -> ! {
             None => core::future::pending().await,
         }
     };
+    #[cfg(not(feature = "board-t1000e"))]
     let mesh = join(lora.run(lora_seam), render);
+    #[cfg(not(feature = "board-t1000e"))]
     join3(io, ble_plane, mesh).await;
+    #[cfg(feature = "board-t1000e")]
+    {
+        // T1000-E bring-up: no LoRa plane (see compile_error! above). The build is
+        // halted there; this tail only exists so `run` shape-checks `-> !` once the
+        // LoRaInterface generalization lands and the compile_error! is removed.
+        drop(io);
+        drop(ble_plane);
+        drop(render);
+        core::future::pending().await
+    }
+    #[cfg(not(feature = "board-t1000e"))]
     core::future::pending().await
 }
