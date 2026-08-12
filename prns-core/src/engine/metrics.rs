@@ -249,7 +249,7 @@ pub enum IgnoreReasonKind {
 }
 
 impl IgnoreReasonKind {
-    pub const ALL: [Self; 26] = [
+    pub const ALL: [Self; 27] = [
         Self::Consumed,
         Self::Malformed,
         Self::UnhandledContext,
@@ -276,6 +276,7 @@ impl IgnoreReasonKind {
         Self::StrategyDeclined,
         Self::UnmatchedResponse,
         Self::IfacRefused,
+        Self::RequestTooLarge,
     ];
 
     const fn index(self) -> usize {
