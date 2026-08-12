@@ -499,7 +499,7 @@ where
         self.tx_staging[..len].copy_from_slice(payload);
 
         self.standby().await?;
-        self.set_payload_length(len as u8).await?;
+        self.set_packet_params(len as u8).await?;
         self.write_tx_payload(len).await?;
         self.clear_irq(irq::ALL).await?;
         // SetTx with timeout 0 = single shot, no chip timeout — so the TxDone wait is bounded here ([`TX_DONE_TIMEOUT_MS`]); a TX that never completes must not trap the radio task forever.
@@ -517,28 +517,51 @@ where
         }
         let flags = self.irq_status().await?;
         self.clear_irq(flags).await?;
+        // DIO1 falls asynchronously after ClearIrqStatus. Do not hand the
+        // radio back to the RX path while the level-triggered wait can still
+        // consume the stale TxDone assertion as a receive event.
+        {
+            let Self { dio1, delay, .. } = self;
+            deadline(
+                dio1.wait_for_low(),
+                delay,
+                BUSY_TIMEOUT_MS,
+                Error::Dio1,
+                Error::Timeout,
+            )
+            .await?;
+        }
         if flags & irq::TIMEOUT != 0 {
             return Err(Error::Timeout);
         }
         Ok(())
     }
 
-    /// Arm continuous RX: restamp the RX-side max payload length, clear stale IRQs, enter SetRx continuous. [`read_frame`](Self::read_frame) waits WITHOUT re-arming, so a host-side select that cancels the read mid-listen leaves the radio receiving (the RxDone IRQ latches) rather than guillotining an in-flight multi-hundred-ms LoRa frame.
+    /// Arm continuous RX: restamp the RX-side max payload length, clear stale
+    /// IRQs, and enter `SetRx` continuous. A host-side select that cancels
+    /// [`read_event`](Self::read_event) mid-listen leaves the radio receiving;
+    /// after `RxDone`, `read_event` explicitly restores this state.
     pub async fn arm_rx(&mut self) -> Result<(), Error> {
         self.standby().await?;
-        self.set_payload_length(0xFF).await?;
+        self.set_packet_params(0xFF).await?;
         self.clear_irq(irq::ALL).await?;
         // SetRx 0xFFFFFF = continuous.
         self.command(&[op::SET_RX, 0xFF, 0xFF, 0xFF]).await
     }
 
     /// Wait for one receive-side IRQ event on an already
-    /// [`arm_rx`](Self::arm_rx)'d radio. The radio remains in continuous RX.
+    /// [`arm_rx`](Self::arm_rx)'d radio. A completed receive is re-armed before
+    /// returning so back-to-back RNode split frames do not leave the SX126x in
+    /// standby on boards whose silicon exits continuous RX after `RxDone`.
     pub async fn read_event(&mut self, buf: &mut [u8]) -> Result<RadioEvent, Error> {
         self.dio1.wait_for_high().await.map_err(|_| Error::Dio1)?;
         let flags = self.irq_status().await?;
         self.clear_irq(flags).await?;
-        self.decode_radio_event(flags, buf).await
+        let event = self.decode_radio_event(flags, buf).await?;
+        if matches!(event, RadioEvent::Frame(_) | RadioEvent::CrcError) {
+            self.arm_rx().await?;
+        }
+        Ok(event)
     }
 
     /// Read an already-latched IRQ event without waiting for DIO1. This is the
@@ -665,7 +688,7 @@ where
         }
     }
 
-    async fn set_payload_length(&mut self, payload_len: u8) -> Result<(), Error> {
+    async fn set_packet_params(&mut self, payload_len: u8) -> Result<(), Error> {
         let pre = self.packet.preamble_symbols.to_be_bytes();
         let header = u8::from(!self.packet.explicit_header);
         let crc = u8::from(self.packet.crc_on);
@@ -679,12 +702,9 @@ where
             crc,
             iq,
         ])
-        .await
-    }
-
-    async fn set_packet_params(&mut self, payload_len: u8) -> Result<(), Error> {
-        self.set_payload_length(payload_len).await?;
-        // IQPolarity errata (DS 15.4): set bit 2 unless inverted IQ.
+        .await?;
+        // SetPacketParams resets this register, so DS 15.4 must be applied
+        // after every payload-length restamp as well as initial setup.
         let mut v = [0u8; 1];
         self.read_register(reg::IQ_POLARITY, &mut v).await?;
         let fixed = if self.packet.invert_iq {
@@ -1064,7 +1084,11 @@ mod tests {
             "SetPacketParams RX max len"
         );
         assert!(has(&[0x0D, 0x08, 0x89, 0x04]), "TxModulation errata bit2");
-        assert!(has(&[0x0D, 0x07, 0x36, 0x04]), "IQPolarity errata bit2");
+        assert_eq!(
+            count(&[0x0D, 0x07, 0x36, 0x04]),
+            6,
+            "IQPolarity errata follows initial, TX, explicit RX arms, and post-RxDone re-arms"
+        );
         assert!(has(&[0x0D, 0x08, 0xD8, 0x1E]), "TxClampCfg errata bits1-4");
 
         assert_eq!(
@@ -1086,8 +1110,8 @@ mod tests {
         );
         assert_eq!(
             count(&[0x82, 0xFF, 0xFF, 0xFF]),
-            2,
-            "SetRx armed once per receive (two)"
+            4,
+            "SetRx arms before and immediately after both receives"
         );
         assert_eq!(count(&[0x14]), 2, "GetPacketStatus once per receive");
     }
