@@ -10,8 +10,10 @@
 //!
 //! Non-radio GPIO (status LED, battery AIN, e-ink rail, button, frontlight) are
 //! bring-up placeholders pinned to unused GPIO until the full T1000-E peripheral
-//! map is confirmed. The board is not yet linked into a runnable image — see the
-//! `compile_error!` at the LoRaInterface construction in `runtime/firmware.rs`.
+//! map is confirmed. The LR1110 is wired into `LoRaInterface` via the generic
+//! `Radio` trait (`personal_rns::radios::Radio`); the board links into a runnable
+//! image modulo flash transport (the Nordic serial DFU bootloader carries the
+//! firmware; on-device persistence is not yet wired for this variant).
 
 use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
 use embassy_nrf::interrupt::{self, InterruptExt, Priority};

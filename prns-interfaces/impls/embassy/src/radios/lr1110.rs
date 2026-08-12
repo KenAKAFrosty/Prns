@@ -24,6 +24,12 @@ use embedded_hal_async::digital::Wait;
 use embedded_hal_async::spi::{Operation, SpiDevice};
 
 use prns_core::interfaces::{PacketPhyStats, RssiDbm, SnrQuarterDb};
+use prns_core::interfaces::lora::{
+    CodingRate as ProfileCodingRate, LoraBandwidth as ProfileBandwidth, Modulation as ProfileModulation,
+    RadioProfile, RNODE_LORA_SYNC_WORD, SpreadingFactor as ProfileSpreadingFactor,
+};
+
+use crate::radios::Radio;
 
 /// LR11xx NOP/dummy byte written on MOSI while reading status/data on MISO.
 const LR11XX_NOP: u8 = 0x00;
@@ -220,22 +226,10 @@ pub enum Error {
     BufferTooSmall,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ReceivedAirFrame {
-    pub len: usize,
-    pub phy: PacketPhyStats,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RadioEvent {
-    PreambleDetected,
-    HeaderValid,
-    Frame(ReceivedAirFrame),
-    HeaderError,
-    CrcError,
-    Timeout,
-    Other,
-}
+// `RadioEvent` / `ReceivedAirFrame` are chip-agnostic and live in
+// `crate::radios::radio` so `LoRaInterface` can match on event variants without
+// a per-chip event type. Re-exported here for import-path symmetry with sx126x.
+pub use crate::radios::radio::{RadioEvent, ReceivedAirFrame};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IrqEventKind {
@@ -859,6 +853,94 @@ where
             u8::from(enable),
         ])
         .await
+    }
+}
+
+/// `LoRaInterface` drives any `Radio`; the LR1110 is one such chip.
+impl<SPI, BUSY, DIO1, RST, DLY> Radio for Lr1110<SPI, BUSY, DIO1, RST, DLY>
+where
+    SPI: SpiDevice,
+    BUSY: Wait,
+    DIO1: Wait,
+    RST: OutputPin,
+    DLY: DelayNs,
+{
+    type Config = RadioConfig;
+    type Error = Error;
+
+    fn config_from_profile(profile: &RadioProfile) -> RadioConfig {
+        let ProfileModulation::Lora {
+            spreading_factor,
+            bandwidth,
+            coding_rate,
+        } = profile.modulation;
+        let spreading_factor = match spreading_factor {
+            ProfileSpreadingFactor::Sf5 => SpreadingFactor::Sf5,
+            ProfileSpreadingFactor::Sf6 => SpreadingFactor::Sf6,
+            ProfileSpreadingFactor::Sf7 => SpreadingFactor::Sf7,
+            ProfileSpreadingFactor::Sf8 => SpreadingFactor::Sf8,
+            ProfileSpreadingFactor::Sf9 => SpreadingFactor::Sf9,
+            ProfileSpreadingFactor::Sf10 => SpreadingFactor::Sf10,
+            ProfileSpreadingFactor::Sf11 => SpreadingFactor::Sf11,
+            ProfileSpreadingFactor::Sf12 => SpreadingFactor::Sf12,
+        };
+        let bandwidth = match bandwidth {
+            ProfileBandwidth::Bw125kHz => Bandwidth::Bw125,
+            ProfileBandwidth::Bw250kHz => Bandwidth::Bw250,
+            ProfileBandwidth::Bw500kHz => Bandwidth::Bw500,
+        };
+        let coding_rate = match coding_rate {
+            ProfileCodingRate::Cr45 => CodingRate::Cr4_5,
+            ProfileCodingRate::Cr46 => CodingRate::Cr4_6,
+            ProfileCodingRate::Cr47 => CodingRate::Cr4_7,
+            ProfileCodingRate::Cr48 => CodingRate::Cr4_8,
+        };
+        RadioConfig {
+            frequency_hz: profile.frequency.hz(),
+            modulation: Modulation::Lora {
+                spreading_factor,
+                bandwidth,
+                coding_rate,
+            },
+            packet: LoraPacket {
+                preamble_symbols: profile.preamble.count(),
+                explicit_header: true,
+                crc_on: true,
+                invert_iq: false,
+            },
+            sync_word: RNODE_LORA_SYNC_WORD,
+            tx_power_dbm: profile.tx_power.dbm(),
+        }
+    }
+
+    fn buffer_too_small_error() -> Error {
+        Error::BufferTooSmall
+    }
+
+    fn is_fault(e: &Error) -> bool {
+        matches!(
+            e,
+            Error::Busy | Error::Dio1 | Error::Spi | Error::Timeout | Error::Reset
+        )
+    }
+
+    async fn init(&mut self, config: RadioConfig) -> Result<(), Error> {
+        Lr1110::init(self, config).await
+    }
+    async fn arm_rx(&mut self) -> Result<(), Error> {
+        Lr1110::arm_rx(self).await
+    }
+    async fn transmit(&mut self, payload: &[u8]) -> Result<(), Error> {
+        Lr1110::transmit(self, payload).await
+    }
+    async fn channel_rssi_dbm(&mut self) -> Result<i16, Error> {
+        Lr1110::channel_rssi_dbm(self).await
+    }
+    async fn read_event(&mut self, buf: &mut [u8]) -> Result<RadioEvent, Error> {
+        Lr1110::read_event(self, buf).await
+    }
+    async fn poll_event(&mut self, buf: &mut [u8]) -> Result<Option<RadioEvent>, Error> {
+        Lr1110::poll_event(self, buf).await
     }
 }
 
