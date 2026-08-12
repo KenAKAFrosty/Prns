@@ -619,6 +619,10 @@ pub(crate) fn usb_auto_message_to_js(message: usb_auto::Message<'_>) -> JsValue 
             set_str(&object, "type", "data");
             set_bytes(&object, "bytes", packet);
         }
+        // Typed but not unpacked: the surface that reads a report is the other half of this
+        // seam, the same boundary the tokio host draws. A JS caller can see that a report
+        // arrived without this crate inventing a shape for it first.
+        usb_auto::Message::Vitals(_) => set_str(&object, "type", "vitals"),
     }
     object.into()
 }
