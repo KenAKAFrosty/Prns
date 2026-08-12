@@ -81,6 +81,15 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
       - name: clippy and test — prns-core external-alloc
         run: bash validation/native/external-alloc.sh
+      # prns-core's own suite under runtime-metrics. Nothing else on this lane executes it with the
+      # counters compiled: the root test job builds prns-core without the feature, and the prnsd
+      # step below runs inside prnsd's own workspace, which does not have prns-core as a member, so
+      # feature unification compiles the counters there without ever running prns-core's tests
+      # against them. The scheduled mutation audit does use this feature set, but monthly and on a
+      # branch that trails this one. Without this step a counter array missing a variant stays green
+      # here and fails somewhere slower.
+      - name: test — prns-core runtime-metrics
+        run: cargo test -p prns-core --features std,runtime-metrics --locked
       # The tokio interface crate: every host interface family above the engine's tokio-host bind,
       # linted/tested/doc'd as the standalone workspace consumers actually build. --all-features is
       # honest here — the per-OS BLE backends live in target tables, so Linux gets BlueR and never
