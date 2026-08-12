@@ -385,7 +385,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "prns-core"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "aes",
  "cbc",
@@ -403,7 +403,7 @@ dependencies = [
 
 [[package]]
 name = "prns-ffi"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "cfg-if",
  "dispatch2",

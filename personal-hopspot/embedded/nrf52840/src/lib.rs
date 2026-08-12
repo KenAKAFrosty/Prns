@@ -1,12 +1,18 @@
 #![no_std]
 
-#[cfg(not(feature = "board-t-echo"))]
-compile_error!("select exactly one nRF52840 board feature; available: board-t-echo");
+#[cfg(not(any(feature = "board-t-echo", feature = "board-t096")))]
+compile_error!("select exactly one nRF52840 board feature; available: board-t-echo, board-t096");
 
-#[cfg(feature = "board-t-echo")]
+#[cfg(all(feature = "board-t-echo", feature = "board-t096"))]
+compile_error!("nRF52840 board features are mutually exclusive");
+
+#[cfg(any(
+    all(feature = "board-t-echo", not(feature = "board-t096")),
+    all(feature = "board-t096", not(feature = "board-t-echo"))
+))]
 mod boards;
-#[cfg(feature = "board-t-echo")]
+#[cfg(all(feature = "board-t-echo", not(feature = "board-t096")))]
 mod runtime;
 
-#[cfg(feature = "board-t-echo")]
+#[cfg(all(feature = "board-t-echo", not(feature = "board-t096")))]
 pub use runtime::run;
