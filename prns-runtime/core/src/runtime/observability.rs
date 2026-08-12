@@ -8,79 +8,52 @@ use crate::engine::{
 use crate::routing::links::resources::table::ApplyHashmapUpdateError;
 use crate::routing::links::resources::ResourceFailureCause;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum RuntimeOperation {
-    AnnounceNow,
-    SendSinglePacket,
-    SendGroup,
-    RequestPath,
-    EstablishLink,
-    SendToLink,
-    Identify,
-    SendRequest,
-    Respond,
-    CloseLink,
-    SendResource,
-    SetResourceStrategy,
-    SendToChannel,
-    AllowRequester,
+prns_macros::iterable_enum! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[repr(u8)]
+    pub enum RuntimeOperation {
+        AnnounceNow,
+        SendSinglePacket,
+        SendGroup,
+        RequestPath,
+        EstablishLink,
+        SendToLink,
+        Identify,
+        SendRequest,
+        Respond,
+        CloseLink,
+        SendResource,
+        SetResourceStrategy,
+        SendToChannel,
+        AllowRequester,
+    }
 }
 
 impl RuntimeOperation {
-    pub const ALL: [Self; 14] = [
-        Self::AnnounceNow,
-        Self::SendSinglePacket,
-        Self::SendGroup,
-        Self::RequestPath,
-        Self::EstablishLink,
-        Self::SendToLink,
-        Self::Identify,
-        Self::SendRequest,
-        Self::Respond,
-        Self::CloseLink,
-        Self::SendResource,
-        Self::SetResourceStrategy,
-        Self::SendToChannel,
-        Self::AllowRequester,
-    ];
-
     const fn index(self) -> usize {
         self as usize
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum RuntimeOperationOutcome {
-    Succeeded,
-    Rejected,
-    WriteFailed,
-    Timeout,
-    Culled,
-    PeerRejected,
-    Sequencing,
-    DependencyFailed,
-    Backpressure,
-    Untrackable,
-    ResponseTooLarge,
+prns_macros::iterable_enum! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[repr(u8)]
+    pub enum RuntimeOperationOutcome {
+        Succeeded,
+        Rejected,
+        WriteFailed,
+        Timeout,
+        Culled,
+        PeerRejected,
+        Sequencing,
+        DependencyFailed,
+        Backpressure,
+        Untrackable,
+        ResponseTooLarge,
+    }
 }
 
 impl RuntimeOperationOutcome {
-    pub const ALL: [Self; 11] = [
-        Self::Succeeded,
-        Self::Rejected,
-        Self::WriteFailed,
-        Self::Timeout,
-        Self::Culled,
-        Self::PeerRejected,
-        Self::Sequencing,
-        Self::DependencyFailed,
-        Self::Backpressure,
-        Self::Untrackable,
-        Self::ResponseTooLarge,
-    ];
-
     const fn index(self) -> usize {
         self as usize
     }
@@ -122,43 +95,28 @@ impl RuntimeOperationCounts {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum RuntimeResourceFailure {
-    CancelledBySender,
-    HashmapBeyondPartCount,
-    HashmapSkipsAhead,
-    HashmapTooLong,
-    HashmapRagged,
-    RetriesExhausted,
-    LinkVanished,
-    TransferUnopenable,
-    TransferCorrupt,
-    ProofUnsendable,
-    DecompressionFailed,
-    DecompressionTimedOut,
-    OpenTimedOut,
-    MetadataOverrun,
+prns_macros::iterable_enum! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[repr(u8)]
+    pub enum RuntimeResourceFailure {
+        CancelledBySender,
+        HashmapBeyondPartCount,
+        HashmapSkipsAhead,
+        HashmapTooLong,
+        HashmapRagged,
+        RetriesExhausted,
+        LinkVanished,
+        TransferUnopenable,
+        TransferCorrupt,
+        ProofUnsendable,
+        DecompressionFailed,
+        DecompressionTimedOut,
+        OpenTimedOut,
+        MetadataOverrun,
+    }
 }
 
 impl RuntimeResourceFailure {
-    pub const ALL: [Self; 14] = [
-        Self::CancelledBySender,
-        Self::HashmapBeyondPartCount,
-        Self::HashmapSkipsAhead,
-        Self::HashmapTooLong,
-        Self::HashmapRagged,
-        Self::RetriesExhausted,
-        Self::LinkVanished,
-        Self::TransferUnopenable,
-        Self::TransferCorrupt,
-        Self::ProofUnsendable,
-        Self::DecompressionFailed,
-        Self::DecompressionTimedOut,
-        Self::OpenTimedOut,
-        Self::MetadataOverrun,
-    ];
-
     const fn index(self) -> usize {
         self as usize
     }
@@ -194,17 +152,17 @@ impl RuntimeResourceFailureCounts {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum RuntimeLinkClosure {
-    Timeout,
-    PeerClosed,
-    MalformedRtt,
+prns_macros::iterable_enum! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[repr(u8)]
+    pub enum RuntimeLinkClosure {
+        Timeout,
+        PeerClosed,
+        MalformedRtt,
+    }
 }
 
 impl RuntimeLinkClosure {
-    pub const ALL: [Self; 3] = [Self::Timeout, Self::PeerClosed, Self::MalformedRtt];
-
     const fn index(self) -> usize {
         self as usize
     }
@@ -232,23 +190,18 @@ impl RuntimeLinkClosureCounts {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum RuntimeRouteRemoval {
-    Expired,
-    Evicted,
-    InterfaceGone,
-    Dropped,
+prns_macros::iterable_enum! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[repr(u8)]
+    pub enum RuntimeRouteRemoval {
+        Expired,
+        Evicted,
+        InterfaceGone,
+        Dropped,
+    }
 }
 
 impl RuntimeRouteRemoval {
-    pub const ALL: [Self; 4] = [
-        Self::Expired,
-        Self::Evicted,
-        Self::InterfaceGone,
-        Self::Dropped,
-    ];
-
     const fn index(self) -> usize {
         self as usize
     }

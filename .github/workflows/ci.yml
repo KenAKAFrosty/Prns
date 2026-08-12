@@ -81,6 +81,10 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
       - name: clippy and test — prns-core external-alloc
         run: bash validation/native/external-alloc.sh
+      # Counter dimensions are feature-gated, so the default workspace test does not compile or
+      # execute their owning tests. Keep the regression that motivated iterable enums on a PR lane.
+      - name: test — prns-core runtime-metrics
+        run: cargo test -p prns-core --features std,runtime-metrics --locked
       # The tokio interface crate: every host interface family above the engine's tokio-host bind,
       # linted/tested/doc'd as the standalone workspace consumers actually build. --all-features is
       # honest here — the per-OS BLE backends live in target tables, so Linux gets BlueR and never

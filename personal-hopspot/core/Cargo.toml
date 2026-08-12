@@ -17,6 +17,7 @@ source-archive = ["personal-rns/large-static-responses"]
 
 [dependencies]
 personal-rns = { path = "../../personal-rns", default-features = false, features = ["flash"] }
+prns-macros = { path = "../../prns-macros" }
 embedded-storage = "0.3"
 embedded-storage-async = "0.4"
 embedded-graphics = "0.8" # pinned to the same 0.8 the S3's ssd1306 stack uses.

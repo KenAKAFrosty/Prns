@@ -52,38 +52,25 @@ impl PreambleSymbols {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Region {
-    Us915,
-    Au915,
-    Eu433,
-    Eu865,
-    Eu868,
-    Eu869,
-    As923,
-    In865,
-    Cn470,
-    Kr920,
-    Jp920,
-    Unlimited,
+prns_macros::iterable_enum! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Region {
+        Us915,
+        Au915,
+        Eu433,
+        Eu865,
+        Eu868,
+        Eu869,
+        As923,
+        In865,
+        Cn470,
+        Kr920,
+        Jp920,
+        Unlimited,
+    }
 }
 
 impl Region {
-    pub const ALL: [Region; 12] = [
-        Self::Us915,
-        Self::Au915,
-        Self::Eu433,
-        Self::Eu865,
-        Self::Eu868,
-        Self::Eu869,
-        Self::As923,
-        Self::In865,
-        Self::Cn470,
-        Self::Kr920,
-        Self::Jp920,
-        Self::Unlimited,
-    ];
-
     pub const fn band(self) -> (u32, u32) {
         match self {
             Self::Us915 => (902_000_000, 928_000_000),
@@ -270,22 +257,17 @@ impl AirtimePolicy {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ModemPreset {
-    ShortFast,
-    MediumFast,
-    LongFast,
-    LongSlow,
+prns_macros::iterable_enum! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum ModemPreset {
+        ShortFast,
+        MediumFast,
+        LongFast,
+        LongSlow,
+    }
 }
 
 impl ModemPreset {
-    pub const ALL: [ModemPreset; 4] = [
-        Self::ShortFast,
-        Self::MediumFast,
-        Self::LongFast,
-        Self::LongSlow,
-    ];
-
     pub const fn modulation(self) -> Modulation {
         match self {
             Self::ShortFast => Modulation::Lora {

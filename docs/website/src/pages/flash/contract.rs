@@ -102,16 +102,17 @@ pub(super) enum PartPolicy {
     Required,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum BridgeOperation {
-    Preparation,
-    Device,
+prns_macros::iterable_enum! {
+    #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+    #[serde(rename_all = "snake_case")]
+    pub(super) enum BridgeOperation {
+        Preparation,
+        Device,
+    }
+    const ALL;
 }
 
 impl BridgeOperation {
-    const ALL: [Self; 2] = [Self::Preparation, Self::Device];
-
     pub(super) const fn wire(self) -> &'static str {
         match self {
             Self::Preparation => "preparation",
@@ -120,48 +121,32 @@ impl BridgeOperation {
     }
 }
 
-/// A phase accepted by the shared JavaScript/Rust bridge contract.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum BridgePhase {
-    Idle,
-    ValidatingManifest,
-    Downloading,
-    VerifyingArtifacts,
-    Ready,
-    RequestingPort,
-    Connecting,
-    VerifyingTarget,
-    Erasing,
-    Writing,
-    VerifyingFlash,
-    Resetting,
-    Success,
-    DownloadRequested,
-    Failed,
-    Cancelled,
+prns_macros::iterable_enum! {
+    /// A phase accepted by the shared JavaScript/Rust bridge contract.
+    #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+    #[serde(rename_all = "snake_case")]
+    pub(super) enum BridgePhase {
+        Idle,
+        ValidatingManifest,
+        Downloading,
+        VerifyingArtifacts,
+        Ready,
+        RequestingPort,
+        Connecting,
+        VerifyingTarget,
+        Erasing,
+        Writing,
+        VerifyingFlash,
+        Resetting,
+        Success,
+        DownloadRequested,
+        Failed,
+        Cancelled,
+    }
+    const ALL;
 }
 
 impl BridgePhase {
-    const ALL: [Self; 16] = [
-        Self::Idle,
-        Self::ValidatingManifest,
-        Self::Downloading,
-        Self::VerifyingArtifacts,
-        Self::Ready,
-        Self::RequestingPort,
-        Self::Connecting,
-        Self::VerifyingTarget,
-        Self::Erasing,
-        Self::Writing,
-        Self::VerifyingFlash,
-        Self::Resetting,
-        Self::Success,
-        Self::DownloadRequested,
-        Self::Failed,
-        Self::Cancelled,
-    ];
-
     pub(super) const fn wire(self) -> &'static str {
         match self {
             Self::Idle => "idle",
@@ -190,56 +175,36 @@ impl fmt::Display for BridgePhase {
     }
 }
 
-/// An error code accepted by the shared JavaScript/Rust bridge contract.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum BridgeErrorCode {
-    InvalidRequest,
-    InvalidConfig,
-    UnsupportedBrowser,
-    InsecureContext,
-    PermissionDenied,
-    ConnectionFailure,
-    WrongChip,
-    WrongFlashSize,
-    EraseFailure,
-    ArtifactFetch,
-    ArtifactSizeMismatch,
-    ArtifactHashMismatch,
-    DeviceLost,
-    WriteFailure,
-    VerificationFailure,
-    ResetFailure,
-    Cancelled,
-    NotPrepared,
-    Busy,
-    FlashFailed,
+prns_macros::iterable_enum! {
+    /// An error code accepted by the shared JavaScript/Rust bridge contract.
+    #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+    #[serde(rename_all = "snake_case")]
+    pub(super) enum BridgeErrorCode {
+        InvalidRequest,
+        InvalidConfig,
+        UnsupportedBrowser,
+        InsecureContext,
+        PermissionDenied,
+        ConnectionFailure,
+        WrongChip,
+        WrongFlashSize,
+        EraseFailure,
+        ArtifactFetch,
+        ArtifactSizeMismatch,
+        ArtifactHashMismatch,
+        DeviceLost,
+        WriteFailure,
+        VerificationFailure,
+        ResetFailure,
+        Cancelled,
+        NotPrepared,
+        Busy,
+        FlashFailed,
+    }
+    const ALL; //explicitly overridden to make private
 }
 
 impl BridgeErrorCode {
-    const ALL: [Self; 20] = [
-        Self::InvalidRequest,
-        Self::InvalidConfig,
-        Self::UnsupportedBrowser,
-        Self::InsecureContext,
-        Self::PermissionDenied,
-        Self::ConnectionFailure,
-        Self::WrongChip,
-        Self::WrongFlashSize,
-        Self::EraseFailure,
-        Self::ArtifactFetch,
-        Self::ArtifactSizeMismatch,
-        Self::ArtifactHashMismatch,
-        Self::DeviceLost,
-        Self::WriteFailure,
-        Self::VerificationFailure,
-        Self::ResetFailure,
-        Self::Cancelled,
-        Self::NotPrepared,
-        Self::Busy,
-        Self::FlashFailed,
-    ];
-
     pub(super) const fn wire(self) -> &'static str {
         match self {
             Self::InvalidRequest => "invalid_request",

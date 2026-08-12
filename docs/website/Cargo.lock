@@ -2128,6 +2128,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "prns-macros"
+version = "0.3.6"
+
+[[package]]
 name = "proc-macro-crate"
 version = "3.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2412,6 +2416,7 @@ dependencies = [
  "dioxus",
  "dioxus-i18n",
  "prns-flash-manifest",
+ "prns-macros",
  "pulldown-cmark",
  "serde",
  "serde_json",

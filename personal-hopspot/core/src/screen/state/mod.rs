@@ -73,25 +73,29 @@ pub enum UiAction {
     OpenDocs,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum UiNotice {
-    Announcing,
-    OledOff,
-    TurningOff,
-    TurningOn,
-    DisconnectingAp,
-    ReconnectingAp,
-    Sleeping,
-    Awake,
-    Saved,
-    ApplyFailed,
-    ProfileNotSaved,
-    ProfileRecovered,
-    ProfileReset,
-    IdentityReset,
-    IdentityUnstable,
-    SaveDeferred,
-    SaveFailed,
+prns_macros::iterable_enum! {
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub enum UiNotice {
+        Announcing,
+        OledOff,
+        TurningOff,
+        TurningOn,
+        DisconnectingAp,
+        ReconnectingAp,
+        Sleeping,
+        Awake,
+        Saved,
+        ApplyFailed,
+        ProfileNotSaved,
+        ProfileRecovered,
+        ProfileReset,
+        IdentityReset,
+        IdentityUnstable,
+        SaveDeferred,
+        SaveFailed,
+    }
+    #[cfg(test)]
+    pub(in crate::screen) const ALL;
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -136,27 +140,6 @@ where
 }
 
 impl UiNotice {
-    #[cfg(test)]
-    pub(in crate::screen) const ALL: [Self; 17] = [
-        Self::Announcing,
-        Self::OledOff,
-        Self::TurningOff,
-        Self::TurningOn,
-        Self::DisconnectingAp,
-        Self::ReconnectingAp,
-        Self::Sleeping,
-        Self::Awake,
-        Self::Saved,
-        Self::ApplyFailed,
-        Self::ProfileNotSaved,
-        Self::ProfileRecovered,
-        Self::ProfileReset,
-        Self::IdentityReset,
-        Self::IdentityUnstable,
-        Self::SaveDeferred,
-        Self::SaveFailed,
-    ];
-
     pub(in crate::screen) const fn lines(self) -> NoticeLines {
         match self {
             Self::Announcing => NoticeLines::one("Announcing"),

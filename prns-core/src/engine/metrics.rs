@@ -10,78 +10,69 @@ use crate::storage::StorageLayout;
 
 use super::state::EngineState;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum AnnounceSourceKind {
-    Network,
-    SharedClient,
+prns_macros::iterable_enum! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[repr(u8)]
+    pub enum AnnounceSourceKind {
+        Network,
+        SharedClient,
+    }
 }
 
 impl AnnounceSourceKind {
-    pub const ALL: [Self; 2] = [Self::Network, Self::SharedClient];
-
     const fn index(self) -> usize {
         self as usize
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum AnnounceIngressOutcome {
-    Accepted,
-    Held,
-    Ignored,
-    HeldDroppedInterfaceAtCap,
-    HeldDroppedPoolFull,
-    HeldDroppedArenaFull,
-    Blackholed,
-    AcceptedScheduleRejectedQueueFull,
+prns_macros::iterable_enum! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[repr(u8)]
+    pub enum AnnounceIngressOutcome {
+        Accepted,
+        Held,
+        Ignored,
+        HeldDroppedInterfaceAtCap,
+        HeldDroppedPoolFull,
+        HeldDroppedArenaFull,
+        Blackholed,
+        AcceptedScheduleRejectedQueueFull,
+    }
 }
 
 impl AnnounceIngressOutcome {
-    pub const ALL: [Self; 8] = [
-        Self::Accepted,
-        Self::AcceptedScheduleRejectedQueueFull,
-        Self::Held,
-        Self::Ignored,
-        Self::HeldDroppedInterfaceAtCap,
-        Self::HeldDroppedPoolFull,
-        Self::HeldDroppedArenaFull,
-        Self::Blackholed,
-    ];
-
     const fn index(self) -> usize {
         self as usize
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum AnnounceCommandOutcome {
-    Succeeded,
-    Rejected,
-    WriteFailed,
+prns_macros::iterable_enum! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[repr(u8)]
+    pub enum AnnounceCommandOutcome {
+        Succeeded,
+        Rejected,
+        WriteFailed,
+    }
 }
 
 impl AnnounceCommandOutcome {
-    pub const ALL: [Self; 3] = [Self::Succeeded, Self::Rejected, Self::WriteFailed];
-
     const fn index(self) -> usize {
         self as usize
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum AnnounceOrigin {
-    Local,
-    SharedClient,
-    Relay,
+prns_macros::iterable_enum! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[repr(u8)]
+    pub enum AnnounceOrigin {
+        Local,
+        SharedClient,
+        Relay,
+    }
 }
 
 impl AnnounceOrigin {
-    pub const ALL: [Self; 3] = [Self::Local, Self::SharedClient, Self::Relay];
-
     pub const fn index(self) -> usize {
         self as usize
     }
@@ -216,68 +207,41 @@ pub struct EngineAnnounceMetricsSnapshot {
     pub interfaces: Vec<InterfaceAnnounceMetricsSnapshot>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum IgnoreReasonKind {
-    Consumed,
-    Malformed,
-    UnhandledContext,
-    Duplicate,
-    Superseded,
-    NotForUs,
-    NoRoute,
-    HopLimitReached,
-    LoopPrevented,
-    RouteUnresponsive,
-    OtherInstance,
-    UnknownLink,
-    LinkPhaseMismatch,
-    LinkRttMalformed,
-    LinkRttInvalidToken,
-    LinkRttBufferTooShort,
-    DecryptFailed,
-    ProofInvalid,
-    UnknownIdentity,
-    LinkRequestsRefused,
-    PermissionDenied,
-    RateLimited,
-    CapacityExhausted,
-    StrategyDeclined,
-    UnmatchedResponse,
-    IfacRefused,
-    RequestTooLarge,
+prns_macros::iterable_enum! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[repr(u8)]
+    pub enum IgnoreReasonKind {
+        Consumed,
+        Malformed,
+        UnhandledContext,
+        Duplicate,
+        Superseded,
+        NotForUs,
+        NoRoute,
+        HopLimitReached,
+        LoopPrevented,
+        RouteUnresponsive,
+        OtherInstance,
+        UnknownLink,
+        LinkPhaseMismatch,
+        LinkRttMalformed,
+        LinkRttInvalidToken,
+        LinkRttBufferTooShort,
+        DecryptFailed,
+        ProofInvalid,
+        UnknownIdentity,
+        LinkRequestsRefused,
+        PermissionDenied,
+        RateLimited,
+        CapacityExhausted,
+        StrategyDeclined,
+        UnmatchedResponse,
+        IfacRefused,
+        RequestTooLarge,
+    }
 }
 
 impl IgnoreReasonKind {
-    pub const ALL: [Self; 26] = [
-        Self::Consumed,
-        Self::Malformed,
-        Self::UnhandledContext,
-        Self::Duplicate,
-        Self::Superseded,
-        Self::NotForUs,
-        Self::NoRoute,
-        Self::HopLimitReached,
-        Self::LoopPrevented,
-        Self::RouteUnresponsive,
-        Self::OtherInstance,
-        Self::UnknownLink,
-        Self::LinkPhaseMismatch,
-        Self::LinkRttMalformed,
-        Self::LinkRttInvalidToken,
-        Self::LinkRttBufferTooShort,
-        Self::DecryptFailed,
-        Self::ProofInvalid,
-        Self::UnknownIdentity,
-        Self::LinkRequestsRefused,
-        Self::PermissionDenied,
-        Self::RateLimited,
-        Self::CapacityExhausted,
-        Self::StrategyDeclined,
-        Self::UnmatchedResponse,
-        Self::IfacRefused,
-    ];
-
     const fn index(self) -> usize {
         self as usize
     }
@@ -565,6 +529,20 @@ mod tests {
                 AnnounceIngressOutcome::Accepted
             ),
             0,
+        );
+    }
+
+    #[test]
+    fn request_too_large_is_recorded_and_exported_as_a_stable_counter() {
+        let mut counts = IgnoreReasonCounts::default();
+        counts.record(IgnoreReason::RequestTooLarge);
+
+        assert_eq!(counts.get(IgnoreReasonKind::RequestTooLarge), 1);
+        assert_eq!(
+            counts
+                .iter()
+                .find(|(reason, _)| *reason == IgnoreReasonKind::RequestTooLarge),
+            Some((IgnoreReasonKind::RequestTooLarge, 1)),
         );
     }
 

@@ -136,6 +136,11 @@
   ],
   "rustCrates": [
     {
+      "name": "prns-macros",
+      "manifest": "prns-macros/Cargo.toml",
+      "order": 0
+    },
+    {
       "name": "prns-core",
       "manifest": "prns-core/Cargo.toml",
       "order": 1

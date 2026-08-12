@@ -5,27 +5,20 @@ use crate::interfaces::{InterfaceId, InterfaceKind};
 use crate::runtime::ReliabilityMetricsSnapshot;
 use crate::units::InstantMillis;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum AnnounceEgressOutcome {
-    Enqueued,
-    InterfaceUnavailable,
-    LaneFull,
-    LaneMissing,
-    IfacRejected,
-    PacerRejected,
+prns_macros::iterable_enum! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[repr(u8)]
+    pub enum AnnounceEgressOutcome {
+        Enqueued,
+        InterfaceUnavailable,
+        LaneFull,
+        LaneMissing,
+        IfacRejected,
+        PacerRejected,
+    }
 }
 
 impl AnnounceEgressOutcome {
-    pub const ALL: [Self; 6] = [
-        Self::Enqueued,
-        Self::InterfaceUnavailable,
-        Self::LaneFull,
-        Self::LaneMissing,
-        Self::IfacRejected,
-        Self::PacerRejected,
-    ];
-
     const fn index(self) -> usize {
         self as usize
     }

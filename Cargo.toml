@@ -2,6 +2,7 @@
 members = [
     "personal-rns",
     "prns-core",
+    "prns-macros",
     "prns-host/core",
     "prns-flash-manifest",
     "prns-runtime/core",

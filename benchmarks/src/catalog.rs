@@ -21,37 +21,26 @@ const LARGE_RESOURCE_PAYLOAD_BYTES: usize =
     personal_rns::routing::links::resources::MAX_EFFICIENT_SIZE * LARGE_RESOURCE_SEGMENTS;
 pub const DEFAULT_SIZE_SEED: u64 = 0x5EED_CAFE_F00D_0001;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum ScenarioId {
-    SinglePacketThroughput,
-    LinkMessageThroughput,
-    RequestResponse,
-    ResourceMaxSegment,
-    ResourceMaxSegmentUnleashed,
-    #[serde(rename = "resource-64mib-stream")]
-    Resource64mibStream,
-    #[serde(rename = "resource-64mib-stream-unleashed")]
-    Resource64mibStreamUnleashed,
-    RawTransportThroughput,
-    TransportResourceThroughput,
-    TransportResourceThroughputUnleashed,
+prns_macros::iterable_enum! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+    #[serde(rename_all = "kebab-case")]
+    pub enum ScenarioId {
+        SinglePacketThroughput,
+        LinkMessageThroughput,
+        RequestResponse,
+        ResourceMaxSegment,
+        ResourceMaxSegmentUnleashed,
+        #[serde(rename = "resource-64mib-stream")]
+        Resource64mibStream,
+        #[serde(rename = "resource-64mib-stream-unleashed")]
+        Resource64mibStreamUnleashed,
+        RawTransportThroughput,
+        TransportResourceThroughput,
+        TransportResourceThroughputUnleashed,
+    }
 }
 
 impl ScenarioId {
-    pub const ALL: [Self; 10] = [
-        Self::SinglePacketThroughput,
-        Self::LinkMessageThroughput,
-        Self::RequestResponse,
-        Self::ResourceMaxSegment,
-        Self::ResourceMaxSegmentUnleashed,
-        Self::Resource64mibStream,
-        Self::Resource64mibStreamUnleashed,
-        Self::RawTransportThroughput,
-        Self::TransportResourceThroughput,
-        Self::TransportResourceThroughputUnleashed,
-    ];
-
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::SinglePacketThroughput => "single-packet-throughput",
