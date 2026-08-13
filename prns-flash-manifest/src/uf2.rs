@@ -135,9 +135,7 @@ impl Uf2BootloaderIdentity {
 }
 
 fn valid_bootloader_version(value: &str) -> bool {
-    let core_end = value
-        .find(|character| matches!(character, '-' | '+'))
-        .unwrap_or(value.len());
+    let core_end = value.find(['-', '+']).unwrap_or(value.len());
     let core = &value[..core_end];
     let components = core.split('.').collect::<Vec<_>>();
     let core_is_valid = components.len() == 3

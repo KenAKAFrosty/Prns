@@ -96,6 +96,9 @@ format_manifests = [
     "validation/oracles/Cargo.toml",
 ]
 
+[registry.format_package_overrides]
+"personal-hopspot/embedded/nrf52840/Cargo.toml" = ["t-echo"]
+
 [[registry.asset_exemptions]]
 path = "prns-wasm/smoke/smoke.ts"
 reason = "Interactive browser-and-device smoke page; the automatable TypeScript smokes are registered suites."
