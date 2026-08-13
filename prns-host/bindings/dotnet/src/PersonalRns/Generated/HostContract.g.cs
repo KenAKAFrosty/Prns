@@ -68,6 +68,7 @@ public enum Capability : uint
     BrowserRendezvous = 10,
     I2p = 11,
     Weave = 12,
+    SuppliedPipe = 13,
 }
 
 public enum InterfaceKind : uint
@@ -1664,6 +1665,15 @@ internal static class RawHostProtocolContract
         "hostIdentityHash",
         "hostDestinationCount",
         "hostDestinationHash",
+        "hostAttachSuppliedPipe",
+        "suppliedPipeClaimAttachment",
+        "suppliedPipeNextOpenRequest",
+        "suppliedPipeRegisterReadiness",
+        "suppliedPipeInterruptWait",
+        "suppliedPipeRelease",
+        "suppliedPipeOpenRequestProvide",
+        "suppliedPipeOpenRequestDecline",
+        "suppliedPipeOpenRequestRelease",
         "hostBeginResourceUpload",
         "resourceUploadWrite",
         "resourceUploadIsWritable",
@@ -1735,6 +1745,8 @@ internal interface IRawReadinessRegistration { }
 internal interface IRawResourceChunk { }
 internal interface IRawResourceStream { }
 internal interface IRawResourceUpload { }
+internal interface IRawSuppliedPipe { }
+internal interface IRawSuppliedPipeOpenRequest { }
 internal interface IRawOpaquePointer { }
 
 internal interface IRawHostProtocol
@@ -1750,6 +1762,15 @@ internal interface IRawHostProtocol
     RawCallResult<RawBorrowed<ReadOnlyMemory<byte>>> HostIdentityHash(IRawHost host);
     nuint HostDestinationCount(IRawHost host);
     RawCallResult<RawBorrowed<ReadOnlyMemory<byte>>> HostDestinationHash(IRawHost host, nuint index);
+    RawCallResult<RawOwned<IRawSuppliedPipe>> HostAttachSuppliedPipe(IRawHost host, string name, ulong respawnDelayMillis, Bitrate bitrate);
+    RawCallResult<RawOwned<IRawIssuedCommand>> SuppliedPipeClaimAttachment(IRawSuppliedPipe supplied_pipe);
+    RawCallResult<RawOwned<IRawSuppliedPipeOpenRequest>> SuppliedPipeNextOpenRequest(IRawSuppliedPipe supplied_pipe, uint timeoutMillis);
+    RawCallResult<RawOwned<IRawReadinessRegistration>> SuppliedPipeRegisterReadiness(IRawSuppliedPipe supplied_pipe, IRawReadinessCallback callback, IRawOpaquePointer context);
+    RawUnit SuppliedPipeInterruptWait(IRawSuppliedPipe supplied_pipe);
+    RawUnit SuppliedPipeRelease(IRawSuppliedPipe supplied_pipe);
+    RawCallResult<bool> SuppliedPipeOpenRequestProvide(IRawSuppliedPipeOpenRequest supplied_pipe_open_request, long descriptor);
+    RawCallResult<bool> SuppliedPipeOpenRequestDecline(IRawSuppliedPipeOpenRequest supplied_pipe_open_request);
+    RawUnit SuppliedPipeOpenRequestRelease(IRawSuppliedPipeOpenRequest supplied_pipe_open_request);
     RawCallResult<RawOwned<IRawResourceUpload>> HostBeginResourceUpload(IRawHost host, LinkId linkId, ulong declaredLength, ReadOnlyMemory<byte>? packedMetadata, ResourceCompression compression);
     RawCallResult<RawUnit> ResourceUploadWrite(IRawResourceUpload resource_upload, ReadOnlyMemory<byte> chunk);
     RawCallResult<bool> ResourceUploadIsWritable(IRawResourceUpload resource_upload);

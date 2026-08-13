@@ -1483,6 +1483,7 @@ dependencies = [
  "embedded-storage-async",
  "heapless 0.8.0",
  "personal-rns",
+ "prns-macros",
  "sha2 0.11.0",
 ]
 
@@ -1562,6 +1563,7 @@ dependencies = [
  "heapless 0.8.0",
  "hkdf",
  "hmac",
+ "prns-macros",
  "roaring",
  "sha2 0.11.0",
  "x25519-dalek",
@@ -1617,6 +1619,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "prns-macros"
+version = "0.3.6"
+
+[[package]]
 name = "prns-runtime"
 version = "0.3.6"
 dependencies = [
@@ -1624,6 +1630,7 @@ dependencies = [
  "cfg-if",
  "heapless 0.8.0",
  "prns-core",
+ "prns-macros",
 ]
 
 [[package]]

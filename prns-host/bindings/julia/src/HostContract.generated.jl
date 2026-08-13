@@ -56,6 +56,7 @@ end
     CapabilityBrowserRendezvous = 10
     CapabilityI2p = 11
     CapabilityWeave = 12
+    CapabilitySuppliedPipe = 13
 end
 
 @enum InterfaceKind::UInt32 begin
@@ -1222,6 +1223,15 @@ const HOST_OPERATION_NAMES = (
     :host_identity_hash,
     :host_destination_count,
     :host_destination_hash,
+    :host_attach_supplied_pipe,
+    :supplied_pipe_claim_attachment,
+    :supplied_pipe_next_open_request,
+    :supplied_pipe_register_readiness,
+    :supplied_pipe_interrupt_wait,
+    :supplied_pipe_release,
+    :supplied_pipe_open_request_provide,
+    :supplied_pipe_open_request_decline,
+    :supplied_pipe_open_request_release,
     :host_begin_resource_upload,
     :resource_upload_write,
     :resource_upload_is_writable,
@@ -1290,6 +1300,8 @@ struct RawReadinessRegistration end
 struct RawResourceChunk end
 struct RawResourceStream end
 struct RawResourceUpload end
+struct RawSuppliedPipe end
+struct RawSuppliedPipeOpenRequest end
 struct RawOpaquePointer end
 
 abstract type RawHostProtocol end
@@ -1336,6 +1348,42 @@ end
 
 function host_destination_hash(protocol::RawHostProtocol, host::RawHost, index::UInt)::RawCallResult{RawBorrowed{Vector{UInt8}}}
     throw(MethodError(host_destination_hash, (protocol,)))
+end
+
+function host_attach_supplied_pipe(protocol::RawHostProtocol, host::RawHost, name::String, respawn_delay_millis::UInt64, bitrate::Bitrate)::RawCallResult{RawOwned{RawSuppliedPipe}}
+    throw(MethodError(host_attach_supplied_pipe, (protocol,)))
+end
+
+function supplied_pipe_claim_attachment(protocol::RawHostProtocol, supplied_pipe::RawSuppliedPipe)::RawCallResult{RawOwned{RawIssuedCommand}}
+    throw(MethodError(supplied_pipe_claim_attachment, (protocol,)))
+end
+
+function supplied_pipe_next_open_request(protocol::RawHostProtocol, supplied_pipe::RawSuppliedPipe, timeout_millis::UInt32)::RawCallResult{RawOwned{RawSuppliedPipeOpenRequest}}
+    throw(MethodError(supplied_pipe_next_open_request, (protocol,)))
+end
+
+function supplied_pipe_register_readiness(protocol::RawHostProtocol, supplied_pipe::RawSuppliedPipe, callback::RawReadinessCallback, context::RawOpaquePointer)::RawCallResult{RawOwned{RawReadinessRegistration}}
+    throw(MethodError(supplied_pipe_register_readiness, (protocol,)))
+end
+
+function supplied_pipe_interrupt_wait(protocol::RawHostProtocol, supplied_pipe::RawSuppliedPipe)::RawUnit
+    throw(MethodError(supplied_pipe_interrupt_wait, (protocol,)))
+end
+
+function supplied_pipe_release(protocol::RawHostProtocol, supplied_pipe::RawSuppliedPipe)::RawUnit
+    throw(MethodError(supplied_pipe_release, (protocol,)))
+end
+
+function supplied_pipe_open_request_provide(protocol::RawHostProtocol, supplied_pipe_open_request::RawSuppliedPipeOpenRequest, descriptor::Int64)::RawCallResult{Bool}
+    throw(MethodError(supplied_pipe_open_request_provide, (protocol,)))
+end
+
+function supplied_pipe_open_request_decline(protocol::RawHostProtocol, supplied_pipe_open_request::RawSuppliedPipeOpenRequest)::RawCallResult{Bool}
+    throw(MethodError(supplied_pipe_open_request_decline, (protocol,)))
+end
+
+function supplied_pipe_open_request_release(protocol::RawHostProtocol, supplied_pipe_open_request::RawSuppliedPipeOpenRequest)::RawUnit
+    throw(MethodError(supplied_pipe_open_request_release, (protocol,)))
 end
 
 function host_begin_resource_upload(protocol::RawHostProtocol, host::RawHost, link_id::LinkId, declared_length::UInt64, packed_metadata::Union{Nothing,Vector{UInt8}}, compression::ResourceCompression)::RawCallResult{RawOwned{RawResourceUpload}}

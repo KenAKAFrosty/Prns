@@ -70,6 +70,34 @@ src/main/jniLibs/arm64-v8a/libprns_host.so
 src/main/jniLibs/armeabi-v7a/libprns_host.so
 ```
 
+Applications that must create the transport themselves can attach it as an
+ordinary Pipe. The controller keeps transport creation in the application's
+coroutine; native code publishes requests and never calls into the JVM to open
+a descriptor:
+
+```kotlin
+host.beginSuppliedPipe(
+    name = "protected-uplink",
+    respawnDelayMillis = 5_000,
+    bitrate = BitrateAuto,
+).use { pipe ->
+    when (val attached = pipe.awaitAttachment()) {
+        is CommandSucceeded -> pipe.serve {
+            connectProtectedParcelFileDescriptor().detachFd()
+        }
+        is CommandFailed -> handleFailure(attached.failure)
+    }
+}
+```
+
+The engine owns and closes every non-negative descriptor accepted from
+`serve`. Return `SUPPLIED_PIPE_DECLINED` when no connection is available; a new
+request arrives after the respawn delay. Cancelling `serve` releases its current
+request, while closing the controller also detaches the interface. This
+operation is reported by the
+`SUPPLIED_PIPE` capability and is POSIX-only, including Android and Apple/Linux
+JVM targets.
+
 `CompletionStage` requires Android API 24 or core library desugaring on older Android versions.
 
 The Gradle wrapper is pinned to 9.6.1 with distribution checksum verification. `./gradlew test` compiles with warnings as errors and runs the adapter against a real native host when `-Dpersonal.rns.library=/absolute/path/libprns_host.so` is provided.

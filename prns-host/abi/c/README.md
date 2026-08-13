@@ -37,9 +37,11 @@ The intended public delivery is a signed target archive containing the header, d
 - Readiness callbacks carry no event or settlement data. They schedule the foreign runtime’s waiter and return; consumers retain authority by calling `prns_command_wait` or `prns_event_stream_next` with a zero timeout.
 - Wake hints may be coalesced or spurious. A consumer drains until the source reports timed out or would block, then waits for another hint.
 - Releasing a readiness registration or its source waits for an in-flight callback to return. The callback must not release its own registration or source.
+- `prns_host_attach_supplied_pipe` returns an owned controller. Consumers pull `PrnsSuppliedPipeOpenRequest` handles and provide or decline each request exactly once; native code never invokes a foreign descriptor opener.
+- A successful `prns_supplied_pipe_open_request_provide` call consumes every valid non-negative descriptor. Its `accepted` result distinguishes a descriptor delivered to the Pipe from one closed because cancellation or teardown won the race.
 - All entry points contain Rust panics and return `PRNS_STATUS_PANIC` where a status can be returned.
 
-Host, command, and stream operations are safe from multiple native threads. An individual event or resource handle must not be released while another thread is reading it.
+Host, command, stream, and supplied-Pipe controller operations are safe from multiple native threads. An individual open request, event, or resource handle must not be released while another thread is using it.
 
 ## Versioning
 

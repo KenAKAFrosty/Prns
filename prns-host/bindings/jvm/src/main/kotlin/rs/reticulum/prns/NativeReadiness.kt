@@ -17,6 +17,8 @@ internal class NativeReadiness private constructor(
         signal.receive()
     }
 
+    suspend fun awaitOrClosed(): Boolean = signal.receiveCatching().isSuccess
+
     override fun close() {
         if (closed.compareAndSet(false, true)) {
             NativeApi.library.prns_readiness_registration_release(registration)
@@ -39,6 +41,16 @@ internal class NativeReadiness private constructor(
             register { callback, output ->
                 NativeApi.library.prns_event_stream_register_readiness(
                     stream,
+                    callback,
+                    null,
+                    output,
+                )
+            }
+
+        fun suppliedPipe(suppliedPipe: Pointer): NativeReadiness =
+            register { callback, output ->
+                NativeApi.library.prns_supplied_pipe_register_readiness(
+                    suppliedPipe,
                     callback,
                     null,
                     output,

@@ -798,6 +798,8 @@ def c_operation_parameter(parameter, fixed_types):
         return [f"size_t {name}"]
     if type_name == "ResourceCompression":
         return [f"PrnsResourceCompressionKind {name}_kind"]
+    if type_name == "Bitrate":
+        return [f"PrnsBitrateKind {name}_kind", f"uint64_t {name}_bps"]
     c_name = c_type(type_name, fixed_types)
     if passing == "optionalBorrow":
         return [f"const {c_name} *{name}"]
@@ -931,7 +933,12 @@ def c_output(schema):
             " *   with status results reject other required NULL arguments.",
             " * - A release must not race another operation on the same handle. Interrupt",
             " *   may race its matching wait; release only after that wait has returned.",
-            " * - UINT32_MAX is the infinite timeout for command and event-stream waits.",
+            " * - UINT32_MAX is the infinite timeout for command, event-stream, and",
+            " *   supplied-Pipe request waits.",
+            " * - Supplied-Pipe readiness is only a wake hint. Consumers pull an owned",
+            " *   open-request handle, then provide or decline it exactly once.",
+            " * - A successful descriptor-provide call consumes every non-negative",
+            " *   descriptor, including one rejected because closure won a race.",
             " * - All exported calls contain Rust panics and report PRNS_STATUS_PANIC where",
             " *   the function has a status result; no Rust unwinding crosses this ABI.",
             " */",

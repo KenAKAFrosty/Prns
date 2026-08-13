@@ -29,6 +29,8 @@
   ],
   "handles": [
     { "name": "Host", "release": "hostRelease", "threadSafe": true },
+    { "name": "SuppliedPipe", "release": "suppliedPipeRelease", "threadSafe": true },
+    { "name": "SuppliedPipeOpenRequest", "release": "suppliedPipeOpenRequestRelease", "threadSafe": false },
     { "name": "HostInspection", "release": "hostSnapshotRelease", "threadSafe": false },
     { "name": "IssuedCommand", "release": "commandRelease", "threadSafe": true },
     { "name": "ResourceUpload", "release": "resourceUploadRelease", "threadSafe": false },
@@ -231,7 +233,8 @@
         { "name": "WebSocket", "value": 9 },
         { "name": "BrowserRendezvous", "value": 10 },
         { "name": "I2p", "value": 11 },
-        { "name": "Weave", "value": 12 }
+        { "name": "Weave", "value": 12 },
+        { "name": "SuppliedPipe", "value": 13 }
       ]
     },
     {
@@ -1385,6 +1388,15 @@
     { "name": "hostIdentityHash", "kind": "query", "receiver": { "type": "Host", "mutable": false }, "parameters": [], "result": { "type": "bytes", "ownership": "borrowed", "validUntil": "hostRelease" }, "status": true },
     { "name": "hostDestinationCount", "kind": "query", "receiver": { "type": "Host", "mutable": false }, "parameters": [], "result": { "type": "size", "ownership": "copied" }, "status": false },
     { "name": "hostDestinationHash", "kind": "query", "receiver": { "type": "Host", "mutable": false }, "parameters": [{ "name": "index", "type": "size", "passing": "value" }], "result": { "type": "bytes", "ownership": "borrowed", "validUntil": "hostRelease" }, "status": true },
+    { "name": "hostAttachSuppliedPipe", "kind": "create", "receiver": { "type": "Host", "mutable": true }, "parameters": [{ "name": "name", "type": "string", "passing": "borrow" }, { "name": "respawnDelayMillis", "type": "safeUint", "passing": "value" }, { "name": "bitrate", "type": "Bitrate", "passing": "borrow" }], "result": { "type": "SuppliedPipe", "ownership": "owned" }, "status": true },
+    { "name": "suppliedPipeClaimAttachment", "kind": "claim", "receiver": { "type": "SuppliedPipe", "mutable": true }, "parameters": [], "result": { "type": "IssuedCommand", "ownership": "owned", "exclusive": true }, "status": true },
+    { "name": "suppliedPipeNextOpenRequest", "kind": "blocking", "receiver": { "type": "SuppliedPipe", "mutable": true }, "parameters": [{ "name": "timeoutMillis", "type": "u32", "passing": "value" }], "result": { "type": "SuppliedPipeOpenRequest", "ownership": "owned" }, "interrupt": "suppliedPipeInterruptWait", "readiness": "suppliedPipeRegisterReadiness", "status": true },
+    { "name": "suppliedPipeRegisterReadiness", "kind": "readiness", "receiver": { "type": "SuppliedPipe", "mutable": true }, "parameters": [{ "name": "callback", "type": "ReadinessCallback", "passing": "value" }, { "name": "context", "type": "opaquePointer", "passing": "value" }], "result": { "type": "ReadinessRegistration", "ownership": "owned" }, "status": true },
+    { "name": "suppliedPipeInterruptWait", "kind": "interrupt", "receiver": { "type": "SuppliedPipe", "mutable": true }, "parameters": [], "status": false },
+    { "name": "suppliedPipeRelease", "kind": "release", "receiver": { "type": "SuppliedPipe", "mutable": true, "consumed": true }, "parameters": [], "status": false },
+    { "name": "suppliedPipeOpenRequestProvide", "kind": "write", "receiver": { "type": "SuppliedPipeOpenRequest", "mutable": true }, "parameters": [{ "name": "descriptor", "type": "i64", "passing": "value" }], "result": { "type": "bool", "ownership": "copied" }, "status": true },
+    { "name": "suppliedPipeOpenRequestDecline", "kind": "finish", "receiver": { "type": "SuppliedPipeOpenRequest", "mutable": true }, "parameters": [], "result": { "type": "bool", "ownership": "copied" }, "status": true },
+    { "name": "suppliedPipeOpenRequestRelease", "kind": "release", "receiver": { "type": "SuppliedPipeOpenRequest", "mutable": true, "consumed": true }, "parameters": [], "status": false },
     { "name": "hostBeginResourceUpload", "kind": "create", "receiver": { "type": "Host", "mutable": true }, "parameters": [{ "name": "linkId", "type": "LinkId", "passing": "borrow" }, { "name": "declaredLength", "type": "u64", "passing": "value" }, { "name": "packedMetadata", "type": "bytes", "passing": "optionalBorrow" }, { "name": "compression", "type": "ResourceCompression", "passing": "value" }], "result": { "type": "ResourceUpload", "ownership": "owned" }, "status": true },
     { "name": "resourceUploadWrite", "kind": "write", "receiver": { "type": "ResourceUpload", "mutable": true }, "parameters": [{ "name": "chunk", "type": "bytes", "passing": "borrow" }], "status": true },
     { "name": "resourceUploadIsWritable", "kind": "query", "receiver": { "type": "ResourceUpload", "mutable": false }, "parameters": [], "result": { "type": "bool", "ownership": "copied" }, "status": true },

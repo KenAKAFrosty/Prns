@@ -69,7 +69,8 @@ enum class Capability(val rawValue: Int) {
     WEB_SOCKET(9),
     BROWSER_RENDEZVOUS(10),
     I2P(11),
-    WEAVE(12);
+    WEAVE(12),
+    SUPPLIED_PIPE(13);
 
     companion object {
         fun fromRawValue(value: Int): Capability? = entries.firstOrNull { it.rawValue == value }
@@ -1354,6 +1355,15 @@ internal val HOST_OPERATION_NAMES = listOf(
     "hostIdentityHash",
     "hostDestinationCount",
     "hostDestinationHash",
+    "hostAttachSuppliedPipe",
+    "suppliedPipeClaimAttachment",
+    "suppliedPipeNextOpenRequest",
+    "suppliedPipeRegisterReadiness",
+    "suppliedPipeInterruptWait",
+    "suppliedPipeRelease",
+    "suppliedPipeOpenRequestProvide",
+    "suppliedPipeOpenRequestDecline",
+    "suppliedPipeOpenRequestRelease",
     "hostBeginResourceUpload",
     "resourceUploadWrite",
     "resourceUploadIsWritable",
@@ -1422,6 +1432,8 @@ internal class RawReadinessRegistration
 internal class RawResourceChunk
 internal class RawResourceStream
 internal class RawResourceUpload
+internal class RawSuppliedPipe
+internal class RawSuppliedPipeOpenRequest
 internal class RawOpaquePointer
 
 internal interface RawHostProtocol {
@@ -1436,6 +1448,15 @@ internal interface RawHostProtocol {
     fun hostIdentityHash(host: RawHost): RawCallResult<RawBorrowed<Bytes>>
     fun hostDestinationCount(host: RawHost): Long
     fun hostDestinationHash(host: RawHost, index: Long): RawCallResult<RawBorrowed<Bytes>>
+    fun hostAttachSuppliedPipe(host: RawHost, name: String, respawnDelayMillis: Long, bitrate: Bitrate): RawCallResult<RawOwned<RawSuppliedPipe>>
+    fun suppliedPipeClaimAttachment(supplied_pipe: RawSuppliedPipe): RawCallResult<RawOwned<RawIssuedCommand>>
+    fun suppliedPipeNextOpenRequest(supplied_pipe: RawSuppliedPipe, timeoutMillis: Long): RawCallResult<RawOwned<RawSuppliedPipeOpenRequest>>
+    fun suppliedPipeRegisterReadiness(supplied_pipe: RawSuppliedPipe, callback: RawReadinessCallback, context: RawOpaquePointer): RawCallResult<RawOwned<RawReadinessRegistration>>
+    fun suppliedPipeInterruptWait(supplied_pipe: RawSuppliedPipe): RawUnit
+    fun suppliedPipeRelease(supplied_pipe: RawSuppliedPipe): RawUnit
+    fun suppliedPipeOpenRequestProvide(supplied_pipe_open_request: RawSuppliedPipeOpenRequest, descriptor: Long): RawCallResult<Boolean>
+    fun suppliedPipeOpenRequestDecline(supplied_pipe_open_request: RawSuppliedPipeOpenRequest): RawCallResult<Boolean>
+    fun suppliedPipeOpenRequestRelease(supplied_pipe_open_request: RawSuppliedPipeOpenRequest): RawUnit
     fun hostBeginResourceUpload(host: RawHost, linkId: LinkId, declaredLength: ULong, packedMetadata: Bytes?, compression: ResourceCompression): RawCallResult<RawOwned<RawResourceUpload>>
     fun resourceUploadWrite(resource_upload: RawResourceUpload, chunk: Bytes): RawCallResult<RawUnit>
     fun resourceUploadIsWritable(resource_upload: RawResourceUpload): RawCallResult<Boolean>

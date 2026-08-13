@@ -2,6 +2,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 mod readiness;
+mod supplied_pipe;
 
 use std::collections::BTreeMap;
 use std::ffi::c_void;
@@ -169,6 +170,15 @@ pub struct PrnsHostSnapshot {
     pub persistence: PrnsPersistenceSnapshot,
 }
 
+#[cfg(unix)]
+static NATIVE_CAPABILITIES: [u32; 4] = [
+    AbiCapability::TcpClient as u32,
+    AbiCapability::TcpServer as u32,
+    AbiCapability::Udp as u32,
+    AbiCapability::SuppliedPipe as u32,
+];
+
+#[cfg(not(unix))]
 static NATIVE_CAPABILITIES: [u32; 3] = [
     AbiCapability::TcpClient as u32,
     AbiCapability::TcpServer as u32,
@@ -855,6 +865,7 @@ fn parse_capability(value: u32) -> Result<Capability, u32> {
         AbiCapability::BrowserRendezvous => Ok(Capability::BrowserRendezvous),
         AbiCapability::I2p => Ok(Capability::I2p),
         AbiCapability::Weave => Ok(Capability::Weave),
+        AbiCapability::SuppliedPipe => Ok(Capability::SuppliedPipe),
     }
 }
 

@@ -58,6 +58,7 @@
       "I2p": 11,
       "Loopback": 1,
       "Serial": 5,
+      "SuppliedPipe": 13,
       "TcpClient": 2,
       "TcpServer": 3,
       "Udp": 4,
@@ -360,6 +361,16 @@
       "threadSafe": true
     },
     {
+      "name": "SuppliedPipe",
+      "release": "suppliedPipeRelease",
+      "threadSafe": true
+    },
+    {
+      "name": "SuppliedPipeOpenRequest",
+      "release": "suppliedPipeOpenRequestRelease",
+      "threadSafe": false
+    },
+    {
       "name": "HostInspection",
       "release": "hostSnapshotRelease",
       "threadSafe": false
@@ -591,6 +602,164 @@
         "validUntil": "hostRelease"
       },
       "status": true
+    },
+    {
+      "kind": "create",
+      "name": "hostAttachSuppliedPipe",
+      "parameters": [
+        {
+          "name": "name",
+          "passing": "borrow",
+          "type": "string"
+        },
+        {
+          "name": "respawnDelayMillis",
+          "passing": "value",
+          "type": "safeUint"
+        },
+        {
+          "name": "bitrate",
+          "passing": "borrow",
+          "type": "Bitrate"
+        }
+      ],
+      "receiver": {
+        "mutable": true,
+        "type": "Host"
+      },
+      "result": {
+        "ownership": "owned",
+        "type": "SuppliedPipe"
+      },
+      "status": true
+    },
+    {
+      "kind": "claim",
+      "name": "suppliedPipeClaimAttachment",
+      "parameters": [],
+      "receiver": {
+        "mutable": true,
+        "type": "SuppliedPipe"
+      },
+      "result": {
+        "exclusive": true,
+        "ownership": "owned",
+        "type": "IssuedCommand"
+      },
+      "status": true
+    },
+    {
+      "interrupt": "suppliedPipeInterruptWait",
+      "kind": "blocking",
+      "name": "suppliedPipeNextOpenRequest",
+      "parameters": [
+        {
+          "name": "timeoutMillis",
+          "passing": "value",
+          "type": "u32"
+        }
+      ],
+      "readiness": "suppliedPipeRegisterReadiness",
+      "receiver": {
+        "mutable": true,
+        "type": "SuppliedPipe"
+      },
+      "result": {
+        "ownership": "owned",
+        "type": "SuppliedPipeOpenRequest"
+      },
+      "status": true
+    },
+    {
+      "kind": "readiness",
+      "name": "suppliedPipeRegisterReadiness",
+      "parameters": [
+        {
+          "name": "callback",
+          "passing": "value",
+          "type": "ReadinessCallback"
+        },
+        {
+          "name": "context",
+          "passing": "value",
+          "type": "opaquePointer"
+        }
+      ],
+      "receiver": {
+        "mutable": true,
+        "type": "SuppliedPipe"
+      },
+      "result": {
+        "ownership": "owned",
+        "type": "ReadinessRegistration"
+      },
+      "status": true
+    },
+    {
+      "kind": "interrupt",
+      "name": "suppliedPipeInterruptWait",
+      "parameters": [],
+      "receiver": {
+        "mutable": true,
+        "type": "SuppliedPipe"
+      },
+      "status": false
+    },
+    {
+      "kind": "release",
+      "name": "suppliedPipeRelease",
+      "parameters": [],
+      "receiver": {
+        "consumed": true,
+        "mutable": true,
+        "type": "SuppliedPipe"
+      },
+      "status": false
+    },
+    {
+      "kind": "write",
+      "name": "suppliedPipeOpenRequestProvide",
+      "parameters": [
+        {
+          "name": "descriptor",
+          "passing": "value",
+          "type": "i64"
+        }
+      ],
+      "receiver": {
+        "mutable": true,
+        "type": "SuppliedPipeOpenRequest"
+      },
+      "result": {
+        "ownership": "copied",
+        "type": "bool"
+      },
+      "status": true
+    },
+    {
+      "kind": "finish",
+      "name": "suppliedPipeOpenRequestDecline",
+      "parameters": [],
+      "receiver": {
+        "mutable": true,
+        "type": "SuppliedPipeOpenRequest"
+      },
+      "result": {
+        "ownership": "copied",
+        "type": "bool"
+      },
+      "status": true
+    },
+    {
+      "kind": "release",
+      "name": "suppliedPipeOpenRequestRelease",
+      "parameters": [],
+      "receiver": {
+        "consumed": true,
+        "mutable": true,
+        "type": "SuppliedPipeOpenRequest"
+      },
+      "status": false
     },
     {
       "kind": "create",

@@ -14913,11 +14913,11 @@
       "name": "prns-host-c",
       "source": "prns-host/abi/c",
       "unsafe": {
-        "blocks": 247,
-        "externs": 60,
+        "blocks": 282,
+        "externs": 70,
         "functions": 18,
         "impls": 2,
-        "tokens": 327
+        "tokens": 372
       },
       "version": "0.3.6"
     },
@@ -15310,6 +15310,38 @@
       },
       "name": "prns-interfaces-tokio",
       "source": "prns-interfaces/impls/tokio",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.3.6"
+    },
+    {
+      "graphs": {
+        "android": [],
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
+        "desktop-linux": [],
+        "desktop-macos": [],
+        "desktop-windows": [],
+        "engine": [],
+        "esp32-c6": [],
+        "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
+        "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
+        "ios": [],
+        "nrf52840": [],
+        "wasm": []
+      },
+      "name": "prns-macros",
+      "source": "prns-macros",
       "unsafe": {
         "blocks": 0,
         "externs": 0,

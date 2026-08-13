@@ -29,6 +29,15 @@ pub const HOST_OPERATION_NAMES: &[&str] = &[
     "hostIdentityHash",
     "hostDestinationCount",
     "hostDestinationHash",
+    "hostAttachSuppliedPipe",
+    "suppliedPipeClaimAttachment",
+    "suppliedPipeNextOpenRequest",
+    "suppliedPipeRegisterReadiness",
+    "suppliedPipeInterruptWait",
+    "suppliedPipeRelease",
+    "suppliedPipeOpenRequestProvide",
+    "suppliedPipeOpenRequestDecline",
+    "suppliedPipeOpenRequestRelease",
     "hostBeginResourceUpload",
     "resourceUploadWrite",
     "resourceUploadIsWritable",
@@ -195,6 +204,7 @@ pub enum Capability {
     BrowserRendezvous = 10,
     I2p = 11,
     Weave = 12,
+    SuppliedPipe = 13,
 }
 
 impl Capability {
@@ -213,6 +223,7 @@ impl Capability {
             Self::BrowserRendezvous => "BrowserRendezvous",
             Self::I2p => "I2p",
             Self::Weave => "Weave",
+            Self::SuppliedPipe => "SuppliedPipe",
         }
     }
 }
@@ -234,6 +245,7 @@ impl TryFrom<u32> for Capability {
             10 => Ok(Self::BrowserRendezvous),
             11 => Ok(Self::I2p),
             12 => Ok(Self::Weave),
+            13 => Ok(Self::SuppliedPipe),
             _ => Err(()),
         }
     }
@@ -1609,6 +1621,7 @@ mod tests {
             (Capability::BrowserRendezvous, 10, "BrowserRendezvous"),
             (Capability::I2p, 11, "I2p"),
             (Capability::Weave, 12, "Weave"),
+            (Capability::SuppliedPipe, 13, "SuppliedPipe"),
         ]);
     }
 

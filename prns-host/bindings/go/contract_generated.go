@@ -72,6 +72,7 @@ const (
 	CapabilityBrowserRendezvous Capability = 10
 	CapabilityI2p Capability = 11
 	CapabilityWeave Capability = 12
+	CapabilitySuppliedPipe Capability = 13
 )
 
 type InterfaceKind uint32
@@ -1486,6 +1487,15 @@ var hostOperationNames = [...]string{
 	"hostIdentityHash",
 	"hostDestinationCount",
 	"hostDestinationHash",
+	"hostAttachSuppliedPipe",
+	"suppliedPipeClaimAttachment",
+	"suppliedPipeNextOpenRequest",
+	"suppliedPipeRegisterReadiness",
+	"suppliedPipeInterruptWait",
+	"suppliedPipeRelease",
+	"suppliedPipeOpenRequestProvide",
+	"suppliedPipeOpenRequestDecline",
+	"suppliedPipeOpenRequestRelease",
 	"hostBeginResourceUpload",
 	"resourceUploadWrite",
 	"resourceUploadIsWritable",
@@ -1556,6 +1566,8 @@ type rawReadinessRegistration struct{}
 type rawResourceChunk struct{}
 type rawResourceStream struct{}
 type rawResourceUpload struct{}
+type rawSuppliedPipe struct{}
+type rawSuppliedPipeOpenRequest struct{}
 type rawOpaquePointer struct{}
 
 type rawHostProtocol interface {
@@ -1570,6 +1582,15 @@ type rawHostProtocol interface {
 	hostIdentityHash(host rawHost) rawCallResult[rawBorrowed[[]byte]]
 	hostDestinationCount(host rawHost) uintptr
 	hostDestinationHash(host rawHost, index uintptr) rawCallResult[rawBorrowed[[]byte]]
+	hostAttachSuppliedPipe(host rawHost, name string, respawnDelayMillis uint64, bitrate Bitrate) rawCallResult[rawOwned[rawSuppliedPipe]]
+	suppliedPipeClaimAttachment(supplied_pipe rawSuppliedPipe) rawCallResult[rawOwned[rawIssuedCommand]]
+	suppliedPipeNextOpenRequest(supplied_pipe rawSuppliedPipe, timeoutMillis uint32) rawCallResult[rawOwned[rawSuppliedPipeOpenRequest]]
+	suppliedPipeRegisterReadiness(supplied_pipe rawSuppliedPipe, callback rawReadinessCallback, context rawOpaquePointer) rawCallResult[rawOwned[rawReadinessRegistration]]
+	suppliedPipeInterruptWait(supplied_pipe rawSuppliedPipe) rawUnit
+	suppliedPipeRelease(supplied_pipe rawSuppliedPipe) rawUnit
+	suppliedPipeOpenRequestProvide(supplied_pipe_open_request rawSuppliedPipeOpenRequest, descriptor int64) rawCallResult[bool]
+	suppliedPipeOpenRequestDecline(supplied_pipe_open_request rawSuppliedPipeOpenRequest) rawCallResult[bool]
+	suppliedPipeOpenRequestRelease(supplied_pipe_open_request rawSuppliedPipeOpenRequest) rawUnit
 	hostBeginResourceUpload(host rawHost, linkId LinkId, declaredLength uint64, packedMetadata *[]byte, compression ResourceCompression) rawCallResult[rawOwned[rawResourceUpload]]
 	resourceUploadWrite(resource_upload rawResourceUpload, chunk []byte) rawCallResult[rawUnit]
 	resourceUploadIsWritable(resource_upload rawResourceUpload) rawCallResult[bool]

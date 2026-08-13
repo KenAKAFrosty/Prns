@@ -60,6 +60,7 @@ public enum Capability: UInt32, Sendable {
     case browserRendezvous = 10
     case i2p = 11
     case weave = 12
+    case suppliedPipe = 13
 }
 
 public enum InterfaceKind: UInt32, Sendable {
@@ -896,6 +897,15 @@ let hostOperationNames = [
     "hostIdentityHash",
     "hostDestinationCount",
     "hostDestinationHash",
+    "hostAttachSuppliedPipe",
+    "suppliedPipeClaimAttachment",
+    "suppliedPipeNextOpenRequest",
+    "suppliedPipeRegisterReadiness",
+    "suppliedPipeInterruptWait",
+    "suppliedPipeRelease",
+    "suppliedPipeOpenRequestProvide",
+    "suppliedPipeOpenRequestDecline",
+    "suppliedPipeOpenRequestRelease",
     "hostBeginResourceUpload",
     "resourceUploadWrite",
     "resourceUploadIsWritable",
@@ -965,6 +975,8 @@ struct RawReadinessRegistration {}
 struct RawResourceChunk {}
 struct RawResourceStream {}
 struct RawResourceUpload {}
+struct RawSuppliedPipe {}
+struct RawSuppliedPipeOpenRequest {}
 struct RawOpaquePointer {}
 
 protocol RawHostProtocol {
@@ -979,6 +991,15 @@ protocol RawHostProtocol {
     func hostIdentityHash(_ host: RawHost) -> RawCallResult<RawBorrowed<[UInt8]>>
     func hostDestinationCount(_ host: RawHost) -> Int
     func hostDestinationHash(_ host: RawHost, _ index: Int) -> RawCallResult<RawBorrowed<[UInt8]>>
+    func hostAttachSuppliedPipe(_ host: RawHost, _ name: String, _ respawnDelayMillis: UInt64, _ bitrate: Bitrate) -> RawCallResult<RawOwned<RawSuppliedPipe>>
+    func suppliedPipeClaimAttachment(_ supplied_pipe: RawSuppliedPipe) -> RawCallResult<RawOwned<RawIssuedCommand>>
+    func suppliedPipeNextOpenRequest(_ supplied_pipe: RawSuppliedPipe, _ timeoutMillis: UInt32) -> RawCallResult<RawOwned<RawSuppliedPipeOpenRequest>>
+    func suppliedPipeRegisterReadiness(_ supplied_pipe: RawSuppliedPipe, _ callback: RawReadinessCallback, _ context: RawOpaquePointer) -> RawCallResult<RawOwned<RawReadinessRegistration>>
+    func suppliedPipeInterruptWait(_ supplied_pipe: RawSuppliedPipe) -> RawUnit
+    func suppliedPipeRelease(_ supplied_pipe: RawSuppliedPipe) -> RawUnit
+    func suppliedPipeOpenRequestProvide(_ supplied_pipe_open_request: RawSuppliedPipeOpenRequest, _ descriptor: Int64) -> RawCallResult<Bool>
+    func suppliedPipeOpenRequestDecline(_ supplied_pipe_open_request: RawSuppliedPipeOpenRequest) -> RawCallResult<Bool>
+    func suppliedPipeOpenRequestRelease(_ supplied_pipe_open_request: RawSuppliedPipeOpenRequest) -> RawUnit
     func hostBeginResourceUpload(_ host: RawHost, _ linkId: LinkId, _ declaredLength: UInt64, _ packedMetadata: [UInt8]?, _ compression: ResourceCompression) -> RawCallResult<RawOwned<RawResourceUpload>>
     func resourceUploadWrite(_ resource_upload: RawResourceUpload, _ chunk: [UInt8]) -> RawCallResult<RawUnit>
     func resourceUploadIsWritable(_ resource_upload: RawResourceUpload) -> RawCallResult<Bool>

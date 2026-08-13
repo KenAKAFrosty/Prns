@@ -59,7 +59,7 @@ test("generated contract inventories and guards accept exactly their known strin
     [
       "CAPABILITY_NAME_VALUES",
       "isCapabilityName",
-      ["Loopback", "TcpClient", "TcpServer", "Udp", "Serial", "Usb", "Bluetooth", "Wifi", "WebSocket", "BrowserRendezvous", "I2p", "Weave"],
+      ["Loopback", "TcpClient", "TcpServer", "Udp", "Serial", "Usb", "Bluetooth", "Wifi", "WebSocket", "BrowserRendezvous", "I2p", "Weave", "SuppliedPipe"],
     ],
     [
       "LINK_CLOSED_REASON_VALUES",
