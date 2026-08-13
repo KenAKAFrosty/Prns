@@ -90,8 +90,15 @@ The authoritative scenario sets and roster-derived rows live in
 ## Browser fallbacks
 
 `browser_fallbacks` records exact stable Firefox checks on macOS, Windows, and Linux plus stable
-Safari on macOS. Every row must prove all four points: the ESP CLI guidance is present, ESP connect
-is unavailable, no broken connect action is shown, and the T-Echo UF2 route remains available.
+Safari on macOS. What a row must prove depends on whether that browser has Web Serial, which the
+flasher itself decides by feature detection rather than by browser name.
+
+A browser without Web Serial must prove all four points: the ESP CLI guidance is present, ESP
+connect is unavailable, no broken connect action is shown, and the T-Echo UF2 route remains
+available. A browser that has Web Serial takes the supported branch and shows none of the first
+three, so its row proves the T-Echo UF2 route only. Firefox has been in that second group since
+Firefox 151 shipped Web Serial in May 2026.
+
 Fallback checks are separate from successful Web Serial flashing.
 
 ## Native installation smoke

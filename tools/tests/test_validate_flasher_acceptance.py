@@ -167,7 +167,8 @@ def complete_acceptance(
                     "version": "126.0.1",
                 },
                 "scenarios": {
-                    name: "pass" for name in VALIDATOR.FALLBACK_SCENARIOS
+                    name: "pass"
+                    for name in VALIDATOR.fallback_scenarios(browser, os_name)
                 },
                 "result": "pass",
                 "tester": roster_assignment["tester"],
@@ -527,10 +528,32 @@ class AcceptanceValidatorTests(unittest.TestCase):
             )
         )
 
+    def fallback(self, browser: str) -> dict:
+        return next(
+            entry
+            for entry in self.acceptance["browser_fallbacks"]
+            if entry["browser"]["name"] == browser
+        )
+
     def test_browser_fallback_requires_every_truthful_fallback_scenario(self) -> None:
-        self.acceptance["browser_fallbacks"][0]["scenarios"].pop("no-broken-connect-action")
+        self.fallback("safari")["scenarios"].pop("no-broken-connect-action")
         self.assertTrue(
             any("is missing fallback scenarios: ['no-broken-connect-action']" in error for error in self.validate())
+        )
+
+    def test_web_serial_browser_cannot_claim_the_unsupported_page(self) -> None:
+        self.fallback("firefox")["scenarios"]["esp-connect-unavailable"] = "pass"
+        self.assertTrue(
+            any(
+                "claims scenarios that do not apply: ['esp-connect-unavailable']" in error
+                for error in self.validate()
+            )
+        )
+
+    def test_web_serial_browser_still_proves_the_uf2_route(self) -> None:
+        self.fallback("firefox")["scenarios"].pop("t-echo-uf2-route")
+        self.assertTrue(
+            any("is missing fallback scenarios: ['t-echo-uf2-route']" in error for error in self.validate())
         )
 
     def test_unknown_fields_and_future_timestamps_are_rejected(self) -> None:

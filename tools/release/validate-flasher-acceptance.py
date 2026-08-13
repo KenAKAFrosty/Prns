@@ -19,12 +19,12 @@ if str(SCRIPT_DIRECTORY) not in sys.path:
 from flasher_acceptance_contract import (  # noqa: E402
     ACCEPTANCE_SCHEMA,
     CLI_TARGETS,
-    FALLBACK_SCENARIOS,
     OS_ARCHITECTURES,
     REQUIRED_FALLBACKS,
     SHIPPING_BOARDS,
     SURFACES,
     applicable_scenarios,
+    fallback_scenarios,
     parse_utc_timestamp,
     required_compatibilities,
     sha256,
@@ -587,10 +587,11 @@ def validate_fallbacks(
         seen.add(key)
         if entry.get("result") != "pass":
             errors.append(f"{label} is not a passing fallback check")
+        required_scenarios = fallback_scenarios(browser_name, os_name)
         observed = validate_scenarios(
-            entry.get("scenarios"), FALLBACK_SCENARIOS, label, errors
+            entry.get("scenarios"), required_scenarios, label, errors
         )
-        missing_scenarios = sorted(FALLBACK_SCENARIOS - observed)
+        missing_scenarios = sorted(required_scenarios - observed)
         if missing_scenarios:
             errors.append(f"{label} is missing fallback scenarios: {missing_scenarios}")
     missing = sorted(REQUIRED_FALLBACKS - seen)

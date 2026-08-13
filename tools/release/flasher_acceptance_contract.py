@@ -33,18 +33,42 @@ CLI_TARGETS = {
     "aarch64-unknown-linux-gnu": ("linux", "aarch64"),
     "x86_64-pc-windows-msvc": ("windows", "x86_64"),
 }
-REQUIRED_FALLBACKS = {
+# The web flasher never asks which browser it is running in. It feature-detects
+# `window.isSecureContext && navigator.serial && navigator.serial.requestPort` and branches on
+# the answer, so a browser moves between these two sets by shipping the API, not by being renamed
+# here. Firefox 151 shipped Web Serial in May 2026 and stable Firefox has carried it since.
+WEB_SERIAL_FALLBACK_BROWSERS = {
+    ("safari", "macos"),
+}
+WEB_SERIAL_CAPABLE_BROWSERS = {
     ("firefox", "macos"),
     ("firefox", "windows"),
     ("firefox", "linux"),
-    ("safari", "macos"),
 }
-FALLBACK_SCENARIOS = {
+REQUIRED_FALLBACKS = WEB_SERIAL_FALLBACK_BROWSERS | WEB_SERIAL_CAPABLE_BROWSERS
+
+# These three describe the page a browser gets when it cannot reach a serial port at all: the
+# CLI is offered instead, ESP connect is absent, and nothing broken is left on screen in its
+# place. A browser that has Web Serial takes the supported branch and shows none of them.
+NO_WEB_SERIAL_SCENARIOS = {
     "esp-cli-guidance",
     "esp-connect-unavailable",
     "no-broken-connect-action",
+}
+# The T-Echo route is a manual UF2 copy. It does not depend on Web Serial, so it is the one
+# point every fallback row can still prove whatever the browser supports.
+FALLBACK_COMMON_SCENARIOS = {
     "t-echo-uf2-route",
 }
+FALLBACK_SCENARIOS = NO_WEB_SERIAL_SCENARIOS | FALLBACK_COMMON_SCENARIOS
+
+
+def fallback_scenarios(browser: str, os_name: str) -> set[str]:
+    """Points a browser fallback row can actually observe on that browser."""
+
+    if (browser, os_name) in WEB_SERIAL_CAPABLE_BROWSERS:
+        return set(FALLBACK_COMMON_SCENARIOS)
+    return set(FALLBACK_SCENARIOS)
 
 ESP_COMMON_SCENARIOS = {
     "fresh-install",
@@ -309,7 +333,8 @@ def scaffold(
                     "version": NOT_RUN,
                 },
                 "scenarios": {
-                    scenario: "not-run" for scenario in sorted(FALLBACK_SCENARIOS)
+                    scenario: "not-run"
+                    for scenario in sorted(fallback_scenarios(browser, os_name))
                 },
                 "result": "not-run",
                 "tester": assignment.tester,
