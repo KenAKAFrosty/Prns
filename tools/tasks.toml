@@ -166,6 +166,17 @@ requires = ["bash", "cargo", "npm", "wasm-bindgen"]
 setup = "cargo install wasm-bindgen-cli --version 0.2.126 --locked"
 
 [[task]]
+id = "build.configure.stage"
+summary = "Build and stage the headless-config webUI (/assets/configure/) into the documentation site."
+domain = "build"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci"]
+entrypoint = ["bash", "tools/build/stage-configure-asset.sh"]
+requires = ["bash", "cargo", "npm", "wasm-bindgen"]
+setup = "cargo install wasm-bindgen-cli --version 0.2.126 --locked"
+
+[[task]]
 id = "device.techo.flash"
 summary = "Build T-Echo firmware, create a UF2 image, and copy it to the mounted bootloader."
 domain = "device"
