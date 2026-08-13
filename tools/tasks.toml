@@ -167,7 +167,7 @@ setup = "cargo install wasm-bindgen-cli --version 0.2.126 --locked"
 
 [[task]]
 id = "device.techo.flash"
-summary = "Build T-Echo firmware, create a UF2 image, and copy it to the mounted bootloader."
+summary = "Detect the mounted T-Echo foundation, build its compatible UF2, flash it, and verify reboot."
 domain = "device"
 effect = "device-write"
 platforms = ["macos"]

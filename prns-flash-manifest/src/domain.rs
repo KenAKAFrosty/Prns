@@ -2,7 +2,8 @@ mod target;
 mod values;
 
 pub use target::{
-    EspFlashPart, EspSerialTarget, ReleasePartRef, ReleaseTarget, Uf2Part, Uf2Target,
+    EspFlashPart, EspSerialTarget, ReleasePartRef, ReleaseTarget, SoftdeviceFamily,
+    SoftdeviceIdentity, SoftdeviceVersion, Uf2Compatibility, Uf2Part, Uf2Target, Uf2Variant,
     ValidatedChannelDescriptor, ValidatedFlashManifest, ValidatedReleaseInfo, ValidatedSigningInfo,
 };
 pub use values::{

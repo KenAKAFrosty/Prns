@@ -155,10 +155,30 @@
         "kind": "uf2",
         "package": "t-echo",
         "rust_target": "thumbv7em-none-eabihf",
-        "family_id": "0xADA52840",
-        "base_address": "0x27000",
         "mount_label": "TECHOBOOT",
-        "board_id_prefix": "nrf52840-techo-v"
+        "board_id_prefix": "nrf52840-techo-v",
+        "variants": [
+          {
+            "softdevice_family": "s140",
+            "softdevice_version": "6.1.1",
+            "fwid": "0x00b6",
+            "application_base": "0x00026000",
+            "family_id": "0xada52840",
+            "cargo_feature": "softdevice-s140-v6",
+            "target_directory": "target/s140-v6",
+            "filename": "t-echo-s140-6.1.1.uf2"
+          },
+          {
+            "softdevice_family": "s140",
+            "softdevice_version": "7.3.0",
+            "fwid": "0x0123",
+            "application_base": "0x00027000",
+            "family_id": "0xada52840",
+            "cargo_feature": "softdevice-s140-v7",
+            "target_directory": "target/s140-v7",
+            "filename": "t-echo-s140-7.3.0.uf2"
+          }
+        ]
       }
     }
   ]

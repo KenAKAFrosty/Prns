@@ -319,29 +319,27 @@ test("the exact staged production bundle rejects a partial artifact before seria
   await assertNoCredentialLeak(page, credentialEvidence);
 });
 
-test("the exact staged production bundle starts a real verified UF2 download", async ({
+test("schema-three UF2 stays fail closed without a compatibility identity", async ({
   page,
 }) => {
   const expectedHash = process.env.PRNS_EXPECTED_FLASH_BUNDLE_SHA256;
   expect(expectedHash).toMatch(/^[0-9a-f]{64}$/);
+  let uf2Requests = 0;
+  page.on("request", request => {
+    if (new URL(request.url()).pathname.includes("/firmware/hopspot/t-echo/")) {
+      uf2Requests += 1;
+    }
+  });
   await selectBoard(page, "t-echo");
   expect(await stagedProductionBundleHash(page)).toBe(expectedHash);
 
   await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: "Prepare and verify release" }).click();
-  await expect(page.locator("#flash-status")).toContainText("Release ready:");
-
-  const downloadStarted = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Download verified UF2" }).click();
-  const download = await downloadStarted;
-  expect(download.suggestedFilename()).toBe("prns-hopspot-t-echo.uf2");
-  expect(await download.failure()).toBeNull();
   await expect(page.locator("#flash-status")).toContainText(
-    "Verified UF2 download requested. Check the browser's downloads",
+    /cannot resolve a signed UF2 compatibility variant/i,
   );
-  await expect(page.getByText("Download requested", { exact: true })).toBeVisible();
-  await expect(page.getByText("Complete", { exact: true })).toHaveCount(0);
-  await expect(page.getByText(/device-side verification/i)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Download verified UF2" })).toBeDisabled();
+  expect(uf2Requests).toBe(0);
 });
 
 test("guided ESP flow verifies the signed candidate, protects credentials, and completes accessibly", async ({
@@ -640,12 +638,10 @@ test("browser support is feature-detected and T-Echo stays on the signed UF2 rou
   await expect(page.locator(".flash-wifi-config")).toHaveCount(0);
   await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: "Prepare and verify release" }).click();
-  await expect(page.locator("#flash-status")).toContainText("Release ready:");
-  await page.getByRole("button", { name: "Download verified UF2" }).click();
   await expect(page.locator("#flash-status")).toContainText(
-    "Verified UF2 download requested. Check the browser's downloads",
+    /cannot resolve a signed UF2 compatibility variant/i,
   );
-  await expect(page.getByText(/device-side verification/i)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Download verified UF2" })).toBeDisabled();
 });
 
 for (const androidPlatform of ["client-hints", "legacy-ua"]) {

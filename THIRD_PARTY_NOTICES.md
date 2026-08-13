@@ -2697,7 +2697,7 @@ License: MIT License
 
 Used by: `slab 0.4.12`
 
-Release graphs: Android, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, iOS, website Rust/WASM
+Release graphs: Android, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, website Rust/WASM
 
 ```text
 Copyright (c) 2019 Carl Lerche
@@ -7748,7 +7748,7 @@ License: MIT License
 
 Used by: `futures 0.3.32`, `futures 0.3.33`, `futures-channel 0.3.32`, `futures-channel 0.3.33`, `futures-core 0.3.32`, `futures-core 0.3.33`, `futures-executor 0.3.32`, `futures-executor 0.3.33`, `futures-io 0.3.32`, `futures-io 0.3.33`, `futures-macro 0.3.32`, `futures-macro 0.3.33`, `futures-sink 0.3.32`, `futures-sink 0.3.33`, `futures-task 0.3.32`, `futures-task 0.3.33`, `futures-util 0.3.32`, `futures-util 0.3.33`
 
-Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, iOS, nRF52840, website Rust/WASM
+Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
 
 ```text
 Copyright (c) 2016 Alex Crichton

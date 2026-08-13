@@ -776,7 +776,7 @@ mod tests {
     use super::*;
     use prns_flash_manifest::{
         board_catalog, BoardBuild, ChannelDescriptor, FlashManifest, FlashPart, FlashPartKind,
-        ReleaseInfo, SigningInfo, TargetManifest, FLASH_MANIFEST_SCHEMA,
+        ReleaseInfo, SigningInfo, TargetManifest, Uf2VariantManifest, FLASH_MANIFEST_SCHEMA,
     };
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -859,13 +859,7 @@ mod tests {
                                 (FlashPartKind::Application, "application.bin", Some(0x10000)),
                             ],
                         ),
-                        BoardBuild::Uf2(_) => (
-                            None,
-                            None,
-                            None,
-                            None,
-                            vec![(FlashPartKind::Uf2, "t-echo.uf2", None)],
-                        ),
+                        BoardBuild::Uf2(_) => (None, None, None, None, Vec::new()),
                     };
                 let parts = recipes
                     .into_iter()
@@ -885,6 +879,32 @@ mod tests {
                         }
                     })
                     .collect();
+                let variants = match &board.build {
+                    BoardBuild::Esp(_) => Vec::new(),
+                    BoardBuild::Uf2(build) => build
+                        .variants
+                        .iter()
+                        .map(|variant| {
+                            let relative = format!(
+                                "firmware/hopspot/{}/{version}/{}",
+                                board.slug, variant.filename
+                            );
+                            let bytes =
+                                format!("{seed}:{}:{}", board.slug, variant.filename).into_bytes();
+                            write_fixture(directory.path(), &relative, &bytes);
+                            Uf2VariantManifest {
+                                softdevice_family: variant.softdevice_family.clone(),
+                                softdevice_version: variant.softdevice_version.clone(),
+                                fwid: variant.fwid.clone(),
+                                application_base: variant.application_base.clone(),
+                                family_id: variant.family_id.clone(),
+                                path: relative,
+                                size: bytes.len() as u64,
+                                sha256: sha256_hex(&bytes),
+                            }
+                        })
+                        .collect(),
+                };
                 TargetManifest {
                     board_slug: board.slug.clone(),
                     display_name: board.display_name.clone(),
@@ -899,6 +919,7 @@ mod tests {
                     after_reset,
                     preparation_profile: board.preparation_profile.clone(),
                     parts,
+                    variants,
                     provisioning: board.provisioning.clone(),
                     source: None,
                 }
@@ -1021,7 +1042,7 @@ mod tests {
 
         assert_eq!(imported.version, "0.2.6");
         assert_eq!(imported.channel, "preview");
-        assert_eq!(imported.artifact_count, 13);
+        assert_eq!(imported.artifact_count, 14);
         assert!(cache
             .path()
             .join("releases/0.2.6/heltec-v4/application.bin")

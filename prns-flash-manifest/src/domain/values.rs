@@ -10,48 +10,38 @@ const UF2_BOARD_ID_PREFIX_MAX_BYTES: usize = 128;
 /// Failure to construct one of the validated release-domain values.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum DomainValueError {
-    /// A stable board identifier is malformed.
     #[error("board ID {0:?} must use lowercase ASCII, digits, and hyphens")]
     BoardId(String),
-    /// A UF2 bootloader volume label is malformed.
     #[error("UF2 mount label {0:?} is not a canonical cross-platform volume label")]
     Uf2MountLabel(String),
-    /// A UF2 bootloader identity prefix is not in canonical form.
     #[error("UF2 Board-ID prefix {0:?} is not a bounded canonical ASCII prefix")]
     Uf2BoardIdPrefix(String),
-    /// An immutable release version is malformed.
     #[error("release version {0:?} is not an immutable path-safe identifier")]
     ReleaseVersion(String),
-    /// A signing key identifier is malformed.
     #[error("key ID {0:?} must be exactly 16 hexadecimal characters")]
     KeyId(String),
-    /// A SHA-256 digest is malformed.
     #[error("SHA-256 digest must be exactly 64 lowercase hexadecimal characters")]
     Sha256Digest,
-    /// An artifact path is mutable or can escape its release directory.
     #[error("artifact path {0:?} is not immutable and relative")]
     ImmutableArtifactPath(String),
-    /// An expected Espressif chip is unsupported.
     #[error("unsupported chip family {0:?}")]
     ChipFamily(String),
-    /// A preparation profile is unsupported.
     #[error("unsupported preparation profile {0:?}")]
     PreparationProfile(String),
-    /// A pre-connect reset strategy is unsupported.
     #[error("unsupported pre-connect reset strategy {0:?}")]
     BeforeResetStrategy(String),
-    /// A post-flash reset strategy is unsupported.
     #[error("unsupported post-flash reset strategy {0:?}")]
     AfterResetStrategy(String),
-    /// A provisioning format is unsupported.
     #[error("unsupported provisioning format {0:?}")]
     ProvisioningFormat(String),
-    /// A flash-mode value is unsupported.
     #[error("unsupported flash mode {0:?}")]
     FlashMode(String),
-    /// A flash-frequency value is unsupported.
     #[error("unsupported flash frequency {0:?}")]
     FlashFrequency(String),
+    #[error("unsupported SoftDevice family {0:?}")]
+    SoftdeviceFamily(String),
+    #[error("malformed SoftDevice version {0:?}")]
+    SoftdeviceVersion(String),
 }
 
 macro_rules! validated_string {

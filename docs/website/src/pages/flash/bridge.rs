@@ -1,5 +1,5 @@
 use dioxus::prelude::*;
-use prns_flash_manifest::{EspSerialTarget, FlashPartKind, ReleaseTarget, Transport, Uf2Target};
+use prns_flash_manifest::{EspSerialTarget, ReleaseTarget, Transport, Uf2Target};
 use serde::{Deserialize, Serialize};
 
 use crate::platforms::BoardFlashTarget;
@@ -233,42 +233,17 @@ impl BridgeRequest {
     }
 
     fn from_uf2_target(
-        board_slug: &str,
-        display_name: &str,
-        target: &Uf2Target,
-        base_url: &str,
+        _board_slug: &str,
+        _display_name: &str,
+        _target: &Uf2Target,
+        _base_url: &str,
         provisioning: Option<BridgeProvisioning>,
-        mount_label: &str,
+        _mount_label: &str,
     ) -> Result<Self, String> {
         if provisioning.is_some() {
             return Err("A UF2 release cannot carry ESP provisioning data.".to_string());
         }
-        let part = target.part();
-        let path = part.path().as_str();
-        Ok(Self {
-            schema: contract::schema(),
-            board_slug: board_slug.to_string(),
-            display_name: display_name.to_string(),
-            transport: Transport::Uf2MassStorage,
-            expected_chip: None,
-            flash_size: None,
-            flash_mode: None,
-            flash_frequency: None,
-            before_reset: None,
-            after_reset: None,
-            mount_label: Some(mount_label.to_string()),
-            install_mode: None,
-            erase_confirmed: None,
-            provisioning: None,
-            parts: vec![BridgePart {
-                kind: part_kind(FlashPartKind::Uf2),
-                path: path.to_string(),
-                url: immutable_part_url(base_url, path)?,
-                offset: None,
-                size: part.size(),
-                sha256: part.sha256().as_str().to_string(),
-            }],
-        })
+        Err("This website build cannot resolve a signed UF2 compatibility variant. Use the native flasher until the browser identity selector is available.".to_string())
     }
 }
 
@@ -750,6 +725,18 @@ mod tests {
             let catalog_target = board_target_by_slug(target.board_id().as_str())
                 .and_then(|board| board.flash_target)
                 .ok_or("missing cataloged flash target")?;
+            if matches!(target, ReleaseTarget::Uf2(_)) {
+                assert!(BridgeRequest::from_target(
+                    target,
+                    manifest_url,
+                    InstallMode::PreserveData,
+                    DestructiveConfirmation::Unconfirmed,
+                    None,
+                    catalog_target,
+                )
+                .is_err());
+                continue;
+            }
             let request = BridgeRequest::from_target(
                 target,
                 manifest_url,

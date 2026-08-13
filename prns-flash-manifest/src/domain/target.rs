@@ -8,6 +8,150 @@ use super::values::{
     Sha256Digest,
 };
 
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SoftdeviceFamily {
+    S140,
+}
+
+impl SoftdeviceFamily {
+    pub fn parse(value: &str) -> Result<Self, super::values::DomainValueError> {
+        match value.to_ascii_lowercase().as_str() {
+            "s140" => Ok(Self::S140),
+            _ => Err(super::values::DomainValueError::SoftdeviceFamily(
+                value.to_string(),
+            )),
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::S140 => "s140",
+        }
+    }
+}
+
+impl std::fmt::Display for SoftdeviceFamily {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SoftdeviceVersion(String);
+
+impl SoftdeviceVersion {
+    pub fn parse(value: impl Into<String>) -> Result<Self, super::values::DomainValueError> {
+        let value = value.into();
+        let components = value.split('.').collect::<Vec<_>>();
+        let valid = components.len() == 3
+            && components.iter().all(|component| {
+                !component.is_empty()
+                    && component.bytes().all(|byte| byte.is_ascii_digit())
+                    && (component == &"0" || !component.starts_with('0'))
+                    && component.parse::<u16>().is_ok()
+            });
+        valid
+            .then_some(Self(value.clone()))
+            .ok_or(super::values::DomainValueError::SoftdeviceVersion(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for SoftdeviceVersion {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SoftdeviceIdentity {
+    family: SoftdeviceFamily,
+    version: SoftdeviceVersion,
+}
+
+impl SoftdeviceIdentity {
+    pub fn parse(
+        family: &str,
+        version: impl Into<String>,
+    ) -> Result<Self, super::values::DomainValueError> {
+        Ok(Self {
+            family: SoftdeviceFamily::parse(family)?,
+            version: SoftdeviceVersion::parse(version)?,
+        })
+    }
+
+    pub const fn family(&self) -> SoftdeviceFamily {
+        self.family
+    }
+
+    pub fn version(&self) -> &SoftdeviceVersion {
+        &self.version
+    }
+}
+
+impl std::fmt::Display for SoftdeviceIdentity {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "{} {}",
+            self.family.to_string().to_ascii_uppercase(),
+            self.version
+        )
+    }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Uf2Compatibility {
+    softdevice: SoftdeviceIdentity,
+    fwid: u16,
+    application_base: u32,
+    family_id: u32,
+}
+
+impl Uf2Compatibility {
+    pub(crate) fn new(
+        softdevice: SoftdeviceIdentity,
+        fwid: u16,
+        application_base: u32,
+        family_id: u32,
+    ) -> Self {
+        Self {
+            softdevice,
+            fwid,
+            application_base,
+            family_id,
+        }
+    }
+
+    pub fn softdevice(&self) -> &SoftdeviceIdentity {
+        &self.softdevice
+    }
+
+    pub const fn fwid(&self) -> u16 {
+        self.fwid
+    }
+
+    pub const fn application_base(&self) -> u32 {
+        self.application_base
+    }
+
+    pub const fn family_id(&self) -> u32 {
+        self.family_id
+    }
+
+    pub fn label(&self) -> String {
+        format!(
+            "{}-{}-fwid-0x{:04x}",
+            self.softdevice.family().as_str(),
+            self.softdevice.version(),
+            self.fwid
+        )
+    }
+}
+
 /// Immutable release identity after validation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ValidatedReleaseInfo {
@@ -111,6 +255,22 @@ pub struct Uf2Part {
     pub(crate) sha256: Sha256Digest,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Uf2Variant {
+    pub(crate) compatibility: Uf2Compatibility,
+    pub(crate) part: Uf2Part,
+}
+
+impl Uf2Variant {
+    pub fn compatibility(&self) -> &Uf2Compatibility {
+        &self.compatibility
+    }
+
+    pub fn part(&self) -> &Uf2Part {
+        &self.part
+    }
+}
+
 impl Uf2Part {
     /// Immutable relative artifact path.
     pub fn path(&self) -> &ImmutableArtifactPath {
@@ -188,7 +348,6 @@ impl ReleasePartRef<'_> {
         }
     }
 
-    /// Convert back to the stable schema-v2 wire DTO.
     pub fn to_wire(self) -> FlashPart {
         match self {
             Self::Esp(part) => part.to_wire(),
@@ -257,13 +416,18 @@ impl EspSerialTarget {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Uf2Target {
     pub(crate) identity: TargetIdentity,
-    pub(crate) part: Uf2Part,
+    pub(crate) variants: Vec<Uf2Variant>,
 }
 
 impl Uf2Target {
-    /// The single signed UF2 payload.
-    pub fn part(&self) -> &Uf2Part {
-        &self.part
+    pub fn variants(&self) -> &[Uf2Variant] {
+        &self.variants
+    }
+
+    pub fn variant_for(&self, identity: &SoftdeviceIdentity) -> Option<&Uf2Variant> {
+        self.variants
+            .iter()
+            .find(|variant| variant.compatibility.softdevice() == identity)
     }
 }
 
@@ -324,7 +488,11 @@ impl ReleaseTarget {
     pub fn parts(&self) -> Vec<ReleasePartRef<'_>> {
         match self {
             Self::EspSerial(target) => target.parts.iter().map(ReleasePartRef::Esp).collect(),
-            Self::Uf2(target) => vec![ReleasePartRef::Uf2(&target.part)],
+            Self::Uf2(target) => target
+                .variants
+                .iter()
+                .map(|variant| ReleasePartRef::Uf2(&variant.part))
+                .collect(),
         }
     }
 
@@ -341,7 +509,6 @@ impl ReleaseTarget {
         self.identity().source.as_ref()
     }
 
-    /// Convert back to the stable schema-v2 wire DTO.
     pub fn to_wire(&self) -> TargetManifest {
         let identity = self.identity();
         match self {
@@ -359,6 +526,7 @@ impl ReleaseTarget {
                 after_reset: Some(target.after_reset.as_str().to_string()),
                 preparation_profile: identity.preparation_profile.as_str().to_string(),
                 parts: target.parts.iter().map(EspFlashPart::to_wire).collect(),
+                variants: Vec::new(),
                 provisioning: target.provisioning.as_ref().map(ProvisioningSlot::to_wire),
                 source: identity.source.clone(),
             },
@@ -375,7 +543,34 @@ impl ReleaseTarget {
                 before_reset: None,
                 after_reset: None,
                 preparation_profile: identity.preparation_profile.as_str().to_string(),
-                parts: vec![target.part.to_wire()],
+                parts: Vec::new(),
+                variants: target
+                    .variants
+                    .iter()
+                    .map(|variant| crate::Uf2VariantManifest {
+                        softdevice_family: variant
+                            .compatibility
+                            .softdevice()
+                            .family()
+                            .as_str()
+                            .to_string(),
+                        softdevice_version: variant
+                            .compatibility
+                            .softdevice()
+                            .version()
+                            .as_str()
+                            .to_string(),
+                        fwid: format!("0x{:04x}", variant.compatibility.fwid()),
+                        application_base: format!(
+                            "0x{:08x}",
+                            variant.compatibility.application_base()
+                        ),
+                        family_id: format!("0x{:08x}", variant.compatibility.family_id()),
+                        path: variant.part.path.as_str().to_string(),
+                        size: variant.part.size,
+                        sha256: variant.part.sha256.as_str().to_string(),
+                    })
+                    .collect(),
                 provisioning: None,
                 source: identity.source.clone(),
             },
@@ -383,7 +578,6 @@ impl ReleaseTarget {
     }
 }
 
-/// Signed schema-v2 manifest after wire parsing and semantic conversion.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ValidatedFlashManifest {
     pub(crate) schema: u32,

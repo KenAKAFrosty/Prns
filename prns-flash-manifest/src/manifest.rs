@@ -105,12 +105,26 @@ pub struct TargetManifest {
     pub preparation_profile: String,
     /// Ordered immutable release parts.
     pub parts: Vec<FlashPart>,
+    pub variants: Vec<Uf2VariantManifest>,
     /// Optional local provisioning slot.
     pub provisioning: Option<ProvisioningDescriptor>,
     /// Native source archive served by this exact target. Its absence means the target does not
     /// register source-download routes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<SourceArchiveIdentity>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Uf2VariantManifest {
+    pub softdevice_family: String,
+    pub softdevice_version: String,
+    pub fwid: String,
+    pub application_base: String,
+    pub family_id: String,
+    pub path: String,
+    pub size: u64,
+    pub sha256: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -263,7 +277,6 @@ impl FlashManifest {
         Ok(manifest)
     }
 
-    /// Consume a schema-v2 wire DTO into the validated release-domain model.
     pub fn into_validated(
         self,
         catalog: &BoardCatalog,
@@ -377,7 +390,9 @@ impl PartialOrd for FlashPartKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{board_catalog, BoardBuild, ReleaseTarget, CONFIG_OFFSET};
+    use crate::{
+        board_catalog, BoardBuild, ReleaseTarget, ReleaseVersion, SoftdeviceIdentity, CONFIG_OFFSET,
+    };
 
     fn valid_manifest() -> Result<FlashManifest, crate::catalog::CatalogError> {
         let catalog = board_catalog()?;
@@ -385,7 +400,7 @@ mod tests {
             .boards
             .iter()
             .map(|board| {
-                let (flash_mode, flash_frequency, before_reset, after_reset, parts) =
+                let (flash_mode, flash_frequency, before_reset, after_reset, parts, variants) =
                     match &board.build {
                         BoardBuild::Esp(build) => (
                             Some(build.flash_mode.clone()),
@@ -407,13 +422,31 @@ mod tests {
                                     Some(0x10000),
                                 ),
                             ],
+                            Vec::new(),
                         ),
-                        BoardBuild::Uf2(_) => (
+                        BoardBuild::Uf2(build) => (
                             None,
                             None,
                             None,
                             None,
-                            vec![part(board, FlashPartKind::Uf2, "firmware.uf2", None)],
+                            Vec::new(),
+                            build
+                                .variants
+                                .iter()
+                                .map(|variant| Uf2VariantManifest {
+                                    softdevice_family: variant.softdevice_family.clone(),
+                                    softdevice_version: variant.softdevice_version.clone(),
+                                    fwid: variant.fwid.clone(),
+                                    application_base: variant.application_base.clone(),
+                                    family_id: variant.family_id.clone(),
+                                    path: format!(
+                                        "firmware/hopspot/{}/0.2.6/{}",
+                                        board.slug, variant.filename
+                                    ),
+                                    size: 256,
+                                    sha256: "a".repeat(64),
+                                })
+                                .collect(),
                         ),
                     };
                 TargetManifest {
@@ -430,6 +463,7 @@ mod tests {
                     after_reset,
                     preparation_profile: board.preparation_profile.clone(),
                     parts,
+                    variants,
                     provisioning: board.provisioning.clone(),
                     source: None,
                 }
@@ -542,13 +576,12 @@ mod tests {
     }
 
     #[test]
-    fn schema_two_wire_roundtrips_through_transport_typed_domain(
+    fn schema_three_wire_roundtrips_through_transport_typed_domain(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let catalog = board_catalog()?;
         let wire = valid_manifest()?;
         let encoded = serde_json::to_vec(&wire)?;
 
-        // Compatibility callers retain the exact schema-v2 DTO.
         assert_eq!(FlashManifest::from_json(&encoded, &catalog)?, wire);
 
         let validated = ValidatedFlashManifest::from_json(&encoded, &catalog)?;
@@ -580,9 +613,50 @@ mod tests {
             return Err("T-Echo did not convert to the UF2 variant".into());
         };
         assert_eq!(
-            t_echo.part().path().as_str(),
-            "firmware/hopspot/t-echo/0.2.6/firmware.uf2"
+            t_echo
+                .variants()
+                .iter()
+                .map(|variant| variant.part().path().as_str())
+                .collect::<Vec<_>>(),
+            [
+                "firmware/hopspot/t-echo/0.2.6/t-echo-s140-6.1.1.uf2",
+                "firmware/hopspot/t-echo/0.2.6/t-echo-s140-7.3.0.uf2",
+            ]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn local_uf2_validation_accepts_only_the_selected_catalog_variant(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let catalog = board_catalog()?;
+        let board = catalog
+            .board("t-echo")
+            .ok_or("missing T-Echo catalog entry")?;
+        let mut target = valid_manifest()?
+            .targets
+            .into_iter()
+            .find(|target| target.board_slug == "t-echo")
+            .ok_or("missing T-Echo target")?;
+        target
+            .variants
+            .retain(|variant| variant.softdevice_version == "6.1.1");
+        let version = ReleaseVersion::parse("0.2.6")?;
+        let v6 = SoftdeviceIdentity::parse("s140", "6.1.1")?;
+        let v7 = SoftdeviceIdentity::parse("s140", "7.3.0")?;
+
+        assert!(target.clone().into_validated(board, &version).is_err());
+        assert!(target
+            .clone()
+            .into_validated_uf2_variant(board, &version, &v7)
+            .is_err());
+        let ReleaseTarget::Uf2(validated) =
+            target.into_validated_uf2_variant(board, &version, &v6)?
+        else {
+            return Err("selected T-Echo target did not remain UF2".into());
+        };
+        assert_eq!(validated.variants().len(), 1);
+        assert_eq!(validated.variants()[0].compatibility().softdevice(), &v6);
         Ok(())
     }
 

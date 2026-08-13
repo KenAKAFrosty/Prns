@@ -22,12 +22,13 @@ use prns_flash_manifest::{
 use serde::Serialize;
 
 use build::{
-    assemble_manifest, build_board, default_artifact_root, BuildVersion, ManifestTargetProfile,
+    assemble_manifest, build_board, build_board_for_flash, default_artifact_root, BuildVersion,
+    ManifestTargetProfile,
 };
 use cli::{CacheCommand, ChannelArg, Cli, CommandMode, WifiMode};
 use error::AppError;
 use events::{Phase, Reporter};
-use release::{prepare_candidate_target, prepare_published_target, PreparedTarget};
+use release::{verify_candidate_target, verify_published_target, PreparedTarget};
 use wifi::WifiOptions;
 
 fn main() -> ExitCode {
@@ -229,27 +230,54 @@ fn execute_flash(
     reporter: Reporter,
 ) -> Result<(), AppError> {
     esp::begin_cancellable_operation()?;
-    let prepared = if request.local_build {
+    let (prepared, detected_uf2) = if request.local_build {
+        let detected_uf2 = match board.transport {
+            Transport::EspSerial => None,
+            Transport::Uf2MassStorage => Some(uf2::detect_device(board, request.mount)?),
+        };
         let repo = repo_root()?;
-        build_board(
-            board,
-            &repo,
-            &default_artifact_root(&repo),
-            BuildVersion::Repository,
-            reporter,
-        )?
-        .prepared
-    } else if let Some(candidate) = request.candidate {
-        prepare_candidate_target(catalog, &board.slug, request.channel, candidate, reporter)?
+        let prepared = match &detected_uf2 {
+            Some(device) => build_board_for_flash(
+                board,
+                &repo,
+                &default_artifact_root(&repo),
+                BuildVersion::Repository,
+                device.softdevice(),
+                reporter,
+            )?
+            .into_prepared()?,
+            None => build_board(
+                board,
+                &repo,
+                &default_artifact_root(&repo),
+                BuildVersion::Repository,
+                reporter,
+            )?
+            .into_prepared()?,
+        };
+        (prepared, detected_uf2)
     } else {
-        prepare_published_target(
-            catalog,
-            &board.slug,
-            request.channel,
-            request.version,
-            request.offline,
+        let verified = if let Some(candidate) = request.candidate {
+            verify_candidate_target(catalog, &board.slug, request.channel, candidate, reporter)?
+        } else {
+            verify_published_target(
+                catalog,
+                &board.slug,
+                request.channel,
+                request.version,
+                request.offline,
+                reporter,
+            )?
+        };
+        let detected_uf2 = match board.transport {
+            Transport::EspSerial => None,
+            Transport::Uf2MassStorage => Some(uf2::detect_device(board, request.mount)?),
+        };
+        let prepared = verified.prepare(
+            detected_uf2.as_ref().map(|device| device.softdevice()),
             reporter,
-        )?
+        )?;
+        (prepared, detected_uf2)
     };
     if esp::cancelled() {
         return Err(AppError::Cancelled);
@@ -284,7 +312,10 @@ fn execute_flash(
                     board.display_name
                 )));
             }
-            uf2::flash(board, &prepared, request.mount, reporter)
+            let device = detected_uf2.ok_or_else(|| {
+                AppError::device_identity("UF2 device selection disappeared before delivery")
+            })?;
+            uf2::flash(board, &prepared, device, reporter)
         }
         _ => Err(AppError::trust_identity(
             "prepared artifact transport does not match the selected board",
@@ -480,7 +511,14 @@ enum DoctorCheck {
         note: Option<String>,
     },
     #[serde(rename = "uf2-mass-storage")]
-    Uf2MassStorage { mount: String },
+    Uf2MassStorage {
+        mount: String,
+        board_id: String,
+        bootloader_version: String,
+        softdevice_family: String,
+        softdevice_version: String,
+        compatibility_variant: String,
+    },
 }
 
 fn doctor(
@@ -535,9 +573,14 @@ fn doctor(
             })
         }
         Some(board) => {
-            let mount = uf2::doctor_mount_from(detected_mounts.clone(), board)?;
+            let device = uf2::detect_device(board, None)?;
             Some(DoctorCheck::Uf2MassStorage {
-                mount: mount.display().to_string(),
+                mount: device.mount().display().to_string(),
+                board_id: device.identity().board_id().to_string(),
+                bootloader_version: device.identity().bootloader_version().to_string(),
+                softdevice_family: device.softdevice().family().as_str().to_string(),
+                softdevice_version: device.softdevice().version().as_str().to_string(),
+                compatibility_variant: device.compatibility_variant().to_string(),
             })
         }
         None => None,
@@ -559,7 +602,7 @@ fn doctor(
         .map(|path| path.display().to_string())
         .collect::<Vec<_>>();
     let output = DoctorOutput {
-        schema: 1,
+        schema: 2,
         event: "doctor",
         phase: "complete",
         board: board_slug,
@@ -625,9 +668,24 @@ fn human_doctor_output(
                 rendered.push_str(&format!("  board confirmation: {note}\n"));
             }
         }
-        Some(DoctorCheck::Uf2MassStorage { mount }) => {
+        Some(DoctorCheck::Uf2MassStorage {
+            mount,
+            board_id,
+            bootloader_version,
+            softdevice_family,
+            softdevice_version,
+            compatibility_variant,
+        }) => {
             rendered.push_str("non-writing UF2 preflight: passed\n");
             rendered.push_str(&format!("  identifiable UF2 bootloader mount: {mount}\n"));
+            rendered.push_str(&format!("  Board-ID: {board_id}\n"));
+            rendered.push_str(&format!("  bootloader: {bootloader_version}\n"));
+            rendered.push_str(&format!(
+                "  SoftDevice: {softdevice_family} {softdevice_version}\n"
+            ));
+            rendered.push_str(&format!(
+                "  compatibility variant: {compatibility_variant}\n"
+            ));
         }
         None => {}
     }
@@ -733,7 +791,7 @@ mod doctor_tests {
     #[test]
     fn esp_doctor_json_exposes_same_chip_ambiguity() {
         let encoded = json_line(&DoctorOutput {
-            schema: 1,
+            schema: 2,
             event: "doctor",
             phase: "complete",
             board: Some("heltec-v4"),
@@ -754,7 +812,7 @@ mod doctor_tests {
         .expect("doctor output serializes");
         assert_eq!(
             encoded,
-            r#"{"schema":1,"event":"doctor","phase":"complete","board":"heltec-v4","requested_port":"fake-port","serial_ports":[{"name":"fake-port","kind":"usb"}],"techo_mounts":[],"check":{"transport":"esp-serial","port":"fake-port","detected_chip":"esp32s3","flash_size":16777216,"same_chip_board_ambiguity":true,"note":"cannot distinguish these two board models"}}"#
+            r#"{"schema":2,"event":"doctor","phase":"complete","board":"heltec-v4","requested_port":"fake-port","serial_ports":[{"name":"fake-port","kind":"usb"}],"techo_mounts":[],"check":{"transport":"esp-serial","port":"fake-port","detected_chip":"esp32s3","flash_size":16777216,"same_chip_board_ambiguity":true,"note":"cannot distinguish these two board models"}}"#
         );
     }
 
@@ -791,7 +849,7 @@ mod doctor_tests {
         let catalog = board_catalog().expect("catalog");
         let board = catalog.board("t-beam-supreme").expect("T-Beam");
         let output = DoctorOutput {
-            schema: 1,
+            schema: 2,
             event: "doctor",
             phase: "complete",
             board: Some("t-beam-supreme"),
@@ -827,7 +885,7 @@ mod doctor_tests {
         let catalog = board_catalog().expect("catalog");
         let board = catalog.board("t-echo").expect("T-Echo");
         let output = DoctorOutput {
-            schema: 1,
+            schema: 2,
             event: "doctor",
             phase: "complete",
             board: Some("t-echo"),
@@ -839,12 +897,17 @@ mod doctor_tests {
             techo_mounts: vec!["/media/operator/TECHOBOOT".to_string()],
             check: Some(DoctorCheck::Uf2MassStorage {
                 mount: "/media/operator/TECHOBOOT".to_string(),
+                board_id: "nrf52840-techo-v1".to_string(),
+                bootloader_version: "0.6.1".to_string(),
+                softdevice_family: "s140".to_string(),
+                softdevice_version: "7.3.0".to_string(),
+                compatibility_variant: "s140-7.3.0-fwid-0x0123".to_string(),
             }),
         };
 
         assert_eq!(
             human_doctor_output(&output, Some(board), None),
-            "board: t-echo\nUF2 bootloader mounts:\n  /media/operator/TECHOBOOT\nnon-writing UF2 preflight: passed\n  identifiable UF2 bootloader mount: /media/operator/TECHOBOOT\n"
+            "board: t-echo\nUF2 bootloader mounts:\n  /media/operator/TECHOBOOT\nnon-writing UF2 preflight: passed\n  identifiable UF2 bootloader mount: /media/operator/TECHOBOOT\n  Board-ID: nrf52840-techo-v1\n  bootloader: 0.6.1\n  SoftDevice: s140 7.3.0\n  compatibility variant: s140-7.3.0-fwid-0x0123\n"
         );
     }
 }

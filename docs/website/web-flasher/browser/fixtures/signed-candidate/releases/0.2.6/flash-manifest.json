@@ -1,12 +1,12 @@
 {
-  "schema": 2,
+  "schema": 3,
   "release": {
     "version": "0.2.6",
     "channel": "stable",
     "commit": "acd32a00552708dac3e8f7df9a86fa188172ca60"
   },
   "signing": {
-    "key_id": "6B62D3410E007120"
+    "key_id": "FE225DB0CF7ED13B"
   },
   "targets": [
     {
@@ -45,6 +45,7 @@
           "sha256": "afd1704d2aa5f4dbdf86a995c0a634c4f43226a8efb1606d58530715989ca7a5"
         }
       ],
+      "variants": [],
       "provisioning": {
         "format": "HSPCFG1",
         "version": 1,
@@ -90,6 +91,7 @@
           "sha256": "d4c4c0ff50bb82fc71c17ef394c072d7756bb816688b25c55c26bb039760ad61"
         }
       ],
+      "variants": [],
       "provisioning": {
         "format": "HSPCFG1",
         "version": 1,
@@ -135,6 +137,7 @@
           "sha256": "4d1ba104ca65cf5045acac9baa721ae1b03d632290128bf6a871426c6c6a6184"
         }
       ],
+      "variants": [],
       "provisioning": null
     },
     {
@@ -150,13 +153,27 @@
       "before_reset": null,
       "after_reset": null,
       "preparation_profile": "techo-uf2",
-      "parts": [
+      "parts": [],
+      "variants": [
         {
-          "kind": "uf2",
-          "path": "firmware/hopspot/t-echo/0.2.6/firmware.uf2",
-          "offset": null,
-          "size": 34,
-          "sha256": "c460ec34187cdd6800d7bac28f1d900b6e669ba7a38db86a412cb4f389b84f8a"
+          "softdevice_family": "s140",
+          "softdevice_version": "6.1.1",
+          "fwid": "0x00b6",
+          "application_base": "0x00026000",
+          "family_id": "0xada52840",
+          "path": "firmware/hopspot/t-echo/0.2.6/t-echo-s140-6.1.1.uf2",
+          "size": 512,
+          "sha256": "4e0ba8eae4642318590fe74d444d541dc9e5f97c88c7f7a136e6af25ec58f125"
+        },
+        {
+          "softdevice_family": "s140",
+          "softdevice_version": "7.3.0",
+          "fwid": "0x0123",
+          "application_base": "0x00027000",
+          "family_id": "0xada52840",
+          "path": "firmware/hopspot/t-echo/0.2.6/t-echo-s140-7.3.0.uf2",
+          "size": 512,
+          "sha256": "fa9bf4825cac638fa7f0f3ae42e99bd8c580fb6c9bb869b181c9c6933400d9bd"
         }
       ],
       "provisioning": null
