@@ -14,6 +14,7 @@ from flasher_sparse_sizes import SHIPPING_BOARDS
 from flasher_sparse_sizes import build_report as build_sparse_size_report
 from flasher_sparse_sizes import render_summary as render_sparse_size_summary
 from flasher_website_history import allowed_historical_signatures
+from flasher_manifest import FLASH_MANIFEST_SCHEMA
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -65,8 +66,8 @@ def validate_manifest(candidate: Path, version: str, channel: str, commit: str, 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     release = manifest.get("release", {})
     signing = manifest.get("signing", {})
-    if manifest.get("schema") != 2:
-        raise ValueError("candidate manifest is not schema 2")
+    if manifest.get("schema") != FLASH_MANIFEST_SCHEMA:
+        raise ValueError(f"candidate manifest is not schema {FLASH_MANIFEST_SCHEMA}")
     if release != {"version": version, "channel": channel, "commit": commit}:
         raise ValueError("candidate manifest release identity disagrees with finalization inputs")
     if signing != {"key_id": key_id}:

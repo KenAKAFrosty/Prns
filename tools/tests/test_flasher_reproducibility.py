@@ -71,26 +71,31 @@ def manifest(
                 "board_slug": "heltec-v4",
                 "transport": "esp-serial",
                 "parts": [{"size": heltec_size}],
+                "variants": [],
             },
             {
                 "board_slug": "heltec-v4-r8",
                 "transport": "esp-serial",
                 "parts": [{"size": heltec_r8_size}],
+                "variants": [],
             },
             {
                 "board_slug": "t-beam-supreme",
                 "transport": "esp-serial",
                 "parts": [{"size": t_beam_size}],
+                "variants": [],
             },
             {
                 "board_slug": "xiao-esp32-c6",
                 "transport": "esp-serial",
                 "parts": [{"size": xiao_size}],
+                "variants": [],
             },
             {
                 "board_slug": "t-echo",
                 "transport": "uf2-mass-storage",
-                "parts": [{"size": 700_000}],
+                "parts": [],
+                "variants": [{"size": 350_000}, {"size": 350_000}],
             },
         ],
     }
@@ -128,7 +133,7 @@ def candidate(root: Path, *, payload: bytes = b"same bytes") -> None:
     (root / "flash-manifest.json").write_text(
         json.dumps(
             {
-                "schema": 2,
+                "schema": 3,
                 "release": {
                     "version": VERSION,
                     "channel": "preview",

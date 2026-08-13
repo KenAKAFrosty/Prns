@@ -26,6 +26,7 @@ from script_command import script_command
 from flasher_build_metadata import EXPECTED_TOOLS, EXPECTED_WEB_PACKAGES
 from flasher_reproducibility import SEPARATE_ENVELOPES, payload_identity, payload_manifest
 from flasher_sparse_sizes import build_report as build_sparse_size_report
+from flasher_manifest import validate_uf2_artifact
 from source_snapshot import package_source_snapshot
 
 
@@ -50,6 +51,24 @@ CLI_TARGETS = {
 }
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def uf2_payload(application_base: int) -> bytes:
+    block = bytearray(512)
+    for offset, value in (
+        (0, 0x0A324655),
+        (4, 0x9E5D5157),
+        (8, 0x00002000),
+        (12, application_base),
+        (16, 256),
+        (20, 0),
+        (24, 1),
+        (28, 0xADA52840),
+        (508, 0x0AB16F30),
+    ):
+        block[offset : offset + 4] = value.to_bytes(4, "little")
+    block[32:288] = bytes(range(256))
+    return bytes(block)
 
 
 def run_script(script: str, *arguments: object, environment: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
@@ -161,30 +180,60 @@ class CandidateFixture:
         for index, board in enumerate(
             ("heltec-v4", "heltec-v4-r8", "t-beam-supreme", "xiao-esp32-c6", "t-echo"), start=1
         ):
-            relative = f"firmware/{board}/application.bin"
-            artifact = root / relative
-            artifact.parent.mkdir(parents=True, exist_ok=True)
-            payload = f"firmware-{index}-{board}".encode()
-            artifact.write_bytes(payload)
-            self.firmware_paths.append(artifact)
-            hosted = root / "website" / "releases" / VERSION / relative
-            hosted.parent.mkdir(parents=True, exist_ok=True)
-            hosted.write_bytes(artifact.read_bytes())
-            application_part = {
-                "kind": "uf2" if board == "t-echo" else "application",
-                "path": relative,
-                "size": artifact.stat().st_size,
-                "sha256": sha256(artifact),
-            }
-            if board != "t-echo":
-                application_part["offset"] = 0x10000
-            parts = [application_part]
+            filenames = (
+                ("t-echo-s140-6.1.1.uf2", "t-echo-s140-7.3.0.uf2")
+                if board == "t-echo"
+                else ("application.bin",)
+            )
+            artifacts = []
+            for filename in filenames:
+                relative = f"firmware/{board}/{filename}"
+                artifact = root / relative
+                artifact.parent.mkdir(parents=True, exist_ok=True)
+                if board == "t-echo":
+                    application_base = 0x26000 if "6.1.1" in filename else 0x27000
+                    artifact.write_bytes(uf2_payload(application_base))
+                else:
+                    artifact.write_bytes(f"firmware-{index}-{board}-{filename}".encode())
+                self.firmware_paths.append(artifact)
+                hosted = root / "website" / "releases" / VERSION / relative
+                hosted.parent.mkdir(parents=True, exist_ok=True)
+                hosted.write_bytes(artifact.read_bytes())
+                artifacts.append(
+                    {
+                        "path": relative,
+                        "size": artifact.stat().st_size,
+                        "sha256": sha256(artifact),
+                    }
+                )
+            if board == "t-echo":
+                parts = []
+                variants = [
+                    {
+                        **artifact,
+                        "softdevice_family": "s140",
+                        "softdevice_version": version,
+                        "fwid": fwid,
+                        "application_base": application_base,
+                        "family_id": "0xada52840",
+                    }
+                    for artifact, version, fwid, application_base in zip(
+                        artifacts,
+                        ("6.1.1", "7.3.0"),
+                        ("0x00b6", "0x0123"),
+                        ("0x00026000", "0x00027000"),
+                    )
+                ]
+            else:
+                parts = [{**artifacts[0], "kind": "application", "offset": 0x10000}]
+                variants = []
             target = {
                 "board_slug": board,
                 "transport": (
                     "uf2-mass-storage" if board == "t-echo" else "esp-serial"
                 ),
                 "parts": parts,
+                "variants": variants,
             }
             targets.append(target)
         write_json(
@@ -213,7 +262,7 @@ class CandidateFixture:
             },
         )
         self.manifest = {
-            "schema": 2,
+            "schema": 3,
             "release": {
                 "version": VERSION,
                 "channel": "stable",
@@ -295,6 +344,7 @@ class CandidateFixture:
             "create-flasher-acceptance.py": SCRIPTS / "create-flasher-acceptance.py",
             "validate-flasher-acceptance.py": SCRIPTS / "validate-flasher-acceptance.py",
             "flasher_acceptance_contract.py": SCRIPTS / "flasher_acceptance_contract.py",
+            "flasher_manifest.py": SCRIPTS / "flasher_manifest.py",
             "serve-flasher-candidate.py": SCRIPTS / "serve-flasher-candidate.py",
             "verify-flasher-candidate-files.py": SCRIPTS / "verify-flasher-candidate-files.py",
             "validate-flasher-tester-roster.py": SCRIPTS / "validate-flasher-tester-roster.py",
@@ -578,6 +628,19 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         result = self.validate_unsigned()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("SHA-256 mismatch", result.stderr)
+
+    def test_release_boundary_rejects_structurally_invalid_uf2(self) -> None:
+        target = next(
+            target
+            for target in self.fixture.manifest["targets"]
+            if target["board_slug"] == "t-echo"
+        )
+        variant = target["variants"][0]
+        payload = bytearray((self.fixture.root / variant["path"]).read_bytes())
+        validate_uf2_artifact(variant, bytes(payload))
+        payload[0] = 0
+        with self.assertRaisesRegex(ValueError, "invalid magic"):
+            validate_uf2_artifact(variant, bytes(payload))
 
     def test_embedded_firmware_cannot_carry_the_hosted_source_archive(self) -> None:
         target = next(
@@ -885,7 +948,7 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         write_json(
             acceptance,
             {
-                "schema": 3,
+                "schema": 4,
                 "candidate": {
                     "version": VERSION,
                     "channel": "stable",
@@ -1251,6 +1314,7 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
             self.fixture.root / "qualification" / "create-flasher-acceptance.py",
             self.fixture.root / "qualification" / "validate-flasher-acceptance.py",
             self.fixture.root / "qualification" / "flasher_acceptance_contract.py",
+            self.fixture.root / "qualification" / "flasher_manifest.py",
             self.fixture.root / "qualification" / "serve-flasher-candidate.py",
             self.fixture.root / "qualification" / "verify-flasher-candidate-files.py",
             self.fixture.root / "qualification" / "validate-flasher-tester-roster.py",

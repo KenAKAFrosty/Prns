@@ -16,6 +16,7 @@ from flasher_reproducibility import validate_report as validate_reproducibility_
 from flasher_sparse_sizes import build_report as build_sparse_size_report
 from flasher_website_history import allowed_historical_signatures, validate_candidate_history
 from source_snapshot import verify_source_snapshot
+from flasher_manifest import FLASH_MANIFEST_SCHEMA, target_artifacts, validate_uf2_artifact
 
 
 CLI_TARGETS = {
@@ -44,6 +45,7 @@ REQUIRED_RELEASE_FILES = (
     "qualification/create-flasher-acceptance.py",
     "qualification/validate-flasher-acceptance.py",
     "qualification/flasher_acceptance_contract.py",
+    "qualification/flasher_manifest.py",
     "qualification/flasher_tester_roster.py",
     "qualification/package-flasher-qualification-evidence.py",
     "qualification/serve-flasher-candidate.py",
@@ -128,6 +130,7 @@ def verify_qualification_kit(root: Path, version: str, tester_roster: Path) -> N
         "qualification/validate-flasher-acceptance.py": release_tools / "validate-flasher-acceptance.py",
         "qualification/flasher_acceptance_contract.py": release_tools
         / "flasher_acceptance_contract.py",
+        "qualification/flasher_manifest.py": release_tools / "flasher_manifest.py",
         "qualification/flasher_tester_roster.py": release_tools / "flasher_tester_roster.py",
         "qualification/package-flasher-qualification-evidence.py": release_tools
         / "package-flasher-qualification-evidence.py",
@@ -307,7 +310,7 @@ def verify(arguments: argparse.Namespace) -> dict:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     release = manifest.get("release")
     signing = manifest.get("signing")
-    if manifest.get("schema") != 2 or not isinstance(release, dict) or not isinstance(signing, dict):
+    if manifest.get("schema") != FLASH_MANIFEST_SCHEMA or not isinstance(release, dict) or not isinstance(signing, dict):
         raise ValueError("candidate manifest identity is malformed")
     channel = release.get("channel")
     if release != {
@@ -330,9 +333,7 @@ def verify(arguments: argparse.Namespace) -> dict:
     for target in targets:
         if not isinstance(target, dict):
             raise ValueError("candidate manifest contains a malformed target")
-        parts = target.get("parts")
-        if not isinstance(parts, list) or not parts:
-            raise ValueError(f"candidate target {target.get('board_slug')!r} has no firmware parts")
+        parts = target_artifacts(target)
         board_slug = target.get("board_slug")
         source = target.get("source")
         if source is not None:
@@ -354,9 +355,12 @@ def verify(arguments: argparse.Namespace) -> dict:
             hosted = safe_path(immutable_root, relative)
             if not artifact.is_file() or artifact.stat().st_size != size or digest(artifact) != checksum:
                 raise ValueError(f"candidate firmware part does not match manifest: {relative}")
-            if not hosted.is_file() or hosted.read_bytes() != artifact.read_bytes():
+            payload = artifact.read_bytes()
+            if not hosted.is_file() or hosted.read_bytes() != payload:
                 raise ValueError(f"hosted firmware part differs from candidate payload: {relative}")
-            if part.get("kind") == "application" and source_archive in artifact.read_bytes():
+            if target.get("transport") == "uf2-mass-storage":
+                validate_uf2_artifact(part, payload)
+            if part.get("kind") == "application" and source_archive in payload:
                 raise ValueError(
                     f"embedded target {board_slug} must not embed source.zip"
                 )

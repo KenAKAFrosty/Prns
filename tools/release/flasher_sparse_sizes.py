@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from flasher_manifest import target_artifacts
+
 
 MERGED_BASELINES = {
     "heltec-v4": 7_643_152,
@@ -31,9 +33,9 @@ def build_report(manifest: dict) -> dict:
             raise ValueError("sparse-size report encountered a malformed target")
         board = target.get("board_slug")
         transport = target.get("transport")
-        parts = target.get("parts")
-        if not isinstance(board, str) or board in boards or not isinstance(parts, list) or not parts:
+        if not isinstance(board, str) or board in boards:
             raise ValueError("sparse-size report encountered an invalid board or parts list")
+        parts = target_artifacts(target)
         boards.add(board)
         sizes = []
         for part in parts:

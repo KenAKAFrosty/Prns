@@ -8,6 +8,8 @@ from pathlib import Path
 from pathlib import PurePosixPath
 import shutil
 import tempfile
+
+from flasher_manifest import FLASH_MANIFEST_SCHEMA
 from urllib.parse import quote, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
@@ -330,7 +332,7 @@ def stage(
     manifest = load_object(candidate / "flash-manifest.json", "target manifest")
     release = manifest.get("release")
     if (
-        manifest.get("schema") != 2
+        manifest.get("schema") != FLASH_MANIFEST_SCHEMA
         or not isinstance(release, dict)
         or release.get("version") != version
         or release.get("channel") != "stable"

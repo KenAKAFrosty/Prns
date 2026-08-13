@@ -804,6 +804,10 @@ path = "tools/release/flasher_build_metadata.py"
 reason = "Shared reproducible build metadata implementation."
 
 [[internal]]
+path = "tools/release/flasher_manifest.py"
+reason = "Shared signed flash manifest and UF2 validation implementation."
+
+[[internal]]
 path = "tools/release/flasher_browser_test_trust.py"
 reason = "Shared production development-trust boundary implementation."
 
