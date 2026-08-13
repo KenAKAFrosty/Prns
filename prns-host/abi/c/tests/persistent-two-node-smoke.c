@@ -329,9 +329,9 @@ static int reserve_loopback_port(uint16_t *port) {
         return 0;
     }
     address.sin_family = AF_INET;
-    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     address.sin_port = 0;
-    if (bind(descriptor, (const struct sockaddr *)&address, sizeof(address)) != 0 ||
+    if (inet_pton(AF_INET, "127.0.0.1", &address.sin_addr) != 1 ||
+        bind(descriptor, (const struct sockaddr *)&address, sizeof(address)) != 0 ||
         getsockname(descriptor, (struct sockaddr *)&address, &length) != 0) {
         close(descriptor);
         return 0;

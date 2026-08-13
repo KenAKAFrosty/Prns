@@ -8,15 +8,24 @@ cd "$root"
 
 cargo build --manifest-path prns-host/abi/c/Cargo.toml --locked
 
+loader_variable="LD_LIBRARY_PATH"
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    loader_variable="DYLD_LIBRARY_PATH"
+fi
+
 for compiler in cc c++; do
     name="$(basename "$compiler")"
     standard="c11"
     if [[ "$name" == "c++" ]]; then
         standard="c++17"
     fi
+    compile_args=("-std=$standard")
+    if [[ "$name" == "c++" ]]; then
+        compile_args+=(-x c++)
+    fi
     mkdir -p "$scratch/state-$name"
     "$compiler" \
-        "-std=$standard" \
+        "${compile_args[@]}" \
         -Wall \
         -Wextra \
         -Werror \
@@ -28,7 +37,7 @@ for compiler in cc c++; do
         -ldl \
         -lm \
         -o "$scratch/journey-$name"
-    env LD_LIBRARY_PATH="${root}/prns-host/abi/c/target/debug" \
+    env "${loader_variable}=${root}/prns-host/abi/c/target/debug" \
         "$scratch/journey-$name" \
         prns-host/conformance/persistent-two-node-v1.json \
         prns-host/conformance/interface-configs-v1.json \

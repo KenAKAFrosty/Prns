@@ -276,6 +276,9 @@ jobs:
           else
             cargo build --manifest-path prns-host/abi/c/Cargo.toml --locked --release --target ${{ matrix.settings.target }}
           fi
+      - name: exercise C and C++ host contract on macOS
+        if: contains(matrix.settings.target, 'apple-darwin')
+        run: bash validation/interop/cases/host-c-contract-smoke.sh
       - name: normalize Apple native binaries
         if: contains(matrix.settings.target, 'apple-darwin')
         shell: bash
