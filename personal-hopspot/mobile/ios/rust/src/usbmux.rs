@@ -162,7 +162,15 @@ async fn serve_stream<Seam: InterfaceSeam>(
                         Ok(Message::Data(packet)) if !packet.is_empty() => {
                             seam.next_inbound(packet).await;
                         }
-                        Ok(Message::Data(_)) | Ok(Message::HelloAck { .. }) | Err(_) => {}
+                        // Config lane not yet routed on iOS — see
+                        // `T1000E_HEADLESS_CONFIG.md`. Dropped until the
+                        // config task is wired.
+                        Ok(Message::Data(_))
+                        | Ok(Message::HelloAck { .. })
+                        | Ok(Message::ConfigRequest { .. })
+                        | Ok(Message::ConfigResponse { .. })
+                        | Ok(Message::Snapshot { .. })
+                        | Err(_) => {}
                     }
                 }
             }

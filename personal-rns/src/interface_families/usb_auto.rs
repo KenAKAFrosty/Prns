@@ -5,6 +5,6 @@ pub use prns_interfaces_tokio::usb_auto::{
 
 #[cfg(feature = "embassy-host")]
 pub use prns_interfaces_embassy::usb_auto::{
-    UsbAutoDevice, UsbAutoDeviceInput, WebUsbAutoClass, WebUsbAutoError, WebUsbAutoRx,
-    WebUsbAutoState, WebUsbAutoTx, WEBUSB_AUTO_PACKET_SIZE,
+    ConfigEndpoints, UsbAutoDevice, UsbAutoDeviceInput, WebUsbAutoClass, WebUsbAutoError,
+    WebUsbAutoRx, WebUsbAutoState, WebUsbAutoTx, CONFIG_CHANNEL_CAPACITY, WEBUSB_AUTO_PACKET_SIZE,
 };

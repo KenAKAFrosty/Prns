@@ -15,4 +15,5 @@ pub use policy::{defaults, descriptor};
 pub use profile::{
     channel_tag, AirtimePolicy, AirtimePolicyError, Frequency, ModemPreset, PreambleSymbols,
     RadioProfile, RadioProfileError, Region, TxPower, CHANNEL_TAG_CAP, DEFAULT_915_PROFILE,
+    PROFILE_WIRE_LEN,
 };

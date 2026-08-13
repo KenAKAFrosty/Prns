@@ -176,6 +176,46 @@ impl Region {
             Self::Unlimited => Self::Us915,
         }
     }
+
+    /// Canonical 1-byte wire code used by the persistent profile store and the
+    /// headless config lane. Stable across releases; never reuse a retired
+    /// code. See `T1000E_HEADLESS_CONFIG.md`.
+    pub const fn to_wire_code(self) -> u8 {
+        match self {
+            Self::Us915 => 1,
+            Self::Au915 => 2,
+            Self::Eu433 => 3,
+            Self::Eu865 => 4,
+            Self::Eu868 => 5,
+            Self::Eu869 => 6,
+            Self::As923 => 7,
+            Self::In865 => 8,
+            Self::Cn470 => 9,
+            Self::Kr920 => 10,
+            Self::Jp920 => 11,
+            Self::Unlimited => 12,
+        }
+    }
+
+    /// Inverse of [`Region::to_wire_code`]. Returns `None` for unknown codes
+    /// (including the reserved `0`).
+    pub const fn from_wire_code(value: u8) -> Option<Region> {
+        match value {
+            1 => Some(Self::Us915),
+            2 => Some(Self::Au915),
+            3 => Some(Self::Eu433),
+            4 => Some(Self::Eu865),
+            5 => Some(Self::Eu868),
+            6 => Some(Self::Eu869),
+            7 => Some(Self::As923),
+            8 => Some(Self::In865),
+            9 => Some(Self::Cn470),
+            10 => Some(Self::Kr920),
+            11 => Some(Self::Jp920),
+            12 => Some(Self::Unlimited),
+            _ => None,
+        }
+    }
 }
 
 /// Why a LoRa radio profile cannot be applied safely.
@@ -435,6 +475,96 @@ pub fn channel_tag(profile: &RadioProfile) -> HeaplessVec<u8, CHANNEL_TAG_CAP> {
     tag
 }
 
+/// Byte length of the canonical [`RadioProfile`] wire encoding shared by the
+/// persistent profile store and the headless config lane. The 12th byte is a
+/// reserved zero. See `T1000E_HEADLESS_CONFIG.md`.
+pub const PROFILE_WIRE_LEN: usize = 12;
+
+impl RadioProfile {
+    /// Encode the profile into the canonical [`PROFILE_WIRE_LEN`]-byte wire
+    /// form. Only the first 12 bytes of `out` are written; the caller is
+    /// responsible for providing at least that many bytes.
+    pub fn encode(self, out: &mut [u8]) {
+        out[..4].copy_from_slice(&self.frequency.hz().to_le_bytes());
+        let Modulation::Lora {
+            spreading_factor,
+            bandwidth,
+            coding_rate,
+        } = self.modulation;
+        out[4] = match spreading_factor {
+            SpreadingFactor::Sf5 => 5,
+            SpreadingFactor::Sf6 => 6,
+            SpreadingFactor::Sf7 => 7,
+            SpreadingFactor::Sf8 => 8,
+            SpreadingFactor::Sf9 => 9,
+            SpreadingFactor::Sf10 => 10,
+            SpreadingFactor::Sf11 => 11,
+            SpreadingFactor::Sf12 => 12,
+        };
+        out[5] = match bandwidth {
+            LoraBandwidth::Bw125kHz => 1,
+            LoraBandwidth::Bw250kHz => 2,
+            LoraBandwidth::Bw500kHz => 3,
+        };
+        out[6] = match coding_rate {
+            CodingRate::Cr45 => 5,
+            CodingRate::Cr46 => 6,
+            CodingRate::Cr47 => 7,
+            CodingRate::Cr48 => 8,
+        };
+        out[7] = self.tx_power.dbm().to_le_bytes()[0];
+        out[8..10].copy_from_slice(&self.preamble.count().to_le_bytes());
+        out[10] = self.region.to_wire_code();
+        out[11] = 0;
+    }
+
+    /// Decode the canonical [`PROFILE_WIRE_LEN`]-byte wire form. Returns
+    /// `None` when the bytes are not a valid profile: wrong length, reserved
+    /// byte non-zero, unknown enum tag, or a profile that fails
+    /// [`RadioProfile::validate`]. Reads only the first 12 bytes.
+    pub fn decode(bytes: &[u8]) -> Option<RadioProfile> {
+        if bytes.len() < PROFILE_WIRE_LEN || bytes[11] != 0 {
+            return None;
+        }
+        let spreading_factor = match bytes[4] {
+            5 => SpreadingFactor::Sf5,
+            6 => SpreadingFactor::Sf6,
+            7 => SpreadingFactor::Sf7,
+            8 => SpreadingFactor::Sf8,
+            9 => SpreadingFactor::Sf9,
+            10 => SpreadingFactor::Sf10,
+            11 => SpreadingFactor::Sf11,
+            12 => SpreadingFactor::Sf12,
+            _ => return None,
+        };
+        let bandwidth = match bytes[5] {
+            1 => LoraBandwidth::Bw125kHz,
+            2 => LoraBandwidth::Bw250kHz,
+            3 => LoraBandwidth::Bw500kHz,
+            _ => return None,
+        };
+        let coding_rate = match bytes[6] {
+            5 => CodingRate::Cr45,
+            6 => CodingRate::Cr46,
+            7 => CodingRate::Cr47,
+            8 => CodingRate::Cr48,
+            _ => return None,
+        };
+        let profile = RadioProfile {
+            frequency: Frequency::new(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])),
+            modulation: Modulation::Lora {
+                spreading_factor,
+                bandwidth,
+                coding_rate,
+            },
+            tx_power: TxPower::new(i8::from_le_bytes([bytes[7]])),
+            preamble: PreambleSymbols::new(u16::from_le_bytes([bytes[8], bytes[9]])),
+            region: Region::from_wire_code(bytes[10])?,
+        };
+        profile.validate().ok().map(|()| profile)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -642,5 +772,56 @@ mod tests {
             AirtimePolicy::Fixed(None).resolve(Region::Unlimited),
             Ok(None)
         );
+    }
+
+    #[test]
+    fn profile_wire_round_trips_for_every_region_default() {
+        let mut buf = [0u8; PROFILE_WIRE_LEN];
+        for region in Region::ALL {
+            let profile = RadioProfile {
+                frequency: region.default_frequency(),
+                modulation: ModemPreset::LongSlow.modulation(),
+                tx_power: region.max_tx_power(),
+                preamble: PreambleSymbols::new(32),
+                region,
+            };
+            profile.encode(&mut buf);
+            assert_eq!(RadioProfile::decode(&buf), Some(profile));
+            assert_eq!(buf[11], 0);
+            assert_eq!(region.to_wire_code(), buf[10]);
+            assert_eq!(Region::from_wire_code(buf[10]), Some(region));
+        }
+    }
+
+    #[test]
+    fn profile_decode_rejects_invalid_wire() {
+        let mut buf = [0u8; PROFILE_WIRE_LEN];
+        DEFAULT_915_PROFILE.encode(&mut buf);
+        // Reserved byte must be zero.
+        buf[11] = 1;
+        assert_eq!(RadioProfile::decode(&buf), None);
+        buf[11] = 0;
+        // Unknown spreading factor.
+        buf[4] = 13;
+        assert_eq!(RadioProfile::decode(&buf), None);
+        buf[4] = 9;
+        // Unknown bandwidth.
+        buf[5] = 9;
+        assert_eq!(RadioProfile::decode(&buf), None);
+        buf[5] = 2;
+        // Unknown region code.
+        buf[10] = 99;
+        assert_eq!(RadioProfile::decode(&buf), None);
+        buf[10] = 1;
+        // A profile that fails validate: frequency outside the region band.
+        buf[0..4].copy_from_slice(&100_000_000u32.to_le_bytes());
+        assert_eq!(RadioProfile::decode(&buf), None);
+    }
+
+    #[test]
+    fn profile_decode_rejects_short_buffers() {
+        let mut buf = [0u8; PROFILE_WIRE_LEN];
+        DEFAULT_915_PROFILE.encode(&mut buf);
+        assert_eq!(RadioProfile::decode(&buf[..11]), None);
     }
 }
