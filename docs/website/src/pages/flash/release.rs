@@ -457,8 +457,8 @@ fn bridge_provisioning(
     provisioning_image(&provisioning_action).map_err(|error| error.to_string())?;
     Ok(Some(BridgeProvisioning {
         action: action.wire().to_string(),
-        offset: slot.offset(),
-        size: slot.size(),
+        offset: slot.flash_offset(),
+        size: slot.reserved_size_bytes(),
         ssid: if action == WifiAction::Configure {
             ssid
         } else {

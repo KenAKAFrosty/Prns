@@ -415,34 +415,30 @@ impl ProvisioningFormat {
 /// Validated provisioning slot attached only to an ESP target.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProvisioningSlot {
-    pub(crate) format: ProvisioningFormat,
-    pub(crate) version: u8,
-    pub(crate) offset: u32,
-    pub(crate) size: u32,
+    pub(crate) wire_format: ProvisioningFormat,
+    pub(crate) wire_format_version: u8,
+    pub(crate) flash_offset: u32,
+    pub(crate) reserved_size_bytes: u32,
     pub(crate) ssid_max_bytes: usize,
     pub(crate) password_max_bytes: usize,
     pub(crate) tcp_client: Option<TcpClientProvisioningDescriptor>,
 }
 
 impl ProvisioningSlot {
-    /// Provisioning format.
-    pub const fn format(&self) -> ProvisioningFormat {
-        self.format
+    pub const fn wire_format(&self) -> ProvisioningFormat {
+        self.wire_format
     }
 
-    /// Wire-format version.
-    pub const fn version(&self) -> u8 {
-        self.version
+    pub const fn wire_format_version(&self) -> u8 {
+        self.wire_format_version
     }
 
-    /// Absolute flash offset.
-    pub const fn offset(&self) -> u32 {
-        self.offset
+    pub const fn flash_offset(&self) -> u32 {
+        self.flash_offset
     }
 
-    /// Reserved byte size.
-    pub const fn size(&self) -> u32 {
-        self.size
+    pub const fn reserved_size_bytes(&self) -> u32 {
+        self.reserved_size_bytes
     }
 
     /// Maximum encoded SSID bytes.
@@ -461,10 +457,10 @@ impl ProvisioningSlot {
 
     pub(crate) fn to_wire(&self) -> ProvisioningDescriptor {
         ProvisioningDescriptor {
-            format: self.format.as_str().to_string(),
-            version: self.version,
-            offset: self.offset,
-            size: self.size,
+            format: self.wire_format.as_str().to_string(),
+            version: self.wire_format_version,
+            offset: self.flash_offset,
+            size: self.reserved_size_bytes,
             ssid_max_bytes: self.ssid_max_bytes,
             password_max_bytes: self.password_max_bytes,
             tcp_client: self.tcp_client.clone(),

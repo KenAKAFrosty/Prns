@@ -203,8 +203,8 @@ impl BridgeRequest {
         }
         match (&provisioning, target.provisioning()) {
             (Some(request), Some(slot))
-                if request.offset == slot.offset()
-                    && request.size == slot.size()
+                if request.offset == slot.flash_offset()
+                    && request.size == slot.reserved_size_bytes()
                     && (request.tcp_client.is_none() || slot.tcp_client().is_some()) => {}
             (Some(_), Some(_)) => {
                 return Err(
@@ -902,8 +902,8 @@ mod tests {
             DestructiveConfirmation::Confirmed,
             Some(BridgeProvisioning {
                 action: "configure".to_string(),
-                offset: slot.offset(),
-                size: slot.size(),
+                offset: slot.flash_offset(),
+                size: slot.reserved_size_bytes(),
                 ssid: "network".to_string(),
                 password: "password".to_string(),
                 tcp_client: None,
@@ -918,8 +918,8 @@ mod tests {
             wire["provisioning"],
             serde_json::json!({
                 "action": "configure",
-                "offset": slot.offset(),
-                "size": slot.size(),
+                "offset": slot.flash_offset(),
+                "size": slot.reserved_size_bytes(),
                 "ssid": "network",
                 "password": "password",
                 "tcpClient": null,

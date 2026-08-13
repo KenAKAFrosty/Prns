@@ -371,15 +371,15 @@ fn convert_provisioning(
         });
     }
     Ok(ProvisioningSlot {
-        format: ProvisioningFormat::parse(&slot.format).map_err(|error| {
+        wire_format: ProvisioningFormat::parse(&slot.format).map_err(|error| {
             ManifestError::CatalogMismatch {
                 board: board.to_string(),
                 field: error.to_string(),
             }
         })?,
-        version: slot.version,
-        offset: slot.offset,
-        size: slot.size,
+        wire_format_version: slot.version,
+        flash_offset: slot.offset,
+        reserved_size_bytes: slot.size,
         ssid_max_bytes: slot.ssid_max_bytes,
         password_max_bytes: slot.password_max_bytes,
         tcp_client: slot.tcp_client,
