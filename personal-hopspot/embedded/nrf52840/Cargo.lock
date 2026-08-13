@@ -1325,6 +1325,7 @@ dependencies = [
  "futures",
  "heapless 0.9.3",
  "nrf-softdevice-macro",
+ "nrf-softdevice-s140-v6",
  "nrf-softdevice-s140-v7",
  "num_enum",
 ]
@@ -1340,6 +1341,10 @@ dependencies = [
  "syn 1.0.109",
  "uuid",
 ]
+
+[[package]]
+name = "nrf-softdevice-s140-v6"
+version = "0.1.2-prns.1"
 
 [[package]]
 name = "nrf-softdevice-s140-v7"
