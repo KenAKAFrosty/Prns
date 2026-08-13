@@ -10,7 +10,8 @@ use personal_rns::manifold::embassy::{EmbassyHost, InterfaceLifecycle};
 use personal_rns::manifold::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
 use personal_rns::runtime::{
     minimum_interface_store_capacity, minimum_manifold_notification_capacity, CompletionPool,
-    EmbassyInterfaceStore, ManifoldLaneSet, PrnsEvent, PrnsNode, StaticManifoldLane,
+    EmbassyInterfaceStore, ManifoldLaneSet, PrnsEvent, PrnsNode, PrnsNodeHandle,
+    StaticManifoldLane,
 };
 use personal_rns::storage::{StorageCapacity, StorageLayout};
 
@@ -64,6 +65,9 @@ pub(super) type Node = PrnsNode<
     COMPLETIONS_CAP,
 >;
 pub(super) type ManifoldLanes = ManifoldLaneSet<Mtx, LANE_COUNT, NOTIFY_CAP>;
+/// The concrete command-handle type shared by the render loop and the headless
+/// config task. Backed by the static [`COMMANDS`] channel and [`COMPLETION`] pool.
+pub(super) type UiHandle = PrnsNodeHandle<'static, Mtx, COMMANDS_CAP, COMPLETIONS_CAP>;
 
 pub(super) static LORA_CONTROL: LoRaControl = LoRaControl::new();
 pub(super) static NOTIFY: Channel<Mtx, InterfaceId, NOTIFY_CAP> = Channel::new();

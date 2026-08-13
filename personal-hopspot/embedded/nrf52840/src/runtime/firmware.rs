@@ -138,6 +138,12 @@ pub async fn run(spawner: Spawner) -> ! {
             notice: Some(hopspot::RadioProfileLoadNotice::Reset),
         },
     };
+    // Park the store behind a static NoopRawMutex so the render loop (T-Echo)
+    // and the headless config task (T1000-E) can both hold a `&'static` ref.
+    // NoopRawMutex is safe: a single task accesses the store per board.
+    static PROFILE_STORE: StaticCell<super::config_task::ProfileStore> = StaticCell::new();
+    let lora_profile_store: &super::config_task::ProfileStore =
+        PROFILE_STORE.init(Mutex::new(lora_profile_store));
     let profile_startup_notice = loaded_lora_profile.notice.map(|notice| match notice {
         hopspot::RadioProfileLoadNotice::Recovered => hopspot::UiNotice::ProfileRecovered,
         hopspot::RadioProfileLoadNotice::Reset => hopspot::UiNotice::ProfileReset,
@@ -215,6 +221,11 @@ pub async fn run(spawner: Spawner) -> ! {
         status: usb_status,
         host_present: || true,
     });
+    // The headless config lane is wired only on the T1000-E (no screen). On
+    // T-Echo the device lane keeps its default `config: None` and any stray
+    // ConfigRequest is dropped while linked.
+    #[cfg(feature = "board-t1000e")]
+    let usb_dev = usb_dev.with_config(super::config_task::lane_endpoints());
 
     let lora_lane = manifold_lanes
         .claim_interface(&LORA_MANIFOLD_LANE, lora.descriptor())
@@ -297,6 +308,18 @@ pub async fn run(spawner: Spawner) -> ! {
     };
 
     let ui_handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
+    // Headless config task. Runs on every board; on the T-Echo no config lane
+    // is wired (see `with_config` below), so `run` parks forever on the empty
+    // request channel — a true no-op. On the T1000-E the USB Auto device lane
+    // feeds it `ConfigRequest`s, so headless configuration works without the
+    // render loop (which is inert: `eink: None` → `pending()`).
+    let config_fut = super::config_task::run(
+        lora_profile_store,
+        lora_status,
+        usb_status,
+        lora_spectrum,
+        node_page_destination,
+    );
     let render = async move {
         let mut saadc = saadc;
         let mut epd = match eink {
@@ -528,7 +551,9 @@ pub async fn run(spawner: Spawner) -> ! {
                                 async {
                                     LORA_CONTROL.apply(profile).await == LoRaApplyOutcome::Applied
                                 },
-                                || async { lora_profile_store.save(profile).await.is_ok() },
+                                || async {
+                                    lora_profile_store.lock().await.save(profile).await.is_ok()
+                                },
                             )
                             .await;
                             if result.applied() {
@@ -547,7 +572,7 @@ pub async fn run(spawner: Spawner) -> ! {
                                     LORA_CONTROL.apply(DEFAULT_915_PROFILE).await
                                         == LoRaApplyOutcome::Applied
                                 },
-                                || async { lora_profile_store.reset().await.is_ok() },
+                                || async { lora_profile_store.lock().await.reset().await.is_ok() },
                             )
                             .await;
                             if result.applied() {
@@ -593,6 +618,6 @@ pub async fn run(spawner: Spawner) -> ! {
         }
     };
     let mesh = join(lora.run(lora_seam), render);
-    join3(io, ble_plane, mesh).await;
+    join(join3(io, ble_plane, mesh), config_fut).await;
     core::future::pending().await
 }
