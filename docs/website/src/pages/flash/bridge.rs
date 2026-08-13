@@ -1,13 +1,13 @@
 use dioxus::prelude::*;
-use prns_flash_manifest::{EspSerialTarget, ReleaseTarget, Transport, Uf2Target};
+use prns_flash_manifest::{EspSerialTarget, FlashPartKind, ReleaseTarget, Transport, Uf2Target};
 use serde::{Deserialize, Serialize};
 
 use crate::platforms::BoardFlashTarget;
 
 use super::contract::{self, BridgeErrorCode, BridgePhase};
 use super::model::{
-    part_kind, DestructiveConfirmation, FlasherState, InstallMode, WebSerialCapability,
-    WEB_SERIAL_PROBE_ANDROID_BLUETOOTH_ONLY, WEB_SERIAL_PROBE_SUPPORTED,
+    part_kind, DestructiveConfirmation, FlasherState, InstallMode, ReleaseCompatibility,
+    WebSerialCapability, WEB_SERIAL_PROBE_ANDROID_BLUETOOTH_ONLY, WEB_SERIAL_PROBE_SUPPORTED,
 };
 use super::protocol;
 
@@ -68,12 +68,23 @@ pub(super) struct BridgeRequest {
     before_reset: Option<String>,
     after_reset: Option<String>,
     mount_label: Option<String>,
+    uf2_compatibility: Option<BridgeUf2Compatibility>,
     #[serde(skip_serializing_if = "Option::is_none")]
     install_mode: Option<InstallMode>,
     #[serde(skip_serializing_if = "Option::is_none")]
     erase_confirmed: Option<bool>,
     provisioning: Option<BridgeProvisioning>,
     parts: Vec<BridgePart>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BridgeUf2Compatibility {
+    softdevice_family: String,
+    softdevice_version: String,
+    fwid: u16,
+    application_base: u32,
+    family_id: u32,
 }
 
 #[derive(Serialize)]
@@ -130,23 +141,28 @@ impl BridgeRequest {
         destructive_confirmation: DestructiveConfirmation,
         provisioning: Option<BridgeProvisioning>,
         catalog_target: BoardFlashTarget,
+        compatibility: &ReleaseCompatibility,
     ) -> Result<Self, String> {
         let base_url = same_origin_release_base(manifest_url)?;
-        match (target, catalog_target) {
-            (ReleaseTarget::EspSerial(esp), BoardFlashTarget::EspSerial { expected_chip, .. })
-                if esp.expected_chip().as_str() == expected_chip =>
-            {
-                Self::from_esp_target(
-                    target.board_id().as_str(),
-                    target.display_name(),
-                    esp,
-                    base_url,
-                    install_mode,
-                    destructive_confirmation,
-                    provisioning,
-                )
-            }
-            (ReleaseTarget::Uf2(uf2), BoardFlashTarget::Uf2MassStorage { mount_label }) => {
+        match (target, catalog_target, compatibility) {
+            (
+                ReleaseTarget::EspSerial(esp),
+                BoardFlashTarget::EspSerial { expected_chip, .. },
+                ReleaseCompatibility::Esp,
+            ) if esp.expected_chip().as_str() == expected_chip => Self::from_esp_target(
+                target.board_id().as_str(),
+                target.display_name(),
+                esp,
+                base_url,
+                install_mode,
+                destructive_confirmation,
+                provisioning,
+            ),
+            (
+                ReleaseTarget::Uf2(uf2),
+                BoardFlashTarget::Uf2MassStorage { mount_label, .. },
+                ReleaseCompatibility::Uf2(softdevice),
+            ) => {
                 if install_mode != InstallMode::PreserveData
                     || destructive_confirmation != DestructiveConfirmation::Unconfirmed
                 {
@@ -161,6 +177,7 @@ impl BridgeRequest {
                     base_url,
                     provisioning,
                     mount_label,
+                    softdevice,
                 )
             }
             _ => Err(
@@ -211,6 +228,7 @@ impl BridgeRequest {
             before_reset: Some(target.before_reset().as_str().to_string()),
             after_reset: Some(target.after_reset().as_str().to_string()),
             mount_label: None,
+            uf2_compatibility: None,
             install_mode: Some(install_mode),
             erase_confirmed: Some(destructive_confirmation.is_confirmed()),
             provisioning,
@@ -233,17 +251,54 @@ impl BridgeRequest {
     }
 
     fn from_uf2_target(
-        _board_slug: &str,
-        _display_name: &str,
-        _target: &Uf2Target,
-        _base_url: &str,
+        board_slug: &str,
+        display_name: &str,
+        target: &Uf2Target,
+        base_url: &str,
         provisioning: Option<BridgeProvisioning>,
-        _mount_label: &str,
+        mount_label: &str,
+        softdevice: &prns_flash_manifest::SoftdeviceIdentity,
     ) -> Result<Self, String> {
         if provisioning.is_some() {
             return Err("A UF2 release cannot carry ESP provisioning data.".to_string());
         }
-        Err("This website build cannot resolve a signed UF2 compatibility variant. Use the native flasher until the browser identity selector is available.".to_string())
+        let variant = target.variant_for(softdevice).ok_or_else(|| {
+            format!("The signed release does not support the detected SoftDevice {softdevice}.")
+        })?;
+        let compatibility = variant.compatibility();
+        let part = variant.part();
+        let path = part.path().as_str();
+        Ok(Self {
+            schema: contract::schema(),
+            board_slug: board_slug.to_string(),
+            display_name: display_name.to_string(),
+            transport: Transport::Uf2MassStorage,
+            expected_chip: None,
+            flash_size: None,
+            flash_mode: None,
+            flash_frequency: None,
+            before_reset: None,
+            after_reset: None,
+            mount_label: Some(mount_label.to_string()),
+            uf2_compatibility: Some(BridgeUf2Compatibility {
+                softdevice_family: compatibility.softdevice().family().as_str().to_string(),
+                softdevice_version: compatibility.softdevice().version().as_str().to_string(),
+                fwid: compatibility.fwid(),
+                application_base: compatibility.application_base(),
+                family_id: compatibility.family_id(),
+            }),
+            install_mode: None,
+            erase_confirmed: None,
+            provisioning: None,
+            parts: vec![BridgePart {
+                kind: part_kind(FlashPartKind::Uf2),
+                path: path.to_string(),
+                url: immutable_part_url(base_url, path)?,
+                offset: None,
+                size: part.size(),
+                sha256: part.sha256().as_str().to_string(),
+            }],
+        })
     }
 }
 
@@ -547,7 +602,7 @@ fn event_message(
             "Finished — Verified serial flash complete. The device disconnected and re-enumerated after reset; Personal Hopspot is starting. You can close this page.".to_string()
         }
         BridgePhase::DownloadRequested => match flash_target {
-            BoardFlashTarget::Uf2MassStorage { mount_label } => format!(
+            BoardFlashTarget::Uf2MassStorage { mount_label, .. } => format!(
                 "Verified UF2 download requested. Check the browser's downloads, then copy it to {mount_label}."
             ),
             BoardFlashTarget::EspSerial { .. } => {
@@ -685,7 +740,7 @@ mod tests {
     #[test]
     fn typed_targets_preserve_the_javascript_request_shape(
     ) -> Result<(), Box<dyn std::error::Error>> {
-        const UF2_REQUEST_FIELDS: [&str; 13] = [
+        const UF2_REQUEST_FIELDS: [&str; 14] = [
             "schema",
             "boardSlug",
             "displayName",
@@ -697,10 +752,11 @@ mod tests {
             "beforeReset",
             "afterReset",
             "mountLabel",
+            "uf2Compatibility",
             "provisioning",
             "parts",
         ];
-        const ESP_REQUEST_FIELDS: [&str; 15] = [
+        const ESP_REQUEST_FIELDS: [&str; 16] = [
             "schema",
             "boardSlug",
             "displayName",
@@ -712,6 +768,7 @@ mod tests {
             "beforeReset",
             "afterReset",
             "mountLabel",
+            "uf2Compatibility",
             "installMode",
             "eraseConfirmed",
             "provisioning",
@@ -725,18 +782,16 @@ mod tests {
             let catalog_target = board_target_by_slug(target.board_id().as_str())
                 .and_then(|board| board.flash_target)
                 .ok_or("missing cataloged flash target")?;
-            if matches!(target, ReleaseTarget::Uf2(_)) {
-                assert!(BridgeRequest::from_target(
-                    target,
-                    manifest_url,
-                    InstallMode::PreserveData,
-                    DestructiveConfirmation::Unconfirmed,
-                    None,
-                    catalog_target,
-                )
-                .is_err());
-                continue;
-            }
+            let (compatibility, target_parts) = match target {
+                ReleaseTarget::EspSerial(_) => (ReleaseCompatibility::Esp, target.parts()),
+                ReleaseTarget::Uf2(target) => {
+                    let variant = target.variants().last().ok_or("missing UF2 variant")?;
+                    (
+                        ReleaseCompatibility::Uf2(variant.compatibility().softdevice().clone()),
+                        vec![prns_flash_manifest::ReleasePartRef::Uf2(variant.part())],
+                    )
+                }
+            };
             let request = BridgeRequest::from_target(
                 target,
                 manifest_url,
@@ -744,6 +799,7 @@ mod tests {
                 DestructiveConfirmation::Unconfirmed,
                 None,
                 catalog_target,
+                &compatibility,
             )?;
             let wire = serde_json::to_value(request)?;
             let object = wire.as_object().ok_or("bridge request is not an object")?;
@@ -752,7 +808,6 @@ mod tests {
             assert_eq!(wire["displayName"], target.display_name());
             assert!(wire["provisioning"].is_null());
             let wire_parts = wire["parts"].as_array().ok_or("parts are not an array")?;
-            let target_parts = target.parts();
             assert_eq!(wire_parts.len(), target_parts.len());
             for (part, target_part) in wire_parts.iter().zip(target_parts) {
                 assert_eq!(
@@ -790,6 +845,7 @@ mod tests {
                     assert_eq!(wire["beforeReset"], esp.before_reset().as_str());
                     assert_eq!(wire["afterReset"], esp.after_reset().as_str());
                     assert!(wire["mountLabel"].is_null());
+                    assert!(wire["uf2Compatibility"].is_null());
                     assert!(wire["parts"]
                         .as_array()
                         .expect("parts array")
@@ -805,6 +861,11 @@ mod tests {
                     assert!(wire.get("installMode").is_none());
                     assert!(wire.get("eraseConfirmed").is_none());
                     assert_eq!(wire["mountLabel"], "TECHOBOOT");
+                    assert_eq!(wire["uf2Compatibility"]["softdeviceFamily"], "s140");
+                    assert_eq!(wire["uf2Compatibility"]["softdeviceVersion"], "7.3.0");
+                    assert_eq!(wire["uf2Compatibility"]["fwid"], 0x0123);
+                    assert_eq!(wire["uf2Compatibility"]["applicationBase"], 0x27000);
+                    assert_eq!(wire["uf2Compatibility"]["familyId"], 0xada52840_u32);
                     for field in [
                         "expectedChip",
                         "flashSize",
@@ -848,6 +909,7 @@ mod tests {
                 tcp_client: None,
             }),
             ESP_TARGET,
+            &ReleaseCompatibility::Esp,
         )?;
         let wire = serde_json::to_value(request)?;
         assert_eq!(wire["installMode"], "erase-all");
@@ -887,6 +949,7 @@ mod tests {
                 supports_provisioning: false,
                 supports_tcp_client_provisioning: false,
             },
+            &ReleaseCompatibility::Esp,
         )
         .is_err());
 
@@ -895,6 +958,18 @@ mod tests {
             .iter()
             .find(|target| target.board_id().as_str() == "t-echo")
             .ok_or("missing UF2 target")?;
+        let ReleaseTarget::Uf2(uf2_target) = target else {
+            return Err("T-Echo target is not UF2".into());
+        };
+        let compatibility = ReleaseCompatibility::Uf2(
+            uf2_target
+                .variants()
+                .last()
+                .ok_or("missing UF2 variant")?
+                .compatibility()
+                .softdevice()
+                .clone(),
+        );
         assert!(BridgeRequest::from_target(
             target,
             "https://reticulum.rs/releases/0.2.6/flash-manifest.json",
@@ -903,7 +978,9 @@ mod tests {
             None,
             BoardFlashTarget::Uf2MassStorage {
                 mount_label: "TECHOBOOT",
+                board_id_prefix: "nrf52840-techo-v",
             },
+            &compatibility,
         )
         .is_err());
         Ok(())

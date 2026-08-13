@@ -17,6 +17,15 @@ const VERSION_PATTERN = /^[A-Za-z0-9.+-]+$/;
 const PATH_COMPONENT_PATTERN = /^[A-Za-z0-9._+-]+$/;
 const MOUNT_LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/;
 const ESP_PARTS = ["bootloader", "partition-table", "application"];
+const UF2_BLOCK_BYTES = 512;
+const UF2_PAYLOAD_BYTES = 256;
+const UF2_DATA_OFFSET = 32;
+const UF2_DATA_BYTES = 476;
+const UF2_APPLICATION_END = 0xc0000;
+const UF2_COMPATIBILITIES = new Map([
+  ["s140:6.1.1", Object.freeze({ fwid: 0x00b6, applicationBase: 0x26000, familyId: 0xada52840 })],
+  ["s140:7.3.0", Object.freeze({ fwid: 0x0123, applicationBase: 0x27000, familyId: 0xada52840 })],
+]);
 const INSTALL_MODES = new Set(["preserve-data", "erase-all"]);
 const FLASH_SIZE_PROFILES = new Map([
   [4 * 1024 * 1024, Object.freeze({ label: "4 MiB", esptool: "4MB" })],
@@ -229,6 +238,7 @@ export function validateRequest(request) {
       || !["default-reset", "usb-reset"].includes(request.beforeReset)
       || !["hard-reset", "watchdog-reset"].includes(request.afterReset)
       || request.mountLabel !== null
+      || request.uf2Compatibility !== null
     ) {
       throw new FlashBridgeError("invalid_request", "The ESP target identity is incomplete.");
     }
@@ -267,11 +277,67 @@ export function validateRequest(request) {
       || request.provisioning !== null
       || request.installMode !== undefined
       || request.eraseConfirmed !== undefined
+      || !validUf2Compatibility(request.uf2Compatibility)
     ) {
       throw new FlashBridgeError("invalid_request", "The UF2 target identity is incomplete.");
     }
   }
   return request;
+}
+
+function validUf2Compatibility(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const fields = Object.keys(value).sort();
+  if (fields.join(",") !== "applicationBase,familyId,fwid,softdeviceFamily,softdeviceVersion") {
+    return false;
+  }
+  const expected = UF2_COMPATIBILITIES.get(
+    `${value.softdeviceFamily}:${value.softdeviceVersion}`,
+  );
+  return expected !== undefined
+    && value.fwid === expected.fwid
+    && value.applicationBase === expected.applicationBase
+    && value.familyId === expected.familyId;
+}
+
+export function validateUf2Artifact(bytes, compatibility) {
+  if (!(bytes instanceof Uint8Array) || bytes.length === 0 || bytes.length % UF2_BLOCK_BYTES !== 0) {
+    throw new FlashBridgeError("invalid_request", "The signed UF2 length is structurally invalid.");
+  }
+  if (!validUf2Compatibility(compatibility)) {
+    throw new FlashBridgeError("invalid_request", "The signed UF2 compatibility identity is invalid.");
+  }
+  const blocks = bytes.length / UF2_BLOCK_BYTES;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  for (let index = 0; index < blocks; index += 1) {
+    const start = index * UF2_BLOCK_BYTES;
+    const word = offset => view.getUint32(start + offset, true);
+    if (word(0) !== 0x0a324655 || word(4) !== 0x9e5d5157 || word(508) !== 0x0ab16f30) {
+      throw new FlashBridgeError("invalid_request", "The signed UF2 contains invalid block magic.");
+    }
+    if (word(8) !== 0x00002000 || word(20) !== index || word(24) !== blocks) {
+      throw new FlashBridgeError("invalid_request", "The signed UF2 block sequence is invalid.");
+    }
+    if (word(28) !== compatibility.familyId) {
+      throw new FlashBridgeError("invalid_request", "The signed UF2 family ID is invalid.");
+    }
+    const address = word(12);
+    const payload = word(16);
+    if (address !== compatibility.applicationBase + index * UF2_PAYLOAD_BYTES) {
+      throw new FlashBridgeError("invalid_request", "The signed UF2 application address is invalid.");
+    }
+    if (payload !== UF2_PAYLOAD_BYTES || address + payload > UF2_APPLICATION_END) {
+      throw new FlashBridgeError("invalid_request", "The signed UF2 payload bounds are invalid.");
+    }
+    const padding = bytes.subarray(
+      start + UF2_DATA_OFFSET + payload,
+      start + UF2_DATA_OFFSET + UF2_DATA_BYTES,
+    );
+    if (padding.some(byte => byte !== 0)) {
+      throw new FlashBridgeError("invalid_request", "The signed UF2 block padding is invalid.");
+    }
+  }
+  return bytes;
 }
 
 function validateArtifactLocation(part) {

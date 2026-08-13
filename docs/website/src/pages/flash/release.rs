@@ -1,7 +1,8 @@
 use dioxus::prelude::*;
 use prns_flash_manifest::{
     provisioning_image, sha256_hex, verify_minisign, ProvisioningAction, ReleaseChannel,
-    ReleaseTarget, TcpClientEndpoint, TcpClientHost, ValidatedChannelDescriptor, WifiCredentials,
+    ReleasePartRef, ReleaseTarget, TcpClientEndpoint, TcpClientHost, ValidatedChannelDescriptor,
+    WifiCredentials,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -11,8 +12,8 @@ use crate::platforms::BoardFlashTarget;
 use super::bridge::{self, BridgeProvisioning, BridgeRequest};
 use super::contract::BridgePhase;
 use super::model::{
-    part_kind, DestructiveConfirmation, FlasherState, InstallMode, PartDetails, ReleaseDetails,
-    WifiAction,
+    part_kind, DestructiveConfirmation, FlasherState, InstallMode, PartDetails,
+    ReleaseCompatibility, ReleaseDetails, WifiAction,
 };
 use super::trust;
 
@@ -128,6 +129,7 @@ pub(super) struct ReleaseSelection {
     pub(super) ssid: String,
     pub(super) password: String,
     pub(super) tcp_target: Option<String>,
+    pub(super) compatibility: ReleaseCompatibility,
 }
 
 pub(super) async fn prepare_release(
@@ -196,6 +198,7 @@ async fn acquire_release(
         ssid,
         password,
         tcp_target,
+        compatibility,
     } = selection;
     if !trust::key_is_configured() {
         return Err(ReleaseAcquisitionError::custody_unavailable(
@@ -307,8 +310,28 @@ async fn acquire_release(
         destructive_confirmation,
         provisioning,
         flash_target,
+        &compatibility,
     )?;
-    let parts = target.parts();
+    let parts = match (target, &compatibility) {
+        (ReleaseTarget::EspSerial(_), ReleaseCompatibility::Esp) => target.parts(),
+        (ReleaseTarget::Uf2(target), ReleaseCompatibility::Uf2(softdevice)) => vec![
+            ReleasePartRef::Uf2(
+                target
+                    .variant_for(softdevice)
+                    .ok_or_else(|| {
+                        ReleaseAcquisitionError::review_selection(format!(
+                            "The signed release does not support the detected SoftDevice {softdevice}."
+                        ))
+                    })?
+                    .part(),
+            ),
+        ],
+        _ => {
+            return Err(ReleaseAcquisitionError::review_selection(
+                "The detected compatibility foundation does not match the selected transport.",
+            ))
+        }
+    };
     let details = ReleaseDetails {
         version: manifest.release().version().as_str().to_string(),
         channel: match manifest.release().channel() {

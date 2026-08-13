@@ -12,6 +12,7 @@ import {
   provisioningImage,
   recoveryGuidance,
   sha256Hex,
+  validateUf2Artifact,
   validateRequest,
 } from "../src/core.js";
 import { testingContract } from "../src/contract.js";
@@ -31,6 +32,7 @@ function request() {
     beforeReset: "usb-reset",
     afterReset: "watchdog-reset",
     mountLabel: null,
+    uf2Compatibility: null,
     provisioning: { action: "preserve", offset: 0xd000, size: 0x1000 },
     parts: [
       { kind: "bootloader", path: "firmware/hopspot/heltec-v4/0.2.6/bootloader.bin", url: "/releases/0.2.6/firmware/hopspot/heltec-v4/0.2.6/bootloader.bin", offset: 0, size: 32, sha256: "a".repeat(64) },
@@ -59,6 +61,13 @@ test("transport-specific request identity is complete and bounded", () => {
     beforeReset: null,
     afterReset: null,
     mountLabel: "TECHOBOOT",
+    uf2Compatibility: {
+      softdeviceFamily: "s140",
+      softdeviceVersion: "7.3.0",
+      fwid: 0x0123,
+      applicationBase: 0x27000,
+      familyId: 0xada52840,
+    },
     provisioning: null,
     parts: [{
       kind: "uf2",
@@ -80,6 +89,63 @@ test("transport-specific request identity is complete and bounded", () => {
     uf2.mountLabel = mountLabel;
     assert.equal(validateRequest(uf2).mountLabel, mountLabel);
   }
+});
+
+function uf2Block(applicationBase, familyId, blockNumber = 0, blockCount = 1) {
+  const bytes = new Uint8Array(512);
+  const view = new DataView(bytes.buffer);
+  for (const [offset, value] of [
+    [0, 0x0a324655],
+    [4, 0x9e5d5157],
+    [8, 0x00002000],
+    [12, applicationBase + blockNumber * 256],
+    [16, 256],
+    [20, blockNumber],
+    [24, blockCount],
+    [28, familyId],
+    [508, 0x0ab16f30],
+  ]) {
+    view.setUint32(offset, value, true);
+  }
+  return bytes;
+}
+
+test("UF2 structure is bound to the exact detected foundation", () => {
+  const v6 = {
+    softdeviceFamily: "s140",
+    softdeviceVersion: "6.1.1",
+    fwid: 0x00b6,
+    applicationBase: 0x26000,
+    familyId: 0xada52840,
+  };
+  const v7 = {
+    softdeviceFamily: "s140",
+    softdeviceVersion: "7.3.0",
+    fwid: 0x0123,
+    applicationBase: 0x27000,
+    familyId: 0xada52840,
+  };
+  assert.equal(validateUf2Artifact(uf2Block(v6.applicationBase, v6.familyId), v6).length, 512);
+  assert.equal(validateUf2Artifact(uf2Block(v7.applicationBase, v7.familyId), v7).length, 512);
+
+  const corrupt = uf2Block(v7.applicationBase, v7.familyId);
+  corrupt[0] = 0;
+  assert.throws(() => validateUf2Artifact(corrupt, v7), /block magic/);
+
+  const reordered = uf2Block(v7.applicationBase, v7.familyId, 1, 2);
+  assert.throws(() => validateUf2Artifact(reordered, v7), /block sequence/);
+  assert.throws(
+    () => validateUf2Artifact(uf2Block(v7.applicationBase + 256, v7.familyId), v7),
+    /application address/,
+  );
+  assert.throws(
+    () => validateUf2Artifact(uf2Block(v7.applicationBase, 0x12345678), v7),
+    /family ID/,
+  );
+  assert.throws(
+    () => validateUf2Artifact(uf2Block(v6.applicationBase, v6.familyId), v7),
+    /application address/,
+  );
 });
 
 test("ESP install mode requires an exact destructive confirmation", () => {

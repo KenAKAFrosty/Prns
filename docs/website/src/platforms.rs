@@ -91,6 +91,7 @@ pub enum BoardFlashTarget {
     },
     Uf2MassStorage {
         mount_label: &'static str,
+        board_id_prefix: &'static str,
     },
 }
 

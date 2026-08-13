@@ -60,6 +60,25 @@ function sha(data) {
   return createHash("sha256").update(data).digest("hex");
 }
 
+function uf2Bytes(applicationBase, familyId) {
+  const payload = new Uint8Array(512);
+  const view = new DataView(payload.buffer);
+  for (const [offset, value] of [
+    [0, 0x0a324655],
+    [4, 0x9e5d5157],
+    [8, 0x00002000],
+    [12, applicationBase],
+    [16, 256],
+    [20, 0],
+    [24, 1],
+    [28, familyId],
+    [508, 0x0ab16f30],
+  ]) {
+    view.setUint32(offset, value, true);
+  }
+  return payload;
+}
+
 function request() {
   const payloads = [bytes(1), bytes(5), bytes(9)];
   return {
@@ -78,6 +97,7 @@ function request() {
       beforeReset: "usb-reset",
       afterReset: "watchdog-reset",
       mountLabel: null,
+      uf2Compatibility: null,
       provisioning: { action: "configure", offset: 0xd000, size: 0x1000, ssid: "local", password: "private" },
       parts: [
         { kind: "bootloader", path: "firmware/hopspot/heltec-v4/0.2.6/a.bin", url: "/releases/0.2.6/firmware/hopspot/heltec-v4/0.2.6/a.bin", offset: 0, size: 4, sha256: sha(payloads[0]) },
@@ -1582,7 +1602,7 @@ test("retry after a partial write requires re-preparation and restarts the compl
 });
 
 test("UF2 completion reports delivery guidance without claiming device verification", async () => {
-  const payload = bytes(21);
+  const payload = uf2Bytes(0x27000, 0xada52840);
   const value = {
     schema: 1,
     boardSlug: "t-echo",
@@ -1595,6 +1615,13 @@ test("UF2 completion reports delivery guidance without claiming device verificat
     beforeReset: null,
     afterReset: null,
     mountLabel: "TECHOBOOT",
+    uf2Compatibility: {
+      softdeviceFamily: "s140",
+      softdeviceVersion: "7.3.0",
+      fwid: 0x0123,
+      applicationBase: 0x27000,
+      familyId: 0xada52840,
+    },
     provisioning: null,
     parts: [{
       kind: "uf2",

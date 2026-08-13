@@ -33,8 +33,8 @@ pub(crate) fn generate() {
                 )
             }
             (Transport::Uf2MassStorage, BoardBuild::Uf2(build)) => format!(
-                "BoardFlashTarget::Uf2MassStorage {{ mount_label: {:?} }}",
-                build.mount_label
+                "BoardFlashTarget::Uf2MassStorage {{ mount_label: {:?}, board_id_prefix: {:?} }}",
+                build.mount_label, build.board_id_prefix
             ),
             _ => panic!("validated catalog transport and build recipe disagree"),
         };
