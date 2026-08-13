@@ -1313,8 +1313,7 @@ dependencies = [
 
 [[package]]
 name = "nrf-softdevice"
-version = "0.1.0"
-source = "git+https://github.com/embassy-rs/nrf-softdevice?rev=47d6121c6e823120e8b883a7ac75f44ce7daa3aa#47d6121c6e823120e8b883a7ac75f44ce7daa3aa"
+version = "0.1.0-prns.1"
 dependencies = [
  "cortex-m",
  "critical-section",
@@ -1326,14 +1325,13 @@ dependencies = [
  "futures",
  "heapless 0.9.3",
  "nrf-softdevice-macro",
- "nrf-softdevice-s140",
+ "nrf-softdevice-s140-v7",
  "num_enum",
 ]
 
 [[package]]
 name = "nrf-softdevice-macro"
 version = "0.1.0"
-source = "git+https://github.com/embassy-rs/nrf-softdevice?rev=47d6121c6e823120e8b883a7ac75f44ce7daa3aa#47d6121c6e823120e8b883a7ac75f44ce7daa3aa"
 dependencies = [
  "Inflector",
  "darling 0.13.4",
@@ -1344,9 +1342,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "nrf-softdevice-s140"
-version = "0.1.2"
-source = "git+https://github.com/embassy-rs/nrf-softdevice?rev=47d6121c6e823120e8b883a7ac75f44ce7daa3aa#47d6121c6e823120e8b883a7ac75f44ce7daa3aa"
+name = "nrf-softdevice-s140-v7"
+version = "0.1.2-prns.1"
 
 [[package]]
 name = "nu-ansi-term"

@@ -1,0 +1,23 @@
+[package]
+name = "nrf-softdevice-macro"
+version = "0.1.0"
+authors = ["Dario Nieuwenhuis <dirbaio@dirbaio.net>"]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Macros for rust interface to nRF SoftDevice"
+repository = "https://github.com/embassy-rs/nrf-softdevice"
+categories = ["embedded", "hardware-support", "no-std"]
+keywords = ["arm", "cortex-m", "nrf52", "nrf-softdevice"]
+
+[dependencies]
+syn = { version = "1.0.39", features = ["full", "extra-traits"] }
+quote = "1.0.7"
+darling = "0.13.4"
+proc-macro2 = "1.0.18"
+Inflector = { version = "0.11.4", default-features = false }
+uuid = "1.2.2"
+
+[lib]
+proc-macro = true
+
+[workspace]
