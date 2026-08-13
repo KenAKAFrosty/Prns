@@ -78,3 +78,41 @@ stock-RNS packet validation. Because the V4s were used as promiscuous framing
 oracles, it does not claim stock RNode normal-mode end to end. Measured
 contention fairness, collision behavior, and physical multi-node queue drainage
 remain open for the airtime-quantum scheduler.
+
+## Current-main T114 qualification
+
+A second hardware receipt ran on 2026-08-13 against the clean T114 port at
+`78868c5b`, with the shared SX126x receive-reentry correction at `cfe48877` and
+upstream `df05c6bf` as their base.
+
+- `cargo build --release --locked --no-default-features --features board-t114
+  --bin heltec-t114` completed for `thumbv7em-none-eabihf`. The resulting UF2
+  used application base `0x26000`, nRF52840 family ID `0xada52840`, measured
+  694,272 bytes, and had SHA-256
+  `f1901becf0b2cb19162180425d5e555a5d67562898743314afc6798333147c2f`.
+- The image booted on the owner-confirmed Heltec Mesh Node T114 Rev. 2.x.
+  Production USB enumerated as `1209:0001`, product
+  `Personal Hopspot (Heltec T114)`, serial `PERSONAL-RNS-T114-HOP`, and completed
+  USB Auto `Hello`/`HelloAck` with node tag `t114-usb`.
+- The independent oracle was a Heltec LoRa32 V4 850-950 MHz PA variant running
+  stock RNode 1.86. `rnodeconf` validated the device signature, EEPROM checksum,
+  SX1262 identity, firmware version, and host-controlled mode. Stock RNS 1.4.2
+  configured it at 915 MHz, 250 kHz bandwidth, SF9, CR4:5, and 7 dBm; the T114
+  used the matching channel with its 18-symbol preamble and RNode sync word.
+- V4 to T114: stock RNS emitted a fresh signed announce for destination
+  `84125f42bd0410207657440faa510c82`. The T114 delivered a 230-byte RF packet
+  over USB whose header carried that exact destination hash.
+- T114 to V4: a fresh 215-byte stock-RNS signed announce was injected over the
+  T114 USB lane. Stock RNS received it through the V4, validated and dispatched
+  destination `9e7cecbeb3fefff82314aa0d1601d9d4`, and delivered the exact application
+  data `stock-rns-1.4.2-via-prns-v4-to-current-main-t114`.
+- After the receipt, the V4 was restored through the signed Prns Hopspot 0.3.4
+  package. The helper verified its bootloader, partition table, and application
+  (`c029b78248c3bd05bde79b82e31160736cddb7f8e1d88ea6b0fdf374c39762b9`),
+  preserved the package's declared provisioning range, and the restored device
+  completed USB Auto `Hello`/`HelloAck` with node tag `heltecv4`.
+
+This is a normal-mode, bidirectional, single-frame RNode interoperability
+receipt for the exact current-main T114 image. It does not repeat the older
+maximum-fragment qualification, measure contention fairness, or claim
+multi-node queue drainage.
