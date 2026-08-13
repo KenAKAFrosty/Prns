@@ -8,6 +8,7 @@ use tokio_tungstenite::{accept_async_with_config, WebSocketStream};
 
 use crate::websocket::framing;
 use prns_core::interfaces::websocket;
+use prns_core::interfaces::websocket::WebSocketWireFraming;
 use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{
     ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
@@ -27,13 +28,24 @@ pub struct WebSocketServerConnection<S> {
     channel_tag: Vec<u8>,
     socket: Option<WebSocketStream<S>>,
     policy: EffectiveInterfacePolicy,
+    wire_framing: WebSocketWireFraming,
     status: TokioInterfaceStatus,
 }
 
 impl<S> WebSocketServerConnection<S> {
     #[must_use]
-    pub fn new(channel_tag: Vec<u8>, socket: WebSocketStream<S>, bitrate: BitrateBps) -> Self {
-        Self::with_policy(channel_tag, socket, websocket::policy_for_bitrate(bitrate))
+    pub fn new(
+        channel_tag: Vec<u8>,
+        socket: WebSocketStream<S>,
+        bitrate: BitrateBps,
+        wire_framing: WebSocketWireFraming,
+    ) -> Self {
+        Self::with_policy(
+            channel_tag,
+            socket,
+            websocket::policy_for_bitrate(bitrate),
+            wire_framing,
+        )
     }
 
     #[must_use]
@@ -41,13 +53,16 @@ impl<S> WebSocketServerConnection<S> {
         channel_tag: Vec<u8>,
         socket: WebSocketStream<S>,
         policy: EffectiveInterfacePolicy,
+        wire_framing: WebSocketWireFraming,
     ) -> Self {
+        let channel_tag = framed_channel_tag(channel_tag, wire_framing);
         let id = InterfaceId::from_channel_tag(InterfaceKind::WebSocketServerPeer, &channel_tag);
         Self {
             id,
             channel_tag,
             socket: Some(socket),
             policy,
+            wire_framing,
             status: TokioInterfaceStatus::new(id, ConnectionState::Connected),
         }
     }
@@ -90,8 +105,7 @@ impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> Interface
             &self.status,
             &mut airtime,
             &mut throughput,
-            self.policy.bitrate,
-            started,
+            framing::SessionConfig::new(self.policy.bitrate, started, self.wire_framing),
         )
         .await;
         self.status.set_connection(ConnectionState::Disconnected);
@@ -103,28 +117,35 @@ pub struct WebSocketServer {
     policy: EffectiveInterfacePolicy,
     channel_tag: Vec<u8>,
     status: WebSocketServerStatus,
+    wire_framing: WebSocketWireFraming,
 }
 
 impl WebSocketServer {
     pub async fn bind(
         addr: impl tokio::net::ToSocketAddrs,
         bitrate: BitrateBps,
+        wire_framing: WebSocketWireFraming,
     ) -> io::Result<Self> {
-        Self::bind_with_policy(addr, websocket::policy_for_bitrate(bitrate)).await
+        Self::bind_with_policy(addr, websocket::policy_for_bitrate(bitrate), wire_framing).await
     }
 
     pub async fn bind_with_policy(
         addr: impl tokio::net::ToSocketAddrs,
         policy: EffectiveInterfacePolicy,
+        wire_framing: WebSocketWireFraming,
     ) -> io::Result<Self> {
         let listener = TcpListener::bind(addr).await?;
-        let channel_tag = listener.local_addr()?.to_string().into_bytes();
+        let channel_tag = framed_channel_tag(
+            listener.local_addr()?.to_string().into_bytes(),
+            wire_framing,
+        );
         let id = InterfaceId::from_channel_tag(InterfaceKind::WebSocketServer, &channel_tag);
         Ok(Self {
             listener,
             policy,
             channel_tag,
             status: WebSocketServerStatus::new(id),
+            wire_framing,
         })
     }
 
@@ -156,6 +177,7 @@ impl InterfaceSupervisor for WebSocketServer {
 
     async fn run(self, fleet: Fleet) {
         let mut handshakes = tokio::task::JoinSet::new();
+        let wire_framing = self.wire_framing;
         loop {
             tokio::select! {
                 accepted = self.listener.accept(), if handshakes.len() < MAX_PENDING_HANDSHAKES => {
@@ -164,7 +186,10 @@ impl InterfaceSupervisor for WebSocketServer {
                             handshakes.spawn(async move {
                                 let result = tokio::time::timeout(
                                     WEBSOCKET_HANDSHAKE_TIMEOUT,
-                                    accept_async_with_config(stream, Some(framing::config())),
+                                    accept_async_with_config(
+                                        stream,
+                                        Some(framing::config(wire_framing)),
+                                    ),
                                 )
                                 .await;
                                 (peer, result)
@@ -183,6 +208,7 @@ impl InterfaceSupervisor for WebSocketServer {
                             peer.to_string().into_bytes(),
                             socket,
                             self.policy,
+                            wire_framing,
                         );
                         self.status.admit(connection.status());
                         let _ = fleet.add(connection);
@@ -196,6 +222,11 @@ impl InterfaceSupervisor for WebSocketServer {
             }
         }
     }
+}
+
+fn framed_channel_tag(mut tag: Vec<u8>, framing: WebSocketWireFraming) -> Vec<u8> {
+    tag.extend_from_slice(framing.channel_tag_suffix());
+    tag
 }
 
 #[derive(Clone)]
@@ -397,7 +428,12 @@ mod tests {
             None,
         )
         .await;
-        let interface = WebSocketServerConnection::with_policy(b"peer".to_vec(), socket, policy);
+        let interface = WebSocketServerConnection::with_policy(
+            b"peer".to_vec(),
+            socket,
+            policy,
+            WebSocketWireFraming::RawPacket,
+        );
 
         assert_eq!(interface.descriptor(), policy.descriptor(interface.id()));
     }
@@ -419,13 +455,17 @@ mod tests {
 
         tokio::spawn(async move {
             let (stream, peer) = listener.accept().await.expect("the listener accepts");
-            let socket = accept_async_with_config(stream, Some(framing::config()))
-                .await
-                .expect("the websocket handshake completes");
+            let socket = accept_async_with_config(
+                stream,
+                Some(framing::config(WebSocketWireFraming::RawPacket)),
+            )
+            .await
+            .expect("the websocket handshake completes");
             WebSocketServerConnection::new(
                 peer.to_string().into_bytes(),
                 socket,
                 websocket::WEBSOCKET_BITRATE_ESTIMATE,
+                WebSocketWireFraming::RawPacket,
             )
             .run(seam)
             .await;

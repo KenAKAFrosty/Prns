@@ -5,6 +5,8 @@ use prns_config::{TcpListenPlan, WebSocketTargetPlan};
 use crate::host_network::resolve_tcp_listener;
 #[cfg(feature = "websocket")]
 use crate::websocket::{WebSocketClientInterface, WebSocketServer};
+#[cfg(feature = "websocket")]
+use prns_core::interfaces::websocket::WebSocketWireFraming;
 
 #[cfg(feature = "websocket")]
 use super::{AttachmentResult, InterfaceConstruction, RECONNECT_POLICY};
@@ -18,6 +20,7 @@ pub(super) fn stand_up_client(
         target.as_str().to_string(),
         construction.interface.policy,
         RECONNECT_POLICY,
+        WebSocketWireFraming::RawPacket,
     );
     let attached = construction.attach(websocket);
     Ok(attached.id())
@@ -29,7 +32,14 @@ pub(super) async fn stand_up_server(
     listener: &TcpListenPlan,
 ) -> AttachmentResult {
     let opened = match resolve_tcp_listener(listener).await {
-        Ok(bind) => WebSocketServer::bind_with_policy(bind, construction.interface.policy).await,
+        Ok(bind) => {
+            WebSocketServer::bind_with_policy(
+                bind,
+                construction.interface.policy,
+                WebSocketWireFraming::RawPacket,
+            )
+            .await
+        }
         Err(error) => Err(error),
     };
     let server = opened?;
