@@ -20,13 +20,13 @@ from flasher_acceptance_contract import (  # noqa: E402
     ACCEPTANCE_SCHEMA,
     CLI_TARGETS,
     FALLBACK_SCENARIOS,
-    MAINTAINER_OVERRIDE_SCHEMA,
     OS_ARCHITECTURES,
     REQUIRED_FALLBACKS,
     SHIPPING_BOARDS,
     SURFACES,
     applicable_scenarios,
     parse_utc_timestamp,
+    required_compatibilities,
     sha256,
 )
 from flasher_tester_roster import (  # noqa: E402
@@ -36,10 +36,9 @@ from flasher_tester_roster import (  # noqa: E402
     TesterRoster,
     validate_roster,
 )
+from flasher_manifest import require_schema
 
 TOP_LEVEL_FIELDS = {"schema", "candidate", "runs", "browser_fallbacks", "installation_smoke"}
-OVERRIDE_TOP_LEVEL_FIELDS = {"schema", "candidate", "maintainer_override"}
-OVERRIDE_FIELDS = {"basis", "approved_by", "approved_at"}
 CANDIDATE_FIELDS = {
     "version",
     "channel",
@@ -66,6 +65,7 @@ RUN_FIELDS = {
     "tester",
     "completed_at",
     "evidence",
+    "compatibility_variant",
 }
 CLIENT_FIELDS = {"name", "version"}
 BROWSER_FIELDS = {"name", "channel", "version"}
@@ -433,12 +433,18 @@ def validate_runs(
     now: datetime,
     errors: list[str],
 ) -> None:
-    required_matrix = {
-        (board, surface)
-        for board in SHIPPING_BOARDS
-        for surface in SURFACES
-    }
-    seen_matrix: set[tuple[str, str]] = set()
+    try:
+        required_matrix = {
+            (board, surface, compatibility)
+            for board in SHIPPING_BOARDS
+            for surface in SURFACES
+            for compatibility in required_compatibilities(targets.get(board, {}))
+        }
+    except ValueError as error:
+        errors.append(str(error))
+        return
+    seen_matrix: set[tuple[str, str, str | None]] = set()
+    t_echo_evidence: set[str] = set()
     chip_counts = Counter(
         target.get("expected_chip")
         for target in targets.values()
@@ -461,14 +467,18 @@ def validate_runs(
         if not all(isinstance(value, str) for value in (board, surface, os_name, architecture)):
             errors.append(f"{label} board, surface, OS, and architecture must be strings")
             continue
-        key = (board, surface)
+        compatibility = run.get("compatibility_variant")
+        if compatibility is not None and not isinstance(compatibility, str):
+            errors.append(f"{label} compatibility_variant must be a string")
+            continue
+        key = (board, surface, compatibility)
         if key not in required_matrix:
-            errors.append(f"{label} has an unknown board/surface tuple")
+            errors.append(f"{label} has an unknown board/surface/compatibility tuple")
             continue
         if key in seen_matrix:
             errors.append(f"duplicate matrix result for {key}")
         seen_matrix.add(key)
-        assignment = roster.physical.get(key)
+        assignment = roster.physical.get((board, surface))
         if (os_name, architecture) not in OS_ARCHITECTURES:
             errors.append(f"{label} has an unsupported OS/architecture pair")
         if assignment is not None and (
@@ -493,6 +503,12 @@ def validate_runs(
         )
         validate_completed_at(run, label, prerelease_published_at, now, errors)
         validate_evidence(run.get("evidence"), label, evidence_store, errors)
+        if board == "t-echo" and isinstance(run.get("evidence"), dict):
+            evidence_digest = run["evidence"].get("sha256")
+            if isinstance(evidence_digest, str):
+                if evidence_digest in t_echo_evidence:
+                    errors.append(f"{label} reuses T-Echo compatibility evidence")
+                t_echo_evidence.add(evidence_digest)
         target = targets.get(str(board), {})
         if run.get("hardware_model") != target.get("display_name"):
             errors.append(f"{label} hardware_model differs from the signed manifest")
@@ -517,7 +533,7 @@ def validate_runs(
 
     missing_matrix = sorted(required_matrix - seen_matrix)
     if missing_matrix:
-        errors.append(f"missing board/surface runs: {missing_matrix}")
+        errors.append(f"missing board/surface/compatibility runs: {missing_matrix}")
 
 
 def validate_fallbacks(
@@ -637,59 +653,6 @@ def validate_installation_smokes(
         errors.append(f"missing native installation/version smokes: {missing}")
 
 
-def validate_maintainer_override(
-    acceptance: dict,
-    raw_roster: object,
-    manifest: dict,
-    arguments: argparse.Namespace,
-    prerelease_published_at: datetime,
-    now: datetime,
-) -> list[str]:
-    errors: list[str] = []
-    reject_unknown_fields(acceptance, OVERRIDE_TOP_LEVEL_FIELDS, "acceptance", errors)
-    version, _ = validate_candidate_identity(
-        acceptance,
-        manifest,
-        arguments.manifest,
-        arguments.manifest_signature,
-        arguments.signed_bundle,
-        arguments.prerelease_published_at,
-        errors,
-    )
-    if version.partition(".")[0] != "0":
-        errors.append(
-            "maintainer override is a pre-1.0 provision and cannot approve this version"
-        )
-    override = acceptance.get("maintainer_override")
-    if not isinstance(override, dict):
-        errors.append("maintainer_override must be an object")
-        return errors
-    reject_unknown_fields(override, OVERRIDE_FIELDS, "maintainer_override", errors)
-    if not is_evidence_text(override.get("basis")):
-        errors.append("maintainer_override basis must state the approval grounds")
-    release_owner = raw_roster.get("release_owner") if isinstance(raw_roster, dict) else None
-    approved_by = override.get("approved_by")
-    if not is_evidence_text(approved_by) or approved_by != release_owner:
-        errors.append(
-            "maintainer_override approved_by must be the signed roster release_owner"
-        )
-    try:
-        approved_at = parse_utc_timestamp(
-            override.get("approved_at"), "maintainer_override approved_at"
-        )
-    except ValueError as error:
-        errors.append(str(error))
-    else:
-        if approved_at < prerelease_published_at:
-            errors.append(
-                "maintainer_override approved_at predates the exact public prerelease"
-            )
-        if approved_at > now:
-            errors.append("maintainer_override approved_at cannot be in the future")
-    EvidenceStore(arguments.evidence_root).validate_inventory(errors)
-    return errors
-
-
 def validate(arguments: argparse.Namespace, now: datetime | None = None) -> list[str]:
     errors: list[str] = []
     acceptance = json.loads(arguments.acceptance.read_text(encoding="utf-8"))
@@ -699,6 +662,10 @@ def validate(arguments: argparse.Namespace, now: datetime | None = None) -> list
         return ["acceptance document must be a JSON object"]
     if not isinstance(manifest, dict):
         return ["candidate manifest must be a JSON object"]
+    try:
+        require_schema(manifest)
+    except ValueError as error:
+        return [str(error)]
     try:
         published_at = parse_utc_timestamp(
             arguments.prerelease_published_at, "prerelease publishedAt"
@@ -713,17 +680,10 @@ def validate(arguments: argparse.Namespace, now: datetime | None = None) -> list
     version = version_value.get("version") if isinstance(version_value, dict) else ""
     tester_roster, roster_errors = validate_roster(roster, str(version))
     errors.extend(f"signed tester roster: {error}" for error in roster_errors)
-    if acceptance.get("schema") == MAINTAINER_OVERRIDE_SCHEMA:
-        errors.extend(
-            validate_maintainer_override(
-                acceptance, roster, manifest, arguments, published_at, current
-            )
-        )
-        return errors
     evidence_store = EvidenceStore(arguments.evidence_root)
     reject_unknown_fields(acceptance, TOP_LEVEL_FIELDS, "acceptance", errors)
     if acceptance.get("schema") != ACCEPTANCE_SCHEMA:
-        errors.append("acceptance schema must be 3")
+        errors.append(f"acceptance schema must be {ACCEPTANCE_SCHEMA}")
     version, targets = validate_candidate_identity(
         acceptance,
         manifest,
@@ -784,11 +744,7 @@ def main() -> int:
         for error in errors:
             print(f"acceptance validation failed: {error}", file=sys.stderr)
         return 1
-    document = json.loads(arguments.acceptance.read_text(encoding="utf-8"))
-    if isinstance(document, dict) and document.get("schema") == MAINTAINER_OVERRIDE_SCHEMA:
-        print("pre-1.0 maintainer override is bound to the exact signed candidate")
-    else:
-        print("physical flasher acceptance matrix is complete for the exact signed candidate")
+    print("physical flasher acceptance matrix is complete for the exact signed candidate")
     return 0
 
 

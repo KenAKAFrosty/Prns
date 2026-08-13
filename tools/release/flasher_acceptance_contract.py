@@ -8,6 +8,8 @@ import hashlib
 from pathlib import Path
 import re
 
+from flasher_manifest import require_schema, target_artifacts
+
 
 SHIPPING_BOARDS = (
     "heltec-v4",
@@ -76,12 +78,19 @@ UF2_COMMON_SCENARIOS = {
     "corrupt-artifact",
     "signature-rejection",
     "post-flash-boot",
+    "foundation-detection",
+    "unsupported-foundation-rejection",
+    "display",
+    "ble",
+    "lora",
 }
 UF2_WEB_SCENARIOS = {
     "manual-copy-flow",
     "missing-mount-guidance",
     "copy-failure-guidance",
     "reboot-guidance",
+    "malformed-foundation-rejection",
+    "local-only-info-file",
 }
 UF2_CLI_SCENARIOS = {
     "zero-mounts",
@@ -93,11 +102,15 @@ UF2_CLI_SCENARIOS = {
     "mount-disappearance",
     "reboot-detection",
     "reboot-timeout",
+    "application-usb-enumeration",
 }
 
 PER_RUN_BASELINE_SCENARIOS = {"fresh-install", "post-flash-boot"}
-ACCEPTANCE_SCHEMA = 3
-MAINTAINER_OVERRIDE_SCHEMA = 4
+ACCEPTANCE_SCHEMA = 4
+T_ECHO_COMPATIBILITY_VARIANTS = (
+    "s140-6.1.1-fwid-0x00b6",
+    "s140-7.3.0-fwid-0x0123",
+)
 NOT_RUN = "NOT_RUN"
 UTC_TIMESTAMP = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
 
@@ -139,6 +152,22 @@ def applicable_scenarios(
     return set()
 
 
+def required_compatibilities(target: dict) -> tuple[str | None, ...]:
+    if target.get("transport") != "uf2-mass-storage":
+        return (None,)
+    labels = []
+    for variant in target_artifacts(target):
+        family = variant.get("softdevice_family")
+        version = variant.get("softdevice_version")
+        fwid = variant.get("fwid")
+        if not all(isinstance(value, str) for value in (family, version, fwid)):
+            raise ValueError("UF2 acceptance compatibility identity is malformed")
+        labels.append(f"{family}-{version}-fwid-{fwid}")
+    if tuple(labels) != T_ECHO_COMPATIBILITY_VARIANTS:
+        raise ValueError("UF2 acceptance requires the exact S140 v6 and v7 compatibility matrix")
+    return tuple(labels)
+
+
 def evidence_placeholder() -> dict:
     return {
         "reference": NOT_RUN,
@@ -165,8 +194,7 @@ def scaffold(
     release = manifest.get("release")
     signing = manifest.get("signing")
     raw_targets = manifest.get("targets")
-    if manifest.get("schema") != 2:
-        raise ValueError("manifest must use schema 2")
+    require_schema(manifest)
     if not isinstance(release, dict) or not isinstance(signing, dict):
         raise ValueError("manifest release/signing identity is malformed")
     if not isinstance(raw_targets, list):
@@ -227,36 +255,39 @@ def scaffold(
             if assignment is None:
                 raise ValueError(f"tester roster is missing {board}/{surface}")
             required = applicable_scenarios(target, surface, chip_counts)
-            run = {
-                "board": board,
-                "surface": surface,
-                "os": assignment.os_name,
-                "architecture": assignment.architecture,
-                "os_version": NOT_RUN,
-                "hardware_identity": NOT_RUN,
-                "hardware_model": target.get("display_name", NOT_RUN),
-                "hardware_revision": NOT_RUN,
-                "client": {
-                    "name": "prns-web-flasher"
-                    if surface == "web"
-                    else "hopspot-flash",
-                    "version": version,
-                },
-                "scenarios": {
-                    scenario: "not-run" for scenario in sorted(required)
-                },
-                "result": "not-run",
-                "tester": assignment.tester,
-                "completed_at": NOT_RUN,
-                "evidence": evidence_placeholder(),
-            }
-            if surface == "web":
-                run["browser"] = {
-                    "name": assignment.browser_name,
-                    "channel": "stable",
-                    "version": NOT_RUN,
+            for compatibility in required_compatibilities(target):
+                run = {
+                    "board": board,
+                    "surface": surface,
+                    "os": assignment.os_name,
+                    "architecture": assignment.architecture,
+                    "os_version": NOT_RUN,
+                    "hardware_identity": NOT_RUN,
+                    "hardware_model": target.get("display_name", NOT_RUN),
+                    "hardware_revision": NOT_RUN,
+                    "client": {
+                        "name": "prns-web-flasher"
+                        if surface == "web"
+                        else "hopspot-flash",
+                        "version": version,
+                    },
+                    "scenarios": {
+                        scenario: "not-run" for scenario in sorted(required)
+                    },
+                    "result": "not-run",
+                    "tester": assignment.tester,
+                    "completed_at": NOT_RUN,
+                    "evidence": evidence_placeholder(),
                 }
-            runs.append(run)
+                if compatibility is not None:
+                    run["compatibility_variant"] = compatibility
+                if surface == "web":
+                    run["browser"] = {
+                        "name": assignment.browser_name,
+                        "channel": "stable",
+                        "version": NOT_RUN,
+                    }
+                runs.append(run)
 
     browser_fallbacks = []
     for browser, os_name in sorted(REQUIRED_FALLBACKS):
@@ -308,7 +339,7 @@ def scaffold(
         )
 
     return {
-        "schema": 3,
+        "schema": ACCEPTANCE_SCHEMA,
         "candidate": {
             "version": version,
             "channel": channel,

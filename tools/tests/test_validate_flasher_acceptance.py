@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import hashlib
 import importlib.util
@@ -43,13 +42,34 @@ def manifest() -> dict:
                 "display_name": model,
                 "transport": "esp-serial" if esp else "uf2-mass-storage",
                 "expected_chip": chip if esp else None,
+                "parts": [{"path": f"{board}.bin", "size": 1, "sha256": "a" * 64}]
+                if esp
+                else [],
+                "variants": []
+                if esp
+                else [
+                    {
+                        "softdevice_family": "s140",
+                        "softdevice_version": version,
+                        "fwid": fwid,
+                        "application_base": application_base,
+                        "family_id": "0xada52840",
+                        "path": f"t-echo-s140-{version}.uf2",
+                        "size": 512,
+                        "sha256": digest,
+                    }
+                    for version, fwid, application_base, digest in (
+                        ("6.1.1", "0x00b6", "0x00026000", "b" * 64),
+                        ("7.3.0", "0x0123", "0x00027000", "c" * 64),
+                    )
+                ],
                 "provisioning": {"format": "HSPCFG1"}
                 if board in {"heltec-v4", "heltec-v4-r8", "t-beam-supreme"}
                 else None,
             }
         )
     return {
-        "schema": 2,
+        "schema": 3,
         "release": {"version": VERSION, "channel": "stable", "commit": SOURCE_COMMIT},
         "signing": {"key_id": KEY_ID},
         "targets": targets,
@@ -93,36 +113,43 @@ def complete_acceptance(
         surface = roster_assignment["surface"]
         target = targets[board]
         os_name = roster_assignment["os"]
-        run = {
-            "board": board,
-            "surface": surface,
-            "os": os_name,
-            "architecture": roster_assignment["architecture"],
-            "os_version": f"{os_name}-fixture-1",
-            "hardware_identity": f"lab-{board}-01",
-            "hardware_model": MODELS[board],
-            "hardware_revision": "not-marked",
-            "client": {
-                "name": "prns-web-flasher" if surface == "web" else "hopspot-flash",
-                "version": VERSION,
-            },
-            "scenarios": {
-                name: "pass"
-                for name in VALIDATOR.applicable_scenarios(
-                    target, surface, chip_counts
-                )
-            },
-            "result": "pass",
-            "tester": roster_assignment["tester"],
-            "completed_at": COMPLETED_AT,
-            "evidence": evidence(evidence_root, f"evidence://{board}/{surface}"),
-        }
-        if surface == "web":
-            run["browser"] = {
-                **roster_assignment["browser"],
-                "version": "126.0.1",
+        compatibilities = VALIDATOR.required_compatibilities(target)
+        for compatibility in compatibilities:
+            run = {
+                "board": board,
+                "surface": surface,
+                "os": os_name,
+                "architecture": roster_assignment["architecture"],
+                "os_version": f"{os_name}-fixture-1",
+                "hardware_identity": f"lab-{board}-01",
+                "hardware_model": MODELS[board],
+                "hardware_revision": "not-marked",
+                "client": {
+                    "name": "prns-web-flasher" if surface == "web" else "hopspot-flash",
+                    "version": VERSION,
+                },
+                "scenarios": {
+                    name: "pass"
+                    for name in VALIDATOR.applicable_scenarios(
+                        target, surface, chip_counts
+                    )
+                },
+                "result": "pass",
+                "tester": roster_assignment["tester"],
+                "completed_at": COMPLETED_AT,
+                "evidence": evidence(
+                    evidence_root,
+                    f"evidence://{board}/{surface}/{compatibility or 'default'}",
+                ),
             }
-        runs.append(run)
+            if compatibility is not None:
+                run["compatibility_variant"] = compatibility
+            if surface == "web":
+                run["browser"] = {
+                    **roster_assignment["browser"],
+                    "version": "126.0.1",
+                }
+            runs.append(run)
 
     browser_fallbacks = []
     for roster_assignment in roster["fallback_assignments"]:
@@ -170,7 +197,7 @@ def complete_acceptance(
         )
 
     return {
-        "schema": 3,
+        "schema": 4,
         "candidate": {
             "version": VERSION,
             "channel": "stable",
@@ -326,6 +353,26 @@ class AcceptanceValidatorTests(unittest.TestCase):
         errors = self.validate()
         self.assertTrue(any("is missing applicable scenarios" in error for error in errors))
         self.assertTrue(any("failed-sync" in error and "reboot-detection" in error for error in errors))
+
+    def test_t_echo_missing_compatibility_row_is_rejected(self) -> None:
+        run = self.runs("t-echo", "web")[-1]
+        self.acceptance["runs"].remove(run)
+        (self.evidence_root / run["evidence"]["sha256"]).unlink()
+        self.assertTrue(
+            any(
+                "missing board/surface/compatibility runs" in error
+                for error in self.validate()
+            )
+        )
+
+    def test_t_echo_compatibility_rows_cannot_reuse_evidence(self) -> None:
+        first, second = self.runs("t-echo", "cli")
+        old_digest = second["evidence"]["sha256"]
+        second["evidence"] = dict(first["evidence"])
+        (self.evidence_root / old_digest).unlink()
+        self.assertTrue(
+            any("reuses T-Echo compatibility evidence" in error for error in self.validate())
+        )
 
     def test_esp_web_requires_device_md5_mismatch(self) -> None:
         for run in self.runs("heltec-v4", "web"):
@@ -503,89 +550,19 @@ class AcceptanceValidatorTests(unittest.TestCase):
         self.assertTrue(any("not a required Safari/Firefox fallback" in error for error in errors))
         self.assertTrue(any("unknown published target" in error for error in errors))
 
-    def override_acceptance(self) -> dict:
-        return {
+    def test_maintainer_override_cannot_replace_the_physical_matrix(self) -> None:
+        record = {
             "schema": 4,
-            "candidate": deepcopy(self.acceptance["candidate"]),
+            "candidate": self.acceptance["candidate"],
             "maintainer_override": {
-                "basis": "prerelease approved on continuous hardware validation through development",
+                "basis": "continuous development testing",
                 "approved_by": "github:release-owner",
                 "approved_at": COMPLETED_AT,
             },
         }
-
-    def clear_evidence_root(self) -> None:
-        for path in self.evidence_root.iterdir():
-            path.unlink()
-
-    def test_maintainer_override_binds_candidate_and_release_owner(self) -> None:
-        self.clear_evidence_root()
-        self.assertEqual(self.validate(self.override_acceptance()), [])
-
-    def test_maintainer_override_requires_the_release_owner(self) -> None:
-        self.clear_evidence_root()
-        record = self.override_acceptance()
-        record["maintainer_override"]["approved_by"] = "github:solo-fixture"
-        self.assertTrue(
-            any("release_owner" in error for error in self.validate(record))
-        )
-
-    def test_maintainer_override_still_binds_the_exact_candidate(self) -> None:
-        self.clear_evidence_root()
-        record = self.override_acceptance()
-        record["candidate"]["signed_candidate_sha256"] = "0" * 64
-        self.assertTrue(
-            any(
-                "signed_candidate_sha256 does not match the exact signed candidate archive" in error
-                for error in self.validate(record)
-            )
-        )
-
-    def test_maintainer_override_is_pre_1_0_only(self) -> None:
-        self.clear_evidence_root()
-        self.manifest_document["release"]["version"] = "1.0.0"
-        self.manifest_path.write_text(
-            json.dumps(self.manifest_document, sort_keys=True) + "\n", encoding="utf-8"
-        )
-        record = self.override_acceptance()
-        record["candidate"]["version"] = "1.0.0"
-        record["candidate"]["manifest_sha256"] = hashlib.sha256(
-            self.manifest_path.read_bytes()
-        ).hexdigest()
-        self.assertTrue(
-            any(
-                "pre-1.0 provision and cannot approve this version" in error
-                for error in self.validate(record)
-            )
-        )
-
-    def test_maintainer_override_rejects_stray_evidence_objects(self) -> None:
-        record = self.override_acceptance()
-        self.assertTrue(
-            any("unreferenced objects" in error for error in self.validate(record))
-        )
-
-    def test_maintainer_override_rejects_unknown_and_placeholder_fields(self) -> None:
-        self.clear_evidence_root()
-        record = self.override_acceptance()
-        record["runs"] = []
-        record["maintainer_override"]["basis"] = "TODO"
-        record["maintainer_override"]["approved_at"] = "9999-12-31T23:59:59Z"
         errors = self.validate(record)
-        self.assertTrue(any("unknown fields: ['runs']" in error for error in errors))
-        self.assertTrue(any("basis must state the approval grounds" in error for error in errors))
-        self.assertTrue(any("approved_at cannot be in the future" in error for error in errors))
-
-    def test_maintainer_override_approval_cannot_predate_the_prerelease(self) -> None:
-        self.clear_evidence_root()
-        record = self.override_acceptance()
-        record["maintainer_override"]["approved_at"] = "2026-07-20T11:00:00Z"
-        self.assertTrue(
-            any(
-                "approved_at predates the exact public prerelease" in error
-                for error in self.validate(record)
-            )
-        )
+        self.assertTrue(any("unknown fields: ['maintainer_override']" in error for error in errors))
+        self.assertTrue(any("acceptance runs must be an array" in error for error in errors))
 
 
 if __name__ == "__main__":
