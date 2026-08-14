@@ -119,8 +119,7 @@ impl ServerBootstrapEnvironment {
              type = PrnsWebSocketServer\n\
              interface_enabled = Yes\n\
              listen_ip = 0.0.0.0\n\
-             listen_port = {DEFAULT_WEBSOCKET_PORT}\n\
-             framing = raw\n"
+             listen_port = {DEFAULT_WEBSOCKET_PORT}\n"
         ));
         config
     }
@@ -1206,6 +1205,7 @@ mod tests {
     use personal_rns::config::{
         parse_and_plan, DiscoveryAdvertisementPlan, PlannedMedium, TcpListenHost,
     };
+    use personal_rns::interfaces::websocket::WebSocketFramingSelection;
 
     use super::*;
 
@@ -1351,10 +1351,12 @@ mod tests {
         assert_eq!(plan.interfaces.len(), 2);
         assert!(matches!(
             &plan.interfaces[1].medium,
-            PlannedMedium::PrnsWebSocketServer { listener, framing }
+            PlannedMedium::PrnsWebSocketServer {
+                listener,
+                framing: WebSocketFramingSelection::Auto,
+            }
                 if listener.host == TcpListenHost::Address("0.0.0.0".to_string())
                     && listener.port == DEFAULT_WEBSOCKET_PORT
-                    && framing.name() == "raw"
         ));
     }
 

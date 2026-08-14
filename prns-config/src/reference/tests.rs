@@ -680,29 +680,28 @@ fn websocket_targets_require_a_supported_websocket_url() {
 }
 
 #[test]
-fn websocket_framing_is_required_and_closed() {
+fn websocket_framing_is_optional_and_closed() {
     for type_and_endpoint in [
         "type = PrnsWebSocketClient\ntarget = ws://peer.example/prns",
         "type = PrnsWebSocketServer\nport = 4242",
     ] {
-        let errors = parse(&format!(
+        parse(&format!(
             "[interfaces]\n[[WebSocket]]\n{type_and_endpoint}\nenabled = Yes\n"
         ))
-        .unwrap_err();
-        assert!(has_code(&errors, ConfigDiagnosticCode::MissingRequiredKey));
+        .expect("omitted WebSocket framing uses automatic selection");
 
-        let errors = parse(&format!(
-            "[interfaces]\n[[WebSocket]]\n{type_and_endpoint}\nenabled = Yes\nframing = auto\n"
-        ))
-        .unwrap_err();
-        assert!(has_code(&errors, ConfigDiagnosticCode::InvalidValue));
-
-        for framing in ["raw", "hdlc", "kiss"] {
+        for framing in ["auto", "raw", "hdlc", "kiss"] {
             parse(&format!(
                 "[interfaces]\n[[WebSocket]]\n{type_and_endpoint}\nenabled = Yes\nframing = {framing}\n"
             ))
             .expect("supported WebSocket framing parses");
         }
+
+        let errors = parse(&format!(
+            "[interfaces]\n[[WebSocket]]\n{type_and_endpoint}\nenabled = Yes\nframing = slip\n"
+        ))
+        .unwrap_err();
+        assert!(has_code(&errors, ConfigDiagnosticCode::InvalidValue));
     }
 }
 

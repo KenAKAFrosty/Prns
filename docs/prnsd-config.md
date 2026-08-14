@@ -309,8 +309,8 @@ Prnsd also accepts these canonical interface types, which stock RNS 1.4.2 does n
 | --- | --- |
 | `PrnsUsbAuto` | Discovers and supervises supported USB CDC devices. Only common interface policy is required. |
 | `PrnsBluetoothAuto` | Discovers and supervises Prns Bluetooth LE peers. Only common interface policy is required. |
-| `PrnsWebSocketClient` | Connects to the required `ws://` or certificate-validated `wss://` URL in `target` and retries after disconnects. Requires `framing = raw`, `hdlc`, or `kiss`. |
-| `PrnsWebSocketServer` | Listens on `port` or `listen_port`, with optional `listen_ip`, `device`, and `prefer_ipv6`. Requires `framing = raw`, `hdlc`, or `kiss`. Accepted members inherit the full policy and IFAC access. |
+| `PrnsWebSocketClient` | Connects to the required `ws://` or certificate-validated `wss://` URL in `target` and retries after disconnects. `framing` accepts `auto`, `raw`, `hdlc`, or `kiss` and defaults to `auto`. |
+| `PrnsWebSocketServer` | Listens on `port` or `listen_port`, with optional `listen_ip`, `device`, and `prefer_ipv6`. `framing` accepts `auto`, `raw`, `hdlc`, or `kiss` and defaults to `auto`. Accepted members inherit the full policy and IFAC access. |
 
 Prns-owned type values are ASCII case-insensitive. The explicit `Interface` suffix is accepted as
 an alias, and `Bluetooth` and `Ble` are interchangeable. For example, `prnsusbauto`,
@@ -333,13 +333,11 @@ WebSocket client and server stanzas may be repeated.
     type = PrnsWebSocketClient
     enabled = Yes
     target = wss://peer.example/prns
-    framing = raw
 
   [[WebSocket listener]]
     type = PrnsWebSocketServer
     enabled = Yes
     listen_ip = ::
-    framing = raw
     listen_port = 4242
     prefer_ipv6 = Yes
 ```

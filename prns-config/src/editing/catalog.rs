@@ -494,7 +494,7 @@ impl InterfaceSettingSpec {
             interface_key::TARGET_PORT => "Sets the remote port this client connects to.",
             interface_key::TARGET => "Sets the complete remote WebSocket URL.",
             interface_key::FRAMING => {
-                "Selects raw packet, HDLC, or KISS framing inside each WebSocket binary message."
+                "Automatically detects raw packet, HDLC, or KISS framing, or fixes one explicitly."
             }
             interface_key::KISS_FRAMING => {
                 "Wraps packets in KISS framing while they cross this TCP connection."
@@ -706,10 +706,6 @@ impl InterfaceSettingSpec {
             (InterfaceKind::PrnsWebSocketClient, interface_key::TARGET) => {
                 Some("a ws:// or wss:// target is required")
             }
-            (
-                InterfaceKind::PrnsWebSocketClient | InterfaceKind::PrnsWebSocketServer,
-                interface_key::FRAMING,
-            ) => Some("a WebSocket wire framing is required"),
             _ => None,
         }
     }
@@ -1207,7 +1203,7 @@ impl InterfaceSettingSpec {
                 "a percentage"
             }
             interface_key::PARITY => "none, even, or odd",
-            interface_key::FRAMING => "raw, hdlc, or kiss",
+            interface_key::FRAMING => "auto, raw, hdlc, or kiss",
             _ => match self.input_kind(kind) {
                 InterfaceSettingInputKind::Boolean => "yes or no",
                 InterfaceSettingInputKind::Unsigned => "a non-negative whole number",
