@@ -1167,6 +1167,33 @@ inputs = [
 ]
 artifacts = "validation-artifacts/results/interop-websocket-ecosystem-characterization"
 
+[[suite]]
+id = "interop-websocket-bergie-lxmf-e2e"
+domain = "interop"
+group = "linux-network"
+tiers = ["scheduled"]
+platform = "linux"
+toolchain = "python"
+timeout_seconds = 600
+command = [
+  "__RUNNER_PYTHON__",
+  "validation/interop/websocket_ecosystem_characterization.py",
+  "--lxmf-application-e2e",
+]
+inputs = [
+  "validation/interop/websocket_ecosystem_characterization.py",
+  "validation/interop/websocket_bergie_lxmf_e2e.py",
+  "validation/interop/peers/websocket_ecosystem/bergie_lxmf/echo.mjs",
+  "validation/interop/peers/websocket_ecosystem/bergie_lxmf/sender.mjs",
+  "prns-core/src/interfaces/websocket",
+  "prns-interfaces/impls/tokio/src/websocket",
+  "personal-rns/src",
+  "prnsd/Cargo.toml",
+  "prnsd/Cargo.lock",
+  "prnsd/src",
+]
+artifacts = "validation-artifacts/results/interop-websocket-bergie-lxmf-e2e"
+
 [[fuzz_target]]
 name = "wire_announce_parse"
 path = "fuzz_targets/wire_announce_parse.rs"
