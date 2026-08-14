@@ -6,7 +6,9 @@ use futures_util::FutureExt;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 
-use crate::engine::InstantMillis;
+use crate::engine::{
+    InstantMillis, RespondFailure, RespondRejection, SendResourceFailure, SendResourceRejection,
+};
 use crate::identity::IdentityHash;
 use crate::routing::links::request::RequestId;
 use crate::routing::links::LinkId;
@@ -14,7 +16,7 @@ use crate::routing::request_handlers::RequestPathHash;
 use crate::units::RttMillis;
 use crate::wire::DestinationHash;
 
-use super::node_facade::PrnsNodeHandle;
+use super::node_facade::{PrnsNodeHandle, ResponseSendError};
 use super::request_endpoints::{dispatch_request, Decline, InboundRequest, RequestEndpointSet};
 use super::request_endpoints::{ResponseCapacityExceeded, ResponseSink};
 
@@ -219,11 +221,32 @@ async fn dispatch<St, R: RequestEndpointSet<St>>(
                 }
             };
             if let Err(error) = result {
-                eprintln!(
-                    "REQUEST_RESPONSE_FAILURE link_id={:?} error={error}",
-                    link_id.as_bytes()
+                let link_already_gone = matches!(
+                    error,
+                    ResponseSendError::Rejected(
+                        RespondFailure::Rejected(RespondRejection::NoSuchLink)
+                            | RespondFailure::Resource(SendResourceFailure::Rejected(
+                                SendResourceRejection::NoSuchLink,
+                            )),
+                    )
                 );
-                commands.close_link(link_id);
+                if link_already_gone {
+                    #[cfg(feature = "tracing")]
+                    tracing::debug!(
+                        target: "prns.runtime",
+                        event = "request_response_link_gone",
+                        link_id = ?link_id.as_bytes(),
+                    );
+                } else {
+                    #[cfg(feature = "tracing")]
+                    tracing::warn!(
+                        target: "prns.runtime",
+                        event = "request_response_failed",
+                        error = ?error,
+                        link_id = ?link_id.as_bytes(),
+                    );
+                    commands.close_link(link_id);
+                }
             }
         }
         Err(Decline::Ignore) => {}
@@ -237,7 +260,7 @@ async fn dispatch<St, R: RequestEndpointSet<St>>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::{IssuedCommand, PrnsCommand};
+    use crate::engine::{IssuedCommand, PrnsCommand, Settlement};
     use crate::manifold::driver::HostCommand;
     use crate::routing::request_handlers::RequestPathHash;
     use crate::runtime::request_endpoints::{RequestContext, RequestEndpointPolicy};
@@ -308,5 +331,82 @@ mod tests {
                 ..
             })) if close.link_id == link_id
         ));
+    }
+
+    struct PongRequestEndpointSet;
+
+    impl RequestEndpointSet<()> for PongRequestEndpointSet {
+        const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)] = &[];
+
+        async fn dispatch(
+            mut context: RequestContext<'_, ()>,
+            _path_hash: RequestPathHash,
+        ) -> Result<(), Decline> {
+            context.respond("pong")
+        }
+    }
+
+    async fn drive_response_settling_to(
+        failure: RespondFailure,
+    ) -> mpsc::UnboundedReceiver<HostCommand> {
+        let (commands, mut command_rx) = mpsc::unbounded_channel();
+        let handle = PrnsNodeHandle::over(commands);
+        let dispatched = dispatch_guarded::<(), PongRequestEndpointSet>(
+            &(),
+            &handle,
+            RunnerRequest {
+                destination: DestinationHash::new([0x33; 16]),
+                link_id: LinkId::new([0x44; 16]),
+                request_id: RequestId([0x55; 16]),
+                requester: None,
+                path_hash: RequestPathHash::new([0x66; 16]),
+                requested_at: InstantMillis(700),
+                rtt: RttMillis::new(80),
+                data: std::vec::Vec::new(),
+            },
+            Arc::new(Mutex::new(())),
+        );
+        let settled = async {
+            let Some(HostCommand::RespondAny(respond)) = command_rx.recv().await else {
+                panic!("respond command");
+            };
+            respond
+                .completion
+                .unwrap()
+                .send(Settlement::Respond(Err(failure)))
+                .unwrap();
+            command_rx
+        };
+        let ((), command_rx) = tokio::join!(dispatched, settled);
+        command_rx
+    }
+
+    #[tokio::test]
+    async fn a_failed_response_closes_its_link() {
+        let mut command_rx = drive_response_settling_to(RespondFailure::WriteFailed).await;
+        assert!(matches!(
+            command_rx.recv().await,
+            Some(HostCommand::Engine(IssuedCommand {
+                command: PrnsCommand::CloseLink(close),
+                ..
+            })) if close.link_id == LinkId::new([0x44; 16])
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_response_rejected_for_a_vanished_link_does_not_close_it_again() {
+        let mut command_rx =
+            drive_response_settling_to(RespondFailure::Rejected(RespondRejection::NoSuchLink))
+                .await;
+        assert!(command_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn a_resource_response_rejected_for_a_vanished_link_does_not_close_it_again() {
+        let mut command_rx = drive_response_settling_to(RespondFailure::Resource(
+            SendResourceFailure::Rejected(SendResourceRejection::NoSuchLink),
+        ))
+        .await;
+        assert!(command_rx.try_recv().is_err());
     }
 }

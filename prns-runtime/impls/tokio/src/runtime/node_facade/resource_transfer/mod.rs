@@ -218,7 +218,7 @@ impl PrnsNodeHandle {
             level = "debug",
             skip_all,
             fields(bytes = total_len, link_id = ?link_id.as_bytes()),
-            err(Debug)
+            err(Debug, level = "debug")
         )
     )]
     pub(super) async fn send_resource_streaming(
@@ -384,7 +384,7 @@ impl PrnsNodeHandle {
             level = "debug",
             skip_all,
             fields(link_id = ?link_id.as_bytes()),
-            err(Debug)
+            err(Debug, level = "debug")
         )
     )]
     pub async fn receive_resource(
