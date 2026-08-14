@@ -114,14 +114,7 @@ import {
   sendResourceFromSource,
 } from "./resource_send.js";
 import { browserResourceCompressor } from "./resource_compressor.js";
-import {
-  closeFailed,
-  closedSessionOutcome,
-  delay,
-  describeInterfaceSessionFailure,
-  hasCleanupFailures,
-  unexpectedSessionFailure,
-} from "./session.js";
+import { describeInterfaceSessionFailure } from "./session.js";
 import {
   BROWSER_RENDEZVOUS_FRAMING_SELECTION,
   WebSocketInterface,
@@ -131,7 +124,8 @@ import {
   WebUsbAutoTransport,
   usbStage,
 } from "./usb_auto/transport.js";
-import type { UsbAutoWriteOutcome } from "./usb_auto/transport.js";
+import type { UsbAutoRuntimeHost } from "./usb_auto/runtime.js";
+import { BrowserUsbAutoSession } from "./usb_auto/session.js";
 import type {
   ResourceSendSettlement,
   ResourceSource,
@@ -1032,12 +1026,6 @@ export type PrnsSnapshot = {
   destinationIdentities: StableDestinationIdentitySnapshot[];
 };
 
-type UsbAutoInboundMessage =
-  | Tag<"Hello">
-  | Tag<"HelloAck", Uint8Array>
-  | Tag<"Data", Uint8Array>;
-
-type SessionHandleOutcome = Tag<"Handled"> | InterfaceSessionFailure;
 type InterfaceRegistrationOutcome<Name extends InterfaceName> =
   | Tag<"Registered", InterfaceId>
   | AlreadyActive<Name>
@@ -1076,8 +1064,6 @@ type RuntimeOutboundDrainOutcome =
   | Tag<"Drained", readonly PrnsOutboundFrame[]>
   | RuntimeRejected;
 
-const USB_AUTO_PROBE_INTERVAL_MS = 500;
-const USB_AUTO_OUTBOUND_POLL_MS = 25;
 const INTERFACE_OUTBOUND_QUEUE_DEPTH = 64;
 let nextBrowserUsbAutoTag = 0;
 
@@ -1152,9 +1138,9 @@ export class PrnsInterfaces {
 
 export class UsbAutoInterface {
   readonly name = "usb-auto" as const;
-  readonly #host: RuntimeHost;
+  readonly #host: UsbAutoRuntimeHost;
 
-  constructor(host: RuntimeHost) {
+  constructor(host: UsbAutoRuntimeHost) {
     this.#host = host;
   }
 
@@ -1211,234 +1197,6 @@ export class UsbAutoInterface {
       await transport?.close();
       return connectFailure("usb-auto", stage, error);
     }
-  }
-}
-
-class BrowserUsbAutoSession implements UsbAutoSession {
-  readonly name = "usb-auto" as const;
-  readonly interfaceId: InterfaceId;
-
-  readonly #host: RuntimeHost;
-  readonly #transport: WebUsbAutoTransport;
-  readonly #decoder: UsbAutoDecoderBinding;
-  readonly #nodeTag: Uint8Array;
-  #writeQueue: Promise<UsbAutoWriteOutcome> = Promise.resolve(Tag("Written"));
-  #closed = false;
-  #confirmed = false;
-  #status: InterfaceSessionStatus = Tag("Negotiating");
-
-  constructor(
-    host: RuntimeHost,
-    transport: WebUsbAutoTransport,
-    interfaceId: InterfaceId,
-  ) {
-    this.#host = host;
-    this.#transport = transport;
-    this.interfaceId = interfaceId;
-    this.#decoder = host.createUsbAutoDecoder();
-    this.#nodeTag = host.usbAutoNodeTagFor(interfaceId);
-  }
-
-  get status(): InterfaceSessionStatus {
-    return this.#status;
-  }
-
-  start(): void {
-    void this.#readLoop();
-    void this.#probeLoop();
-    void this.#outboundLoop();
-  }
-
-  async close(): Promise<InterfaceCloseOutcome> {
-    if (this.#closed) {
-      return closedSessionOutcome(this.#status);
-    }
-    this.#closed = true;
-    const causes: InterfaceCleanupFailure[] = [];
-    const detached = this.#host.deactivateInterface(this.interfaceId);
-    if (detached.tag !== "Detached") {
-      causes.push(Tag("RuntimeDetachFailed", { detail: detached.data.detail }));
-    }
-    const pendingWrite = await this.#writeQueue;
-    if (pendingWrite.tag !== "Written") {
-      causes.push(
-        Tag("TransportCloseFailed", {
-          detail: describeInterfaceSessionFailure(pendingWrite),
-        }),
-      );
-    }
-    causes.push(...(await this.#transport.close()));
-    if (hasCleanupFailures(causes)) {
-      const failed = closeFailed(causes);
-      this.#status = Tag("Failed", failed);
-      return failed;
-    }
-    this.#status = Tag("Closed");
-    return Tag("Closed");
-  }
-
-  async #readLoop(): Promise<void> {
-    try {
-      while (!this.#closed) {
-        const read = await this.#transport.read();
-        if (read.tag !== "Read") {
-          await this.#fail(read);
-          return;
-        }
-        const chunk = read.data;
-        if (!chunk) {
-          break;
-        }
-        if (chunk.length === 0) {
-          continue;
-        }
-        let messages: unknown[];
-        try {
-          messages = this.#decoder.feed(chunk);
-        } catch (error) {
-          await this.#fail(
-            Tag("ProtocolViolation", {
-              protocol: "UsbAuto",
-              detail: describeHostError(error),
-            }),
-          );
-          return;
-        }
-        for (const raw of messages) {
-          let message: UsbAutoInboundMessage;
-          try {
-            message = parseUsbAutoMessage(raw);
-          } catch (error) {
-            await this.#fail(
-              Tag("ProtocolViolation", {
-                protocol: "UsbAuto",
-                detail: describeHostError(error),
-              }),
-            );
-            return;
-          }
-          const handled = await this.#handleInbound(message);
-          if (handled.tag !== "Handled") {
-            await this.#fail(handled);
-            return;
-          }
-        }
-      }
-    } catch (error) {
-      if (!this.#closed) {
-        await this.#fail(unexpectedSessionFailure(error));
-      }
-    } finally {
-      if (!this.#closed) {
-        await this.close();
-      }
-    }
-  }
-
-  async #probeLoop(): Promise<void> {
-    try {
-      while (!this.#closed && !this.#confirmed) {
-        const written = await this.#writeFrame(this.#host.usbAutoHostHelloFrame());
-        if (written.tag !== "Written") {
-          await this.#fail(written);
-          return;
-        }
-        await delay(USB_AUTO_PROBE_INTERVAL_MS);
-      }
-    } catch (error) {
-      if (!this.#closed) {
-        await this.#fail(unexpectedSessionFailure(error));
-      }
-    }
-  }
-
-  async #outboundLoop(): Promise<void> {
-    try {
-      while (!this.#closed) {
-        if (this.#confirmed) {
-          const outbound = this.#host.takeOutboundFor(this.interfaceId);
-          if (outbound.tag !== "Outbound") {
-            await this.#fail(outbound);
-            return;
-          }
-          for (const frame of outbound.data) {
-            const written = await this.#writeFrame(
-              this.#host.usbAutoDataFrame(frame.bytes),
-            );
-            if (written.tag !== "Written") {
-              await this.#fail(written);
-              return;
-            }
-          }
-        }
-        await delay(USB_AUTO_OUTBOUND_POLL_MS);
-      }
-    } catch (error) {
-      if (!this.#closed) {
-        await this.#fail(unexpectedSessionFailure(error));
-      }
-    }
-  }
-
-  async #handleInbound(message: UsbAutoInboundMessage): Promise<SessionHandleOutcome> {
-    return match_into<Promise<SessionHandleOutcome>>().from(message, {
-      Hello: async () => {
-        const written = await this.#writeFrame(
-          this.#host.usbAutoHostHelloAckFrame(this.#nodeTag),
-        );
-        if (written.tag !== "Written") {
-          return written;
-        }
-        this.#confirmPeer();
-        return Tag("Handled");
-      },
-      HelloAck: async () => {
-        this.#confirmPeer();
-        return Tag("Handled");
-      },
-      Data: async (bytes) => {
-        if (this.#confirmed && bytes.length > 0) {
-          const ingested = this.#host.ingest(
-            this.interfaceId,
-            packetFrame(bytes),
-          );
-          return ingested.tag === "Accepted" ? Tag("Handled") : ingested;
-        }
-        return Tag("Handled");
-      },
-    });
-  }
-
-  #confirmPeer(): void {
-    this.#confirmed = true;
-    this.#status = Tag("Active");
-  }
-
-  async #fail(sessionFailure: InterfaceSessionFailure): Promise<void> {
-    if (this.#closed) {
-      return;
-    }
-    this.#status = Tag("Failed", sessionFailure);
-    this.#closed = true;
-    this.#host.deactivateInterface(this.interfaceId);
-    await this.#writeQueue;
-    await this.#transport.close();
-  }
-
-  async #writeFrame(frame: Uint8Array): Promise<UsbAutoWriteOutcome> {
-    if (this.#closed) {
-      return Tag("Written");
-    }
-    const write = this.#writeQueue
-      .then(async (previous): Promise<UsbAutoWriteOutcome> => {
-        if (previous.tag !== "Written" || this.#closed) {
-          return previous;
-        }
-        return this.#transport.write(frame);
-      })
-      .catch((error: unknown) => unexpectedSessionFailure(error));
-    this.#writeQueue = write;
-    return write;
   }
 }
 
@@ -3075,27 +2833,6 @@ function outboundTargets(
         AllExcept: (targetInterface) =>
           !equalBytes(targetInterface, interfaceId),
       }),
-  });
-}
-
-type RawUsbAutoMessageType = "hello" | "helloAck" | "data";
-
-const RAW_USB_AUTO_MESSAGE_TYPES: ReadonlySet<string> =
-  new Set<RawUsbAutoMessageType>(["hello", "helloAck", "data"]);
-
-function parseUsbAutoMessage(raw: unknown): UsbAutoInboundMessage {
-  const object = record(raw, "UsbAutoInboundMessage");
-  const type = stringField(object, "type");
-  if (!RAW_USB_AUTO_MESSAGE_TYPES.has(type)) {
-    throw new PrnsValidationError(
-      "invalid-component",
-      `unknown USB-auto message ${type}`,
-    );
-  }
-  return match(type as RawUsbAutoMessageType, {
-    hello: () => Tag("Hello"),
-    helloAck: () => Tag("HelloAck", bytesField(object, "tag")),
-    data: () => Tag("Data", bytesField(object, "bytes")),
   });
 }
 
