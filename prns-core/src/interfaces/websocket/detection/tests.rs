@@ -3,6 +3,7 @@ use super::allocated::{
     WebSocketFramingState, WebSocketWireDetection, WebSocketWireDetector,
 };
 use super::*;
+use crate::interfaces::framing::FrameBuffer;
 use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
     WireContext, WirePacketHeader,
@@ -115,7 +116,7 @@ fn passive_session_detection_selects_pending_outbound_framing() {
     );
 
     let mut offset = 0;
-    let mut sink = Vec::new();
+    let mut sink = FrameBuffer::<FRAME_CAP>::new();
     let outcome = session
         .next_frame_into(&message, &mut offset, &mut sink)
         .expect("framing detection succeeds");
@@ -124,7 +125,7 @@ fn passive_session_detection_selects_pending_outbound_framing() {
     };
     assert_eq!(resolved.framing(), WebSocketWireFraming::Kiss);
     assert_eq!(resolved.pending_packet(), Some(outbound.as_slice()));
-    assert_eq!(sink, inbound);
+    assert_eq!(sink.as_slice(), inbound.as_slice());
     assert_eq!(
         session.stage_outbound(&outbound),
         WebSocketSessionOutboundAction::Send(WebSocketWireFraming::Kiss)
@@ -135,7 +136,7 @@ fn passive_session_detection_selects_pending_outbound_framing() {
 fn raw_packet_is_unique_detection_evidence() {
     let packet = packet(&[0xC0, 0xDB, 0x7E, 0x7D]);
     let mut detector = WebSocketWireDetector::new();
-    let mut sink = Vec::new();
+    let mut sink = FrameBuffer::<FRAME_CAP>::new();
     let frame = detected_frame(
         detector
             .inspect_message(&packet, &mut sink)
@@ -144,7 +145,7 @@ fn raw_packet_is_unique_detection_evidence() {
     assert_eq!(frame.framing(), WebSocketWireFraming::RawPacket);
     assert_eq!(frame.frame_len(), packet.len());
     assert_eq!(frame.consumed_message_bytes(), packet.len());
-    assert_eq!(sink, packet);
+    assert_eq!(sink.as_slice(), packet.as_slice());
 }
 
 #[test]
@@ -153,7 +154,7 @@ fn hdlc_detection_accumulates_across_websocket_messages() {
     let wire = encoded(WebSocketWireFraming::Hdlc, &packet);
     let split = wire.len() / 2;
     let mut detector = WebSocketWireDetector::new();
-    let mut sink = Vec::new();
+    let mut sink = FrameBuffer::<FRAME_CAP>::new();
     assert_eq!(
         detector.inspect_message(&wire[..split], &mut sink),
         Ok(WebSocketWireDetection::AwaitingEvidence)
@@ -166,7 +167,7 @@ fn hdlc_detection_accumulates_across_websocket_messages() {
     assert_eq!(frame.framing(), WebSocketWireFraming::Hdlc);
     assert_eq!(frame.frame_len(), packet.len());
     assert_eq!(frame.consumed_message_bytes(), wire.len() - split);
-    assert_eq!(sink, packet);
+    assert_eq!(sink.as_slice(), packet.as_slice());
 }
 
 #[test]
@@ -176,7 +177,7 @@ fn kiss_detection_reports_the_first_coalesced_frame_boundary() {
     let mut wire = first.clone();
     wire.extend_from_slice(&first);
     let mut detector = WebSocketWireDetector::new();
-    let mut sink = Vec::new();
+    let mut sink = FrameBuffer::<FRAME_CAP>::new();
     let frame = detected_frame(
         detector
             .inspect_message(&wire, &mut sink)
@@ -185,7 +186,7 @@ fn kiss_detection_reports_the_first_coalesced_frame_boundary() {
     assert_eq!(frame.framing(), WebSocketWireFraming::Kiss);
     assert_eq!(frame.frame_len(), packet.len());
     assert_eq!(frame.consumed_message_bytes(), first.len());
-    assert_eq!(sink, packet);
+    assert_eq!(sink.as_slice(), packet.as_slice());
 }
 
 #[test]
@@ -194,12 +195,12 @@ fn multiple_valid_interpretations_remain_ambiguous() {
     let framed_inner = encoded(WebSocketWireFraming::Kiss, &inner);
     let outer = packet(&framed_inner);
     let mut detector = WebSocketWireDetector::new();
-    let mut sink = Vec::new();
+    let mut sink = FrameBuffer::<FRAME_CAP>::new();
     assert_eq!(
         detector.inspect_message(&outer, &mut sink),
         Ok(WebSocketWireDetection::AmbiguousEvidence)
     );
-    assert!(sink.is_empty());
+    assert!(sink.as_slice().is_empty());
 }
 
 #[test]
@@ -208,7 +209,7 @@ fn opaque_ifac_and_malformed_frames_do_not_select_a_codec() {
     authenticated[0] |= 0x80;
     let malformed = encoded(WebSocketWireFraming::Hdlc, &[0x01, 0x02]);
     let mut detector = WebSocketWireDetector::new();
-    let mut sink = Vec::new();
+    let mut sink = FrameBuffer::<FRAME_CAP>::new();
     assert_eq!(
         detector.inspect_message(&authenticated, &mut sink),
         Ok(WebSocketWireDetection::AwaitingEvidence)
@@ -225,7 +226,7 @@ fn reset_discards_partial_stream_evidence() {
     let wire = encoded(WebSocketWireFraming::Hdlc, &packet);
     let split = wire.len() / 2;
     let mut detector = WebSocketWireDetector::new();
-    let mut sink = Vec::new();
+    let mut sink = FrameBuffer::<FRAME_CAP>::new();
     assert_eq!(
         detector.inspect_message(&wire[..split], &mut sink),
         Ok(WebSocketWireDetection::AwaitingEvidence)
@@ -241,7 +242,7 @@ fn reset_discards_partial_stream_evidence() {
 fn auto_and_fixed_connection_states_reset_by_their_own_policy() {
     let packet = packet(&[0x22]);
     let mut automatic = WebSocketFramingDecoder::new(WebSocketFramingSelection::Auto);
-    let mut sink = Vec::new();
+    let mut sink = FrameBuffer::<FRAME_CAP>::new();
     let mut offset = 0;
     assert!(matches!(
         automatic
@@ -272,7 +273,7 @@ fn auto_resolution_continues_through_coalesced_frames() {
     let mut wire = first.clone();
     wire.extend_from_slice(&first);
     let mut decoder = WebSocketFramingDecoder::new(WebSocketFramingSelection::Auto);
-    let mut sink = Vec::new();
+    let mut sink = FrameBuffer::<FRAME_CAP>::new();
     let mut offset = 0;
 
     let first_frame = decoder
@@ -280,7 +281,7 @@ fn auto_resolution_continues_through_coalesced_frames() {
         .expect("first packet decodes");
     assert!(matches!(first_frame, WebSocketFrameDecodeOutcome::Frame(_)));
     assert_eq!(offset, first.len());
-    assert_eq!(sink, packet);
+    assert_eq!(sink.as_slice(), packet.as_slice());
 
     let second_frame = decoder
         .next_frame_into(&wire, &mut offset, &mut sink)
@@ -290,5 +291,5 @@ fn auto_resolution_continues_through_coalesced_frames() {
         WebSocketFrameDecodeOutcome::Frame(_)
     ));
     assert_eq!(offset, wire.len());
-    assert_eq!(sink, packet);
+    assert_eq!(sink.as_slice(), packet.as_slice());
 }
