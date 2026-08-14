@@ -30,10 +30,12 @@ import type {
   BluetoothRuntimeRegistration,
 } from "./runtime.js";
 import type {
-  AlreadyActive,
   BluetoothConnectFailure,
-  BluetoothReassemblerBinding,
   BluetoothSession,
+} from "../bluetooth.js";
+import type {
+  AlreadyActive,
+  BluetoothReassemblerBinding,
   ConnectTimedOut,
   InterfaceCleanupFailure,
   InterfaceCloseOutcome,
