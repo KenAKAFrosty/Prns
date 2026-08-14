@@ -9,7 +9,11 @@ Node.js and Bun entry.
 The browser-facing transport helpers live under `prns.interfaces`: WebUSB and
 Bluetooth LE talk to nearby devices, while `prns.interfaces.webSocket.connect(url)`
 opens a browser WebSocket client to a local or public Prns WebSocket endpoint.
-Each binary WebSocket message carries one Prns wire frame.
+Browser WebSocket clients detect raw-packet, HDLC, or KISS framing from inbound
+traffic and fall back to raw-packet framing when a silent peer first needs
+outbound traffic. Callers can select a fixed framing when the endpoint contract
+is already known. Stable `BrowserRendezvous` interfaces remain fixed to raw
+packet framing.
 
 Fallible host operations resolve semantic tagged outcomes. They do not reject
 for expected conditions such as cancellation, unavailable browser APIs,

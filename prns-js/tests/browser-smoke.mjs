@@ -114,6 +114,7 @@ try {
     persistence: "Restored",
     persistenceFailures: "Typed",
     routePersistence: "Restored",
+    webSocketFraming: "Resolved",
     compression: "Compressed",
     compressionDetail: "message:message",
   });

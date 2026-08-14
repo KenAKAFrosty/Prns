@@ -117,6 +117,55 @@
         }
       }
 
+      async function webSocketFramingOutcome() {
+        let automatic;
+        let fallback;
+        try {
+          const wasm = await import("/prns-wasm/smoke/pkg/prns_wasm.js");
+          await wasm.default();
+          const packet = new Uint8Array([
+            0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+            0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x00, 0x42,
+          ]);
+          const kiss = new Uint8Array([0xc0, 0x00, ...packet, 0xc0]);
+          automatic = new wasm.WebSocketFramingCodec("auto");
+          if (automatic.stageOutbound(packet) !== undefined) {
+            return "Failed:OutboundNotHeld";
+          }
+          const batch = automatic.decode(kiss);
+          if (
+            automatic.isDetecting() ||
+            batch.packets.length !== 1 ||
+            !equalBytes(batch.packets[0], packet) ||
+            !equalBytes(batch.resolvedOutbound, kiss)
+          ) {
+            return "Failed:KissResolution";
+          }
+          fallback = new wasm.WebSocketFramingCodec("auto");
+          fallback.stageOutbound(packet);
+          if (
+            !fallback.rawFallbackIsArmed() ||
+            !equalBytes(fallback.resolveRawFallback(), packet) ||
+            fallback.rawFallbackIsArmed()
+          ) {
+            return "Failed:RawFallback";
+          }
+          return "Resolved";
+        } catch (error) {
+          return `Failed:${error instanceof Error ? error.message : error}`;
+        } finally {
+          automatic?.free();
+          fallback?.free();
+        }
+      }
+
+      function equalBytes(left, right) {
+        return left instanceof Uint8Array &&
+          right instanceof Uint8Array &&
+          left.length === right.length &&
+          left.every((byte, index) => byte === right[index]);
+      }
+
       const [packagedCompression, docsCompression] = await Promise.all([
         compressionWorkerOutcome(
           "/prns-js/dist/browser/resource_compression_worker.js",
@@ -132,7 +181,9 @@
       const compressionDetail =
         `${packagedCompression.detail}:${docsCompression.detail}`;
       const routePersistence = await routePersistenceOutcome();
+      const webSocketFraming = await webSocketFramingOutcome();
       document.body.dataset.routePersistence = routePersistence;
+      document.body.dataset.webSocketFraming = webSocketFraming;
       document.body.dataset.compression =
         compression ? "Compressed" : "Failed";
       document.body.dataset.compressionDetail = compressionDetail;
@@ -274,6 +325,7 @@
           persistence === "Restored" &&
           persistenceFailures === "Typed" &&
           routePersistence === "Restored" &&
+          webSocketFraming === "Resolved" &&
           compression
             ? "PASS"
             : "FAIL";
@@ -291,6 +343,7 @@
           persistence: document.body.dataset.persistence,
           persistenceFailures: document.body.dataset.persistenceFailures,
           routePersistence: document.body.dataset.routePersistence,
+          webSocketFraming: document.body.dataset.webSocketFraming,
           compression: document.body.dataset.compression,
           compressionDetail: document.body.dataset.compressionDetail,
         }),

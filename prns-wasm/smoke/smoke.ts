@@ -2,6 +2,7 @@ import init, {
   BluetoothReassembler,
   PrnsRuntime,
   UsbAutoDecoder,
+  WebSocketFramingCodec,
   bluetoothBitrateBps,
   bluetoothControlUuid,
   bluetoothDataFragments,
@@ -229,6 +230,8 @@ function wasmModule(): PrnsWasmModule {
     UsbAutoDecoder: UsbAutoDecoder as PrnsWasmModule["UsbAutoDecoder"],
     BluetoothReassembler:
       BluetoothReassembler as PrnsWasmModule["BluetoothReassembler"],
+    WebSocketFramingCodec:
+      WebSocketFramingCodec as PrnsWasmModule["WebSocketFramingCodec"],
     hostContractAbi,
     hostSchemaVersion,
     browserPersistenceVersion,
