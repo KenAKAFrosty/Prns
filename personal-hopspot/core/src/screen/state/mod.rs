@@ -15,17 +15,20 @@ const INITIAL_VISIBLE_FOCUS_ITEMS: usize = 3;
 const SCROLLED_VISIBLE_FOCUS_ITEMS: usize = 2;
 const PERSISTENCE_NOTICE_MILLIS: u64 = 5_000;
 pub(in crate::screen) const GLOBAL_MENU_ITEMS: &[&str] = &["Announce", "Limits", "Sleep", "Back"];
-pub(in crate::screen) const GLOBAL_MENU_ITEMS_DISPLAY: &[&str] =
-    &["Announce", "Limits", "OLED Off", "Sleep", "Back"];
+pub(in crate::screen) const GLOBAL_MENU_ITEMS_DISPLAY: &[&str] = &[
+    "Announce", "Limits", "OLED Off", "Auto Off", "Sleep", "Back",
+];
 pub(in crate::screen) const GLOBAL_MENU_ITEMS_AP: &[&str] =
     &["Announce", "Limits", "Sleep", "AP Mode", "Back"];
-pub(in crate::screen) const GLOBAL_MENU_ITEMS_AP_DISPLAY: &[&str] =
-    &["Announce", "Limits", "OLED Off", "Sleep", "AP Mode", "Back"];
+pub(in crate::screen) const GLOBAL_MENU_ITEMS_AP_DISPLAY: &[&str] = &[
+    "Announce", "Limits", "OLED Off", "Auto Off", "Sleep", "AP Mode", "Back",
+];
 pub(in crate::screen) const ANNOUNCE_MENU_ITEM: usize = 0;
 const LIMITS_MENU_ITEM: usize = 1;
 pub(in crate::screen) const OLED_OFF_MENU_ITEM: usize = 2;
-pub(in crate::screen) const SLEEP_MENU_ITEM: usize = 3;
-pub(in crate::screen) const RADIO_MENU_ITEM: usize = 4;
+pub(in crate::screen) const OLED_AUTO_OFF_MENU_ITEM: usize = 3;
+pub(in crate::screen) const SLEEP_MENU_ITEM: usize = 4;
+pub(in crate::screen) const RADIO_MENU_ITEM: usize = 5;
 const SLEEP_MENU_ITEM_NO_DISPLAY: usize = 2;
 pub(in crate::screen) const RADIO_MENU_ITEM_NO_DISPLAY: usize = 3;
 pub(in crate::screen) const POWER_MENU_ITEM: usize = 0;
@@ -61,6 +64,7 @@ pub enum UiAction {
     None,
     Announce,
     OledOff,
+    ToggleOledAutoOff,
     Sleep,
     Wake,
     /// Flip the selected card's interface off or back on, keyed by the card's [`id`](crate::screen::Card::id).
@@ -78,6 +82,8 @@ prns_macros::iterable_enum! {
     pub enum UiNotice {
         Announcing,
         OledOff,
+        OledAutoOffOn,
+        OledAutoOffOff,
         TurningOff,
         TurningOn,
         DisconnectingAp,
@@ -144,6 +150,8 @@ impl UiNotice {
         match self {
             Self::Announcing => NoticeLines::one("Announcing"),
             Self::OledOff => NoticeLines::one("OLED Off"),
+            Self::OledAutoOffOn => NoticeLines::two("Auto-off", "On"),
+            Self::OledAutoOffOff => NoticeLines::two("Auto-off", "Off"),
             Self::TurningOff => NoticeLines::one("Turning Off"),
             Self::TurningOn => NoticeLines::one("Turning On"),
             Self::DisconnectingAp => NoticeLines::two("Disconnecting", "AP"),
@@ -513,6 +521,12 @@ impl UiState {
                 {
                     self.mode = UiMode::Cards;
                     UiAction::OledOff
+                }
+                OLED_AUTO_OFF_MENU_ITEM
+                    if self.display_power_control == DisplayPowerControl::Available =>
+                {
+                    self.mode = UiMode::Cards;
+                    UiAction::ToggleOledAutoOff
                 }
                 item if item == self.global_sleep_menu_item() => {
                     self.mode = UiMode::Sleeping;

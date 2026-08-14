@@ -440,9 +440,11 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         let mut activity = screen::CardActivityTracker::<8>::new();
         let mut notice_until_ms =
             startup_notice.map(|notice| (embassy_time::Instant::now().as_millis() + 5_000, notice));
-        let mut oled_awake = true;
-        let mut oled_off_at_ms: Option<u64> = None;
-        let mut oled_sleep_at_ms: Option<u64> = None;
+        let mut oled_power = screen::OledPowerState::new(
+            oled_ok,
+            embassy_time::Instant::now().as_millis(),
+            DEFAULT_OLED_AUTO_OFF_MS,
+        );
         let mut render_tick = Ticker::every(RENDER_INTERVAL);
         let mut settle_after_draw = false;
         let mut persistence_notice = screen::PersistenceNotice::new();
@@ -534,24 +536,10 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                     }
                 }
             }
-            if let Some(off_at) = oled_off_at_ms {
-                if oled_awake && now_ms >= off_at {
-                    B::set_display_awake(&mut display, false);
-                    oled_awake = false;
-                    oled_off_at_ms = None;
-                    if let Some((_, owner)) = notice_until_ms {
-                        ui_state.clear_notice_if(owner);
-                    }
-                    notice_until_ms = None;
-                }
+            if oled_power.tick(now_ms) == screen::OledPowerCommand::TurnOff {
+                B::set_display_awake(&mut display, false);
             }
-            if let Some(sleep_at) = oled_sleep_at_ms {
-                if oled_awake && now_ms >= sleep_at {
-                    B::set_display_awake(&mut display, false);
-                    oled_awake = false;
-                }
-            }
-            if oled_ok && oled_awake {
+            if oled_power.is_lit() {
                 if first_render_pending {
                     boot_stage(BootPhase::DisplayFirstRenderBegin);
                 }
@@ -594,28 +582,42 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 }
                 Either3::First(event) => {
                     let now_ms = embassy_time::Instant::now().as_millis();
-                    if !oled_awake && oled_sleep_at_ms.is_none() {
-                        if oled_ok {
-                            B::set_display_awake(&mut display, true);
-                            oled_awake = true;
-                        }
-                        oled_off_at_ms = None;
+                    if oled_power.button_pressed(now_ms, DEFAULT_OLED_AUTO_OFF_MS)
+                        == screen::OledButtonOutcome::WakeAndConsume
+                    {
+                        B::set_display_awake(&mut display, true);
                         ui_state.show_notice(screen::UiNotice::Awake);
                         notice_until_ms = Some((now_ms + NOTICE_MS, screen::UiNotice::Awake));
+                        // Waking a dark-but-running display is the whole action for this press. Do
+                        // not forward it to `UiState`, where a short press would also move focus.
                         continue;
                     }
-                    oled_off_at_ms = None;
                     match ui_state.handle_input(event, content) {
                         screen::UiAction::OledOff => {
                             ui_state.show_notice(screen::UiNotice::OledOff);
                             notice_until_ms = Some((now_ms + NOTICE_MS, screen::UiNotice::OledOff));
-                            oled_off_at_ms = Some(now_ms + NOTICE_MS);
+                            oled_power.schedule_display_off(now_ms.saturating_add(NOTICE_MS));
+                        }
+                        screen::UiAction::ToggleOledAutoOff => {
+                            if let Some(auto_off) =
+                                oled_power.toggle_auto_off(now_ms, DEFAULT_OLED_AUTO_OFF_MS)
+                            {
+                                let notice = match auto_off {
+                                    screen::OledAutoOff::Enabled => screen::UiNotice::OledAutoOffOn,
+                                    screen::OledAutoOff::Disabled => {
+                                        screen::UiNotice::OledAutoOffOff
+                                    }
+                                };
+                                ui_state.show_notice(notice);
+                                notice_until_ms = Some((now_ms + NOTICE_MS, notice));
+                            }
                         }
                         screen::UiAction::Sleep => {
                             ui_state.show_notice(screen::UiNotice::Sleeping);
                             notice_until_ms =
                                 Some((now_ms + NOTICE_MS, screen::UiNotice::Sleeping));
-                            oled_sleep_at_ms = Some(now_ms + OLED_SLEEP_DELAY_MS);
+                            oled_power
+                                .schedule_system_sleep(now_ms.saturating_add(OLED_SLEEP_DELAY_MS));
                             usb_status.disable();
                             if let Some(status) = lora_card_status {
                                 status.disable();
@@ -637,11 +639,10 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                             }
                         }
                         screen::UiAction::Wake => {
-                            oled_off_at_ms = None;
-                            oled_sleep_at_ms = None;
-                            if oled_ok && !oled_awake {
+                            if oled_power.wake(now_ms, DEFAULT_OLED_AUTO_OFF_MS)
+                                == screen::OledPowerCommand::TurnOn
+                            {
                                 B::set_display_awake(&mut display, true);
-                                oled_awake = true;
                             }
                             ui_state.show_notice(screen::UiNotice::Awake);
                             notice_until_ms = Some((now_ms + NOTICE_MS, screen::UiNotice::Awake));

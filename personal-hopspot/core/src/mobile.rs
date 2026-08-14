@@ -55,6 +55,7 @@ impl MobileActionCode {
             UiAction::Announce => Self::Announce,
             UiAction::None
             | UiAction::OledOff
+            | UiAction::ToggleOledAutoOff
             | UiAction::Sleep
             | UiAction::Wake
             | UiAction::ToggleSelectedInterface

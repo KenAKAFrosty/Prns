@@ -554,6 +554,7 @@ pub(super) fn run_window(handles: WindowHandles) {
             ui_state.show_notice(screen::UiNotice::OledOff);
             *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
         }
+        UiAction::ToggleOledAutoOff => {}
         UiAction::Sleep => {
             ui_state.show_notice(screen::UiNotice::Sleeping);
             *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);

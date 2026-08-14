@@ -256,7 +256,7 @@ fn long_press_on_sleep_enters_sleep_and_next_press_wakes() {
 }
 
 #[test]
-fn oled_capable_menu_offers_display_off_before_sleep() {
+fn oled_capable_menu_offers_display_controls_before_sleep() {
     let cards = test_cards::<4>(CardKind::Usb);
     let content = test_content(&cards);
     let mut state = test_ui_state_with_display_power();
@@ -268,6 +268,16 @@ fn oled_capable_menu_offers_display_off_before_sleep() {
     assert_eq!(
         state.handle_input(InputEvent::LongPress, content),
         UiAction::OledOff
+    );
+    assert!(state.global_selected());
+
+    state.handle_input(InputEvent::LongPress, content);
+    for _ in 0..OLED_AUTO_OFF_MENU_ITEM {
+        state.handle_input(InputEvent::ShortPress, content);
+    }
+    assert_eq!(
+        state.handle_input(InputEvent::LongPress, content),
+        UiAction::ToggleOledAutoOff
     );
     assert!(state.global_selected());
 

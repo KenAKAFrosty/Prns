@@ -85,6 +85,7 @@ impl HopspotFace {
             UiAction::Announce => self.show_notice(UiNotice::Announcing),
             UiAction::None
             | UiAction::OledOff
+            | UiAction::ToggleOledAutoOff
             | UiAction::ToggleStationUplink
             | UiAction::OpenDocs
             | UiAction::OpenLoRaEditor

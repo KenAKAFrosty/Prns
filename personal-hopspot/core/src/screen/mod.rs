@@ -3,6 +3,7 @@
 mod eink;
 mod limits;
 mod model;
+mod power;
 mod render;
 mod state;
 
@@ -13,6 +14,7 @@ pub use model::{
     CardLabel, InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess, ScreenContent,
     WifiNetworkStatus, WifiStationStatus,
 };
+pub use power::{OledAutoOff, OledButtonOutcome, OledDarkReason, OledPowerCommand, OledPowerState};
 pub use render::cards::card_label_max_chars;
 pub use render::{render, splash, RenderFrame, SplashContent};
 pub use state::{

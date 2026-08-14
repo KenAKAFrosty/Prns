@@ -573,6 +573,7 @@ pub async fn run(spawner: Spawner) -> ! {
                         hopspot::UiAction::SwapRadioMode => {}
                         hopspot::UiAction::ToggleStationUplink => {}
                         hopspot::UiAction::OledOff => {}
+                        hopspot::UiAction::ToggleOledAutoOff => {}
                         hopspot::UiAction::None => {}
                     }
                 }

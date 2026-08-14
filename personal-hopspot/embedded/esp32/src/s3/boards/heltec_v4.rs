@@ -117,6 +117,10 @@ impl Esp32S3Board for HeltecBoard {
     ) -> S3BoardHardware<Self::Display, Self::Battery> {
         let (sw_int1, timebase, rtc) = s3::boot_common!(p, Self::BOOT_BANNER);
 
+        // GPIO35 drives the V4's bright white user LED active-high. Claim it immediately so the
+        // reset/default pin state cannot leave the LED lit while the Hopspot is running.
+        let _user_led = Output::new(p.GPIO35, Level::Low, OutputConfig::default());
+
         s3::boot_stage(s3::BootPhase::OledBegin);
         // OLED (Heltec V4: Vext active-low gates panel power; pulse RST; I2C0 on 17/18).
         let mut _vext = Output::new(p.GPIO36, Level::Low, OutputConfig::default());
