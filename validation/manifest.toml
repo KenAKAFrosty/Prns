@@ -1144,6 +1144,23 @@ command = ["bash", "validation/interop/cases/rnx-interop-smoke.sh"]
 inputs = ["validation/interop/cases/rnx-interop-smoke.sh", "validation/interop/peers/rns_rnx_oracle.py"]
 artifacts = "validation-artifacts/results/interop-rnx"
 
+[[suite]]
+id = "interop-websocket-ecosystem-characterization"
+domain = "interop"
+group = "linux-network"
+tiers = ["scheduled"]
+platform = "linux"
+toolchain = "python"
+timeout_seconds = 600
+command = ["__RUNNER_PYTHON__", "validation/interop/websocket_ecosystem_characterization.py"]
+inputs = [
+  "validation/interop/websocket_ecosystem_characterization.py",
+  "validation/interop/peers/websocket_ecosystem/aerik.mjs",
+  "validation/interop/peers/websocket_ecosystem/bergie.mjs",
+  "validation/interop/peers/websocket_ecosystem/nilu96.py",
+]
+artifacts = "validation-artifacts/results/interop-websocket-ecosystem-characterization"
+
 [[fuzz_target]]
 name = "wire_announce_parse"
 path = "fuzz_targets/wire_announce_parse.rs"
