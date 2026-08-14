@@ -58,6 +58,7 @@ import type {
 import { MemoryResourceStream } from "../memory_resource.js";
 import { AutoWifiInterface } from "./auto_wifi.js";
 import { BluetoothInterface } from "./bluetooth.js";
+import { UsbAutoInterface } from "./usb_auto.js";
 import { byteKey } from "./bytes.js";
 import {
   bigintField,
@@ -72,16 +73,10 @@ import {
   record,
   stringField,
 } from "./decoding.js";
-import {
-  connectFailure,
-  describeHostError,
-} from "./host_errors.js";
+import { describeHostError } from "./host_errors.js";
 import { hostGlobal } from "./host_apis.js";
 import type {
-  BrowserUsb,
-  BrowserUsbDevice,
   BrowserUsbDeviceFilter,
-  HostApi,
   HostApiUnavailable,
 } from "./host_apis.js";
 import {
@@ -120,12 +115,6 @@ import {
   WebSocketInterface,
 } from "./websocket.js";
 import type { WebSocketRuntimeRegistration } from "./websocket.js";
-import {
-  WebUsbAutoTransport,
-  usbStage,
-} from "./usb_auto/transport.js";
-import type { UsbAutoRuntimeHost } from "./usb_auto/runtime.js";
-import { BrowserUsbAutoSession } from "./usb_auto/session.js";
 import type {
   ResourceSendSettlement,
   ResourceSource,
@@ -237,6 +226,13 @@ export type {
   BluetoothConnectOutcome,
   BluetoothSession,
 } from "./bluetooth.js";
+export { UsbAutoInterface } from "./usb_auto.js";
+export type {
+  UsbAutoConnectOptions,
+  UsbAutoConnectOutcome,
+  UsbAutoDeviceFilter,
+  UsbAutoSession,
+} from "./usb_auto.js";
 export type { HostApi, HostApiUnavailable } from "./host_apis.js";
 export {
   BROWSER_PERSISTENCE_VERSION,
@@ -437,16 +433,6 @@ export type UnsupportedInterface<Name extends InterfaceName = InterfaceName> = T
   "UnsupportedInterface",
   { readonly interface: Name; readonly host: "Browser" }
 >;
-
-export type UsbAutoConnectOutcome =
-  | Tag<"Connected", UsbAutoSession>
-  | HostApiUnavailable<"WebUSB">
-  | PermissionDenied<"usb-auto">
-  | Cancelled<"usb-auto">
-  | AlreadyActive<"usb-auto">
-  | UnsupportedDevice<"usb-auto">
-  | ConnectionFailed<"usb-auto">
-  | RuntimeRejected;
 
 export type WebSocketConnectOutcome =
   | Tag<"Connected", WebSocketSession>
@@ -1057,15 +1043,11 @@ type IdentityGenerationOutcome =
 export type BleIdentityAvailability =
   | Tag<"Available", BleIdentity>
   | StableIdentityUnavailable<"bluetooth">;
-type Available<Host, Api extends HostApi> =
-  | Tag<"Available", Host>
-  | HostApiUnavailable<Api>;
 type RuntimeOutboundDrainOutcome =
   | Tag<"Drained", readonly PrnsOutboundFrame[]>
   | RuntimeRejected;
 
 const INTERFACE_OUTBOUND_QUEUE_DEPTH = 64;
-let nextBrowserUsbAutoTag = 0;
 
 export type EntropySource = (length: number) => EntropyOutcome;
 
@@ -1091,24 +1073,10 @@ export type InterfaceSession = {
   close(): Promise<InterfaceCloseOutcome>;
 };
 
-export type UsbAutoSession = InterfaceSession & {
-  readonly name: "usb-auto";
-};
-
 export type WebSocketSession = InterfaceSession & {
   readonly name: "websocket";
   readonly url: string;
   readonly framing: WebSocketFramingSelection;
-};
-
-export type UsbAutoDeviceFilter = {
-  readonly vendorId?: number;
-  readonly productId?: number;
-  readonly serialNumber?: string;
-};
-
-export type UsbAutoConnectOptions = {
-  readonly filters?: readonly UsbAutoDeviceFilter[];
 };
 
 export type WebSocketConnectOptions = {
@@ -1133,70 +1101,6 @@ export class PrnsInterfaces {
     this.bluetooth = new BluetoothInterface(host);
     this.autoWifi = new AutoWifiInterface(host);
     this.webSocket = new WebSocketInterface(host);
-  }
-}
-
-export class UsbAutoInterface {
-  readonly name = "usb-auto" as const;
-  readonly #host: UsbAutoRuntimeHost;
-
-  constructor(host: UsbAutoRuntimeHost) {
-    this.#host = host;
-  }
-
-  async connect(
-    options: UsbAutoConnectOptions = {},
-  ): Promise<UsbAutoConnectOutcome> {
-    const ready = this.#host.runtimeReadiness();
-    if (ready.tag !== "Ready") {
-      return ready;
-    }
-    const available = requireWebUsb();
-    if (available.tag !== "Available") {
-      return available;
-    }
-    let transport: WebUsbAutoTransport | undefined;
-    let interfaceId: InterfaceId | undefined;
-    let stage: InterfaceConnectStage = "DeviceSelection";
-    try {
-      const requested = await usbStage("DeviceSelection", "request device", () =>
-        available.data.requestDevice({
-          filters: options.filters ?? this.#host.defaultUsbAutoFilters(),
-        }),
-      );
-      if (requested.tag !== "Completed") {
-        return requested;
-      }
-      stage = "TransportOpen";
-      const opened = await WebUsbAutoTransport.open(requested.data);
-      if (opened.tag !== "Opened") {
-        return opened;
-      }
-      transport = opened.data;
-      stage = "RuntimeRegistration";
-      const registered = this.#host.registerInterface({
-        interfaceName: "usb-auto",
-        kind: "auto-usb-host",
-        channelTag: browserUsbAutoChannelTag(requested.data),
-        bitrateBps: this.#host.usbAutoHostBitrateBps(),
-        hardwareMtu: this.#host.usbAutoHostHardwareMtu(),
-      });
-      if (registered.tag !== "Registered") {
-        await transport.close();
-        return registered;
-      }
-      interfaceId = registered.data;
-      stage = "Handshake";
-      const session = new BrowserUsbAutoSession(this.#host, transport, interfaceId);
-      session.start();
-      return Tag("Connected", session);
-    } catch (error) {
-      if (interfaceId) {
-        this.#host.deactivateInterface(interfaceId);
-      }
-      await transport?.close();
-      return connectFailure("usb-auto", stage, error);
-    }
   }
 }
 
@@ -3559,28 +3463,6 @@ function webCryptoBytes(length: number): Uint8Array {
   return out;
 }
 
-function requireWebUsb(): Available<BrowserUsb, "WebUSB"> {
-  try {
-    const usb = hostGlobal().navigator?.usb;
-    return usb
-      ? Tag("Available", usb)
-      : Tag("HostApiUnavailable", { api: "WebUSB" });
-  } catch {
-    return Tag("HostApiUnavailable", { api: "WebUSB" });
-  }
-}
-
-function browserUsbAutoChannelTag(device: BrowserUsbDevice): ChannelTag {
-  const vendor = formatOptionalHex(device.vendorId);
-  const product = formatOptionalHex(device.productId);
-  const serial = device.serialNumber ?? "unknown";
-  const nonce = nextBrowserUsbAutoTag;
-  nextBrowserUsbAutoTag = (nextBrowserUsbAutoTag + 1) >>> 0;
-  return channelTag(
-    new TextEncoder().encode(`webusb:auto-usb:${vendor}:${product}:${serial}:${nonce}`),
-  );
-}
-
 function runtimeRejected(
   operation: RuntimeOperation,
   error: unknown,
@@ -3820,10 +3702,6 @@ function wasmWebSocketFramingSelection(
   }
   const unreachable: never = selection;
   return unreachable;
-}
-
-function formatOptionalHex(value: number | undefined): string {
-  return value === undefined ? "unknown" : value.toString(16).padStart(4, "0");
 }
 
 async function loadBundledWasm(): Promise<
