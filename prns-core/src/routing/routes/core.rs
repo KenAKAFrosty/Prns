@@ -77,7 +77,7 @@ pub enum RouteResponsiveness {
 pub struct RouteEntry {
     pub hops: u8,
     pub learned_at: InstantMillis,
-    pub last_relayed_at: InstantMillis,
+    pub last_route_activity_at: InstantMillis,
     pub responsiveness: RouteResponsiveness,
     pub receiving_interface: InterfaceId,
     pub next_hop: NextHop,
@@ -120,7 +120,7 @@ pub trait RouteTable {
                 RouteEntry {
                     hops: self.hops()[row],
                     learned_at: self.learned_at()[row],
-                    last_relayed_at: now,
+                    last_route_activity_at: now,
                     responsiveness: self.responsiveness()[row],
                     receiving_interface: current,
                     next_hop: self.next_hops()[row],
@@ -134,7 +134,7 @@ pub trait RouteTable {
     fn destinations(&self) -> &[DestinationHash];
     fn hops(&self) -> &[u8];
     fn learned_at(&self) -> &[InstantMillis];
-    fn last_relayed_at(&self) -> &[InstantMillis];
+    fn last_route_activity_at(&self) -> &[InstantMillis];
     fn responsiveness(&self) -> &[RouteResponsiveness];
     fn receiving_interfaces(&self) -> &[InterfaceId];
     fn next_hops(&self) -> &[NextHop];

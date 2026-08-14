@@ -515,7 +515,7 @@ struct RouteSnapshot
     via_identity::Union{Nothing,IdentityHash}
     interface_id::InterfaceId
     learned_at_millis::UInt64
-    last_relayed_at_millis::UInt64
+    last_route_activity_at_millis::UInt64
     expires_at_millis::UInt64
 end
 

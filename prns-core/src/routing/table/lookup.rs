@@ -159,7 +159,7 @@ where
             responsiveness: self.routes.responsiveness()[i],
             receiving_interface: self.routes.receiving_interfaces()[i],
             next_hop: self.routes.next_hops()[i],
-            last_relayed_at: self.routes.last_relayed_at()[i],
+            last_route_activity_at: self.routes.last_route_activity_at()[i],
         }
     }
 

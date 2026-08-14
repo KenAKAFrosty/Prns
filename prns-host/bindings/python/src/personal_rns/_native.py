@@ -215,7 +215,7 @@ class RouteSnapshot(ctypes.Structure):
         ("via_identity", ByteView),
         ("interface_id", ByteView),
         ("learned_at_millis", ctypes.c_uint64),
-        ("last_relayed_at_millis", ctypes.c_uint64),
+        ("last_route_activity_at_millis", ctypes.c_uint64),
         ("expires_at_millis", ctypes.c_uint64),
     ]
 

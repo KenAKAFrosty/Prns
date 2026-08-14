@@ -555,7 +555,7 @@ async function main(): Promise<void> {
         viaIdentity: inspectedIdentity,
         interfaceId: stableAttached.data.data.interface,
         learnedAtMillis: 10,
-        lastRelayedAtMillis: 20,
+        lastRouteActivityAtMillis: 20,
         expiresAtMillis: 30,
       },
     ];

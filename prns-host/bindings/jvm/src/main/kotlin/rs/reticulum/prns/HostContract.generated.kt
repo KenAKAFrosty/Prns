@@ -692,7 +692,7 @@ data class RouteSnapshot(
     val viaIdentity: IdentityHash?,
     val interfaceId: InterfaceId,
     val learnedAtMillis: Long,
-    val lastRelayedAtMillis: Long,
+    val lastRouteActivityAtMillis: Long,
     val expiresAtMillis: Long,
 )
 

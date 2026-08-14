@@ -1465,7 +1465,7 @@
         "type": "safeUint"
       },
       {
-        "name": "lastRelayedAtMillis",
+        "name": "lastRouteActivityAtMillis",
         "type": "safeUint"
       },
       {

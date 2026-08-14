@@ -17,9 +17,8 @@ where
 {
     /// Applies authenticated traffic to the exact route incarnation that carried it.
     ///
-    /// `last_relayed_at` remains the persisted field name for compatibility, but from this point
-    /// it is the route's broader post-announce activity clock: relayed traffic and authenticated
-    /// return traffic both advance it.
+    /// The route activity clock is separate from announce age: relayed traffic and authenticated
+    /// return traffic both advance it without making the route appear newly announced.
     pub(crate) fn apply_route_evidence(
         &mut self,
         handle: &mut RouteEvidenceHandle,
@@ -28,8 +27,8 @@ where
         let Some(i) = self.resolve_route_evidence(handle) else {
             return false;
         };
-        let last_active = self.routes.last_relayed_at()[i].max(observed_at);
-        let changed = last_active != self.routes.last_relayed_at()[i]
+        let last_route_activity = self.routes.last_route_activity_at()[i].max(observed_at);
+        let changed = last_route_activity != self.routes.last_route_activity_at()[i]
             || self.routes.responsiveness()[i] != RouteResponsiveness::Responsive;
         if !changed {
             return false;
@@ -39,7 +38,7 @@ where
             RouteEntry {
                 hops: self.routes.hops()[i],
                 learned_at: self.routes.learned_at()[i],
-                last_relayed_at: last_active,
+                last_route_activity_at: last_route_activity,
                 responsiveness: RouteResponsiveness::Responsive,
                 receiving_interface: self.routes.receiving_interfaces()[i],
                 next_hop: self.routes.next_hops()[i],
@@ -59,7 +58,7 @@ where
         let Some(i) = self.resolve_route_evidence(handle) else {
             return false;
         };
-        let last_active = self.routes.learned_at()[i].max(self.routes.last_relayed_at()[i]);
+        let last_active = self.routes.learned_at()[i].max(self.routes.last_route_activity_at()[i]);
         if last_active > attempt_started_at
             || self.routes.responsiveness()[i] == RouteResponsiveness::Unresponsive
         {
@@ -70,7 +69,7 @@ where
             RouteEntry {
                 hops: self.routes.hops()[i],
                 learned_at: self.routes.learned_at()[i],
-                last_relayed_at: self.routes.last_relayed_at()[i],
+                last_route_activity_at: self.routes.last_route_activity_at()[i],
                 responsiveness: RouteResponsiveness::Unresponsive,
                 receiving_interface: self.routes.receiving_interfaces()[i],
                 next_hop: self.routes.next_hops()[i],
@@ -92,7 +91,7 @@ where
             RouteEntry {
                 hops: self.routes.hops()[i],
                 learned_at: self.routes.learned_at()[i],
-                last_relayed_at: self.routes.last_relayed_at()[i],
+                last_route_activity_at: self.routes.last_route_activity_at()[i],
                 responsiveness,
                 receiving_interface: self.routes.receiving_interfaces()[i],
                 next_hop: self.routes.next_hops()[i],
@@ -109,7 +108,7 @@ where
             RouteEntry {
                 hops,
                 learned_at: self.routes.learned_at()[i],
-                last_relayed_at: self.routes.last_relayed_at()[i],
+                last_route_activity_at: self.routes.last_route_activity_at()[i],
                 responsiveness: self.routes.responsiveness()[i],
                 receiving_interface: self.routes.receiving_interfaces()[i],
                 next_hop: self.routes.next_hops()[i],
@@ -126,7 +125,7 @@ where
             RouteEntry {
                 hops: self.routes.hops()[i],
                 learned_at: self.routes.learned_at()[i],
-                last_relayed_at: now,
+                last_route_activity_at: now,
                 responsiveness: self.routes.responsiveness()[i],
                 receiving_interface: self.routes.receiving_interfaces()[i],
                 next_hop: self.routes.next_hops()[i],
@@ -150,7 +149,7 @@ where
             RouteEntry {
                 hops: self.routes.hops()[i],
                 learned_at: self.routes.learned_at()[i],
-                last_relayed_at: now,
+                last_route_activity_at: now,
                 responsiveness: self.routes.responsiveness()[i],
                 receiving_interface: self.routes.receiving_interfaces()[i],
                 next_hop: self.routes.next_hops()[i],

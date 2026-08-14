@@ -222,7 +222,7 @@ struct NativeRouteSnapshot
     via_identity::NativeByteView
     interface_id::NativeByteView
     learned_at_millis::UInt64
-    last_relayed_at_millis::UInt64
+    last_route_activity_at_millis::UInt64
     expires_at_millis::UInt64
 end
 
@@ -844,7 +844,7 @@ function decode_host_snapshot(value::NativeHostSnapshot)
                 IdentityHash(copy_view(item.via_identity)),
             InterfaceId(copy_view(item.interface_id)),
             item.learned_at_millis,
-            item.last_relayed_at_millis,
+            item.last_route_activity_at_millis,
             item.expires_at_millis,
         )
         for item in native_array(value.routes, value.route_count)

@@ -818,7 +818,7 @@ mod tests {
             entry: RouteEntry {
                 hops: 3,
                 learned_at: InstantMillis(500),
-                last_relayed_at: InstantMillis(700),
+                last_route_activity_at: InstantMillis(700),
                 responsiveness: RouteResponsiveness::Responsive,
                 receiving_interface: interface,
                 next_hop: NextHop::Direct,

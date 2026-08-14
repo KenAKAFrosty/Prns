@@ -133,7 +133,7 @@
         { "name": "viaIdentity", "type": "IdentityHash", "optional": true },
         { "name": "interfaceId", "type": "InterfaceId" },
         { "name": "learnedAtMillis", "type": "safeUint" },
-        { "name": "lastRelayedAtMillis", "type": "safeUint" },
+        { "name": "lastRouteActivityAtMillis", "type": "safeUint" },
         { "name": "expiresAtMillis", "type": "safeUint" }
       ]
     },

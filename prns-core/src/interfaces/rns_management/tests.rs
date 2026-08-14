@@ -106,7 +106,7 @@ fn path_rate_and_blackhole_tables_keep_stock_shapes() {
         hops: 2,
         via: NextHop::Direct,
         learned_at: InstantMillis(1_000),
-        last_relayed_at: InstantMillis(1_500),
+        last_route_activity_at: InstantMillis(1_500),
         expires_at: InstantMillis(2_000),
         interface: InterfaceId::from_channel_tag(InterfaceKind::TcpClient, b"route"),
     };

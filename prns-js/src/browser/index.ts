@@ -5073,9 +5073,9 @@ function parseStableRouteSnapshot(raw: unknown): StableRouteSnapshot {
       numberField(object, "learnedAtMillis"),
       "learnedAtMillis",
     ),
-    lastRelayedAtMillis: nonNegativeInteger(
-      numberField(object, "lastRelayedAtMillis"),
-      "lastRelayedAtMillis",
+    lastRouteActivityAtMillis: nonNegativeInteger(
+      numberField(object, "lastRouteActivityAtMillis"),
+      "lastRouteActivityAtMillis",
     ),
     expiresAtMillis: nonNegativeInteger(
       numberField(object, "expiresAtMillis"),

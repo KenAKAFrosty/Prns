@@ -117,7 +117,7 @@ internal class NativeInterfaceSnapshot(pointer: Pointer? = null) : Structure(poi
     "viaIdentity",
     "interfaceId",
     "learnedAtMillis",
-    "lastRelayedAtMillis",
+    "lastRouteActivityAtMillis",
     "expiresAtMillis",
 )
 internal class NativeRouteSnapshot(pointer: Pointer? = null) : Structure(pointer) {
@@ -143,7 +143,7 @@ internal class NativeRouteSnapshot(pointer: Pointer? = null) : Structure(pointer
     var learnedAtMillis: Long = 0
 
     @JvmField
-    var lastRelayedAtMillis: Long = 0
+    var lastRouteActivityAtMillis: Long = 0
 
     @JvmField
     var expiresAtMillis: Long = 0
@@ -347,7 +347,7 @@ internal fun NativeHostSnapshot.decode(): HostSnapshot {
             },
             InterfaceId(copyBytes(value.interfaceId)),
             value.learnedAtMillis,
-            value.lastRelayedAtMillis,
+            value.lastRouteActivityAtMillis,
             value.expiresAtMillis,
         )
     }

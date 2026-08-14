@@ -340,7 +340,7 @@ type RawHostSnapshot = {
     viaIdentity?: Buffer;
     interfaceId: Buffer;
     learnedAtMillis: number;
-    lastRelayedAtMillis: number;
+    lastRouteActivityAtMillis: number;
     expiresAtMillis: number;
   }>;
   activeLinkCount: number;
@@ -552,7 +552,7 @@ function decodeHostSnapshot(raw: RawHostSnapshot): HostSnapshot {
       hops: entry.hops,
       interfaceId: contract.interfaceId(entry.interfaceId),
       learnedAtMillis: entry.learnedAtMillis,
-      lastRelayedAtMillis: entry.lastRelayedAtMillis,
+      lastRouteActivityAtMillis: entry.lastRouteActivityAtMillis,
       expiresAtMillis: entry.expiresAtMillis,
       ...(entry.viaIdentity === undefined
         ? {}

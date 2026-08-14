@@ -743,7 +743,7 @@ def _decode_host_snapshot(value: NativeHostSnapshot) -> g.HostSnapshot:
             else None,
             g.InterfaceId(bytes_from_view(item.interface_id)),
             item.learned_at_millis,
-            item.last_relayed_at_millis,
+            item.last_route_activity_at_millis,
             item.expires_at_millis,
         )
         for item in (value.routes[index] for index in range(value.route_count))

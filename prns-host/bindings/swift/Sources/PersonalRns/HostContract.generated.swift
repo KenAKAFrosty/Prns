@@ -612,16 +612,16 @@ public struct RouteSnapshot: Sendable {
     public let viaIdentity: IdentityHash?
     public let interfaceId: InterfaceId
     public let learnedAtMillis: UInt64
-    public let lastRelayedAtMillis: UInt64
+    public let lastRouteActivityAtMillis: UInt64
     public let expiresAtMillis: UInt64
 
-    public init(destination: DestinationHash, hops: UInt8, viaIdentity: IdentityHash?, interfaceId: InterfaceId, learnedAtMillis: UInt64, lastRelayedAtMillis: UInt64, expiresAtMillis: UInt64) {
+    public init(destination: DestinationHash, hops: UInt8, viaIdentity: IdentityHash?, interfaceId: InterfaceId, learnedAtMillis: UInt64, lastRouteActivityAtMillis: UInt64, expiresAtMillis: UInt64) {
         self.destination = destination
         self.hops = hops
         self.viaIdentity = viaIdentity
         self.interfaceId = interfaceId
         self.learnedAtMillis = learnedAtMillis
-        self.lastRelayedAtMillis = lastRelayedAtMillis
+        self.lastRouteActivityAtMillis = lastRouteActivityAtMillis
         self.expiresAtMillis = expiresAtMillis
     }
 }

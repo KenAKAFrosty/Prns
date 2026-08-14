@@ -20,6 +20,6 @@ pub trait RouteInterfaceIndex: Default {
         current: InterfaceId,
         now: InstantMillis,
         receiving_interfaces: &mut [InterfaceId],
-        last_relayed_at: &mut [InstantMillis],
+        last_route_activity_at: &mut [InstantMillis],
     ) -> usize;
 }

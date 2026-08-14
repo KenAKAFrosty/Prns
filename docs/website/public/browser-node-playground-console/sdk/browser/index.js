@@ -2905,7 +2905,7 @@ function parseStableRouteSnapshot(raw) {
             : { viaIdentity: identityHash(viaIdentity) }),
         interfaceId: interfaceId(bytesField(object, "interfaceId")),
         learnedAtMillis: nonNegativeInteger(numberField(object, "learnedAtMillis"), "learnedAtMillis"),
-        lastRelayedAtMillis: nonNegativeInteger(numberField(object, "lastRelayedAtMillis"), "lastRelayedAtMillis"),
+        lastRouteActivityAtMillis: nonNegativeInteger(numberField(object, "lastRouteActivityAtMillis"), "lastRouteActivityAtMillis"),
         expiresAtMillis: nonNegativeInteger(numberField(object, "expiresAtMillis"), "expiresAtMillis"),
     };
 }

@@ -146,7 +146,7 @@ where
         let route_entry = RouteEntry {
             hops,
             learned_at: arrived_at,
-            last_relayed_at: InstantMillis(0),
+            last_route_activity_at: InstantMillis(0),
             responsiveness: RouteResponsiveness::Unknown,
             receiving_interface,
             next_hop,
@@ -216,7 +216,7 @@ where
             RouteEntry {
                 hops,
                 learned_at: arrived_at,
-                last_relayed_at: InstantMillis(0),
+                last_route_activity_at: InstantMillis(0),
                 responsiveness: RouteResponsiveness::Unknown,
                 receiving_interface,
                 next_hop,

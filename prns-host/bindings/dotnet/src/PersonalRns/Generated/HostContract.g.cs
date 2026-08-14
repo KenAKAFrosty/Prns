@@ -746,7 +746,7 @@ public sealed record BackendInfo(BackendKind Backend, ImmutableArray<Capability>
 
 public sealed record InterfaceSnapshot(InterfaceId InterfaceId, string? Name, InterfaceKind? Kind, InterfaceHealth Health, string? FailureDetail, ulong RxBytes, ulong TxBytes, ulong? RxBps, ulong? TxBps, uint RouteCount, uint LinkCount, uint TransportedLinkCount);
 
-public sealed record RouteSnapshot(DestinationHash Destination, byte Hops, IdentityHash? ViaIdentity, InterfaceId InterfaceId, ulong LearnedAtMillis, ulong LastRelayedAtMillis, ulong ExpiresAtMillis);
+public sealed record RouteSnapshot(DestinationHash Destination, byte Hops, IdentityHash? ViaIdentity, InterfaceId InterfaceId, ulong LearnedAtMillis, ulong LastRouteActivityAtMillis, ulong ExpiresAtMillis);
 
 public sealed record DestinationIdentitySnapshot(DestinationHash Destination, IdentityHash Identity);
 

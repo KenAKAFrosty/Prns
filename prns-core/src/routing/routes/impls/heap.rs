@@ -14,7 +14,7 @@ pub struct HeapRouteTableWithInterfaceIndex<I> {
     destination: Vec<DestinationHash>,
     hops: Vec<u8>,
     learned_at: Vec<InstantMillis>,
-    last_relayed_at: Vec<InstantMillis>,
+    last_route_activity_at: Vec<InstantMillis>,
     responsiveness: Vec<RouteResponsiveness>,
     receiving_interface: Vec<InterfaceId>,
     next_hop: Vec<NextHop>,
@@ -66,7 +66,7 @@ impl<I: RouteInterfaceIndex> RouteTable for HeapRouteTableWithInterfaceIndex<I> 
             current,
             now,
             &mut self.receiving_interface,
-            &mut self.last_relayed_at,
+            &mut self.last_route_activity_at,
         )
     }
 
@@ -79,8 +79,8 @@ impl<I: RouteInterfaceIndex> RouteTable for HeapRouteTableWithInterfaceIndex<I> 
     fn learned_at(&self) -> &[InstantMillis] {
         &self.learned_at
     }
-    fn last_relayed_at(&self) -> &[InstantMillis] {
-        &self.last_relayed_at
+    fn last_route_activity_at(&self) -> &[InstantMillis] {
+        &self.last_route_activity_at
     }
     fn responsiveness(&self) -> &[RouteResponsiveness] {
         &self.responsiveness
@@ -100,7 +100,7 @@ impl<I: RouteInterfaceIndex> RouteTable for HeapRouteTableWithInterfaceIndex<I> 
             .update(i, self.receiving_interface[i], row.receiving_interface);
         self.hops[i] = row.hops;
         self.learned_at[i] = row.learned_at;
-        self.last_relayed_at[i] = row.last_relayed_at;
+        self.last_route_activity_at[i] = row.last_route_activity_at;
         self.responsiveness[i] = row.responsiveness;
         self.receiving_interface[i] = row.receiving_interface;
         self.next_hop[i] = row.next_hop;
@@ -124,7 +124,7 @@ impl<I: RouteInterfaceIndex> RouteTable for HeapRouteTableWithInterfaceIndex<I> 
         self.evidence_id.push(evidence_id);
         self.hops.push(row.hops);
         self.learned_at.push(row.learned_at);
-        self.last_relayed_at.push(row.last_relayed_at);
+        self.last_route_activity_at.push(row.last_route_activity_at);
         self.responsiveness.push(row.responsiveness);
         self.receiving_interface.push(row.receiving_interface);
         self.next_hop.push(row.next_hop);
@@ -146,7 +146,7 @@ impl<I: RouteInterfaceIndex> RouteTable for HeapRouteTableWithInterfaceIndex<I> 
         self.destination.swap_remove(i);
         self.hops.swap_remove(i);
         self.learned_at.swap_remove(i);
-        self.last_relayed_at.swap_remove(i);
+        self.last_route_activity_at.swap_remove(i);
         self.responsiveness.swap_remove(i);
         self.receiving_interface.swap_remove(i);
         self.next_hop.swap_remove(i);
@@ -171,7 +171,7 @@ mod tests {
         RouteEntry {
             hops,
             learned_at: InstantMillis(learned_at),
-            last_relayed_at: InstantMillis(0),
+            last_route_activity_at: InstantMillis(0),
             responsiveness: RouteResponsiveness::Responsive,
             receiving_interface,
             next_hop: NextHop::Direct,
@@ -314,7 +314,10 @@ mod tests {
         assert_eq!(linear.destinations(), roaring.destinations());
         assert_eq!(linear.hops(), roaring.hops());
         assert_eq!(linear.learned_at(), roaring.learned_at());
-        assert_eq!(linear.last_relayed_at(), roaring.last_relayed_at());
+        assert_eq!(
+            linear.last_route_activity_at(),
+            roaring.last_route_activity_at()
+        );
         assert_eq!(linear.responsiveness(), roaring.responsiveness());
         assert_eq!(
             linear.receiving_interfaces(),
@@ -366,7 +369,7 @@ mod tests {
                     let route = RouteEntry {
                         hops: linear.hops()[slot],
                         learned_at: linear.learned_at()[slot],
-                        last_relayed_at: InstantMillis(step),
+                        last_route_activity_at: InstantMillis(step),
                         responsiveness: linear.responsiveness()[slot],
                         receiving_interface: iface((rng >> 37) as u8),
                         next_hop: linear.next_hops()[slot],

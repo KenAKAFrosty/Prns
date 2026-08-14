@@ -365,7 +365,7 @@ pub struct HostRouteSnapshotInfo {
     pub via_identity: Option<Buffer>,
     pub interface_id: Buffer,
     pub learned_at_millis: f64,
-    pub last_relayed_at_millis: f64,
+    pub last_route_activity_at_millis: f64,
     pub expires_at_millis: f64,
 }
 
@@ -417,7 +417,7 @@ pub struct RouteInfo {
     pub via: Option<Buffer>,
     pub interface_id: Buffer,
     pub learned_at_millis: f64,
-    pub last_relayed_at_millis: f64,
+    pub last_route_activity_at_millis: f64,
     pub expires_at_millis: f64,
 }
 
@@ -2979,7 +2979,7 @@ fn host_snapshot_info(snapshot: prns_host::HostSnapshot) -> HostSnapshotInfo {
                 .map(|identity| marshal::to_buffer(identity.as_bytes())),
             interface_id: marshal::to_buffer(route.interface_id.as_bytes()),
             learned_at_millis: route.learned_at_millis as f64,
-            last_relayed_at_millis: route.last_relayed_at_millis as f64,
+            last_route_activity_at_millis: route.last_route_activity_at_millis as f64,
             expires_at_millis: route.expires_at_millis as f64,
         })
         .collect();
@@ -3055,7 +3055,7 @@ fn interface_info(snapshot: &InterfaceSnapshot) -> InterfaceInfo {
 
 fn route_info(route: &RouteSnapshot) -> RouteInfo {
     let learned_at_millis = route.learned_at.0 as f64;
-    let last_relayed_at_millis = route.last_relayed_at.0 as f64;
+    let last_route_activity_at_millis = route.last_route_activity_at.0 as f64;
     let expires_at_millis = route.expires_at.0 as f64;
     RouteInfo {
         destination: marshal::to_buffer(route.destination.as_bytes()),
@@ -3066,7 +3066,7 @@ fn route_info(route: &RouteSnapshot) -> RouteInfo {
         },
         interface_id: marshal::to_buffer(route.interface.as_bytes()),
         learned_at_millis,
-        last_relayed_at_millis,
+        last_route_activity_at_millis,
         expires_at_millis,
     }
 }

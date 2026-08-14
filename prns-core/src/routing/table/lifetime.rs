@@ -35,7 +35,7 @@ where
         InstantMillis(
             self.routes.learned_at()[i]
                 .0
-                .max(self.routes.last_relayed_at()[i].0),
+                .max(self.routes.last_route_activity_at()[i].0),
         )
     }
 

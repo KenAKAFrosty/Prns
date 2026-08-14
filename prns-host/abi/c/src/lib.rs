@@ -116,7 +116,7 @@ pub struct PrnsRouteSnapshot {
     pub via_identity: PrnsByteView,
     pub interface_id: PrnsByteView,
     pub learned_at_millis: u64,
-    pub last_relayed_at_millis: u64,
+    pub last_route_activity_at_millis: u64,
     pub expires_at_millis: u64,
 }
 
@@ -1556,7 +1556,7 @@ impl PrnsHostInspection {
                 ),
                 interface_id: bytes_view(route.interface_id.as_bytes()),
                 learned_at_millis: route.learned_at_millis,
-                last_relayed_at_millis: route.last_relayed_at_millis,
+                last_route_activity_at_millis: route.last_route_activity_at_millis,
                 expires_at_millis: route.expires_at_millis,
             })
             .collect();

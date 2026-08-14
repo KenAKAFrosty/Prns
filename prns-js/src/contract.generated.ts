@@ -428,7 +428,7 @@ export type RouteSnapshot = {
   readonly viaIdentity?: IdentityHash;
   readonly interfaceId: InterfaceId;
   readonly learnedAtMillis: number;
-  readonly lastRelayedAtMillis: number;
+  readonly lastRouteActivityAtMillis: number;
   readonly expiresAtMillis: number;
 };
 

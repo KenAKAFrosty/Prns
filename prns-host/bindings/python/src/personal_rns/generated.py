@@ -515,7 +515,7 @@ class RouteSnapshot:
     via_identity: IdentityHash | None
     interface_id: InterfaceId
     learned_at_millis: int
-    last_relayed_at_millis: int
+    last_route_activity_at_millis: int
     expires_at_millis: int
 
 @dataclass(frozen=True, slots=True)

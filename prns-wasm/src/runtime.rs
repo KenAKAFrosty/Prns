@@ -1042,7 +1042,7 @@ impl PrnsRuntime {
                 }
                 set_bytes(&row, "interfaceId", route.interface.as_bytes());
                 set_u64(&row, "learnedAtMillis", route.learned_at.0);
-                set_u64(&row, "lastRelayedAtMillis", route.last_relayed_at.0);
+                set_u64(&row, "lastRouteActivityAtMillis", route.last_route_activity_at.0);
                 set_u64(&row, "expiresAtMillis", route.expires_at.0);
                 route_snapshots.push(&row);
             },

@@ -994,7 +994,7 @@ fn explicit_drops_target_one_destination_or_every_route_via_one_transport() {
             RouteEntry {
                 hops: 1,
                 learned_at: InstantMillis(100),
-                last_relayed_at: InstantMillis(0),
+                last_route_activity_at: InstantMillis(0),
                 responsiveness: RouteResponsiveness::Unknown,
                 receiving_interface: source(),
                 next_hop: NextHop::Via(via_b),
@@ -1583,7 +1583,7 @@ fn seedable_row<'a>(
         entry: RouteEntry {
             hops: 7,
             learned_at: InstantMillis(3_000),
-            last_relayed_at: InstantMillis(5_000),
+            last_route_activity_at: InstantMillis(5_000),
             responsiveness: RouteResponsiveness::Responsive,
             receiving_interface: source(),
             next_hop: NextHop::Direct,
@@ -1743,7 +1743,7 @@ fn authenticated_route_evidence_advances_only_its_live_path() {
         RouteEntry {
             hops: 1,
             learned_at: InstantMillis(1_000),
-            last_relayed_at: InstantMillis(4_000),
+            last_route_activity_at: InstantMillis(4_000),
             responsiveness: RouteResponsiveness::Responsive,
             receiving_interface: source(),
             next_hop: NextHop::Direct,
@@ -1757,7 +1757,7 @@ fn authenticated_route_evidence_advances_only_its_live_path() {
     table.mark_responsiveness(&destination, RouteResponsiveness::Unresponsive);
     assert!(table.apply_route_evidence(&mut original_handle, InstantMillis(3_000)));
     assert_eq!(
-        table.path_row(&destination).unwrap().last_relayed_at,
+        table.path_row(&destination).unwrap().last_route_activity_at,
         InstantMillis(4_000),
         "an older valid observation can restore responsiveness without moving the clock backward",
     );
@@ -1772,7 +1772,7 @@ fn authenticated_route_evidence_advances_only_its_live_path() {
     );
     assert!(!table.apply_route_evidence(&mut original_handle, InstantMillis(6_000)));
     let row = table.path_row(&destination).unwrap();
-    assert_eq!(row.last_relayed_at, InstantMillis(0));
+    assert_eq!(row.last_route_activity_at, InstantMillis(0));
     assert_eq!(row.responsiveness, RouteResponsiveness::Unknown);
 }
 

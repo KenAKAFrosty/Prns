@@ -12,7 +12,7 @@ pub struct FixedArrayRouteTable<const MAX_TRACKED_DESTINATIONS: usize> {
     destination: [DestinationHash; MAX_TRACKED_DESTINATIONS],
     hops: [u8; MAX_TRACKED_DESTINATIONS],
     learned_at: [InstantMillis; MAX_TRACKED_DESTINATIONS],
-    last_relayed_at: [InstantMillis; MAX_TRACKED_DESTINATIONS],
+    last_route_activity_at: [InstantMillis; MAX_TRACKED_DESTINATIONS],
     responsiveness: [RouteResponsiveness; MAX_TRACKED_DESTINATIONS],
     receiving_interface: [InterfaceId; MAX_TRACKED_DESTINATIONS],
     next_hop: [NextHop; MAX_TRACKED_DESTINATIONS],
@@ -28,7 +28,7 @@ impl<const MAX_TRACKED_DESTINATIONS: usize> Default
             destination: [DestinationHash::new([0u8; 16]); MAX_TRACKED_DESTINATIONS],
             hops: [0u8; MAX_TRACKED_DESTINATIONS],
             learned_at: [InstantMillis(0); MAX_TRACKED_DESTINATIONS],
-            last_relayed_at: [InstantMillis(0); MAX_TRACKED_DESTINATIONS],
+            last_route_activity_at: [InstantMillis(0); MAX_TRACKED_DESTINATIONS],
             responsiveness: [RouteResponsiveness::Responsive; MAX_TRACKED_DESTINATIONS],
             receiving_interface: [InterfaceId::new([0u8; 8]); MAX_TRACKED_DESTINATIONS],
             next_hop: [NextHop::Direct; MAX_TRACKED_DESTINATIONS],
@@ -56,8 +56,8 @@ impl<const MAX_TRACKED_DESTINATIONS: usize> RouteTable
     fn learned_at(&self) -> &[InstantMillis] {
         &self.learned_at[..self.len]
     }
-    fn last_relayed_at(&self) -> &[InstantMillis] {
-        &self.last_relayed_at[..self.len]
+    fn last_route_activity_at(&self) -> &[InstantMillis] {
+        &self.last_route_activity_at[..self.len]
     }
     fn responsiveness(&self) -> &[RouteResponsiveness] {
         &self.responsiveness[..self.len]
@@ -75,7 +75,7 @@ impl<const MAX_TRACKED_DESTINATIONS: usize> RouteTable
     fn set_row(&mut self, i: usize, row: RouteEntry) {
         self.hops[i] = row.hops;
         self.learned_at[i] = row.learned_at;
-        self.last_relayed_at[i] = row.last_relayed_at;
+        self.last_route_activity_at[i] = row.last_route_activity_at;
         self.responsiveness[i] = row.responsiveness;
         self.receiving_interface[i] = row.receiving_interface;
         self.next_hop[i] = row.next_hop;
@@ -107,7 +107,7 @@ impl<const MAX_TRACKED_DESTINATIONS: usize> RouteTable
         self.destination[i] = self.destination[last];
         self.hops[i] = self.hops[last];
         self.learned_at[i] = self.learned_at[last];
-        self.last_relayed_at[i] = self.last_relayed_at[last];
+        self.last_route_activity_at[i] = self.last_route_activity_at[last];
         self.responsiveness[i] = self.responsiveness[last];
         self.receiving_interface[i] = self.receiving_interface[last];
         self.next_hop[i] = self.next_hop[last];
@@ -140,7 +140,7 @@ mod tests {
         RouteEntry {
             hops,
             learned_at: InstantMillis(learned_at),
-            last_relayed_at: InstantMillis(0),
+            last_route_activity_at: InstantMillis(0),
             responsiveness,
             receiving_interface,
             next_hop: NextHop::Direct,

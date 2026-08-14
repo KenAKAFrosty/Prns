@@ -1416,7 +1416,7 @@ async fn collect_snapshot(
                     |(interface, _)| *interface,
                 ),
             learned_at_millis: route.learned_at.0,
-            last_relayed_at_millis: route.last_relayed_at.0,
+            last_route_activity_at_millis: route.last_route_activity_at.0,
             expires_at_millis: route.expires_at.0,
         })
         .collect();

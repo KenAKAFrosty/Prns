@@ -44,7 +44,7 @@ internal static class InspectionMarshaller
                     : new IdentityHash(NativeValue.CopyBytes(item.ViaIdentity)),
                 new InterfaceId(NativeValue.CopyBytes(item.InterfaceId)),
                 item.LearnedAtMillis,
-                item.LastRelayedAtMillis,
+                item.LastRouteActivityAtMillis,
                 item.ExpiresAtMillis
             ))
             .ToImmutableArray();

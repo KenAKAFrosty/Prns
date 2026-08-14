@@ -376,7 +376,7 @@ fn a_failed_parallel_link_attempt_yields_to_newer_inbound_evidence() {
     );
 
     let row = state.routing_table.path_row(&peer_destination()).unwrap();
-    assert_eq!(row.last_relayed_at, InstantMillis(3_000));
+    assert_eq!(row.last_route_activity_at, InstantMillis(3_000));
     assert_eq!(
         row.responsiveness,
         RouteResponsiveness::Responsive,
@@ -431,7 +431,7 @@ fn the_initiator_link_activating_marks_its_destination_responsive() {
             .routing_table
             .path_row(&peer_destination())
             .unwrap()
-            .last_relayed_at,
+            .last_route_activity_at,
         InstantMillis(1_250),
         "the proof arrival, rather than later completion work, is the route observation",
     );
@@ -466,7 +466,7 @@ fn route_culling_reconciles_a_links_inbound_burst_before_deciding() {
             .routing_table
             .path_row(&peer_destination())
             .unwrap()
-            .last_relayed_at,
+            .last_route_activity_at,
         InstantMillis(1_250),
         "hot traffic remains coalesced in Link state until an engine decision boundary",
     );
@@ -483,7 +483,7 @@ fn route_culling_reconciles_a_links_inbound_burst_before_deciding() {
             .routing_table
             .path_row(&peer_destination())
             .unwrap()
-            .last_relayed_at,
+            .last_route_activity_at,
         InstantMillis(5_000),
         "culling promotes the newest observation before it evaluates expiry",
     );
@@ -864,7 +864,7 @@ fn deferred_link_proof_sign_and_verify_resume_the_handshake() {
             .routing_table
             .path_row(&personal_node_destination())
             .unwrap()
-            .last_relayed_at,
+            .last_route_activity_at,
         InstantMillis(1_250),
         "deferred completion credits the proof's arrival, not worker latency",
     );
@@ -2366,7 +2366,7 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
             .routing_table
             .path_row(&personal_node_destination())
             .unwrap()
-            .last_relayed_at,
+            .last_route_activity_at,
         InstantMillis(1_300),
         "the signed establishment proof is the transported route observation",
     );
@@ -2532,7 +2532,7 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
             .routing_table
             .path_row(&personal_node_destination())
             .unwrap()
-            .last_relayed_at,
+            .last_route_activity_at,
         InstantMillis(1_300),
         "later opaque switched traffic cannot repeatedly extend the attributed route",
     );
@@ -3482,7 +3482,7 @@ fn a_valid_peer_close_commits_final_route_evidence_before_removal() {
         .routing_table
         .path_row(&peer_destination())
         .unwrap();
-    assert_eq!(row.last_relayed_at, InstantMillis(2_200));
+    assert_eq!(row.last_route_activity_at, InstantMillis(2_200));
     assert_eq!(row.responsiveness, RouteResponsiveness::Responsive);
 }
 

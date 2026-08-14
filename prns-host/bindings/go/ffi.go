@@ -816,7 +816,7 @@ func ffiHostSnapshot(host nativeHost, timeoutMillis uint32) (HostSnapshot, Statu
 				ViaIdentity:         viaIdentity,
 				InterfaceId:         interfaceID,
 				LearnedAtMillis:     uint64(item.learned_at_millis),
-				LastRelayedAtMillis: uint64(item.last_relayed_at_millis),
+				LastRouteActivityAtMillis: uint64(item.last_route_activity_at_millis),
 				ExpiresAtMillis:     uint64(item.expires_at_millis),
 			}
 		}

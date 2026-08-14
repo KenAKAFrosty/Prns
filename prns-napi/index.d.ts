@@ -230,7 +230,7 @@ export interface HostRouteSnapshotInfo {
   viaIdentity?: Buffer
   interfaceId: Buffer
   learnedAtMillis: number
-  lastRelayedAtMillis: number
+  lastRouteActivityAtMillis: number
   expiresAtMillis: number
 }
 
@@ -429,7 +429,7 @@ export interface RouteInfo {
   via?: Buffer
   interfaceId: Buffer
   learnedAtMillis: number
-  lastRelayedAtMillis: number
+  lastRouteActivityAtMillis: number
   expiresAtMillis: number
 }
 

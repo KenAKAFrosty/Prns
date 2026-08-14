@@ -155,9 +155,9 @@ impl RouteInterfaceIndex for RoaringRouteInterfaceIndex {
         current: InterfaceId,
         now: InstantMillis,
         receiving_interfaces: &mut [InterfaceId],
-        last_relayed_at: &mut [InstantMillis],
+        last_route_activity_at: &mut [InstantMillis],
     ) -> usize {
-        debug_assert_eq!(receiving_interfaces.len(), last_relayed_at.len());
+        debug_assert_eq!(receiving_interfaces.len(), last_route_activity_at.len());
         let Some(rows) = self.take_rows(previous) else {
             return 0;
         };
@@ -165,7 +165,7 @@ impl RouteInterfaceIndex for RoaringRouteInterfaceIndex {
         for row in rows.iter() {
             let row = row as usize;
             receiving_interfaces[row] = current;
-            last_relayed_at[row] = now;
+            last_route_activity_at[row] = now;
         }
         self.merge_rows(current, rows);
         moved

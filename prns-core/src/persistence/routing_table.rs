@@ -208,7 +208,7 @@ fn write_row(row: &PersistedRouteRow<'_>, buf: &mut [u8]) -> usize {
     put(row.destination.as_bytes(), &mut at);
     put(&[row.entry.hops], &mut at);
     put(&row.entry.learned_at.0.to_le_bytes(), &mut at);
-    put(&row.entry.last_relayed_at.0.to_le_bytes(), &mut at);
+    put(&row.entry.last_route_activity_at.0.to_le_bytes(), &mut at);
     let responsiveness_tag = match row.entry.responsiveness {
         RouteResponsiveness::Unknown => RESPONSIVENESS_UNKNOWN_TAG,
         RouteResponsiveness::Responsive => RESPONSIVENESS_RESPONSIVE_TAG,
@@ -314,7 +314,7 @@ fn parse_row(bytes: &[u8]) -> Option<(PersistedRouteRow<'_>, &[u8])> {
     let (destination, rest) = bytes.split_first_chunk::<TRUNCATED_HASH_BYTE_LEN>()?;
     let (&[hops], rest) = rest.split_first_chunk::<HOPS_LEN>()?;
     let (learned_at, rest) = rest.split_first_chunk::<INSTANT_LEN>()?;
-    let (last_relayed_at, rest) = rest.split_first_chunk::<INSTANT_LEN>()?;
+    let (last_route_activity_at, rest) = rest.split_first_chunk::<INSTANT_LEN>()?;
     let (&[responsiveness_tag], rest) = rest.split_first_chunk::<TAG_LEN>()?;
     let responsiveness = match responsiveness_tag {
         RESPONSIVENESS_UNKNOWN_TAG => RouteResponsiveness::Unknown,
@@ -363,7 +363,7 @@ fn parse_row(bytes: &[u8]) -> Option<(PersistedRouteRow<'_>, &[u8])> {
         entry: RouteEntry {
             hops,
             learned_at: InstantMillis(u64::from_le_bytes(*learned_at)),
-            last_relayed_at: InstantMillis(u64::from_le_bytes(*last_relayed_at)),
+            last_route_activity_at: InstantMillis(u64::from_le_bytes(*last_route_activity_at)),
             responsiveness,
             receiving_interface: InterfaceId::new(*receiving_interface),
             next_hop,
@@ -404,7 +404,7 @@ mod tests {
             entry: RouteEntry {
                 hops: seed,
                 learned_at: InstantMillis(1_000 + u64::from(seed)),
-                last_relayed_at: InstantMillis(2_000 + u64::from(seed)),
+                last_route_activity_at: InstantMillis(2_000 + u64::from(seed)),
                 responsiveness: RouteResponsiveness::Responsive,
                 receiving_interface: InterfaceId::new([seed; INTERFACE_ID_LEN]),
                 next_hop: NextHop::Via(TransportId::new([seed.wrapping_add(1); 16])),

@@ -523,7 +523,7 @@ type RouteSnapshot struct {
 	ViaIdentity *IdentityHash
 	InterfaceId InterfaceId
 	LearnedAtMillis uint64
-	LastRelayedAtMillis uint64
+	LastRouteActivityAtMillis uint64
 	ExpiresAtMillis uint64
 }
 

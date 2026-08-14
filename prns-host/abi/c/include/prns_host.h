@@ -505,7 +505,7 @@ typedef struct PrnsRouteSnapshot {
     PrnsByteView via_identity;
     PrnsByteView interface_id;
     uint64_t learned_at_millis;
-    uint64_t last_relayed_at_millis;
+    uint64_t last_route_activity_at_millis;
     uint64_t expires_at_millis;
 } PrnsRouteSnapshot;
 
