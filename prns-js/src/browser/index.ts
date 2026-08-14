@@ -58,8 +58,9 @@ import type {
 import { MemoryResourceStream } from "../memory_resource.js";
 import { AutoWifiInterface } from "./auto_wifi.js";
 import { BluetoothInterface } from "./bluetooth.js";
-import { UsbAutoInterface } from "./usb_auto.js";
 import { byteKey } from "./bytes.js";
+import { RNodeInterface } from "./rnode.js";
+import { UsbAutoInterface } from "./usb_auto.js";
 import {
   bigintField,
   bytesField,
@@ -258,6 +259,8 @@ export type {
   StableIdentityStore,
   StableIdentityStoreFailure,
 } from "./persistence.js";
+export { RNodeInterface } from "./rnode.js";
+export type { RNodeConnectOutcome } from "./rnode.js";
 export { WebSocketInterface } from "./websocket.js";
 export type {
   AutoWifiControllerCloseOutcome,
@@ -443,10 +446,6 @@ export type WebSocketConnectOutcome =
   | InvalidTarget<"websocket">
   | ConnectTimedOut<"websocket">
   | ConnectionFailed<"websocket">
-  | RuntimeRejected;
-
-export type RNodeConnectOutcome =
-  | UnsupportedInterface<"rnode">
   | RuntimeRejected;
 
 export type InterfaceCleanupFailure =
@@ -1101,26 +1100,6 @@ export class PrnsInterfaces {
     this.bluetooth = new BluetoothInterface(host);
     this.autoWifi = new AutoWifiInterface(host);
     this.webSocket = new WebSocketInterface(host);
-  }
-}
-
-export class RNodeInterface {
-  readonly name = "rnode" as const;
-  readonly #host: RuntimeHost;
-
-  constructor(host: RuntimeHost) {
-    this.#host = host;
-  }
-
-  async connect(): Promise<RNodeConnectOutcome> {
-    const ready = this.#host.runtimeReadiness();
-    if (ready.tag !== "Ready") {
-      return ready;
-    }
-    return Tag("UnsupportedInterface", {
-      interface: "rnode",
-      host: "Browser",
-    });
   }
 }
 
