@@ -123,6 +123,7 @@ impl<S: StorageLayout> EngineState<S> {
         };
         let wire_bytes =
             write_link_close(link_id, key, iv, buf).map_err(|_| WriteLinkCloseError::Serialize)?;
+        self.reconcile_pending_link_route_evidence();
         self.links.remove(link_id);
         self.channels.close(link_id);
         self.incoming_assemblies.clear(link_id);

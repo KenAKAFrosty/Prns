@@ -7,6 +7,7 @@ use crate::engine::{
 use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::{AttachedInterfaces, Egress, InterfaceId};
 use crate::routing::links::establish::link_mtu_ceiling;
+use crate::routing::links::establish::LinkRttTimes;
 use crate::routing::links::handshake::{LinkProofSignOwed, LinkProofVerifyOwed};
 use crate::routing::links::table::LinkActivation;
 use crate::routing::links::LinkId;
@@ -42,7 +43,7 @@ impl<S: StorageLayout> EngineState<S> {
         owed: LinkRttOwed,
         source: InterfaceId,
         interfaces: AttachedInterfaces<'_>,
-        now: InstantMillis,
+        _now: InstantMillis,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedule
@@ -65,7 +66,7 @@ impl<S: StorageLayout> EngineState<S> {
                 attached_interface: source,
                 peer_signing: owed.responder_signing,
             },
-            now,
+            owed.arrived_at,
             &iv,
             &mut buf,
         ) {
@@ -100,7 +101,7 @@ impl<S: StorageLayout> EngineState<S> {
         let mut iv = [0u8; ENCRYPTION_IV_LEN];
         fill_entropy(&mut iv);
         let mut buf = [0u8; BROADCAST_MTU];
-        if let Ok(written) = self.write_owed_link_rtt_with_shared(
+        if let Ok(written) = self.write_owed_link_rtt_with_shared_observed(
             &owed.link_id,
             &shared,
             &LinkActivation {
@@ -110,7 +111,10 @@ impl<S: StorageLayout> EngineState<S> {
                 attached_interface: source,
                 peer_signing: owed.responder_signing,
             },
-            now,
+            LinkRttTimes {
+                activated_at: now,
+                evidence_observed_at: owed.arrived_at,
+            },
             &iv,
             &mut buf,
         ) {

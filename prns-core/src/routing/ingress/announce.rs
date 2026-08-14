@@ -221,6 +221,8 @@ impl<S: StorageLayout> EngineState<S> {
             );
         }
 
+        self.reconcile_pending_link_route_evidence();
+
         let decision = determine_acceptance(AnnounceAcceptanceInput {
             packet_hops: received_hops,
             announce_id: announce.announce_id,

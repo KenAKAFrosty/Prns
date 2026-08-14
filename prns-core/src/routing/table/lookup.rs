@@ -90,10 +90,6 @@ where
     ///
     /// A surviving route can only remain in place or move downward: insertions append and every
     /// removal moves the last row into a lower hole. No upward or wraparound scan is needed.
-    #[allow(
-        dead_code,
-        reason = "the next review slice wires evidence promotion into this resolver"
-    )]
     pub(crate) fn resolve_route_evidence(&self, handle: &mut RouteEvidenceHandle) -> Option<usize> {
         let len = self.routes.len();
         if len == 0 {

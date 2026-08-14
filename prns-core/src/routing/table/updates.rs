@@ -3,7 +3,7 @@ use crate::engine::InstantMillis;
 use crate::interfaces::{AttachedInterfaces, InterfaceId};
 use crate::routing::announce::stored::{AnnounceAppData, AnnounceIdHistory, AnnounceRecordTable};
 use crate::routing::route_expiry::RouteExpiryIndex;
-use crate::routing::routes::{RouteEntry, RouteResponsiveness, RouteTable};
+use crate::routing::routes::{RouteEntry, RouteEvidenceHandle, RouteResponsiveness, RouteTable};
 use crate::routing::warmth::RouteWarmth;
 use crate::wire::DestinationHash;
 
@@ -15,6 +15,70 @@ where
     D: AnnounceAppData,
     I: RouteExpiryIndex,
 {
+    /// Applies authenticated traffic to the exact route incarnation that carried it.
+    ///
+    /// `last_relayed_at` remains the persisted field name for compatibility, but from this point
+    /// it is the route's broader post-announce activity clock: relayed traffic and authenticated
+    /// return traffic both advance it.
+    pub(crate) fn apply_route_evidence(
+        &mut self,
+        handle: &mut RouteEvidenceHandle,
+        observed_at: InstantMillis,
+    ) -> bool {
+        let Some(i) = self.resolve_route_evidence(handle) else {
+            return false;
+        };
+        let last_active = self.routes.last_relayed_at()[i].max(observed_at);
+        let changed = last_active != self.routes.last_relayed_at()[i]
+            || self.routes.responsiveness()[i] != RouteResponsiveness::Responsive;
+        if !changed {
+            return false;
+        }
+        self.routes.set_row(
+            i,
+            RouteEntry {
+                hops: self.routes.hops()[i],
+                learned_at: self.routes.learned_at()[i],
+                last_relayed_at: last_active,
+                responsiveness: RouteResponsiveness::Responsive,
+                receiving_interface: self.routes.receiving_interfaces()[i],
+                next_hop: self.routes.next_hops()[i],
+            },
+        );
+        self.route_expiries.invalidate();
+        true
+    }
+
+    /// Marks only the route incarnation used by a failed attempt, unless newer route activity has
+    /// already disproved that negative observation.
+    pub(crate) fn mark_unresponsive_if_not_active_since(
+        &mut self,
+        handle: &mut RouteEvidenceHandle,
+        attempt_started_at: InstantMillis,
+    ) -> bool {
+        let Some(i) = self.resolve_route_evidence(handle) else {
+            return false;
+        };
+        let last_active = self.routes.learned_at()[i].max(self.routes.last_relayed_at()[i]);
+        if last_active > attempt_started_at
+            || self.routes.responsiveness()[i] == RouteResponsiveness::Unresponsive
+        {
+            return false;
+        }
+        self.routes.set_row(
+            i,
+            RouteEntry {
+                hops: self.routes.hops()[i],
+                learned_at: self.routes.learned_at()[i],
+                last_relayed_at: self.routes.last_relayed_at()[i],
+                responsiveness: RouteResponsiveness::Unresponsive,
+                receiving_interface: self.routes.receiving_interfaces()[i],
+                next_hop: self.routes.next_hops()[i],
+            },
+        );
+        true
+    }
+
     pub fn mark_responsiveness(
         &mut self,
         destination: &DestinationHash,

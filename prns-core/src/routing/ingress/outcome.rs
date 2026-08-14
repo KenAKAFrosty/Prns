@@ -71,6 +71,7 @@ pub struct LinkRttOwed {
     pub responder_encryption: X25519PublicKey,
     pub responder_signing: Ed25519PublicKey,
     pub command_id: CommandId,
+    pub arrived_at: InstantMillis,
     pub rtt: RttMillis,
     pub mtu: usize,
 }

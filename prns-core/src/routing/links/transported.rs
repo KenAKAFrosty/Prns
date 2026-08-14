@@ -3,6 +3,7 @@
 use crate::engine::InstantMillis;
 use crate::interfaces::{BitrateBps, InterfaceId};
 use crate::routing::links::{LinkId, LinkMode};
+use crate::routing::routes::{RouteEvidenceHandle, RouteEvidenceId};
 use crate::storage::TablePushError;
 use crate::wire::{DestinationHash, TransportId};
 
@@ -19,6 +20,7 @@ pub fn extra_link_proof_timeout_ms(bitrate: BitrateBps) -> u64 {
 pub struct TransportedLink {
     pub link_id: LinkId,
     pub destination: DestinationHash,
+    pub route_evidence: RouteEvidenceHandle,
     pub mode: LinkMode,
     pub next_hop: Option<TransportId>,
     pub next_hop_interface: InterfaceId,
@@ -29,6 +31,9 @@ pub struct TransportedLink {
     pub last_active: InstantMillis,
     pub proof_timeout: InstantMillis,
 }
+
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<TransportedLink>() == 96);
 
 impl crate::lemire_index::IndexRow for TransportedLink {
     type Key = LinkId;
@@ -140,6 +145,13 @@ impl<C: TransportedLinkTable> TransportedLinks<C> {
     pub fn entry_for(&self, link_id: &LinkId) -> Option<&TransportedLink> {
         self.index_of(link_id)
             .and_then(|index| self.table.entries().get(index))
+    }
+
+    pub(crate) fn route_evidence_ids(&self) -> impl Iterator<Item = RouteEvidenceId> + '_ {
+        self.table
+            .entries()
+            .iter()
+            .map(|entry| entry.route_evidence.id)
     }
 
     /// The returning LRPROOF's gate. RNS 1.4.2 transports a proof only when it arrives over the next hop with exactly the remaining hop count.
@@ -338,6 +350,7 @@ mod tests {
         TransportedLink {
             link_id: LinkId::new([link; 16]),
             destination: DestinationHash::new([0xDD; 16]),
+            route_evidence: RouteEvidenceHandle::new(RouteEvidenceId::FIRST, 0),
             mode: LinkMode::Aes256Cbc,
             next_hop: Some(TransportId::new([0x77; 16])),
             next_hop_interface: iface(0xB2),

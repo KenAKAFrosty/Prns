@@ -1722,6 +1722,109 @@ fn route_evidence_lookup_only_moves_down_and_rejects_retired_ids() {
 }
 
 #[test]
+fn authenticated_route_evidence_advances_only_its_live_path() {
+    let mut table: Rt = Rt::default();
+    let destination = dest(0x51);
+    let original = RouteEvidenceId::new(31).unwrap();
+    let replacement = RouteEvidenceId::new(32).unwrap();
+    record_with_evidence(
+        &mut table,
+        destination,
+        InstantMillis(1_000),
+        source(),
+        NextHop::Direct,
+        original,
+    );
+    let mut original_handle = table.route_evidence_handle_for(&destination).unwrap();
+
+    assert!(table.apply_route_evidence(&mut original_handle, InstantMillis(4_000)));
+    assert_eq!(
+        table.path_row(&destination).unwrap(),
+        RouteEntry {
+            hops: 1,
+            learned_at: InstantMillis(1_000),
+            last_relayed_at: InstantMillis(4_000),
+            responsiveness: RouteResponsiveness::Responsive,
+            receiving_interface: source(),
+            next_hop: NextHop::Direct,
+        },
+    );
+    assert!(
+        !table.apply_route_evidence(&mut original_handle, InstantMillis(3_000)),
+        "older evidence neither rolls the activity clock back nor rewrites an already responsive row",
+    );
+
+    table.mark_responsiveness(&destination, RouteResponsiveness::Unresponsive);
+    assert!(table.apply_route_evidence(&mut original_handle, InstantMillis(3_000)));
+    assert_eq!(
+        table.path_row(&destination).unwrap().last_relayed_at,
+        InstantMillis(4_000),
+        "an older valid observation can restore responsiveness without moving the clock backward",
+    );
+
+    record_with_evidence(
+        &mut table,
+        destination,
+        InstantMillis(5_000),
+        source(),
+        NextHop::Via(TransportId::new([0x55; 16])),
+        replacement,
+    );
+    assert!(!table.apply_route_evidence(&mut original_handle, InstantMillis(6_000)));
+    let row = table.path_row(&destination).unwrap();
+    assert_eq!(row.last_relayed_at, InstantMillis(0));
+    assert_eq!(row.responsiveness, RouteResponsiveness::Unknown);
+}
+
+#[test]
+fn failed_attempts_cannot_override_newer_activity_or_a_replacement_path() {
+    let mut table: Rt = Rt::default();
+    let destination = dest(0x52);
+    let original = RouteEvidenceId::new(41).unwrap();
+    let replacement = RouteEvidenceId::new(42).unwrap();
+    record_with_evidence(
+        &mut table,
+        destination,
+        InstantMillis(1_000),
+        source(),
+        NextHop::Direct,
+        original,
+    );
+    let mut old_handle = table.route_evidence_handle_for(&destination).unwrap();
+    assert!(table.apply_route_evidence(&mut old_handle, InstantMillis(3_000)));
+    assert!(
+        !table.mark_unresponsive_if_not_active_since(&mut old_handle, InstantMillis(2_000)),
+        "evidence newer than the failed attempt wins",
+    );
+
+    record_with_evidence(
+        &mut table,
+        destination,
+        InstantMillis(4_000),
+        source(),
+        NextHop::Via(TransportId::new([0x56; 16])),
+        replacement,
+    );
+    assert!(
+        !table.mark_unresponsive_if_not_active_since(&mut old_handle, InstantMillis(5_000)),
+        "a retired handle cannot poison its replacement",
+    );
+    assert_eq!(
+        table.path_row(&destination).unwrap().responsiveness,
+        RouteResponsiveness::Unknown,
+    );
+
+    let mut replacement_handle = table.route_evidence_handle_for(&destination).unwrap();
+    assert!(
+        table.mark_unresponsive_if_not_active_since(&mut replacement_handle, InstantMillis(5_000),)
+    );
+    assert_eq!(
+        table.path_row(&destination).unwrap().responsiveness,
+        RouteResponsiveness::Unresponsive,
+    );
+}
+
+#[test]
 fn a_seeded_row_carries_its_entry_verbatim_where_an_upsert_would_default_it() {
     let ring = [announce_id(1, 1), announce_id(2, 2), announce_id(3, 3)];
     let payload = app_data(0x5D);

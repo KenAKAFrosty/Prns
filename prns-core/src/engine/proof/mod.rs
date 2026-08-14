@@ -186,7 +186,7 @@ impl<S: StorageLayout> EngineState<S> {
                 delivered,
             },
             ReceiptKind::SendToLink(link_id) => {
-                self.links.note_inbound(&link_id, arrived_at);
+                self.links.note_unverified_inbound(&link_id, arrived_at);
                 ProofIngest::SendToLinkDelivered {
                     id: resolved.proven.command_id,
                     delivered,

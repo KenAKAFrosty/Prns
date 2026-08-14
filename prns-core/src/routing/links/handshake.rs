@@ -325,6 +325,7 @@ pub struct LinkProofVerifyOwed {
     pub responder_signing: Ed25519PublicKey,
     pub initiator_secret: X25519SecretKey,
     pub command_id: CommandId,
+    pub arrived_at: InstantMillis,
     pub rtt: RttMillis,
     pub mtu: usize,
     pub signed_data: [u8; LINK_PROOF_SIGNED_DATA_LEN],

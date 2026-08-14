@@ -247,7 +247,10 @@ impl<S: StorageLayout> EngineState<S> {
                 last_resource_window,
                 last_resource_eifr,
                 ..
-            }) => (*last_resource_window, *last_resource_eifr),
+            }) => (
+                last_resource_window.map(core::num::NonZeroUsize::get),
+                *last_resource_eifr,
+            ),
             _ => (None, None),
         };
         let index = match self.incoming_resources.accept(link_id, accepted) {

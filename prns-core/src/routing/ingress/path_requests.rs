@@ -129,6 +129,8 @@ impl<S: StorageLayout> EngineState<S> {
             };
         }
 
+        self.reconcile_pending_link_route_evidence();
+
         let from_local_client = source_interface.kind() == Some(InterfaceKind::LocalClient);
         let held_route = (self.network_transport_enabled() || from_local_client)
             .then(|| {

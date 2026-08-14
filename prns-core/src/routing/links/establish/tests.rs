@@ -9,6 +9,7 @@ use crate::engine::{
 };
 use crate::engine::{EstablishLinkFailure, WakeSchedules};
 use crate::interfaces::{InboundPacket, InterfaceDescriptor};
+use crate::routing::announce::defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
 use crate::routing::dedup::PacketHash;
 use crate::routing::links::handshake::parse_link_request;
 use crate::routing::links::maintenance::{KEEPALIVE_ECHO, KEEPALIVE_REQUEST};
@@ -327,6 +328,63 @@ fn a_timed_out_link_request_marks_its_destination_unresponsive() {
 }
 
 #[test]
+fn a_failed_parallel_link_attempt_yields_to_newer_inbound_evidence() {
+    let mut state = neighbor_with_a_route();
+    let mut first_request = [0u8; BROADCAST_MTU];
+    let first = state
+        .write_commanded_link_request(
+            CommandId(7),
+            &establish(),
+            InstantMillis(1_000),
+            vector_establish_entropy(),
+            AttachedInterfaces::new(&arrival_interfaces()),
+            &mut first_request,
+        )
+        .dispatched();
+    let mut responder = personal_node_announcer();
+    let (proofs, _, _) = reactions_of(
+        &mut responder,
+        &first_request[..first.wire_bytes],
+        1_100,
+        0x99,
+    );
+    let _ = reactions_of(&mut state, &proofs[0], 1_250, 0xA5);
+
+    let mut second_entropy = [0x66; EstablishLinkEntropy::LEN];
+    second_entropy[32..].fill(0x55);
+    let mut second_request = [0u8; BROADCAST_MTU];
+    let second = state
+        .write_commanded_link_request(
+            CommandId(8),
+            &establish(),
+            InstantMillis(2_000),
+            EstablishLinkEntropy::new(second_entropy),
+            AttachedInterfaces::new(&arrival_interfaces()),
+            &mut second_request,
+        )
+        .dispatched();
+    assert_ne!(first.link_id, second.link_id);
+
+    state
+        .links
+        .note_inbound(&first.link_id, InstantMillis(3_000));
+    let _ = state.fire_due_link_deadlines(
+        InstantMillis(14_000),
+        AttachedInterfaces::new(&arrival_interfaces()),
+        &mut |bytes: &mut [u8]| bytes.fill(0),
+        &mut |_| {},
+    );
+
+    let row = state.routing_table.path_row(&peer_destination()).unwrap();
+    assert_eq!(row.last_relayed_at, InstantMillis(3_000));
+    assert_eq!(
+        row.responsiveness,
+        RouteResponsiveness::Responsive,
+        "a failed parallel attempt cannot overwrite stronger evidence received after it began",
+    );
+}
+
+#[test]
 fn the_initiator_link_activating_marks_its_destination_responsive() {
     let mut initiator = neighbor_with_a_route();
     let mut request = [0u8; BROADCAST_MTU];
@@ -368,6 +426,68 @@ fn the_initiator_link_activating_marks_its_destination_responsive() {
         RouteResponsiveness::Responsive,
         "the initiator's link reaching active confirms its destination's route",
     );
+    assert_eq!(
+        initiator
+            .routing_table
+            .path_row(&peer_destination())
+            .unwrap()
+            .last_relayed_at,
+        InstantMillis(1_250),
+        "the proof arrival, rather than later completion work, is the route observation",
+    );
+}
+
+#[test]
+fn route_culling_reconciles_a_links_inbound_burst_before_deciding() {
+    let mut initiator = neighbor_with_a_route();
+    let mut request = [0u8; BROADCAST_MTU];
+    let dispatch = initiator
+        .write_commanded_link_request(
+            CommandId(7),
+            &establish(),
+            InstantMillis(1_000),
+            vector_establish_entropy(),
+            AttachedInterfaces::new(&arrival_interfaces()),
+            &mut request,
+        )
+        .dispatched();
+    let mut responder = personal_node_announcer();
+    let (proofs, _, _) = reactions_of(&mut responder, &request[..dispatch.wire_bytes], 1_100, 0x99);
+    let _ = reactions_of(&mut initiator, &proofs[0], 1_250, 0xA5);
+
+    initiator
+        .links
+        .note_inbound(&dispatch.link_id, InstantMillis(4_000));
+    initiator
+        .links
+        .note_inbound(&dispatch.link_id, InstantMillis(5_000));
+    assert_eq!(
+        initiator
+            .routing_table
+            .path_row(&peer_destination())
+            .unwrap()
+            .last_relayed_at,
+        InstantMillis(1_250),
+        "hot traffic remains coalesced in Link state until an engine decision boundary",
+    );
+
+    let would_have_expired_without_reconciliation =
+        InstantMillis(DEFAULT_ROUTE_EXPIRY_MILLIS + 2_000);
+    let _ = initiator.cull_expired_routes(
+        would_have_expired_without_reconciliation,
+        AttachedInterfaces::new(&arrival_interfaces()),
+        &mut |_| {},
+    );
+    assert_eq!(
+        initiator
+            .routing_table
+            .path_row(&peer_destination())
+            .unwrap()
+            .last_relayed_at,
+        InstantMillis(5_000),
+        "culling promotes the newest observation before it evaluates expiry",
+    );
+    assert_eq!(initiator.reconcile_pending_link_route_evidence(), 0);
 }
 
 #[test]
@@ -717,7 +837,7 @@ fn deferred_link_proof_sign_and_verify_resume_the_handshake() {
         owed,
         shared,
         AttachedInterfaces::new(&arrival_interfaces()),
-        InstantMillis(1_250),
+        InstantMillis(5_000),
         &mut |bytes: &mut [u8]| bytes.fill(0xA5),
         &mut |reaction| match reaction {
             EngineReaction::Directive(Directive::Send { target, bytes }) => {
@@ -738,6 +858,15 @@ fn deferred_link_proof_sign_and_verify_resume_the_handshake() {
             .unwrap()
             .hops,
         3,
+    );
+    assert_eq!(
+        initiator
+            .routing_table
+            .path_row(&personal_node_destination())
+            .unwrap()
+            .last_relayed_at,
+        InstantMillis(1_250),
+        "deferred completion credits the proof's arrival, not worker latency",
     );
     assert_eq!(
         settlements,
@@ -1467,6 +1596,15 @@ fn a_prove_all_responder_proves_link_data_the_reference_way() {
         InstantMillis(2_200),
         "a delivery proof is inbound link traffic and refreshes its liveness clock",
     );
+    let mut observed = None;
+    initiator
+        .links
+        .reconcile_pending_route_evidence(|_, at| observed = Some(at));
+    assert_eq!(
+        observed,
+        Some(InstantMillis(2_200)),
+        "a verified Link receipt is also pending route evidence",
+    );
     assert_eq!(
         initiator.links.pop_stale(InstantMillis(17_199)),
         None,
@@ -1773,7 +1911,7 @@ fn a_duplicate_transported_link_request_is_dropped_as_a_duplicate() {
 }
 
 #[test]
-fn a_returning_proof_switches_home_without_the_destinations_announce() {
+fn a_transported_proof_needs_the_destinations_signing_key() {
     let iface_to_b = InterfaceId::new([0xB7; 8]);
     let relay_view = [
         routable_descriptor(arrival()),
@@ -1831,9 +1969,18 @@ fn a_returning_proof_switches_home_without_the_destinations_announce() {
         &mut |_| {},
         None,
     );
+    assert_eq!(
+        outcome,
+        IngestPacketOutcome::Ignored(IgnoreReason::UnknownIdentity),
+        "Prns does not unlock opaque transported Link traffic from proof shape alone",
+    );
     assert!(
-        matches!(outcome, IngestPacketOutcome::Forward(_)),
-        "RNS 1.4.2 switches a returning proof home on shape alone; verification is the initiator's job",
+        !relay
+            .transported_links
+            .entry_for(&parse_link_request(&request).unwrap().link_id)
+            .unwrap()
+            .validated_by_proof,
+        "the unverified transported row stays proof-gated",
     );
 }
 
@@ -2149,6 +2296,41 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
     );
 
     let (proofs, _, _) = reactions_of(&mut responder, &switched[0].1, 1_200, 0x99);
+    let mut forged_proof = proofs[0].clone();
+    let payload_offset = {
+        let (_, payload) = crate::wire::WirePacketHeader::parse(&forged_proof).unwrap();
+        forged_proof.len() - payload.len()
+    };
+    forged_proof[payload_offset] ^= 0x01;
+    let (forged_return, _, _, _) = ingest_via(
+        &mut relay,
+        &forged_proof,
+        iface_to_b,
+        1_250,
+        0x2F,
+        AttachedInterfaces::new(&relay_view),
+    );
+    assert!(
+        forged_return.is_empty(),
+        "a forged exact-hop proof is not switched"
+    );
+    assert!(
+        !relay
+            .transported_links
+            .entry_for(&link_id)
+            .unwrap()
+            .validated_by_proof,
+        "a forged proof cannot unlock later opaque Link traffic",
+    );
+    assert_eq!(
+        relay
+            .routing_table
+            .path_row(&personal_node_destination())
+            .unwrap()
+            .responsiveness,
+        RouteResponsiveness::Unknown,
+        "forged traffic is not route evidence",
+    );
     let (returned, _, _, _) = ingest_via(
         &mut relay,
         &proofs[0],
@@ -2178,6 +2360,15 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
             .responsiveness,
         RouteResponsiveness::Responsive,
         "validating the transported proof confirms the relay's route to B",
+    );
+    assert_eq!(
+        relay
+            .routing_table
+            .path_row(&personal_node_destination())
+            .unwrap()
+            .last_relayed_at,
+        InstantMillis(1_300),
+        "the signed establishment proof is the transported route observation",
     );
 
     let (rtts, _, _) = reactions_of(&mut initiator, &returned[0].1, 1_400, 0xA5);
@@ -2335,6 +2526,15 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
         data_replay.len(),
         1,
         "a byte-identical retry switches through again: RNS 1.4.2 never remembers a transported link's packets in the duplicate filter",
+    );
+    assert_eq!(
+        relay
+            .routing_table
+            .path_row(&personal_node_destination())
+            .unwrap()
+            .last_relayed_at,
+        InstantMillis(1_300),
+        "later opaque switched traffic cannot repeatedly extend the attributed route",
     );
     let mut close_frames = std::vec::Vec::new();
     let _ = initiator.ingest_command_into(
@@ -3230,6 +3430,60 @@ fn a_close_link_command_settles_and_closes_the_peer() {
         std::vec![(link_id, LinkClosedReason::PeerClosed)],
     );
     assert!(responder.links.is_empty());
+}
+
+#[test]
+fn a_valid_peer_close_commits_final_route_evidence_before_removal() {
+    use crate::engine::CloseLink;
+
+    let (mut initiator, mut responder, link_id) = established_pair();
+    let mut closes = std::vec::Vec::new();
+    let _ = responder.ingest_command_into(
+        IssuedCommand {
+            id: CommandId(12),
+            command: PrnsCommand::CloseLink(CloseLink { link_id }),
+        },
+        AttachedInterfaces::new(&arrival_interfaces()),
+        InstantMillis(2_000),
+        &mut |bytes: &mut [u8]| bytes.fill(0xEA),
+        &mut |reaction| match reaction {
+            EngineReaction::Directive(Directive::Send { bytes, .. }) => {
+                closes.push(bytes.to_vec());
+            }
+            EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
+                if let Some(bytes) = filled_frame(fill) {
+                    closes.push(bytes);
+                }
+            }
+            _ => {}
+        },
+    );
+    assert_eq!(closes.len(), 1);
+
+    let mut raw = closes.remove(0);
+    let _ = initiator.ingest_packet_into(
+        InboundPacket {
+            arrived_at: InstantMillis(2_200),
+            source_interface: arrival(),
+            bytes: &mut raw,
+        },
+        IngestIo {
+            interfaces: AttachedInterfaces::new(&arrival_interfaces()),
+            now: InstantMillis(2_200),
+            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+            should_prove: &mut |_| false,
+            should_accept_resource: &mut |_| false,
+            sink: &mut |_| {},
+        },
+    );
+
+    assert!(initiator.links.is_empty());
+    let row = initiator
+        .routing_table
+        .path_row(&peer_destination())
+        .unwrap();
+    assert_eq!(row.last_relayed_at, InstantMillis(2_200));
+    assert_eq!(row.responsiveness, RouteResponsiveness::Responsive);
 }
 
 #[test]
