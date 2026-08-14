@@ -17,7 +17,7 @@ pub(super) fn settle(
 
 pub(super) fn culled_settlement(kind: ReceiptKind) -> Settlement {
     match kind {
-        ReceiptKind::SendSinglePacket => {
+        ReceiptKind::SendSinglePacket { .. } => {
             Settlement::SendSinglePacket(Err(SendSinglePacketFailure::Culled))
         }
         ReceiptKind::SendToLink(_) => Settlement::SendToLink(Err(SendToLinkFailure::Culled)),
@@ -27,7 +27,7 @@ pub(super) fn culled_settlement(kind: ReceiptKind) -> Settlement {
 
 pub(super) fn timeout_settlement(kind: ReceiptKind) -> Settlement {
     match kind {
-        ReceiptKind::SendSinglePacket => {
+        ReceiptKind::SendSinglePacket { .. } => {
             Settlement::SendSinglePacket(Err(SendSinglePacketFailure::Timeout))
         }
         ReceiptKind::SendToLink(_) => Settlement::SendToLink(Err(SendToLinkFailure::Timeout)),

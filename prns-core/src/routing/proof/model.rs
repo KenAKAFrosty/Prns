@@ -1,5 +1,5 @@
 use crate::crypto::{Ed25519SecretKey, Ed25519Signature};
-use crate::engine::{CommandId, PacketReceiptDelivered};
+use crate::engine::{CommandId, InstantMillis, PacketReceiptDelivered};
 use crate::identity::{IdentityHash, IdentitySigningPublicKey};
 use crate::interfaces::InterfaceId;
 use crate::routing::dedup::PacketHash;
@@ -30,6 +30,7 @@ pub struct DeferredProof {
     pub packet_hash: PacketHash,
     pub signing_key: IdentitySigningPublicKey,
     pub signature: Ed25519Signature,
+    pub arrived_at: InstantMillis,
 }
 
 pub struct DeferredProofSign {

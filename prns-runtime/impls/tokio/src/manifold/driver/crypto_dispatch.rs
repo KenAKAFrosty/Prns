@@ -1,5 +1,6 @@
 use crate::engine::{
-    Directive, EngineReaction, EngineState, InstantMillis, Journaled, ProofRequest, WakeSchedules,
+    Directive, EngineReaction, EngineState, InstantMillis, Journaled, ProofRequest,
+    ResolvedReceiptSettlement, WakeSchedules,
 };
 use crate::identity::OpenedToken;
 use crate::manifold::Host;
@@ -146,25 +147,30 @@ where
         match result {
             CryptoResult::Verified {
                 id,
+                packet_hash,
                 settlement,
+                arrived_at,
                 valid,
             } => {
-                let settled = valid && engine.settle_resolved(id).is_some();
-                if settled {
-                    route_reaction(
-                        EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }),
-                        &mut topology.egress,
-                        &topology.ifacs,
-                        &mut topology.pacers,
-                        wire_scratch,
-                        now,
-                        &mut journaled_sink!(),
-                    );
+                if !valid {
+                    return CryptoCompletionEffect::NoWakeChange;
                 }
-                if settled {
-                    settled_receipt_effect(engine)
-                } else {
-                    CryptoCompletionEffect::NoWakeChange
+                match engine.settle_resolved_receipt_proof(id, &packet_hash, arrived_at) {
+                    ResolvedReceiptSettlement::Settled => {
+                        route_reaction(
+                            EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }),
+                            &mut topology.egress,
+                            &topology.ifacs,
+                            &mut topology.pacers,
+                            wire_scratch,
+                            now,
+                            &mut journaled_sink!(),
+                        );
+                        settled_receipt_effect(engine)
+                    }
+                    ResolvedReceiptSettlement::NoMatchingReceipt => {
+                        CryptoCompletionEffect::NoWakeChange
+                    }
                 }
             }
             CryptoResult::Sealed {

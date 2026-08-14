@@ -1613,6 +1613,84 @@ fn a_prove_all_responder_proves_link_data_the_reference_way() {
 }
 
 #[test]
+fn a_deferred_link_proof_updates_inbound_only_after_verification() {
+    use crate::crypto::Ed25519Verifier;
+    use crate::routing::proof::ProofIngest;
+    use crate::wire::WirePacketHeader;
+
+    let mut initiator = neighbor_with_a_route();
+    let mut request = [0u8; BROADCAST_MTU];
+    let dispatch = initiator
+        .write_commanded_link_request(
+            CommandId(7),
+            &establish(),
+            InstantMillis(1_000),
+            vector_establish_entropy(),
+            AttachedInterfaces::new(&arrival_interfaces()),
+            &mut request,
+        )
+        .dispatched();
+    let link_id = dispatch.link_id;
+
+    let mut responder = proving_node_announcer(ProofStrategy::ProveAll);
+    let (proofs, _, _) = reactions_of(&mut responder, &request[..dispatch.wire_bytes], 1_100, 0x99);
+    let (rtts, _, _) = reactions_of(&mut initiator, &proofs[0], 1_250, 0xA5);
+    let (_, _, _) = reactions_of(&mut responder, &rtts[0], 1_600, 0xB5);
+    initiator.links.reconcile_pending_route_evidence(|_, _| {});
+
+    let data = commanded_link_data(&mut initiator, link_id, b"prove this", 2_000, 0xD1);
+    let (answers, _, _) = reactions_of(&mut responder, &data, 2_100, 0xD2);
+    let proof = &answers[0];
+    let (header, payload) = WirePacketHeader::parse(proof).unwrap();
+    let deferred = initiator
+        .settle_receipt_proof_deferred(
+            payload,
+            &DestinationHash::from_address(header.address),
+            PacketHash::of_wire_packet(proof).unwrap(),
+            InstantMillis(2_200),
+        )
+        .expect("the explicit proof resolves the link receipt");
+
+    let Some(LinkPhase::Active { last_inbound, .. }) = initiator.links.phase_for(&link_id) else {
+        panic!("the initiator link remains active");
+    };
+    assert_eq!(
+        *last_inbound,
+        InstantMillis(1_250),
+        "resolving an unverified proof cannot touch Link liveness",
+    );
+    assert_eq!(initiator.receipts.len(), 1);
+    let mut observed = None;
+    initiator
+        .links
+        .reconcile_pending_route_evidence(|_, at| observed = Some(at));
+    assert_eq!(observed, None, "unverified traffic is not route evidence");
+
+    assert!(Ed25519Verifier::new(deferred.signing_key.as_ed25519())
+        .unwrap()
+        .verify(deferred.packet_hash.as_bytes(), &deferred.signature)
+        .is_ok(),);
+    let ProofIngest::SendToLinkDelivered { id, .. } = deferred.ingest else {
+        panic!("the deferred proof belongs to the Link send");
+    };
+    assert_eq!(
+        initiator.settle_resolved_receipt_proof(id, &deferred.packet_hash, deferred.arrived_at,),
+        crate::engine::ResolvedReceiptSettlement::Settled,
+    );
+
+    let Some(LinkPhase::Active { last_inbound, .. }) = initiator.links.phase_for(&link_id) else {
+        panic!("the proven link remains active");
+    };
+    assert_eq!(*last_inbound, InstantMillis(2_200));
+    let mut observed = None;
+    initiator
+        .links
+        .reconcile_pending_route_evidence(|_, at| observed = Some(at));
+    assert_eq!(observed, Some(InstantMillis(2_200)));
+    assert!(initiator.receipts.is_empty());
+}
+
+#[test]
 fn a_forged_link_proof_settles_nothing() {
     let mut initiator = neighbor_with_a_route();
     let mut request = [0u8; BROADCAST_MTU];

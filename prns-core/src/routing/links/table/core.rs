@@ -594,21 +594,6 @@ impl<C: LinkTable> Links<C> {
     }
 
     pub fn note_inbound(&mut self, link_id: &LinkId, now: InstantMillis) {
-        self.note_inbound_with_route_evidence(link_id, now, true);
-    }
-
-    /// Deferred receipt lookup is not authentication. Preserve its existing Link-timer behavior
-    /// without allowing the unresolved proof to become route evidence.
-    pub(crate) fn note_unverified_inbound(&mut self, link_id: &LinkId, now: InstantMillis) {
-        self.note_inbound_with_route_evidence(link_id, now, false);
-    }
-
-    fn note_inbound_with_route_evidence(
-        &mut self,
-        link_id: &LinkId,
-        now: InstantMillis,
-        is_route_evidence: bool,
-    ) {
         let Some(index) = self.index_of(link_id) else {
             return;
         };
@@ -625,7 +610,7 @@ impl<C: LinkTable> Links<C> {
         } = self.table.phase_mut(index)
         {
             *last_inbound = (*last_inbound).max(now);
-            if is_route_evidence && route_evidence.is_some() {
+            if route_evidence.is_some() {
                 *route_evidence_pending = true;
             }
             let deadline = active_deadline(

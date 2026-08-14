@@ -13,8 +13,8 @@ use crate::crypto::{
     X25519PublicKey, X25519SharedSecret,
 };
 use crate::engine::{
-    AnnounceVerifyOwed, CommandId, DecryptOwed, DeferredProofSign, EncryptOwed, RatchetDecryptOwed,
-    Settlement,
+    AnnounceVerifyOwed, CommandId, DecryptOwed, DeferredProofSign, EncryptOwed, InstantMillis,
+    RatchetDecryptOwed, Settlement,
 };
 use crate::identity::{decrypt_token_in_place_with_ratchets, IdentitySigningPublicKey, OpenedBy};
 use crate::interfaces::InterfaceId;
@@ -183,6 +183,7 @@ pub(super) struct EngineVerifyJob {
     pub(super) signature: Ed25519Signature,
     pub(super) id: CommandId,
     pub(super) settlement: Settlement,
+    pub(super) arrived_at: InstantMillis,
 }
 
 pub(super) struct StagedSealJob {
@@ -227,7 +228,9 @@ impl CryptoJob {
 pub(super) enum CryptoResult {
     Verified {
         id: CommandId,
+        packet_hash: PacketHash,
         settlement: Settlement,
+        arrived_at: InstantMillis,
         valid: bool,
     },
     Sealed {
@@ -528,7 +531,9 @@ fn run_crypto_job(job: CryptoJob) -> CryptoResult {
                 .unwrap_or(false);
             CryptoResult::Verified {
                 id: job.id,
+                packet_hash: job.packet_hash,
                 settlement: job.settlement,
+                arrived_at: job.arrived_at,
                 valid,
             }
         }

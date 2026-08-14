@@ -64,6 +64,7 @@ pub use commands::*;
 pub use introspection::{AnnounceRateState, RouteSnapshot};
 pub use node_egress::ReemitAnnounce;
 pub use node_ingress::IngestIo;
+pub use proof::ResolvedReceiptSettlement;
 pub use reaction::{
     Directive, EngineReaction, FanTarget, Journaled, LinkClosedReason, PersistenceFlushCause,
     PersistenceFlushTarget,

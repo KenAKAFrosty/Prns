@@ -166,6 +166,7 @@ impl InboundDispatch {
                                     signature: deferred.signature,
                                     id,
                                     settlement,
+                                    arrived_at: deferred.arrived_at,
                                 }));
                             }
                             lane.release();

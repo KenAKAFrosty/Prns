@@ -5,16 +5,25 @@ use crate::identity::IdentitySigningPublicKey;
 use crate::routing::dedup::PacketHash;
 use crate::routing::links::request::RequestId;
 use crate::routing::links::LinkId;
+use crate::routing::routes::RouteEvidenceHandle;
 use crate::units::ByteLimit;
 use crate::wire::DestinationHash;
 
 /// One table for every send kind, as RNS 1.4.2 keeps every `PacketReceipt` in the one `Transport.receipts` list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReceiptKind {
-    SendSinglePacket,
+    SendSinglePacket {
+        route_evidence: Option<RouteEvidenceHandle>,
+    },
     SendToLink(LinkId),
-    SendRequest { maximum_response_bytes: ByteLimit },
+    SendRequest {
+        maximum_response_bytes: ByteLimit,
+    },
 }
+
+const _: () = {
+    assert!(core::mem::size_of::<ReceiptKind>() == 24);
+};
 
 impl ReceiptKind {
     const fn is_request(self) -> bool {
@@ -260,11 +269,17 @@ impl<C: ReceiptTable> Receipts<C> {
         })
     }
 
-    /// Keyed by command id: a duplicate proof, or a verdict that lost a race to the timeout or a cull, finds nothing and settles nothing, keeping exactly-once.
+    /// Keyed by command id and packet hash: a duplicate proof, a verdict that lost a race to the
+    /// timeout or cull, or a command id later reused for another send settles nothing.
     /// A `SendRequest` row concludes by request id, never here.
-    pub fn settle_resolved(&mut self, command_id: CommandId) -> Option<ProvenReceipt> {
+    pub fn settle_resolved(
+        &mut self,
+        command_id: CommandId,
+        packet_hash: &PacketHash,
+    ) -> Option<ProvenReceipt> {
         let index = (0..self.table.len()).find(|index| {
             self.table.command_ids().get(*index) == Some(&command_id)
+                && self.table.packet_hashes().get(*index) == Some(packet_hash)
                 && self
                     .table
                     .kinds()
@@ -311,7 +326,7 @@ impl<C: ReceiptTable> Receipts<C> {
             ReceiptKind::SendRequest {
                 maximum_response_bytes,
             } => Some(*maximum_response_bytes),
-            ReceiptKind::SendSinglePacket | ReceiptKind::SendToLink(_) => None,
+            ReceiptKind::SendSinglePacket { .. } | ReceiptKind::SendToLink(_) => None,
         }
     }
 
@@ -430,7 +445,9 @@ mod tests {
         OutstandingReceipt {
             packet_hash: PacketHash::new([hash_fill; 32]),
             command_id: CommandId(command_id),
-            kind: ReceiptKind::SendSinglePacket,
+            kind: ReceiptKind::SendSinglePacket {
+                route_evidence: None,
+            },
             peer_signing_key: key,
             sent_at: InstantMillis(sent_at),
             timeout_at: InstantMillis(timeout_at),
@@ -449,7 +466,9 @@ mod tests {
             receipts.track(outstanding(4, 4, key, 400, 7_000)),
             Some(CulledReceipt {
                 command_id: CommandId(2),
-                kind: ReceiptKind::SendSinglePacket,
+                kind: ReceiptKind::SendSinglePacket {
+                    route_evidence: None,
+                },
             }),
             "the stalest send (earliest sent_at) is culled, not the newest",
         );
@@ -509,7 +528,7 @@ mod tests {
         );
         assert_eq!(
             deferred
-                .settle_resolved(resolved.proven.command_id)
+                .settle_resolved(resolved.proven.command_id, &resolved.packet_hash)
                 .as_ref(),
             Some(&proven),
             "a valid verdict settles exactly the resolved receipt",
@@ -559,19 +578,56 @@ mod tests {
             .expect("the destination identifies its receipt");
 
         let proven = receipts
-            .settle_resolved(CommandId(4))
+            .settle_resolved(CommandId(4), &PacketHash::new([0x66; 32]))
             .expect("a valid verdict settles the resolved receipt");
         assert_eq!(proven.command_id, CommandId(4));
         assert_eq!(receipts.len(), 1, "only the settled receipt is removed");
 
         assert!(
-            receipts.settle_resolved(CommandId(4)).is_none(),
+            receipts
+                .settle_resolved(CommandId(4), &PacketHash::new([0x66; 32]))
+                .is_none(),
             "a second verdict for the same command settles nothing, exactly once",
         );
         assert_eq!(
             receipts.len(),
             1,
             "the duplicate verdict removes no other receipt",
+        );
+    }
+
+    #[test]
+    fn a_stale_verdict_cannot_settle_a_reused_command_id() {
+        let (_, key) = signer(0x66);
+        let stale_hash = PacketHash::new([0x66; 32]);
+        let mut receipts = TestReceipts::default();
+        receipts.track(outstanding(0x66, 4, key, 100, 7_000));
+
+        receipts
+            .resolve_proof_by_destination(&stale_hash.proof_destination())
+            .expect("the old worker resolves the original receipt");
+        assert_eq!(
+            receipts
+                .pop_expired(InstantMillis(7_000))
+                .map(|receipt| receipt.command_id),
+            Some(CommandId(4)),
+            "the original receipt can time out while verification is in flight",
+        );
+
+        let replacement_hash = PacketHash::new([0x77; 32]);
+        receipts.track(outstanding(0x77, 4, key, 8_000, 15_000));
+        assert!(
+            receipts
+                .settle_resolved(CommandId(4), &stale_hash)
+                .is_none(),
+            "the old verdict must match both command id and packet hash",
+        );
+        assert_eq!(receipts.len(), 1, "the reused command remains outstanding");
+        assert!(
+            receipts
+                .settle_resolved(CommandId(4), &replacement_hash)
+                .is_some(),
+            "the replacement's own proof can still settle it",
         );
     }
 
@@ -699,7 +755,9 @@ mod tests {
             receipts.settle_by_explicit_proof(&named, &signature),
             Some(ProvenReceipt {
                 command_id: CommandId(2),
-                kind: ReceiptKind::SendSinglePacket,
+                kind: ReceiptKind::SendSinglePacket {
+                    route_evidence: None,
+                },
                 sent_at: InstantMillis(250),
             }),
         );
@@ -795,7 +853,9 @@ mod tests {
             receipts.settle_by_implicit_proof(&signature),
             Some(ProvenReceipt {
                 command_id: CommandId(2),
-                kind: ReceiptKind::SendSinglePacket,
+                kind: ReceiptKind::SendSinglePacket {
+                    route_evidence: None,
+                },
                 sent_at: InstantMillis(300),
             }),
         );
