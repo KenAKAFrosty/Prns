@@ -57,6 +57,11 @@ import type {
 } from "../contract.js";
 import { MemoryResourceStream } from "../memory_resource.js";
 import { AutoWifiInterface } from "./auto_wifi.js";
+import {
+  bluetoothStage,
+  disconnectBluetoothServer,
+} from "./bluetooth/gatt.js";
+import { BrowserBluetoothSession } from "./bluetooth/session.js";
 import { byteKey } from "./bytes.js";
 import {
   bigintField,
@@ -79,8 +84,6 @@ import {
 import { hostGlobal } from "./host_apis.js";
 import type {
   BrowserBluetooth,
-  BrowserBluetoothCharacteristicEvent,
-  BrowserBluetoothDevice,
   BrowserBluetoothRemoteGattCharacteristic,
   BrowserBluetoothRemoteGattServer,
   BrowserBluetoothRemoteGattService,
@@ -1052,11 +1055,6 @@ type UsbAutoInboundMessage =
   | Tag<"HelloAck", Uint8Array>
   | Tag<"Data", Uint8Array>;
 
-type BluetoothControl =
-  | Tag<"Hello", Uint8Array>
-  | Tag<"Welcome", Uint8Array>
-  | Tag<"Close", string>;
-
 type SessionWriteOutcome = Tag<"Written"> | InterfaceSessionFailure;
 type SessionHandleOutcome = Tag<"Handled"> | InterfaceSessionFailure;
 type UsbReadOutcome =
@@ -1095,10 +1093,6 @@ type OutboundTakeOutcome =
   | Tag<"Outbound", readonly PrnsOutboundFrame[]>
   | Extract<InterfaceSessionFailure, Tag<"OutboundQueueFull", unknown>>
   | RuntimeRejected;
-type BluetoothStartOutcome = Tag<"Started"> | BluetoothConnectFailure;
-type BluetoothHandleOutcome =
-  | SessionHandleOutcome
-  | AlreadyActive<"bluetooth">;
 type IdentityGenerationOutcome =
   | Tag<"Generated", IdentitySecretKey>
   | HostApiUnavailable<"Crypto">
@@ -1114,14 +1108,6 @@ type UsbStageOutcome<Value> =
   | PermissionDenied<"usb-auto">
   | Cancelled<"usb-auto">
   | ConnectionFailed<"usb-auto">;
-type BluetoothStageOutcome<Value> =
-  | Tag<"Completed", Value>
-  | PermissionDenied<"bluetooth">
-  | Cancelled<"bluetooth">
-  | ConnectionFailed<"bluetooth">;
-type CharacteristicBytesOutcome =
-  | Tag<"Decoded", Uint8Array>
-  | Extract<InterfaceSessionFailure, Tag<"ProtocolViolation", unknown>>;
 type RuntimeOutboundDrainOutcome =
   | Tag<"Drained", readonly PrnsOutboundFrame[]>
   | RuntimeRejected;
@@ -1129,8 +1115,6 @@ type RuntimeOutboundDrainOutcome =
 const USB_AUTO_PROBE_INTERVAL_MS = 500;
 const USB_AUTO_OUTBOUND_POLL_MS = 25;
 const WEBUSB_MIN_TRANSFER_BYTES = 512;
-const BLUETOOTH_HANDSHAKE_TIMEOUT_MS = 10_000;
-const BLUETOOTH_OUTBOUND_POLL_MS = 25;
 const INTERFACE_OUTBOUND_QUEUE_DEPTH = 64;
 let nextBrowserUsbAutoTag = 0;
 const LINUX_WEBUSB_SETUP_HINT =
@@ -1797,355 +1781,6 @@ export class BluetoothInterface {
       }
       return connectFailure("bluetooth", stage, error);
     }
-  }
-}
-
-class BrowserBluetoothSession implements BluetoothSession {
-  readonly name = "bluetooth" as const;
-  readonly #host: RuntimeHost;
-  readonly #server: BrowserBluetoothRemoteGattServer;
-  readonly #control: BrowserBluetoothRemoteGattCharacteristic;
-  readonly #data: BrowserBluetoothRemoteGattCharacteristic;
-  readonly #reassembler: BluetoothReassemblerBinding;
-  #interfaceId?: InterfaceId;
-  #writeQueue: Promise<SessionWriteOutcome> = Promise.resolve(Tag("Written"));
-  #closed = false;
-  #confirmed = false;
-  #status: InterfaceSessionStatus = Tag("Negotiating");
-  #connectFailure?: BluetoothConnectFailure;
-
-  constructor(
-    host: RuntimeHost,
-    server: BrowserBluetoothRemoteGattServer,
-    control: BrowserBluetoothRemoteGattCharacteristic,
-    data: BrowserBluetoothRemoteGattCharacteristic,
-  ) {
-    this.#host = host;
-    this.#server = server;
-    this.#control = control;
-    this.#data = data;
-    this.#reassembler = host.createBluetoothReassembler();
-  }
-
-  get interfaceId(): InterfaceId {
-    if (!this.#interfaceId) {
-      throw new PrnsValidationError(
-        "invalid-component",
-        "Bluetooth peer interface is not registered yet",
-      );
-    }
-    return this.#interfaceId;
-  }
-
-  get status(): InterfaceSessionStatus {
-    return this.#status;
-  }
-
-  async start(): Promise<BluetoothStartOutcome> {
-    const controlStarted = await bluetoothStage(
-      "Handshake",
-      () => this.#control.startNotifications(),
-    );
-    if (controlStarted.tag !== "Completed") {
-      return controlStarted;
-    }
-    this.#control.addEventListener("characteristicvaluechanged", (event) => {
-      try {
-        const handled = this.#handleControlEvent(
-          event as BrowserBluetoothCharacteristicEvent,
-        );
-        if (handled.tag !== "Handled") {
-          this.#handleEventFailure(handled);
-        }
-      } catch (error) {
-        this.#handleEventFailure(unexpectedSessionFailure(error));
-      }
-    });
-    if (this.#data !== this.#control) {
-      const dataStarted = await bluetoothStage(
-        "Handshake",
-        () => this.#data.startNotifications(),
-      );
-      if (dataStarted.tag !== "Completed") {
-        return dataStarted;
-      }
-      this.#data.addEventListener("characteristicvaluechanged", (event) => {
-        try {
-          const handled = this.#handleDataEvent(
-            event as BrowserBluetoothCharacteristicEvent,
-          );
-          if (handled.tag !== "Handled") {
-            this.#handleEventFailure(handled);
-          }
-        } catch (error) {
-          this.#handleEventFailure(unexpectedSessionFailure(error));
-        }
-      });
-    }
-    const written = await this.#writeControl(this.#host.bluetoothDialerHello());
-    if (written.tag !== "Written") {
-      return sessionFailureToConnectFailure("bluetooth", "Handshake", written);
-    }
-    const confirmed = await this.#waitForPeer();
-    if (confirmed.tag !== "Confirmed") {
-      return confirmed;
-    }
-    void this.#outboundLoop();
-    return Tag("Started");
-  }
-
-  async close(): Promise<InterfaceCloseOutcome> {
-    if (this.#closed) {
-      return closedSessionOutcome(this.#status);
-    }
-    this.#closed = true;
-    const causes: InterfaceCleanupFailure[] = [];
-    if (this.#interfaceId) {
-      const detached = this.#host.deactivateInterface(this.#interfaceId);
-      if (detached.tag !== "Detached") {
-        causes.push(Tag("RuntimeDetachFailed", { detail: detached.data.detail }));
-      }
-    }
-    const pendingWrite = await this.#writeQueue;
-    if (pendingWrite.tag !== "Written") {
-      causes.push(
-        Tag("TransportCloseFailed", {
-          detail: describeInterfaceSessionFailure(pendingWrite),
-        }),
-      );
-    }
-    const disconnected = disconnectBluetoothServer(this.#server);
-    if (disconnected) {
-      causes.push(disconnected);
-    }
-    if (hasCleanupFailures(causes)) {
-      const failed = closeFailed(causes);
-      this.#status = Tag("Failed", failed);
-      return failed;
-    }
-    this.#status = Tag("Closed");
-    return Tag("Closed");
-  }
-
-  async #waitForPeer(): Promise<Tag<"Confirmed"> | BluetoothConnectFailure> {
-    const started = Date.now();
-    while (!this.#confirmed && !this.#closed && !this.#connectFailure) {
-      if (Date.now() - started > BLUETOOTH_HANDSHAKE_TIMEOUT_MS) {
-        const timedOut: ConnectTimedOut<"bluetooth"> = Tag("TimedOut", {
-          interface: "bluetooth",
-          stage: "Handshake",
-          timeoutMs: BLUETOOTH_HANDSHAKE_TIMEOUT_MS,
-        });
-        this.#abortConnect(timedOut);
-        return timedOut;
-      }
-      await delay(25);
-    }
-    if (this.#connectFailure) {
-      return this.#connectFailure;
-    }
-    if (!this.#confirmed) {
-      return Tag("ConnectionFailed", {
-        interface: "bluetooth",
-        stage: "Handshake",
-        detail: "Bluetooth link closed before peer confirmation",
-      });
-    }
-    return Tag("Confirmed");
-  }
-
-  #handleControlEvent(
-    event: BrowserBluetoothCharacteristicEvent,
-  ): BluetoothHandleOutcome {
-    const decoded = characteristicBytes(event);
-    if (decoded.tag !== "Decoded") {
-      return decoded;
-    }
-    const bytes = decoded.data;
-    let control: BluetoothControl;
-    try {
-      control = parseBluetoothControl(this.#host.bluetoothDecodeControl(bytes));
-    } catch (error) {
-      return Tag("ProtocolViolation", {
-        protocol: "Bluetooth",
-        detail: describeHostError(error),
-      });
-    }
-    return match_into<BluetoothHandleOutcome>().from(control, {
-      Hello: () =>
-        this.#data === this.#control
-          ? this.#handleDataBytes(bytes)
-          : Tag("Handled"),
-      Welcome: (identity) => {
-        if (this.#confirmed) {
-          return Tag("Handled");
-        }
-        let registration: HostedInterfaceRegistration<"bluetooth">;
-        try {
-          registration = {
-            interfaceName: "bluetooth",
-            supervisorKind: "bluetooth-auto",
-            kind: "bluetooth-peer",
-            channelTag: channelTag(identity),
-            bitrateBps: this.#host.bluetoothBitrateBps(),
-            hardwareMtu: this.#host.bluetoothHardwareMtu(),
-          };
-        } catch (error) {
-          return Tag("ProtocolViolation", {
-            protocol: "Bluetooth",
-            detail: describeHostError(error),
-          });
-        }
-        const registered = this.#host.registerInterface(registration);
-        if (registered.tag !== "Registered") {
-          return registered;
-        }
-        this.#interfaceId = registered.data;
-        this.#confirmed = true;
-        this.#status = Tag("Active");
-        return Tag("Handled");
-      },
-      Close: () => {
-        void this.close();
-        return Tag("Handled");
-      },
-    });
-  }
-
-  #handleDataEvent(
-    event: BrowserBluetoothCharacteristicEvent,
-  ): SessionHandleOutcome {
-    const decoded = characteristicBytes(event);
-    return decoded.tag === "Decoded"
-      ? this.#handleDataBytes(decoded.data)
-      : decoded;
-  }
-
-  #handleDataBytes(bytes: Uint8Array): SessionHandleOutcome {
-    if (!this.#confirmed || !this.#interfaceId) {
-      return Tag("Handled");
-    }
-    let frame: Uint8Array | undefined;
-    try {
-      frame = this.#reassembler.absorb(bytes);
-    } catch (error) {
-      return Tag("ProtocolViolation", {
-        protocol: "Bluetooth",
-        detail: describeHostError(error),
-      });
-    }
-    if (frame && frame.length > 0) {
-      const ingested = this.#host.ingest(this.#interfaceId, packetFrame(frame));
-      return ingested.tag === "Accepted" ? Tag("Handled") : ingested;
-    }
-    return Tag("Handled");
-  }
-
-  #handleEventFailure(
-    failure: InterfaceSessionFailure | AlreadyActive<"bluetooth">,
-  ): void {
-    if (!this.#confirmed) {
-      this.#abortConnect(
-        failure.tag === "AlreadyActive"
-          ? failure
-          : sessionFailureToConnectFailure("bluetooth", "Handshake", failure),
-      );
-      return;
-    }
-    const sessionFailure =
-      failure.tag === "AlreadyActive"
-        ? unexpectedSessionFailure(
-            `Bluetooth peer became active more than once for ${failure.data.target}`,
-          )
-        : failure;
-    void this.#fail(sessionFailure);
-  }
-
-  #abortConnect(failure: BluetoothConnectFailure): void {
-    if (this.#closed) {
-      return;
-    }
-    this.#connectFailure = failure;
-    this.#status = Tag(
-      "Failed",
-      failure.tag === "RuntimeRejected"
-        ? failure
-        : unexpectedSessionFailure(describeBluetoothConnectFailure(failure)),
-    );
-    this.#closed = true;
-    if (this.#interfaceId) {
-      this.#host.deactivateInterface(this.#interfaceId);
-    }
-    disconnectBluetoothServer(this.#server);
-  }
-
-  async #outboundLoop(): Promise<void> {
-    try {
-      while (!this.#closed) {
-        const interfaceId = this.#interfaceId;
-        if (this.#confirmed && interfaceId) {
-          const outbound = this.#host.takeOutboundFor(interfaceId);
-          if (outbound.tag !== "Outbound") {
-            await this.#fail(outbound);
-            return;
-          }
-          for (const frame of outbound.data) {
-            for (const fragment of this.#host.bluetoothDataFragments(frame.bytes)) {
-              const written = await this.#writeData(fragment);
-              if (written.tag !== "Written") {
-                await this.#fail(written);
-                return;
-              }
-            }
-          }
-        }
-        await delay(BLUETOOTH_OUTBOUND_POLL_MS);
-      }
-    } catch (error) {
-      if (!this.#closed) {
-        await this.#fail(unexpectedSessionFailure(error));
-      }
-    }
-  }
-
-  async #fail(sessionFailure: InterfaceSessionFailure): Promise<void> {
-    if (this.#closed) {
-      return;
-    }
-    this.#status = Tag("Failed", sessionFailure);
-    this.#closed = true;
-    if (this.#interfaceId) {
-      this.#host.deactivateInterface(this.#interfaceId);
-    }
-    await this.#writeQueue;
-    disconnectBluetoothServer(this.#server);
-  }
-
-  async #writeControl(bytes: Uint8Array): Promise<SessionWriteOutcome> {
-    return this.#write(this.#control, bytes);
-  }
-
-  async #writeData(bytes: Uint8Array): Promise<SessionWriteOutcome> {
-    return this.#write(this.#data, bytes);
-  }
-
-  async #write(
-    characteristic: BrowserBluetoothRemoteGattCharacteristic,
-    bytes: Uint8Array,
-  ): Promise<SessionWriteOutcome> {
-    if (this.#closed || bytes.length === 0) {
-      return Tag("Written");
-    }
-    const write = this.#writeQueue
-      .then(async (previous): Promise<SessionWriteOutcome> => {
-        if (previous.tag !== "Written" || this.#closed) {
-          return previous;
-        }
-        return writeBluetoothValue(characteristic, bytes);
-      })
-      .catch((error: unknown) => unexpectedSessionFailure(error));
-    this.#writeQueue = write;
-    return write;
   }
 }
 
@@ -3786,27 +3421,6 @@ function parseUsbAutoMessage(raw: unknown): UsbAutoInboundMessage {
   });
 }
 
-type RawBluetoothControlType = "hello" | "welcome" | "close";
-
-const RAW_BLUETOOTH_CONTROL_TYPES: ReadonlySet<string> =
-  new Set<RawBluetoothControlType>(["hello", "welcome", "close"]);
-
-function parseBluetoothControl(raw: unknown): BluetoothControl {
-  const object = record(raw, "BluetoothControl");
-  const type = stringField(object, "type");
-  if (!RAW_BLUETOOTH_CONTROL_TYPES.has(type)) {
-    throw new PrnsValidationError(
-      "invalid-component",
-      `unknown Bluetooth control ${type}`,
-    );
-  }
-  return match(type as RawBluetoothControlType, {
-    hello: () => Tag("Hello", bytesField(object, "identity")),
-    welcome: () => Tag("Welcome", bytesField(object, "identity")),
-    close: () => Tag("Close", stringField(object, "reason")),
-  });
-}
-
 function parseOutboundFrame(raw: unknown): PrnsOutboundFrame {
   const object = record(raw, "PrnsOutboundFrame");
   const type = stringField(object, "type");
@@ -4647,32 +4261,6 @@ async function usbStage<T>(
   }
 }
 
-async function bluetoothStage<T>(
-  stage: InterfaceConnectStage,
-  action: () => Promise<T>,
-): Promise<BluetoothStageOutcome<T>> {
-  try {
-    return Tag("Completed", await action());
-  } catch (error) {
-    const name = domExceptionName(error);
-    if (name === "SecurityError" || name === "NotAllowedError") {
-      return Tag("PermissionDenied", {
-        interface: "bluetooth",
-        stage,
-        detail: describeHostError(error),
-      });
-    }
-    if (name === "NotFoundError" && stage === "DeviceSelection") {
-      return Tag("Cancelled", { interface: "bluetooth", stage });
-    }
-    return Tag("ConnectionFailed", {
-      interface: "bluetooth",
-      stage,
-      detail: describeHostError(error),
-    });
-  }
-}
-
 function describeUsbError(error: unknown, stage: string): string {
   const base = describeHostError(error);
   const name = domExceptionName(error);
@@ -4698,19 +4286,6 @@ async function closeUsbDevice(
   }
 }
 
-function disconnectBluetoothServer(
-  server: BrowserBluetoothRemoteGattServer,
-): InterfaceCleanupFailure | undefined {
-  try {
-    server.disconnect();
-    return undefined;
-  } catch (error) {
-    return Tag("TransportCloseFailed", {
-      detail: `disconnect Bluetooth server: ${describeHostError(error)}`,
-    });
-  }
-}
-
 async function optionalBluetoothCharacteristic(
   service: BrowserBluetoothRemoteGattService,
   uuid: string,
@@ -4720,55 +4295,6 @@ async function optionalBluetoothCharacteristic(
   } catch {
     return undefined;
   }
-}
-
-function characteristicBytes(
-  event: BrowserBluetoothCharacteristicEvent,
-): CharacteristicBytesOutcome {
-  const value = event.target?.value;
-  if (!value) {
-    return Tag("ProtocolViolation", {
-      protocol: "Bluetooth",
-      detail: "Bluetooth characteristic event did not include a value",
-    });
-  }
-  return Tag(
-    "Decoded",
-    new Uint8Array(value.buffer, value.byteOffset, value.byteLength),
-  );
-}
-
-async function writeBluetoothValue(
-  characteristic: BrowserBluetoothRemoteGattCharacteristic,
-  bytes: Uint8Array,
-): Promise<SessionWriteOutcome> {
-  const value = arrayBufferForBluetooth(bytes);
-  try {
-    if (characteristic.writeValueWithoutResponse) {
-      await characteristic.writeValueWithoutResponse(value);
-    } else if (characteristic.writeValueWithResponse) {
-      await characteristic.writeValueWithResponse(value);
-    } else if (characteristic.writeValue) {
-      await characteristic.writeValue(value);
-    } else {
-      return Tag("TransferFailed", {
-        direction: "Outbound",
-        detail: "Bluetooth characteristic does not support writes",
-      });
-    }
-    return Tag("Written");
-  } catch (error) {
-    return Tag("TransferFailed", {
-      direction: "Outbound",
-      detail: describeHostError(error),
-    });
-  }
-}
-
-function arrayBufferForBluetooth(bytes: Uint8Array): ArrayBuffer {
-  const out = new ArrayBuffer(bytes.length);
-  new Uint8Array(out).set(bytes);
-  return out;
 }
 
 function arrayBufferForUsb(bytes: Uint8Array): ArrayBuffer {
@@ -4950,39 +4476,6 @@ async function loadOrCreateBleIdentity(
     });
   }
   return Tag("Available", generated);
-}
-
-function sessionFailureToConnectFailure(
-  interfaceName: "bluetooth",
-  stage: InterfaceConnectStage,
-  failure: InterfaceSessionFailure,
-): BluetoothConnectFailure {
-  if (failure.tag === "RuntimeRejected") {
-    return failure;
-  }
-  return Tag("ConnectionFailed", {
-    interface: interfaceName,
-    stage,
-    detail: describeInterfaceSessionFailure(failure),
-  });
-}
-
-function describeBluetoothConnectFailure(
-  failure: BluetoothConnectFailure,
-): string {
-  return match(failure, {
-    HostApiUnavailable: ({ api }) => `${api} is unavailable`,
-    PermissionDenied: ({ detail }) => detail,
-    Cancelled: ({ stage }) => `Bluetooth ${stage} was cancelled`,
-    UnsupportedDevice: ({ capability }) =>
-      `Bluetooth device does not provide ${capability}`,
-    TimedOut: ({ stage, timeoutMs }) =>
-      `Bluetooth ${stage} timed out after ${timeoutMs}ms`,
-    ConnectionFailed: ({ detail }) => detail,
-    AlreadyActive: ({ target }) => `${target} is already active`,
-    StableIdentityUnavailable: ({ detail }) => detail,
-    RuntimeRejected: ({ operation, detail }) => `${operation}: ${detail}`,
-  });
 }
 
 function webSocketCommandFailure(
