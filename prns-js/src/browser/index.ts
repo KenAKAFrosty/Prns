@@ -63,6 +63,21 @@ import {
   describeHostError,
   domExceptionName,
 } from "./host_errors.js";
+import { hostGlobal } from "./host_apis.js";
+import type {
+  BrowserBluetooth,
+  BrowserBluetoothCharacteristicEvent,
+  BrowserBluetoothDevice,
+  BrowserBluetoothRemoteGattCharacteristic,
+  BrowserBluetoothRemoteGattServer,
+  BrowserBluetoothRemoteGattService,
+  BrowserUsb,
+  BrowserUsbAlternateInterface,
+  BrowserUsbConfiguration,
+  BrowserUsbDevice,
+  BrowserUsbDeviceFilter,
+  BrowserUsbEndpoint,
+} from "./host_apis.js";
 import {
   blobResourceSource,
   byteResourceSource,
@@ -1056,138 +1071,6 @@ type BrowserPersistenceRestoreReport = {
 
 export const BROWSER_PERSISTENCE_VERSION = 1;
 
-type HostGlobal = typeof globalThis & {
-  crypto?: {
-    getRandomValues<T extends Uint8Array>(array: T): T;
-  };
-  navigator?: {
-    bluetooth?: BrowserBluetooth;
-    usb?: BrowserUsb;
-  };
-  localStorage?: {
-    getItem(key: string): string | null;
-    setItem(key: string, value: string): void;
-  };
-  btoa?: (data: string) => string;
-  atob?: (data: string) => string;
-  WebSocket?: typeof WebSocket;
-};
-
-type BrowserBluetooth = {
-  requestDevice(options: BrowserBluetoothRequestOptions): Promise<BrowserBluetoothDevice>;
-};
-
-type BrowserBluetoothRequestOptions = {
-  filters: readonly BrowserBluetoothRequestFilter[];
-  optionalServices?: readonly string[];
-};
-
-type BrowserBluetoothRequestFilter = {
-  services: readonly string[];
-};
-
-type BrowserBluetoothDevice = {
-  readonly gatt?: BrowserBluetoothRemoteGattServer;
-};
-
-type BrowserBluetoothRemoteGattServer = {
-  connect(): Promise<BrowserBluetoothRemoteGattServer>;
-  disconnect(): void;
-  getPrimaryService(service: string): Promise<BrowserBluetoothRemoteGattService>;
-};
-
-type BrowserBluetoothRemoteGattService = {
-  getCharacteristic(characteristic: string): Promise<BrowserBluetoothRemoteGattCharacteristic>;
-};
-
-type BrowserBluetoothRemoteGattCharacteristic = EventTarget & {
-  readonly value?: DataView;
-  startNotifications(): Promise<BrowserBluetoothRemoteGattCharacteristic>;
-  writeValue?(value: BufferSource): Promise<void>;
-  writeValueWithResponse?(value: BufferSource): Promise<void>;
-  writeValueWithoutResponse?(value: BufferSource): Promise<void>;
-};
-
-type BrowserBluetoothCharacteristicEvent = Event & {
-  target: BrowserBluetoothRemoteGattCharacteristic | null;
-};
-
-type BrowserUsb = {
-  requestDevice(options: BrowserUsbRequestOptions): Promise<BrowserUsbDevice>;
-};
-
-type BrowserUsbRequestOptions = {
-  filters: readonly BrowserUsbDeviceFilter[];
-};
-
-type BrowserUsbDeviceFilter = {
-  vendorId?: number;
-  productId?: number;
-  classCode?: number;
-  subclassCode?: number;
-  protocolCode?: number;
-  serialNumber?: string;
-};
-
-type BrowserUsbDevice = {
-  readonly vendorId: number;
-  readonly productId: number;
-  readonly manufacturerName?: string;
-  readonly productName?: string;
-  readonly serialNumber?: string;
-  readonly configurations: readonly BrowserUsbConfiguration[];
-  readonly configuration?: BrowserUsbConfiguration | null;
-  open(): Promise<void>;
-  close(): Promise<void>;
-  selectConfiguration(configurationValue: number): Promise<void>;
-  claimInterface(interfaceNumber: number): Promise<void>;
-  releaseInterface(interfaceNumber: number): Promise<void>;
-  selectAlternateInterface?(
-    interfaceNumber: number,
-    alternateSetting: number,
-  ): Promise<void>;
-  transferIn(endpointNumber: number, length: number): Promise<BrowserUsbInTransferResult>;
-  transferOut(
-    endpointNumber: number,
-    data: BufferSource,
-  ): Promise<BrowserUsbOutTransferResult>;
-};
-
-type BrowserUsbConfiguration = {
-  readonly configurationValue: number;
-  readonly interfaces: readonly BrowserUsbInterface[];
-};
-
-type BrowserUsbInterface = {
-  readonly interfaceNumber: number;
-  readonly alternates: readonly BrowserUsbAlternateInterface[];
-  readonly claimed?: boolean;
-};
-
-type BrowserUsbAlternateInterface = {
-  readonly alternateSetting: number;
-  readonly interfaceClass?: number;
-  readonly interfaceSubclass?: number;
-  readonly interfaceProtocol?: number;
-  readonly endpoints: readonly BrowserUsbEndpoint[];
-};
-
-type BrowserUsbEndpoint = {
-  readonly endpointNumber: number;
-  readonly direction: "in" | "out";
-  readonly type: "bulk" | "interrupt" | "isochronous";
-  readonly packetSize: number;
-};
-
-type BrowserUsbInTransferResult = {
-  readonly data?: DataView;
-  readonly status: "ok" | "stall" | "babble";
-};
-
-type BrowserUsbOutTransferResult = {
-  readonly bytesWritten: number;
-  readonly status: "ok" | "stall";
-};
 
 type UsbAutoInboundMessage =
   | Tag<"Hello">
@@ -5941,10 +5824,6 @@ function linkClosedReason(
     peerClosed: () => "PeerClosed" as const,
     malformedRtt: () => "MalformedRtt" as const,
   });
-}
-
-function hostGlobal(): HostGlobal {
-  return globalThis as HostGlobal;
 }
 
 function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
