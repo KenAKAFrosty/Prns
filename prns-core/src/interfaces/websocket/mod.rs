@@ -12,7 +12,8 @@ mod detection;
 #[cfg(feature = "alloc")]
 pub use detection::{
     DecodedWebSocketFrame, WebSocketFrameDecodeOutcome, WebSocketFramingDecoder,
-    WebSocketFramingState,
+    WebSocketFramingResolution, WebSocketFramingState, WebSocketSessionFrameDecodeOutcome,
+    WebSocketSessionFraming, WebSocketSessionOutboundAction,
 };
 pub use detection::{WebSocketFramingSelection, WebSocketFramingSelectionParseError};
 
@@ -20,6 +21,7 @@ pub const WEBSOCKET_BITRATE_ESTIMATE: BitrateBps = TRAVERSED_NETWORK_BITRATE_EST
 
 pub const WEBSOCKET_HW_MTU_CAP: usize = MAX_LINK_MTU;
 pub const FRAME_CAP: usize = MAX_LINK_MTU + IFAC_MAX_SIZE;
+pub const AUTO_DETECTION_GRACE_PERIOD_MILLIS: u64 = 250;
 
 prns_macros::iterable_enum! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -5,10 +5,13 @@ use tokio_tungstenite::WebSocketStream;
 
 use prns_core::engine::InstantMillis;
 use prns_core::interfaces::websocket::{
-    WebSocketFrameDecodeOutcome, WebSocketFramingDecoder, WebSocketFramingSelection,
-    WebSocketWireDecoder, WebSocketWireFraming, FRAME_CAP,
+    WebSocketFramingResolution, WebSocketFramingSelection,
+    WebSocketSessionFrameDecodeOutcome as SessionFrameDecodeOutcome,
+    WebSocketSessionFraming as SessionFraming,
+    WebSocketSessionOutboundAction as SessionOutboundAction, WebSocketWireFraming,
+    AUTO_DETECTION_GRACE_PERIOD_MILLIS,
 };
-use prns_core::interfaces::{BitrateBps, FrameSink};
+use prns_core::interfaces::BitrateBps;
 use prns_runtime::manifold::airtime::{frame_airtime_us, AirtimeLedger};
 use prns_runtime::manifold::driver::TokioInterfaceStatus;
 use prns_runtime::manifold::interface_seam::{
@@ -16,7 +19,8 @@ use prns_runtime::manifold::interface_seam::{
 };
 use prns_runtime::manifold::throughput::ThroughputLedger;
 
-const AUTO_DETECTION_GRACE_PERIOD: std::time::Duration = std::time::Duration::from_millis(250);
+const AUTO_DETECTION_GRACE_PERIOD: std::time::Duration =
+    std::time::Duration::from_millis(AUTO_DETECTION_GRACE_PERIOD_MILLIS);
 const SOCKET_BUFFER_LEN: usize = 16 * 1024;
 
 pub(crate) struct SessionConfig {
@@ -51,148 +55,6 @@ pub(crate) fn config(selection: WebSocketFramingSelection) -> WebSocketConfig {
         )
         .max_message_size(Some(message_cap))
         .max_frame_size(Some(message_cap))
-}
-
-enum PendingOutbound {
-    Empty,
-    Frame(Vec<u8>),
-}
-
-enum SessionFraming {
-    Detecting {
-        decoder: WebSocketFramingDecoder,
-        pending_outbound: PendingOutbound,
-    },
-    Ready(WebSocketWireDecoder),
-}
-
-enum SessionFrameDecodeOutcome {
-    Incomplete,
-    AmbiguousFraming,
-    Frame,
-    ResolvedFrame(ResolvedPendingOutbound),
-}
-
-struct ResolvedPendingOutbound {
-    framing: WebSocketWireFraming,
-    pending: PendingOutbound,
-}
-
-enum SessionOutboundAction {
-    Queued,
-    Send(WebSocketWireFraming),
-    Rejected,
-    Backpressured,
-}
-
-impl SessionFraming {
-    fn new(selection: WebSocketFramingSelection) -> Self {
-        match selection {
-            WebSocketFramingSelection::Auto => Self::Detecting {
-                decoder: WebSocketFramingDecoder::new(WebSocketFramingSelection::Auto),
-                pending_outbound: PendingOutbound::Empty,
-            },
-            WebSocketFramingSelection::Fixed(framing) => {
-                Self::Ready(WebSocketWireDecoder::new(framing))
-            }
-        }
-    }
-
-    fn raw_fallback_is_armed(&self) -> bool {
-        matches!(
-            self,
-            Self::Detecting {
-                pending_outbound: PendingOutbound::Frame(_),
-                ..
-            }
-        )
-    }
-
-    fn can_read_outbound(&self) -> bool {
-        match self {
-            Self::Detecting {
-                pending_outbound: PendingOutbound::Empty,
-                ..
-            }
-            | Self::Ready(_) => true,
-            Self::Detecting {
-                pending_outbound: PendingOutbound::Frame(_),
-                ..
-            } => false,
-        }
-    }
-
-    fn stage_outbound(&mut self, packet: &[u8]) -> SessionOutboundAction {
-        match self {
-            Self::Detecting {
-                pending_outbound, ..
-            } => match pending_outbound {
-                PendingOutbound::Empty if !packet.is_empty() && packet.len() <= FRAME_CAP => {
-                    *pending_outbound = PendingOutbound::Frame(packet.to_vec());
-                    SessionOutboundAction::Queued
-                }
-                PendingOutbound::Empty => SessionOutboundAction::Rejected,
-                PendingOutbound::Frame(_) => SessionOutboundAction::Backpressured,
-            },
-            Self::Ready(decoder) => SessionOutboundAction::Send(decoder.framing()),
-        }
-    }
-
-    fn resolve_raw_fallback(&mut self) -> ResolvedPendingOutbound {
-        self.resolve(WebSocketWireFraming::RawPacket)
-    }
-
-    fn next_frame_into(
-        &mut self,
-        input: &[u8],
-        offset: &mut usize,
-        sink: &mut dyn FrameSink,
-    ) -> Result<SessionFrameDecodeOutcome, prns_core::interfaces::websocket::DecodeError> {
-        match self {
-            Self::Ready(decoder) => decoder.next_frame_into(input, offset, sink).map(|frame| {
-                if frame.is_some() {
-                    SessionFrameDecodeOutcome::Frame
-                } else {
-                    SessionFrameDecodeOutcome::Incomplete
-                }
-            }),
-            Self::Detecting { decoder, .. } => {
-                let outcome = decoder.next_frame_into(input, offset, sink)?;
-                match outcome {
-                    WebSocketFrameDecodeOutcome::Incomplete => {
-                        Ok(SessionFrameDecodeOutcome::Incomplete)
-                    }
-                    WebSocketFrameDecodeOutcome::AmbiguousFraming => {
-                        Ok(SessionFrameDecodeOutcome::AmbiguousFraming)
-                    }
-                    WebSocketFrameDecodeOutcome::Frame(frame) => {
-                        let pending = self.resolve(frame.framing());
-                        Ok(SessionFrameDecodeOutcome::ResolvedFrame(pending))
-                    }
-                }
-            }
-        }
-    }
-
-    fn resolve(&mut self, framing: WebSocketWireFraming) -> ResolvedPendingOutbound {
-        let pending = match self {
-            Self::Detecting {
-                pending_outbound, ..
-            } => std::mem::replace(pending_outbound, PendingOutbound::Empty),
-            Self::Ready(_) => PendingOutbound::Empty,
-        };
-        *self = Self::Ready(WebSocketWireDecoder::new(framing));
-        ResolvedPendingOutbound { framing, pending }
-    }
-
-    fn into_pending_outbound(self) -> PendingOutbound {
-        match self {
-            Self::Detecting {
-                pending_outbound, ..
-            } => pending_outbound,
-            Self::Ready(_) => PendingOutbound::Empty,
-        }
-    }
 }
 
 pub async fn serve<S, Seam>(
@@ -297,7 +159,9 @@ pub async fn serve<S, Seam>(
                 }
             }
             () = &mut detection_grace, if raw_fallback_is_armed => {
-                let resolved = framing.resolve_raw_fallback();
+                let Some(resolved) = framing.resolve_raw_fallback() else {
+                    continue;
+                };
                 if matches!(
                     send_accepted_outbound(
                         resolved,
@@ -315,7 +179,7 @@ pub async fn serve<S, Seam>(
             }
         }
     }
-    if matches!(framing.into_pending_outbound(), PendingOutbound::Frame(_)) {
+    if framing.has_pending_outbound() {
         seam.complete_outbound(OutboundDisposition::Dropped(
             OutboundDropReason::TransportFailure,
         ));
@@ -334,7 +198,7 @@ enum AcceptedOutboundSendOutcome {
 }
 
 async fn send_accepted_outbound<S, Seam>(
-    resolved: ResolvedPendingOutbound,
+    resolved: WebSocketFramingResolution,
     socket: &mut WebSocketStream<S>,
     seam: &mut Seam,
     status: &TokioInterfaceStatus,
@@ -346,13 +210,13 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
     Seam: InterfaceSeam,
 {
-    let PendingOutbound::Frame(packet) = resolved.pending else {
+    let Some(packet) = resolved.pending_packet() else {
         return AcceptedOutboundSendOutcome::Continue;
     };
     match send_wire_message(
         socket,
-        resolved.framing,
-        &packet,
+        resolved.framing(),
+        packet,
         status,
         airtime,
         throughput,
@@ -509,67 +373,6 @@ mod tests {
         assert_eq!(automatic.max_frame_size, automatic.max_message_size);
     }
 
-    #[test]
-    fn automatic_framing_holds_one_packet_then_falls_back_to_raw() {
-        let first = packet(b"first");
-        let second = packet(b"second");
-        let mut session = SessionFraming::new(WebSocketFramingSelection::Auto);
-
-        assert!(session.can_read_outbound());
-        assert!(matches!(
-            session.stage_outbound(&first),
-            SessionOutboundAction::Queued
-        ));
-        assert!(!session.can_read_outbound());
-        assert!(matches!(
-            session.stage_outbound(&second),
-            SessionOutboundAction::Backpressured
-        ));
-
-        let resolved = session.resolve_raw_fallback();
-        assert_eq!(resolved.framing, WebSocketWireFraming::RawPacket);
-        let PendingOutbound::Frame(pending) = resolved.pending else {
-            panic!("the queued packet remains owned by the session")
-        };
-        assert_eq!(pending, first);
-        assert!(session.can_read_outbound());
-        assert!(matches!(
-            session.stage_outbound(&second),
-            SessionOutboundAction::Send(WebSocketWireFraming::RawPacket)
-        ));
-    }
-
-    #[test]
-    fn passive_detection_selects_pending_outbound_framing() {
-        let inbound = packet(b"inbound");
-        let outbound = packet(b"outbound");
-        let message = encoded(WebSocketWireFraming::Kiss, &inbound);
-        let mut session = SessionFraming::new(WebSocketFramingSelection::Auto);
-        assert!(matches!(
-            session.stage_outbound(&outbound),
-            SessionOutboundAction::Queued
-        ));
-
-        let mut offset = 0;
-        let mut sink = Vec::new();
-        let outcome = session
-            .next_frame_into(&message, &mut offset, &mut sink)
-            .expect("framing detection succeeds");
-        let SessionFrameDecodeOutcome::ResolvedFrame(resolved) = outcome else {
-            panic!("KISS is unique framing evidence")
-        };
-        assert_eq!(resolved.framing, WebSocketWireFraming::Kiss);
-        let PendingOutbound::Frame(pending) = resolved.pending else {
-            panic!("the pending packet follows framing resolution")
-        };
-        assert_eq!(pending, outbound);
-        assert_eq!(sink, inbound);
-        assert!(matches!(
-            session.stage_outbound(&outbound),
-            SessionOutboundAction::Send(WebSocketWireFraming::Kiss)
-        ));
-    }
-
     #[tokio::test(start_paused = true)]
     async fn silent_peer_fallback_starts_when_an_outbound_packet_waits() {
         let (client_io, server_io) = tokio::io::duplex(SOCKET_BUFFER_LEN);
@@ -580,7 +383,7 @@ mod tests {
             Some(config(WebSocketFramingSelection::Auto)),
         )
         .await;
-        let (mut outbound, outbound_consumer) = tokio_grant_lane(FRAME_CAP, 1);
+        let (mut outbound, outbound_consumer) = tokio_grant_lane(websocket::FRAME_CAP, 1);
         let seam = OutboundOnlySeam {
             sink: Vec::new(),
             outbound: outbound_consumer,
@@ -642,7 +445,7 @@ mod tests {
             Some(config(WebSocketFramingSelection::Auto)),
         )
         .await;
-        let (mut outbound, outbound_consumer) = tokio_grant_lane(FRAME_CAP, 1);
+        let (mut outbound, outbound_consumer) = tokio_grant_lane(websocket::FRAME_CAP, 1);
         let seam = OutboundOnlySeam {
             sink: Vec::new(),
             outbound: outbound_consumer,

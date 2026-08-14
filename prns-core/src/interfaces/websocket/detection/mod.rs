@@ -209,6 +209,174 @@ mod allocated {
         }
     }
 
+    enum PendingOutbound {
+        Empty,
+        Frame(Vec<u8>),
+    }
+
+    enum SessionFramingState {
+        Detecting {
+            decoder: WebSocketFramingDecoder,
+            pending_outbound: PendingOutbound,
+        },
+        Ready(WebSocketWireDecoder),
+    }
+
+    pub struct WebSocketFramingResolution {
+        framing: WebSocketWireFraming,
+        pending: PendingOutbound,
+    }
+
+    impl WebSocketFramingResolution {
+        #[must_use]
+        pub const fn framing(&self) -> WebSocketWireFraming {
+            self.framing
+        }
+
+        #[must_use]
+        pub fn pending_packet(&self) -> Option<&[u8]> {
+            match &self.pending {
+                PendingOutbound::Empty => None,
+                PendingOutbound::Frame(packet) => Some(packet),
+            }
+        }
+    }
+
+    pub enum WebSocketSessionFrameDecodeOutcome {
+        Incomplete,
+        AmbiguousFraming,
+        Frame,
+        ResolvedFrame(WebSocketFramingResolution),
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum WebSocketSessionOutboundAction {
+        Queued,
+        Send(WebSocketWireFraming),
+        Rejected,
+        Backpressured,
+    }
+
+    pub struct WebSocketSessionFraming {
+        state: SessionFramingState,
+    }
+
+    impl WebSocketSessionFraming {
+        #[must_use]
+        pub const fn new(selection: WebSocketFramingSelection) -> Self {
+            let state = match selection {
+                WebSocketFramingSelection::Auto => SessionFramingState::Detecting {
+                    decoder: WebSocketFramingDecoder::new(WebSocketFramingSelection::Auto),
+                    pending_outbound: PendingOutbound::Empty,
+                },
+                WebSocketFramingSelection::Fixed(framing) => {
+                    SessionFramingState::Ready(WebSocketWireDecoder::new(framing))
+                }
+            };
+            Self { state }
+        }
+
+        #[must_use]
+        pub const fn raw_fallback_is_armed(&self) -> bool {
+            matches!(
+                &self.state,
+                SessionFramingState::Detecting {
+                    pending_outbound: PendingOutbound::Frame(_),
+                    ..
+                }
+            )
+        }
+
+        #[must_use]
+        pub const fn is_detecting(&self) -> bool {
+            matches!(&self.state, SessionFramingState::Detecting { .. })
+        }
+
+        #[must_use]
+        pub const fn can_read_outbound(&self) -> bool {
+            matches!(
+                &self.state,
+                SessionFramingState::Detecting {
+                    pending_outbound: PendingOutbound::Empty,
+                    ..
+                } | SessionFramingState::Ready(_)
+            )
+        }
+
+        #[must_use]
+        pub const fn has_pending_outbound(&self) -> bool {
+            self.raw_fallback_is_armed()
+        }
+
+        pub fn stage_outbound(&mut self, packet: &[u8]) -> WebSocketSessionOutboundAction {
+            match &mut self.state {
+                SessionFramingState::Detecting {
+                    pending_outbound, ..
+                } => match pending_outbound {
+                    PendingOutbound::Empty if !packet.is_empty() && packet.len() <= FRAME_CAP => {
+                        *pending_outbound = PendingOutbound::Frame(packet.to_vec());
+                        WebSocketSessionOutboundAction::Queued
+                    }
+                    PendingOutbound::Empty => WebSocketSessionOutboundAction::Rejected,
+                    PendingOutbound::Frame(_) => WebSocketSessionOutboundAction::Backpressured,
+                },
+                SessionFramingState::Ready(decoder) => {
+                    WebSocketSessionOutboundAction::Send(decoder.framing())
+                }
+            }
+        }
+
+        pub fn resolve_raw_fallback(&mut self) -> Option<WebSocketFramingResolution> {
+            if !self.raw_fallback_is_armed() {
+                return None;
+            }
+            Some(self.resolve(WebSocketWireFraming::RawPacket))
+        }
+
+        pub fn next_frame_into(
+            &mut self,
+            input: &[u8],
+            offset: &mut usize,
+            sink: &mut dyn FrameSink,
+        ) -> Result<WebSocketSessionFrameDecodeOutcome, super::super::DecodeError> {
+            match &mut self.state {
+                SessionFramingState::Ready(decoder) => decoder
+                    .next_frame_into(input, offset, sink)
+                    .map(|frame| match frame {
+                        Some(_) => WebSocketSessionFrameDecodeOutcome::Frame,
+                        None => WebSocketSessionFrameDecodeOutcome::Incomplete,
+                    }),
+                SessionFramingState::Detecting { decoder, .. } => {
+                    match decoder.next_frame_into(input, offset, sink)? {
+                        WebSocketFrameDecodeOutcome::Incomplete => {
+                            Ok(WebSocketSessionFrameDecodeOutcome::Incomplete)
+                        }
+                        WebSocketFrameDecodeOutcome::AmbiguousFraming => {
+                            Ok(WebSocketSessionFrameDecodeOutcome::AmbiguousFraming)
+                        }
+                        WebSocketFrameDecodeOutcome::Frame(frame) => {
+                            let resolution = self.resolve(frame.framing());
+                            Ok(WebSocketSessionFrameDecodeOutcome::ResolvedFrame(
+                                resolution,
+                            ))
+                        }
+                    }
+                }
+            }
+        }
+
+        fn resolve(&mut self, framing: WebSocketWireFraming) -> WebSocketFramingResolution {
+            let pending = match &mut self.state {
+                SessionFramingState::Detecting {
+                    pending_outbound, ..
+                } => core::mem::replace(pending_outbound, PendingOutbound::Empty),
+                SessionFramingState::Ready(_) => PendingOutbound::Empty,
+            };
+            self.state = SessionFramingState::Ready(WebSocketWireDecoder::new(framing));
+            WebSocketFramingResolution { framing, pending }
+        }
+    }
+
     pub(super) struct WebSocketWireDetector {
         hdlc_scanner: rns_serial_framing::RnsSerialScanner,
         hdlc_frame: DetectionFrame,
@@ -421,5 +589,6 @@ mod tests;
 #[cfg(feature = "alloc")]
 pub use allocated::{
     DecodedWebSocketFrame, WebSocketFrameDecodeOutcome, WebSocketFramingDecoder,
-    WebSocketFramingState,
+    WebSocketFramingResolution, WebSocketFramingState, WebSocketSessionFrameDecodeOutcome,
+    WebSocketSessionFraming, WebSocketSessionOutboundAction,
 };

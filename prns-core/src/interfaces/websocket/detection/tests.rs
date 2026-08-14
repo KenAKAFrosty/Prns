@@ -10,6 +10,7 @@ use crate::wire::{
 use alloc::vec;
 use alloc::vec::Vec;
 
+#[allow(clippy::expect_used)]
 fn packet(payload: &[u8]) -> Vec<u8> {
     let header = WirePacketHeader {
         ifac_flag: IfacFlag::Open,
@@ -28,6 +29,7 @@ fn packet(payload: &[u8]) -> Vec<u8> {
     bytes
 }
 
+#[allow(clippy::expect_used)]
 fn encoded(framing: WebSocketWireFraming, packet: &[u8]) -> Vec<u8> {
     let mut output = vec![0; framing.message_cap()];
     let len = framing.encode(packet, &mut output).expect("packet encodes");
@@ -35,6 +37,7 @@ fn encoded(framing: WebSocketWireFraming, packet: &[u8]) -> Vec<u8> {
     output
 }
 
+#[allow(clippy::panic)]
 fn detected_frame(outcome: WebSocketWireDetection) -> DecodedWebSocketFrame {
     let WebSocketWireDetection::Detected(frame) = outcome else {
         panic!("wire framing was not detected")
@@ -66,6 +69,65 @@ fn framing_selection_names_all_four_closed_variants() {
     assert_eq!(
         WebSocketFramingSelection::Auto.message_cap(),
         kiss_framing::max_encoded_len(FRAME_CAP)
+    );
+}
+
+#[test]
+fn automatic_session_holds_one_packet_then_falls_back_to_raw() {
+    let first = packet(b"first");
+    let second = packet(b"second");
+    let mut session = WebSocketSessionFraming::new(WebSocketFramingSelection::Auto);
+
+    assert!(session.resolve_raw_fallback().is_none());
+    assert!(session.can_read_outbound());
+    assert_eq!(
+        session.stage_outbound(&first),
+        WebSocketSessionOutboundAction::Queued
+    );
+    assert!(!session.can_read_outbound());
+    assert_eq!(
+        session.stage_outbound(&second),
+        WebSocketSessionOutboundAction::Backpressured
+    );
+
+    let resolved = session
+        .resolve_raw_fallback()
+        .expect("queued packet arms raw fallback");
+    assert_eq!(resolved.framing(), WebSocketWireFraming::RawPacket);
+    assert_eq!(resolved.pending_packet(), Some(first.as_slice()));
+    assert!(session.resolve_raw_fallback().is_none());
+    assert!(session.can_read_outbound());
+    assert_eq!(
+        session.stage_outbound(&second),
+        WebSocketSessionOutboundAction::Send(WebSocketWireFraming::RawPacket)
+    );
+}
+
+#[test]
+fn passive_session_detection_selects_pending_outbound_framing() {
+    let inbound = packet(b"inbound");
+    let outbound = packet(b"outbound");
+    let message = encoded(WebSocketWireFraming::Kiss, &inbound);
+    let mut session = WebSocketSessionFraming::new(WebSocketFramingSelection::Auto);
+    assert_eq!(
+        session.stage_outbound(&outbound),
+        WebSocketSessionOutboundAction::Queued
+    );
+
+    let mut offset = 0;
+    let mut sink = Vec::new();
+    let outcome = session
+        .next_frame_into(&message, &mut offset, &mut sink)
+        .expect("framing detection succeeds");
+    let WebSocketSessionFrameDecodeOutcome::ResolvedFrame(resolved) = outcome else {
+        panic!("KISS is unique framing evidence")
+    };
+    assert_eq!(resolved.framing(), WebSocketWireFraming::Kiss);
+    assert_eq!(resolved.pending_packet(), Some(outbound.as_slice()));
+    assert_eq!(sink, inbound);
+    assert_eq!(
+        session.stage_outbound(&outbound),
+        WebSocketSessionOutboundAction::Send(WebSocketWireFraming::Kiss)
     );
 }
 
