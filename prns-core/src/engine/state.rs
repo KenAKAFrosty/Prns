@@ -22,6 +22,7 @@ use crate::routing::path_requests::recursive::RecursivePathRequests;
 use crate::routing::path_requests::seen::SeenPathRequests;
 use crate::routing::request_handlers::RequestHandlers;
 use crate::routing::reverse_routes::ReverseRoutes;
+use crate::routing::routes::RouteEvidenceIdIssuer;
 use crate::routing::tunnel::Tunnels;
 use crate::routing::upstream_app_destinations::UpstreamAppDestinations;
 use crate::routing::warmth::{DepartedInterfaces, Departure};
@@ -178,6 +179,7 @@ pub struct EngineState<S: StorageLayout> {
     #[cfg(feature = "runtime-metrics")]
     pub(crate) interface_metric_groups: Vec<super::metrics::InterfaceMetricGroup>,
     pub(crate) routing_table: EngineRoutingTable<S>,
+    pub(crate) route_evidence_id_issuer: RouteEvidenceIdIssuer,
     pub(crate) destination_identities:
         DestinationIdentities<S::DestinationIdentities, S::DestinationIdentityAppData>,
     pub(crate) scheduled_announces: S::ScheduledAnnounces,
@@ -234,6 +236,7 @@ impl<S: StorageLayout> Default for EngineState<S> {
             #[cfg(feature = "runtime-metrics")]
             interface_metric_groups: Vec::new(),
             routing_table: Default::default(),
+            route_evidence_id_issuer: RouteEvidenceIdIssuer::default(),
             destination_identities: DestinationIdentities::default(),
             scheduled_announces: Default::default(),
             upstream_app_destinations: UpstreamAppDestinations::default(),
@@ -301,6 +304,7 @@ impl<S: StorageLayout> EngineState<S> {
             #[cfg(feature = "runtime-metrics")]
             write!(interface_metric_groups, Vec::new());
             write!(routing_table, Default::default());
+            write!(route_evidence_id_issuer, RouteEvidenceIdIssuer::default());
             write!(destination_identities, DestinationIdentities::default());
             write!(scheduled_announces, Default::default());
             write!(

@@ -1,3 +1,5 @@
+use core::num::NonZeroU32;
+
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
 use crate::lemire_index::buckets_for_two_thirds_load;
@@ -7,6 +9,54 @@ use crate::wire::{DestinationHash, TransportId};
 pub const fn route_index_buckets(destinations: usize) -> usize {
     buckets_for_two_thirds_load(destinations)
 }
+
+/// Process-local identity for one live incarnation of a routing-table path.
+///
+/// The value is attribution, not a clock: unrelated route changes never invalidate it. A removed
+/// or materially replaced path retires its value, so later evidence cannot refresh a newer route
+/// merely because the destination hash is the same.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+pub struct RouteEvidenceId(NonZeroU32);
+
+impl RouteEvidenceId {
+    pub const FIRST: Self = Self(NonZeroU32::MIN);
+
+    pub const fn new(value: u32) -> Option<Self> {
+        match NonZeroU32::new(value) {
+            Some(value) => Some(Self(value)),
+            None => None,
+        }
+    }
+
+    pub(super) const fn get(self) -> u32 {
+        self.0.get()
+    }
+}
+
+/// Compact, validated locator retained by traffic that can later prove a route worked.
+///
+/// `row_hint` is only a fast path. The evidence id is authoritative and survives swap-removal
+/// moving its route toward row zero.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(C)]
+pub struct RouteEvidenceHandle {
+    pub id: RouteEvidenceId,
+    pub row_hint: u16,
+}
+
+impl RouteEvidenceHandle {
+    pub const fn new(id: RouteEvidenceId, row_hint: u16) -> Self {
+        Self { id, row_hint }
+    }
+}
+
+const _: () = {
+    assert!(core::mem::size_of::<RouteEvidenceId>() == 4);
+    assert!(core::mem::size_of::<Option<RouteEvidenceId>>() == 4);
+    assert!(core::mem::size_of::<RouteEvidenceHandle>() == 8);
+    assert!(core::mem::size_of::<Option<RouteEvidenceHandle>>() == 8);
+};
 
 /// RNS 1.4.2 `Transport.path_table`'s `received_from` column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -88,12 +138,15 @@ pub trait RouteTable {
     fn responsiveness(&self) -> &[RouteResponsiveness];
     fn receiving_interfaces(&self) -> &[InterfaceId];
     fn next_hops(&self) -> &[NextHop];
+    fn evidence_ids(&self) -> &[RouteEvidenceId];
 
     fn set_row(&mut self, i: usize, row: RouteEntry);
+    fn set_evidence_id(&mut self, i: usize, evidence_id: RouteEvidenceId);
 
     fn push(
         &mut self,
         destination: DestinationHash,
+        evidence_id: RouteEvidenceId,
         row: RouteEntry,
     ) -> Result<usize, TablePushError>;
 

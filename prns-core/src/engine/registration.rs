@@ -359,7 +359,15 @@ impl<S: StorageLayout> EngineState<S> {
         {
             return RouteSeedOutcome::RefusedBlackholedIdentity;
         }
-        match self.routing_table.seed_route(&verified.pending.row) {
+        let route_evidence_id = self.route_evidence_id_for_update(
+            &verified.pending.row.destination,
+            verified.pending.row.entry.receiving_interface,
+            verified.pending.row.entry.next_hop,
+        );
+        match self
+            .routing_table
+            .seed_route(&verified.pending.row, route_evidence_id)
+        {
             SeedRouteOutcome::Seeded => {
                 self.departed_interfaces.record(
                     verified.pending.row.entry.receiving_interface,

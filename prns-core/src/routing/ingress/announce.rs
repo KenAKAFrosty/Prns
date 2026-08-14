@@ -250,12 +250,18 @@ impl<S: StorageLayout> EngineState<S> {
             .routing_table
             .path_row(&announce.destination)
             .map(|entry| entry.receiving_interface);
+        let route_evidence_id = self.route_evidence_id_for_update(
+            &announce.destination,
+            arrival.receiving_interface,
+            arrival.next_hop,
+        );
         let warmth = WarmestOf(&self.tunnels, &self.departed_interfaces);
         let dirty = &mut self.dirty_interfaces;
         let destination_identities = &self.destination_identities;
         let scheduled_announces = &mut self.scheduled_announces;
         let outcome = self.routing_table.upsert_route_with_warmth(
             arrival,
+            route_evidence_id,
             interfaces,
             &warmth,
             &mut |removed| {

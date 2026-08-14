@@ -7,7 +7,7 @@ use crate::routing::announce::{
     AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey, ANNOUNCE_ID_WIRE_LEN,
 };
 use crate::routing::route_expiry::RouteExpiryIndex;
-use crate::routing::routes::{RouteEntry, RouteTable};
+use crate::routing::routes::{RouteEntry, RouteEvidenceId, RouteTable};
 use crate::storage::TablePushError;
 use crate::wire::DestinationHash;
 
@@ -107,7 +107,11 @@ where
         }
     }
 
-    pub fn seed_route(&mut self, row: &PersistedRouteRow<'_>) -> SeedRouteOutcome {
+    pub fn seed_route(
+        &mut self,
+        row: &PersistedRouteRow<'_>,
+        evidence_id: RouteEvidenceId,
+    ) -> SeedRouteOutcome {
         if self.index_of(&row.destination).is_some() {
             return SeedRouteOutcome::AlreadyPresent;
         }
@@ -117,7 +121,7 @@ where
         let Ok(handle) = self.announce_app_data.insert(row.app_data) else {
             return SeedRouteOutcome::AppDataArenaFull;
         };
-        let routes_slot = match self.routes.push(row.destination, row.entry) {
+        let routes_slot = match self.routes.push(row.destination, evidence_id, row.entry) {
             Ok(i) => i,
             Err(TablePushError::TableFull) => {
                 self.announce_app_data.free(handle);

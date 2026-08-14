@@ -7,7 +7,7 @@ use crate::routing::announce::stored::{
 };
 use crate::routing::announce::AnnounceArrival;
 use crate::routing::route_expiry::RouteExpiryIndex;
-use crate::routing::routes::{RouteEntry, RouteResponsiveness, RouteTable};
+use crate::routing::routes::{RouteEntry, RouteEvidenceId, RouteResponsiveness, RouteTable};
 use crate::routing::warmth::RouteWarmth;
 use crate::storage::TablePushError;
 
@@ -41,15 +41,23 @@ where
     pub fn upsert_route(
         &mut self,
         arrival: &AnnounceArrival<'_>,
+        replacement_evidence_id: RouteEvidenceId,
         interfaces: AttachedInterfaces<'_>,
         on_removed: &mut impl FnMut(RemovedRoute),
     ) -> UpsertRouteOutcome {
-        self.upsert_route_with_warmth(arrival, interfaces, &(), on_removed)
+        self.upsert_route_with_warmth(
+            arrival,
+            replacement_evidence_id,
+            interfaces,
+            &(),
+            on_removed,
+        )
     }
 
     pub fn upsert_route_with_warmth(
         &mut self,
         arrival: &AnnounceArrival<'_>,
+        replacement_evidence_id: RouteEvidenceId,
         interfaces: AttachedInterfaces<'_>,
         warmth: &dyn RouteWarmth,
         on_removed: &mut impl FnMut(RemovedRoute),
@@ -67,9 +75,17 @@ where
                         self.evict_route_nearest_expiry(interfaces, warmth, on_removed);
                     }
                 }
-                self.insert_new_route(arrival, interfaces, warmth, on_removed)
+                self.insert_new_route(
+                    arrival,
+                    replacement_evidence_id,
+                    interfaces,
+                    warmth,
+                    on_removed,
+                )
             }
-            Some(i) => self.refresh_existing_route(i, arrival, interfaces, warmth),
+            Some(i) => {
+                self.refresh_existing_route(i, arrival, replacement_evidence_id, interfaces, warmth)
+            }
         }
     }
 
@@ -97,6 +113,7 @@ where
     fn insert_new_route(
         &mut self,
         arrival: &AnnounceArrival<'_>,
+        evidence_id: RouteEvidenceId,
         interfaces: AttachedInterfaces<'_>,
         warmth: &dyn RouteWarmth,
         on_removed: &mut impl FnMut(RemovedRoute),
@@ -142,7 +159,10 @@ where
             signature: announce.signature,
             maybe_app_data_handle: Some(handle),
         };
-        let routes_slot = match self.routes.push(announce.destination, route_entry) {
+        let routes_slot = match self
+            .routes
+            .push(announce.destination, evidence_id, route_entry)
+        {
             Ok(i) => i,
             Err(TablePushError::TableFull) => {
                 self.announce_app_data.free(handle);
@@ -165,6 +185,7 @@ where
         &mut self,
         i: usize,
         arrival: &AnnounceArrival<'_>,
+        replacement_evidence_id: RouteEvidenceId,
         interfaces: AttachedInterfaces<'_>,
         warmth: &dyn RouteWarmth,
     ) -> UpsertRouteOutcome {
@@ -176,6 +197,8 @@ where
             next_hop,
             ..
         } = arrival;
+        let path_changed = self.routes.receiving_interfaces()[i] != receiving_interface
+            || self.routes.next_hops()[i] != next_hop;
         let Some(handle) = self.announce_records.app_data_handles()[i] else {
             debug_assert!(false, "existing destination missing app_data handle");
             return UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull);
@@ -199,6 +222,9 @@ where
                 next_hop,
             },
         );
+        if path_changed {
+            self.routes.set_evidence_id(i, replacement_evidence_id);
+        }
         self.announce_records.set_row(
             i,
             AnnounceRecord {

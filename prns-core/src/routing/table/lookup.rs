@@ -5,9 +5,24 @@ use crate::interfaces::{AttachedInterfaces, InterfaceId};
 use crate::routing::announce::stored::{AnnounceAppData, AnnounceIdHistory, AnnounceRecordTable};
 use crate::routing::announce::Announce;
 use crate::routing::route_expiry::RouteExpiryIndex;
-use crate::routing::routes::{RouteEntry, RouteResponsiveness, RouteTable};
+use crate::routing::routes::{
+    RouteEntry, RouteEvidenceHandle, RouteEvidenceId, RouteResponsiveness, RouteTable,
+};
 use crate::routing::warmth::RouteWarmth;
 use crate::wire::DestinationHash;
+
+fn route_evidence_row_hint(row: usize) -> u16 {
+    u16::try_from(row).unwrap_or(u16::MAX)
+}
+
+fn route_evidence_scan_start(row_hint: u16, len: usize) -> usize {
+    debug_assert!(len > 0);
+    if row_hint == u16::MAX {
+        len - 1
+    } else {
+        usize::from(row_hint).min(len - 1)
+    }
+}
 
 impl<R, A, H, D, I> RoutingTable<R, A, H, D, I>
 where
@@ -55,6 +70,47 @@ where
 
     pub fn has_route(&self, destination: &DestinationHash) -> bool {
         self.index_of(destination).is_some()
+    }
+
+    pub fn route_evidence_handle_for(
+        &self,
+        destination: &DestinationHash,
+    ) -> Option<RouteEvidenceHandle> {
+        let row = self.index_of(destination)?;
+        // Fixed profiles fit exactly. A very large heap table uses MAX as an overflow sentinel;
+        // resolution then starts at the tail and remains correct without widening the handle.
+        let row_hint = route_evidence_row_hint(row);
+        Some(RouteEvidenceHandle::new(
+            self.routes.evidence_ids()[row],
+            row_hint,
+        ))
+    }
+
+    /// Resolves the authoritative id, repairing a row hint made stale by swap-removal.
+    ///
+    /// A surviving route can only remain in place or move downward: insertions append and every
+    /// removal moves the last row into a lower hole. No upward or wraparound scan is needed.
+    #[allow(
+        dead_code,
+        reason = "the next review slice wires evidence promotion into this resolver"
+    )]
+    pub(crate) fn resolve_route_evidence(&self, handle: &mut RouteEvidenceHandle) -> Option<usize> {
+        let len = self.routes.len();
+        if len == 0 {
+            return None;
+        }
+        let start = route_evidence_scan_start(handle.row_hint, len);
+        for row in (0..=start).rev() {
+            if self.routes.evidence_ids()[row] == handle.id {
+                handle.row_hint = route_evidence_row_hint(row);
+                return Some(row);
+            }
+        }
+        None
+    }
+
+    pub(crate) fn route_evidence_ids(&self) -> &[RouteEvidenceId] {
+        self.routes.evidence_ids()
     }
 
     pub fn responsiveness_of(&self, destination: &DestinationHash) -> Option<RouteResponsiveness> {
@@ -139,5 +195,23 @@ where
             receiving_interface: self.routes.receiving_interfaces()[i],
             next_hop: self.routes.next_hops()[i],
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{route_evidence_row_hint, route_evidence_scan_start};
+
+    #[test]
+    fn oversized_heap_rows_use_the_tail_as_their_compact_hint() {
+        assert_eq!(route_evidence_row_hint(7), 7);
+        assert_eq!(route_evidence_scan_start(7, 20), 7);
+
+        let oversized_row = usize::from(u16::MAX) + 9;
+        assert_eq!(route_evidence_row_hint(oversized_row), u16::MAX);
+        assert_eq!(
+            route_evidence_scan_start(u16::MAX, oversized_row + 5),
+            oversized_row + 4,
+        );
     }
 }

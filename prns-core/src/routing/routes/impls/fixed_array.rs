@@ -1,6 +1,6 @@
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
-use crate::routing::routes::{RouteEntry, RouteTable};
+use crate::routing::routes::{RouteEntry, RouteEvidenceId, RouteTable};
 use crate::routing::{NextHop, RouteResponsiveness};
 use crate::storage::TablePushError;
 use crate::wire::DestinationHash;
@@ -16,6 +16,7 @@ pub struct FixedArrayRouteTable<const MAX_TRACKED_DESTINATIONS: usize> {
     responsiveness: [RouteResponsiveness; MAX_TRACKED_DESTINATIONS],
     receiving_interface: [InterfaceId; MAX_TRACKED_DESTINATIONS],
     next_hop: [NextHop; MAX_TRACKED_DESTINATIONS],
+    evidence_id: [RouteEvidenceId; MAX_TRACKED_DESTINATIONS],
 }
 
 impl<const MAX_TRACKED_DESTINATIONS: usize> Default
@@ -31,6 +32,7 @@ impl<const MAX_TRACKED_DESTINATIONS: usize> Default
             responsiveness: [RouteResponsiveness::Responsive; MAX_TRACKED_DESTINATIONS],
             receiving_interface: [InterfaceId::new([0u8; 8]); MAX_TRACKED_DESTINATIONS],
             next_hop: [NextHop::Direct; MAX_TRACKED_DESTINATIONS],
+            evidence_id: [RouteEvidenceId::FIRST; MAX_TRACKED_DESTINATIONS],
         }
     }
 }
@@ -66,6 +68,9 @@ impl<const MAX_TRACKED_DESTINATIONS: usize> RouteTable
     fn next_hops(&self) -> &[NextHop] {
         &self.next_hop[..self.len]
     }
+    fn evidence_ids(&self) -> &[RouteEvidenceId] {
+        &self.evidence_id[..self.len]
+    }
 
     fn set_row(&mut self, i: usize, row: RouteEntry) {
         self.hops[i] = row.hops;
@@ -76,9 +81,14 @@ impl<const MAX_TRACKED_DESTINATIONS: usize> RouteTable
         self.next_hop[i] = row.next_hop;
     }
 
+    fn set_evidence_id(&mut self, i: usize, evidence_id: RouteEvidenceId) {
+        self.evidence_id[i] = evidence_id;
+    }
+
     fn push(
         &mut self,
         destination: DestinationHash,
+        evidence_id: RouteEvidenceId,
         row: RouteEntry,
     ) -> Result<usize, TablePushError> {
         if self.len >= MAX_TRACKED_DESTINATIONS {
@@ -86,6 +96,7 @@ impl<const MAX_TRACKED_DESTINATIONS: usize> RouteTable
         }
         let i = self.len;
         self.destination[i] = destination;
+        self.evidence_id[i] = evidence_id;
         self.set_row(i, row);
         self.len += 1;
         Ok(i)
@@ -100,6 +111,7 @@ impl<const MAX_TRACKED_DESTINATIONS: usize> RouteTable
         self.responsiveness[i] = self.responsiveness[last];
         self.receiving_interface[i] = self.receiving_interface[last];
         self.next_hop[i] = self.next_hop[last];
+        self.evidence_id[i] = self.evidence_id[last];
         self.len = last;
     }
 }
@@ -114,6 +126,9 @@ mod tests {
 
     fn iface(byte: u8) -> InterfaceId {
         InterfaceId::new([byte; 8])
+    }
+    fn evidence(n: u32) -> RouteEvidenceId {
+        RouteEvidenceId::new(n + 1).unwrap()
     }
 
     fn row(
@@ -141,6 +156,7 @@ mod tests {
         assert_eq!(
             table.push(
                 dest(0xA1),
+                RouteEvidenceId::FIRST,
                 row(1, 10, RouteResponsiveness::Responsive, iface(0xE1))
             ),
             Ok(0)
@@ -148,6 +164,7 @@ mod tests {
         assert_eq!(
             table.push(
                 dest(0xB2),
+                RouteEvidenceId::FIRST,
                 row(2, 20, RouteResponsiveness::Unresponsive, iface(0xE2))
             ),
             Ok(1)
@@ -173,12 +190,14 @@ mod tests {
         table
             .push(
                 dest(0xA1),
+                evidence(1),
                 row(1, 10, RouteResponsiveness::Responsive, iface(0xE1)),
             )
             .unwrap();
         table
             .push(
                 dest(0xB2),
+                evidence(2),
                 row(2, 20, RouteResponsiveness::Responsive, iface(0xE2)),
             )
             .unwrap();
@@ -200,6 +219,7 @@ mod tests {
             ]
         );
         assert_eq!(table.receiving_interfaces(), &[iface(0xE9), iface(0xE2)]);
+        assert_eq!(table.evidence_ids(), &[evidence(1), evidence(2)]);
     }
 
     #[test]
@@ -208,12 +228,14 @@ mod tests {
         table
             .push(
                 dest(0xA1),
+                RouteEvidenceId::FIRST,
                 row(1, 10, RouteResponsiveness::Responsive, iface(0xE1)),
             )
             .unwrap();
         table
             .push(
                 dest(0xB2),
+                RouteEvidenceId::FIRST,
                 row(2, 20, RouteResponsiveness::Responsive, iface(0xE2)),
             )
             .unwrap();
@@ -229,18 +251,21 @@ mod tests {
         table
             .push(
                 dest(0xA1),
+                evidence(1),
                 row(1, 10, RouteResponsiveness::Responsive, iface(0xE1)),
             )
             .unwrap();
         table
             .push(
                 dest(0xB2),
+                evidence(2),
                 row(2, 20, RouteResponsiveness::Responsive, iface(0xE2)),
             )
             .unwrap();
         table
             .push(
                 dest(0xC3),
+                evidence(3),
                 row(3, 30, RouteResponsiveness::Unresponsive, iface(0xE3)),
             )
             .unwrap();
@@ -252,6 +277,7 @@ mod tests {
         assert_eq!(table.hops(), &[3, 2]);
         assert_eq!(table.learned_at(), &[InstantMillis(30), InstantMillis(20)]);
         assert_eq!(table.receiving_interfaces(), &[iface(0xE3), iface(0xE2)]);
+        assert_eq!(table.evidence_ids(), &[evidence(3), evidence(2)]);
     }
 
     #[test]
@@ -260,12 +286,14 @@ mod tests {
         table
             .push(
                 dest(0xA1),
+                RouteEvidenceId::FIRST,
                 row(1, 10, RouteResponsiveness::Responsive, iface(0xE1)),
             )
             .unwrap();
         table
             .push(
                 dest(0xB2),
+                RouteEvidenceId::FIRST,
                 row(2, 20, RouteResponsiveness::Responsive, iface(0xE2)),
             )
             .unwrap();
@@ -284,6 +312,7 @@ mod tests {
         assert_eq!(
             table.push(
                 dest(0xA1),
+                RouteEvidenceId::FIRST,
                 row(1, 10, RouteResponsiveness::Responsive, iface(0xE1))
             ),
             Err(TablePushError::TableFull)
