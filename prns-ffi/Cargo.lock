@@ -395,6 +395,7 @@ dependencies = [
  "heapless",
  "hkdf",
  "hmac",
+ "prns-macros",
  "roaring",
  "sha2 0.11.0",
  "x25519-dalek",
@@ -417,6 +418,10 @@ dependencies = [
  "tokio",
  "windows",
 ]
+
+[[package]]
+name = "prns-macros"
+version = "0.3.6"
 
 [[package]]
 name = "proc-macro2"

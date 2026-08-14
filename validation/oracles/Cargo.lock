@@ -383,12 +383,17 @@ dependencies = [
  "heapless",
  "hkdf",
  "hmac",
+ "prns-macros",
  "rmp",
  "roaring",
  "sha2 0.11.0",
  "x25519-dalek",
  "zeroize",
 ]
+
+[[package]]
+name = "prns-macros"
+version = "0.3.6"
 
 [[package]]
 name = "prns-validation-oracles"

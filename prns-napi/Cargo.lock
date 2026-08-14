@@ -1990,6 +1990,7 @@ dependencies = [
  "hkdf",
  "hmac",
  "md-5",
+ "prns-macros",
  "rayon",
  "rmp",
  "roaring",
@@ -2078,6 +2079,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "prns-macros"
+version = "0.3.6"
+
+[[package]]
 name = "prns-napi"
 version = "0.3.6"
 dependencies = [
@@ -2099,6 +2104,7 @@ dependencies = [
  "cfg-if",
  "heapless 0.8.0",
  "prns-core",
+ "prns-macros",
 ]
 
 [[package]]
