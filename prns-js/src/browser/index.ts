@@ -53,15 +53,35 @@ import type {
   ResourceStream,
   ResponseTimeout,
   RouteSnapshot as StableRouteSnapshot,
+  WebSocketFramingSelection,
 } from "../contract.js";
 import { MemoryResourceStream } from "../memory_resource.js";
 import { AutoWifiInterface } from "./auto_wifi.js";
+import { byteKey } from "./bytes.js";
+import {
+  connectFailure,
+  describeHostError,
+  domExceptionName,
+} from "./host_errors.js";
 import {
   blobResourceSource,
   byteResourceSource,
   sendResourceFromSource,
 } from "./resource_send.js";
 import { browserResourceCompressor } from "./resource_compressor.js";
+import {
+  closeFailed,
+  closedSessionOutcome,
+  delay,
+  describeInterfaceSessionFailure,
+  hasCleanupFailures,
+  unexpectedSessionFailure,
+} from "./session.js";
+import {
+  BROWSER_RENDEZVOUS_FRAMING_SELECTION,
+  WebSocketInterface,
+} from "./websocket.js";
+import type { WebSocketRuntimeRegistration } from "./websocket.js";
 import type {
   ResourceSendSettlement,
   ResourceSource,
@@ -122,6 +142,7 @@ export type {
   ResourceStream,
   ResponseTimeout,
   RouteSnapshot,
+  WebSocketFramingSelection,
 } from "../contract.js";
 export {
   AutoWifiController,
@@ -129,6 +150,7 @@ export {
   parseBrowserGatewayCatalog,
   validateBrowserGatewayUrl,
 } from "./auto_wifi.js";
+export { WebSocketInterface } from "./websocket.js";
 export type {
   AutoWifiControllerCloseOutcome,
   AutoWifiControllerStatus,
@@ -535,6 +557,9 @@ export type PrnsWasmModule = {
   BluetoothReassembler: {
     new(): BluetoothReassemblerBinding;
   };
+  WebSocketFramingCodec: {
+    new(selection: string): WebSocketFramingCodecBinding;
+  };
   identitySecretKeyLength(): number;
   hostContractAbi(): number;
   hostSchemaVersion(): number;
@@ -606,6 +631,22 @@ export type UsbAutoDecoderBinding = {
 
 export type BluetoothReassemblerBinding = {
   absorb(bytes: Uint8Array): Uint8Array | undefined;
+};
+
+export type WebSocketFramingCodecBinding = {
+  messageCap(): number;
+  canReadOutbound(): boolean;
+  rawFallbackIsArmed(): boolean;
+  isDetecting(): boolean;
+  rawFallbackDelayMillis(): number;
+  decode(message: Uint8Array): WebSocketDecodeBatchBinding;
+  stageOutbound(packet: PacketFrame): Uint8Array | undefined;
+  resolveRawFallback(): Uint8Array | undefined;
+};
+
+export type WebSocketDecodeBatchBinding = {
+  readonly packets: readonly Uint8Array[];
+  readonly resolvedOutbound?: Uint8Array;
 };
 
 export type InterfaceName =
@@ -1223,21 +1264,6 @@ type BluetoothStageOutcome<Value> =
   | PermissionDenied<"bluetooth">
   | Cancelled<"bluetooth">
   | ConnectionFailed<"bluetooth">;
-type WebSocketOpenOutcome =
-  | Tag<"Opened", WebSocket>
-  | HostApiUnavailable<"WebSocket">
-  | PermissionDenied<"websocket">
-  | Cancelled<"websocket">
-  | ConnectTimedOut<"websocket">
-  | ConnectionFailed<"websocket">;
-type WebSocketDecodeOutcome =
-  | Tag<"Decoded", Uint8Array>
-  | Extract<InterfaceSessionFailure, Tag<"UnsupportedFrame", unknown>>
-  | Extract<InterfaceSessionFailure, Tag<"FrameTooLarge", unknown>>
-  | Extract<InterfaceSessionFailure, Tag<"TransferFailed", unknown>>;
-type CanonicalWebSocketOutcome =
-  | Tag<"Canonical", string>
-  | InvalidTarget<"websocket">;
 type CharacteristicBytesOutcome =
   | Tag<"Decoded", Uint8Array>
   | Extract<InterfaceSessionFailure, Tag<"ProtocolViolation", unknown>>;
@@ -1250,12 +1276,6 @@ const USB_AUTO_OUTBOUND_POLL_MS = 25;
 const WEBUSB_MIN_TRANSFER_BYTES = 512;
 const BLUETOOTH_HANDSHAKE_TIMEOUT_MS = 10_000;
 const BLUETOOTH_OUTBOUND_POLL_MS = 25;
-const WEBSOCKET_CONNECT_TIMEOUT_MS = 10_000;
-const WEBSOCKET_OUTBOUND_POLL_MS = 25;
-const WEBSOCKET_BUFFER_POLL_MS = 4;
-const WEBSOCKET_MIN_BUFFER_LIMIT = 1024 * 1024;
-const WEBSOCKET_CONNECTING = 0;
-const WEBSOCKET_OPEN = 1;
 const INTERFACE_OUTBOUND_QUEUE_DEPTH = 64;
 let nextBrowserUsbAutoTag = 0;
 const LINUX_WEBUSB_SETUP_HINT =
@@ -1487,6 +1507,7 @@ export type BluetoothSession = InterfaceSession & {
 export type WebSocketSession = InterfaceSession & {
   readonly name: "websocket";
   readonly url: string;
+  readonly framing: WebSocketFramingSelection;
 };
 
 export type UsbAutoDeviceFilter = {
@@ -1500,6 +1521,7 @@ export type UsbAutoConnectOptions = {
 };
 
 export type WebSocketConnectOptions = {
+  readonly framing?: WebSocketFramingSelection;
   readonly protocols?: string | readonly string[];
   readonly channelTag?: ChannelTag;
   readonly bitrateBps?: BitrateBps;
@@ -1989,297 +2011,6 @@ class WebUsbAutoTransport {
       );
     }
     return failures;
-  }
-}
-
-export class WebSocketInterface {
-  readonly name = "websocket" as const;
-  readonly #host: RuntimeHost;
-  readonly #activeTags = new Set<string>();
-
-  constructor(host: RuntimeHost) {
-    this.#host = host;
-  }
-
-  async connect(
-    url: string | URL,
-    options: WebSocketConnectOptions = {},
-  ): Promise<WebSocketConnectOutcome> {
-    const ready = this.#host.runtimeReadiness();
-    if (ready.tag !== "Ready") {
-      return ready;
-    }
-    const canonical = canonicalWebSocketUrl(url);
-    if (canonical.tag !== "Canonical") {
-      return canonical;
-    }
-    const target = canonical.data;
-    const protocols = normalizedWebSocketProtocols(options.protocols);
-    let tag: ChannelTag;
-    try {
-      tag = options.channelTag ?? browserWebSocketChannelTag(target, protocols);
-    } catch (error) {
-      return connectFailure("websocket", "RuntimeRegistration", error);
-    }
-    const tagKey = byteKey(tag);
-    if (this.#activeTags.has(tagKey)) {
-      return Tag("AlreadyActive", { interface: "websocket", target });
-    }
-    this.#activeTags.add(tagKey);
-
-    let socket: WebSocket | undefined;
-    let interfaceId: InterfaceId | undefined;
-    let stage: InterfaceConnectStage = "TransportOpen";
-    try {
-      const opened = await openBrowserWebSocket(target, protocols);
-      if (opened.tag !== "Opened") {
-        this.#activeTags.delete(tagKey);
-        return opened;
-      }
-      socket = opened.data;
-      stage = "RuntimeRegistration";
-      const registered = this.#host.registerInterface({
-        interfaceName: "websocket",
-        kind: "websocket-client",
-        channelTag: tag,
-        bitrateBps: options.bitrateBps ?? this.#host.websocketBitrateBps(),
-        hardwareMtu: options.hardwareMtu ?? this.#host.websocketHardwareMtu(),
-        ...runtimeInterfaceRouting(options.routing),
-      });
-      if (registered.tag !== "Registered") {
-        closeBrowserWebSocket(socket);
-        this.#activeTags.delete(tagKey);
-        return registered;
-      }
-      interfaceId = registered.data;
-      stage = "Handshake";
-      const session = new BrowserWebSocketSession(
-        this.#host,
-        socket,
-        interfaceId,
-        target,
-        this.#host.websocketFrameCap(),
-        () => this.#activeTags.delete(tagKey),
-      );
-      session.start();
-      return Tag("Connected", session);
-    } catch (error) {
-      if (interfaceId) {
-        this.#host.deactivateInterface(interfaceId);
-      }
-      closeBrowserWebSocket(socket);
-      this.#activeTags.delete(tagKey);
-      return connectFailure("websocket", stage, error);
-    }
-  }
-}
-
-class BrowserWebSocketSession implements WebSocketSession {
-  readonly name = "websocket" as const;
-  readonly interfaceId: InterfaceId;
-  readonly url: string;
-
-  readonly #host: RuntimeHost;
-  readonly #socket: WebSocket;
-  readonly #frameCap: number;
-  readonly #bufferLimit: number;
-  readonly #release: () => void;
-  #readQueue: Promise<void> = Promise.resolve();
-  #writeQueue: Promise<SessionWriteOutcome> = Promise.resolve(Tag("Written"));
-  #closed = false;
-  #released = false;
-  #status: InterfaceSessionStatus = Tag("Active");
-
-  constructor(
-    host: RuntimeHost,
-    socket: WebSocket,
-    interfaceId: InterfaceId,
-    url: string,
-    frameCap: number,
-    release: () => void,
-  ) {
-    this.#host = host;
-    this.#socket = socket;
-    this.interfaceId = interfaceId;
-    this.url = url;
-    this.#frameCap = frameCap;
-    this.#bufferLimit = Math.max(WEBSOCKET_MIN_BUFFER_LIMIT, frameCap * 2);
-    this.#release = release;
-  }
-
-  get status(): InterfaceSessionStatus {
-    return this.#status;
-  }
-
-  start(): void {
-    this.#socket.addEventListener("message", (event) => {
-      this.#enqueueMessage(event);
-    });
-    this.#socket.addEventListener("close", () => {
-      this.#handleClose();
-    });
-    this.#socket.addEventListener("error", () => {
-      void this.#fail(
-        Tag("Disconnected", {
-          detail: `WebSocket connection failed for ${this.url}`,
-        }),
-      );
-    });
-    void this.#outboundLoop();
-  }
-
-  async close(): Promise<InterfaceCloseOutcome> {
-    if (this.#closed) {
-      return closedSessionOutcome(this.#status);
-    }
-    this.#closed = true;
-    const causes: InterfaceCleanupFailure[] = [];
-    const detached = this.#host.deactivateInterface(this.interfaceId);
-    if (detached.tag !== "Detached") {
-      causes.push(Tag("RuntimeDetachFailed", { detail: detached.data.detail }));
-    }
-    this.#releaseOnce();
-    const socketFailure = closeBrowserWebSocket(this.#socket);
-    if (socketFailure) {
-      causes.push(socketFailure);
-    }
-    const pendingWrite = await this.#writeQueue;
-    if (pendingWrite.tag !== "Written") {
-      causes.push(
-        Tag("TransportCloseFailed", {
-          detail: describeInterfaceSessionFailure(pendingWrite),
-        }),
-      );
-    }
-    if (hasCleanupFailures(causes)) {
-      const failed = closeFailed(causes);
-      this.#status = Tag("Failed", failed);
-      return failed;
-    }
-    this.#status = Tag("Closed");
-    return Tag("Closed");
-  }
-
-  #enqueueMessage(event: MessageEvent): void {
-    this.#readQueue = this.#readQueue
-      .then(async () => {
-        const handled = await this.#handleMessage(event);
-        if (handled.tag !== "Handled" && !this.#closed) {
-          await this.#fail(handled);
-        }
-      })
-      .catch(async (error: unknown) => {
-        if (!this.#closed) {
-          await this.#fail(unexpectedSessionFailure(error));
-        }
-      });
-  }
-
-  async #handleMessage(event: MessageEvent): Promise<SessionHandleOutcome> {
-    const decoded = await websocketMessageBytes(event.data, this.#frameCap);
-    if (decoded.tag !== "Decoded") {
-      return decoded;
-    }
-    if (decoded.data.length > 0 && !this.#closed) {
-      const ingested = this.#host.ingest(
-        this.interfaceId,
-        packetFrame(decoded.data),
-      );
-      return ingested.tag === "Accepted" ? Tag("Handled") : ingested;
-    }
-    return Tag("Handled");
-  }
-
-  #handleClose(): void {
-    if (this.#closed) {
-      return;
-    }
-    this.#closed = true;
-    const detached = this.#host.deactivateInterface(this.interfaceId);
-    this.#status =
-      detached.tag === "Detached" ? Tag("Closed") : Tag("Failed", detached);
-    this.#releaseOnce();
-  }
-
-  async #outboundLoop(): Promise<void> {
-    try {
-      while (!this.#closed) {
-        const outbound = this.#host.takeOutboundFor(this.interfaceId);
-        if (outbound.tag !== "Outbound") {
-          await this.#fail(outbound);
-          return;
-        }
-        for (const frame of outbound.data) {
-          const written = await this.#writeFrame(frame.bytes);
-          if (written.tag !== "Written") {
-            await this.#fail(written);
-            return;
-          }
-        }
-        await delay(WEBSOCKET_OUTBOUND_POLL_MS);
-      }
-    } catch (error) {
-      if (!this.#closed) {
-        await this.#fail(unexpectedSessionFailure(error));
-      }
-    }
-  }
-
-  async #fail(sessionFailure: InterfaceSessionFailure): Promise<void> {
-    if (this.#closed) {
-      return;
-    }
-    this.#status = Tag("Failed", sessionFailure);
-    this.#closed = true;
-    this.#host.deactivateInterface(this.interfaceId);
-    this.#releaseOnce();
-    await this.#writeQueue;
-    closeBrowserWebSocket(this.#socket);
-  }
-
-  async #writeFrame(frame: Uint8Array): Promise<SessionWriteOutcome> {
-    if (this.#closed || frame.length === 0) {
-      return Tag("Written");
-    }
-    if (frame.length > this.#frameCap) {
-      return Tag("FrameTooLarge", {
-        length: frame.length,
-        maximum: this.#frameCap,
-      });
-    }
-    const write = this.#writeQueue
-      .then(async (previous): Promise<SessionWriteOutcome> => {
-        if (previous.tag !== "Written" || this.#closed) {
-          return previous;
-        }
-        while (!this.#closed && this.#socket.bufferedAmount > this.#bufferLimit) {
-          await delay(WEBSOCKET_BUFFER_POLL_MS);
-        }
-        if (this.#closed) {
-          return Tag("Written");
-        }
-        if (this.#socket.readyState !== WEBSOCKET_OPEN) {
-          return Tag("Disconnected", {
-            detail: `WebSocket is not open for ${this.url}`,
-          });
-        }
-        try {
-          this.#socket.send(frame);
-          return Tag("Written");
-        } catch (error) {
-          return Tag("Disconnected", { detail: describeHostError(error) });
-        }
-      })
-      .catch((error: unknown) => unexpectedSessionFailure(error));
-    this.#writeQueue = write;
-    return write;
-  }
-
-  #releaseOnce(): void {
-    if (!this.#released) {
-      this.#released = true;
-      this.#release();
-    }
   }
 }
 
@@ -3636,22 +3367,28 @@ export class Prns {
       Weave: unsupported,
       AutomaticUsb: unsupported,
       AutomaticBluetoothLe: unsupported,
-      WebSocketClient: ({ target }) =>
-        this.#attachWebSocket(target, "WebSocketClient", routing),
+      WebSocketClient: ({ target, framing }) =>
+        this.#attachWebSocket(target, "WebSocketClient", framing, routing),
       WebSocketServer: unsupported,
       BrowserRendezvous: ({ url }) =>
-        this.#attachWebSocket(url, "BrowserRendezvous", routing),
+        this.#attachWebSocket(
+          url,
+          "BrowserRendezvous",
+          BROWSER_RENDEZVOUS_FRAMING_SELECTION,
+          routing,
+        ),
     });
   }
 
   async #attachWebSocket(
     target: string,
     kind: InterfaceKind,
+    framing: WebSocketFramingSelection,
     routing: InterfaceRoutingPolicy | undefined,
   ): Promise<CommandSettlement> {
     const connected = await this.interfaces.webSocket.connect(
       target,
-      routing === undefined ? {} : { routing },
+      routing === undefined ? { framing } : { framing, routing },
     );
     if (connected.tag !== "Connected") {
       return commandFailed(webSocketCommandFailure(connected));
@@ -4098,7 +3835,10 @@ class RuntimeHost {
     }
   }
 
-  takeOutboundFor(interfaceId: InterfaceId): OutboundTakeOutcome {
+  takeOutboundFor(
+    interfaceId: InterfaceId,
+    maximumFrames = Number.MAX_SAFE_INTEGER,
+  ): OutboundTakeOutcome {
     const interfaceKey = byteKey(interfaceId);
     const direct: PrnsOutboundFrame[] = [];
     const drained = this.drainOutbound();
@@ -4128,8 +3868,9 @@ class RuntimeHost {
       });
     }
     const queued = this.#outboundQueues.get(interfaceKey) ?? [];
-    this.#outboundQueues.set(interfaceKey, []);
-    const outbound = queued.concat(direct);
+    const available = queued.concat(direct);
+    const outbound = available.slice(0, maximumFrames);
+    this.#outboundQueues.set(interfaceKey, available.slice(maximumFrames));
     const active = this.#activeInterfaces.get(interfaceKey);
     if (active !== undefined) {
       active.txBytes = outbound.reduce(
@@ -4146,6 +3887,14 @@ class RuntimeHost {
 
   createBluetoothReassembler(): BluetoothReassemblerBinding {
     return new this.#wasm.BluetoothReassembler();
+  }
+
+  createWebSocketFramingCodec(
+    selection: WebSocketFramingSelection,
+  ): WebSocketFramingCodecBinding {
+    return new this.#wasm.WebSocketFramingCodec(
+      wasmWebSocketFramingSelection(selection),
+    );
   }
 
   bluetoothServiceUuid(): string {
@@ -4198,6 +3947,34 @@ class RuntimeHost {
 
   websocketHardwareMtu(): HardwareMtu {
     return hardwareMtu(this.#wasm.websocketHardwareMtu());
+  }
+
+  webSocketRegister(
+    options: WebSocketRuntimeRegistration,
+  ): InterfaceRegistrationOutcome<"websocket"> {
+    try {
+      return this.registerInterface({
+        interfaceName: "websocket",
+        kind: "websocket-client",
+        channelTag: channelTag(options.channelTag),
+        bitrateBps: options.bitrateBps,
+        hardwareMtu: options.hardwareMtu,
+        ...runtimeInterfaceRouting(options.routing),
+      });
+    } catch (error) {
+      return runtimeRejected("register-interface", error);
+    }
+  }
+
+  webSocketIngest(
+    id: InterfaceId,
+    bytes: Uint8Array,
+  ): RuntimeIngestOutcome {
+    try {
+      return this.ingest(id, packetFrame(bytes));
+    } catch (error) {
+      return runtimeRejected("ingest", error);
+    }
   }
 
   autoWifiReady(): RuntimeReadyOutcome {
@@ -5526,165 +5303,6 @@ function requireWebBluetooth(): Available<BrowserBluetooth, "WebBluetooth"> {
   }
 }
 
-function requireBrowserWebSocket(): Available<typeof WebSocket, "WebSocket"> {
-  try {
-    const WebSocketCtor = hostGlobal().WebSocket;
-    return WebSocketCtor
-      ? Tag("Available", WebSocketCtor)
-      : Tag("HostApiUnavailable", { api: "WebSocket" });
-  } catch {
-    return Tag("HostApiUnavailable", { api: "WebSocket" });
-  }
-}
-
-async function openBrowserWebSocket(
-  url: string,
-  protocols?: string | readonly string[],
-): Promise<WebSocketOpenOutcome> {
-  const available = requireBrowserWebSocket();
-  if (available.tag !== "Available") {
-    return available;
-  }
-  const protocolList =
-    protocols === undefined || typeof protocols === "string"
-      ? protocols
-      : [...protocols];
-  let socket: WebSocket;
-  try {
-    const WebSocketCtor = available.data;
-    socket =
-      protocolList === undefined
-        ? new WebSocketCtor(url)
-        : new WebSocketCtor(url, protocolList);
-  } catch (error) {
-    return connectFailure("websocket", "TransportOpen", error);
-  }
-  try {
-    socket.binaryType = "arraybuffer";
-  } catch (error) {
-    closeBrowserWebSocket(socket);
-    return connectFailure("websocket", "TransportOpen", error);
-  }
-  return new Promise((resolve) => {
-    let timeout: number | undefined;
-    const cleanup = (): void => {
-      if (timeout !== undefined) {
-        globalThis.clearTimeout(timeout);
-      }
-      socket.removeEventListener("open", handleOpen);
-      socket.removeEventListener("error", handleError);
-      socket.removeEventListener("close", handleClose);
-    };
-    const handleOpen = (): void => {
-      cleanup();
-      resolve(Tag("Opened", socket));
-    };
-    const handleError = (): void => {
-      cleanup();
-      closeBrowserWebSocket(socket);
-      resolve(
-        Tag("ConnectionFailed", {
-          interface: "websocket",
-          stage: "TransportOpen",
-          detail: `WebSocket connection failed for ${url}`,
-        }),
-      );
-    };
-    const handleClose = (): void => {
-      cleanup();
-      resolve(
-        Tag("ConnectionFailed", {
-          interface: "websocket",
-          stage: "TransportOpen",
-          detail: `WebSocket connection closed before opening for ${url}`,
-        }),
-      );
-    };
-    const handleTimeout = (): void => {
-      cleanup();
-      closeBrowserWebSocket(socket);
-      resolve(
-        Tag("TimedOut", {
-          interface: "websocket",
-          stage: "TransportOpen",
-          timeoutMs: WEBSOCKET_CONNECT_TIMEOUT_MS,
-        }),
-      );
-    };
-    try {
-      timeout = globalThis.setTimeout(handleTimeout, WEBSOCKET_CONNECT_TIMEOUT_MS);
-      socket.addEventListener("open", handleOpen);
-      socket.addEventListener("error", handleError);
-      socket.addEventListener("close", handleClose);
-    } catch (error) {
-      cleanup();
-      closeBrowserWebSocket(socket);
-      resolve(connectFailure("websocket", "TransportOpen", error));
-    }
-  });
-}
-
-async function websocketMessageBytes(
-  data: MessageEvent["data"],
-  frameCap: number,
-): Promise<WebSocketDecodeOutcome> {
-  if (data instanceof ArrayBuffer) {
-    return data.byteLength > frameCap
-      ? frameTooLarge(data.byteLength, frameCap)
-      : Tag("Decoded", new Uint8Array(data));
-  }
-  if (ArrayBuffer.isView(data)) {
-    return data.byteLength > frameCap
-      ? frameTooLarge(data.byteLength, frameCap)
-      : Tag(
-          "Decoded",
-          new Uint8Array(data.buffer, data.byteOffset, data.byteLength),
-        );
-  }
-  if (typeof Blob !== "undefined" && data instanceof Blob) {
-    if (data.size > frameCap) {
-      return frameTooLarge(data.size, frameCap);
-    }
-    try {
-      return Tag("Decoded", new Uint8Array(await data.arrayBuffer()));
-    } catch (error) {
-      return Tag("TransferFailed", {
-        direction: "Inbound",
-        detail: describeHostError(error),
-      });
-    }
-  }
-  return Tag("UnsupportedFrame", {
-    format: typeof data === "string" ? "Text" : "Unknown",
-  });
-}
-
-function frameTooLarge(
-  length: number,
-  maximum: number,
-): Extract<InterfaceSessionFailure, Tag<"FrameTooLarge", unknown>> {
-  return Tag("FrameTooLarge", { length, maximum });
-}
-
-function closeBrowserWebSocket(
-  socket: WebSocket | undefined,
-): InterfaceCleanupFailure | undefined {
-  try {
-    if (
-      socket &&
-      (socket.readyState === WEBSOCKET_CONNECTING ||
-        socket.readyState === WEBSOCKET_OPEN)
-    ) {
-      socket.close();
-    }
-  } catch (error) {
-    return Tag("TransportCloseFailed", {
-      detail: describeHostError(error),
-    });
-  }
-  return undefined;
-}
-
 function firstUsbConfiguration(
   device: BrowserUsbDevice,
 ): UsbConfigurationOutcome {
@@ -5844,45 +5462,6 @@ function disconnectBluetoothServer(
   }
 }
 
-function domExceptionName(error: unknown): string | undefined {
-  return typeof DOMException !== "undefined" && error instanceof DOMException
-    ? error.name
-    : undefined;
-}
-
-function connectFailure<Name extends InterfaceName>(
-  interfaceName: Name,
-  stage: InterfaceConnectStage,
-  error: unknown,
-): ConnectionFailed<Name> | PermissionDenied<Name> | Cancelled<Name> {
-  const name = domExceptionName(error);
-  if (name === "SecurityError" || name === "NotAllowedError") {
-    return Tag("PermissionDenied", {
-      interface: interfaceName,
-      stage,
-      detail: describeHostError(error),
-    });
-  }
-  if (name === "NotFoundError" && stage === "DeviceSelection") {
-    return Tag("Cancelled", { interface: interfaceName, stage });
-  }
-  return Tag("ConnectionFailed", {
-    interface: interfaceName,
-    stage,
-    detail: describeHostError(error),
-  });
-}
-
-function describeHostError(error: unknown): string {
-  if (typeof DOMException !== "undefined" && error instanceof DOMException) {
-    return `${error.name}: ${error.message}`;
-  }
-  if (error instanceof Error) {
-    return `${error.name}: ${error.message}`;
-  }
-  return String(error);
-}
-
 async function optionalBluetoothCharacteristic(
   service: BrowserBluetoothRemoteGattService,
   uuid: string,
@@ -5958,27 +5537,6 @@ function browserUsbAutoChannelTag(device: BrowserUsbDevice): ChannelTag {
   return channelTag(
     new TextEncoder().encode(`webusb:auto-usb:${vendor}:${product}:${serial}:${nonce}`),
   );
-}
-
-function canonicalWebSocketUrl(url: string | URL): CanonicalWebSocketOutcome {
-  let target: URL;
-  try {
-    target = new URL(url.toString());
-  } catch (error) {
-    return Tag("InvalidTarget", {
-      interface: "websocket",
-      target: url.toString(),
-      detail: describeHostError(error),
-    });
-  }
-  if (target.protocol !== "ws:" && target.protocol !== "wss:") {
-    return Tag("InvalidTarget", {
-      interface: "websocket",
-      target: target.toString(),
-      detail: "WebSocket URL must use the ws or wss scheme",
-    });
-  }
-  return Tag("Canonical", target.toString());
 }
 
 function runtimeRejected(
@@ -6167,33 +5725,6 @@ function describePersistenceStoreFailure(
   });
 }
 
-function unexpectedSessionFailure(error: unknown): Extract<
-  InterfaceSessionFailure,
-  Tag<"UnexpectedSessionFailure", unknown>
-> {
-  return Tag("UnexpectedSessionFailure", { detail: describeHostError(error) });
-}
-
-function closeFailed(
-  causes: InterfaceCleanupFailures,
-): Extract<InterfaceSessionFailure, Tag<"CloseFailed", unknown>> {
-  return Tag("CloseFailed", { causes });
-}
-
-function hasCleanupFailures(
-  causes: readonly InterfaceCleanupFailure[],
-): causes is InterfaceCleanupFailures {
-  return causes.length > 0;
-}
-
-function closedSessionOutcome(
-  status: InterfaceSessionStatus,
-): InterfaceCloseOutcome {
-  return status.tag === "Failed" && status.data.tag === "CloseFailed"
-    ? status.data
-    : Tag("Closed");
-}
-
 function sessionFailureToConnectFailure(
   interfaceName: "bluetooth",
   stage: InterfaceConnectStage,
@@ -6287,61 +5818,21 @@ function saturatingAdd(left: number, right: number): number {
   return Math.min(Number.MAX_SAFE_INTEGER, left + right);
 }
 
-function describeInterfaceSessionFailure(
-  failure: InterfaceSessionFailure,
+function wasmWebSocketFramingSelection(
+  selection: WebSocketFramingSelection,
 ): string {
-  return match_into<string>().from(failure, {
-    Disconnected: ({ detail }) => detail,
-    UnexpectedSessionFailure: ({ detail }) => detail,
-    EntropySourceFailed: ({ detail }) => detail,
-    TransferFailed: ({ direction, detail }) =>
-      `${direction} transfer: ${detail}`,
-    ProtocolViolation: ({ protocol, detail }) => `${protocol}: ${detail}`,
-    UnsupportedFrame: ({ format }) =>
-      `unsupported ${format.toLowerCase()} frame`,
-    FrameTooLarge: ({ length, maximum }) =>
-      `frame is ${length} bytes; maximum is ${maximum}`,
-    OutboundQueueFull: ({ capacity }) =>
-      `outbound queue reached ${capacity} frames`,
-    CloseFailed: ({ causes }) =>
-      causes.map((cause) => cause.data.detail).join("; "),
-    HostApiUnavailable: ({ api }) => `${api} is unavailable`,
-    InsufficientEntropy: ({ actual, minimum }) =>
-      `entropy source returned ${actual} bytes; minimum is ${minimum}`,
-    RuntimeRejected: ({ operation, detail }) => `${operation}: ${detail}`,
-  });
-}
-
-function normalizedWebSocketProtocols(
-  protocols: string | readonly string[] | undefined,
-): string | readonly string[] | undefined {
-  if (protocols === undefined || typeof protocols === "string") {
-    return protocols;
+  switch (selection) {
+    case "Auto":
+      return "auto";
+    case "RawPacket":
+      return "raw";
+    case "Hdlc":
+      return "hdlc";
+    case "Kiss":
+      return "kiss";
   }
-  return protocols.length === 0 ? undefined : [...protocols];
-}
-
-function browserWebSocketChannelTag(
-  url: string,
-  protocols: string | readonly string[] | undefined,
-): ChannelTag {
-  const protocolList =
-    protocols === undefined
-      ? []
-      : typeof protocols === "string"
-        ? [protocols]
-        : protocols;
-  return channelTag(
-    new TextEncoder().encode(JSON.stringify(["websocket-client", url, protocolList])),
-  );
-}
-
-function byteKey(bytes: Uint8Array): string {
-  let key = "";
-  for (const byte of bytes) {
-    key += byte.toString(16).padStart(2, "0");
-  }
-  return key;
+  const unreachable: never = selection;
+  return unreachable;
 }
 
 function formatOptionalHex(value: number | undefined): string {
@@ -6449,12 +5940,6 @@ function linkClosedReason(
     timeout: () => "Timeout" as const,
     peerClosed: () => "PeerClosed" as const,
     malformedRtt: () => "MalformedRtt" as const,
-  });
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
   });
 }
 

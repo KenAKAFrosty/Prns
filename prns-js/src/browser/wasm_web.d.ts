@@ -5,6 +5,7 @@ import type {
   PacketFrame,
   PrnsRuntimeBinding,
   UsbAutoDecoderBinding,
+  WebSocketFramingCodecBinding,
 } from "./index.js";
 
 export declare class PrnsRuntime implements PrnsRuntimeBinding {
@@ -47,6 +48,20 @@ export declare class BluetoothReassembler
 {
   constructor();
   absorb: BluetoothReassemblerBinding["absorb"];
+}
+
+export declare class WebSocketFramingCodec
+  implements WebSocketFramingCodecBinding
+{
+  constructor(selection: string);
+  messageCap: WebSocketFramingCodecBinding["messageCap"];
+  canReadOutbound: WebSocketFramingCodecBinding["canReadOutbound"];
+  rawFallbackIsArmed: WebSocketFramingCodecBinding["rawFallbackIsArmed"];
+  isDetecting: WebSocketFramingCodecBinding["isDetecting"];
+  rawFallbackDelayMillis: WebSocketFramingCodecBinding["rawFallbackDelayMillis"];
+  decode: WebSocketFramingCodecBinding["decode"];
+  stageOutbound: WebSocketFramingCodecBinding["stageOutbound"];
+  resolveRawFallback: WebSocketFramingCodecBinding["resolveRawFallback"];
 }
 
 export declare function hostContractAbi(): number;
