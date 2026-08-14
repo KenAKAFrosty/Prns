@@ -6,11 +6,14 @@ pub use device::{
 };
 
 use embassy_futures::select::{select, select3, Either, Either3};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::channel::{Receiver, Sender};
 use embassy_time::{with_timeout, Duration, Instant, Timer};
 use embedded_io_async::{Error, ErrorKind, Read, Write};
 
 use prns_core::interfaces::usb_auto::{
-    self as contract, Capabilities, InboundReaction, Message, NodeTag,
+    self as contract, Capabilities, ConfigReply, ConfigRequest, ConfigResult, InboundReaction,
+    Message, NodeTag,
 };
 use prns_core::interfaces::{
     ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceStatus,
@@ -24,6 +27,20 @@ const WRITE_TIMEOUT: Duration = Duration::from_millis(200);
 const IO_RETRY_DELAY: Duration = Duration::from_millis(100);
 const PRESENCE_PROBE_INTERVAL: Duration = Duration::from_secs(2);
 const PRESENCE_STRIKES_TO_DORMANT: u8 = 2;
+
+/// Capacity of the config request/reply channels between the USB Auto device
+/// lane and the headless config task. One outstanding request at a time is
+/// enough — the lane awaits the reply before reading the next frame.
+pub const CONFIG_CHANNEL_CAPACITY: usize = 2;
+
+/// Endpoints the USB Auto device lane uses to hand a [`ConfigRequest`] to the
+/// headless config task and await its [`ConfigReply`]. Built from a pair of
+/// `embassy_sync::channel::Channel`s stored as statics in the board runtime;
+/// `None` (the default) on boards with no config task (e.g. T-Echo).
+pub struct ConfigEndpoints<'a> {
+    pub requests: Sender<'a, CriticalSectionRawMutex, ConfigRequest, CONFIG_CHANNEL_CAPACITY>,
+    pub replies: Receiver<'a, CriticalSectionRawMutex, ConfigReply, CONFIG_CHANNEL_CAPACITY>,
+}
 
 #[derive(Debug, PartialEq, Eq)]
 enum UsbLifecycle {
@@ -153,6 +170,7 @@ pub struct UsbAutoDevice<'a, R, W, P> {
     node_tag: NodeTag,
     status: &'a EmbassyInterfaceStatus,
     host_present: P,
+    config: Option<ConfigEndpoints<'a>>,
 }
 
 impl<'a, R, W, P> UsbAutoDevice<'a, R, W, P> {
@@ -172,7 +190,18 @@ impl<'a, R, W, P> UsbAutoDevice<'a, R, W, P> {
             node_tag: contract::node_tag_for(id),
             status,
             host_present,
+            config: None,
         }
+    }
+
+    /// Attach the config-lane channel endpoints so the device lane can forward
+    /// `ConfigRequest` frames to the headless config task. Boards without a
+    /// config task leave this unset (the default); a `ConfigRequest` that
+    /// arrives on such a board is dropped while linked.
+    #[must_use]
+    pub fn with_config(mut self, endpoints: ConfigEndpoints<'a>) -> Self {
+        self.config = Some(endpoints);
+        self
     }
 }
 
@@ -201,6 +230,7 @@ where
             node_tag,
             status,
             mut host_present,
+            mut config,
         } = self;
         let mut decoder = contract::Decoder::new();
         let mut read_buf = [0u8; contract::READ_CHUNK_BYTES];
@@ -293,6 +323,79 @@ where
                                     InboundReaction::Deliver(packet) => {
                                         if lifecycle.is_linked() && !packet.is_empty() {
                                             seam.next_inbound(packet).await;
+                                        }
+                                    }
+                                    // Config lane: forward the request to the
+                                    // headless config task (when wired) and
+                                    // write its reply back as a ConfigResponse
+                                    // or Snapshot. See T1000E_HEADLESS_CONFIG.md.
+                                    InboundReaction::Configure { request_id, action } => {
+                                        if !lifecycle.is_linked() {
+                                            continue;
+                                        }
+                                        let Some(endpoints) = config.as_mut() else {
+                                            // No config task on this board.
+                                            continue;
+                                        };
+                                        let reply = if action.len()
+                                            > contract::MAX_CONFIG_ACTION_BYTES
+                                        {
+                                            ConfigReply::response(
+                                                request_id,
+                                                ConfigResult::BadPayload,
+                                            )
+                                        } else {
+                                            match ConfigRequest::from_action(request_id, action) {
+                                                Some(request) => {
+                                                    endpoints.requests.send(request).await;
+                                                    endpoints.replies.receive().await
+                                                }
+                                                None => ConfigReply::response(
+                                                    request_id,
+                                                    ConfigResult::BadPayload,
+                                                ),
+                                            }
+                                        };
+                                        let message = match &reply {
+                                            ConfigReply::Response {
+                                                request_id,
+                                                result,
+                                                detail,
+                                            } => Message::ConfigResponse {
+                                                request_id: *request_id,
+                                                result: *result,
+                                                detail,
+                                            },
+                                            ConfigReply::Snapshot {
+                                                schema_version,
+                                                body,
+                                            } => Message::Snapshot {
+                                                schema_version: *schema_version,
+                                                body,
+                                            },
+                                        };
+                                        match write_message(
+                                            &mut tx,
+                                            &message,
+                                            &mut frame_buf,
+                                            status,
+                                        )
+                                        .await
+                                        {
+                                            WriteOutcome::Sent(n) => status.add_tx(n as u64),
+                                            WriteOutcome::TimedOut
+                                            | WriteOutcome::TransientFailure => {
+                                                lifecycle.degrade(status);
+                                            }
+                                            WriteOutcome::Disconnected => {
+                                                decoder = contract::Decoder::new();
+                                                lifecycle.disconnect(status);
+                                            }
+                                            WriteOutcome::Failed | WriteOutcome::Rejected => {
+                                                decoder = contract::Decoder::new();
+                                                lifecycle.fail(status);
+                                            }
+                                            WriteOutcome::Disabled => {}
                                         }
                                     }
                                     InboundReaction::Ignore => {}

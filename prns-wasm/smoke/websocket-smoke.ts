@@ -768,6 +768,15 @@ function wasmModule(): PrnsWasmModule {
     usbAutoHostHelloFrame: () => new Uint8Array([1]),
     usbAutoHostHelloAckFrame: () => new Uint8Array([2]),
     usbAutoDataFrame: (packet: PacketFrame) => packet,
+    usbAutoConfigRequestFrame: () => new Uint8Array([1]),
+    usbAutoSnapshotDecode: () => ({ sections: [] }),
+    usbAutoConfigActionSetLoRaProfile: () => new Uint8Array([1]),
+    usbAutoConfigActionResetLoRaProfile: () => new Uint8Array([1]),
+    usbAutoConfigActionToggleInterface: () => new Uint8Array([1]),
+    usbAutoConfigActionSleep: () => new Uint8Array([1]),
+    usbAutoConfigActionWake: () => new Uint8Array([1]),
+    usbAutoConfigActionAnnounce: () => new Uint8Array([1]),
+    usbAutoConfigActionRequestSnapshot: () => new Uint8Array([1]),
   };
 }
 

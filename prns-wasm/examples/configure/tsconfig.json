@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "../../..",
+    "rootDirs": [".", "../../target/configure"],
+    "outDir": "../../target/configure",
+    "declaration": false,
+    "declarationMap": false
+  },
+  "include": [
+    "../../../prns-js/src/casework.ts",
+    "../../../prns-js/src/contract.ts",
+    "../../../prns-js/src/browser/**/*.ts",
+    "./**/*.ts"
+  ],
+  "exclude": []
+}

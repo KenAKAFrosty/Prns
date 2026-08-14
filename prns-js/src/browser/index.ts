@@ -559,6 +559,23 @@ export type PrnsWasmModule = {
   usbAutoHostHelloFrame(): Uint8Array;
   usbAutoHostHelloAckFrame(nodeTag: Uint8Array): Uint8Array;
   usbAutoDataFrame(packet: PacketFrame): Uint8Array;
+  usbAutoConfigRequestFrame(requestId: number, action: Uint8Array): Uint8Array;
+  usbAutoSnapshotDecode(body: Uint8Array): UsbAutoSnapshot;
+  usbAutoConfigActionSetLoRaProfile(
+    frequencyHz: number,
+    spreadingFactor: number,
+    bandwidth: number,
+    codingRate: number,
+    txPowerDbm: number,
+    preamble: number,
+    regionCode: number,
+  ): Uint8Array;
+  usbAutoConfigActionResetLoRaProfile(): Uint8Array;
+  usbAutoConfigActionToggleInterface(interfaceCode: number): Uint8Array;
+  usbAutoConfigActionSleep(): Uint8Array;
+  usbAutoConfigActionWake(): Uint8Array;
+  usbAutoConfigActionAnnounce(): Uint8Array;
+  usbAutoConfigActionRequestSnapshot(): Uint8Array;
 };
 
 export type RuntimeRegisterNodePageOptions = {
@@ -1151,7 +1168,95 @@ type BrowserUsbOutTransferResult = {
 type UsbAutoInboundMessage =
   | Tag<"Hello">
   | Tag<"HelloAck", Uint8Array>
-  | Tag<"Data", Uint8Array>;
+  | Tag<"Data", Uint8Array>
+  | Tag<"ConfigRequest", { requestId: number; action: Uint8Array }>
+  | Tag<"ConfigResponse", { requestId: number; result: UsbAutoConfigResult; detail: Uint8Array }>
+  | Tag<"Snapshot", { schemaVersion: number; body: Uint8Array }>;
+
+export type UsbAutoConfigResult =
+  | "ok"
+  | "applyFailed"
+  | "profileNotSaved"
+  | "rejected"
+  | "badPayload";
+
+export type UsbAutoInterfaceKind = "lora" | "usb" | "ble";
+
+export type UsbAutoConnectionState =
+  | "initializing"
+  | "connected"
+  | "degraded"
+  | "reconnecting"
+  | "failed"
+  | "disconnected"
+  | "disabled"
+  | "unknown";
+
+export type UsbAutoPersistenceState = "durable" | "deferred" | "failed";
+
+export type UsbAutoInterfaceStatus = {
+  enabled: boolean;
+  connection: UsbAutoConnectionState;
+  rxBytes: number;
+  txBytes: number;
+  airtime?: { shortPerMille: number; longPerMille: number };
+  transferRates?: { rxBps: number; txBps: number };
+};
+
+export type UsbAutoRadioProfile = {
+  frequencyHz: number;
+  spreadingFactor: number;
+  bandwidth: number;
+  codingRate: number;
+  txPowerDbm: number;
+  preamble: number;
+  regionCode: number;
+  region: string;
+};
+
+export type UsbAutoInterfaceCount = {
+  kind: UsbAutoInterfaceKind;
+  destinations: number;
+  links: number;
+  transportedLinks: number;
+};
+
+export type UsbAutoSnapshotSection =
+  | { type: "deviceInfo"; version: string }
+  | { type: "persistence"; state: UsbAutoPersistenceState }
+  | { type: "loraStatus"; status: UsbAutoInterfaceStatus }
+  | { type: "usbStatus"; status: UsbAutoInterfaceStatus }
+  | {
+      type: "bleStatus";
+      status: UsbAutoInterfaceStatus;
+      failureReason: string;
+    }
+  | {
+      type: "bleRecovery";
+      ingressPressure: number;
+      setupFailures: number;
+      transportClosures: number;
+      egressPressureEvents: number;
+      memberCount: number;
+    }
+  | {
+      type: "loraSpectrum";
+      channelBusyPerMille: number;
+      noiseFloorDbm?: number;
+      ccaThresholdDbm?: number;
+      deferrals: number;
+      falsePreambles: number;
+      contentionTimeouts: number;
+      dutyHolds: number;
+      dutyTimeouts: number;
+      radioRecoveries: number;
+    }
+  | { type: "radioProfile"; profile: UsbAutoRadioProfile }
+  | { type: "interfaceCounts"; counts: UsbAutoInterfaceCount[] };
+
+export type UsbAutoSnapshot = {
+  sections: UsbAutoSnapshotSection[];
+};
 
 type BluetoothControl =
   | Tag<"Hello", Uint8Array>
@@ -1779,6 +1884,11 @@ class BrowserUsbAutoSession implements UsbAutoSession {
         }
         return Tag("Handled");
       },
+      // The Reticulum-data session ignores config-lane traffic. The headless
+      // config session (`BrowserUsbAutoConfigSession`) owns those messages.
+      ConfigRequest: async () => Tag("Handled"),
+      ConfigResponse: async () => Tag("Handled"),
+      Snapshot: async () => Tag("Handled"),
     });
   }
 
@@ -1989,6 +2099,423 @@ class WebUsbAutoTransport {
       );
     }
     return failures;
+  }
+}
+
+/// Fixed 8-byte host tag for the config lane. The data session derives its tag
+/// from the registered interface id; the config session registers no interface
+/// (it bypasses the Reticulum runtime), so it advertises a stable synthetic
+/// tag. The device stores it as the peer tag and never routes Reticulum traffic
+/// to it because no ConfigRequest the device sends is ever expected back.
+const USB_AUTO_CONFIG_HOST_TAG = new Uint8Array([
+  0x70, 0x72, 0x6e, 0x73, 0x68, 0x6f, 0x73, 0x74, // "prnshost"
+]);
+
+/// Per-request ceiling for a ConfigResponse / Snapshot round trip. The device
+/// applies actions synchronously inside the config task, so this only fires on
+/// a wedged radio or a dropped frame; resolving with a failure beats hanging
+/// the webUI forever.
+const USB_AUTO_CONFIG_REQUEST_TIMEOUT_MS = 5_000;
+
+export type UsbAutoConfigConnectOutcome =
+  | Tag<"Connected", BrowserUsbAutoConfigSession>
+  | HostApiUnavailable<"WebUSB">
+  | PermissionDenied<"usb-auto">
+  | Cancelled<"usb-auto">
+  | UnsupportedDevice<"usb-auto">
+  | ConnectionFailed<"usb-auto">;
+
+export type UsbAutoConfigActionOutcome =
+  | Tag<"Result", UsbAutoConfigResult>
+  | InterfaceSessionFailure;
+
+export type UsbAutoConfigSnapshotOutcome =
+  | Tag<"Snapshot", UsbAutoSnapshot>
+  | InterfaceSessionFailure;
+
+export type UsbAutoConfigConnectOptions = {
+  readonly filters?: readonly UsbAutoDeviceFilter[];
+};
+
+/// Default WebUSB request filter for the config lane: the Prns VID/PID the
+/// firmware enumerates as. Matches the data session's filter set.
+function defaultUsbAutoConfigFilters(
+  wasm: PrnsWasmModule,
+): readonly BrowserUsbDeviceFilter[] {
+  return [
+    {
+      vendorId: wasm.usbAutoWebUsbVendorId(),
+      productId: wasm.usbAutoWebUsbProductId(),
+    },
+  ];
+}
+
+/// Headless config entry point for `/configure`. Unlike `UsbAutoInterface`,
+/// this does NOT register a Reticulum interface or spin up a runtime lane — it
+/// talks WebUSB + the wasm codec directly, so it works on a device with no
+/// Reticulum data session (and side-by-side with one that does, since the
+/// config-lane capability bit is a strict superset the device already speaks).
+export class UsbAutoConfigInterface {
+  readonly #wasm: PrnsWasmModule;
+
+  constructor(wasm: PrnsWasmModule) {
+    this.#wasm = wasm;
+  }
+
+  async connect(
+    options: UsbAutoConfigConnectOptions = {},
+  ): Promise<UsbAutoConfigConnectOutcome> {
+    const available = requireWebUsb();
+    if (available.tag !== "Available") {
+      return available;
+    }
+    let transport: WebUsbAutoTransport | undefined;
+    let stage: InterfaceConnectStage = "DeviceSelection";
+    try {
+      const requested = await usbStage("DeviceSelection", "request device", () =>
+        available.data.requestDevice({
+          filters: options.filters ?? defaultUsbAutoConfigFilters(this.#wasm),
+        }),
+      );
+      if (requested.tag !== "Completed") {
+        return requested;
+      }
+      stage = "TransportOpen";
+      const opened = await WebUsbAutoTransport.open(requested.data);
+      if (opened.tag !== "Opened") {
+        return opened;
+      }
+      transport = opened.data;
+      const session = new BrowserUsbAutoConfigSession(this.#wasm, transport);
+      session.start();
+      return Tag("Connected", session);
+    } catch (error) {
+      await transport?.close();
+      return connectFailure("usb-auto", stage, error);
+    }
+  }
+}
+
+/// WebUSB session for the headless config lane. Decodes inbound frames, runs
+/// the Hello/HelloAck handshake, and correlates outbound `ConfigRequest`s with
+/// inbound `ConfigResponse`s (by request id) and `Snapshot` replies (uncorrelated,
+/// since a snapshot carries no request id — at most one snapshot request is in
+/// flight at a time).
+class BrowserUsbAutoConfigSession {
+  readonly #wasm: PrnsWasmModule;
+  readonly #transport: WebUsbAutoTransport;
+  readonly #decoder: UsbAutoDecoderBinding;
+  #writeQueue: Promise<SessionWriteOutcome> = Promise.resolve(Tag("Written"));
+  #closed = false;
+  #confirmed = false;
+  #status: InterfaceSessionStatus = Tag("Negotiating");
+  #nextRequestId = 1;
+  #nextToken = 1;
+  #pendingResult:
+    | {
+        token: number;
+        requestId: number;
+        resolve: (outcome: UsbAutoConfigActionOutcome) => void;
+      }
+    | undefined;
+  #pendingSnapshot:
+    | {
+        token: number;
+        resolve: (outcome: UsbAutoConfigSnapshotOutcome) => void;
+      }
+    | undefined;
+
+  constructor(wasm: PrnsWasmModule, transport: WebUsbAutoTransport) {
+    this.#wasm = wasm;
+    this.#transport = transport;
+    this.#decoder = new wasm.UsbAutoDecoder();
+  }
+
+  get status(): InterfaceSessionStatus {
+    return this.#status;
+  }
+
+  start(): void {
+    void this.#readLoop();
+    void this.#probeLoop();
+  }
+
+  async close(): Promise<void> {
+    if (this.#closed) {
+      return;
+    }
+    this.#closed = true;
+    this.#resolvePending(
+      Tag("TransferFailed", {
+        direction: "Outbound",
+        detail: "session closed",
+      }),
+    );
+    await this.#writeQueue;
+    await this.#transport.close();
+    this.#status = Tag("Closed");
+  }
+
+  /// Send `action` (bytes from a `usbAutoConfigAction*` builder) and await the
+  /// matching `ConfigResponse`. The request id is allocated internally.
+  async sendAction(
+    action: Uint8Array,
+  ): Promise<UsbAutoConfigActionOutcome> {
+    if (this.#closed) {
+      return Tag("TransferFailed", {
+        direction: "Outbound",
+        detail: "session closed",
+      });
+    }
+    const requestId = this.#allocateRequestId();
+    const written = await this.#writeFrame(
+      this.#wasm.usbAutoConfigRequestFrame(requestId, action),
+    );
+    if (written.tag !== "Written") {
+      return written;
+    }
+    return new Promise<UsbAutoConfigActionOutcome>((resolve) => {
+      const token = this.#nextToken;
+      this.#nextToken = (this.#nextToken + 1) | 0;
+      this.#pendingResult = { token, requestId, resolve };
+      void this.#armTimeout(token, (failure) => resolve(failure));
+    });
+  }
+
+  /// Request a full device snapshot and decode its body into the webUI shape.
+  async requestSnapshot(): Promise<UsbAutoConfigSnapshotOutcome> {
+    if (this.#closed) {
+      return Tag("TransferFailed", {
+        direction: "Outbound",
+        detail: "session closed",
+      });
+    }
+    const requestId = this.#allocateRequestId();
+    const written = await this.#writeFrame(
+      this.#wasm.usbAutoConfigRequestFrame(
+        requestId,
+        this.#wasm.usbAutoConfigActionRequestSnapshot(),
+      ),
+    );
+    if (written.tag !== "Written") {
+      return written;
+    }
+    return new Promise<UsbAutoConfigSnapshotOutcome>((resolve) => {
+      const token = this.#nextToken;
+      this.#nextToken = (this.#nextToken + 1) | 0;
+      this.#pendingSnapshot = { token, resolve };
+      void this.#armTimeout(token, (failure) => resolve(failure));
+    });
+  }
+
+  async #readLoop(): Promise<void> {
+    try {
+      while (!this.#closed) {
+        const read = await this.#transport.read();
+        if (read.tag !== "Read") {
+          await this.#fail(read);
+          return;
+        }
+        const chunk = read.data;
+        if (!chunk) {
+          break;
+        }
+        if (chunk.length === 0) {
+          continue;
+        }
+        let messages: unknown[];
+        try {
+          messages = this.#decoder.feed(chunk);
+        } catch (error) {
+          await this.#fail(
+            Tag("ProtocolViolation", {
+              protocol: "UsbAuto",
+              detail: describeHostError(error),
+            }),
+          );
+          return;
+        }
+        for (const raw of messages) {
+          let message: UsbAutoInboundMessage;
+          try {
+            message = parseUsbAutoMessage(raw);
+          } catch (error) {
+            await this.#fail(
+              Tag("ProtocolViolation", {
+                protocol: "UsbAuto",
+                detail: describeHostError(error),
+              }),
+            );
+            return;
+          }
+          const handled = await this.#handleInbound(message);
+          if (handled.tag !== "Handled") {
+            await this.#fail(handled);
+            return;
+          }
+        }
+      }
+    } catch (error) {
+      if (!this.#closed) {
+        await this.#fail(unexpectedSessionFailure(error));
+      }
+    } finally {
+      if (!this.#closed) {
+        await this.close();
+      }
+    }
+  }
+
+  async #probeLoop(): Promise<void> {
+    try {
+      while (!this.#closed && !this.#confirmed) {
+        const written = await this.#writeFrame(this.#wasm.usbAutoHostHelloFrame());
+        if (written.tag !== "Written") {
+          await this.#fail(written);
+          return;
+        }
+        await delay(USB_AUTO_PROBE_INTERVAL_MS);
+      }
+    } catch (error) {
+      if (!this.#closed) {
+        await this.#fail(unexpectedSessionFailure(error));
+      }
+    }
+  }
+
+  async #handleInbound(message: UsbAutoInboundMessage): Promise<SessionHandleOutcome> {
+    return match_into<Promise<SessionHandleOutcome>>().from(message, {
+      Hello: async () => {
+        const written = await this.#writeFrame(
+          this.#wasm.usbAutoHostHelloAckFrame(USB_AUTO_CONFIG_HOST_TAG),
+        );
+        if (written.tag !== "Written") {
+          return written;
+        }
+        this.#confirmPeer();
+        return Tag("Handled");
+      },
+      HelloAck: async () => {
+        this.#confirmPeer();
+        return Tag("Handled");
+      },
+      // The config session ignores Reticulum data; the data session owns it.
+      Data: async () => Tag("Handled"),
+      // The device is the config responder; it never sends ConfigRequest to us.
+      ConfigRequest: async () => Tag("Handled"),
+      ConfigResponse: async ({ requestId, result }) => {
+        const pending = this.#pendingResult;
+        if (pending && pending.requestId === requestId) {
+          this.#pendingResult = undefined;
+          pending.resolve(Tag("Result", result));
+        }
+        return Tag("Handled");
+      },
+      Snapshot: async ({ body }) => {
+        const pending = this.#pendingSnapshot;
+        if (pending) {
+          this.#pendingSnapshot = undefined;
+          try {
+            pending.resolve(Tag("Snapshot", this.#wasm.usbAutoSnapshotDecode(body)));
+          } catch (error) {
+            pending.resolve(
+              Tag("ProtocolViolation", {
+                protocol: "UsbAuto",
+                detail: describeHostError(error),
+              }),
+            );
+          }
+        }
+        return Tag("Handled");
+      },
+    });
+  }
+
+  #confirmPeer(): void {
+    this.#confirmed = true;
+    this.#status = Tag("Active");
+  }
+
+  #allocateRequestId(): number {
+    const id = this.#nextRequestId;
+    this.#nextRequestId = (this.#nextRequestId + 1) & 0xff;
+    if (this.#nextRequestId === 0) {
+      this.#nextRequestId = 1;
+    }
+    return id;
+  }
+
+  /// Resolve any in-flight request with `failure` and clear both pending slots.
+  /// Used on close and on session failure so callers never hang.
+  #resolvePending(failure: InterfaceSessionFailure): void {
+    const result = this.#pendingResult;
+    if (result) {
+      this.#pendingResult = undefined;
+      result.resolve(failure);
+    }
+    const snapshot = this.#pendingSnapshot;
+    if (snapshot) {
+      this.#pendingSnapshot = undefined;
+      snapshot.resolve(failure);
+    }
+  }
+
+  /// Fail a pending request after the round-trip ceiling. `token` identifies
+  /// which in-flight request this timeout owns; if the dispatcher already
+  /// resolved it (slot cleared or reused for a later request), the timeout is a
+  /// no-op.
+  #armTimeout(
+    token: number,
+    fail: (failure: InterfaceSessionFailure) => void,
+  ): void {
+    void delay(USB_AUTO_CONFIG_REQUEST_TIMEOUT_MS).then(() => {
+      if (this.#pendingResult?.token === token) {
+        this.#pendingResult = undefined;
+        fail(
+          Tag("TransferFailed", {
+            direction: "Inbound",
+            detail: "config request timed out",
+          }),
+        );
+        return;
+      }
+      if (this.#pendingSnapshot?.token === token) {
+        this.#pendingSnapshot = undefined;
+        fail(
+          Tag("TransferFailed", {
+            direction: "Inbound",
+            detail: "snapshot request timed out",
+          }),
+        );
+      }
+    });
+  }
+
+  async #fail(sessionFailure: InterfaceSessionFailure): Promise<void> {
+    if (this.#closed) {
+      return;
+    }
+    this.#status = Tag("Failed", sessionFailure);
+    this.#closed = true;
+    this.#resolvePending(sessionFailure);
+    await this.#writeQueue;
+    await this.#transport.close();
+  }
+
+  async #writeFrame(frame: Uint8Array): Promise<SessionWriteOutcome> {
+    if (this.#closed) {
+      return Tag("Written");
+    }
+    const write = this.#writeQueue
+      .then(async (previous): Promise<SessionWriteOutcome> => {
+        if (previous.tag !== "Written" || this.#closed) {
+          return previous;
+        }
+        return this.#transport.write(frame);
+      })
+      .catch((error: unknown) => unexpectedSessionFailure(error));
+    this.#writeQueue = write;
+    return write;
   }
 }
 
@@ -4403,10 +4930,21 @@ function outboundTargets(
   });
 }
 
-type RawUsbAutoMessageType = "hello" | "helloAck" | "data";
+type RawUsbAutoMessageType =
+  | "hello"
+  | "helloAck"
+  | "data"
+  | "configRequest"
+  | "configResponse"
+  | "snapshot";
 
-const RAW_USB_AUTO_MESSAGE_TYPES: ReadonlySet<string> =
-  new Set<RawUsbAutoMessageType>(["hello", "helloAck", "data"]);
+const RAW_USB_AUTO_MESSAGE_TYPES: ReadonlySet<string> = new Set<
+  RawUsbAutoMessageType
+>(["hello", "helloAck", "data", "configRequest", "configResponse", "snapshot"]);
+
+const USB_AUTO_CONFIG_RESULTS: ReadonlySet<string> = new Set<
+  UsbAutoConfigResult
+>(["ok", "applyFailed", "profileNotSaved", "rejected", "badPayload"]);
 
 function parseUsbAutoMessage(raw: unknown): UsbAutoInboundMessage {
   const object = record(raw, "UsbAutoInboundMessage");
@@ -4421,6 +4959,30 @@ function parseUsbAutoMessage(raw: unknown): UsbAutoInboundMessage {
     hello: () => Tag("Hello"),
     helloAck: () => Tag("HelloAck", bytesField(object, "tag")),
     data: () => Tag("Data", bytesField(object, "bytes")),
+    configRequest: () =>
+      Tag("ConfigRequest", {
+        requestId: numberField(object, "requestId"),
+        action: bytesField(object, "action"),
+      }),
+    configResponse: () => {
+      const result = stringField(object, "result") as UsbAutoConfigResult;
+      if (!USB_AUTO_CONFIG_RESULTS.has(result)) {
+        throw new PrnsValidationError(
+          "invalid-component",
+          `unknown USB-auto config result ${result}`,
+        );
+      }
+      return Tag("ConfigResponse", {
+        requestId: numberField(object, "requestId"),
+        result,
+        detail: bytesField(object, "detail"),
+      });
+    },
+    snapshot: () =>
+      Tag("Snapshot", {
+        schemaVersion: numberField(object, "schemaVersion"),
+        body: bytesField(object, "body"),
+      }),
   });
 }
 

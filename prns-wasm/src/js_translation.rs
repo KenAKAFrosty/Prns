@@ -1,4 +1,4 @@
-use js_sys::{BigInt, Object, Reflect, Uint8Array};
+use js_sys::{Array, BigInt, Object, Reflect, Uint8Array};
 use personal_rns::engine::{
     AllowRequesterFailure, AllowRequesterRejection, AnnounceNowFailure, AnnounceNowRejection,
     CloseLinkFailure, CloseLinkRejection, DeliveryEvidence, DeliveryProof, EstablishLinkFailure,
@@ -10,8 +10,9 @@ use personal_rns::engine::{
     SetResourceStrategyRejection, Settlement,
 };
 use personal_rns::interfaces::bluetooth_auto as bluetooth_contract;
+use personal_rns::interfaces::lora::{RadioProfile, PROFILE_WIRE_LEN};
 use personal_rns::interfaces::usb_auto;
-use personal_rns::interfaces::InterfaceKind;
+use personal_rns::interfaces::{ConnectionState, InterfaceKind};
 use personal_rns::routing::delivery::Delivery;
 use wasm_bindgen::prelude::*;
 
@@ -607,6 +608,16 @@ pub(crate) fn outbound_to_js(frame: &OutboundFrame) -> JsValue {
     object.into()
 }
 
+pub(crate) fn config_result_to_str(result: usb_auto::ConfigResult) -> &'static str {
+    match result {
+        usb_auto::ConfigResult::Ok => "ok",
+        usb_auto::ConfigResult::ApplyFailed => "applyFailed",
+        usb_auto::ConfigResult::ProfileNotSaved => "profileNotSaved",
+        usb_auto::ConfigResult::Rejected => "rejected",
+        usb_auto::ConfigResult::BadPayload => "badPayload",
+    }
+}
+
 pub(crate) fn usb_auto_message_to_js(message: usb_auto::Message<'_>) -> JsValue {
     let object = Object::new();
     match message {
@@ -619,8 +630,201 @@ pub(crate) fn usb_auto_message_to_js(message: usb_auto::Message<'_>) -> JsValue 
             set_str(&object, "type", "data");
             set_bytes(&object, "bytes", packet);
         }
+        usb_auto::Message::ConfigRequest { request_id, action } => {
+            set_str(&object, "type", "configRequest");
+            set_u32(&object, "requestId", request_id as u32);
+            set_bytes(&object, "action", action);
+        }
+        usb_auto::Message::ConfigResponse {
+            request_id,
+            result,
+            detail,
+        } => {
+            set_str(&object, "type", "configResponse");
+            set_u32(&object, "requestId", request_id as u32);
+            set_str(&object, "result", config_result_to_str(result));
+            set_bytes(&object, "detail", detail);
+        }
+        usb_auto::Message::Snapshot {
+            schema_version,
+            body,
+        } => {
+            set_str(&object, "type", "snapshot");
+            set_u32(&object, "schemaVersion", schema_version as u32);
+            set_bytes(&object, "body", body);
+        }
     }
     object.into()
+}
+
+/// Decode a snapshot body and project it onto a plain JS object the `/configure`
+/// webUI renders. Returns `Err` when the body is malformed so the JS layer can
+/// surface a decode failure rather than silently dropping the snapshot.
+pub(crate) fn snapshot_body_to_js(body: &[u8]) -> Result<JsValue, usb_auto::SnapshotDecodeError> {
+    let decoded = usb_auto::SnapshotBody::decode(body)?;
+    let object = Object::new();
+    let sections = Array::new();
+    for section in &decoded.sections {
+        sections.push(&snapshot_section_to_js(section));
+    }
+    set_value(&object, "sections", sections.into());
+    Ok(object.into())
+}
+
+fn snapshot_section_to_js(section: &usb_auto::SnapshotSection) -> JsValue {
+    let object = Object::new();
+    match section {
+        usb_auto::SnapshotSection::DeviceInfo { version } => {
+            set_str(&object, "type", "deviceInfo");
+            set_str(&object, "version", version.as_str());
+        }
+        usb_auto::SnapshotSection::Persistence { state } => {
+            set_str(&object, "type", "persistence");
+            set_str(&object, "state", persistence_state_to_str(*state));
+        }
+        usb_auto::SnapshotSection::LoraStatus(status) => {
+            set_str(&object, "type", "loraStatus");
+            set_value(&object, "status", interface_status_to_js(*status).into());
+        }
+        usb_auto::SnapshotSection::UsbStatus(status) => {
+            set_str(&object, "type", "usbStatus");
+            set_value(&object, "status", interface_status_to_js(*status).into());
+        }
+        usb_auto::SnapshotSection::BleStatus {
+            status,
+            failure_reason,
+        } => {
+            set_str(&object, "type", "bleStatus");
+            set_value(&object, "status", interface_status_to_js(*status).into());
+            set_str(&object, "failureReason", failure_reason.as_str());
+        }
+        usb_auto::SnapshotSection::BleRecovery(body) => {
+            set_str(&object, "type", "bleRecovery");
+            set_u32(&object, "ingressPressure", body.ingress_pressure);
+            set_u32(&object, "setupFailures", body.setup_failures);
+            set_u32(&object, "transportClosures", body.transport_closures);
+            set_u32(&object, "egressPressureEvents", body.egress_pressure_events);
+            set_u32(&object, "memberCount", u32::from(body.member_count));
+        }
+        usb_auto::SnapshotSection::LoraSpectrum(body) => {
+            set_str(&object, "type", "loraSpectrum");
+            set_u32(
+                &object,
+                "channelBusyPerMille",
+                u32::from(body.channel_busy_per_mille),
+            );
+            if let Some(noise) = body.noise_floor_dbm {
+                set_i32(&object, "noiseFloorDbm", noise as i32);
+            }
+            if let Some(cca) = body.cca_threshold_dbm {
+                set_i32(&object, "ccaThresholdDbm", cca as i32);
+            }
+            set_u32(&object, "deferrals", body.deferrals);
+            set_u32(&object, "falsePreambles", body.false_preambles);
+            set_u32(&object, "contentionTimeouts", body.contention_timeouts);
+            set_u32(&object, "dutyHolds", body.duty_holds);
+            set_u32(&object, "dutyTimeouts", body.duty_timeouts);
+            set_u32(&object, "radioRecoveries", body.radio_recoveries);
+        }
+        usb_auto::SnapshotSection::RadioProfile(profile) => {
+            set_str(&object, "type", "radioProfile");
+            set_value(&object, "profile", profile_to_js(profile).into());
+        }
+        usb_auto::SnapshotSection::InterfaceCounts(counts) => {
+            set_str(&object, "type", "interfaceCounts");
+            let array = Array::new();
+            for count in counts {
+                let entry = Object::new();
+                set_str(&entry, "kind", config_interface_to_str(count.kind));
+                set_u32(&entry, "destinations", count.destinations);
+                set_u32(&entry, "links", count.links);
+                set_u32(&entry, "transportedLinks", count.transported_links);
+                array.push(&entry.into());
+            }
+            set_value(&object, "counts", array.into());
+        }
+    }
+    object.into()
+}
+
+fn interface_status_to_js(status: usb_auto::InterfaceStatusBody) -> Object {
+    let object = Object::new();
+    set_bool(&object, "enabled", status.enabled);
+    set_str(
+        &object,
+        "connection",
+        connection_state_to_str(status.connection),
+    );
+    set_u64(&object, "rxBytes", status.rx_bytes);
+    set_u64(&object, "txBytes", status.tx_bytes);
+    if let Some(airtime) = status.airtime {
+        let air = Object::new();
+        set_u32(&air, "shortPerMille", u32::from(airtime.short_per_mille));
+        set_u32(&air, "longPerMille", u32::from(airtime.long_per_mille));
+        set_value(&object, "airtime", air.into());
+    }
+    if let Some(rates) = status.transfer_rates {
+        let transfer = Object::new();
+        set_u32(&transfer, "rxBps", rates.rx_bps);
+        set_u32(&transfer, "txBps", rates.tx_bps);
+        set_value(&object, "transferRates", transfer.into());
+    }
+    object
+}
+
+/// Project a [`RadioProfile`] onto JS via its canonical wire form, so the
+/// `/configure` editor and the device share one encoding. The wire bytes are
+/// the source of truth for the enum codes; `region` adds the human label.
+fn profile_to_js(profile: &RadioProfile) -> Object {
+    let mut wire = [0u8; PROFILE_WIRE_LEN];
+    profile.encode(&mut wire);
+    let object = Object::new();
+    set_u32(
+        &object,
+        "frequencyHz",
+        u32::from_le_bytes([wire[0], wire[1], wire[2], wire[3]]),
+    );
+    set_u32(&object, "spreadingFactor", u32::from(wire[4]));
+    set_u32(&object, "bandwidth", u32::from(wire[5]));
+    set_u32(&object, "codingRate", u32::from(wire[6]));
+    set_i32(&object, "txPowerDbm", i8::from_le_bytes([wire[7]]) as i32);
+    set_u32(
+        &object,
+        "preamble",
+        u32::from(u16::from_le_bytes([wire[8], wire[9]])),
+    );
+    set_u32(&object, "regionCode", u32::from(wire[10]));
+    set_str(&object, "region", profile.region.label());
+    object
+}
+
+fn connection_state_to_str(state: ConnectionState) -> &'static str {
+    match state {
+        ConnectionState::Initializing => "initializing",
+        ConnectionState::Connected => "connected",
+        ConnectionState::Degraded => "degraded",
+        ConnectionState::Reconnecting => "reconnecting",
+        ConnectionState::Failed => "failed",
+        ConnectionState::Disconnected => "disconnected",
+        ConnectionState::Disabled => "disabled",
+        ConnectionState::Unknown => "unknown",
+    }
+}
+
+fn persistence_state_to_str(state: usb_auto::SnapshotPersistence) -> &'static str {
+    match state {
+        usb_auto::SnapshotPersistence::Durable => "durable",
+        usb_auto::SnapshotPersistence::Deferred => "deferred",
+        usb_auto::SnapshotPersistence::Failed => "failed",
+    }
+}
+
+fn config_interface_to_str(interface: usb_auto::ConfigInterface) -> &'static str {
+    match interface {
+        usb_auto::ConfigInterface::Lora => "lora",
+        usb_auto::ConfigInterface::Usb => "usb",
+        usb_auto::ConfigInterface::Ble => "ble",
+    }
 }
 
 pub(crate) fn bluetooth_control_to_js(control: bluetooth_contract::Control) -> JsValue {

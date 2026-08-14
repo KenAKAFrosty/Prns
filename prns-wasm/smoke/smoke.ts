@@ -27,6 +27,15 @@ import init, {
   usbAutoNodeTagFor,
   usbAutoWebUsbProductId,
   usbAutoWebUsbVendorId,
+  usbAutoConfigRequestFrame,
+  usbAutoSnapshotDecode,
+  usbAutoConfigActionSetLoRaProfile,
+  usbAutoConfigActionResetLoRaProfile,
+  usbAutoConfigActionToggleInterface,
+  usbAutoConfigActionSleep,
+  usbAutoConfigActionWake,
+  usbAutoConfigActionAnnounce,
+  usbAutoConfigActionRequestSnapshot,
 } from "/pkg/prns_wasm.js";
 import {
   BLE_IDENTITY_LENGTH,
@@ -253,6 +262,15 @@ function wasmModule(): PrnsWasmModule {
     usbAutoHostHelloFrame,
     usbAutoHostHelloAckFrame,
     usbAutoDataFrame,
+    usbAutoConfigRequestFrame,
+    usbAutoSnapshotDecode,
+    usbAutoConfigActionSetLoRaProfile,
+    usbAutoConfigActionResetLoRaProfile,
+    usbAutoConfigActionToggleInterface,
+    usbAutoConfigActionSleep,
+    usbAutoConfigActionWake,
+    usbAutoConfigActionAnnounce,
+    usbAutoConfigActionRequestSnapshot,
   };
 }
 

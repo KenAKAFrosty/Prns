@@ -5,6 +5,7 @@ import type {
   PacketFrame,
   PrnsRuntimeBinding,
   UsbAutoDecoderBinding,
+  UsbAutoSnapshot,
 } from "./index.js";
 
 export declare class PrnsRuntime implements PrnsRuntimeBinding {
@@ -85,4 +86,26 @@ export declare function usbAutoHostHelloAckFrame(
   nodeTag: Uint8Array,
 ): Uint8Array;
 export declare function usbAutoDataFrame(packet: PacketFrame): Uint8Array;
+export declare function usbAutoConfigRequestFrame(
+  requestId: number,
+  action: Uint8Array,
+): Uint8Array;
+export declare function usbAutoSnapshotDecode(body: Uint8Array): UsbAutoSnapshot;
+export declare function usbAutoConfigActionSetLoRaProfile(
+  frequencyHz: number,
+  spreadingFactor: number,
+  bandwidth: number,
+  codingRate: number,
+  txPowerDbm: number,
+  preamble: number,
+  regionCode: number,
+): Uint8Array;
+export declare function usbAutoConfigActionResetLoRaProfile(): Uint8Array;
+export declare function usbAutoConfigActionToggleInterface(
+  interfaceCode: number,
+): Uint8Array;
+export declare function usbAutoConfigActionSleep(): Uint8Array;
+export declare function usbAutoConfigActionWake(): Uint8Array;
+export declare function usbAutoConfigActionAnnounce(): Uint8Array;
+export declare function usbAutoConfigActionRequestSnapshot(): Uint8Array;
 export default function init(moduleOrPath?: unknown): Promise<unknown>;

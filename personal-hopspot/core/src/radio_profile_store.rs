@@ -1,8 +1,5 @@
 use embedded_storage_async::nor_flash::NorFlash;
-use personal_rns::interfaces::lora::{
-    CodingRate, Frequency, LoraBandwidth, Modulation, PreambleSymbols, RadioProfile, Region,
-    SpreadingFactor, TxPower,
-};
+use personal_rns::interfaces::lora::{RadioProfile, PROFILE_WIRE_LEN};
 
 const MAGIC: [u8; 4] = *b"HSLP";
 const SCHEMA_VERSION: u16 = 1;
@@ -10,7 +7,7 @@ const PROFILE_KIND: u8 = 1;
 const DEFAULT_KIND: u8 = 2;
 const COMMIT_WORD: u32 = 0x5449_4D43;
 const RECORD_LEN: usize = 48;
-const PROFILE_PAYLOAD_LEN: usize = 12;
+const PROFILE_PAYLOAD_LEN: usize = PROFILE_WIRE_LEN;
 const CHECKSUM_OFFSET: usize = 20;
 const COMMIT_OFFSET: usize = 28;
 const PAYLOAD_OFFSET: usize = 32;
@@ -259,10 +256,7 @@ fn encode_record(generation: u64, value: StoredValue) -> [u8; RECORD_LEN] {
     bytes[8..16].copy_from_slice(&generation.to_le_bytes());
     let payload_len = match value {
         StoredValue::Profile(profile) => {
-            encode_profile(
-                profile,
-                &mut bytes[PAYLOAD_OFFSET..PAYLOAD_OFFSET + PROFILE_PAYLOAD_LEN],
-            );
+            profile.encode(&mut bytes[PAYLOAD_OFFSET..PAYLOAD_OFFSET + PROFILE_PAYLOAD_LEN]);
             PROFILE_PAYLOAD_LEN
         }
         StoredValue::Default => 0,
@@ -303,7 +297,7 @@ fn decode_record(bytes: &[u8; RECORD_LEN]) -> Option<StoredRecord> {
     let generation = u64::from_le_bytes(bytes[8..16].try_into().ok()?);
     let payload_len = u16::from_le_bytes(bytes[16..18].try_into().ok()?) as usize;
     let value = match (bytes[6], payload_len) {
-        (PROFILE_KIND, PROFILE_PAYLOAD_LEN) => StoredValue::Profile(decode_profile(
+        (PROFILE_KIND, PROFILE_PAYLOAD_LEN) => StoredValue::Profile(RadioProfile::decode(
             &bytes[PAYLOAD_OFFSET..PAYLOAD_OFFSET + PROFILE_PAYLOAD_LEN],
         )?),
         (DEFAULT_KIND, 0) => StoredValue::Default,
@@ -318,117 +312,6 @@ fn generation_hint(bytes: &[u8; RECORD_LEN]) -> Option<u64> {
             bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
         ])
     })
-}
-
-fn encode_profile(profile: RadioProfile, out: &mut [u8]) {
-    out[..4].copy_from_slice(&profile.frequency.hz().to_le_bytes());
-    let Modulation::Lora {
-        spreading_factor,
-        bandwidth,
-        coding_rate,
-    } = profile.modulation;
-    out[4] = match spreading_factor {
-        SpreadingFactor::Sf5 => 5,
-        SpreadingFactor::Sf6 => 6,
-        SpreadingFactor::Sf7 => 7,
-        SpreadingFactor::Sf8 => 8,
-        SpreadingFactor::Sf9 => 9,
-        SpreadingFactor::Sf10 => 10,
-        SpreadingFactor::Sf11 => 11,
-        SpreadingFactor::Sf12 => 12,
-    };
-    out[5] = match bandwidth {
-        LoraBandwidth::Bw125kHz => 1,
-        LoraBandwidth::Bw250kHz => 2,
-        LoraBandwidth::Bw500kHz => 3,
-    };
-    out[6] = match coding_rate {
-        CodingRate::Cr45 => 5,
-        CodingRate::Cr46 => 6,
-        CodingRate::Cr47 => 7,
-        CodingRate::Cr48 => 8,
-    };
-    out[7] = profile.tx_power.dbm().to_le_bytes()[0];
-    out[8..10].copy_from_slice(&profile.preamble.count().to_le_bytes());
-    out[10] = region_code(profile.region);
-    out[11] = 0;
-}
-
-fn decode_profile(bytes: &[u8]) -> Option<RadioProfile> {
-    if bytes[11] != 0 {
-        return None;
-    }
-    let spreading_factor = match bytes[4] {
-        5 => SpreadingFactor::Sf5,
-        6 => SpreadingFactor::Sf6,
-        7 => SpreadingFactor::Sf7,
-        8 => SpreadingFactor::Sf8,
-        9 => SpreadingFactor::Sf9,
-        10 => SpreadingFactor::Sf10,
-        11 => SpreadingFactor::Sf11,
-        12 => SpreadingFactor::Sf12,
-        _ => return None,
-    };
-    let bandwidth = match bytes[5] {
-        1 => LoraBandwidth::Bw125kHz,
-        2 => LoraBandwidth::Bw250kHz,
-        3 => LoraBandwidth::Bw500kHz,
-        _ => return None,
-    };
-    let coding_rate = match bytes[6] {
-        5 => CodingRate::Cr45,
-        6 => CodingRate::Cr46,
-        7 => CodingRate::Cr47,
-        8 => CodingRate::Cr48,
-        _ => return None,
-    };
-    let profile = RadioProfile {
-        frequency: Frequency::new(u32::from_le_bytes(bytes[..4].try_into().ok()?)),
-        modulation: Modulation::Lora {
-            spreading_factor,
-            bandwidth,
-            coding_rate,
-        },
-        tx_power: TxPower::new(i8::from_le_bytes([bytes[7]])),
-        preamble: PreambleSymbols::new(u16::from_le_bytes(bytes[8..10].try_into().ok()?)),
-        region: decode_region(bytes[10])?,
-    };
-    profile.validate().ok().map(|()| profile)
-}
-
-const fn region_code(region: Region) -> u8 {
-    match region {
-        Region::Us915 => 1,
-        Region::Au915 => 2,
-        Region::Eu433 => 3,
-        Region::Eu865 => 4,
-        Region::Eu868 => 5,
-        Region::Eu869 => 6,
-        Region::As923 => 7,
-        Region::In865 => 8,
-        Region::Cn470 => 9,
-        Region::Kr920 => 10,
-        Region::Jp920 => 11,
-        Region::Unlimited => 12,
-    }
-}
-
-const fn decode_region(value: u8) -> Option<Region> {
-    match value {
-        1 => Some(Region::Us915),
-        2 => Some(Region::Au915),
-        3 => Some(Region::Eu433),
-        4 => Some(Region::Eu865),
-        5 => Some(Region::Eu868),
-        6 => Some(Region::Eu869),
-        7 => Some(Region::As923),
-        8 => Some(Region::In865),
-        9 => Some(Region::Cn470),
-        10 => Some(Region::Kr920),
-        11 => Some(Region::Jp920),
-        12 => Some(Region::Unlimited),
-        _ => None,
-    }
 }
 
 fn crc32(bytes: &[u8]) -> u32 {
@@ -451,7 +334,10 @@ mod tests {
     use embedded_storage_async::nor_flash::{
         ErrorType, NorFlashError, NorFlashErrorKind, ReadNorFlash,
     };
-    use personal_rns::interfaces::lora::DEFAULT_915_PROFILE;
+    use personal_rns::interfaces::lora::{
+        CodingRate, Frequency, LoraBandwidth, Modulation, PreambleSymbols, Region, SpreadingFactor,
+        TxPower, DEFAULT_915_PROFILE,
+    };
     use std::boxed::Box;
     use std::task::Waker;
 

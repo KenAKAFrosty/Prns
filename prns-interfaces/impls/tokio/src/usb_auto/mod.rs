@@ -483,6 +483,12 @@ async fn serve_port<S>(
                                 let _ = notify.send(key);
                             }
                         }
+                        // Config lane: device-originated response /
+                        // snapshot. Routing to the `hopspot configure` CLI
+                        // consumer is wired in the config follow-up — see
+                        // `T1000E_HEADLESS_CONFIG.md` phase 1. Until then
+                        // these are dropped; no device sends them yet.
+                        HostInbound::ConfigResponse { .. } | HostInbound::Snapshot { .. } => {}
                         HostInbound::Ignore => {}
                     }
                 }

@@ -11,12 +11,14 @@ pub enum ConnectionState {
     Unknown,
 }
 
-#[cfg(any(feature = "tokio-host", feature = "embassy-host"))]
 impl ConnectionState {
     pub const fn is_online(self) -> bool {
         matches!(self, Self::Connected | Self::Degraded)
     }
 
+    /// Canonical 1-byte wire code. Stable across releases; the headless config
+    /// snapshot reuses this as the single authoritative `ConnectionState` wire
+    /// encoding. See `T1000E_HEADLESS_CONFIG.md`.
     pub const fn as_u8(self) -> u8 {
         match self {
             ConnectionState::Initializing => 0,

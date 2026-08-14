@@ -969,3 +969,77 @@ html, body {
     border: 1px solid rgb(0 0 0 / 0.06);
     box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.85), inset 0 -2px 5px rgb(0 0 0 / 0.1), 0 1px 2px rgb(0 0 0 / 0.3);
 }
+
+/* /configure — headless-config webUI. Mirrors the flasher palette but the
+   layout is a live snapshot + profile editor, not a flash flow. */
+.configure-primary-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 2.85rem;
+    padding: 0.72rem 1rem;
+    border: 1px solid rgb(110 231 183 / 0.46);
+    border-radius: 0.58rem;
+    background: var(--color-accent);
+    color: var(--color-ink);
+    font-size: 0.9rem;
+    font-weight: 750;
+    line-height: 1;
+    text-decoration: none;
+}
+.configure-primary-action:disabled {
+    cursor: not-allowed;
+    border-color: rgb(108 116 128 / 0.36);
+    background: rgb(108 116 128 / 0.2);
+    color: var(--color-mid);
+}
+.configure-secondary-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 2.85rem;
+    padding: 0.72rem 1rem;
+    border: 1px solid rgb(165 172 184 / 0.22);
+    border-radius: 0.58rem;
+    background: rgb(11 14 19 / 0.32);
+    color: var(--color-paper);
+    font-size: 0.9rem;
+    font-weight: 650;
+    line-height: 1;
+    text-decoration: none;
+}
+.configure-secondary-action:disabled {
+    cursor: not-allowed;
+    border-color: rgb(108 116 128 / 0.28);
+    color: var(--color-mid);
+}
+.configure-field {
+    display: grid;
+    gap: 0.35rem;
+    color: var(--color-soft);
+    font-size: 0.72rem;
+    font-weight: 700;
+}
+.configure-field-label {
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+.configure-input {
+    width: 100%;
+    min-height: 2.35rem;
+    border: 1px solid rgb(165 172 184 / 0.16);
+    border-radius: 0.5rem;
+    background: rgb(11 14 19 / 0.44);
+    padding: 0.55rem 0.68rem;
+    color: var(--color-paper);
+    font-size: 0.84rem;
+    font-weight: 600;
+    outline: none;
+}
+.configure-input:focus {
+    border-color: rgb(110 231 183 / 0.54);
+    box-shadow: 0 0 0 1px rgb(110 231 183 / 0.18);
+}
+.configure-status {
+    letter-spacing: 0.06em;
+}
