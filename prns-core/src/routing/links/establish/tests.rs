@@ -1221,6 +1221,94 @@ fn a_proof_for_an_unknown_link_is_ignored() {
     );
 }
 
+fn responder_awaiting_lrrtt() -> (EngineState<TestStorageLayout>, LinkRequestDispatch) {
+    let mut initiator = neighbor_with_a_route();
+    let mut request = [0u8; BROADCAST_MTU];
+    let dispatch = initiator
+        .write_commanded_link_request(
+            CommandId(7),
+            &establish(),
+            InstantMillis(1_000),
+            vector_establish_entropy(),
+            AttachedInterfaces::new(&arrival_interfaces()),
+            &mut request,
+        )
+        .dispatched();
+
+    let mut responder = personal_node_announcer();
+    let (_, _, _) = reactions_of(&mut responder, &request[..dispatch.wire_bytes], 1_100, 0x99);
+    (responder, dispatch)
+}
+
+fn encrypted_lrrtt_frame(
+    responder: &EngineState<TestStorageLayout>,
+    link_id: LinkId,
+    plaintext: &[u8],
+) -> std::vec::Vec<u8> {
+    let Some(LinkPhase::Handshake { key, .. }) = responder.links.phase_for(&link_id) else {
+        panic!("the responder must be awaiting its LRRTT");
+    };
+    let mut frame = std::vec![0x0Cu8, 0x00];
+    frame.extend_from_slice(link_id.as_bytes());
+    frame.push(0xFE);
+    let mut sealed = [0u8; 64];
+    let n = key.seal(&[0xB5; 16], plaintext, &mut sealed).unwrap();
+    frame.extend_from_slice(&sealed[..n]);
+    frame
+}
+
+struct AuthenticatedNumericLrrttCase {
+    plaintext: &'static [u8],
+    expected_rtt_millis: u64,
+}
+
+const FLOAT32_THREE_QUARTER_SECOND_LRRTT: AuthenticatedNumericLrrttCase =
+    AuthenticatedNumericLrrttCase {
+        plaintext: &[0xCA, 0x3F, 0x40, 0x00, 0x00],
+        expected_rtt_millis: 750,
+    };
+const POSITIVE_FIXINT_ONE_SECOND_LRRTT: AuthenticatedNumericLrrttCase =
+    AuthenticatedNumericLrrttCase {
+        plaintext: &[0x01],
+        expected_rtt_millis: 1_000,
+    };
+
+fn assert_numeric_lrrtt_activates(case: &AuthenticatedNumericLrrttCase) {
+    let (mut responder, dispatch) = responder_awaiting_lrrtt();
+    let frame = encrypted_lrrtt_frame(&responder, dispatch.link_id, case.plaintext);
+
+    let (sent, established, _) = reactions_of(&mut responder, &frame, 1_600, 0xB5);
+    assert!(sent.is_empty(), "activation answers nothing back");
+    assert_eq!(
+        established,
+        std::vec![(
+            CommandId(u64::MAX),
+            Settlement::EstablishLink(Ok(LinkEstablished {
+                link_id: dispatch.link_id,
+                rtt_millis: case.expected_rtt_millis,
+            })),
+        )],
+    );
+    assert!(matches!(
+        responder.links.phase_for(&dispatch.link_id),
+        Some(LinkPhase::Active {
+            role: LinkRole::Responder { .. },
+            rtt,
+            ..
+        }) if *rtt == RttMillis::new(case.expected_rtt_millis),
+    ));
+}
+
+#[test]
+fn an_authenticated_float32_lrrtt_activates_the_responding_link() {
+    assert_numeric_lrrtt_activates(&FLOAT32_THREE_QUARTER_SECOND_LRRTT);
+}
+
+#[test]
+fn an_authenticated_integer_lrrtt_activates_the_responding_link() {
+    assert_numeric_lrrtt_activates(&POSITIVE_FIXINT_ONE_SECOND_LRRTT);
+}
+
 #[test]
 fn a_tampered_lrrtt_keeps_the_handshake_pending() {
     let mut initiator = neighbor_with_a_route();
@@ -1259,34 +1347,10 @@ fn an_authenticated_but_malformed_lrrtt_tears_the_link_down() {
     use crate::engine::LinkClosedReason;
     use crate::wire::WirePacketHeader;
 
-    let mut initiator = neighbor_with_a_route();
-    let mut request = [0u8; BROADCAST_MTU];
-    let dispatch = initiator
-        .write_commanded_link_request(
-            CommandId(7),
-            &establish(),
-            InstantMillis(1_000),
-            vector_establish_entropy(),
-            AttachedInterfaces::new(&arrival_interfaces()),
-            &mut request,
-        )
-        .dispatched();
-
-    let mut responder = personal_node_announcer();
-    let (_, _, _) = reactions_of(&mut responder, &request[..dispatch.wire_bytes], 1_100, 0x99);
-
-    let mut frame = std::vec![0x0Cu8, 0x00];
-    frame.extend_from_slice(dispatch.link_id.as_bytes());
-    frame.push(0xFE);
-    let Some(LinkPhase::Handshake { key, .. }) = responder.links.phase_for(&dispatch.link_id)
-    else {
-        panic!("the responder must be awaiting its LRRTT");
-    };
+    let (mut responder, dispatch) = responder_awaiting_lrrtt();
     let mut not_msgpack = [0xC1u8; 9];
     not_msgpack[1..].fill(0x55);
-    let mut sealed = [0u8; 64];
-    let n = key.seal(&[0xB5; 16], &not_msgpack, &mut sealed).unwrap();
-    frame.extend_from_slice(&sealed[..n]);
+    let frame = encrypted_lrrtt_frame(&responder, dispatch.link_id, &not_msgpack);
 
     let mut closes = std::vec::Vec::new();
     let mut journaled = std::vec::Vec::new();

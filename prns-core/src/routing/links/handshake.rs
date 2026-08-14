@@ -422,7 +422,16 @@ pub fn link_proof_from(
     Ok(parsed.proof)
 }
 
+const MSGPACK_FLOAT32: u8 = 0xca;
 const MSGPACK_FLOAT64: u8 = 0xcb;
+const MSGPACK_UINT8: u8 = 0xcc;
+const MSGPACK_UINT16: u8 = 0xcd;
+const MSGPACK_UINT32: u8 = 0xce;
+const MSGPACK_UINT64: u8 = 0xcf;
+const MSGPACK_INT8: u8 = 0xd0;
+const MSGPACK_INT16: u8 = 0xd1;
+const MSGPACK_INT32: u8 = 0xd2;
+const MSGPACK_INT64: u8 = 0xd3;
 const LINK_RTT_PLAINTEXT_LEN: usize = 9;
 
 fn pack_rtt(rtt: RttMillis) -> [u8; LINK_RTT_PLAINTEXT_LEN] {
@@ -432,15 +441,42 @@ fn pack_rtt(rtt: RttMillis) -> [u8; LINK_RTT_PLAINTEXT_LEN] {
     out
 }
 
-fn unpack_rtt(bytes: &[u8]) -> Option<RttMillis> {
-    if bytes.len() != LINK_RTT_PLAINTEXT_LEN || bytes[0] != MSGPACK_FLOAT64 {
-        return None;
-    }
-    let mut be = [0u8; 8];
-    be.copy_from_slice(&bytes[1..]);
-    Some(RttMillis::new(
-        (f64::from_be_bytes(be) * 1_000.0 + 0.5) as u64,
-    ))
+fn message_pack_numeric_body<const LENGTH: usize>(
+    body: &[u8],
+) -> Result<[u8; LENGTH], LinkRttError> {
+    body.try_into().map_err(|_| LinkRttError::Malformed)
+}
+
+fn unpack_rtt(bytes: &[u8]) -> Result<RttMillis, LinkRttError> {
+    let Some((marker, body)) = bytes.split_first() else {
+        return Err(LinkRttError::Malformed);
+    };
+    let seconds = match *marker {
+        value @ 0x00..=0x7f => {
+            if !body.is_empty() {
+                return Err(LinkRttError::Malformed);
+            }
+            f64::from(value)
+        }
+        value @ 0xe0..=0xff => {
+            if !body.is_empty() {
+                return Err(LinkRttError::Malformed);
+            }
+            f64::from(value as i8)
+        }
+        MSGPACK_FLOAT32 => f64::from(f32::from_be_bytes(message_pack_numeric_body(body)?)),
+        MSGPACK_FLOAT64 => f64::from_be_bytes(message_pack_numeric_body(body)?),
+        MSGPACK_UINT8 => f64::from(u8::from_be_bytes(message_pack_numeric_body(body)?)),
+        MSGPACK_UINT16 => f64::from(u16::from_be_bytes(message_pack_numeric_body(body)?)),
+        MSGPACK_UINT32 => f64::from(u32::from_be_bytes(message_pack_numeric_body(body)?)),
+        MSGPACK_UINT64 => u64::from_be_bytes(message_pack_numeric_body(body)?) as f64,
+        MSGPACK_INT8 => f64::from(i8::from_be_bytes(message_pack_numeric_body(body)?)),
+        MSGPACK_INT16 => f64::from(i16::from_be_bytes(message_pack_numeric_body(body)?)),
+        MSGPACK_INT32 => f64::from(i32::from_be_bytes(message_pack_numeric_body(body)?)),
+        MSGPACK_INT64 => i64::from_be_bytes(message_pack_numeric_body(body)?) as f64,
+        _ => return Err(LinkRttError::Malformed),
+    };
+    Ok(RttMillis::new((seconds * 1_000.0 + 0.5) as u64))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -498,7 +534,7 @@ pub fn link_rtt_from(
     let n = link_key
         .open(payload, &mut out)
         .map_err(|_| LinkRttError::InvalidToken)?;
-    let rtt = unpack_rtt(&out[..n]).ok_or(LinkRttError::Malformed)?;
+    let rtt = unpack_rtt(&out[..n])?;
     Ok(LinkRtt {
         link_id: *link_id,
         rtt,
@@ -872,6 +908,299 @@ mod tests {
         .unwrap();
         let parsed = parse_link_rtt(&buf[..n], &key).unwrap();
         assert_eq!(parsed.rtt, RttMillis::new(73_115));
+    }
+
+    struct NumericRttCase {
+        intent: &'static str,
+        encoded: &'static [u8],
+        expected_millis: u64,
+    }
+
+    const POSITIVE_FIXINT_ZERO_SECONDS: NumericRttCase = NumericRttCase {
+        intent: "positive fixint zero",
+        encoded: &[0x00],
+        expected_millis: 0,
+    };
+    const POSITIVE_FIXINT_MAXIMUM_SECONDS: NumericRttCase = NumericRttCase {
+        intent: "positive fixint maximum",
+        encoded: &[0x7f],
+        expected_millis: 127_000,
+    };
+    const NEGATIVE_FIXINT_MINUS_ONE_SECOND: NumericRttCase = NumericRttCase {
+        intent: "negative fixint minus one saturates to zero",
+        encoded: &[0xff],
+        expected_millis: 0,
+    };
+    const NEGATIVE_FIXINT_MINIMUM_SECONDS: NumericRttCase = NumericRttCase {
+        intent: "negative fixint minimum saturates to zero",
+        encoded: &[0xe0],
+        expected_millis: 0,
+    };
+    const FLOAT32_ONE_EIGHTH_SECOND: NumericRttCase = NumericRttCase {
+        intent: "float32 one eighth second",
+        encoded: &[MSGPACK_FLOAT32, 0x3e, 0x00, 0x00, 0x00],
+        expected_millis: 125,
+    };
+    const FLOAT64_ONE_EIGHTH_SECOND: NumericRttCase = NumericRttCase {
+        intent: "float64 one eighth second",
+        encoded: &[
+            MSGPACK_FLOAT64,
+            0x3f,
+            0xc0,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+        ],
+        expected_millis: 125,
+    };
+    const UINT8_MAXIMUM_SECONDS: NumericRttCase = NumericRttCase {
+        intent: "uint8 maximum",
+        encoded: &[MSGPACK_UINT8, 0xff],
+        expected_millis: 255_000,
+    };
+    const UINT16_MAXIMUM_SECONDS: NumericRttCase = NumericRttCase {
+        intent: "uint16 maximum",
+        encoded: &[MSGPACK_UINT16, 0xff, 0xff],
+        expected_millis: 65_535_000,
+    };
+    const UINT32_MAXIMUM_SECONDS: NumericRttCase = NumericRttCase {
+        intent: "uint32 maximum",
+        encoded: &[MSGPACK_UINT32, 0xff, 0xff, 0xff, 0xff],
+        expected_millis: 4_294_967_295_000,
+    };
+    const UINT64_MAXIMUM_SECONDS: NumericRttCase = NumericRttCase {
+        intent: "uint64 maximum saturates milliseconds",
+        encoded: &[
+            MSGPACK_UINT64,
+            0xff,
+            0xff,
+            0xff,
+            0xff,
+            0xff,
+            0xff,
+            0xff,
+            0xff,
+        ],
+        expected_millis: u64::MAX,
+    };
+    const INT8_MAXIMUM_SECONDS: NumericRttCase = NumericRttCase {
+        intent: "int8 maximum",
+        encoded: &[MSGPACK_INT8, 0x7f],
+        expected_millis: 127_000,
+    };
+    const INT8_MINIMUM_SECONDS: NumericRttCase = NumericRttCase {
+        intent: "int8 minimum saturates to zero",
+        encoded: &[MSGPACK_INT8, 0x80],
+        expected_millis: 0,
+    };
+    const INT16_MAXIMUM_SECONDS: NumericRttCase = NumericRttCase {
+        intent: "int16 maximum",
+        encoded: &[MSGPACK_INT16, 0x7f, 0xff],
+        expected_millis: 32_767_000,
+    };
+    const INT16_MINIMUM_SECONDS: NumericRttCase = NumericRttCase {
+        intent: "int16 minimum saturates to zero",
+        encoded: &[MSGPACK_INT16, 0x80, 0x00],
+        expected_millis: 0,
+    };
+    const INT32_MAXIMUM_SECONDS: NumericRttCase = NumericRttCase {
+        intent: "int32 maximum",
+        encoded: &[MSGPACK_INT32, 0x7f, 0xff, 0xff, 0xff],
+        expected_millis: 2_147_483_647_000,
+    };
+    const INT32_MINIMUM_SECONDS: NumericRttCase = NumericRttCase {
+        intent: "int32 minimum saturates to zero",
+        encoded: &[MSGPACK_INT32, 0x80, 0x00, 0x00, 0x00],
+        expected_millis: 0,
+    };
+    const INT64_MAXIMUM_SECONDS: NumericRttCase = NumericRttCase {
+        intent: "int64 maximum saturates milliseconds",
+        encoded: &[
+            MSGPACK_INT64,
+            0x7f,
+            0xff,
+            0xff,
+            0xff,
+            0xff,
+            0xff,
+            0xff,
+            0xff,
+        ],
+        expected_millis: u64::MAX,
+    };
+    const INT64_MINIMUM_SECONDS: NumericRttCase = NumericRttCase {
+        intent: "int64 minimum saturates to zero",
+        encoded: &[
+            MSGPACK_INT64,
+            0x80,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+        ],
+        expected_millis: 0,
+    };
+    const NUMERIC_RTT_CASES: &[NumericRttCase] = &[
+        POSITIVE_FIXINT_ZERO_SECONDS,
+        POSITIVE_FIXINT_MAXIMUM_SECONDS,
+        NEGATIVE_FIXINT_MINUS_ONE_SECOND,
+        NEGATIVE_FIXINT_MINIMUM_SECONDS,
+        FLOAT32_ONE_EIGHTH_SECOND,
+        FLOAT64_ONE_EIGHTH_SECOND,
+        UINT8_MAXIMUM_SECONDS,
+        UINT16_MAXIMUM_SECONDS,
+        UINT32_MAXIMUM_SECONDS,
+        UINT64_MAXIMUM_SECONDS,
+        INT8_MAXIMUM_SECONDS,
+        INT8_MINIMUM_SECONDS,
+        INT16_MAXIMUM_SECONDS,
+        INT16_MINIMUM_SECONDS,
+        INT32_MAXIMUM_SECONDS,
+        INT32_MINIMUM_SECONDS,
+        INT64_MAXIMUM_SECONDS,
+        INT64_MINIMUM_SECONDS,
+    ];
+
+    #[test]
+    fn unpack_link_rtt_accepts_every_msgpack_numeric_scalar_encoding() {
+        for case in NUMERIC_RTT_CASES {
+            assert_eq!(
+                unpack_rtt(case.encoded),
+                Ok(RttMillis::new(case.expected_millis)),
+                "{}: {:02x?}",
+                case.intent,
+                case.encoded,
+            );
+        }
+    }
+
+    #[test]
+    fn unpack_link_rtt_saturates_hostile_float32_values() {
+        let parse = |value: f32| {
+            let mut encoded = [0u8; 5];
+            encoded[0] = MSGPACK_FLOAT32;
+            encoded[1..].copy_from_slice(&value.to_be_bytes());
+            unpack_rtt(&encoded).unwrap().millis()
+        };
+
+        assert_eq!(parse(f32::NAN), 0);
+        assert_eq!(parse(-5.0), 0);
+        assert_eq!(parse(f32::INFINITY), u64::MAX);
+    }
+
+    struct MalformedRttCase {
+        intent: &'static str,
+        encoded: &'static [u8],
+    }
+
+    const MALFORMED_RTT_CASES: &[MalformedRttCase] = &[
+        MalformedRttCase {
+            intent: "empty plaintext has no MessagePack value",
+            encoded: &[],
+        },
+        MalformedRttCase {
+            intent: "nil is not numeric",
+            encoded: &[0xc0],
+        },
+        MalformedRttCase {
+            intent: "the reserved marker is invalid MessagePack",
+            encoded: &[0xc1],
+        },
+        MalformedRttCase {
+            intent: "false is not numeric",
+            encoded: &[0xc2],
+        },
+        MalformedRttCase {
+            intent: "true is not numeric",
+            encoded: &[0xc3],
+        },
+        MalformedRttCase {
+            intent: "an empty array is not numeric",
+            encoded: &[0x90],
+        },
+        MalformedRttCase {
+            intent: "an empty string is not numeric",
+            encoded: &[0xa0],
+        },
+        MalformedRttCase {
+            intent: "an empty binary value is not numeric",
+            encoded: &[0xc4, 0x00],
+        },
+        MalformedRttCase {
+            intent: "float32 without a body is incomplete",
+            encoded: &[MSGPACK_FLOAT32],
+        },
+        MalformedRttCase {
+            intent: "float32 with a three-byte body is incomplete",
+            encoded: &[MSGPACK_FLOAT32, 0x3e, 0x00, 0x00],
+        },
+        MalformedRttCase {
+            intent: "float64 without a body is incomplete",
+            encoded: &[MSGPACK_FLOAT64],
+        },
+        MalformedRttCase {
+            intent: "float64 with a seven-byte body is incomplete",
+            encoded: &[MSGPACK_FLOAT64, 0x3f, 0xc0, 0x00, 0x00, 0x00, 0x00, 0x00],
+        },
+        MalformedRttCase {
+            intent: "uint8 without a body is incomplete",
+            encoded: &[MSGPACK_UINT8],
+        },
+        MalformedRttCase {
+            intent: "uint16 with a one-byte body is incomplete",
+            encoded: &[MSGPACK_UINT16, 0x01],
+        },
+        MalformedRttCase {
+            intent: "uint32 with a three-byte body is incomplete",
+            encoded: &[MSGPACK_UINT32, 0x00, 0x00, 0x01],
+        },
+        MalformedRttCase {
+            intent: "uint64 with a seven-byte body is incomplete",
+            encoded: &[MSGPACK_UINT64, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01],
+        },
+        MalformedRttCase {
+            intent: "int8 without a body is incomplete",
+            encoded: &[MSGPACK_INT8],
+        },
+        MalformedRttCase {
+            intent: "int16 with a one-byte body is incomplete",
+            encoded: &[MSGPACK_INT16, 0x01],
+        },
+        MalformedRttCase {
+            intent: "int32 with a three-byte body is incomplete",
+            encoded: &[MSGPACK_INT32, 0x00, 0x00, 0x01],
+        },
+        MalformedRttCase {
+            intent: "int64 with a seven-byte body is incomplete",
+            encoded: &[MSGPACK_INT64, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01],
+        },
+        MalformedRttCase {
+            intent: "a fixint followed by another value has trailing data",
+            encoded: &[0x01, 0x00],
+        },
+        MalformedRttCase {
+            intent: "a complete float32 followed by another byte has trailing data",
+            encoded: &[MSGPACK_FLOAT32, 0x3e, 0x00, 0x00, 0x00, 0x00],
+        },
+    ];
+
+    #[test]
+    fn unpack_link_rtt_rejects_nonnumeric_incomplete_and_trailing_data() {
+        for case in MALFORMED_RTT_CASES {
+            assert_eq!(
+                unpack_rtt(case.encoded),
+                Err(LinkRttError::Malformed),
+                "{}: {:02x?}",
+                case.intent,
+                case.encoded,
+            );
+        }
     }
 
     fn sealed_rtt_packet_of(hostile: f64) -> Vec<u8> {
