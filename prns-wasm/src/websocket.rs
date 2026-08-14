@@ -37,6 +37,11 @@ impl WebSocketFramingCodec {
         self.session.can_read_outbound()
     }
 
+    #[wasm_bindgen(js_name = canStageMultipleOutbound)]
+    pub fn can_stage_multiple_outbound(&self) -> bool {
+        self.session.can_stage_multiple_outbound()
+    }
+
     #[wasm_bindgen(js_name = rawFallbackIsArmed)]
     pub fn raw_fallback_is_armed(&self) -> bool {
         self.session.raw_fallback_is_armed()
@@ -114,12 +119,12 @@ impl WebSocketFramingCodec {
         }
     }
 
-    #[wasm_bindgen(js_name = resolveRawFallback)]
-    pub fn resolve_raw_fallback(&mut self) -> Option<Vec<u8>> {
-        let resolution = self.session.resolve_raw_fallback()?;
-        resolution
+    #[wasm_bindgen(js_name = releaseRawFallback)]
+    pub fn release_raw_fallback(&mut self) -> Option<Vec<u8>> {
+        let released = self.session.release_raw_fallback()?;
+        released
             .pending_packet()
-            .and_then(|packet| encode_packet(resolution.framing(), packet))
+            .and_then(|packet| encode_packet(released.framing(), packet))
     }
 }
 

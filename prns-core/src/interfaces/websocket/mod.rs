@@ -12,7 +12,7 @@ mod detection;
 #[cfg(feature = "alloc")]
 pub use detection::{
     DecodedWebSocketFrame, WebSocketFrameDecodeOutcome, WebSocketFramingDecoder,
-    WebSocketFramingResolution, WebSocketFramingState, WebSocketSessionFrameDecodeOutcome,
+    WebSocketFramingState, WebSocketOutboundRelease, WebSocketSessionFrameDecodeOutcome,
     WebSocketSessionFraming, WebSocketSessionOutboundAction,
 };
 pub use detection::{WebSocketFramingSelection, WebSocketFramingSelectionParseError};

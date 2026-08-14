@@ -73,14 +73,14 @@ fn framing_selection_names_all_four_closed_variants() {
     );
 }
 
-#[test]
-fn automatic_session_holds_one_packet_then_falls_back_to_raw() {
+fn automatic_session_releases_provisional_raw_and_recovers_as(framing: WebSocketWireFraming) {
     let first = packet(b"first");
     let second = packet(b"second");
     let mut session = WebSocketSessionFraming::new(WebSocketFramingSelection::Auto);
 
-    assert!(session.resolve_raw_fallback().is_none());
+    assert!(session.release_raw_fallback().is_none());
     assert!(session.can_read_outbound());
+    assert!(!session.can_stage_multiple_outbound());
     assert_eq!(
         session.stage_outbound(&first),
         WebSocketSessionOutboundAction::Queued
@@ -91,17 +91,49 @@ fn automatic_session_holds_one_packet_then_falls_back_to_raw() {
         WebSocketSessionOutboundAction::Backpressured
     );
 
-    let resolved = session
-        .resolve_raw_fallback()
-        .expect("queued packet arms raw fallback");
-    assert_eq!(resolved.framing(), WebSocketWireFraming::RawPacket);
-    assert_eq!(resolved.pending_packet(), Some(first.as_slice()));
-    assert!(session.resolve_raw_fallback().is_none());
+    let release = session.release_raw_fallback();
+    assert!(matches!(
+        release.as_ref(),
+        Some(resolved)
+            if resolved.framing() == WebSocketWireFraming::RawPacket
+                && resolved.pending_packet() == Some(first.as_slice())
+    ));
+    assert!(session.release_raw_fallback().is_none());
+    assert!(session.is_detecting());
     assert!(session.can_read_outbound());
+    assert!(session.can_stage_multiple_outbound());
     assert_eq!(
         session.stage_outbound(&second),
         WebSocketSessionOutboundAction::Send(WebSocketWireFraming::RawPacket)
     );
+
+    let inbound = packet(b"late-framing-evidence");
+    let message = encoded(framing, &inbound);
+    let mut offset = 0;
+    let mut sink = FrameBuffer::<FRAME_CAP>::new();
+    let outcome = session.next_frame_into(&message, &mut offset, &mut sink);
+    assert!(matches!(
+        outcome,
+        Ok(WebSocketSessionFrameDecodeOutcome::ResolvedFrame(resolved))
+            if resolved.framing() == framing && resolved.pending_packet().is_none()
+    ));
+    assert_eq!(sink.as_slice(), inbound.as_slice());
+    assert!(!session.is_detecting());
+    assert!(session.can_stage_multiple_outbound());
+    assert_eq!(
+        session.stage_outbound(&second),
+        WebSocketSessionOutboundAction::Send(framing)
+    );
+}
+
+#[test]
+fn automatic_session_recovers_from_provisional_raw_to_kiss() {
+    automatic_session_releases_provisional_raw_and_recovers_as(WebSocketWireFraming::Kiss);
+}
+
+#[test]
+fn automatic_session_recovers_from_provisional_raw_to_hdlc() {
+    automatic_session_releases_provisional_raw_and_recovers_as(WebSocketWireFraming::Hdlc);
 }
 
 #[test]

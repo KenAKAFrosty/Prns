@@ -176,12 +176,13 @@ export type BluetoothReassemblerBinding = {
 export type WebSocketFramingCodecBinding = {
   messageCap(): number;
   canReadOutbound(): boolean;
+  canStageMultipleOutbound(): boolean;
   rawFallbackIsArmed(): boolean;
   isDetecting(): boolean;
   rawFallbackDelayMillis(): number;
   decode(message: Uint8Array): WebSocketDecodeBatchBinding;
   stageOutbound(packet: PacketFrame): Uint8Array | undefined;
-  resolveRawFallback(): Uint8Array | undefined;
+  releaseRawFallback(): Uint8Array | undefined;
 };
 
 export type WebSocketDecodeBatchBinding = {

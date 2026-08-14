@@ -5,7 +5,7 @@ use tokio_tungstenite::WebSocketStream;
 
 use prns_core::engine::InstantMillis;
 use prns_core::interfaces::websocket::{
-    WebSocketFramingResolution, WebSocketFramingSelection,
+    WebSocketFramingSelection, WebSocketOutboundRelease,
     WebSocketSessionFrameDecodeOutcome as SessionFrameDecodeOutcome,
     WebSocketSessionFraming as SessionFraming,
     WebSocketSessionOutboundAction as SessionOutboundAction, WebSocketWireFraming,
@@ -103,7 +103,7 @@ pub async fn serve<S, Seam>(
                                 Ok(SessionFrameDecodeOutcome::ResolvedFrame(resolved)) => {
                                     seam.commit_inbound().await;
                                     if matches!(
-                                        send_accepted_outbound(
+                                        send_released_outbound(
                                         resolved,
                                         &mut socket,
                                         seam,
@@ -159,12 +159,12 @@ pub async fn serve<S, Seam>(
                 }
             }
             () = &mut detection_grace, if raw_fallback_is_armed => {
-                let Some(resolved) = framing.resolve_raw_fallback() else {
+                let Some(released) = framing.release_raw_fallback() else {
                     continue;
                 };
                 if matches!(
-                    send_accepted_outbound(
-                        resolved,
+                    send_released_outbound(
+                        released,
                         &mut socket,
                         seam,
                         status,
@@ -197,8 +197,8 @@ enum AcceptedOutboundSendOutcome {
     TransportClosed,
 }
 
-async fn send_accepted_outbound<S, Seam>(
-    resolved: WebSocketFramingResolution,
+async fn send_released_outbound<S, Seam>(
+    released: WebSocketOutboundRelease,
     socket: &mut WebSocketStream<S>,
     seam: &mut Seam,
     status: &TokioInterfaceStatus,
@@ -210,12 +210,12 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
     Seam: InterfaceSeam,
 {
-    let Some(packet) = resolved.pending_packet() else {
+    let Some(packet) = released.pending_packet() else {
         return AcceptedOutboundSendOutcome::Continue;
     };
     match send_wire_message(
         socket,
-        resolved.framing(),
+        released.framing(),
         packet,
         status,
         airtime,
@@ -302,6 +302,7 @@ mod tests {
     struct OutboundOnlySeam {
         sink: Vec<u8>,
         outbound: TokioGrantConsumer,
+        inbound: Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>,
     }
 
     impl InterfaceSeam for OutboundOnlySeam {
@@ -314,6 +315,9 @@ mod tests {
         }
 
         async fn commit_inbound(&mut self) {
+            if let Some(inbound) = &self.inbound {
+                let _ = inbound.send(self.sink.clone());
+            }
             self.sink.clear();
         }
 
@@ -373,8 +377,7 @@ mod tests {
         assert_eq!(automatic.max_frame_size, automatic.max_message_size);
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn silent_peer_fallback_starts_when_an_outbound_packet_waits() {
+    async fn late_framing_evidence_replaces_provisional_raw_egress(framing: WebSocketWireFraming) {
         let (client_io, server_io) = tokio::io::duplex(SOCKET_BUFFER_LEN);
         let mut client = WebSocketStream::from_raw_socket(client_io, Role::Client, None).await;
         let server = WebSocketStream::from_raw_socket(
@@ -384,9 +387,11 @@ mod tests {
         )
         .await;
         let (mut outbound, outbound_consumer) = tokio_grant_lane(websocket::FRAME_CAP, 1);
+        let (inbound_sender, mut inbound) = tokio::sync::mpsc::unbounded_channel();
         let seam = OutboundOnlySeam {
             sink: Vec::new(),
             outbound: outbound_consumer,
+            inbound: Some(inbound_sender),
         };
         let id = InterfaceId::from_channel_tag(InterfaceKind::WebSocketServerPeer, b"auto-test");
         let status = TokioInterfaceStatus::new(id, ConnectionState::Connected);
@@ -432,7 +437,44 @@ mod tests {
             .expect("the websocket message is valid")
             .into_data();
         assert_eq!(received, outbound_packet);
+
+        let inbound_packet = packet(b"late-framing-evidence");
+        client
+            .send(Message::binary(encoded(framing, &inbound_packet)))
+            .await
+            .expect("late framing evidence reaches the session");
+        assert_eq!(
+            inbound
+                .recv()
+                .await
+                .expect("the framed packet is committed"),
+            inbound_packet
+        );
+
+        let subsequent_packet = packet(b"after-evidence");
+        outbound
+            .try_grant()
+            .expect("the outbound lane regains capacity")
+            .fill(&subsequent_packet);
+        outbound.commit();
+        let received = client
+            .next()
+            .await
+            .expect("the websocket remains open")
+            .expect("the websocket message is valid")
+            .into_data();
+        assert_eq!(received, encoded(framing, &subsequent_packet));
         task.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn late_kiss_evidence_replaces_provisional_raw_egress() {
+        late_framing_evidence_replaces_provisional_raw_egress(WebSocketWireFraming::Kiss).await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn late_hdlc_evidence_replaces_provisional_raw_egress() {
+        late_framing_evidence_replaces_provisional_raw_egress(WebSocketWireFraming::Hdlc).await;
     }
 
     #[tokio::test]
@@ -449,6 +491,7 @@ mod tests {
         let seam = OutboundOnlySeam {
             sink: Vec::new(),
             outbound: outbound_consumer,
+            inbound: None,
         };
         let id = InterfaceId::from_channel_tag(InterfaceKind::WebSocketServerPeer, b"kiss-test");
         let status = TokioInterfaceStatus::new(id, ConnectionState::Connected);

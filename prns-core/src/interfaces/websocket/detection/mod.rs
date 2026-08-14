@@ -214,20 +214,25 @@ mod allocated {
         Frame(Vec<u8>),
     }
 
+    enum DetectingOutbound {
+        AwaitingEvidence(PendingOutbound),
+        ProvisionalRaw,
+    }
+
     enum SessionFramingState {
         Detecting {
             decoder: WebSocketFramingDecoder,
-            pending_outbound: PendingOutbound,
+            outbound: DetectingOutbound,
         },
         Ready(WebSocketWireDecoder),
     }
 
-    pub struct WebSocketFramingResolution {
+    pub struct WebSocketOutboundRelease {
         framing: WebSocketWireFraming,
         pending: PendingOutbound,
     }
 
-    impl WebSocketFramingResolution {
+    impl WebSocketOutboundRelease {
         #[must_use]
         pub const fn framing(&self) -> WebSocketWireFraming {
             self.framing
@@ -246,7 +251,7 @@ mod allocated {
         Incomplete,
         AmbiguousFraming,
         Frame,
-        ResolvedFrame(WebSocketFramingResolution),
+        ResolvedFrame(WebSocketOutboundRelease),
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -267,7 +272,7 @@ mod allocated {
             let state = match selection {
                 WebSocketFramingSelection::Auto => SessionFramingState::Detecting {
                     decoder: WebSocketFramingDecoder::new(WebSocketFramingSelection::Auto),
-                    pending_outbound: PendingOutbound::Empty,
+                    outbound: DetectingOutbound::AwaitingEvidence(PendingOutbound::Empty),
                 },
                 WebSocketFramingSelection::Fixed(framing) => {
                     SessionFramingState::Ready(WebSocketWireDecoder::new(framing))
@@ -281,7 +286,7 @@ mod allocated {
             matches!(
                 &self.state,
                 SessionFramingState::Detecting {
-                    pending_outbound: PendingOutbound::Frame(_),
+                    outbound: DetectingOutbound::AwaitingEvidence(PendingOutbound::Frame(_)),
                     ..
                 }
             )
@@ -297,7 +302,21 @@ mod allocated {
             matches!(
                 &self.state,
                 SessionFramingState::Detecting {
-                    pending_outbound: PendingOutbound::Empty,
+                    outbound: DetectingOutbound::AwaitingEvidence(PendingOutbound::Empty),
+                    ..
+                } | SessionFramingState::Detecting {
+                    outbound: DetectingOutbound::ProvisionalRaw,
+                    ..
+                } | SessionFramingState::Ready(_)
+            )
+        }
+
+        #[must_use]
+        pub const fn can_stage_multiple_outbound(&self) -> bool {
+            matches!(
+                &self.state,
+                SessionFramingState::Detecting {
+                    outbound: DetectingOutbound::ProvisionalRaw,
                     ..
                 } | SessionFramingState::Ready(_)
             )
@@ -310,15 +329,21 @@ mod allocated {
 
         pub fn stage_outbound(&mut self, packet: &[u8]) -> WebSocketSessionOutboundAction {
             match &mut self.state {
-                SessionFramingState::Detecting {
-                    pending_outbound, ..
-                } => match pending_outbound {
-                    PendingOutbound::Empty if !packet.is_empty() && packet.len() <= FRAME_CAP => {
-                        *pending_outbound = PendingOutbound::Frame(packet.to_vec());
-                        WebSocketSessionOutboundAction::Queued
+                SessionFramingState::Detecting { outbound, .. } => match outbound {
+                    DetectingOutbound::AwaitingEvidence(pending_outbound) => match pending_outbound
+                    {
+                        PendingOutbound::Empty
+                            if !packet.is_empty() && packet.len() <= FRAME_CAP =>
+                        {
+                            *pending_outbound = PendingOutbound::Frame(packet.to_vec());
+                            WebSocketSessionOutboundAction::Queued
+                        }
+                        PendingOutbound::Empty => WebSocketSessionOutboundAction::Rejected,
+                        PendingOutbound::Frame(_) => WebSocketSessionOutboundAction::Backpressured,
+                    },
+                    DetectingOutbound::ProvisionalRaw => {
+                        WebSocketSessionOutboundAction::Send(WebSocketWireFraming::RawPacket)
                     }
-                    PendingOutbound::Empty => WebSocketSessionOutboundAction::Rejected,
-                    PendingOutbound::Frame(_) => WebSocketSessionOutboundAction::Backpressured,
                 },
                 SessionFramingState::Ready(decoder) => {
                     WebSocketSessionOutboundAction::Send(decoder.framing())
@@ -326,11 +351,24 @@ mod allocated {
             }
         }
 
-        pub fn resolve_raw_fallback(&mut self) -> Option<WebSocketFramingResolution> {
-            if !self.raw_fallback_is_armed() {
+        pub fn release_raw_fallback(&mut self) -> Option<WebSocketOutboundRelease> {
+            let SessionFramingState::Detecting { outbound, .. } = &mut self.state else {
                 return None;
-            }
-            Some(self.resolve(WebSocketWireFraming::RawPacket))
+            };
+            let pending = match outbound {
+                DetectingOutbound::AwaitingEvidence(pending) => match pending {
+                    PendingOutbound::Empty => return None,
+                    PendingOutbound::Frame(_) => {
+                        core::mem::replace(pending, PendingOutbound::Empty)
+                    }
+                },
+                DetectingOutbound::ProvisionalRaw => return None,
+            };
+            *outbound = DetectingOutbound::ProvisionalRaw;
+            Some(WebSocketOutboundRelease {
+                framing: WebSocketWireFraming::RawPacket,
+                pending,
+            })
         }
 
         pub fn next_frame_into(
@@ -365,15 +403,18 @@ mod allocated {
             }
         }
 
-        fn resolve(&mut self, framing: WebSocketWireFraming) -> WebSocketFramingResolution {
+        fn resolve(&mut self, framing: WebSocketWireFraming) -> WebSocketOutboundRelease {
             let pending = match &mut self.state {
-                SessionFramingState::Detecting {
-                    pending_outbound, ..
-                } => core::mem::replace(pending_outbound, PendingOutbound::Empty),
+                SessionFramingState::Detecting { outbound, .. } => match outbound {
+                    DetectingOutbound::AwaitingEvidence(pending) => {
+                        core::mem::replace(pending, PendingOutbound::Empty)
+                    }
+                    DetectingOutbound::ProvisionalRaw => PendingOutbound::Empty,
+                },
                 SessionFramingState::Ready(_) => PendingOutbound::Empty,
             };
             self.state = SessionFramingState::Ready(WebSocketWireDecoder::new(framing));
-            WebSocketFramingResolution { framing, pending }
+            WebSocketOutboundRelease { framing, pending }
         }
     }
 
@@ -589,6 +630,6 @@ mod tests;
 #[cfg(feature = "alloc")]
 pub use allocated::{
     DecodedWebSocketFrame, WebSocketFrameDecodeOutcome, WebSocketFramingDecoder,
-    WebSocketFramingResolution, WebSocketFramingState, WebSocketSessionFrameDecodeOutcome,
+    WebSocketFramingState, WebSocketOutboundRelease, WebSocketSessionFrameDecodeOutcome,
     WebSocketSessionFraming, WebSocketSessionOutboundAction,
 };

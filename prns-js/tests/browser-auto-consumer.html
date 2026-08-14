@@ -120,6 +120,7 @@
       async function webSocketFramingOutcome() {
         let automatic;
         let fallback;
+        let hdlcFallback;
         try {
           const wasm = await import("/prns-wasm/smoke/pkg/prns_wasm.js");
           await wasm.default();
@@ -128,6 +129,7 @@
             0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x00, 0x42,
           ]);
           const kiss = new Uint8Array([0xc0, 0x00, ...packet, 0xc0]);
+          const hdlc = new Uint8Array([0x7e, ...packet, 0x7e]);
           automatic = new wasm.WebSocketFramingCodec("auto");
           if (automatic.stageOutbound(packet) !== undefined) {
             return "Failed:OutboundNotHeld";
@@ -145,10 +147,41 @@
           fallback.stageOutbound(packet);
           if (
             !fallback.rawFallbackIsArmed() ||
-            !equalBytes(fallback.resolveRawFallback(), packet) ||
-            fallback.rawFallbackIsArmed()
+            !equalBytes(fallback.releaseRawFallback(), packet) ||
+            fallback.rawFallbackIsArmed() ||
+            !fallback.isDetecting() ||
+            !fallback.canStageMultipleOutbound() ||
+            !equalBytes(fallback.stageOutbound(packet), packet)
           ) {
             return "Failed:RawFallback";
+          }
+          const lateBatch = fallback.decode(kiss);
+          if (
+            fallback.isDetecting() ||
+            lateBatch.packets.length !== 1 ||
+            !equalBytes(lateBatch.packets[0], packet) ||
+            lateBatch.resolvedOutbound !== undefined ||
+            !equalBytes(fallback.stageOutbound(packet), kiss)
+          ) {
+            return "Failed:LateKissResolution";
+          }
+          hdlcFallback = new wasm.WebSocketFramingCodec("auto");
+          hdlcFallback.stageOutbound(packet);
+          if (
+            !equalBytes(hdlcFallback.releaseRawFallback(), packet) ||
+            !hdlcFallback.isDetecting()
+          ) {
+            return "Failed:HdlcRawFallback";
+          }
+          const lateHdlcBatch = hdlcFallback.decode(hdlc);
+          if (
+            hdlcFallback.isDetecting() ||
+            lateHdlcBatch.packets.length !== 1 ||
+            !equalBytes(lateHdlcBatch.packets[0], packet) ||
+            lateHdlcBatch.resolvedOutbound !== undefined ||
+            !equalBytes(hdlcFallback.stageOutbound(packet), hdlc)
+          ) {
+            return "Failed:LateHdlcResolution";
           }
           return "Resolved";
         } catch (error) {
@@ -156,6 +189,7 @@
         } finally {
           automatic?.free();
           fallback?.free();
+          hdlcFallback?.free();
         }
       }
 

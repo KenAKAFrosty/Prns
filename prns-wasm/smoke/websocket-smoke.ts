@@ -407,6 +407,30 @@ async function main(): Promise<void> {
       equalBytes(silentAutoSocket.sent[0] ?? new Uint8Array(), VALID_PACKET),
       "raw fallback preserves packet bytes",
     );
+
+    const lateKissEvidence = kissFrame(VALID_PACKET);
+    const lateEvidenceIngestCount = runtime.ingests.length + 1;
+    silentAutoSocket.emitMessage(ownedArrayBuffer(lateKissEvidence));
+    await waitFor(
+      () => runtime.ingests.length === lateEvidenceIngestCount,
+      "late KISS evidence is ingested after provisional raw",
+    );
+    runtime.outbound.push({
+      type: "frame",
+      target: { type: "interface", interfaceId: silentAuto.interfaceId },
+      bytes: packetFrame(VALID_PACKET),
+    });
+    await waitFor(
+      () => silentAutoSocket.sent.length === 2,
+      "outbound resumes after late KISS evidence",
+    );
+    assert(
+      equalBytes(
+        silentAutoSocket.sent[1] ?? new Uint8Array(),
+        lateKissEvidence,
+      ),
+      "late KISS evidence changes subsequent outbound framing",
+    );
     await silentAuto.close();
 
     const kissAuto = expectConnected(
