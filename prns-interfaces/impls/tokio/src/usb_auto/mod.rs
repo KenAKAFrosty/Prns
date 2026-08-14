@@ -40,6 +40,12 @@ const LIVENESS_TIMEOUT: Duration = Duration::from_secs(6);
 const RECENT_LINK_GRACE: Duration = Duration::from_secs(3);
 /// Backs off a busy or re-enumerating target so failures do not become a once-per-second error storm.
 const OPEN_FAILURE_BACKOFF: Duration = Duration::from_secs(5);
+/// Gives up a port that accepts writes and never answers, so a serial device that is not a board
+/// stops being held open. Long enough to cover a board that resets and boots after the port opens.
+const HANDSHAKE_DEADLINE: Duration = Duration::from_secs(30);
+/// Stops reopening a port that has never answered, until the entry re-enumerates. Without this the
+/// deadline alone still holds the device for `HANDSHAKE_DEADLINE` out of every backoff cycle.
+const MAX_UNCONFIRMED_OPENS: u32 = 3;
 
 struct Port {
     id: String,
@@ -71,16 +77,54 @@ impl PortLiveness {
 }
 
 enum PortEvent {
-    Alive { id: String },
-    Closed { id: String },
+    Alive {
+        id: String,
+    },
+    /// `confirmed` distinguishes a link that ended from one that never started, which is what
+    /// decides whether the port is worth reopening.
+    Closed {
+        id: String,
+        confirmed: bool,
+    },
 }
 
 type PendingOpen<S> = Pin<Box<dyn Future<Output = (String, io::Result<S>)> + Send>>;
 
-fn has_pending_retry(failed_opens: &HashMap<String, Instant>) -> bool {
-    failed_opens
-        .values()
-        .any(|failed_at| failed_at.elapsed() < OPEN_FAILURE_BACKOFF)
+/// Why a port is not being opened right now, and how many times it has already been given up on.
+struct OpenFailure {
+    at: Instant,
+    unconfirmed: u32,
+}
+
+impl OpenFailure {
+    fn since(at: Instant) -> Self {
+        Self { at, unconfirmed: 0 }
+    }
+
+    fn is_abandoned(&self) -> bool {
+        self.unconfirmed >= MAX_UNCONFIRMED_OPENS
+    }
+
+    fn is_backing_off(&self) -> bool {
+        !self.is_abandoned() && self.at.elapsed() < OPEN_FAILURE_BACKOFF
+    }
+}
+
+fn has_pending_retry(failed_opens: &HashMap<String, OpenFailure>) -> bool {
+    failed_opens.values().any(OpenFailure::is_backing_off)
+}
+
+/// Records a port worth backing off from, keeping the unconfirmed tally across reopens so the
+/// give-up threshold counts attempts rather than resetting on every retry.
+fn note_failure(failed_opens: &mut HashMap<String, OpenFailure>, id: String, unconfirmed: bool) {
+    let now = Instant::now();
+    let failure = failed_opens
+        .entry(id)
+        .or_insert_with(|| OpenFailure::since(now));
+    failure.at = now;
+    if unconfirmed {
+        failure.unconfirmed += 1;
+    }
 }
 
 #[derive(Clone)]
@@ -191,7 +235,7 @@ where
         let rescan = self.rescan.clone();
         let mut ports: Vec<Port> = Vec::new();
         let mut opening: HashSet<String> = HashSet::new();
-        let mut failed_opens: HashMap<String, Instant> = HashMap::new();
+        let mut failed_opens: HashMap<String, OpenFailure> = HashMap::new();
         let mut pending_opens: FuturesUnordered<PendingOpen<S>> = FuturesUnordered::new();
         let mut next_port_key: u64 = 0;
         let mut last_confirmed_at: Option<Instant> = None;
@@ -252,9 +296,19 @@ where
                                 port.liveness.mark_alive(now);
                                 last_confirmed_at = Some(now);
                             }
+                            // A port that answered has earned its retries back.
+                            failed_opens.remove(&id);
                         }
-                        PortEvent::Closed { id } => {
+                        PortEvent::Closed { id, confirmed } => {
                             ports.retain(|port| port.id != id);
+                            if !confirmed {
+                                note_failure(&mut failed_opens, id.clone(), true);
+                                if failed_opens.get(&id).is_some_and(OpenFailure::is_abandoned) {
+                                    crate::diagnostic_log::warn!(
+                                        "usb-auto: {id} never answered a handshake in {MAX_UNCONFIRMED_OPENS} opens; leaving it alone until it re-enumerates"
+                                    );
+                                }
+                            }
                         }
                     }
                     self.refresh_connection(
@@ -299,7 +353,7 @@ where
                         }
                         Err(error) => {
                             crate::diagnostic_log::warn!("usb-auto: open {name} failed: {error}");
-                            failed_opens.insert(name, Instant::now());
+                            note_failure(&mut failed_opens, name, false);
                         }
                     }
                     self.refresh_connection(
@@ -348,7 +402,7 @@ where
         &mut self,
         ports: &mut Vec<Port>,
         opening: &mut HashSet<String>,
-        failed_opens: &mut HashMap<String, Instant>,
+        failed_opens: &mut HashMap<String, OpenFailure>,
         pending_opens: &mut FuturesUnordered<PendingOpen<S>>,
         last_confirmed_at: Option<Instant>,
     ) {
@@ -378,13 +432,14 @@ where
             if ports.iter().any(|port| port.id == name) || opening.contains(&name) {
                 continue;
             }
+            // The tally survives the retry: clearing it here would reset the give-up threshold on
+            // every reopen. `retain` above drops it when the entry leaves the scan.
             if failed_opens
                 .get(&name)
-                .is_some_and(|failed_at| failed_at.elapsed() < OPEN_FAILURE_BACKOFF)
+                .is_some_and(|failure| failure.is_abandoned() || failure.is_backing_off())
             {
                 continue;
             }
-            failed_opens.remove(&name);
             let future = (self.open)(name.clone());
             opening.insert(name.clone());
             pending_opens.push(Box::pin(async move {
@@ -423,9 +478,16 @@ async fn serve_port<S>(
     let mut confirmed = false;
     let mut probe = tokio::time::interval(PROBE_INTERVAL);
     let mut liveness_probe = tokio::time::interval(LIVENESS_PROBE_INTERVAL);
+    let handshake_deadline = Instant::now() + HANDSHAKE_DEADLINE;
 
     loop {
         tokio::select! {
+            () = tokio::time::sleep_until(handshake_deadline), if !confirmed => {
+                crate::diagnostic_log::warn!(
+                    "usb-auto: {id} did not answer a handshake in {HANDSHAKE_DEADLINE:?}; releasing the port"
+                );
+                break;
+            }
             _ = probe.tick(), if !confirmed => {
                 let hello = Message::Hello(Capabilities::host());
                 if write_message(&mut stream, &hello, &mut frame_buf, &context.status)
@@ -501,7 +563,7 @@ async fn serve_port<S>(
             }
         }
     }
-    let _ = context.events.send(PortEvent::Closed { id });
+    let _ = context.events.send(PortEvent::Closed { id, confirmed });
 }
 
 fn mark_alive(confirmed: &mut bool, id: &str, events: &UnboundedSender<PortEvent>) {
@@ -545,6 +607,7 @@ mod tests {
     use super::*;
     use prns_core::interfaces::InterfaceStatus;
     use prns_runtime::manifold::driver::TokioInterfaceSeam;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
     use tokio::io::AsyncRead;
     use tokio::sync::mpsc::unbounded_channel;
@@ -730,5 +793,79 @@ mod tests {
         );
 
         assert_eq!(host.descriptor(), policy.descriptor(host_id()));
+    }
+
+    /// Any serial device that is not a board: it accepts the handshake writes and never answers.
+    /// Draining keeps the wire open, so the host sees a live port rather than an EOF.
+    fn silent_wire() -> tokio::io::DuplexStream {
+        let (host_wire, mut device) = tokio::io::duplex(4096);
+        tokio::spawn(async move {
+            let mut sink = [0u8; 256];
+            while device.read(&mut sink).await.is_ok_and(|n| n > 0) {}
+        });
+        host_wire
+    }
+
+    /// The seam's peers, held by the caller so they stay open for the life of the test.
+    type HeldSeam = (
+        mpsc::UnboundedReceiver<InterfaceId>,
+        TokioGrantConsumer,
+        TokioGrantProducer,
+    );
+
+    fn spawn_host<Scan, Open, Fut, S>(scan: Scan, open: Open) -> HeldSeam
+    where
+        Scan: FnMut() -> Vec<String> + Send + 'static,
+        Open: FnMut(String) -> Fut + Send + 'static,
+        Fut: Future<Output = io::Result<S>> + Send + 'static,
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
+        let host = UsbAutoHost::new(host_id(), scan, open, Arc::new(Notify::new()));
+        let (notify_tx, notify_rx) = unbounded_channel::<InterfaceId>();
+        let (in_tx, in_rx) = tokio_grant_lane(contract::MAX_FRAMED_BYTES, 8);
+        let (out_tx, out_rx) = tokio_grant_lane(contract::MAX_FRAMED_BYTES, 8);
+        let seam = TokioInterfaceSeam::new(host_id(), in_tx, notify_tx, out_rx);
+        tokio::spawn(host.run(seam));
+        (notify_rx, in_rx, out_tx)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_port_that_never_answers_the_handshake_is_released() {
+        let (host_wire, mut device) = tokio::io::duplex(4096);
+        let mut host_wire = Some(host_wire);
+        let open = move |_name: String| {
+            let taken = host_wire.take();
+            async move { taken.ok_or_else(|| io::Error::from(io::ErrorKind::NotConnected)) }
+        };
+        let _seam = spawn_host(|| std::vec![String::from("silent")], open);
+
+        // Before the deadline existed this never returned: the read arm only ends on EOF, and
+        // `PortLiveness::Handshaking` never ages out, so the descriptor was held until unplug.
+        let mut sink = [0u8; 256];
+        tokio::time::timeout(HANDSHAKE_DEADLINE * 4, async {
+            while device.read(&mut sink).await.is_ok_and(|n| n > 0) {}
+        })
+        .await
+        .expect("the host drops a port that has not answered by the handshake deadline");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_port_that_never_answers_stops_being_reopened() {
+        let opens = Arc::new(AtomicUsize::new(0));
+        let counted = opens.clone();
+        let open = move |_name: String| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            async move { Ok::<_, io::Error>(silent_wire()) }
+        };
+        let _seam = spawn_host(|| std::vec![String::from("silent")], open);
+
+        let cycle = HANDSHAKE_DEADLINE + OPEN_FAILURE_BACKOFF + FALLBACK_SCAN_INTERVAL;
+        tokio::time::sleep(cycle * (MAX_UNCONFIRMED_OPENS + 3)).await;
+
+        assert_eq!(
+            opens.load(Ordering::SeqCst),
+            MAX_UNCONFIRMED_OPENS as usize,
+            "a port that never answers is reopened until the give-up threshold and then left alone"
+        );
     }
 }
