@@ -49,8 +49,6 @@ import type {
   ResponseTimeout,
   WebSocketFramingSelection,
 } from "../contract.js";
-import { AutoWifiInterface } from "./auto_wifi.js";
-import { BluetoothInterface } from "./bluetooth.js";
 import {
   browserLimits,
   bundledWasmModuleUrl,
@@ -70,7 +68,8 @@ import type {
   PrnsApplicationEvent,
   PrnsDiagnosticEvent,
 } from "./events.js";
-import { RNodeInterface } from "./rnode.js";
+import type { InterfaceSession } from "./interface_contract.js";
+import { PrnsInterfaces } from "./interfaces.js";
 import {
   RuntimeHost,
   fillEntropy,
@@ -82,7 +81,6 @@ import type {
   EntropyFailure,
   EntropyOutcome,
   EntropySource,
-  InterfaceName,
   PrnsRuntimeBinding,
   PrnsWasmModule,
   RegisterSingleDestinationOptions,
@@ -102,11 +100,8 @@ import type {
   RuntimeResourceStrategy,
   RuntimeRespondOptions,
   RuntimeSendSinglePacketOptions,
-  StableIdentityUnavailable,
 } from "./runtime_contract.js";
-import { UsbAutoInterface } from "./usb_auto.js";
 import { describeHostError } from "./host_errors.js";
-import type { HostApiUnavailable } from "./host_apis.js";
 import {
   BROWSER_PERSISTENCE_VERSION,
   BrowserLocalStorageBleIdentityStore,
@@ -139,8 +134,8 @@ import { parseSnapshot } from "./snapshot.js";
 import type { PrnsSnapshot } from "./snapshot.js";
 import {
   BROWSER_RENDEZVOUS_FRAMING_SELECTION,
-  WebSocketInterface,
-} from "./websocket.js";
+} from "./websocket/index.js";
+import type { WebSocketConnectOutcome } from "./websocket/index.js";
 import type {
   ResourceSendSettlement,
   ResourceSource,
@@ -172,13 +167,10 @@ import type {
   AppData,
   AppName,
   Aspect,
-  BitrateBps,
   BleIdentity,
   BleIdentityValidationOutcome,
-  ChannelTag,
   CommandId,
   EntropyBytes,
-  HardwareMtu,
   HopCount,
   IdentitySecretKey,
   InstantMillis,
@@ -244,21 +236,39 @@ export {
   AutoWifiInterface,
   parseBrowserGatewayCatalog,
   validateBrowserGatewayUrl,
-} from "./auto_wifi.js";
+} from "./auto_wifi/index.js";
 export { webCryptoEntropy } from "./bootstrap.js";
-export { BluetoothInterface } from "./bluetooth.js";
+export type {
+  AlreadyActive,
+  Cancelled,
+  ConnectionFailed,
+  ConnectTimedOut,
+  InterfaceCleanupFailure,
+  InterfaceCleanupFailures,
+  InterfaceCloseOutcome,
+  InterfaceConnectStage,
+  InterfaceSession,
+  InterfaceSessionFailure,
+  InterfaceSessionStatus,
+  InvalidTarget,
+  PermissionDenied,
+  UnsupportedDevice,
+  UnsupportedInterface,
+} from "./interface_contract.js";
+export { PrnsInterfaces } from "./interfaces.js";
+export { BluetoothInterface } from "./bluetooth/index.js";
 export type {
   BluetoothConnectFailure,
   BluetoothConnectOutcome,
   BluetoothSession,
-} from "./bluetooth.js";
-export { UsbAutoInterface } from "./usb_auto.js";
+} from "./bluetooth/index.js";
+export { UsbAutoInterface } from "./usb_auto/index.js";
 export type {
   UsbAutoConnectOptions,
   UsbAutoConnectOutcome,
   UsbAutoDeviceFilter,
   UsbAutoSession,
-} from "./usb_auto.js";
+} from "./usb_auto/index.js";
 export type { HostApi, HostApiUnavailable } from "./host_apis.js";
 export {
   BROWSER_PERSISTENCE_VERSION,
@@ -346,7 +356,12 @@ export type {
 export { RNodeInterface } from "./rnode.js";
 export type { RNodeConnectOutcome } from "./rnode.js";
 export type { InterfaceSnapshot, PrnsSnapshot } from "./snapshot.js";
-export { WebSocketInterface } from "./websocket.js";
+export { WebSocketInterface } from "./websocket/index.js";
+export type {
+  WebSocketConnectOptions,
+  WebSocketConnectOutcome,
+  WebSocketSession,
+} from "./websocket/index.js";
 export type {
   AutoWifiControllerCloseOutcome,
   AutoWifiControllerStatus,
@@ -354,7 +369,7 @@ export type {
   AutoWifiGatewayStatus,
   BrowserGatewayCatalogOutcome,
   BrowserRendezvousId,
-} from "./auto_wifi.js";
+} from "./auto_wifi/index.js";
 export {
   BLE_IDENTITY_LENGTH,
   MIN_ENTROPY_BYTES,
@@ -407,131 +422,6 @@ export type PrnsCreateOutcome =
   | PersistenceStoreFailure
   | EntropyFailure
   | RuntimeRejected;
-
-export type InterfaceConnectStage =
-  | "DeviceSelection"
-  | "TransportOpen"
-  | "ServiceDiscovery"
-  | "Handshake"
-  | "RuntimeRegistration";
-
-export type PermissionDenied<Name extends InterfaceName = InterfaceName> = Tag<
-  "PermissionDenied",
-  {
-    readonly interface: Name;
-    readonly stage: InterfaceConnectStage;
-    readonly detail: string;
-  }
->;
-
-export type Cancelled<Name extends InterfaceName = InterfaceName> = Tag<
-  "Cancelled",
-  {
-    readonly interface: Name;
-    readonly stage: InterfaceConnectStage;
-  }
->;
-
-export type AlreadyActive<Name extends InterfaceName = InterfaceName> = Tag<
-  "AlreadyActive",
-  { readonly interface: Name; readonly target: string }
->;
-
-export type InvalidTarget<Name extends InterfaceName = InterfaceName> = Tag<
-  "InvalidTarget",
-  {
-    readonly interface: Name;
-    readonly target: string;
-    readonly detail: string;
-  }
->;
-
-export type UnsupportedDevice<Name extends InterfaceName = InterfaceName> = Tag<
-  "UnsupportedDevice",
-  { readonly interface: Name; readonly capability: string }
->;
-
-export type ConnectTimedOut<Name extends InterfaceName = InterfaceName> = Tag<
-  "TimedOut",
-  {
-    readonly interface: Name;
-    readonly stage: InterfaceConnectStage;
-    readonly timeoutMs: number;
-  }
->;
-
-export type ConnectionFailed<Name extends InterfaceName = InterfaceName> = Tag<
-  "ConnectionFailed",
-  {
-    readonly interface: Name;
-    readonly stage: InterfaceConnectStage;
-    readonly detail: string;
-  }
->;
-
-export type UnsupportedInterface<Name extends InterfaceName = InterfaceName> = Tag<
-  "UnsupportedInterface",
-  { readonly interface: Name; readonly host: "Browser" }
->;
-
-export type WebSocketConnectOutcome =
-  | Tag<"Connected", WebSocketSession>
-  | HostApiUnavailable<"WebSocket">
-  | PermissionDenied<"websocket">
-  | Cancelled<"websocket">
-  | AlreadyActive<"websocket">
-  | InvalidTarget<"websocket">
-  | ConnectTimedOut<"websocket">
-  | ConnectionFailed<"websocket">
-  | RuntimeRejected;
-
-export type InterfaceCleanupFailure =
-  | Tag<"RuntimeDetachFailed", { readonly detail: string }>
-  | Tag<"TransportCloseFailed", { readonly detail: string }>;
-
-export type InterfaceCleanupFailures = readonly [
-  InterfaceCleanupFailure,
-  ...InterfaceCleanupFailure[],
-];
-
-export type InterfaceSessionFailure =
-  | Tag<"Disconnected", { readonly detail: string }>
-  | Tag<
-      "TransferFailed",
-      { readonly direction: "Inbound" | "Outbound"; readonly detail: string }
-    >
-  | Tag<
-      "ProtocolViolation",
-      {
-        readonly protocol: "UsbAuto" | "Bluetooth" | "WebSocket";
-        readonly detail: string;
-      }
-    >
-  | Tag<"UnsupportedFrame", { readonly format: "Text" | "Unknown" }>
-  | Tag<
-      "FrameTooLarge",
-      { readonly length: number; readonly maximum: number }
-    >
-  | Tag<"OutboundQueueFull", { readonly capacity: number }>
-  | Tag<
-      "CloseFailed",
-      {
-        readonly causes: InterfaceCleanupFailures;
-      }
-    >
-  | Tag<"UnexpectedSessionFailure", { readonly detail: string }>
-  | EntropyFailure
-  | RuntimeRejected;
-
-export type InterfaceSessionStatus =
-  | Tag<"Negotiating">
-  | Tag<"Active">
-  | Tag<"Closed">
-  | Tag<"Failed", InterfaceSessionFailure>;
-
-export type InterfaceCloseOutcome =
-  | Tag<"Closed">
-  | Extract<InterfaceSessionFailure, Tag<"CloseFailed", unknown>>;
 
 export type DestinationRegistrationOutcome =
   | Tag<"Registered", DestinationHash>
@@ -612,44 +502,6 @@ export type PrnsOptions = {
 
 export function persistentBrowser(root: string = "prns"): PrnsOptions {
   return browserPersistenceStores(root);
-}
-
-export type InterfaceSession = {
-  readonly name: InterfaceName;
-  readonly interfaceId: InterfaceId;
-  readonly status: InterfaceSessionStatus;
-  close(): Promise<InterfaceCloseOutcome>;
-};
-
-export type WebSocketSession = InterfaceSession & {
-  readonly name: "websocket";
-  readonly url: string;
-  readonly framing: WebSocketFramingSelection;
-};
-
-export type WebSocketConnectOptions = {
-  readonly framing?: WebSocketFramingSelection;
-  readonly protocols?: string | readonly string[];
-  readonly channelTag?: ChannelTag;
-  readonly bitrateBps?: BitrateBps;
-  readonly hardwareMtu?: HardwareMtu;
-  readonly routing?: InterfaceRoutingPolicy;
-};
-
-export class PrnsInterfaces {
-  readonly usbAuto: UsbAutoInterface;
-  readonly rnode: RNodeInterface;
-  readonly bluetooth: BluetoothInterface;
-  readonly autoWifi: AutoWifiInterface;
-  readonly webSocket: WebSocketInterface;
-
-  constructor(host: RuntimeHost) {
-    this.usbAuto = new UsbAutoInterface(host);
-    this.rnode = new RNodeInterface(host);
-    this.bluetooth = new BluetoothInterface(host);
-    this.autoWifi = new AutoWifiInterface(host);
-    this.webSocket = new WebSocketInterface(host);
-  }
 }
 
 export class Prns {

@@ -14,7 +14,7 @@ import type {
   InterfaceSessionFailure,
   PermissionDenied,
   UnsupportedDevice,
-} from "../index.js";
+} from "../interface_contract.js";
 
 export type UsbAutoWriteOutcome = Tag<"Written"> | InterfaceSessionFailure;
 

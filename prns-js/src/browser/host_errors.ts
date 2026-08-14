@@ -3,9 +3,9 @@ import type {
   Cancelled,
   ConnectionFailed,
   InterfaceConnectStage,
-  InterfaceName,
   PermissionDenied,
-} from "./index.js";
+} from "./interface_contract.js";
+import type { InterfaceName } from "./runtime_contract.js";
 
 export function connectFailure<Name extends InterfaceName>(
   interfaceName: Name,

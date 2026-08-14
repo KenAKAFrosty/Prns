@@ -1,20 +1,22 @@
-import { Tag, match_into } from "../casework.js";
+import { Tag, match_into } from "../../casework.js";
+import type { InterfaceId } from "../../contract.js";
 import {
   RecoverySchedule,
   type DueRecovery,
-} from "./auto_wifi/recovery.js";
+} from "./recovery.js";
 import type {
   AlreadyActive,
+  InterfaceSessionFailure,
+  PermissionDenied,
+} from "../interface_contract.js";
+import type { HostApiUnavailable } from "../host_apis.js";
+import type { PrnsOutboundFrame } from "../outbound.js";
+import type { RuntimeRejected } from "../runtime_contract.js";
+import type {
   BitrateBps,
   HardwareMtu,
-  HostApiUnavailable,
-  InterfaceId,
-  InterfaceSessionFailure,
   PacketFrame,
-  PermissionDenied,
-  PrnsOutboundFrame,
-  RuntimeRejected,
-} from "./index.js";
+} from "../values.js";
 
 declare const rendezvousIdBrand: unique symbol;
 

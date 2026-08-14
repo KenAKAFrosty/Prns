@@ -1,14 +1,16 @@
 import type { Tag } from "../../casework.js";
+import type { InterfaceId } from "../../contract.js";
 import type { BrowserUsbDeviceFilter } from "../host_apis.js";
 import type {
   AlreadyActive,
-  EntropyFailure,
-  InterfaceId,
   InterfaceSessionFailure,
-  PrnsOutboundFrame,
+} from "../interface_contract.js";
+import type { PrnsOutboundFrame } from "../outbound.js";
+import type {
+  EntropyFailure,
   RuntimeRejected,
   UsbAutoDecoderBinding,
-} from "../index.js";
+} from "../runtime_contract.js";
 import type {
   BitrateBps,
   ChannelTag,

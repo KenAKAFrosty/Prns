@@ -1,12 +1,11 @@
 import type {
   BluetoothReassemblerBinding,
-  IdentitySecretKey,
-  InterfaceId,
-  PacketFrame,
   PrnsRuntimeBinding,
   UsbAutoDecoderBinding,
   WebSocketFramingCodecBinding,
-} from "./index.js";
+} from "./runtime_contract.js";
+import type { InterfaceId } from "../contract.js";
+import type { IdentitySecretKey, PacketFrame } from "./values.js";
 
 export declare class PrnsRuntime implements PrnsRuntimeBinding {
   constructor(identitySecretKey: IdentitySecretKey, bleIdentity?: Uint8Array);

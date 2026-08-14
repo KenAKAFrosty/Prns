@@ -1,8 +1,6 @@
 import { Tag } from "../casework.js";
-import type {
-  RuntimeRejected,
-  UnsupportedInterface,
-} from "./index.js";
+import type { UnsupportedInterface } from "./interface_contract.js";
+import type { RuntimeRejected } from "./runtime_contract.js";
 
 export type RNodeConnectOutcome =
   | UnsupportedInterface<"rnode">

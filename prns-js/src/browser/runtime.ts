@@ -29,7 +29,7 @@ import type {
   InstantMillis,
   PacketFrame,
 } from "./values.js";
-import type { WebSocketRuntimeRegistration } from "./websocket.js";
+import type { WebSocketRuntimeRegistration } from "./websocket/index.js";
 import type {
   BleIdentityAvailability,
   BluetoothReassemblerBinding,

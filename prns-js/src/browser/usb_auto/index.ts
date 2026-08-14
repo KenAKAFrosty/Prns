@@ -1,30 +1,30 @@
-import { Tag } from "../casework.js";
-import { connectFailure } from "./host_errors.js";
-import { hostGlobal } from "./host_apis.js";
+import { Tag } from "../../casework.js";
+import type { InterfaceId } from "../../contract.js";
+import { connectFailure } from "../host_errors.js";
+import { hostGlobal } from "../host_apis.js";
 import type {
   BrowserUsb,
   BrowserUsbDevice,
   HostApiUnavailable,
-} from "./host_apis.js";
+} from "../host_apis.js";
 import type {
   AlreadyActive,
   Cancelled,
   ConnectionFailed,
   InterfaceConnectStage,
-  InterfaceId,
   InterfaceSession,
   PermissionDenied,
-  RuntimeRejected,
   UnsupportedDevice,
-} from "./index.js";
-import type { UsbAutoRuntimeHost } from "./usb_auto/runtime.js";
-import { BrowserUsbAutoSession } from "./usb_auto/session.js";
+} from "../interface_contract.js";
+import type { RuntimeRejected } from "../runtime_contract.js";
+import type { UsbAutoRuntimeHost } from "./runtime.js";
+import { BrowserUsbAutoSession } from "./session.js";
 import {
   WebUsbAutoTransport,
   usbStage,
-} from "./usb_auto/transport.js";
-import { channelTag } from "./values.js";
-import type { ChannelTag } from "./values.js";
+} from "./transport.js";
+import { channelTag } from "../values.js";
+import type { ChannelTag } from "../values.js";
 
 export type UsbAutoSession = InterfaceSession & {
   readonly name: "usb-auto";

@@ -1,19 +1,19 @@
-import { Tag } from "../casework.js";
-import { connectFailure } from "./host_errors.js";
-import { hostGlobal } from "./host_apis.js";
+import { Tag } from "../../casework.js";
+import { connectFailure } from "../host_errors.js";
+import { hostGlobal } from "../host_apis.js";
 import type {
   BrowserBluetooth,
   BrowserBluetoothRemoteGattCharacteristic,
   BrowserBluetoothRemoteGattServer,
   BrowserBluetoothRemoteGattService,
   HostApiUnavailable,
-} from "./host_apis.js";
+} from "../host_apis.js";
 import {
   bluetoothStage,
   disconnectBluetoothServer,
-} from "./bluetooth/gatt.js";
-import type { BluetoothRuntimeHost } from "./bluetooth/runtime.js";
-import { BrowserBluetoothSession } from "./bluetooth/session.js";
+} from "./gatt.js";
+import type { BluetoothRuntimeHost } from "./runtime.js";
+import { BrowserBluetoothSession } from "./session.js";
 import type {
   AlreadyActive,
   Cancelled,
@@ -22,10 +22,12 @@ import type {
   InterfaceConnectStage,
   InterfaceSession,
   PermissionDenied,
+  UnsupportedDevice,
+} from "../interface_contract.js";
+import type {
   RuntimeRejected,
   StableIdentityUnavailable,
-  UnsupportedDevice,
-} from "./index.js";
+} from "../runtime_contract.js";
 
 export type BluetoothSession = InterfaceSession & {
   readonly name: "bluetooth";

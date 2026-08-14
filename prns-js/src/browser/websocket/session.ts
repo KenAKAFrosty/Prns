@@ -1,5 +1,8 @@
 import { Tag } from "../../casework.js";
-import type { WebSocketFramingSelection } from "../../contract.js";
+import type {
+  InterfaceId,
+  WebSocketFramingSelection,
+} from "../../contract.js";
 import { describeHostError } from "../host_errors.js";
 import {
   closeFailed,
@@ -12,14 +15,15 @@ import {
 import type {
   InterfaceCleanupFailure,
   InterfaceCloseOutcome,
-  InterfaceId,
   InterfaceSessionFailure,
   InterfaceSessionStatus,
-  PacketFrame,
-  WebSocketFramingCodecBinding,
+} from "../interface_contract.js";
+import type { WebSocketFramingCodecBinding } from "../runtime_contract.js";
+import type { PacketFrame } from "../values.js";
+import type {
+  WebSocketRuntimeHost,
   WebSocketSession,
-} from "../index.js";
-import type { WebSocketRuntimeHost } from "../websocket.js";
+} from "./index.js";
 
 type SessionWriteOutcome = Tag<"Written"> | InterfaceSessionFailure;
 type SessionHandleOutcome = Tag<"Handled"> | InterfaceSessionFailure;

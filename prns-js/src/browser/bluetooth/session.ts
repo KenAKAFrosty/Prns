@@ -1,4 +1,5 @@
 import { Tag, match, match_into } from "../../casework.js";
+import type { InterfaceId } from "../../contract.js";
 import { bytesField, record, stringField } from "../decoding.js";
 import { describeHostError } from "../host_errors.js";
 import type {
@@ -32,18 +33,17 @@ import type {
 import type {
   BluetoothConnectFailure,
   BluetoothSession,
-} from "../bluetooth.js";
+} from "./index.js";
 import type {
   AlreadyActive,
-  BluetoothReassemblerBinding,
   ConnectTimedOut,
   InterfaceCleanupFailure,
   InterfaceCloseOutcome,
   InterfaceConnectStage,
-  InterfaceId,
   InterfaceSessionFailure,
   InterfaceSessionStatus,
-} from "../index.js";
+} from "../interface_contract.js";
+import type { BluetoothReassemblerBinding } from "../runtime_contract.js";
 
 type BluetoothControl =
   | Tag<"Hello", Uint8Array>

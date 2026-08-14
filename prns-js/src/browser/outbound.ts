@@ -8,7 +8,7 @@ import {
   record,
   stringField,
 } from "./decoding.js";
-import type { RuntimeInterfaceKind } from "./index.js";
+import type { RuntimeInterfaceKind } from "./runtime_contract.js";
 import {
   PrnsValidationError,
   hopCount,

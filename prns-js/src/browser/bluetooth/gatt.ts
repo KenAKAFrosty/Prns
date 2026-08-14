@@ -12,7 +12,7 @@ import type {
   InterfaceConnectStage,
   InterfaceSessionFailure,
   PermissionDenied,
-} from "../index.js";
+} from "../interface_contract.js";
 
 export type BluetoothStageOutcome<Value> =
   | Tag<"Completed", Value>

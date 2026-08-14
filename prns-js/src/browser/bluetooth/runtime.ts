@@ -1,14 +1,16 @@
 import type { Tag } from "../../casework.js";
+import type { InterfaceId } from "../../contract.js";
 import type {
   AlreadyActive,
+  InterfaceSessionFailure,
+} from "../interface_contract.js";
+import type { PrnsOutboundFrame } from "../outbound.js";
+import type {
   BluetoothReassemblerBinding,
   EntropyFailure,
-  InterfaceId,
-  InterfaceSessionFailure,
-  PrnsOutboundFrame,
   RuntimeRejected,
   StableIdentityUnavailable,
-} from "../index.js";
+} from "../runtime_contract.js";
 import type {
   BitrateBps,
   ChannelTag,

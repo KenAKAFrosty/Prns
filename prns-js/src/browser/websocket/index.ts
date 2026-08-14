@@ -1,34 +1,64 @@
-import { Tag } from "../casework.js";
+import { Tag } from "../../casework.js";
 import type {
+  InterfaceId,
   InterfaceRoutingPolicy,
   WebSocketFramingSelection,
-} from "../contract.js";
-import { byteKey } from "./bytes.js";
-import { connectFailure, describeHostError } from "./host_errors.js";
-import {
-  BrowserWebSocketSession,
-  closeBrowserWebSocket,
-} from "./websocket/session.js";
+} from "../../contract.js";
+import { byteKey } from "../bytes.js";
+import { connectFailure, describeHostError } from "../host_errors.js";
+import type { HostApiUnavailable } from "../host_apis.js";
 import type {
   AlreadyActive,
-  BitrateBps,
   Cancelled,
   ConnectionFailed,
   ConnectTimedOut,
-  EntropyFailure,
-  HardwareMtu,
-  HostApiUnavailable,
   InterfaceConnectStage,
-  InterfaceId,
+  InterfaceSession,
   InterfaceSessionFailure,
   InvalidTarget,
   PermissionDenied,
-  PrnsOutboundFrame,
+} from "../interface_contract.js";
+import type { PrnsOutboundFrame } from "../outbound.js";
+import type {
+  EntropyFailure,
   RuntimeRejected,
-  WebSocketConnectOptions,
-  WebSocketConnectOutcome,
   WebSocketFramingCodecBinding,
-} from "./index.js";
+} from "../runtime_contract.js";
+import type {
+  BitrateBps,
+  ChannelTag,
+  HardwareMtu,
+} from "../values.js";
+import {
+  BrowserWebSocketSession,
+  closeBrowserWebSocket,
+} from "./session.js";
+
+export type WebSocketSession = InterfaceSession & {
+  readonly name: "websocket";
+  readonly url: string;
+  readonly framing: WebSocketFramingSelection;
+};
+
+export type WebSocketConnectOptions = {
+  readonly framing?: WebSocketFramingSelection;
+  readonly protocols?: string | readonly string[];
+  readonly channelTag?: ChannelTag;
+  readonly bitrateBps?: BitrateBps;
+  readonly hardwareMtu?: HardwareMtu;
+  readonly routing?: InterfaceRoutingPolicy;
+};
+
+export type WebSocketConnectOutcome =
+  | Tag<"Connected", WebSocketSession>
+  | HostApiUnavailable<"WebSocket">
+  | PermissionDenied<"websocket">
+  | Cancelled<"websocket">
+  | AlreadyActive<"websocket">
+  | InvalidTarget<"websocket">
+  | ConnectTimedOut<"websocket">
+  | ConnectionFailed<"websocket">
+  | RuntimeRejected;
 
 export type WebSocketRuntimeRegistration = {
   readonly channelTag: Uint8Array;

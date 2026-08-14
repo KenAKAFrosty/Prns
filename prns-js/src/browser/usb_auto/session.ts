@@ -1,4 +1,5 @@
 import { Tag, match, match_into } from "../../casework.js";
+import type { InterfaceId } from "../../contract.js";
 import { bytesField, record, stringField } from "../decoding.js";
 import { describeHostError } from "../host_errors.js";
 import {
@@ -13,12 +14,11 @@ import { PrnsValidationError, packetFrame } from "../values.js";
 import type {
   InterfaceCleanupFailure,
   InterfaceCloseOutcome,
-  InterfaceId,
   InterfaceSessionFailure,
   InterfaceSessionStatus,
-  UsbAutoDecoderBinding,
-  UsbAutoSession,
-} from "../index.js";
+} from "../interface_contract.js";
+import type { UsbAutoDecoderBinding } from "../runtime_contract.js";
+import type { UsbAutoSession } from "./index.js";
 import type { UsbAutoRuntimeHost } from "./runtime.js";
 import { WebUsbAutoTransport } from "./transport.js";
 import type { UsbAutoWriteOutcome } from "./transport.js";

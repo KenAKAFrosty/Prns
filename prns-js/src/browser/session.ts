@@ -6,7 +6,7 @@ import type {
   InterfaceCloseOutcome,
   InterfaceSessionFailure,
   InterfaceSessionStatus,
-} from "./index.js";
+} from "./interface_contract.js";
 
 export function unexpectedSessionFailure(error: unknown): Extract<
   InterfaceSessionFailure,
