@@ -1,3 +1,20 @@
+import type { Tag } from "../casework.js";
+
+export type HostApi =
+  | "Crypto"
+  | "LocalStorage"
+  | "Base64Encoder"
+  | "Base64Decoder"
+  | "WebUSB"
+  | "WebBluetooth"
+  | "WebSocket"
+  | "Fetch";
+
+export type HostApiUnavailable<Api extends HostApi = HostApi> = Tag<
+  "HostApiUnavailable",
+  { readonly api: Api }
+>;
+
 export type HostGlobal = typeof globalThis & {
   crypto?: {
     getRandomValues<T extends Uint8Array>(array: T): T;
