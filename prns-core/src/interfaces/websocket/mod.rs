@@ -7,16 +7,27 @@ use crate::interfaces::{
 };
 use crate::routing::links::MAX_LINK_MTU;
 
+mod detection;
+
+#[cfg(feature = "alloc")]
+pub use detection::{
+    DecodedWebSocketFrame, WebSocketFrameDecodeOutcome, WebSocketFramingDecoder,
+    WebSocketFramingState,
+};
+pub use detection::{WebSocketFramingSelection, WebSocketFramingSelectionParseError};
+
 pub const WEBSOCKET_BITRATE_ESTIMATE: BitrateBps = TRAVERSED_NETWORK_BITRATE_ESTIMATE;
 
 pub const WEBSOCKET_HW_MTU_CAP: usize = MAX_LINK_MTU;
 pub const FRAME_CAP: usize = MAX_LINK_MTU + IFAC_MAX_SIZE;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum WebSocketWireFraming {
-    RawPacket,
-    Hdlc,
-    Kiss,
+prns_macros::iterable_enum! {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum WebSocketWireFraming {
+        RawPacket,
+        Hdlc,
+        Kiss,
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,12 +37,10 @@ pub enum WebSocketWireFramingParseError {
 
 impl WebSocketWireFraming {
     pub fn from_name(name: &str) -> Result<Self, WebSocketWireFramingParseError> {
-        match name {
-            "raw" => Ok(Self::RawPacket),
-            "hdlc" => Ok(Self::Hdlc),
-            "kiss" => Ok(Self::Kiss),
-            _ => Err(WebSocketWireFramingParseError::UnknownFraming),
-        }
+        Self::ALL
+            .into_iter()
+            .find(|framing| framing.name() == name)
+            .ok_or(WebSocketWireFramingParseError::UnknownFraming)
     }
 
     #[must_use]
@@ -115,6 +124,15 @@ impl WebSocketWireDecoder {
             WebSocketWireFraming::Kiss => WireDecoderState::Kiss(kiss_framing::KissScanner::new()),
         };
         Self { state }
+    }
+
+    #[must_use]
+    pub const fn framing(&self) -> WebSocketWireFraming {
+        match self.state {
+            WireDecoderState::RawPacket => WebSocketWireFraming::RawPacket,
+            WireDecoderState::Hdlc(_) => WebSocketWireFraming::Hdlc,
+            WireDecoderState::Kiss(_) => WebSocketWireFraming::Kiss,
+        }
     }
 
     pub fn reset(&mut self) {
@@ -347,11 +365,7 @@ mod tests {
             WebSocketWireFraming::RawPacket.channel_tag_suffix(),
             WebSocketWireFraming::Kiss.channel_tag_suffix()
         );
-        for framing in [
-            WebSocketWireFraming::RawPacket,
-            WebSocketWireFraming::Hdlc,
-            WebSocketWireFraming::Kiss,
-        ] {
+        for framing in WebSocketWireFraming::ALL {
             assert_eq!(WebSocketWireFraming::from_name(framing.name()), Ok(framing));
         }
         assert_eq!(
