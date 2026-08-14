@@ -10,6 +10,7 @@ import {
   readBoundedBytes,
   safeFailure,
   sha256Hex,
+  validateUf2Artifact,
   validateRequest,
 } from "./core.js";
 import { BRIDGE_SCHEMA, BridgeEventSequence, RESPONSE_LIMITS } from "./contract.js";
@@ -234,6 +235,9 @@ export async function prepare(request, emit = () => {}, dependencies = {}) {
       requireCurrentPreparation(generation);
       if (actual !== part.sha256) {
         throw new FlashBridgeError("artifact_hash_mismatch", "A firmware part failed SHA-256 verification.");
+      }
+      if (request.transport === "uf2-mass-storage") {
+        validateUf2Artifact(bytes, request.uf2Compatibility);
       }
       files.push({ ...part, bytes });
       completed += bytes.length;

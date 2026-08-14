@@ -5,8 +5,8 @@ use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
 use prns_flash_manifest::{
-    board_catalog, pinned_key_id, sha256_hex, verify_minisign, ValidatedChannelDescriptor,
-    ValidatedFlashManifest, PINNED_MINISIGN_PUBLIC_KEY,
+    board_catalog, pinned_key_id, sha256_hex, validate_uf2_artifact, verify_minisign,
+    ReleaseTarget, ValidatedChannelDescriptor, ValidatedFlashManifest, PINNED_MINISIGN_PUBLIC_KEY,
 };
 use serde::Deserialize;
 
@@ -153,6 +153,18 @@ fn validate_candidate(root: &Path) -> Result<(), String> {
                     "{} does not match the signed hosted artifact",
                     hosted_path.display()
                 ));
+            }
+        }
+        if let ReleaseTarget::Uf2(target) = target {
+            for variant in target.variants() {
+                let path = safe_join(root, variant.part().path().as_str())?;
+                let bytes = read_limited(&path, variant.part().size())?;
+                validate_uf2_artifact(variant, &bytes).map_err(|error| {
+                    format!(
+                        "{} is not a valid signed UF2 variant: {error}",
+                        path.display()
+                    )
+                })?;
             }
         }
     }
@@ -680,7 +692,7 @@ mod tests {
     }
 
     #[test]
-    fn accepts_exact_schema_two_release_metadata() {
+    fn accepts_exact_schema_three_release_metadata() {
         assert_eq!(
             utc_timestamp(1_774_358_400),
             Ok("2026-03-24T13:20:00+00:00".to_string())

@@ -14,7 +14,7 @@ on:
         required: true
         type: string
       history_mode:
-        description: Retain the exact current signed history, or explicitly bootstrap the first schema-v2 release
+        description: Retain the exact current signed history, or explicitly bootstrap the first schema-v3 release
         required: true
         default: retain
         type: choice

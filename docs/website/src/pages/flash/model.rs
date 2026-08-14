@@ -4,7 +4,9 @@ use std::sync::{
 };
 
 use dioxus::prelude::{Signal, WritableExt};
-use prns_flash_manifest::FlashPartKind;
+use prns_flash_manifest::{
+    FlashPartKind, SoftdeviceIdentity, Uf2BoardIdPrefix, Uf2BootloaderIdentity,
+};
 use serde::Serialize;
 
 use crate::platforms::{BoardFlashTarget, BoardTarget, PreparationProfile, SHIPPING_BOARD_TARGETS};
@@ -29,6 +31,12 @@ pub(super) enum InstallMode {
 pub(super) enum DestructiveConfirmation {
     Unconfirmed,
     Confirmed,
+}
+
+#[derive(Clone)]
+pub(super) enum ReleaseCompatibility {
+    Esp,
+    Uf2(SoftdeviceIdentity),
 }
 
 pub(super) const WEB_SERIAL_PROBE_SUPPORTED: &str = "supported";
@@ -176,13 +184,16 @@ pub(super) fn preparation_guide(
             ],
         },
         PreparationProfile::TechoUf2 => PreparationGuide {
-            lead: "This board uses its UF2 bootloader; the website only verifies and downloads the UF2 file.",
+            lead: "This board uses its UF2 bootloader; the website reads its local descriptor and downloads the matching verified UF2 file.",
             steps: match target {
-                BoardFlashTarget::Uf2MassStorage { mount_label } => vec![
-                    "Prepare the verified UF2 here before entering bootloader mode.".to_string(),
+                BoardFlashTarget::Uf2MassStorage { mount_label, .. } => vec![
                     format!(
                         "Connect with a USB data cable and double-press RESET until the {mount_label} drive appears."
                     ),
+                    format!(
+                        "Select INFO_UF2.TXT from {mount_label}. The file is parsed only in this browser and is not uploaded or retained."
+                    ),
+                    "Prepare the signed release after the detected SoftDevice foundation appears.".to_string(),
                     format!(
                         "Copy the downloaded UF2 to {mount_label} and wait for the copy to finish. The drive disappears when the device reboots."
                     ),
@@ -202,7 +213,8 @@ pub(super) const fn guided_steps(
     match (target, install_mode) {
         (BoardFlashTarget::Uf2MassStorage { .. }, _) => &[
             "Confirm the exact board pictured above.",
-            "Prepare the release; its Minisign signature, byte count, and SHA-256 are checked locally.",
+            "Select INFO_UF2.TXT so the browser can resolve the exact SoftDevice foundation without uploading the file.",
+            "Prepare the matching release artifact; its Minisign signature, UF2 structure, byte count, and SHA-256 are checked locally.",
             "Download the verified UF2, follow the board preparation instructions, and copy it to the bootloader drive.",
             "The bootloader drive disappears when the device reboots.",
         ],
@@ -219,6 +231,28 @@ pub(super) const fn guided_steps(
             "Erase and flash. Success is reported only after every replacement part verifies on the device and the final reset request completes.",
         ],
     }
+}
+
+pub(super) fn parse_uf2_selection(
+    bytes: &[u8],
+    target: BoardFlashTarget,
+) -> Result<Uf2BootloaderIdentity, String> {
+    let BoardFlashTarget::Uf2MassStorage {
+        board_id_prefix, ..
+    } = target
+    else {
+        return Err("An ESP target cannot use a UF2 bootloader descriptor.".to_string());
+    };
+    let identity = Uf2BootloaderIdentity::parse(bytes).map_err(|error| error.to_string())?;
+    let prefix =
+        Uf2BoardIdPrefix::parse(board_id_prefix.to_string()).map_err(|error| error.to_string())?;
+    if !identity.matches_board(&prefix) {
+        return Err(format!(
+            "INFO_UF2.TXT reports Board-ID {:?}, which does not match the selected board.",
+            identity.board_id()
+        ));
+    }
+    Ok(identity)
 }
 
 pub(super) const fn initial_status(target: BoardFlashTarget) -> &'static str {
@@ -286,7 +320,7 @@ mod tests {
             .iter()
             .any(|step| step.contains("double-press RESET")));
         assert!(uf2.steps.iter().any(|step| step.contains("TECHOBOOT")));
-        assert!(uf2.lead.contains("only verifies and downloads"));
+        assert!(uf2.lead.contains("local descriptor"));
     }
 
     #[test]
@@ -325,6 +359,32 @@ mod tests {
         assert!(shares_serial_chip_identity(t_beam));
         assert!(!shares_serial_chip_identity(xiao));
         assert!(!shares_serial_chip_identity(t_echo));
+    }
+
+    #[test]
+    fn uf2_selection_requires_a_matching_board_and_supported_descriptor_shape() {
+        let t_echo = board_target_by_slug("t-echo").expect("shipping board");
+        let target = t_echo.flash_target.expect("flash target");
+        for version in ["6.1.1", "7.3.0"] {
+            let descriptor = format!(
+                "UF2 Bootloader 0.6.1\r\nBoard-ID: nRF52840-TEcho-v1\r\nSoftDevice: S140 version {version}\r\n"
+            );
+            let identity =
+                parse_uf2_selection(descriptor.as_bytes(), target).expect("valid identity");
+            assert_eq!(identity.softdevice().version().as_str(), version);
+        }
+
+        let wrong_board =
+            b"UF2 Bootloader 0.6.1\nBoard-ID: nRF52840-Other-v1\nSoftDevice: S140 version 7.3.0\n";
+        assert!(parse_uf2_selection(wrong_board, target).is_err());
+        assert!(parse_uf2_selection(b"not a descriptor", target).is_err());
+
+        let esp = board_target_by_slug("heltec-v4").expect("shipping board");
+        assert!(parse_uf2_selection(
+            b"UF2 Bootloader 0.6.1\nBoard-ID: nRF52840-TEcho-v1\nSoftDevice: S140 version 7.3.0\n",
+            esp.flash_target.expect("flash target"),
+        )
+        .is_err());
     }
 
     #[test]

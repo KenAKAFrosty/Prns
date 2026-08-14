@@ -79,7 +79,7 @@ def bootstrap_metadata() -> dict:
 def signed_candidate(root: Path, version: str = VERSION) -> tuple[Path, Path]:
     root.mkdir(parents=True)
     manifest = {
-        "schema": 2,
+        "schema": 3,
         "release": {
             "version": version,
             "channel": "stable",
@@ -177,7 +177,7 @@ class FlasherRollbackTests(unittest.TestCase):
             write_json(
                 bootstrap_candidate / "flash-manifest.json",
                 {
-                    "schema": 2,
+                    "schema": 3,
                     "release": {
                         "version": NEXT_VERSION,
                         "channel": "stable",
@@ -204,7 +204,7 @@ class FlasherRollbackTests(unittest.TestCase):
             write_json(
                 current / "flash-manifest.json",
                 {
-                    "schema": 2,
+                    "schema": 3,
                     "release": {
                         "version": NEXT_VERSION,
                         "channel": "stable",

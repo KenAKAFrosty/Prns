@@ -6,6 +6,7 @@ mod js_translation;
 mod parameters;
 mod runtime;
 mod usb_auto;
+mod websocket;
 
 pub use bluetooth_auto::{
     bluetooth_bitrate_bps, bluetooth_control_uuid, bluetooth_data_fragments, bluetooth_data_uuid,
@@ -24,6 +25,7 @@ pub use usb_auto::{
     usb_auto_web_usb_product_id, usb_auto_web_usb_vendor_id, UsbAutoDecoder,
 };
 use wasm_bindgen::prelude::*;
+pub use websocket::WebSocketFramingCodec;
 
 #[wasm_bindgen(js_name = compressResourceCandidate)]
 pub fn compress_resource_candidate(options: JsValue) -> Result<Option<Vec<u8>>, JsValue> {

@@ -65,6 +65,7 @@ test("the exact staged production bundle performs a hardware-free sparse flash",
       beforeReset: target.before_reset,
       afterReset: target.after_reset,
       mountLabel: null,
+      uf2Compatibility: null,
       provisioning: null,
       parts: target.parts.map((part) => ({
         ...part,
@@ -196,6 +197,7 @@ test("the exact staged production bundle traps same-document Back during an acti
       beforeReset: target.before_reset,
       afterReset: target.after_reset,
       mountLabel: null,
+      uf2Compatibility: null,
       provisioning: null,
       parts: target.parts.map((part) => ({
         ...part,
@@ -328,6 +330,7 @@ test("the exact staged production bundle starts a real verified UF2 download", a
   expect(await stagedProductionBundleHash(page)).toBe(expectedHash);
 
   await page.getByRole("checkbox").check();
+  await selectTechoInfo(page, "7.3.0");
   await page.getByRole("button", { name: "Prepare and verify release" }).click();
   await expect(page.locator("#flash-status")).toContainText("Release ready:");
 
@@ -637,10 +640,17 @@ test("browser support is feature-detected and T-Echo stays on the signed UF2 rou
   await expect(page.locator("#flash-status")).toContainText(/verified UF2 download/i);
   await expect(page.getByText(/TECHOBOOT/).first()).toBeVisible();
   await expect(page.getByText(/double-press RESET/i)).toBeVisible();
-  await expect(page.locator(".flash-wifi-config")).toHaveCount(0);
+  await expect(page.getByRole("group", { name: "Wi-Fi configuration" })).toHaveCount(0);
   await page.getByRole("checkbox").check();
+  await selectTechoInfo(page, "6.1.1");
   await page.getByRole("button", { name: "Prepare and verify release" }).click();
   await expect(page.locator("#flash-status")).toContainText("Release ready:");
+  expect(await page.evaluate(() => window.__prnsFlashTest.state.lastRequest.partKinds)).toEqual(["uf2"]);
+  expect(await page.evaluate(() => window.__prnsFlashTest.state.lastRequest.boardSlug)).toBe("t-echo");
+  expect(await page.evaluate(() => window.__prnsFlashTest.state.lastRequest.partPaths)).toEqual([
+    "firmware/hopspot/t-echo/0.2.6/t-echo-s140-6.1.1.uf2",
+  ]);
+  expect(await page.evaluate(() => window.__prnsFlashTest.state.lastRequest.softdeviceVersion)).toBe("6.1.1");
   await page.getByRole("button", { name: "Download verified UF2" }).click();
   await expect(page.locator("#flash-status")).toContainText(
     "Verified UF2 download requested. Check the browser's downloads",
@@ -668,6 +678,7 @@ for (const androidPlatform of ["client-hints", "legacy-ua"]) {
     await appReady(page);
     await fixtureBuildReady(page);
     await page.getByRole("checkbox").check();
+    await selectTechoInfo(page, "7.3.0");
     await expect(page.getByRole("button", { name: "Prepare and verify release" })).toBeEnabled();
   });
 }
@@ -1057,6 +1068,17 @@ async function fixtureBuildReady(page) {
   await expect(
     page.locator(`[data-prns-browser-test-fixture="${FIXTURE_MARKER}"]`),
   ).toHaveCount(1);
+}
+
+async function selectTechoInfo(page, softdeviceVersion) {
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "INFO_UF2.TXT",
+    mimeType: "text/plain",
+    buffer: Buffer.from(
+      `UF2 Bootloader 0.6.1\r\nModel: LilyGo T-Echo\r\nBoard-ID: nRF52840-TEcho-v1\r\nSoftDevice: S140 version ${softdeviceVersion}\r\n`,
+    ),
+  });
+  await expect(page.getByText(new RegExp(`Detected.*S140 ${softdeviceVersion}`))).toBeVisible();
 }
 
 function observeCredentialLeaks(page) {

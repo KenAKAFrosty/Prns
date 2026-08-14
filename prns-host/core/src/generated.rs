@@ -377,6 +377,41 @@ impl TryFrom<u32> for InterfaceMode {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum WebSocketFramingSelection {
+    RawPacket = 1,
+    Hdlc = 2,
+    Kiss = 3,
+    Auto = 4,
+}
+
+impl WebSocketFramingSelection {
+    #[must_use]
+    pub const fn contract_name(self) -> &'static str {
+        match self {
+            Self::RawPacket => "RawPacket",
+            Self::Hdlc => "Hdlc",
+            Self::Kiss => "Kiss",
+            Self::Auto => "Auto",
+        }
+    }
+}
+
+impl TryFrom<u32> for WebSocketFramingSelection {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::RawPacket),
+            2 => Ok(Self::Hdlc),
+            3 => Ok(Self::Kiss),
+            4 => Ok(Self::Auto),
+            _ => Err(()),
+        }
+    }
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum InterfaceHealth {
     Initializing = 1,
     Connected = 2,
@@ -1662,6 +1697,17 @@ mod tests {
             (InterfaceMode::Boundary, 5, "Boundary"),
             (InterfaceMode::Gateway, 6, "Gateway"),
             (InterfaceMode::Internal, 7, "Internal"),
+        ]);
+    }
+
+    #[rustfmt::skip]
+    #[test]
+    fn web_socket_framing_selection_values_match_the_contract() {
+        assert_contract_enum!(WebSocketFramingSelection, [
+            (WebSocketFramingSelection::RawPacket, 1, "RawPacket"),
+            (WebSocketFramingSelection::Hdlc, 2, "Hdlc"),
+            (WebSocketFramingSelection::Kiss, 3, "Kiss"),
+            (WebSocketFramingSelection::Auto, 4, "Auto"),
         ]);
     }
 

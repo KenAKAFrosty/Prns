@@ -175,6 +175,8 @@ export async function installFakeBridge(page, overrides = {}) {
           ssidBytes: new TextEncoder().encode(request.provisioning?.ssid ?? "").length,
           passwordBytes: new TextEncoder().encode(request.provisioning?.password ?? "").length,
           partKinds: request.parts.map((part) => part.kind),
+          partPaths: request.parts.map((part) => part.path),
+          softdeviceVersion: request.uf2Compatibility?.softdeviceVersion ?? null,
         };
         try {
           await emitEvent(emit, { phase: "validating_manifest" });

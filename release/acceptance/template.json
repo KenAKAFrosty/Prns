@@ -1,5 +1,5 @@
 {
-  "schema": 2,
+  "schema": 4,
   "candidate": {
     "version": "REPLACE_WITH_VERSION",
     "channel": "REPLACE_WITH_STABLE_OR_PREVIEW",

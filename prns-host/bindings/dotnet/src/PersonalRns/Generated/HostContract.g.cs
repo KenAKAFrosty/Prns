@@ -105,6 +105,14 @@ public enum InterfaceMode : uint
     Internal = 7,
 }
 
+public enum WebSocketFramingSelection : uint
+{
+    RawPacket = 1,
+    Hdlc = 2,
+    Kiss = 3,
+    Auto = 4,
+}
+
 public enum InterfaceHealth : uint
 {
     Initializing = 1,
@@ -892,10 +900,12 @@ public abstract record InterfaceConfig
     public sealed record AutomaticUsb() : InterfaceConfig;
     public sealed record AutomaticBluetoothLe() : InterfaceConfig;
     public sealed record WebSocketClient(
-        string Target
+        string Target,
+        WebSocketFramingSelection Framing
     ) : InterfaceConfig;
     public sealed record WebSocketServer(
-        string Bind
+        string Bind,
+        WebSocketFramingSelection Framing
     ) : InterfaceConfig;
     public sealed record BrowserRendezvous(
         string Url

@@ -10,48 +10,38 @@ const UF2_BOARD_ID_PREFIX_MAX_BYTES: usize = 128;
 /// Failure to construct one of the validated release-domain values.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum DomainValueError {
-    /// A stable board identifier is malformed.
     #[error("board ID {0:?} must use lowercase ASCII, digits, and hyphens")]
     BoardId(String),
-    /// A UF2 bootloader volume label is malformed.
     #[error("UF2 mount label {0:?} is not a canonical cross-platform volume label")]
     Uf2MountLabel(String),
-    /// A UF2 bootloader identity prefix is not in canonical form.
     #[error("UF2 Board-ID prefix {0:?} is not a bounded canonical ASCII prefix")]
     Uf2BoardIdPrefix(String),
-    /// An immutable release version is malformed.
     #[error("release version {0:?} is not an immutable path-safe identifier")]
     ReleaseVersion(String),
-    /// A signing key identifier is malformed.
     #[error("key ID {0:?} must be exactly 16 hexadecimal characters")]
     KeyId(String),
-    /// A SHA-256 digest is malformed.
     #[error("SHA-256 digest must be exactly 64 lowercase hexadecimal characters")]
     Sha256Digest,
-    /// An artifact path is mutable or can escape its release directory.
     #[error("artifact path {0:?} is not immutable and relative")]
     ImmutableArtifactPath(String),
-    /// An expected Espressif chip is unsupported.
     #[error("unsupported chip family {0:?}")]
     ChipFamily(String),
-    /// A preparation profile is unsupported.
     #[error("unsupported preparation profile {0:?}")]
     PreparationProfile(String),
-    /// A pre-connect reset strategy is unsupported.
     #[error("unsupported pre-connect reset strategy {0:?}")]
     BeforeResetStrategy(String),
-    /// A post-flash reset strategy is unsupported.
     #[error("unsupported post-flash reset strategy {0:?}")]
     AfterResetStrategy(String),
-    /// A provisioning format is unsupported.
     #[error("unsupported provisioning format {0:?}")]
     ProvisioningFormat(String),
-    /// A flash-mode value is unsupported.
     #[error("unsupported flash mode {0:?}")]
     FlashMode(String),
-    /// A flash-frequency value is unsupported.
     #[error("unsupported flash frequency {0:?}")]
     FlashFrequency(String),
+    #[error("unsupported SoftDevice family {0:?}")]
+    SoftdeviceFamily(String),
+    #[error("malformed SoftDevice version {0:?}")]
+    SoftdeviceVersion(String),
 }
 
 macro_rules! validated_string {
@@ -425,34 +415,30 @@ impl ProvisioningFormat {
 /// Validated provisioning slot attached only to an ESP target.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProvisioningSlot {
-    pub(crate) format: ProvisioningFormat,
-    pub(crate) version: u8,
-    pub(crate) offset: u32,
-    pub(crate) size: u32,
+    pub(crate) wire_format: ProvisioningFormat,
+    pub(crate) wire_format_version: u8,
+    pub(crate) flash_offset: u32,
+    pub(crate) reserved_size_bytes: u32,
     pub(crate) ssid_max_bytes: usize,
     pub(crate) password_max_bytes: usize,
     pub(crate) tcp_client: Option<TcpClientProvisioningDescriptor>,
 }
 
 impl ProvisioningSlot {
-    /// Provisioning format.
-    pub const fn format(&self) -> ProvisioningFormat {
-        self.format
+    pub const fn wire_format(&self) -> ProvisioningFormat {
+        self.wire_format
     }
 
-    /// Wire-format version.
-    pub const fn version(&self) -> u8 {
-        self.version
+    pub const fn wire_format_version(&self) -> u8 {
+        self.wire_format_version
     }
 
-    /// Absolute flash offset.
-    pub const fn offset(&self) -> u32 {
-        self.offset
+    pub const fn flash_offset(&self) -> u32 {
+        self.flash_offset
     }
 
-    /// Reserved byte size.
-    pub const fn size(&self) -> u32 {
-        self.size
+    pub const fn reserved_size_bytes(&self) -> u32 {
+        self.reserved_size_bytes
     }
 
     /// Maximum encoded SSID bytes.
@@ -471,10 +457,10 @@ impl ProvisioningSlot {
 
     pub(crate) fn to_wire(&self) -> ProvisioningDescriptor {
         ProvisioningDescriptor {
-            format: self.format.as_str().to_string(),
-            version: self.version,
-            offset: self.offset,
-            size: self.size,
+            format: self.wire_format.as_str().to_string(),
+            version: self.wire_format_version,
+            offset: self.flash_offset,
+            size: self.reserved_size_bytes,
             ssid_max_bytes: self.ssid_max_bytes,
             password_max_bytes: self.password_max_bytes,
             tcp_client: self.tcp_client.clone(),

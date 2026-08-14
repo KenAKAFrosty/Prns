@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 
 use crate::{
     Bitrate, DiscoveryScope, InterfaceKind, MulticastAddressType, SerialDataBits, SerialParity,
-    SerialStopBits,
+    SerialStopBits, WebSocketFramingSelection,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -120,9 +120,11 @@ pub enum InterfaceConfig {
     AutomaticBluetoothLe,
     WebSocketClient {
         target: String,
+        framing: WebSocketFramingSelection,
     },
     WebSocketServer {
         bind: String,
+        framing: WebSocketFramingSelection,
     },
     BrowserRendezvous {
         url: String,
@@ -260,10 +262,9 @@ impl InterfaceConfig {
                 }
             }
             Self::AutomaticUsb | Self::AutomaticBluetoothLe => {}
-            Self::WebSocketClient { target } | Self::BrowserRendezvous { url: target } => {
-                validate_websocket(target)?
-            }
-            Self::WebSocketServer { bind } => required(bind)?,
+            Self::WebSocketClient { target, framing: _ }
+            | Self::BrowserRendezvous { url: target } => validate_websocket(target)?,
+            Self::WebSocketServer { bind, framing: _ } => required(bind)?,
         }
         Ok(())
     }
@@ -445,9 +446,11 @@ mod tests {
             InterfaceConfig::AutomaticBluetoothLe,
             InterfaceConfig::WebSocketClient {
                 target: "wss://example.com/prns".into(),
+                framing: WebSocketFramingSelection::Auto,
             },
             InterfaceConfig::WebSocketServer {
                 bind: "127.0.0.1:0".into(),
+                framing: WebSocketFramingSelection::Hdlc,
             },
             InterfaceConfig::BrowserRendezvous {
                 url: "ws://localhost:1/prns".into(),
@@ -463,7 +466,8 @@ mod tests {
     fn invalid_typed_interface_values_are_rejected_before_attachment() {
         assert_eq!(
             InterfaceConfig::WebSocketClient {
-                target: "https://example.com".into()
+                target: "https://example.com".into(),
+                framing: WebSocketFramingSelection::RawPacket,
             }
             .validate(),
             Err(InterfaceConfigError::InvalidWebSocketUrl)

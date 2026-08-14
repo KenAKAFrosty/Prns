@@ -22,6 +22,7 @@ from flasher_public_review import (
     require_sha256 as require_review_sha256,
 )
 from flasher_release_evidence import attestation_subjects, sha256
+from flasher_manifest import FLASH_MANIFEST_SCHEMA, target_artifacts
 
 
 CLI_TARGETS = {
@@ -216,7 +217,7 @@ def build_record(arguments: argparse.Namespace) -> dict:
     manifest = load_object(manifest_path, "candidate manifest")
     release = manifest.get("release")
     signing = manifest.get("signing")
-    if manifest.get("schema") != 2 or not isinstance(release, dict) or not isinstance(signing, dict):
+    if manifest.get("schema") != FLASH_MANIFEST_SCHEMA or not isinstance(release, dict) or not isinstance(signing, dict):
         raise ValueError("candidate manifest identity is malformed")
     version = release.get("version")
     channel = release.get("channel")
@@ -347,9 +348,7 @@ def build_record(arguments: argparse.Namespace) -> dict:
     for target in targets:
         if not isinstance(target, dict) or not isinstance(target.get("board_slug"), str):
             raise ValueError("candidate manifest contains a malformed firmware target")
-        parts = target.get("parts")
-        if not isinstance(parts, list) or not parts:
-            raise ValueError("candidate manifest contains an empty firmware plan")
+        parts = target_artifacts(target)
         for part in parts:
             if not isinstance(part, dict):
                 raise ValueError("candidate manifest contains a malformed firmware part")

@@ -37,6 +37,10 @@ cargo_manifests = [
     "personal-hopspot/embedded/esp32/vendor/esp-radio-0.18.0/Cargo.toml",
     "personal-hopspot/embedded/esp32/vendor/trouble-host-0.6.0/Cargo.toml",
     "personal-hopspot/embedded/nrf52840/Cargo.toml",
+    "personal-hopspot/embedded/nrf52840/vendor/nrf-softdevice/nrf-softdevice/Cargo.toml",
+    "personal-hopspot/embedded/nrf52840/vendor/nrf-softdevice/nrf-softdevice-macro/Cargo.toml",
+    "personal-hopspot/embedded/nrf52840/vendor/nrf-softdevice/nrf-softdevice-s140-v6/Cargo.toml",
+    "personal-hopspot/embedded/nrf52840/vendor/nrf-softdevice/nrf-softdevice-s140-v7/Cargo.toml",
     "personal-hopspot/flasher/Cargo.toml",
     "personal-hopspot/mobile/android/rust/Cargo.toml",
     "personal-hopspot/mobile/ios/rust/Cargo.toml",
@@ -91,6 +95,9 @@ format_manifests = [
     "validation/integration/Cargo.toml",
     "validation/oracles/Cargo.toml",
 ]
+
+[registry.format_package_overrides]
+"personal-hopspot/embedded/nrf52840/Cargo.toml" = ["t-echo"]
 
 [[registry.asset_exemptions]]
 path = "prns-wasm/smoke/smoke.ts"
@@ -1136,6 +1143,23 @@ timeout_seconds = 600
 command = ["bash", "validation/interop/cases/rnx-interop-smoke.sh"]
 inputs = ["validation/interop/cases/rnx-interop-smoke.sh", "validation/interop/peers/rns_rnx_oracle.py"]
 artifacts = "validation-artifacts/results/interop-rnx"
+
+[[suite]]
+id = "interop-websocket-ecosystem-characterization"
+domain = "interop"
+group = "linux-network"
+tiers = ["scheduled"]
+platform = "linux"
+toolchain = "python"
+timeout_seconds = 600
+command = ["__RUNNER_PYTHON__", "validation/interop/websocket_ecosystem_characterization.py"]
+inputs = [
+  "validation/interop/websocket_ecosystem_characterization.py",
+  "validation/interop/peers/websocket_ecosystem/aerik.mjs",
+  "validation/interop/peers/websocket_ecosystem/bergie.mjs",
+  "validation/interop/peers/websocket_ecosystem/nilu96.py",
+]
+artifacts = "validation-artifacts/results/interop-websocket-ecosystem-characterization"
 
 [[fuzz_target]]
 name = "wire_announce_parse"

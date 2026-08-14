@@ -177,6 +177,11 @@ export SerialDataBits
 export SerialLineConfig
 export SerialParity
 export SerialStopBits
+export WebSocketFramingSelection
+export WebSocketFramingSelectionRawPacket
+export WebSocketFramingSelectionHdlc
+export WebSocketFramingSelectionKiss
+export WebSocketFramingSelectionAuto
 export RNodeRadioConfig
 export MultiRNodeMemberConfig
 export InterfaceId

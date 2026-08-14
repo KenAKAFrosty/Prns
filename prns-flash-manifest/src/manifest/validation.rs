@@ -3,7 +3,8 @@ use std::fmt;
 
 use crate::{
     BoardBuild, BoardCatalogEntry, FlashPart, FlashPartKind, ImmutableArtifactPath, KeyId,
-    ReleaseVersion, Sha256Digest, Transport, CONFIG_OFFSET, ESP_FLASH_SECTOR_SIZE,
+    ReleaseVersion, Sha256Digest, SoftdeviceIdentity, Transport, CONFIG_OFFSET,
+    ESP_FLASH_SECTOR_SIZE,
 };
 
 use super::{FlashManifest, ManifestError, ManifestTargetSetPolicy, TargetManifest};
@@ -12,6 +13,24 @@ pub(super) fn validate_target(
     target: &TargetManifest,
     board: &BoardCatalogEntry,
     version: &str,
+) -> Result<(), ManifestError> {
+    validate_target_with_uf2_identity(target, board, version, None)
+}
+
+pub(super) fn validate_uf2_target_variant(
+    target: &TargetManifest,
+    board: &BoardCatalogEntry,
+    version: &str,
+    softdevice: &SoftdeviceIdentity,
+) -> Result<(), ManifestError> {
+    validate_target_with_uf2_identity(target, board, version, Some(softdevice))
+}
+
+fn validate_target_with_uf2_identity(
+    target: &TargetManifest,
+    board: &BoardCatalogEntry,
+    version: &str,
+    softdevice: Option<&SoftdeviceIdentity>,
 ) -> Result<(), ManifestError> {
     let pairs = [
         (
@@ -45,18 +64,20 @@ pub(super) fn validate_target(
             if target.flash_mode.as_deref() == Some(build.flash_mode.as_str())
                 && target.flash_frequency.as_deref() == Some(build.flash_frequency.as_str())
                 && target.before_reset.as_deref() == Some(build.before_reset.as_str())
-                && target.after_reset.as_deref() == Some(build.after_reset.as_str()) => {}
+                && target.after_reset.as_deref() == Some(build.after_reset.as_str())
+                && target.variants.is_empty() => {}
         BoardBuild::Uf2(_)
             if target.flash_mode.is_none()
                 && target.flash_frequency.is_none()
                 && target.before_reset.is_none()
-                && target.after_reset.is_none() => {}
+                && target.after_reset.is_none()
+                && target.parts.is_empty() => {}
         _ => return Err(mismatch(target, "flash/reset parameters")),
     }
     if target.source.is_some() {
         return Err(mismatch(target, "source archive capability"));
     }
-    validate_parts(target, version)
+    validate_payloads(target, board, version, softdevice)
 }
 
 fn provisioning_is_compatible(
@@ -127,7 +148,18 @@ pub(super) fn validate_target_set(
     Ok(())
 }
 
-fn validate_parts(target: &TargetManifest, version: &str) -> Result<(), ManifestError> {
+fn validate_payloads(
+    target: &TargetManifest,
+    board: &BoardCatalogEntry,
+    version: &str,
+    softdevice: Option<&SoftdeviceIdentity>,
+) -> Result<(), ManifestError> {
+    if let BoardBuild::Uf2(build) = &board.build {
+        return validate_uf2_variants(target, build, version, softdevice);
+    }
+    if softdevice.is_some() {
+        return Err(mismatch(target, "UF2 compatibility selection"));
+    }
     let expected_prefix = format!("firmware/hopspot/{}/{version}/", target.board_slug);
     if target.parts.is_empty() {
         return Err(invalid_part(target, "", "at least one part is required"));
@@ -163,18 +195,7 @@ fn validate_parts(target: &TargetManifest, version: &str) -> Result<(), Manifest
         }
         match target.transport {
             Transport::EspSerial => validate_esp_part(target, part, &mut ranges)?,
-            Transport::Uf2MassStorage => {
-                if part.kind != FlashPartKind::Uf2
-                    || part.offset.is_some()
-                    || target.parts.len() != 1
-                {
-                    return Err(invalid_part(
-                        target,
-                        &part.path,
-                        "UF2 target must contain one offset-free UF2 part",
-                    ));
-                }
-            }
+            Transport::Uf2MassStorage => unreachable!(),
         }
     }
     if target.transport == Transport::EspSerial {
@@ -193,6 +214,96 @@ fn validate_parts(target: &TargetManifest, version: &str) -> Result<(), Manifest
                 target,
                 "",
                 "ESP parts must be ordered bootloader, partition-table, application",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_uf2_variants(
+    target: &TargetManifest,
+    build: &crate::Uf2Build,
+    version: &str,
+    softdevice: Option<&SoftdeviceIdentity>,
+) -> Result<(), ManifestError> {
+    if target.variants.is_empty() {
+        return Err(invalid_part(
+            target,
+            "",
+            "UF2 target requires a non-empty compatibility variant set",
+        ));
+    }
+    let expected = match softdevice {
+        Some(softdevice) => build
+            .variants
+            .iter()
+            .filter(|variant| {
+                variant.softdevice_family == softdevice.family().as_str()
+                    && variant.softdevice_version == softdevice.version().as_str()
+            })
+            .collect::<Vec<_>>(),
+        None => build.variants.iter().collect::<Vec<_>>(),
+    };
+    if expected.is_empty() || target.variants.len() != expected.len() {
+        return Err(invalid_part(
+            target,
+            "",
+            "UF2 compatibility variant set disagrees with the catalog",
+        ));
+    }
+    let mut identities = BTreeSet::new();
+    let mut paths = BTreeSet::new();
+    for (variant, expected) in target.variants.iter().zip(expected) {
+        let identity = (
+            variant.softdevice_family.as_str(),
+            variant.softdevice_version.as_str(),
+        );
+        if !identities.insert(identity) {
+            return Err(invalid_part(
+                target,
+                &variant.path,
+                "UF2 compatibility key is duplicated",
+            ));
+        }
+        let expected_path = format!(
+            "firmware/hopspot/{}/{version}/{}",
+            target.board_slug, expected.filename
+        );
+        if variant.softdevice_family != expected.softdevice_family
+            || variant.softdevice_version != expected.softdevice_version
+            || variant.fwid != expected.fwid
+            || variant.application_base != expected.application_base
+            || variant.family_id != expected.family_id
+            || variant.path != expected_path
+        {
+            return Err(invalid_part(
+                target,
+                &variant.path,
+                "UF2 compatibility metadata disagrees with the catalog",
+            ));
+        }
+        if variant.size == 0 {
+            return Err(invalid_part(target, &variant.path, "size must be nonzero"));
+        }
+        if ImmutableArtifactPath::parse(variant.path.clone()).is_err() {
+            return Err(invalid_part(
+                target,
+                &variant.path,
+                "path is not immutable and relative",
+            ));
+        }
+        if validate_sha256(&variant.sha256).is_err() {
+            return Err(invalid_part(
+                target,
+                &variant.path,
+                "SHA-256 must be lowercase hex",
+            ));
+        }
+        if !paths.insert(variant.path.as_str()) {
+            return Err(invalid_part(
+                target,
+                &variant.path,
+                "artifact path is duplicated",
             ));
         }
     }

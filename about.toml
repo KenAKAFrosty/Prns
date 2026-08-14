@@ -33,3 +33,38 @@ override-git-commit = "47d6121c6e823120e8b883a7ac75f44ce7daa3aa"
 path = "LICENSE-NORDIC"
 license = "LicenseRef-Nordic-SoftDevice"
 checksum = "3f8a5738383719bbcd5975da82923797d707daa9507245d8c820e2b1df55c5c5"
+
+[nrf-softdevice-s140-v6]
+accepted = ["LicenseRef-Nordic-SoftDevice"]
+
+[nrf-softdevice-s140-v6.clarify]
+license = "LicenseRef-Nordic-SoftDevice"
+
+[[nrf-softdevice-s140-v6.clarify.files]]
+path = "LICENSE-NORDIC"
+license = "LicenseRef-Nordic-SoftDevice"
+checksum = "3f8a5738383719bbcd5975da82923797d707daa9507245d8c820e2b1df55c5c5"
+
+[nrf-softdevice-s140-v7]
+accepted = ["LicenseRef-Nordic-SoftDevice"]
+
+[t-echo.clarify]
+license = "MIT OR Apache-2.0"
+
+[[t-echo.clarify.files]]
+path = "../../../LICENSE-MIT"
+license = "MIT"
+checksum = "5bf49eb9322d0041f79e6b64d26f1cc8f3afbac69241f4798d5bd5b82ce6c094"
+
+[[t-echo.clarify.files]]
+path = "../../../LICENSE-APACHE"
+license = "Apache-2.0"
+checksum = "c10feb7b34593505604abed81a9dcbb3d7001436442b6394d51ae2fa2107ec03"
+
+[nrf-softdevice-s140-v7.clarify]
+license = "LicenseRef-Nordic-SoftDevice"
+
+[[nrf-softdevice-s140-v7.clarify.files]]
+path = "LICENSE-NORDIC"
+license = "LicenseRef-Nordic-SoftDevice"
+checksum = "3f8a5738383719bbcd5975da82923797d707daa9507245d8c820e2b1df55c5c5"

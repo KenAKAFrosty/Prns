@@ -114,8 +114,11 @@ class HostContractTest {
             InterfaceConfigWeave("/dev/ttyWEAVE0"),
             InterfaceConfigAutomaticUsb,
             InterfaceConfigAutomaticBluetoothLe,
-            InterfaceConfigWebSocketClient("ws://fixture.invalid/client"),
-            InterfaceConfigWebSocketServer("127.0.0.1:4246"),
+            InterfaceConfigWebSocketClient(
+                "ws://fixture.invalid/client",
+                WebSocketFramingSelection.AUTO,
+            ),
+            InterfaceConfigWebSocketServer("127.0.0.1:4246", WebSocketFramingSelection.HDLC),
             InterfaceConfigBrowserRendezvous("ws://fixture.invalid/rendezvous"),
         )
         val fixtureKinds = Regex("\\\"kind\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"")

@@ -7,11 +7,19 @@ publish = false
 description = "LilyGo T-Echo (nRF52840 + SX1262 + 200x200 SSD1681 e-ink) Personal Hopspot face: drives the Personal Reticulum engine on bare metal and renders the shared Hopspot screen on e-ink."
 
 [workspace]
+exclude = [
+    "vendor/nrf-softdevice/nrf-softdevice",
+    "vendor/nrf-softdevice/nrf-softdevice-macro",
+    "vendor/nrf-softdevice/nrf-softdevice-s140-v6",
+    "vendor/nrf-softdevice/nrf-softdevice-s140-v7",
+]
 
 [features]
-default = ["board-t-echo"]
+default = ["board-t-echo", "softdevice-s140-v7"]
 board-t-echo = []
 board-t096 = []
+softdevice-s140-v6 = ["dep:nrf-softdevice", "nrf-softdevice/s140-v6"]
+softdevice-s140-v7 = ["dep:nrf-softdevice", "nrf-softdevice/s140-v7"]
 
 [lib]
 name = "personal_hopspot_nrf52840"
@@ -51,12 +59,10 @@ static_cell = "2.1"
 heapless = "0.8"
 
 embedded-io-async = "0.6"
-# T-Echo firmware. nrf-softdevice does not depend on embassy-nrf, so it rides alongside the
-# T-Echo's embassy-nrf 0.10. The S140 v7 binding talks to the SoftDevice over SVCs.
 # evt-max-size-512: our att_mtu is 247, so a single GATT write/notification event reaches ~258 bytes —
 # past the 128-byte default and the 256 tier. Without this the SoftDevice's event read overflows and
 # nrf-softdevice panics ("BLE_EVT_MAX_SIZE is too low") the instant a peer sends a full-MTU payload.
-nrf-softdevice = { git = "https://github.com/embassy-rs/nrf-softdevice", rev = "47d6121c6e823120e8b883a7ac75f44ce7daa3aa", features = ["nrf52840", "s140", "ble-central", "ble-peripheral", "ble-gatt-server", "ble-gatt-client", "ble-l2cap", "ble-l2cap-credit-workaround", "evt-max-size-512", "critical-section-impl"] }
+nrf-softdevice = { path = "vendor/nrf-softdevice/nrf-softdevice", optional = true, features = ["nrf52840", "ble-central", "ble-peripheral", "ble-gatt-server", "ble-gatt-client", "ble-l2cap", "ble-l2cap-credit-workaround", "evt-max-size-512", "critical-section-impl"] }
 # nrf-softdevice's GATT characteristics use heapless 0.9; the rest of the firmware is on 0.8.
 heapless09 = { package = "heapless", version = "0.9" }
 rand_chacha = { version = "0.9", default-features = false }

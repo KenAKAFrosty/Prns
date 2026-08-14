@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 
 use prns_flash_manifest::{
     pinned_key_id, pinned_key_is_configured, sha256_hex, verify_minisign, BoardCatalog,
-    ReleaseChannel, ValidatedChannelDescriptor, ValidatedFlashManifest, PINNED_MINISIGN_PUBLIC_KEY,
+    ReleaseChannel, ReleasePartRef, ReleaseTarget, SoftdeviceIdentity, ValidatedChannelDescriptor,
+    ValidatedFlashManifest, PINNED_MINISIGN_PUBLIC_KEY,
 };
 use url::Url;
 
@@ -27,13 +28,30 @@ use source::{
     MAX_MANIFEST_BYTES, MAX_SIGNATURE_BYTES,
 };
 
-pub(crate) fn prepare_candidate_target(
+pub(crate) struct VerifiedReleaseTarget {
+    version: prns_flash_manifest::ReleaseVersion,
+    target: ReleaseTarget,
+    source: VerifiedArtifactSource,
+}
+
+enum VerifiedArtifactSource {
+    Candidate {
+        root: PathBuf,
+    },
+    Published {
+        base: Url,
+        cache: PathBuf,
+        offline: bool,
+    },
+}
+
+pub(crate) fn verify_candidate_target(
     catalog: &BoardCatalog,
     board_slug: &str,
     channel: ChannelArg,
     candidate: &Path,
     reporter: Reporter,
-) -> Result<PreparedTarget, AppError> {
+) -> Result<VerifiedReleaseTarget, AppError> {
     if !pinned_key_is_configured() {
         return Err(AppError::trust_signing(
             "release key custody is not configured; release/keys/minisign.pub still contains the fail-closed marker",
@@ -99,35 +117,13 @@ pub(crate) fn prepare_candidate_target(
         .ok_or_else(|| {
             AppError::trust_identity(format!("candidate does not contain board {board_slug:?}"))
         })?;
-    let target_parts = target.parts();
-    let mut artifacts = Vec::with_capacity(target_parts.len());
-    for part in target_parts {
-        let part_path = part.path().as_str();
-        reporter.phase(
-            Phase::VerifyingArtifacts,
-            Some(board_slug),
-            &format!("Verifying local {} ({} bytes)…", part_path, part.size()),
-        );
-        let path = candidate.join(part_path);
-        let bytes = fs::read(&path).map_err(|error| {
-            AppError::trust_artifact(format!(
-                "could not read candidate artifact {}: {error}",
-                path.display()
-            ))
-        })?;
-        if bytes.len() as u64 != part.size() {
-            return Err(AppError::trust_artifact(format!(
-                "candidate artifact {:?} is {} bytes; manifest requires {}",
-                part_path,
-                bytes.len(),
-                part.size()
-            )));
-        }
-        verify_hash(&bytes, part.sha256().as_str(), part_path)?;
-        artifacts.push(bytes);
-    }
-    PreparedTarget::bind(descriptor.version().clone(), target, artifacts)
-        .map_err(|error| AppError::trust_artifact(error.to_string()))
+    Ok(VerifiedReleaseTarget {
+        version: descriptor.version().clone(),
+        target,
+        source: VerifiedArtifactSource::Candidate {
+            root: candidate.to_path_buf(),
+        },
+    })
 }
 
 fn verify_local_signature(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
@@ -142,14 +138,14 @@ fn verify_local_signature(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
         .map_err(|error| AppError::trust_signing(error.to_string()))
 }
 
-pub(crate) fn prepare_published_target(
+pub(crate) fn verify_published_target(
     catalog: &BoardCatalog,
     board_slug: &str,
     channel: ChannelArg,
     version: Option<&str>,
     offline: bool,
     reporter: Reporter,
-) -> Result<PreparedTarget, AppError> {
+) -> Result<VerifiedReleaseTarget, AppError> {
     if !pinned_key_is_configured() {
         return Err(AppError::trust_signing(
             "release key custody is not configured; release/keys/minisign.pub still contains the fail-closed marker",
@@ -233,52 +229,149 @@ pub(crate) fn prepare_published_target(
 
     let base = Url::parse(&manifest_url)
         .map_err(|error| AppError::trust_manifest(format!("invalid manifest URL: {error}")))?;
-    let target_parts = target.parts();
-    let mut artifacts = Vec::with_capacity(target_parts.len());
-    for part in target_parts {
-        let part_path = part.path().as_str();
-        reporter.phase(
-            Phase::Downloading,
-            Some(board_slug),
-            &format!("Acquiring {} ({} bytes)…", part_path, part.size()),
-        );
-        let part_url = base
-            .join(part_path)
-            .map_err(|error| AppError::trust_artifact(format!("invalid artifact URL: {error}")))?;
-        enforce_https(&part_url)?;
-        let file_name = Path::new(part_path)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| {
-                AppError::trust_artifact(format!("invalid artifact path {part_path:?}"))
-            })?;
-        let part_cache = cache
-            .join("releases")
-            .join(version.as_str())
-            .join(target.board_id().as_str())
-            .join(file_name);
-        let limit = part
-            .size()
-            .checked_add(1)
-            .ok_or_else(|| AppError::trust_artifact("artifact size overflows download limit"))?;
-        let bytes = acquire(part_url.as_str(), &part_cache, offline, limit, &cache)?;
-        if bytes.len() as u64 != part.size() {
-            return Err(AppError::trust_artifact(format!(
-                "artifact {:?} is {} bytes; signed manifest requires {}",
-                part_path,
-                bytes.len(),
-                part.size()
-            )));
-        }
-        verify_hash(&bytes, part.sha256().as_str(), part_path)?;
-        if !offline {
-            cache::store_immutable(&cache, &part_cache, &bytes)?;
-        }
-        artifacts.push(bytes);
-    }
+    Ok(VerifiedReleaseTarget {
+        version,
+        target,
+        source: VerifiedArtifactSource::Published {
+            base,
+            cache,
+            offline,
+        },
+    })
+}
 
-    PreparedTarget::bind(version, target, artifacts)
-        .map_err(|error| AppError::trust_artifact(error.to_string()))
+impl VerifiedReleaseTarget {
+    pub(crate) fn prepare(
+        self,
+        softdevice: Option<&SoftdeviceIdentity>,
+        reporter: Reporter,
+    ) -> Result<PreparedTarget, AppError> {
+        let Self {
+            version,
+            target,
+            source,
+        } = self;
+        let board_slug = target.board_id().as_str().to_string();
+        let target_parts = selected_target_parts(&target, softdevice)?;
+        let mut artifacts = Vec::with_capacity(target_parts.len());
+        for part in target_parts {
+            let part_path = part.path().as_str();
+            let (bytes, cache_destination) = match &source {
+                VerifiedArtifactSource::Candidate { root } => {
+                    reporter.phase(
+                        Phase::VerifyingArtifacts,
+                        Some(&board_slug),
+                        &format!("Verifying local {} ({} bytes)…", part_path, part.size()),
+                    );
+                    let path = root.join(part_path);
+                    let bytes = fs::read(&path).map_err(|error| {
+                        AppError::trust_artifact(format!(
+                            "could not read candidate artifact {}: {error}",
+                            path.display()
+                        ))
+                    })?;
+                    (bytes, None)
+                }
+                VerifiedArtifactSource::Published {
+                    base,
+                    cache,
+                    offline,
+                } => {
+                    reporter.phase(
+                        Phase::Downloading,
+                        Some(&board_slug),
+                        &format!("Acquiring {} ({} bytes)…", part_path, part.size()),
+                    );
+                    let part_url = base.join(part_path).map_err(|error| {
+                        AppError::trust_artifact(format!("invalid artifact URL: {error}"))
+                    })?;
+                    enforce_https(&part_url)?;
+                    let file_name = Path::new(part_path)
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .ok_or_else(|| {
+                            AppError::trust_artifact(format!("invalid artifact path {part_path:?}"))
+                        })?;
+                    let part_cache = cache
+                        .join("releases")
+                        .join(version.as_str())
+                        .join(&board_slug)
+                        .join(file_name);
+                    let limit = part.size().checked_add(1).ok_or_else(|| {
+                        AppError::trust_artifact("artifact size overflows download limit")
+                    })?;
+                    let bytes = acquire(part_url.as_str(), &part_cache, *offline, limit, cache)?;
+                    let cache_destination = (!offline).then_some((cache.as_path(), part_cache));
+                    (bytes, cache_destination)
+                }
+            };
+            if bytes.len() as u64 != part.size() {
+                return Err(AppError::trust_artifact(format!(
+                    "artifact {:?} is {} bytes; signed manifest requires {}",
+                    part_path,
+                    bytes.len(),
+                    part.size()
+                )));
+            }
+            verify_hash(&bytes, part.sha256().as_str(), part_path)?;
+            if let Some((cache, part_cache)) = cache_destination {
+                cache::store_immutable(cache, &part_cache, &bytes)?;
+            }
+            artifacts.push(bytes);
+        }
+        bind_prepared_target(version, target, softdevice, artifacts)
+    }
+}
+
+fn selected_target_parts<'a>(
+    target: &'a ReleaseTarget,
+    softdevice: Option<&SoftdeviceIdentity>,
+) -> Result<Vec<ReleasePartRef<'a>>, AppError> {
+    match target {
+        ReleaseTarget::EspSerial(_) => {
+            if softdevice.is_some() {
+                return Err(AppError::trust_identity(
+                    "ESP target cannot use a SoftDevice compatibility selection",
+                ));
+            }
+            Ok(target.parts())
+        }
+        ReleaseTarget::Uf2(target) => {
+            let softdevice = softdevice.ok_or_else(|| {
+                AppError::trust_identity(
+                    "UF2 target requires a detected SoftDevice compatibility selection",
+                )
+            })?;
+            let variant = target.variant_for(softdevice).ok_or_else(|| {
+                AppError::trust_identity(format!(
+                    "signed release has no UF2 variant for detected {softdevice}"
+                ))
+            })?;
+            Ok(vec![ReleasePartRef::Uf2(variant.part())])
+        }
+    }
+}
+
+fn bind_prepared_target(
+    version: prns_flash_manifest::ReleaseVersion,
+    target: ReleaseTarget,
+    softdevice: Option<&SoftdeviceIdentity>,
+    artifacts: Vec<Vec<u8>>,
+) -> Result<PreparedTarget, AppError> {
+    match softdevice {
+        Some(softdevice) => {
+            let [bytes] = <[Vec<u8>; 1]>::try_from(artifacts).map_err(|artifacts| {
+                AppError::trust_artifact(format!(
+                    "selected UF2 variant produced {} artifacts instead of one",
+                    artifacts.len()
+                ))
+            })?;
+            PreparedTarget::bind_uf2(version, target, softdevice, bytes)
+                .map_err(|error| AppError::trust_artifact(error.to_string()))
+        }
+        None => PreparedTarget::bind(version, target, artifacts)
+            .map_err(|error| AppError::trust_artifact(error.to_string())),
+    }
 }
 
 fn verify_manifest_key_id(manifest: &ValidatedFlashManifest) -> Result<(), AppError> {
@@ -310,7 +403,7 @@ mod tests {
     use super::*;
     use prns_flash_manifest::{
         board_catalog, BoardBuild, FlashPart, FlashPartKind, ReleaseTarget, ReleaseVersion,
-        TargetManifest,
+        SoftdeviceIdentity, TargetManifest, Uf2VariantManifest,
     };
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -351,6 +444,7 @@ mod tests {
             after_reset: Some(build.after_reset.clone()),
             preparation_profile: board.preparation_profile.clone(),
             parts,
+            variants: Vec::new(),
             provisioning: board.provisioning.clone(),
             source: None,
         }
@@ -359,10 +453,33 @@ mod tests {
         (version, target)
     }
 
-    fn uf2_target(bytes: &[u8]) -> (ReleaseVersion, ReleaseTarget) {
+    fn uf2_target(seed: u8) -> (ReleaseVersion, ReleaseTarget, SoftdeviceIdentity, Vec<u8>) {
         let catalog = board_catalog().expect("catalog");
         let board = catalog.board("t-echo").expect("T-Echo catalog entry");
+        let BoardBuild::Uf2(build) = &board.build else {
+            panic!("T-Echo must use the UF2 build");
+        };
         let version = ReleaseVersion::parse("0.2.6").expect("release version");
+        let artifacts = build
+            .variants
+            .iter()
+            .map(|variant| {
+                let base = u32::from_str_radix(
+                    variant
+                        .application_base
+                        .strip_prefix("0x")
+                        .expect("hex base"),
+                    16,
+                )
+                .expect("base");
+                let family = u32::from_str_radix(
+                    variant.family_id.strip_prefix("0x").expect("hex family"),
+                    16,
+                )
+                .expect("family");
+                test_uf2(base, family, seed)
+            })
+            .collect::<Vec<_>>();
         let target = TargetManifest {
             board_slug: board.slug.clone(),
             display_name: board.display_name.clone(),
@@ -376,19 +493,48 @@ mod tests {
             before_reset: None,
             after_reset: None,
             preparation_profile: board.preparation_profile.clone(),
-            parts: vec![FlashPart {
-                kind: FlashPartKind::Uf2,
-                path: "firmware/hopspot/t-echo/0.2.6/t-echo.uf2".to_string(),
-                offset: None,
-                size: bytes.len() as u64,
-                sha256: sha256_hex(bytes),
-            }],
+            parts: Vec::new(),
+            variants: build
+                .variants
+                .iter()
+                .zip(&artifacts)
+                .map(|(variant, bytes)| Uf2VariantManifest {
+                    softdevice_family: variant.softdevice_family.clone(),
+                    softdevice_version: variant.softdevice_version.clone(),
+                    fwid: variant.fwid.clone(),
+                    application_base: variant.application_base.clone(),
+                    family_id: variant.family_id.clone(),
+                    path: format!("firmware/hopspot/t-echo/0.2.6/{}", variant.filename),
+                    size: bytes.len() as u64,
+                    sha256: sha256_hex(bytes),
+                })
+                .collect(),
             provisioning: None,
             source: None,
         }
         .into_validated(board, &version)
         .expect("typed UF2 target");
-        (version, target)
+        let softdevice = SoftdeviceIdentity::parse("s140", "7.3.0").expect("identity");
+        (version, target, softdevice, artifacts[1].clone())
+    }
+
+    fn test_uf2(base: u32, family: u32, seed: u8) -> Vec<u8> {
+        let mut block = vec![0u8; 512];
+        for (offset, value) in [
+            (0, 0x0a32_4655),
+            (4, 0x9e5d_5157),
+            (8, 0x0000_2000),
+            (12, base),
+            (16, 256),
+            (20, 0),
+            (24, 1),
+            (28, family),
+            (508, 0x0ab1_6f30),
+        ] {
+            block[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        block[32..288].fill(seed);
+        block
     }
 
     fn temporary_cache() -> PathBuf {
@@ -475,32 +621,26 @@ mod tests {
 
     #[test]
     fn prepared_uf2_target_binds_exactly_one_signed_payload() {
-        let (version, target) = uf2_target(b"signed UF2");
-        let prepared = PreparedTarget::bind(version, target, vec![b"signed UF2".to_vec()])
+        let (version, target, softdevice, bytes) = uf2_target(0xa5);
+        let prepared = PreparedTarget::bind_uf2(version, target, &softdevice, bytes.clone())
             .expect("bind signed UF2");
         let PreparedTarget::Uf2(prepared) = prepared else {
             panic!("expected UF2 prepared target");
         };
-        assert_eq!(prepared.part().bytes(), b"signed UF2");
+        assert_eq!(prepared.part().bytes(), bytes);
 
-        let (version, target) = uf2_target(b"signed UF2");
+        let (version, target, softdevice, bytes) = uf2_target(0xa5);
+        let mut forged = bytes;
+        forged[32] ^= 1;
         assert!(matches!(
-            PreparedTarget::bind(version, target, vec![b"forged UF2".to_vec()]),
+            PreparedTarget::bind_uf2(version, target, &softdevice, forged),
             Err(PreparedArtifactError::Hash { .. })
         ));
 
-        let (version, target) = uf2_target(b"signed UF2");
+        let (version, target, _, bytes) = uf2_target(0xa5);
         assert!(matches!(
-            PreparedTarget::bind(
-                version,
-                target,
-                vec![b"signed UF2".to_vec(), b"extra".to_vec()],
-            ),
-            Err(PreparedArtifactError::Count {
-                expected: 1,
-                actual: 2,
-                ..
-            })
+            PreparedTarget::bind(version, target, vec![bytes]),
+            Err(PreparedArtifactError::CompatibilityRequired(_))
         ));
     }
 

@@ -274,6 +274,15 @@
       ]
     },
     {
+      "name": "WebSocketFramingSelection",
+      "values": [
+        { "name": "RawPacket", "value": 1 },
+        { "name": "Hdlc", "value": 2 },
+        { "name": "Kiss", "value": 3 },
+        { "name": "Auto", "value": 4 }
+      ]
+    },
+    {
       "name": "InterfaceHealth",
       "values": [
         { "name": "Initializing", "value": 1 },
@@ -722,10 +731,12 @@
         { "name": "AutomaticUsb", "value": 15, "fields": [] },
         { "name": "AutomaticBluetoothLe", "value": 16, "fields": [] },
         { "name": "WebSocketClient", "value": 17, "fields": [
-          { "name": "target", "type": "string" }
+          { "name": "target", "type": "string" },
+          { "name": "framing", "type": "WebSocketFramingSelection" }
         ] },
         { "name": "WebSocketServer", "value": 18, "fields": [
-          { "name": "bind", "type": "string" }
+          { "name": "bind", "type": "string" },
+          { "name": "framing", "type": "WebSocketFramingSelection" }
         ] },
         { "name": "BrowserRendezvous", "value": 19, "fields": [
           { "name": "url", "type": "string" }

@@ -1,11 +1,11 @@
 import type {
   BluetoothReassemblerBinding,
-  IdentitySecretKey,
-  InterfaceId,
-  PacketFrame,
   PrnsRuntimeBinding,
   UsbAutoDecoderBinding,
-} from "./index.js";
+  WebSocketFramingCodecBinding,
+} from "./runtime_contract.js";
+import type { InterfaceId } from "../contract.js";
+import type { IdentitySecretKey, PacketFrame } from "./values.js";
 
 export declare class PrnsRuntime implements PrnsRuntimeBinding {
   constructor(identitySecretKey: IdentitySecretKey, bleIdentity?: Uint8Array);
@@ -47,6 +47,20 @@ export declare class BluetoothReassembler
 {
   constructor();
   absorb: BluetoothReassemblerBinding["absorb"];
+}
+
+export declare class WebSocketFramingCodec
+  implements WebSocketFramingCodecBinding
+{
+  constructor(selection: string);
+  messageCap: WebSocketFramingCodecBinding["messageCap"];
+  canReadOutbound: WebSocketFramingCodecBinding["canReadOutbound"];
+  rawFallbackIsArmed: WebSocketFramingCodecBinding["rawFallbackIsArmed"];
+  isDetecting: WebSocketFramingCodecBinding["isDetecting"];
+  rawFallbackDelayMillis: WebSocketFramingCodecBinding["rawFallbackDelayMillis"];
+  decode: WebSocketFramingCodecBinding["decode"];
+  stageOutbound: WebSocketFramingCodecBinding["stageOutbound"];
+  resolveRawFallback: WebSocketFramingCodecBinding["resolveRawFallback"];
 }
 
 export declare function hostContractAbi(): number;

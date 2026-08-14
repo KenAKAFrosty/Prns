@@ -13,7 +13,10 @@ import {
   nowMillis,
   packetFrame,
 } from "../../prns-js/src/browser/index.js";
-import { MockRuntimeBase } from "./mock_runtime.js";
+import {
+  MockRuntimeBase,
+  MockWebSocketFramingCodec,
+} from "./mock_runtime.js";
 import type {
   BluetoothReassemblerBinding,
   DestinationHash,
@@ -41,6 +44,10 @@ const IDENTITY_LENGTH = 32;
 const DEFAULT_WEBSOCKET_BITRATE = 1_000_000_000;
 const DEFAULT_WEBSOCKET_MTU = 508;
 const WEBSOCKET_FRAME_CAP = 572;
+const VALID_PACKET = new Uint8Array([
+  0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
+  0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x00, 0x42,
+]);
 
 class MockRuntime extends MockRuntimeBase {
   readonly identity: IdentitySecretKey;
@@ -311,6 +318,7 @@ async function main(): Promise<void> {
     assert(socket.protocols[0] === "prns.v1", "subprotocol value is preserved");
     assert(socket.binaryType === "arraybuffer", "binaryType is arraybuffer");
     assert(session.status.tag === "Active", "open WebSocket is active");
+    assert(session.framing === "Auto", "browser WebSocket defaults to auto framing");
 
     assert(registered.kind === "websocket-client", "websocket-client kind is used");
     assert(equalBytes(registered.channelTag, customTag), "channel tag override is used");
@@ -372,6 +380,74 @@ async function main(): Promise<void> {
     assert(socket.closeCalls === 1, "failed session closes the socket");
     assert(runtime.removed.length === 1, "failed session removes its interface");
 
+    const silentAuto = expectConnected(
+      await prns.interfaces.webSocket.connect(
+        "ws://127.0.0.1:9876/silent-auto",
+      ),
+    );
+    const silentAutoSocket = assertDefined(
+      FakeWebSocket.instances.at(-1),
+      "silent auto socket exists",
+    );
+    runtime.outbound.push({
+      type: "frame",
+      target: { type: "interface", interfaceId: silentAuto.interfaceId },
+      bytes: packetFrame(VALID_PACKET),
+    });
+    await wait(40);
+    assert(
+      silentAutoSocket.sent.length === 0,
+      "auto framing holds one outbound packet while awaiting evidence",
+    );
+    await waitFor(
+      () => silentAutoSocket.sent.length === 1,
+      "silent auto peer falls back to raw",
+    );
+    assert(
+      equalBytes(silentAutoSocket.sent[0] ?? new Uint8Array(), VALID_PACKET),
+      "raw fallback preserves packet bytes",
+    );
+    await silentAuto.close();
+
+    const kissAuto = expectConnected(
+      await prns.interfaces.webSocket.connect(
+        "ws://127.0.0.1:9876/kiss-auto",
+      ),
+    );
+    const kissAutoSocket = assertDefined(
+      FakeWebSocket.instances.at(-1),
+      "KISS auto socket exists",
+    );
+    runtime.outbound.push({
+      type: "frame",
+      target: { type: "interface", interfaceId: kissAuto.interfaceId },
+      bytes: packetFrame(VALID_PACKET),
+    });
+    await wait(40);
+    assert(
+      kissAutoSocket.sent.length === 0,
+      "pending packet remains held before KISS evidence",
+    );
+    const kissMessage = kissFrame(VALID_PACKET);
+    kissAutoSocket.emitMessage(ownedArrayBuffer(kissMessage));
+    await waitFor(
+      () => kissAutoSocket.sent.length === 1,
+      "KISS evidence releases the pending packet",
+    );
+    assert(
+      equalBytes(kissAutoSocket.sent[0] ?? new Uint8Array(), kissMessage),
+      "pending packet follows detected KISS framing",
+    );
+    assert(
+      equalBytes(
+        runtime.ingests.at(-1)?.bytes ?? new Uint8Array(),
+        VALID_PACKET,
+      ),
+      "KISS evidence is decoded before runtime ingestion",
+    );
+    await kissAuto.close();
+
+    const firstDefaultRegistrationIndex = runtime.registered.length;
     const firstDefault = expectConnected(
       await prns.interfaces.webSocket.connect(
         "ws://127.0.0.1:9876/stable",
@@ -379,10 +455,11 @@ async function main(): Promise<void> {
       ),
     );
     const firstDefaultRegistration = assertDefined(
-      runtime.registered[1],
+      runtime.registered[firstDefaultRegistrationIndex],
       "first default registration exists",
     );
     await firstDefault.close();
+    const secondDefaultRegistrationIndex = runtime.registered.length;
     const secondDefault = expectConnected(
       await prns.interfaces.webSocket.connect(
         "ws://127.0.0.1:9876/stable",
@@ -390,7 +467,7 @@ async function main(): Promise<void> {
       ),
     );
     const secondDefaultRegistration = assertDefined(
-      runtime.registered[2],
+      runtime.registered[secondDefaultRegistrationIndex],
       "second default registration exists",
     );
     assert(
@@ -486,6 +563,7 @@ async function main(): Promise<void> {
     const oversized = expectConnected(
       await prns.interfaces.webSocket.connect(
         "ws://127.0.0.1:9876/oversized",
+        { framing: "RawPacket" },
       ),
     );
     const oversizedSocket = assertDefined(
@@ -532,8 +610,6 @@ async function main(): Promise<void> {
       FakeWebSocket.instances[stableSocketIndex],
       "stable rendezvous socket exists",
     );
-    stableRendezvousSocket.emitMessage(arrayBuffer([21, 22]));
-    await settle();
     runtime.outbound.push({
       type: "frame",
       target: {
@@ -542,10 +618,13 @@ async function main(): Promise<void> {
       },
       bytes: packetFrame(new Uint8Array([23])),
     });
-    await waitFor(
-      () => stableRendezvousSocket.sent.length === 1,
-      "stable rendezvous drains outbound data",
+    await wait(40);
+    assert(
+      stableRendezvousSocket.sent.length === 1,
+      "browser rendezvous keeps its fixed raw contract",
     );
+    stableRendezvousSocket.emitMessage(arrayBuffer([21, 22]));
+    await settle();
     const inspectedDestination = destinationHash(new Uint8Array(16).fill(31));
     const inspectedIdentity = identityHash(new Uint8Array(16).fill(32));
     runtime.routeSnapshots = [
@@ -630,6 +709,7 @@ async function main(): Promise<void> {
     const stableClient = await prns.attachInterface(
       Tag("WebSocketClient", {
         target: "ws://127.0.0.1:9876/stable-client",
+        framing: "Auto",
       }),
     );
     assert(
@@ -675,6 +755,7 @@ async function main(): Promise<void> {
     const stopAttached = await prns.attachInterface(
       Tag("WebSocketClient", {
         target: "ws://127.0.0.1:9876/stop-cleanup",
+        framing: "Auto",
       }),
     );
     assert(
@@ -744,6 +825,7 @@ function wasmModule(): PrnsWasmModule {
     PrnsRuntime: MockRuntime,
     UsbAutoDecoder: MockUsbAutoDecoder,
     BluetoothReassembler: MockBluetoothReassembler,
+    WebSocketFramingCodec: MockWebSocketFramingCodec,
     hostContractAbi: () => 1,
     hostSchemaVersion: () => 1,
     browserPersistenceVersion: () => 1,
@@ -809,6 +891,21 @@ function ownedArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   const out = new ArrayBuffer(bytes.length);
   new Uint8Array(out).set(bytes);
   return out;
+}
+
+function kissFrame(packet: Uint8Array): Uint8Array {
+  const framed = [0xc0, 0x00];
+  for (const byte of packet) {
+    if (byte === 0xc0) {
+      framed.push(0xdb, 0xdc);
+    } else if (byte === 0xdb) {
+      framed.push(0xdb, 0xdd);
+    } else {
+      framed.push(byte);
+    }
+  }
+  framed.push(0xc0);
+  return new Uint8Array(framed);
 }
 
 function assertBytes(

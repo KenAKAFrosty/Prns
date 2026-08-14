@@ -598,9 +598,11 @@ fn application_contract_baseline(type_name: &'static str) -> BTreeMap<&'static s
         }
         "PrnsWebSocketClient" => {
             settings.insert(interface_key::TARGET, "ws://peer.example:4242/prns");
+            settings.insert(interface_key::FRAMING, "raw");
         }
         "PrnsWebSocketServer" => {
             settings.insert(interface_key::PORT, "4242");
+            settings.insert(interface_key::FRAMING, "raw");
         }
         _ => panic!("unsupported contract interface {type_name}"),
     }
@@ -638,8 +640,8 @@ fn prns_interface_names_accept_explicit_and_short_case_insensitive_aliases() {
         ("PRNSWEBSOCKETSERVERINTERFACE", "PrnsWebSocketServer"),
     ] {
         let settings = match canonical {
-            "PrnsWebSocketClient" => "target = ws://peer.example:4242/prns\n",
-            "PrnsWebSocketServer" => "port = 4242\n",
+            "PrnsWebSocketClient" => "target = ws://peer.example:4242/prns\nframing = raw\n",
+            "PrnsWebSocketServer" => "port = 4242\nframing = raw\n",
             _ => "",
         };
         let config =
@@ -663,7 +665,7 @@ fn stock_interface_names_remain_case_sensitive() {
 fn websocket_targets_require_a_supported_websocket_url() {
     for target in ["peer.example", "ws://bad target", "wss://bad target"] {
         let errors = parse(&format!(
-            "[interfaces]\n[[WebSocket]]\ntype = PrnsWebSocketClient\nenabled = Yes\ntarget = {target}\n"
+            "[interfaces]\n[[WebSocket]]\ntype = PrnsWebSocketClient\nenabled = Yes\ntarget = {target}\nframing = raw\n"
         ))
         .unwrap_err();
         assert!(has_code(&errors, ConfigDiagnosticCode::InvalidValue));
@@ -671,9 +673,35 @@ fn websocket_targets_require_a_supported_websocket_url() {
 
     for target in ["ws://peer.example:4284/prns", "wss://peer.example/prns"] {
         parse(&format!(
-            "[interfaces]\n[[WebSocket]]\ntype = PrnsWebSocketClient\nenabled = Yes\ntarget = {target}\n"
+            "[interfaces]\n[[WebSocket]]\ntype = PrnsWebSocketClient\nenabled = Yes\ntarget = {target}\nframing = raw\n"
         ))
         .expect("supported WebSocket targets parse");
+    }
+}
+
+#[test]
+fn websocket_framing_is_optional_and_closed() {
+    for type_and_endpoint in [
+        "type = PrnsWebSocketClient\ntarget = ws://peer.example/prns",
+        "type = PrnsWebSocketServer\nport = 4242",
+    ] {
+        parse(&format!(
+            "[interfaces]\n[[WebSocket]]\n{type_and_endpoint}\nenabled = Yes\n"
+        ))
+        .expect("omitted WebSocket framing uses automatic selection");
+
+        for framing in ["auto", "raw", "hdlc", "kiss"] {
+            parse(&format!(
+                "[interfaces]\n[[WebSocket]]\n{type_and_endpoint}\nenabled = Yes\nframing = {framing}\n"
+            ))
+            .expect("supported WebSocket framing parses");
+        }
+
+        let errors = parse(&format!(
+            "[interfaces]\n[[WebSocket]]\n{type_and_endpoint}\nenabled = Yes\nframing = slip\n"
+        ))
+        .unwrap_err();
+        assert!(has_code(&errors, ConfigDiagnosticCode::InvalidValue));
     }
 }
 

@@ -154,6 +154,26 @@ class RegistryTests(unittest.TestCase):
         errors = runner.validate_manifest(manifest)
         self.assertTrue(any("input is missing" in error for error in errors))
 
+    def test_format_package_overrides_are_scoped_and_unique(self) -> None:
+        manifest = copy.deepcopy(self.manifest)
+        manifest["registry"]["format_package_overrides"] = {
+            "validation/not-a-format-root/Cargo.toml": ["missing-package"],
+            "personal-hopspot/embedded/nrf52840/Cargo.toml": [
+                "t-echo",
+                "t-echo",
+            ],
+        }
+        errors = runner.validate_manifest(manifest)
+        self.assertTrue(
+            any(
+                "format package overrides name unknown manifests" in error
+                for error in errors
+            )
+        )
+        self.assertTrue(
+            any("must contain unique package names" in error for error in errors)
+        )
+
     def test_invalid_shard_definitions_are_rejected(self) -> None:
         manifest = copy.deepcopy(self.manifest)
         mutation = next(

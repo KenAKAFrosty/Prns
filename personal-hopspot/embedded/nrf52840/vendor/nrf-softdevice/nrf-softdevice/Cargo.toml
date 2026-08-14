@@ -1,0 +1,100 @@
+[package]
+name = "nrf-softdevice"
+version = "0.1.0-prns.1"
+authors = ["Dario Nieuwenhuis <dirbaio@dirbaio.net>"]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Rust interface to nRF SoftDevice"
+repository = "https://github.com/embassy-rs/nrf-softdevice"
+categories = ["embedded", "hardware-support", "no-std"]
+keywords = ["arm", "cortex-m", "nrf52", "nrf-softdevice"]
+rust-version = "1.76"
+
+[features]
+default = ["macros"]
+
+defmt = ["dep:defmt", "heapless/defmt"]
+
+nrf52805 = []
+nrf52810 = []
+nrf52811 = []
+nrf52820 = []
+nrf52832 = []
+nrf52833 = []
+nrf52840 = []
+
+s112 = []
+s113 = []
+s122 = []
+s132 = []
+s140 = []
+s140-v6 = ["s140", "dep:nrf-softdevice-s140-v6"]
+s140-v7 = ["s140", "dep:nrf-softdevice-s140-v7"]
+
+ble-rssi = []
+ble-peripheral = []
+ble-central = []
+ble-l2cap = []
+ble-gatt = []
+ble-gatt-server = ["ble-gatt"]
+ble-gatt-client = ["ble-gatt"]
+ble-sec = []
+
+critical-section-impl = ["critical-section/restore-state-bool"]
+
+usable-from-interrupts = []
+
+macros = ["dep:nrf-softdevice-macro"]
+
+# Workaround l2cap credit bug. If set, infinite credits are issued
+# to the peer in batches. The `credits` config when establishing the channel is ignored.
+# https://devzone.nordicsemi.com/f/nordic-q-a/81894/s140-7-3-0-softdevice-assertion-failed-at-pc-0xa806-using-l2cap
+ble-l2cap-credit-workaround = []
+
+evt-max-size-256 = []
+evt-max-size-512 = []
+
+# Support more discovery characteristics in GATT clients,
+# may be needed with higher ATT_MTU and peripherals with
+# many service characteristics
+discovery-chars-12 = []
+
+[dependencies]
+defmt = { version = "0.3", optional = true }
+log = { version = "0.4.11", optional = true }
+critical-section = { version = "1.0", optional = true }
+
+num_enum = { version = "0.7.0", default-features = false }
+embassy-sync = { version = "0.8.0" }
+embassy-futures = { version = "0.1.1" }
+cortex-m = "0.7.2"
+heapless = "0.9"
+fixed = "1.5.0"
+futures = { version = "0.3.17", default-features = false }
+embedded-storage = "0.3.1"
+embedded-storage-async = { version = "0.4.1" }
+
+nrf-softdevice-s140-v6 = { version = "=0.1.2-prns.1", path = "../nrf-softdevice-s140-v6", optional = true }
+nrf-softdevice-s140-v7 = { version = "=0.1.2-prns.1", path = "../nrf-softdevice-s140-v7", optional = true }
+
+nrf-softdevice-macro = { version = "0.1.0", path = "../nrf-softdevice-macro", optional = true }
+
+[package.metadata.docs.rs]
+targets = ["thumbv7em-none-eabi"]
+features = ["nrf52840", "s140", "ble-central", "ble-peripheral", "ble-l2cap", "ble-gatt-server", "ble-gatt-client", "ble-rssi", "ble-sec"]
+rustdoc-args = ["--cfg", "docsrs"]
+
+
+[package.metadata.embassy_docs]
+src_base = "https://github.com/embassy-rs/nrf-softdevice/blob/nrf-softdevice-mbr-v$VERSION/nrf-softdevice/src/"
+src_base_git = "https://github.com/embassy-rs/nrf-softdevice/blob/$COMMIT/nrf-softdevice/src/"
+target = "thumbv7em-none-eabi"
+flavors = [
+    { name = "s112", features = ["nrf52832", "s112", "ble-peripheral", "ble-gatt-server", "ble-gatt-client", "ble-rssi", "ble-sec"] },
+    { name = "s113", features = ["nrf52840", "s113", "ble-peripheral", "ble-l2cap", "ble-gatt-server", "ble-gatt-client", "ble-rssi", "ble-sec"] },
+    { name = "s122", features = ["nrf52833", "s122", "ble-central", "ble-gatt-server", "ble-gatt-client", "ble-rssi"] },
+    { name = "s132", features = ["nrf52832", "s132", "ble-central", "ble-peripheral", "ble-l2cap", "ble-gatt-server", "ble-gatt-client", "ble-rssi", "ble-sec"] },
+    { name = "s140", features = ["nrf52840", "s140", "ble-central", "ble-peripheral", "ble-l2cap", "ble-gatt-server", "ble-gatt-client", "ble-rssi", "ble-sec"] },
+]
+
+[workspace]

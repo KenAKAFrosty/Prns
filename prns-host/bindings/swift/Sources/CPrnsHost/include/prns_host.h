@@ -103,6 +103,12 @@ typedef uint32_t PrnsInterfaceMode;
 #define PRNS_INTERFACE_MODE_GATEWAY UINT32_C(6)
 #define PRNS_INTERFACE_MODE_INTERNAL UINT32_C(7)
 
+typedef uint32_t PrnsWebSocketFramingSelection;
+#define PRNS_WEB_SOCKET_FRAMING_SELECTION_RAW_PACKET UINT32_C(1)
+#define PRNS_WEB_SOCKET_FRAMING_SELECTION_HDLC UINT32_C(2)
+#define PRNS_WEB_SOCKET_FRAMING_SELECTION_KISS UINT32_C(3)
+#define PRNS_WEB_SOCKET_FRAMING_SELECTION_AUTO UINT32_C(4)
+
 typedef uint32_t PrnsInterfaceHealth;
 #define PRNS_INTERFACE_HEALTH_INITIALIZING UINT32_C(1)
 #define PRNS_INTERFACE_HEALTH_CONNECTED UINT32_C(2)
@@ -605,6 +611,7 @@ typedef struct PrnsInterfaceConfig {
     size_t peer_count;
     uint8_t connectable;
     PrnsStringView url;
+    PrnsWebSocketFramingSelection websocket_framing_selection;
 } PrnsInterfaceConfig;
 
 typedef struct PrnsDestinationConfig {

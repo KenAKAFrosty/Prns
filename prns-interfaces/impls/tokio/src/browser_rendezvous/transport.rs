@@ -16,6 +16,7 @@ use prns_core::interfaces::browser_rendezvous::{
     BrowserRendezvousId, ClientHello, HelloDecodeError, ServerHello,
 };
 use prns_core::interfaces::websocket;
+use prns_core::interfaces::websocket::{WebSocketFramingSelection, WebSocketWireFraming};
 use prns_core::interfaces::{
     ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
 };
@@ -92,8 +93,11 @@ impl Interface for BrowserRendezvousClient {
                     &self.status,
                     &mut airtime,
                     &mut throughput,
-                    self.policy.bitrate,
-                    started,
+                    framing::SessionConfig::new(
+                        self.policy.bitrate,
+                        started,
+                        WebSocketFramingSelection::Fixed(WebSocketWireFraming::RawPacket),
+                    ),
                 )
                 .await;
                 self.status.set_connection(ConnectionState::Disconnected);
@@ -125,10 +129,15 @@ pub(super) async fn accept(
     stream: TcpStream,
     id: BrowserRendezvousId,
 ) -> Result<WebSocketStream<TcpStream>, BrowserTransportHandshakeError> {
-    let mut socket =
-        accept_hdr_async_with_config(stream, validate_upgrade, Some(framing::config()))
-            .await
-            .map_err(BrowserTransportHandshakeError::WebSocket)?;
+    let mut socket = accept_hdr_async_with_config(
+        stream,
+        validate_upgrade,
+        Some(framing::config(WebSocketFramingSelection::Fixed(
+            WebSocketWireFraming::RawPacket,
+        ))),
+    )
+    .await
+    .map_err(BrowserTransportHandshakeError::WebSocket)?;
     let message = next_message(&mut socket).await?;
     let Message::Binary(bytes) = message else {
         return Err(BrowserTransportHandshakeError::UnexpectedFrame);
@@ -192,9 +201,15 @@ async fn connect() -> Result<
         header::SEC_WEBSOCKET_PROTOCOL,
         HeaderValue::from_static(contract::SUBPROTOCOL),
     );
-    let (mut socket, response) = connect_async_with_config(request, Some(framing::config()), false)
-        .await
-        .map_err(BrowserTransportHandshakeError::WebSocket)?;
+    let (mut socket, response) = connect_async_with_config(
+        request,
+        Some(framing::config(WebSocketFramingSelection::Fixed(
+            WebSocketWireFraming::RawPacket,
+        ))),
+        false,
+    )
+    .await
+    .map_err(BrowserTransportHandshakeError::WebSocket)?;
     let selected = response
         .headers()
         .get(header::SEC_WEBSOCKET_PROTOCOL)

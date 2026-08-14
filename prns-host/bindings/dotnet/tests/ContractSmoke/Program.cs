@@ -277,8 +277,14 @@ static void MarshalInterfaceFixtures()
         new InterfaceConfig.Weave("/dev/ttyWEAVE0"),
         new InterfaceConfig.AutomaticUsb(),
         new InterfaceConfig.AutomaticBluetoothLe(),
-        new InterfaceConfig.WebSocketClient("ws://fixture.invalid/client"),
-        new InterfaceConfig.WebSocketServer("127.0.0.1:4246"),
+        new InterfaceConfig.WebSocketClient(
+            "ws://fixture.invalid/client",
+            WebSocketFramingSelection.Auto
+        ),
+        new InterfaceConfig.WebSocketServer(
+            "127.0.0.1:4246",
+            WebSocketFramingSelection.Hdlc
+        ),
         new InterfaceConfig.BrowserRendezvous("ws://fixture.invalid/rendezvous")
     );
     if (fixture.SchemaVersion != HostContract.SchemaVersion || fixture.Interfaces.Length != configs.Length)

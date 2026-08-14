@@ -676,8 +676,8 @@ mod tests {
         let plan = parse_and_plan(
             "[interfaces]\n[[USB]]\ntype = PrnsUsbAuto\nenabled = Yes\n\
              [[BLE]]\ntype = PrnsBluetoothAuto\nenabled = Yes\n\
-             [[WebSocket Client]]\ntype = PrnsWebSocketClient\nenabled = Yes\ntarget = ws://peer.example/prns\n\
-             [[WebSocket Server]]\ntype = PrnsWebSocketServer\nenabled = Yes\nport = 4242\n",
+             [[WebSocket Client]]\ntype = PrnsWebSocketClient\nenabled = Yes\ntarget = ws://peer.example/prns\nframing = raw\n\
+             [[WebSocket Server]]\ntype = PrnsWebSocketServer\nenabled = Yes\nport = 4242\nframing = raw\n",
         )
         .expect("valid Prns-owned interface configuration")
         .value;

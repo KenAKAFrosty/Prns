@@ -60,6 +60,21 @@ test("packaged native API starts, exposes lifecycle, and stops", async () => {
     assert.ok(attachedSnapshot.backend.interfaceKinds.includes("TcpServer"));
     assert.equal(attachedSnapshot.interfaces.length, 1);
     assert.equal(attachedSnapshot.interfaces[0].kind, "TcpServer");
+    const webSocketAttached = await created.data.attachInterface(
+      esm.Tag("WebSocketClient", {
+        target: "ws://127.0.0.1:9",
+        framing: "Auto",
+      }),
+    );
+    assert.equal(webSocketAttached.tag, "Succeeded");
+    assert.equal(webSocketAttached.data.tag, "InterfaceAttached");
+    const webSocketDetached = await created.data.execute(
+      esm.Tag("DetachInterface", {
+        interface: webSocketAttached.data.data.interface,
+      }),
+    );
+    assert.equal(webSocketDetached.tag, "Succeeded");
+    assert.equal(webSocketDetached.data.tag, "InterfaceDetached");
     const unsupported = await created.data.attachInterface(
       esm.Tag("BrowserRendezvous", { url: "wss://fixture.invalid/rendezvous" }),
       {

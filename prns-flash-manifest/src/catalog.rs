@@ -151,14 +151,24 @@ pub struct Uf2Build {
     pub package: String,
     /// Rust target triple.
     pub rust_target: String,
-    /// UF2 family identifier.
-    pub family_id: String,
-    /// UF2 base address.
-    pub base_address: String,
     /// Bootloader volume label.
     pub mount_label: String,
     /// Normalized `Board-ID` prefix this bootloader publishes in `INFO_UF2.TXT`.
     pub board_id_prefix: String,
+    pub variants: Vec<Uf2BuildVariant>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Uf2BuildVariant {
+    pub softdevice_family: String,
+    pub softdevice_version: String,
+    pub fwid: String,
+    pub application_base: String,
+    pub family_id: String,
+    pub cargo_feature: String,
+    pub target_directory: String,
+    pub filename: String,
 }
 
 /// Catalog loading or invariant failure.
@@ -309,8 +319,7 @@ fn validate_transport(board: &BoardCatalogEntry) -> Result<(), CatalogError> {
                 || Uf2BoardIdPrefix::parse(build.board_id_prefix.clone()).is_err()
                 || build.package.trim().is_empty()
                 || build.rust_target != "thumbv7em-none-eabihf"
-                || parse_hex_u32(&build.family_id).is_none()
-                || parse_hex_u32(&build.base_address).is_none()
+                || !valid_uf2_build_variants(&build.variants)
             {
                 return Err(invalid(
                     board,
@@ -347,6 +356,50 @@ fn validate_uf2_board_id_prefixes(boards: &[BoardCatalogEntry]) -> Result<(), Ca
 
 fn parse_hex_u32(value: &str) -> Option<u32> {
     u32::from_str_radix(value.strip_prefix("0x")?, 16).ok()
+}
+
+fn valid_uf2_build_variants(variants: &[Uf2BuildVariant]) -> bool {
+    let expected = [
+        (
+            "s140",
+            "6.1.1",
+            "0x00b6",
+            "0x00026000",
+            "0xada52840",
+            "softdevice-s140-v6",
+            "target/s140-v6",
+            "t-echo-s140-6.1.1.uf2",
+        ),
+        (
+            "s140",
+            "7.3.0",
+            "0x0123",
+            "0x00027000",
+            "0xada52840",
+            "softdevice-s140-v7",
+            "target/s140-v7",
+            "t-echo-s140-7.3.0.uf2",
+        ),
+    ];
+    variants
+        .iter()
+        .map(|variant| {
+            (
+                variant.softdevice_family.as_str(),
+                variant.softdevice_version.as_str(),
+                variant.fwid.as_str(),
+                variant.application_base.as_str(),
+                variant.family_id.as_str(),
+                variant.cargo_feature.as_str(),
+                variant.target_directory.as_str(),
+                variant.filename.as_str(),
+            )
+        })
+        .eq(expected)
+        && variants.iter().all(|variant| {
+            parse_hex_u32(&variant.application_base).is_some()
+                && parse_hex_u32(&variant.family_id).is_some()
+        })
 }
 
 fn validate_provisioning(board: &BoardCatalogEntry) -> Result<(), CatalogError> {

@@ -90,12 +90,14 @@ hopspot-flash flash BOARD \
 
 Replace `preview` only if the signed manifest says `stable`. `--offline` is mandatory for counted
 CLI qualification. Use the masked guided entry or `--wifi-password-stdin` for Configure; never put
-a password on the command line. T-Echo stays on the signed UF2 mount/copy route. Do not claim
-device-side UF2 verification.
+a password on the command line. T-Echo stays on the signed UF2 mount/copy route and must resolve the
+exact S140 6.1.1 or 7.3.0 variant from the mounted bootloader identity before reading that variant
+from the verified cache.
 
 Run `hopspot-flash doctor BOARD` as part of each physical CLI assignment. On ESP boards it opens a
-non-writing identity session; on T-Echo it validates the UF2 mount. Heltec versus T-Beam remains a
-same-chip limitation and must be confirmed by the tester.
+non-writing identity session; on T-Echo it reports the Board-ID, bootloader version, SoftDevice,
+and exact compatibility variant without writing. Heltec versus T-Beam remains a same-chip
+limitation and must be confirmed by the tester.
 
 The five native installation rows are separate archive checks. Each one runs on its target OS and
 architecture, installs the exact public archive, and confirms that `hopspot-flash --version` reports

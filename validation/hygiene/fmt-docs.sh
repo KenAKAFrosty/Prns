@@ -5,12 +5,21 @@ cd "$(dirname "$0")/../.."
 python3 validation/run.py verify
 ./tools/prns verify
 
-while IFS= read -r manifest; do
+while IFS=$'\t' read -r manifest packages; do
   echo "[fmt] ${manifest}"
-  cargo fmt --manifest-path "${manifest}" --all -- --check
+  args=(--manifest-path "${manifest}")
+  if [[ -n "${packages}" ]]; then
+    IFS=',' read -ra selected <<< "${packages}"
+    for package in "${selected[@]}"; do
+      args+=(--package "${package}")
+    done
+  else
+    args+=(--all)
+  fi
+  cargo fmt "${args[@]}" -- --check
 done < <(
   python3 -c \
-    'from validation.run import MANIFEST_PATH, load_toml; print(*load_toml(MANIFEST_PATH)["registry"]["format_manifests"], sep="\n")' \
+    'from validation.run import MANIFEST_PATH, load_toml; registry=load_toml(MANIFEST_PATH)["registry"]; overrides=registry.get("format_package_overrides", {}); print(*(f"{manifest}\t{chr(44).join(overrides.get(manifest, []))}" for manifest in registry["format_manifests"]), sep="\n")' \
     | tr -d '\r'
 )
 

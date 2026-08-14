@@ -1784,7 +1784,8 @@ fn accepted_for_key(key: &str, kind: ValueKind) -> String {
         ValueKind::RnodeMultiVport
         | ValueKind::RnodeMultiFrequency
         | ValueKind::RnodeMultiTxPower
-        | ValueKind::BlackholeUpdateInterval => return kind.accepted().to_string(),
+        | ValueKind::BlackholeUpdateInterval
+        | ValueKind::WebSocketFramingSelection => return kind.accepted().to_string(),
         _ => {}
     }
     match key {
@@ -1885,7 +1886,8 @@ pub(super) fn example_for_key(key: &str, kind: ValueKind) -> &'static str {
         ValueKind::RnodeMultiVport
         | ValueKind::RnodeMultiFrequency
         | ValueKind::RnodeMultiTxPower
-        | ValueKind::BlackholeUpdateInterval => return kind.example(),
+        | ValueKind::BlackholeUpdateInterval
+        | ValueKind::WebSocketFramingSelection => return kind.example(),
         _ => {}
     }
     match key {
@@ -1944,6 +1946,10 @@ fn semantic_value_is_valid(key: &str, value: &Value, kind: ValueKind) -> bool {
         }
         interface_key::MULTICAST_ADDRESS_TYPE => {
             prns_core::interfaces::wifi_auto::MulticastAddressType::from_name(text.trim()).is_some()
+        }
+        interface_key::FRAMING => {
+            prns_core::interfaces::websocket::WebSocketFramingSelection::from_name(text.trim())
+                .is_ok()
         }
         interface_key::DISCOVERY_PORT => {
             parse_integer::<u16>(text).is_ok_and(|value| (1..=u16::MAX - 1).contains(&value))
@@ -2140,6 +2146,12 @@ fn normalized_value(value: &Value, kind: ValueKind) -> Result<String, ()> {
                 return Err(());
             }
             minutes.to_string()
+        }
+        ValueKind::WebSocketFramingSelection => {
+            prns_core::interfaces::websocket::WebSocketFramingSelection::from_name(text.trim())
+                .map_err(|_| ())?
+                .name()
+                .to_string()
         }
     };
     Ok(normalized)

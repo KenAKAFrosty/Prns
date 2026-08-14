@@ -497,6 +497,7 @@ pub(super) const ALL_SETTING_KEYS: &[&str] = &[
     interface_key::TARGET_HOST,
     interface_key::TARGET_PORT,
     interface_key::TARGET,
+    interface_key::FRAMING,
     interface_key::KISS_FRAMING,
     interface_key::I2P_TUNNELED,
     interface_key::CONNECT_TIMEOUT,

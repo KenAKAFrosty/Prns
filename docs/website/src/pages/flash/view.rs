@@ -13,9 +13,9 @@ use crate::routes::Route;
 use super::bridge;
 use super::contract::BridgePhase;
 use super::model::{
-    guided_steps, initial_status, preparation_guide, shares_serial_chip_identity,
-    DestructiveConfirmation, FlasherState, InstallMode, ReleaseDetails, WebSerialCapability,
-    WifiAction,
+    guided_steps, initial_status, parse_uf2_selection, preparation_guide,
+    shares_serial_chip_identity, DestructiveConfirmation, FlasherState, InstallMode,
+    ReleaseCompatibility, ReleaseDetails, WebSerialCapability, WifiAction,
 };
 use super::release;
 use super::trust;
@@ -47,6 +47,11 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
     let mut prepared = use_signal(|| false);
     let mut release_details = use_signal(|| None::<ReleaseDetails>);
     let mut web_serial = use_signal(|| WebSerialCapability::Checking);
+    let mut uf2_identity = use_signal(|| None::<prns_flash_manifest::Uf2BootloaderIdentity>);
+    let mut uf2_identity_status = use_signal(|| {
+        "Select INFO_UF2.TXT from the mounted bootloader drive to detect its SoftDevice foundation."
+            .to_string()
+    });
     let state = FlasherState {
         flash_target,
         phase,
@@ -91,6 +96,7 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
         && !busy
         && key_ready
         && browser_ready
+        && (is_esp || uf2_identity().is_some())
         && (!tcp_enabled() || !tcp_target().trim().is_empty());
     let can_flash = prepared() && !busy && browser_ready;
     let action_label = match (flash_target, install_mode()) {
@@ -271,6 +277,72 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
 
                 if let Some(profile) = target.preparation_profile {
                     PreparationInstructions { profile, flash_target }
+                }
+
+                if !is_esp {
+                    fieldset { class: "flash-wifi-config mt-5",
+                        legend { class: "font-semibold text-paper", "Detect firmware foundation" }
+                        p { class: "mt-2 text-sm text-soft",
+                            "Select INFO_UF2.TXT from TECHOBOOT. It is read entirely in this browser, never uploaded, and its contents are discarded after identity parsing."
+                        }
+                        input {
+                            class: "mt-3 block w-full text-sm text-soft",
+                            r#type: "file",
+                            accept: ".txt,text/plain",
+                            disabled: device_operation_active,
+                            onchange: {
+                                let event_state = state.clone();
+                                move |event: FormEvent| {
+                                    let files = event.files();
+                                    uf2_identity.set(None);
+                                    invalidate_preparation(
+                                        event_state.clone(),
+                                        "UF2 identity selection changed. Detect the foundation before preparing the release.",
+                                    );
+                                    let [file] = files.as_slice() else {
+                                        uf2_identity_status.set(
+                                            "Select exactly one INFO_UF2.TXT file.".to_string(),
+                                        );
+                                        return;
+                                    };
+                                    if file.size() > 4096 {
+                                        uf2_identity_status.set(format!(
+                                            "INFO_UF2.TXT is {} bytes; the maximum is 4096.",
+                                            file.size()
+                                        ));
+                                        return;
+                                    }
+                                    let file = file.clone();
+                                    let selected_target = flash_target;
+                                    spawn(async move {
+                                        let result = file
+                                            .read_bytes()
+                                            .await
+                                            .map_err(|error| format!("Could not read INFO_UF2.TXT: {error}"))
+                                            .and_then(|bytes| {
+                                                parse_uf2_selection(bytes.as_ref(), selected_target)
+                                            });
+                                        match result {
+                                            Ok(identity) => {
+                                                uf2_identity_status.set(format!(
+                                                    "Detected {} with SoftDevice {} and bootloader {}.",
+                                                    identity.board_id(),
+                                                    identity.softdevice(),
+                                                    identity.bootloader_version()
+                                                ));
+                                                uf2_identity.set(Some(identity));
+                                            }
+                                            Err(error) => {
+                                                uf2_identity_status.set(error);
+                                                uf2_identity.set(None);
+                                            }
+                                        }
+                                    });
+                                }
+                            },
+                        }
+                        p { class: "mt-3 text-sm font-semibold text-accent", "{uf2_identity_status}" }
+                    }
                 }
 
                 if supports_wifi {
@@ -519,6 +591,16 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                             } else {
                                 None
                             };
+                            let compatibility = match flash_target {
+                                BoardFlashTarget::EspSerial { .. } => ReleaseCompatibility::Esp,
+                                BoardFlashTarget::Uf2MassStorage { .. } => {
+                                    let Some(identity) = uf2_identity() else {
+                                        status.set("Select a valid INFO_UF2.TXT before preparing the release.".to_string());
+                                        return;
+                                    };
+                                    ReleaseCompatibility::Uf2(identity.softdevice().clone())
+                                }
+                            };
                             let mut preparation_state = event_state.clone();
                             let generation = preparation_state.begin_preparation();
                             prepared.set(false);
@@ -534,6 +616,7 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                                         ssid: selected_ssid,
                                         password: selected_password,
                                         tcp_target: selected_tcp_target,
+                                        compatibility,
                                     },
                                     preparation_state,
                                     generation,

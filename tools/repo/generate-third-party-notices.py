@@ -101,6 +101,12 @@ NPM = (
 )
 VENDORED = (
     (
+        "nrf-softdevice-s140-v6 0.1.2-prns.1",
+        "LicenseRef-Nordic-SoftDevice",
+        "personal-hopspot/embedded/nrf52840/vendor/nrf-softdevice/nrf-softdevice-s140-v6/LICENSE-NORDIC",
+        ("nRF52840",),
+    ),
+    (
         "libdbus 1.14.4",
         "AFL-2.1",
         "release/licenses/libdbus-AFL-2.1.txt",

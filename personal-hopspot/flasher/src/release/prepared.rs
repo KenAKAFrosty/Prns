@@ -1,8 +1,9 @@
 //! Bind already-verified bytes to typed ESP and UF2 part descriptors.
 
 use prns_flash_manifest::{
-    sha256_hex, BoardId, EspFlashPart, ImmutableArtifactPath, ReleaseTarget, ReleaseVersion,
-    Sha256Digest, Uf2Part,
+    sha256_hex, validate_uf2_artifact, BoardId, EspFlashPart, ImmutableArtifactPath, ReleaseTarget,
+    ReleaseVersion, Sha256Digest, SoftdeviceIdentity, Uf2ArtifactError, Uf2Compatibility, Uf2Part,
+    Uf2Variant,
 };
 use thiserror::Error;
 
@@ -27,6 +28,18 @@ pub(crate) enum PreparedArtifactError {
         path: ImmutableArtifactPath,
         expected: Sha256Digest,
         actual: String,
+    },
+    #[error("UF2 compatibility selection is required for signed target {0}")]
+    CompatibilityRequired(BoardId),
+    #[error("signed target {board_id} has no UF2 variant for {softdevice}")]
+    CompatibilityMissing {
+        board_id: BoardId,
+        softdevice: SoftdeviceIdentity,
+    },
+    #[error("artifact {path} is not a valid signed UF2 variant: {source}")]
+    Uf2 {
+        path: ImmutableArtifactPath,
+        source: Uf2ArtifactError,
     },
 }
 
@@ -65,23 +78,34 @@ impl PreparedTarget {
                 }))
             }
             ReleaseTarget::Uf2(target) => {
-                let bytes = match <Vec<Vec<u8>> as TryInto<[Vec<u8>; 1]>>::try_into(artifacts) {
-                    Ok([bytes]) => bytes,
-                    Err(artifacts) => {
-                        return Err(PreparedArtifactError::Count {
-                            board_id,
-                            expected: 1,
-                            actual: artifacts.len(),
-                        });
-                    }
-                };
-                Ok(Self::Uf2(PreparedUf2Target {
-                    version,
-                    board_id,
-                    part: PreparedUf2Part::bind(target.part().clone(), bytes)?,
-                }))
+                let _ = (version, target, artifacts);
+                Err(PreparedArtifactError::CompatibilityRequired(board_id))
             }
         }
+    }
+
+    pub(crate) fn bind_uf2(
+        version: ReleaseVersion,
+        target: ReleaseTarget,
+        softdevice: &SoftdeviceIdentity,
+        bytes: Vec<u8>,
+    ) -> Result<Self, PreparedArtifactError> {
+        let board_id = target.board_id().clone();
+        let ReleaseTarget::Uf2(target) = target else {
+            return Err(PreparedArtifactError::CompatibilityRequired(board_id));
+        };
+        let variant = target.variant_for(softdevice).cloned().ok_or_else(|| {
+            PreparedArtifactError::CompatibilityMissing {
+                board_id: board_id.clone(),
+                softdevice: softdevice.clone(),
+            }
+        })?;
+        Ok(Self::Uf2(PreparedUf2Target {
+            version,
+            board_id,
+            compatibility: variant.compatibility().clone(),
+            part: PreparedUf2Part::bind(variant, bytes)?,
+        }))
     }
 
     pub(crate) fn version(&self) -> &ReleaseVersion {
@@ -155,6 +179,7 @@ impl PreparedEspPart {
 pub(crate) struct PreparedUf2Target {
     version: ReleaseVersion,
     board_id: BoardId,
+    compatibility: Uf2Compatibility,
     part: PreparedUf2Part,
 }
 
@@ -170,6 +195,10 @@ impl PreparedUf2Target {
     pub(crate) fn part(&self) -> &PreparedUf2Part {
         &self.part
     }
+
+    pub(crate) fn compatibility(&self) -> &Uf2Compatibility {
+        &self.compatibility
+    }
 }
 
 #[derive(Debug)]
@@ -178,13 +207,18 @@ pub(crate) struct PreparedUf2Part {
 }
 
 impl PreparedUf2Part {
-    fn bind(descriptor: Uf2Part, bytes: Vec<u8>) -> Result<Self, PreparedArtifactError> {
+    fn bind(variant: Uf2Variant, bytes: Vec<u8>) -> Result<Self, PreparedArtifactError> {
+        let descriptor: &Uf2Part = variant.part();
         verify_prepared_artifact(
             descriptor.path(),
             descriptor.size(),
             descriptor.sha256(),
             &bytes,
         )?;
+        validate_uf2_artifact(&variant, &bytes).map_err(|source| PreparedArtifactError::Uf2 {
+            path: descriptor.path().clone(),
+            source,
+        })?;
         Ok(Self { bytes })
     }
 

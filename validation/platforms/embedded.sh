@@ -17,7 +17,12 @@ cargo build \
     --features "lora,bluetooth-auto,usb"
 (
     cd personal-hopspot/embedded/nrf52840
-    cargo build --release --locked
+    cargo build --release --locked --no-default-features \
+        --features board-t-echo,softdevice-s140-v6 \
+        --target-dir target/s140-v6
+    cargo build --release --locked --no-default-features \
+        --features board-t-echo,softdevice-s140-v7 \
+        --target-dir target/s140-v7
 )
 
 echo "EMBEDDED_BUILD_GATE_OK"

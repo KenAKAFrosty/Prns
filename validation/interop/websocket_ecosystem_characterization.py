@@ -1,0 +1,289 @@
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[2]
+PEERS = ROOT / "validation" / "interop" / "peers" / "websocket_ecosystem"
+PACKET_HEX = "0000000102030405060708090a0b0c0d0e0f00c0db7e7d42"
+KISS_HEX = "c0000000000102030405060708090a0b0c0d0e0f00dbdcdbdd7e7d42c0"
+HDLC_HEX = "7e0000000102030405060708090a0b0c0d0e0f00c0db7d5e7d5d427e"
+
+
+@dataclass(frozen=True)
+class PackageLicense:
+    path: str
+    identifier: str
+
+
+@dataclass(frozen=True)
+class FileLicense:
+    path: str
+    sha256: str
+
+
+@dataclass(frozen=True)
+class Upstream:
+    name: str
+    repository: str
+    commit: str
+    adapter: str | None
+    prepare_commands: tuple[tuple[str, ...], ...] = ()
+    package_licenses: tuple[PackageLicense, ...] = ()
+    file_licenses: tuple[FileLicense, ...] = ()
+
+
+UPSTREAMS = (
+    Upstream(
+        name="bergie",
+        repository="https://github.com/bergie/reticulum-js.git",
+        commit="30b93f2d0e2ec2e46f0a88db1d704305c68fad8e",
+        adapter="bergie.mjs",
+        package_licenses=(
+            PackageLicense("packages/core/package.json", "EUPL-1.2"),
+            PackageLicense(
+                "packages/websocket-server-node/package.json", "EUPL-1.2"
+            ),
+        ),
+    ),
+    Upstream(
+        name="aerik",
+        repository="https://github.com/aerik/reticulum-js.git",
+        commit="872d781b1a33c1f4d718a9c05dd0d224f2d790ca",
+        adapter="aerik.mjs",
+        prepare_commands=(("npm", "ci", "--ignore-scripts", "--omit=dev"),),
+        package_licenses=(PackageLicense("package.json", "MIT"),),
+        file_licenses=(
+            FileLicense(
+                "LICENSE",
+                "91b33216fc6d2db053d8561279b62fbddfc03198bb3857840d613a9f7a1ce0f9",
+            ),
+        ),
+    ),
+    Upstream(
+        name="nilu96",
+        repository="https://github.com/nilu96/rnsWebsocketInterface.git",
+        commit="2a9c214f6a47c75092e7b822184aa3ec3b9f37c0",
+        adapter="nilu96.py",
+        file_licenses=(
+            FileLicense(
+                "LICENSE",
+                "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+            ),
+        ),
+    ),
+    Upstream(
+        name="attermann",
+        repository="https://github.com/attermann/microReticulum_Firmware.git",
+        commit="592c826df31636edaf45b2a0d84f46545041fecb",
+        adapter=None,
+        file_licenses=(
+            FileLicense(
+                "LICENSE",
+                "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+            ),
+        ),
+    ),
+)
+
+
+EXPECTED_RUNTIME = {
+    "bergie": {
+        "kind": "runtime",
+        "raw": {
+            "inbound": [PACKET_HEX],
+            "outbound": PACKET_HEX,
+            "silent_until_outbound": True,
+        },
+        "kiss": {
+            "inbound": [PACKET_HEX, PACKET_HEX],
+            "outbound": KISS_HEX,
+            "silent_until_outbound": True,
+        },
+    },
+    "aerik": {
+        "kind": "runtime",
+        "hdlc": {
+            "inbound": [PACKET_HEX, PACKET_HEX],
+            "outbound": HDLC_HEX,
+            "silent_until_outbound": True,
+        },
+    },
+    "nilu96": {
+        "kind": "runtime",
+        "raw": {
+            "inbound": [PACKET_HEX],
+            "outbound": PACKET_HEX,
+            "silent_until_outbound": True,
+        },
+    },
+}
+
+
+def run(command: list[str], cwd: Path) -> str:
+    environment = os.environ.copy()
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    completed = subprocess.run(
+        command,
+        cwd=cwd,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            json.dumps(
+                {
+                    "command": command,
+                    "cwd": str(cwd),
+                    "exit_code": completed.returncode,
+                    "stdout": completed.stdout,
+                    "stderr": completed.stderr,
+                },
+                sort_keys=True,
+            )
+        )
+    return completed.stdout.strip()
+
+
+def checkout(upstream: Upstream, checkout_root: Path) -> Path:
+    destination = checkout_root / upstream.name
+    if destination.exists():
+        return destination
+    destination.mkdir(parents=True)
+    run(["git", "init", "--quiet"], destination)
+    run(["git", "remote", "add", "origin", upstream.repository], destination)
+    run(
+        ["git", "fetch", "--quiet", "--depth", "1", "origin", upstream.commit],
+        destination,
+    )
+    run(["git", "checkout", "--quiet", "--detach", "FETCH_HEAD"], destination)
+    return destination
+
+
+def verify_checkout(upstream: Upstream, repository: Path) -> None:
+    actual_commit = run(["git", "rev-parse", "HEAD"], repository)
+    if actual_commit != upstream.commit:
+        raise RuntimeError(
+            f"{upstream.name} resolved to {actual_commit}, expected {upstream.commit}"
+        )
+
+    for package_license in upstream.package_licenses:
+        package = json.loads((repository / package_license.path).read_text())
+        actual_license = package.get("license")
+        if actual_license != package_license.identifier:
+            raise RuntimeError(
+                f"{upstream.name} {package_license.path} declares {actual_license}, "
+                f"expected {package_license.identifier}"
+            )
+
+    for file_license in upstream.file_licenses:
+        actual_digest = hashlib.sha256(
+            (repository / file_license.path).read_bytes()
+        ).hexdigest()
+        if actual_digest != file_license.sha256:
+            raise RuntimeError(
+                f"{upstream.name} {file_license.path} has SHA-256 {actual_digest}, "
+                f"expected {file_license.sha256}"
+            )
+
+
+def runtime_characterization(upstream: Upstream, repository: Path) -> dict:
+    if upstream.adapter is None:
+        raise RuntimeError(f"{upstream.name} has no runtime adapter")
+    for command in upstream.prepare_commands:
+        run(list(command), repository)
+    adapter = PEERS / upstream.adapter
+    command = (
+        [sys.executable, str(adapter), str(repository)]
+        if adapter.suffix == ".py"
+        else ["node", str(adapter), str(repository)]
+    )
+    output = run(command, repository)
+    result = json.loads(output)
+    expected = EXPECTED_RUNTIME[upstream.name]
+    if result != expected:
+        raise RuntimeError(
+            f"{upstream.name} behavior changed: "
+            f"expected {json.dumps(expected, sort_keys=True)}, "
+            f"received {json.dumps(result, sort_keys=True)}"
+        )
+    return result
+
+
+def firmware_source_characterization(repository: Path) -> dict:
+    console = (repository / "WebSocketConsole.cpp").read_text()
+    server = (repository / "WebSocketServer.cpp").read_text()
+    required_console_fragments = (
+        "constexpr uint8_t FEND = 0xC0;",
+        "serial_fifo_push(data[i]);",
+        "g_server->send_binary(g_tx_buf, g_tx_len);",
+        "g_tx_buf[0]  = FEND;",
+        "if (g_tx_len < TX_BUF_CAP) g_tx_buf[g_tx_len++] = byte;",
+    )
+    missing = [fragment for fragment in required_console_fragments if fragment not in console]
+    if missing:
+        raise RuntimeError(f"attermann KISS-over-WebSocket contract changed: {missing}")
+
+    handshake_start = server.index("bool WebSocketServer::finish_handshake()")
+    handshake_end = server.index("void WebSocketServer::reset_frame_rx()")
+    handshake = server[handshake_start:handshake_end]
+    if "Sec-WebSocket-Protocol:" in handshake:
+        raise RuntimeError("attermann began selecting a WebSocket subprotocol")
+    if "send_binary(" in handshake:
+        raise RuntimeError("attermann began sending application data during handshake")
+
+    return {
+        "kind": "source_contract",
+        "kiss": {
+            "complete_frame_per_message": True,
+            "silent_after_handshake": True,
+        },
+        "subprotocol": "not_selected",
+    }
+
+
+def characterize(checkout_root: Path) -> dict:
+    results = {}
+    for upstream in UPSTREAMS:
+        repository = checkout(upstream, checkout_root)
+        verify_checkout(upstream, repository)
+        result = (
+            firmware_source_characterization(repository)
+            if upstream.adapter is None
+            else runtime_characterization(upstream, repository)
+        )
+        results[upstream.name] = {
+            "commit": upstream.commit,
+            "repository": upstream.repository,
+            "behavior": result,
+        }
+    return {"schema": 1, "upstreams": results}
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--checkout-root", type=Path)
+    arguments = parser.parse_args()
+
+    if arguments.checkout_root is not None:
+        print(json.dumps(characterize(arguments.checkout_root), sort_keys=True))
+        return 0
+
+    with tempfile.TemporaryDirectory(prefix="prns-websocket-ecosystem-") as directory:
+        print(json.dumps(characterize(Path(directory)), sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

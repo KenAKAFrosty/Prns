@@ -5,19 +5,19 @@ use crate::{
     AfterResetStrategy, BeforeResetStrategy, BoardCatalog, BoardCatalogEntry, BoardId, ChipFamily,
     EspFlashPart, EspSerialTarget, FlashFrequency, FlashMode, ImmutableArtifactPath, KeyId,
     PreparationProfile, ProvisioningDescriptor, ProvisioningFormat, ProvisioningSlot,
-    ReleaseTarget, ReleaseVersion, Sha256Digest, Transport, Uf2Part, Uf2Target,
-    ValidatedChannelDescriptor, ValidatedFlashManifest, ValidatedReleaseInfo, ValidatedSigningInfo,
-    CONFIG_OFFSET, CONFIG_PASSWORD_MAX_BYTES, CONFIG_SIZE, CONFIG_SSID_MAX_BYTES, CONFIG_VERSION,
+    ReleaseTarget, ReleaseVersion, Sha256Digest, SoftdeviceIdentity, Transport, Uf2Compatibility,
+    Uf2Part, Uf2Target, Uf2Variant, ValidatedChannelDescriptor, ValidatedFlashManifest,
+    ValidatedReleaseInfo, ValidatedSigningInfo, CONFIG_OFFSET, CONFIG_PASSWORD_MAX_BYTES,
+    CONFIG_SIZE, CONFIG_SSID_MAX_BYTES, CONFIG_VERSION,
 };
 
-use super::validation::validate_target;
+use super::validation::{validate_target, validate_uf2_target_variant};
 use super::{
-    ChannelDescriptor, FlashManifest, FlashPart, FlashPartKind, ManifestError,
-    ManifestTargetSetPolicy, ReleaseChannel, TargetManifest,
+    ChannelDescriptor, FlashManifest, FlashPartKind, ManifestError, ManifestTargetSetPolicy,
+    ReleaseChannel, TargetManifest,
 };
 
 impl ValidatedFlashManifest {
-    /// Parse schema-v2 JSON directly into the validated release-domain model.
     pub fn from_json(bytes: &[u8], catalog: &BoardCatalog) -> Result<Self, ManifestError> {
         let wire: FlashManifest = serde_json::from_slice(bytes)?;
         wire.into_validated(catalog)
@@ -41,6 +41,16 @@ impl TargetManifest {
         version: &ReleaseVersion,
     ) -> Result<ReleaseTarget, ManifestError> {
         validate_target(&self, board, version.as_str())?;
+        convert_target(self)
+    }
+
+    pub fn into_validated_uf2_variant(
+        self,
+        board: &BoardCatalogEntry,
+        version: &ReleaseVersion,
+        softdevice: &SoftdeviceIdentity,
+    ) -> Result<ReleaseTarget, ManifestError> {
+        validate_uf2_target_variant(&self, board, version.as_str(), softdevice)?;
         convert_target(self)
     }
 }
@@ -116,6 +126,7 @@ fn convert_target(target: TargetManifest) -> Result<ReleaseTarget, ManifestError
         after_reset,
         preparation_profile,
         parts,
+        variants,
         provisioning,
         source,
     } = target;
@@ -135,6 +146,12 @@ fn convert_target(target: TargetManifest) -> Result<ReleaseTarget, ManifestError
     };
     match transport {
         Transport::EspSerial => {
+            if !variants.is_empty() {
+                return Err(ManifestError::CatalogMismatch {
+                    board: board_slug,
+                    field: "ESP target contains UF2 variants".to_string(),
+                });
+            }
             if identity.preparation_profile != PreparationProfile::EspUsbBoot {
                 return Err(ManifestError::CatalogMismatch {
                     board: board_slug,
@@ -232,34 +249,88 @@ fn convert_target(target: TargetManifest) -> Result<ReleaseTarget, ManifestError
                     field: "UF2 target contains ESP-only fields".to_string(),
                 });
             }
-            let [part] = <[FlashPart; 1]>::try_from(parts).map_err(|parts: Vec<FlashPart>| {
-                invalid_part_values(
-                    &board_slug,
-                    "",
-                    &format!("UF2 target requires one part, found {}", parts.len()),
-                )
-            })?;
-            if part.kind != FlashPartKind::Uf2 || part.offset.is_some() {
+            if !parts.is_empty() {
                 return Err(invalid_part_values(
                     &board_slug,
-                    &part.path,
-                    "UF2 target requires one offset-free UF2 part",
+                    "",
+                    "UF2 target cannot contain top-level parts",
                 ));
             }
-            Ok(ReleaseTarget::Uf2(Uf2Target {
-                identity,
-                part: Uf2Part {
-                    path: ImmutableArtifactPath::parse(part.path.clone()).map_err(|error| {
-                        invalid_part_values(&board_slug, &part.path, &error.to_string())
-                    })?,
-                    size: part.size,
-                    sha256: Sha256Digest::parse(part.sha256).map_err(|error| {
-                        invalid_part_values(&board_slug, &part.path, &error.to_string())
-                    })?,
-                },
-            }))
+            let variants = variants
+                .into_iter()
+                .map(|variant| {
+                    let path = variant.path.clone();
+                    let softdevice = SoftdeviceIdentity::parse(
+                        &variant.softdevice_family,
+                        variant.softdevice_version,
+                    )
+                    .map_err(|error| invalid_part_values(&board_slug, &path, &error.to_string()))?;
+                    let fwid = parse_hex_u16(&variant.fwid).ok_or_else(|| {
+                        invalid_part_values(&board_slug, &path, "FWID is not canonical hexadecimal")
+                    })?;
+                    let application_base =
+                        parse_hex_u32(&variant.application_base).ok_or_else(|| {
+                            invalid_part_values(
+                                &board_slug,
+                                &path,
+                                "application base is not canonical hexadecimal",
+                            )
+                        })?;
+                    let family_id = parse_hex_u32(&variant.family_id).ok_or_else(|| {
+                        invalid_part_values(
+                            &board_slug,
+                            &path,
+                            "UF2 family ID is not canonical hexadecimal",
+                        )
+                    })?;
+                    Ok(Uf2Variant {
+                        compatibility: Uf2Compatibility::new(
+                            softdevice,
+                            fwid,
+                            application_base,
+                            family_id,
+                        ),
+                        part: Uf2Part {
+                            path: ImmutableArtifactPath::parse(variant.path.clone()).map_err(
+                                |error| {
+                                    invalid_part_values(
+                                        &board_slug,
+                                        &variant.path,
+                                        &error.to_string(),
+                                    )
+                                },
+                            )?,
+                            size: variant.size,
+                            sha256: Sha256Digest::parse(variant.sha256).map_err(|error| {
+                                invalid_part_values(&board_slug, &variant.path, &error.to_string())
+                            })?,
+                        },
+                    })
+                })
+                .collect::<Result<Vec<_>, ManifestError>>()?;
+            Ok(ReleaseTarget::Uf2(Uf2Target { identity, variants }))
         }
     }
+}
+
+fn parse_hex_u16(value: &str) -> Option<u16> {
+    let digits = value.strip_prefix("0x")?;
+    (digits.len() == 4
+        && digits
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()))
+    .then(|| u16::from_str_radix(digits, 16).ok())
+    .flatten()
+}
+
+fn parse_hex_u32(value: &str) -> Option<u32> {
+    let digits = value.strip_prefix("0x")?;
+    (digits.len() == 8
+        && digits
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()))
+    .then(|| u32::from_str_radix(digits, 16).ok())
+    .flatten()
 }
 
 fn required_target_value<T>(
@@ -300,15 +371,15 @@ fn convert_provisioning(
         });
     }
     Ok(ProvisioningSlot {
-        format: ProvisioningFormat::parse(&slot.format).map_err(|error| {
+        wire_format: ProvisioningFormat::parse(&slot.format).map_err(|error| {
             ManifestError::CatalogMismatch {
                 board: board.to_string(),
                 field: error.to_string(),
             }
         })?,
-        version: slot.version,
-        offset: slot.offset,
-        size: slot.size,
+        wire_format_version: slot.version,
+        flash_offset: slot.offset,
+        reserved_size_bytes: slot.size,
         ssid_max_bytes: slot.ssid_max_bytes,
         password_max_bytes: slot.password_max_bytes,
         tcp_client: slot.tcp_client,

@@ -6,9 +6,10 @@ use espflash::flasher::{FlashData, FlashFrequency, FlashMode, FlashSettings, Fla
 use espflash::image_format::{idf::IdfBootloaderFormat, ImageFormat};
 use espflash::target::{Chip, XtalFrequency};
 use prns_flash_manifest::{
-    sha256_hex, BoardBuild, BoardCatalog, BoardCatalogEntry, FlashManifest, FlashPart,
-    FlashPartKind, ManifestTargetSetPolicy, ReleaseChannel, ReleaseInfo, ReleaseVersion,
-    SigningInfo, TargetManifest, FLASH_MANIFEST_SCHEMA,
+    sha256_hex, validate_uf2_artifact, BoardBuild, BoardCatalog, BoardCatalogEntry, FlashManifest,
+    FlashPart, FlashPartKind, ManifestTargetSetPolicy, ReleaseChannel, ReleaseInfo, ReleaseTarget,
+    ReleaseVersion, SigningInfo, SoftdeviceIdentity, TargetManifest, Uf2VariantManifest,
+    FLASH_MANIFEST_SCHEMA,
 };
 
 use crate::cli::ChannelArg;
@@ -33,9 +34,17 @@ fn embedded_cargo_command() -> Command {
 }
 
 pub(crate) struct BuildOutput {
-    pub(crate) prepared: PreparedTarget,
+    prepared: Option<PreparedTarget>,
     pub(crate) output_dir: PathBuf,
     pub(crate) target_record: PathBuf,
+}
+
+impl BuildOutput {
+    pub(crate) fn into_prepared(self) -> Result<PreparedTarget, AppError> {
+        self.prepared.ok_or_else(|| {
+            AppError::developer_artifact("build did not select one flash compatibility variant")
+        })
+    }
 }
 
 pub(crate) enum BuildVersion<'a> {
@@ -51,6 +60,11 @@ pub(crate) enum ManifestTargetProfile<'a> {
     },
 }
 
+enum Uf2BuildSelection<'a> {
+    AllVariants,
+    Compatible(&'a SoftdeviceIdentity),
+}
+
 pub(crate) fn build_board(
     board: &BoardCatalogEntry,
     repo: &Path,
@@ -61,7 +75,38 @@ pub(crate) fn build_board(
     let version = resolve_build_version(repo, build_version)?;
     match &board.build {
         BoardBuild::Esp(build) => build_esp(board, build, repo, out_root, &version, reporter),
-        BoardBuild::Uf2(build) => build_uf2(board, build, repo, out_root, &version, reporter),
+        BoardBuild::Uf2(build) => build_uf2(
+            board,
+            build,
+            repo,
+            out_root,
+            &version,
+            Uf2BuildSelection::AllVariants,
+            reporter,
+        ),
+    }
+}
+
+pub(crate) fn build_board_for_flash(
+    board: &BoardCatalogEntry,
+    repo: &Path,
+    out_root: &Path,
+    build_version: BuildVersion<'_>,
+    softdevice: &SoftdeviceIdentity,
+    reporter: Reporter,
+) -> Result<BuildOutput, AppError> {
+    let version = resolve_build_version(repo, build_version)?;
+    match &board.build {
+        BoardBuild::Esp(build) => build_esp(board, build, repo, out_root, &version, reporter),
+        BoardBuild::Uf2(build) => build_uf2(
+            board,
+            build,
+            repo,
+            out_root,
+            &version,
+            Uf2BuildSelection::Compatible(softdevice),
+            reporter,
+        ),
     }
 }
 
@@ -214,6 +259,7 @@ fn build_esp(
     let target = target_record(
         board,
         parts.iter().map(|part| part.descriptor.clone()).collect(),
+        Vec::new(),
     );
     write_target_record(&output_dir, &target)?;
     write_source_capability_record(&output_dir, board)?;
@@ -227,7 +273,7 @@ fn build_esp(
     .map_err(|error| AppError::developer_artifact(error.to_string()))?;
     let target_record = output_dir.join("target.json");
     Ok(BuildOutput {
-        prepared,
+        prepared: Some(prepared),
         output_dir,
         target_record,
     })
@@ -339,6 +385,7 @@ fn build_uf2(
     repo: &Path,
     out_root: &Path,
     version: &str,
+    selection: Uf2BuildSelection<'_>,
     reporter: Reporter,
 ) -> Result<BuildOutput, AppError> {
     reporter.phase(
@@ -350,14 +397,6 @@ fn build_uf2(
         .join("personal-hopspot")
         .join("embedded")
         .join("nrf52840");
-    let mut cargo = embedded_cargo_command();
-    cargo
-        .arg("build")
-        .arg("--release")
-        .arg("--locked")
-        .current_dir(&crate_dir);
-    run_status(&mut cargo, "T-Echo cargo build")?;
-
     let host_triple = rust_host_triple()?;
     let sysroot = capture_stdout(Command::new("rustc").arg("--print").arg("sysroot"), "rustc")?;
     let objcopy = Path::new(sysroot.trim())
@@ -366,11 +405,6 @@ fn build_uf2(
         .join(host_triple.trim())
         .join("bin")
         .join("llvm-objcopy");
-    let elf = crate_dir
-        .join("target")
-        .join(&build.rust_target)
-        .join("release")
-        .join(&build.package);
     let work_dir = repo
         .join("target")
         .join("flash-artifacts")
@@ -379,15 +413,6 @@ fn build_uf2(
     fs::create_dir_all(&work_dir).map_err(|error| {
         AppError::developer_artifact(format!("could not create work directory: {error}"))
     })?;
-    let binary = work_dir.join("firmware.bin");
-    run_status(
-        Command::new(&objcopy)
-            .arg("-O")
-            .arg("binary")
-            .arg(&elf)
-            .arg(&binary),
-        "llvm-objcopy",
-    )?;
     let output_dir = board_output(out_root, &board.slug, version);
     fs::create_dir_all(&output_dir).map_err(|error| {
         AppError::developer_artifact(format!(
@@ -395,42 +420,135 @@ fn build_uf2(
             output_dir.display()
         ))
     })?;
-    let uf2 = output_dir.join("t-echo.uf2");
-    run_status(
-        Command::new(if cfg!(windows) { "python" } else { "python3" })
-            .arg(repo.join("tools").join("device").join("bin2uf2.py"))
-            .arg(&binary)
-            .arg(&uf2)
-            .arg(&build.base_address)
-            .arg(&build.family_id),
-        "bin2uf2.py",
-    )?;
-    let bytes = fs::read(&uf2)
-        .map_err(|error| AppError::developer_artifact(format!("could not read UF2: {error}")))?;
-    let descriptor = FlashPart {
-        kind: FlashPartKind::Uf2,
-        path: release_part_path(&board.slug, version, "t-echo.uf2"),
-        offset: None,
-        size: bytes.len() as u64,
-        sha256: sha256_hex(&bytes),
+    let selected_softdevice = match selection {
+        Uf2BuildSelection::AllVariants => None,
+        Uf2BuildSelection::Compatible(softdevice) => Some(softdevice),
     };
-    let target = target_record(board, vec![descriptor.clone()]);
+    let variants = compatible_uf2_build_variants(build, selected_softdevice);
+    if variants.is_empty() {
+        return Err(AppError::developer_artifact(format!(
+            "no build variant matches {selected_softdevice:?}"
+        )));
+    }
+    let mut descriptors = Vec::with_capacity(variants.len());
+    let mut artifacts = Vec::with_capacity(variants.len());
+    for variant in variants {
+        let target_directory = crate_dir.join(&variant.target_directory);
+        let mut cargo = embedded_cargo_command();
+        cargo
+            .arg("build")
+            .arg("--release")
+            .arg("--locked")
+            .arg("--no-default-features")
+            .arg("--features")
+            .arg(format!("board-t-echo,{}", variant.cargo_feature))
+            .arg("--target-dir")
+            .arg(&target_directory)
+            .current_dir(&crate_dir);
+        run_status(&mut cargo, "T-Echo cargo build")?;
+        let elf = target_directory
+            .join(&build.rust_target)
+            .join("release")
+            .join(&build.package);
+        let binary = work_dir.join(format!("{}.bin", variant.softdevice_version));
+        run_status(
+            Command::new(&objcopy)
+                .arg("-O")
+                .arg("binary")
+                .arg(&elf)
+                .arg(&binary),
+            "llvm-objcopy",
+        )?;
+        let uf2 = output_dir.join(&variant.filename);
+        run_status(
+            Command::new(if cfg!(windows) { "python" } else { "python3" })
+                .arg(repo.join("tools").join("device").join("bin2uf2.py"))
+                .arg(&binary)
+                .arg(&uf2)
+                .arg(&variant.application_base)
+                .arg(&variant.family_id),
+            "bin2uf2.py",
+        )?;
+        let bytes = fs::read(&uf2).map_err(|error| {
+            AppError::developer_artifact(format!("could not read UF2: {error}"))
+        })?;
+        descriptors.push(Uf2VariantManifest {
+            softdevice_family: variant.softdevice_family.clone(),
+            softdevice_version: variant.softdevice_version.clone(),
+            fwid: variant.fwid.clone(),
+            application_base: variant.application_base.clone(),
+            family_id: variant.family_id.clone(),
+            path: release_part_path(&board.slug, version, &variant.filename),
+            size: bytes.len() as u64,
+            sha256: sha256_hex(&bytes),
+        });
+        artifacts.push(bytes);
+    }
+    let target = target_record(board, Vec::new(), descriptors);
     write_target_record(&output_dir, &target)?;
     write_source_capability_record(&output_dir, board)?;
-    let (version, target) = validated_prepared_target(board, version, target)?;
+    let (version, target) = match selected_softdevice {
+        Some(softdevice) => validated_prepared_uf2_variant(board, version, target, softdevice)?,
+        None => validated_prepared_target(board, version, target)?,
+    };
+    let ReleaseTarget::Uf2(validated_uf2) = &target else {
+        return Err(AppError::developer_manifest(
+            "built T-Echo target did not validate as UF2",
+        ));
+    };
+    if validated_uf2.variants().len() != artifacts.len() {
+        return Err(AppError::developer_artifact(
+            "built UF2 descriptor and payload counts disagree",
+        ));
+    }
+    for (variant, bytes) in validated_uf2.variants().iter().zip(&artifacts) {
+        validate_uf2_artifact(variant, bytes).map_err(|error| {
+            AppError::developer_artifact(format!(
+                "built UF2 {} is invalid: {error}",
+                variant.part().path()
+            ))
+        })?;
+    }
     reporter.phase(
         Phase::ArtifactReady,
         Some(&board.slug),
-        &format!("UF2 ready: {} bytes", bytes.len()),
+        &format!(
+            "UF2 variants ready: {} bytes",
+            artifacts.iter().map(Vec::len).sum::<usize>()
+        ),
     );
-    let prepared = PreparedTarget::bind(version, target, vec![bytes])
-        .map_err(|error| AppError::developer_artifact(error.to_string()))?;
+    let prepared = selected_softdevice
+        .map(|softdevice| {
+            let bytes = artifacts.into_iter().next().ok_or_else(|| {
+                AppError::developer_artifact(format!("no built UF2 variant matches {softdevice}"))
+            })?;
+            PreparedTarget::bind_uf2(version.clone(), target.clone(), softdevice, bytes)
+                .map_err(|error| AppError::developer_artifact(error.to_string()))
+        })
+        .transpose()?;
     let target_record = output_dir.join("target.json");
     Ok(BuildOutput {
         prepared,
         output_dir,
         target_record,
     })
+}
+
+fn compatible_uf2_build_variants<'a>(
+    build: &'a prns_flash_manifest::Uf2Build,
+    softdevice: Option<&SoftdeviceIdentity>,
+) -> Vec<&'a prns_flash_manifest::Uf2BuildVariant> {
+    match softdevice {
+        Some(softdevice) => build
+            .variants
+            .iter()
+            .filter(|variant| {
+                variant.softdevice_family == softdevice.family().as_str()
+                    && variant.softdevice_version == softdevice.version().as_str()
+            })
+            .collect(),
+        None => build.variants.iter().collect(),
+    }
 }
 
 fn write_source_capability_record(
@@ -454,7 +572,11 @@ fn write_source_capability_record(
     )
 }
 
-fn target_record(board: &BoardCatalogEntry, parts: Vec<FlashPart>) -> TargetManifest {
+fn target_record(
+    board: &BoardCatalogEntry,
+    parts: Vec<FlashPart>,
+    variants: Vec<Uf2VariantManifest>,
+) -> TargetManifest {
     let esp = match &board.build {
         BoardBuild::Esp(build) => Some(build),
         BoardBuild::Uf2(_) => None,
@@ -473,6 +595,7 @@ fn target_record(board: &BoardCatalogEntry, parts: Vec<FlashPart>) -> TargetMani
         after_reset: esp.map(|build| build.after_reset.clone()),
         preparation_profile: board.preparation_profile.clone(),
         parts,
+        variants,
         provisioning: board.provisioning.clone(),
         source: None,
     }
@@ -488,6 +611,21 @@ fn validated_prepared_target(
     })?;
     let target = target
         .into_validated(board, &version)
+        .map_err(|error| AppError::developer_manifest(format!("invalid built target: {error}")))?;
+    Ok((version, target))
+}
+
+fn validated_prepared_uf2_variant(
+    board: &BoardCatalogEntry,
+    version: &str,
+    target: TargetManifest,
+    softdevice: &SoftdeviceIdentity,
+) -> Result<(ReleaseVersion, prns_flash_manifest::ReleaseTarget), AppError> {
+    let version = ReleaseVersion::parse(version.to_string()).map_err(|error| {
+        AppError::developer_repository(format!("invalid repository VERSION: {error}"))
+    })?;
+    let target = target
+        .into_validated_uf2_variant(board, &version, softdevice)
         .map_err(|error| AppError::developer_manifest(format!("invalid built target: {error}")))?;
     Ok((version, target))
 }
@@ -653,6 +791,23 @@ mod tests {
                     | (Transport::Uf2MassStorage, BoardBuild::Uf2(_))
             )
         }));
+        Ok(())
+    }
+
+    #[test]
+    fn device_bound_uf2_build_selects_only_the_compatible_variant(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let catalog = prns_flash_manifest::board_catalog()?;
+        let board = catalog.board("t-echo").ok_or("missing T-Echo")?;
+        let BoardBuild::Uf2(build) = &board.build else {
+            return Err("T-Echo is not a UF2 build".into());
+        };
+        let v6 = SoftdeviceIdentity::parse("s140", "6.1.1")?;
+        let selected = compatible_uf2_build_variants(build, Some(&v6));
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].softdevice_version, "6.1.1");
+        assert_eq!(compatible_uf2_build_variants(build, None).len(), 2);
         Ok(())
     }
 

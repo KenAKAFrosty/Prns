@@ -441,6 +441,30 @@ def validate_manifest(manifest: dict, check_tools: bool = False) -> list[str]:
             errors.append(f"duplicate format manifests: {duplicates!r}")
         if unknown:
             errors.append(f"format manifests are not registered Cargo manifests: {unknown!r}")
+        format_package_overrides = manifest.get("registry", {}).get(
+            "format_package_overrides", {}
+        )
+        if not isinstance(format_package_overrides, dict):
+            errors.append("format package overrides must be a table")
+        else:
+            unknown_overrides = sorted(
+                set(format_package_overrides) - set(format_manifests)
+            )
+            if unknown_overrides:
+                errors.append(
+                    "format package overrides name unknown manifests: "
+                    f"{unknown_overrides!r}"
+                )
+            for path, packages in format_package_overrides.items():
+                if (
+                    not isinstance(packages, list)
+                    or not packages
+                    or any(not isinstance(package, str) or not package for package in packages)
+                    or len(set(packages)) != len(packages)
+                ):
+                    errors.append(
+                        f"format package override for {path!r} must contain unique package names"
+                    )
 
     try:
         discovered_kani = discover_kani_harnesses()

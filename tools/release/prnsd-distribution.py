@@ -18,6 +18,8 @@ import tempfile
 import types
 import zipfile
 
+from flasher_manifest import FLASH_MANIFEST_SCHEMA, target_artifacts
+
 
 ROOT = Path(__file__).resolve().parents[2]
 TARGETS = {
@@ -109,6 +111,7 @@ def flasher_payload_identities(manifest_path: Path) -> dict[str, dict[str, str |
     targets = manifest.get("targets") if isinstance(manifest, dict) else None
     if (
         not isinstance(release, dict)
+        or manifest.get("schema") != FLASH_MANIFEST_SCHEMA
         or release.get("version") != version
         or release.get("channel") != "stable"
         or not isinstance(targets, list)
@@ -121,18 +124,16 @@ def flasher_payload_identities(manifest_path: Path) -> dict[str, dict[str, str |
     board_slugs: set[str] = set()
     for target in targets:
         board = target.get("board_slug") if isinstance(target, dict) else None
-        parts = target.get("parts") if isinstance(target, dict) else None
         if (
             not isinstance(board, str)
             or FLASHER_BOARD_PATTERN.fullmatch(board) is None
             or board in board_slugs
-            or not isinstance(parts, list)
-            or not parts
         ):
             raise ValueError(
                 "flasher manifest has an invalid or duplicate board identity"
             )
         board_slugs.add(board)
+        parts = target_artifacts(target)
         for part in parts:
             path = part.get("path") if isinstance(part, dict) else None
             checksum = part.get("sha256") if isinstance(part, dict) else None

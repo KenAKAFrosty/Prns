@@ -522,6 +522,7 @@ fn interpret_params(
         "PrnsBluetoothAuto" => ReferenceConfigParams::PrnsBluetoothAuto,
         "PrnsWebSocketClient" => ReferenceConfigParams::PrnsWebSocketClient {
             target: opt(rest, interface_key::TARGET, interface, coerce_string)?,
+            framing: opt(rest, interface_key::FRAMING, interface, coerce_string)?,
         },
         "PrnsWebSocketServer" => ReferenceConfigParams::PrnsWebSocketServer {
             listen_ip: opt(rest, interface_key::LISTEN_IP, interface, coerce_string)?,
@@ -529,6 +530,7 @@ fn interpret_params(
             device: opt(rest, interface_key::DEVICE, interface, coerce_string)?,
             port: opt(rest, interface_key::PORT, interface, coerce_u16)?,
             prefer_ipv6: opt(rest, interface_key::PREFER_IPV6, interface, coerce_bool)?,
+            framing: opt(rest, interface_key::FRAMING, interface, coerce_string)?,
         },
         _ => ReferenceConfigParams::Unknown,
     })

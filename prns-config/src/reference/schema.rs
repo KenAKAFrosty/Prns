@@ -30,6 +30,7 @@ pub(super) enum ValueKind {
     RnodeMultiFrequency,
     RnodeMultiTxPower,
     BlackholeUpdateInterval,
+    WebSocketFramingSelection,
 }
 
 impl ValueKind {
@@ -72,6 +73,7 @@ impl ValueKind {
             ValueKind::BlackholeUpdateInterval => {
                 "a finite number of minutes representable by the host; values below 2 use 2 minutes"
             }
+            ValueKind::WebSocketFramingSelection => "one of auto, raw, hdlc, or kiss",
         }
     }
 
@@ -100,6 +102,7 @@ impl ValueKind {
             ValueKind::RnodeMultiFrequency => "868000000",
             ValueKind::RnodeMultiTxPower => "7",
             ValueKind::BlackholeUpdateInterval => "60.0",
+            ValueKind::WebSocketFramingSelection => "auto",
         }
     }
 }
@@ -519,6 +522,7 @@ fn weave_interface_key_rule(key: &str) -> Option<KeyRule> {
 fn prns_websocket_client_key_rule(key: &str) -> Option<KeyRule> {
     match key {
         interface_key::TARGET => Some(Applied(ValueKind::String)),
+        interface_key::FRAMING => Some(Applied(ValueKind::WebSocketFramingSelection)),
         _ => None,
     }
 }
@@ -528,6 +532,7 @@ fn prns_websocket_server_key_rule(key: &str) -> Option<KeyRule> {
         interface_key::LISTEN_IP | interface_key::DEVICE => Some(Applied(ValueKind::String)),
         interface_key::LISTEN_PORT | interface_key::PORT => Some(Applied(ValueKind::U16)),
         interface_key::PREFER_IPV6 => Some(Applied(ValueKind::Bool)),
+        interface_key::FRAMING => Some(Applied(ValueKind::WebSocketFramingSelection)),
         _ => None,
     }
 }

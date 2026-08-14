@@ -64,7 +64,7 @@ if (sha256(manifestBytes) !== channel.manifest_sha256) {
 
 const manifest = JSON.parse(manifestBytes);
 if (
-  manifest.schema !== 2 ||
+  manifest.schema !== 3 ||
   manifest.release?.version !== channel.version ||
   manifest.release?.channel !== channel.channel ||
   manifest.signing?.key_id !== keyId
@@ -88,10 +88,14 @@ const immutableReleaseRoot = path.join(
   channel.version,
 );
 for (const target of manifest.targets) {
-  if (!Array.isArray(target.parts) || target.parts.length === 0) {
-    throw new Error(`fixture target ${target.board_slug} has no firmware parts`);
+  const artifacts = [
+    ...(Array.isArray(target.parts) ? target.parts : []),
+    ...(Array.isArray(target.variants) ? target.variants : []),
+  ];
+  if (artifacts.length === 0) {
+    throw new Error(`fixture target ${target.board_slug} has no firmware artifacts`);
   }
-  for (const part of target.parts) {
+  for (const part of artifacts) {
     const artifactPath = safeJoin(immutableReleaseRoot, part.path);
     const artifact = await readFile(artifactPath);
     if (artifact.byteLength !== part.size || sha256(artifact) !== part.sha256) {

@@ -101,7 +101,8 @@ fn route_expiry(c: &mut Criterion) {
             b.iter(|| {
                 let row = iteration % rows.len();
                 iteration = iteration.wrapping_add(1);
-                rows.last_route_activity_at[row] = rows.last_route_activity_at[row].wrapping_add(300_001);
+                rows.last_route_activity_at[row] =
+                    rows.last_route_activity_at[row].wrapping_add(300_001);
                 roaring.update(row, rows.expiry(row));
                 black_box(rows.last_route_activity_at[row])
             })

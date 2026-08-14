@@ -56,8 +56,8 @@ fn prns_owned_host_interfaces_reach_typed_plans() {
         "[interfaces]\n\
          [[USB]]\ntype = prnsusbautointerface\nenabled = Yes\nbitrate = 7654321\n\
          [[BLE]]\ntype = PrnsBleAuto\nenabled = Yes\nbitrate = 7654321\n\
-         [[WebSocket Client]]\ntype = PRNSWEBSOCKETCLIENT\nenabled = Yes\ntarget = wss://peer.example/prns\nbitrate = 7654321\n\
-         [[WebSocket Server]]\ntype = PrnsWebSocketServerInterface\nenabled = Yes\nlisten_ip = ::1\nlisten_port = 4243\nprefer_ipv6 = Yes\nbitrate = 7654321\n",
+         [[WebSocket Client]]\ntype = PRNSWEBSOCKETCLIENT\nenabled = Yes\ntarget = wss://peer.example/prns\nframing = kiss\nbitrate = 7654321\n\
+         [[WebSocket Server]]\ntype = PrnsWebSocketServerInterface\nenabled = Yes\nlisten_ip = ::1\nlisten_port = 4243\nprefer_ipv6 = Yes\nframing = hdlc\nbitrate = 7654321\n",
     );
 
     assert!(matches!(
@@ -68,11 +68,18 @@ fn prns_owned_host_interfaces_reach_typed_plans() {
         named(&plan, "BLE").medium,
         PlannedMedium::PrnsBluetoothAuto
     ));
-    let PlannedMedium::PrnsWebSocketClient { target } = &named(&plan, "WebSocket Client").medium
+    let PlannedMedium::PrnsWebSocketClient { target, framing } =
+        &named(&plan, "WebSocket Client").medium
     else {
         panic!("Prns WebSocket client medium expected")
     };
     assert_eq!(target.as_str(), "wss://peer.example/prns");
+    assert_eq!(
+        *framing,
+        prns_core::interfaces::websocket::WebSocketFramingSelection::Fixed(
+            prns_core::interfaces::websocket::WebSocketWireFraming::Kiss,
+        )
+    );
     assert_eq!(
         named(&plan, "WebSocket Server").medium,
         PlannedMedium::PrnsWebSocketServer {
@@ -82,6 +89,9 @@ fn prns_owned_host_interfaces_reach_typed_plans() {
                 address_family: AddressFamilyPreference::Ipv6,
                 tunnel: TcpTunnelMode::Direct,
             },
+            framing: prns_core::interfaces::websocket::WebSocketFramingSelection::Fixed(
+                prns_core::interfaces::websocket::WebSocketWireFraming::Hdlc,
+            ),
         }
     );
     for interface in &plan.interfaces {
@@ -90,6 +100,30 @@ fn prns_owned_host_interfaces_reach_typed_plans() {
             BitrateBps::new(7_654_321).unwrap()
         );
     }
+}
+
+#[test]
+fn websocket_framing_defaults_to_automatic_selection() {
+    let plan = plan_of(
+        "[interfaces]\n\
+         [[WebSocket Client]]\ntype = PrnsWebSocketClient\nenabled = Yes\ntarget = ws://peer.example/prns\n\
+         [[WebSocket Server]]\ntype = PrnsWebSocketServer\nenabled = Yes\nport = 4243\n",
+    );
+
+    assert!(matches!(
+        named(&plan, "WebSocket Client").medium,
+        PlannedMedium::PrnsWebSocketClient {
+            framing: prns_core::interfaces::websocket::WebSocketFramingSelection::Auto,
+            ..
+        }
+    ));
+    assert!(matches!(
+        named(&plan, "WebSocket Server").medium,
+        PlannedMedium::PrnsWebSocketServer {
+            framing: prns_core::interfaces::websocket::WebSocketFramingSelection::Auto,
+            ..
+        }
+    ));
 }
 
 #[test]

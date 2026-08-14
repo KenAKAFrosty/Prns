@@ -303,8 +303,14 @@ jobs:
       - name: prns-interfaces-embassy — cross-build (nRF52840 / thumbv7em)
         run: cargo build --locked --target thumbv7em-none-eabihf --features "lora,bluetooth-auto,usb"
         working-directory: prns-interfaces/impls/embassy
-      - name: t-echo firmware — cross-build (nRF52840 / thumbv7em)
-        run: cargo build --release --locked
+      - name: t-echo firmware — cross-build both S140 foundations (nRF52840 / thumbv7em)
+        run: |
+          cargo build --release --locked --no-default-features \
+            --features board-t-echo,softdevice-s140-v6 \
+            --target-dir target/s140-v6
+          cargo build --release --locked --no-default-features \
+            --features board-t-echo,softdevice-s140-v7 \
+            --target-dir target/s140-v7
         working-directory: personal-hopspot/embedded/nrf52840
 
   android-service:

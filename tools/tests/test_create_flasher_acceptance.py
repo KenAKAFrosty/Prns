@@ -104,7 +104,7 @@ def manifest() -> dict:
         ("t-echo", "LilyGO T-Echo", "uf2-mass-storage", None, False),
     )
     return {
-        "schema": 2,
+        "schema": 3,
         "release": {"version": "0.2.6", "channel": "preview", "commit": "a" * 40},
         "signing": {"key_id": "0123456789ABCDEF"},
         "targets": [
@@ -113,6 +113,23 @@ def manifest() -> dict:
                 "display_name": display_name,
                 "transport": transport,
                 "expected_chip": chip,
+                "parts": [] if transport == "uf2-mass-storage" else [{"path": f"{slug}.bin", "size": 1, "sha256": "a" * 64}],
+                "variants": [
+                    {
+                        "softdevice_family": "s140",
+                        "softdevice_version": version,
+                        "fwid": fwid,
+                        "application_base": application_base,
+                        "family_id": "0xada52840",
+                        "path": f"t-echo-s140-{version}.uf2",
+                        "size": 512,
+                        "sha256": digest,
+                    }
+                    for version, fwid, application_base, digest in (
+                        ("6.1.1", "0x00b6", "0x00026000", "b" * 64),
+                        ("7.3.0", "0x0123", "0x00027000", "c" * 64),
+                    )
+                ] if transport == "uf2-mass-storage" else [],
                 "provisioning": {"format": "HSPCFG1"} if provisioned else None,
             }
             for slug, display_name, transport, chip, provisioned in boards
@@ -165,8 +182,8 @@ class AcceptanceScaffoldTests(unittest.TestCase):
             hashlib.sha256(self.signed_bundle_path.read_bytes()).hexdigest(),
         )
         self.assertEqual(candidate["prerelease_published_at"], PUBLISHED_AT)
-        self.assertEqual(record["schema"], 3)
-        self.assertEqual(len(record["runs"]), 10)
+        self.assertEqual(record["schema"], 4)
+        self.assertEqual(len(record["runs"]), 12)
         self.assertEqual(len(record["browser_fallbacks"]), 4)
         self.assertEqual(len(record["installation_smoke"]), 5)
         self.assertTrue(
@@ -199,11 +216,17 @@ class AcceptanceScaffoldTests(unittest.TestCase):
                     for run in record["runs"]
                     if run["board"] == board and run["surface"] == surface
                 ]
-                self.assertEqual(len(rows), 1)
+                expected_compatibilities = CONTRACT.required_compatibilities(target)
+                self.assertEqual(len(rows), len(expected_compatibilities))
                 self.assertEqual(
-                    set(rows[0]["scenarios"]),
-                    CONTRACT.applicable_scenarios(target, surface, chip_counts),
+                    {row.get("compatibility_variant") for row in rows},
+                    set(expected_compatibilities),
                 )
+                for row in rows:
+                    self.assertEqual(
+                        set(row["scenarios"]),
+                        CONTRACT.applicable_scenarios(target, surface, chip_counts),
+                    )
 
     def test_unperformed_scaffold_fails_closed_in_validator(self) -> None:
         self.create()
@@ -240,6 +263,19 @@ class AcceptanceScaffoldTests(unittest.TestCase):
             json.dumps(self.manifest_document, sort_keys=True) + "\n", encoding="utf-8"
         )
         with self.assertRaisesRegex(ValueError, "well-formed targets"):
+            self.create()
+
+    def test_t_echo_requires_both_exact_compatibility_variants(self) -> None:
+        t_echo = next(
+            target
+            for target in self.manifest_document["targets"]
+            if target["board_slug"] == "t-echo"
+        )
+        t_echo["variants"].pop()
+        self.manifest_path.write_text(
+            json.dumps(self.manifest_document, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        with self.assertRaisesRegex(ValueError, "exact S140 v6 and v7"):
             self.create()
 
     def test_prerelease_publication_requires_full_utc_timestamp(self) -> None:
