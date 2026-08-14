@@ -31,14 +31,12 @@ import type {
 } from "./values.js";
 import type { WebSocketRuntimeRegistration } from "./websocket.js";
 import type {
-  AlreadyActive,
   BleIdentityAvailability,
   BluetoothReassemblerBinding,
   EntropyFailure,
   EntropyOutcome,
   EntropySource,
   InterfaceName,
-  InterfaceSessionFailure,
   PrnsRuntimeBinding,
   PrnsWasmModule,
   RuntimeInterfaceKind,
@@ -48,11 +46,11 @@ import type {
   StableIdentityUnavailable,
   UsbAutoDecoderBinding,
   WebSocketFramingCodecBinding,
-} from "./index.js";
+} from "./runtime_contract.js";
 
 type InterfaceRegistrationOutcome<Name extends InterfaceName> =
   | Tag<"Registered", InterfaceId>
-  | AlreadyActive<Name>
+  | Tag<"AlreadyActive", { readonly interface: Name; readonly target: string }>
   | RuntimeRejected;
 
 type HostedInterfaceRegistration<Name extends InterfaceName> =
@@ -75,7 +73,7 @@ type RuntimeReadyOutcome = Tag<"Ready"> | RuntimeRejected;
 type RuntimeIngestOutcome = Tag<"Accepted"> | EntropyFailure | RuntimeRejected;
 type OutboundTakeOutcome =
   | Tag<"Outbound", readonly PrnsOutboundFrame[]>
-  | Extract<InterfaceSessionFailure, Tag<"OutboundQueueFull", unknown>>
+  | Tag<"OutboundQueueFull", { readonly capacity: number }>
   | RuntimeRejected;
 type RuntimeOutboundDrainOutcome =
   | Tag<"Drained", readonly PrnsOutboundFrame[]>
