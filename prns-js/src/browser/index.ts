@@ -62,15 +62,14 @@ import type {
   PrnsApplicationEvent,
   PrnsDiagnosticEvent,
 } from "./events.js";
+import {
+  outboundTargets,
+  parseOutboundFrame,
+} from "./outbound.js";
+import type { PrnsOutboundFrame } from "./outbound.js";
 import { RNodeInterface } from "./rnode.js";
 import { UsbAutoInterface } from "./usb_auto.js";
-import {
-  bytesField,
-  field,
-  optionalNumber,
-  record,
-  stringField,
-} from "./decoding.js";
+import { record } from "./decoding.js";
 import { describeHostError } from "./host_errors.js";
 import { hostGlobal } from "./host_apis.js";
 import type {
@@ -257,6 +256,11 @@ export type {
   RuntimeDiagnosticEvent,
   SingleDeliveryEvent,
 } from "./events.js";
+export type {
+  FanTarget,
+  OutboundTarget,
+  PrnsOutboundFrame,
+} from "./outbound.js";
 export type {
   BrowserPersistedRatchet,
   BrowserPersistedState,
@@ -826,28 +830,6 @@ export type RuntimeIngestOptions = {
 type PendingCommand =
   | Tag<"HostCommand", { readonly command: HostCommand }>
   | Tag<"ResourceSegment">;
-
-export type FanTarget =
-  | Tag<"All">
-  | Tag<"Only", InterfaceId>
-  | Tag<"AllExcept", InterfaceId>;
-
-export type OutboundTarget =
-  | Tag<"Interface", InterfaceId>
-  | Tag<
-      "Broadcast",
-      {
-        readonly supervisorKind: RuntimeInterfaceKind;
-        readonly fan: FanTarget;
-      }
-    >;
-
-export type PrnsOutboundFrame = {
-  type: "frame" | "announce";
-  target: OutboundTarget;
-  hops?: HopCount;
-  bytes: PacketFrame;
-};
 
 type InterfaceRegistrationOutcome<Name extends InterfaceName> =
   | Tag<"Registered", InterfaceId>
@@ -2537,115 +2519,6 @@ export function webCryptoEntropy(length: number): EntropyOutcome {
   }
 }
 
-function outboundTargets(
-  target: OutboundTarget,
-  interfaceId: InterfaceId,
-  supervisorKind: RuntimeInterfaceKind,
-): boolean {
-  return match_into<boolean>().from(target, {
-    Interface: (targetInterface) =>
-      equalBytes(targetInterface, interfaceId),
-    Broadcast: ({ supervisorKind: targetKind, fan }) =>
-      targetKind === supervisorKind &&
-      match_into<boolean>().from(fan, {
-        All: () => true,
-        Only: (targetInterface) =>
-          equalBytes(targetInterface, interfaceId),
-        AllExcept: (targetInterface) =>
-          !equalBytes(targetInterface, interfaceId),
-      }),
-  });
-}
-
-function parseOutboundFrame(raw: unknown): PrnsOutboundFrame {
-  const object = record(raw, "PrnsOutboundFrame");
-  const type = stringField(object, "type");
-  if (type !== "frame" && type !== "announce") {
-    throw new PrnsValidationError(
-      "unknown-outbound-target",
-      `unknown outbound frame type ${type}`,
-    );
-  }
-  const frame: PrnsOutboundFrame = {
-    type,
-    target: parseOutboundTarget(field(object, "target")),
-    bytes: packetFrame(bytesField(object, "bytes")),
-  };
-  const hops = optionalNumber(object, "hops", hopCount);
-  if (hops !== undefined) {
-    frame.hops = hops;
-  }
-  return frame;
-}
-
-function parseOutboundTarget(raw: unknown): OutboundTarget {
-  const object = record(raw, "OutboundTarget");
-  const type = stringField(object, "type");
-  if (type === "interface") {
-    return Tag(
-      "Interface",
-      interfaceId(bytesField(object, "interfaceId")),
-    );
-  }
-  if (type === "broadcast") {
-    return Tag("Broadcast", {
-      supervisorKind: parseRuntimeInterfaceKind(stringField(object, "supervisorKind")),
-      fan: parseFanTarget(field(object, "fan")),
-    });
-  }
-  throw new PrnsValidationError(
-    "unknown-outbound-target",
-    `unknown outbound target ${type}`,
-  );
-}
-
-function parseFanTarget(raw: unknown): FanTarget {
-  const object = record(raw, "FanTarget");
-  const type = stringField(object, "type");
-  if (type === "all") {
-    return Tag("All");
-  }
-  if (type === "only") {
-    return Tag(
-      "Only",
-      interfaceId(bytesField(object, "interfaceId")),
-    );
-  }
-  if (type === "allExcept") {
-    return Tag(
-      "AllExcept",
-      interfaceId(bytesField(object, "interfaceId")),
-    );
-  }
-  throw new PrnsValidationError(
-    "unknown-outbound-target",
-    `unknown fan target ${type}`,
-  );
-}
-
-function parseRuntimeInterfaceKind(value: string): RuntimeInterfaceKind {
-  if (
-    value === "auto-usb-host" ||
-    value === "auto-usb-device" ||
-    value === "rnode" ||
-    value === "bluetooth-auto" ||
-    value === "bluetooth-peer" ||
-    value === "auto-wifi" ||
-    value === "websocket-client" ||
-    value === "websocket-server" ||
-    value === "websocket-server-peer" ||
-    value === "serial" ||
-    value === "kiss" ||
-    value === "pipe"
-  ) {
-    return value;
-  }
-  throw new PrnsValidationError(
-    "unknown-interface-kind",
-    `unknown interface kind ${value}`,
-  );
-}
-
 function runtimeInterfaceRouting(
   routing: InterfaceRoutingPolicy | undefined,
 ): Pick<
@@ -3001,16 +2874,4 @@ function exactBytesAsSafeNumber(value: bigint, name: string): number {
     );
   }
   return Number(value);
-}
-
-function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
-  if (left.length !== right.length) {
-    return false;
-  }
-  for (let i = 0; i < left.length; i += 1) {
-    if (left[i] !== right[i]) {
-      return false;
-    }
-  }
-  return true;
 }
