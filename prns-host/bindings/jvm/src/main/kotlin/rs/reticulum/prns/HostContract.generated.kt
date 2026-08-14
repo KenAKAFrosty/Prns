@@ -117,6 +117,16 @@ enum class InterfaceMode(val rawValue: Int) {
     }
 }
 
+enum class WebSocketWireFraming(val rawValue: Int) {
+    RAW_PACKET(1),
+    HDLC(2),
+    KISS(3);
+
+    companion object {
+        fun fromRawValue(value: Int): WebSocketWireFraming? = entries.firstOrNull { it.rawValue == value }
+    }
+}
+
 enum class InterfaceHealth(val rawValue: Int) {
     INITIALIZING(1),
     CONNECTED(2),
@@ -863,11 +873,13 @@ data object InterfaceConfigAutomaticUsb : InterfaceConfig
 data object InterfaceConfigAutomaticBluetoothLe : InterfaceConfig
 
 data class InterfaceConfigWebSocketClient(
-    val target: String
+    val target: String,
+    val framing: WebSocketWireFraming
 ) : InterfaceConfig
 
 data class InterfaceConfigWebSocketServer(
-    val bind: String
+    val bind: String,
+    val framing: WebSocketWireFraming
 ) : InterfaceConfig
 
 data class InterfaceConfigBrowserRendezvous(

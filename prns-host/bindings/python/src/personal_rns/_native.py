@@ -153,6 +153,7 @@ class InterfaceConfig(ctypes.Structure):
         ("peer_count", ctypes.c_size_t),
         ("connectable", ctypes.c_uint8),
         ("url", StringView),
+        ("websocket_wire_framing", ctypes.c_uint32),
     ]
 
 

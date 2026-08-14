@@ -119,7 +119,8 @@ impl ServerBootstrapEnvironment {
              type = PrnsWebSocketServer\n\
              interface_enabled = Yes\n\
              listen_ip = 0.0.0.0\n\
-             listen_port = {DEFAULT_WEBSOCKET_PORT}\n"
+             listen_port = {DEFAULT_WEBSOCKET_PORT}\n\
+             framing = raw\n"
         ));
         config
     }
@@ -1350,9 +1351,10 @@ mod tests {
         assert_eq!(plan.interfaces.len(), 2);
         assert!(matches!(
             &plan.interfaces[1].medium,
-            PlannedMedium::PrnsWebSocketServer { listener }
+            PlannedMedium::PrnsWebSocketServer { listener, framing }
                 if listener.host == TcpListenHost::Address("0.0.0.0".to_string())
                     && listener.port == DEFAULT_WEBSOCKET_PORT
+                    && framing.name() == "raw"
         ));
     }
 

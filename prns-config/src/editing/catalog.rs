@@ -153,6 +153,7 @@ impl InterfaceSettingSpec {
             interface_key::TARGET_HOST
             | interface_key::TARGET_PORT
             | interface_key::TARGET
+            | interface_key::FRAMING
             | interface_key::LISTEN_IP
             | interface_key::LISTEN_PORT
             | interface_key::FORWARD_IP
@@ -492,6 +493,9 @@ impl InterfaceSettingSpec {
             interface_key::TARGET_HOST => "Sets the host name or address this client connects to.",
             interface_key::TARGET_PORT => "Sets the remote port this client connects to.",
             interface_key::TARGET => "Sets the complete remote WebSocket URL.",
+            interface_key::FRAMING => {
+                "Selects raw packet, HDLC, or KISS framing inside each WebSocket binary message."
+            }
             interface_key::KISS_FRAMING => {
                 "Wraps packets in KISS framing while they cross this TCP connection."
             }
@@ -702,6 +706,10 @@ impl InterfaceSettingSpec {
             (InterfaceKind::PrnsWebSocketClient, interface_key::TARGET) => {
                 Some("a ws:// or wss:// target is required")
             }
+            (
+                InterfaceKind::PrnsWebSocketClient | InterfaceKind::PrnsWebSocketServer,
+                interface_key::FRAMING,
+            ) => Some("a WebSocket wire framing is required"),
             _ => None,
         }
     }
@@ -1035,7 +1043,16 @@ impl InterfaceSettingSpec {
                 _ => None,
             },
             interface_key::TARGET => match &planned.medium {
-                PlannedMedium::PrnsWebSocketClient { target } => Some(target.as_str().to_string()),
+                PlannedMedium::PrnsWebSocketClient { target, .. } => {
+                    Some(target.as_str().to_string())
+                }
+                _ => None,
+            },
+            interface_key::FRAMING => match &planned.medium {
+                PlannedMedium::PrnsWebSocketClient { framing, .. }
+                | PlannedMedium::PrnsWebSocketServer { framing, .. } => {
+                    Some(framing.name().to_string())
+                }
                 _ => None,
             },
             interface_key::GROUP_ID => {
@@ -1190,6 +1207,7 @@ impl InterfaceSettingSpec {
                 "a percentage"
             }
             interface_key::PARITY => "none, even, or odd",
+            interface_key::FRAMING => "raw, hdlc, or kiss",
             _ => match self.input_kind(kind) {
                 InterfaceSettingInputKind::Boolean => "yes or no",
                 InterfaceSettingInputKind::Unsigned => "a non-negative whole number",

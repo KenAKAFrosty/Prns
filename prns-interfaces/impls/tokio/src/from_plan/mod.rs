@@ -485,10 +485,10 @@ async fn stand_up<'a>(
                 ))
             }
         }
-        PlannedMedium::PrnsWebSocketClient { target } => {
+        PlannedMedium::PrnsWebSocketClient { target, framing } => {
             #[cfg(feature = "websocket")]
             {
-                websocket::stand_up_client(construction, target)
+                websocket::stand_up_client(construction, target, *framing)
             }
             #[cfg(not(feature = "websocket"))]
             {
@@ -498,10 +498,10 @@ async fn stand_up<'a>(
                 ))
             }
         }
-        PlannedMedium::PrnsWebSocketServer { listener } => {
+        PlannedMedium::PrnsWebSocketServer { listener, framing } => {
             #[cfg(feature = "websocket")]
             {
-                websocket::stand_up_server(construction, listener).await
+                websocket::stand_up_server(construction, listener, *framing).await
             }
             #[cfg(not(feature = "websocket"))]
             {

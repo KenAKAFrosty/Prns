@@ -63,7 +63,8 @@ use prns_host::{
     RequestPathHash, RequestPolicy, ResourceAvailable, ResourceCompression, ResourceHash,
     ResourceNeedsDecompression, ResourceSegmentAvailable, ResourceStrategy, ResourceStreamId,
     ResponseAvailable, ResponseSegmentAvailable, ResponseTimeout, RouteSnapshot,
-    RuntimeHealthSnapshot, SingleDelivery, SAFE_INT_MAX, SAFE_INT_MIN, SAFE_UINT_MAX,
+    RuntimeHealthSnapshot, SingleDelivery, WebSocketWireFraming, SAFE_INT_MAX, SAFE_INT_MIN,
+    SAFE_UINT_MAX,
 };
 use tokio::io::{AsyncRead, ReadBuf};
 use tokio::sync::{mpsc, oneshot, watch};
@@ -1945,14 +1946,15 @@ fn reference_interface(config: &InterfaceConfig) -> Result<ReferenceInterface, C
             ReferenceConfigParams::PrnsBluetoothAuto,
             None,
         ),
-        InterfaceConfig::WebSocketClient { target } => (
+        InterfaceConfig::WebSocketClient { target, framing } => (
             "PrnsWebSocketClient",
             ReferenceConfigParams::PrnsWebSocketClient {
                 target: Some(target.clone()),
+                framing: Some(websocket_wire_framing(*framing).to_string()),
             },
             None,
         ),
-        InterfaceConfig::WebSocketServer { bind } => {
+        InterfaceConfig::WebSocketServer { bind, framing } => {
             let (host, port) = endpoint_parts(bind, true)?;
             (
                 "PrnsWebSocketServer",
@@ -1962,6 +1964,7 @@ fn reference_interface(config: &InterfaceConfig) -> Result<ReferenceInterface, C
                     device: None,
                     port: None,
                     prefer_ipv6: None,
+                    framing: Some(websocket_wire_framing(*framing).to_string()),
                 },
                 None,
             )
@@ -1973,6 +1976,14 @@ fn reference_interface(config: &InterfaceConfig) -> Result<ReferenceInterface, C
     let mut interface = ReferenceInterface::enabled("sdk-interface", type_name, params);
     interface.bitrate = bitrate;
     Ok(interface)
+}
+
+fn websocket_wire_framing(framing: WebSocketWireFraming) -> &'static str {
+    match framing {
+        WebSocketWireFraming::RawPacket => "raw",
+        WebSocketWireFraming::Hdlc => "hdlc",
+        WebSocketWireFraming::Kiss => "kiss",
+    }
 }
 
 fn reference_mode(mode: InterfaceMode) -> ReferenceMode {

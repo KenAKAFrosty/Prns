@@ -19,7 +19,21 @@ pub enum WebSocketWireFraming {
     Kiss,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WebSocketWireFramingParseError {
+    UnknownFraming,
+}
+
 impl WebSocketWireFraming {
+    pub fn from_name(name: &str) -> Result<Self, WebSocketWireFramingParseError> {
+        match name {
+            "raw" => Ok(Self::RawPacket),
+            "hdlc" => Ok(Self::Hdlc),
+            "kiss" => Ok(Self::Kiss),
+            _ => Err(WebSocketWireFramingParseError::UnknownFraming),
+        }
+    }
+
     #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
@@ -332,6 +346,17 @@ mod tests {
         assert_ne!(
             WebSocketWireFraming::RawPacket.channel_tag_suffix(),
             WebSocketWireFraming::Kiss.channel_tag_suffix()
+        );
+        for framing in [
+            WebSocketWireFraming::RawPacket,
+            WebSocketWireFraming::Hdlc,
+            WebSocketWireFraming::Kiss,
+        ] {
+            assert_eq!(WebSocketWireFraming::from_name(framing.name()), Ok(framing));
+        }
+        assert_eq!(
+            WebSocketWireFraming::from_name("Raw"),
+            Err(WebSocketWireFramingParseError::UnknownFraming)
         );
     }
 }

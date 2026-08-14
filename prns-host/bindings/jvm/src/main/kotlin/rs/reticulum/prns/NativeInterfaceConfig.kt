@@ -131,6 +131,7 @@ internal open class NativeMultiRNodeMemberConfig : Structure() {
     "peerCount",
     "connectable",
     "url",
+    "websocketWireFraming",
 )
 internal class NativeInterfaceConfig : Structure() {
     @JvmField
@@ -279,6 +280,9 @@ internal class NativeInterfaceConfig : Structure() {
 
     @JvmField
     var url: NativeStringView.ByValue = NativeStringView.ByValue()
+
+    @JvmField
+    var websocketWireFraming: Int = 0
 }
 
 @Structure.FieldOrder(
@@ -451,10 +455,12 @@ internal fun NativeArena.interfaceConfig(value: InterfaceConfig): NativeInterfac
         is InterfaceConfigWebSocketClient -> {
             result.kind = InterfaceKind.WEB_SOCKET_CLIENT.rawValue
             result.target = string(value.target)
+            result.websocketWireFraming = value.framing.rawValue
         }
         is InterfaceConfigWebSocketServer -> {
             result.kind = InterfaceKind.WEB_SOCKET_SERVER.rawValue
             result.bind = string(value.bind)
+            result.websocketWireFraming = value.framing.rawValue
         }
         is InterfaceConfigBrowserRendezvous -> {
             result.kind = InterfaceKind.BROWSER_RENDEZVOUS.rawValue

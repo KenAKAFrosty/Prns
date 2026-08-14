@@ -80,6 +80,31 @@ test('every shared typed interface fixture marshals without touching hardware', 
   }
 });
 
+test('websocket framing is required and closed before attachment', async () => {
+  const node = startNode({}, () => {});
+  try {
+    assert.throws(
+      () =>
+        node.previewValidateInterfaceConfig({
+          kind: 'WebSocketClient',
+          target: 'ws://fixture.invalid/client'
+        }),
+      (error: unknown) => errorCode(error) === 'PRNS_CONFIG_INVALID'
+    );
+    assert.throws(
+      () =>
+        node.previewValidateInterfaceConfig({
+          kind: 'WebSocketServer',
+          bind: '127.0.0.1:4242',
+          framing: 'HDLC' as never
+        }),
+      (error: unknown) => errorCode(error) === 'PRNS_CONFIG_INVALID'
+    );
+  } finally {
+    await node.stop().catch(() => {});
+  }
+});
+
 function errorCode(error: unknown): string | undefined {
   if (error instanceof Error && 'code' in error && typeof error.code === 'string') {
     return error.code;

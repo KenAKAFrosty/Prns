@@ -377,6 +377,38 @@ impl TryFrom<u32> for InterfaceMode {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum WebSocketWireFraming {
+    RawPacket = 1,
+    Hdlc = 2,
+    Kiss = 3,
+}
+
+impl WebSocketWireFraming {
+    #[must_use]
+    pub const fn contract_name(self) -> &'static str {
+        match self {
+            Self::RawPacket => "RawPacket",
+            Self::Hdlc => "Hdlc",
+            Self::Kiss => "Kiss",
+        }
+    }
+}
+
+impl TryFrom<u32> for WebSocketWireFraming {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::RawPacket),
+            2 => Ok(Self::Hdlc),
+            3 => Ok(Self::Kiss),
+            _ => Err(()),
+        }
+    }
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum InterfaceHealth {
     Initializing = 1,
     Connected = 2,
@@ -1662,6 +1694,16 @@ mod tests {
             (InterfaceMode::Boundary, 5, "Boundary"),
             (InterfaceMode::Gateway, 6, "Gateway"),
             (InterfaceMode::Internal, 7, "Internal"),
+        ]);
+    }
+
+    #[rustfmt::skip]
+    #[test]
+    fn web_socket_wire_framing_values_match_the_contract() {
+        assert_contract_enum!(WebSocketWireFraming, [
+            (WebSocketWireFraming::RawPacket, 1, "RawPacket"),
+            (WebSocketWireFraming::Hdlc, 2, "Hdlc"),
+            (WebSocketWireFraming::Kiss, 3, "Kiss"),
         ]);
     }
 

@@ -228,9 +228,11 @@ fn every_supported_typed_interface_uses_the_effective_planner() -> Result<(), St
         InterfaceConfig::AutomaticBluetoothLe,
         InterfaceConfig::WebSocketClient {
             target: "ws://127.0.0.1:4242".to_string(),
+            framing: prns_host::WebSocketWireFraming::Kiss,
         },
         InterfaceConfig::WebSocketServer {
             bind: "127.0.0.1:4242".to_string(),
+            framing: prns_host::WebSocketWireFraming::Hdlc,
         },
     ];
     for config in configs {

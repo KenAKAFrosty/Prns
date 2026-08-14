@@ -92,6 +92,11 @@ class InterfaceMode(IntEnum):
     GATEWAY = 6
     INTERNAL = 7
 
+class WebSocketWireFraming(IntEnum):
+    RAW_PACKET = 1
+    HDLC = 2
+    KISS = 3
+
 class InterfaceHealth(IntEnum):
     INITIALIZING = 1
     CONNECTED = 2
@@ -682,10 +687,12 @@ class InterfaceConfigAutomaticBluetoothLe:
 @dataclass(frozen=True, slots=True)
 class InterfaceConfigWebSocketClient:
     target: str
+    framing: WebSocketWireFraming
 
 @dataclass(frozen=True, slots=True)
 class InterfaceConfigWebSocketServer:
     bind: str
+    framing: WebSocketWireFraming
 
 @dataclass(frozen=True, slots=True)
 class InterfaceConfigBrowserRendezvous:

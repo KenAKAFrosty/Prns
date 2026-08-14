@@ -1067,6 +1067,7 @@ fn validate_medium_requirements(
                 },
                 errors,
             );
+            require_websocket_framing(&context, errors);
             validate_websocket_target(&context, errors);
         }
         "PrnsWebSocketServer" => {
@@ -1083,6 +1084,7 @@ fn validate_medium_requirements(
                 },
                 errors,
             );
+            require_websocket_framing(&context, errors);
         }
         "TCPServerInterface" => {
             require_setting(
@@ -1308,6 +1310,26 @@ fn validate_medium_requirements(
         }
         _ => {}
     }
+}
+
+fn require_websocket_framing(
+    context: &InterfaceRequirementContext<'_>,
+    errors: &mut ValidationErrorCollector,
+) {
+    require_setting(
+        context,
+        RequiredSetting {
+            primary: interface_key::FRAMING,
+            alternatives: &[],
+            accepted: "raw, hdlc, or kiss",
+            correction: format!(
+                "add `{} = raw` under [[{}]]",
+                interface_key::FRAMING,
+                context.interface
+            ),
+        },
+        errors,
+    );
 }
 
 fn validate_websocket_target(
@@ -1799,6 +1821,7 @@ fn accepted_for_key(key: &str, kind: ValueKind) -> String {
         interface_key::MULTICAST_ADDRESS_TYPE => {
             "one of temporary or permanent".to_string()
         }
+        interface_key::FRAMING => "one of raw, hdlc, or kiss".to_string(),
         interface_key::DISCOVERY_PORT => {
             "an integer from 1 through 65534; the following port is reserved for reverse discovery"
                 .to_string()
@@ -1893,6 +1916,7 @@ pub(super) fn example_for_key(key: &str, kind: ValueKind) -> &'static str {
         interface_key::ANNOUNCE_CAP => "2.0",
         interface_key::DISCOVERY_SCOPE => "link",
         interface_key::MULTICAST_ADDRESS_TYPE => "temporary",
+        interface_key::FRAMING => "raw",
         interface_key::DISCOVERY_PORT => "29716",
         interface_key::DATA_PORT => "42671",
         interface_key::SPEED => "9600",
@@ -1944,6 +1968,9 @@ fn semantic_value_is_valid(key: &str, value: &Value, kind: ValueKind) -> bool {
         }
         interface_key::MULTICAST_ADDRESS_TYPE => {
             prns_core::interfaces::wifi_auto::MulticastAddressType::from_name(text.trim()).is_some()
+        }
+        interface_key::FRAMING => {
+            prns_core::interfaces::websocket::WebSocketWireFraming::from_name(text.trim()).is_ok()
         }
         interface_key::DISCOVERY_PORT => {
             parse_integer::<u16>(text).is_ok_and(|value| (1..=u16::MAX - 1).contains(&value))
@@ -2140,6 +2167,12 @@ fn normalized_value(value: &Value, kind: ValueKind) -> Result<String, ()> {
                 return Err(());
             }
             minutes.to_string()
+        }
+        ValueKind::WebSocketWireFraming => {
+            prns_core::interfaces::websocket::WebSocketWireFraming::from_name(text.trim())
+                .map_err(|_| ())?
+                .name()
+                .to_string()
         }
     };
     Ok(normalized)

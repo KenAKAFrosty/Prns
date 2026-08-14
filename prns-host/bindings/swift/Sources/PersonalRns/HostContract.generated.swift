@@ -95,6 +95,12 @@ public enum InterfaceMode: UInt32, Sendable {
     case `internal` = 7
 }
 
+public enum WebSocketWireFraming: UInt32, Sendable {
+    case rawPacket = 1
+    case hdlc = 2
+    case kiss = 3
+}
+
 public enum InterfaceHealth: UInt32, Sendable {
     case initializing = 1
     case connected = 2
@@ -734,8 +740,8 @@ public enum InterfaceConfig: Sendable {
     case weave(port: String)
     case automaticUsb
     case automaticBluetoothLe
-    case webSocketClient(target: String)
-    case webSocketServer(bind: String)
+    case webSocketClient(target: String, framing: WebSocketWireFraming)
+    case webSocketServer(bind: String, framing: WebSocketWireFraming)
     case browserRendezvous(url: String)
 }
 

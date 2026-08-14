@@ -439,9 +439,11 @@ func marshalInterface(
 	case InterfaceConfigWebSocketClient:
 		result.kind = C.PRNS_INTERFACE_KIND_WEB_SOCKET_CLIENT
 		result.target, err = arena.stringView(config.Target)
+		result.websocket_wire_framing = C.PrnsWebSocketWireFraming(config.Framing)
 	case InterfaceConfigWebSocketServer:
 		result.kind = C.PRNS_INTERFACE_KIND_WEB_SOCKET_SERVER
 		result.bind, err = arena.stringView(config.Bind)
+		result.websocket_wire_framing = C.PrnsWebSocketWireFraming(config.Framing)
 	case InterfaceConfigBrowserRendezvous:
 		result.kind = C.PRNS_INTERFACE_KIND_BROWSER_RENDEZVOUS
 		result.url, err = arena.stringView(config.Url)

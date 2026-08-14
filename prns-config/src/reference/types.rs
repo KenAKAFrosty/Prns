@@ -196,6 +196,7 @@ pub enum ReferenceConfigParams {
     PrnsBluetoothAuto,
     PrnsWebSocketClient {
         target: Option<String>,
+        framing: Option<String>,
     },
     PrnsWebSocketServer {
         listen_ip: Option<String>,
@@ -203,6 +204,7 @@ pub enum ReferenceConfigParams {
         device: Option<String>,
         port: Option<u16>,
         prefer_ipv6: Option<bool>,
+        framing: Option<String>,
     },
     Unknown,
 }

@@ -258,6 +258,21 @@ export function isInterfaceMode(value: unknown): value is InterfaceMode {
   return typeof value === "string" && (INTERFACE_MODE_VALUES as readonly string[]).includes(value);
 }
 
+export type WebSocketWireFraming =
+  | "RawPacket"
+  | "Hdlc"
+  | "Kiss";
+
+export const WEB_SOCKET_WIRE_FRAMING_VALUES: readonly WebSocketWireFraming[] = Object.freeze([
+  "RawPacket",
+  "Hdlc",
+  "Kiss",
+]);
+
+export function isWebSocketWireFraming(value: unknown): value is WebSocketWireFraming {
+  return typeof value === "string" && (WEB_SOCKET_WIRE_FRAMING_VALUES as readonly string[]).includes(value);
+}
+
 export type InterfaceHealth =
   | "Initializing"
   | "Connected"
@@ -629,12 +644,14 @@ export type InterfaceConfig =
       "WebSocketClient",
       {
         readonly target: string;
+        readonly framing: WebSocketWireFraming;
       }
     >
   | Tag<
       "WebSocketServer",
       {
         readonly bind: string;
+        readonly framing: WebSocketWireFraming;
       }
     >
   | Tag<

@@ -114,8 +114,8 @@ func TestMarshalEveryInterfaceFixture(t *testing.T) {
 		InterfaceConfigWeave{"/dev/ttyWEAVE0"},
 		InterfaceConfigAutomaticUsb{},
 		InterfaceConfigAutomaticBluetoothLe{},
-		InterfaceConfigWebSocketClient{"ws://fixture.invalid/client"},
-		InterfaceConfigWebSocketServer{"127.0.0.1:4246"},
+		InterfaceConfigWebSocketClient{"ws://fixture.invalid/client", WebSocketWireFramingKiss},
+		InterfaceConfigWebSocketServer{"127.0.0.1:4246", WebSocketWireFramingHdlc},
 		InterfaceConfigBrowserRendezvous{"ws://fixture.invalid/rendezvous"},
 	}
 	if fixture.SchemaVersion != HostSchemaVersion || len(fixture.Interfaces) != len(configs) {

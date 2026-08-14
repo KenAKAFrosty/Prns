@@ -41,8 +41,8 @@ use prns_host_core::{
     ResponseTimeoutKind as AbiResponseTimeoutKind, SerialDataBits as AbiSerialDataBits,
     SerialDataBits, SerialLineConfig, SerialParity as AbiSerialParity, SerialParity,
     SerialStopBits as AbiSerialStopBits, SerialStopBits, Status as AbiStatus,
-    StopReason as AbiStopReason, StopReason, HOST_CONTRACT, HOST_SCHEMA_VERSION, SAFE_INT_MAX,
-    SAFE_INT_MIN, SAFE_UINT_MAX,
+    StopReason as AbiStopReason, StopReason, WebSocketWireFraming, HOST_CONTRACT,
+    HOST_SCHEMA_VERSION, SAFE_INT_MAX, SAFE_INT_MIN, SAFE_UINT_MAX,
 };
 use prns_host_native::{
     CommandHandle, CommandWait, IdentityStartError, NativeEventSink, NativeHost,
@@ -319,6 +319,7 @@ pub struct PrnsInterfaceConfig {
     pub peer_count: usize,
     pub connectable: u8,
     pub url: PrnsStringView,
+    pub websocket_wire_framing: u32,
 }
 
 #[repr(C)]
@@ -1167,14 +1168,20 @@ unsafe fn parse_interface_config(value: &PrnsInterfaceConfig) -> Result<Interfac
         AbiInterfaceKind::AutomaticBluetoothLe => Ok(InterfaceConfig::AutomaticBluetoothLe),
         AbiInterfaceKind::WebSocketClient => Ok(InterfaceConfig::WebSocketClient {
             target: unsafe { read_string(value.target) }?.to_string(),
+            framing: parse_websocket_wire_framing(value.websocket_wire_framing)?,
         }),
         AbiInterfaceKind::WebSocketServer => Ok(InterfaceConfig::WebSocketServer {
             bind: unsafe { read_string(value.bind) }?.to_string(),
+            framing: parse_websocket_wire_framing(value.websocket_wire_framing)?,
         }),
         AbiInterfaceKind::BrowserRendezvous => Ok(InterfaceConfig::BrowserRendezvous {
             url: unsafe { read_string(value.url) }?.to_string(),
         }),
     }
+}
+
+fn parse_websocket_wire_framing(value: u32) -> Result<WebSocketWireFraming, u32> {
+    WebSocketWireFraming::try_from(value).map_err(|_| status(AbiStatus::InvalidArgument))
 }
 
 fn parse_interface_routing_policy(
@@ -3710,6 +3717,22 @@ mod tests {
         );
         assert_eq!(
             optional_safe_uint(1, SAFE_UINT_MAX + 1),
+            Err(status(AbiStatus::InvalidArgument))
+        );
+    }
+
+    #[test]
+    fn websocket_wire_framing_rejects_zero_and_unknown_discriminants() {
+        assert_eq!(
+            parse_websocket_wire_framing(WebSocketWireFraming::RawPacket as u32),
+            Ok(WebSocketWireFraming::RawPacket)
+        );
+        assert_eq!(
+            parse_websocket_wire_framing(0),
+            Err(status(AbiStatus::InvalidArgument))
+        );
+        assert_eq!(
+            parse_websocket_wire_framing(u32::MAX),
             Err(status(AbiStatus::InvalidArgument))
         );
     }

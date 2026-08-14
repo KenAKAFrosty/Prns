@@ -168,6 +168,7 @@ struct NativeInterfaceConfig
     peer_count::Csize_t
     connectable::UInt8
     url::NativeStringView
+    websocket_wire_framing::UInt32
 end
 
 struct NativeInterfaceRoutingPolicy
@@ -312,6 +313,7 @@ function NativeInterfaceConfig(;
     peer_count=0,
     connectable=false,
     url=NativeStringView(C_NULL, 0),
+    websocket_wire_framing=UInt32(0),
 )
     empty_string = NativeStringView(C_NULL, 0)
     NativeInterfaceConfig(
@@ -364,6 +366,7 @@ function NativeInterfaceConfig(;
         peer_count,
         UInt8(connectable),
         url,
+        UInt32(websocket_wire_framing),
     )
 end
 
@@ -781,12 +784,14 @@ function native_interface(arena::NativeArena, value::InterfaceConfig)
         return NativeInterfaceConfig(
             kind=InterfaceKindWebSocketClient,
             target=native_string_view(arena, value.target),
+            websocket_wire_framing=value.framing,
         )
     end
     if value isa InterfaceConfigWebSocketServer
         return NativeInterfaceConfig(
             kind=InterfaceKindWebSocketServer,
             bind=native_string_view(arena, value.bind),
+            websocket_wire_framing=value.framing,
         )
     end
     if value isa InterfaceConfigBrowserRendezvous

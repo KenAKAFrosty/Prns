@@ -341,6 +341,11 @@
     "StopReason": {
       "BackendExited": 2,
       "Requested": 1
+    },
+    "WebSocketWireFraming": {
+      "Hdlc": 2,
+      "Kiss": 3,
+      "RawPacket": 1
     }
   },
   "fixedBytes": {

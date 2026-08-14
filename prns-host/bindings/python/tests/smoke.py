@@ -79,8 +79,12 @@ def marshal_interface_fixtures():
         prns.InterfaceConfigWeave("/dev/ttyWEAVE0"),
         prns.InterfaceConfigAutomaticUsb(),
         prns.InterfaceConfigAutomaticBluetoothLe(),
-        prns.InterfaceConfigWebSocketClient("ws://fixture.invalid/client"),
-        prns.InterfaceConfigWebSocketServer("127.0.0.1:4246"),
+        prns.InterfaceConfigWebSocketClient(
+            "ws://fixture.invalid/client", prns.WebSocketWireFraming.KISS
+        ),
+        prns.InterfaceConfigWebSocketServer(
+            "127.0.0.1:4246", prns.WebSocketWireFraming.HDLC
+        ),
         prns.InterfaceConfigBrowserRendezvous(
             "ws://fixture.invalid/rendezvous"
         ),

@@ -88,6 +88,7 @@ internal static partial class Native
         internal nuint PeerCount;
         internal byte Connectable;
         internal StringView Url;
+        internal WebSocketWireFraming WebSocketWireFraming;
     }
 
     [StructLayout(LayoutKind.Sequential)]
