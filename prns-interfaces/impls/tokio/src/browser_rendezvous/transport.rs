@@ -16,7 +16,7 @@ use prns_core::interfaces::browser_rendezvous::{
     BrowserRendezvousId, ClientHello, HelloDecodeError, ServerHello,
 };
 use prns_core::interfaces::websocket;
-use prns_core::interfaces::websocket::WebSocketWireFraming;
+use prns_core::interfaces::websocket::{WebSocketFramingSelection, WebSocketWireFraming};
 use prns_core::interfaces::{
     ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
 };
@@ -96,7 +96,7 @@ impl Interface for BrowserRendezvousClient {
                     framing::SessionConfig::new(
                         self.policy.bitrate,
                         started,
-                        WebSocketWireFraming::RawPacket,
+                        WebSocketFramingSelection::Fixed(WebSocketWireFraming::RawPacket),
                     ),
                 )
                 .await;
@@ -132,7 +132,9 @@ pub(super) async fn accept(
     let mut socket = accept_hdr_async_with_config(
         stream,
         validate_upgrade,
-        Some(framing::config(WebSocketWireFraming::RawPacket)),
+        Some(framing::config(WebSocketFramingSelection::Fixed(
+            WebSocketWireFraming::RawPacket,
+        ))),
     )
     .await
     .map_err(BrowserTransportHandshakeError::WebSocket)?;
@@ -201,7 +203,9 @@ async fn connect() -> Result<
     );
     let (mut socket, response) = connect_async_with_config(
         request,
-        Some(framing::config(WebSocketWireFraming::RawPacket)),
+        Some(framing::config(WebSocketFramingSelection::Fixed(
+            WebSocketWireFraming::RawPacket,
+        ))),
         false,
     )
     .await

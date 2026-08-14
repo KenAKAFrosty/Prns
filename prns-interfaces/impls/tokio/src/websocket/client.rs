@@ -6,7 +6,7 @@ use tokio_tungstenite::connect_async_with_config;
 use crate::reconnect::ReconnectPolicy;
 use crate::websocket::framing;
 use prns_core::interfaces::websocket;
-use prns_core::interfaces::websocket::WebSocketWireFraming;
+use prns_core::interfaces::websocket::WebSocketFramingSelection;
 use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{
     ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
@@ -24,7 +24,7 @@ pub struct WebSocketClientInterface {
     channel_tag: Vec<u8>,
     policy: EffectiveInterfacePolicy,
     reconnect_policy: ReconnectPolicy,
-    wire_framing: WebSocketWireFraming,
+    framing_selection: WebSocketFramingSelection,
     status: TokioInterfaceStatus,
 }
 
@@ -34,16 +34,16 @@ impl WebSocketClientInterface {
         target: String,
         bitrate: BitrateBps,
         reconnect_policy: ReconnectPolicy,
-        wire_framing: WebSocketWireFraming,
+        framing_selection: WebSocketFramingSelection,
     ) -> Self {
-        let channel_tag = channel_tag(&target, wire_framing);
+        let channel_tag = channel_tag(&target, framing_selection);
         let id = InterfaceId::from_channel_tag(InterfaceKind::WebSocketClient, &channel_tag);
         Self::with_id_and_policy(
             id,
             target,
             websocket::policy_for_bitrate(bitrate),
             reconnect_policy,
-            wire_framing,
+            framing_selection,
         )
     }
 
@@ -52,11 +52,11 @@ impl WebSocketClientInterface {
         target: String,
         policy: EffectiveInterfacePolicy,
         reconnect_policy: ReconnectPolicy,
-        wire_framing: WebSocketWireFraming,
+        framing_selection: WebSocketFramingSelection,
     ) -> Self {
-        let channel_tag = channel_tag(&target, wire_framing);
+        let channel_tag = channel_tag(&target, framing_selection);
         let id = InterfaceId::from_channel_tag(InterfaceKind::WebSocketClient, &channel_tag);
-        Self::with_id_and_policy(id, target, policy, reconnect_policy, wire_framing)
+        Self::with_id_and_policy(id, target, policy, reconnect_policy, framing_selection)
     }
 
     #[must_use]
@@ -65,14 +65,14 @@ impl WebSocketClientInterface {
         target: String,
         bitrate: BitrateBps,
         reconnect_policy: ReconnectPolicy,
-        wire_framing: WebSocketWireFraming,
+        framing_selection: WebSocketFramingSelection,
     ) -> Self {
         Self::with_id_and_policy(
             id,
             target,
             websocket::policy_for_bitrate(bitrate),
             reconnect_policy,
-            wire_framing,
+            framing_selection,
         )
     }
 
@@ -82,16 +82,16 @@ impl WebSocketClientInterface {
         target: String,
         policy: EffectiveInterfacePolicy,
         reconnect_policy: ReconnectPolicy,
-        wire_framing: WebSocketWireFraming,
+        framing_selection: WebSocketFramingSelection,
     ) -> Self {
-        let channel_tag = channel_tag(&target, wire_framing);
+        let channel_tag = channel_tag(&target, framing_selection);
         Self {
             id,
             target,
             channel_tag,
             policy,
             reconnect_policy,
-            wire_framing,
+            framing_selection,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
         }
     }
@@ -130,7 +130,7 @@ impl Interface for WebSocketClientInterface {
                 WEBSOCKET_HANDSHAKE_TIMEOUT,
                 connect_async_with_config(
                     self.target.as_str(),
-                    Some(framing::config(self.wire_framing)),
+                    Some(framing::config(self.framing_selection)),
                     false,
                 ),
             );
@@ -166,7 +166,7 @@ impl Interface for WebSocketClientInterface {
                         framing::SessionConfig::new(
                             self.policy.bitrate,
                             started,
-                            self.wire_framing,
+                            self.framing_selection,
                         ),
                     )
                     .await;
@@ -190,9 +190,9 @@ impl Interface for WebSocketClientInterface {
     }
 }
 
-fn channel_tag(target: &str, framing: WebSocketWireFraming) -> Vec<u8> {
+fn channel_tag(target: &str, selection: WebSocketFramingSelection) -> Vec<u8> {
     let mut tag = target.as_bytes().to_vec();
-    tag.extend_from_slice(framing.channel_tag_suffix());
+    tag.extend_from_slice(selection.channel_tag_suffix());
     tag
 }
 
@@ -213,6 +213,7 @@ impl prns_core::interfaces::ReportsStatus for WebSocketClientInterface {
 mod tests {
     use super::*;
     use futures_util::{SinkExt, StreamExt};
+    use prns_core::interfaces::websocket::WebSocketWireFraming;
     use tokio::net::TcpListener;
     use tokio::sync::mpsc::{self, UnboundedSender};
     use tokio_tungstenite::accept_async;
@@ -282,7 +283,7 @@ mod tests {
             std::format!("ws://{addr}/prns"),
             websocket::WEBSOCKET_BITRATE_ESTIMATE,
             ReconnectPolicy::STANDARD,
-            WebSocketWireFraming::RawPacket,
+            WebSocketFramingSelection::Fixed(WebSocketWireFraming::RawPacket),
         );
         tokio::spawn(interface.run(seam));
 
@@ -350,7 +351,9 @@ mod tests {
             Duration::from_secs(if cfg!(windows) { 20 } else { 2 }),
             connect_async_with_config(
                 std::format!("wss://localhost:{}/prns", addr.port()),
-                Some(framing::config(WebSocketWireFraming::RawPacket)),
+                Some(framing::config(WebSocketFramingSelection::Fixed(
+                    WebSocketWireFraming::RawPacket,
+                ))),
                 false,
             ),
         )

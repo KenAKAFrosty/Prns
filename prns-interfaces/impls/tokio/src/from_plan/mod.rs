@@ -492,7 +492,7 @@ async fn stand_up<'a>(
             }
             #[cfg(not(feature = "websocket"))]
             {
-                let _ = target;
+                let _ = (target, framing);
                 Err(PlanFailure::InterfaceNotBuilt(
                     PlannedInterfaceKind::PrnsWebSocketClient,
                 ))
@@ -505,7 +505,7 @@ async fn stand_up<'a>(
             }
             #[cfg(not(feature = "websocket"))]
             {
-                let _ = listener;
+                let _ = (listener, framing);
                 Err(PlanFailure::InterfaceNotBuilt(
                     PlannedInterfaceKind::PrnsWebSocketServer,
                 ))

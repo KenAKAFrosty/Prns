@@ -1,17 +1,11 @@
-#[cfg(feature = "websocket")]
 use prns_config::{TcpListenPlan, WebSocketTargetPlan};
 
-#[cfg(feature = "websocket")]
 use crate::host_network::resolve_tcp_listener;
-#[cfg(feature = "websocket")]
 use crate::websocket::{WebSocketClientInterface, WebSocketServer};
-#[cfg(feature = "websocket")]
-use prns_core::interfaces::websocket::WebSocketWireFraming;
+use prns_core::interfaces::websocket::{WebSocketFramingSelection, WebSocketWireFraming};
 
-#[cfg(feature = "websocket")]
 use super::{AttachmentResult, InterfaceConstruction, RECONNECT_POLICY};
 
-#[cfg(feature = "websocket")]
 pub(super) fn stand_up_client(
     construction: InterfaceConstruction<'_>,
     target: &WebSocketTargetPlan,
@@ -21,13 +15,12 @@ pub(super) fn stand_up_client(
         target.as_str().to_string(),
         construction.interface.policy,
         RECONNECT_POLICY,
-        framing,
+        WebSocketFramingSelection::Fixed(framing),
     );
     let attached = construction.attach(websocket);
     Ok(attached.id())
 }
 
-#[cfg(feature = "websocket")]
 pub(super) async fn stand_up_server(
     construction: InterfaceConstruction<'_>,
     listener: &TcpListenPlan,
@@ -35,7 +28,12 @@ pub(super) async fn stand_up_server(
 ) -> AttachmentResult {
     let opened = match resolve_tcp_listener(listener).await {
         Ok(bind) => {
-            WebSocketServer::bind_with_policy(bind, construction.interface.policy, framing).await
+            WebSocketServer::bind_with_policy(
+                bind,
+                construction.interface.policy,
+                WebSocketFramingSelection::Fixed(framing),
+            )
+            .await
         }
         Err(error) => Err(error),
     };

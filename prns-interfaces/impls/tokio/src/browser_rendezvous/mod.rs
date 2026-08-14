@@ -15,7 +15,7 @@ use tokio::task::JoinSet;
 
 use prns_core::interfaces::browser_rendezvous as contract;
 use prns_core::interfaces::browser_rendezvous::BrowserRendezvousId;
-use prns_core::interfaces::websocket::WebSocketWireFraming;
+use prns_core::interfaces::websocket::{WebSocketFramingSelection, WebSocketWireFraming};
 use prns_core::interfaces::{EffectiveInterfacePolicy, InterfaceKind, ReportsStatus};
 use prns_runtime::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
 
@@ -172,7 +172,7 @@ impl InterfaceSupervisor for BrowserRendezvous {
                         channel_tag,
                         prepared.socket,
                         self.policy,
-                        WebSocketWireFraming::RawPacket,
+                        WebSocketFramingSelection::Fixed(WebSocketWireFraming::RawPacket),
                     );
                     let _ = fleet.add(connection);
                 }
