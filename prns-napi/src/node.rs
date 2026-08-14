@@ -260,7 +260,7 @@ pub struct InterfaceConfigSpec {
     pub peers: Option<Vec<String>>,
     pub connectable: Option<bool>,
     pub url: Option<String>,
-    #[napi(ts_type = "'RawPacket' | 'Hdlc' | 'Kiss'")]
+    #[napi(ts_type = "'RawPacket' | 'Hdlc' | 'Kiss' | 'Auto'")]
     pub framing: Option<String>,
 }
 

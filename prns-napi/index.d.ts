@@ -300,7 +300,7 @@ export interface InterfaceConfigSpec {
   peers?: Array<string>
   connectable?: boolean
   url?: string
-  framing?: 'RawPacket' | 'Hdlc' | 'Kiss'
+  framing?: 'RawPacket' | 'Hdlc' | 'Kiss' | 'Auto'
 }
 
 export interface InterfaceInfo {

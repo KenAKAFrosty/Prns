@@ -83,6 +83,14 @@ test('every shared typed interface fixture marshals without touching hardware', 
 test('websocket framing selection is required and closed before attachment', async () => {
   const node = startNode({}, () => {});
   try {
+    assert.equal(
+      node.previewValidateInterfaceConfig({
+        kind: 'WebSocketClient',
+        target: 'ws://fixture.invalid/client',
+        framing: 'Auto'
+      }),
+      'WebSocketClient'
+    );
     assert.throws(
       () =>
         node.previewValidateInterfaceConfig({
