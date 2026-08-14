@@ -96,7 +96,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "HEALTHY has no hard failures or bounded-table pressure. DEGRADED covers route eviction or table-capacity exhaustion. Interface availability is informational and shown separately. FAULT means a hard runtime failure occurred in five minutes. Host integrity is also independent.",
+      "description": "HEALTHY has no hard failures or bounded-capacity pressure. DEGRADED covers route eviction, table-capacity exhaustion, or egress-lane shedding under backpressure. Interface availability is informational and shown separately. FAULT means a hard runtime failure occurred in five minutes. Host integrity is also independent.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -179,7 +179,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "3 * ((max(last_over_time(prns_runtime_up[2m])) or vector(0)) == bool 0) + ((max(last_over_time(prns_runtime_up[2m])) or vector(0)) > bool 0) * clamp_max(2 * (((sum(increase(prns_egress_frames_total{outcome=~\"lane_full|lane_missing\"}[5m])) or vector(0)) + (sum(increase(prns_announces_egress_total{outcome=~\"ifac_rejected|pacer_rejected\"}[5m])) or vector(0)) + (sum(increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) or vector(0)) + (sum(increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) or vector(0)) + (sum(increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) or vector(0)) + (sum(increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) or vector(0)) + (sum(increase(prns_links_interface_mismatches_total[5m])) or vector(0))) > bool 0) + ((((sum(increase(prns_routes_removals_total{cause=\"evicted\"}[5m])) or vector(0)) > bool 0) + ((sum(increase(prns_engine_ignored_packets_total{reason=\"capacity_exhausted\"}[5m])) or vector(0)) > bool 0)) > bool 0), 2)",
+          "expr": "3 * ((max(last_over_time(prns_runtime_up[2m])) or vector(0)) == bool 0) + ((max(last_over_time(prns_runtime_up[2m])) or vector(0)) > bool 0) * clamp_max(2 * (((sum(increase(prns_egress_frames_total{outcome=\"lane_missing\"}[5m])) or vector(0)) + (sum(increase(prns_announces_egress_total{outcome=~\"ifac_rejected|pacer_rejected\"}[5m])) or vector(0)) + (sum(increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) or vector(0)) + (sum(increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) or vector(0)) + (sum(increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) or vector(0)) + (sum(increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) or vector(0)) + (sum(increase(prns_links_interface_mismatches_total[5m])) or vector(0))) > bool 0) + ((((sum(increase(prns_routes_removals_total{cause=\"evicted\"}[5m])) or vector(0)) > bool 0) + ((sum(increase(prns_engine_ignored_packets_total{reason=\"capacity_exhausted\"}[5m])) or vector(0)) > bool 0) + ((sum(increase(prns_egress_frames_total{outcome=\"lane_full\"}[5m])) or vector(0)) > bool 0)) > bool 0), 2)",
           "instant": true,
           "legendFormat": "Runtime",
           "range": false,
@@ -257,7 +257,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "((sum(increase(prns_egress_frames_total{outcome=~\"lane_full|lane_missing\"}[5m])) or vector(0)) + (sum(increase(prns_announces_egress_total{outcome=~\"ifac_rejected|pacer_rejected\"}[5m])) or vector(0)) + (sum(increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) or vector(0)) + (sum(increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) or vector(0)) + (sum(increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) or vector(0)) + (sum(increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) or vector(0)) + (sum(increase(prns_links_interface_mismatches_total[5m])) or vector(0)))",
+          "expr": "((sum(increase(prns_egress_frames_total{outcome=\"lane_missing\"}[5m])) or vector(0)) + (sum(increase(prns_announces_egress_total{outcome=~\"ifac_rejected|pacer_rejected\"}[5m])) or vector(0)) + (sum(increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) or vector(0)) + (sum(increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) or vector(0)) + (sum(increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) or vector(0)) + (sum(increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) or vector(0)) + (sum(increase(prns_links_interface_mismatches_total[5m])) or vector(0)))",
           "instant": true,
           "legendFormat": "Signals",
           "range": false,
@@ -272,7 +272,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Number of active bounded-table pressure conditions: route eviction or capacity exhaustion. Interface availability and cryptographic-work deferrals do not change Operational state.",
+      "description": "Number of active bounded-capacity pressure conditions: route eviction, capacity exhaustion, or egress-lane shed. Interface availability and cryptographic-work deferrals do not change Operational state.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -335,7 +335,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "(((sum(increase(prns_routes_removals_total{cause=\"evicted\"}[5m])) or vector(0)) > bool 0) + ((sum(increase(prns_engine_ignored_packets_total{reason=\"capacity_exhausted\"}[5m])) or vector(0)) > bool 0))",
+          "expr": "(((sum(increase(prns_routes_removals_total{cause=\"evicted\"}[5m])) or vector(0)) > bool 0) + ((sum(increase(prns_engine_ignored_packets_total{reason=\"capacity_exhausted\"}[5m])) or vector(0)) > bool 0) + ((sum(increase(prns_egress_frames_total{outcome=\"lane_full\"}[5m])) or vector(0)) > bool 0))",
           "instant": true,
           "legendFormat": "Signals",
           "range": false,
@@ -551,7 +551,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "(label_join(label_replace(sum by (operation, outcome) (increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) > 0, \"kind\", \"operation\", \"operation\", \".*\"), \"signal\", \" · \", \"kind\", \"operation\", \"outcome\") or label_join(label_replace(sum by (cause) (increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) > 0, \"kind\", \"resource\", \"cause\", \".*\"), \"signal\", \" · \", \"kind\", \"cause\") or label_join(label_replace(sum by (reason) (increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) > 0, \"kind\", \"link\", \"reason\", \".*\"), \"signal\", \" · \", \"kind\", \"reason\") or label_replace(sum(increase(prns_links_interface_mismatches_total[5m])) > 0, \"signal\", \"link · interface mismatch\", \"__name__\", \".*\") or label_join(label_replace(sum by (outcome) (increase(prns_egress_frames_total{outcome=~\"lane_full|lane_missing\"}[5m])) > 0, \"kind\", \"egress\", \"outcome\", \".*\"), \"signal\", \" · \", \"kind\", \"outcome\") or label_join(label_replace(sum by (origin, outcome) (increase(prns_announces_egress_total{outcome=~\"ifac_rejected|pacer_rejected\"}[5m])) > 0, \"kind\", \"announce\", \"origin\", \".*\"), \"signal\", \" · \", \"kind\", \"origin\", \"outcome\") or label_join(label_replace(sum by (outcome) (increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) > 0, \"kind\", \"announce ingress\", \"outcome\", \".*\"), \"signal\", \" · \", \"kind\", \"outcome\")) or on() label_replace(((sum(increase(prns_egress_frames_total{outcome=~\"lane_full|lane_missing\"}[5m])) or vector(0)) + (sum(increase(prns_announces_egress_total{outcome=~\"ifac_rejected|pacer_rejected\"}[5m])) or vector(0)) + (sum(increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) or vector(0)) + (sum(increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) or vector(0)) + (sum(increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) or vector(0)) + (sum(increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) or vector(0)) + (sum(increase(prns_links_interface_mismatches_total[5m])) or vector(0))) == 0, \"signal\", \"No hard failures\", \"__name__\", \".*\")",
+          "expr": "(label_join(label_replace(sum by (operation, outcome) (increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) > 0, \"kind\", \"operation\", \"operation\", \".*\"), \"signal\", \" · \", \"kind\", \"operation\", \"outcome\") or label_join(label_replace(sum by (cause) (increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) > 0, \"kind\", \"resource\", \"cause\", \".*\"), \"signal\", \" · \", \"kind\", \"cause\") or label_join(label_replace(sum by (reason) (increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) > 0, \"kind\", \"link\", \"reason\", \".*\"), \"signal\", \" · \", \"kind\", \"reason\") or label_replace(sum(increase(prns_links_interface_mismatches_total[5m])) > 0, \"signal\", \"link · interface mismatch\", \"__name__\", \".*\") or label_join(label_replace(sum by (outcome) (increase(prns_egress_frames_total{outcome=\"lane_missing\"}[5m])) > 0, \"kind\", \"egress\", \"outcome\", \".*\"), \"signal\", \" · \", \"kind\", \"outcome\") or label_join(label_replace(sum by (origin, outcome) (increase(prns_announces_egress_total{outcome=~\"ifac_rejected|pacer_rejected\"}[5m])) > 0, \"kind\", \"announce\", \"origin\", \".*\"), \"signal\", \" · \", \"kind\", \"origin\", \"outcome\") or label_join(label_replace(sum by (outcome) (increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) > 0, \"kind\", \"announce ingress\", \"outcome\", \".*\"), \"signal\", \" · \", \"kind\", \"outcome\")) or on() label_replace(((sum(increase(prns_egress_frames_total{outcome=\"lane_missing\"}[5m])) or vector(0)) + (sum(increase(prns_announces_egress_total{outcome=~\"ifac_rejected|pacer_rejected\"}[5m])) or vector(0)) + (sum(increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) or vector(0)) + (sum(increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) or vector(0)) + (sum(increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) or vector(0)) + (sum(increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) or vector(0)) + (sum(increase(prns_links_interface_mismatches_total[5m])) or vector(0))) == 0, \"signal\", \"No hard failures\", \"__name__\", \".*\")",
           "instant": true,
           "legendFormat": "{{signal}}",
           "range": false,
@@ -566,7 +566,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Route eviction and capacity exhaustion are bounded-table pressure signals. Interface availability and cryptographic-work deferrals are deliberately excluded.",
+      "description": "Route eviction, capacity exhaustion, and egress-lane shed are bounded-capacity pressure signals. Egress lane shed counts frames dropped because a full per-interface send queue shed by design; peers recover them end to end. Interface availability and cryptographic-work deferrals are deliberately excluded.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -635,9 +635,21 @@
           "legendFormat": "Capacity exhausted",
           "range": false,
           "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "(sum(increase(prns_egress_frames_total{outcome=\"lane_full\"}[5m])) or vector(0))",
+          "instant": true,
+          "legendFormat": "Egress lane shed",
+          "range": false,
+          "refId": "C"
         }
       ],
-      "title": "Bounded-table pressure · 5m",
+      "title": "Bounded-capacity pressure · 5m",
       "type": "stat"
     },
     {
