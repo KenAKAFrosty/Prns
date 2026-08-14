@@ -111,12 +111,13 @@ const (
 	InterfaceModeInternal InterfaceMode = 7
 )
 
-type WebSocketWireFraming uint32
+type WebSocketFramingSelection uint32
 
 const (
-	WebSocketWireFramingRawPacket WebSocketWireFraming = 1
-	WebSocketWireFramingHdlc WebSocketWireFraming = 2
-	WebSocketWireFramingKiss WebSocketWireFraming = 3
+	WebSocketFramingSelectionRawPacket WebSocketFramingSelection = 1
+	WebSocketFramingSelectionHdlc WebSocketFramingSelection = 2
+	WebSocketFramingSelectionKiss WebSocketFramingSelection = 3
+	WebSocketFramingSelectionAuto WebSocketFramingSelection = 4
 )
 
 type InterfaceHealth uint32
@@ -750,14 +751,14 @@ func (InterfaceConfigAutomaticBluetoothLe) interfaceConfig() {}
 
 type InterfaceConfigWebSocketClient struct {
 	Target string
-	Framing WebSocketWireFraming
+	Framing WebSocketFramingSelection
 }
 
 func (InterfaceConfigWebSocketClient) interfaceConfig() {}
 
 type InterfaceConfigWebSocketServer struct {
 	Bind string
-	Framing WebSocketWireFraming
+	Framing WebSocketFramingSelection
 }
 
 func (InterfaceConfigWebSocketServer) interfaceConfig() {}

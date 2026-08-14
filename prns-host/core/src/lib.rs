@@ -46,7 +46,7 @@ pub use generated::{
     InterfaceKind, InterfaceMode, LifecyclePhase, LinkClosedReason, MulticastAddressType,
     PersistenceConfigKind, PersistenceFlushCause, PersistenceFlushTarget, RequestPolicy,
     ResourceCompressionKind, ResourceStrategyKind, ResponseTimeoutKind, SerialDataBits,
-    SerialParity, SerialStopBits, Status, StopReason, WebSocketWireFraming,
+    SerialParity, SerialStopBits, Status, StopReason, WebSocketFramingSelection,
     BALANCED_APPLICATION_EVENTS, BALANCED_DIAGNOSTICS, BALANCED_PENDING_COMMANDS,
     BALANCED_RETAINED_EVENT_BYTES, DESTINATION_HASH_LENGTH, HOST_OPERATION_NAMES, HOST_SCHEMA_ABI,
     HOST_SCHEMA_PRODUCT_VERSION, HOST_SCHEMA_VERSION, IDENTITY_HASH_LENGTH, IDENTITY_SECRET_LENGTH,

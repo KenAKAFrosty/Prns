@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 
 use crate::{
     Bitrate, DiscoveryScope, InterfaceKind, MulticastAddressType, SerialDataBits, SerialParity,
-    SerialStopBits, WebSocketWireFraming,
+    SerialStopBits, WebSocketFramingSelection,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -120,11 +120,11 @@ pub enum InterfaceConfig {
     AutomaticBluetoothLe,
     WebSocketClient {
         target: String,
-        framing: WebSocketWireFraming,
+        framing: WebSocketFramingSelection,
     },
     WebSocketServer {
         bind: String,
-        framing: WebSocketWireFraming,
+        framing: WebSocketFramingSelection,
     },
     BrowserRendezvous {
         url: String,
@@ -446,11 +446,11 @@ mod tests {
             InterfaceConfig::AutomaticBluetoothLe,
             InterfaceConfig::WebSocketClient {
                 target: "wss://example.com/prns".into(),
-                framing: WebSocketWireFraming::Kiss,
+                framing: WebSocketFramingSelection::Auto,
             },
             InterfaceConfig::WebSocketServer {
                 bind: "127.0.0.1:0".into(),
-                framing: WebSocketWireFraming::Hdlc,
+                framing: WebSocketFramingSelection::Hdlc,
             },
             InterfaceConfig::BrowserRendezvous {
                 url: "ws://localhost:1/prns".into(),
@@ -467,7 +467,7 @@ mod tests {
         assert_eq!(
             InterfaceConfig::WebSocketClient {
                 target: "https://example.com".into(),
-                framing: WebSocketWireFraming::RawPacket,
+                framing: WebSocketFramingSelection::RawPacket,
             }
             .validate(),
             Err(InterfaceConfigError::InvalidWebSocketUrl)

@@ -672,11 +672,11 @@ def _marshal_interface(
     elif isinstance(value, g.InterfaceConfigWebSocketClient):
         result.kind = g.InterfaceKind.WEB_SOCKET_CLIENT
         result.target = arena.string(value.target)
-        result.websocket_wire_framing = value.framing
+        result.websocket_framing_selection = value.framing
     elif isinstance(value, g.InterfaceConfigWebSocketServer):
         result.kind = g.InterfaceKind.WEB_SOCKET_SERVER
         result.bind = arena.string(value.bind)
-        result.websocket_wire_framing = value.framing
+        result.websocket_framing_selection = value.framing
     elif isinstance(value, g.InterfaceConfigBrowserRendezvous):
         result.kind = g.InterfaceKind.BROWSER_RENDEZVOUS
         result.url = arena.string(value.url)

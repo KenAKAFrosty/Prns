@@ -377,24 +377,26 @@ impl TryFrom<u32> for InterfaceMode {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum WebSocketWireFraming {
+pub enum WebSocketFramingSelection {
     RawPacket = 1,
     Hdlc = 2,
     Kiss = 3,
+    Auto = 4,
 }
 
-impl WebSocketWireFraming {
+impl WebSocketFramingSelection {
     #[must_use]
     pub const fn contract_name(self) -> &'static str {
         match self {
             Self::RawPacket => "RawPacket",
             Self::Hdlc => "Hdlc",
             Self::Kiss => "Kiss",
+            Self::Auto => "Auto",
         }
     }
 }
 
-impl TryFrom<u32> for WebSocketWireFraming {
+impl TryFrom<u32> for WebSocketFramingSelection {
     type Error = ();
 
     fn try_from(value: u32) -> Result<Self, Self::Error> {
@@ -402,6 +404,7 @@ impl TryFrom<u32> for WebSocketWireFraming {
             1 => Ok(Self::RawPacket),
             2 => Ok(Self::Hdlc),
             3 => Ok(Self::Kiss),
+            4 => Ok(Self::Auto),
             _ => Err(()),
         }
     }
@@ -1699,11 +1702,12 @@ mod tests {
 
     #[rustfmt::skip]
     #[test]
-    fn web_socket_wire_framing_values_match_the_contract() {
-        assert_contract_enum!(WebSocketWireFraming, [
-            (WebSocketWireFraming::RawPacket, 1, "RawPacket"),
-            (WebSocketWireFraming::Hdlc, 2, "Hdlc"),
-            (WebSocketWireFraming::Kiss, 3, "Kiss"),
+    fn web_socket_framing_selection_values_match_the_contract() {
+        assert_contract_enum!(WebSocketFramingSelection, [
+            (WebSocketFramingSelection::RawPacket, 1, "RawPacket"),
+            (WebSocketFramingSelection::Hdlc, 2, "Hdlc"),
+            (WebSocketFramingSelection::Kiss, 3, "Kiss"),
+            (WebSocketFramingSelection::Auto, 4, "Auto"),
         ]);
     }
 

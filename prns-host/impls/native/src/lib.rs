@@ -63,7 +63,7 @@ use prns_host::{
     RequestPathHash, RequestPolicy, ResourceAvailable, ResourceCompression, ResourceHash,
     ResourceNeedsDecompression, ResourceSegmentAvailable, ResourceStrategy, ResourceStreamId,
     ResponseAvailable, ResponseSegmentAvailable, ResponseTimeout, RouteSnapshot,
-    RuntimeHealthSnapshot, SingleDelivery, WebSocketWireFraming, SAFE_INT_MAX, SAFE_INT_MIN,
+    RuntimeHealthSnapshot, SingleDelivery, WebSocketFramingSelection, SAFE_INT_MAX, SAFE_INT_MIN,
     SAFE_UINT_MAX,
 };
 use tokio::io::{AsyncRead, ReadBuf};
@@ -1950,7 +1950,7 @@ fn reference_interface(config: &InterfaceConfig) -> Result<ReferenceInterface, C
             "PrnsWebSocketClient",
             ReferenceConfigParams::PrnsWebSocketClient {
                 target: Some(target.clone()),
-                framing: Some(websocket_wire_framing(*framing).to_string()),
+                framing: Some(websocket_framing_selection(*framing).to_string()),
             },
             None,
         ),
@@ -1964,7 +1964,7 @@ fn reference_interface(config: &InterfaceConfig) -> Result<ReferenceInterface, C
                     device: None,
                     port: None,
                     prefer_ipv6: None,
-                    framing: Some(websocket_wire_framing(*framing).to_string()),
+                    framing: Some(websocket_framing_selection(*framing).to_string()),
                 },
                 None,
             )
@@ -1978,11 +1978,12 @@ fn reference_interface(config: &InterfaceConfig) -> Result<ReferenceInterface, C
     Ok(interface)
 }
 
-fn websocket_wire_framing(framing: WebSocketWireFraming) -> &'static str {
+fn websocket_framing_selection(framing: WebSocketFramingSelection) -> &'static str {
     match framing {
-        WebSocketWireFraming::RawPacket => "raw",
-        WebSocketWireFraming::Hdlc => "hdlc",
-        WebSocketWireFraming::Kiss => "kiss",
+        WebSocketFramingSelection::RawPacket => "raw",
+        WebSocketFramingSelection::Hdlc => "hdlc",
+        WebSocketFramingSelection::Kiss => "kiss",
+        WebSocketFramingSelection::Auto => "auto",
     }
 }
 

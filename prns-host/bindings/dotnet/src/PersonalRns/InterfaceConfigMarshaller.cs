@@ -62,14 +62,14 @@ internal static class InterfaceConfigMarshaller
             StructSize = Size,
             Kind = InterfaceKind.WebSocketClient,
             Target = arena.String(client.Target),
-            WebSocketWireFraming = client.Framing,
+            WebSocketFramingSelection = client.Framing,
         },
         server => new Native.InterfaceConfig
         {
             StructSize = Size,
             Kind = InterfaceKind.WebSocketServer,
             Bind = arena.String(server.Bind),
-            WebSocketWireFraming = server.Framing,
+            WebSocketFramingSelection = server.Framing,
         },
         rendezvous => new Native.InterfaceConfig
         {

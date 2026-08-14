@@ -80,7 +80,7 @@ test('every shared typed interface fixture marshals without touching hardware', 
   }
 });
 
-test('websocket framing is required and closed before attachment', async () => {
+test('websocket framing selection is required and closed before attachment', async () => {
   const node = startNode({}, () => {});
   try {
     assert.throws(

@@ -56,7 +56,8 @@ use prns_host::{
     InterfaceRoutingPolicy as StableInterfaceRoutingPolicy, MultiRNodeMemberConfig,
     MulticastAddressType, PersistenceConfig, PrnsLimits, RNodeRadioConfig, RequestHandlerConfig,
     RequestPolicy as HostRequestPolicy, ResourceStrategy as HostResourceStrategy, SerialDataBits,
-    SerialLineConfig, SerialParity, SerialStopBits, SingleDestinationConfig, WebSocketWireFraming,
+    SerialLineConfig, SerialParity, SerialStopBits, SingleDestinationConfig,
+    WebSocketFramingSelection,
 };
 use prns_host_native::{
     CommandWait, NativeHost, NativeSnapshotError, NativeStartError, NativeSubmitError,
@@ -1010,13 +1011,14 @@ fn multicast_address_type(value: Option<String>) -> CodeResult<Option<MulticastA
         .transpose()
 }
 
-fn websocket_wire_framing(value: Option<String>) -> CodeResult<WebSocketWireFraming> {
+fn websocket_framing_selection(value: Option<String>) -> CodeResult<WebSocketFramingSelection> {
     match required_interface_field(value, "framing")?.as_str() {
-        "RawPacket" => Ok(WebSocketWireFraming::RawPacket),
-        "Hdlc" => Ok(WebSocketWireFraming::Hdlc),
-        "Kiss" => Ok(WebSocketWireFraming::Kiss),
+        "RawPacket" => Ok(WebSocketFramingSelection::RawPacket),
+        "Hdlc" => Ok(WebSocketFramingSelection::Hdlc),
+        "Kiss" => Ok(WebSocketFramingSelection::Kiss),
+        "Auto" => Ok(WebSocketFramingSelection::Auto),
         other => Err(interface_config_error(format!(
-            "unknown WebSocket wire framing {other:?}"
+            "unknown WebSocket framing selection {other:?}"
         ))),
     }
 }
@@ -1157,11 +1159,11 @@ fn stable_interface_config(spec: InterfaceConfigSpec) -> CodeResult<StableInterf
         "AutomaticBluetoothLe" => StableInterfaceConfig::AutomaticBluetoothLe,
         "WebSocketClient" => StableInterfaceConfig::WebSocketClient {
             target: required_interface_field(spec.target, "target")?,
-            framing: websocket_wire_framing(spec.framing)?,
+            framing: websocket_framing_selection(spec.framing)?,
         },
         "WebSocketServer" => StableInterfaceConfig::WebSocketServer {
             bind: required_interface_field(spec.bind, "bind")?,
-            framing: websocket_wire_framing(spec.framing)?,
+            framing: websocket_framing_selection(spec.framing)?,
         },
         "BrowserRendezvous" => StableInterfaceConfig::BrowserRendezvous {
             url: required_interface_field(spec.url, "url")?,

@@ -279,11 +279,11 @@ static void MarshalInterfaceFixtures()
         new InterfaceConfig.AutomaticBluetoothLe(),
         new InterfaceConfig.WebSocketClient(
             "ws://fixture.invalid/client",
-            WebSocketWireFraming.Kiss
+            WebSocketFramingSelection.Auto
         ),
         new InterfaceConfig.WebSocketServer(
             "127.0.0.1:4246",
-            WebSocketWireFraming.Hdlc
+            WebSocketFramingSelection.Hdlc
         ),
         new InterfaceConfig.BrowserRendezvous("ws://fixture.invalid/rendezvous")
     );

@@ -91,10 +91,11 @@ end
     InterfaceModeInternal = 7
 end
 
-@enum WebSocketWireFraming::UInt32 begin
-    WebSocketWireFramingRawPacket = 1
-    WebSocketWireFramingHdlc = 2
-    WebSocketWireFramingKiss = 3
+@enum WebSocketFramingSelection::UInt32 begin
+    WebSocketFramingSelectionRawPacket = 1
+    WebSocketFramingSelectionHdlc = 2
+    WebSocketFramingSelectionKiss = 3
+    WebSocketFramingSelectionAuto = 4
 end
 
 @enum InterfaceHealth::UInt32 begin
@@ -714,12 +715,12 @@ end
 
 struct InterfaceConfigWebSocketClient <: InterfaceConfig
     target::String
-    framing::WebSocketWireFraming
+    framing::WebSocketFramingSelection
 end
 
 struct InterfaceConfigWebSocketServer <: InterfaceConfig
     bind::String
-    framing::WebSocketWireFraming
+    framing::WebSocketFramingSelection
 end
 
 struct InterfaceConfigBrowserRendezvous <: InterfaceConfig

@@ -110,7 +110,7 @@
     {
       "kind": "WebSocketClient",
       "target": "ws://fixture.invalid/client",
-      "framing": "Kiss"
+      "framing": "Auto"
     },
     {
       "kind": "WebSocketServer",

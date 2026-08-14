@@ -184,9 +184,9 @@ interface_configs = InterfaceConfig[
     InterfaceConfigAutomaticBluetoothLe(),
     InterfaceConfigWebSocketClient(
         "ws://fixture.invalid/client",
-        WebSocketWireFramingKiss,
+        WebSocketFramingSelectionAuto,
     ),
-    InterfaceConfigWebSocketServer("127.0.0.1:4246", WebSocketWireFramingHdlc),
+    InterfaceConfigWebSocketServer("127.0.0.1:4246", WebSocketFramingSelectionHdlc),
     InterfaceConfigBrowserRendezvous("ws://fixture.invalid/rendezvous"),
 ]
 interface_kinds = [
