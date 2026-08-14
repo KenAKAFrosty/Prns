@@ -1157,7 +1157,13 @@ inputs = [
   "validation/interop/websocket_ecosystem_characterization.py",
   "validation/interop/peers/websocket_ecosystem/aerik.mjs",
   "validation/interop/peers/websocket_ecosystem/bergie.mjs",
+  "validation/interop/peers/websocket_ecosystem/bergie_prns.mjs",
   "validation/interop/peers/websocket_ecosystem/nilu96.py",
+  "validation/integration/Cargo.toml",
+  "validation/integration/Cargo.lock",
+  "validation/integration/examples/websocket_bergie_peer.rs",
+  "prns-core/src/interfaces/websocket",
+  "prns-interfaces/impls/tokio/src/websocket",
 ]
 artifacts = "validation-artifacts/results/interop-websocket-ecosystem-characterization"
 

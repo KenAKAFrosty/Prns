@@ -13,6 +13,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PEERS = ROOT / "validation" / "interop" / "peers" / "websocket_ecosystem"
+INTEGRATION_MANIFEST = ROOT / "validation" / "integration" / "Cargo.toml"
 PACKET_HEX = "0000000102030405060708090a0b0c0d0e0f00c0db7e7d42"
 KISS_HEX = "c0000000000102030405060708090a0b0c0d0e0f00dbdcdbdd7e7d42c0"
 HDLC_HEX = "7e0000000102030405060708090a0b0c0d0e0f00c0db7d5e7d5d427e"
@@ -36,6 +37,7 @@ class Upstream:
     repository: str
     commit: str
     adapter: str | None
+    prns_interop_adapter: str | None = None
     prepare_commands: tuple[tuple[str, ...], ...] = ()
     package_licenses: tuple[PackageLicense, ...] = ()
     file_licenses: tuple[FileLicense, ...] = ()
@@ -47,6 +49,7 @@ UPSTREAMS = (
         repository="https://github.com/bergie/reticulum-js.git",
         commit="30b93f2d0e2ec2e46f0a88db1d704305c68fad8e",
         adapter="bergie.mjs",
+        prns_interop_adapter="bergie_prns.mjs",
         package_licenses=(
             PackageLicense("packages/core/package.json", "EUPL-1.2"),
             PackageLicense(
@@ -221,6 +224,49 @@ def runtime_characterization(upstream: Upstream, repository: Path) -> dict:
     return result
 
 
+def prns_interoperability(upstream: Upstream, repository: Path) -> dict | None:
+    if upstream.prns_interop_adapter is None:
+        return None
+    adapter = PEERS / upstream.prns_interop_adapter
+    for framing in ("raw", "kiss"):
+        output = run(
+            [
+                "cargo",
+                "run",
+                "--quiet",
+                "--manifest-path",
+                str(INTEGRATION_MANIFEST),
+                "--example",
+                "websocket_bergie_peer",
+                "--locked",
+                "--",
+                str(repository),
+                str(adapter),
+                framing,
+            ],
+            ROOT,
+        )
+        expected = f"PASS: bergie {framing} interoperated with Prns auto"
+        if output != expected:
+            raise RuntimeError(
+                f"{upstream.name} {framing} interoperability changed: "
+                f"expected {expected!r}, received {output!r}"
+            )
+    return {
+        "kind": "live_websocket",
+        "raw": {
+            "provisional_raw_received": True,
+            "late_evidence_received_by_prns": True,
+            "resolved_egress_received": True,
+        },
+        "kiss": {
+            "provisional_raw_discarded": True,
+            "late_evidence_received_by_prns": True,
+            "resolved_egress_received": True,
+        },
+    }
+
+
 def firmware_source_characterization(repository: Path) -> dict:
     console = (repository / "WebSocketConsole.cpp").read_text()
     server = (repository / "WebSocketServer.cpp").read_text()
@@ -263,11 +309,15 @@ def characterize(checkout_root: Path) -> dict:
             if upstream.adapter is None
             else runtime_characterization(upstream, repository)
         )
-        results[upstream.name] = {
+        upstream_result = {
             "commit": upstream.commit,
             "repository": upstream.repository,
             "behavior": result,
         }
+        interoperability = prns_interoperability(upstream, repository)
+        if interoperability is not None:
+            upstream_result["prns_interoperability"] = interoperability
+        results[upstream.name] = upstream_result
     return {"schema": 1, "upstreams": results}
 
 
