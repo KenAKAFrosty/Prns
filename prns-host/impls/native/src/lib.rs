@@ -269,6 +269,10 @@ impl Drop for CommandJob {
 
 pub struct NativeHost {
     commands: mpsc::Sender<CommandJob>,
+    // Every current `NativeControl` variant is unix-only, so on other targets the enum is
+    // uninhabited and this sender can never be used. The channel stays platform-neutral so a
+    // future non-unix control needs no re-plumbing.
+    #[cfg_attr(not(unix), allow(dead_code))]
     controls: mpsc::UnboundedSender<NativeControl>,
     uploads: mpsc::Sender<UploadJob>,
     snapshots: mpsc::Sender<SnapshotJob>,
@@ -2110,6 +2114,10 @@ async fn attach_typed_interface(
     })
 }
 
+// On targets where every `NativeControl` variant is compiled out the enum is uninhabited: the
+// match below is legal with no arms, and the parameters only look unused because no arm is left
+// to read them.
+#[cfg_attr(not(unix), allow(unused_variables))]
 async fn execute_control(
     handle: &PrnsNodeHandle,
     attachments: &mut BTreeMap<InterfaceId, Attachment>,
