@@ -13,6 +13,7 @@ pub mod channel_rendezvous;
 pub mod esp_now;
 pub mod i2p;
 pub mod kiss;
+pub mod local_network;
 pub mod lora;
 pub mod pipe;
 pub mod rnode;

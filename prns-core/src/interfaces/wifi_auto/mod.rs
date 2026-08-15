@@ -1,6 +1,17 @@
 mod policy;
 mod protocol;
 
+#[cfg(feature = "alloc")]
+mod discovery;
+
+#[cfg(feature = "alloc")]
+pub use discovery::{
+    AdvertisementInsertion, CandidateInsertion, DiscoveryEndpoint, DiscoveryEndpointError,
+    DiscoveryServiceName, DiscoveryServiceNameError, DiscoverySnapshot, DiscoveryVersion,
+    DiscoveryVersionError, ServiceAdvertisement, DISCOVERY_SERVICE_NAME_MAX_BYTES,
+    DNS_SD_BASE_SERVICE_TYPE, DNS_SD_LOCAL_DOMAIN, DNS_SD_SERVICE_TYPE,
+    SERVICE_ADVERTISEMENT_CANDIDATE_CAPACITY, TXT_VERSION_KEY, TXT_VERSION_VALUE,
+};
 pub use policy::{
     configured_policy, descriptor, policy_for_bitrate, DEFAULTS, HARDWARE_MTU,
     WIFI_BITRATE_GUESS_BPS, WIFI_EMBEDDED_BITRATE_CEILING_BPS, WIFI_HW_MTU_CAP,
