@@ -1,7 +1,8 @@
 #[cfg(feature = "tokio-host")]
 pub use prns_interfaces_tokio::wifi_auto::{
     AutoWifi, AutoWifiDevicePolicy, AutoWifiPeer, AutoWifiSettings, AutoWifiSettingsError,
-    AutoWifiStatus,
+    AutoWifiStatus, DiscoveryParticipation, ServiceDiscovery, ServiceDiscoveryPublisher,
+    SnapshotPublication,
 };
 
 #[cfg(all(feature = "embassy-host", not(feature = "tokio-host")))]
