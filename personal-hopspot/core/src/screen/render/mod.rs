@@ -33,10 +33,24 @@ pub struct RenderFrame<'frame, 'docs> {
     pub animation_ms: u64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SplashContent {
     Brand,
     Starting,
     Connecting,
+}
+
+impl SplashContent {
+    #[cfg(test)]
+    pub(in crate::screen) const ALL: [Self; 3] = [Self::Brand, Self::Starting, Self::Connecting];
+
+    pub(in crate::screen) fn lines(self) -> &'static [&'static str] {
+        match self {
+            Self::Brand => &["Personal", "Hopspot"],
+            Self::Starting => &["starting"],
+            Self::Connecting => &["connecting"],
+        }
+    }
 }
 
 pub fn render<D: DrawTarget<Color = BinaryColor>>(display: &mut D, frame: RenderFrame<'_, '_>) {
@@ -131,14 +145,13 @@ pub fn render<D: DrawTarget<Color = BinaryColor>>(display: &mut D, frame: Render
 }
 
 pub fn splash<D: DrawTarget<Color = BinaryColor>>(display: &mut D, content: SplashContent) {
-    let status = match content {
-        SplashContent::Brand => "Personal Hopspot",
-        SplashContent::Starting => "starting",
-        SplashContent::Connecting => "connecting",
-    };
     let _ = display.clear(BinaryColor::Off);
     draw_title_bar(display, BatteryState::Unknown, 0);
     let style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
-    let _ = Text::with_baseline(status, Point::new(2, CARD_TOP + 4), style, Baseline::Top)
-        .draw(display);
+    let mut y = CARD_TOP + 4;
+    for line in content.lines() {
+        let _ = Text::with_baseline(line, Point::new(SPLASH_TEXT_X, y), style, Baseline::Top)
+            .draw(display);
+        y += SPLASH_LINE_STEP;
+    }
 }
