@@ -17,7 +17,6 @@ fn every_splash_line_fits_its_rendered_font() {
 
 #[test]
 fn the_brand_splash_still_says_the_whole_name() {
-    // Fitting the panel must not be achieved by dropping a word.
     let joined = SplashContent::Brand.lines().join(" ");
     assert_eq!(joined, "Personal Hopspot");
 }

@@ -44,11 +44,6 @@ impl SplashContent {
     #[cfg(test)]
     pub(in crate::screen) const ALL: [Self; 3] = [Self::Brand, Self::Starting, Self::Connecting];
 
-    /// The splash text, already split into lines that fit the panel.
-    ///
-    /// The brand is two lines because it has to be: sixteen characters of
-    /// FONT_6X10 is 96px starting at x=2, and the panel is 64px wide, so a
-    /// single line ran off the edge partway through the "o" of "Hopspot".
     pub(in crate::screen) fn lines(self) -> &'static [&'static str] {
         match self {
             Self::Brand => &["Personal", "Hopspot"],
