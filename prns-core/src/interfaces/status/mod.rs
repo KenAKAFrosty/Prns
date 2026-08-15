@@ -58,6 +58,14 @@ pub trait InterfaceStatus {
     fn frame_accounting(&self) -> Option<FrameAccounting> {
         None
     }
+
+    /// The family's own monotonic clock when an inbound frame was last accepted, `None` before
+    /// the first one. Read beside `frame_accounting`: the totals say how much, this says how
+    /// recently, and only the pair can tell a frozen interface from a quiet one in one look —
+    /// the totals are monotonic, and `connection` only dissents once the link layer notices.
+    fn last_frame_in_at_ms(&self) -> Option<u64> {
+        None
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -172,5 +180,9 @@ impl<T: InterfaceStatus + ?Sized> InterfaceStatus for &T {
 
     fn frame_accounting(&self) -> Option<FrameAccounting> {
         (**self).frame_accounting()
+    }
+
+    fn last_frame_in_at_ms(&self) -> Option<u64> {
+        (**self).last_frame_in_at_ms()
     }
 }

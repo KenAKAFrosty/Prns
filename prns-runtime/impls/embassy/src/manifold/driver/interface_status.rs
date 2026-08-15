@@ -17,6 +17,7 @@ pub struct EmbassyInterfaceStatus {
     enabled: AtomicBool,
     enabled_changed: Signal<CriticalSectionRawMutex, bool>,
     accounts_frames: AtomicBool,
+    last_frame_in_at: AtomicU64,
     frames_in: AtomicU64,
     frames_out: AtomicU64,
     frames_malformed: AtomicU64,
@@ -26,6 +27,7 @@ pub struct EmbassyInterfaceStatus {
 
 const AIRTIME_UNPUBLISHED: u32 = u32::MAX;
 const RATES_UNPUBLISHED: u64 = u64::MAX;
+const NO_FRAME_YET: u64 = u64::MAX;
 
 impl EmbassyInterfaceStatus {
     #[must_use]
@@ -40,6 +42,7 @@ impl EmbassyInterfaceStatus {
             enabled: AtomicBool::new(true),
             enabled_changed: Signal::new(),
             accounts_frames: AtomicBool::new(false),
+            last_frame_in_at: AtomicU64::new(NO_FRAME_YET),
             frames_in: AtomicU64::new(0),
             frames_out: AtomicU64::new(0),
             frames_malformed: AtomicU64::new(0),
@@ -126,7 +129,11 @@ impl EmbassyInterfaceStatus {
         self.accounts_frames.store(true, Ordering::Relaxed);
     }
 
-    pub fn count_frame_in(&self) {
+    /// Count an accepted inbound frame and stamp when, on the driver's own monotonic clock.
+    /// One call does both so a counted frame can never be an unstamped one — a counter that
+    /// moves while the stamp stands still would recreate the ambiguity the stamp exists to end.
+    pub fn count_frame_in(&self, at_ms: u64) {
+        self.last_frame_in_at.store(at_ms, Ordering::Relaxed);
         self.frames_in.fetch_add(1, Ordering::Relaxed);
     }
 
@@ -201,6 +208,13 @@ impl InterfaceStatus for EmbassyInterfaceStatus {
             delivered: self.frames_delivered.load(Ordering::Relaxed),
         })
     }
+
+    fn last_frame_in_at_ms(&self) -> Option<u64> {
+        match self.last_frame_in_at.load(Ordering::Relaxed) {
+            NO_FRAME_YET => None,
+            at_ms => Some(at_ms),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -237,14 +251,14 @@ mod tests {
 
         // Counting before declaring must not publish: a family that never declares stays None,
         // and None must remain distinguishable from an idle link's all-zero.
-        status.count_frame_in();
+        status.count_frame_in(7);
         assert_eq!(status.frame_accounting(), None);
 
         status.account_frames();
         let counts = status.frame_accounting().unwrap();
         assert_eq!(counts.frames_in, 1);
 
-        status.count_frame_in();
+        status.count_frame_in(19);
         status.count_frame_out();
         status.count_frame_malformed();
         status.count_frame_undecodable();
@@ -260,5 +274,27 @@ mod tests {
             ),
             (2, 1, 1, 1, 1)
         );
+    }
+
+    #[test]
+    fn the_inbound_stamp_tracks_the_latest_accepted_frame() {
+        let status =
+            EmbassyInterfaceStatus::new(InterfaceId::new([0x5A; 8]), ConnectionState::Connected);
+
+        // No frame yet reads None, not zero: "never" and "at boot" are different answers.
+        assert_eq!(status.last_frame_in_at_ms(), None);
+
+        status.count_frame_in(1_000);
+        assert_eq!(status.last_frame_in_at_ms(), Some(1_000));
+
+        // Only accepted inbound frames move the stamp; discards and TX must not refresh it,
+        // or a link delivering nothing but garbage would keep reading fresh.
+        status.count_frame_out();
+        status.count_frame_malformed();
+        status.count_frame_undecodable();
+        assert_eq!(status.last_frame_in_at_ms(), Some(1_000));
+
+        status.count_frame_in(2_500);
+        assert_eq!(status.last_frame_in_at_ms(), Some(2_500));
     }
 }

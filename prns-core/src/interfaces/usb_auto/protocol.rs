@@ -109,17 +109,27 @@ impl PeerProfile {
 /// so every sample dates itself. A host stamping arrival time instead would fold its polling
 /// gaps into the timeline — and when the question is "when did arrivals stop", that resolution
 /// is the point.
+///
+/// `last_frame_in_at_ms` is that same clock's value when the interface last accepted an inbound
+/// frame, `None` before the first one. The pair answers "how long ago did arrivals stop" from a
+/// single report: the accounting counters are monotonic totals, so one read of them cannot tell
+/// a frozen interface from a quiet one, and `connection` only dissents once the link layer has
+/// noticed. `uptime_ms - last_frame_in_at_ms` needs no second sample and no host clock.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct VitalsReport {
     pub interface_id: InterfaceId,
     pub connection: ConnectionState,
     pub uptime_ms: u64,
+    pub last_frame_in_at_ms: Option<u64>,
     pub rx_bytes: u64,
     pub tx_bytes: u64,
     pub frames: Option<FrameAccounting>,
 }
 
-const VITALS_FIXED_LEN: usize = 8 + 1 + 8 + 8 + 8 + 1;
+const VITALS_FIXED_LEN: usize = 8 + 1 + 8 + 8 + 8 + 8 + 1;
+/// "No inbound frame since boot" on the wire. A real stamp cannot reach it: 2^64 - 1 ms of
+/// uptime is over half a billion years, so the sentinel costs no representable value.
+const VITALS_NO_FRAME_YET: u64 = u64::MAX;
 const VITALS_FRAMES_LEN: usize = 5 * 8;
 const VITALS_FRAMES_ABSENT: u8 = 0;
 const VITALS_FRAMES_PRESENT: u8 = 1;
@@ -194,17 +204,19 @@ impl Message<'_> {
                 body[..8].copy_from_slice(report.interface_id.as_bytes());
                 body[8] = report.connection.as_u8();
                 body[9..17].copy_from_slice(&report.uptime_ms.to_be_bytes());
-                body[17..25].copy_from_slice(&report.rx_bytes.to_be_bytes());
-                body[25..33].copy_from_slice(&report.tx_bytes.to_be_bytes());
+                let last_frame_in = report.last_frame_in_at_ms.unwrap_or(VITALS_NO_FRAME_YET);
+                body[17..25].copy_from_slice(&last_frame_in.to_be_bytes());
+                body[25..33].copy_from_slice(&report.rx_bytes.to_be_bytes());
+                body[33..41].copy_from_slice(&report.tx_bytes.to_be_bytes());
                 match report.frames {
-                    None => body[33] = VITALS_FRAMES_ABSENT,
+                    None => body[41] = VITALS_FRAMES_ABSENT,
                     Some(frames) => {
-                        body[33] = VITALS_FRAMES_PRESENT;
-                        body[34..42].copy_from_slice(&frames.frames_in.to_be_bytes());
-                        body[42..50].copy_from_slice(&frames.frames_out.to_be_bytes());
-                        body[50..58].copy_from_slice(&frames.malformed.to_be_bytes());
-                        body[58..66].copy_from_slice(&frames.undecodable.to_be_bytes());
-                        body[66..74].copy_from_slice(&frames.delivered.to_be_bytes());
+                        body[41] = VITALS_FRAMES_PRESENT;
+                        body[42..50].copy_from_slice(&frames.frames_in.to_be_bytes());
+                        body[50..58].copy_from_slice(&frames.frames_out.to_be_bytes());
+                        body[58..66].copy_from_slice(&frames.malformed.to_be_bytes());
+                        body[66..74].copy_from_slice(&frames.undecodable.to_be_bytes());
+                        body[74..82].copy_from_slice(&frames.delivered.to_be_bytes());
                     }
                 }
                 Ok(total)
@@ -267,7 +279,7 @@ fn decode_vitals(body: &[u8]) -> Result<VitalsReport, MalformedMessage> {
         .ok_or(MalformedMessage::MalformedVitals)?;
     let mut id = [0u8; 8];
     id.copy_from_slice(&fixed[..8]);
-    let frames = match (fixed[33], frames_body.len()) {
+    let frames = match (fixed[41], frames_body.len()) {
         (VITALS_FRAMES_ABSENT, 0) => None,
         (VITALS_FRAMES_PRESENT, VITALS_FRAMES_LEN) => Some(FrameAccounting {
             frames_in: be_u64(&frames_body[..8]),
@@ -282,8 +294,12 @@ fn decode_vitals(body: &[u8]) -> Result<VitalsReport, MalformedMessage> {
         interface_id: InterfaceId::new(id),
         connection: ConnectionState::from_u8(fixed[8]),
         uptime_ms: be_u64(&fixed[9..17]),
-        rx_bytes: be_u64(&fixed[17..25]),
-        tx_bytes: be_u64(&fixed[25..33]),
+        last_frame_in_at_ms: match be_u64(&fixed[17..25]) {
+            VITALS_NO_FRAME_YET => None,
+            at_ms => Some(at_ms),
+        },
+        rx_bytes: be_u64(&fixed[25..33]),
+        tx_bytes: be_u64(&fixed[33..41]),
         frames,
     })
 }
@@ -410,6 +426,8 @@ mod tests {
             any::<[u8; 8]>(),
             any::<u8>(),
             any::<(u64, u64, u64)>(),
+            // The wire spends u64::MAX on "no frame yet", so it is not a representable stamp.
+            prop::option::of(0..u64::MAX),
             prop::option::of((
                 any::<u64>(),
                 any::<u64>(),
@@ -419,23 +437,26 @@ mod tests {
             )),
         )
             .prop_map(
-                |(id, connection, (uptime_ms, rx_bytes, tx_bytes), frames)| VitalsReport {
-                    interface_id: InterfaceId::new(id),
-                    connection: ConnectionState::from_u8(connection),
-                    uptime_ms,
-                    rx_bytes,
-                    tx_bytes,
-                    frames: frames.map(
-                        |(frames_in, frames_out, malformed, undecodable, delivered)| {
-                            FrameAccounting {
-                                frames_in,
-                                frames_out,
-                                malformed,
-                                undecodable,
-                                delivered,
-                            }
-                        },
-                    ),
+                |(id, connection, (uptime_ms, rx_bytes, tx_bytes), last_frame_in_at_ms, frames)| {
+                    VitalsReport {
+                        interface_id: InterfaceId::new(id),
+                        connection: ConnectionState::from_u8(connection),
+                        uptime_ms,
+                        last_frame_in_at_ms,
+                        rx_bytes,
+                        tx_bytes,
+                        frames: frames.map(
+                            |(frames_in, frames_out, malformed, undecodable, delivered)| {
+                                FrameAccounting {
+                                    frames_in,
+                                    frames_out,
+                                    malformed,
+                                    undecodable,
+                                    delivered,
+                                }
+                            },
+                        ),
+                    }
                 },
             )
     }
@@ -603,6 +624,7 @@ mod tests {
             interface_id: InterfaceId::new(*b"halowat0"),
             connection: ConnectionState::Connected,
             uptime_ms: 1_923_004,
+            last_frame_in_at_ms: Some(1_919_557),
             rx_bytes: 0x0102_0304_0506_0708,
             tx_bytes: 42,
             frames,
@@ -634,6 +656,50 @@ mod tests {
             Ok(Message::Vitals(decoded)) => assert_eq!(decoded.frames, None),
             other => panic!("expected vitals, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_never_stamped_interface_survives_the_wire_as_never() {
+        // None must not collapse into a number: "no frame since boot" and "a frame at some
+        // stamp" are different answers, exactly like the accounting block's None.
+        let report = VitalsReport {
+            last_frame_in_at_ms: None,
+            ..sample_vitals(None)
+        };
+        let mut buf = [0u8; MAX_MESSAGE_BYTES];
+        let n = Message::Vitals(report).write_payload(&mut buf).unwrap();
+        match decode_message(&buf[..n]) {
+            Ok(Message::Vitals(decoded)) => assert_eq!(decoded.last_frame_in_at_ms, None),
+            other => panic!("expected vitals, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn one_sample_tells_a_frozen_interface_from_a_quiet_one() {
+        // The counters below are identical, so nothing else in the report can make this call.
+        // Both stamps ride the reporter's own clock, so the ages are commensurable by
+        // construction and no second sample or host clock enters the arithmetic.
+        let frames = Some(FrameAccounting {
+            frames_in: 5058,
+            frames_out: 5258,
+            malformed: 0,
+            undecodable: 0,
+            delivered: 5058,
+        });
+        let quiet = VitalsReport {
+            uptime_ms: 3_600_000,
+            last_frame_in_at_ms: Some(3_594_000),
+            ..sample_vitals(frames)
+        };
+        let frozen = VitalsReport {
+            uptime_ms: 3_600_000,
+            last_frame_in_at_ms: Some(600_000),
+            ..sample_vitals(frames)
+        };
+        let age = |report: VitalsReport| report.uptime_ms - report.last_frame_in_at_ms.unwrap();
+        assert_eq!(age(quiet), 6_000);
+        assert_eq!(age(frozen), 3_000_000);
+        assert_eq!(quiet.frames, frozen.frames);
     }
 
     #[test]
