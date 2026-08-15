@@ -1231,10 +1231,6 @@ test("unsupported and insecure browser failures emit terminal bridge events", as
     { phase: unsupportedEvents.at(-1).phase, code: unsupportedEvents.at(-1).code },
     { phase: "failed", code: "unsupported_browser" },
   );
-  // The emitted message is the thrown text plus the recovery guidance, so the
-  // reader sees both sentences at once and they have to agree. The guidance has
-  // named Firefox since it shipped Web Serial in 151; a leading sentence that
-  // still says "Chrome/Edge" contradicts the sentence right after it.
   assert.match(unsupportedEvents.at(-1).message, /Firefox/);
   assert.doesNotMatch(unsupportedEvents.at(-1).message, /Chrome\/Edge/);
   assert.equal(testing.prepared(), null);
