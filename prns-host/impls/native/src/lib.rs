@@ -1703,6 +1703,7 @@ fn reference_interface(config: &InterfaceConfig) -> Result<ReferenceInterface, C
                     }
                     .to_string()
                 }),
+                mdns_find: None,
             },
             None,
         ),

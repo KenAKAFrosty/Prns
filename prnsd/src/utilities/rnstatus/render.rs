@@ -141,6 +141,13 @@ fn render_interface(
     if let Some(clients) = status.clients.value().copied() {
         render_clients(output, status, clients);
     }
+    if let Some(mdns_find) = status.mdns_find.value().copied() {
+        let _ = writeln!(
+            output,
+            "    mDNS Find : {}",
+            if mdns_find { "Yes" } else { "No" }
+        );
+    }
     if !mode_is_suppressed(&status.name) {
         let _ = writeln!(output, "    Mode      : {}", status.mode.display_name());
     }

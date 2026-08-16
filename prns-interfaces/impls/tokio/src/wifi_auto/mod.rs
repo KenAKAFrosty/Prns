@@ -1,6 +1,9 @@
+mod mdns;
+
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -193,6 +196,7 @@ pub struct AutoWifiSettings {
     discovery_port: u16,
     data_port: u16,
     devices: AutoWifiDevicePolicy,
+    mdns_find: bool,
 }
 
 impl AutoWifiSettings {
@@ -219,6 +223,7 @@ impl AutoWifiSettings {
             discovery_port,
             data_port,
             devices,
+            mdns_find: false,
         })
     }
 
@@ -249,6 +254,17 @@ impl AutoWifiSettings {
 
     pub const fn devices(&self) -> &AutoWifiDevicePolicy {
         &self.devices
+    }
+
+    #[must_use]
+    pub fn with_mdns_find(mut self) -> Self {
+        self.mdns_find = true;
+        self
+    }
+
+    #[must_use]
+    pub const fn mdns_find(&self) -> bool {
+        self.mdns_find
     }
 
     fn discovery_group(&self) -> Ipv6Addr {
@@ -282,6 +298,7 @@ impl Default for AutoWifiSettings {
             discovery_port: contract::DEFAULT_DISCOVERY_PORT,
             data_port: contract::DEFAULT_DATA_PORT,
             devices: AutoWifiDevicePolicy::default(),
+            mdns_find: false,
         }
     }
 }
@@ -308,20 +325,42 @@ impl AutoWifi {
         settings: AutoWifiSettings,
     ) -> Self {
         let id = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, &settings.instance_tag);
+        let mdns_find = settings.mdns_find();
         Self {
             policy,
             settings,
-            status: AutoWifiStatus::new(id),
+            status: AutoWifiStatus::new(id, mdns_find),
             mdns: None,
             rendezvous_listener: None,
             host_network_discovery: HostNetworkDiscovery::Enumerated,
         }
     }
 
-    /// Bonjour supplies discovery on platforms that cannot run raw multicast; sightings are deduplicated by rendezvous endpoint.
     #[must_use]
-    pub fn with_mdns(mut self, sightings: UnboundedReceiver<SocketAddr>) -> Self {
+    pub fn with_mdns_find(mut self) -> Self {
+        self.settings.mdns_find = true;
+        self.status.set_mdns_find(true);
+        self
+    }
+
+    /// Bonjour / mDNS sightings feed UDP unicast probes on the reverse discovery port.
+    #[must_use]
+    pub fn with_mdns_sightings(mut self, sightings: UnboundedReceiver<SocketAddr>) -> Self {
+        self.settings.mdns_find = true;
+        self.status.set_mdns_find(true);
         self.mdns = Some(sightings);
+        self
+    }
+
+    /// Compatibility alias for [`Self::with_mdns_sightings`].
+    #[must_use]
+    pub fn with_mdns(self, sightings: UnboundedReceiver<SocketAddr>) -> Self {
+        self.with_mdns_sightings(sightings)
+    }
+
+    #[must_use]
+    pub fn without_host_network_discovery(mut self) -> Self {
+        self.host_network_discovery = HostNetworkDiscovery::PlatformRendezvous;
         self
     }
 
@@ -336,6 +375,8 @@ impl AutoWifi {
 
     #[must_use]
     pub fn with_platform_rendezvous(mut self, sightings: UnboundedReceiver<SocketAddr>) -> Self {
+        self.settings.mdns_find = true;
+        self.status.set_mdns_find(true);
         self.mdns = Some(sightings);
         self.host_network_discovery = HostNetworkDiscovery::PlatformRendezvous;
         self
@@ -361,6 +402,7 @@ pub struct AutoWifiStatus {
 struct AutoWifiShared {
     id: InterfaceId,
     enabled: watch::Sender<bool>,
+    mdns_find: AtomicBool,
     accounting: Mutex<AutoWifiAccounting>,
 }
 
@@ -383,18 +425,23 @@ impl CompletedTraffic {
 }
 
 impl AutoWifiStatus {
-    fn new(id: InterfaceId) -> Self {
+    fn new(id: InterfaceId, mdns_find: bool) -> Self {
         let (enabled, _) = watch::channel(true);
         Self {
             shared: Arc::new(AutoWifiShared {
                 id,
                 enabled,
+                mdns_find: AtomicBool::new(mdns_find),
                 accounting: Mutex::new(AutoWifiAccounting {
                     completed: CompletedTraffic::default(),
                     members: std::vec::Vec::new(),
                 }),
             }),
         }
+    }
+
+    fn set_mdns_find(&self, mdns_find: bool) {
+        self.shared.mdns_find.store(mdns_find, Ordering::Relaxed);
     }
 
     pub fn enable(&self) {
@@ -519,6 +566,10 @@ impl InterfaceStatus for AutoWifiStatus {
                 tx_bps: acc.tx_bps.saturating_add(rates.tx_bps),
             })
     }
+
+    fn mdns_find(&self) -> Option<bool> {
+        Some(self.shared.mdns_find.load(Ordering::Relaxed))
+    }
 }
 
 fn auto_wifi_connection_rank(state: ConnectionState) -> u8 {
@@ -590,7 +641,6 @@ impl InterfaceSupervisor for AutoWifi {
             },
             members: HashMap::new(),
             gateways: HashMap::new(),
-            mdns_dials: HashMap::new(),
             accepted: std::vec::Vec::new(),
             prefixes,
             fleet,
@@ -605,7 +655,14 @@ impl InterfaceSupervisor for AutoWifi {
         }
         sup.publish_status();
 
-        let mut mdns = mdns;
+        let mut mdns = mdns.or_else(|| {
+            settings.mdns_find.then(|| {
+                mdns::start(&settings.instance_tag, settings.devices.clone())
+            })
+        });
+        // Bonjour often emits each peer once; remember sightings and keep probing until
+        // multicast/reverse peering installs them as known members.
+        let mut mdns_targets: HashMap<Ipv6Addr, u32> = HashMap::new();
         let started = tokio::time::Instant::now();
         let mut beacon = tokio::time::interval(BEACON_INTERVAL);
         let mut beacon_cycle: u32 = 0;
@@ -666,7 +723,34 @@ impl InterfaceSupervisor for AutoWifi {
                 }
                 sighting = next_mdns(mdns.as_mut()) => {
                     match sighting {
-                        Some(target) => sup.dial_mdns_sighting(target),
+                        Some(target) => {
+                            if let SocketAddr::V6(v6) = target {
+                                let ip = *v6.ip();
+                                if ip.is_unicast_link_local()
+                                    && !is_own_address(IpAddr::V6(ip), &sup.prefixes)
+                                    && !sup
+                                        .brains
+                                        .values()
+                                        .any(|brain| brain.our_link_local() == ip)
+                                {
+                                    let scope = if v6.scope_id() != 0 {
+                                        v6.scope_id()
+                                    } else {
+                                        0
+                                    };
+                                    mdns_targets.insert(ip, scope);
+                                    if let Some(sockets) = sockets.as_ref() {
+                                        probe_mdns_peer(
+                                            sockets,
+                                            &sup.brains,
+                                            settings.reverse_discovery_port(),
+                                            target,
+                                        )
+                                        .await;
+                                    }
+                                }
+                            }
+                        }
                         None => mdns = None,
                     }
                 }
@@ -710,6 +794,26 @@ impl InterfaceSupervisor for AutoWifi {
                         sup.reconcile_nics(sockets.as_ref().map(|s| &s.discovery), &mut nics);
                     }
                     sup.retire_stale(now_ms);
+                    // Bonjour often emits once; keep probing remembered finds whenever they
+                    // are not currently members so a later retire can re-peer without a fresh
+                    // mDNS sighting.
+                    if repeer {
+                        if let Some(sockets) = sockets.as_ref() {
+                            for (&ip, &scope) in &mdns_targets {
+                                if sup.members.contains_key(&ip) {
+                                    continue;
+                                }
+                                let target = SocketAddr::V6(SocketAddrV6::new(ip, 0, 0, scope));
+                                probe_mdns_peer(
+                                    sockets,
+                                    &sup.brains,
+                                    settings.reverse_discovery_port(),
+                                    target,
+                                )
+                                .await;
+                            }
+                        }
+                    }
                     sup.publish_status();
                     reclaim_port =
                         settings.prns_rendezvous_enabled()
@@ -746,7 +850,6 @@ struct Supervisor {
     brains: HashMap<u32, contract::HeapAutoInterfaceProtocol>,
     members: HashMap<Ipv6Addr, PeerMember>,
     gateways: HashMap<u32, GatewayDial>,
-    mdns_dials: HashMap<SocketAddr, AttachedStatus>,
     accepted: std::vec::Vec<AttachedStatus>,
     prefixes: std::vec::Vec<LocalPrefix>,
     fleet: Fleet,
@@ -828,7 +931,6 @@ impl Supervisor {
             .collect();
         statuses.extend(self.gateways.values().map(|dial| dial.status.clone()));
         statuses.extend(self.accepted.iter().map(|member| member.status.clone()));
-        statuses.extend(self.mdns_dials.values().map(|dial| dial.status.clone()));
         self.status.publish(&self.completed, statuses);
     }
 
@@ -841,32 +943,11 @@ impl Supervisor {
             self.completed.retain(&dial.status);
             dial.attached.teardown();
         }
-        for (_, dial) in self.mdns_dials.drain() {
-            self.completed.retain(&dial.status);
-            dial.attached.teardown();
-        }
         for member in self.accepted.drain(..) {
             self.completed.retain(&member.status);
             member.attached.teardown();
         }
         self.status.publish(&self.completed, std::vec::Vec::new());
-    }
-
-    fn dial_mdns_sighting(&mut self, target: SocketAddr) {
-        if !self.settings.prns_rendezvous_enabled()
-            || is_own_address(target.ip(), &self.prefixes)
-            || self.mdns_dials.contains_key(&target)
-        {
-            return;
-        }
-        crate::diagnostic_log::debug!("wifi-auto: dialing mDNS rendezvous {target}");
-        let client =
-            TcpClientInterface::with_policy(target.to_string(), self.policy, RENDEZVOUS_RECONNECT);
-        let status = client.status();
-        let attached = self.fleet.add(client);
-        self.mdns_dials
-            .insert(target, AttachedStatus { attached, status });
-        self.publish_status();
     }
 
     fn route_inbound(&self, src: SocketAddr, bytes: &[u8]) {
@@ -1184,6 +1265,37 @@ async fn next_mdns(sightings: Option<&mut UnboundedReceiver<SocketAddr>>) -> Opt
     match sightings {
         Some(sightings) => sightings.recv().await,
         None => std::future::pending().await,
+    }
+}
+
+async fn probe_mdns_peer(
+    sockets: &Sockets,
+    brains: &HashMap<u32, contract::HeapAutoInterfaceProtocol>,
+    reverse_port: u16,
+    target: SocketAddr,
+) {
+    let SocketAddr::V6(v6) = target else {
+        return;
+    };
+    let ip = *v6.ip();
+    if !ip.is_unicast_link_local() {
+        return;
+    }
+    let scopes: std::vec::Vec<u32> = if v6.scope_id() != 0 {
+        vec![v6.scope_id()]
+    } else {
+        brains.keys().copied().collect()
+    };
+    for scope in scopes {
+        let Some(brain) = brains.get(&scope) else {
+            continue;
+        };
+        let token = *brain.our_peering_token().as_bytes();
+        crate::diagnostic_log::debug!("wifi-auto: mDNS found {ip}%{scope}, probing UDP unicast");
+        let _ = sockets
+            .unicast_discovery
+            .send_to(&token, scoped(ip, reverse_port, scope))
+            .await;
     }
 }
 
@@ -1531,14 +1643,13 @@ mod tests {
             brains: HashMap::new(),
             members: HashMap::new(),
             gateways: HashMap::new(),
-            mdns_dials: HashMap::new(),
             accepted: std::vec::Vec::new(),
             prefixes: std::vec::Vec::new(),
             fleet,
             data: Some(Arc::new(UdpSocket::from_std(data).expect("into tokio"))),
             policy: contract::configured_policy(Default::default()),
             settings,
-            status: AutoWifiStatus::new(id),
+            status: AutoWifiStatus::new(id, false),
             completed: CompletedTraffic::default(),
         };
         (sup, guard)
@@ -1588,17 +1699,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_disconnected_rendezvous_dial_does_not_make_the_aggregate_live() {
+    async fn a_disconnected_gateway_dial_does_not_make_the_aggregate_live() {
         use std::net::Ipv4Addr;
         let (mut sup, _guard) = test_supervisor();
-        let peer = SocketAddr::new(
-            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 77)),
-            contract::TCP_RENDEZVOUS_PORT,
+        let gateway = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
+        let client = TcpClientInterface::with_policy(
+            SocketAddr::new(gateway, contract::TCP_RENDEZVOUS_PORT).to_string(),
+            sup.policy,
+            RENDEZVOUS_RECONNECT,
         );
-
-        sup.dial_mdns_sighting(peer);
-        let status = &sup.mdns_dials.get(&peer).expect("peer was dialed").status;
+        let status = client.status();
+        let attached = sup.fleet.add(client);
         status.set_connection(ConnectionState::Disconnected);
+        sup.gateways.insert(
+            1,
+            GatewayDial {
+                gateway,
+                attached,
+                status,
+            },
+        );
         sup.publish_status();
 
         assert_eq!(
@@ -1673,35 +1793,29 @@ mod tests {
         assert!(nics.is_empty());
     }
 
-    #[tokio::test]
-    async fn mdns_sightings_dial_each_peer_once_and_never_dial_ourselves() {
-        use std::net::Ipv4Addr;
-        let (mut sup, _guard) = test_supervisor();
-        sup.prefixes = std::vec![prefix([192, 168, 1, 50], [255, 255, 255, 0])];
+    #[test]
+    fn mdns_find_only_accepts_foreign_link_local_peers() {
+        let prefixes = [LocalPrefix {
+            addr: IpAddr::V6(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 0x50)),
+            netmask: IpAddr::V6(Ipv6Addr::from([
+                0xff, 0xc0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            ])),
+        }];
+        let ours = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 0x50);
+        let peer = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 0x77);
+        let routed = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1);
 
-        let peer = SocketAddr::new(
-            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 77)),
-            contract::TCP_RENDEZVOUS_PORT,
+        assert!(
+            peer.is_unicast_link_local() && !is_own_address(IpAddr::V6(peer), &prefixes),
+            "a foreign link-local sighting is probeable",
         );
-        sup.dial_mdns_sighting(peer);
-        assert_eq!(sup.mdns_dials.len(), 1, "a fresh sighting becomes a dial");
-
-        sup.dial_mdns_sighting(peer);
-        assert_eq!(
-            sup.mdns_dials.len(),
-            1,
-            "a repeat sighting does not stack a second dial",
+        assert!(
+            is_own_address(IpAddr::V6(ours), &prefixes),
+            "we never probe our own advertised address",
         );
-
-        let ours = SocketAddr::new(
-            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 50)),
-            contract::TCP_RENDEZVOUS_PORT,
-        );
-        sup.dial_mdns_sighting(ours);
-        assert_eq!(
-            sup.mdns_dials.len(),
-            1,
-            "we never dial our own advertised rendezvous",
+        assert!(
+            !routed.is_unicast_link_local(),
+            "routable IPv6 sightings stay on the multicast path",
         );
     }
 
@@ -1731,7 +1845,7 @@ mod tests {
     #[test]
     fn the_parent_connection_follows_the_best_live_child_state() {
         let id = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, contract::GROUP_ID);
-        let status = AutoWifiStatus::new(id);
+        let status = AutoWifiStatus::new(id, false);
         let first = TokioInterfaceStatus::new(
             InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, b"first"),
             ConnectionState::Initializing,
@@ -1759,7 +1873,7 @@ mod tests {
     #[test]
     fn completed_and_reconnected_member_traffic_is_monotonic() {
         let id = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, b"accounting");
-        let status = AutoWifiStatus::new(id);
+        let status = AutoWifiStatus::new(id, false);
         let first = TokioInterfaceStatus::new(
             InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, b"peer"),
             ConnectionState::Connected,

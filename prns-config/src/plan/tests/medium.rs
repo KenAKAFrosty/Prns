@@ -132,7 +132,7 @@ fn auto_interface_settings_and_bootstrap_lifecycle_are_fully_typed() {
         "[interfaces]\n[[Field LAN]]\ntype = AutoInterface\nenabled = Yes\n\
          bootstrap_only = Yes\ngroup_id = field-team\ndiscovery_scope = organisation\n\
          discovery_port = 30100\ndata_port = 30200\ndevices = en0, eth0\n\
-         ignored_devices = eth0\nmulticast_address_type = permanent\n",
+         ignored_devices = eth0\nmulticast_address_type = permanent\nmdns_find = Yes\n",
     );
     let interface = named(&plan, "Field LAN");
     let PlannedMedium::AutoWifi(auto) = &interface.medium else {
@@ -157,6 +157,7 @@ fn auto_interface_settings_and_bootstrap_lifecycle_are_fully_typed() {
         auto.multicast_address_type(),
         AutoInterfaceMulticastAddressType::Permanent,
     );
+    assert!(auto.mdns_find());
 }
 
 #[test]

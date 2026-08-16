@@ -93,6 +93,7 @@ pub struct RnsInterfaceStatusReport {
     pub mode: RnsInterfaceMode,
     pub gravity: RnsOptionalField<i64>,
     pub clients: RnsOptionalField<u64>,
+    pub mdns_find: RnsOptionalField<bool>,
     pub receive_bytes: u64,
     pub transmit_bytes: u64,
     pub receive_speed_bps: f64,

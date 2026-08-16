@@ -108,6 +108,7 @@ pub(crate) mod interface {
     pub const DEVICES: &str = "devices";
     pub const IGNORED_DEVICES: &str = "ignored_devices";
     pub const MULTICAST_ADDRESS_TYPE: &str = "multicast_address_type";
+    pub const MDNS_FIND: &str = "mdns_find";
     pub const TARGET_HOST: &str = "target_host";
     pub const TARGET_PORT: &str = "target_port";
     pub const TARGET: &str = "target";
@@ -225,6 +226,7 @@ pub(crate) mod interface {
         DEVICES,
         IGNORED_DEVICES,
         MULTICAST_ADDRESS_TYPE,
+        MDNS_FIND,
     ];
     pub const TCP_CLIENT: &[&str] = &[
         TARGET_HOST,

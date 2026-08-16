@@ -351,6 +351,7 @@ fn auto_interface_key_rule(key: &str) -> Option<KeyRule> {
         }
         interface_key::DISCOVERY_PORT | interface_key::DATA_PORT => Some(Applied(ValueKind::U16)),
         interface_key::DEVICES | interface_key::IGNORED_DEVICES => Some(Applied(ValueKind::List)),
+        interface_key::MDNS_FIND => Some(Applied(ValueKind::Bool)),
         _ => None,
     }
 }

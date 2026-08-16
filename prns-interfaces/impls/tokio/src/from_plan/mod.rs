@@ -421,10 +421,10 @@ pub async fn attach_plan_with_context(
             #[cfg(not(feature = "rnode"))]
             {
                 let _ = member;
-                stand_up(handle, interface, context, &mut attachments, report).await;
+                stand_up(handle, interface, plan, context, &mut attachments, report).await;
             }
         } else {
-            stand_up(handle, interface, context, &mut attachments, report).await;
+            stand_up(handle, interface, plan, context, &mut attachments, report).await;
         }
     }
     attachments
@@ -433,6 +433,7 @@ pub async fn attach_plan_with_context(
 async fn stand_up<'a>(
     handle: &PrnsNodeHandle,
     interface: &'a PlannedInterface,
+    _plan: &DaemonPlan,
     context: &PlanRuntimeContext,
     attachments: &mut PlanAttachments,
     report: &mut impl FnMut(PlanOutcome<'a>),
@@ -453,7 +454,7 @@ async fn stand_up<'a>(
         PlannedMedium::AutoWifi(planned) => {
             #[cfg(feature = "wifi-auto")]
             {
-                wifi_auto::stand_up(construction, planned)
+                wifi_auto::stand_up(construction, planned, planned.mdns_find())
             }
             #[cfg(not(feature = "wifi-auto"))]
             {

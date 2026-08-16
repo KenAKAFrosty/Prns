@@ -194,6 +194,7 @@ struct InterfaceBuilder {
     mode: Option<RnsInterfaceMode>,
     gravity: RnsOptionalField<i64>,
     clients: RnsOptionalField<u64>,
+    mdns_find: RnsOptionalField<bool>,
     receive_bytes: Option<u64>,
     transmit_bytes: Option<u64>,
     receive_speed_bps: Option<f64>,
@@ -256,6 +257,7 @@ impl InterfaceBuilder {
             mode: required(self.mode, path(interface::MODE))?,
             gravity: self.gravity,
             clients: self.clients,
+            mdns_find: self.mdns_find,
             receive_bytes: required(self.receive_bytes, path(interface::RECEIVE_BYTES))?,
             transmit_bytes: required(self.transmit_bytes, path(interface::TRANSMIT_BYTES))?,
             receive_speed_bps: required(self.receive_speed_bps, path(interface::RECEIVE_SPEED))?,
@@ -443,6 +445,9 @@ fn read_interface(
             }
             interface::GRAVITY => interface_report.gravity = read_optional_i64(reader, path)?,
             interface::CLIENTS => interface_report.clients = read_optional_u64(reader, path)?,
+            interface::MDNS_FIND => {
+                interface_report.mdns_find = read_optional_bool(reader, path)?
+            }
             interface::RECEIVE_BYTES => {
                 interface_report.receive_bytes = Some(read_u64(reader, path)?)
             }

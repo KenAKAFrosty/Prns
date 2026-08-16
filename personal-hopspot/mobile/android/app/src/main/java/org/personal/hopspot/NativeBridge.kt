@@ -110,7 +110,7 @@ object NativeBridge {
 
     external fun nativeUsbTx(buffer: ByteBuffer): Int
 
-    external fun nativeRendezvousPort(): Int
+    external fun nativeMdnsServicePort(): Int
 
     external fun nativeWifiSighting(address: ByteBuffer, port: Int)
 

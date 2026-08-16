@@ -13,11 +13,14 @@ const CAPTIVE_PORTAL_UDP_SOCKET_COUNT: usize = 2;
 #[cfg(feature = "wifi-auto")]
 const TCP_RENDEZVOUS_SOCKET_COUNT: usize = 1;
 #[cfg(feature = "wifi-auto")]
+const MDNS_UDP_SOCKET_COUNT: usize = 1;
+#[cfg(feature = "wifi-auto")]
 const AP_STACK_SOCKET_CAPACITY: usize = EMBASSY_INTERNAL_SOCKET_COUNT
     + WIFI_AUTO_UDP_SOCKET_COUNT
     + CAPTIVE_PORTAL_UDP_SOCKET_COUNT
     + HTTP_SERVER_WORKERS
-    + TCP_RENDEZVOUS_SOCKET_COUNT;
+    + TCP_RENDEZVOUS_SOCKET_COUNT
+    + MDNS_UDP_SOCKET_COUNT;
 
 /// A random per-boot SoftAP SSID suffix, cached so every `set_config` within a boot reuses the same
 /// name (regenerating per call would flap the SSID). 0 = unset. Random rather than MAC-derived so the

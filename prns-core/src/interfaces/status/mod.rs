@@ -32,6 +32,11 @@ pub trait InterfaceStatus {
     fn transfer_rates(&self) -> Option<TransferRates> {
         None
     }
+
+    /// Present only for AutoInterface / AutoWifi status views.
+    fn mdns_find(&self) -> Option<bool> {
+        None
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,6 +53,7 @@ pub struct InterfaceVitals {
     pub rx_bytes: u64,
     pub tx_bytes: u64,
     pub transfer_rates: Option<TransferRates>,
+    pub mdns_find: Option<bool>,
 }
 
 impl InterfaceVitals {
@@ -59,6 +65,7 @@ impl InterfaceVitals {
             rx_bytes: status.rx_bytes(),
             tx_bytes: status.tx_bytes(),
             transfer_rates: status.transfer_rates(),
+            mdns_find: status.mdns_find(),
         }
     }
 }
@@ -142,5 +149,9 @@ impl<T: InterfaceStatus + ?Sized> InterfaceStatus for &T {
 
     fn transfer_rates(&self) -> Option<TransferRates> {
         (**self).transfer_rates()
+    }
+
+    fn mdns_find(&self) -> Option<bool> {
+        (**self).mdns_find()
     }
 }

@@ -8,17 +8,17 @@ use personal_rns::interfaces::wifi_auto as wifi_auto_contract;
 use crate::engine::mdns_bridge;
 
 #[no_mangle]
-pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeRendezvousPort(
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeMdnsServicePort(
     _env: JNIEnv,
     _class: JClass,
 ) -> jint {
-    jint::from(wifi_auto_contract::TCP_RENDEZVOUS_PORT)
+    jint::from(wifi_auto_contract::MDNS_SERVICE_PORT)
 }
 
-/// Build a peer's rendezvous endpoint from the raw address bytes NsdManager resolved (4 = IPv4,
-/// 16 = IPv6) and its TCP port. An NsdManager-resolved IPv6 carries no interface scope, so a
-/// link-local arrives unscoped (rarely dialable); Android resolution is almost always the LAN IPv4,
-/// which is the case that matters here.
+/// Build a peer's AutoInterface find endpoint from the raw address bytes NsdManager resolved
+/// (4 = IPv4, 16 = IPv6) and the SRV port. An NsdManager-resolved IPv6 carries no interface scope,
+/// so a link-local arrives unscoped (rarely usable); Android resolution is almost always the LAN
+/// IPv4, which is the case that matters here.
 fn socket_addr(env: &JNIEnv, buffer: &JByteBuffer, port: jint) -> Option<SocketAddr> {
     let address = env.get_direct_buffer_address(buffer).ok()?;
     let capacity = env.get_direct_buffer_capacity(buffer).ok()?;

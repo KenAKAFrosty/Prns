@@ -102,6 +102,12 @@ pub const DEFAULT_DATA_PORT: u16 = 42671;
 /// A Prns extension for peers behind an isolating hotspot; it is distinct from the RNS UDP [`DEFAULT_DATA_PORT`].
 pub const TCP_RENDEZVOUS_PORT: u16 = 42699;
 
+/// DNS-SD type for AutoInterface find. The SRV port is [`DEFAULT_DATA_PORT`]; peering stays IPv6 UDP unicast.
+pub const MDNS_SERVICE_TYPE: &str = "_reticulum._udp.local.";
+
+/// Port published in the mDNS SRV record. Peers then unicast AutoInterface discovery/data, not TCP.
+pub const MDNS_SERVICE_PORT: u16 = DEFAULT_DATA_PORT;
+
 pub const PEERING_TIMEOUT_MS: u64 = 22_000;
 
 /// Reconstructs the EUI-64 link-local address peers use as the source when validating [`peering_token`].
@@ -400,6 +406,16 @@ mod tests {
     use super::*;
 
     const MAX_PEERS: usize = 8;
+
+    #[test]
+    fn mdns_service_type_is_bonjour_reticulum_udp_in_local() {
+        assert_eq!(MDNS_SERVICE_TYPE, "_reticulum._udp.local.");
+        assert_eq!(
+            MDNS_SERVICE_TYPE.strip_suffix("local."),
+            Some("_reticulum._udp.")
+        );
+        assert_eq!(MDNS_SERVICE_PORT, DEFAULT_DATA_PORT);
+    }
 
     #[test]
     fn from_link_local_token_hashes_over_the_given_address() {

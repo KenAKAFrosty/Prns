@@ -157,6 +157,31 @@ pub(super) async fn send_beacon(socket: Option<&UdpSocket<'_>>, token: Option<&[
         .is_ok()
 }
 
+pub(super) async fn send_reverse_peering(
+    socket: Option<&UdpSocket<'_>>,
+    token: Option<&[u8; 32]>,
+    peer: Ipv6Addr,
+) -> bool {
+    let (Some(socket), Some(token)) = (socket, token) else {
+        return false;
+    };
+    match socket
+        .send_to(
+            token,
+            (IpAddress::Ipv6(peer), contract::UNICAST_DISCOVERY_PORT),
+        )
+        .await
+    {
+        Ok(()) => true,
+        Err(error) => {
+            crate::diagnostic_log::warn!(
+                "wifi-auto: reverse peering to {peer} failed: {error:?}"
+            );
+            false
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

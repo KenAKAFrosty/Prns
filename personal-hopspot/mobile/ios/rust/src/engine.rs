@@ -650,10 +650,13 @@ async fn run_engine(
     let (mdns_tx, mdns_rx) = tokio::sync::mpsc::unbounded_channel::<SocketAddr>();
     #[cfg(target_os = "ios")]
     let wifi = AutoWifi::new()
-        .with_mdns(mdns_rx)
+        .with_mdns_find()
+        .with_mdns_sightings(mdns_rx)
         .with_rendezvous_listener(wifi_listener);
     #[cfg(not(target_os = "ios"))]
-    let wifi = AutoWifi::new().with_rendezvous_listener(wifi_listener);
+    let wifi = AutoWifi::new()
+        .with_mdns_find()
+        .with_rendezvous_listener(wifi_listener);
     let wifi_status = wifi.status();
     handle.supervise(wifi);
     diagnostic(
@@ -663,9 +666,16 @@ async fn run_engine(
             wifi_auto_contract::TCP_RENDEZVOUS_PORT
         ),
     );
+    diagnostic(
+        "listener",
+        format_args!(
+            "kind=mdns state=browse port={}",
+            wifi_auto_contract::MDNS_SERVICE_PORT
+        ),
+    );
 
     #[cfg(target_os = "ios")]
-    let mdns_task = tokio::spawn(run_mdns(wifi_auto_contract::TCP_RENDEZVOUS_PORT, mdns_tx));
+    let mdns_task = tokio::spawn(run_mdns(wifi_auto_contract::MDNS_SERVICE_PORT, mdns_tx));
 
     let attached_ble = handle.attach(prepared_ble);
     let ble_id = attached_ble.id();

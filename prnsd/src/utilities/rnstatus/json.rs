@@ -91,6 +91,7 @@ fn interface_value(status: &RnsInterfaceStatusReport) -> Value {
     );
     insert_optional_i64(&mut fields, interface::GRAVITY, &status.gravity);
     insert_optional_u64(&mut fields, interface::CLIENTS, &status.clients);
+    insert_optional_bool(&mut fields, interface::MDNS_FIND, &status.mdns_find);
     fields.insert(
         String::from(interface::RECEIVE_BYTES),
         status.receive_bytes.into(),
@@ -347,6 +348,7 @@ mod tests {
             mode: RnsInterfaceMode::Internal,
             gravity: RnsOptionalField::Value(-7),
             clients: RnsOptionalField::Null,
+            mdns_find: RnsOptionalField::Absent,
             receive_bytes: 1,
             transmit_bytes: 2,
             receive_speed_bps: 3.0,

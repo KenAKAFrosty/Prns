@@ -7,8 +7,12 @@ use super::{AttachmentResult, InterfaceConstruction};
 pub(super) fn stand_up(
     construction: InterfaceConstruction<'_>,
     planned: &AutoInterfacePlan,
+    mdns_find: bool,
 ) -> AttachmentResult {
-    let settings = settings(&construction.interface.name, planned)?;
+    let mut settings = settings(&construction.interface.name, planned)?;
+    if mdns_find {
+        settings = settings.with_mdns_find();
+    }
     let wifi = AutoWifi::with_policy_and_settings(construction.interface.policy, settings);
     let attached = construction.attach(wifi);
     Ok(attached.id())
@@ -47,7 +51,7 @@ mod tests {
         let plan = prns_config::parse_and_plan(
             "[interfaces]\n[[Mesh]]\ntype = AutoInterface\nenabled = Yes\ngroup_id = field-mesh\n\
              discovery_scope = organisation\nmulticast_address_type = permanent\ndiscovery_port = 31000\n\
-             data_port = 32000\ndevices = en0, wlan0\nignored_devices = wlan0\n",
+             data_port = 32000\ndevices = en0, wlan0\nignored_devices = wlan0\nmdns_find = Yes\n",
         )
         .expect("valid AutoInterface configuration")
         .value;
@@ -71,5 +75,6 @@ mod tests {
         assert_eq!(settings.data_port(), 32_000);
         assert_eq!(settings.devices().allowed(), &["en0", "wlan0"]);
         assert_eq!(settings.devices().ignored(), &["wlan0"]);
+        assert!(planned.mdns_find());
     }
 }

@@ -23,6 +23,8 @@ pub fn interface_stats(inventory: Vec<InterfaceInventoryEntry<String>>) -> RnsIn
                     )
                 });
                 RnsInterfaceStatsEntry::new(entry.name, entry.snapshot, access_code)
+                    .with_clients(entry.clients)
+                    .with_mdns_find(entry.mdns_find)
             })
             .collect(),
     )

@@ -91,6 +91,7 @@ pub enum ReferenceConfigParams {
         devices: Option<Vec<String>>,
         ignored_devices: Option<Vec<String>>,
         multicast_address_type: Option<String>,
+        mdns_find: Option<bool>,
     },
     TcpClient {
         target_host: Option<String>,

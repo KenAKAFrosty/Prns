@@ -18,10 +18,17 @@ use objc2_foundation::{
 };
 use tokio::sync::{mpsc as tokio_mpsc, oneshot};
 
-const SERVICE_TYPE: &str = "_reticulum._tcp.";
+use prns_core::interfaces::wifi_auto::MDNS_SERVICE_TYPE;
+
 const DOMAIN: &str = "local.";
 const PUBLISH_TIMEOUT: Duration = Duration::from_secs(10);
 const RESOLVE_TIMEOUT: f64 = 6.0;
+
+fn bonjour_service_type() -> &'static str {
+    MDNS_SERVICE_TYPE
+        .strip_suffix("local.")
+        .unwrap_or("_reticulum._udp.")
+}
 
 const AF_INET: u8 = 2;
 const AF_INET6: u8 = 30;
@@ -209,7 +216,7 @@ impl MacosMdnsBackend {
                 let service = NSNetService::initWithDomain_type_name_port(
                     NSNetService::alloc(),
                     &NSString::from_str(DOMAIN),
-                    &NSString::from_str(SERVICE_TYPE),
+                    &NSString::from_str(bonjour_service_type()),
                     &NSString::from_str(""),
                     port,
                 );
@@ -231,7 +238,7 @@ impl MacosMdnsBackend {
                 unsafe { browser.setDelegate(Some(browser_proto)) };
                 browser.setIncludesPeerToPeer(true);
                 browser.searchForServicesOfType_inDomain(
-                    &NSString::from_str(SERVICE_TYPE),
+                    &NSString::from_str(bonjour_service_type()),
                     &NSString::from_str(DOMAIN),
                 );
 
@@ -253,7 +260,7 @@ impl MacosMdnsBackend {
         match tokio::time::timeout(PUBLISH_TIMEOUT, ready_rx).await {
             Ok(Ok(true)) => {
                 crate::diagnostic_log::debug!(
-                    "mdns: advertising + browsing {SERVICE_TYPE} on port {port}"
+                    "mdns: advertising + browsing {MDNS_SERVICE_TYPE} on port {port}"
                 );
                 Ok(Self {
                     sightings: sightings_rx,
@@ -266,8 +273,8 @@ impl MacosMdnsBackend {
         }
     }
 
-    /// The next discovered peer's rendezvous endpoint, resolved to a concrete address. `None` once the
-    /// browse thread is gone.
+    /// The next discovered peer address (link-local or LAN), for AutoInterface unicast find.
+    /// `None` once the browse thread is gone.
     pub async fn next_sighting(&mut self) -> Option<SocketAddr> {
         self.sightings.recv().await
     }
@@ -305,31 +312,25 @@ fn parse_sockaddr(data: &[u8]) -> Option<SocketAddr> {
     }
 }
 
-/// Pick the best of a resolved service's addresses to dial: a routable address (IPv4, or a global
-/// IPv6) is preferred over a link-local one, since a link-local must be dialed with the right
-/// interface scope id and only reaches an AWDL/same-link peer. The link-local — now carrying its
-/// `sin6_scope_id` from [`parse_sockaddr`] — is kept as the fallback for exactly the router-free
-/// hotspot case where it is all Bonjour has.
+/// Prefer IPv6 link-local (with Bonjour's scope id) so AutoInterface can unicast UDP on the same
+/// L2. Routable addresses are a fallback when no LL is published.
 fn select_sighting(addresses: &NSArray<NSData>) -> Option<SocketAddr> {
-    let mut link_local: Option<SocketAddr> = None;
+    let mut link_local_v6: Option<SocketAddr> = None;
+    let mut other: Option<SocketAddr> = None;
     for address in addresses.iter() {
         let Some(addr) = parse_sockaddr(&address.to_vec()) else {
             continue;
         };
-        if is_link_local(addr.ip()) {
-            link_local.get_or_insert(addr);
-        } else {
-            return Some(addr);
+        match addr {
+            SocketAddr::V6(v6) if (v6.ip().segments()[0] & 0xffc0) == 0xfe80 => {
+                link_local_v6.get_or_insert(addr);
+            }
+            _ => {
+                other.get_or_insert(addr);
+            }
         }
     }
-    link_local
-}
-
-fn is_link_local(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => v4.is_link_local(),
-        IpAddr::V6(v6) => (v6.segments()[0] & 0xffc0) == 0xfe80,
-    }
+    link_local_v6.or(other)
 }
 
 fn build_txt(pairs: &[(String, Vec<u8>)]) -> Option<Retained<NSData>> {

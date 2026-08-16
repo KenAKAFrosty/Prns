@@ -167,7 +167,9 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
     let Some(mdns_rx) = platform.mdns.take_receiver() else {
         return fail_start(ready_tx, EngineStartError::WorkerStopped);
     };
-    let wifi = AutoWifi::new().with_platform_rendezvous(mdns_rx);
+    let wifi = AutoWifi::new()
+        .without_host_network_discovery()
+        .with_mdns_sightings(mdns_rx);
     let wifi_status = wifi.status();
     handle.supervise(wifi);
 

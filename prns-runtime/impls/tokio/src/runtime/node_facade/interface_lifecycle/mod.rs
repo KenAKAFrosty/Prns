@@ -208,6 +208,8 @@ impl PrnsNodeHandle {
                             membership: placement.membership,
                         },
                         ifac: ifac.clone(),
+                        clients: None,
+                        mdns_find: vitals.mdns_find,
                     }
                 })
             })

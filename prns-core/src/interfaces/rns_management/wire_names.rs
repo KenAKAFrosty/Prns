@@ -28,6 +28,7 @@ pub mod interface {
     pub const MODE: &str = "mode";
     pub const GRAVITY: &str = "gravity";
     pub const CLIENTS: &str = "clients";
+    pub const MDNS_FIND: &str = "mdns_find";
     pub const RECEIVE_BYTES: &str = "rxb";
     pub const TRANSMIT_BYTES: &str = "txb";
     pub const RECEIVE_SPEED: &str = "rxs";

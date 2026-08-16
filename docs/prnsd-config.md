@@ -284,7 +284,7 @@ remains compact and displays only the canonical mode name.
 
 | Stock interface | Applied configuration |
 | --- | --- |
-| `AutoInterface` | Group ID, multicast scope/address type, discovery and data ports, allowed and ignored devices, and common policy. |
+| `AutoInterface` | Group ID, multicast scope/address type, discovery and data ports, allowed and ignored devices, optional `mdns_find`, and common policy. |
 | `TCPClientInterface` | Target, port, KISS framing, I2P socket discipline, connect timeout, reconnect limit, fixed MTU. |
 | `TCPServerInterface` | Port aliases, address/device binding, IPv6 preference, KISS framing, I2P socket discipline, fixed MTU. Accepted members inherit the full policy and IFAC access. |
 | `UDPInterface` | Receive-only, send-only, or bidirectional endpoints; shared port alias; device broadcast resolution. |
@@ -333,6 +333,11 @@ WebSocket client and server stanzas may be repeated.
   [[Nearby Prns peers]]
     type = PrnsBluetoothAuto
     enabled = Yes
+
+  [[LAN]]
+    type = AutoInterface
+    enabled = Yes
+    mdns_find = Yes
 
   [[WebSocket uplink]]
     type = PrnsWebSocketClient
@@ -401,10 +406,17 @@ RNodeMulti radios are nested beneath their physical device. Each enabled child r
 ```
 
 AutoInterface defaults to group `reticulum`, link scope, temporary multicast addressing, discovery
-port 29716, and data port 42671. `discovery_scope` accepts `link`, `admin`, `site`, `organisation`,
-or `global`; `multicast_address_type` accepts `temporary` or `permanent`. A custom group changes
-both the multicast group and peer-authentication token. `devices` is an allowlist when present,
-`ignored_devices` always wins, and loopback devices are never selected.
+port 29716, and data port 42671. It stays on that IPv6 link-local multicast path. `discovery_scope`
+accepts `link`, `admin`, `site`, `organisation`, or `global`; `multicast_address_type` accepts
+`temporary` or `permanent`. A custom group changes both the multicast group and peer-authentication
+token. `devices` is an allowlist when present, `ignored_devices` always wins, and loopback devices
+are never selected. `mdns_find` defaults to `No`.
+
+When a LAN filters IPv6 multicast, set `mdns_find = Yes` on the AutoInterface stanza. That only
+adds a find path over mDNS (`_reticulum._udp`); peers remain ordinary AutoInterface UDP members on
+the same IPv6 unicast dataplane (port 42671). ESP32 station firmware advertises `_reticulum._udp`
+with an AAAA for its link-local address so a host can probe that unicast path; the board does not
+browse or dial other mDNS peers.
 
 An interface with `bootstrap_only = Yes` starts normally while no auto-connected discovered
 interface is available. When the configured `autoconnect_discovered_interfaces` limit is full,
@@ -461,6 +473,7 @@ backend exists.
   [[LAN]]
     type = AutoInterface
     enabled = Yes
+    mdns_find = Yes
 
   [[Uplink]]
     type = TCPClientInterface

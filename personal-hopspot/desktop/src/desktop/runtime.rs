@@ -248,19 +248,20 @@ fn run_node(ready_tx: Sender<(WindowHandles, persistence::ShutdownFlush)>) {
             prns_ffi::usb_hotplug::watch_serial_hotplug(move || rescan.notify_one());
         }
 
+        let mut wifi = AutoWifi::default().with_mdns_find();
+        let wifi_status = wifi.status();
         #[cfg(target_os = "macos")]
         let (mdns_tx, mdns_rx) = tokio::sync::mpsc::unbounded_channel::<std::net::SocketAddr>();
         #[cfg(target_os = "macos")]
-        let wifi = AutoWifi::default().with_mdns(mdns_rx);
-        #[cfg(not(target_os = "macos"))]
-        let wifi = AutoWifi::default();
-        let wifi_status = wifi.status();
+        {
+            wifi = wifi.with_mdns_sightings(mdns_rx);
+        }
         if std::env::var_os("HOPSPOT_WIFI_OFF").is_some() {
             wifi_status.disable();
             tracing::info!(event = "wifi_started_disabled");
         } else {
             #[cfg(target_os = "macos")]
-            spawn_mdns(wifi_auto_contract::TCP_RENDEZVOUS_PORT, mdns_tx);
+            spawn_mdns(wifi_auto_contract::MDNS_SERVICE_PORT, mdns_tx);
         }
         handle.supervise(wifi);
 

@@ -16,9 +16,11 @@ Your config, your identity file, and your apps carry over unchanged. The interop
 
     Reticulum over WebSockets, dialing out or accepting connections. This gets Reticulum more compatible with the vast web-based ecosystem. And since WebSocket traffic is ordinary web traffic, it passes through free tunnel services like Cloudflare Tunnel: you can host a public node from home with no port forwarding, no exposed home IP, and no rented server.
 
-- **AutoInterface, upgraded**
+- **`AutoInterface` `mdns_find`**
 
-    The `AutoInterface` you already run gains other rendezvous mechanisms on top of stock multicast discovery, so peers still find each other on more restricted networks, especially those that filter multicast (mobile hotspot, guest Wi-Fi, browser instances on LAN, etc.).
+    Optional LAN find over mDNS (`_reticulum._udp`) on the stock AutoInterface UDP dataplane.
+    Set `mdns_find = Yes` when IPv6 link-local multicast is filtered (guest Wi-Fi, some mesh APs,
+    phone hotspots). Leave it off where multicast discovery already works.
 
 - **`PrnsUsbAuto`**
 

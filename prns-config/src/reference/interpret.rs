@@ -391,6 +391,7 @@ fn interpret_params(
                 interface,
                 coerce_string,
             )?,
+            mdns_find: opt(rest, interface_key::MDNS_FIND, interface, coerce_bool)?,
         },
         "TCPClientInterface" => ReferenceConfigParams::TcpClient {
             target_host: opt(rest, interface_key::TARGET_HOST, interface, coerce_string)?,

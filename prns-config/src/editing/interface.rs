@@ -494,6 +494,7 @@ pub(super) const ALL_SETTING_KEYS: &[&str] = &[
     interface_key::DEVICES,
     interface_key::IGNORED_DEVICES,
     interface_key::MULTICAST_ADDRESS_TYPE,
+    interface_key::MDNS_FIND,
     interface_key::TARGET_HOST,
     interface_key::TARGET_PORT,
     interface_key::TARGET,

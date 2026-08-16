@@ -63,7 +63,7 @@ class WifiAutoLink(context: Context) {
             Log.i(TAG, "nsd unavailable; multicast only")
             return
         }
-        val port = NativeBridge.nativeRendezvousPort()
+        val port = NativeBridge.nativeMdnsServicePort()
         registerService(manager, port)
         discoverServices(manager)
     }
@@ -198,7 +198,7 @@ class WifiAutoLink(context: Context) {
 
     private companion object {
         private const val TAG = "HopspotWifi"
-        private const val SERVICE_TYPE = "_reticulum._tcp"
+        private const val SERVICE_TYPE = "_reticulum._udp"
         private const val SERVICE_NAME = "PersonalHopspot"
     }
 }

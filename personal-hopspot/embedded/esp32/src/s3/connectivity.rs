@@ -13,6 +13,30 @@ use crate::wifi_data_path_recovery::{
 use alloc::boxed::Box;
 
 #[cfg(feature = "wifi-auto")]
+const STA_EMBASSY_INTERNAL_SOCKET_COUNT: usize = 1;
+#[cfg(feature = "wifi-auto")]
+const STA_WIFI_AUTO_UDP_SOCKET_COUNT: usize = 3;
+#[cfg(feature = "wifi-auto")]
+const STA_TCP_CLIENT_SOCKET_COUNT: usize = 1;
+#[cfg(feature = "wifi-auto")]
+const STA_DNS_SOCKET_COUNT: usize = 1;
+#[cfg(feature = "wifi-auto")]
+const STA_MDNS_UDP_SOCKET_COUNT: usize = 1;
+/// DHCP + 3 AutoWifi UDP + optional TCP client + DNS + mDNS UDP.
+#[cfg(feature = "wifi-auto")]
+const STA_STACK_SOCKET_CAPACITY: usize = STA_EMBASSY_INTERNAL_SOCKET_COUNT
+    + STA_WIFI_AUTO_UDP_SOCKET_COUNT
+    + STA_TCP_CLIENT_SOCKET_COUNT
+    + STA_DNS_SOCKET_COUNT
+    + STA_MDNS_UDP_SOCKET_COUNT;
+
+#[cfg(feature = "wifi-auto")]
+fn start_sta_ipv4_mdns(spawner: &Spawner, stack: Stack<'static>, mac: [u8; 6]) {
+    let socket = psram_udp_socket::<4, 512, 4, 512>(stack);
+    spawner.spawn(ipv4_mdns_advertise_task(stack, socket, mac).expect("IPv4 mDNS task fits"));
+}
+
+#[cfg(feature = "wifi-auto")]
 fn psram_udp_socket<
     const RX_META: usize,
     const RX_BYTES: usize,
@@ -161,7 +185,10 @@ pub(super) fn build_wifi(
             gateway: None,
             dns_servers: Default::default(),
         });
-        let resources = mk_static!(StackResources<6>, StackResources::new());
+        let resources = mk_static!(
+            StackResources<STA_STACK_SOCKET_CAPACITY>,
+            StackResources::new()
+        );
         let seed = {
             let mut bytes = [0u8; 8];
             Rng::new().read(&mut bytes);
@@ -169,7 +196,7 @@ pub(super) fn build_wifi(
         };
         let (stack, runner) = embassy_net::new(interfaces.station, net_config, resources, seed);
         let discovery = psram_udp_socket::<8, 128, 8, 128>(stack);
-        let unicast_discovery = psram_udp_socket::<8, 128, 1, 1>(stack);
+        let unicast_discovery = psram_udp_socket::<8, 128, 8, 128>(stack);
         let data =
             psram_udp_socket::<8, WIFI_DATA_SOCKET_BUFFER_BYTES, 8, WIFI_DATA_SOCKET_BUFFER_BYTES>(
                 stack,
@@ -198,6 +225,9 @@ pub(super) fn build_wifi(
         None
     };
     let tcp_stack = station_segment.as_ref().map(|segment| segment.stack);
+    if let Some(segment) = station_segment.as_ref() {
+        start_sta_ipv4_mdns(spawner, segment.stack, segment.mac);
+    }
 
     // In explicit SoftAP mode, the AP is the primary Wi-Fi Auto segment and the station (if any) folds
     // in as the opportunistic secondary. The AP link-local is the station MAC + 1 (build_ap_netif
@@ -242,8 +272,9 @@ pub(super) fn build_wifi(
             rendezvous_storage,
         );
         spawner.spawn(tcp_rendezvous_task(rendezvous_server).expect("TCP rendezvous task fits"));
+        start_sta_ipv4_mdns(spawner, ap_stack, ap_mac);
         let ap_discovery = psram_udp_socket::<8, 512, 8, 512>(ap_stack);
-        let ap_unicast_discovery = psram_udp_socket::<8, 128, 1, 1>(ap_stack);
+        let ap_unicast_discovery = psram_udp_socket::<8, 128, 8, 128>(ap_stack);
         let ap_data =
             psram_udp_socket::<8, WIFI_DATA_SOCKET_BUFFER_BYTES, 8, WIFI_DATA_SOCKET_BUFFER_BYTES>(
                 ap_stack,
@@ -285,6 +316,16 @@ pub(super) fn build_wifi(
 #[embassy_executor::task]
 async fn tcp_rendezvous_task(server: TcpRendezvousServer<'static>) -> ! {
     server.run().await
+}
+
+#[cfg(feature = "wifi-auto")]
+#[embassy_executor::task]
+async fn ipv4_mdns_advertise_task(
+    stack: Stack<'static>,
+    socket: UdpSocket<'static>,
+    mac: [u8; 6],
+) -> ! {
+    advertise_ipv4_mdns(stack, socket, mac).await
 }
 
 #[cfg(feature = "wifi-auto")]

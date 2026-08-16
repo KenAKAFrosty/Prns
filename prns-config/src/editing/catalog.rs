@@ -173,7 +173,8 @@ impl InterfaceSettingSpec {
             | interface_key::DATA_PORT
             | interface_key::DEVICES
             | interface_key::IGNORED_DEVICES
-            | interface_key::MULTICAST_ADDRESS_TYPE => InterfaceSettingCategory::Connectivity,
+            | interface_key::MULTICAST_ADDRESS_TYPE
+            | interface_key::MDNS_FIND => InterfaceSettingCategory::Connectivity,
             interface_key::NETWORK_NAME | interface_key::PASS_PHRASE | interface_key::IFAC_SIZE => {
                 InterfaceSettingCategory::Access
             }
@@ -490,6 +491,9 @@ impl InterfaceSettingSpec {
             interface_key::MULTICAST_ADDRESS_TYPE => {
                 "Chooses temporary or permanently assigned IPv6 multicast addressing for AutoInterface discovery."
             }
+            interface_key::MDNS_FIND => {
+                "Also finds AutoInterface peers over mDNS (_reticulum._udp) when IPv6 link-local multicast is filtered; peers still use the same UDP dataplane."
+            }
             interface_key::TARGET_HOST => "Sets the host name or address this client connects to.",
             interface_key::TARGET_PORT => "Sets the remote port this client connects to.",
             interface_key::TARGET => "Sets the complete remote WebSocket URL.",
@@ -651,6 +655,7 @@ impl InterfaceSettingSpec {
             interface_key::MULTICAST_ADDRESS_TYPE if kind == InterfaceKind::Auto => {
                 Some("temporary")
             }
+            interface_key::MDNS_FIND if kind == InterfaceKind::Auto => Some("No"),
             common_key::INGRESS_CONTROL => Some("Yes"),
             common_key::EGRESS_CONTROL => Some("No"),
             common_key::IC_MAX_HELD_ANNOUNCES => Some("256"),
@@ -1078,6 +1083,9 @@ impl InterfaceSettingSpec {
             }),
             interface_key::MULTICAST_ADDRESS_TYPE => auto_plan(planned)
                 .map(|auto| format!("{:?}", auto.multicast_address_type()).to_ascii_lowercase()),
+            interface_key::MDNS_FIND => {
+                auto_plan(planned).map(|auto| yes_no(auto.mdns_find()))
+            }
             _ => None,
         }
     }
@@ -1094,6 +1102,7 @@ impl InterfaceSettingSpec {
             | interface_key::ANNOUNCES_FROM_INTERNAL
             | interface_key::ANNOUNCES_TO_INTERNAL
             | interface_key::IGNORE_CONFIG_WARNINGS
+            | interface_key::MDNS_FIND
             | interface_key::KISS_FRAMING
             | interface_key::I2P_TUNNELED
             | interface_key::PREFER_IPV6

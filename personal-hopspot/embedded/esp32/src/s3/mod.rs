@@ -111,10 +111,10 @@ use personal_rns::tcp::{
 };
 use personal_rns::usb_auto::{UsbAutoDevice, UsbAutoDeviceInput};
 use personal_rns::wifi_auto::{
-    tcp_rendezvous, AutoWifi, AutoWifiSegment, AutoWifiShared, AutoWifiStatus, AutoWifiTopology,
-    TcpRendezvousBuffers, TcpRendezvousServer, TcpRendezvousStorage, TcpRendezvousWireSlot,
-    TCP_RENDEZVOUS_FRAMED_LEN, TCP_RENDEZVOUS_FRAME_CAP, TCP_RENDEZVOUS_READ_BUFFER_BYTES,
-    TCP_RENDEZVOUS_SOCKET_BUFFER_BYTES,
+    advertise_ipv4_mdns, tcp_rendezvous, AutoWifi, AutoWifiSegment, AutoWifiShared, AutoWifiStatus,
+    AutoWifiTopology, TcpRendezvousBuffers, TcpRendezvousServer, TcpRendezvousStorage,
+    TcpRendezvousWireSlot, TCP_RENDEZVOUS_FRAMED_LEN, TCP_RENDEZVOUS_FRAME_CAP,
+    TCP_RENDEZVOUS_READ_BUFFER_BYTES, TCP_RENDEZVOUS_SOCKET_BUFFER_BYTES,
 };
 #[cfg(feature = "bluetooth-auto")]
 use prns_interfaces_embassy::bluetooth_auto::PEER_CAPACITY as EMBEDDED_BLE_PEER_CAPACITY;

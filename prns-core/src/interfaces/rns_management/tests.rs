@@ -61,7 +61,8 @@ fn interface_stats_preserve_live_counters_and_access_code_fields() {
             IfacSize::WIDE,
             Some(String::from("ops")),
         )),
-    )]);
+    )
+    .with_clients(Some(2))]);
     let Ok(encoded) = stats.encode_message_pack() else {
         panic!("interface stats must encode");
     };
@@ -85,9 +86,42 @@ fn interface_stats_preserve_live_counters_and_access_code_fields() {
             .iter()
             .any(|(key, value)| key.as_str() == Some(interface::MODE) && value.as_i64() == Some(5))
             && fields.iter().any(|(key, value)| {
-                key.as_str() == Some(interface::GRAVITY) && value.as_i64() == Some(-12)
+                key.as_str() == Some(interface::CLIENTS) && value.as_u64() == Some(2)
             })
     }));
+}
+
+#[test]
+fn interface_stats_encode_mdns_find_when_present() {
+    let id = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, b"lan");
+    let stats = RnsInterfaceStats::new(vec![RnsInterfaceStatsEntry::new(
+        Some(String::from("LAN")),
+        InterfaceSnapshot {
+            id,
+            mode: crate::interfaces::InterfaceMode::Full,
+            gravity: crate::interfaces::InterfaceGravity::ZERO,
+            connection: ConnectionState::Connected,
+            failure_reason: None,
+            rx_bytes: 0,
+            tx_bytes: 0,
+            transfer_rates: None,
+            destinations: 0,
+            links: 0,
+            transported_links: 0,
+            membership: Membership::Independent,
+        },
+        None,
+    )
+    .with_mdns_find(Some(true))]);
+    let Ok(encoded) = stats.encode_message_pack() else {
+        panic!("interface stats must encode");
+    };
+    let report = RnsInterfaceStatsReport::decode_message_pack(&encoded)
+        .expect("encoded stats must decode");
+    assert_eq!(
+        report.interfaces[0].mdns_find,
+        RnsOptionalField::Value(true)
+    );
 }
 
 #[test]

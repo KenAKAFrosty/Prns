@@ -343,6 +343,7 @@ pub struct AutoInterfacePlan {
     data_port: AutoInterfaceDataPort,
     devices: AutoInterfaceDevicePolicy,
     multicast_address_type: AutoInterfaceMulticastAddressType,
+    mdns_find: bool,
 }
 
 impl AutoInterfacePlan {
@@ -368,6 +369,10 @@ impl AutoInterfacePlan {
 
     pub const fn multicast_address_type(&self) -> AutoInterfaceMulticastAddressType {
         self.multicast_address_type
+    }
+
+    pub const fn mdns_find(&self) -> bool {
+        self.mdns_find
     }
 }
 
@@ -494,6 +499,7 @@ pub(super) fn plan_medium(interface: &ReferenceInterface) -> Result<PlannedMediu
             devices,
             ignored_devices,
             multicast_address_type,
+            mdns_find,
         } => Ok(PlannedMedium::AutoWifi(auto_interface_plan(
             group_id,
             discovery_scope,
@@ -502,6 +508,7 @@ pub(super) fn plan_medium(interface: &ReferenceInterface) -> Result<PlannedMediu
             devices,
             ignored_devices,
             multicast_address_type,
+            *mdns_find,
         )?)),
         ReferenceConfigParams::TcpClient {
             target_host,
@@ -870,6 +877,7 @@ fn auto_interface_plan(
     devices: &Option<Vec<String>>,
     ignored_devices: &Option<Vec<String>>,
     multicast_address_type: &Option<String>,
+    mdns_find: Option<bool>,
 ) -> Result<AutoInterfacePlan, PlanErrorKind> {
     let discovery_scope =
         discovery_scope
@@ -912,6 +920,7 @@ fn auto_interface_plan(
             ignored: ignored_devices.clone().unwrap_or_default(),
         },
         multicast_address_type,
+        mdns_find: mdns_find.unwrap_or(false),
     })
 }
 

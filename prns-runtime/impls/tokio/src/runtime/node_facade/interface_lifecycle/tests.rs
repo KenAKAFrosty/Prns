@@ -151,6 +151,8 @@ async fn runtime_attachment_carries_ifac_wire_and_status_metadata() {
                 size: IfacSize::WIDE,
                 network_name: Some("private-net".into()),
             }),
+            clients: None,
+            mdns_find: None,
         }]
     );
 }

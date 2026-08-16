@@ -1,7 +1,7 @@
 use prns_core::interfaces::IfacSize;
 use prns_core::interfaces::{
-    ConnectionState, InterfaceGravity, InterfaceId, InterfaceMode, InterfaceOriginKind,
-    InterfaceSnapshot, Membership, TransferRates,
+    ConnectionState, InterfaceGravity, InterfaceId, InterfaceKind, InterfaceMode,
+    InterfaceOriginKind, InterfaceSnapshot, Membership, TransferRates,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,6 +17,10 @@ pub struct InterfaceInventoryEntry<Label> {
     pub origin: InterfaceOriginKind,
     pub snapshot: InterfaceSnapshot,
     pub ifac: Option<InterfaceIfacSnapshot<Label>>,
+    /// Fleet member count for supervisors that own members; `None` for ordinary interfaces.
+    pub clients: Option<u64>,
+    /// AutoInterface mDNS find setting when this entry is an AutoWifi supervisor.
+    pub mdns_find: Option<bool>,
 }
 
 struct FoldedInterface<Label> {
@@ -25,6 +29,7 @@ struct FoldedInterface<Label> {
     origin: InterfaceOriginKind,
     root: Option<InterfaceSnapshot>,
     ifac: Option<InterfaceIfacSnapshot<Label>>,
+    mdns_find: Option<bool>,
     member_connection: ConnectionState,
     member_mode: Option<InterfaceMode>,
     member_gravity: Option<InterfaceGravity>,
@@ -33,6 +38,7 @@ struct FoldedInterface<Label> {
     member_tx_bytes: u64,
     member_rates: Option<TransferRates>,
     has_members: bool,
+    members: u32,
     destinations: u32,
     links: u32,
     transported_links: u32,
@@ -46,6 +52,7 @@ impl<Label> FoldedInterface<Label> {
             origin,
             root: None,
             ifac: None,
+            mdns_find: None,
             member_connection: ConnectionState::Unknown,
             member_mode: None,
             member_gravity: None,
@@ -54,6 +61,7 @@ impl<Label> FoldedInterface<Label> {
             member_tx_bytes: 0,
             member_rates: None,
             has_members: false,
+            members: 0,
             destinations: 0,
             links: 0,
             transported_links: 0,
@@ -77,12 +85,16 @@ impl<Label> FoldedInterface<Label> {
                 if entry.ifac.is_some() {
                     self.ifac = entry.ifac.take();
                 }
+                if entry.mdns_find.is_some() {
+                    self.mdns_find = entry.mdns_find.take();
+                }
             }
             Membership::FleetMember { .. } => {
                 if self.root.is_none() && entry.origin == InterfaceOriginKind::Discovered {
                     self.origin = InterfaceOriginKind::Discovered;
                 }
                 self.has_members = true;
+                self.members = self.members.saturating_add(1);
                 self.member_mode.get_or_insert(snapshot.mode);
                 self.member_gravity.get_or_insert(snapshot.gravity);
                 self.member_connection =
@@ -153,8 +165,16 @@ impl<Label> FoldedInterface<Label> {
                 membership: Membership::Independent,
             },
             ifac: self.ifac,
+            clients: supervisor_client_count(self.id, self.members),
+            mdns_find: self.mdns_find,
         }
     }
+}
+
+fn supervisor_client_count(id: InterfaceId, members: u32) -> Option<u64> {
+    id.kind()
+        .and_then(InterfaceKind::member_kind)
+        .map(|_| u64::from(members))
 }
 
 #[must_use]
@@ -263,6 +283,8 @@ mod tests {
                 membership,
             },
             ifac: None,
+            clients: None,
+            mdns_find: None,
         }
     }
 
@@ -297,6 +319,7 @@ mod tests {
         assert_eq!(logical[0].snapshot.destinations, 5);
         assert_eq!(logical[0].snapshot.links, 3);
         assert_eq!(logical[0].snapshot.membership, Membership::Independent);
+        assert_eq!(logical[0].clients, Some(2));
     }
 
     #[test]

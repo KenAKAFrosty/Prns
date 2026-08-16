@@ -35,6 +35,8 @@ pub struct RnsInterfaceStatsEntry {
     name: Option<String>,
     snapshot: InterfaceSnapshot,
     access_code: Option<RnsInterfaceAccessCode>,
+    clients: Option<u64>,
+    mdns_find: Option<bool>,
 }
 
 impl RnsInterfaceStatsEntry {
@@ -47,7 +49,19 @@ impl RnsInterfaceStatsEntry {
             name,
             snapshot,
             access_code,
+            clients: None,
+            mdns_find: None,
         }
+    }
+
+    pub fn with_clients(mut self, clients: Option<u64>) -> Self {
+        self.clients = clients;
+        self
+    }
+
+    pub fn with_mdns_find(mut self, mdns_find: Option<bool>) -> Self {
+        self.mdns_find = mdns_find;
+        self
     }
 }
 
@@ -170,7 +184,8 @@ fn encode_interface_entry(
         rx_bps: 0,
         tx_bps: 0,
     });
-    encoder.map(14)?;
+    let field_count = 14 + usize::from(entry.mdns_find.is_some());
+    encoder.map(field_count)?;
     encoder.string_field(interface::NAME, &name)?;
     encoder.string_field(interface::SHORT_NAME, &name)?;
     encoder.string_field(interface::TYPE, &interface_type(entry.snapshot.id))?;
@@ -181,7 +196,14 @@ fn encode_interface_entry(
     encoder.field(interface::GRAVITY)?;
     encoder.signed(entry.snapshot.gravity.get());
     encoder.field(interface::CLIENTS)?;
-    encoder.nil();
+    match entry.clients {
+        Some(clients) => encoder.unsigned(clients),
+        None => encoder.nil(),
+    }
+    if let Some(mdns_find) = entry.mdns_find {
+        encoder.field(interface::MDNS_FIND)?;
+        encoder.boolean(mdns_find);
+    }
     encoder.unsigned_field(interface::RECEIVE_BYTES, entry.snapshot.rx_bytes)?;
     encoder.unsigned_field(interface::TRANSMIT_BYTES, entry.snapshot.tx_bytes)?;
     encoder.unsigned_field(interface::RECEIVE_SPEED, u64::from(rates.rx_bps))?;

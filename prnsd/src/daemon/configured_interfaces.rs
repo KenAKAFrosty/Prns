@@ -676,6 +676,7 @@ mod tests {
         let plan = parse_and_plan(
             "[interfaces]\n[[USB]]\ntype = PrnsUsbAuto\nenabled = Yes\n\
              [[BLE]]\ntype = PrnsBluetoothAuto\nenabled = Yes\n\
+             [[LAN]]\ntype = AutoInterface\nenabled = Yes\nmdns_find = Yes\n\
              [[WebSocket Client]]\ntype = PrnsWebSocketClient\nenabled = Yes\ntarget = ws://peer.example/prns\nframing = raw\n\
              [[WebSocket Server]]\ntype = PrnsWebSocketServer\nenabled = Yes\nport = 4242\nframing = raw\n",
         )
@@ -692,7 +693,7 @@ mod tests {
         assert_eq!(
             report,
             StartupInterfaceReport {
-                online: 2,
+                online: 3,
                 listening: 1,
                 retrying: 1,
                 failed: 0,
