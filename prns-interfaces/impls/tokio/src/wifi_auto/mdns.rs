@@ -1,5 +1,5 @@
 use std::net::SocketAddr;
-use tokio::sync::mpsc::{self, UnboundedReceiver};
+use tokio::sync::mpsc::UnboundedReceiver;
 
 use prns_core::crypto::sha256;
 use prns_core::interfaces::wifi_auto as contract;
@@ -23,7 +23,7 @@ pub(crate) fn start(
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 fn start_bonjour() -> UnboundedReceiver<SocketAddr> {
-    let (sightings, rx) = mpsc::unbounded_channel();
+    let (sightings, rx) = tokio::sync::mpsc::unbounded_channel();
     tokio::spawn(async move {
         match prns_ffi::mdns::macos::MacosMdnsBackend::new(
             contract::MDNS_SERVICE_PORT,
