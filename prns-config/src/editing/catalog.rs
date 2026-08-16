@@ -1083,9 +1083,7 @@ impl InterfaceSettingSpec {
             }),
             interface_key::MULTICAST_ADDRESS_TYPE => auto_plan(planned)
                 .map(|auto| format!("{:?}", auto.multicast_address_type()).to_ascii_lowercase()),
-            interface_key::MDNS_FIND => {
-                auto_plan(planned).map(|auto| yes_no(auto.mdns_find()))
-            }
+            interface_key::MDNS_FIND => auto_plan(planned).map(|auto| yes_no(auto.mdns_find())),
             _ => None,
         }
     }

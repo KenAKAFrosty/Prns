@@ -174,9 +174,7 @@ pub(super) async fn send_reverse_peering(
     {
         Ok(()) => true,
         Err(error) => {
-            crate::diagnostic_log::warn!(
-                "wifi-auto: reverse peering to {peer} failed: {error:?}"
-            );
+            crate::diagnostic_log::warn!("wifi-auto: reverse peering to {peer} failed: {error:?}");
             false
         }
     }

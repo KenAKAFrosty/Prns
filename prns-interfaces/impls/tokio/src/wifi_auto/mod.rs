@@ -656,9 +656,9 @@ impl InterfaceSupervisor for AutoWifi {
         sup.publish_status();
 
         let mut mdns = mdns.or_else(|| {
-            settings.mdns_find.then(|| {
-                mdns::start(&settings.instance_tag, settings.devices.clone())
-            })
+            settings
+                .mdns_find
+                .then(|| mdns::start(&settings.instance_tag, settings.devices.clone()))
         });
         // Bonjour often emits each peer once; remember sightings and keep probing until
         // multicast/reverse peering installs them as known members.

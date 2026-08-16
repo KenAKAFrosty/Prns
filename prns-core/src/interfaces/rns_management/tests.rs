@@ -116,8 +116,8 @@ fn interface_stats_encode_mdns_find_when_present() {
     let Ok(encoded) = stats.encode_message_pack() else {
         panic!("interface stats must encode");
     };
-    let report = RnsInterfaceStatsReport::decode_message_pack(&encoded)
-        .expect("encoded stats must decode");
+    let report =
+        RnsInterfaceStatsReport::decode_message_pack(&encoded).expect("encoded stats must decode");
     assert_eq!(
         report.interfaces[0].mdns_find,
         RnsOptionalField::Value(true)

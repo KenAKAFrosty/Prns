@@ -445,9 +445,7 @@ fn read_interface(
             }
             interface::GRAVITY => interface_report.gravity = read_optional_i64(reader, path)?,
             interface::CLIENTS => interface_report.clients = read_optional_u64(reader, path)?,
-            interface::MDNS_FIND => {
-                interface_report.mdns_find = read_optional_bool(reader, path)?
-            }
+            interface::MDNS_FIND => interface_report.mdns_find = read_optional_bool(reader, path)?,
             interface::RECEIVE_BYTES => {
                 interface_report.receive_bytes = Some(read_u64(reader, path)?)
             }

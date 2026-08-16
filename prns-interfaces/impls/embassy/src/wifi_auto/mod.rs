@@ -25,8 +25,8 @@ use fanout::{
     dispatch_fanout, send_beacon, send_reverse_peering, target_includes, FanoutPlan,
     UdpFanoutSender,
 };
-use rendezvous::TcpRendezvousEvent;
 pub use mdns::{advertise_ipv4 as advertise_ipv4_mdns, instance_label as mdns_instance_label};
+use rendezvous::TcpRendezvousEvent;
 pub use rendezvous::{
     tcp_rendezvous, TcpRendezvousBuffers, TcpRendezvousClient, TcpRendezvousExitCause,
     TcpRendezvousServer, TcpRendezvousStorage, TcpRendezvousWireSlot, TcpRendezvousWriteFailure,
@@ -545,11 +545,8 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                                 Instant::now().as_millis(),
                                 false,
                                 tcp_slot,
-
                             )
-
                             .await
-
                             {
                                 let _ = send_reverse_peering(
                                     Some(&self.primary.unicast_discovery),
@@ -557,7 +554,6 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                                     addr,
                                 )
                                 .await;
-
                             }
                         }
                     }
@@ -578,11 +574,8 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                                 Instant::now().as_millis(),
                                 false,
                                 tcp_slot,
-
                             )
-
                             .await
-
                             {
                                 let _ = send_reverse_peering(
                                     Some(&self.primary.unicast_discovery),
@@ -590,7 +583,6 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                                     addr,
                                 )
                                 .await;
-
                             }
                         }
                     }
@@ -648,7 +640,9 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                             };
                             if peer_on_secondary[slot] {
                                 let _ = send_reverse_peering(
-                                    self.secondary.as_ref().map(|segment| &segment.unicast_discovery),
+                                    self.secondary
+                                        .as_ref()
+                                        .map(|segment| &segment.unicast_discovery),
                                     secondary_token.as_ref(),
                                     addr,
                                 )
@@ -721,19 +715,17 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                                 Instant::now().as_millis(),
                                 true,
                                 tcp_slot,
-
                             )
-
                             .await
-
                             {
                                 let _ = send_reverse_peering(
-                                    self.secondary.as_ref().map(|segment| &segment.unicast_discovery),
+                                    self.secondary
+                                        .as_ref()
+                                        .map(|segment| &segment.unicast_discovery),
                                     secondary_token.as_ref(),
                                     addr,
                                 )
                                 .await;
-
                             }
                         }
                     }
@@ -754,19 +746,17 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                                 Instant::now().as_millis(),
                                 true,
                                 tcp_slot,
-
                             )
-
                             .await
-
                             {
                                 let _ = send_reverse_peering(
-                                    self.secondary.as_ref().map(|segment| &segment.unicast_discovery),
+                                    self.secondary
+                                        .as_ref()
+                                        .map(|segment| &segment.unicast_discovery),
                                     secondary_token.as_ref(),
                                     addr,
                                 )
                                 .await;
-
                             }
                         }
                     }

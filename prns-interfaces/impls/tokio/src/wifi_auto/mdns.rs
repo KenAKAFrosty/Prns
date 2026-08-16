@@ -44,9 +44,7 @@ fn start_bonjour() -> UnboundedReceiver<SocketAddr> {
                 }
             }
             Err(error) => {
-                crate::diagnostic_log::warn!(
-                    "wifi-auto: mDNS browse unavailable ({error:?})"
-                );
+                crate::diagnostic_log::warn!("wifi-auto: mDNS browse unavailable ({error:?})");
             }
         }
     });
@@ -292,10 +290,7 @@ mod mdns_sd_backend {
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
 use mdns_sd_backend::start_mdns_sd;
 
-#[cfg_attr(
-    any(target_os = "macos", target_os = "ios"),
-    allow(dead_code)
-)]
+#[cfg_attr(any(target_os = "macos", target_os = "ios"), allow(dead_code))]
 fn instance_label(tag: &[u8]) -> String {
     let digest = sha256(tag);
     format!(
@@ -304,10 +299,7 @@ fn instance_label(tag: &[u8]) -> String {
     )
 }
 
-#[cfg_attr(
-    any(target_os = "macos", target_os = "ios"),
-    allow(dead_code)
-)]
+#[cfg_attr(any(target_os = "macos", target_os = "ios"), allow(dead_code))]
 fn pick_sighting(addresses: impl IntoIterator<Item = SocketAddr>) -> Option<SocketAddr> {
     let mut link_local_v6 = None;
     let mut other = None;

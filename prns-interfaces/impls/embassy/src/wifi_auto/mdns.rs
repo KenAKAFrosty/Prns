@@ -152,7 +152,10 @@ async fn announce(
     };
     if ipv4.is_some() {
         if let Err(error) = socket
-            .send_to(&tx[..len], IpEndpoint::new(IpAddress::Ipv4(MDNS_GROUP), MDNS_PORT))
+            .send_to(
+                &tx[..len],
+                IpEndpoint::new(IpAddress::Ipv4(MDNS_GROUP), MDNS_PORT),
+            )
             .await
         {
             crate::diagnostic_log::debug!("wifi-auto: IPv4 mDNS announce failed: {error:?}");
@@ -411,13 +414,7 @@ fn write_records(
     let mut pos = 12usize;
     let mut ancount = 0u16;
     if answers.services_ptr {
-        write_ptr(
-            out,
-            &mut pos,
-            &SERVICES_LABELS,
-            &SERVICE_LABELS,
-            CLASS_IN,
-        )?;
+        write_ptr(out, &mut pos, &SERVICES_LABELS, &SERVICE_LABELS, CLASS_IN)?;
         ancount += 1;
     }
     if answers.service_ptr {
@@ -564,7 +561,9 @@ mod tests {
 
     fn query(labels: &[&[u8]], qtype: u16) -> heapless::Vec<u8, 128> {
         let mut packet = heapless::Vec::new();
-        packet.extend_from_slice(&[0, 7, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0]).ok();
+        packet
+            .extend_from_slice(&[0, 7, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0])
+            .ok();
         for label in labels {
             packet.push(label.len() as u8).ok();
             packet.extend_from_slice(label).ok();
@@ -602,7 +601,9 @@ mod tests {
         assert_eq!(body[2] & 0x84, 0x84);
         assert!(body.windows(2).any(|pair| pair == 42671u16.to_be_bytes()));
         assert!(body.windows(16).any(|octets| octets == ipv6.octets()));
-        assert!(body.windows(instance.len()).any(|w| w == instance.as_bytes()));
+        assert!(body
+            .windows(instance.len())
+            .any(|w| w == instance.as_bytes()));
         assert!(body.windows(b"_udp".len()).any(|w| w == b"_udp"));
     }
 

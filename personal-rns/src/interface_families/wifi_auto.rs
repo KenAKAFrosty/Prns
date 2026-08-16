@@ -4,7 +4,11 @@ pub use prns_interfaces_tokio::wifi_auto::{
     AutoWifiStatus,
 };
 
-#[cfg(all(feature = "embassy-host", feature = "wifi-auto", not(feature = "tokio-host")))]
+#[cfg(all(
+    feature = "embassy-host",
+    feature = "wifi-auto",
+    not(feature = "tokio-host")
+))]
 pub use prns_interfaces_embassy::wifi_auto::{
     advertise_ipv4_mdns, tcp_rendezvous, AutoWifi, AutoWifiSegment, AutoWifiShared, AutoWifiStatus,
     AutoWifiTopology, TcpRendezvousBuffers, TcpRendezvousClient, TcpRendezvousExitCause,
