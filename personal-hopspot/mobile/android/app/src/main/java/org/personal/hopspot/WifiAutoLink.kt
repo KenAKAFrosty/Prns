@@ -4,9 +4,11 @@ import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.net.wifi.WifiManager
+import android.os.Build
 import android.util.Log
 import java.net.Inet4Address
 import java.net.Inet6Address
+import java.net.InetAddress
 import java.nio.ByteBuffer
 import java.util.ArrayDeque
 
@@ -64,7 +66,8 @@ class WifiAutoLink(context: Context) {
             return
         }
         val port = NativeBridge.nativeMdnsServicePort()
-        registerService(manager, port)
+        val instanceName = NativeBridge.nativeMdnsInstanceName()
+        registerService(manager, port, instanceName)
         discoverServices(manager)
     }
 
@@ -92,9 +95,9 @@ class WifiAutoLink(context: Context) {
         }
     }
 
-    private fun registerService(manager: NsdManager, port: Int) {
+    private fun registerService(manager: NsdManager, port: Int, instanceName: String) {
         val info = NsdServiceInfo().apply {
-            serviceName = SERVICE_NAME
+            serviceName = instanceName
             serviceType = SERVICE_TYPE
             this.port = port
         }
@@ -182,12 +185,8 @@ class WifiAutoLink(context: Context) {
 
     @Suppress("DEPRECATION")
     private fun pushSighting(info: NsdServiceInfo) {
-        val host = info.host ?: return
-        val octets = when (host) {
-            is Inet4Address -> host.address
-            is Inet6Address -> host.address
-            else -> return
-        }
+        val preferred = preferredHost(info) ?: return
+        val octets = preferred.address
         if (octets.size != 4 && octets.size != 16) {
             return
         }
@@ -196,9 +195,28 @@ class WifiAutoLink(context: Context) {
         NativeBridge.nativeWifiSighting(direct, info.port)
     }
 
+    @Suppress("DEPRECATION")
+    private fun preferredHost(info: NsdServiceInfo): InetAddress? {
+        val addresses = hostAddresses(info)
+        return addresses.firstOrNull { address ->
+            address is Inet6Address && address.isLinkLocalAddress
+        } ?: addresses.firstOrNull { address ->
+            address is Inet6Address
+        } ?: addresses.firstOrNull { address ->
+            address is Inet4Address
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun hostAddresses(info: NsdServiceInfo): List<InetAddress> {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            return info.hostAddresses
+        }
+        return listOfNotNull(info.host)
+    }
+
     private companion object {
         private const val TAG = "HopspotWifi"
         private const val SERVICE_TYPE = "_reticulum._udp"
-        private const val SERVICE_NAME = "PersonalHopspot"
     }
 }

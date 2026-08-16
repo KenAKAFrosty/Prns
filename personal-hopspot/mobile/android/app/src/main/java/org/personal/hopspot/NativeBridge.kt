@@ -112,6 +112,8 @@ object NativeBridge {
 
     external fun nativeMdnsServicePort(): Int
 
+    external fun nativeMdnsInstanceName(): String
+
     external fun nativeWifiSighting(address: ByteBuffer, port: Int)
 
     external fun nativeBleSetPsm(psm: Int)

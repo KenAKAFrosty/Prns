@@ -167,8 +167,10 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
     let Some(mdns_rx) = platform.mdns.take_receiver() else {
         return fail_start(ready_tx, EngineStartError::WorkerStopped);
     };
+    // Same shape as prnsd/desktop: enumerate NICs, UDP AutoInterface dataplane, SoftAP
+    // gateway TCP dial, and platform mDNS sightings as a find path into UDP reverse probes.
     let wifi = AutoWifi::new()
-        .without_host_network_discovery()
+        .with_mdns_find()
         .with_mdns_sightings(mdns_rx);
     let wifi_status = wifi.status();
     handle.supervise(wifi);
