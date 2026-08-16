@@ -88,7 +88,7 @@ COUNT_CONTRACTS = (
     ),
     CountContract(
         "release/acceptance/README.md",
-        "Every row must prove all ",
+        "A browser without Web Serial must prove all ",
         "fallback_scenarios",
         " points:",
     ),
