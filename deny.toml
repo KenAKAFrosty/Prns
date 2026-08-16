@@ -35,7 +35,8 @@ confidence-threshold = 0.93
 # Licenses outside the general permissive set stay scoped to the exact reviewed package.
 exceptions = [
     { allow = ["Unlicense"], crate = "ksni@0.3.6" },
-    { allow = ["LicenseRef-Nordic-SoftDevice"], crate = "nrf-softdevice-s140@0.1.2" },
+    { allow = ["LicenseRef-Nordic-SoftDevice"], crate = "nrf-softdevice-s140-v6@0.1.2-prns.1" },
+    { allow = ["LicenseRef-Nordic-SoftDevice"], crate = "nrf-softdevice-s140-v7@0.1.2-prns.1" },
     # espflash 4.5.0's library serial engine requires serialport. Keep its file-level MPL
     # obligations quarantined to this exact transport crate instead of widening the policy.
     { allow = ["MPL-2.0"], crate = "serialport@4.9.0" },
@@ -53,10 +54,17 @@ license-files = []
 # license. Keep the release exception bound to the exact upstream text; a license change
 # invalidates this clarification and fails the audit.
 [[licenses.clarify]]
-crate = "nrf-softdevice-s140@0.1.2"
+crate = "nrf-softdevice-s140-v6@0.1.2-prns.1"
 expression = "LicenseRef-Nordic-SoftDevice"
 license-files = [
-    { path = "LICENSE-NORDIC", hash = 0xe7401bed },
+    { path = "LICENSE-NORDIC", hash = 0x3515b511 },
+]
+
+[[licenses.clarify]]
+crate = "nrf-softdevice-s140-v7@0.1.2-prns.1"
+expression = "LicenseRef-Nordic-SoftDevice"
+license-files = [
+    { path = "LICENSE-NORDIC", hash = 0x3515b511 },
 ]
 
 [advisories]

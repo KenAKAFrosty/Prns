@@ -248,7 +248,10 @@ fn run_node(ready_tx: Sender<(WindowHandles, persistence::ShutdownFlush)>) {
             prns_ffi::usb_hotplug::watch_serial_hotplug(move || rescan.notify_one());
         }
 
+        #[cfg(target_os = "macos")]
         let mut wifi = AutoWifi::default().with_mdns_find();
+        #[cfg(not(target_os = "macos"))]
+        let wifi = AutoWifi::default().with_mdns_find();
         let wifi_status = wifi.status();
         #[cfg(target_os = "macos")]
         let (mdns_tx, mdns_rx) = tokio::sync::mpsc::unbounded_channel::<std::net::SocketAddr>();
