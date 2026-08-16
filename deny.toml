@@ -57,14 +57,14 @@ license-files = []
 crate = "nrf-softdevice-s140-v6@0.1.2-prns.1"
 expression = "LicenseRef-Nordic-SoftDevice"
 license-files = [
-    { path = "LICENSE-NORDIC", hash = 0x3515b511 },
+    { path = "LICENSE-NORDIC", hash = 0xe7401bed },
 ]
 
 [[licenses.clarify]]
 crate = "nrf-softdevice-s140-v7@0.1.2-prns.1"
 expression = "LicenseRef-Nordic-SoftDevice"
 license-files = [
-    { path = "LICENSE-NORDIC", hash = 0x3515b511 },
+    { path = "LICENSE-NORDIC", hash = 0xe7401bed },
 ]
 
 [advisories]
