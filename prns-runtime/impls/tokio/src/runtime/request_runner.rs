@@ -171,6 +171,15 @@ async fn dispatch_guarded<St, R: RequestEndpointSet<St>>(
     }
 }
 
+#[cfg_attr(
+    feature = "tracing",
+    tracing::instrument(
+        name = "prns.respond",
+        level = "debug",
+        skip_all,
+        fields(bytes = request.data.len(), link_id = ?request.link_id.as_bytes(), path_hash = ?request.path_hash)
+    )
+)]
 async fn dispatch<St, R: RequestEndpointSet<St>>(
     state: &St,
     commands: &PrnsNodeHandle,
