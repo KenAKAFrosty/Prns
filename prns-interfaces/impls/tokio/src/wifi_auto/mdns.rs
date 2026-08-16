@@ -1,5 +1,5 @@
 use std::net::SocketAddr;
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::{self, UnboundedReceiver};
 
 use prns_core::crypto::sha256;
 use prns_core::interfaces::wifi_auto as contract;

@@ -963,13 +963,10 @@ async fn ingest_beacon<
                 // often never arrives, so unicast refresh must drive the peer table both ways.
                 return Some(addr);
             }
-            let Some(slot) = peers
+            let slot = peers
                 .iter()
                 .enumerate()
-                .position(|(slot, peer)| peer.is_none() && Some(slot) != reserved_slot)
-            else {
-                return None;
-            };
+                .position(|(slot, peer)| peer.is_none() && Some(slot) != reserved_slot)?;
             let id = InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, &addr.octets());
             fleet
                 .register_member(contract::descriptor(
