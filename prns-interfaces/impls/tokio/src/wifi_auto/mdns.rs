@@ -63,33 +63,30 @@ async fn run_service_discovery(
             }
         }
 
-        match run_central_session(
+        let central_session_follow_up = match run_central_session(
             &instance_identity,
             &auto_wifi_device_policy,
             &mut service_discovery_publisher,
         )
         .await
         {
-            Ok(
-                CentralDiscoverySessionEnd::BecameInactive
-                | CentralDiscoverySessionEnd::BecameSatellite,
-            ) => {
-                service_discovery_publisher.clear_snapshot();
-                continue;
-            }
-            Ok(CentralDiscoverySessionEnd::RuntimeDropped) => {
-                service_discovery_publisher.clear_snapshot();
-                return NativeDiscoveryExit::RuntimeDropped;
-            }
-            Ok(CentralDiscoverySessionEnd::BackendStopped) => {}
+            Ok(central_session_end) => CentralSessionFollowUp::from(central_session_end),
             Err(mdns_error) => {
                 crate::diagnostic_log::debug!(
                     "wifi-auto: mDNS discovery unavailable: {mdns_error}"
                 );
+                CentralSessionFollowUp::RetryBackend
             }
-        }
+        };
 
         service_discovery_publisher.clear_snapshot();
+        match central_session_follow_up {
+            CentralSessionFollowUp::ReevaluateParticipation => continue,
+            CentralSessionFollowUp::RetryBackend => {}
+            CentralSessionFollowUp::ExitDiscovery => {
+                return NativeDiscoveryExit::RuntimeDropped;
+            }
+        }
         if service_discovery_publisher.participation() != DiscoveryParticipation::Central {
             continue;
         }
@@ -154,17 +151,19 @@ async fn run_central_session(
             _ = reconciliation_interval.tick() => {
                 let current_eligible_ip_addresses =
                     collect_eligible_ip_addresses(auto_wifi_device_policy)?;
-                if current_eligible_ip_addresses != eligible_ip_addresses {
-                    reconcile_mdns_interfaces(
-                        &mdns_daemon,
-                        &eligible_ip_addresses,
-                        &current_eligible_ip_addresses,
-                    )?;
-                    eligible_ip_addresses = current_eligible_ip_addresses;
-                    discovery_snapshot =
-                        DiscoverySnapshot::new(service_discovery_publisher.capacity());
-                    let _ = service_discovery_publisher
-                        .replace_snapshot(discovery_snapshot.clone());
+                match InterfaceReconciliation::between(
+                    &eligible_ip_addresses,
+                    &current_eligible_ip_addresses,
+                ) {
+                    InterfaceReconciliation::Unchanged => {}
+                    InterfaceReconciliation::Changed(interface_changes) => {
+                        interface_changes.apply(&mdns_daemon)?;
+                        eligible_ip_addresses = current_eligible_ip_addresses;
+                        discovery_snapshot =
+                            DiscoverySnapshot::new(service_discovery_publisher.capacity());
+                        let _ = service_discovery_publisher
+                            .replace_snapshot(discovery_snapshot.clone());
+                    }
                 }
                 reconcile_service_advertisement(
                     &mdns_daemon,
@@ -290,34 +289,6 @@ fn collect_eligible_ip_addresses(
         eligible_ip_addresses.insert(ip_address);
     }
     Ok(eligible_ip_addresses)
-}
-
-fn reconcile_mdns_interfaces(
-    mdns_daemon: &ServiceDaemon,
-    previous_ip_addresses: &BTreeSet<IpAddr>,
-    current_ip_addresses: &BTreeSet<IpAddr>,
-) -> Result<(), MdnsDiscoveryError> {
-    let removed_interfaces = previous_ip_addresses
-        .difference(current_ip_addresses)
-        .copied()
-        .map(IfKind::Addr)
-        .collect::<Vec<_>>();
-    if !removed_interfaces.is_empty() {
-        mdns_daemon
-            .disable_interface(removed_interfaces)
-            .map_err(MdnsDiscoveryError::Mdns)?;
-    }
-    let added_interfaces = current_ip_addresses
-        .difference(previous_ip_addresses)
-        .copied()
-        .map(IfKind::Addr)
-        .collect::<Vec<_>>();
-    if !added_interfaces.is_empty() {
-        mdns_daemon
-            .enable_interface(added_interfaces)
-            .map_err(MdnsDiscoveryError::Mdns)?;
-    }
-    Ok(())
 }
 
 fn reconcile_service_advertisement(
@@ -475,6 +446,87 @@ enum CentralDiscoverySessionEnd {
     BackendStopped,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum CentralSessionFollowUp {
+    ReevaluateParticipation,
+    RetryBackend,
+    ExitDiscovery,
+}
+
+impl From<CentralDiscoverySessionEnd> for CentralSessionFollowUp {
+    fn from(central_session_end: CentralDiscoverySessionEnd) -> Self {
+        match central_session_end {
+            CentralDiscoverySessionEnd::BecameInactive
+            | CentralDiscoverySessionEnd::BecameSatellite => Self::ReevaluateParticipation,
+            CentralDiscoverySessionEnd::BackendStopped => Self::RetryBackend,
+            CentralDiscoverySessionEnd::RuntimeDropped => Self::ExitDiscovery,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum InterfaceReconciliation {
+    Unchanged,
+    Changed(InterfaceChanges),
+}
+
+impl InterfaceReconciliation {
+    fn between(
+        previous_ip_addresses: &BTreeSet<IpAddr>,
+        current_ip_addresses: &BTreeSet<IpAddr>,
+    ) -> Self {
+        let removed_ip_addresses: BTreeSet<IpAddr> = previous_ip_addresses
+            .difference(current_ip_addresses)
+            .copied()
+            .collect();
+        let added_ip_addresses: BTreeSet<IpAddr> = current_ip_addresses
+            .difference(previous_ip_addresses)
+            .copied()
+            .collect();
+        if removed_ip_addresses.is_empty() && added_ip_addresses.is_empty() {
+            return Self::Unchanged;
+        }
+        Self::Changed(InterfaceChanges {
+            removed_ip_addresses,
+            added_ip_addresses,
+        })
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct InterfaceChanges {
+    removed_ip_addresses: BTreeSet<IpAddr>,
+    added_ip_addresses: BTreeSet<IpAddr>,
+}
+
+impl InterfaceChanges {
+    fn apply(&self, mdns_daemon: &ServiceDaemon) -> Result<(), MdnsDiscoveryError> {
+        if !self.removed_ip_addresses.is_empty() {
+            mdns_daemon
+                .disable_interface(
+                    self.removed_ip_addresses
+                        .iter()
+                        .copied()
+                        .map(IfKind::Addr)
+                        .collect::<Vec<_>>(),
+                )
+                .map_err(MdnsDiscoveryError::Mdns)?;
+        }
+        if !self.added_ip_addresses.is_empty() {
+            mdns_daemon
+                .enable_interface(
+                    self.added_ip_addresses
+                        .iter()
+                        .copied()
+                        .map(IfKind::Addr)
+                        .collect::<Vec<_>>(),
+                )
+                .map_err(MdnsDiscoveryError::Mdns)?;
+        }
+        Ok(())
+    }
+}
+
 enum DiscoveryRestartTrigger {
     RetryElapsed,
     ParticipationChanged,
@@ -524,6 +576,13 @@ impl std::error::Error for MdnsDiscoveryError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ip_address_set(ip_addresses: &[&str]) -> BTreeSet<IpAddr> {
+        ip_addresses
+            .iter()
+            .map(|ip_address| ip_address.parse().unwrap())
+            .collect()
+    }
 
     fn resolved_service(
         instance_name: &str,
@@ -612,6 +671,55 @@ mod tests {
         );
         build_service_advertisement(&legacy_service, &instance_identity.service_fullname)
             .expect("implicit v1 record is accepted");
+    }
+
+    #[test]
+    fn interface_reconciliation_names_every_address_change() {
+        let no_ip_addresses = BTreeSet::new();
+        let original_ip_addresses = ip_address_set(&["192.168.4.8", "fd00::8"]);
+        let changed_ip_addresses = ip_address_set(&["192.168.4.9", "fd00::8"]);
+
+        assert_eq!(
+            [
+                InterfaceReconciliation::between(&original_ip_addresses, &original_ip_addresses,),
+                InterfaceReconciliation::between(&no_ip_addresses, &original_ip_addresses),
+                InterfaceReconciliation::between(&original_ip_addresses, &changed_ip_addresses,),
+                InterfaceReconciliation::between(&changed_ip_addresses, &no_ip_addresses),
+            ],
+            [
+                InterfaceReconciliation::Unchanged,
+                InterfaceReconciliation::Changed(InterfaceChanges {
+                    removed_ip_addresses: BTreeSet::new(),
+                    added_ip_addresses: original_ip_addresses.clone(),
+                }),
+                InterfaceReconciliation::Changed(InterfaceChanges {
+                    removed_ip_addresses: ip_address_set(&["192.168.4.8"]),
+                    added_ip_addresses: ip_address_set(&["192.168.4.9"]),
+                }),
+                InterfaceReconciliation::Changed(InterfaceChanges {
+                    removed_ip_addresses: changed_ip_addresses,
+                    added_ip_addresses: BTreeSet::new(),
+                }),
+            ]
+        );
+    }
+
+    #[test]
+    fn central_session_completion_has_an_explicit_follow_up() {
+        assert_eq!(
+            [
+                CentralSessionFollowUp::from(CentralDiscoverySessionEnd::BecameInactive),
+                CentralSessionFollowUp::from(CentralDiscoverySessionEnd::BecameSatellite),
+                CentralSessionFollowUp::from(CentralDiscoverySessionEnd::BackendStopped),
+                CentralSessionFollowUp::from(CentralDiscoverySessionEnd::RuntimeDropped),
+            ],
+            [
+                CentralSessionFollowUp::ReevaluateParticipation,
+                CentralSessionFollowUp::ReevaluateParticipation,
+                CentralSessionFollowUp::RetryBackend,
+                CentralSessionFollowUp::ExitDiscovery,
+            ]
+        );
     }
 
     #[test]
