@@ -1,14 +1,19 @@
 use std::ffi::c_void;
 use std::ptr;
 use std::sync::{Arc, Mutex};
+// `Duration` and `issued_command` are only reached from the unix arms below; the non-unix arms
+// return `Unsupported` before either would be used.
+#[cfg_attr(not(unix), allow(unused_imports))]
 use std::time::Duration;
 
 #[cfg(unix)]
 use std::os::fd::{FromRawFd, OwnedFd, RawFd};
 
+#[cfg_attr(not(unix), allow(unused_imports))]
+use crate::issued_command;
 use crate::readiness::{Readiness, ReadinessCallback, RegisteredReadiness};
 use crate::{
-    catch_status, issued_command, lock, required_mut, required_ref, status, PrnsIssuedCommand,
+    catch_status, lock, required_mut, required_ref, status, PrnsIssuedCommand,
     PrnsReadinessRegistration, PrnsStringView,
 };
 use prns_host_core::{Status as AbiStatus, SAFE_UINT_MAX};
@@ -16,6 +21,9 @@ use prns_host_core::{Status as AbiStatus, SAFE_UINT_MAX};
 pub struct PrnsSuppliedPipe {
     #[cfg(unix)]
     native: prns_host_native::NativeSuppliedPipe,
+    // Only the unix attach path constructs this struct and only unix code reads the field; it
+    // stays unconditional so the struct's shape does not vary by platform.
+    #[cfg_attr(not(unix), allow(dead_code))]
     attachment_readiness: Arc<Readiness>,
     request_readiness: Arc<Readiness>,
     readiness_registration: Mutex<Option<Arc<RegisteredReadiness>>>,
@@ -111,6 +119,8 @@ pub unsafe extern "C" fn prns_host_attach_supplied_pipe(
     })
 }
 
+// Called only from the unix attach path; on other targets that path compiles out.
+#[cfg_attr(not(unix), allow(dead_code))]
 fn weak_signal(readiness: &Arc<Readiness>) -> prns_host_native::ReadinessSignal {
     let readiness = Arc::downgrade(readiness);
     Arc::new(move || {
@@ -231,6 +241,9 @@ pub unsafe extern "C" fn prns_supplied_pipe_register_readiness(
     })
 }
 
+// On non-unix targets the body compiles out and the rebound `supplied_pipe` only looks unused
+// because no code is left to read it.
+#[cfg_attr(not(unix), allow(unused_variables))]
 #[no_mangle]
 pub unsafe extern "C" fn prns_supplied_pipe_interrupt_wait(supplied_pipe: *mut PrnsSuppliedPipe) {
     if let Ok(Some(supplied_pipe)) =
