@@ -47,9 +47,15 @@ const WIFI_DYNAMIC_TX_BUFFERS: u16 = 0;
 #[cfg(feature = "wifi-auto")]
 const WIFI_DATA_SOCKET_BUFFER_BYTES: usize = 4 * 1_024;
 #[cfg(feature = "wifi-auto")]
+const WIFI_DATA_SOCKET_METADATA: usize = 8;
+#[cfg(feature = "wifi-auto")]
 const WIFI_AUTO_DISCOVERY_SOCKET_METADATA: usize = 8;
 #[cfg(feature = "wifi-auto")]
 const WIFI_AUTO_DISCOVERY_SOCKET_BYTES: usize = 128;
+#[cfg(feature = "wifi-auto")]
+const WIFI_AUTO_SOFT_AP_DISCOVERY_SOCKET_METADATA: usize = 8;
+#[cfg(feature = "wifi-auto")]
+const WIFI_AUTO_SOFT_AP_DISCOVERY_SOCKET_BYTES: usize = 512;
 #[cfg(feature = "wifi-auto")]
 const WIFI_AUTO_UNICAST_DISCOVERY_TX_QUEUED_PACKETS: usize = 2;
 #[cfg(feature = "wifi-auto")]
@@ -72,6 +78,56 @@ const STATION_STACK_SOCKET_CAPACITY: usize = DHCP_CLIENT_SOCKET_COUNT
 #[cfg(feature = "wifi-auto")]
 const WIFI_HEALTH_SAMPLES_BETWEEN_REPORTS: u8 = 4;
 #[cfg(feature = "wifi-auto")]
+fn wifi_auto_station_multicast_discovery_socket(stack: Stack<'static>) -> UdpSocket<'static> {
+    psram_udp_socket::<
+        WIFI_AUTO_DISCOVERY_SOCKET_METADATA,
+        WIFI_AUTO_DISCOVERY_SOCKET_BYTES,
+        WIFI_AUTO_DISCOVERY_SOCKET_METADATA,
+        WIFI_AUTO_DISCOVERY_SOCKET_BYTES,
+    >(stack)
+}
+
+#[cfg(feature = "wifi-auto")]
+fn wifi_auto_soft_ap_multicast_discovery_socket(stack: Stack<'static>) -> UdpSocket<'static> {
+    psram_udp_socket::<
+        WIFI_AUTO_SOFT_AP_DISCOVERY_SOCKET_METADATA,
+        WIFI_AUTO_SOFT_AP_DISCOVERY_SOCKET_BYTES,
+        WIFI_AUTO_SOFT_AP_DISCOVERY_SOCKET_METADATA,
+        WIFI_AUTO_SOFT_AP_DISCOVERY_SOCKET_BYTES,
+    >(stack)
+}
+
+#[cfg(feature = "wifi-auto")]
+fn wifi_auto_unicast_discovery_socket(stack: Stack<'static>) -> UdpSocket<'static> {
+    psram_udp_socket::<
+        WIFI_AUTO_DISCOVERY_SOCKET_METADATA,
+        WIFI_AUTO_DISCOVERY_SOCKET_BYTES,
+        WIFI_AUTO_UNICAST_DISCOVERY_TX_SOCKET_METADATA,
+        WIFI_AUTO_UNICAST_DISCOVERY_TX_SOCKET_BYTES,
+    >(stack)
+}
+
+#[cfg(feature = "wifi-auto")]
+fn wifi_auto_data_socket(stack: Stack<'static>) -> UdpSocket<'static> {
+    psram_udp_socket::<
+        WIFI_DATA_SOCKET_METADATA,
+        WIFI_DATA_SOCKET_BUFFER_BYTES,
+        WIFI_DATA_SOCKET_METADATA,
+        WIFI_DATA_SOCKET_BUFFER_BYTES,
+    >(stack)
+}
+
+#[cfg(feature = "wifi-auto")]
+fn udp_service_discovery_socket(stack: Stack<'static>) -> UdpSocket<'static> {
+    psram_udp_socket::<
+        UDP_SERVICE_DISCOVERY_RX_SOCKET_METADATA,
+        UDP_SERVICE_DISCOVERY_RX_SOCKET_BYTES,
+        UDP_SERVICE_DISCOVERY_TX_SOCKET_METADATA,
+        UDP_SERVICE_DISCOVERY_TX_SOCKET_BYTES,
+    >(stack)
+}
+
+#[cfg(feature = "wifi-auto")]
 const _: () = assert!(WIFI_STATIC_RX_BUFFERS >= WIFI_RX_BA_WINDOW);
 #[cfg(feature = "wifi-auto")]
 const _: () = assert!(WIFI_DYNAMIC_RX_BUFFERS > WIFI_RX_BA_WINDOW as u16);
@@ -81,6 +137,16 @@ const _: () = assert!(WIFI_STATIC_TX_BUFFERS >= WIFI_TX_QUEUE_FRAMES as u8);
 const _: () = assert!(
     WIFI_AUTO_UNICAST_DISCOVERY_TX_SOCKET_METADATA > WIFI_AUTO_UNICAST_DISCOVERY_TX_QUEUED_PACKETS
 );
+#[cfg(feature = "wifi-auto")]
+const _: () = assert!(
+    WIFI_AUTO_UNICAST_DISCOVERY_TX_SOCKET_BYTES
+        == wifi_auto_contract::PEERING_TOKEN_BYTES * WIFI_AUTO_UNICAST_DISCOVERY_TX_QUEUED_PACKETS
+);
+#[cfg(feature = "wifi-auto")]
+const _: () = assert!(WIFI_AUTO_DISCOVERY_SOCKET_BYTES >= wifi_auto_contract::PEERING_TOKEN_BYTES);
+#[cfg(feature = "wifi-auto")]
+const _: () =
+    assert!(WIFI_AUTO_SOFT_AP_DISCOVERY_SOCKET_BYTES >= wifi_auto_contract::PEERING_TOKEN_BYTES);
 
 pub(super) fn build_tcp(
     stack: Stack<'static>,
@@ -198,22 +264,9 @@ pub(super) fn build_wifi(
             u64::from_le_bytes(bytes)
         };
         let (stack, runner) = embassy_net::new(interfaces.station, net_config, resources, seed);
-        let discovery = psram_udp_socket::<
-            WIFI_AUTO_DISCOVERY_SOCKET_METADATA,
-            WIFI_AUTO_DISCOVERY_SOCKET_BYTES,
-            WIFI_AUTO_DISCOVERY_SOCKET_METADATA,
-            WIFI_AUTO_DISCOVERY_SOCKET_BYTES,
-        >(stack);
-        let unicast_discovery = psram_udp_socket::<
-            WIFI_AUTO_DISCOVERY_SOCKET_METADATA,
-            WIFI_AUTO_DISCOVERY_SOCKET_BYTES,
-            WIFI_AUTO_UNICAST_DISCOVERY_TX_SOCKET_METADATA,
-            WIFI_AUTO_UNICAST_DISCOVERY_TX_SOCKET_BYTES,
-        >(stack);
-        let data =
-            psram_udp_socket::<8, WIFI_DATA_SOCKET_BUFFER_BYTES, 8, WIFI_DATA_SOCKET_BUFFER_BYTES>(
-                stack,
-            );
+        let discovery = wifi_auto_station_multicast_discovery_socket(stack);
+        let unicast_discovery = wifi_auto_unicast_discovery_socket(stack);
+        let data = wifi_auto_data_socket(stack);
         let wifi_status = AutoWifiStatus::new(&WIFI_SHARED);
         start_udp_service_discovery(spawner, stack, link_local, wifi_status);
         let station_credentials = StationCredentials {
@@ -283,12 +336,9 @@ pub(super) fn build_wifi(
             rendezvous_storage,
         );
         spawner.spawn(tcp_rendezvous_task(rendezvous_server).expect("TCP rendezvous task fits"));
-        let ap_discovery = psram_udp_socket::<8, 512, 8, 512>(ap_stack);
-        let ap_unicast_discovery = psram_udp_socket::<8, 128, 1, 1>(ap_stack);
-        let ap_data =
-            psram_udp_socket::<8, WIFI_DATA_SOCKET_BUFFER_BYTES, 8, WIFI_DATA_SOCKET_BUFFER_BYTES>(
-                ap_stack,
-            );
+        let ap_discovery = wifi_auto_soft_ap_multicast_discovery_socket(ap_stack);
+        let ap_unicast_discovery = wifi_auto_unicast_discovery_socket(ap_stack);
+        let ap_data = wifi_auto_data_socket(ap_stack);
         let wifi = AutoWifi::new(
             AutoWifiTopology {
                 primary: AutoWifiSegment {
@@ -329,12 +379,7 @@ fn start_udp_service_discovery(
     address: core::net::Ipv6Addr,
     status: AutoWifiStatus<MEMBERS>,
 ) {
-    let socket = psram_udp_socket::<
-        UDP_SERVICE_DISCOVERY_RX_SOCKET_METADATA,
-        UDP_SERVICE_DISCOVERY_RX_SOCKET_BYTES,
-        UDP_SERVICE_DISCOVERY_TX_SOCKET_METADATA,
-        UDP_SERVICE_DISCOVERY_TX_SOCKET_BYTES,
-    >(stack);
+    let socket = udp_service_discovery_socket(stack);
     let storage = crate::storage::allocate_psram(UdpServiceDiscoveryStorage::<MEMBERS>::new());
     let service_discovery =
         match UdpServiceDiscovery::new(socket, stack, address, status, storage, hardware_entropy) {
