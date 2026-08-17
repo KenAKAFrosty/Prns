@@ -22,6 +22,7 @@ compile_error!("S140 compatibility features are mutually exclusive");
 mod boards;
 #[cfg(all(feature = "board-t-echo", not(feature = "board-t096")))]
 mod runtime;
+mod storage;
 
 #[cfg(all(feature = "board-t-echo", not(feature = "board-t096")))]
 pub use runtime::run;

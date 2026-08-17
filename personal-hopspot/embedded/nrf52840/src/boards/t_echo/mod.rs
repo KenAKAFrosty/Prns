@@ -4,10 +4,10 @@ mod identity;
 mod input;
 mod persistence;
 mod ssd1681;
-mod storage;
 
 use personal_rns::interfaces::InterfaceId;
 
+pub(crate) use crate::storage::Nrf52840Storage as Storage;
 pub(crate) use display::{frame_hash, EinkScreen};
 pub(crate) use hardware::{
     TechoBoard as Board, TechoControls as Controls, TechoDisplayHardware as DisplayHardware,
@@ -21,7 +21,6 @@ pub(crate) use input::{drive_button, drive_frontlight, EVENTS as INPUT_EVENTS};
 pub(crate) use persistence::{
     new as new_persistence, persistence_state, TechoPersistence as Persistence,
 };
-pub(crate) use storage::TechoStorage as Storage;
 
 pub(crate) const RADIO_PROFILE_PAGES: [u32; 2] = personal_hopspot_core::T_ECHO_RADIO_PROFILE_PAGES;
 pub(crate) const USB_MANUFACTURER: &str = "Stay Personal";

@@ -11,11 +11,12 @@ use personal_rns::runtime::{
 pub const ARENA_BYTES: usize = personal_hopspot_core::T_ECHO_MIN_ARENA_BYTES;
 
 const PENDING: usize = 8;
+const _: () = assert!(super::Storage::MAX_COMPACTED_FLASH_JOURNAL_BYTES <= ARENA_BYTES);
 
 pub type TechoSharedFlash = SharedNorFlash<'static, CriticalSectionRawMutex, Flash>;
 pub type TechoPersistence = EmbeddedFlashPersistence<
     TechoSharedFlash,
-    FixedRouteSnapshotKeys<{ super::storage::TechoStorage::TRACKED_DESTINATIONS }>,
+    FixedRouteSnapshotKeys<{ super::Storage::TRACKED_DESTINATIONS }>,
     fn(EmbeddedPersistenceDiagnostic),
     PENDING,
 >;
@@ -27,7 +28,7 @@ pub fn new(flash: TechoSharedFlash) -> TechoPersistence {
         flash,
         personal_hopspot_core::T_ECHO_JOURNAL_LAYOUT,
         EmbeddedPersistencePolicy::hopspot_default(EmbeddedCompactionPolicy::hopspot(
-            super::storage::TechoStorage::MAX_CRITICAL_FLASH_JOURNAL_BYTES,
+            super::Storage::MAX_CRITICAL_FLASH_JOURNAL_BYTES,
         )),
         FixedRouteSnapshotKeys::new(),
         observe as fn(EmbeddedPersistenceDiagnostic),

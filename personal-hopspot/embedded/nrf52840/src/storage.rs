@@ -41,9 +41,9 @@ use personal_rns::routing::warmth::FixedDepartedInterfaceTable;
 use personal_rns::runtime::request_endpoints::RequestEndpointSet;
 use personal_rns::storage::{DisplayedStorageLimits, StorageCapacity, StorageLayout};
 
-pub struct TechoStorage;
+pub(crate) struct Nrf52840Storage;
 
-impl TechoStorage {
+impl Nrf52840Storage {
     // Relationship tables are intentionally independent from transfer workspaces. An idle link is
     // cheap; channels and resources borrow the smaller shared pools only while doing payload work.
     pub(crate) const TRACKED_DESTINATIONS: usize = 8;
@@ -65,7 +65,7 @@ impl TechoStorage {
     const CHANNEL_REORDER_DEPTH: usize = 2;
     const LINK_MTU: usize = 1024;
     const CHANNEL_MESSAGE_BYTES: usize = channel_mdu(Self::LINK_MTU);
-    const MAX_COMPACTED_FLASH_JOURNAL_BYTES: usize = Self::TRACKED_DESTINATIONS
+    pub(crate) const MAX_COMPACTED_FLASH_JOURNAL_BYTES: usize = Self::TRACKED_DESTINATIONS
         * (personal_rns::persistence::flash_journal_record_storage_len(
             personal_rns::persistence::maximum_route_upsert_payload_len(0, 0),
             4,
@@ -86,12 +86,10 @@ impl TechoStorage {
         );
 }
 
-const _: () =
-    assert!(TechoStorage::MAX_COMPACTED_FLASH_JOURNAL_BYTES <= super::persistence::ARENA_BYTES);
-const _: () = assert!(TechoStorage::LINK_SESSIONS > TechoStorage::CHANNELS);
-const _: () = assert!(TechoStorage::RESOURCE_ASSEMBLIES == 1);
+const _: () = assert!(Nrf52840Storage::LINK_SESSIONS > Nrf52840Storage::CHANNELS);
+const _: () = assert!(Nrf52840Storage::RESOURCE_ASSEMBLIES == 1);
 
-impl StorageLayout for TechoStorage {
+impl StorageLayout for Nrf52840Storage {
     const LIMITS: DisplayedStorageLimits = DisplayedStorageLimits {
         tracked_destinations: StorageCapacity::Fixed(Self::TRACKED_DESTINATIONS),
         destination_identities: StorageCapacity::Fixed(0),
