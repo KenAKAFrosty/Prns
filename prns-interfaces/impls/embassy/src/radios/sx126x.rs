@@ -147,6 +147,7 @@ const TX_RAMP_40_US: u8 = 0x02;
 
 /// Longest the SX1262 should ever hold BUSY: commands process in tens of microseconds and the worst legitimate case is cold-start calibration with TCXO startup (~15 ms). BUSY gates every SPI command, so an unbounded wait lets one wedged-high line hang the radio task and every recovery command with it; past this we surface [`Error::Busy`] so the caller can hard-reset.
 const BUSY_TIMEOUT_MS: u32 = 100;
+const DIO1_RELEASE_TIMEOUT_MS: u32 = 100;
 
 /// Longest a single LoRa frame can sit on air before TxDone: the worst supported case (SF12 / BW125, a full 255-byte frame at CR4:8 with LDRO) is ~14 s, so this clears it with margin. `SetTx` runs with the chip's own timeout disabled (single-shot), so the TxDone IRQ is otherwise unbounded; a wait past this means the PA or IRQ path faulted, surfaced as [`Error::Timeout`].
 const TX_DONE_TIMEOUT_MS: u32 = 20_000;
@@ -398,6 +399,18 @@ where
         self.command(&[op::CLEAR_IRQ_STATUS, (mask >> 8) as u8, mask as u8])
             .await
     }
+
+    async fn wait_for_dio1_release(&mut self) -> Result<(), Error> {
+        let Self { dio1, delay, .. } = self;
+        deadline(
+            dio1.wait_for_low(),
+            delay,
+            DIO1_RELEASE_TIMEOUT_MS,
+            Error::Dio1,
+            Error::Timeout,
+        )
+        .await
+    }
 }
 
 impl<SPI, BUSY, DIO1, RST, DLY> Sx126x<SPI, BUSY, DIO1, RST, DLY>
@@ -499,7 +512,7 @@ where
         self.tx_staging[..len].copy_from_slice(payload);
 
         self.standby().await?;
-        self.set_payload_length(len as u8).await?;
+        self.set_packet_params(len as u8).await?;
         self.write_tx_payload(len).await?;
         self.clear_irq(irq::ALL).await?;
         // SetTx with timeout 0 = single shot, no chip timeout — so the TxDone wait is bounded here ([`TX_DONE_TIMEOUT_MS`]); a TX that never completes must not trap the radio task forever.
@@ -517,6 +530,7 @@ where
         }
         let flags = self.irq_status().await?;
         self.clear_irq(flags).await?;
+        self.wait_for_dio1_release().await?;
         if flags & irq::TIMEOUT != 0 {
             return Err(Error::Timeout);
         }
@@ -526,7 +540,7 @@ where
     /// Arm continuous RX: restamp the RX-side max payload length, clear stale IRQs, enter SetRx continuous. [`read_frame`](Self::read_frame) waits WITHOUT re-arming, so a host-side select that cancels the read mid-listen leaves the radio receiving (the RxDone IRQ latches) rather than guillotining an in-flight multi-hundred-ms LoRa frame.
     pub async fn arm_rx(&mut self) -> Result<(), Error> {
         self.standby().await?;
-        self.set_payload_length(0xFF).await?;
+        self.set_packet_params(0xFF).await?;
         self.clear_irq(irq::ALL).await?;
         // SetRx 0xFFFFFF = continuous.
         self.command(&[op::SET_RX, 0xFF, 0xFF, 0xFF]).await
@@ -665,7 +679,7 @@ where
         }
     }
 
-    async fn set_payload_length(&mut self, payload_len: u8) -> Result<(), Error> {
+    async fn set_packet_params(&mut self, payload_len: u8) -> Result<(), Error> {
         let pre = self.packet.preamble_symbols.to_be_bytes();
         let header = u8::from(!self.packet.explicit_header);
         let crc = u8::from(self.packet.crc_on);
@@ -679,11 +693,7 @@ where
             crc,
             iq,
         ])
-        .await
-    }
-
-    async fn set_packet_params(&mut self, payload_len: u8) -> Result<(), Error> {
-        self.set_payload_length(payload_len).await?;
+        .await?;
         // IQPolarity errata (DS 15.4): set bit 2 unless inverted IQ.
         let mut v = [0u8; 1];
         self.read_register(reg::IQ_POLARITY, &mut v).await?;
@@ -950,6 +960,28 @@ mod tests {
         }
     }
 
+    struct Dio1NeverReleases;
+    impl DigErrorType for Dio1NeverReleases {
+        type Error = MockErr;
+    }
+    impl Wait for Dio1NeverReleases {
+        async fn wait_for_high(&mut self) -> Result<(), MockErr> {
+            Ok(())
+        }
+        async fn wait_for_low(&mut self) -> Result<(), MockErr> {
+            core::future::pending::<Result<(), MockErr>>().await
+        }
+        async fn wait_for_rising_edge(&mut self) -> Result<(), MockErr> {
+            Ok(())
+        }
+        async fn wait_for_falling_edge(&mut self) -> Result<(), MockErr> {
+            core::future::pending::<Result<(), MockErr>>().await
+        }
+        async fn wait_for_any_edge(&mut self) -> Result<(), MockErr> {
+            Ok(())
+        }
+    }
+
     fn board() -> BoardConfig {
         BoardConfig {
             tcxo_voltage: Some(TcxoVoltage::V1_8),
@@ -1064,7 +1096,11 @@ mod tests {
             "SetPacketParams RX max len"
         );
         assert!(has(&[0x0D, 0x08, 0x89, 0x04]), "TxModulation errata bit2");
-        assert!(has(&[0x0D, 0x07, 0x36, 0x04]), "IQPolarity errata bit2");
+        assert_eq!(
+            count(&[0x0D, 0x07, 0x36, 0x04]),
+            4,
+            "IQPolarity errata follows initial, TX, and explicit RX packet parameters"
+        );
         assert!(has(&[0x0D, 0x08, 0xD8, 0x1E]), "TxClampCfg errata bits1-4");
 
         assert_eq!(
@@ -1175,6 +1211,21 @@ mod tests {
             MockSpi { log },
             MockWait,
             Dio1NeverHigh,
+            MockOut,
+            MockDelay,
+            board(),
+        );
+        let result = block_on(radio.transmit(b"PRNS-HELTEC-SMOK"));
+        assert_eq!(result, Err(Error::Timeout));
+    }
+
+    #[test]
+    fn a_txdone_that_never_releases_times_out_instead_of_reentering_receive() {
+        let log: Log = Rc::new(RefCell::new(Vec::new()));
+        let mut radio = Sx126x::new(
+            MockSpi { log },
+            MockWait,
+            Dio1NeverReleases,
             MockOut,
             MockDelay,
             board(),
