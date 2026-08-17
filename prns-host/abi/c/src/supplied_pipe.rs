@@ -1,14 +1,17 @@
 use std::ffi::c_void;
 use std::ptr;
 use std::sync::{Arc, Mutex};
+#[cfg(unix)]
 use std::time::Duration;
 
 #[cfg(unix)]
 use std::os::fd::{FromRawFd, OwnedFd, RawFd};
 
+#[cfg(unix)]
+use crate::issued_command;
 use crate::readiness::{Readiness, ReadinessCallback, RegisteredReadiness};
 use crate::{
-    catch_status, issued_command, lock, required_mut, required_ref, status, PrnsIssuedCommand,
+    catch_status, lock, required_mut, required_ref, status, PrnsIssuedCommand,
     PrnsReadinessRegistration, PrnsStringView,
 };
 use prns_host_core::{Status as AbiStatus, SAFE_UINT_MAX};
@@ -16,6 +19,7 @@ use prns_host_core::{Status as AbiStatus, SAFE_UINT_MAX};
 pub struct PrnsSuppliedPipe {
     #[cfg(unix)]
     native: prns_host_native::NativeSuppliedPipe,
+    #[cfg_attr(not(unix), allow(dead_code))]
     attachment_readiness: Arc<Readiness>,
     request_readiness: Arc<Readiness>,
     readiness_registration: Mutex<Option<Arc<RegisteredReadiness>>>,
@@ -111,6 +115,7 @@ pub unsafe extern "C" fn prns_host_attach_supplied_pipe(
     })
 }
 
+#[cfg(unix)]
 fn weak_signal(readiness: &Arc<Readiness>) -> prns_host_native::ReadinessSignal {
     let readiness = Arc::downgrade(readiness);
     Arc::new(move || {
@@ -240,6 +245,8 @@ pub unsafe extern "C" fn prns_supplied_pipe_interrupt_wait(supplied_pipe: *mut P
     {
         #[cfg(unix)]
         supplied_pipe.native.interrupt_wait();
+        #[cfg(not(unix))]
+        let _ = supplied_pipe;
     }
 }
 
