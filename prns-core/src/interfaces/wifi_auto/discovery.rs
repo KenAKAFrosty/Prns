@@ -11,16 +11,89 @@ use core::num::NonZeroU8;
 
 use crate::interfaces::local_network::{local_address_scope, LocalAddressScope};
 
-use super::TCP_RENDEZVOUS_PORT;
+use super::{TCP_RENDEZVOUS_PORT, UNICAST_DISCOVERY_PORT};
 
-pub const DNS_SD_BASE_SERVICE_TYPE: &str = "_reticulum._tcp";
 pub const DNS_SD_LOCAL_DOMAIN: &str = "local.";
-pub const DNS_SD_SERVICE_TYPE: &str = "_reticulum._tcp.local.";
+pub const TCP_DNS_SD_BASE_SERVICE_TYPE: &str = "_reticulum._tcp";
+pub const TCP_DNS_SD_SERVICE_TYPE: &str = "_reticulum._tcp.local.";
+pub const UDP_DNS_SD_BASE_SERVICE_TYPE: &str = "_reticulum._udp";
+pub const UDP_DNS_SD_SERVICE_TYPE: &str = "_reticulum._udp.local.";
 pub const TXT_VERSION_KEY: &str = "v";
 pub const TXT_VERSION_VALUE: &str = "1";
 pub const DEFAULT_DISCOVERY_SERVICE_CAPACITY: NonZeroU8 = NonZeroU8::MAX;
 pub const SERVICE_ADVERTISEMENT_CANDIDATE_CAPACITY: u8 = 8;
 pub const DISCOVERY_SERVICE_NAME_MAX_BYTES: usize = 255;
+pub const EPHEMERAL_DISCOVERY_INSTANCE_RANDOM_BYTES: usize = 8;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum DiscoveryTransport {
+    Tcp,
+    Udp,
+}
+
+impl DiscoveryTransport {
+    pub const fn port(self) -> u16 {
+        match self {
+            Self::Tcp => TCP_RENDEZVOUS_PORT,
+            Self::Udp => UNICAST_DISCOVERY_PORT,
+        }
+    }
+
+    pub const fn dns_sd_base_service_type(self) -> &'static str {
+        match self {
+            Self::Tcp => TCP_DNS_SD_BASE_SERVICE_TYPE,
+            Self::Udp => UDP_DNS_SD_BASE_SERVICE_TYPE,
+        }
+    }
+
+    pub const fn dns_sd_service_type(self) -> &'static str {
+        match self {
+            Self::Tcp => TCP_DNS_SD_SERVICE_TYPE,
+            Self::Udp => UDP_DNS_SD_SERVICE_TYPE,
+        }
+    }
+}
+
+impl fmt::Display for DiscoveryTransport {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Tcp => formatter.write_str("TCP"),
+            Self::Udp => formatter.write_str("UDP"),
+        }
+    }
+}
+
+/// A DNS-SD instance label derived only from fresh random session material.
+///
+/// The private representation deliberately offers no hostname-, device-, or
+/// node-identity constructor. A publisher obtains fresh random bytes for each
+/// transport whenever a Central publication session starts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EphemeralDiscoveryInstanceName(String);
+
+impl EphemeralDiscoveryInstanceName {
+    pub fn from_random_bytes(
+        random_bytes: [u8; EPHEMERAL_DISCOVERY_INSTANCE_RANDOM_BYTES],
+    ) -> Self {
+        const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
+        let mut value = String::from("prns-");
+        for byte in random_bytes {
+            value.push(char::from(HEX_DIGITS[usize::from(byte >> 4)]));
+            value.push(char::from(HEX_DIGITS[usize::from(byte & 0x0f)]));
+        }
+        Self(value)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for EphemeralDiscoveryInstanceName {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiscoveryVersion {
@@ -72,11 +145,17 @@ impl fmt::Display for DiscoveryVersionError {
 impl std::error::Error for DiscoveryVersionError {}
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct DiscoveryServiceName(String);
+pub struct DiscoveryServiceName {
+    value: String,
+    transport: DiscoveryTransport,
+}
 
 impl DiscoveryServiceName {
-    pub fn new(value: impl Into<String>) -> Result<Self, DiscoveryServiceNameError> {
-        let value = value.into();
+    pub fn from_fullname(
+        value: impl Into<String>,
+        transport: DiscoveryTransport,
+    ) -> Result<Self, DiscoveryServiceNameError> {
+        let mut value = value.into();
         if value.is_empty() {
             return Err(DiscoveryServiceNameError::Empty);
         }
@@ -85,18 +164,39 @@ impl DiscoveryServiceName {
                 actual: value.len(),
             });
         }
-        Ok(Self(value))
+        value.make_ascii_lowercase();
+        let expected_service_type = transport.dns_sd_service_type();
+        let instance_prefix_bytes = value.len().saturating_sub(expected_service_type.len());
+        if !value.ends_with(expected_service_type)
+            || instance_prefix_bytes < 2
+            || value.as_bytes()[instance_prefix_bytes - 1] != b'.'
+        {
+            return Err(DiscoveryServiceNameError::WrongServiceType {
+                expected: expected_service_type,
+            });
+        }
+        Ok(Self { value, transport })
     }
 
-    pub fn from_instance(instance: &str) -> Result<Self, DiscoveryServiceNameError> {
+    pub fn from_instance(
+        instance: &str,
+        transport: DiscoveryTransport,
+    ) -> Result<Self, DiscoveryServiceNameError> {
         if instance.is_empty() {
             return Err(DiscoveryServiceNameError::Empty);
         }
-        Self::new(format!("{instance}.{DNS_SD_SERVICE_TYPE}"))
+        Self::from_fullname(
+            format!("{instance}.{}", transport.dns_sd_service_type()),
+            transport,
+        )
     }
 
     pub fn as_str(&self) -> &str {
-        &self.0
+        &self.value
+    }
+
+    pub const fn transport(&self) -> DiscoveryTransport {
+        self.transport
     }
 }
 
@@ -110,6 +210,7 @@ impl fmt::Display for DiscoveryServiceName {
 pub enum DiscoveryServiceNameError {
     Empty,
     TooLong { actual: usize },
+    WrongServiceType { expected: &'static str },
 }
 
 impl fmt::Display for DiscoveryServiceNameError {
@@ -120,6 +221,9 @@ impl fmt::Display for DiscoveryServiceNameError {
                 formatter,
                 "discovery service name has {actual} bytes, exceeding {DISCOVERY_SERVICE_NAME_MAX_BYTES}"
             ),
+            Self::WrongServiceType { expected } => {
+                write!(formatter, "discovery service name is not a {expected} service")
+            }
         }
     }
 }
@@ -128,12 +232,16 @@ impl fmt::Display for DiscoveryServiceNameError {
 impl std::error::Error for DiscoveryServiceNameError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct DiscoveryEndpoint(SocketAddr);
+pub struct DiscoveryEndpoint {
+    address: SocketAddr,
+    transport: DiscoveryTransport,
+}
 
 impl DiscoveryEndpoint {
-    pub fn new(address: SocketAddr) -> Result<Self, DiscoveryEndpointError> {
+    pub fn tcp(address: SocketAddr) -> Result<Self, DiscoveryEndpointError> {
         if address.port() != TCP_RENDEZVOUS_PORT {
             return Err(DiscoveryEndpointError::WrongPort {
+                expected: TCP_RENDEZVOUS_PORT,
                 actual: address.port(),
             });
         }
@@ -152,23 +260,55 @@ impl DiscoveryEndpoint {
                 return Err(DiscoveryEndpointError::UnexpectedIpv6Scope);
             }
         }
-        Ok(Self(address))
+        Ok(Self {
+            address,
+            transport: DiscoveryTransport::Tcp,
+        })
+    }
+
+    pub fn udp(address: SocketAddr) -> Result<Self, DiscoveryEndpointError> {
+        if address.port() != UNICAST_DISCOVERY_PORT {
+            return Err(DiscoveryEndpointError::WrongPort {
+                expected: UNICAST_DISCOVERY_PORT,
+                actual: address.port(),
+            });
+        }
+        let SocketAddr::V6(address) = address else {
+            return Err(DiscoveryEndpointError::UdpRequiresIpv6);
+        };
+        if !address.ip().is_unicast_link_local() {
+            return Err(DiscoveryEndpointError::UdpRequiresIpv6LinkLocal);
+        }
+        if address.flowinfo() != 0 {
+            return Err(DiscoveryEndpointError::Ipv6FlowInfo);
+        }
+        if address.scope_id() == 0 {
+            return Err(DiscoveryEndpointError::MissingIpv6Scope);
+        }
+        Ok(Self {
+            address: SocketAddr::V6(address),
+            transport: DiscoveryTransport::Udp,
+        })
+    }
+
+    pub const fn transport(self) -> DiscoveryTransport {
+        self.transport
     }
 
     pub const fn socket_addr(self) -> SocketAddr {
-        self.0
+        self.address
     }
 
     pub const fn ip(self) -> IpAddr {
-        self.0.ip()
+        self.socket_addr().ip()
     }
 
     fn preference(self) -> u8 {
-        match self.0.ip() {
+        match self.ip() {
             IpAddr::V4(address) if address.is_private() => 0,
             IpAddr::V6(_) => {
                 if matches!(
-                    local_address_scope(self.0.ip()),
+                    local_address_scope(self.ip()),
                     Some(LocalAddressScope::Private)
                 ) {
                     1
@@ -189,23 +329,26 @@ impl PartialOrd for DiscoveryEndpoint {
 
 impl Ord for DiscoveryEndpoint {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.preference()
-            .cmp(&other.preference())
-            .then_with(|| self.0.cmp(&other.0))
+        self.transport()
+            .cmp(&other.transport())
+            .then_with(|| self.preference().cmp(&other.preference()))
+            .then_with(|| self.socket_addr().cmp(&other.socket_addr()))
     }
 }
 
 impl fmt::Display for DiscoveryEndpoint {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(formatter)
+        self.socket_addr().fmt(formatter)
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiscoveryEndpointError {
-    WrongPort { actual: u16 },
+    WrongPort { expected: u16, actual: u16 },
     Loopback,
     NonLocal,
+    UdpRequiresIpv6,
+    UdpRequiresIpv6LinkLocal,
     MissingIpv6Scope,
     UnexpectedIpv6Scope,
     Ipv6FlowInfo,
@@ -214,12 +357,20 @@ pub enum DiscoveryEndpointError {
 impl fmt::Display for DiscoveryEndpointError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::WrongPort { actual } => write!(
-                formatter,
-                "discovery endpoint port {actual} is not {TCP_RENDEZVOUS_PORT}"
-            ),
+            Self::WrongPort { expected, actual } => {
+                write!(
+                    formatter,
+                    "discovery endpoint port {actual} is not {expected}"
+                )
+            }
             Self::Loopback => formatter.write_str("discovery endpoint is loopback"),
             Self::NonLocal => formatter.write_str("discovery endpoint is not a local address"),
+            Self::UdpRequiresIpv6 => {
+                formatter.write_str("UDP discovery endpoint is not an IPv6 address")
+            }
+            Self::UdpRequiresIpv6LinkLocal => {
+                formatter.write_str("UDP discovery endpoint is not IPv6 link-local")
+            }
             Self::MissingIpv6Scope => {
                 formatter.write_str("IPv6 link-local discovery endpoint has no scope")
             }
@@ -240,8 +391,28 @@ impl std::error::Error for DiscoveryEndpointError {}
 pub enum CandidateInsertion {
     Inserted,
     AlreadyPresent,
-    AtCapacity,
+    ReplacedLowerPriority,
+    RejectedLowerPriority,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CandidateInsertionError {
+    pub service_transport: DiscoveryTransport,
+    pub endpoint_transport: DiscoveryTransport,
+}
+
+impl fmt::Display for CandidateInsertionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "cannot insert a {} endpoint into a {} service advertisement",
+            self.endpoint_transport, self.service_transport
+        )
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for CandidateInsertionError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServiceAdvertisement {
@@ -265,20 +436,32 @@ impl ServiceAdvertisement {
         &self.endpoints
     }
 
-    pub fn insert(&mut self, endpoint: DiscoveryEndpoint) -> CandidateInsertion {
-        match self.endpoints.binary_search(&endpoint) {
+    pub fn insert(
+        &mut self,
+        endpoint: DiscoveryEndpoint,
+    ) -> Result<CandidateInsertion, CandidateInsertionError> {
+        if self.service.transport() != endpoint.transport() {
+            return Err(CandidateInsertionError {
+                service_transport: self.service.transport(),
+                endpoint_transport: endpoint.transport(),
+            });
+        }
+        Ok(match self.endpoints.binary_search(&endpoint) {
             Ok(_) => CandidateInsertion::AlreadyPresent,
-            Err(_)
-                if self.endpoints.len()
-                    == usize::from(SERVICE_ADVERTISEMENT_CANDIDATE_CAPACITY) =>
-            {
-                CandidateInsertion::AtCapacity
-            }
             Err(index) => {
+                let capacity = usize::from(SERVICE_ADVERTISEMENT_CANDIDATE_CAPACITY);
+                if self.endpoints.len() == capacity {
+                    if index == capacity {
+                        return Ok(CandidateInsertion::RejectedLowerPriority);
+                    }
+                    self.endpoints.insert(index, endpoint);
+                    self.endpoints.pop();
+                    return Ok(CandidateInsertion::ReplacedLowerPriority);
+                }
                 self.endpoints.insert(index, endpoint);
                 CandidateInsertion::Inserted
             }
-        }
+        })
     }
 
     pub fn is_empty(&self) -> bool {
@@ -291,6 +474,12 @@ pub enum AdvertisementInsertion {
     Inserted,
     Replaced,
     AtCapacity,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdvertisementRemoval {
+    Removed,
+    NotPresent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -325,8 +514,11 @@ impl DiscoverySnapshot {
         AdvertisementInsertion::Inserted
     }
 
-    pub fn remove(&mut self, service: &DiscoveryServiceName) -> bool {
-        self.advertisements.remove(service).is_some()
+    pub fn remove(&mut self, service: &DiscoveryServiceName) -> AdvertisementRemoval {
+        match self.advertisements.remove(service) {
+            Some(_removed_advertisement) => AdvertisementRemoval::Removed,
+            None => AdvertisementRemoval::NotPresent,
+        }
     }
 
     pub fn get(&self, service: &DiscoveryServiceName) -> Option<&ServiceAdvertisement> {
@@ -352,11 +544,16 @@ impl From<DiscoveryEndpoint> for SocketAddr {
     }
 }
 
-impl TryFrom<SocketAddr> for DiscoveryEndpoint {
+impl TryFrom<(DiscoveryTransport, SocketAddr)> for DiscoveryEndpoint {
     type Error = DiscoveryEndpointError;
 
-    fn try_from(value: SocketAddr) -> Result<Self, Self::Error> {
-        Self::new(value)
+    fn try_from(
+        (transport, address): (DiscoveryTransport, SocketAddr),
+    ) -> Result<Self, Self::Error> {
+        match transport {
+            DiscoveryTransport::Tcp => Self::tcp(address),
+            DiscoveryTransport::Udp => Self::udp(address),
+        }
     }
 }
 
@@ -371,35 +568,55 @@ mod tests {
     use super::*;
     use core::net::{Ipv6Addr, SocketAddrV6};
 
-    fn endpoint(value: &str) -> DiscoveryEndpoint {
-        DiscoveryEndpoint::new(value.parse().expect("test endpoint parses"))
-            .expect("test endpoint is valid")
+    fn tcp_endpoint(value: &str) -> DiscoveryEndpoint {
+        DiscoveryEndpoint::tcp(value.parse().expect("test endpoint parses"))
+            .expect("test TCP endpoint is valid")
     }
 
-    fn advertisement(name: &str, endpoint: DiscoveryEndpoint) -> ServiceAdvertisement {
-        let mut advertisement = ServiceAdvertisement::new(
-            DiscoveryServiceName::new(name).expect("test service name is valid"),
+    fn udp_endpoint(address_suffix: u16, scope_id: u32) -> DiscoveryEndpoint {
+        DiscoveryEndpoint::udp(SocketAddr::V6(SocketAddrV6::new(
+            Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, address_suffix),
+            UNICAST_DISCOVERY_PORT,
+            0,
+            scope_id,
+        )))
+        .expect("test UDP endpoint is valid")
+    }
+
+    fn advertisement(
+        instance: &str,
+        transport: DiscoveryTransport,
+        endpoint: DiscoveryEndpoint,
+    ) -> ServiceAdvertisement {
+        let service = DiscoveryServiceName::from_instance(instance, transport)
+            .expect("test service name is valid");
+        let mut advertisement = ServiceAdvertisement::new(service);
+        assert_eq!(
+            advertisement.insert(endpoint),
+            Ok(CandidateInsertion::Inserted)
         );
-        assert_eq!(advertisement.insert(endpoint), CandidateInsertion::Inserted);
         advertisement
     }
 
     #[test]
-    fn endpoint_validation_keeps_the_fixed_local_contract() {
+    fn tcp_endpoint_validation_keeps_the_fixed_local_contract() {
         assert_eq!(
-            DiscoveryEndpoint::new("192.168.1.9:7".parse().unwrap()),
-            Err(DiscoveryEndpointError::WrongPort { actual: 7 })
+            DiscoveryEndpoint::tcp("192.168.1.9:7".parse().unwrap()),
+            Err(DiscoveryEndpointError::WrongPort {
+                expected: TCP_RENDEZVOUS_PORT,
+                actual: 7,
+            })
         );
         assert_eq!(
-            DiscoveryEndpoint::new("127.0.0.1:42699".parse().unwrap()),
+            DiscoveryEndpoint::tcp("127.0.0.1:42699".parse().unwrap()),
             Err(DiscoveryEndpointError::Loopback)
         );
         assert_eq!(
-            DiscoveryEndpoint::new("8.8.8.8:42699".parse().unwrap()),
+            DiscoveryEndpoint::tcp("8.8.8.8:42699".parse().unwrap()),
             Err(DiscoveryEndpointError::NonLocal)
         );
         assert_eq!(
-            DiscoveryEndpoint::new("[fe80::1]:42699".parse().unwrap()),
+            DiscoveryEndpoint::tcp("[fe80::1]:42699".parse().unwrap()),
             Err(DiscoveryEndpointError::MissingIpv6Scope)
         );
         let scoped = SocketAddr::V6(SocketAddrV6::new(
@@ -408,74 +625,149 @@ mod tests {
             0,
             4,
         ));
-        assert!(DiscoveryEndpoint::new(scoped).is_ok());
+        assert!(DiscoveryEndpoint::tcp(scoped).is_ok());
     }
 
     #[test]
-    fn candidates_are_deduplicated_bounded_and_preference_ordered() {
-        let service = DiscoveryServiceName::new("peer._reticulum._tcp.local.").unwrap();
+    fn udp_endpoint_validation_requires_the_reverse_discovery_contract() {
+        assert_eq!(
+            DiscoveryEndpoint::udp("192.168.1.9:29717".parse().unwrap()),
+            Err(DiscoveryEndpointError::UdpRequiresIpv6)
+        );
+        assert_eq!(
+            DiscoveryEndpoint::udp("[fd00::1]:29717".parse().unwrap()),
+            Err(DiscoveryEndpointError::UdpRequiresIpv6LinkLocal)
+        );
+        assert_eq!(
+            DiscoveryEndpoint::udp("[fe80::1]:29717".parse().unwrap()),
+            Err(DiscoveryEndpointError::MissingIpv6Scope)
+        );
+        assert_eq!(
+            DiscoveryEndpoint::udp(SocketAddr::V6(SocketAddrV6::new(
+                Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1),
+                TCP_RENDEZVOUS_PORT,
+                0,
+                4,
+            ))),
+            Err(DiscoveryEndpointError::WrongPort {
+                expected: UNICAST_DISCOVERY_PORT,
+                actual: TCP_RENDEZVOUS_PORT,
+            })
+        );
+        assert_eq!(udp_endpoint(1, 4).transport(), DiscoveryTransport::Udp);
+    }
+
+    #[test]
+    fn candidate_selection_is_bounded_deduplicated_and_order_independent() {
+        let service = DiscoveryServiceName::from_instance("peer", DiscoveryTransport::Tcp).unwrap();
         let mut advertisement = ServiceAdvertisement::new(service);
-        let v6_private = endpoint("[fd00::2]:42699");
-        let v4_private = endpoint("192.168.1.2:42699");
-        let v4_link_local = endpoint("169.254.1.2:42699");
+        let candidates: Vec<_> = (1..=10)
+            .map(|suffix| tcp_endpoint(&format!("192.168.1.{suffix}:42699")))
+            .collect();
+        for candidate in candidates.iter().rev().copied() {
+            advertisement
+                .insert(candidate)
+                .expect("candidate transport matches the advertisement");
+        }
+        let expected = candidates[..usize::from(SERVICE_ADVERTISEMENT_CANDIDATE_CAPACITY)].to_vec();
+        assert_eq!(advertisement.endpoints(), expected);
         assert_eq!(
-            advertisement.insert(v6_private),
-            CandidateInsertion::Inserted
-        );
-        assert_eq!(
-            advertisement.insert(v4_private),
-            CandidateInsertion::Inserted
-        );
-        assert_eq!(
-            advertisement.insert(v4_link_local),
-            CandidateInsertion::Inserted
-        );
-        assert_eq!(
-            advertisement.insert(v4_private),
-            CandidateInsertion::AlreadyPresent
-        );
-        assert_eq!(
-            advertisement.endpoints(),
-            &[v4_private, v6_private, v4_link_local]
+            advertisement.insert(candidates[0]),
+            Ok(CandidateInsertion::AlreadyPresent)
         );
 
-        for tail in 3..=7 {
+        let mut rotated = ServiceAdvertisement::new(advertisement.service().clone());
+        let mut replacement_count = 0;
+        for candidate in candidates[3..]
+            .iter()
+            .chain(candidates[..3].iter())
+            .copied()
+        {
+            let insertion = rotated
+                .insert(candidate)
+                .expect("candidate transport matches the advertisement");
+            if insertion == CandidateInsertion::ReplacedLowerPriority {
+                replacement_count += 1;
+            }
+        }
+        assert_eq!(replacement_count, 2);
+        assert_eq!(rotated.endpoints(), expected);
+        assert_eq!(
+            rotated.insert(tcp_endpoint("192.168.1.99:42699")),
+            Ok(CandidateInsertion::RejectedLowerPriority)
+        );
+    }
+
+    #[test]
+    fn a_service_only_accepts_endpoints_for_its_transport() {
+        let service = DiscoveryServiceName::from_instance("peer", DiscoveryTransport::Tcp).unwrap();
+        let mut advertisement = ServiceAdvertisement::new(service);
+        assert_eq!(
+            advertisement.insert(udp_endpoint(1, 4)),
+            Err(CandidateInsertionError {
+                service_transport: DiscoveryTransport::Tcp,
+                endpoint_transport: DiscoveryTransport::Udp,
+            })
+        );
+        assert!(advertisement.is_empty());
+    }
+
+    #[test]
+    fn one_capacity_bounds_tcp_and_udp_records_together() {
+        let capacity = DEFAULT_DISCOVERY_SERVICE_CAPACITY;
+        let mut snapshot = DiscoverySnapshot::new(capacity);
+        let first_tcp_endpoint = tcp_endpoint("10.0.0.2:42699");
+        let first_udp_endpoint = udp_endpoint(2, 4);
+        for index in 0..128u8 {
             assert_eq!(
-                advertisement.insert(endpoint(&format!("192.168.1.{tail}:42699"))),
-                CandidateInsertion::Inserted
+                snapshot.insert(advertisement(
+                    &format!("tcp-peer-{index}"),
+                    DiscoveryTransport::Tcp,
+                    first_tcp_endpoint,
+                )),
+                AdvertisementInsertion::Inserted
             );
         }
-        assert_eq!(
-            advertisement.endpoints().len(),
-            usize::from(SERVICE_ADVERTISEMENT_CANDIDATE_CAPACITY)
-        );
-        assert_eq!(
-            advertisement.insert(endpoint("192.168.1.99:42699")),
-            CandidateInsertion::AtCapacity
-        );
-    }
-
-    #[test]
-    fn snapshot_updates_known_services_when_full() {
-        let capacity = NonZeroU8::new(3).unwrap();
-        let mut snapshot = DiscoverySnapshot::new(capacity);
-        let first_endpoint = endpoint("10.0.0.2:42699");
-        for index in 0..capacity.get() {
+        for index in 0..127u8 {
             assert_eq!(
-                snapshot.insert(advertisement(&format!("peer-{index}"), first_endpoint)),
+                snapshot.insert(advertisement(
+                    &format!("udp-peer-{index}"),
+                    DiscoveryTransport::Udp,
+                    first_udp_endpoint,
+                )),
                 AdvertisementInsertion::Inserted
             );
         }
         assert_eq!(
-            snapshot.insert(advertisement("overflow", first_endpoint)),
+            snapshot.insert(advertisement(
+                "overflow",
+                DiscoveryTransport::Udp,
+                first_udp_endpoint,
+            )),
             AdvertisementInsertion::AtCapacity
         );
         assert_eq!(
-            snapshot.insert(advertisement("peer-0", endpoint("10.0.0.3:42699"))),
+            snapshot.insert(advertisement(
+                "tcp-peer-0",
+                DiscoveryTransport::Tcp,
+                tcp_endpoint("10.0.0.3:42699"),
+            )),
             AdvertisementInsertion::Replaced
         );
         assert_eq!(snapshot.len(), usize::from(capacity.get()));
         assert_eq!(snapshot.capacity(), capacity);
+
+        let removed =
+            DiscoveryServiceName::from_instance("udp-peer-0", DiscoveryTransport::Udp).unwrap();
+        assert_eq!(snapshot.remove(&removed), AdvertisementRemoval::Removed);
+        assert_eq!(
+            snapshot.insert(advertisement(
+                "new-udp-peer",
+                DiscoveryTransport::Udp,
+                first_udp_endpoint,
+            )),
+            AdvertisementInsertion::Inserted
+        );
     }
 
     #[test]
@@ -511,16 +803,48 @@ mod tests {
     }
 
     #[test]
-    fn service_instances_have_one_canonical_dns_sd_identity() {
+    fn service_instances_have_transport_specific_dns_sd_identities() {
         assert_eq!(
-            DiscoveryServiceName::from_instance("peer")
+            DiscoveryServiceName::from_instance("peer", DiscoveryTransport::Tcp)
                 .unwrap()
                 .as_str(),
             "peer._reticulum._tcp.local."
         );
         assert_eq!(
-            DiscoveryServiceName::from_instance(""),
+            DiscoveryServiceName::from_instance("peer", DiscoveryTransport::Udp)
+                .unwrap()
+                .as_str(),
+            "peer._reticulum._udp.local."
+        );
+        assert_ne!(
+            DiscoveryServiceName::from_instance("peer", DiscoveryTransport::Tcp).unwrap(),
+            DiscoveryServiceName::from_instance("peer", DiscoveryTransport::Udp).unwrap()
+        );
+        assert_eq!(
+            DiscoveryServiceName::from_instance("", DiscoveryTransport::Tcp),
             Err(DiscoveryServiceNameError::Empty)
         );
+        assert_eq!(
+            DiscoveryServiceName::from_fullname(
+                "peer._reticulum._udp.local.",
+                DiscoveryTransport::Tcp,
+            ),
+            Err(DiscoveryServiceNameError::WrongServiceType {
+                expected: TCP_DNS_SD_SERVICE_TYPE,
+            })
+        );
+    }
+
+    #[test]
+    fn publication_names_are_derived_only_from_session_randomness() {
+        let tcp_name = EphemeralDiscoveryInstanceName::from_random_bytes([
+            0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
+        ]);
+        let udp_name = EphemeralDiscoveryInstanceName::from_random_bytes([
+            0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54, 0x32, 0x10,
+        ]);
+        assert_eq!(tcp_name.as_str(), "prns-0123456789abcdef");
+        assert_eq!(udp_name.as_str(), "prns-fedcba9876543210");
+        assert_ne!(tcp_name, udp_name);
     }
 }

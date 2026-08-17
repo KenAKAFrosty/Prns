@@ -27,7 +27,7 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiServiceT
     env: JNIEnv,
     _class: JClass,
 ) -> jstring {
-    jni_string(env, wifi_auto_contract::DNS_SD_BASE_SERVICE_TYPE)
+    jni_string(env, wifi_auto_contract::TCP_DNS_SD_BASE_SERVICE_TYPE)
 }
 
 #[no_mangle]

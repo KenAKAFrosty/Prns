@@ -5,8 +5,8 @@ use std::num::NonZeroU8;
 use std::time::Duration;
 
 use prns_core::interfaces::wifi_auto::{
-    DiscoveryEndpoint, DiscoveryServiceName, DiscoverySnapshot, ServiceAdvertisement,
-    TCP_RENDEZVOUS_PORT,
+    DiscoveryEndpoint, DiscoveryServiceName, DiscoverySnapshot, DiscoveryTransport,
+    ServiceAdvertisement, TCP_RENDEZVOUS_PORT,
 };
 use prns_core::interfaces::{InterfaceStatus, ReportsStatus};
 use prns_interfaces_tokio::wifi_auto::{
@@ -58,12 +58,13 @@ fn discovery_snapshot(
     service_name: &str,
     ipv4_last_octet: u8,
 ) -> Result<DiscoverySnapshot, Box<dyn std::error::Error + Send + Sync>> {
-    let discovery_service_name = DiscoveryServiceName::new(service_name)?;
+    let discovery_service_name =
+        DiscoveryServiceName::from_instance(service_name, DiscoveryTransport::Tcp)?;
     let socket_address = SocketAddr::new(
         IpAddr::V4(Ipv4Addr::new(10, 254, 254, ipv4_last_octet)),
         TCP_RENDEZVOUS_PORT,
     );
-    let discovery_endpoint = DiscoveryEndpoint::new(socket_address)?;
+    let discovery_endpoint = DiscoveryEndpoint::tcp(socket_address)?;
     let mut service_advertisement = ServiceAdvertisement::new(discovery_service_name);
     let _ = service_advertisement.insert(discovery_endpoint);
     let mut discovery_snapshot = DiscoverySnapshot::new(TEST_DISCOVERY_CAPACITY);

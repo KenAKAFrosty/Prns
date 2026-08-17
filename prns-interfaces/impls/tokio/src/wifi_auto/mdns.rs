@@ -8,9 +8,9 @@ use mdns_sd::{IfKind, ResolvedService, ScopedIp, ServiceDaemon, ServiceEvent, Se
 use prns_core::interfaces::local_network::is_local_address;
 use prns_core::interfaces::wifi_auto as contract;
 use prns_core::interfaces::wifi_auto::{
-    AdvertisementInsertion, CandidateInsertion, DiscoveryEndpoint, DiscoveryServiceName,
-    DiscoveryServiceNameError, DiscoverySnapshot, DiscoveryVersion, DiscoveryVersionError,
-    ServiceAdvertisement,
+    AdvertisementInsertion, AdvertisementRemoval, CandidateInsertion, CandidateInsertionError,
+    DiscoveryEndpoint, DiscoveryServiceName, DiscoveryServiceNameError, DiscoverySnapshot,
+    DiscoveryTransport, DiscoveryVersion, DiscoveryVersionError, ServiceAdvertisement,
 };
 
 use crate::network_device::AutoWifiDevicePolicy;
@@ -124,7 +124,7 @@ async fn run_central_session(
         .disable_interface(IfKind::All)
         .map_err(MdnsDiscoveryError::Mdns)?;
     let service_event_receiver = mdns_daemon
-        .browse(contract::DNS_SD_SERVICE_TYPE)
+        .browse(contract::TCP_DNS_SD_SERVICE_TYPE)
         .map_err(MdnsDiscoveryError::Mdns)?;
     let mut eligible_ip_addresses = BTreeSet::new();
     let mut published_service: Option<PublishedService> = None;
@@ -196,7 +196,7 @@ async fn run_central_session(
     if let Some(published_service) = published_service {
         let _ = mdns_daemon.unregister(&published_service.service_fullname);
     }
-    let _ = mdns_daemon.stop_browse(contract::DNS_SD_SERVICE_TYPE);
+    let _ = mdns_daemon.stop_browse(contract::TCP_DNS_SD_SERVICE_TYPE);
     let _ = mdns_daemon.shutdown();
     Ok(central_session_end)
 }
@@ -211,17 +211,23 @@ fn apply_service_event(
             apply_resolved_service(discovery_snapshot, resolved_service, local_service_fullname)
         }
         ServiceEvent::ServiceRemoved(removed_service_type, removed_service_fullname)
-            if removed_service_type.eq_ignore_ascii_case(contract::DNS_SD_SERVICE_TYPE) =>
+            if removed_service_type.eq_ignore_ascii_case(contract::TCP_DNS_SD_SERVICE_TYPE) =>
         {
-            match DiscoveryServiceName::new(removed_service_fullname) {
+            match DiscoveryServiceName::from_fullname(
+                removed_service_fullname,
+                DiscoveryTransport::Tcp,
+            ) {
                 Ok(discovery_service_name)
-                    if discovery_snapshot.remove(&discovery_service_name) =>
+                    if discovery_snapshot.remove(&discovery_service_name)
+                        == AdvertisementRemoval::Removed =>
                 {
                     ServiceEventOutcome::SnapshotChanged
                 }
                 Ok(_unknown_service_name) => ServiceEventOutcome::SnapshotUnchanged,
                 Err(
-                    DiscoveryServiceNameError::Empty | DiscoveryServiceNameError::TooLong { .. },
+                    DiscoveryServiceNameError::Empty
+                    | DiscoveryServiceNameError::TooLong { .. }
+                    | DiscoveryServiceNameError::WrongServiceType { .. },
                 ) => ServiceEventOutcome::SnapshotUnchanged,
             }
         }
@@ -248,16 +254,18 @@ fn apply_resolved_service(
             ) => return ServiceEventOutcome::SnapshotUnchanged,
             Err(
                 ServiceAdvertisementRejection::InvalidVersion(_)
+                | ServiceAdvertisementRejection::CandidateTransport(_)
                 | ServiceAdvertisementRejection::NoEligibleEndpoints,
             ) => {
-                let Ok(discovery_service_name) =
-                    DiscoveryServiceName::new(resolved_service.get_fullname())
-                else {
+                let Ok(discovery_service_name) = DiscoveryServiceName::from_fullname(
+                    resolved_service.get_fullname(),
+                    DiscoveryTransport::Tcp,
+                ) else {
                     return ServiceEventOutcome::SnapshotUnchanged;
                 };
                 return match discovery_snapshot.remove(&discovery_service_name) {
-                    true => ServiceEventOutcome::SnapshotChanged,
-                    false => ServiceEventOutcome::SnapshotUnchanged,
+                    AdvertisementRemoval::Removed => ServiceEventOutcome::SnapshotChanged,
+                    AdvertisementRemoval::NotPresent => ServiceEventOutcome::SnapshotUnchanged,
                 };
             }
         };
@@ -316,7 +324,7 @@ fn reconcile_service_advertisement(
     let txt_properties = [(contract::TXT_VERSION_KEY, contract::TXT_VERSION_VALUE)];
     let advertised_ip_addresses = eligible_ip_addresses.iter().copied().collect::<Vec<_>>();
     let mut service_info = ServiceInfo::new(
-        contract::DNS_SD_SERVICE_TYPE,
+        contract::TCP_DNS_SD_SERVICE_TYPE,
         &instance_identity.instance_name,
         &instance_identity.hostname,
         advertised_ip_addresses.as_slice(),
@@ -344,7 +352,7 @@ fn build_service_advertisement(
 ) -> Result<ServiceAdvertisement, ServiceAdvertisementRejection> {
     if !resolved_service
         .ty_domain
-        .eq_ignore_ascii_case(contract::DNS_SD_SERVICE_TYPE)
+        .eq_ignore_ascii_case(contract::TCP_DNS_SD_SERVICE_TYPE)
     {
         return Err(ServiceAdvertisementRejection::WrongServiceType);
     }
@@ -361,8 +369,11 @@ fn build_service_advertisement(
     };
     DiscoveryVersion::parse(version_metadata)
         .map_err(ServiceAdvertisementRejection::InvalidVersion)?;
-    let discovery_service_name = DiscoveryServiceName::new(resolved_service.get_fullname())
-        .map_err(ServiceAdvertisementRejection::InvalidServiceName)?;
+    let discovery_service_name = DiscoveryServiceName::from_fullname(
+        resolved_service.get_fullname(),
+        DiscoveryTransport::Tcp,
+    )
+    .map_err(ServiceAdvertisementRejection::InvalidServiceName)?;
     let mut discovery_endpoints = BTreeSet::new();
     for scoped_ip_address in resolved_service.get_addresses() {
         if let Some(discovery_endpoint) =
@@ -373,8 +384,18 @@ fn build_service_advertisement(
     }
     let mut service_advertisement = ServiceAdvertisement::new(discovery_service_name);
     for discovery_endpoint in discovery_endpoints {
-        if service_advertisement.insert(discovery_endpoint) == CandidateInsertion::AtCapacity {
-            break;
+        match service_advertisement.insert(discovery_endpoint) {
+            Ok(CandidateInsertion::RejectedLowerPriority) => break,
+            Ok(
+                CandidateInsertion::Inserted
+                | CandidateInsertion::AlreadyPresent
+                | CandidateInsertion::ReplacedLowerPriority,
+            ) => {}
+            Err(candidate_error) => {
+                return Err(ServiceAdvertisementRejection::CandidateTransport(
+                    candidate_error,
+                ));
+            }
         }
     }
     if service_advertisement.is_empty() {
@@ -402,7 +423,7 @@ fn validated_discovery_endpoint(
         }
         _ => return None,
     };
-    DiscoveryEndpoint::new(socket_address).ok()
+    DiscoveryEndpoint::tcp(socket_address).ok()
 }
 
 struct InstanceIdentity {
@@ -423,7 +444,7 @@ impl InstanceIdentity {
         );
         Self {
             hostname: format!("{instance_name}.{}", contract::DNS_SD_LOCAL_DOMAIN),
-            service_fullname: format!("{instance_name}.{}", contract::DNS_SD_SERVICE_TYPE),
+            service_fullname: format!("{instance_name}.{}", contract::TCP_DNS_SD_SERVICE_TYPE),
             instance_name,
         }
     }
@@ -546,6 +567,7 @@ enum ServiceAdvertisementRejection {
     OwnService,
     InvalidVersion(DiscoveryVersionError),
     InvalidServiceName(DiscoveryServiceNameError),
+    CandidateTransport(CandidateInsertionError),
     NoEligibleEndpoints,
 }
 
@@ -591,7 +613,7 @@ mod tests {
         txt_properties: &[(&str, &str)],
     ) -> ResolvedService {
         ServiceInfo::new(
-            contract::DNS_SD_SERVICE_TYPE,
+            contract::TCP_DNS_SD_SERVICE_TYPE,
             instance_name,
             &format!("{instance_name}.local."),
             ip_addresses,
@@ -731,7 +753,11 @@ mod tests {
             contract::TCP_RENDEZVOUS_PORT,
             &[],
         );
-        let first_service_name = DiscoveryServiceName::new(first_service.get_fullname()).unwrap();
+        let first_service_name = DiscoveryServiceName::from_fullname(
+            first_service.get_fullname(),
+            DiscoveryTransport::Tcp,
+        )
+        .unwrap();
         let mut discovery_snapshot = DiscoverySnapshot::new(NonZeroU8::new(1).unwrap());
 
         assert_eq!(
@@ -832,7 +858,7 @@ mod tests {
             apply_service_event(
                 &mut discovery_snapshot,
                 &ServiceEvent::ServiceRemoved(
-                    contract::DNS_SD_SERVICE_TYPE.to_owned(),
+                    contract::TCP_DNS_SD_SERVICE_TYPE.to_owned(),
                     first_service_name.as_str().to_owned(),
                 ),
                 local_service_fullname,

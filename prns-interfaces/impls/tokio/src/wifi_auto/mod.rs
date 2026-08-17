@@ -1844,9 +1844,13 @@ mod tests {
 
     fn discovery_snapshot(service_name: &str, socket_address: SocketAddr) -> DiscoverySnapshot {
         let discovery_endpoint =
-            DiscoveryEndpoint::new(socket_address).expect("test endpoint is valid");
+            DiscoveryEndpoint::tcp(socket_address).expect("test endpoint is valid");
         let mut service_advertisement = contract::ServiceAdvertisement::new(
-            contract::DiscoveryServiceName::new(service_name).expect("test service name is valid"),
+            contract::DiscoveryServiceName::from_instance(
+                service_name,
+                contract::DiscoveryTransport::Tcp,
+            )
+            .expect("test service name is valid"),
         );
         let _ = service_advertisement.insert(discovery_endpoint);
         let mut discovery_snapshot = DiscoverySnapshot::new(TEST_DISCOVERY_CAPACITY);
@@ -1907,7 +1911,7 @@ mod tests {
             &discovery_snapshot("peer", peer),
             HostNetworkDiscovery::Enumerated,
         );
-        let endpoint = DiscoveryEndpoint::new(peer).unwrap();
+        let endpoint = DiscoveryEndpoint::tcp(peer).unwrap();
         let status = &supervisor
             .discovered_dials
             .members
@@ -2047,15 +2051,23 @@ mod tests {
 
     #[test]
     fn multihomed_services_choose_the_shared_subnet_and_deduplicate_endpoints() {
-        let wrong = DiscoveryEndpoint::new("10.0.0.7:42699".parse().unwrap()).unwrap();
-        let right = DiscoveryEndpoint::new("192.168.50.7:42699".parse().unwrap()).unwrap();
+        let wrong = DiscoveryEndpoint::tcp("10.0.0.7:42699".parse().unwrap()).unwrap();
+        let right = DiscoveryEndpoint::tcp("192.168.50.7:42699".parse().unwrap()).unwrap();
         let mut first = contract::ServiceAdvertisement::new(
-            contract::DiscoveryServiceName::new("first").unwrap(),
+            contract::DiscoveryServiceName::from_instance(
+                "first",
+                contract::DiscoveryTransport::Tcp,
+            )
+            .unwrap(),
         );
         let _ = first.insert(wrong);
         let _ = first.insert(right);
         let mut second = contract::ServiceAdvertisement::new(
-            contract::DiscoveryServiceName::new("second").unwrap(),
+            contract::DiscoveryServiceName::from_instance(
+                "second",
+                contract::DiscoveryTransport::Tcp,
+            )
+            .unwrap(),
         );
         let _ = second.insert(right);
         let mut snapshot = DiscoverySnapshot::new(TEST_DISCOVERY_CAPACITY);
@@ -2075,14 +2087,14 @@ mod tests {
             netmask: "ffff:ffff:ffff:ffff::".parse().unwrap(),
             index: 7,
         };
-        let matching = DiscoveryEndpoint::new(SocketAddr::V6(SocketAddrV6::new(
+        let matching = DiscoveryEndpoint::tcp(SocketAddr::V6(SocketAddrV6::new(
             "fe80::2".parse().unwrap(),
             contract::TCP_RENDEZVOUS_PORT,
             0,
             7,
         )))
         .unwrap();
-        let other_interface = DiscoveryEndpoint::new(SocketAddr::V6(SocketAddrV6::new(
+        let other_interface = DiscoveryEndpoint::tcp(SocketAddr::V6(SocketAddrV6::new(
             "fe80::2".parse().unwrap(),
             contract::TCP_RENDEZVOUS_PORT,
             0,

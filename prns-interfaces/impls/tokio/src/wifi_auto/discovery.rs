@@ -264,7 +264,7 @@ impl ServiceDiscoveryPublisher {
 mod tests {
     use super::*;
     use prns_core::interfaces::wifi_auto::{
-        DiscoveryEndpoint, DiscoveryServiceName, ServiceAdvertisement,
+        DiscoveryEndpoint, DiscoveryServiceName, DiscoveryTransport, ServiceAdvertisement,
     };
 
     const TEST_CAPACITY: NonZeroU8 = NonZeroU8::new(4).unwrap();
@@ -272,10 +272,11 @@ mod tests {
 
     fn snapshot_for_peer(service_name: &str) -> DiscoverySnapshot {
         let mut service_advertisement = ServiceAdvertisement::new(
-            DiscoveryServiceName::new(service_name).expect("test service name"),
+            DiscoveryServiceName::from_instance(service_name, DiscoveryTransport::Tcp)
+                .expect("test service name"),
         );
         let discovery_endpoint =
-            DiscoveryEndpoint::new("192.168.1.8:42699".parse().expect("test endpoint parses"))
+            DiscoveryEndpoint::tcp("192.168.1.8:42699".parse().expect("test endpoint parses"))
                 .expect("test endpoint is valid");
         let _ = service_advertisement.insert(discovery_endpoint);
         let mut discovery_snapshot = DiscoverySnapshot::new(TEST_CAPACITY);

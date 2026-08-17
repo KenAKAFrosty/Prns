@@ -3,9 +3,10 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use personal_rns::interfaces::wifi_auto::{
-    AdvertisementInsertion, CandidateInsertion, DiscoveryEndpoint, DiscoveryEndpointError,
-    DiscoveryServiceName, DiscoveryServiceNameError, DiscoverySnapshot, DiscoveryVersion,
-    DiscoveryVersionError, ServiceAdvertisement, DEFAULT_DISCOVERY_SERVICE_CAPACITY,
+    AdvertisementInsertion, AdvertisementRemoval, CandidateInsertion, CandidateInsertionError,
+    DiscoveryEndpoint, DiscoveryEndpointError, DiscoveryServiceName, DiscoveryServiceNameError,
+    DiscoverySnapshot, DiscoveryTransport, DiscoveryVersion, DiscoveryVersionError,
+    ServiceAdvertisement, DEFAULT_DISCOVERY_SERVICE_CAPACITY,
 };
 use personal_rns::wifi_auto::{
     DiscoveryParticipation, ServiceDiscovery, ServiceDiscoveryPublisher, SnapshotPublication,
@@ -50,6 +51,7 @@ pub enum ServiceRecordRejection {
     ServiceName(DiscoveryServiceNameError),
     Version(DiscoveryVersionError),
     Endpoint(DiscoveryEndpointError),
+    CandidateTransport(CandidateInsertionError),
     NoCandidates,
 }
 
@@ -59,7 +61,6 @@ pub enum ServiceResolutionOutcome {
     SnapshotUnchanged,
     RejectedParticipation(DiscoveryParticipation),
     RejectedRecord(ServiceRecordRejection),
-    RejectedCandidateCapacity,
     RejectedAdvertisementCapacity,
     CapacityMismatch,
     StateUnavailable,
@@ -121,14 +122,15 @@ impl AndroidServiceDiscoveryBridge {
             return ServiceResolutionOutcome::RejectedParticipation(current_participation);
         }
 
-        let discovery_service_name = match DiscoveryServiceName::from_instance(service_instance) {
-            Ok(discovery_service_name) => discovery_service_name,
-            Err(service_name_error) => {
-                return ServiceResolutionOutcome::RejectedRecord(
-                    ServiceRecordRejection::ServiceName(service_name_error),
-                );
-            }
-        };
+        let discovery_service_name =
+            match DiscoveryServiceName::from_instance(service_instance, DiscoveryTransport::Tcp) {
+                Ok(discovery_service_name) => discovery_service_name,
+                Err(service_name_error) => {
+                    return ServiceResolutionOutcome::RejectedRecord(
+                        ServiceRecordRejection::ServiceName(service_name_error),
+                    );
+                }
+            };
         if let Err(version_error) = DiscoveryVersion::parse(version) {
             let _removal_outcome = self.remove_visible_service(&discovery_service_name);
             return ServiceResolutionOutcome::RejectedRecord(ServiceRecordRejection::Version(
@@ -138,7 +140,7 @@ impl AndroidServiceDiscoveryBridge {
         let mut service_advertisement = ServiceAdvertisement::new(discovery_service_name.clone());
         let mut latest_endpoint_error = None;
         for socket_address in socket_addresses {
-            let discovery_endpoint = match DiscoveryEndpoint::new(socket_address) {
+            let discovery_endpoint = match DiscoveryEndpoint::tcp(socket_address) {
                 Ok(discovery_endpoint) => discovery_endpoint,
                 Err(endpoint_error) => {
                     latest_endpoint_error = Some(endpoint_error);
@@ -146,10 +148,17 @@ impl AndroidServiceDiscoveryBridge {
                 }
             };
             match service_advertisement.insert(discovery_endpoint) {
-                CandidateInsertion::Inserted | CandidateInsertion::AlreadyPresent => {}
-                CandidateInsertion::AtCapacity => {
+                Ok(
+                    CandidateInsertion::Inserted
+                    | CandidateInsertion::AlreadyPresent
+                    | CandidateInsertion::ReplacedLowerPriority
+                    | CandidateInsertion::RejectedLowerPriority,
+                ) => {}
+                Err(candidate_error) => {
                     let _removal_outcome = self.remove_visible_service(&discovery_service_name);
-                    return ServiceResolutionOutcome::RejectedCandidateCapacity;
+                    return ServiceResolutionOutcome::RejectedRecord(
+                        ServiceRecordRejection::CandidateTransport(candidate_error),
+                    );
                 }
             }
         }
@@ -180,12 +189,13 @@ impl AndroidServiceDiscoveryBridge {
     }
 
     pub fn lost(&self, service_instance: &str) -> ServiceRemovalOutcome {
-        let discovery_service_name = match DiscoveryServiceName::from_instance(service_instance) {
-            Ok(discovery_service_name) => discovery_service_name,
-            Err(service_name_error) => {
-                return ServiceRemovalOutcome::RejectedServiceName(service_name_error);
-            }
-        };
+        let discovery_service_name =
+            match DiscoveryServiceName::from_instance(service_instance, DiscoveryTransport::Tcp) {
+                Ok(discovery_service_name) => discovery_service_name,
+                Err(service_name_error) => {
+                    return ServiceRemovalOutcome::RejectedServiceName(service_name_error);
+                }
+            };
         self.remove_visible_service(&discovery_service_name)
     }
 
@@ -246,8 +256,11 @@ impl AndroidServiceDiscoveryBridge {
             let Ok(mut visible_services) = self.shared.visible_services.lock() else {
                 return ServiceRemovalOutcome::StateUnavailable;
             };
-            if !visible_services.remove(discovery_service_name) {
-                return ServiceRemovalOutcome::SnapshotUnchanged;
+            match visible_services.remove(discovery_service_name) {
+                AdvertisementRemoval::Removed => {}
+                AdvertisementRemoval::NotPresent => {
+                    return ServiceRemovalOutcome::SnapshotUnchanged;
+                }
             }
             visible_services.clone()
         };
@@ -362,8 +375,8 @@ mod tests {
         socket_address: &str,
     ) -> Result<(DiscoveryServiceName, DiscoveryEndpoint), Box<dyn std::error::Error>> {
         Ok((
-            DiscoveryServiceName::from_instance(service_instance)?,
-            DiscoveryEndpoint::new(socket_address.parse()?)?,
+            DiscoveryServiceName::from_instance(service_instance, DiscoveryTransport::Tcp)?,
+            DiscoveryEndpoint::tcp(socket_address.parse()?)?,
         ))
     }
 
@@ -376,11 +389,11 @@ mod tests {
         let mut initial_advertisement = ServiceAdvertisement::new(service_name.clone());
         assert_eq!(
             initial_advertisement.insert(first_endpoint),
-            CandidateInsertion::Inserted
+            Ok(CandidateInsertion::Inserted)
         );
         assert_eq!(
             initial_advertisement.insert(second_endpoint),
-            CandidateInsertion::Inserted
+            Ok(CandidateInsertion::Inserted)
         );
         assert_eq!(
             apply_service_resolution(&mut discovery_snapshot, initial_advertisement),
@@ -390,7 +403,7 @@ mod tests {
         let mut replacement_advertisement = ServiceAdvertisement::new(service_name.clone());
         assert_eq!(
             replacement_advertisement.insert(second_endpoint),
-            CandidateInsertion::Inserted
+            Ok(CandidateInsertion::Inserted)
         );
         assert_eq!(
             apply_service_resolution(&mut discovery_snapshot, replacement_advertisement),
@@ -407,7 +420,7 @@ mod tests {
         let mut overflow_advertisement = ServiceAdvertisement::new(overflow_name);
         assert_eq!(
             overflow_advertisement.insert(overflow_endpoint),
-            CandidateInsertion::Inserted
+            Ok(CandidateInsertion::Inserted)
         );
         assert_eq!(
             apply_service_resolution(&mut discovery_snapshot, overflow_advertisement),
@@ -428,8 +441,8 @@ mod tests {
             Ok(DiscoveryVersion::ExplicitV1)
         );
         assert!(DiscoveryVersion::parse(Some(b"2")).is_err());
-        assert!(DiscoveryEndpoint::new("192.168.1.2:42699".parse()?).is_ok());
-        assert!(DiscoveryEndpoint::new("8.8.8.8:42699".parse()?).is_err());
+        assert!(DiscoveryEndpoint::tcp("192.168.1.2:42699".parse()?).is_ok());
+        assert!(DiscoveryEndpoint::tcp("8.8.8.8:42699".parse()?).is_err());
         Ok(())
     }
 

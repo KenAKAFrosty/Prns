@@ -21,10 +21,11 @@ use objc2_foundation::{
 use tokio::sync::{oneshot, watch};
 
 use prns_core::interfaces::wifi_auto::{
-    AdvertisementInsertion, CandidateInsertion, DiscoveryEndpoint, DiscoveryServiceName,
-    DiscoveryServiceNameError, DiscoverySnapshot, DiscoveryVersion, DiscoveryVersionError,
-    ServiceAdvertisement, DEFAULT_DISCOVERY_SERVICE_CAPACITY, DNS_SD_BASE_SERVICE_TYPE,
-    DNS_SD_LOCAL_DOMAIN, TCP_RENDEZVOUS_PORT, TXT_VERSION_KEY, TXT_VERSION_VALUE,
+    AdvertisementInsertion, AdvertisementRemoval, CandidateInsertion, CandidateInsertionError,
+    DiscoveryEndpoint, DiscoveryServiceName, DiscoveryServiceNameError, DiscoverySnapshot,
+    DiscoveryTransport, DiscoveryVersion, DiscoveryVersionError, ServiceAdvertisement,
+    DEFAULT_DISCOVERY_SERVICE_CAPACITY, DNS_SD_LOCAL_DOMAIN, TCP_DNS_SD_BASE_SERVICE_TYPE,
+    TCP_RENDEZVOUS_PORT, TXT_VERSION_KEY, TXT_VERSION_VALUE,
 };
 
 pub const DISCOVERY_CAPACITY: NonZeroU8 = DEFAULT_DISCOVERY_SERVICE_CAPACITY;
@@ -146,11 +147,12 @@ impl SnapshotState {
         let Ok(mut visible_snapshot) = self.visible.lock() else {
             return SnapshotRemoval::StateUnavailable;
         };
-        if visible_snapshot.remove(service_name) {
-            self.snapshot_sender.send_replace(visible_snapshot.clone());
-            SnapshotRemoval::Changed
-        } else {
-            SnapshotRemoval::Unchanged
+        match visible_snapshot.remove(service_name) {
+            AdvertisementRemoval::Removed => {
+                self.snapshot_sender.send_replace(visible_snapshot.clone());
+                SnapshotRemoval::Changed
+            }
+            AdvertisementRemoval::NotPresent => SnapshotRemoval::Unchanged,
         }
     }
 }
@@ -339,7 +341,7 @@ impl AppleServiceDiscoveryBackend {
         let (snapshot_state, snapshot_receiver) = SnapshotState::channel(DISCOVERY_CAPACITY);
         let (shutdown_tx, shutdown_rx) = sync_mpsc::channel::<()>();
         let port = core::ffi::c_int::from(TCP_RENDEZVOUS_PORT);
-        let service_type = format!("{DNS_SD_BASE_SERVICE_TYPE}.");
+        let service_type = format!("{TCP_DNS_SD_BASE_SERVICE_TYPE}.");
         let txt = [(
             String::from(TXT_VERSION_KEY),
             TXT_VERSION_VALUE.as_bytes().to_vec(),
@@ -397,7 +399,7 @@ impl AppleServiceDiscoveryBackend {
         match tokio::time::timeout(PUBLISH_TIMEOUT, ready_receiver).await {
             Ok(Ok(PublicationOutcome::Published)) => {
                 crate::diagnostic_log::debug!(
-                    "mdns: advertising + browsing {DNS_SD_BASE_SERVICE_TYPE} on port {port}"
+                    "mdns: advertising + browsing {TCP_DNS_SD_BASE_SERVICE_TYPE} on port {port}"
                 );
                 Ok(Self {
                     snapshot_receiver,
@@ -459,6 +461,7 @@ enum ServiceRecordRejection {
     InvalidServiceName(DiscoveryServiceNameError),
     WrongPort,
     InvalidVersion(DiscoveryVersionError),
+    CandidateTransport(CandidateInsertionError),
     NoEligibleEndpoints,
 }
 
@@ -534,15 +537,23 @@ fn resolved_service_advertisement(
         let Some(socket_address) = parse_sockaddr(&address.to_vec()) else {
             continue;
         };
-        if let Ok(discovery_endpoint) = DiscoveryEndpoint::new(socket_address) {
+        if let Ok(discovery_endpoint) = DiscoveryEndpoint::tcp(socket_address) {
             discovery_endpoints.insert(discovery_endpoint);
         }
     }
 
     let mut service_advertisement = ServiceAdvertisement::new(service_name);
     for discovery_endpoint in discovery_endpoints {
-        if service_advertisement.insert(discovery_endpoint) == CandidateInsertion::AtCapacity {
-            break;
+        match service_advertisement.insert(discovery_endpoint) {
+            Ok(CandidateInsertion::RejectedLowerPriority) => break,
+            Ok(
+                CandidateInsertion::Inserted
+                | CandidateInsertion::AlreadyPresent
+                | CandidateInsertion::ReplacedLowerPriority,
+            ) => {}
+            Err(candidate_error) => {
+                return Err(ServiceRecordRejection::CandidateTransport(candidate_error));
+            }
         }
     }
     if service_advertisement.is_empty() {
@@ -555,7 +566,7 @@ fn resolved_service_advertisement(
 fn discovery_service_name(
     service: &NSNetService,
 ) -> Result<DiscoveryServiceName, ServiceRecordRejection> {
-    let expected_service_type = format!("{DNS_SD_BASE_SERVICE_TYPE}.");
+    let expected_service_type = format!("{TCP_DNS_SD_BASE_SERVICE_TYPE}.");
     if !service
         .r#type()
         .to_string()
@@ -570,7 +581,7 @@ fn discovery_service_name(
     {
         return Err(ServiceRecordRejection::WrongDomain);
     }
-    DiscoveryServiceName::from_instance(&service.name().to_string())
+    DiscoveryServiceName::from_instance(&service.name().to_string(), DiscoveryTransport::Tcp)
         .map_err(ServiceRecordRejection::InvalidServiceName)
 }
 
@@ -666,7 +677,7 @@ mod native_thread_tests {
         NSNetService::initWithDomain_type_name_port(
             NSNetService::alloc(),
             &NSString::from_str(DNS_SD_LOCAL_DOMAIN),
-            &NSString::from_str(&format!("{DNS_SD_BASE_SERVICE_TYPE}.")),
+            &NSString::from_str(&format!("{TCP_DNS_SD_BASE_SERVICE_TYPE}.")),
             &NSString::from_str(instance_name),
             core::ffi::c_int::from(port),
         )
@@ -696,8 +707,9 @@ mod native_thread_tests {
         service_name: &str,
         socket_address: &str,
     ) -> Result<ServiceAdvertisement, Box<dyn std::error::Error>> {
-        let discovery_service_name = DiscoveryServiceName::new(service_name)?;
-        let discovery_endpoint = DiscoveryEndpoint::new(socket_address.parse()?)?;
+        let discovery_service_name =
+            DiscoveryServiceName::from_instance(service_name, DiscoveryTransport::Tcp)?;
+        let discovery_endpoint = DiscoveryEndpoint::tcp(socket_address.parse()?)?;
         let mut service_advertisement = ServiceAdvertisement::new(discovery_service_name);
         let _ = service_advertisement.insert(discovery_endpoint);
         Ok(service_advertisement)
@@ -799,15 +811,16 @@ mod native_thread_tests {
             apply_resolved_service(&snapshot_state, &service, &addresses),
             ServiceResolutionOutcome::SnapshotChanged
         );
-        let mut expected_advertisement =
-            ServiceAdvertisement::new(DiscoveryServiceName::from_instance("peer")?);
-        assert_eq!(
-            expected_advertisement.insert(DiscoveryEndpoint::new("10.0.0.8:42699".parse()?,)?),
-            CandidateInsertion::Inserted
+        let mut expected_advertisement = ServiceAdvertisement::new(
+            DiscoveryServiceName::from_instance("peer", DiscoveryTransport::Tcp)?,
         );
         assert_eq!(
-            expected_advertisement.insert(DiscoveryEndpoint::new("192.168.1.8:42699".parse()?,)?),
-            CandidateInsertion::Inserted
+            expected_advertisement.insert(DiscoveryEndpoint::tcp("10.0.0.8:42699".parse()?,)?),
+            Ok(CandidateInsertion::Inserted)
+        );
+        assert_eq!(
+            expected_advertisement.insert(DiscoveryEndpoint::tcp("192.168.1.8:42699".parse()?,)?),
+            Ok(CandidateInsertion::Inserted)
         );
         let mut expected_snapshot = DiscoverySnapshot::new(NonZeroU8::MIN);
         assert_eq!(
