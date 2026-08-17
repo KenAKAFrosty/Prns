@@ -1459,7 +1459,7 @@
         "type": "tempo",
         "uid": "tempo"
       },
-      "description": "How long requests take, from tracing spans. prns.respond is a request this node answered, and every one is recorded. prns.request is a request this node sent out itself, and only 1 in 10 is recorded. Tempo can only compute this over a window of 3 hours or less.",
+      "description": "How long requests this node sends out itself take, like prnsd probe or a fetch it makes over a link. Measured from tracing spans; every one is recorded. Tempo can only compute this over a window of 3 hours or less.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1502,7 +1502,7 @@
             "uid": "tempo"
           },
           "metricsQueryType": "range",
-          "query": "{ resource.service.name = \"prnsd\" && span:name =~ \"prns.request|prns.respond\" } | avg_over_time(span:duration) by (name)",
+          "query": "{ resource.service.name = \"prnsd\" && span:name = \"prns.request\" } | avg_over_time(span:duration)",
           "queryType": "traceql",
           "refId": "A"
         },
@@ -1512,7 +1512,7 @@
             "uid": "tempo"
           },
           "metricsQueryType": "range",
-          "query": "{ resource.service.name = \"prnsd\" && span:name =~ \"prns.request|prns.respond\" } | quantile_over_time(span:duration, .95) by (name)",
+          "query": "{ resource.service.name = \"prnsd\" && span:name = \"prns.request\" } | quantile_over_time(span:duration, .95)",
           "queryType": "traceql",
           "refId": "B"
         },
@@ -1522,7 +1522,7 @@
             "uid": "tempo"
           },
           "metricsQueryType": "range",
-          "query": "{ resource.service.name = \"prnsd\" && span:name =~ \"prns.request|prns.respond\" } | quantile_over_time(span:duration, .99) by (name)",
+          "query": "{ resource.service.name = \"prnsd\" && span:name = \"prns.request\" } | quantile_over_time(span:duration, .99)",
           "queryType": "traceql",
           "refId": "C"
         }
@@ -1535,7 +1535,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "How many requests this node answered (like a page fetch from its hosted pages) and how many it sent out itself, per time slice, split by outcome.",
+      "description": "How many requests this node answered in each time slice, like a page fetch from its hosted pages, split by outcome.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1584,21 +1584,9 @@
           "editorMode": "code",
           "expr": "sum by (outcome) (increase(prns_operations_total{operation=\"respond\"}[$__interval]))",
           "interval": "1m",
-          "legendFormat": "answered · {{outcome}}",
+          "legendFormat": "{{outcome}}",
           "range": true,
           "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "editorMode": "code",
-          "expr": "sum by (outcome) (increase(prns_operations_total{operation=\"send_request\"}[$__interval]))",
-          "interval": "1m",
-          "legendFormat": "sent · {{outcome}}",
-          "range": true,
-          "refId": "B"
         }
       ],
       "title": "Inbound Requests",
