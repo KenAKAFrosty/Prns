@@ -57,7 +57,7 @@ Feature names keep platform costs explicit. Common choices include:
 | Embedded async host | `embassy-host` |
 | TCP | `tcp` |
 | Automatic LAN discovery | `wifi-auto` |
-| Native DNS-SD service discovery for the stock AutoInterface profile | `wifi-auto-mdns` |
+| Native dual-transport DNS-SD discovery for the stock AutoInterface profile | `wifi-auto-mdns` |
 | Serial, KISS, AX.25 KISS, or RNode | `serial`, `kiss`, `ax25`, `rnode` |
 | WebSocket or I2P | `websocket`, `i2p` |
 | USB or Bluetooth discovery | `usb`, `bluetooth-auto` |
