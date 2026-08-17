@@ -1,7 +1,5 @@
 use personal_rns::runtime::NoPersistence;
 use std::fmt::Write as _;
-#[cfg(target_os = "ios")]
-use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::mpsc;
@@ -26,6 +24,8 @@ use personal_rns::runtime::{
     Diagnostic, ManuallyAttached, NodeRunError, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
 };
 use personal_rns::storage::GrowableHeap;
+#[cfg(target_os = "ios")]
+use personal_rns::wifi_auto::apple_service_discovery;
 use personal_rns::wifi_auto::{AutoWifi, AutoWifiStatus};
 use personal_rns::wire::DestinationHash;
 use tokio::net::TcpListener;
@@ -528,18 +528,6 @@ async fn run_engine(
             return;
         }
     };
-    let wifi_listener =
-        match TcpListener::bind(("0.0.0.0", wifi_auto_contract::TCP_RENDEZVOUS_PORT)).await {
-            Ok(listener) => listener,
-            Err(error) => {
-                diagnostic(
-                    "listener",
-                    format_args!("kind=wifi state=failed error={error}"),
-                );
-                let _ = ready_tx.send(Err(MobileEngineFailure::LocalListenerBind));
-                return;
-            }
-        };
     let prepared_persistence = match PreparedPersistence::open(&storage_directory) {
         Ok(prepared) => prepared,
         Err(error) => {
@@ -647,25 +635,18 @@ async fn run_engine(
     );
 
     #[cfg(target_os = "ios")]
-    let (mdns_tx, mdns_rx) = tokio::sync::mpsc::unbounded_channel::<SocketAddr>();
-    #[cfg(target_os = "ios")]
-    let wifi = AutoWifi::new()
-        .with_mdns(mdns_rx)
-        .with_rendezvous_listener(wifi_listener);
+    let wifi = AutoWifi::new().with_platform_discovery(apple_service_discovery());
     #[cfg(not(target_os = "ios"))]
-    let wifi = AutoWifi::new().with_rendezvous_listener(wifi_listener);
+    let wifi = AutoWifi::new();
     let wifi_status = wifi.status();
     handle.supervise(wifi);
     diagnostic(
         "listener",
         format_args!(
-            "kind=wifi state=bound port={}",
+            "kind=wifi state=managed port={}",
             wifi_auto_contract::TCP_RENDEZVOUS_PORT
         ),
     );
-
-    #[cfg(target_os = "ios")]
-    let mdns_task = tokio::spawn(run_mdns(wifi_auto_contract::TCP_RENDEZVOUS_PORT, mdns_tx));
 
     let attached_ble = handle.attach(prepared_ble);
     let ble_id = attached_ble.id();
@@ -727,11 +708,6 @@ async fn run_engine(
     persistence_task.abort().await;
     diagnostics.abort();
     let _ = diagnostics.await;
-    #[cfg(target_os = "ios")]
-    {
-        mdns_task.abort();
-        let _ = mdns_task.await;
-    }
     drop(node_run);
     diagnostic(
         "worker",
@@ -815,50 +791,6 @@ async fn log_runtime_diagnostics(handle: PrnsNodeHandle) {
                 format_args!("resident_bytes={}", resident_bytes()),
             );
         }
-    }
-}
-
-#[cfg(target_os = "ios")]
-async fn run_mdns(port: u16, sightings: tokio::sync::mpsc::UnboundedSender<SocketAddr>) {
-    use prns_ffi::mdns::macos::MacosMdnsBackend;
-
-    const RETRY_DELAY: Duration = Duration::from_secs(2);
-
-    loop {
-        match MacosMdnsBackend::new(port, &[("v", b"1")]).await {
-            Ok(mut backend) => {
-                diagnostic(
-                    "transport",
-                    format_args!("kind=bonjour state=running port={port}"),
-                );
-                while let Some(addr) = backend.next_sighting().await {
-                    diagnostic(
-                        "transport",
-                        format_args!("kind=bonjour state=sighting peer={addr}"),
-                    );
-                    if sightings.send(addr).is_err() {
-                        return;
-                    }
-                }
-                diagnostic(
-                    "transport",
-                    format_args!(
-                        "kind=bonjour state=stopped retry_ms={}",
-                        RETRY_DELAY.as_millis()
-                    ),
-                );
-            }
-            Err(error) => {
-                diagnostic(
-                    "transport",
-                    format_args!(
-                        "kind=bonjour state=failed error={error:?} retry_ms={}",
-                        RETRY_DELAY.as_millis()
-                    ),
-                );
-            }
-        }
-        tokio::time::sleep(RETRY_DELAY).await;
     }
 }
 

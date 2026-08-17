@@ -1,3 +1,9 @@
+#[cfg(all(
+    feature = "tokio-host",
+    feature = "wifi-auto-apple",
+    any(target_os = "macos", target_os = "ios")
+))]
+pub use prns_interfaces_tokio::wifi_auto::apple_service_discovery;
 #[cfg(all(feature = "tokio-host", feature = "wifi-auto-mdns"))]
 pub use prns_interfaces_tokio::wifi_auto::native_service_discovery;
 #[cfg(feature = "tokio-host")]

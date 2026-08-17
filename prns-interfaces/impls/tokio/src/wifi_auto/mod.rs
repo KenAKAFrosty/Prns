@@ -27,10 +27,20 @@ use prns_runtime::manifold::interface_seam::{Interface, InterfaceSeam};
 use prns_runtime::manifold::throughput::ThroughputLedger;
 use prns_runtime::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
 
+#[cfg(all(
+    feature = "wifi-auto-apple",
+    any(target_os = "macos", target_os = "ios")
+))]
+mod apple;
 mod discovery;
 #[cfg(feature = "wifi-auto-mdns")]
 mod mdns;
 
+#[cfg(all(
+    feature = "wifi-auto-apple",
+    any(target_os = "macos", target_os = "ios")
+))]
+pub use apple::apple_service_discovery;
 pub use discovery::{
     DiscoveryLifecycleError, DiscoveryParticipation, ServiceDiscovery, ServiceDiscoveryPublisher,
     SnapshotPublication,
