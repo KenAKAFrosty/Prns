@@ -110,9 +110,39 @@ object NativeBridge {
 
     external fun nativeUsbTx(buffer: ByteBuffer): Int
 
-    external fun nativeRendezvousPort(): Int
+    const val WIFI_DISCOVERY_INACTIVE = 0
+    const val WIFI_DISCOVERY_SATELLITE = 1
+    const val WIFI_DISCOVERY_CENTRAL = 2
 
-    external fun nativeWifiSighting(address: ByteBuffer, port: Int)
+    external fun nativeWifiServicePort(): Int
+
+    external fun nativeWifiServiceType(): String
+
+    external fun nativeWifiTxtVersionKey(): String
+
+    external fun nativeWifiTxtVersionValue(): String
+
+    external fun nativeWifiServiceCapacity(): Int
+
+    external fun nativeWifiCandidateCapacity(): Int
+
+    external fun nativeWifiDiscoveryParticipation(): Int
+
+    external fun nativeWifiWorkGeneration(): Long
+
+    external fun nativeWifiWaitForWork(observedGeneration: Long, timeoutMillis: Long): Long
+
+    external fun nativeWifiWakeDiscoveryPump()
+
+    external fun nativeWifiResolved(
+        serviceInstance: String,
+        addresses: Array<ByteArray>,
+        scopeIds: IntArray,
+        port: Int,
+        version: String?,
+    ): Boolean
+
+    external fun nativeWifiLost(serviceInstance: String)
 
     external fun nativeBleSetPsm(psm: Int)
 

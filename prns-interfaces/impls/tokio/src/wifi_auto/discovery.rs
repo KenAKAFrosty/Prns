@@ -253,6 +253,11 @@ impl ServiceDiscoveryPublisher {
         let timeout = (timeout_millis != 0).then(|| Duration::from_millis(timeout_millis));
         self.work_signal.wait(observed_generation, timeout)
     }
+
+    /// Wakes blocking platform pumps during an outer lifecycle transition.
+    pub fn wake_waiters(&self) {
+        self.work_signal.wake();
+    }
 }
 
 #[cfg(test)]

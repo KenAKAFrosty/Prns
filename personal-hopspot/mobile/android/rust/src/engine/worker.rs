@@ -164,10 +164,13 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
     };
     tokio::spawn(rpc.run());
 
-    let Some(mdns_rx) = platform.mdns.take_receiver() else {
-        return fail_start(ready_tx, EngineStartError::WorkerStopped);
+    let service_discovery = match platform.service_discovery.take_service_discovery() {
+        Ok(service_discovery) => service_discovery,
+        Err(_service_discovery_unavailable) => {
+            return fail_start(ready_tx, EngineStartError::WorkerStopped);
+        }
     };
-    let wifi = AutoWifi::new().with_platform_rendezvous(mdns_rx);
+    let wifi = AutoWifi::new().with_platform_discovery(service_discovery);
     let wifi_status = wifi.status();
     handle.supervise(wifi);
 

@@ -26,7 +26,7 @@ use tokio::sync::oneshot;
 
 use crate::bluetooth_auto::AndroidBleBridge;
 use crate::bridge::AndroidUsbBridge;
-use crate::mdns::AndroidMdnsBridge;
+use crate::service_discovery::AndroidServiceDiscoveryBridge;
 use crate::wifi_aware::AndroidWifiAwareBridge;
 use crate::wifi_direct::AndroidWifiDirectBridge;
 use persistence::{PersistenceHealth, PersistenceSnapshot};
@@ -88,7 +88,7 @@ pub(super) struct PlatformLinks {
     pub(super) ble: AndroidBleBridge,
     pub(super) wifi_direct: AndroidWifiDirectBridge,
     pub(super) wifi_aware: AndroidWifiAwareBridge,
-    pub(super) mdns: AndroidMdnsBridge,
+    pub(super) service_discovery: AndroidServiceDiscoveryBridge,
 }
 
 impl PlatformLinks {
@@ -98,7 +98,7 @@ impl PlatformLinks {
             ble: AndroidBleBridge::new(),
             wifi_direct: AndroidWifiDirectBridge::new(),
             wifi_aware: AndroidWifiAwareBridge::new(),
-            mdns: AndroidMdnsBridge::new(),
+            service_discovery: AndroidServiceDiscoveryBridge::new(),
         }
     }
 }
@@ -619,11 +619,11 @@ pub(crate) fn wa_bridge() -> AndroidWifiAwareBridge {
         .unwrap_or_default()
 }
 
-pub(crate) fn mdns_bridge() -> AndroidMdnsBridge {
+pub(crate) fn service_discovery_bridge() -> AndroidServiceDiscoveryBridge {
     lock_manager()
         .process
         .as_ref()
-        .map(|process| process.platform.mdns.clone())
+        .map(|process| process.platform.service_discovery.clone())
         .unwrap_or_default()
 }
 
