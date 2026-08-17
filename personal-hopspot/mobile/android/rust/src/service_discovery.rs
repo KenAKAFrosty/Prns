@@ -30,6 +30,21 @@ pub enum TakeServiceDiscoveryError {
     AlreadyTaken,
 }
 
+impl std::fmt::Display for TakeServiceDiscoveryError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::StateUnavailable => {
+                formatter.write_str("Android service-discovery state is unavailable")
+            }
+            Self::AlreadyTaken => {
+                formatter.write_str("Android service-discovery runtime is already attached")
+            }
+        }
+    }
+}
+
+impl std::error::Error for TakeServiceDiscoveryError {}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum ServiceRecordRejection {
     ServiceName(DiscoveryServiceNameError),
@@ -281,6 +296,66 @@ impl Default for AndroidServiceDiscoveryBridge {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+
+    use personal_rns::interfaces::InterfaceStatus;
+    use personal_rns::manifold::tokio::TokioInterfaceStatus;
+    use personal_rns::runtime::{Fleet, InterfaceSupervisor};
+    use personal_rns::wifi_auto::{AutoWifi, AutoWifiStatus};
+    use tokio::net::TcpListener;
+    use tokio::sync::watch;
+
+    const EVENT_DEADLINE: Duration = Duration::from_secs(10);
+
+    struct StartedAutoWifi {
+        status: AutoWifiStatus,
+        member_updates: watch::Receiver<Vec<TokioInterfaceStatus>>,
+        task: tokio::task::JoinHandle<()>,
+    }
+
+    async fn await_participation(
+        service_discovery_bridge: &AndroidServiceDiscoveryBridge,
+        expected_participation: DiscoveryParticipation,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let mut service_discovery_publisher = service_discovery_bridge.shared.publisher.clone();
+        tokio::time::timeout(
+            EVENT_DEADLINE,
+            service_discovery_publisher.wait_for_participation(expected_participation),
+        )
+        .await??;
+        Ok(())
+    }
+
+    async fn await_member_count(
+        member_updates: &mut watch::Receiver<Vec<TokioInterfaceStatus>>,
+        expected_member_count: usize,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        tokio::time::timeout(
+            EVENT_DEADLINE,
+            member_updates.wait_for(|members| members.len() == expected_member_count),
+        )
+        .await??;
+        Ok(())
+    }
+
+    fn start_auto_wifi(
+        service_discovery_bridge: &AndroidServiceDiscoveryBridge,
+        rendezvous_listener: TcpListener,
+    ) -> Result<StartedAutoWifi, Box<dyn std::error::Error + Send + Sync>> {
+        let service_discovery = service_discovery_bridge.take_service_discovery()?;
+        let auto_wifi = AutoWifi::new()
+            .with_platform_discovery(service_discovery)
+            .with_rendezvous_listener(rendezvous_listener);
+        let auto_wifi_status = auto_wifi.status();
+        let member_updates = auto_wifi_status.subscribe_members();
+        let (auto_wifi_fleet, _detached_fleet) = Fleet::detached(auto_wifi_status.id());
+        let auto_wifi_task = tokio::spawn(auto_wifi.run(auto_wifi_fleet));
+        Ok(StartedAutoWifi {
+            status: auto_wifi_status,
+            member_updates,
+            task: auto_wifi_task,
+        })
+    }
 
     fn service_resolution(
         service_instance: &str,
@@ -373,6 +448,78 @@ mod tests {
                 .map(|visible_services| visible_services.len()),
             Ok(0)
         ));
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn android_bridge_follows_the_real_auto_wifi_lifecycle_without_stale_state(
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let service_discovery_bridge = AndroidServiceDiscoveryBridge::new();
+        let rendezvous_listener = TcpListener::bind((
+            "0.0.0.0",
+            personal_rns::interfaces::wifi_auto::TCP_RENDEZVOUS_PORT,
+        ))
+        .await?;
+        let StartedAutoWifi {
+            status: auto_wifi_status,
+            mut member_updates,
+            task: auto_wifi_task,
+        } = start_auto_wifi(&service_discovery_bridge, rendezvous_listener)?;
+
+        await_participation(&service_discovery_bridge, DiscoveryParticipation::Central).await?;
+        let peer_address: SocketAddr = "192.168.254.2:42699".parse()?;
+        assert_eq!(
+            service_discovery_bridge.resolved("legacy", [peer_address], None),
+            ServiceResolutionOutcome::SnapshotChanged
+        );
+        await_member_count(&mut member_updates, 1).await?;
+        assert_eq!(
+            service_discovery_bridge.resolved("legacy", [peer_address], Some(b"1")),
+            ServiceResolutionOutcome::SnapshotUnchanged
+        );
+        assert_eq!(
+            service_discovery_bridge.resolved("legacy", [peer_address], Some(b"2")),
+            ServiceResolutionOutcome::RejectedRecord(ServiceRecordRejection::Version(
+                DiscoveryVersionError::Unsupported(2)
+            ))
+        );
+        await_member_count(&mut member_updates, 0).await?;
+
+        assert_eq!(
+            service_discovery_bridge.resolved("peer", [peer_address], Some(b"1")),
+            ServiceResolutionOutcome::SnapshotChanged
+        );
+        await_member_count(&mut member_updates, 1).await?;
+        assert_eq!(
+            service_discovery_bridge.lost("peer"),
+            ServiceRemovalOutcome::SnapshotChanged
+        );
+        await_member_count(&mut member_updates, 0).await?;
+
+        auto_wifi_status.disable();
+        await_participation(&service_discovery_bridge, DiscoveryParticipation::Inactive).await?;
+        assert_eq!(
+            service_discovery_bridge.resolved("inactive", [peer_address], Some(b"1")),
+            ServiceResolutionOutcome::RejectedParticipation(DiscoveryParticipation::Inactive)
+        );
+
+        let rendezvous_port_guard = TcpListener::bind((
+            "0.0.0.0",
+            personal_rns::interfaces::wifi_auto::TCP_RENDEZVOUS_PORT,
+        ))
+        .await?;
+        auto_wifi_status.enable();
+        await_participation(&service_discovery_bridge, DiscoveryParticipation::Satellite).await?;
+        assert_eq!(
+            service_discovery_bridge.resolved("satellite", [peer_address], Some(b"1")),
+            ServiceResolutionOutcome::RejectedParticipation(DiscoveryParticipation::Satellite)
+        );
+        drop(rendezvous_port_guard);
+        await_participation(&service_discovery_bridge, DiscoveryParticipation::Central).await?;
+        await_member_count(&mut member_updates, 0).await?;
+
+        auto_wifi_task.abort();
+        let _ = auto_wifi_task.await;
         Ok(())
     }
 }

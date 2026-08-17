@@ -153,8 +153,17 @@ class WifiAutoLink(context: Context) {
             serviceName = SERVICE_NAME
             serviceType = this@WifiAutoLink.serviceType
             port = NativeBridge.nativeWifiServicePort()
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                setAttribute(versionKey, versionValue)
+            when (
+                AndroidDiscoveryVersionMetadata.forApiLevel(Build.VERSION.SDK_INT)
+            ) {
+                AndroidDiscoveryVersionMetadata.ImplicitV1 -> Unit
+                AndroidDiscoveryVersionMetadata.ExplicitV1 -> {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                        setAttribute(versionKey, versionValue)
+                    } else {
+                        error("explicit DNS-SD version metadata requires Android API 21")
+                    }
+                }
             }
         }
         return try {
@@ -484,12 +493,18 @@ class WifiAutoLink(context: Context) {
             listOfNotNull(service.host)
         }
 
-    private fun serviceVersion(service: NsdServiceInfo): String? =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            service.attributes[versionKey]?.toString(StandardCharsets.UTF_8)
-        } else {
-            null
+    private fun serviceVersion(service: NsdServiceInfo): String? = when (
+        AndroidDiscoveryVersionMetadata.forApiLevel(Build.VERSION.SDK_INT)
+    ) {
+        AndroidDiscoveryVersionMetadata.ImplicitV1 -> null
+        AndroidDiscoveryVersionMetadata.ExplicitV1 -> {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                service.attributes[versionKey]?.toString(StandardCharsets.UTF_8)
+            } else {
+                error("explicit DNS-SD version metadata requires Android API 21")
+            }
         }
+    }
 
     private fun acquireMulticastLock(): MulticastLockOutcome {
         val currentLock = multicastLock ?: return MulticastLockOutcome.Unavailable
