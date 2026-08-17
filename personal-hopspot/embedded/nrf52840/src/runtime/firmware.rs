@@ -31,7 +31,10 @@ use personal_rns::runtime::{
 };
 use personal_rns::storage::StorageLayout;
 use personal_rns::usb_auto::{UsbAutoDevice, UsbAutoDeviceInput};
-use personal_rns::usb_auto::{WebUsbAutoClass, WebUsbAutoState, WEBUSB_AUTO_PACKET_SIZE};
+use personal_rns::usb_auto::{
+    WebUsbAutoClass, WebUsbAutoState, WEBUSB_AUTO_CONTROL_BUFFER_BYTES,
+    WEBUSB_AUTO_MSOS_DESCRIPTOR_BYTES, WEBUSB_AUTO_PACKET_SIZE,
+};
 
 use crate::boards::selected as board;
 use board::{
@@ -57,7 +60,6 @@ const EINK_ANIMATION_MS: u64 = 0;
 const NOTICE_MS: u64 = 900;
 const USB_CONFIG_DESCRIPTOR_BYTES: usize = 64;
 const USB_BOS_DESCRIPTOR_BYTES: usize = 64;
-const USB_MSOS_DESCRIPTOR_BYTES: usize = 192;
 
 #[embassy_executor::task]
 async fn manifold_task(node: &'static mut Node, persistence: &'static mut board::Persistence) {
@@ -101,17 +103,17 @@ pub async fn run(spawner: Spawner) -> ! {
     usb_config.max_packet_size_0 = 64;
     static CONFIG_DESC: StaticCell<[u8; USB_CONFIG_DESCRIPTOR_BYTES]> = StaticCell::new();
     static BOS_DESC: StaticCell<[u8; USB_BOS_DESCRIPTOR_BYTES]> = StaticCell::new();
-    static MSOS_DESC: StaticCell<[u8; USB_MSOS_DESCRIPTOR_BYTES]> = StaticCell::new();
-    static CONTROL_BUF: StaticCell<[u8; 64]> = StaticCell::new();
+    static MSOS_DESC: StaticCell<[u8; WEBUSB_AUTO_MSOS_DESCRIPTOR_BYTES]> = StaticCell::new();
+    static CONTROL_BUF: StaticCell<[u8; WEBUSB_AUTO_CONTROL_BUFFER_BYTES]> = StaticCell::new();
     let mut builder = Builder::new(
         usb_driver,
         usb_config,
         CONFIG_DESC.init([0; USB_CONFIG_DESCRIPTOR_BYTES]),
         BOS_DESC.init([0; USB_BOS_DESCRIPTOR_BYTES]),
-        MSOS_DESC.init([0; USB_MSOS_DESCRIPTOR_BYTES]),
-        CONTROL_BUF.init([0; 64]),
+        MSOS_DESC.init([0; WEBUSB_AUTO_MSOS_DESCRIPTOR_BYTES]),
+        CONTROL_BUF.init([0; WEBUSB_AUTO_CONTROL_BUFFER_BYTES]),
     );
-    builder.msos_descriptor(0x0603_0000, 0x20);
+    builder.msos_descriptor(embassy_usb::msos::windows_version::WIN8_1, 0x20);
     static USB_STATE: StaticCell<WebUsbAutoState> = StaticCell::new();
     let class = WebUsbAutoClass::new(
         &mut builder,

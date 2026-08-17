@@ -7,6 +7,8 @@ use ::embassy_usb::types::StringIndex;
 use ::embassy_usb::{msos, Builder, Handler};
 
 pub const WEBUSB_AUTO_PACKET_SIZE: u16 = 64;
+pub const WEBUSB_AUTO_CONTROL_BUFFER_BYTES: usize = 128;
+pub const WEBUSB_AUTO_MSOS_DESCRIPTOR_BYTES: usize = 192;
 
 #[derive(Debug)]
 pub enum WebUsbAutoError {
@@ -58,6 +60,7 @@ pub struct WebUsbAutoClass<'d, D: UsbDriver<'d>> {
 }
 
 impl<'d, D: UsbDriver<'d>> WebUsbAutoClass<'d, D> {
+    /// Tells Windows to use WinUSB for this device. USB Auto must be its only USB function.
     #[must_use]
     pub fn new(
         builder: &mut Builder<'d, D>,
@@ -65,12 +68,12 @@ impl<'d, D: UsbDriver<'d>> WebUsbAutoClass<'d, D> {
         max_packet_size: u16,
     ) -> Self {
         let iface_string = builder.string();
-        let mut function = builder.function(0xff, 0, 0);
-        function.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
-        function.msos_feature(msos::RegistryPropertyFeatureDescriptor::new(
+        builder.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
+        builder.msos_feature(msos::RegistryPropertyFeatureDescriptor::new(
             "DeviceInterfaceGUIDs",
             msos::PropertyData::RegMultiSz(&["{D6F980C1-0B65-4B3B-A029-01A93A3DEB44}"]),
         ));
+        let mut function = builder.function(0xff, 0, 0);
         let mut interface = function.interface();
         let mut alt = interface.alt_setting(0xff, 0, 0, Some(iface_string));
         let read_ep = alt.endpoint_bulk_out(None, max_packet_size);
