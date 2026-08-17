@@ -1,5 +1,7 @@
+mod candidate;
 mod host;
 
+pub use candidate::{UsbAutoCandidate, UsbAutoIncarnation};
 pub use host::{AutoUsb, DEFAULT_USB_AUTO_ID, DEFAULT_USB_BAUD};
 
 use std::collections::{HashMap, HashSet};
@@ -30,6 +32,8 @@ use prns_runtime::manifold::driver::{
 };
 use prns_runtime::manifold::interface_seam::{Interface, InterfaceSeam};
 
+use candidate::HandshakeTimeoutDisposition;
+
 /// Backstops missed hot-plug events, platforms without a hot-plug source, and ports whose task died without an unplug.
 const FALLBACK_SCAN_INTERVAL: Duration = Duration::from_secs(1);
 /// Repeats the handshake while a newly opened board may still be booting.
@@ -43,7 +47,7 @@ const OPEN_FAILURE_BACKOFF: Duration = Duration::from_secs(5);
 const HANDSHAKE_DEADLINE: Duration = Duration::from_secs(30);
 
 struct Port {
-    id: String,
+    candidate: UsbAutoCandidate,
     key: u64,
     liveness: PortLiveness,
     outbound: TokioGrantProducer,
@@ -72,8 +76,13 @@ impl PortLiveness {
 }
 
 enum PortEvent {
-    Alive { id: String },
-    Closed { id: String, reason: PortExitReason },
+    Alive {
+        candidate: UsbAutoCandidate,
+    },
+    Closed {
+        candidate: UsbAutoCandidate,
+        reason: PortExitReason,
+    },
 }
 
 enum PortExitReason {
@@ -81,11 +90,11 @@ enum PortExitReason {
     HandshakeTimedOut,
 }
 
-type PendingOpen<S> = Pin<Box<dyn Future<Output = (String, io::Result<S>)> + Send>>;
+type PendingOpen<S> = Pin<Box<dyn Future<Output = (UsbAutoCandidate, io::Result<S>)> + Send>>;
 
 enum PortHoldoff {
     RetryAt(Instant),
-    UntilReenumerated,
+    UntilIncarnationChanges,
 }
 
 impl PortHoldoff {
@@ -96,12 +105,12 @@ impl PortHoldoff {
     fn blocks_open(&self, now: Instant) -> bool {
         match self {
             Self::RetryAt(retry_at) => now < *retry_at,
-            Self::UntilReenumerated => true,
+            Self::UntilIncarnationChanges => true,
         }
     }
 }
 
-fn has_pending_retry(port_holdoffs: &HashMap<String, PortHoldoff>) -> bool {
+fn has_pending_retry(port_holdoffs: &HashMap<UsbAutoCandidate, PortHoldoff>) -> bool {
     let now = Instant::now();
     port_holdoffs
         .values()
@@ -189,8 +198,8 @@ impl<Scan, Open> UsbAutoHost<Scan, Open> {
 
 impl<Scan, Open, Fut, S> Interface for UsbAutoHost<Scan, Open>
 where
-    Scan: FnMut() -> Vec<String> + Send + 'static,
-    Open: FnMut(String) -> Fut + Send + 'static,
+    Scan: FnMut() -> Vec<UsbAutoCandidate> + Send + 'static,
+    Open: FnMut(UsbAutoCandidate) -> Fut + Send + 'static,
     Fut: Future<Output = io::Result<S>> + Send + 'static,
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -215,8 +224,8 @@ where
         };
         let rescan = self.rescan.clone();
         let mut ports: Vec<Port> = Vec::new();
-        let mut opening: HashSet<String> = HashSet::new();
-        let mut port_holdoffs: HashMap<String, PortHoldoff> = HashMap::new();
+        let mut opening: HashSet<UsbAutoCandidate> = HashSet::new();
+        let mut port_holdoffs: HashMap<UsbAutoCandidate, PortHoldoff> = HashMap::new();
         let mut pending_opens: FuturesUnordered<PendingOpen<S>> = FuturesUnordered::new();
         let mut next_port_key: u64 = 0;
         let mut last_confirmed_at: Option<Instant> = None;
@@ -271,28 +280,47 @@ where
                 }
                 Some(event) = events_rx.recv() => {
                     match event {
-                        PortEvent::Alive { id } => {
-                            if let Some(port) = ports.iter_mut().find(|port| port.id == id) {
+                        PortEvent::Alive { candidate } => {
+                            if let Some(port) = ports
+                                .iter_mut()
+                                .find(|port| port.candidate == candidate)
+                            {
                                 let now = Instant::now();
                                 port.liveness.mark_alive(now);
                                 last_confirmed_at = Some(now);
                             }
-                            port_holdoffs.remove(&id);
+                            port_holdoffs.remove(&candidate);
                         }
-                        PortEvent::Closed { id, reason } => {
-                            ports.retain(|port| port.id != id);
+                        PortEvent::Closed { candidate, reason } => {
+                            ports.retain(|port| port.candidate != candidate);
                             match reason {
                                 PortExitReason::TransportEnded => {
                                     port_holdoffs.insert(
-                                        id,
+                                        candidate,
                                         PortHoldoff::retry_after(OPEN_FAILURE_BACKOFF),
                                     );
                                 }
                                 PortExitReason::HandshakeTimedOut => {
-                                    crate::diagnostic_log::warn!(
-                                        "usb-auto: {id} did not answer the handshake; leaving it alone until it re-enumerates"
-                                    );
-                                    port_holdoffs.insert(id, PortHoldoff::UntilReenumerated);
+                                    match candidate.handshake_timeout_disposition() {
+                                        HandshakeTimeoutDisposition::IgnoreIncarnation => {
+                                            crate::diagnostic_log::warn!(
+                                                "usb-auto: {candidate} did not answer the handshake; leaving this attachment alone"
+                                            );
+                                            port_holdoffs.insert(
+                                                candidate,
+                                                PortHoldoff::UntilIncarnationChanges,
+                                            );
+                                        }
+                                        HandshakeTimeoutDisposition::Retry => {
+                                            crate::diagnostic_log::warn!(
+                                                "usb-auto: {candidate} did not answer the handshake; retrying after {OPEN_FAILURE_BACKOFF:?}"
+                                            );
+                                            port_holdoffs.insert(
+                                                candidate,
+                                                PortHoldoff::retry_after(OPEN_FAILURE_BACKOFF),
+                                            );
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -304,45 +332,48 @@ where
                     );
                     None
                 }
-                Some((name, opened)) = pending_opens.next(), if !pending_opens.is_empty() => {
-                    opening.remove(&name);
-                    match opened {
-                        Ok(stream) => {
-                            let key = next_port_key;
-                            next_port_key += 1;
-                            let (in_tx, in_rx) =
-                                tokio_grant_lane(contract::MAX_FRAMED_BYTES, PORT_LANE_DEPTH);
-                            let (out_tx, out_rx) =
-                                tokio_grant_lane(contract::MAX_FRAMED_BYTES, PORT_LANE_DEPTH);
-                            let task = tokio::spawn(serve_port(
-                                name.clone(),
-                                stream,
-                                context.clone(),
-                                in_tx,
-                                port_notify_tx.clone(),
-                                key,
-                                out_rx,
-                            ));
-                            ports.push(Port {
-                                id: name,
-                                key,
-                                liveness: PortLiveness::default(),
-                                outbound: out_tx,
-                                inbound: in_rx,
-                                task,
-                            });
-                        }
-                        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                            crate::diagnostic_log::debug!(
-                                "usb-auto: {name} requested re-enumeration"
-                            );
-                        }
-                        Err(error) => {
-                            crate::diagnostic_log::warn!("usb-auto: open {name} failed: {error}");
-                            port_holdoffs.insert(
-                                name,
-                                PortHoldoff::retry_after(OPEN_FAILURE_BACKOFF),
-                            );
+                Some((candidate, opened)) = pending_opens.next(), if !pending_opens.is_empty() => {
+                    if opening.remove(&candidate) {
+                        match opened {
+                            Ok(stream) => {
+                                let key = next_port_key;
+                                next_port_key += 1;
+                                let (in_tx, in_rx) =
+                                    tokio_grant_lane(contract::MAX_FRAMED_BYTES, PORT_LANE_DEPTH);
+                                let (out_tx, out_rx) =
+                                    tokio_grant_lane(contract::MAX_FRAMED_BYTES, PORT_LANE_DEPTH);
+                                let task = tokio::spawn(serve_port(
+                                    candidate.clone(),
+                                    stream,
+                                    context.clone(),
+                                    in_tx,
+                                    port_notify_tx.clone(),
+                                    key,
+                                    out_rx,
+                                ));
+                                ports.push(Port {
+                                    candidate,
+                                    key,
+                                    liveness: PortLiveness::default(),
+                                    outbound: out_tx,
+                                    inbound: in_rx,
+                                    task,
+                                });
+                            }
+                            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                                crate::diagnostic_log::debug!(
+                                    "usb-auto: {candidate} requested re-enumeration"
+                                );
+                            }
+                            Err(error) => {
+                                crate::diagnostic_log::warn!(
+                                    "usb-auto: open {candidate} failed: {error}"
+                                );
+                                port_holdoffs.insert(
+                                    candidate,
+                                    PortHoldoff::retry_after(OPEN_FAILURE_BACKOFF),
+                                );
+                            }
                         }
                     }
                     self.refresh_connection(
@@ -382,16 +413,16 @@ where
 
 impl<Scan, Open, Fut, S> UsbAutoHost<Scan, Open>
 where
-    Scan: FnMut() -> Vec<String> + Send + 'static,
-    Open: FnMut(String) -> Fut + Send + 'static,
+    Scan: FnMut() -> Vec<UsbAutoCandidate> + Send + 'static,
+    Open: FnMut(UsbAutoCandidate) -> Fut + Send + 'static,
     Fut: Future<Output = io::Result<S>> + Send + 'static,
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     async fn reconcile(
         &mut self,
         ports: &mut Vec<Port>,
-        opening: &mut HashSet<String>,
-        port_holdoffs: &mut HashMap<String, PortHoldoff>,
+        opening: &mut HashSet<UsbAutoCandidate>,
+        port_holdoffs: &mut HashMap<UsbAutoCandidate, PortHoldoff>,
         pending_opens: &mut FuturesUnordered<PendingOpen<S>>,
         last_confirmed_at: Option<Instant>,
     ) {
@@ -408,32 +439,33 @@ where
         }
         let present = (self.scan)();
         ports.retain(|port| {
-            if present.iter().any(|name| name == &port.id) {
+            if present.contains(&port.candidate) {
                 true
             } else {
                 port.task.abort();
                 false
             }
         });
-        opening.retain(|name| present.iter().any(|present_name| present_name == name));
-        port_holdoffs.retain(|name, _| present.iter().any(|present_name| present_name == name));
-        for name in present {
-            if ports.iter().any(|port| port.id == name) || opening.contains(&name) {
+        opening.retain(|candidate| present.contains(candidate));
+        port_holdoffs.retain(|candidate, _| present.contains(candidate));
+        for candidate in present {
+            if ports.iter().any(|port| port.candidate == candidate) || opening.contains(&candidate)
+            {
                 continue;
             }
             let now = Instant::now();
             if port_holdoffs
-                .get(&name)
+                .get(&candidate)
                 .is_some_and(|holdoff| holdoff.blocks_open(now))
             {
                 continue;
             }
-            port_holdoffs.remove(&name);
-            let future = (self.open)(name.clone());
-            opening.insert(name.clone());
+            port_holdoffs.remove(&candidate);
+            let future = (self.open)(candidate.clone());
+            opening.insert(candidate.clone());
             pending_opens.push(Box::pin(async move {
                 let opened = future.await;
-                (name, opened)
+                (candidate, opened)
             }));
         }
         self.refresh_connection(
@@ -451,7 +483,7 @@ async fn next_from_lane(lane: &mut TokioGrantConsumer) -> &[u8] {
 }
 
 async fn serve_port<S>(
-    id: String,
+    candidate: UsbAutoCandidate,
     mut stream: S,
     context: PortContext,
     mut inbound: TokioGrantProducer,
@@ -519,10 +551,10 @@ async fn serve_port<S>(
                                 write_failed = true;
                                 break;
                             }
-                            mark_alive(&mut confirmed, &id, &context.events);
+                            mark_alive(&mut confirmed, &candidate, &context.events);
                         }
                         HostInbound::Confirmed(_) => {
-                            mark_alive(&mut confirmed, &id, &context.events)
+                            mark_alive(&mut confirmed, &candidate, &context.events)
                         }
                         HostInbound::Data(packet) => {
                             if confirmed && !packet.is_empty() {
@@ -549,12 +581,18 @@ async fn serve_port<S>(
             }
         }
     };
-    let _ = context.events.send(PortEvent::Closed { id, reason });
+    let _ = context.events.send(PortEvent::Closed { candidate, reason });
 }
 
-fn mark_alive(confirmed: &mut bool, id: &str, events: &UnboundedSender<PortEvent>) {
+fn mark_alive(
+    confirmed: &mut bool,
+    candidate: &UsbAutoCandidate,
+    events: &UnboundedSender<PortEvent>,
+) {
     *confirmed = true;
-    let _ = events.send(PortEvent::Alive { id: id.to_string() });
+    let _ = events.send(PortEvent::Alive {
+        candidate: candidate.clone(),
+    });
 }
 
 async fn write_message<S>(
@@ -593,7 +631,9 @@ mod tests {
     use super::*;
     use prns_core::interfaces::InterfaceStatus;
     use prns_runtime::manifold::driver::TokioInterfaceSeam;
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::collections::VecDeque;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
     use std::time::Duration;
     use tokio::io::AsyncRead;
     use tokio::sync::mpsc::unbounded_channel;
@@ -603,6 +643,13 @@ mod tests {
 
     fn host_id() -> InterfaceId {
         InterfaceId::new([0xD0; 8])
+    }
+
+    fn candidate(locator: &str) -> UsbAutoCandidate {
+        UsbAutoCandidate::unclassified_attachment(
+            locator,
+            UsbAutoIncarnation::new(format!("{locator}-incarnation")),
+        )
     }
 
     async fn read_until<R, T>(
@@ -639,11 +686,11 @@ mod tests {
     async fn the_host_handshakes_a_discovered_port_then_carries_data_both_ways() {
         let (host_wire, mut device) = tokio::io::duplex(4096);
         let mut host_wire = Some(host_wire);
-        let open = move |_name: String| {
+        let open = move |_candidate: UsbAutoCandidate| {
             let taken = host_wire.take();
             async move { taken.ok_or_else(|| io::Error::from(io::ErrorKind::NotConnected)) }
         };
-        let scan = || std::vec![String::from("loopback")];
+        let scan = || std::vec![candidate("loopback")];
 
         let host = UsbAutoHost::new(host_id(), scan, open, Arc::new(Notify::new()));
         let status = host.status();
@@ -713,10 +760,15 @@ mod tests {
 
     #[test]
     fn recently_confirmed_link_lingers_degraded_instead_of_disconnected() {
-        let open = |_name: String| async {
+        let open = |_candidate: UsbAutoCandidate| async {
             Err::<tokio::io::DuplexStream, io::Error>(io::ErrorKind::NotConnected.into())
         };
-        let host = UsbAutoHost::new(host_id(), Vec::<String>::new, open, Arc::new(Notify::new()));
+        let host = UsbAutoHost::new(
+            host_id(),
+            Vec::<UsbAutoCandidate>::new,
+            open,
+            Arc::new(Notify::new()),
+        );
         let status = host.status();
 
         host.refresh_connection(&[], false, Some(Instant::now()));
@@ -735,16 +787,21 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn an_enumerated_port_becomes_reconnecting_when_liveness_expires() {
-        let open = |_name: String| async {
+        let open = |_candidate: UsbAutoCandidate| async {
             Err::<tokio::io::DuplexStream, io::Error>(io::ErrorKind::NotConnected.into())
         };
-        let host = UsbAutoHost::new(host_id(), Vec::<String>::new, open, Arc::new(Notify::new()));
+        let host = UsbAutoHost::new(
+            host_id(),
+            Vec::<UsbAutoCandidate>::new,
+            open,
+            Arc::new(Notify::new()),
+        );
         let status = host.status();
         let (outbound, _outbound_rx) =
             tokio_grant_lane(contract::MAX_FRAMED_BYTES, PORT_LANE_DEPTH);
         let (_inbound_tx, inbound) = tokio_grant_lane(contract::MAX_FRAMED_BYTES, PORT_LANE_DEPTH);
         let ports = [Port {
-            id: String::from("loopback"),
+            candidate: candidate("loopback"),
             key: 0,
             liveness: PortLiveness::Alive(Instant::now()),
             outbound,
@@ -767,12 +824,12 @@ mod tests {
             bitrate: Some(prns_core::interfaces::BitrateBps::guess(7_654_321)),
             ..ConfiguredInterfacePolicy::default()
         });
-        let open = |_name: String| async {
+        let open = |_candidate: UsbAutoCandidate| async {
             Err::<tokio::io::DuplexStream, io::Error>(io::ErrorKind::NotConnected.into())
         };
         let host = UsbAutoHost::with_policy(
             host_id(),
-            Vec::<String>::new,
+            Vec::<UsbAutoCandidate>::new,
             open,
             Arc::new(Notify::new()),
             policy,
@@ -803,8 +860,8 @@ mod tests {
 
     fn spawn_host<Scan, Open, Fut, S>(scan: Scan, open: Open) -> HostPeers
     where
-        Scan: FnMut() -> Vec<String> + Send + 'static,
-        Open: FnMut(String) -> Fut + Send + 'static,
+        Scan: FnMut() -> Vec<UsbAutoCandidate> + Send + 'static,
+        Open: FnMut(UsbAutoCandidate) -> Fut + Send + 'static,
         Fut: Future<Output = io::Result<S>> + Send + 'static,
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
@@ -821,11 +878,11 @@ mod tests {
     async fn a_silent_port_is_released_at_the_handshake_deadline() {
         let (host_wire, mut device) = tokio::io::duplex(4096);
         let mut host_wire = Some(host_wire);
-        let open = move |_name: String| {
+        let open = move |_candidate: UsbAutoCandidate| {
             let taken = host_wire.take();
             async move { taken.ok_or_else(|| io::Error::from(io::ErrorKind::NotConnected)) }
         };
-        let _seam = spawn_host(|| std::vec![String::from("silent")], open);
+        let _seam = spawn_host(|| std::vec![candidate("silent")], open);
 
         let before_deadline = HANDSHAKE_DEADLINE - Duration::from_millis(1);
         assert!(
@@ -843,11 +900,11 @@ mod tests {
     async fn a_silent_port_is_not_reopened_while_it_remains_present() {
         let opens = Arc::new(AtomicUsize::new(0));
         let counted = opens.clone();
-        let open = move |_name: String| {
+        let open = move |_candidate: UsbAutoCandidate| {
             counted.fetch_add(1, Ordering::Relaxed);
             async move { Ok::<_, io::Error>(silent_wire()) }
         };
-        let _seam = spawn_host(|| std::vec![String::from("silent")], open);
+        let _seam = spawn_host(|| std::vec![candidate("silent")], open);
 
         tokio::time::sleep(HANDSHAKE_DEADLINE * 3).await;
 
@@ -862,7 +919,7 @@ mod tests {
     async fn a_transport_failure_retries_after_the_open_backoff() {
         let opens = Arc::new(AtomicUsize::new(0));
         let counted = opens.clone();
-        let open = move |_name: String| {
+        let open = move |_candidate: UsbAutoCandidate| {
             counted.fetch_add(1, Ordering::Relaxed);
             async move {
                 let (host_wire, device) = tokio::io::duplex(4096);
@@ -870,7 +927,7 @@ mod tests {
                 Ok::<_, io::Error>(host_wire)
             }
         };
-        let _seam = spawn_host(|| std::vec![String::from("closing")], open);
+        let _seam = spawn_host(|| std::vec![candidate("closing")], open);
 
         tokio::time::sleep(OPEN_FAILURE_BACKOFF - Duration::from_millis(1)).await;
         assert_eq!(opens.load(Ordering::Relaxed), 1);
@@ -880,19 +937,18 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn an_ignored_port_is_retried_after_reenumeration() {
-        let present = Arc::new(AtomicBool::new(true));
-        let scanned_present = present.clone();
+    async fn a_new_incarnation_at_the_same_locator_is_retried() {
+        let incarnation = Arc::new(AtomicUsize::new(1));
+        let scanned_incarnation = incarnation.clone();
         let scan = move || {
-            if scanned_present.load(Ordering::Relaxed) {
-                std::vec![String::from("silent")]
-            } else {
-                Vec::new()
-            }
+            std::vec![UsbAutoCandidate::unclassified_attachment(
+                "silent",
+                UsbAutoIncarnation::new(scanned_incarnation.load(Ordering::Relaxed).to_string()),
+            )]
         };
         let opens = Arc::new(AtomicUsize::new(0));
         let counted = opens.clone();
-        let open = move |_name: String| {
+        let open = move |_candidate: UsbAutoCandidate| {
             counted.fetch_add(1, Ordering::Relaxed);
             async move { Ok::<_, io::Error>(silent_wire()) }
         };
@@ -901,10 +957,67 @@ mod tests {
         tokio::time::sleep(HANDSHAKE_DEADLINE + FALLBACK_SCAN_INTERVAL).await;
         assert_eq!(opens.load(Ordering::Relaxed), 1);
 
-        present.store(false, Ordering::Relaxed);
+        incarnation.store(2, Ordering::Relaxed);
         tokio::time::sleep(FALLBACK_SCAN_INTERVAL * 2).await;
-        present.store(true, Ordering::Relaxed);
-        tokio::time::sleep(FALLBACK_SCAN_INTERVAL * 2).await;
+
+        assert_eq!(opens.load(Ordering::Relaxed), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_completed_open_from_a_previous_incarnation_is_discarded() {
+        let incarnation = Arc::new(AtomicUsize::new(1));
+        let scanned_incarnation = incarnation.clone();
+        let scan = move || {
+            std::vec![UsbAutoCandidate::unclassified_attachment(
+                "reused",
+                UsbAutoIncarnation::new(scanned_incarnation.load(Ordering::Relaxed).to_string()),
+            )]
+        };
+        let (first_host, mut first_device) = tokio::io::duplex(4096);
+        let (second_host, mut second_device) = tokio::io::duplex(4096);
+        let (first_tx, first_rx) = tokio::sync::oneshot::channel();
+        let (second_tx, second_rx) = tokio::sync::oneshot::channel();
+        let receivers = Arc::new(Mutex::new(VecDeque::from([first_rx, second_rx])));
+        let pending_receivers = receivers.clone();
+        let open = move |_candidate: UsbAutoCandidate| {
+            let receiver = pending_receivers.lock().unwrap().pop_front().unwrap();
+            async move {
+                receiver
+                    .await
+                    .map_err(|_| io::ErrorKind::NotConnected.into())
+            }
+        };
+        let _seam = spawn_host(scan, open);
+
+        tokio::time::sleep(FALLBACK_SCAN_INTERVAL).await;
+        incarnation.store(2, Ordering::Relaxed);
+        tokio::time::sleep(FALLBACK_SCAN_INTERVAL).await;
+
+        first_tx.send(first_host).unwrap();
+        tokio::time::timeout(FALLBACK_SCAN_INTERVAL, drain_until_eof(&mut first_device))
+            .await
+            .expect("the obsolete stream is discarded");
+
+        second_tx.send(second_host).unwrap();
+        let mut decoder = contract::Decoder::new();
+        read_until(&mut second_device, &mut decoder, |message| {
+            matches!(message, Message::Hello(_)).then_some(())
+        })
+        .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_prns_specific_target_retries_after_a_handshake_timeout() {
+        let opens = Arc::new(AtomicUsize::new(0));
+        let counted = opens.clone();
+        let open = move |_candidate: UsbAutoCandidate| {
+            counted.fetch_add(1, Ordering::Relaxed);
+            async move { Ok::<_, io::Error>(silent_wire()) }
+        };
+        let _seam = spawn_host(|| std::vec![UsbAutoCandidate::prns_specific("known")], open);
+
+        tokio::time::sleep(HANDSHAKE_DEADLINE + OPEN_FAILURE_BACKOFF + FALLBACK_SCAN_INTERVAL)
+            .await;
 
         assert_eq!(opens.load(Ordering::Relaxed), 2);
     }
@@ -915,12 +1028,12 @@ mod tests {
         let mut host_wire = Some(host_wire);
         let opens = Arc::new(AtomicUsize::new(0));
         let counted = opens.clone();
-        let open = move |_name: String| {
+        let open = move |_candidate: UsbAutoCandidate| {
             counted.fetch_add(1, Ordering::Relaxed);
             let taken = host_wire.take();
             async move { taken.ok_or_else(|| io::Error::from(io::ErrorKind::NotConnected)) }
         };
-        let _seam = spawn_host(|| std::vec![String::from("confirmed")], open);
+        let _seam = spawn_host(|| std::vec![candidate("confirmed")], open);
 
         let mut decoder = contract::Decoder::new();
         read_until(&mut device, &mut decoder, |message| {

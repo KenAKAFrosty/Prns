@@ -5,7 +5,7 @@ use prns_runtime::interfaces::{ConfiguredInterfacePolicy, EffectiveInterfacePoli
 use prns_runtime::runtime::{Attachable, AttachedInterface, PrnsNodeHandle};
 use tokio::sync::Notify;
 
-use super::UsbAutoHost;
+use super::{UsbAutoCandidate, UsbAutoHost, UsbAutoIncarnation};
 use crate::serial::{open_host_serial, scan_usb_serial_ports};
 
 pub const DEFAULT_USB_AUTO_ID: InterfaceId = InterfaceId::new([0xD0; 8]);
@@ -47,8 +47,17 @@ impl AutoUsb {
     }
 }
 
-fn scan_cdc_targets() -> Vec<String> {
-    scan_usb_serial_ports().unwrap_or_default()
+fn scan_cdc_targets() -> Vec<UsbAutoCandidate> {
+    scan_usb_serial_ports()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|port| {
+            UsbAutoCandidate::unclassified_attachment(
+                port.path(),
+                UsbAutoIncarnation::new(port.incarnation()),
+            )
+        })
+        .collect()
 }
 
 impl Attachable for AutoUsb {
@@ -58,7 +67,9 @@ impl Attachable for AutoUsb {
         handle.add_interface(UsbAutoHost::with_policy(
             DEFAULT_USB_AUTO_ID,
             scan_cdc_targets,
-            move |name: String| async move { open_host_serial(&name, baud) },
+            move |candidate: UsbAutoCandidate| async move {
+                open_host_serial(candidate.locator(), baud)
+            },
             self.rescan,
             self.policy,
         ))
@@ -75,7 +86,9 @@ impl Attachable for AutoUsb {
             UsbAutoHost::with_policy(
                 DEFAULT_USB_AUTO_ID,
                 scan_cdc_targets,
-                move |name: String| async move { open_host_serial(&name, baud) },
+                move |candidate: UsbAutoCandidate| async move {
+                    open_host_serial(candidate.locator(), baud)
+                },
                 self.rescan,
                 self.policy,
             ),
