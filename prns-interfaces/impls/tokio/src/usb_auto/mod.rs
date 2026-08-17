@@ -40,6 +40,7 @@ const LIVENESS_TIMEOUT: Duration = Duration::from_secs(6);
 const RECENT_LINK_GRACE: Duration = Duration::from_secs(3);
 /// Backs off a busy or re-enumerating target so failures do not become a once-per-second error storm.
 const OPEN_FAILURE_BACKOFF: Duration = Duration::from_secs(5);
+const HANDSHAKE_DEADLINE: Duration = Duration::from_secs(30);
 
 struct Port {
     id: String,
@@ -72,15 +73,39 @@ impl PortLiveness {
 
 enum PortEvent {
     Alive { id: String },
-    Closed { id: String },
+    Closed { id: String, reason: PortExitReason },
+}
+
+enum PortExitReason {
+    TransportEnded,
+    HandshakeTimedOut,
 }
 
 type PendingOpen<S> = Pin<Box<dyn Future<Output = (String, io::Result<S>)> + Send>>;
 
-fn has_pending_retry(failed_opens: &HashMap<String, Instant>) -> bool {
-    failed_opens
+enum PortHoldoff {
+    RetryAt(Instant),
+    UntilReenumerated,
+}
+
+impl PortHoldoff {
+    fn retry_after(duration: Duration) -> Self {
+        Self::RetryAt(Instant::now() + duration)
+    }
+
+    fn blocks_open(&self, now: Instant) -> bool {
+        match self {
+            Self::RetryAt(retry_at) => now < *retry_at,
+            Self::UntilReenumerated => true,
+        }
+    }
+}
+
+fn has_pending_retry(port_holdoffs: &HashMap<String, PortHoldoff>) -> bool {
+    let now = Instant::now();
+    port_holdoffs
         .values()
-        .any(|failed_at| failed_at.elapsed() < OPEN_FAILURE_BACKOFF)
+        .any(|holdoff| matches!(holdoff, PortHoldoff::RetryAt(retry_at) if now < *retry_at))
 }
 
 #[derive(Clone)]
@@ -191,7 +216,7 @@ where
         let rescan = self.rescan.clone();
         let mut ports: Vec<Port> = Vec::new();
         let mut opening: HashSet<String> = HashSet::new();
-        let mut failed_opens: HashMap<String, Instant> = HashMap::new();
+        let mut port_holdoffs: HashMap<String, PortHoldoff> = HashMap::new();
         let mut pending_opens: FuturesUnordered<PendingOpen<S>> = FuturesUnordered::new();
         let mut next_port_key: u64 = 0;
         let mut last_confirmed_at: Option<Instant> = None;
@@ -204,7 +229,7 @@ where
                     self.reconcile(
                         &mut ports,
                         &mut opening,
-                        &mut failed_opens,
+                        &mut port_holdoffs,
                         &mut pending_opens,
                         last_confirmed_at,
                     )
@@ -215,7 +240,7 @@ where
                     self.reconcile(
                         &mut ports,
                         &mut opening,
-                        &mut failed_opens,
+                        &mut port_holdoffs,
                         &mut pending_opens,
                         last_confirmed_at,
                     )
@@ -226,7 +251,7 @@ where
                     self.reconcile(
                         &mut ports,
                         &mut opening,
-                        &mut failed_opens,
+                        &mut port_holdoffs,
                         &mut pending_opens,
                         last_confirmed_at,
                     )
@@ -237,7 +262,7 @@ where
                     self.reconcile(
                         &mut ports,
                         &mut opening,
-                        &mut failed_opens,
+                        &mut port_holdoffs,
                         &mut pending_opens,
                         last_confirmed_at,
                     )
@@ -252,14 +277,29 @@ where
                                 port.liveness.mark_alive(now);
                                 last_confirmed_at = Some(now);
                             }
+                            port_holdoffs.remove(&id);
                         }
-                        PortEvent::Closed { id } => {
+                        PortEvent::Closed { id, reason } => {
                             ports.retain(|port| port.id != id);
+                            match reason {
+                                PortExitReason::TransportEnded => {
+                                    port_holdoffs.insert(
+                                        id,
+                                        PortHoldoff::retry_after(OPEN_FAILURE_BACKOFF),
+                                    );
+                                }
+                                PortExitReason::HandshakeTimedOut => {
+                                    crate::diagnostic_log::warn!(
+                                        "usb-auto: {id} did not answer the handshake; leaving it alone until it re-enumerates"
+                                    );
+                                    port_holdoffs.insert(id, PortHoldoff::UntilReenumerated);
+                                }
+                            }
                         }
                     }
                     self.refresh_connection(
                         &ports,
-                        !opening.is_empty() || has_pending_retry(&failed_opens),
+                        !opening.is_empty() || has_pending_retry(&port_holdoffs),
                         last_confirmed_at,
                     );
                     None
@@ -299,12 +339,15 @@ where
                         }
                         Err(error) => {
                             crate::diagnostic_log::warn!("usb-auto: open {name} failed: {error}");
-                            failed_opens.insert(name, Instant::now());
+                            port_holdoffs.insert(
+                                name,
+                                PortHoldoff::retry_after(OPEN_FAILURE_BACKOFF),
+                            );
                         }
                     }
                     self.refresh_connection(
                         &ports,
-                        !opening.is_empty() || has_pending_retry(&failed_opens),
+                        !opening.is_empty() || has_pending_retry(&port_holdoffs),
                         last_confirmed_at,
                     );
                     None
@@ -348,7 +391,7 @@ where
         &mut self,
         ports: &mut Vec<Port>,
         opening: &mut HashSet<String>,
-        failed_opens: &mut HashMap<String, Instant>,
+        port_holdoffs: &mut HashMap<String, PortHoldoff>,
         pending_opens: &mut FuturesUnordered<PendingOpen<S>>,
         last_confirmed_at: Option<Instant>,
     ) {
@@ -358,7 +401,7 @@ where
                 port.task.abort();
             }
             opening.clear();
-            failed_opens.clear();
+            port_holdoffs.clear();
             *pending_opens = FuturesUnordered::new();
             self.status.set_connection(ConnectionState::Disabled);
             return;
@@ -373,18 +416,19 @@ where
             }
         });
         opening.retain(|name| present.iter().any(|present_name| present_name == name));
-        failed_opens.retain(|name, _| present.iter().any(|present_name| present_name == name));
+        port_holdoffs.retain(|name, _| present.iter().any(|present_name| present_name == name));
         for name in present {
             if ports.iter().any(|port| port.id == name) || opening.contains(&name) {
                 continue;
             }
-            if failed_opens
+            let now = Instant::now();
+            if port_holdoffs
                 .get(&name)
-                .is_some_and(|failed_at| failed_at.elapsed() < OPEN_FAILURE_BACKOFF)
+                .is_some_and(|holdoff| holdoff.blocks_open(now))
             {
                 continue;
             }
-            failed_opens.remove(&name);
+            port_holdoffs.remove(&name);
             let future = (self.open)(name.clone());
             opening.insert(name.clone());
             pending_opens.push(Box::pin(async move {
@@ -394,7 +438,7 @@ where
         }
         self.refresh_connection(
             ports,
-            !opening.is_empty() || has_pending_retry(failed_opens),
+            !opening.is_empty() || has_pending_retry(port_holdoffs),
             last_confirmed_at,
         );
     }
@@ -423,16 +467,20 @@ async fn serve_port<S>(
     let mut confirmed = false;
     let mut probe = tokio::time::interval(PROBE_INTERVAL);
     let mut liveness_probe = tokio::time::interval(LIVENESS_PROBE_INTERVAL);
+    let handshake_deadline = Instant::now() + HANDSHAKE_DEADLINE;
 
-    loop {
+    let reason = loop {
         tokio::select! {
+            () = tokio::time::sleep_until(handshake_deadline), if !confirmed => {
+                break PortExitReason::HandshakeTimedOut;
+            }
             _ = probe.tick(), if !confirmed => {
                 let hello = Message::Hello(Capabilities::host());
                 if write_message(&mut stream, &hello, &mut frame_buf, &context.status)
                     .await
                     .is_err()
                 {
-                    break;
+                    break PortExitReason::TransportEnded;
                 }
             }
             _ = liveness_probe.tick(), if confirmed => {
@@ -441,12 +489,12 @@ async fn serve_port<S>(
                     .await
                     .is_err()
                 {
-                    break;
+                    break PortExitReason::TransportEnded;
                 }
             }
             read = stream.read(&mut read_buf) => {
                 let n = match read {
-                    Ok(0) | Err(_) => break,
+                    Ok(0) | Err(_) => break PortExitReason::TransportEnded,
                     Ok(n) => n,
                 };
                 context.status.add_rx(n as u64);
@@ -487,7 +535,7 @@ async fn serve_port<S>(
                     }
                 }
                 if write_failed {
-                    break;
+                    break PortExitReason::TransportEnded;
                 }
             }
             out = next_from_lane(&mut outbound) => {
@@ -496,12 +544,12 @@ async fn serve_port<S>(
                     .await
                     .is_err()
                 {
-                    break;
+                    break PortExitReason::TransportEnded;
                 }
             }
         }
-    }
-    let _ = context.events.send(PortEvent::Closed { id });
+    };
+    let _ = context.events.send(PortEvent::Closed { id, reason });
 }
 
 fn mark_alive(confirmed: &mut bool, id: &str, events: &UnboundedSender<PortEvent>) {
@@ -545,6 +593,7 @@ mod tests {
     use super::*;
     use prns_core::interfaces::InterfaceStatus;
     use prns_runtime::manifold::driver::TokioInterfaceSeam;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::time::Duration;
     use tokio::io::AsyncRead;
     use tokio::sync::mpsc::unbounded_channel;
@@ -730,5 +779,168 @@ mod tests {
         );
 
         assert_eq!(host.descriptor(), policy.descriptor(host_id()));
+    }
+
+    fn silent_wire() -> tokio::io::DuplexStream {
+        let (host_wire, mut device) = tokio::io::duplex(4096);
+        tokio::spawn(async move {
+            let mut sink = [0u8; 256];
+            while device.read(&mut sink).await.is_ok_and(|n| n > 0) {}
+        });
+        host_wire
+    }
+
+    async fn drain_until_eof<R: AsyncRead + Unpin>(wire: &mut R) {
+        let mut sink = [0u8; 256];
+        while wire.read(&mut sink).await.is_ok_and(|n| n > 0) {}
+    }
+
+    type HostPeers = (
+        mpsc::UnboundedReceiver<InterfaceId>,
+        TokioGrantConsumer,
+        TokioGrantProducer,
+    );
+
+    fn spawn_host<Scan, Open, Fut, S>(scan: Scan, open: Open) -> HostPeers
+    where
+        Scan: FnMut() -> Vec<String> + Send + 'static,
+        Open: FnMut(String) -> Fut + Send + 'static,
+        Fut: Future<Output = io::Result<S>> + Send + 'static,
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
+        let host = UsbAutoHost::new(host_id(), scan, open, Arc::new(Notify::new()));
+        let (notify_tx, notify_rx) = unbounded_channel::<InterfaceId>();
+        let (in_tx, in_rx) = tokio_grant_lane(contract::MAX_FRAMED_BYTES, PORT_LANE_DEPTH);
+        let (out_tx, out_rx) = tokio_grant_lane(contract::MAX_FRAMED_BYTES, PORT_LANE_DEPTH);
+        let seam = TokioInterfaceSeam::new(host_id(), in_tx, notify_tx, out_rx);
+        tokio::spawn(host.run(seam));
+        (notify_rx, in_rx, out_tx)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_silent_port_is_released_at_the_handshake_deadline() {
+        let (host_wire, mut device) = tokio::io::duplex(4096);
+        let mut host_wire = Some(host_wire);
+        let open = move |_name: String| {
+            let taken = host_wire.take();
+            async move { taken.ok_or_else(|| io::Error::from(io::ErrorKind::NotConnected)) }
+        };
+        let _seam = spawn_host(|| std::vec![String::from("silent")], open);
+
+        let before_deadline = HANDSHAKE_DEADLINE - Duration::from_millis(1);
+        assert!(
+            tokio::time::timeout(before_deadline, drain_until_eof(&mut device))
+                .await
+                .is_err(),
+            "the host keeps the port through the handshake window"
+        );
+        tokio::time::timeout(FALLBACK_SCAN_INTERVAL, drain_until_eof(&mut device))
+            .await
+            .expect("the host releases the port at the handshake deadline");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_silent_port_is_not_reopened_while_it_remains_present() {
+        let opens = Arc::new(AtomicUsize::new(0));
+        let counted = opens.clone();
+        let open = move |_name: String| {
+            counted.fetch_add(1, Ordering::Relaxed);
+            async move { Ok::<_, io::Error>(silent_wire()) }
+        };
+        let _seam = spawn_host(|| std::vec![String::from("silent")], open);
+
+        tokio::time::sleep(HANDSHAKE_DEADLINE * 3).await;
+
+        assert_eq!(
+            opens.load(Ordering::Relaxed),
+            1,
+            "a complete handshake timeout suppresses reopening"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_transport_failure_retries_after_the_open_backoff() {
+        let opens = Arc::new(AtomicUsize::new(0));
+        let counted = opens.clone();
+        let open = move |_name: String| {
+            counted.fetch_add(1, Ordering::Relaxed);
+            async move {
+                let (host_wire, device) = tokio::io::duplex(4096);
+                drop(device);
+                Ok::<_, io::Error>(host_wire)
+            }
+        };
+        let _seam = spawn_host(|| std::vec![String::from("closing")], open);
+
+        tokio::time::sleep(OPEN_FAILURE_BACKOFF - Duration::from_millis(1)).await;
+        assert_eq!(opens.load(Ordering::Relaxed), 1);
+
+        tokio::time::sleep(FALLBACK_SCAN_INTERVAL + Duration::from_millis(1)).await;
+        assert_eq!(opens.load(Ordering::Relaxed), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_ignored_port_is_retried_after_reenumeration() {
+        let present = Arc::new(AtomicBool::new(true));
+        let scanned_present = present.clone();
+        let scan = move || {
+            if scanned_present.load(Ordering::Relaxed) {
+                std::vec![String::from("silent")]
+            } else {
+                Vec::new()
+            }
+        };
+        let opens = Arc::new(AtomicUsize::new(0));
+        let counted = opens.clone();
+        let open = move |_name: String| {
+            counted.fetch_add(1, Ordering::Relaxed);
+            async move { Ok::<_, io::Error>(silent_wire()) }
+        };
+        let _seam = spawn_host(scan, open);
+
+        tokio::time::sleep(HANDSHAKE_DEADLINE + FALLBACK_SCAN_INTERVAL).await;
+        assert_eq!(opens.load(Ordering::Relaxed), 1);
+
+        present.store(false, Ordering::Relaxed);
+        tokio::time::sleep(FALLBACK_SCAN_INTERVAL * 2).await;
+        present.store(true, Ordering::Relaxed);
+        tokio::time::sleep(FALLBACK_SCAN_INTERVAL * 2).await;
+
+        assert_eq!(opens.load(Ordering::Relaxed), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_confirmed_port_outlives_the_handshake_deadline() {
+        let (host_wire, mut device) = tokio::io::duplex(4096);
+        let mut host_wire = Some(host_wire);
+        let opens = Arc::new(AtomicUsize::new(0));
+        let counted = opens.clone();
+        let open = move |_name: String| {
+            counted.fetch_add(1, Ordering::Relaxed);
+            let taken = host_wire.take();
+            async move { taken.ok_or_else(|| io::Error::from(io::ErrorKind::NotConnected)) }
+        };
+        let _seam = spawn_host(|| std::vec![String::from("confirmed")], open);
+
+        let mut decoder = contract::Decoder::new();
+        read_until(&mut device, &mut decoder, |message| {
+            matches!(message, Message::Hello(_)).then_some(())
+        })
+        .await;
+        let mut frame = [0u8; contract::MAX_FRAMED_BYTES];
+        let ack = Message::HelloAck {
+            tag: NodeTag([0xAB; 8]),
+            capabilities: Capabilities::none(),
+        };
+        let n = ack.write_framed(&mut frame).expect("frames the ack");
+        device.write_all(&frame[..n]).await.expect("the host reads");
+
+        tokio::time::sleep(HANDSHAKE_DEADLINE * 2).await;
+
+        assert_eq!(opens.load(Ordering::Relaxed), 1);
+        device
+            .write_all(&frame[..n])
+            .await
+            .expect("the confirmed port remains open");
     }
 }
