@@ -5,19 +5,39 @@ use std::time::Duration;
 use prns_core::interfaces::wifi_auto::DiscoverySnapshot;
 use tokio::sync::watch;
 
-/// Whether this process may consume platform service-discovery resources.
+/// Whether (or how) this process may consume platform service-discovery resources.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiscoveryParticipation {
     Inactive,
     Satellite,
-    Core,
+    Central,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum DiscoveryLifecycleError {
+    Closed,
+}
+
+impl std::fmt::Display for DiscoveryLifecycleError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Closed => formatter.write_str("service-discovery lifecycle closed"),
+        }
+    }
+}
+
+impl std::error::Error for DiscoveryLifecycleError {}
+
+#[derive(Debug)]
+pub(super) enum DiscoverySnapshotError {
+    PublisherClosed,
 }
 
 /// Result of replacing the latest visible service-discovery state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnapshotPublication {
     Published,
-    NotCore(DiscoveryParticipation),
+    NotCentral(DiscoveryParticipation),
     CapacityMismatch {
         expected: NonZeroU8,
         actual: NonZeroU8,
@@ -26,108 +46,121 @@ pub enum SnapshotPublication {
 
 struct WorkSignal {
     generation: Mutex<u64>,
-    changed: Condvar,
+    generation_changed: Condvar,
 }
 
 impl WorkSignal {
     fn new() -> Self {
         Self {
             generation: Mutex::new(0),
-            changed: Condvar::new(),
+            generation_changed: Condvar::new(),
         }
     }
 
     fn generation(&self) -> u64 {
-        self.generation.lock().map(|value| *value).unwrap_or(0)
+        self.generation
+            .lock()
+            .map(|current_generation| *current_generation)
+            .unwrap_or(0)
     }
 
     fn wake(&self) {
-        if let Ok(mut generation) = self.generation.lock() {
-            *generation = generation.wrapping_add(1);
-            self.changed.notify_all();
+        if let Ok(mut current_generation) = self.generation.lock() {
+            *current_generation = current_generation.wrapping_add(1);
+            self.generation_changed.notify_all();
         }
     }
 
-    fn wait(&self, observed: u64, timeout: Option<Duration>) -> u64 {
-        let Ok(mut generation) = self.generation.lock() else {
-            return observed.wrapping_add(1);
+    fn wait(&self, observed_generation: u64, timeout: Option<Duration>) -> u64 {
+        let Ok(mut current_generation) = self.generation.lock() else {
+            return observed_generation.wrapping_add(1);
         };
         match timeout {
-            Some(timeout) if *generation == observed => {
-                let Ok((next, _)) = self.changed.wait_timeout(generation, timeout) else {
-                    return observed.wrapping_add(1);
+            Some(timeout) if *current_generation == observed_generation => {
+                let Ok((next_generation, _timeout_result)) = self
+                    .generation_changed
+                    .wait_timeout(current_generation, timeout)
+                else {
+                    return observed_generation.wrapping_add(1);
                 };
-                generation = next;
+                current_generation = next_generation;
             }
             None => {
-                while *generation == observed {
-                    let Ok(next) = self.changed.wait(generation) else {
-                        return observed.wrapping_add(1);
+                while *current_generation == observed_generation {
+                    let Ok(next_generation) = self.generation_changed.wait(current_generation)
+                    else {
+                        return observed_generation.wrapping_add(1);
                     };
-                    generation = next;
+                    current_generation = next_generation;
                 }
             }
             Some(_) => {}
         }
-        *generation
+        *current_generation
     }
 }
 
 /// Runtime-owned side of a bounded, latest-state service-discovery channel.
 pub struct ServiceDiscovery {
-    snapshots: watch::Receiver<DiscoverySnapshot>,
-    participation: watch::Sender<DiscoveryParticipation>,
-    work: Arc<WorkSignal>,
+    snapshot_receiver: watch::Receiver<DiscoverySnapshot>,
+    participation_sender: watch::Sender<DiscoveryParticipation>,
+    work_signal: Arc<WorkSignal>,
 }
 
 impl ServiceDiscovery {
     /// Creates a channel with a platform-selected capacity of 1–255 advertisements.
     #[must_use]
-    pub fn channel(capacity: NonZeroU8) -> (Self, ServiceDiscoveryPublisher) {
-        let (snapshots, snapshot_receiver) = watch::channel(DiscoverySnapshot::new(capacity));
-        let (participation, participation_receiver) =
+    pub fn channel(advertisement_capacity: NonZeroU8) -> (Self, ServiceDiscoveryPublisher) {
+        let (snapshot_sender, snapshot_receiver) =
+            watch::channel(DiscoverySnapshot::new(advertisement_capacity));
+        let (participation_sender, participation_receiver) =
             watch::channel(DiscoveryParticipation::Inactive);
-        let work = Arc::new(WorkSignal::new());
+        let work_signal = Arc::new(WorkSignal::new());
         (
             Self {
-                snapshots: snapshot_receiver,
-                participation,
-                work: Arc::clone(&work),
+                snapshot_receiver,
+                participation_sender,
+                work_signal: Arc::clone(&work_signal),
             },
             ServiceDiscoveryPublisher {
-                snapshots,
-                participation: participation_receiver,
-                work,
-                capacity,
+                snapshot_sender,
+                participation_receiver,
+                work_signal,
+                advertisement_capacity,
             },
         )
     }
 
-    pub(crate) fn set_participation(&self, participation: DiscoveryParticipation) {
-        let previous = self.participation.send_replace(participation);
-        if previous != participation {
-            self.work.wake();
+    pub(crate) fn set_participation(&self, new_participation: DiscoveryParticipation) {
+        let previous_participation = self.participation_sender.send_replace(new_participation);
+        if previous_participation != new_participation {
+            self.work_signal.wake();
         }
     }
 
-    pub(crate) async fn next_snapshot(&mut self) -> Option<DiscoverySnapshot> {
-        self.snapshots.changed().await.ok()?;
-        Some(self.snapshots.borrow_and_update().clone())
+    pub(super) async fn next_snapshot(
+        &mut self,
+    ) -> Result<DiscoverySnapshot, DiscoverySnapshotError> {
+        self.snapshot_receiver
+            .changed()
+            .await
+            .map_err(|_publisher_closed| DiscoverySnapshotError::PublisherClosed)?;
+        Ok(self.snapshot_receiver.borrow_and_update().clone())
     }
 
     #[cfg(test)]
     pub(crate) fn current_snapshot(&self) -> DiscoverySnapshot {
-        self.snapshots.borrow().clone()
+        self.snapshot_receiver.borrow().clone()
     }
 }
 
 impl Drop for ServiceDiscovery {
     fn drop(&mut self) {
-        let previous = self
-            .participation
+        let previous_participation = self
+            .participation_sender
             .send_replace(DiscoveryParticipation::Inactive);
-        if previous != DiscoveryParticipation::Inactive {
-            self.work.wake();
+        if previous_participation != DiscoveryParticipation::Inactive {
+            self.work_signal.wake();
         }
     }
 }
@@ -135,75 +168,90 @@ impl Drop for ServiceDiscovery {
 /// Platform-owned side of a [`ServiceDiscovery`] channel.
 #[derive(Clone)]
 pub struct ServiceDiscoveryPublisher {
-    snapshots: watch::Sender<DiscoverySnapshot>,
-    participation: watch::Receiver<DiscoveryParticipation>,
-    work: Arc<WorkSignal>,
-    capacity: NonZeroU8,
+    snapshot_sender: watch::Sender<DiscoverySnapshot>,
+    participation_receiver: watch::Receiver<DiscoveryParticipation>,
+    work_signal: Arc<WorkSignal>,
+    advertisement_capacity: NonZeroU8,
 }
 
 impl ServiceDiscoveryPublisher {
     /// Returns the platform budget selected when the channel was created.
     #[must_use]
     pub const fn capacity(&self) -> NonZeroU8 {
-        self.capacity
+        self.advertisement_capacity
     }
 
     #[must_use]
     pub fn participation(&self) -> DiscoveryParticipation {
-        *self.participation.borrow()
+        *self.participation_receiver.borrow()
     }
 
-    pub async fn wait_for_participation_change(&mut self) -> Option<DiscoveryParticipation> {
-        self.participation.changed().await.ok()?;
-        Some(*self.participation.borrow_and_update())
+    /// Waits for the next lifecycle transition and returns its new state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DiscoveryLifecycleError::Closed`] when the runtime-owned
+    /// [`ServiceDiscovery`] has been dropped.
+    pub async fn wait_for_participation_change(
+        &mut self,
+    ) -> Result<DiscoveryParticipation, DiscoveryLifecycleError> {
+        self.participation_receiver
+            .changed()
+            .await
+            .map_err(|_lifecycle_closed| DiscoveryLifecycleError::Closed)?;
+        Ok(*self.participation_receiver.borrow_and_update())
     }
 
     /// Waits for a specific lifecycle state without polling or missing an
     /// already-published transition.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DiscoveryLifecycleError::Closed`] when the runtime-owned
+    /// [`ServiceDiscovery`] is dropped before reaching `expected`.
     pub async fn wait_for_participation(
         &mut self,
         expected: DiscoveryParticipation,
-    ) -> Option<DiscoveryParticipation> {
-        let observed = self
-            .participation
-            .wait_for(|current| *current == expected)
+    ) -> Result<(), DiscoveryLifecycleError> {
+        self.participation_receiver
+            .wait_for(|current_participation| *current_participation == expected)
             .await
-            .ok()?;
-        Some(*observed)
+            .map_err(|_lifecycle_closed| DiscoveryLifecycleError::Closed)?;
+        Ok(())
     }
 
     /// Replaces the latest complete snapshot without queueing intermediate state.
     #[must_use]
-    pub fn replace_snapshot(&self, snapshot: DiscoverySnapshot) -> SnapshotPublication {
-        let participation = self.participation();
-        if participation != DiscoveryParticipation::Core {
-            return SnapshotPublication::NotCore(participation);
+    pub fn replace_snapshot(&self, discovery_snapshot: DiscoverySnapshot) -> SnapshotPublication {
+        let current_participation = self.participation();
+        if current_participation != DiscoveryParticipation::Central {
+            return SnapshotPublication::NotCentral(current_participation);
         }
-        if snapshot.capacity() != self.capacity {
+        if discovery_snapshot.capacity() != self.advertisement_capacity {
             return SnapshotPublication::CapacityMismatch {
-                expected: self.capacity,
-                actual: snapshot.capacity(),
+                expected: self.advertisement_capacity,
+                actual: discovery_snapshot.capacity(),
             };
         }
-        self.snapshots.send_replace(snapshot);
+        self.snapshot_sender.send_replace(discovery_snapshot);
         SnapshotPublication::Published
     }
 
     /// Removes all currently visible advertisements while preserving the budget.
     pub fn clear_snapshot(&self) {
-        self.snapshots
-            .send_replace(DiscoverySnapshot::new(self.capacity));
+        self.snapshot_sender
+            .send_replace(DiscoverySnapshot::new(self.advertisement_capacity));
     }
 
     #[must_use]
     pub fn work_generation(&self) -> u64 {
-        self.work.generation()
+        self.work_signal.generation()
     }
 
     #[must_use]
-    pub fn wait_for_work(&self, observed: u64, timeout_millis: u64) -> u64 {
+    pub fn wait_for_work(&self, observed_generation: u64, timeout_millis: u64) -> u64 {
         let timeout = (timeout_millis != 0).then(|| Duration::from_millis(timeout_millis));
-        self.work.wait(observed, timeout)
+        self.work_signal.wait(observed_generation, timeout)
     }
 }
 
@@ -217,75 +265,94 @@ mod tests {
     const TEST_CAPACITY: NonZeroU8 = NonZeroU8::new(4).unwrap();
     const OTHER_CAPACITY: NonZeroU8 = NonZeroU8::new(5).unwrap();
 
-    fn one_peer(name: &str) -> DiscoverySnapshot {
-        let mut advertisement =
-            ServiceAdvertisement::new(DiscoveryServiceName::new(name).expect("test service name"));
-        let endpoint =
+    fn snapshot_for_peer(service_name: &str) -> DiscoverySnapshot {
+        let mut service_advertisement = ServiceAdvertisement::new(
+            DiscoveryServiceName::new(service_name).expect("test service name"),
+        );
+        let discovery_endpoint =
             DiscoveryEndpoint::new("192.168.1.8:42699".parse().expect("test endpoint parses"))
                 .expect("test endpoint is valid");
-        let _ = advertisement.insert(endpoint);
-        let mut snapshot = DiscoverySnapshot::new(TEST_CAPACITY);
-        let _ = snapshot.insert(advertisement);
-        snapshot
+        let _ = service_advertisement.insert(discovery_endpoint);
+        let mut discovery_snapshot = DiscoverySnapshot::new(TEST_CAPACITY);
+        let _ = discovery_snapshot.insert(service_advertisement);
+        discovery_snapshot
     }
 
     #[tokio::test]
-    async fn latest_snapshot_replaces_queued_work_and_non_core_clears_it() {
-        let (mut discovery, publisher) = ServiceDiscovery::channel(TEST_CAPACITY);
+    async fn latest_snapshot_replaces_queued_work_and_non_central_clears_it() {
+        let (mut service_discovery, service_discovery_publisher) =
+            ServiceDiscovery::channel(TEST_CAPACITY);
         assert_eq!(
-            publisher.replace_snapshot(one_peer("inactive")),
-            SnapshotPublication::NotCore(DiscoveryParticipation::Inactive)
+            service_discovery_publisher.replace_snapshot(snapshot_for_peer("inactive")),
+            SnapshotPublication::NotCentral(DiscoveryParticipation::Inactive)
         );
-        discovery.set_participation(DiscoveryParticipation::Core);
+        service_discovery.set_participation(DiscoveryParticipation::Central);
         assert_eq!(
-            publisher.replace_snapshot(one_peer("first")),
+            service_discovery_publisher.replace_snapshot(snapshot_for_peer("first")),
             SnapshotPublication::Published
         );
         assert_eq!(
-            publisher.replace_snapshot(one_peer("latest")),
+            service_discovery_publisher.replace_snapshot(snapshot_for_peer("latest")),
             SnapshotPublication::Published
         );
-        let observed = discovery.next_snapshot().await.expect("snapshot changed");
-        assert_eq!(observed, one_peer("latest"));
+        let latest_snapshot = service_discovery
+            .next_snapshot()
+            .await
+            .expect("snapshot changed");
+        assert_eq!(latest_snapshot, snapshot_for_peer("latest"));
 
-        discovery.set_participation(DiscoveryParticipation::Satellite);
-        publisher.clear_snapshot();
-        assert!(discovery.current_snapshot().is_empty());
-        assert_eq!(discovery.current_snapshot().capacity(), TEST_CAPACITY);
+        service_discovery.set_participation(DiscoveryParticipation::Satellite);
+        service_discovery_publisher.clear_snapshot();
+        assert!(service_discovery.current_snapshot().is_empty());
         assert_eq!(
-            publisher.replace_snapshot(one_peer("satellite")),
-            SnapshotPublication::NotCore(DiscoveryParticipation::Satellite)
+            service_discovery.current_snapshot().capacity(),
+            TEST_CAPACITY
+        );
+        assert_eq!(
+            service_discovery_publisher.replace_snapshot(snapshot_for_peer("satellite")),
+            SnapshotPublication::NotCentral(DiscoveryParticipation::Satellite)
         );
     }
 
     #[test]
     fn publisher_rejects_a_snapshot_with_another_platform_budget() {
-        let (discovery, publisher) = ServiceDiscovery::channel(TEST_CAPACITY);
-        discovery.set_participation(DiscoveryParticipation::Core);
-        let snapshot = DiscoverySnapshot::new(OTHER_CAPACITY);
+        let (service_discovery, service_discovery_publisher) =
+            ServiceDiscovery::channel(TEST_CAPACITY);
+        service_discovery.set_participation(DiscoveryParticipation::Central);
+        let mismatched_snapshot = DiscoverySnapshot::new(OTHER_CAPACITY);
         assert_eq!(
-            publisher.replace_snapshot(snapshot),
+            service_discovery_publisher.replace_snapshot(mismatched_snapshot),
             SnapshotPublication::CapacityMismatch {
                 expected: TEST_CAPACITY,
                 actual: OTHER_CAPACITY,
             }
         );
-        assert_eq!(publisher.capacity(), TEST_CAPACITY);
+        assert_eq!(service_discovery_publisher.capacity(), TEST_CAPACITY);
     }
 
     #[tokio::test]
     async fn dropping_the_discovery_owner_terminates_provider_lifecycle() {
-        let (discovery, mut publisher) = ServiceDiscovery::channel(TEST_CAPACITY);
-        discovery.set_participation(DiscoveryParticipation::Core);
+        let (service_discovery, mut service_discovery_publisher) =
+            ServiceDiscovery::channel(TEST_CAPACITY);
+        service_discovery.set_participation(DiscoveryParticipation::Central);
         assert_eq!(
-            publisher.wait_for_participation_change().await,
-            Some(DiscoveryParticipation::Core)
+            service_discovery_publisher
+                .wait_for_participation_change()
+                .await,
+            Ok(DiscoveryParticipation::Central)
         );
-        drop(discovery);
+        drop(service_discovery);
         assert_eq!(
-            publisher.wait_for_participation_change().await,
-            Some(DiscoveryParticipation::Inactive)
+            service_discovery_publisher
+                .wait_for_participation_change()
+                .await,
+            Ok(DiscoveryParticipation::Inactive)
         );
-        assert_eq!(publisher.wait_for_participation_change().await, None);
+        assert_eq!(
+            service_discovery_publisher
+                .wait_for_participation_change()
+                .await,
+            Err(DiscoveryLifecycleError::Closed)
+        );
     }
 }

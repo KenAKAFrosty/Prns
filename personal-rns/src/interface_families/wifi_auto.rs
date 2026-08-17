@@ -1,8 +1,10 @@
+#[cfg(all(feature = "tokio-host", feature = "wifi-auto-mdns"))]
+pub use prns_interfaces_tokio::wifi_auto::native_service_discovery;
 #[cfg(feature = "tokio-host")]
 pub use prns_interfaces_tokio::wifi_auto::{
     AutoWifi, AutoWifiDevicePolicy, AutoWifiPeer, AutoWifiSettings, AutoWifiSettingsError,
-    AutoWifiStatus, DiscoveryParticipation, ServiceDiscovery, ServiceDiscoveryPublisher,
-    SnapshotPublication,
+    AutoWifiStatus, DiscoveryLifecycleError, DiscoveryParticipation, ServiceDiscovery,
+    ServiceDiscoveryPublisher, SnapshotPublication,
 };
 
 #[cfg(all(feature = "embassy-host", not(feature = "tokio-host")))]

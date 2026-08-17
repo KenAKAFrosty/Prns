@@ -23,16 +23,30 @@ const TEST_DISCOVERY_CAPACITY: NonZeroU8 = NonZeroU8::new(8).unwrap();
 
 #[derive(Debug)]
 enum AwaitError {
-    Timeout(&'static str),
-    PublisherClosed(&'static str),
+    ParticipationTimeout,
+    MemberCountTimeout,
+    MemberReplacementTimeout,
+    DiscoveryLifecycleClosed,
+    MemberUpdatesClosed,
 }
 
 impl std::fmt::Display for AwaitError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Timeout(state) => write!(formatter, "timed out waiting for {state}"),
-            Self::PublisherClosed(state) => {
-                write!(formatter, "publisher closed while waiting for {state}")
+            Self::ParticipationTimeout => {
+                formatter.write_str("timed out waiting for participation transition")
+            }
+            Self::MemberCountTimeout => {
+                formatter.write_str("timed out waiting for member-count transition")
+            }
+            Self::MemberReplacementTimeout => {
+                formatter.write_str("timed out waiting for member replacement")
+            }
+            Self::DiscoveryLifecycleClosed => {
+                formatter.write_str("discovery lifecycle closed while awaiting participation")
+            }
+            Self::MemberUpdatesClosed => {
+                formatter.write_str("member updates closed before reaching expected state")
             }
         }
     }
@@ -40,137 +54,171 @@ impl std::fmt::Display for AwaitError {
 
 impl std::error::Error for AwaitError {}
 
-fn snapshot(
-    name: &str,
-    last_octet: u8,
+fn discovery_snapshot(
+    service_name: &str,
+    ipv4_last_octet: u8,
 ) -> Result<DiscoverySnapshot, Box<dyn std::error::Error + Send + Sync>> {
-    let service = DiscoveryServiceName::new(name)?;
-    let address = SocketAddr::new(
-        IpAddr::V4(Ipv4Addr::new(10, 254, 254, last_octet)),
+    let discovery_service_name = DiscoveryServiceName::new(service_name)?;
+    let socket_address = SocketAddr::new(
+        IpAddr::V4(Ipv4Addr::new(10, 254, 254, ipv4_last_octet)),
         TCP_RENDEZVOUS_PORT,
     );
-    let endpoint = DiscoveryEndpoint::new(address)?;
-    let mut advertisement = ServiceAdvertisement::new(service);
-    let _ = advertisement.insert(endpoint);
-    let mut snapshot = DiscoverySnapshot::new(TEST_DISCOVERY_CAPACITY);
-    let _ = snapshot.insert(advertisement);
-    Ok(snapshot)
+    let discovery_endpoint = DiscoveryEndpoint::new(socket_address)?;
+    let mut service_advertisement = ServiceAdvertisement::new(discovery_service_name);
+    let _ = service_advertisement.insert(discovery_endpoint);
+    let mut discovery_snapshot = DiscoverySnapshot::new(TEST_DISCOVERY_CAPACITY);
+    let _ = discovery_snapshot.insert(service_advertisement);
+    Ok(discovery_snapshot)
 }
 
 async fn await_participation(
-    publisher: &mut ServiceDiscoveryPublisher,
-    expected: DiscoveryParticipation,
+    service_discovery_publisher: &mut ServiceDiscoveryPublisher,
+    expected_participation: DiscoveryParticipation,
 ) -> Result<(), AwaitError> {
-    match tokio::time::timeout(EVENT_DEADLINE, publisher.wait_for_participation(expected)).await {
-        Ok(Some(_)) => Ok(()),
-        Ok(None) => Err(AwaitError::PublisherClosed("participation transition")),
-        Err(_) => Err(AwaitError::Timeout("participation transition")),
+    match tokio::time::timeout(
+        EVENT_DEADLINE,
+        service_discovery_publisher.wait_for_participation(expected_participation),
+    )
+    .await
+    {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(_lifecycle_closed)) => Err(AwaitError::DiscoveryLifecycleClosed),
+        Err(_deadline_elapsed) => Err(AwaitError::ParticipationTimeout),
     }
 }
 
 async fn await_member_count(
-    updates: &mut watch::Receiver<Vec<TokioInterfaceStatus>>,
-    expected: usize,
+    member_updates: &mut watch::Receiver<Vec<TokioInterfaceStatus>>,
+    expected_member_count: usize,
 ) -> Result<Vec<TokioInterfaceStatus>, AwaitError> {
     match tokio::time::timeout(
         EVENT_DEADLINE,
-        updates.wait_for(|members| members.len() == expected),
+        member_updates.wait_for(|members| members.len() == expected_member_count),
     )
     .await
     {
         Ok(Ok(members)) => Ok(members.clone()),
-        Ok(Err(_)) => Err(AwaitError::PublisherClosed("member-set transition")),
-        Err(_) => Err(AwaitError::Timeout("member-set transition")),
+        Ok(Err(_member_updates_closed)) => Err(AwaitError::MemberUpdatesClosed),
+        Err(_deadline_elapsed) => Err(AwaitError::MemberCountTimeout),
     }
 }
 
 async fn await_member_replacement(
-    updates: &mut watch::Receiver<Vec<TokioInterfaceStatus>>,
-    previous: prns_core::interfaces::InterfaceId,
+    member_updates: &mut watch::Receiver<Vec<TokioInterfaceStatus>>,
+    previous_member_id: prns_core::interfaces::InterfaceId,
 ) -> Result<Vec<TokioInterfaceStatus>, AwaitError> {
     match tokio::time::timeout(
         EVENT_DEADLINE,
-        updates.wait_for(|members| members.len() == 1 && members[0].id() != previous),
+        member_updates
+            .wait_for(|members| members.len() == 1 && members[0].id() != previous_member_id),
     )
     .await
     {
         Ok(Ok(members)) => Ok(members.clone()),
-        Ok(Err(_)) => Err(AwaitError::PublisherClosed("member replacement")),
-        Err(_) => Err(AwaitError::Timeout("member replacement")),
+        Ok(Err(_member_updates_closed)) => Err(AwaitError::MemberUpdatesClosed),
+        Err(_deadline_elapsed) => Err(AwaitError::MemberReplacementTimeout),
     }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn public_discovery_snapshot_and_shared_core_lifecycle_capstone(
+async fn public_discovery_snapshot_and_shared_central_lifecycle_capstone(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let listener = match TcpListener::bind(("0.0.0.0", TCP_RENDEZVOUS_PORT)).await {
-        Ok(listener) => listener,
+    let rendezvous_listener = match TcpListener::bind(("0.0.0.0", TCP_RENDEZVOUS_PORT)).await {
+        Ok(rendezvous_listener) => rendezvous_listener,
         Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => {
-            let (discovery, mut publisher) = ServiceDiscovery::channel(TEST_DISCOVERY_CAPACITY);
-            let wifi = AutoWifi::new().with_platform_discovery(discovery);
-            let status = wifi.status();
-            let mut member_updates = status.subscribe_members();
-            let (fleet, _tail) = Fleet::detached(status.id());
-            let task = tokio::spawn(wifi.run(fleet));
-            await_participation(&mut publisher, DiscoveryParticipation::Satellite).await?;
+            let (service_discovery, mut service_discovery_publisher) =
+                ServiceDiscovery::channel(TEST_DISCOVERY_CAPACITY);
+            let auto_wifi = AutoWifi::new().with_platform_discovery(service_discovery);
+            let auto_wifi_status = auto_wifi.status();
+            let mut member_updates = auto_wifi_status.subscribe_members();
+            let (auto_wifi_fleet, _detached_fleet) = Fleet::detached(auto_wifi_status.id());
+            let auto_wifi_task = tokio::spawn(auto_wifi.run(auto_wifi_fleet));
+            await_participation(
+                &mut service_discovery_publisher,
+                DiscoveryParticipation::Satellite,
+            )
+            .await?;
             let _ = await_member_count(&mut member_updates, 1).await?;
-            status.disable();
-            await_participation(&mut publisher, DiscoveryParticipation::Inactive).await?;
+            auto_wifi_status.disable();
+            await_participation(
+                &mut service_discovery_publisher,
+                DiscoveryParticipation::Inactive,
+            )
+            .await?;
             let _ = await_member_count(&mut member_updates, 0).await?;
-            task.abort();
-            let _ = task.await;
-            eprintln!("CAPSTONE: joined the external AutoWifi core as one silent satellite");
+            auto_wifi_task.abort();
+            let _ = auto_wifi_task.await;
+            eprintln!("CAPSTONE: joined the external AutoWifi central as one silent satellite");
             return Ok(());
         }
         Err(error) => {
             return Err(Box::new(error) as Box<dyn std::error::Error + Send + Sync>);
         }
     };
-    let (discovery, mut publisher) = ServiceDiscovery::channel(TEST_DISCOVERY_CAPACITY);
-    let wifi = AutoWifi::new()
-        .with_platform_discovery(discovery)
-        .with_rendezvous_listener(listener);
-    let status = wifi.status();
-    let mut member_updates = status.subscribe_members();
-    let status_view = wifi.status_view();
-    assert!(status_view.is_some());
-    let (fleet, _tail) = Fleet::detached(status.id());
-    let task = tokio::spawn(wifi.run(fleet));
+    let (service_discovery, mut service_discovery_publisher) =
+        ServiceDiscovery::channel(TEST_DISCOVERY_CAPACITY);
+    let auto_wifi = AutoWifi::new()
+        .with_platform_discovery(service_discovery)
+        .with_rendezvous_listener(rendezvous_listener);
+    let auto_wifi_status = auto_wifi.status();
+    let mut member_updates = auto_wifi_status.subscribe_members();
+    auto_wifi
+        .status_view()
+        .expect("AutoWifi exposes a status view");
+    let (auto_wifi_fleet, _detached_fleet) = Fleet::detached(auto_wifi_status.id());
+    let auto_wifi_task = tokio::spawn(auto_wifi.run(auto_wifi_fleet));
 
-    await_participation(&mut publisher, DiscoveryParticipation::Core).await?;
-    let first_snapshot = snapshot("peer", 2)?;
+    await_participation(
+        &mut service_discovery_publisher,
+        DiscoveryParticipation::Central,
+    )
+    .await?;
+    let first_snapshot = discovery_snapshot("peer", 2)?;
     assert_eq!(
-        publisher.replace_snapshot(first_snapshot),
+        service_discovery_publisher.replace_snapshot(first_snapshot),
         SnapshotPublication::Published
     );
-    let first = await_member_count(&mut member_updates, 1).await?[0].id();
+    let first_member_id = await_member_count(&mut member_updates, 1).await?[0].id();
 
-    let second_snapshot = snapshot("peer", 3)?;
+    let replacement_snapshot = discovery_snapshot("peer", 3)?;
     assert_eq!(
-        publisher.replace_snapshot(second_snapshot),
+        service_discovery_publisher.replace_snapshot(replacement_snapshot),
         SnapshotPublication::Published
     );
-    let _ = await_member_replacement(&mut member_updates, first).await?;
+    let _ = await_member_replacement(&mut member_updates, first_member_id).await?;
 
     assert_eq!(
-        publisher.replace_snapshot(DiscoverySnapshot::new(TEST_DISCOVERY_CAPACITY)),
+        service_discovery_publisher
+            .replace_snapshot(DiscoverySnapshot::new(TEST_DISCOVERY_CAPACITY)),
         SnapshotPublication::Published
     );
     let _ = await_member_count(&mut member_updates, 0).await?;
 
-    status.disable();
-    await_participation(&mut publisher, DiscoveryParticipation::Inactive).await?;
+    auto_wifi_status.disable();
+    await_participation(
+        &mut service_discovery_publisher,
+        DiscoveryParticipation::Inactive,
+    )
+    .await?;
     let _ = await_member_count(&mut member_updates, 0).await?;
-    let probe = TcpListener::bind(("0.0.0.0", TCP_RENDEZVOUS_PORT)).await?;
+    let rendezvous_port_guard = TcpListener::bind(("0.0.0.0", TCP_RENDEZVOUS_PORT)).await?;
 
-    status.enable();
-    await_participation(&mut publisher, DiscoveryParticipation::Satellite).await?;
+    auto_wifi_status.enable();
+    await_participation(
+        &mut service_discovery_publisher,
+        DiscoveryParticipation::Satellite,
+    )
+    .await?;
     let _ = await_member_count(&mut member_updates, 1).await?;
-    drop(probe);
-    await_participation(&mut publisher, DiscoveryParticipation::Core).await?;
+    drop(rendezvous_port_guard);
+    await_participation(
+        &mut service_discovery_publisher,
+        DiscoveryParticipation::Central,
+    )
+    .await?;
     let _ = await_member_count(&mut member_updates, 0).await?;
 
-    task.abort();
-    let _ = task.await;
+    auto_wifi_task.abort();
+    let _ = auto_wifi_task.await;
     Ok(())
 }

@@ -39,6 +39,8 @@ corroborated evidence.
 - Do not use `anyhow` in repo code. Prefer typed error enums with `thiserror`
   or an explicit domain error type so callers can preserve structure.
 - Be very careful using `Option`s. They are a sensible choice when the semantics are "Either a thing, or some only-one-variant failure; especially when that outcome is not fair to be described as a 'failure' (e.g, a lookup in a key-value data structure)" . In most cases, a proper Result or just custom outcome enum is a far superior choice and should be preferred.
+- Treat booleans with the same skepticism. A `bool` says that there are two states without preserving what either state means, so boolean parameters and return values usually erase useful domain language.
+  Prefer a named enum, even when it has only two unit variants. Reserve booleans for facts that are inherently predicates and remain unambiguous at every callsite.
 - Don't blindly add derived traits like `Copy`. Assume no derived traits, and only add them once they're truly needed.
 - Avoid nesting as much as possible. Prefer early returns, which also pair very well with the aforementioned newtypes and named enums
 - Prefer self-documenting APIs. Avoid callsites like `foo(false)` or `bar(None)`

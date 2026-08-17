@@ -28,10 +28,15 @@ use prns_runtime::manifold::throughput::ThroughputLedger;
 use prns_runtime::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
 
 mod discovery;
+#[cfg(feature = "wifi-auto-mdns")]
+mod mdns;
 
 pub use discovery::{
-    DiscoveryParticipation, ServiceDiscovery, ServiceDiscoveryPublisher, SnapshotPublication,
+    DiscoveryLifecycleError, DiscoveryParticipation, ServiceDiscovery, ServiceDiscoveryPublisher,
+    SnapshotPublication,
 };
+#[cfg(feature = "wifi-auto-mdns")]
+pub use mdns::native_service_discovery;
 
 const BEACON_INTERVAL: Duration = Duration::from_millis(1600);
 const UNICAST_REPEER_EVERY: u32 = 3;
@@ -328,8 +333,8 @@ impl AutoWifi {
     }
 
     #[must_use]
-    pub fn with_host_discovery(mut self, discovery: ServiceDiscovery) -> Self {
-        self.service_discovery = Some(discovery);
+    pub fn with_host_discovery(mut self, service_discovery: ServiceDiscovery) -> Self {
+        self.service_discovery = Some(service_discovery);
         self
     }
 
@@ -338,14 +343,14 @@ impl AutoWifi {
     /// This lets applications prove the local port is owned before publishing a running state,
     /// while retaining AutoWifi's normal accept and rebind behavior afterwards.
     #[must_use]
-    pub fn with_rendezvous_listener(mut self, listener: TcpListener) -> Self {
-        self.rendezvous_listener = Some(listener);
+    pub fn with_rendezvous_listener(mut self, rendezvous_listener: TcpListener) -> Self {
+        self.rendezvous_listener = Some(rendezvous_listener);
         self
     }
 
     #[must_use]
-    pub fn with_platform_discovery(mut self, discovery: ServiceDiscovery) -> Self {
-        self.service_discovery = Some(discovery);
+    pub fn with_platform_discovery(mut self, service_discovery: ServiceDiscovery) -> Self {
+        self.service_discovery = Some(service_discovery);
         self.host_network_discovery = HostNetworkDiscovery::Platform;
         self
     }
@@ -582,8 +587,8 @@ impl InterfaceSupervisor for AutoWifi {
             policy,
             settings,
             status,
-            service_discovery,
-            rendezvous_listener,
+            mut service_discovery,
+            rendezvous_listener: supplied_rendezvous_listener,
             host_network_discovery,
         } = self;
         let enumerate_host_network =
@@ -599,7 +604,7 @@ impl InterfaceSupervisor for AutoWifi {
             open_sockets(&nics, &settings).ok()
         };
         let prefixes = local_prefixes(&settings.devices);
-        let mut sup = Supervisor {
+        let mut supervisor = Supervisor {
             brains: if sockets.is_some() {
                 nics.iter()
                     .map(|nic| {
@@ -629,155 +634,181 @@ impl InterfaceSupervisor for AutoWifi {
             completed: CompletedTraffic::default(),
         };
         if enumerate_host_network {
-            sup.dial_initial_gateways(&nics);
+            supervisor.dial_initial_gateways(&nics);
         }
-        sup.publish_status();
+        supervisor.publish_status();
 
-        let mut service_discovery = service_discovery;
-        let started = tokio::time::Instant::now();
-        let mut beacon = tokio::time::interval(BEACON_INTERVAL);
+        let runtime_started_at = tokio::time::Instant::now();
+        let mut beacon_interval = tokio::time::interval(BEACON_INTERVAL);
         let mut beacon_cycle: u32 = 0;
-        let mut discovery_buf = [0u8; 64];
-        let mut unicast_buf = [0u8; 64];
-        let mut data_buf = [0u8; contract::HARDWARE_MTU];
-        let mut rendezvous = settings
+        let mut discovery_buffer = [0u8; 64];
+        let mut unicast_discovery_buffer = [0u8; 64];
+        let mut data_buffer = [0u8; contract::HARDWARE_MTU];
+        let mut rendezvous_listener = settings
             .stock_service_discovery_enabled()
-            .then_some(rendezvous_listener)
+            .then_some(supplied_rendezvous_listener)
             .flatten();
-        let mut participation = if rendezvous.is_some() {
-            DiscoveryParticipation::Core
+        let mut discovery_participation = if rendezvous_listener.is_some() {
+            DiscoveryParticipation::Central
         } else {
             DiscoveryParticipation::Inactive
         };
-        let mut claim_rendezvous =
-            settings.stock_service_discovery_enabled() && rendezvous.is_none();
-        if let Some(discovery) = service_discovery.as_ref() {
-            discovery.set_participation(participation);
+        let mut should_claim_rendezvous =
+            settings.stock_service_discovery_enabled() && rendezvous_listener.is_none();
+        if let Some(service_discovery) = service_discovery.as_ref() {
+            service_discovery.set_participation(discovery_participation);
         }
 
         loop {
-            if !sup.status.is_enabled() {
-                rendezvous = None;
-                participation = DiscoveryParticipation::Inactive;
-                if let Some(discovery) = service_discovery.as_ref() {
-                    discovery.set_participation(participation);
+            if !supervisor.status.is_enabled() {
+                rendezvous_listener = None;
+                discovery_participation = DiscoveryParticipation::Inactive;
+                if let Some(service_discovery) = service_discovery.as_ref() {
+                    service_discovery.set_participation(discovery_participation);
                 }
-                sup.disable_members();
-                sup.status.wait_until_enabled().await;
-                claim_rendezvous = settings.stock_service_discovery_enabled();
+                supervisor.disable_members();
+                supervisor.status.wait_until_enabled().await;
+                should_claim_rendezvous = settings.stock_service_discovery_enabled();
                 continue;
             }
-            if claim_rendezvous {
+            if should_claim_rendezvous {
                 match claim_local_rendezvous().await {
-                    RendezvousClaim::Core(listener) => {
-                        rendezvous = Some(listener);
-                        participation = DiscoveryParticipation::Core;
-                        sup.remove_loopback();
+                    RendezvousClaim::Central(claimed_rendezvous_listener) => {
+                        rendezvous_listener = Some(claimed_rendezvous_listener);
+                        discovery_participation = DiscoveryParticipation::Central;
+                        supervisor.remove_loopback();
                     }
                     RendezvousClaim::Satellite => {
-                        rendezvous = None;
-                        participation = DiscoveryParticipation::Satellite;
-                        sup.ensure_loopback();
-                        sup.clear_discovered_dials();
+                        rendezvous_listener = None;
+                        discovery_participation = DiscoveryParticipation::Satellite;
+                        supervisor.ensure_loopback();
+                        supervisor.clear_discovered_dials();
                     }
-                    RendezvousClaim::Unavailable(kind) => {
-                        rendezvous = None;
-                        participation = DiscoveryParticipation::Inactive;
-                        sup.remove_loopback();
-                        sup.clear_discovered_dials();
+                    RendezvousClaim::Unavailable(error_kind) => {
+                        rendezvous_listener = None;
+                        discovery_participation = DiscoveryParticipation::Inactive;
+                        supervisor.remove_loopback();
+                        supervisor.clear_discovered_dials();
                         crate::diagnostic_log::debug!(
-                            "wifi-auto: rendezvous listener unavailable ({kind:?}); retrying"
+                            "wifi-auto: rendezvous listener unavailable ({error_kind:?}); retrying"
                         );
                     }
                 }
-                if let Some(discovery) = service_discovery.as_ref() {
-                    discovery.set_participation(participation);
+                if let Some(service_discovery) = service_discovery.as_ref() {
+                    service_discovery.set_participation(discovery_participation);
                 }
-                claim_rendezvous = false;
+                should_claim_rendezvous = false;
             }
             tokio::select! {
-                accepted = accept_maybe(&rendezvous) => {
-                    if let Ok((stream, peer)) = accepted {
-                        if is_local_peer(peer.ip(), &sup.prefixes) {
-                            sup.reap_accepted_rendezvous();
-                            if sup.accepted.len()
+                accepted_connection = accept_maybe(&rendezvous_listener) => {
+                    if let Ok((tcp_stream, peer_address)) = accepted_connection {
+                        if is_local_peer(peer_address.ip(), &supervisor.prefixes) {
+                            supervisor.reap_accepted_rendezvous();
+                            if supervisor.accepted.len()
                                 >= usize::from(TCP_RENDEZVOUS_ACCEPTED_CAPACITY)
                             {
                                 crate::diagnostic_log::debug!(
-                                    "wifi-auto: rejecting rendezvous connection from {peer}; capacity reached"
+                                    "wifi-auto: rejecting rendezvous connection from {peer_address}; capacity reached"
                                 );
                                 continue;
                             }
-                            tune(&stream);
-                            let connection = TcpServerConnection::with_policy(
-                                peer.to_string().into_bytes(),
-                                stream,
-                                sup.policy,
+                            tune(&tcp_stream);
+                            let tcp_connection = TcpServerConnection::with_policy(
+                                peer_address.to_string().into_bytes(),
+                                tcp_stream,
+                                supervisor.policy,
                             );
-                            let status = connection.status();
-                            let attached = sup.fleet.add(connection);
-                            sup.accepted.push(AttachedStatus { attached, status });
-                            sup.publish_status();
+                            let connection_status = tcp_connection.status();
+                            let attached_connection = supervisor.fleet.add(tcp_connection);
+                            supervisor.accepted.push(AttachedStatus {
+                                attached: attached_connection,
+                                status: connection_status,
+                            });
+                            supervisor.publish_status();
                         }
                     }
                 }
-                received = recv_maybe(sockets.as_ref().map(|s| &s.discovery), &mut discovery_buf) => {
-                    if let Some((len, src)) = received {
-                        let now_ms = started.elapsed().as_millis() as u64;
-                        sup.ingest_beacon(src, &discovery_buf[..len], now_ms);
-                    }
-                }
-                received = recv_maybe(sockets.as_ref().map(|s| &s.unicast_discovery), &mut unicast_buf) => {
-                    if let Some((len, src)) = received {
-                        let now_ms = started.elapsed().as_millis() as u64;
-                        sup.ingest_beacon(src, &unicast_buf[..len], now_ms);
-                    }
-                }
-                received = recv_maybe(sockets.as_ref().map(|s| s.data.as_ref()), &mut data_buf) => {
-                    if let Some((len, src)) = received {
-                        sup.route_inbound(src, &data_buf[..len]);
-                    }
-                }
-                snapshot = next_discovery_snapshot(
-                    service_discovery.as_mut(),
-                    participation == DiscoveryParticipation::Core,
+                received_discovery_datagram = recv_maybe(
+                    sockets.as_ref().map(|sockets| &sockets.discovery),
+                    &mut discovery_buffer,
                 ) => {
-                    match snapshot {
-                        Some(snapshot) => sup.reconcile_discovery(
-                            &snapshot,
+                    if let Some((received_bytes, source_address)) = received_discovery_datagram {
+                        let elapsed_millis = runtime_started_at.elapsed().as_millis() as u64;
+                        supervisor.ingest_beacon(
+                            source_address,
+                            &discovery_buffer[..received_bytes],
+                            elapsed_millis,
+                        );
+                    }
+                }
+                received_unicast_datagram = recv_maybe(
+                    sockets.as_ref().map(|sockets| &sockets.unicast_discovery),
+                    &mut unicast_discovery_buffer,
+                ) => {
+                    if let Some((received_bytes, source_address)) = received_unicast_datagram {
+                        let elapsed_millis = runtime_started_at.elapsed().as_millis() as u64;
+                        supervisor.ingest_beacon(
+                            source_address,
+                            &unicast_discovery_buffer[..received_bytes],
+                            elapsed_millis,
+                        );
+                    }
+                }
+                received_data_datagram = recv_maybe(
+                    sockets.as_ref().map(|sockets| sockets.data.as_ref()),
+                    &mut data_buffer,
+                ) => {
+                    if let Some((received_bytes, source_address)) = received_data_datagram {
+                        supervisor.route_inbound(
+                            source_address,
+                            &data_buffer[..received_bytes],
+                        );
+                    }
+                }
+                discovery_snapshot = next_discovery_snapshot(
+                    service_discovery.as_mut(),
+                    discovery_participation,
+                ) => {
+                    match discovery_snapshot {
+                        Ok(discovery_snapshot) => supervisor.reconcile_discovery(
+                            &discovery_snapshot,
                             host_network_discovery,
                         ),
-                        None => service_discovery = None,
+                        Err(discovery::DiscoverySnapshotError::PublisherClosed) => {
+                            service_discovery = None;
+                        }
                     }
                 }
-                () = sup.status.wait_until_disabled() => {}
-                _ = beacon.tick() => {
+                () = supervisor.status.wait_until_disabled() => {}
+                _ = beacon_interval.tick() => {
                     beacon_cycle = beacon_cycle.wrapping_add(1);
-                    let repeer = beacon_cycle.is_multiple_of(UNICAST_REPEER_EVERY);
+                    let should_repeat_unicast_peering =
+                        beacon_cycle.is_multiple_of(UNICAST_REPEER_EVERY);
                     if let Some(sockets) = sockets.as_ref() {
-                        for (&index, brain) in &sup.brains {
-                            let token = *brain.our_peering_token().as_bytes();
+                        for (&interface_index, auto_interface_protocol) in &supervisor.brains {
+                            let peering_token =
+                                *auto_interface_protocol.our_peering_token().as_bytes();
                             let _ = sockets
                                 .discovery
                                 .send_to(
-                                    &token,
+                                    &peering_token,
                                     scoped(
                                         settings.discovery_group(),
                                         settings.discovery_port,
-                                        index,
+                                        interface_index,
                                     ),
                                 )
                                 .await;
-                            if repeer {
-                                for addr in brain.known_peer_addresses() {
+                            if should_repeat_unicast_peering {
+                                for peer_address in auto_interface_protocol.known_peer_addresses() {
                                     let _ = sockets
                                         .unicast_discovery
                                         .send_to(
-                                            &token,
+                                            &peering_token,
                                             scoped(
-                                                addr,
+                                                peer_address,
                                                 settings.reverse_discovery_port(),
-                                                index,
+                                                interface_index,
                                             ),
                                         )
                                         .await;
@@ -785,15 +816,18 @@ impl InterfaceSupervisor for AutoWifi {
                             }
                         }
                     }
-                    let now_ms = started.elapsed().as_millis() as u64;
+                    let elapsed_millis = runtime_started_at.elapsed().as_millis() as u64;
                     if beacon_cycle.is_multiple_of(REBIND_BEACON_CYCLES) {
-                        sup.reconcile_nics(sockets.as_ref().map(|s| &s.discovery), &mut nics);
+                        supervisor.reconcile_nics(
+                            sockets.as_ref().map(|sockets| &sockets.discovery),
+                            &mut nics,
+                        );
                     }
-                    sup.retire_stale(now_ms);
-                    sup.publish_status();
-                    claim_rendezvous =
+                    supervisor.retire_stale(elapsed_millis);
+                    supervisor.publish_status();
+                    should_claim_rendezvous =
                         settings.stock_service_discovery_enabled()
-                            && rendezvous.is_none()
+                            && rendezvous_listener.is_none()
                             && beacon_cycle.is_multiple_of(REBIND_BEACON_CYCLES);
                 }
             }
@@ -825,62 +859,79 @@ impl DiscoveredDials {
 
     fn reconcile(
         &mut self,
-        snapshot: &DiscoverySnapshot,
-        discovery: HostNetworkDiscovery,
-        prefixes: &[LocalPrefix],
+        discovery_snapshot: &DiscoverySnapshot,
+        host_network_discovery: HostNetworkDiscovery,
+        local_prefixes: &[LocalPrefix],
         fleet: &Fleet,
         policy: EffectiveInterfacePolicy,
-        completed: &mut CompletedTraffic,
+        completed_traffic: &mut CompletedTraffic,
     ) {
-        let desired = desired_discovery_endpoints(snapshot, discovery, prefixes);
+        let desired_endpoints =
+            desired_discovery_endpoints(discovery_snapshot, host_network_discovery, local_prefixes);
 
-        let removed: std::vec::Vec<DiscoveryEndpoint> = self
+        let removed_endpoints: std::vec::Vec<DiscoveryEndpoint> = self
             .members
             .keys()
-            .filter(|endpoint| !desired.contains(endpoint))
+            .filter(|endpoint| !desired_endpoints.contains(endpoint))
             .copied()
             .collect();
-        for endpoint in removed {
-            if let Some(dial) = self.members.remove(&endpoint) {
-                completed.retain(&dial.status);
-                dial.attached.teardown();
+        for removed_endpoint in removed_endpoints {
+            if let Some(removed_dial) = self.members.remove(&removed_endpoint) {
+                completed_traffic.retain(&removed_dial.status);
+                removed_dial.attached.teardown();
             }
         }
-        for endpoint in desired {
-            if self.members.contains_key(&endpoint) {
+        for desired_endpoint in desired_endpoints {
+            if self.members.contains_key(&desired_endpoint) {
                 continue;
             }
-            crate::diagnostic_log::debug!("wifi-auto: dialing discovered service {endpoint}");
-            let client =
-                TcpClientInterface::with_policy(endpoint.to_string(), policy, RENDEZVOUS_RECONNECT);
-            let status = client.status();
-            let attached = fleet.add(client);
-            self.members
-                .insert(endpoint, AttachedStatus { attached, status });
+            crate::diagnostic_log::debug!(
+                "wifi-auto: dialing discovered service {desired_endpoint}"
+            );
+            let tcp_client = TcpClientInterface::with_policy(
+                desired_endpoint.to_string(),
+                policy,
+                RENDEZVOUS_RECONNECT,
+            );
+            let client_status = tcp_client.status();
+            let attached_client = fleet.add(tcp_client);
+            self.members.insert(
+                desired_endpoint,
+                AttachedStatus {
+                    attached: attached_client,
+                    status: client_status,
+                },
+            );
         }
     }
 
-    fn clear(&mut self, completed: &mut CompletedTraffic) {
-        for (_, dial) in std::mem::take(&mut self.members) {
-            completed.retain(&dial.status);
-            dial.attached.teardown();
+    fn clear(&mut self, completed_traffic: &mut CompletedTraffic) {
+        for (_discovery_endpoint, removed_dial) in std::mem::take(&mut self.members) {
+            completed_traffic.retain(&removed_dial.status);
+            removed_dial.attached.teardown();
         }
     }
 }
 
 fn desired_discovery_endpoints(
-    snapshot: &DiscoverySnapshot,
-    discovery: HostNetworkDiscovery,
-    prefixes: &[LocalPrefix],
+    discovery_snapshot: &DiscoverySnapshot,
+    host_network_discovery: HostNetworkDiscovery,
+    local_prefixes: &[LocalPrefix],
 ) -> BTreeSet<DiscoveryEndpoint> {
-    snapshot
+    discovery_snapshot
         .iter()
-        .filter_map(|advertisement| {
-            advertisement
+        .filter_map(|service_advertisement| {
+            service_advertisement
                 .endpoints()
                 .iter()
                 .copied()
-                .find(|endpoint| endpoint_is_eligible(*endpoint, discovery, prefixes))
+                .find(|discovery_endpoint| {
+                    endpoint_is_eligible(
+                        *discovery_endpoint,
+                        host_network_discovery,
+                        local_prefixes,
+                    )
+                })
         })
         .collect()
 }
@@ -994,12 +1045,12 @@ impl Supervisor {
 
     fn reconcile_discovery(
         &mut self,
-        snapshot: &DiscoverySnapshot,
-        discovery: HostNetworkDiscovery,
+        discovery_snapshot: &DiscoverySnapshot,
+        host_network_discovery: HostNetworkDiscovery,
     ) {
         self.discovered_dials.reconcile(
-            snapshot,
-            discovery,
+            discovery_snapshot,
+            host_network_discovery,
             &self.prefixes,
             &self.fleet,
             self.policy,
@@ -1268,58 +1319,65 @@ struct LocalPrefix {
     index: u32,
 }
 
-fn local_prefixes(devices: &AutoWifiDevicePolicy) -> std::vec::Vec<LocalPrefix> {
-    let Ok(ifaces) = if_addrs::get_if_addrs() else {
+fn local_prefixes(auto_wifi_device_policy: &AutoWifiDevicePolicy) -> std::vec::Vec<LocalPrefix> {
+    let Ok(network_interfaces) = if_addrs::get_if_addrs() else {
         return std::vec::Vec::new();
     };
-    ifaces
+    network_interfaces
         .iter()
-        .filter(|iface| devices.allows(&iface.name, iface.is_loopback()))
-        .map(|iface| match &iface.addr {
-            if_addrs::IfAddr::V4(v4) => LocalPrefix {
-                addr: IpAddr::V4(v4.ip),
-                netmask: IpAddr::V4(v4.netmask),
-                index: iface.index.unwrap_or(0),
+        .filter(|network_interface| {
+            auto_wifi_device_policy.allows(&network_interface.name, network_interface.is_loopback())
+        })
+        .map(|network_interface| match &network_interface.addr {
+            if_addrs::IfAddr::V4(ipv4_address) => LocalPrefix {
+                addr: IpAddr::V4(ipv4_address.ip),
+                netmask: IpAddr::V4(ipv4_address.netmask),
+                index: network_interface.index.unwrap_or(0),
             },
-            if_addrs::IfAddr::V6(v6) => LocalPrefix {
-                addr: IpAddr::V6(v6.ip),
-                netmask: IpAddr::V6(v6.netmask),
-                index: iface.index.unwrap_or(0),
+            if_addrs::IfAddr::V6(ipv6_address) => LocalPrefix {
+                addr: IpAddr::V6(ipv6_address.ip),
+                netmask: IpAddr::V6(ipv6_address.netmask),
+                index: network_interface.index.unwrap_or(0),
             },
         })
         .collect()
 }
 
-fn is_local_peer(peer: IpAddr, prefixes: &[LocalPrefix]) -> bool {
-    peer.is_loopback()
-        || prefixes
-            .iter()
-            .any(|prefix| is_same_subnet(prefix.addr, prefix.netmask, peer))
+fn is_local_peer(peer_address: IpAddr, local_prefixes: &[LocalPrefix]) -> bool {
+    peer_address.is_loopback()
+        || local_prefixes.iter().any(|local_prefix| {
+            is_same_subnet(local_prefix.addr, local_prefix.netmask, peer_address)
+        })
 }
 
-fn is_own_address(ip: IpAddr, prefixes: &[LocalPrefix]) -> bool {
-    ip.is_loopback() || prefixes.iter().any(|prefix| prefix.addr == ip)
+fn is_own_address(ip_address: IpAddr, local_prefixes: &[LocalPrefix]) -> bool {
+    ip_address.is_loopback()
+        || local_prefixes
+            .iter()
+            .any(|local_prefix| local_prefix.addr == ip_address)
 }
 
 fn endpoint_is_eligible(
-    endpoint: DiscoveryEndpoint,
-    discovery: HostNetworkDiscovery,
-    prefixes: &[LocalPrefix],
+    discovery_endpoint: DiscoveryEndpoint,
+    host_network_discovery: HostNetworkDiscovery,
+    local_prefixes: &[LocalPrefix],
 ) -> bool {
-    let address = endpoint.socket_addr();
-    if is_own_address(address.ip(), prefixes) {
+    let socket_address = discovery_endpoint.socket_addr();
+    if is_own_address(socket_address.ip(), local_prefixes) {
         return false;
     }
-    if matches!(discovery, HostNetworkDiscovery::Platform) {
+    if matches!(host_network_discovery, HostNetworkDiscovery::Platform) {
         return true;
     }
-    prefixes.iter().any(|prefix| {
-        if let SocketAddr::V6(address) = address {
-            if address.ip().is_unicast_link_local() && address.scope_id() != prefix.index {
+    local_prefixes.iter().any(|local_prefix| {
+        if let SocketAddr::V6(ipv6_socket_address) = socket_address {
+            if ipv6_socket_address.ip().is_unicast_link_local()
+                && ipv6_socket_address.scope_id() != local_prefix.index
+            {
                 return false;
             }
         }
-        is_same_subnet(prefix.addr, prefix.netmask, address.ip())
+        is_same_subnet(local_prefix.addr, local_prefix.netmask, socket_address.ip())
     })
 }
 
@@ -1341,7 +1399,7 @@ fn platform_gateway_inventory() -> GatewayInventory {
 }
 
 enum RendezvousClaim {
-    Core(TcpListener),
+    Central(TcpListener),
     Satellite,
     Unavailable(io::ErrorKind),
 }
@@ -1352,27 +1410,31 @@ enum RendezvousBindFailure {
     Unavailable(io::ErrorKind),
 }
 
-fn classify_rendezvous_bind_error(error: &io::Error) -> RendezvousBindFailure {
-    if error.kind() == io::ErrorKind::AddrInUse {
+fn classify_rendezvous_bind_error(bind_error: &io::Error) -> RendezvousBindFailure {
+    if bind_error.kind() == io::ErrorKind::AddrInUse {
         RendezvousBindFailure::Satellite
     } else {
-        RendezvousBindFailure::Unavailable(error.kind())
+        RendezvousBindFailure::Unavailable(bind_error.kind())
     }
 }
 
 async fn claim_local_rendezvous() -> RendezvousClaim {
     match TcpListener::bind(("0.0.0.0", contract::TCP_RENDEZVOUS_PORT)).await {
-        Ok(listener) => RendezvousClaim::Core(listener),
-        Err(error) => match classify_rendezvous_bind_error(&error) {
+        Ok(rendezvous_listener) => RendezvousClaim::Central(rendezvous_listener),
+        Err(bind_error) => match classify_rendezvous_bind_error(&bind_error) {
             RendezvousBindFailure::Satellite => RendezvousClaim::Satellite,
-            RendezvousBindFailure::Unavailable(kind) => RendezvousClaim::Unavailable(kind),
+            RendezvousBindFailure::Unavailable(error_kind) => {
+                RendezvousClaim::Unavailable(error_kind)
+            }
         },
     }
 }
 
-async fn accept_maybe(listener: &Option<TcpListener>) -> io::Result<(TcpStream, SocketAddr)> {
-    match listener {
-        Some(listener) => listener.accept().await,
+async fn accept_maybe(
+    rendezvous_listener: &Option<TcpListener>,
+) -> io::Result<(TcpStream, SocketAddr)> {
+    match rendezvous_listener {
+        Some(rendezvous_listener) => rendezvous_listener.accept().await,
         None => std::future::pending().await,
     }
 }
@@ -1385,14 +1447,17 @@ async fn recv_maybe(socket: Option<&UdpSocket>, buf: &mut [u8]) -> Option<(usize
 }
 
 async fn next_discovery_snapshot(
-    discovery: Option<&mut ServiceDiscovery>,
-    active: bool,
-) -> Option<DiscoverySnapshot> {
-    if !active {
-        return std::future::pending().await;
+    service_discovery: Option<&mut ServiceDiscovery>,
+    discovery_participation: DiscoveryParticipation,
+) -> Result<DiscoverySnapshot, discovery::DiscoverySnapshotError> {
+    match discovery_participation {
+        DiscoveryParticipation::Inactive | DiscoveryParticipation::Satellite => {
+            return std::future::pending().await;
+        }
+        DiscoveryParticipation::Central => {}
     }
-    match discovery {
-        Some(discovery) => discovery.next_snapshot().await,
+    match service_discovery {
+        Some(service_discovery) => service_discovery.next_snapshot().await,
         None => std::future::pending().await,
     }
 }
@@ -1535,12 +1600,16 @@ mod tests {
 
     #[test]
     fn platform_discovery_replaces_host_network_enumeration() {
-        let (discovery, _) = ServiceDiscovery::channel(TEST_DISCOVERY_CAPACITY);
-        let wifi = AutoWifi::new().with_platform_discovery(discovery);
+        let (service_discovery, _service_discovery_publisher) =
+            ServiceDiscovery::channel(TEST_DISCOVERY_CAPACITY);
+        let auto_wifi = AutoWifi::new().with_platform_discovery(service_discovery);
 
-        assert!(wifi.service_discovery.is_some());
+        auto_wifi
+            .service_discovery
+            .as_ref()
+            .expect("platform discovery is retained");
         assert!(matches!(
-            wifi.host_network_discovery,
+            auto_wifi.host_network_discovery,
             HostNetworkDiscovery::Platform
         ));
     }
@@ -1741,7 +1810,7 @@ mod tests {
         let (fleet, guard) = Fleet::detached(id);
         let data = std::net::UdpSocket::bind((Ipv6Addr::UNSPECIFIED, 0)).expect("bind data socket");
         data.set_nonblocking(true).expect("nonblocking");
-        let sup = Supervisor {
+        let supervisor = Supervisor {
             brains: HashMap::new(),
             members: HashMap::new(),
             gateways: HashMap::new(),
@@ -1756,22 +1825,23 @@ mod tests {
             status: AutoWifiStatus::new(id),
             completed: CompletedTraffic::default(),
         };
-        (sup, guard)
+        (supervisor, guard)
     }
 
     fn gateway_inventory<const N: usize>(routes: [(u32, IpAddr); N]) -> GatewayInventory {
         Ok(routes.into_iter().collect())
     }
 
-    fn discovery_snapshot(name: &str, address: SocketAddr) -> DiscoverySnapshot {
-        let endpoint = DiscoveryEndpoint::new(address).expect("test endpoint is valid");
-        let mut advertisement = contract::ServiceAdvertisement::new(
-            contract::DiscoveryServiceName::new(name).expect("test service name is valid"),
+    fn discovery_snapshot(service_name: &str, socket_address: SocketAddr) -> DiscoverySnapshot {
+        let discovery_endpoint =
+            DiscoveryEndpoint::new(socket_address).expect("test endpoint is valid");
+        let mut service_advertisement = contract::ServiceAdvertisement::new(
+            contract::DiscoveryServiceName::new(service_name).expect("test service name is valid"),
         );
-        let _ = advertisement.insert(endpoint);
-        let mut snapshot = DiscoverySnapshot::new(TEST_DISCOVERY_CAPACITY);
-        let _ = snapshot.insert(advertisement);
-        snapshot
+        let _ = service_advertisement.insert(discovery_endpoint);
+        let mut discovery_snapshot = DiscoverySnapshot::new(TEST_DISCOVERY_CAPACITY);
+        let _ = discovery_snapshot.insert(service_advertisement);
+        discovery_snapshot
     }
 
     #[tokio::test]
@@ -1796,18 +1866,18 @@ mod tests {
 
     #[tokio::test]
     async fn a_disconnected_multicast_member_does_not_make_the_aggregate_live() {
-        let (mut sup, _guard) = test_supervisor();
+        let (mut supervisor, _guard) = test_supervisor();
         let peer = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 0x867c);
 
-        sup.spawn_member(peer, 0);
-        assert_eq!(sup.status.connection(), ConnectionState::Connected);
+        supervisor.spawn_member(peer, 0);
+        assert_eq!(supervisor.status.connection(), ConnectionState::Connected);
 
-        let member = sup.members.get(&peer).expect("peer was registered");
+        let member = supervisor.members.get(&peer).expect("peer was registered");
         member.status.set_connection(ConnectionState::Disconnected);
-        sup.publish_status();
+        supervisor.publish_status();
 
         assert_eq!(
-            sup.status.connection(),
+            supervisor.status.connection(),
             ConnectionState::Disconnected,
             "the aggregate follows the live child state",
         );
@@ -1816,29 +1886,29 @@ mod tests {
     #[tokio::test]
     async fn a_disconnected_rendezvous_dial_does_not_make_the_aggregate_live() {
         use std::net::Ipv4Addr;
-        let (mut sup, _guard) = test_supervisor();
+        let (mut supervisor, _guard) = test_supervisor();
         let peer = SocketAddr::new(
             IpAddr::V4(Ipv4Addr::new(192, 168, 1, 77)),
             contract::TCP_RENDEZVOUS_PORT,
         );
-        sup.prefixes = std::vec![prefix([192, 168, 1, 50], [255, 255, 255, 0])];
+        supervisor.prefixes = std::vec![prefix([192, 168, 1, 50], [255, 255, 255, 0])];
 
-        sup.reconcile_discovery(
+        supervisor.reconcile_discovery(
             &discovery_snapshot("peer", peer),
             HostNetworkDiscovery::Enumerated,
         );
         let endpoint = DiscoveryEndpoint::new(peer).unwrap();
-        let status = &sup
+        let status = &supervisor
             .discovered_dials
             .members
             .get(&endpoint)
             .expect("peer was dialed")
             .status;
         status.set_connection(ConnectionState::Disconnected);
-        sup.publish_status();
+        supervisor.publish_status();
 
         assert_eq!(
-            sup.status.connection(),
+            supervisor.status.connection(),
             ConnectionState::Disconnected,
             "an unsuccessful gateway dial remains dormant",
         );
@@ -1846,28 +1916,32 @@ mod tests {
 
     #[tokio::test]
     async fn reconcile_applies_nic_churn_and_repoints_gateways_against_a_real_fleet() {
-        let (mut sup, _guard) = test_supervisor();
+        let (mut supervisor, _guard) = test_supervisor();
         let discovery = UdpSocket::bind((Ipv6Addr::UNSPECIFIED, 0))
             .await
             .expect("bind discovery socket");
         let mut nics = std::vec::Vec::new();
 
-        sup.apply_reconcile(
+        supervisor.apply_reconcile(
             &discovery,
             &mut nics,
             std::vec![nic(1, 0x10), nic(2, 0x20)],
             gateway_inventory([(1, IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 1)))]),
         );
-        assert_eq!(sup.brains.len(), 2, "both NICs got a brain");
-        assert!(sup.brains.contains_key(&1) && sup.brains.contains_key(&2));
+        assert_eq!(supervisor.brains.len(), 2, "both NICs got a brain");
+        assert!(supervisor.brains.contains_key(&1) && supervisor.brains.contains_key(&2));
         assert_eq!(
-            sup.gateways.get(&1).map(|dial| dial.gateway),
+            supervisor.gateways.get(&1).map(|dial| dial.gateway),
             Some(IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 1))),
             "the NIC with a gateway got a dial",
         );
-        assert_eq!(sup.gateways.len(), 1, "the gateway-less NIC dialed nothing");
+        assert_eq!(
+            supervisor.gateways.len(),
+            1,
+            "the gateway-less NIC dialed nothing"
+        );
 
-        sup.apply_reconcile(
+        supervisor.apply_reconcile(
             &discovery,
             &mut nics,
             std::vec![nic(1, 0x10), nic(3, 0x30)],
@@ -1877,59 +1951,65 @@ mod tests {
             ]),
         );
         assert!(
-            !sup.brains.contains_key(&2),
+            !supervisor.brains.contains_key(&2),
             "the vanished NIC's brain was dropped",
         );
-        assert!(sup.brains.contains_key(&3), "the new NIC got a brain");
+        assert!(
+            supervisor.brains.contains_key(&3),
+            "the new NIC got a brain"
+        );
         assert_eq!(
-            sup.gateways.get(&1).map(|dial| dial.gateway),
+            supervisor.gateways.get(&1).map(|dial| dial.gateway),
             Some(IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 1))),
             "the surviving NIC's gateway was re-pointed after the roam",
         );
         assert!(
-            sup.gateways.contains_key(&3),
+            supervisor.gateways.contains_key(&3),
             "the new NIC's gateway was dialed",
         );
         assert!(
-            !sup.gateways.contains_key(&2),
+            !supervisor.gateways.contains_key(&2),
             "the vanished NIC's gateway dial was torn down",
         );
 
-        sup.apply_reconcile(
+        supervisor.apply_reconcile(
             &discovery,
             &mut nics,
             std::vec![],
             Err(GatewayInventoryUnavailable),
         );
         assert!(
-            sup.brains.is_empty(),
+            supervisor.brains.is_empty(),
             "the brains drained when the link left"
         );
-        assert!(sup.gateways.is_empty(), "every gateway dial was torn down");
+        assert!(
+            supervisor.gateways.is_empty(),
+            "every gateway dial was torn down"
+        );
         assert!(nics.is_empty());
     }
 
     #[tokio::test]
     async fn discovery_snapshots_are_idempotent_remove_stale_peers_and_never_dial_ourselves() {
         use std::net::Ipv4Addr;
-        let (mut sup, _guard) = test_supervisor();
-        sup.prefixes = std::vec![prefix([192, 168, 1, 50], [255, 255, 255, 0])];
+        let (mut supervisor, _guard) = test_supervisor();
+        supervisor.prefixes = std::vec![prefix([192, 168, 1, 50], [255, 255, 255, 0])];
 
         let peer = SocketAddr::new(
             IpAddr::V4(Ipv4Addr::new(192, 168, 1, 77)),
             contract::TCP_RENDEZVOUS_PORT,
         );
         let snapshot = discovery_snapshot("peer", peer);
-        sup.reconcile_discovery(&snapshot, HostNetworkDiscovery::Enumerated);
+        supervisor.reconcile_discovery(&snapshot, HostNetworkDiscovery::Enumerated);
         assert_eq!(
-            sup.discovered_dials.members.len(),
+            supervisor.discovered_dials.members.len(),
             1,
             "a fresh snapshot becomes a dial"
         );
 
-        sup.reconcile_discovery(&snapshot, HostNetworkDiscovery::Enumerated);
+        supervisor.reconcile_discovery(&snapshot, HostNetworkDiscovery::Enumerated);
         assert_eq!(
-            sup.discovered_dials.members.len(),
+            supervisor.discovered_dials.members.len(),
             1,
             "a repeat snapshot does not stack a second dial",
         );
@@ -1938,21 +2018,21 @@ mod tests {
             IpAddr::V4(Ipv4Addr::new(192, 168, 1, 50)),
             contract::TCP_RENDEZVOUS_PORT,
         );
-        sup.reconcile_discovery(
+        supervisor.reconcile_discovery(
             &discovery_snapshot("ours", ours),
             HostNetworkDiscovery::Enumerated,
         );
         assert_eq!(
-            sup.discovered_dials.members.len(),
+            supervisor.discovered_dials.members.len(),
             0,
             "we never dial our own advertised rendezvous",
         );
 
-        sup.reconcile_discovery(
+        supervisor.reconcile_discovery(
             &DiscoverySnapshot::new(TEST_DISCOVERY_CAPACITY),
             HostNetworkDiscovery::Enumerated,
         );
-        assert!(sup.discovered_dials.members.is_empty());
+        assert!(supervisor.discovered_dials.members.is_empty());
     }
 
     #[test]
@@ -2013,7 +2093,7 @@ mod tests {
 
     #[tokio::test]
     async fn custom_group_nodes_never_dial_the_stock_loopback_rendezvous() {
-        let (mut sup, _guard) = test_supervisor();
+        let (mut supervisor, _guard) = test_supervisor();
         let custom = AutoWifiSettings::new(
             b"field-mesh".to_vec(),
             contract::DiscoveryScope::Site,
@@ -2023,14 +2103,14 @@ mod tests {
             AutoWifiDevicePolicy::default(),
         )
         .expect("ports are valid");
-        sup.settings = custom;
-        sup.ensure_loopback();
-        assert!(sup.loopback.is_none());
+        supervisor.settings = custom;
+        supervisor.ensure_loopback();
+        assert!(supervisor.loopback.is_none());
 
-        sup.settings = AutoWifiSettings::default();
-        sup.ensure_loopback();
-        assert!(sup.loopback.is_some());
-        sup.remove_loopback();
+        supervisor.settings = AutoWifiSettings::default();
+        supervisor.ensure_loopback();
+        assert!(supervisor.loopback.is_some());
+        supervisor.remove_loopback();
     }
 
     #[test]
