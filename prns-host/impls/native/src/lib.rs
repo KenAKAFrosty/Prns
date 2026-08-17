@@ -2114,8 +2114,10 @@ async fn attach_typed_interface(
 
 async fn execute_control(
     #[cfg_attr(not(unix), allow(unused_variables))] handle: &PrnsNodeHandle,
-    #[cfg_attr(not(unix), allow(unused_variables))]
-    attachments: &mut BTreeMap<InterfaceId, Attachment>,
+    #[cfg_attr(not(unix), allow(unused_variables))] attachments: &mut BTreeMap<
+        InterfaceId,
+        Attachment,
+    >,
     control: NativeControl,
 ) {
     match control {
