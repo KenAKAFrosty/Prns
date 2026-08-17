@@ -47,6 +47,18 @@ const WIFI_DYNAMIC_TX_BUFFERS: u16 = 0;
 #[cfg(feature = "wifi-auto")]
 const WIFI_DATA_SOCKET_BUFFER_BYTES: usize = 4 * 1_024;
 #[cfg(feature = "wifi-auto")]
+const WIFI_AUTO_DISCOVERY_SOCKET_METADATA: usize = 8;
+#[cfg(feature = "wifi-auto")]
+const WIFI_AUTO_DISCOVERY_SOCKET_BYTES: usize = 128;
+#[cfg(feature = "wifi-auto")]
+const WIFI_AUTO_UNICAST_DISCOVERY_TX_QUEUED_PACKETS: usize = 2;
+#[cfg(feature = "wifi-auto")]
+const WIFI_AUTO_UNICAST_DISCOVERY_TX_SOCKET_METADATA: usize =
+    WIFI_AUTO_UNICAST_DISCOVERY_TX_QUEUED_PACKETS + 1;
+#[cfg(feature = "wifi-auto")]
+const WIFI_AUTO_UNICAST_DISCOVERY_TX_SOCKET_BYTES: usize =
+    wifi_auto_contract::PEERING_TOKEN_BYTES * WIFI_AUTO_UNICAST_DISCOVERY_TX_QUEUED_PACKETS;
+#[cfg(feature = "wifi-auto")]
 const DHCP_CLIENT_SOCKET_COUNT: usize = 1;
 #[cfg(feature = "wifi-auto")]
 const WIFI_AUTO_DATAGRAM_SOCKET_COUNT: usize = 3;
@@ -65,6 +77,10 @@ const _: () = assert!(WIFI_STATIC_RX_BUFFERS >= WIFI_RX_BA_WINDOW);
 const _: () = assert!(WIFI_DYNAMIC_RX_BUFFERS > WIFI_RX_BA_WINDOW as u16);
 #[cfg(feature = "wifi-auto")]
 const _: () = assert!(WIFI_STATIC_TX_BUFFERS >= WIFI_TX_QUEUE_FRAMES as u8);
+#[cfg(feature = "wifi-auto")]
+const _: () = assert!(
+    WIFI_AUTO_UNICAST_DISCOVERY_TX_SOCKET_METADATA > WIFI_AUTO_UNICAST_DISCOVERY_TX_QUEUED_PACKETS
+);
 
 pub(super) fn build_tcp(
     stack: Stack<'static>,
@@ -182,8 +198,18 @@ pub(super) fn build_wifi(
             u64::from_le_bytes(bytes)
         };
         let (stack, runner) = embassy_net::new(interfaces.station, net_config, resources, seed);
-        let discovery = psram_udp_socket::<8, 128, 8, 128>(stack);
-        let unicast_discovery = psram_udp_socket::<8, 128, 1, 1>(stack);
+        let discovery = psram_udp_socket::<
+            WIFI_AUTO_DISCOVERY_SOCKET_METADATA,
+            WIFI_AUTO_DISCOVERY_SOCKET_BYTES,
+            WIFI_AUTO_DISCOVERY_SOCKET_METADATA,
+            WIFI_AUTO_DISCOVERY_SOCKET_BYTES,
+        >(stack);
+        let unicast_discovery = psram_udp_socket::<
+            WIFI_AUTO_DISCOVERY_SOCKET_METADATA,
+            WIFI_AUTO_DISCOVERY_SOCKET_BYTES,
+            WIFI_AUTO_UNICAST_DISCOVERY_TX_SOCKET_METADATA,
+            WIFI_AUTO_UNICAST_DISCOVERY_TX_SOCKET_BYTES,
+        >(stack);
         let data =
             psram_udp_socket::<8, WIFI_DATA_SOCKET_BUFFER_BYTES, 8, WIFI_DATA_SOCKET_BUFFER_BYTES>(
                 stack,
@@ -304,20 +330,21 @@ fn start_udp_service_discovery(
     status: AutoWifiStatus<MEMBERS>,
 ) {
     let socket = psram_udp_socket::<
-        UDP_SERVICE_DISCOVERY_SOCKET_METADATA,
-        UDP_SERVICE_DISCOVERY_SOCKET_BYTES,
-        UDP_SERVICE_DISCOVERY_SOCKET_METADATA,
-        UDP_SERVICE_DISCOVERY_SOCKET_BYTES,
+        UDP_SERVICE_DISCOVERY_RX_SOCKET_METADATA,
+        UDP_SERVICE_DISCOVERY_RX_SOCKET_BYTES,
+        UDP_SERVICE_DISCOVERY_TX_SOCKET_METADATA,
+        UDP_SERVICE_DISCOVERY_TX_SOCKET_BYTES,
     >(stack);
-    let publisher =
-        match UdpServiceDiscoveryPublisher::new(socket, stack, address, status, hardware_entropy) {
-            Ok(publisher) => publisher,
+    let storage = crate::storage::allocate_psram(UdpServiceDiscoveryStorage::<MEMBERS>::new());
+    let service_discovery =
+        match UdpServiceDiscovery::new(socket, stack, address, status, storage, hardware_entropy) {
+            Ok(service_discovery) => service_discovery,
             Err(error) => {
                 log::error!("wifi-auto: UDP DNS-SD construction failed: {error:?}");
                 return;
             }
         };
-    let task = match udp_service_discovery_task(publisher) {
+    let task = match udp_service_discovery_task(service_discovery) {
         Ok(task) => task,
         Err(_) => {
             log::error!("wifi-auto: UDP DNS-SD task capacity exhausted");
@@ -335,8 +362,8 @@ async fn tcp_rendezvous_task(server: TcpRendezvousServer<'static>) -> ! {
 
 #[cfg(feature = "wifi-auto")]
 #[embassy_executor::task]
-async fn udp_service_discovery_task(publisher: UdpServiceDiscoveryPublisher<'static>) -> ! {
-    publisher.run().await
+async fn udp_service_discovery_task(service_discovery: UdpServiceDiscovery<'static, MEMBERS>) -> ! {
+    service_discovery.run().await
 }
 
 #[cfg(feature = "wifi-auto")]

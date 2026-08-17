@@ -6,7 +6,7 @@ use ::core::cell::Cell;
 use ::core::net::Ipv6Addr;
 
 use embassy_futures::join::join;
-use embassy_futures::select::{select, select3, select5, Either, Either3, Either5};
+use embassy_futures::select::{select, select4, select5, Either, Either4, Either5};
 use embassy_net::udp::{RecvError, UdpMetadata, UdpSocket};
 use embassy_net::{IpAddress, Stack};
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex};
@@ -14,6 +14,7 @@ use embassy_sync::blocking_mutex::CriticalSectionMutex;
 use embassy_sync::signal::Signal;
 use embassy_sync::watch::Watch;
 use embassy_time::{with_timeout, Duration, Instant, Ticker};
+use heapless::Vec;
 use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 use prns_core::interfaces::wifi_auto as contract;
@@ -32,16 +33,19 @@ pub use rendezvous::{
 };
 use service_discovery::{
     DiscoveryParticipationReceiver, EmbeddedDiscoveryParticipation,
-    EMBEDDED_DISCOVERY_PUBLISHER_CAPACITY as DISCOVERY_PUBLISHERS,
+    EMBEDDED_SERVICE_DISCOVERY_CAPACITY as SERVICE_DISCOVERY_INSTANCES,
 };
 pub use service_discovery::{
-    UdpServiceDiscoveryConstructionError, UdpServiceDiscoveryPublisher,
-    EMBEDDED_DISCOVERY_PUBLISHER_CAPACITY, UDP_SERVICE_DISCOVERY_PACKET_BYTES,
-    UDP_SERVICE_DISCOVERY_SOCKET_BYTES, UDP_SERVICE_DISCOVERY_SOCKET_COUNT,
-    UDP_SERVICE_DISCOVERY_SOCKET_METADATA,
+    UdpServiceDiscovery, UdpServiceDiscoveryConstructionError, UdpServiceDiscoveryStorage,
+    EMBEDDED_SERVICE_DISCOVERY_CAPACITY, UDP_SERVICE_DISCOVERY_PACKET_BYTES,
+    UDP_SERVICE_DISCOVERY_RECEIVE_PACKET_BYTES, UDP_SERVICE_DISCOVERY_RX_QUEUED_PACKETS,
+    UDP_SERVICE_DISCOVERY_RX_SOCKET_BYTES, UDP_SERVICE_DISCOVERY_RX_SOCKET_METADATA,
+    UDP_SERVICE_DISCOVERY_SOCKET_COUNT, UDP_SERVICE_DISCOVERY_TX_QUEUED_PACKETS,
+    UDP_SERVICE_DISCOVERY_TX_SOCKET_BYTES, UDP_SERVICE_DISCOVERY_TX_SOCKET_METADATA,
 };
 
 const BEACON_INTERVAL: Duration = Duration::from_millis(1600);
+const UNICAST_REPEER_EVERY: u32 = 3;
 const SEND_TIMEOUT: Duration = Duration::from_millis(300);
 const BEACON_FAILURES_BEFORE_DEGRADED: u8 = 3;
 
@@ -86,6 +90,34 @@ pub struct WifiMemberStatus {
     session_rx_start: AtomicU64,
     session_tx_start: AtomicU64,
     active: AtomicBool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EmbeddedDiscoveryTargets<const TARGETS: usize> {
+    addresses: Vec<Ipv6Addr, TARGETS>,
+}
+
+impl<const TARGETS: usize> EmbeddedDiscoveryTargets<TARGETS> {
+    pub(crate) const fn new() -> Self {
+        Self {
+            addresses: Vec::new(),
+        }
+    }
+
+    pub(crate) fn insert(&mut self, address: Ipv6Addr) {
+        let Err(index) = self.addresses.binary_search(&address) else {
+            return;
+        };
+        let _ = self.addresses.insert(index, address);
+    }
+
+    fn iter(&self) -> impl Iterator<Item = Ipv6Addr> + '_ {
+        self.addresses.iter().copied()
+    }
+
+    fn len(&self) -> usize {
+        self.addresses.len()
+    }
 }
 
 impl WifiMemberStatus {
@@ -150,8 +182,9 @@ pub struct AutoWifiShared<const MEMBERS: usize> {
     discovery_participation: Watch<
         CriticalSectionRawMutex,
         EmbeddedDiscoveryParticipation,
-        { DISCOVERY_PUBLISHERS as usize },
+        { SERVICE_DISCOVERY_INSTANCES as usize },
     >,
+    discovery_targets: Signal<CriticalSectionRawMutex, EmbeddedDiscoveryTargets<MEMBERS>>,
     station_uplink_enabled: AtomicBool,
     station_uplink_enabled_changed: Signal<CriticalSectionRawMutex, bool>,
     lifecycle: AtomicU8,
@@ -167,6 +200,7 @@ impl<const MEMBERS: usize> AutoWifiShared<MEMBERS> {
             enabled: AtomicBool::new(true),
             enabled_changed: Signal::new(),
             discovery_participation: Watch::new_with(EmbeddedDiscoveryParticipation::Central),
+            discovery_targets: Signal::new(),
             station_uplink_enabled: AtomicBool::new(true),
             station_uplink_enabled_changed: Signal::new(),
             lifecycle: AtomicU8::new(ConnectionState::Initializing.as_u8()),
@@ -225,8 +259,16 @@ impl<const MEMBERS: usize> AutoWifiStatus<MEMBERS> {
         service_discovery::UdpServiceDiscoveryConstructionError,
     > {
         self.shared.discovery_participation.receiver().ok_or(
-            service_discovery::UdpServiceDiscoveryConstructionError::PublisherCapacityExhausted,
+            service_discovery::UdpServiceDiscoveryConstructionError::DiscoveryCapacityExhausted,
         )
+    }
+
+    fn publish_discovery_targets(&self, targets: EmbeddedDiscoveryTargets<MEMBERS>) {
+        self.shared.discovery_targets.signal(targets);
+    }
+
+    async fn wait_for_discovery_targets(&self) -> EmbeddedDiscoveryTargets<MEMBERS> {
+        self.shared.discovery_targets.wait().await
     }
 
     #[must_use]
@@ -516,6 +558,8 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
         let mut sec_discovery_buf = [0u8; 64];
         let mut sec_unicast_discovery_buf = [0u8; 64];
         let mut consecutive_beacon_failures = 0u8;
+        let mut beacon_cycle = 0u32;
+        let mut discovered_targets = EmbeddedDiscoveryTargets::new();
 
         loop {
             if !self.status.is_enabled() {
@@ -528,6 +572,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                 )
                 .await;
                 clear_tcp_member(&mut self.rendezvous, &mut tcp_peer, &self.status, &fleet).await;
+                discovered_targets = EmbeddedDiscoveryTargets::new();
                 self.status.wait_until_enabled().await;
             }
             match select(
@@ -540,7 +585,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                     beacon.next(),
                     fleet.next_outbound(),
                 ),
-                select3(
+                select4(
                     next_secondary_datagram(
                         &self.secondary,
                         &mut sec_discovery_buf,
@@ -548,6 +593,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                         &mut sec_data_buf[..],
                     ),
                     next_rendezvous_event(&mut self.rendezvous),
+                    self.status.wait_for_discovery_targets(),
                     self.status.wait_until_disabled(),
                 ),
             )
@@ -569,6 +615,8 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                                 Instant::now().as_millis(),
                                 false,
                                 tcp_slot,
+                                BeaconChannel::Multicast,
+                                &token,
                             )
                             .await;
                         }
@@ -577,7 +625,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                 Either::First(Either5::Second(received)) => {
                     if let Ok((len, meta)) = received {
                         if let IpAddress::Ipv6(src) = meta.endpoint.addr {
-                            ingest_beacon(
+                            let peering_token_reply = ingest_beacon(
                                 &mut self.brain,
                                 &mut peers,
                                 &mut ids,
@@ -590,6 +638,13 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                                 Instant::now().as_millis(),
                                 false,
                                 tcp_slot,
+                                BeaconChannel::Unicast,
+                                &token,
+                            )
+                            .await;
+                            send_peering_token_reply(
+                                &self.primary.unicast_discovery,
+                                peering_token_reply,
                             )
                             .await;
                         }
@@ -610,6 +665,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                     }
                 }
                 Either::First(Either5::Fourth(())) => {
+                    beacon_cycle = beacon_cycle.wrapping_add(1);
                     let sends = with_timeout(
                         SEND_TIMEOUT,
                         join(
@@ -650,6 +706,14 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                         Instant::now().as_millis(),
                     )
                     .await;
+                    if beacon_cycle.is_multiple_of(UNICAST_REPEER_EVERY) {
+                        send_discovery_probes(
+                            &self.primary.unicast_discovery,
+                            &discovered_targets,
+                            &self.brain,
+                        )
+                        .await;
+                    }
                 }
                 Either::First(Either5::Fifth(outbound)) => {
                     if !outbound.is_empty() {
@@ -682,7 +746,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                         }
                     }
                 }
-                Either::Second(Either3::First(SecondaryDatagram::Discovery(received))) => {
+                Either::Second(Either4::First(SecondaryDatagram::Discovery(received))) => {
                     if let Ok((len, meta)) = received {
                         if let IpAddress::Ipv6(src) = meta.endpoint.addr {
                             ingest_beacon(
@@ -698,15 +762,17 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                                 Instant::now().as_millis(),
                                 true,
                                 tcp_slot,
+                                BeaconChannel::Multicast,
+                                secondary_token.as_ref().unwrap_or(&token),
                             )
                             .await;
                         }
                     }
                 }
-                Either::Second(Either3::First(SecondaryDatagram::UnicastDiscovery(received))) => {
+                Either::Second(Either4::First(SecondaryDatagram::UnicastDiscovery(received))) => {
                     if let Ok((len, meta)) = received {
                         if let IpAddress::Ipv6(src) = meta.endpoint.addr {
-                            ingest_beacon(
+                            let peering_token_reply = ingest_beacon(
                                 &mut self.brain,
                                 &mut peers,
                                 &mut ids,
@@ -719,12 +785,21 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                                 Instant::now().as_millis(),
                                 true,
                                 tcp_slot,
+                                BeaconChannel::Unicast,
+                                secondary_token.as_ref().unwrap_or(&token),
                             )
                             .await;
+                            if let Some(secondary) = self.secondary.as_ref() {
+                                send_peering_token_reply(
+                                    &secondary.unicast_discovery,
+                                    peering_token_reply,
+                                )
+                                .await;
+                            }
                         }
                     }
                 }
-                Either::Second(Either3::First(SecondaryDatagram::Data(received))) => {
+                Either::Second(Either4::First(SecondaryDatagram::Data(received))) => {
                     if let Ok((len, meta)) = received {
                         if let IpAddress::Ipv6(src) = meta.endpoint.addr {
                             route_inbound(
@@ -738,7 +813,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                         }
                     }
                 }
-                Either::Second(Either3::Second(event_slot)) => {
+                Either::Second(Either4::Second(event_slot)) => {
                     let rejected_session = match event_slot.event() {
                         Some(event) => {
                             handle_rendezvous_event(
@@ -760,7 +835,16 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                         }
                     }
                 }
-                Either::Second(Either3::Third(())) => {}
+                Either::Second(Either4::Third(targets)) => {
+                    discovered_targets = targets;
+                    send_discovery_probes(
+                        &self.primary.unicast_discovery,
+                        &discovered_targets,
+                        &self.brain,
+                    )
+                    .await;
+                }
+                Either::Second(Either4::Fourth(())) => {}
             }
         }
     }
@@ -777,6 +861,21 @@ struct TcpPeer {
     session: u32,
     id: InterfaceId,
     slot: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BeaconChannel {
+    Multicast,
+    Unicast,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PeeringTokenReply {
+    NotRequired,
+    Send {
+        address: Ipv6Addr,
+        peering_token: [u8; contract::PEERING_TOKEN_BYTES],
+    },
 }
 
 async fn next_rendezvous_event<'a>(
@@ -916,34 +1015,109 @@ async fn ingest_beacon<
     now_ms: u64,
     on_secondary: bool,
     reserved_slot: Option<usize>,
-) {
-    let verdict = brain.ingest_discovery_datagram(src, bytes, now_ms);
-    let contract::BeaconVerdict::Peer(addr) = verdict else {
-        return;
-    };
-    if let Some(slot) = peers.iter().position(|peer| *peer == Some(addr)) {
-        peer_on_secondary[slot] = on_secondary;
-        return;
-    }
-    let Some(slot) = peers
+    beacon_channel: BeaconChannel,
+    local_token: &[u8; contract::PEERING_TOKEN_BYTES],
+) -> PeeringTokenReply {
+    let existing_slot = peers.iter().position(|peer| *peer == Some(src));
+    let available_slot = peers
         .iter()
         .enumerate()
-        .position(|(slot, peer)| peer.is_none() && Some(slot) != reserved_slot)
+        .position(|(slot, peer)| peer.is_none() && Some(slot) != reserved_slot);
+    if existing_slot.is_none() && available_slot.is_none() {
+        return PeeringTokenReply::NotRequired;
+    }
+    let contract::BeaconObservation::AuthenticatedPeer {
+        address,
+        peer_observation,
+    } = brain.observe_discovery_datagram(src, bytes, now_ms)
+    else {
+        return PeeringTokenReply::NotRequired;
+    };
+    if peer_observation == contract::PeerObservation::TableFull {
+        return PeeringTokenReply::NotRequired;
+    }
+    if let Some(slot) = existing_slot {
+        peer_on_secondary[slot] = on_secondary;
+    } else if peer_observation == contract::PeerObservation::NewlyDiscovered {
+        let Some(slot) = available_slot else {
+            return PeeringTokenReply::NotRequired;
+        };
+        let id = InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, &address.octets());
+        fleet
+            .register_member(contract::descriptor(
+                id,
+                contract::policy_for_bitrate(bitrate),
+            ))
+            .await;
+        peers[slot] = Some(address);
+        ids[slot] = id;
+        peer_on_secondary[slot] = on_secondary;
+        status.member(slot).assign(id);
+        status.republish_peer_count();
+    }
+    peering_token_reply(beacon_channel, peer_observation, address, *local_token)
+}
+
+fn peering_token_reply(
+    beacon_channel: BeaconChannel,
+    peer_observation: contract::PeerObservation,
+    address: Ipv6Addr,
+    local_peering_token: [u8; contract::PEERING_TOKEN_BYTES],
+) -> PeeringTokenReply {
+    match (beacon_channel, peer_observation) {
+        (BeaconChannel::Unicast, contract::PeerObservation::NewlyDiscovered) => {
+            PeeringTokenReply::Send {
+                address,
+                peering_token: local_peering_token,
+            }
+        }
+        (
+            BeaconChannel::Multicast | BeaconChannel::Unicast,
+            contract::PeerObservation::Refreshed | contract::PeerObservation::TableFull,
+        )
+        | (BeaconChannel::Multicast, contract::PeerObservation::NewlyDiscovered) => {
+            PeeringTokenReply::NotRequired
+        }
+    }
+}
+
+async fn send_peering_token_reply(
+    unicast_discovery_socket: &UdpSocket<'_>,
+    peering_token_reply: PeeringTokenReply,
+) {
+    let PeeringTokenReply::Send {
+        address,
+        peering_token,
+    } = peering_token_reply
     else {
         return;
     };
-    let id = InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, &addr.octets());
-    fleet
-        .register_member(contract::descriptor(
-            id,
-            contract::policy_for_bitrate(bitrate),
-        ))
+    let _ = unicast_discovery_socket
+        .send_to(
+            &peering_token,
+            (IpAddress::Ipv6(address), contract::UNICAST_DISCOVERY_PORT),
+        )
         .await;
-    peers[slot] = Some(addr);
-    ids[slot] = id;
-    peer_on_secondary[slot] = on_secondary;
-    status.member(slot).assign(id);
-    status.republish_peer_count();
+}
+
+async fn send_discovery_probes<const TARGETS: usize, const PEERS: usize>(
+    unicast_discovery_socket: &UdpSocket<'_>,
+    discovery_targets: &EmbeddedDiscoveryTargets<TARGETS>,
+    brain: &contract::FixedAutoInterfaceProtocol<PEERS>,
+) {
+    let token = brain.our_peering_token();
+    for address in discovery_targets.iter().filter(|address| {
+        !brain
+            .known_peer_addresses()
+            .any(|known_peer| known_peer == *address)
+    }) {
+        let _ = unicast_discovery_socket
+            .send_to(
+                token.as_bytes(),
+                (IpAddress::Ipv6(address), contract::UNICAST_DISCOVERY_PORT),
+            )
+            .await;
+    }
 }
 
 fn route_inbound<
@@ -1105,14 +1279,14 @@ mod tests {
     }
 
     #[test]
-    fn discovery_subscribers_are_bounded_by_publisher_capacity(
+    fn service_discovery_instances_are_bounded_by_capacity(
     ) -> Result<(), UdpServiceDiscoveryConstructionError> {
         static BOUNDED_SHARED: AutoWifiShared<1> = AutoWifiShared::new(InterfaceId::new([0x60; 8]));
         let status = AutoWifiStatus::new(&BOUNDED_SHARED);
         let first = status.discovery_participation_receiver()?;
         assert_eq!(
             status.discovery_participation_receiver().err(),
-            Some(UdpServiceDiscoveryConstructionError::PublisherCapacityExhausted)
+            Some(UdpServiceDiscoveryConstructionError::DiscoveryCapacityExhausted)
         );
 
         drop(first);
@@ -1173,6 +1347,43 @@ mod tests {
         assert_eq!(
             (status.member(0).rx_bytes(), status.member(0).tx_bytes()),
             (30, 15)
+        );
+    }
+
+    #[test]
+    fn reciprocal_peering_is_one_shot_and_uses_the_local_token() {
+        let peer = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 2);
+        let local_token = [0x5a; 32];
+
+        assert_eq!(
+            peering_token_reply(
+                BeaconChannel::Unicast,
+                contract::PeerObservation::NewlyDiscovered,
+                peer,
+                local_token,
+            ),
+            PeeringTokenReply::Send {
+                address: peer,
+                peering_token: local_token,
+            }
+        );
+        assert_eq!(
+            peering_token_reply(
+                BeaconChannel::Unicast,
+                contract::PeerObservation::Refreshed,
+                peer,
+                local_token,
+            ),
+            PeeringTokenReply::NotRequired
+        );
+        assert_eq!(
+            peering_token_reply(
+                BeaconChannel::Multicast,
+                contract::PeerObservation::NewlyDiscovered,
+                peer,
+                local_token,
+            ),
+            PeeringTokenReply::NotRequired
         );
     }
 }

@@ -799,6 +799,7 @@ impl InterfaceSupervisor for AutoWifi {
                             source_address,
                             &discovery_buffer[..received_bytes],
                             elapsed_millis,
+                            BeaconChannel::Multicast,
                         );
                     }
                 }
@@ -808,11 +809,16 @@ impl InterfaceSupervisor for AutoWifi {
                 ) => {
                     if let Some((received_bytes, source_address)) = received_unicast_datagram {
                         let elapsed_millis = runtime_started_at.elapsed().as_millis() as u64;
-                        supervisor.ingest_beacon(
+                        let peering_token_reply = supervisor.ingest_beacon(
                             source_address,
                             &unicast_discovery_buffer[..received_bytes],
                             elapsed_millis,
+                            BeaconChannel::Unicast,
                         );
+                        send_peering_token_reply(
+                            sockets.as_ref().map(|sockets| &sockets.unicast_discovery),
+                            peering_token_reply,
+                        ).await;
                     }
                 }
                 received_data_datagram = recv_maybe(
@@ -892,6 +898,12 @@ enum PeerMemberAdmission {
 enum PeerMembership {
     Existing,
     New,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BeaconChannel {
+    Multicast,
+    Unicast,
 }
 
 fn peer_member_admission(
@@ -1070,7 +1082,13 @@ impl NewlyActiveUdpTargets {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct UdpPeeringProbe {
     target: SocketAddrV6,
-    peering_token: [u8; 32],
+    peering_token: [u8; contract::PEERING_TOKEN_BYTES],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PeeringTokenReply {
+    NotRequired,
+    Send(UdpPeeringProbe),
 }
 
 enum UdpPeeringProbePreparation {
@@ -1456,25 +1474,60 @@ impl Supervisor {
         self.deactivate_network();
     }
 
-    fn ingest_beacon(&mut self, src: SocketAddr, bytes: &[u8], now_ms: u64) {
-        let SocketAddr::V6(v6) = src else { return };
+    fn ingest_beacon(
+        &mut self,
+        src: SocketAddr,
+        bytes: &[u8],
+        now_ms: u64,
+        beacon_channel: BeaconChannel,
+    ) -> PeeringTokenReply {
+        let SocketAddr::V6(v6) = src else {
+            return PeeringTokenReply::NotRequired;
+        };
         let scope = v6.scope_id();
         let peer = ScopedPeer::from_socket_address(v6);
         let member_admission = self.peer_member_admission(peer);
         if member_admission == PeerMemberAdmission::AtCapacity {
-            return;
+            return PeeringTokenReply::NotRequired;
         }
         let Some(brain) = self.brains.get_mut(&scope) else {
-            return;
+            return PeeringTokenReply::NotRequired;
         };
-        if let contract::BeaconVerdict::Peer(addr) =
-            brain.ingest_discovery_datagram(*v6.ip(), bytes, now_ms)
-        {
-            if member_admission == PeerMemberAdmission::Available {
-                self.spawn_member(ScopedPeer {
-                    ip_address: addr,
-                    scope_id: scope,
-                });
+        let peering_token = *brain.our_peering_token().as_bytes();
+        let contract::BeaconObservation::AuthenticatedPeer {
+            address,
+            peer_observation,
+        } = brain.observe_discovery_datagram(*v6.ip(), bytes, now_ms)
+        else {
+            return PeeringTokenReply::NotRequired;
+        };
+        if peer_observation == contract::PeerObservation::TableFull {
+            return PeeringTokenReply::NotRequired;
+        }
+        if member_admission == PeerMemberAdmission::Available {
+            self.spawn_member(ScopedPeer {
+                ip_address: address,
+                scope_id: scope,
+            });
+        }
+        match (beacon_channel, peer_observation) {
+            (BeaconChannel::Unicast, contract::PeerObservation::NewlyDiscovered) => {
+                PeeringTokenReply::Send(UdpPeeringProbe {
+                    target: SocketAddrV6::new(
+                        address,
+                        self.settings.reverse_discovery_port(),
+                        0,
+                        scope,
+                    ),
+                    peering_token,
+                })
+            }
+            (
+                BeaconChannel::Multicast | BeaconChannel::Unicast,
+                contract::PeerObservation::Refreshed | contract::PeerObservation::TableFull,
+            )
+            | (BeaconChannel::Multicast, contract::PeerObservation::NewlyDiscovered) => {
+                PeeringTokenReply::NotRequired
             }
         }
     }
@@ -2026,6 +2079,20 @@ async fn send_udp_peering_probes(
             .send_to(&probe.peering_token, SocketAddr::V6(probe.target))
             .await;
     }
+}
+
+async fn send_peering_token_reply(
+    unicast_discovery_socket: Option<&UdpSocket>,
+    peering_token_reply: PeeringTokenReply,
+) {
+    let (Some(unicast_discovery_socket), PeeringTokenReply::Send(reply)) =
+        (unicast_discovery_socket, peering_token_reply)
+    else {
+        return;
+    };
+    let _ = unicast_discovery_socket
+        .send_to(&reply.peering_token, SocketAddr::V6(reply.target))
+        .await;
 }
 
 async fn next_discovery_snapshot(
@@ -2835,15 +2902,33 @@ mod tests {
         );
 
         let peer_token = contract::peering_token(&peer_link_local);
-        supervisor.ingest_beacon(
-            SocketAddr::V6(SocketAddrV6::new(
-                peer_link_local,
-                contract::UNICAST_DISCOVERY_PORT,
-                0,
-                scope_id,
-            )),
-            peer_token.as_bytes(),
-            1,
+        assert!(matches!(
+            supervisor.ingest_beacon(
+                SocketAddr::V6(SocketAddrV6::new(
+                    peer_link_local,
+                    contract::UNICAST_DISCOVERY_PORT,
+                    0,
+                    scope_id,
+                )),
+                peer_token.as_bytes(),
+                1,
+                BeaconChannel::Unicast,
+            ),
+            PeeringTokenReply::Send(_)
+        ));
+        assert_eq!(
+            supervisor.ingest_beacon(
+                SocketAddr::V6(SocketAddrV6::new(
+                    peer_link_local,
+                    contract::UNICAST_DISCOVERY_PORT,
+                    0,
+                    scope_id,
+                )),
+                peer_token.as_bytes(),
+                2,
+                BeaconChannel::Unicast,
+            ),
+            PeeringTokenReply::NotRequired
         );
         assert_eq!(supervisor.members.len(), 1);
         assert!(supervisor
