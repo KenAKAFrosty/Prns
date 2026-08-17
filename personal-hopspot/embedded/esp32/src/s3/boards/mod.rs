@@ -1,6 +1,7 @@
 // The SX1262 boards only exist in a lora build: a board module must never have to invent a
 // radio its hardware does not carry.
 #[cfg(feature = "lora")]
+pub mod heltec_v3;
 pub mod heltec_v4;
 #[cfg(feature = "lora")]
 pub mod heltec_v4_r8;

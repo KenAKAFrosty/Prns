@@ -5,16 +5,24 @@ extern crate alloc;
 
 #[cfg(all(
     target_arch = "xtensa",
-    not(all(
-        feature = "bluetooth-auto",
-        feature = "esp-now",
-        feature = "tcp",
-        feature = "usb",
-        feature = "wifi-auto"
+    not(any(
+        all(
+            feature = "bluetooth-auto",
+            feature = "esp-now",
+            feature = "tcp",
+            feature = "usb",
+            feature = "wifi-auto"
+        ),
+        all(
+            feature = "compact-s3-storage",
+            feature = "tcp",
+            feature = "usb",
+            feature = "wifi-auto"
+        )
     ))
 ))]
 compile_error!(
-    "ESP32-S3 firmware is built through a board package, which selects bluetooth-auto, esp-now, tcp, usb, and wifi-auto (plus lora on boards with an SX1262)"
+    "ESP32-S3 firmware requires the standard bluetooth-auto/esp-now/tcp/usb/wifi-auto profile or the compact tcp/usb/wifi-auto profile"
 );
 
 #[cfg(all(
@@ -55,11 +63,21 @@ mod identity;
 mod persistence;
 #[cfg(all(
     target_arch = "xtensa",
-    feature = "bluetooth-auto",
-    feature = "esp-now",
-    feature = "tcp",
-    feature = "usb",
-    feature = "wifi-auto"
+    any(
+        all(
+            feature = "bluetooth-auto",
+            feature = "esp-now",
+            feature = "tcp",
+            feature = "usb",
+            feature = "wifi-auto"
+        ),
+        all(
+            feature = "compact-s3-storage",
+            feature = "tcp",
+            feature = "usb",
+            feature = "wifi-auto"
+        )
+    )
 ))]
 pub mod s3;
 #[cfg(any(test, target_arch = "xtensa"))]

@@ -50,6 +50,7 @@ statically, which requires CMake and the Visual Studio Build Tools C++ workload
 
 ESP32 firmware, from `embedded/esp32/` with the board on USB:
 
+    cargo heltec-v3-flash
     cargo heltec-v4-flash
     cargo heltec-v4-r8-flash
     cargo tbeam-supreme-flash

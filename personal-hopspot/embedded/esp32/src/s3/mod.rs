@@ -24,6 +24,8 @@ use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
 use esp_hal::Async;
 
 use embassy_executor::Spawner;
+#[cfg(all(feature = "wifi-auto", not(feature = "bluetooth-auto")))]
+use embassy_futures::join::join;
 use embassy_futures::select::{select3, Either3};
 #[cfg(feature = "wifi-auto")]
 use embassy_net::tcp::TcpSocket;
@@ -65,18 +67,18 @@ use esp_radio::wifi::{
     PowerSaveMode, WifiController, WifiError,
 };
 
-#[cfg(feature = "wifi-auto")]
+#[cfg(all(feature = "wifi-auto", feature = "esp-now"))]
 use esp_radio::esp_now::{
     EspNow, EspNowManager, EspNowReceiver, EspNowSender, WifiPhyRate, BROADCAST_ADDRESS,
 };
 #[cfg(feature = "bluetooth-auto")]
 use personal_rns::bluetooth_auto::{BluetoothAutoShared, BluetoothAutoStatus};
 use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand};
-#[cfg(feature = "wifi-auto")]
+#[cfg(all(feature = "wifi-auto", feature = "esp-now"))]
 use personal_rns::esp_now::EspNowInterface;
 #[cfg(feature = "bluetooth-auto")]
 use personal_rns::interfaces::bluetooth_auto::{BleIdentity, BLE_HW_MTU};
-#[cfg(feature = "wifi-auto")]
+#[cfg(all(feature = "wifi-auto", feature = "esp-now"))]
 use personal_rns::interfaces::esp_now::{
     self as espnow_core, Channel as EspNowChannel, ChannelPolicy, ESP_NOW_V2_AIR_MTU,
 };
@@ -116,7 +118,10 @@ use personal_rns::wifi_auto::{
     TCP_RENDEZVOUS_FRAMED_LEN, TCP_RENDEZVOUS_FRAME_CAP, TCP_RENDEZVOUS_READ_BUFFER_BYTES,
     TCP_RENDEZVOUS_SOCKET_BUFFER_BYTES,
 };
-#[cfg(feature = "bluetooth-auto")]
+#[cfg(all(
+    feature = "bluetooth-auto",
+    not(all(feature = "compact-s3-storage", target_arch = "xtensa"))
+))]
 use prns_interfaces_embassy::bluetooth_auto::PEER_CAPACITY as EMBEDDED_BLE_PEER_CAPACITY;
 
 #[cfg(feature = "wifi-auto")]
@@ -186,14 +191,29 @@ const HOPSPOT_TCP_TARGET: &str = match option_env!("HOPSPOT_TCP_TARGET") {
 /// The board's claim about its pipe to the LAN node: it sets the declared MTU tier, which the
 /// manifold then clamps to the embedded ceiling. A 2.4 GHz station's honest order of magnitude.
 const TCP_BITRATE_BPS: BitrateBps = wifi_auto_contract::WIFI_EMBEDDED_BITRATE_CEILING_BPS;
+#[cfg(feature = "compact-s3-storage")]
+const TCP_SOCKET_BUFFER_BYTES: usize = 1 * 1_024;
+#[cfg(not(feature = "compact-s3-storage"))]
 const TCP_SOCKET_BUFFER_BYTES: usize = 4 * 1_024;
 
 const LANE_COUNT: usize = 3
     + cfg!(feature = "lora") as usize
     + cfg!(feature = "bluetooth-auto") as usize
     + cfg!(feature = "esp-now") as usize;
+#[cfg(feature = "compact-s3-storage")]
+const MEMBERS: usize = 7;
+#[cfg(not(feature = "compact-s3-storage"))]
 const MEMBERS: usize = 24;
-#[cfg(feature = "bluetooth-auto")]
+#[cfg(all(
+    feature = "bluetooth-auto",
+    feature = "compact-s3-storage",
+    target_arch = "xtensa"
+))]
+pub const BLE_PEER_CAPACITY: usize = 4;
+#[cfg(all(
+    feature = "bluetooth-auto",
+    not(all(feature = "compact-s3-storage", target_arch = "xtensa"))
+))]
 pub const BLE_PEER_CAPACITY: usize = EMBEDDED_BLE_PEER_CAPACITY;
 #[cfg(feature = "bluetooth-auto")]
 pub const BLE_CONTROLLER_ACTIVITY_CAPACITY: u8 = (BLE_PEER_CAPACITY + 1) as u8;
@@ -207,7 +227,8 @@ const LANE_DEPTH: usize = 1;
 /// A resource request is one inbound frame that synchronously emits its parts and, at most, one
 /// hashmap update. Derive every S3 lane's PSRAM backlog from the engine storage recipe: the compact
 /// build can hold only eighteen parts, rather than the protocol-wide seventy-five-part window.
-const OUTBOUND_BURST_DEPTH: usize = EngineStorageType::MAX_OUTGOING_RESOURCE_REACTION_FRAMES;
+const DEFAULT_OUTBOUND_BURST_DEPTH: usize =
+    EngineStorageType::MAX_OUTGOING_RESOURCE_REACTION_FRAMES;
 pub const NOTIFY_CAP: usize = minimum_manifold_notification_capacity(LANE_COUNT, LANE_DEPTH);
 const _: () = assert!(EngineStorageType::LINK_SESSIONS > MEMBERS + BLE_PEER_CAPACITY);
 #[cfg(feature = "bluetooth-auto")]
@@ -293,7 +314,9 @@ use configuration::{hopspot_wifi_config, HopspotWifiConfig};
 use configuration::{HopspotTcpClientConfig, HopspotTcpClientHost};
 use connectivity::build_tcp;
 #[cfg(feature = "wifi-auto")]
-use connectivity::{build_wifi, espnow_channel_policy, EspNowAdapter, ESPNOW_PHY};
+use connectivity::build_wifi;
+#[cfg(all(feature = "wifi-auto", feature = "esp-now"))]
+use connectivity::{espnow_channel_policy, EspNowAdapter, ESPNOW_PHY};
 #[cfg(all(not(feature = "wifi-auto"), feature = "lora"))]
 use display::add_lora_spectrum;
 #[cfg(not(feature = "wifi-auto"))]
@@ -455,6 +478,7 @@ pub(crate) fn boot_stage(phase: BootPhase) {
 
 const DCACHE_FREE_BASE: usize = 0x3FCF_0000;
 const DCACHE_FREE_LEN: usize = 32 * 1024;
+const NO_PSRAM_HEAP_BYTES: usize = 72 * 1024;
 
 pub(crate) fn reclaim_dcache_region() {
     // SAFETY: On this PSRAM-enabled ESP32-S3 layout, 0x3FCF0000..0x3FCF8000 is the documented
@@ -495,14 +519,19 @@ async fn usb_device_task(
     device.run(seam).await
 }
 
-/// The identical ESP32-S3 early boot every board's `bringup` runs first: allocators (PSRAM +
-/// internal + the reclaimed D-cache region), the RTOS timer, and the RTC with its watchdogs disabled
-/// for the slow PSRAM-backed engine construction. A block expression (so its bindings escape
-/// macro hygiene) owning `$p`'s early peripherals, yielding `(software_interrupt1, timebase, rtc)`.
+/// The ESP32-S3 early boot every board's `bringup` runs first: allocators, the RTOS timer, and the
+/// RTC with its watchdogs disabled. A block expression (so its bindings escape macro hygiene)
+/// owning `$p`'s early peripherals, yielding `(software_interrupt1, timebase, rtc)`.
 ///
 /// Heap region order is load-bearing for Wi-Fi boards: PSRAM must register first so capability-free boot allocations land externally and leave the small internal regions for the radio.
 /// Heltec V4-R8 (Octal) passes a custom `PsramConfig` and uses `split_psram_heap`, which gives engine construction a private freelist without starving the rest of the system.
 macro_rules! boot_common {
+    ($p:ident, $banner:expr, no_psram) => {{
+        ::esp_println::logger::init_logger_from_env();
+        $crate::storage::set_psram_available(false);
+        ::esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: $crate::s3::NO_PSRAM_HEAP_BYTES);
+        $crate::s3::boot_rtos_tail!($p, $banner)
+    }};
     ($p:ident, $banner:expr) => {
         $crate::s3::boot_common!(
             $p,
@@ -516,6 +545,7 @@ macro_rules! boot_common {
     };
     ($p:ident, $banner:expr, $psram_config:expr, global_psram_heap) => {{
         ::esp_println::logger::init_logger_from_env();
+        $crate::storage::set_psram_available(true);
         $crate::s3::boot_add_psram_global!($p, $psram_config);
         ::esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: $crate::s3::RECLAIMED_HEAP_BYTES);
         $crate::s3::reclaim_dcache_region();
@@ -524,6 +554,7 @@ macro_rules! boot_common {
     }};
     ($p:ident, $banner:expr, $psram_config:expr, split_psram_heap) => {{
         ::esp_println::logger::init_logger_from_env();
+        $crate::storage::set_psram_available(true);
         $crate::s3::boot_add_psram_split!($p, $psram_config);
         ::esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: $crate::s3::RECLAIMED_HEAP_BYTES);
         $crate::s3::reclaim_dcache_region();

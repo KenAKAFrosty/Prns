@@ -1,3 +1,5 @@
+#   cargo heltec-v3        build the Heltec V3 (S3FN8) firmware
+#   cargo heltec-v3-flash  build + flash + monitor (board on USB)
 #   cargo heltec-v4        build the Heltec V4 (S3R2) firmware
 #   cargo heltec-v4-flash  build + flash + monitor (board on USB)
 #   cargo heltec-v4-r8     / -flash   the Heltec V4-R8 (S3R8 / Octal PSRAM)
@@ -26,6 +28,8 @@ TROUBLE_HOST_GATT_CLIENT_NOTIFICATION_QUEUE_SIZE = "2"
 ESP_HAL_CONFIG_STACK_GUARD_OFFSET = "4096"
 
 [alias]
+heltec-v3 = "build --release -p hopspot-heltec-v3 --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc"
+heltec-v3-flash = "run --release -p hopspot-heltec-v3 --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc"
 heltec-v4 = "build --release -p hopspot-heltec-v4 --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc"
 heltec-v4-flash = "run --release -p hopspot-heltec-v4 --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc"
 heltec-v4-r8 = "build --release -p hopspot-heltec-v4-r8 --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc"

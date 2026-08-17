@@ -8,10 +8,12 @@ use allocator_api2::vec::Vec;
 use core::alloc::Layout;
 #[cfg(target_arch = "xtensa")]
 use core::ptr::NonNull;
+#[cfg(target_arch = "xtensa")]
+use portable_atomic::{AtomicBool, Ordering};
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use personal_rns::runtime::request_endpoints::RequestEndpointSet;
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "compact-s3-storage")))]
 use personal_rns::storage::Esp32S3;
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
@@ -22,12 +24,10 @@ const NODE_REQUEST_HANDLER_CAPACITY: usize =
 /// The engine's storage recipe: the small coordination shell stays inline in SRAM, while
 /// high-count or bulky columns (including links, routes, announces, history, app-data, and
 /// resource buffers) are placed in PSRAM through `PsramAlloc`.
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "compact-s3-storage")))]
 pub type EngineStorageType = Esp32S3<PsramAlloc, NODE_REQUEST_HANDLER_CAPACITY>;
 
-#[cfg(target_arch = "riscv32")]
-pub use riscv::C6Storage;
-#[cfg(target_arch = "riscv32")]
+#[cfg(any(target_arch = "riscv32", feature = "compact-s3-storage"))]
 pub type EngineStorageType = riscv::C6Storage;
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
@@ -78,6 +78,13 @@ unsafe impl Send for PsramBump {}
 
 #[cfg(target_arch = "xtensa")]
 static PRIVATE_PSRAM: Mutex<RefCell<Option<PsramBump>>> = Mutex::new(RefCell::new(None));
+#[cfg(target_arch = "xtensa")]
+static PSRAM_AVAILABLE: AtomicBool = AtomicBool::new(false);
+
+#[cfg(target_arch = "xtensa")]
+pub fn set_psram_available(available: bool) {
+    PSRAM_AVAILABLE.store(available, Ordering::Release);
+}
 
 /// Install a PSRAM bump allocator used only by [`PsramAlloc`]. Do not also register the same
 /// range with `esp_alloc::HEAP`. Deallocate is a no-op (boot/engine construction is allocate-heavy);
@@ -146,7 +153,13 @@ unsafe impl Allocator for PsramAlloc {
                 Ok(NonNull::slice_from_raw_parts(ptr, layout.size()))
             })
         });
-        private_allocation.unwrap_or_else(|| esp_alloc::ExternalMemory.allocate(layout))
+        private_allocation.unwrap_or_else(|| {
+            if PSRAM_AVAILABLE.load(Ordering::Acquire) {
+                esp_alloc::ExternalMemory.allocate(layout)
+            } else {
+                esp_alloc::InternalMemory.allocate(layout)
+            }
+        })
     }
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
         let private = critical_section::with(|cs| PRIVATE_PSRAM.borrow_ref(cs).is_some());
@@ -160,7 +173,7 @@ unsafe impl Allocator for PsramAlloc {
     }
 }
 
-#[cfg(target_arch = "riscv32")]
+#[cfg(any(target_arch = "riscv32", feature = "compact-s3-storage"))]
 mod riscv {
     use personal_rns::crypto::ratchets::FixedSelfRatchetTable;
     use personal_rns::identity::destination_identity::{
@@ -208,6 +221,7 @@ mod riscv {
     /// The XIAO ESP32-C6 Hopspot's storage profile, sized to its internal SRAM and application role.
     ///
     /// This board is a headless USB/ESP-NOW/BLE mesh bridge. The intent is to keep one local app identity, bias the budget toward heard destinations, and leave links, resources, and channel windows modest.
+    #[derive(Default)]
     pub struct C6Storage;
 
     impl C6Storage {
