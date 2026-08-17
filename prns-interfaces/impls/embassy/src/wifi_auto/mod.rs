@@ -1,4 +1,5 @@
 mod fanout;
+mod peer;
 mod rendezvous;
 mod service_discovery;
 
@@ -24,6 +25,10 @@ use prns_core::interfaces::{
 use prns_runtime::runtime::{EmbassyFleet as Fleet, OutboundFrame};
 
 use fanout::{dispatch_fanout, send_beacon, target_includes, FanoutPlan, UdpFanoutSender};
+use peer::{
+    SegmentRole, WifiPeer, WifiPeerClear, WifiPeerInsertion, WifiPeerLookup, WifiPeerReplacement,
+    WifiPeerRetirement, WifiPeerSlotLookup, WifiPeerTable,
+};
 use rendezvous::TcpRendezvousEvent;
 pub use rendezvous::{
     tcp_rendezvous, TcpRendezvousBuffers, TcpRendezvousClient, TcpRendezvousExitCause,
@@ -553,10 +558,7 @@ struct AutoWifiReceiveBuffers<'a> {
 
 struct AutoWifiRunState<const MEMBERS: usize> {
     topology: TopologyState,
-    peers: [Option<Ipv6Addr>; MEMBERS],
-    ids: [InterfaceId; MEMBERS],
-    peer_on_secondary: [bool; MEMBERS],
-    tcp_slot: Option<usize>,
+    peers: WifiPeerTable<MEMBERS>,
     tcp_peer: Option<TcpPeer>,
     primary_token: [u8; contract::PEERING_TOKEN_BYTES],
     secondary_token: Option<[u8; contract::PEERING_TOKEN_BYTES]>,
@@ -573,15 +575,13 @@ impl<const MEMBERS: usize> AutoWifiRunState<MEMBERS> {
             let link_local = contract::link_local_from_mac(MacAddress::new(segment.mac));
             *contract::peering_token(&link_local).as_bytes()
         });
+        let peers = match auto_wifi.rendezvous.as_ref() {
+            Some(_) => WifiPeerTable::reserving_last_slot(),
+            None => WifiPeerTable::new(),
+        };
         Self {
             topology,
-            peers: [None; MEMBERS],
-            ids: [InterfaceId::new([0u8; 8]); MEMBERS],
-            peer_on_secondary: [false; MEMBERS],
-            tcp_slot: auto_wifi
-                .rendezvous
-                .as_ref()
-                .and_then(|_| MEMBERS.checked_sub(1)),
+            peers,
             tcp_peer: None,
             primary_token,
             secondary_token,
@@ -642,14 +642,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
         state: &mut AutoWifiRunState<MEMBERS>,
         fleet: &Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
     ) {
-        clear_members(
-            &mut state.peers,
-            &state.ids,
-            &mut state.peer_on_secondary,
-            &self.status,
-            fleet,
-        )
-        .await;
+        clear_wifi_peers(&mut state.peers, &self.status, fleet).await;
         clear_tcp_member(
             &mut self.rendezvous,
             &mut state.tcp_peer,
@@ -678,16 +671,13 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                 ingest_beacon(
                     &mut self.brain,
                     &mut state.peers,
-                    &mut state.ids,
-                    &mut state.peer_on_secondary,
                     &self.status,
                     fleet,
                     self.bitrate,
                     src,
                     &bytes[..len],
                     Instant::now().as_millis(),
-                    false,
-                    state.tcp_slot,
+                    SegmentRole::Primary,
                     BeaconChannel::Multicast,
                     &state.primary_token,
                 )
@@ -713,16 +703,13 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                 let peering_token_reply = ingest_beacon(
                     &mut self.brain,
                     &mut state.peers,
-                    &mut state.ids,
-                    &mut state.peer_on_secondary,
                     &self.status,
                     fleet,
                     self.bitrate,
                     src,
                     &bytes[..len],
                     Instant::now().as_millis(),
-                    false,
-                    state.tcp_slot,
+                    SegmentRole::Primary,
                     BeaconChannel::Unicast,
                     &state.primary_token,
                 )
@@ -751,16 +738,13 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                 ingest_beacon(
                     &mut self.brain,
                     &mut state.peers,
-                    &mut state.ids,
-                    &mut state.peer_on_secondary,
                     &self.status,
                     fleet,
                     self.bitrate,
                     src,
                     &bytes[..len],
                     Instant::now().as_millis(),
-                    true,
-                    state.tcp_slot,
+                    SegmentRole::Secondary,
                     BeaconChannel::Multicast,
                     &secondary_token,
                 )
@@ -787,16 +771,13 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                 let peering_token_reply = ingest_beacon(
                     &mut self.brain,
                     &mut state.peers,
-                    &mut state.ids,
-                    &mut state.peer_on_secondary,
                     &self.status,
                     fleet,
                     self.bitrate,
                     src,
                     &bytes[..len],
                     Instant::now().as_millis(),
-                    true,
-                    state.tcp_slot,
+                    SegmentRole::Secondary,
                     BeaconChannel::Unicast,
                     &secondary_token,
                 )
@@ -823,14 +804,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
     ) {
         if let Ok((len, meta)) = received {
             if let IpAddress::Ipv6(src) = meta.endpoint.addr {
-                route_inbound(
-                    fleet,
-                    &state.peers,
-                    &state.ids,
-                    &self.status,
-                    src,
-                    &bytes[..len],
-                );
+                route_inbound(fleet, &state.peers, &self.status, src, &bytes[..len]);
             }
         }
     }
@@ -875,8 +849,6 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
         retire_stale(
             &mut self.brain,
             &mut state.peers,
-            &state.ids,
-            &mut state.peer_on_secondary,
             &self.status,
             fleet,
             Instant::now().as_millis(),
@@ -901,12 +873,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
         if outbound.is_empty() {
             return;
         }
-        let mut plan = FanoutPlan::new(
-            outbound.target(),
-            &state.peers,
-            &state.ids,
-            state.fanout_start,
-        );
+        let mut plan = FanoutPlan::new(outbound.target(), &state.peers, state.fanout_start);
         if MEMBERS > 0 {
             state.fanout_start = (state.fanout_start + 1) % MEMBERS;
         }
@@ -914,7 +881,6 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
             primary: &self.primary.data,
             secondary: self.secondary.as_ref().map(|segment| &segment.data),
             peers: &state.peers,
-            peer_on_secondary: &state.peer_on_secondary,
             status: self.status,
             bytes: outbound.bytes(),
         };
@@ -1084,7 +1050,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                         Some(event) => {
                             handle_rendezvous_event(
                                 &mut state.tcp_peer,
-                                state.tcp_slot,
+                                state.peers.reserved_slot(),
                                 &self.status,
                                 &mut fleet,
                                 self.bitrate,
@@ -1322,26 +1288,19 @@ async fn ingest_beacon<
     const LIFECYCLE: usize,
 >(
     brain: &mut contract::FixedAutoInterfaceProtocol<MEMBERS>,
-    peers: &mut [Option<Ipv6Addr>; MEMBERS],
-    ids: &mut [InterfaceId; MEMBERS],
-    peer_on_secondary: &mut [bool; MEMBERS],
+    peers: &mut WifiPeerTable<MEMBERS>,
     status: &AutoWifiStatus<MEMBERS>,
     fleet: &Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
     bitrate: BitrateBps,
     src: Ipv6Addr,
     bytes: &[u8],
     now_ms: u64,
-    on_secondary: bool,
-    reserved_slot: Option<usize>,
+    segment: SegmentRole,
     beacon_channel: BeaconChannel,
     local_token: &[u8; contract::PEERING_TOKEN_BYTES],
 ) -> PeeringTokenReply {
-    let existing_slot = peers.iter().position(|peer| *peer == Some(src));
-    let available_slot = peers
-        .iter()
-        .enumerate()
-        .position(|(slot, peer)| peer.is_none() && Some(slot) != reserved_slot);
-    if existing_slot.is_none() && available_slot.is_none() {
+    let peer_lookup = peers.lookup(src);
+    if peer_lookup == WifiPeerLookup::Full {
         return PeeringTokenReply::NotRequired;
     }
     let contract::BeaconObservation::AuthenticatedPeer {
@@ -1351,27 +1310,40 @@ async fn ingest_beacon<
     else {
         return PeeringTokenReply::NotRequired;
     };
-    if peer_observation == contract::PeerObservation::TableFull {
-        return PeeringTokenReply::NotRequired;
-    }
-    if let Some(slot) = existing_slot {
-        peer_on_secondary[slot] = on_secondary;
-    } else if peer_observation == contract::PeerObservation::NewlyDiscovered {
-        let Some(slot) = available_slot else {
-            return PeeringTokenReply::NotRequired;
-        };
-        let id = InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, &address.octets());
-        fleet
-            .register_member(contract::descriptor(
-                id,
-                contract::policy_for_bitrate(bitrate),
-            ))
-            .await;
-        peers[slot] = Some(address);
-        ids[slot] = id;
-        peer_on_secondary[slot] = on_secondary;
-        status.member(slot).assign(id);
-        status.republish_peer_count();
+    match (peer_lookup, peer_observation) {
+        (
+            WifiPeerLookup::Present { slot, .. },
+            contract::PeerObservation::NewlyDiscovered | contract::PeerObservation::Refreshed,
+        ) => match peers.replace_segment(slot, segment) {
+            WifiPeerReplacement::Replaced { .. } | WifiPeerReplacement::Unchanged { .. } => {}
+            WifiPeerReplacement::Missing => return PeeringTokenReply::NotRequired,
+        },
+        (WifiPeerLookup::Vacant { slot }, contract::PeerObservation::NewlyDiscovered) => {
+            let peer = WifiPeer::new(address, segment);
+            let id = peer.id();
+            fleet
+                .register_member(contract::descriptor(
+                    id,
+                    contract::policy_for_bitrate(bitrate),
+                ))
+                .await;
+            match peers.insert(slot, peer) {
+                WifiPeerInsertion::Inserted { .. } => {
+                    status.member(slot).assign(id);
+                    status.republish_peer_count();
+                }
+                WifiPeerInsertion::Occupied { .. }
+                | WifiPeerInsertion::Reserved { .. }
+                | WifiPeerInsertion::OutOfBounds => {
+                    fleet.deregister_member(id).await;
+                    return PeeringTokenReply::NotRequired;
+                }
+            }
+        }
+        (WifiPeerLookup::Vacant { .. }, contract::PeerObservation::Refreshed)
+        | (WifiPeerLookup::Present { .. }, contract::PeerObservation::TableFull)
+        | (WifiPeerLookup::Vacant { .. }, contract::PeerObservation::TableFull)
+        | (WifiPeerLookup::Full, _) => return PeeringTokenReply::NotRequired,
     }
     peering_token_reply(beacon_channel, peer_observation, address, *local_token)
 }
@@ -1446,8 +1418,7 @@ fn route_inbound<
     const LIFECYCLE: usize,
 >(
     fleet: &mut Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
-    peers: &[Option<Ipv6Addr>; MEMBERS],
-    ids: &[InterfaceId; MEMBERS],
+    peers: &WifiPeerTable<MEMBERS>,
     status: &AutoWifiStatus<MEMBERS>,
     src: Ipv6Addr,
     bytes: &[u8],
@@ -1455,41 +1426,45 @@ fn route_inbound<
     if bytes.is_empty() {
         return;
     }
-    let Some(slot) = peers.iter().position(|peer| *peer == Some(src)) else {
+    let WifiPeerLookup::Present { slot, id } = peers.lookup(src) else {
         return;
     };
-    if fleet.try_deliver_inbound(ids[slot], bytes).is_ok() {
+    if fleet.try_deliver_inbound(id, bytes).is_ok() {
         status.member(slot).add_rx(bytes.len() as u64);
     }
 }
 
-async fn clear_members<
+async fn clear_wifi_peers<
     M: RawMutex + 'static,
     const FRAME: usize,
     const MEMBERS: usize,
     const NOTIFY: usize,
     const LIFECYCLE: usize,
 >(
-    peers: &mut [Option<Ipv6Addr>; MEMBERS],
-    ids: &[InterfaceId; MEMBERS],
-    peer_on_secondary: &mut [bool; MEMBERS],
+    peers: &mut WifiPeerTable<MEMBERS>,
     status: &AutoWifiStatus<MEMBERS>,
     fleet: &Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
-) {
-    let mut changed = false;
+) -> WifiPeerClear {
+    let mut outcome = WifiPeerClear::AlreadyEmpty;
     for slot in 0..MEMBERS {
-        if peers[slot].is_none() {
+        let WifiPeerSlotLookup::Occupied(peer) = peers.lookup_slot(slot) else {
             continue;
+        };
+        let id = peer.id();
+        fleet.deregister_member(id).await;
+        match peers.retire(slot) {
+            WifiPeerRetirement::Retired { .. } => {
+                status.retire_member(slot);
+                outcome = WifiPeerClear::Cleared;
+            }
+            WifiPeerRetirement::Missing => {}
         }
-        fleet.deregister_member(ids[slot]).await;
-        peers[slot] = None;
-        peer_on_secondary[slot] = false;
-        status.retire_member(slot);
-        changed = true;
     }
-    if changed {
-        status.republish_peer_count();
+    match outcome {
+        WifiPeerClear::AlreadyEmpty => {}
+        WifiPeerClear::Cleared => status.republish_peer_count(),
     }
+    outcome
 }
 
 async fn retire_stale<
@@ -1500,9 +1475,7 @@ async fn retire_stale<
     const LIFECYCLE: usize,
 >(
     brain: &mut contract::FixedAutoInterfaceProtocol<MEMBERS>,
-    peers: &mut [Option<Ipv6Addr>; MEMBERS],
-    ids: &[InterfaceId; MEMBERS],
-    peer_on_secondary: &mut [bool; MEMBERS],
+    peers: &mut WifiPeerTable<MEMBERS>,
     status: &AutoWifiStatus<MEMBERS>,
     fleet: &Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
     now_ms: u64,
@@ -1511,14 +1484,19 @@ async fn retire_stale<
         return;
     }
     for slot in 0..MEMBERS {
-        let Some(addr) = peers[slot] else { continue };
-        if brain.known_peer_addresses().any(|known| known == addr) {
+        let WifiPeerSlotLookup::Occupied(peer) = peers.lookup_slot(slot) else {
+            continue;
+        };
+        let address = peer.address();
+        let id = peer.id();
+        if brain.known_peer_addresses().any(|known| known == address) {
             continue;
         }
-        fleet.deregister_member(ids[slot]).await;
-        peers[slot] = None;
-        peer_on_secondary[slot] = false;
-        status.retire_member(slot);
+        fleet.deregister_member(id).await;
+        match peers.retire(slot) {
+            WifiPeerRetirement::Retired { .. } => status.retire_member(slot),
+            WifiPeerRetirement::Missing => {}
+        }
     }
     status.republish_peer_count();
 }
