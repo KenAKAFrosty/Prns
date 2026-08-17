@@ -11,7 +11,48 @@ use personal_rns::runtime::{
 pub const ARENA_BYTES: usize = personal_hopspot_core::T_ECHO_MIN_ARENA_BYTES;
 
 const PENDING: usize = 8;
-const _: () = assert!(super::Storage::MAX_COMPACTED_FLASH_JOURNAL_BYTES <= ARENA_BYTES);
+const JOURNAL_WRITE_ALIGNMENT_BYTES: usize = 4;
+const MAX_JOURNAL_RECORD_PADDING_BYTES: usize = JOURNAL_WRITE_ALIGNMENT_BYTES - 1;
+const ROUTE_APP_DATA_BUDGETED_SEPARATELY_BYTES: usize = 0;
+const COMPACTED_ROUTE_ANNOUNCE_HISTORY_DEPTH: usize = 0;
+const ARENA_COMMIT_PAYLOAD_BYTES: usize = 0;
+
+const COMPACTED_ROUTE_BASE_PAYLOAD_BYTES: usize =
+    personal_rns::persistence::maximum_route_upsert_payload_len(
+        ROUTE_APP_DATA_BUDGETED_SEPARATELY_BYTES,
+        COMPACTED_ROUTE_ANNOUNCE_HISTORY_DEPTH,
+    );
+const COMPACTED_ROUTE_BASE_RECORD_BYTES: usize =
+    personal_rns::persistence::flash_journal_record_storage_len(
+        COMPACTED_ROUTE_BASE_PAYLOAD_BYTES,
+        JOURNAL_WRITE_ALIGNMENT_BYTES,
+    );
+const MAX_COMPACTED_ROUTE_RECORD_BYTES: usize =
+    COMPACTED_ROUTE_BASE_RECORD_BYTES + MAX_JOURNAL_RECORD_PADDING_BYTES;
+const MAX_COMPACTED_ROUTES_BYTES: usize = super::Storage::TRACKED_DESTINATIONS
+    * MAX_COMPACTED_ROUTE_RECORD_BYTES
+    + super::Storage::RETAINED_ANNOUNCE_APP_DATA_BYTES;
+
+const SELF_RATCHET_PAYLOAD_BYTES: usize = personal_rns::wire::TRUNCATED_HASH_BYTE_LEN
+    + personal_rns::persistence::self_ratchets_snapshot_len(
+        super::Storage::RETAINED_RATCHETS_PER_DESTINATION,
+    );
+const SELF_RATCHET_RECORD_BYTES: usize =
+    personal_rns::persistence::flash_journal_record_storage_len(
+        SELF_RATCHET_PAYLOAD_BYTES,
+        JOURNAL_WRITE_ALIGNMENT_BYTES,
+    );
+const MAX_CRITICAL_FLASH_JOURNAL_BYTES: usize =
+    super::Storage::UPSTREAM_APP_DESTINATIONS * SELF_RATCHET_RECORD_BYTES;
+
+const ARENA_COMMIT_RECORD_BYTES: usize =
+    personal_rns::persistence::flash_journal_record_storage_len(
+        ARENA_COMMIT_PAYLOAD_BYTES,
+        JOURNAL_WRITE_ALIGNMENT_BYTES,
+    );
+const MAX_COMPACTED_FLASH_JOURNAL_BYTES: usize =
+    MAX_COMPACTED_ROUTES_BYTES + MAX_CRITICAL_FLASH_JOURNAL_BYTES + ARENA_COMMIT_RECORD_BYTES;
+const _: () = assert!(MAX_COMPACTED_FLASH_JOURNAL_BYTES <= ARENA_BYTES);
 
 pub type TechoSharedFlash = SharedNorFlash<'static, CriticalSectionRawMutex, Flash>;
 pub type TechoPersistence = EmbeddedFlashPersistence<
@@ -28,7 +69,7 @@ pub fn new(flash: TechoSharedFlash) -> TechoPersistence {
         flash,
         personal_hopspot_core::T_ECHO_JOURNAL_LAYOUT,
         EmbeddedPersistencePolicy::hopspot_default(EmbeddedCompactionPolicy::hopspot(
-            super::Storage::MAX_CRITICAL_FLASH_JOURNAL_BYTES,
+            MAX_CRITICAL_FLASH_JOURNAL_BYTES,
         )),
         FixedRouteSnapshotKeys::new(),
         observe as fn(EmbeddedPersistenceDiagnostic),

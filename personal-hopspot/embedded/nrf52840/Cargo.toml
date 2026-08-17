@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 publish = false
-description = "LilyGo T-Echo (nRF52840 + SX1262 + 200x200 SSD1681 e-ink) Personal Hopspot face: drives the Personal Reticulum engine on bare metal and renders the shared Hopspot screen on e-ink."
+description = "Personal Hopspot firmware for supported nRF52840 and SX1262 boards."
 
 [workspace]
 exclude = [
@@ -18,6 +18,7 @@ exclude = [
 default = ["board-t-echo", "softdevice-s140-v7"]
 board-t-echo = []
 board-t096 = []
+board-t114 = ["cortex-m/critical-section-single-core"]
 softdevice-s140-v6 = ["dep:nrf-softdevice", "nrf-softdevice/s140-v6"]
 softdevice-s140-v7 = ["dep:nrf-softdevice", "nrf-softdevice/s140-v7"]
 
@@ -34,6 +35,11 @@ required-features = ["board-t-echo"]
 name = "t096"
 path = "src/bin/t096.rs"
 required-features = ["board-t096"]
+
+[[bin]]
+name = "heltec-t114"
+path = "src/bin/heltec_t114.rs"
+required-features = ["board-t114"]
 
 [dependencies]
 personal-rns = { path = "../../../personal-rns", default-features = false, features = ["embassy-host", "flash", "lora", "bluetooth-auto", "usb"] }

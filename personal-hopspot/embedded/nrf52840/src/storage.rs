@@ -47,7 +47,7 @@ impl Nrf52840Storage {
     // Relationship tables are intentionally independent from transfer workspaces. An idle link is
     // cheap; channels and resources borrow the smaller shared pools only while doing payload work.
     pub(crate) const TRACKED_DESTINATIONS: usize = 8;
-    const UPSTREAM_APP_DESTINATIONS: usize = 2;
+    pub(crate) const UPSTREAM_APP_DESTINATIONS: usize = 2;
     const REQUEST_HANDLERS: usize =
         <personal_hopspot_core::node_pages::NodePageRoutes as RequestEndpointSet<()>>::REGISTRATIONS
             .len();
@@ -59,31 +59,15 @@ impl Nrf52840Storage {
     const BLACKHOLE_REASON_BYTES: usize = 0;
     const HELD_ANNOUNCES: usize = 4;
     const HELD_ANNOUNCE_APP_DATA_BYTES: usize = Self::HELD_ANNOUNCES * 64;
+    const ANNOUNCE_HISTORY_DEPTH: usize = 8;
+    pub(crate) const RETAINED_ANNOUNCE_APP_DATA_BYTES: usize = 256;
+    pub(crate) const RETAINED_RATCHETS_PER_DESTINATION: usize = 4;
     const RESOURCE_TRANSFER_BYTES: usize = 1504;
     pub const MAX_OUTGOING_RESOURCE_REACTION_FRAMES: usize =
         max_outgoing_resource_reaction_frames(Self::RESOURCE_TRANSFER_BYTES);
     const CHANNEL_REORDER_DEPTH: usize = 2;
     const LINK_MTU: usize = 1024;
     const CHANNEL_MESSAGE_BYTES: usize = channel_mdu(Self::LINK_MTU);
-    pub(crate) const MAX_COMPACTED_FLASH_JOURNAL_BYTES: usize = Self::TRACKED_DESTINATIONS
-        * (personal_rns::persistence::flash_journal_record_storage_len(
-            personal_rns::persistence::maximum_route_upsert_payload_len(0, 0),
-            4,
-        ) + 3)
-        + 256
-        + Self::UPSTREAM_APP_DESTINATIONS
-            * personal_rns::persistence::flash_journal_record_storage_len(
-                personal_rns::wire::TRUNCATED_HASH_BYTE_LEN
-                    + personal_rns::persistence::self_ratchets_snapshot_len(4),
-                4,
-            )
-        + personal_rns::persistence::flash_journal_record_storage_len(0, 4);
-    pub(crate) const MAX_CRITICAL_FLASH_JOURNAL_BYTES: usize = Self::UPSTREAM_APP_DESTINATIONS
-        * personal_rns::persistence::flash_journal_record_storage_len(
-            personal_rns::wire::TRUNCATED_HASH_BYTE_LEN
-                + personal_rns::persistence::self_ratchets_snapshot_len(4),
-            4,
-        );
 }
 
 const _: () = assert!(Nrf52840Storage::LINK_SESSIONS > Nrf52840Storage::CHANNELS);
@@ -109,7 +93,7 @@ impl StorageLayout for Nrf52840Storage {
         reverse_routes: StorageCapacity::Fixed(4),
         pending_path_requests: StorageCapacity::Fixed(4),
         held_announces: StorageCapacity::Fixed(Self::HELD_ANNOUNCES),
-        ratchets_per_destination: StorageCapacity::Fixed(4),
+        ratchets_per_destination: StorageCapacity::Fixed(Self::RETAINED_RATCHETS_PER_DESTINATION),
     };
 
     type Routes = FixedArrayRouteTable<{ Self::TRACKED_DESTINATIONS }>;
@@ -118,13 +102,20 @@ impl StorageLayout for Nrf52840Storage {
     type DestinationIdentityAppData = NoDestinationIdentityAppData;
     type Tunnels = FixedTunnelTable<0>;
     type Announces = FixedArrayAnnounceRecordTable<{ Self::TRACKED_DESTINATIONS }>;
-    type History = FixedAnnounceIdHistory<{ Self::TRACKED_DESTINATIONS }, 8>;
-    type AppData = PackedAppDataArena<256, { Self::TRACKED_DESTINATIONS }>;
+    type History =
+        FixedAnnounceIdHistory<{ Self::TRACKED_DESTINATIONS }, { Self::ANNOUNCE_HISTORY_DEPTH }>;
+    type AppData = PackedAppDataArena<
+        { Self::RETAINED_ANNOUNCE_APP_DATA_BYTES },
+        { Self::TRACKED_DESTINATIONS },
+    >;
     type ScheduledAnnounces = FixedScheduledAnnounceQueue<{ Self::TRACKED_DESTINATIONS }>;
     type UpstreamAppDestinations =
         FixedUpstreamAppDestinationTable<{ Self::UPSTREAM_APP_DESTINATIONS }>;
     type HeldIdentities = FixedHeldIdentityTable<2>;
-    type SelfRatchets = FixedSelfRatchetTable<{ Self::UPSTREAM_APP_DESTINATIONS }, 4>;
+    type SelfRatchets = FixedSelfRatchetTable<
+        { Self::UPSTREAM_APP_DESTINATIONS },
+        { Self::RETAINED_RATCHETS_PER_DESTINATION },
+    >;
     type Receipts = FixedReceiptTable<4>;
     type PacketHashes = FixedPacketHashHistory<16>;
     type Blackholes = FixedBlackholeTable<
