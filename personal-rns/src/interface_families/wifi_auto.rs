@@ -17,7 +17,11 @@ pub use prns_interfaces_tokio::wifi_auto::{
 pub use prns_interfaces_embassy::wifi_auto::{
     tcp_rendezvous, AutoWifi, AutoWifiSegment, AutoWifiShared, AutoWifiStatus, AutoWifiTopology,
     TcpRendezvousBuffers, TcpRendezvousClient, TcpRendezvousExitCause, TcpRendezvousServer,
-    TcpRendezvousStorage, TcpRendezvousWireSlot, TcpRendezvousWriteFailure, WifiMemberStatus,
-    TCP_RENDEZVOUS_FRAMED_LEN, TCP_RENDEZVOUS_FRAME_CAP, TCP_RENDEZVOUS_LIVENESS_TIMEOUT,
-    TCP_RENDEZVOUS_READ_BUFFER_BYTES, TCP_RENDEZVOUS_SOCKET_BUFFER_BYTES,
+    TcpRendezvousStorage, TcpRendezvousWireSlot, TcpRendezvousWriteFailure,
+    UdpServiceDiscoveryConstructionError, UdpServiceDiscoveryPublisher, WifiMemberStatus,
+    EMBEDDED_DISCOVERY_PUBLISHER_CAPACITY, TCP_RENDEZVOUS_FRAMED_LEN, TCP_RENDEZVOUS_FRAME_CAP,
+    TCP_RENDEZVOUS_LIVENESS_TIMEOUT, TCP_RENDEZVOUS_READ_BUFFER_BYTES,
+    TCP_RENDEZVOUS_SOCKET_BUFFER_BYTES, UDP_SERVICE_DISCOVERY_PACKET_BYTES,
+    UDP_SERVICE_DISCOVERY_SOCKET_BYTES, UDP_SERVICE_DISCOVERY_SOCKET_COUNT,
+    UDP_SERVICE_DISCOVERY_SOCKET_METADATA,
 };

@@ -8,7 +8,6 @@ pub(super) const HTTP_SERVER_WORKERS: usize = 4;
 const EMBASSY_INTERNAL_SOCKET_COUNT: usize = 1;
 #[cfg(feature = "wifi-auto")]
 const WIFI_AUTO_UDP_SOCKET_COUNT: usize = 3;
-#[cfg(feature = "wifi-auto")]
 const CAPTIVE_PORTAL_UDP_SOCKET_COUNT: usize = 2;
 #[cfg(feature = "wifi-auto")]
 const TCP_RENDEZVOUS_SOCKET_COUNT: usize = 1;

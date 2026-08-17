@@ -1,5 +1,6 @@
 mod policy;
 mod protocol;
+mod service_discovery;
 
 #[cfg(feature = "alloc")]
 mod discovery;
@@ -8,12 +9,9 @@ mod discovery;
 pub use discovery::{
     AdvertisementInsertion, AdvertisementRemoval, CandidateInsertion, CandidateInsertionError,
     DiscoveryEndpoint, DiscoveryEndpointError, DiscoveryServiceName, DiscoveryServiceNameError,
-    DiscoverySnapshot, DiscoveryTransport, DiscoveryVersion, DiscoveryVersionError,
-    EphemeralDiscoveryInstanceName, ServiceAdvertisement, DEFAULT_DISCOVERY_SERVICE_CAPACITY,
-    DISCOVERY_SERVICE_NAME_MAX_BYTES, DNS_SD_LOCAL_DOMAIN,
-    EPHEMERAL_DISCOVERY_INSTANCE_RANDOM_BYTES, SERVICE_ADVERTISEMENT_CANDIDATE_CAPACITY,
-    TCP_DNS_SD_BASE_SERVICE_TYPE, TCP_DNS_SD_SERVICE_TYPE, TXT_VERSION_KEY, TXT_VERSION_VALUE,
-    UDP_DNS_SD_BASE_SERVICE_TYPE, UDP_DNS_SD_SERVICE_TYPE,
+    DiscoverySnapshot, DiscoveryVersion, DiscoveryVersionError, EphemeralDiscoveryInstanceName,
+    ServiceAdvertisement, DEFAULT_DISCOVERY_SERVICE_CAPACITY, DISCOVERY_SERVICE_NAME_MAX_BYTES,
+    SERVICE_ADVERTISEMENT_CANDIDATE_CAPACITY,
 };
 pub use policy::{
     configured_policy, descriptor, policy_for_bitrate, DEFAULTS, HARDWARE_MTU,
@@ -28,4 +26,10 @@ pub use protocol::{
     FixedAutoInterfaceProtocol, MulticastAddressType, Peer, PeerObservation, PeerStore, PeerTable,
     PeeringToken, DEFAULT_DATA_PORT, DEFAULT_DISCOVERY_PORT, DISCOVERY_GROUP, GROUP_ID, GROUP_NAME,
     PEERING_TIMEOUT_MS, TCP_RENDEZVOUS_PORT, UNICAST_DISCOVERY_PORT,
+};
+pub use service_discovery::{
+    DiscoveryTransport, DNS_SD_LOCAL_DOMAIN, EPHEMERAL_DISCOVERY_INSTANCE_PREFIX,
+    EPHEMERAL_DISCOVERY_INSTANCE_RANDOM_BYTES, TCP_DNS_SD_BASE_SERVICE_TYPE,
+    TCP_DNS_SD_SERVICE_TYPE, TXT_VERSION_KEY, TXT_VERSION_VALUE, UDP_DNS_SD_BASE_SERVICE_TYPE,
+    UDP_DNS_SD_SERVICE_TYPE,
 };

@@ -47,6 +47,17 @@ const WIFI_DYNAMIC_TX_BUFFERS: u16 = 0;
 #[cfg(feature = "wifi-auto")]
 const WIFI_DATA_SOCKET_BUFFER_BYTES: usize = 4 * 1_024;
 #[cfg(feature = "wifi-auto")]
+const DHCP_CLIENT_SOCKET_COUNT: usize = 1;
+#[cfg(feature = "wifi-auto")]
+const WIFI_AUTO_DATAGRAM_SOCKET_COUNT: usize = 3;
+#[cfg(feature = "wifi-auto")]
+const CONFIGURED_TCP_CLIENT_SOCKET_COUNT: usize = 1;
+#[cfg(feature = "wifi-auto")]
+const STATION_STACK_SOCKET_CAPACITY: usize = DHCP_CLIENT_SOCKET_COUNT
+    + WIFI_AUTO_DATAGRAM_SOCKET_COUNT
+    + CONFIGURED_TCP_CLIENT_SOCKET_COUNT
+    + UDP_SERVICE_DISCOVERY_SOCKET_COUNT as usize;
+#[cfg(feature = "wifi-auto")]
 const WIFI_HEALTH_SAMPLES_BETWEEN_REPORTS: u8 = 4;
 #[cfg(feature = "wifi-auto")]
 const _: () = assert!(WIFI_STATIC_RX_BUFFERS >= WIFI_RX_BA_WINDOW);
@@ -161,7 +172,10 @@ pub(super) fn build_wifi(
             gateway: None,
             dns_servers: Default::default(),
         });
-        let resources = mk_static!(StackResources<6>, StackResources::new());
+        let resources = mk_static!(
+            StackResources<STATION_STACK_SOCKET_CAPACITY>,
+            StackResources::new()
+        );
         let seed = {
             let mut bytes = [0u8; 8];
             Rng::new().read(&mut bytes);
@@ -175,6 +189,7 @@ pub(super) fn build_wifi(
                 stack,
             );
         let wifi_status = AutoWifiStatus::new(&WIFI_SHARED);
+        start_udp_service_discovery(spawner, stack, link_local, wifi_status);
         let station_credentials = StationCredentials {
             ssid: config.ssid.clone(),
             password: config.password.clone(),
@@ -282,9 +297,46 @@ pub(super) fn build_wifi(
 }
 
 #[cfg(feature = "wifi-auto")]
+fn start_udp_service_discovery(
+    spawner: &Spawner,
+    stack: Stack<'static>,
+    address: core::net::Ipv6Addr,
+    status: AutoWifiStatus<MEMBERS>,
+) {
+    let socket = psram_udp_socket::<
+        UDP_SERVICE_DISCOVERY_SOCKET_METADATA,
+        UDP_SERVICE_DISCOVERY_SOCKET_BYTES,
+        UDP_SERVICE_DISCOVERY_SOCKET_METADATA,
+        UDP_SERVICE_DISCOVERY_SOCKET_BYTES,
+    >(stack);
+    let publisher =
+        match UdpServiceDiscoveryPublisher::new(socket, stack, address, status, hardware_entropy) {
+            Ok(publisher) => publisher,
+            Err(error) => {
+                log::error!("wifi-auto: UDP DNS-SD construction failed: {error:?}");
+                return;
+            }
+        };
+    let task = match udp_service_discovery_task(publisher) {
+        Ok(task) => task,
+        Err(_) => {
+            log::error!("wifi-auto: UDP DNS-SD task capacity exhausted");
+            return;
+        }
+    };
+    spawner.spawn(task);
+}
+
+#[cfg(feature = "wifi-auto")]
 #[embassy_executor::task]
 async fn tcp_rendezvous_task(server: TcpRendezvousServer<'static>) -> ! {
     server.run().await
+}
+
+#[cfg(feature = "wifi-auto")]
+#[embassy_executor::task]
+async fn udp_service_discovery_task(publisher: UdpServiceDiscoveryPublisher<'static>) -> ! {
+    publisher.run().await
 }
 
 #[cfg(feature = "wifi-auto")]

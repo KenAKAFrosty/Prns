@@ -1,5 +1,6 @@
 mod fanout;
 mod rendezvous;
+mod service_discovery;
 
 use ::core::cell::Cell;
 use ::core::net::Ipv6Addr;
@@ -11,6 +12,7 @@ use embassy_net::{IpAddress, Stack};
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex};
 use embassy_sync::blocking_mutex::CriticalSectionMutex;
 use embassy_sync::signal::Signal;
+use embassy_sync::watch::Watch;
 use embassy_time::{with_timeout, Duration, Instant, Ticker};
 use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
@@ -27,6 +29,16 @@ pub use rendezvous::{
     TcpRendezvousServer, TcpRendezvousStorage, TcpRendezvousWireSlot, TcpRendezvousWriteFailure,
     TCP_RENDEZVOUS_FRAMED_LEN, TCP_RENDEZVOUS_FRAME_CAP, TCP_RENDEZVOUS_LIVENESS_TIMEOUT,
     TCP_RENDEZVOUS_READ_BUFFER_BYTES, TCP_RENDEZVOUS_SOCKET_BUFFER_BYTES,
+};
+use service_discovery::{
+    DiscoveryParticipationReceiver, EmbeddedDiscoveryParticipation,
+    EMBEDDED_DISCOVERY_PUBLISHER_CAPACITY as DISCOVERY_PUBLISHERS,
+};
+pub use service_discovery::{
+    UdpServiceDiscoveryConstructionError, UdpServiceDiscoveryPublisher,
+    EMBEDDED_DISCOVERY_PUBLISHER_CAPACITY, UDP_SERVICE_DISCOVERY_PACKET_BYTES,
+    UDP_SERVICE_DISCOVERY_SOCKET_BYTES, UDP_SERVICE_DISCOVERY_SOCKET_COUNT,
+    UDP_SERVICE_DISCOVERY_SOCKET_METADATA,
 };
 
 const BEACON_INTERVAL: Duration = Duration::from_millis(1600);
@@ -135,6 +147,11 @@ pub struct AutoWifiShared<const MEMBERS: usize> {
     id: InterfaceId,
     enabled: AtomicBool,
     enabled_changed: Signal<CriticalSectionRawMutex, bool>,
+    discovery_participation: Watch<
+        CriticalSectionRawMutex,
+        EmbeddedDiscoveryParticipation,
+        { DISCOVERY_PUBLISHERS as usize },
+    >,
     station_uplink_enabled: AtomicBool,
     station_uplink_enabled_changed: Signal<CriticalSectionRawMutex, bool>,
     lifecycle: AtomicU8,
@@ -149,6 +166,7 @@ impl<const MEMBERS: usize> AutoWifiShared<MEMBERS> {
             id,
             enabled: AtomicBool::new(true),
             enabled_changed: Signal::new(),
+            discovery_participation: Watch::new_with(EmbeddedDiscoveryParticipation::Central),
             station_uplink_enabled: AtomicBool::new(true),
             station_uplink_enabled_changed: Signal::new(),
             lifecycle: AtomicU8::new(ConnectionState::Initializing.as_u8()),
@@ -179,13 +197,36 @@ impl<const MEMBERS: usize> AutoWifiStatus<MEMBERS> {
 
     pub fn toggle_enabled(&self) {
         let enabled = !self.shared.enabled.fetch_xor(true, Ordering::Relaxed);
-        self.shared.enabled_changed.signal(enabled);
+        self.publish_enabled_change(enabled);
     }
 
     fn update_enabled(&self, enabled: bool) {
         if self.shared.enabled.swap(enabled, Ordering::Relaxed) != enabled {
-            self.shared.enabled_changed.signal(enabled);
+            self.publish_enabled_change(enabled);
         }
+    }
+
+    fn publish_enabled_change(&self, enabled: bool) {
+        self.shared.enabled_changed.signal(enabled);
+        self.shared
+            .discovery_participation
+            .sender()
+            .send(if enabled {
+                EmbeddedDiscoveryParticipation::Central
+            } else {
+                EmbeddedDiscoveryParticipation::Inactive
+            });
+    }
+
+    fn discovery_participation_receiver(
+        &self,
+    ) -> Result<
+        DiscoveryParticipationReceiver,
+        service_discovery::UdpServiceDiscoveryConstructionError,
+    > {
+        self.shared.discovery_participation.receiver().ok_or(
+            service_discovery::UdpServiceDiscoveryConstructionError::PublisherCapacityExhausted,
+        )
     }
 
     #[must_use]
@@ -999,6 +1040,7 @@ mod tests {
     static UPLINK_SHARED: AutoWifiShared<1> = AutoWifiShared::new(InterfaceId::new([0x5E; 8]));
     static LIFECYCLE_SHARED: AutoWifiShared<1> = AutoWifiShared::new(InterfaceId::new([0x5C; 8]));
     static ACCOUNTING_SHARED: AutoWifiShared<1> = AutoWifiShared::new(InterfaceId::new([0x5D; 8]));
+    static DISCOVERY_SHARED: AutoWifiShared<1> = AutoWifiShared::new(InterfaceId::new([0x5F; 8]));
 
     fn id(suffix: u8) -> InterfaceId {
         InterfaceId::new([InterfaceKind::WifiPeer as u8, 0, 0, 0, 0, 0, 0, suffix])
@@ -1036,6 +1078,46 @@ mod tests {
         });
 
         assert!(status.is_enabled());
+    }
+
+    #[test]
+    fn discovery_participation_tracks_every_interface_transition(
+    ) -> Result<(), UdpServiceDiscoveryConstructionError> {
+        let status = AutoWifiStatus::new(&DISCOVERY_SHARED);
+        status.enable();
+        let mut participation = status.discovery_participation_receiver()?;
+
+        assert_eq!(
+            participation.try_get(),
+            Some(EmbeddedDiscoveryParticipation::Central)
+        );
+        status.disable();
+        assert_eq!(
+            participation.try_changed(),
+            Some(EmbeddedDiscoveryParticipation::Inactive)
+        );
+        status.toggle_enabled();
+        assert_eq!(
+            participation.try_changed(),
+            Some(EmbeddedDiscoveryParticipation::Central)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn discovery_subscribers_are_bounded_by_publisher_capacity(
+    ) -> Result<(), UdpServiceDiscoveryConstructionError> {
+        static BOUNDED_SHARED: AutoWifiShared<1> = AutoWifiShared::new(InterfaceId::new([0x60; 8]));
+        let status = AutoWifiStatus::new(&BOUNDED_SHARED);
+        let first = status.discovery_participation_receiver()?;
+        assert_eq!(
+            status.discovery_participation_receiver().err(),
+            Some(UdpServiceDiscoveryConstructionError::PublisherCapacityExhausted)
+        );
+
+        drop(first);
+        assert!(status.discovery_participation_receiver().is_ok());
+        Ok(())
     }
 
     #[test]

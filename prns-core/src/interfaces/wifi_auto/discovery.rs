@@ -11,57 +11,17 @@ use core::num::NonZeroU8;
 
 use crate::interfaces::local_network::{local_address_scope, LocalAddressScope};
 
+#[cfg(test)]
+use super::service_discovery::TCP_DNS_SD_SERVICE_TYPE;
+use super::service_discovery::{
+    DiscoveryTransport, EPHEMERAL_DISCOVERY_INSTANCE_PREFIX,
+    EPHEMERAL_DISCOVERY_INSTANCE_RANDOM_BYTES, TXT_VERSION_VALUE,
+};
 use super::{TCP_RENDEZVOUS_PORT, UNICAST_DISCOVERY_PORT};
 
-pub const DNS_SD_LOCAL_DOMAIN: &str = "local.";
-pub const TCP_DNS_SD_BASE_SERVICE_TYPE: &str = "_reticulum._tcp";
-pub const TCP_DNS_SD_SERVICE_TYPE: &str = "_reticulum._tcp.local.";
-pub const UDP_DNS_SD_BASE_SERVICE_TYPE: &str = "_reticulum._udp";
-pub const UDP_DNS_SD_SERVICE_TYPE: &str = "_reticulum._udp.local.";
-pub const TXT_VERSION_KEY: &str = "v";
-pub const TXT_VERSION_VALUE: &str = "1";
 pub const DEFAULT_DISCOVERY_SERVICE_CAPACITY: NonZeroU8 = NonZeroU8::MAX;
 pub const SERVICE_ADVERTISEMENT_CANDIDATE_CAPACITY: u8 = 8;
 pub const DISCOVERY_SERVICE_NAME_MAX_BYTES: usize = 255;
-pub const EPHEMERAL_DISCOVERY_INSTANCE_RANDOM_BYTES: usize = 8;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum DiscoveryTransport {
-    Tcp,
-    Udp,
-}
-
-impl DiscoveryTransport {
-    pub const fn port(self) -> u16 {
-        match self {
-            Self::Tcp => TCP_RENDEZVOUS_PORT,
-            Self::Udp => UNICAST_DISCOVERY_PORT,
-        }
-    }
-
-    pub const fn dns_sd_base_service_type(self) -> &'static str {
-        match self {
-            Self::Tcp => TCP_DNS_SD_BASE_SERVICE_TYPE,
-            Self::Udp => UDP_DNS_SD_BASE_SERVICE_TYPE,
-        }
-    }
-
-    pub const fn dns_sd_service_type(self) -> &'static str {
-        match self {
-            Self::Tcp => TCP_DNS_SD_SERVICE_TYPE,
-            Self::Udp => UDP_DNS_SD_SERVICE_TYPE,
-        }
-    }
-}
-
-impl fmt::Display for DiscoveryTransport {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Tcp => formatter.write_str("TCP"),
-            Self::Udp => formatter.write_str("UDP"),
-        }
-    }
-}
 
 /// A DNS-SD instance label derived only from fresh random session material.
 ///
@@ -76,7 +36,7 @@ impl EphemeralDiscoveryInstanceName {
         random_bytes: [u8; EPHEMERAL_DISCOVERY_INSTANCE_RANDOM_BYTES],
     ) -> Self {
         const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
-        let mut value = String::from("prns-");
+        let mut value = String::from(EPHEMERAL_DISCOVERY_INSTANCE_PREFIX);
         for byte in random_bytes {
             value.push(char::from(HEX_DIGITS[usize::from(byte >> 4)]));
             value.push(char::from(HEX_DIGITS[usize::from(byte & 0x0f)]));
