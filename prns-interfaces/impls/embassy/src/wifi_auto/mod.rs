@@ -7,8 +7,8 @@ use ::core::net::Ipv6Addr;
 
 use embassy_futures::join::join;
 use embassy_futures::select::{select, select4, select5, Either, Either4, Either5};
-use embassy_net::udp::{RecvError, UdpMetadata, UdpSocket};
-use embassy_net::{IpAddress, Stack};
+use embassy_net::udp::{BindError as UdpBindError, RecvError, UdpMetadata, UdpSocket};
+use embassy_net::{IpAddress, MulticastError, Stack};
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex};
 use embassy_sync::blocking_mutex::CriticalSectionMutex;
 use embassy_sync::signal::Signal;
@@ -48,8 +48,53 @@ const BEACON_INTERVAL: Duration = Duration::from_millis(1600);
 const UNICAST_REPEER_EVERY: u32 = 3;
 const SEND_TIMEOUT: Duration = Duration::from_millis(300);
 const BEACON_FAILURES_BEFORE_DEGRADED: u8 = 3;
+const SECONDARY_STACK_CONFIGURATION_TIMEOUT: Duration = Duration::from_secs(10);
 
-async fn wait_for_stack<const MEMBERS: usize>(stack: &Stack<'_>, status: AutoWifiStatus<MEMBERS>) {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SecondaryStackReadiness {
+    Ready,
+    Disabled,
+    TimedOut,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SegmentActivationError {
+    MulticastDiscoveryBind(UdpBindError),
+    UnicastDiscoveryBind(UdpBindError),
+    DataBind(UdpBindError),
+    MulticastJoin(MulticastError),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SecondaryActivationError {
+    StackConfigurationTimedOut,
+    Segment(SegmentActivationError),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TopologyState {
+    PrimaryOnly,
+    DualSegment,
+    SecondaryUnavailable,
+}
+
+impl TopologyState {
+    const fn connection_state(self) -> ConnectionState {
+        match self {
+            Self::PrimaryOnly | Self::DualSegment => ConnectionState::Connected,
+            Self::SecondaryUnavailable => ConnectionState::Degraded,
+        }
+    }
+
+    const fn requires_secondary_health(self) -> bool {
+        matches!(self, Self::DualSegment | Self::SecondaryUnavailable)
+    }
+}
+
+async fn wait_for_primary_stack<const MEMBERS: usize>(
+    stack: &Stack<'_>,
+    status: AutoWifiStatus<MEMBERS>,
+) {
     loop {
         if !status.is_enabled() {
             status.wait_until_enabled().await;
@@ -64,19 +109,57 @@ async fn wait_for_stack<const MEMBERS: usize>(stack: &Stack<'_>, status: AutoWif
 async fn wait_for_secondary_stack<const MEMBERS: usize>(
     stack: &Stack<'_>,
     status: AutoWifiStatus<MEMBERS>,
-) -> bool {
+) -> SecondaryStackReadiness {
+    if !status.is_enabled() {
+        return SecondaryStackReadiness::Disabled;
+    }
+    match select(
+        with_timeout(
+            SECONDARY_STACK_CONFIGURATION_TIMEOUT,
+            stack.wait_config_up(),
+        ),
+        status.wait_until_disabled(),
+    )
+    .await
+    {
+        Either::First(Ok(())) => SecondaryStackReadiness::Ready,
+        Either::First(Err(_timeout)) => SecondaryStackReadiness::TimedOut,
+        Either::Second(()) => SecondaryStackReadiness::Disabled,
+    }
+}
+
+fn activate_segment(segment: &mut AutoWifiSegment<'_>) -> Result<(), SegmentActivationError> {
+    segment
+        .discovery
+        .bind(contract::DEFAULT_DISCOVERY_PORT)
+        .map_err(SegmentActivationError::MulticastDiscoveryBind)?;
+    segment
+        .unicast_discovery
+        .bind(contract::UNICAST_DISCOVERY_PORT)
+        .map_err(SegmentActivationError::UnicastDiscoveryBind)?;
+    segment
+        .data
+        .bind(contract::DEFAULT_DATA_PORT)
+        .map_err(SegmentActivationError::DataBind)?;
+    segment
+        .stack
+        .join_multicast_group(IpAddress::Ipv6(contract::DISCOVERY_GROUP))
+        .map_err(SegmentActivationError::MulticastJoin)
+}
+
+async fn activate_secondary_segment<const MEMBERS: usize>(
+    segment: &mut AutoWifiSegment<'_>,
+    status: AutoWifiStatus<MEMBERS>,
+) -> Result<(), SecondaryActivationError> {
     loop {
-        if !status.is_enabled() {
-            status.wait_until_enabled().await;
-        }
-        match select(
-            with_timeout(Duration::from_secs(10), stack.wait_config_up()),
-            status.wait_until_disabled(),
-        )
-        .await
-        {
-            Either::First(result) => return result.is_ok(),
-            Either::Second(()) => {}
+        match wait_for_secondary_stack(&segment.stack, status).await {
+            SecondaryStackReadiness::Ready => {
+                return activate_segment(segment).map_err(SecondaryActivationError::Segment);
+            }
+            SecondaryStackReadiness::Disabled => status.wait_until_enabled().await,
+            SecondaryStackReadiness::TimedOut => {
+                return Err(SecondaryActivationError::StackConfigurationTimedOut);
+            }
         }
     }
 }
@@ -478,64 +561,38 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
     ) where
         M: RawMutex + 'static,
     {
-        wait_for_stack(&self.primary.stack, self.status).await;
-        let primary_ok = self
-            .primary
-            .discovery
-            .bind(contract::DEFAULT_DISCOVERY_PORT)
-            .is_ok()
-            && self
-                .primary
-                .unicast_discovery
-                .bind(contract::UNICAST_DISCOVERY_PORT)
-                .is_ok()
-            && self.primary.data.bind(contract::DEFAULT_DATA_PORT).is_ok()
-            && self
-                .primary
-                .stack
-                .join_multicast_group(IpAddress::Ipv6(contract::DISCOVERY_GROUP))
-                .is_ok();
-        crate::diagnostic_log::debug!(
-            "wifi-auto: primary segment {}",
-            if primary_ok { "up" } else { "down" }
-        );
-        if !primary_ok {
-            self.status.set_lifecycle(ConnectionState::Failed);
-            return;
+        wait_for_primary_stack(&self.primary.stack, self.status).await;
+        match activate_segment(&mut self.primary) {
+            Ok(()) => crate::diagnostic_log::debug!("wifi-auto: primary segment active"),
+            Err(error) => {
+                crate::diagnostic_log::warn!(
+                    "wifi-auto: primary segment activation failed: {error:?}"
+                );
+                self.status.set_lifecycle(ConnectionState::Failed);
+                return;
+            }
         }
 
-        let secondary_configured = self.secondary.is_some();
-        let secondary_ok = if let Some(segment) = self.secondary.as_mut() {
-            wait_for_secondary_stack(&segment.stack, self.status).await
-                && segment
-                    .discovery
-                    .bind(contract::DEFAULT_DISCOVERY_PORT)
-                    .is_ok()
-                && segment
-                    .unicast_discovery
-                    .bind(contract::UNICAST_DISCOVERY_PORT)
-                    .is_ok()
-                && segment.data.bind(contract::DEFAULT_DATA_PORT).is_ok()
-                && segment
-                    .stack
-                    .join_multicast_group(IpAddress::Ipv6(contract::DISCOVERY_GROUP))
-                    .is_ok()
-        } else {
-            false
+        let topology = match self.secondary.as_mut() {
+            None => {
+                crate::diagnostic_log::debug!("wifi-auto: secondary segment not configured");
+                TopologyState::PrimaryOnly
+            }
+            Some(segment) => match activate_secondary_segment(segment, self.status).await {
+                Ok(()) => {
+                    crate::diagnostic_log::debug!("wifi-auto: secondary segment active");
+                    TopologyState::DualSegment
+                }
+                Err(error) => {
+                    crate::diagnostic_log::warn!(
+                        "wifi-auto: secondary segment unavailable: {error:?}"
+                    );
+                    self.secondary = None;
+                    TopologyState::SecondaryUnavailable
+                }
+            },
         };
-        if !secondary_ok {
-            self.secondary = None;
-        }
-        crate::diagnostic_log::debug!(
-            "wifi-auto: secondary segment {}",
-            if secondary_ok { "up" } else { "down" }
-        );
-        let topology_degraded = secondary_configured && !secondary_ok;
-        self.status.set_lifecycle(if topology_degraded {
-            ConnectionState::Degraded
-        } else {
-            ConnectionState::Connected
-        });
+        self.status.set_lifecycle(topology.connection_state());
 
         let mut peers: [Option<Ipv6Addr>; MEMBERS] = [None; MEMBERS];
         let mut ids: [InterfaceId; MEMBERS] = [InterfaceId::new([0u8; 8]); MEMBERS];
@@ -679,17 +736,13 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                     let sent = match select(self.status.wait_until_disabled(), sends).await {
                         Either::First(()) => continue,
                         Either::Second(Ok((primary, secondary))) => {
-                            primary && (!secondary_configured || secondary)
+                            primary && (!topology.requires_secondary_health() || secondary)
                         }
                         Either::Second(Err(_)) => false,
                     };
                     if sent {
                         consecutive_beacon_failures = 0;
-                        self.status.set_lifecycle(if topology_degraded {
-                            ConnectionState::Degraded
-                        } else {
-                            ConnectionState::Connected
-                        });
+                        self.status.set_lifecycle(topology.connection_state());
                     } else {
                         consecutive_beacon_failures = consecutive_beacon_failures.saturating_add(1);
                         if consecutive_beacon_failures >= BEACON_FAILURES_BEFORE_DEGRADED {
@@ -1218,6 +1271,25 @@ mod tests {
 
     fn id(suffix: u8) -> InterfaceId {
         InterfaceId::new([InterfaceKind::WifiPeer as u8, 0, 0, 0, 0, 0, 0, suffix])
+    }
+
+    #[test]
+    fn topology_health_preserves_a_configured_secondary_failure() {
+        assert_eq!(
+            TopologyState::PrimaryOnly.connection_state(),
+            ConnectionState::Connected
+        );
+        assert!(!TopologyState::PrimaryOnly.requires_secondary_health());
+        assert_eq!(
+            TopologyState::DualSegment.connection_state(),
+            ConnectionState::Connected
+        );
+        assert!(TopologyState::DualSegment.requires_secondary_health());
+        assert_eq!(
+            TopologyState::SecondaryUnavailable.connection_state(),
+            ConnectionState::Degraded
+        );
+        assert!(TopologyState::SecondaryUnavailable.requires_secondary_health());
     }
 
     #[test]
