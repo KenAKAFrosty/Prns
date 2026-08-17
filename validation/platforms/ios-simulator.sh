@@ -38,8 +38,12 @@ IFS=$'\t' read -r simulator_id simulator_name simulator_runtime simulator_data_p
 test -n "$simulator_id"
 
 derived_data="$(mktemp -d "${TMPDIR:-/tmp}/prns-ios-simulator-derived.XXXXXX")"
+cleanup() {
+  xcrun simctl terminate "$simulator_id" com.personal.hopspot 2>/dev/null || true
+  rm -rf "$derived_data"
+}
 trap 'echo "ios-simulator: command failed at line $LINENO" >&2' ERR
-trap 'rm -rf "$derived_data"' EXIT
+trap cleanup EXIT
 app="$derived_data/Build/Products/Debug-iphonesimulator/PersonalHopspot.app"
 screenshot="$derived_data/screenshot.png"
 source_icon="personal-hopspot/mobile/ios/app/PersonalHopspot/Assets.xcassets/AppIcon.appiconset/AppIcon.png"
