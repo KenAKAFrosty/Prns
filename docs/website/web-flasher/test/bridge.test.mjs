@@ -1251,6 +1251,8 @@ test("unsupported and insecure browser failures emit terminal bridge events", as
     { phase: unsupportedEvents.at(-1).phase, code: unsupportedEvents.at(-1).code },
     { phase: "failed", code: "unsupported_browser" },
   );
+  assert.match(unsupportedEvents.at(-1).message, /Firefox/);
+  assert.doesNotMatch(unsupportedEvents.at(-1).message, /Chrome\/Edge/);
   assert.equal(testing.prepared(), null);
   assert.equal(unsupportedConfiguration.every((byte) => byte === 0), true);
 });

@@ -197,7 +197,7 @@ export class BrowserWebSocketSession implements WebSocketSession {
             return;
           }
           if (this.#codec.rawFallbackIsArmed()) {
-            const pending = this.#codec.resolveRawFallback();
+            const pending = this.#codec.releaseRawFallback();
             if (pending !== undefined) {
               const written = await this.#writeEncodedFrame(pending);
               if (written.tag !== "Written") {
@@ -212,9 +212,9 @@ export class BrowserWebSocketSession implements WebSocketSession {
           await delay(OUTBOUND_POLL_MS);
           continue;
         }
-        const maximumFrames = this.#codec.isDetecting()
-          ? 1
-          : Number.MAX_SAFE_INTEGER;
+        const maximumFrames = this.#codec.canStageMultipleOutbound()
+          ? Number.MAX_SAFE_INTEGER
+          : 1;
         const outbound = this.#host.takeOutboundFor(
           this.interfaceId,
           maximumFrames,

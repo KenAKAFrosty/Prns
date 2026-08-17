@@ -13,6 +13,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PEERS = ROOT / "validation" / "interop" / "peers" / "websocket_ecosystem"
+INTEGRATION_MANIFEST = ROOT / "validation" / "integration" / "Cargo.toml"
 PACKET_HEX = "0000000102030405060708090a0b0c0d0e0f00c0db7e7d42"
 KISS_HEX = "c0000000000102030405060708090a0b0c0d0e0f00dbdcdbdd7e7d42c0"
 HDLC_HEX = "7e0000000102030405060708090a0b0c0d0e0f00c0db7d5e7d5d427e"
@@ -31,14 +32,22 @@ class FileLicense:
 
 
 @dataclass(frozen=True)
+class LxmfApplicationPeers:
+    echo: str
+    sender: str
+
+
+@dataclass(frozen=True)
 class Upstream:
     name: str
     repository: str
     commit: str
     adapter: str | None
+    prns_interop_adapter: str | None = None
     prepare_commands: tuple[tuple[str, ...], ...] = ()
     package_licenses: tuple[PackageLicense, ...] = ()
     file_licenses: tuple[FileLicense, ...] = ()
+    lxmf_application_peers: LxmfApplicationPeers | None = None
 
 
 UPSTREAMS = (
@@ -47,6 +56,11 @@ UPSTREAMS = (
         repository="https://github.com/bergie/reticulum-js.git",
         commit="30b93f2d0e2ec2e46f0a88db1d704305c68fad8e",
         adapter="bergie.mjs",
+        prns_interop_adapter="bergie_prns.mjs",
+        lxmf_application_peers=LxmfApplicationPeers(
+            echo="bergie_lxmf/echo.mjs",
+            sender="bergie_lxmf/sender.mjs",
+        ),
         package_licenses=(
             PackageLicense("packages/core/package.json", "EUPL-1.2"),
             PackageLicense(
@@ -221,6 +235,65 @@ def runtime_characterization(upstream: Upstream, repository: Path) -> dict:
     return result
 
 
+def prns_interoperability(upstream: Upstream, repository: Path) -> dict | None:
+    if upstream.prns_interop_adapter is None:
+        return None
+    adapter = PEERS / upstream.prns_interop_adapter
+    for framing in ("raw", "kiss"):
+        output = run(
+            [
+                "cargo",
+                "run",
+                "--quiet",
+                "--manifest-path",
+                str(INTEGRATION_MANIFEST),
+                "--example",
+                "websocket_bergie_peer",
+                "--locked",
+                "--",
+                str(repository),
+                str(adapter),
+                framing,
+            ],
+            ROOT,
+        )
+        expected = f"PASS: bergie {framing} interoperated with Prns auto"
+        if output != expected:
+            raise RuntimeError(
+                f"{upstream.name} {framing} interoperability changed: "
+                f"expected {expected!r}, received {output!r}"
+            )
+    return {
+        "kind": "live_websocket",
+        "raw": {
+            "provisional_raw_received": True,
+            "late_evidence_received_by_prns": True,
+            "resolved_egress_received": True,
+        },
+        "kiss": {
+            "provisional_raw_discarded": True,
+            "late_evidence_received_by_prns": True,
+            "resolved_egress_received": True,
+        },
+    }
+
+
+def lxmf_application_interoperability(
+    upstream: Upstream, repository: Path
+) -> dict | None:
+    from websocket_bergie_lxmf_e2e import exercise
+
+    peers = upstream.lxmf_application_peers
+    if peers is None:
+        return None
+
+    return exercise(
+        repository,
+        PEERS / peers.echo,
+        PEERS / peers.sender,
+    )
+
+
 def firmware_source_characterization(repository: Path) -> dict:
     console = (repository / "WebSocketConsole.cpp").read_text()
     server = (repository / "WebSocketServer.cpp").read_text()
@@ -263,25 +336,63 @@ def characterize(checkout_root: Path) -> dict:
             if upstream.adapter is None
             else runtime_characterization(upstream, repository)
         )
-        results[upstream.name] = {
+        upstream_result = {
             "commit": upstream.commit,
             "repository": upstream.repository,
             "behavior": result,
         }
+        interoperability = prns_interoperability(upstream, repository)
+        if interoperability is not None:
+            upstream_result["prns_interoperability"] = interoperability
+        results[upstream.name] = upstream_result
     return {"schema": 1, "upstreams": results}
+
+
+def lxmf_application_e2e(checkout_root: Path) -> dict:
+    configured = tuple(
+        upstream
+        for upstream in UPSTREAMS
+        if upstream.lxmf_application_peers is not None
+    )
+    if len(configured) != 1:
+        raise RuntimeError(
+            f"expected one LXMF application upstream, received {len(configured)}"
+        )
+    upstream = configured[0]
+    repository = checkout(upstream, checkout_root)
+    verify_checkout(upstream, repository)
+    interoperability = lxmf_application_interoperability(upstream, repository)
+    if interoperability is None:
+        raise RuntimeError(f"{upstream.name} has no LXMF application peers")
+    return {
+        "schema": 1,
+        "upstreams": {
+            upstream.name: {
+                "commit": upstream.commit,
+                "repository": upstream.repository,
+                "interoperability": interoperability,
+            }
+        },
+    }
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkout-root", type=Path)
+    parser.add_argument("--lxmf-application-e2e", action="store_true")
     arguments = parser.parse_args()
+    operation = (
+        lxmf_application_e2e
+        if arguments.lxmf_application_e2e
+        else characterize
+    )
 
     if arguments.checkout_root is not None:
-        print(json.dumps(characterize(arguments.checkout_root), sort_keys=True))
+        print(json.dumps(operation(arguments.checkout_root), sort_keys=True))
         return 0
 
     with tempfile.TemporaryDirectory(prefix="prns-websocket-ecosystem-") as directory:
-        print(json.dumps(characterize(Path(directory)), sort_keys=True))
+        print(json.dumps(operation(Path(directory)), sort_keys=True))
     return 0
 
 

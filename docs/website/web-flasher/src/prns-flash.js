@@ -338,7 +338,7 @@ export async function flash(emit = () => {}, dependencies = {}) {
       events,
       new FlashBridgeError(
         "unsupported_browser",
-        "This browser does not provide Web Serial. Use current Chrome/Edge or the CLI.",
+        "This browser does not provide Web Serial. Use current desktop Chrome, Edge, or Firefox 151 or later, or the CLI.",
       ),
     );
   }

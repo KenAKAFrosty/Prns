@@ -1,6 +1,7 @@
 #[cfg(feature = "tokio-host")]
 pub use prns_interfaces_tokio::usb_auto::{
-    AutoUsb, UsbAutoHost, DEFAULT_USB_AUTO_ID, DEFAULT_USB_BAUD,
+    AutoUsb, UsbAutoCandidate, UsbAutoHost, UsbAutoIncarnation, DEFAULT_USB_AUTO_ID,
+    DEFAULT_USB_BAUD,
 };
 
 #[cfg(feature = "embassy-host")]

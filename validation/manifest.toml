@@ -485,7 +485,7 @@ platform = "linux"
 toolchain = "python"
 timeout_seconds = 600
 command = ["bash", "validation/release/contracts.sh"]
-inputs = ["tools/tests", "tools/release", "prnsd/Cargo.toml", "validation/release/contracts.sh", "validation/release/prnsd-feature-contracts.py", "validation/release/workflow-contracts.py"]
+inputs = ["tools/tests", "tools/release", "prnsd/Cargo.toml", "validation/release/contracts.sh", "validation/release/prnsd-feature-contracts.py", "validation/release/workflow-contracts.py", "validation/release/acceptance-doc-contracts.py", "release/acceptance/README.md", "release/acceptance/QUALIFICATION.md", "release/acceptance/rosters/README.md", "release/flash/README.md", "release/flash/boards.json", "docs/release-dependency-audit.md"]
 artifacts = "validation-artifacts/results/release-contracts"
 
 [[suite]]
@@ -1157,9 +1157,42 @@ inputs = [
   "validation/interop/websocket_ecosystem_characterization.py",
   "validation/interop/peers/websocket_ecosystem/aerik.mjs",
   "validation/interop/peers/websocket_ecosystem/bergie.mjs",
+  "validation/interop/peers/websocket_ecosystem/bergie_prns.mjs",
   "validation/interop/peers/websocket_ecosystem/nilu96.py",
+  "validation/integration/Cargo.toml",
+  "validation/integration/Cargo.lock",
+  "validation/integration/examples/websocket_bergie_peer.rs",
+  "prns-core/src/interfaces/websocket",
+  "prns-interfaces/impls/tokio/src/websocket",
 ]
 artifacts = "validation-artifacts/results/interop-websocket-ecosystem-characterization"
+
+[[suite]]
+id = "interop-websocket-bergie-lxmf-e2e"
+domain = "interop"
+group = "linux-network"
+tiers = ["scheduled"]
+platform = "linux"
+toolchain = "python"
+timeout_seconds = 600
+command = [
+  "__RUNNER_PYTHON__",
+  "validation/interop/websocket_ecosystem_characterization.py",
+  "--lxmf-application-e2e",
+]
+inputs = [
+  "validation/interop/websocket_ecosystem_characterization.py",
+  "validation/interop/websocket_bergie_lxmf_e2e.py",
+  "validation/interop/peers/websocket_ecosystem/bergie_lxmf/echo.mjs",
+  "validation/interop/peers/websocket_ecosystem/bergie_lxmf/sender.mjs",
+  "prns-core/src/interfaces/websocket",
+  "prns-interfaces/impls/tokio/src/websocket",
+  "personal-rns/src",
+  "prnsd/Cargo.toml",
+  "prnsd/Cargo.lock",
+  "prnsd/src",
+]
+artifacts = "validation-artifacts/results/interop-websocket-bergie-lxmf-e2e"
 
 [[fuzz_target]]
 name = "wire_announce_parse"

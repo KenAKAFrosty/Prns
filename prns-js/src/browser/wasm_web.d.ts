@@ -55,12 +55,13 @@ export declare class WebSocketFramingCodec
   constructor(selection: string);
   messageCap: WebSocketFramingCodecBinding["messageCap"];
   canReadOutbound: WebSocketFramingCodecBinding["canReadOutbound"];
+  canStageMultipleOutbound: WebSocketFramingCodecBinding["canStageMultipleOutbound"];
   rawFallbackIsArmed: WebSocketFramingCodecBinding["rawFallbackIsArmed"];
   isDetecting: WebSocketFramingCodecBinding["isDetecting"];
   rawFallbackDelayMillis: WebSocketFramingCodecBinding["rawFallbackDelayMillis"];
   decode: WebSocketFramingCodecBinding["decode"];
   stageOutbound: WebSocketFramingCodecBinding["stageOutbound"];
-  resolveRawFallback: WebSocketFramingCodecBinding["resolveRawFallback"];
+  releaseRawFallback: WebSocketFramingCodecBinding["releaseRawFallback"];
 }
 
 export declare function hostContractAbi(): number;

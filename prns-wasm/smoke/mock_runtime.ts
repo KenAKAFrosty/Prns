@@ -12,23 +12,29 @@ const HDLC_FLAG = 0x7e;
 const HDLC_ESCAPE = 0x7d;
 
 type MockWebSocketWireFraming = "raw" | "hdlc" | "kiss";
+type MockWebSocketFramingState =
+  | { readonly type: "AwaitingEvidence"; readonly pending?: Uint8Array }
+  | { readonly type: "ProvisionalRaw" }
+  | {
+      readonly type: "Resolved";
+      readonly framing: MockWebSocketWireFraming;
+    };
 
 export class MockWebSocketFramingCodec
   implements WebSocketFramingCodecBinding
 {
-  #framing: MockWebSocketWireFraming | undefined;
-  #pending: Uint8Array | undefined;
+  #state: MockWebSocketFramingState;
   #inbound: Uint8Array<ArrayBufferLike> = new Uint8Array();
 
   constructor(selection: string) {
     switch (selection) {
       case "auto":
-        this.#framing = undefined;
+        this.#state = { type: "AwaitingEvidence" };
         break;
       case "raw":
       case "hdlc":
       case "kiss":
-        this.#framing = selection;
+        this.#state = { type: "Resolved", framing: selection };
         break;
       default:
         throw new Error(`unknown WebSocket framing selection ${selection}`);
@@ -36,19 +42,31 @@ export class MockWebSocketFramingCodec
   }
 
   messageCap(): number {
-    return this.#framing === "raw" ? FRAME_CAP : FRAME_CAP * 2 + 3;
+    return this.#state.type === "Resolved" && this.#state.framing === "raw"
+      ? FRAME_CAP
+      : FRAME_CAP * 2 + 3;
   }
 
   canReadOutbound(): boolean {
-    return this.#pending === undefined;
+    return (
+      this.#state.type !== "AwaitingEvidence" ||
+      this.#state.pending === undefined
+    );
+  }
+
+  canStageMultipleOutbound(): boolean {
+    return this.#state.type !== "AwaitingEvidence";
   }
 
   rawFallbackIsArmed(): boolean {
-    return this.#framing === undefined && this.#pending !== undefined;
+    return (
+      this.#state.type === "AwaitingEvidence" &&
+      this.#state.pending !== undefined
+    );
   }
 
   isDetecting(): boolean {
-    return this.#framing === undefined;
+    return this.#state.type !== "Resolved";
   }
 
   rawFallbackDelayMillis(): number {
@@ -57,13 +75,20 @@ export class MockWebSocketFramingCodec
 
   decode(message: Uint8Array): WebSocketDecodeBatchBinding {
     let resolvedOutbound: Uint8Array | undefined;
-    if (this.#framing === undefined) {
+    if (this.#state.type !== "Resolved") {
+      if (message.length === 0) {
+        return mockWebSocketDecodeBatch([], undefined);
+      }
       const first = message[0];
       resolvedOutbound = this.#resolve(
         first === KISS_FLAG ? "kiss" : first === HDLC_FLAG ? "hdlc" : "raw",
       );
     }
-    if (this.#framing === "raw") {
+    if (this.#state.type !== "Resolved") {
+      return mockWebSocketDecodeBatch([], resolvedOutbound);
+    }
+    const framing = this.#state.framing;
+    if (framing === "raw") {
       return mockWebSocketDecodeBatch(
         message.length === 0 ? [] : [message.slice()],
         resolvedOutbound,
@@ -71,7 +96,7 @@ export class MockWebSocketFramingCodec
     }
     this.#inbound = joinedBytes(this.#inbound, message);
     const packets: Uint8Array[] = [];
-    const flag = this.#framing === "kiss" ? KISS_FLAG : HDLC_FLAG;
+    const flag = framing === "kiss" ? KISS_FLAG : HDLC_FLAG;
     while (true) {
       const start = this.#inbound.indexOf(flag);
       if (start < 0) {
@@ -86,7 +111,7 @@ export class MockWebSocketFramingCodec
       const framed = this.#inbound.slice(start + 1, end);
       this.#inbound = this.#inbound.slice(end);
       const packet =
-        this.#framing === "kiss"
+        framing === "kiss"
           ? unescapeBytes(framed.slice(1), KISS_ESCAPE, 0xdc, 0xdd)
           : unescapeBytes(framed, HDLC_ESCAPE, 0x5e, 0x5d);
       if (packet.length > 0) {
@@ -96,28 +121,45 @@ export class MockWebSocketFramingCodec
   }
 
   stageOutbound(packet: PacketFrame): Uint8Array | undefined {
-    if (this.#framing === undefined) {
-      if (this.#pending !== undefined) {
-        throw new Error("WebSocket framing is awaiting evidence");
-      }
-      this.#pending = packet.slice();
-      return undefined;
+    switch (this.#state.type) {
+      case "AwaitingEvidence":
+        if (this.#state.pending !== undefined) {
+          throw new Error("WebSocket framing is awaiting evidence");
+        }
+        this.#state = {
+          type: "AwaitingEvidence",
+          pending: packet.slice(),
+        };
+        return undefined;
+      case "ProvisionalRaw":
+        return encodeMockWebSocketPacket("raw", packet);
+      case "Resolved":
+        return encodeMockWebSocketPacket(this.#state.framing, packet);
     }
-    return encodeMockWebSocketPacket(this.#framing, packet);
   }
 
-  resolveRawFallback(): Uint8Array | undefined {
-    return this.#resolve("raw");
+  releaseRawFallback(): Uint8Array | undefined {
+    if (
+      this.#state.type !== "AwaitingEvidence" ||
+      this.#state.pending === undefined
+    ) {
+      return undefined;
+    }
+    const pending = this.#state.pending;
+    this.#state = { type: "ProvisionalRaw" };
+    return encodeMockWebSocketPacket("raw", pending);
   }
 
   #resolve(framing: MockWebSocketWireFraming): Uint8Array | undefined {
-    this.#framing = framing;
-    if (this.#pending === undefined) {
+    const pending =
+      this.#state.type === "AwaitingEvidence"
+        ? this.#state.pending
+        : undefined;
+    this.#state = { type: "Resolved", framing };
+    if (pending === undefined) {
       return undefined;
     }
-    const outbound = encodeMockWebSocketPacket(framing, this.#pending);
-    this.#pending = undefined;
-    return outbound;
+    return encodeMockWebSocketPacket(framing, pending);
   }
 }
 

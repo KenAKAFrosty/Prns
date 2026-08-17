@@ -16,7 +16,7 @@ use personal_rns::shared_instance::rns_rpc::{
 use personal_rns::shared_instance::SharedInstanceServer;
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::TcpClientInterface;
-use personal_rns::usb_auto::UsbAutoHost;
+use personal_rns::usb_auto::{UsbAutoCandidate, UsbAutoHost};
 #[cfg(target_os = "macos")]
 use personal_rns::wifi_auto::apple_service_discovery;
 use personal_rns::wifi_auto::{AutoWifi, AutoWifiStatus};
@@ -323,8 +323,8 @@ fn run_node(ready_tx: Sender<(WindowHandles, persistence::ShutdownFlush)>) {
     });
 }
 
-async fn open_usb_auto_target_with_baud(name: String) -> io::Result<HostUsb> {
-    open_usb_auto_target(name, USB_BAUD).await
+async fn open_usb_auto_target_with_baud(candidate: UsbAutoCandidate) -> io::Result<HostUsb> {
+    open_usb_auto_target(candidate, USB_BAUD).await
 }
 
 #[cfg(target_os = "linux")]

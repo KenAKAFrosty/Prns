@@ -312,6 +312,11 @@ Prnsd also accepts these canonical interface types, which stock RNS 1.4.2 does n
 | `PrnsWebSocketClient` | Connects to the required `ws://` or certificate-validated `wss://` URL in `target` and retries after disconnects. `framing` accepts `auto`, `raw`, `hdlc`, or `kiss` and defaults to `auto`. |
 | `PrnsWebSocketServer` | Listens on `port` or `listen_port`, with optional `listen_ip`, `device`, and `prefer_ipv6`. `framing` accepts `auto`, `raw`, `hdlc`, or `kiss` and defaults to `auto`. Accepted members inherit the full policy and IFAC access. |
 
+Automatic WebSocket framing resolves from valid inbound packet evidence. When outbound traffic
+arrives first, Prns waits briefly, sends it provisionally as raw, and keeps detecting; later HDLC
+or KISS evidence changes subsequent outbound framing. Select a fixed framing when the first packet
+must use an endpoint's known HDLC or KISS contract.
+
 Prns-owned type values are ASCII case-insensitive. The explicit `Interface` suffix is accepted as
 an alias, and `Bluetooth` and `Ble` are interchangeable. For example, `prnsusbauto`,
 `PrnsUsbAutoInterface`, `PRNSBLEAUTO`, and `PrnsBleAutoInterface` normalize to the canonical names

@@ -17,7 +17,7 @@ use personal_rns::runtime::{Diagnostic, ManuallyAttached, PrnsEvent, PrnsNode, P
 use personal_rns::shared_instance::rns_rpc::{SharedInstanceCredentials, SharedInstanceRpcServer};
 use personal_rns::shared_instance::SharedInstanceServer;
 use personal_rns::storage::GrowableHeap;
-use personal_rns::usb_auto::UsbAutoHost;
+use personal_rns::usb_auto::{UsbAutoCandidate, UsbAutoHost};
 use personal_rns::wifi_auto::AutoWifi;
 use personal_rns::wifi_aware::WifiAwareAuto;
 use personal_rns::wifi_direct::WifiDirectAuto;
@@ -132,7 +132,7 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
         let bridge = platform.usb.clone();
         move || {
             if bridge.is_connected() {
-                vec![ANDROID_PORT.to_string()]
+                vec![UsbAutoCandidate::prns_specific(ANDROID_PORT)]
             } else {
                 Vec::new()
             }
@@ -140,7 +140,7 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
     };
     let open = {
         let bridge = platform.usb.clone();
-        move |_name: String| {
+        move |_candidate: UsbAutoCandidate| {
             let bridge = bridge.clone();
             async move { Ok::<BridgeStream, io::Error>(bridge.open_stream()) }
         }

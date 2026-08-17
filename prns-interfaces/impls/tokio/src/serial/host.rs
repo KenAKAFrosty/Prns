@@ -11,6 +11,24 @@ pub struct HostSerial {
     inner: windows_bridge::ThreadedSerial,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UsbSerialPort {
+    path: String,
+    incarnation: String,
+}
+
+impl UsbSerialPort {
+    #[must_use]
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    #[must_use]
+    pub fn incarnation(&self) -> &str {
+        &self.incarnation
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostSerialDataBits {
     Five,
@@ -152,18 +170,22 @@ impl AsyncWrite for HostSerial {
     }
 }
 
-/// Return only USB-backed serial device paths, sorted and deduplicated.
-///
-/// Linux uses sysfs ancestry rather than probing every TTY. macOS and Windows delegate native
-/// enumeration to `prns-ffi`. Unrelated serial ports are never returned.
-pub fn scan_usb_serial_ports() -> io::Result<Vec<String>> {
+pub fn scan_usb_serial_ports() -> io::Result<Vec<UsbSerialPort>> {
     #[cfg(target_os = "linux")]
     {
         scan_linux_usb_serial_ports(std::path::Path::new("/sys"), std::path::Path::new("/dev"))
     }
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
-        prns_ffi::usb_serial::available_ports()
+        prns_ffi::usb_serial::available_ports().map(|ports| {
+            ports
+                .into_iter()
+                .map(|port| UsbSerialPort {
+                    path: port.path().to_string(),
+                    incarnation: port.incarnation().to_string(),
+                })
+                .collect()
+        })
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
@@ -175,7 +197,9 @@ pub fn scan_usb_serial_ports() -> io::Result<Vec<String>> {
 fn scan_linux_usb_serial_ports(
     sys_root: &std::path::Path,
     dev_root: &std::path::Path,
-) -> io::Result<Vec<String>> {
+) -> io::Result<Vec<UsbSerialPort>> {
+    use std::os::unix::fs::MetadataExt;
+
     let tty_root = sys_root.join("class/tty");
     let entries = match std::fs::read_dir(&tty_root) {
         Ok(entries) => entries,
@@ -195,12 +219,26 @@ fn scan_linux_usb_serial_ports(
             continue;
         }
         let path = dev_root.join(entry.file_name());
-        if path.exists() {
-            ports.push(path.to_string_lossy().into_owned());
+        let Ok(metadata) = device.metadata() else {
+            continue;
+        };
+        if !path.exists() {
+            continue;
         }
+        let incarnation = format!(
+            "{}:{}:{}:{}",
+            device.display(),
+            metadata.ino(),
+            metadata.ctime(),
+            metadata.ctime_nsec()
+        );
+        ports.push(UsbSerialPort {
+            path: path.to_string_lossy().into_owned(),
+            incarnation,
+        });
     }
-    ports.sort();
-    ports.dedup();
+    ports.sort_by(|left, right| left.path.cmp(&right.path));
+    ports.dedup_by(|left, right| left.path == right.path);
     Ok(ports)
 }
 
@@ -373,7 +411,36 @@ mod tests {
         fs::write(dev.join("ttyS0"), []).unwrap();
 
         let ports = scan_linux_usb_serial_ports(&sys, &dev).unwrap();
-        assert_eq!(ports, vec![dev.join("ttyACM0").to_string_lossy()]);
+        assert_eq!(ports.len(), 1);
+        assert_eq!(ports[0].path(), dev.join("ttyACM0").to_string_lossy());
+        assert!(!ports[0].incarnation().is_empty());
+    }
+
+    #[test]
+    fn linux_scan_distinguishes_a_reused_tty_path() {
+        let fixture = tempfile::tempdir().unwrap();
+        let sys = fixture.path().join("sys");
+        let dev = fixture.path().join("dev");
+        let usb = sys.join("devices/usb1/1-1");
+        let retired_usb = sys.join("devices/usb1/retired");
+        let tty = sys.join("class/tty/ttyACM0");
+        fs::create_dir_all(&usb).unwrap();
+        fs::write(usb.join("idVendor"), "303a").unwrap();
+        fs::write(usb.join("idProduct"), "1001").unwrap();
+        fs::create_dir_all(&tty).unwrap();
+        fs::create_dir_all(&dev).unwrap();
+        fs::write(dev.join("ttyACM0"), []).unwrap();
+        std::os::unix::fs::symlink(&usb, tty.join("device")).unwrap();
+
+        let first = scan_linux_usb_serial_ports(&sys, &dev).unwrap();
+        fs::rename(&usb, &retired_usb).unwrap();
+        fs::create_dir_all(&usb).unwrap();
+        fs::write(usb.join("idVendor"), "303a").unwrap();
+        fs::write(usb.join("idProduct"), "1001").unwrap();
+        let second = scan_linux_usb_serial_ports(&sys, &dev).unwrap();
+
+        assert_eq!(first[0].path(), second[0].path());
+        assert_ne!(first[0].incarnation(), second[0].incarnation());
     }
 }
 

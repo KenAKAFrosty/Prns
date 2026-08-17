@@ -22,6 +22,7 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 
 use personal_rns::serial::{open_host_serial, scan_usb_serial_ports, HostSerial};
+use personal_rns::usb_auto::{UsbAutoCandidate, UsbAutoIncarnation};
 
 const GOOGLE_VENDOR_ID: u16 = 0x18D1;
 const AOA_PRODUCT_ACCESSORY: u16 = 0x2D00;
@@ -177,20 +178,26 @@ fn malformed_target() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, "malformed USB Auto target")
 }
 
-pub fn scan_usb_auto_targets() -> Vec<String> {
-    let mut targets: Vec<String> = scan_usb_serial_ports()
+pub fn scan_usb_auto_targets() -> Vec<UsbAutoCandidate> {
+    let mut targets: Vec<UsbAutoCandidate> = scan_usb_serial_ports()
         .unwrap_or_default()
         .into_iter()
-        .map(|path| UsbAutoTarget::Cdc(path).encode())
+        .map(|port| {
+            let locator = UsbAutoTarget::Cdc(port.path().to_string()).encode();
+            UsbAutoCandidate::unclassified_attachment(
+                locator,
+                UsbAutoIncarnation::new(port.incarnation()),
+            )
+        })
         .collect();
     if let Some(target) = configured_usbmux_target() {
-        targets.push(UsbAutoTarget::UsbMuxTcp { target }.encode());
+        targets.push(UsbAutoCandidate::prns_specific(
+            UsbAutoTarget::UsbMuxTcp { target }.encode(),
+        ));
     } else {
-        targets.extend(
-            scan_ios_usbmux_udids()
-                .into_iter()
-                .map(|udid| UsbAutoTarget::UsbMuxIos { udid }.encode()),
-        );
+        targets.extend(scan_ios_usbmux_udids().into_iter().map(|udid| {
+            UsbAutoCandidate::prns_specific(UsbAutoTarget::UsbMuxIos { udid }.encode())
+        }));
     }
 
     let Ok(devices) = nusb::list_devices().wait() else {
@@ -201,29 +208,29 @@ pub fn scan_usb_auto_targets() -> Vec<String> {
             targets.extend(
                 webusb_auto_targets(&device)
                     .into_iter()
-                    .map(|target| target.encode()),
+                    .map(|target| UsbAutoCandidate::prns_specific(target.encode())),
             );
         } else if is_android_accessory(&device) {
             targets.extend(
                 accessory_targets(&device)
                     .into_iter()
-                    .map(|target| target.encode()),
+                    .map(|target| UsbAutoCandidate::prns_specific(target.encode())),
             );
         } else if may_support_android_open_accessory(&device) {
-            targets.push(
+            targets.push(UsbAutoCandidate::prns_specific(
                 UsbAutoTarget::AndroidStartAccessory {
                     bus: device.bus_id().to_string(),
                     address: device.device_address(),
                 }
                 .encode(),
-            );
+            ));
         }
     }
     targets
 }
 
-pub async fn open_usb_auto_target(encoded: String, baud: u32) -> io::Result<HostUsb> {
-    match UsbAutoTarget::decode(&encoded)? {
+pub async fn open_usb_auto_target(candidate: UsbAutoCandidate, baud: u32) -> io::Result<HostUsb> {
+    match UsbAutoTarget::decode(candidate.locator())? {
         UsbAutoTarget::Cdc(path) => open_host_serial(&path, baud).map(HostUsb::Serial),
         UsbAutoTarget::UsbMuxTcp { target } => open_usbmux_tcp(&target, None).await,
         UsbAutoTarget::UsbMuxIos { udid } => open_managed_usbmux_ios(&udid).await,
