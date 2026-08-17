@@ -113,10 +113,18 @@ object NativeBridge {
     const val WIFI_DISCOVERY_INACTIVE = 0
     const val WIFI_DISCOVERY_SATELLITE = 1
     const val WIFI_DISCOVERY_CENTRAL = 2
+    const val WIFI_RESOLVED_SERVICE_VISIBLE = 0
+    const val WIFI_RESOLVED_SERVICE_REJECTED = 1
+    const val WIFI_RESOLVED_SERVICE_AT_CAPACITY = 2
+    const val WIFI_RESOLVED_SERVICE_UNAVAILABLE = 3
 
-    external fun nativeWifiServicePort(): Int
+    external fun nativeWifiTcpServicePort(): Int
 
-    external fun nativeWifiServiceType(): String
+    external fun nativeWifiUdpServicePort(): Int
+
+    external fun nativeWifiTcpServiceType(): String
+
+    external fun nativeWifiUdpServiceType(): String
 
     external fun nativeWifiTxtVersionKey(): String
 
@@ -126,6 +134,8 @@ object NativeBridge {
 
     external fun nativeWifiCandidateCapacity(): Int
 
+    external fun nativeWifiResolvedCandidateInputCapacity(): Int
+
     external fun nativeWifiDiscoveryParticipation(): Int
 
     external fun nativeWifiWorkGeneration(): Long
@@ -134,15 +144,24 @@ object NativeBridge {
 
     external fun nativeWifiWakeDiscoveryPump()
 
+    external fun nativeWifiTcpPublicationName(): String?
+
+    external fun nativeWifiUdpPublicationName(): String?
+
+    external fun nativeWifiEndPublicationSession()
+
+    external fun nativeWifiRegistered(serviceType: String, serviceInstance: String)
+
     external fun nativeWifiResolved(
+        serviceType: String,
         serviceInstance: String,
         addresses: Array<ByteArray>,
         scopeIds: IntArray,
         port: Int,
         version: String?,
-    ): Boolean
+    ): Int
 
-    external fun nativeWifiLost(serviceInstance: String)
+    external fun nativeWifiLost(serviceType: String, serviceInstance: String)
 
     external fun nativeBleSetPsm(psm: Int)
 

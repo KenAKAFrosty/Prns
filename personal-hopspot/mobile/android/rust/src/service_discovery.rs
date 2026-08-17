@@ -6,18 +6,143 @@ use personal_rns::interfaces::wifi_auto::{
     AdvertisementInsertion, AdvertisementRemoval, CandidateInsertion, CandidateInsertionError,
     DiscoveryEndpoint, DiscoveryEndpointError, DiscoveryServiceName, DiscoveryServiceNameError,
     DiscoverySnapshot, DiscoveryTransport, DiscoveryVersion, DiscoveryVersionError,
-    ServiceAdvertisement, DEFAULT_DISCOVERY_SERVICE_CAPACITY,
+    EphemeralDiscoveryInstanceName, ServiceAdvertisement, DEFAULT_DISCOVERY_SERVICE_CAPACITY,
+    EPHEMERAL_DISCOVERY_INSTANCE_RANDOM_BYTES,
 };
 use personal_rns::wifi_auto::{
     DiscoveryParticipation, ServiceDiscovery, ServiceDiscoveryPublisher, SnapshotPublication,
 };
 
-pub const DISCOVERY_CAPACITY: NonZeroU8 = DEFAULT_DISCOVERY_SERVICE_CAPACITY;
+pub(crate) const DISCOVERY_CAPACITY: NonZeroU8 = DEFAULT_DISCOVERY_SERVICE_CAPACITY;
+pub(crate) const RESOLVED_CANDIDATE_INPUT_CAPACITY: NonZeroU8 = NonZeroU8::MAX;
 
 struct AndroidServiceDiscoveryShared {
     publisher: ServiceDiscoveryPublisher,
     visible_services: Mutex<DiscoverySnapshot>,
+    publication_session: Mutex<PublicationSession>,
     discovery: Mutex<Option<ServiceDiscovery>>,
+}
+
+enum PublicationSession {
+    Inactive,
+    Central(CentralPublications),
+}
+
+struct CentralPublications {
+    tcp: PublicationIdentity,
+    udp: PublicationIdentity,
+}
+
+impl CentralPublications {
+    fn fresh() -> Result<Self, PublicationNameError> {
+        let mut tcp_random_bytes = [0u8; EPHEMERAL_DISCOVERY_INSTANCE_RANDOM_BYTES];
+        let mut udp_random_bytes = [0u8; EPHEMERAL_DISCOVERY_INSTANCE_RANDOM_BYTES];
+        getrandom::getrandom(&mut tcp_random_bytes)
+            .map_err(PublicationNameError::RandomnessUnavailable)?;
+        getrandom::getrandom(&mut udp_random_bytes)
+            .map_err(PublicationNameError::RandomnessUnavailable)?;
+        Ok(Self {
+            tcp: PublicationIdentity::new(
+                DiscoveryTransport::Tcp,
+                EphemeralDiscoveryInstanceName::from_random_bytes(tcp_random_bytes),
+            ),
+            udp: PublicationIdentity::new(
+                DiscoveryTransport::Udp,
+                EphemeralDiscoveryInstanceName::from_random_bytes(udp_random_bytes),
+            ),
+        })
+    }
+
+    fn get(&self, discovery_transport: DiscoveryTransport) -> &PublicationIdentity {
+        match discovery_transport {
+            DiscoveryTransport::Tcp => &self.tcp,
+            DiscoveryTransport::Udp => &self.udp,
+        }
+    }
+
+    fn get_mut(&mut self, discovery_transport: DiscoveryTransport) -> &mut PublicationIdentity {
+        match discovery_transport {
+            DiscoveryTransport::Tcp => &mut self.tcp,
+            DiscoveryTransport::Udp => &mut self.udp,
+        }
+    }
+
+    fn classify_service(
+        &self,
+        discovery_transport: DiscoveryTransport,
+        service_instance: &str,
+        discovery_service_name: &DiscoveryServiceName,
+    ) -> ServiceOwnership {
+        self.get(discovery_transport)
+            .classify_service(service_instance, discovery_service_name)
+    }
+
+    fn registered(
+        &mut self,
+        discovery_transport: DiscoveryTransport,
+        discovery_service_name: DiscoveryServiceName,
+    ) {
+        self.get_mut(discovery_transport)
+            .registered(discovery_service_name);
+    }
+}
+
+struct PublicationIdentity {
+    transport: DiscoveryTransport,
+    requested_name: EphemeralDiscoveryInstanceName,
+    registration: PublicationRegistration,
+}
+
+impl PublicationIdentity {
+    fn new(transport: DiscoveryTransport, requested_name: EphemeralDiscoveryInstanceName) -> Self {
+        Self {
+            transport,
+            requested_name,
+            registration: PublicationRegistration::Pending,
+        }
+    }
+
+    fn requested_name(&self) -> &EphemeralDiscoveryInstanceName {
+        &self.requested_name
+    }
+
+    fn registered(&mut self, discovery_service_name: DiscoveryServiceName) {
+        debug_assert_eq!(self.transport, discovery_service_name.transport());
+        self.registration = PublicationRegistration::Registered(discovery_service_name);
+    }
+
+    fn classify_service(
+        &self,
+        service_instance: &str,
+        discovery_service_name: &DiscoveryServiceName,
+    ) -> ServiceOwnership {
+        if self
+            .requested_name
+            .as_str()
+            .eq_ignore_ascii_case(service_instance)
+        {
+            return ServiceOwnership::OwnPublication;
+        }
+        match &self.registration {
+            PublicationRegistration::Pending => ServiceOwnership::OtherPublication,
+            PublicationRegistration::Registered(registered_service_name)
+                if registered_service_name == discovery_service_name =>
+            {
+                ServiceOwnership::OwnPublication
+            }
+            PublicationRegistration::Registered(_) => ServiceOwnership::OtherPublication,
+        }
+    }
+}
+
+enum PublicationRegistration {
+    Pending,
+    Registered(DiscoveryServiceName),
+}
+
+enum ServiceOwnership {
+    OwnPublication,
+    OtherPublication,
 }
 
 #[derive(Clone)]
@@ -46,9 +171,48 @@ impl std::fmt::Display for TakeServiceDiscoveryError {
 
 impl std::error::Error for TakeServiceDiscoveryError {}
 
+#[derive(Debug)]
+pub enum PublicationNameError {
+    RejectedParticipation(DiscoveryParticipation),
+    RandomnessUnavailable(getrandom::Error),
+    StateUnavailable,
+}
+
+impl std::fmt::Display for PublicationNameError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::RejectedParticipation(discovery_participation) => write!(
+                formatter,
+                "Android publication name requested while discovery is {discovery_participation:?}"
+            ),
+            Self::RandomnessUnavailable(randomness_error) => {
+                write!(
+                    formatter,
+                    "ephemeral publication randomness: {randomness_error}"
+                )
+            }
+            Self::StateUnavailable => {
+                formatter.write_str("Android publication-name state is unavailable")
+            }
+        }
+    }
+}
+
+impl std::error::Error for PublicationNameError {}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum PublicationRegistrationOutcome {
+    Recorded,
+    RejectedParticipation(DiscoveryParticipation),
+    RejectedServiceName(DiscoveryServiceNameError),
+    SessionUnavailable,
+    StateUnavailable,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum ServiceRecordRejection {
     ServiceName(DiscoveryServiceNameError),
+    OwnPublication,
     Version(DiscoveryVersionError),
     Endpoint(DiscoveryEndpointError),
     CandidateTransport(CandidateInsertionError),
@@ -64,13 +228,6 @@ pub enum ServiceResolutionOutcome {
     RejectedAdvertisementCapacity,
     CapacityMismatch,
     StateUnavailable,
-}
-
-impl ServiceResolutionOutcome {
-    #[must_use]
-    pub const fn endpoint_is_visible(&self) -> bool {
-        matches!(self, Self::SnapshotChanged | Self::SnapshotUnchanged)
-    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -105,6 +262,7 @@ impl AndroidServiceDiscoveryBridge {
             shared: Arc::new(AndroidServiceDiscoveryShared {
                 publisher: service_discovery_publisher,
                 visible_services: Mutex::new(DiscoverySnapshot::new(DISCOVERY_CAPACITY)),
+                publication_session: Mutex::new(PublicationSession::Inactive),
                 discovery: Mutex::new(Some(service_discovery)),
             }),
         }
@@ -112,6 +270,7 @@ impl AndroidServiceDiscoveryBridge {
 
     pub fn resolved(
         &self,
+        discovery_transport: DiscoveryTransport,
         service_instance: &str,
         socket_addresses: impl IntoIterator<Item = SocketAddr>,
         version: Option<&[u8]>,
@@ -123,7 +282,7 @@ impl AndroidServiceDiscoveryBridge {
         }
 
         let discovery_service_name =
-            match DiscoveryServiceName::from_instance(service_instance, DiscoveryTransport::Tcp) {
+            match DiscoveryServiceName::from_instance(service_instance, discovery_transport) {
                 Ok(discovery_service_name) => discovery_service_name,
                 Err(service_name_error) => {
                     return ServiceResolutionOutcome::RejectedRecord(
@@ -131,6 +290,22 @@ impl AndroidServiceDiscoveryBridge {
                     );
                 }
             };
+        match self.classify_service(
+            discovery_transport,
+            service_instance,
+            &discovery_service_name,
+        ) {
+            Ok(ServiceOwnership::OwnPublication) => {
+                let _removal_outcome = self.remove_visible_service(&discovery_service_name);
+                return ServiceResolutionOutcome::RejectedRecord(
+                    ServiceRecordRejection::OwnPublication,
+                );
+            }
+            Ok(ServiceOwnership::OtherPublication) => {}
+            Err(ServiceOwnershipError::StateUnavailable) => {
+                return ServiceResolutionOutcome::StateUnavailable;
+            }
+        }
         if let Err(version_error) = DiscoveryVersion::parse(version) {
             let _removal_outcome = self.remove_visible_service(&discovery_service_name);
             return ServiceResolutionOutcome::RejectedRecord(ServiceRecordRejection::Version(
@@ -140,7 +315,11 @@ impl AndroidServiceDiscoveryBridge {
         let mut service_advertisement = ServiceAdvertisement::new(discovery_service_name.clone());
         let mut latest_endpoint_error = None;
         for socket_address in socket_addresses {
-            let discovery_endpoint = match DiscoveryEndpoint::tcp(socket_address) {
+            let endpoint_validation = match discovery_transport {
+                DiscoveryTransport::Tcp => DiscoveryEndpoint::tcp(socket_address),
+                DiscoveryTransport::Udp => DiscoveryEndpoint::udp(socket_address),
+            };
+            let discovery_endpoint = match endpoint_validation {
                 Ok(discovery_endpoint) => discovery_endpoint,
                 Err(endpoint_error) => {
                     latest_endpoint_error = Some(endpoint_error);
@@ -188,9 +367,13 @@ impl AndroidServiceDiscoveryBridge {
         }
     }
 
-    pub fn lost(&self, service_instance: &str) -> ServiceRemovalOutcome {
+    pub fn lost(
+        &self,
+        discovery_transport: DiscoveryTransport,
+        service_instance: &str,
+    ) -> ServiceRemovalOutcome {
         let discovery_service_name =
-            match DiscoveryServiceName::from_instance(service_instance, DiscoveryTransport::Tcp) {
+            match DiscoveryServiceName::from_instance(service_instance, discovery_transport) {
                 Ok(discovery_service_name) => discovery_service_name,
                 Err(service_name_error) => {
                     return ServiceRemovalOutcome::RejectedServiceName(service_name_error);
@@ -214,9 +397,77 @@ impl AndroidServiceDiscoveryBridge {
     pub fn synchronize_participation(&self) -> DiscoveryParticipation {
         let current_participation = self.shared.publisher.participation();
         if current_participation != DiscoveryParticipation::Central {
-            let _clear_outcome = self.clear_visible_services();
+            self.end_publication_session();
         }
         current_participation
+    }
+
+    pub fn publication_name(
+        &self,
+        discovery_transport: DiscoveryTransport,
+    ) -> Result<EphemeralDiscoveryInstanceName, PublicationNameError> {
+        let current_participation = self.shared.publisher.participation();
+        if current_participation != DiscoveryParticipation::Central {
+            return Err(PublicationNameError::RejectedParticipation(
+                current_participation,
+            ));
+        }
+        let mut publication_session = self
+            .shared
+            .publication_session
+            .lock()
+            .map_err(|_state_unavailable| PublicationNameError::StateUnavailable)?;
+        match &*publication_session {
+            PublicationSession::Central(central_publications) => {
+                return Ok(central_publications
+                    .get(discovery_transport)
+                    .requested_name()
+                    .clone());
+            }
+            PublicationSession::Inactive => {}
+        }
+        let central_publications = CentralPublications::fresh()?;
+        let publication_name = central_publications
+            .get(discovery_transport)
+            .requested_name()
+            .clone();
+        *publication_session = PublicationSession::Central(central_publications);
+        Ok(publication_name)
+    }
+
+    pub fn registered(
+        &self,
+        discovery_transport: DiscoveryTransport,
+        service_instance: &str,
+    ) -> PublicationRegistrationOutcome {
+        let current_participation = self.shared.publisher.participation();
+        if current_participation != DiscoveryParticipation::Central {
+            return PublicationRegistrationOutcome::RejectedParticipation(current_participation);
+        }
+        let discovery_service_name =
+            match DiscoveryServiceName::from_instance(service_instance, discovery_transport) {
+                Ok(discovery_service_name) => discovery_service_name,
+                Err(service_name_error) => {
+                    return PublicationRegistrationOutcome::RejectedServiceName(service_name_error);
+                }
+            };
+        let Ok(mut publication_session) = self.shared.publication_session.lock() else {
+            return PublicationRegistrationOutcome::StateUnavailable;
+        };
+        match &mut *publication_session {
+            PublicationSession::Inactive => PublicationRegistrationOutcome::SessionUnavailable,
+            PublicationSession::Central(central_publications) => {
+                central_publications.registered(discovery_transport, discovery_service_name);
+                PublicationRegistrationOutcome::Recorded
+            }
+        }
+    }
+
+    pub fn end_publication_session(&self) {
+        if let Ok(mut publication_session) = self.shared.publication_session.lock() {
+            *publication_session = PublicationSession::Inactive;
+        }
+        let _clear_outcome = self.clear_visible_services();
     }
 
     #[must_use]
@@ -283,6 +534,32 @@ impl AndroidServiceDiscoveryBridge {
         self.shared.publisher.clear_snapshot();
         SnapshotClearOutcome::Cleared
     }
+
+    fn classify_service(
+        &self,
+        discovery_transport: DiscoveryTransport,
+        service_instance: &str,
+        discovery_service_name: &DiscoveryServiceName,
+    ) -> Result<ServiceOwnership, ServiceOwnershipError> {
+        let publication_session = self
+            .shared
+            .publication_session
+            .lock()
+            .map_err(|_state_unavailable| ServiceOwnershipError::StateUnavailable)?;
+        match &*publication_session {
+            PublicationSession::Inactive => Ok(ServiceOwnership::OtherPublication),
+            PublicationSession::Central(central_publications) => Ok(central_publications
+                .classify_service(
+                    discovery_transport,
+                    service_instance,
+                    discovery_service_name,
+                )),
+        }
+    }
+}
+
+enum ServiceOwnershipError {
+    StateUnavailable,
 }
 
 fn apply_service_resolution(
@@ -371,21 +648,29 @@ mod tests {
     }
 
     fn service_resolution(
+        discovery_transport: DiscoveryTransport,
         service_instance: &str,
         socket_address: &str,
     ) -> Result<(DiscoveryServiceName, DiscoveryEndpoint), Box<dyn std::error::Error>> {
+        let socket_address = socket_address.parse()?;
+        let discovery_endpoint = match discovery_transport {
+            DiscoveryTransport::Tcp => DiscoveryEndpoint::tcp(socket_address)?,
+            DiscoveryTransport::Udp => DiscoveryEndpoint::udp(socket_address)?,
+        };
         Ok((
-            DiscoveryServiceName::from_instance(service_instance, DiscoveryTransport::Tcp)?,
-            DiscoveryEndpoint::tcp(socket_address.parse()?)?,
+            DiscoveryServiceName::from_instance(service_instance, discovery_transport)?,
+            discovery_endpoint,
         ))
     }
 
     #[test]
-    fn android_service_updates_replace_candidates_under_one_bounded_identity(
+    fn android_service_updates_and_transports_share_one_bounded_catalog(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut discovery_snapshot = DiscoverySnapshot::new(NonZeroU8::MIN);
-        let (service_name, first_endpoint) = service_resolution("peer", "192.168.1.2:42699")?;
-        let (_, second_endpoint) = service_resolution("peer", "192.168.1.3:42699")?;
+        let (service_name, first_endpoint) =
+            service_resolution(DiscoveryTransport::Tcp, "peer", "192.168.1.2:42699")?;
+        let (_, second_endpoint) =
+            service_resolution(DiscoveryTransport::Tcp, "peer", "192.168.1.3:42699")?;
         let mut initial_advertisement = ServiceAdvertisement::new(service_name.clone());
         assert_eq!(
             initial_advertisement.insert(first_endpoint),
@@ -416,7 +701,7 @@ mod tests {
         );
 
         let (overflow_name, overflow_endpoint) =
-            service_resolution("overflow", "192.168.1.4:42699")?;
+            service_resolution(DiscoveryTransport::Udp, "peer", "[fe80::4%1]:29717")?;
         let mut overflow_advertisement = ServiceAdvertisement::new(overflow_name);
         assert_eq!(
             overflow_advertisement.insert(overflow_endpoint),
@@ -443,6 +728,50 @@ mod tests {
         assert!(DiscoveryVersion::parse(Some(b"2")).is_err());
         assert!(DiscoveryEndpoint::tcp("192.168.1.2:42699".parse()?).is_ok());
         assert!(DiscoveryEndpoint::tcp("8.8.8.8:42699".parse()?).is_err());
+        assert!(DiscoveryEndpoint::udp("[fe80::2%1]:29717".parse()?).is_ok());
+        assert!(DiscoveryEndpoint::udp("192.168.1.2:29717".parse()?).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn android_publication_names_are_independent_and_rotate(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut first_publications = CentralPublications::fresh()?;
+        let first_tcp_name = first_publications
+            .get(DiscoveryTransport::Tcp)
+            .requested_name()
+            .clone();
+        let first_udp_name = first_publications
+            .get(DiscoveryTransport::Udp)
+            .requested_name()
+            .clone();
+        assert_ne!(first_tcp_name, first_udp_name);
+
+        let registered_service_name =
+            DiscoveryServiceName::from_instance("android-renamed", DiscoveryTransport::Tcp)?;
+        first_publications.registered(DiscoveryTransport::Tcp, registered_service_name.clone());
+        assert!(matches!(
+            first_publications.classify_service(
+                DiscoveryTransport::Tcp,
+                "android-renamed",
+                &registered_service_name,
+            ),
+            ServiceOwnership::OwnPublication
+        ));
+
+        let second_publications = CentralPublications::fresh()?;
+        assert_ne!(
+            second_publications
+                .get(DiscoveryTransport::Tcp)
+                .requested_name(),
+            &first_tcp_name
+        );
+        assert_ne!(
+            second_publications
+                .get(DiscoveryTransport::Udp)
+                .requested_name(),
+            &first_udp_name
+        );
         Ok(())
     }
 
@@ -450,7 +779,12 @@ mod tests {
     fn inactive_bridge_rejects_late_callbacks() -> Result<(), Box<dyn std::error::Error>> {
         let service_discovery_bridge = AndroidServiceDiscoveryBridge::new();
         assert_eq!(
-            service_discovery_bridge.resolved("peer", ["192.168.1.2:42699".parse()?], Some(b"1")),
+            service_discovery_bridge.resolved(
+                DiscoveryTransport::Tcp,
+                "peer",
+                ["192.168.1.2:42699".parse()?],
+                Some(b"1"),
+            ),
             ServiceResolutionOutcome::RejectedParticipation(DiscoveryParticipation::Inactive)
         );
         assert!(matches!(
@@ -480,18 +814,55 @@ mod tests {
         } = start_auto_wifi(&service_discovery_bridge, rendezvous_listener)?;
 
         await_participation(&service_discovery_bridge, DiscoveryParticipation::Central).await?;
+        let first_tcp_publication =
+            service_discovery_bridge.publication_name(DiscoveryTransport::Tcp)?;
+        let first_udp_publication =
+            service_discovery_bridge.publication_name(DiscoveryTransport::Udp)?;
+        assert_ne!(first_tcp_publication, first_udp_publication);
+        assert_eq!(
+            service_discovery_bridge.publication_name(DiscoveryTransport::Tcp)?,
+            first_tcp_publication
+        );
+        assert_eq!(
+            service_discovery_bridge.registered(DiscoveryTransport::Tcp, "android-renamed"),
+            PublicationRegistrationOutcome::Recorded
+        );
         let peer_address: SocketAddr = "192.168.254.2:42699".parse()?;
         assert_eq!(
-            service_discovery_bridge.resolved("legacy", [peer_address], None),
+            service_discovery_bridge.resolved(
+                DiscoveryTransport::Tcp,
+                "android-renamed",
+                [peer_address],
+                Some(b"1"),
+            ),
+            ServiceResolutionOutcome::RejectedRecord(ServiceRecordRejection::OwnPublication)
+        );
+        assert_eq!(
+            service_discovery_bridge.resolved(
+                DiscoveryTransport::Tcp,
+                "legacy",
+                [peer_address],
+                None,
+            ),
             ServiceResolutionOutcome::SnapshotChanged
         );
         await_member_count(&mut member_updates, 1).await?;
         assert_eq!(
-            service_discovery_bridge.resolved("legacy", [peer_address], Some(b"1")),
+            service_discovery_bridge.resolved(
+                DiscoveryTransport::Tcp,
+                "legacy",
+                [peer_address],
+                Some(b"1"),
+            ),
             ServiceResolutionOutcome::SnapshotUnchanged
         );
         assert_eq!(
-            service_discovery_bridge.resolved("legacy", [peer_address], Some(b"2")),
+            service_discovery_bridge.resolved(
+                DiscoveryTransport::Tcp,
+                "legacy",
+                [peer_address],
+                Some(b"2"),
+            ),
             ServiceResolutionOutcome::RejectedRecord(ServiceRecordRejection::Version(
                 DiscoveryVersionError::Unsupported(2)
             ))
@@ -499,12 +870,39 @@ mod tests {
         await_member_count(&mut member_updates, 0).await?;
 
         assert_eq!(
-            service_discovery_bridge.resolved("peer", [peer_address], Some(b"1")),
+            service_discovery_bridge.resolved(
+                DiscoveryTransport::Tcp,
+                "peer",
+                [peer_address],
+                Some(b"1"),
+            ),
             ServiceResolutionOutcome::SnapshotChanged
         );
         await_member_count(&mut member_updates, 1).await?;
+        let udp_peer_address: SocketAddr = "[fe80::254%1]:29717".parse()?;
         assert_eq!(
-            service_discovery_bridge.lost("peer"),
+            service_discovery_bridge.resolved(
+                DiscoveryTransport::Udp,
+                "udp-peer",
+                [udp_peer_address],
+                Some(b"1"),
+            ),
+            ServiceResolutionOutcome::SnapshotChanged
+        );
+        assert!(matches!(
+            service_discovery_bridge
+                .shared
+                .visible_services
+                .lock()
+                .map(|visible_services| visible_services.len()),
+            Ok(2)
+        ));
+        assert_eq!(
+            service_discovery_bridge.lost(DiscoveryTransport::Udp, "udp-peer"),
+            ServiceRemovalOutcome::SnapshotChanged
+        );
+        assert_eq!(
+            service_discovery_bridge.lost(DiscoveryTransport::Tcp, "peer"),
             ServiceRemovalOutcome::SnapshotChanged
         );
         await_member_count(&mut member_updates, 0).await?;
@@ -512,7 +910,16 @@ mod tests {
         auto_wifi_status.disable();
         await_participation(&service_discovery_bridge, DiscoveryParticipation::Inactive).await?;
         assert_eq!(
-            service_discovery_bridge.resolved("inactive", [peer_address], Some(b"1")),
+            service_discovery_bridge.synchronize_participation(),
+            DiscoveryParticipation::Inactive
+        );
+        assert_eq!(
+            service_discovery_bridge.resolved(
+                DiscoveryTransport::Tcp,
+                "inactive",
+                [peer_address],
+                Some(b"1"),
+            ),
             ServiceResolutionOutcome::RejectedParticipation(DiscoveryParticipation::Inactive)
         );
 
@@ -524,11 +931,31 @@ mod tests {
         auto_wifi_status.enable();
         await_participation(&service_discovery_bridge, DiscoveryParticipation::Satellite).await?;
         assert_eq!(
-            service_discovery_bridge.resolved("satellite", [peer_address], Some(b"1")),
+            service_discovery_bridge.synchronize_participation(),
+            DiscoveryParticipation::Satellite
+        );
+        assert_eq!(
+            service_discovery_bridge.resolved(
+                DiscoveryTransport::Tcp,
+                "satellite",
+                [peer_address],
+                Some(b"1"),
+            ),
             ServiceResolutionOutcome::RejectedParticipation(DiscoveryParticipation::Satellite)
         );
         drop(rendezvous_port_guard);
         await_participation(&service_discovery_bridge, DiscoveryParticipation::Central).await?;
+        assert_eq!(
+            service_discovery_bridge.synchronize_participation(),
+            DiscoveryParticipation::Central
+        );
+        let second_tcp_publication =
+            service_discovery_bridge.publication_name(DiscoveryTransport::Tcp)?;
+        let second_udp_publication =
+            service_discovery_bridge.publication_name(DiscoveryTransport::Udp)?;
+        assert_ne!(second_tcp_publication, second_udp_publication);
+        assert_ne!(second_tcp_publication, first_tcp_publication);
+        assert_ne!(second_udp_publication, first_udp_publication);
         await_member_count(&mut member_updates, 0).await?;
 
         auto_wifi_task.abort();

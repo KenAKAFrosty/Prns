@@ -21,7 +21,20 @@ class WifiAutoLink(context: Context) {
             ?.apply { setReferenceCounted(false) }
     private val nsdManager = appContext.getSystemService(Context.NSD_SERVICE) as? NsdManager
 
-    private val serviceType = NativeBridge.nativeWifiServiceType()
+    private val tcpServiceContract = ServiceContract(
+        serviceType = NativeBridge.nativeWifiTcpServiceType(),
+        port = validatedServicePort(
+            "TCP",
+            NativeBridge.nativeWifiTcpServicePort(),
+        ),
+    )
+    private val udpServiceContract = ServiceContract(
+        serviceType = NativeBridge.nativeWifiUdpServiceType(),
+        port = validatedServicePort(
+            "UDP",
+            NativeBridge.nativeWifiUdpServicePort(),
+        ),
+    )
     private val versionKey = NativeBridge.nativeWifiTxtVersionKey()
     private val versionValue = NativeBridge.nativeWifiTxtVersionValue()
     private val serviceCapacity =
@@ -36,6 +49,12 @@ class WifiAutoLink(context: Context) {
                 "Rust supplied an invalid service-advertisement candidate capacity: $capacity"
             }
         }
+    private val resolvedCandidateInputCapacity =
+        NativeBridge.nativeWifiResolvedCandidateInputCapacity().also { capacity ->
+            require(capacity in candidateCapacity..UByte.MAX_VALUE.toInt()) {
+                "Rust supplied an invalid resolved-candidate input capacity: $capacity"
+            }
+        }
 
     private val lifecycleMonitor = Any()
     private val discoveryMonitor = Any()
@@ -45,9 +64,9 @@ class WifiAutoLink(context: Context) {
     private var nextSessionId = 1L
     private var participationWorker: Thread? = null
 
-    private val discoveredServices = LinkedHashSet<String>()
-    private val resolvedServices = LinkedHashSet<String>()
-    private val pendingResolutions = LinkedHashMap<String, NsdServiceInfo>()
+    private val discoveredServices = LinkedHashSet<ServiceKey>()
+    private val resolvedServices = LinkedHashSet<ServiceKey>()
+    private val pendingResolutions = LinkedHashMap<ServiceKey, NsdServiceInfo>()
 
     fun start() {
         val worker = synchronized(lifecycleMonitor) {
@@ -64,7 +83,7 @@ class WifiAutoLink(context: Context) {
         Log.i(
             TAG,
             "service discovery bounded to $serviceCapacity services and " +
-                "$candidateCapacity candidates per service",
+                "$candidateCapacity retained candidates per service",
         )
         worker.start()
     }
@@ -136,47 +155,51 @@ class WifiAutoLink(context: Context) {
             return DiscoveryTransitionOutcome.AlreadyActive
         }
         val manager = nsdManager ?: return DiscoveryTransitionOutcome.NsdUnavailable
+        val publications = when (val publicationOutcome = centralPublications()) {
+            is PublicationSessionOutcome.Ready -> publicationOutcome.publications
+            PublicationSessionOutcome.NamesUnavailable -> {
+                NativeBridge.nativeWifiEndPublicationSession()
+                return DiscoveryTransitionOutcome.PublicationNamesUnavailable
+            }
+        }
         acquireMulticastLock()
 
         val sessionId = nextSessionId++
-        val registrationListener = registrationListener(sessionId)
-        val discoveryListener = discoveryListener(sessionId)
+        val registrations = publications.map { publication ->
+            ServiceRegistration(
+                publication = publication,
+                listener = registrationListener(sessionId, publication),
+            )
+        }
+        val discoveries = publications.map { publication ->
+            ServiceDiscoveryBrowse(
+                contract = publication.contract,
+                listener = discoveryListener(sessionId, publication.contract),
+            )
+        }
         val session = DiscoverySession(
             id = sessionId,
             manager = manager,
-            registrationListener = registrationListener,
-            discoveryListener = discoveryListener,
+            registrations = registrations,
+            discoveries = discoveries,
         )
         discoveryLifecycle = DiscoveryLifecycle.Active(session)
 
-        val serviceInfo = NsdServiceInfo().apply {
-            serviceName = SERVICE_NAME
-            serviceType = this@WifiAutoLink.serviceType
-            port = NativeBridge.nativeWifiServicePort()
-            when (
-                AndroidDiscoveryVersionMetadata.forApiLevel(Build.VERSION.SDK_INT)
-            ) {
-                AndroidDiscoveryVersionMetadata.ImplicitV1 -> Unit
-                AndroidDiscoveryVersionMetadata.ExplicitV1 -> {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                        setAttribute(versionKey, versionValue)
-                    } else {
-                        error("explicit DNS-SD version metadata requires Android API 21")
-                    }
-                }
-            }
-        }
         return try {
-            manager.registerService(
-                serviceInfo,
-                NsdManager.PROTOCOL_DNS_SD,
-                registrationListener,
-            )
-            manager.discoverServices(
-                serviceType,
-                NsdManager.PROTOCOL_DNS_SD,
-                discoveryListener,
-            )
+            registrations.forEach { registration ->
+                manager.registerService(
+                    serviceInfo(registration.publication),
+                    NsdManager.PROTOCOL_DNS_SD,
+                    registration.listener,
+                )
+            }
+            discoveries.forEach { discovery ->
+                manager.discoverServices(
+                    discovery.contract.serviceType,
+                    NsdManager.PROTOCOL_DNS_SD,
+                    discovery.listener,
+                )
+            }
             DiscoveryTransitionOutcome.Activated
         } catch (failure: RuntimeException) {
             Log.w(TAG, "could not start Android service discovery", failure)
@@ -188,6 +211,7 @@ class WifiAutoLink(context: Context) {
     private fun deactivateDiscovery(): DiscoveryTransitionOutcome {
         val activeSession = when (val currentLifecycle = discoveryLifecycle) {
             DiscoveryLifecycle.Stopped -> {
+                NativeBridge.nativeWifiEndPublicationSession()
                 releaseMulticastLock()
                 return DiscoveryTransitionOutcome.AlreadyInactive
             }
@@ -196,35 +220,59 @@ class WifiAutoLink(context: Context) {
         discoveryLifecycle = DiscoveryLifecycle.Stopped
         resolverState = ResolverState.Idle
 
-        val removedServiceNames = discoveredServices.toList()
+        val removedServices = discoveredServices.toList()
         discoveredServices.clear()
         resolvedServices.clear()
         pendingResolutions.clear()
-        removedServiceNames.forEach(NativeBridge::nativeWifiLost)
+        removedServices.forEach { service ->
+            NativeBridge.nativeWifiLost(service.contract.serviceType, service.instanceName)
+        }
+        NativeBridge.nativeWifiEndPublicationSession()
 
         nsdManager?.let { manager ->
-            try {
-                manager.stopServiceDiscovery(activeSession.discoveryListener)
-            } catch (failure: RuntimeException) {
-                Log.d(TAG, "service discovery was already stopped", failure)
+            activeSession.discoveries.forEach { discovery ->
+                try {
+                    manager.stopServiceDiscovery(discovery.listener)
+                } catch (failure: RuntimeException) {
+                    Log.d(
+                        TAG,
+                        "${discovery.contract.serviceType} discovery was already stopped",
+                        failure,
+                    )
+                }
             }
-            try {
-                manager.unregisterService(activeSession.registrationListener)
-            } catch (failure: RuntimeException) {
-                Log.d(TAG, "service advertisement was already unregistered", failure)
+            activeSession.registrations.forEach { registration ->
+                try {
+                    manager.unregisterService(registration.listener)
+                } catch (failure: RuntimeException) {
+                    Log.d(
+                        TAG,
+                        "${registration.publication.contract.serviceType} advertisement was already unregistered",
+                        failure,
+                    )
+                }
             }
         }
         releaseMulticastLock()
         return DiscoveryTransitionOutcome.Deactivated
     }
 
-    private fun registrationListener(sessionId: Long) =
+    private fun registrationListener(
+        sessionId: Long,
+        publication: DiscoveryPublication,
+    ) =
         object : NsdManager.RegistrationListener {
             override fun onServiceRegistered(registeredService: NsdServiceInfo) {
                 synchronized(discoveryMonitor) {
                     val session = activeSession(sessionId) ?: return
-                    session.registeredName = registeredService.serviceName
+                    session.registrations
+                        .firstOrNull { it.publication == publication }
+                        ?.registeredName = registeredService.serviceName
                 }
+                NativeBridge.nativeWifiRegistered(
+                    publication.contract.serviceType,
+                    registeredService.serviceName,
+                )
                 Log.i(
                     TAG,
                     "service discovery registered ${registeredService.serviceName} " +
@@ -248,14 +296,14 @@ class WifiAutoLink(context: Context) {
             }
         }
 
-    private fun discoveryListener(sessionId: Long) =
+    private fun discoveryListener(sessionId: Long, serviceContract: ServiceContract) =
         object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(discoveredServiceType: String) {
                 Log.i(TAG, "service discovery started for $discoveredServiceType")
             }
 
             override fun onServiceFound(service: NsdServiceInfo) {
-                when (admitService(sessionId, service)) {
+                when (admitService(sessionId, serviceContract, service)) {
                     ServiceAdmission.Admitted,
                     ServiceAdmission.Updated,
                     -> pumpResolver()
@@ -270,8 +318,12 @@ class WifiAutoLink(context: Context) {
             }
 
             override fun onServiceLost(service: NsdServiceInfo) {
-                when (forgetService(sessionId, service.serviceName)) {
-                    ServiceRemoval.Removed -> NativeBridge.nativeWifiLost(service.serviceName)
+                val serviceKey = ServiceKey(serviceContract, service.serviceName)
+                when (forgetService(sessionId, serviceKey)) {
+                    ServiceRemoval.Removed -> NativeBridge.nativeWifiLost(
+                        serviceKey.contract.serviceType,
+                        serviceKey.instanceName,
+                    )
                     ServiceRemoval.NotPresent,
                     ServiceRemoval.StaleSession,
                     -> Unit
@@ -324,33 +376,38 @@ class WifiAutoLink(context: Context) {
         }
     }
 
-    private fun admitService(sessionId: Long, service: NsdServiceInfo): ServiceAdmission =
+    private fun admitService(
+        sessionId: Long,
+        serviceContract: ServiceContract,
+        service: NsdServiceInfo,
+    ): ServiceAdmission =
         synchronized(discoveryMonitor) {
-            val session = activeSession(sessionId) ?: return@synchronized ServiceAdmission.StaleSession
-            val serviceName = service.serviceName
-            if (serviceName == session.registeredName) {
+            val session = activeSession(sessionId)
+                ?: return@synchronized ServiceAdmission.StaleSession
+            val serviceKey = ServiceKey(serviceContract, service.serviceName)
+            if (session.isOwnService(serviceKey)) {
                 return@synchronized ServiceAdmission.OwnService
             }
-            if (discoveredServices.contains(serviceName)) {
-                pendingResolutions[serviceName] = service
+            if (discoveredServices.contains(serviceKey)) {
+                pendingResolutions[serviceKey] = service
                 return@synchronized ServiceAdmission.Updated
             }
             if (discoveredServices.size >= serviceCapacity) {
                 return@synchronized ServiceAdmission.AtCapacity
             }
-            discoveredServices.add(serviceName)
-            pendingResolutions[serviceName] = service
+            discoveredServices.add(serviceKey)
+            pendingResolutions[serviceKey] = service
             ServiceAdmission.Admitted
         }
 
-    private fun forgetService(sessionId: Long, serviceName: String): ServiceRemoval =
+    private fun forgetService(sessionId: Long, serviceKey: ServiceKey): ServiceRemoval =
         synchronized(discoveryMonitor) {
             if (activeSession(sessionId) == null) {
                 return@synchronized ServiceRemoval.StaleSession
             }
-            val wasDiscovered = discoveredServices.remove(serviceName)
-            val wasResolved = resolvedServices.remove(serviceName)
-            val wasPending = pendingResolutions.remove(serviceName) != null
+            val wasDiscovered = discoveredServices.remove(serviceKey)
+            val wasResolved = resolvedServices.remove(serviceKey)
+            val wasPending = pendingResolutions.remove(serviceKey) != null
             if (wasDiscovered || wasResolved || wasPending) {
                 ServiceRemoval.Removed
             } else {
@@ -367,12 +424,12 @@ class WifiAutoLink(context: Context) {
                     try {
                         work.manager.resolveService(
                             work.service,
-                            resolutionListener(work.sessionId, work.serviceName),
+                            resolutionListener(work.sessionId, work.serviceKey),
                         )
                         return
                     } catch (failure: RuntimeException) {
-                        Log.d(TAG, "could not resolve ${work.serviceName}", failure)
-                        completeResolution(work.sessionId, work.serviceName)
+                        Log.d(TAG, "could not resolve ${work.serviceKey.instanceName}", failure)
+                        completeResolution(work.sessionId, work.serviceKey)
                     }
                 }
             }
@@ -397,18 +454,18 @@ class WifiAutoLink(context: Context) {
         ResolutionWork.Resolve(
             manager = activeSession.manager,
             sessionId = activeSession.id,
-            serviceName = nextService.key,
+            serviceKey = nextService.key,
             service = nextService.value,
         )
     }
 
-    private fun resolutionListener(sessionId: Long, serviceName: String) =
+    private fun resolutionListener(sessionId: Long, serviceKey: ServiceKey) =
         object : NsdManager.ResolveListener {
             override fun onServiceResolved(service: NsdServiceInfo) {
-                when (completeResolution(sessionId, serviceName)) {
+                when (completeResolution(sessionId, serviceKey)) {
                     ResolutionCompletion.VisibleService -> publishResolvedService(
                         sessionId,
-                        serviceName,
+                        serviceKey,
                         service,
                     )
                     ResolutionCompletion.RemovedService,
@@ -420,23 +477,23 @@ class WifiAutoLink(context: Context) {
 
             override fun onResolveFailed(service: NsdServiceInfo, errorCode: Int) {
                 Log.d(TAG, "service resolve failed code=$errorCode")
-                completeResolution(sessionId, serviceName)
+                completeResolution(sessionId, serviceKey)
                 pumpResolver()
             }
         }
 
     private fun completeResolution(
         sessionId: Long,
-        serviceName: String,
+        serviceKey: ServiceKey,
     ): ResolutionCompletion = synchronized(discoveryMonitor) {
-        val expectedResolution = ResolverState.Resolving(sessionId, serviceName)
+        val expectedResolution = ResolverState.Resolving(sessionId, serviceKey)
         if (resolverState != expectedResolution) {
             return@synchronized ResolutionCompletion.StaleResolution
         }
         resolverState = ResolverState.Idle
         if (activeSession(sessionId) == null) {
             ResolutionCompletion.StaleResolution
-        } else if (discoveredServices.contains(serviceName)) {
+        } else if (discoveredServices.contains(serviceKey)) {
             ResolutionCompletion.VisibleService
         } else {
             ResolutionCompletion.RemovedService
@@ -445,37 +502,67 @@ class WifiAutoLink(context: Context) {
 
     private fun publishResolvedService(
         sessionId: Long,
-        serviceName: String,
+        serviceKey: ServiceKey,
         service: NsdServiceInfo,
-    ): ServicePublication = synchronized(discoveryMonitor) {
-        if (activeSession(sessionId) == null || !discoveredServices.contains(serviceName)) {
-            return@synchronized ServicePublication.StaleSession
+    ): ResolvedServicePublicationOutcome = synchronized(discoveryMonitor) {
+        if (activeSession(sessionId) == null || !discoveredServices.contains(serviceKey)) {
+            return@synchronized ResolvedServicePublicationOutcome.StaleSession
         }
         val version = serviceVersion(service)
         val candidates = serviceAddresses(service)
             .asSequence()
             .mapNotNull(::resolvedCandidate)
-            .take(candidateCapacity)
+            .take(resolvedCandidateInputCapacity)
             .toList()
-        val publication = if (
+        val publication = ResolvedServicePublicationOutcome.fromBridge(
             NativeBridge.nativeWifiResolved(
-                serviceName,
+                serviceKey.contract.serviceType,
+                serviceKey.instanceName,
                 candidates.map(ResolvedCandidate::octets).toTypedArray(),
                 candidates.map(ResolvedCandidate::scopeId).toIntArray(),
                 service.port,
                 version,
-            )
-        ) {
-            ServicePublication.Published
-        } else {
-            ServicePublication.Rejected
-        }
-        if (publication == ServicePublication.Published) {
-            resolvedServices.add(serviceName)
-        } else {
-            resolvedServices.remove(serviceName)
+            ),
+        )
+        when (publication) {
+            ResolvedServicePublicationOutcome.Visible -> resolvedServices.add(serviceKey)
+            ResolvedServicePublicationOutcome.Rejected,
+            ResolvedServicePublicationOutcome.AtCapacity,
+            ResolvedServicePublicationOutcome.Unavailable,
+            ResolvedServicePublicationOutcome.Unrecognized,
+            ResolvedServicePublicationOutcome.StaleSession,
+            -> resolvedServices.remove(serviceKey)
         }
         publication
+    }
+
+    private fun centralPublications(): PublicationSessionOutcome {
+        val tcpPublicationName = NativeBridge.nativeWifiTcpPublicationName()
+            ?: return PublicationSessionOutcome.NamesUnavailable
+        val udpPublicationName = NativeBridge.nativeWifiUdpPublicationName()
+            ?: return PublicationSessionOutcome.NamesUnavailable
+        return PublicationSessionOutcome.Ready(
+            listOf(
+                DiscoveryPublication(tcpServiceContract, tcpPublicationName),
+                DiscoveryPublication(udpServiceContract, udpPublicationName),
+            ),
+        )
+    }
+
+    private fun serviceInfo(publication: DiscoveryPublication) = NsdServiceInfo().apply {
+        serviceName = publication.instanceName
+        serviceType = publication.contract.serviceType
+        port = publication.contract.port
+        when (AndroidDiscoveryVersionMetadata.forApiLevel(Build.VERSION.SDK_INT)) {
+            AndroidDiscoveryVersionMetadata.ImplicitV1 -> Unit
+            AndroidDiscoveryVersionMetadata.ExplicitV1 -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    setAttribute(versionKey, versionValue)
+                } else {
+                    error("explicit DNS-SD version metadata requires Android API 21")
+                }
+            }
+        }
     }
 
     private fun resolvedCandidate(address: InetAddress): ResolvedCandidate? =
@@ -561,14 +648,60 @@ class WifiAutoLink(context: Context) {
     private data class DiscoverySession(
         val id: Long,
         val manager: NsdManager,
-        val registrationListener: NsdManager.RegistrationListener,
-        val discoveryListener: NsdManager.DiscoveryListener,
+        val registrations: List<ServiceRegistration>,
+        val discoveries: List<ServiceDiscoveryBrowse>,
+    ) {
+        fun isOwnService(serviceKey: ServiceKey): Boolean = registrations.any { registration ->
+            registration.publication.contract == serviceKey.contract &&
+                (
+                    registration.publication.instanceName.equals(
+                        serviceKey.instanceName,
+                        ignoreCase = true,
+                    ) || registration.registeredName?.equals(
+                        serviceKey.instanceName,
+                        ignoreCase = true,
+                    ) == true
+                )
+        }
+    }
+
+    private data class ServiceContract(
+        val serviceType: String,
+        val port: Int,
+    )
+
+    private data class DiscoveryPublication(
+        val contract: ServiceContract,
+        val instanceName: String,
+    )
+
+    private data class ServiceRegistration(
+        val publication: DiscoveryPublication,
+        val listener: NsdManager.RegistrationListener,
         var registeredName: String? = null,
     )
 
+    private data class ServiceDiscoveryBrowse(
+        val contract: ServiceContract,
+        val listener: NsdManager.DiscoveryListener,
+    )
+
+    private data class ServiceKey(
+        val contract: ServiceContract,
+        val instanceName: String,
+    )
+
+    private sealed class PublicationSessionOutcome {
+        data class Ready(
+            val publications: List<DiscoveryPublication>,
+        ) : PublicationSessionOutcome()
+
+        object NamesUnavailable : PublicationSessionOutcome()
+    }
+
     private sealed class ResolverState {
         object Idle : ResolverState()
-        data class Resolving(val sessionId: Long, val serviceName: String) : ResolverState()
+        data class Resolving(val sessionId: Long, val serviceKey: ServiceKey) : ResolverState()
     }
 
     private sealed class ResolutionWork {
@@ -576,7 +709,7 @@ class WifiAutoLink(context: Context) {
         data class Resolve(
             val manager: NsdManager,
             val sessionId: Long,
-            val serviceName: String,
+            val serviceKey: ServiceKey,
             val service: NsdServiceInfo,
         ) : ResolutionWork()
     }
@@ -587,6 +720,7 @@ class WifiAutoLink(context: Context) {
         Deactivated,
         AlreadyInactive,
         NsdUnavailable,
+        PublicationNamesUnavailable,
         ActivationFailed,
         UnrecognizedParticipation,
     }
@@ -611,10 +745,18 @@ class WifiAutoLink(context: Context) {
         StaleResolution,
     }
 
-    private enum class ServicePublication {
-        Published,
-        Rejected,
-        StaleSession,
+    private enum class ResolvedServicePublicationOutcome(val bridgeValue: Int?) {
+        Visible(NativeBridge.WIFI_RESOLVED_SERVICE_VISIBLE),
+        Rejected(NativeBridge.WIFI_RESOLVED_SERVICE_REJECTED),
+        AtCapacity(NativeBridge.WIFI_RESOLVED_SERVICE_AT_CAPACITY),
+        Unavailable(NativeBridge.WIFI_RESOLVED_SERVICE_UNAVAILABLE),
+        Unrecognized(null),
+        StaleSession(null);
+
+        companion object {
+            fun fromBridge(bridgeValue: Int): ResolvedServicePublicationOutcome =
+                values().firstOrNull { it.bridgeValue == bridgeValue } ?: Unrecognized
+        }
     }
 
     private data class ResolvedCandidate(
@@ -634,8 +776,14 @@ class WifiAutoLink(context: Context) {
 
     private companion object {
         private const val TAG = "HopspotWifi"
-        private const val SERVICE_NAME = "PersonalHopspot"
         private const val PARTICIPATION_RETRY_MILLIS = 1_000L
         private const val WORKER_JOIN_MILLIS = 2_000L
+
+        private fun validatedServicePort(transportName: String, port: Int): Int {
+            require(port in 1..UShort.MAX_VALUE.toInt()) {
+                "Rust supplied an invalid Android $transportName service port: $port"
+            }
+            return port
+        }
     }
 }

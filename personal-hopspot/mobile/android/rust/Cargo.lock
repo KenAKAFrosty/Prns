@@ -1750,6 +1750,7 @@ version = "0.1.0"
 dependencies = [
  "android_logger",
  "embedded-graphics",
+ "getrandom 0.2.17",
  "heapless 0.8.0",
  "jni",
  "log",
