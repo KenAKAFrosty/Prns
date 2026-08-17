@@ -18,6 +18,7 @@ pub const DNS_SD_LOCAL_DOMAIN: &str = "local.";
 pub const DNS_SD_SERVICE_TYPE: &str = "_reticulum._tcp.local.";
 pub const TXT_VERSION_KEY: &str = "v";
 pub const TXT_VERSION_VALUE: &str = "1";
+pub const DEFAULT_DISCOVERY_SERVICE_CAPACITY: NonZeroU8 = NonZeroU8::MAX;
 pub const SERVICE_ADVERTISEMENT_CANDIDATE_CAPACITY: u8 = 8;
 pub const DISCOVERY_SERVICE_NAME_MAX_BYTES: usize = 255;
 
@@ -478,10 +479,10 @@ mod tests {
     }
 
     #[test]
-    fn platform_capacity_is_explicitly_bounded_by_its_type() {
-        let capacity = NonZeroU8::new(u8::MAX).unwrap();
+    fn default_discovery_capacity_is_the_nonzero_u8_maximum() {
+        let capacity = DEFAULT_DISCOVERY_SERVICE_CAPACITY;
         let snapshot = DiscoverySnapshot::new(capacity);
-        assert_eq!(snapshot.capacity(), capacity);
+        assert_eq!(snapshot.capacity(), NonZeroU8::MAX);
         assert_eq!(NonZeroU8::new(0), None);
     }
 

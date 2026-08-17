@@ -5,13 +5,13 @@ use std::sync::{Arc, Mutex};
 use personal_rns::interfaces::wifi_auto::{
     AdvertisementInsertion, CandidateInsertion, DiscoveryEndpoint, DiscoveryEndpointError,
     DiscoveryServiceName, DiscoveryServiceNameError, DiscoverySnapshot, DiscoveryVersion,
-    DiscoveryVersionError, ServiceAdvertisement,
+    DiscoveryVersionError, ServiceAdvertisement, DEFAULT_DISCOVERY_SERVICE_CAPACITY,
 };
 use personal_rns::wifi_auto::{
     DiscoveryParticipation, ServiceDiscovery, ServiceDiscoveryPublisher, SnapshotPublication,
 };
 
-pub const DISCOVERY_CAPACITY: NonZeroU8 = NonZeroU8::MAX;
+pub const DISCOVERY_CAPACITY: NonZeroU8 = DEFAULT_DISCOVERY_SERVICE_CAPACITY;
 
 struct AndroidServiceDiscoveryShared {
     publisher: ServiceDiscoveryPublisher,

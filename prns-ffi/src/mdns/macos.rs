@@ -23,11 +23,11 @@ use tokio::sync::{oneshot, watch};
 use prns_core::interfaces::wifi_auto::{
     AdvertisementInsertion, CandidateInsertion, DiscoveryEndpoint, DiscoveryServiceName,
     DiscoveryServiceNameError, DiscoverySnapshot, DiscoveryVersion, DiscoveryVersionError,
-    ServiceAdvertisement, DNS_SD_BASE_SERVICE_TYPE, DNS_SD_LOCAL_DOMAIN, TCP_RENDEZVOUS_PORT,
-    TXT_VERSION_KEY, TXT_VERSION_VALUE,
+    ServiceAdvertisement, DEFAULT_DISCOVERY_SERVICE_CAPACITY, DNS_SD_BASE_SERVICE_TYPE,
+    DNS_SD_LOCAL_DOMAIN, TCP_RENDEZVOUS_PORT, TXT_VERSION_KEY, TXT_VERSION_VALUE,
 };
 
-pub const DISCOVERY_CAPACITY: NonZeroU8 = NonZeroU8::MAX;
+pub const DISCOVERY_CAPACITY: NonZeroU8 = DEFAULT_DISCOVERY_SERVICE_CAPACITY;
 const PUBLISH_TIMEOUT: Duration = Duration::from_secs(10);
 const RESOLVE_TIMEOUT: f64 = 6.0;
 

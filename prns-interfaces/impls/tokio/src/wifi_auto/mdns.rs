@@ -21,7 +21,7 @@ use super::{
 
 const RETRY_INTERVAL: Duration = Duration::from_secs(5);
 const RECONCILE_INTERVAL: Duration = Duration::from_secs(1);
-pub(crate) const DISCOVERY_CAPACITY: NonZeroU8 = NonZeroU8::new(128).unwrap();
+pub(crate) const DISCOVERY_CAPACITY: NonZeroU8 = contract::DEFAULT_DISCOVERY_SERVICE_CAPACITY;
 
 /// Starts the native DNS-SD provider behind a bounded AutoWifi discovery channel.
 ///
