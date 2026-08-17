@@ -269,6 +269,7 @@ impl Drop for CommandJob {
 
 pub struct NativeHost {
     commands: mpsc::Sender<CommandJob>,
+    #[cfg_attr(not(unix), allow(dead_code))]
     controls: mpsc::UnboundedSender<NativeControl>,
     uploads: mpsc::Sender<UploadJob>,
     snapshots: mpsc::Sender<SnapshotJob>,
@@ -2112,7 +2113,8 @@ async fn attach_typed_interface(
 }
 
 async fn execute_control(
-    handle: &PrnsNodeHandle,
+    #[cfg_attr(not(unix), allow(unused_variables))] handle: &PrnsNodeHandle,
+    #[cfg_attr(not(unix), allow(unused_variables))]
     attachments: &mut BTreeMap<InterfaceId, Attachment>,
     control: NativeControl,
 ) {
