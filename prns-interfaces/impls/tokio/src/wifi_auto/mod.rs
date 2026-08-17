@@ -199,6 +199,74 @@ enum AutoInterfaceNetworkParticipation {
     Dormant,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RendezvousClaimSchedule {
+    Due,
+    Waiting,
+}
+
+impl RendezvousClaimSchedule {
+    fn when_unbound(
+        settings: &AutoWifiSettings,
+        rendezvous_listener: &Option<TcpListener>,
+    ) -> Self {
+        match (
+            settings.stock_service_discovery_enabled(),
+            rendezvous_listener,
+        ) {
+            (true, None) => Self::Due,
+            (false, _) | (true, Some(_)) => Self::Waiting,
+        }
+    }
+
+    fn after_beacon(
+        settings: &AutoWifiSettings,
+        rendezvous_listener: &Option<TcpListener>,
+        rebind_schedule: RebindSchedule,
+    ) -> Self {
+        match (
+            Self::when_unbound(settings, rendezvous_listener),
+            rebind_schedule,
+        ) {
+            (Self::Due, RebindSchedule::Due) => Self::Due,
+            (Self::Due | Self::Waiting, RebindSchedule::Waiting)
+            | (Self::Waiting, RebindSchedule::Due) => Self::Waiting,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RebindSchedule {
+    Due,
+    Waiting,
+}
+
+impl RebindSchedule {
+    fn for_beacon(beacon_cycle: u32) -> Self {
+        if beacon_cycle.is_multiple_of(REBIND_BEACON_CYCLES) {
+            Self::Due
+        } else {
+            Self::Waiting
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PeeringRefresh {
+    Due,
+    Waiting,
+}
+
+impl PeeringRefresh {
+    fn for_beacon(beacon_cycle: u32) -> Self {
+        if beacon_cycle.is_multiple_of(UNICAST_REPEER_EVERY) {
+            Self::Due
+        } else {
+            Self::Waiting
+        }
+    }
+}
+
 fn auto_interface_network_participation(
     settings: &AutoWifiSettings,
     discovery_participation: DiscoveryParticipation,
@@ -665,8 +733,8 @@ impl InterfaceSupervisor for AutoWifi {
         } else {
             DiscoveryParticipation::Inactive
         };
-        let mut should_claim_rendezvous =
-            settings.stock_service_discovery_enabled() && rendezvous_listener.is_none();
+        let mut rendezvous_claim_schedule =
+            RendezvousClaimSchedule::when_unbound(&settings, &rendezvous_listener);
         if let Some(service_discovery) = service_discovery.as_ref() {
             service_discovery.set_participation(discovery_participation);
         }
@@ -688,96 +756,36 @@ impl InterfaceSupervisor for AutoWifi {
 
         loop {
             if !supervisor.status.is_enabled() {
-                rendezvous_listener = None;
                 discovery_participation = DiscoveryParticipation::Inactive;
-                if let Some(service_discovery) = service_discovery.as_ref() {
-                    service_discovery.set_participation(discovery_participation);
-                }
-                supervisor.disable_members();
-                drop(sockets.take());
-                nics.clear();
-                supervisor.status.wait_until_enabled().await;
-                if auto_interface_network_participation(&settings, discovery_participation)
-                    == AutoInterfaceNetworkParticipation::Active
-                {
-                    let _network_activation = supervisor.ensure_network_active(
+                supervisor
+                    .suspend_until_enabled(
+                        &mut rendezvous_listener,
+                        service_discovery.as_ref(),
                         &mut nics,
                         &mut sockets,
                         network_discovery_owner,
-                    );
-                }
-                should_claim_rendezvous = settings.stock_service_discovery_enabled();
+                    )
+                    .await;
+                rendezvous_claim_schedule =
+                    RendezvousClaimSchedule::when_unbound(&settings, &rendezvous_listener);
                 continue;
             }
-            if should_claim_rendezvous {
-                match claim_local_rendezvous().await {
-                    RendezvousClaim::Central(claimed_rendezvous_listener) => {
-                        rendezvous_listener = Some(claimed_rendezvous_listener);
-                        discovery_participation = DiscoveryParticipation::Central;
-                        supervisor.remove_loopback();
-                        if let NetworkActivation::SocketUnavailable(error_kind) = supervisor
-                            .ensure_network_active(&mut nics, &mut sockets, network_discovery_owner)
-                        {
-                            crate::diagnostic_log::debug!(
-                                "wifi-auto: UDP sockets unavailable ({error_kind:?}); retrying"
-                            );
-                        }
-                    }
-                    RendezvousClaim::Satellite => {
-                        rendezvous_listener = None;
-                        discovery_participation = DiscoveryParticipation::Satellite;
-                        supervisor.teardown_auto_interface_network();
-                        drop(sockets.take());
-                        nics.clear();
-                        supervisor.ensure_loopback();
-                        supervisor.clear_discovered_services();
-                    }
-                    RendezvousClaim::Unavailable(error_kind) => {
-                        rendezvous_listener = None;
-                        discovery_participation = DiscoveryParticipation::Inactive;
-                        supervisor.teardown_auto_interface_network();
-                        drop(sockets.take());
-                        nics.clear();
-                        supervisor.remove_loopback();
-                        supervisor.clear_discovered_services();
-                        crate::diagnostic_log::debug!(
-                            "wifi-auto: rendezvous listener unavailable ({error_kind:?}); retrying"
-                        );
-                    }
-                }
+            if rendezvous_claim_schedule == RendezvousClaimSchedule::Due {
+                discovery_participation = supervisor.apply_rendezvous_claim(
+                    claim_local_rendezvous().await,
+                    &mut rendezvous_listener,
+                    &mut nics,
+                    &mut sockets,
+                    network_discovery_owner,
+                );
                 if let Some(service_discovery) = service_discovery.as_ref() {
                     service_discovery.set_participation(discovery_participation);
                 }
-                should_claim_rendezvous = false;
+                rendezvous_claim_schedule = RendezvousClaimSchedule::Waiting;
             }
             tokio::select! {
                 accepted_connection = accept_maybe(&rendezvous_listener) => {
-                    if let Ok((tcp_stream, peer_address)) = accepted_connection {
-                        if is_local_peer(peer_address.ip(), &supervisor.prefixes) {
-                            supervisor.reap_accepted_rendezvous();
-                            if supervisor.accepted.len()
-                                >= usize::from(TCP_RENDEZVOUS_ACCEPTED_CAPACITY)
-                            {
-                                crate::diagnostic_log::debug!(
-                                    "wifi-auto: rejecting rendezvous connection from {peer_address}; capacity reached"
-                                );
-                                continue;
-                            }
-                            tune(&tcp_stream);
-                            let tcp_connection = TcpServerConnection::with_policy(
-                                peer_address.to_string().into_bytes(),
-                                tcp_stream,
-                                supervisor.policy,
-                            );
-                            let connection_status = tcp_connection.status();
-                            let attached_connection = supervisor.fleet.add(tcp_connection);
-                            supervisor.accepted.push(AttachedStatus {
-                                attached: attached_connection,
-                                status: connection_status,
-                            });
-                            supervisor.publish_status();
-                        }
-                    }
+                    supervisor.accept_rendezvous_connection(accepted_connection);
                 }
                 received_discovery_datagram = recv_maybe(
                     sockets
@@ -822,131 +830,30 @@ impl InterfaceSupervisor for AutoWifi {
                     service_discovery.as_mut(),
                     discovery_participation,
                 ) => {
-                    match discovery_snapshot {
-                        Ok(discovery_snapshot) => {
-                            let newly_active_udp_targets = supervisor.reconcile_discovery(
-                                &discovery_snapshot,
-                                network_discovery_owner,
-                            );
-                            let probes = supervisor.prepare_udp_peering_probes(
-                                newly_active_udp_targets.iter(),
-                            );
-                            send_udp_peering_probes(
-                                sockets.as_ref().map(|sockets| &sockets.unicast_discovery),
-                                probes,
-                            ).await;
-                        }
-                        Err(discovery::DiscoverySnapshotError::PublisherClosed) => {
-                            service_discovery = None;
-                            supervisor.clear_discovered_services();
-                        }
-                    }
+                    supervisor.apply_discovery_snapshot(
+                        discovery_snapshot,
+                        &mut service_discovery,
+                        sockets.as_ref().map(|sockets| &sockets.unicast_discovery),
+                        network_discovery_owner,
+                    ).await;
                 }
-                () = supervisor.status.wait_until_disabled() => {}
+                () = supervisor.status.wait_until_disabled() => continue,
                 _ = beacon_interval.tick() => {
                     beacon_cycle = beacon_cycle.wrapping_add(1);
-                    if sockets.is_none()
-                        && auto_interface_network_participation(
-                            &settings,
-                            discovery_participation,
-                        ) == AutoInterfaceNetworkParticipation::Active
-                        && beacon_cycle.is_multiple_of(REBIND_BEACON_CYCLES)
-                    {
-                        match supervisor.ensure_network_active(
-                            &mut nics,
-                            &mut sockets,
-                            network_discovery_owner,
-                        ) {
-                            NetworkActivation::Activated => {
-                                let active_udp_targets = supervisor
-                                    .discovered_services
-                                    .udp_targets
-                                    .active_endpoints();
-                                let probes = supervisor
-                                    .prepare_udp_peering_probes(active_udp_targets);
-                                send_udp_peering_probes(
-                                    sockets
-                                        .as_ref()
-                                        .map(|sockets| &sockets.unicast_discovery),
-                                    probes,
-                                ).await;
-                            }
-                            NetworkActivation::SocketUnavailable(error_kind) => {
-                                crate::diagnostic_log::debug!(
-                                    "wifi-auto: UDP sockets unavailable ({error_kind:?}); retrying"
-                                );
-                            }
-                            NetworkActivation::AlreadyActive
-                            | NetworkActivation::NoEligibleInterfaces => {}
-                        }
-                    }
-                    let should_repeat_unicast_peering =
-                        beacon_cycle.is_multiple_of(UNICAST_REPEER_EVERY);
-                    if let Some(sockets) = sockets.as_ref() {
-                        for (&interface_index, auto_interface_protocol) in &supervisor.brains {
-                            let peering_token =
-                                *auto_interface_protocol.our_peering_token().as_bytes();
-                            if let Some(multicast_discovery_socket) = sockets.discovery.as_ref() {
-                                let _ = multicast_discovery_socket
-                                    .send_to(
-                                        &peering_token,
-                                        scoped(
-                                            settings.discovery_group(),
-                                            settings.discovery_port,
-                                            interface_index,
-                                        ),
-                                    )
-                                    .await;
-                            }
-                            if should_repeat_unicast_peering {
-                                for peer_address in auto_interface_protocol.known_peer_addresses() {
-                                    let _ = sockets
-                                        .unicast_discovery
-                                        .send_to(
-                                            &peering_token,
-                                            scoped(
-                                                peer_address,
-                                                settings.reverse_discovery_port(),
-                                                interface_index,
-                                            ),
-                                        )
-                                        .await;
-                                }
-                            }
-                        }
-                        if should_repeat_unicast_peering {
-                            let active_udp_targets = supervisor
-                                .discovered_services
-                                .udp_targets
-                                .active_endpoints();
-                            let probes = supervisor
-                                .prepare_udp_peering_probes(active_udp_targets);
-                            send_udp_peering_probes(
-                                Some(&sockets.unicast_discovery),
-                                probes,
-                            ).await;
-                        }
-                    }
-                    let elapsed_millis = runtime_started_at.elapsed().as_millis() as u64;
-                    if sockets.is_some() && beacon_cycle.is_multiple_of(REBIND_BEACON_CYCLES) {
-                        supervisor.reconcile_nics(
-                            sockets
-                                .as_ref()
-                                .and_then(|sockets| sockets.discovery.as_ref()),
-                            &mut nics,
-                            network_discovery_owner,
-                        );
-                        if nics.is_empty() {
-                            supervisor.deactivate_network();
-                            sockets = None;
-                        }
-                    }
-                    supervisor.retire_stale(elapsed_millis);
-                    supervisor.publish_status();
-                    should_claim_rendezvous =
-                        settings.stock_service_discovery_enabled()
-                            && rendezvous_listener.is_none()
-                            && beacon_cycle.is_multiple_of(REBIND_BEACON_CYCLES);
+                    supervisor.run_beacon_cycle(
+                        beacon_cycle,
+                        &runtime_started_at,
+                        discovery_participation,
+                        &mut nics,
+                        &mut sockets,
+                        network_discovery_owner,
+                    ).await;
+                    let rebind_schedule = RebindSchedule::for_beacon(beacon_cycle);
+                    rendezvous_claim_schedule = RendezvousClaimSchedule::after_beacon(
+                        &settings,
+                        &rendezvous_listener,
+                        rebind_schedule,
+                    );
                 }
             }
         }
@@ -1264,6 +1171,251 @@ impl Supervisor {
             self.dial_initial_gateways(nics);
         }
         NetworkActivation::Activated
+    }
+
+    async fn suspend_until_enabled(
+        &mut self,
+        rendezvous_listener: &mut Option<TcpListener>,
+        service_discovery: Option<&ServiceDiscovery>,
+        nics: &mut std::vec::Vec<Nic>,
+        sockets: &mut Option<Sockets>,
+        network_discovery_owner: NetworkDiscoveryOwner,
+    ) {
+        *rendezvous_listener = None;
+        if let Some(service_discovery) = service_discovery {
+            service_discovery.set_participation(DiscoveryParticipation::Inactive);
+        }
+        self.disable_members();
+        drop(sockets.take());
+        nics.clear();
+        self.status.wait_until_enabled().await;
+        if auto_interface_network_participation(&self.settings, DiscoveryParticipation::Inactive)
+            == AutoInterfaceNetworkParticipation::Active
+        {
+            let _network_activation =
+                self.ensure_network_active(nics, sockets, network_discovery_owner);
+        }
+    }
+
+    fn apply_rendezvous_claim(
+        &mut self,
+        rendezvous_claim: RendezvousClaim,
+        rendezvous_listener: &mut Option<TcpListener>,
+        nics: &mut std::vec::Vec<Nic>,
+        sockets: &mut Option<Sockets>,
+        network_discovery_owner: NetworkDiscoveryOwner,
+    ) -> DiscoveryParticipation {
+        match rendezvous_claim {
+            RendezvousClaim::Central(claimed_rendezvous_listener) => {
+                *rendezvous_listener = Some(claimed_rendezvous_listener);
+                self.remove_loopback();
+                if let NetworkActivation::SocketUnavailable(error_kind) =
+                    self.ensure_network_active(nics, sockets, network_discovery_owner)
+                {
+                    crate::diagnostic_log::debug!(
+                        "wifi-auto: UDP sockets unavailable ({error_kind:?}); retrying"
+                    );
+                }
+                DiscoveryParticipation::Central
+            }
+            RendezvousClaim::Satellite => {
+                *rendezvous_listener = None;
+                self.teardown_auto_interface_network();
+                drop(sockets.take());
+                nics.clear();
+                self.ensure_loopback();
+                self.clear_discovered_services();
+                DiscoveryParticipation::Satellite
+            }
+            RendezvousClaim::Unavailable(error_kind) => {
+                *rendezvous_listener = None;
+                self.teardown_auto_interface_network();
+                drop(sockets.take());
+                nics.clear();
+                self.remove_loopback();
+                self.clear_discovered_services();
+                crate::diagnostic_log::debug!(
+                    "wifi-auto: rendezvous listener unavailable ({error_kind:?}); retrying"
+                );
+                DiscoveryParticipation::Inactive
+            }
+        }
+    }
+
+    fn accept_rendezvous_connection(
+        &mut self,
+        accepted_connection: io::Result<(TcpStream, SocketAddr)>,
+    ) {
+        match accepted_connection {
+            Ok((tcp_stream, peer_address)) if is_local_peer(peer_address.ip(), &self.prefixes) => {
+                self.reap_accepted_rendezvous();
+                if self.accepted.len() >= usize::from(TCP_RENDEZVOUS_ACCEPTED_CAPACITY) {
+                    crate::diagnostic_log::debug!(
+                        "wifi-auto: rejecting rendezvous connection from {peer_address}; capacity reached"
+                    );
+                } else {
+                    tune(&tcp_stream);
+                    let tcp_connection = TcpServerConnection::with_policy(
+                        peer_address.to_string().into_bytes(),
+                        tcp_stream,
+                        self.policy,
+                    );
+                    let connection_status = tcp_connection.status();
+                    let attached_connection = self.fleet.add(tcp_connection);
+                    self.accepted.push(AttachedStatus {
+                        attached: attached_connection,
+                        status: connection_status,
+                    });
+                    self.publish_status();
+                }
+            }
+            Ok(_) | Err(_) => {}
+        }
+    }
+
+    async fn apply_discovery_snapshot(
+        &mut self,
+        discovery_snapshot: Result<DiscoverySnapshot, discovery::DiscoverySnapshotError>,
+        service_discovery: &mut Option<ServiceDiscovery>,
+        unicast_discovery_socket: Option<&UdpSocket>,
+        network_discovery_owner: NetworkDiscoveryOwner,
+    ) {
+        match discovery_snapshot {
+            Ok(discovery_snapshot) => {
+                let newly_active_udp_targets =
+                    self.reconcile_discovery(&discovery_snapshot, network_discovery_owner);
+                let probes = self.prepare_udp_peering_probes(newly_active_udp_targets.iter());
+                send_udp_peering_probes(unicast_discovery_socket, probes).await;
+            }
+            Err(discovery::DiscoverySnapshotError::PublisherClosed) => {
+                *service_discovery = None;
+                self.clear_discovered_services();
+            }
+        }
+    }
+
+    async fn run_beacon_cycle(
+        &mut self,
+        beacon_cycle: u32,
+        runtime_started_at: &tokio::time::Instant,
+        discovery_participation: DiscoveryParticipation,
+        nics: &mut std::vec::Vec<Nic>,
+        sockets: &mut Option<Sockets>,
+        network_discovery_owner: NetworkDiscoveryOwner,
+    ) {
+        let rebind_schedule = RebindSchedule::for_beacon(beacon_cycle);
+        self.recover_network_for_beacon(
+            rebind_schedule,
+            discovery_participation,
+            nics,
+            sockets,
+            network_discovery_owner,
+        )
+        .await;
+        self.send_periodic_peering(sockets.as_ref(), PeeringRefresh::for_beacon(beacon_cycle))
+            .await;
+        let elapsed_millis = runtime_started_at.elapsed().as_millis() as u64;
+        self.reconcile_network_for_beacon(rebind_schedule, nics, sockets, network_discovery_owner);
+        self.retire_stale(elapsed_millis);
+        self.publish_status();
+    }
+
+    async fn recover_network_for_beacon(
+        &mut self,
+        rebind_schedule: RebindSchedule,
+        discovery_participation: DiscoveryParticipation,
+        nics: &mut std::vec::Vec<Nic>,
+        sockets: &mut Option<Sockets>,
+        network_discovery_owner: NetworkDiscoveryOwner,
+    ) {
+        if let (None, AutoInterfaceNetworkParticipation::Active, RebindSchedule::Due) = (
+            sockets.as_ref(),
+            auto_interface_network_participation(&self.settings, discovery_participation),
+            rebind_schedule,
+        ) {
+            match self.ensure_network_active(nics, sockets, network_discovery_owner) {
+                NetworkActivation::Activated => {
+                    let active_udp_targets =
+                        self.discovered_services.udp_targets.active_endpoints();
+                    let probes = self.prepare_udp_peering_probes(active_udp_targets);
+                    send_udp_peering_probes(
+                        sockets.as_ref().map(|sockets| &sockets.unicast_discovery),
+                        probes,
+                    )
+                    .await;
+                }
+                NetworkActivation::SocketUnavailable(error_kind) => {
+                    crate::diagnostic_log::debug!(
+                        "wifi-auto: UDP sockets unavailable ({error_kind:?}); retrying"
+                    );
+                }
+                NetworkActivation::AlreadyActive | NetworkActivation::NoEligibleInterfaces => {}
+            }
+        }
+    }
+
+    async fn send_periodic_peering(
+        &self,
+        sockets: Option<&Sockets>,
+        peering_refresh: PeeringRefresh,
+    ) {
+        if let Some(sockets) = sockets {
+            for (&interface_index, auto_interface_protocol) in &self.brains {
+                let peering_token = *auto_interface_protocol.our_peering_token().as_bytes();
+                if let Some(multicast_discovery_socket) = sockets.discovery.as_ref() {
+                    let _ = multicast_discovery_socket
+                        .send_to(
+                            &peering_token,
+                            scoped(
+                                self.settings.discovery_group(),
+                                self.settings.discovery_port,
+                                interface_index,
+                            ),
+                        )
+                        .await;
+                }
+                if peering_refresh == PeeringRefresh::Due {
+                    for peer_address in auto_interface_protocol.known_peer_addresses() {
+                        let _ = sockets
+                            .unicast_discovery
+                            .send_to(
+                                &peering_token,
+                                scoped(
+                                    peer_address,
+                                    self.settings.reverse_discovery_port(),
+                                    interface_index,
+                                ),
+                            )
+                            .await;
+                    }
+                }
+            }
+            if peering_refresh == PeeringRefresh::Due {
+                let active_udp_targets = self.discovered_services.udp_targets.active_endpoints();
+                let probes = self.prepare_udp_peering_probes(active_udp_targets);
+                send_udp_peering_probes(Some(&sockets.unicast_discovery), probes).await;
+            }
+        }
+    }
+
+    fn reconcile_network_for_beacon(
+        &mut self,
+        rebind_schedule: RebindSchedule,
+        nics: &mut std::vec::Vec<Nic>,
+        sockets: &mut Option<Sockets>,
+        network_discovery_owner: NetworkDiscoveryOwner,
+    ) {
+        if let (Some(active_sockets), RebindSchedule::Due) = (sockets.as_ref(), rebind_schedule) {
+            self.reconcile_nics(
+                active_sockets.discovery.as_ref(),
+                nics,
+                network_discovery_owner,
+            );
+            if nics.is_empty() {
+                self.deactivate_network();
+                *sockets = None;
+            }
+        }
     }
 
     fn activate_network(&mut self, nics: &[Nic], sockets: Option<&Sockets>) {
