@@ -1,5 +1,8 @@
 use std::time::Duration;
 
+use prns_core::interfaces::wifi_auto::{
+    EphemeralDiscoveryInstanceName, EPHEMERAL_DISCOVERY_INSTANCE_RANDOM_BYTES,
+};
 use prns_ffi::mdns::macos::{AppleServiceDiscoveryBackend, MdnsError, DISCOVERY_CAPACITY};
 
 use super::{
@@ -50,9 +53,9 @@ async fn run_service_discovery(
                 return AppleDiscoveryExit::RuntimeDropped;
             }
             Ok(CentralDiscoverySessionEnd::CapacityMismatch) => {}
-            Err(mdns_error) => {
+            Err(apple_discovery_error) => {
                 crate::diagnostic_log::debug!(
-                    "wifi-auto: Apple service discovery unavailable: {mdns_error:?}"
+                    "wifi-auto: Apple service discovery unavailable: {apple_discovery_error}"
                 );
             }
         }
@@ -89,11 +92,16 @@ async fn run_service_discovery(
 
 async fn run_central_session(
     service_discovery_publisher: &mut ServiceDiscoveryPublisher,
-) -> Result<CentralDiscoverySessionEnd, MdnsError> {
+) -> Result<CentralDiscoverySessionEnd, AppleDiscoveryError> {
+    let tcp_instance_name = fresh_instance_name()?;
+    let udp_instance_name = fresh_instance_name()?;
     let mut apple_discovery = loop {
         tokio::select! {
-            apple_discovery = AppleServiceDiscoveryBackend::new() => {
-                break apple_discovery?;
+            apple_discovery = AppleServiceDiscoveryBackend::new(
+                tcp_instance_name.clone(),
+                udp_instance_name.clone(),
+            ) => {
+                break apple_discovery.map_err(AppleDiscoveryError::Native)?;
             }
             participation_change = service_discovery_publisher.wait_for_participation_change() => {
                 match participation_change {
@@ -116,7 +124,7 @@ async fn run_central_session(
     loop {
         tokio::select! {
             next_snapshot = apple_discovery.next_snapshot() => {
-                let discovery_snapshot = next_snapshot?;
+                let discovery_snapshot = next_snapshot.map_err(AppleDiscoveryError::Native)?;
                 match service_discovery_publisher.replace_snapshot(discovery_snapshot) {
                     SnapshotPublication::Published => {}
                     SnapshotPublication::NotCentral(DiscoveryParticipation::Inactive) => {
@@ -149,6 +157,34 @@ async fn run_central_session(
                         return Ok(CentralDiscoverySessionEnd::RuntimeDropped);
                     }
                 }
+            }
+        }
+    }
+}
+
+fn fresh_instance_name() -> Result<EphemeralDiscoveryInstanceName, AppleDiscoveryError> {
+    let mut random_bytes = [0u8; EPHEMERAL_DISCOVERY_INSTANCE_RANDOM_BYTES];
+    getrandom::getrandom(&mut random_bytes).map_err(AppleDiscoveryError::RandomnessUnavailable)?;
+    Ok(EphemeralDiscoveryInstanceName::from_random_bytes(
+        random_bytes,
+    ))
+}
+
+#[derive(Debug)]
+enum AppleDiscoveryError {
+    Native(MdnsError),
+    RandomnessUnavailable(getrandom::Error),
+}
+
+impl std::fmt::Display for AppleDiscoveryError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Native(mdns_error) => write!(formatter, "native backend: {mdns_error}"),
+            Self::RandomnessUnavailable(randomness_error) => {
+                write!(
+                    formatter,
+                    "ephemeral publication randomness: {randomness_error}"
+                )
             }
         }
     }

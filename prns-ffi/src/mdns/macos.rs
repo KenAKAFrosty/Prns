@@ -6,6 +6,7 @@ use core::time::Duration;
 use std::collections::BTreeSet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
 use std::string::String;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc as sync_mpsc, Arc, Mutex};
 use std::thread;
 use std::vec::Vec;
@@ -20,12 +21,15 @@ use objc2_foundation::{
 };
 use tokio::sync::{oneshot, watch};
 
+#[cfg(test)]
+use prns_core::interfaces::wifi_auto::EPHEMERAL_DISCOVERY_INSTANCE_RANDOM_BYTES;
 use prns_core::interfaces::wifi_auto::{
     AdvertisementInsertion, AdvertisementRemoval, CandidateInsertion, CandidateInsertionError,
     DiscoveryEndpoint, DiscoveryServiceName, DiscoveryServiceNameError, DiscoverySnapshot,
-    DiscoveryTransport, DiscoveryVersion, DiscoveryVersionError, ServiceAdvertisement,
-    DEFAULT_DISCOVERY_SERVICE_CAPACITY, DNS_SD_LOCAL_DOMAIN, TCP_DNS_SD_BASE_SERVICE_TYPE,
-    TCP_RENDEZVOUS_PORT, TXT_VERSION_KEY, TXT_VERSION_VALUE,
+    DiscoveryTransport, DiscoveryVersion, DiscoveryVersionError, EphemeralDiscoveryInstanceName,
+    ServiceAdvertisement, DEFAULT_DISCOVERY_SERVICE_CAPACITY, DNS_SD_LOCAL_DOMAIN,
+    TCP_DNS_SD_BASE_SERVICE_TYPE, TCP_RENDEZVOUS_PORT, TXT_VERSION_KEY, TXT_VERSION_VALUE,
+    UDP_DNS_SD_BASE_SERVICE_TYPE, UNICAST_DISCOVERY_PORT,
 };
 
 pub const DISCOVERY_CAPACITY: NonZeroU8 = DEFAULT_DISCOVERY_SERVICE_CAPACITY;
@@ -35,12 +39,28 @@ const RESOLVE_TIMEOUT: f64 = 6.0;
 const AF_INET: u8 = 2;
 const AF_INET6: u8 = 30;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum MdnsError {
     PublishFailed,
     PublishTimeout,
+    InvalidPublicationName,
     Closed,
 }
+
+impl core::fmt::Display for MdnsError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::PublishFailed => formatter.write_str("Apple DNS-SD publication failed"),
+            Self::PublishTimeout => formatter.write_str("Apple DNS-SD publication timed out"),
+            Self::InvalidPublicationName => {
+                formatter.write_str("Apple DNS-SD publication name is invalid")
+            }
+            Self::Closed => formatter.write_str("Apple DNS-SD backend closed"),
+        }
+    }
+}
+
+impl std::error::Error for MdnsError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PublicationOutcome {
@@ -50,6 +70,7 @@ enum PublicationOutcome {
 
 struct AdvertiserDelegateIvars {
     ready: RefCell<Option<oneshot::Sender<PublicationOutcome>>>,
+    backend_failed: Arc<AtomicBool>,
 }
 
 define_class!(
@@ -60,6 +81,11 @@ define_class!(
     unsafe impl NSObjectProtocol for AdvertiserDelegate {}
 
     unsafe impl NSNetServiceDelegate for AdvertiserDelegate {
+        #[unsafe(method(netServiceDidStop:))]
+        fn did_stop(&self, _sender: &NSNetService) {
+            self.ivars().backend_failed.store(true, Ordering::Release);
+        }
+
         #[unsafe(method(netServiceDidPublish:))]
         fn did_publish(&self, _sender: &NSNetService) {
             if let Some(ready) = self.ivars().ready.borrow_mut().take() {
@@ -74,6 +100,7 @@ define_class!(
             error: &NSDictionary<NSString, NSNumber>,
         ) {
             crate::diagnostic_log::error!("mdns: advertise failed: {error:?}");
+            self.ivars().backend_failed.store(true, Ordering::Release);
             if let Some(ready) = self.ivars().ready.borrow_mut().take() {
                 let _ = ready.send(PublicationOutcome::Rejected);
             }
@@ -82,9 +109,13 @@ define_class!(
 );
 
 impl AdvertiserDelegate {
-    fn new(ready: oneshot::Sender<PublicationOutcome>) -> Retained<Self> {
+    fn new(
+        ready: oneshot::Sender<PublicationOutcome>,
+        backend_failed: Arc<AtomicBool>,
+    ) -> Retained<Self> {
         let this = Self::alloc().set_ivars(AdvertiserDelegateIvars {
             ready: RefCell::new(Some(ready)),
+            backend_failed,
         });
         // SAFETY: `this` is a freshly allocated AdvertiserDelegate with fully initialized ivars;
         // forwarding to NSObject's designated initializer preserves its allocation identity.
@@ -224,6 +255,8 @@ impl ResolveDelegate {
 struct BrowserDelegateIvars {
     resolver: Retained<ResolveDelegate>,
     snapshot_state: Arc<SnapshotState>,
+    local_service_names: Arc<BTreeSet<DiscoveryServiceName>>,
+    backend_failed: Arc<AtomicBool>,
     resolving: RefCell<Vec<Retained<NSNetService>>>,
 }
 
@@ -235,6 +268,21 @@ define_class!(
     unsafe impl NSObjectProtocol for BrowserDelegate {}
 
     unsafe impl NSNetServiceBrowserDelegate for BrowserDelegate {
+        #[unsafe(method(netServiceBrowserDidStopSearch:))]
+        fn did_stop_search(&self, _browser: &NSNetServiceBrowser) {
+            self.ivars().backend_failed.store(true, Ordering::Release);
+        }
+
+        #[unsafe(method(netServiceBrowser:didNotSearch:))]
+        fn did_not_search(
+            &self,
+            _browser: &NSNetServiceBrowser,
+            error: &NSDictionary<NSString, NSNumber>,
+        ) {
+            crate::diagnostic_log::error!("mdns: browse failed: {error:?}");
+            self.ivars().backend_failed.store(true, Ordering::Release);
+        }
+
         #[unsafe(method(netServiceBrowser:didFindService:moreComing:))]
         fn did_find(
             &self,
@@ -251,6 +299,9 @@ define_class!(
                     return;
                 }
             };
+            if self.ivars().local_service_names.contains(&service_name) {
+                return;
+            }
             let mut resolving_services = self.ivars().resolving.borrow_mut();
             let known_service_index = resolving_services.iter().position(|known_service| {
                 discovery_service_name(known_service).as_ref() == Ok(&service_name)
@@ -304,10 +355,14 @@ impl BrowserDelegate {
     fn new(
         resolver: Retained<ResolveDelegate>,
         snapshot_state: Arc<SnapshotState>,
+        local_service_names: Arc<BTreeSet<DiscoveryServiceName>>,
+        backend_failed: Arc<AtomicBool>,
     ) -> Retained<Self> {
         let this = Self::alloc().set_ivars(BrowserDelegateIvars {
             resolver,
             snapshot_state,
+            local_service_names,
+            backend_failed,
             resolving: RefCell::new(Vec::new()),
         });
         // SAFETY: `this` is a freshly allocated BrowserDelegate with fully initialized ivars;
@@ -328,20 +383,115 @@ struct NativeMdnsThread {
 
 impl Drop for NativeMdnsThread {
     fn drop(&mut self) {
-        self.shutdown.take();
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(());
+        }
         if let Some(join) = self.join.take() {
             let _ = join.join();
         }
     }
 }
 
+struct ApplePublication {
+    transport: DiscoveryTransport,
+    instance_name: EphemeralDiscoveryInstanceName,
+    service_name: DiscoveryServiceName,
+}
+
+impl ApplePublication {
+    fn new(
+        transport: DiscoveryTransport,
+        instance_name: EphemeralDiscoveryInstanceName,
+    ) -> Result<Self, MdnsError> {
+        let service_name = DiscoveryServiceName::from_instance(instance_name.as_str(), transport)
+            .map_err(|_invalid_generated_name| MdnsError::InvalidPublicationName)?;
+        Ok(Self {
+            transport,
+            instance_name,
+            service_name,
+        })
+    }
+}
+
+fn apple_service_type(discovery_transport: DiscoveryTransport) -> String {
+    format!("{}.", discovery_transport.dns_sd_base_service_type())
+}
+
+fn publish_service(
+    publication: &ApplePublication,
+    advertiser: &AdvertiserDelegate,
+    txt: &[(String, Vec<u8>)],
+) -> Retained<NSNetService> {
+    let service = NSNetService::initWithDomain_type_name_port(
+        NSNetService::alloc(),
+        &NSString::from_str(DNS_SD_LOCAL_DOMAIN),
+        &NSString::from_str(&apple_service_type(publication.transport)),
+        &NSString::from_str(publication.instance_name.as_str()),
+        core::ffi::c_int::from(publication.transport.port()),
+    );
+    let advertiser_protocol = ProtocolObject::from_ref(advertiser);
+    // SAFETY: the service and retained advertiser delegate remain on the native run-loop thread,
+    // and the protocol object has NSNetServiceDelegate's runtime type.
+    unsafe { service.setDelegate(Some(advertiser_protocol)) };
+    service.setIncludesPeerToPeer(true);
+    if let Some(data) = build_txt(txt) {
+        service.setTXTRecordData(Some(&data));
+    }
+    service.publish();
+    service
+}
+
+fn browse_for_services(
+    discovery_transport: DiscoveryTransport,
+    browser_delegate: &BrowserDelegate,
+) -> Retained<NSNetServiceBrowser> {
+    let browser = NSNetServiceBrowser::new();
+    let browser_protocol = ProtocolObject::from_ref(browser_delegate);
+    // SAFETY: the browser and retained delegate remain on the native run-loop thread, and the
+    // protocol object has NSNetServiceBrowserDelegate's runtime type.
+    unsafe { browser.setDelegate(Some(browser_protocol)) };
+    browser.setIncludesPeerToPeer(true);
+    browser.searchForServicesOfType_inDomain(
+        &NSString::from_str(&apple_service_type(discovery_transport)),
+        &NSString::from_str(DNS_SD_LOCAL_DOMAIN),
+    );
+    browser
+}
+
+async fn wait_for_publication(
+    publication_outcome: oneshot::Receiver<PublicationOutcome>,
+) -> Result<(), MdnsError> {
+    match publication_outcome.await {
+        Ok(PublicationOutcome::Published) => Ok(()),
+        Ok(PublicationOutcome::Rejected) => Err(MdnsError::PublishFailed),
+        Err(_native_thread_closed) => Err(MdnsError::Closed),
+    }
+}
+
+async fn wait_for_publications(
+    tcp_publication_outcome: oneshot::Receiver<PublicationOutcome>,
+    udp_publication_outcome: oneshot::Receiver<PublicationOutcome>,
+) -> Result<(), MdnsError> {
+    wait_for_publication(tcp_publication_outcome).await?;
+    wait_for_publication(udp_publication_outcome).await
+}
+
 impl AppleServiceDiscoveryBackend {
-    pub async fn new() -> Result<Self, MdnsError> {
-        let (ready_sender, ready_receiver) = oneshot::channel::<PublicationOutcome>();
+    pub async fn new(
+        tcp_instance_name: EphemeralDiscoveryInstanceName,
+        udp_instance_name: EphemeralDiscoveryInstanceName,
+    ) -> Result<Self, MdnsError> {
+        let tcp_publication = ApplePublication::new(DiscoveryTransport::Tcp, tcp_instance_name)?;
+        let udp_publication = ApplePublication::new(DiscoveryTransport::Udp, udp_instance_name)?;
+        let local_service_names = Arc::new(BTreeSet::from([
+            tcp_publication.service_name.clone(),
+            udp_publication.service_name.clone(),
+        ]));
+        let (tcp_ready_sender, tcp_ready_receiver) = oneshot::channel::<PublicationOutcome>();
+        let (udp_ready_sender, udp_ready_receiver) = oneshot::channel::<PublicationOutcome>();
         let (snapshot_state, snapshot_receiver) = SnapshotState::channel(DISCOVERY_CAPACITY);
         let (shutdown_tx, shutdown_rx) = sync_mpsc::channel::<()>();
-        let port = core::ffi::c_int::from(TCP_RENDEZVOUS_PORT);
-        let service_type = format!("{TCP_DNS_SD_BASE_SERVICE_TYPE}.");
+        let backend_failed = Arc::new(AtomicBool::new(false));
         let txt = [(
             String::from(TXT_VERSION_KEY),
             TXT_VERSION_VALUE.as_bytes().to_vec(),
@@ -350,45 +500,43 @@ impl AppleServiceDiscoveryBackend {
         let join = thread::Builder::new()
             .name("hopspot-mdns".into())
             .spawn(move || {
-                let advertiser = AdvertiserDelegate::new(ready_sender);
-                let advertiser_proto = ProtocolObject::from_ref(&*advertiser);
-                let service = NSNetService::initWithDomain_type_name_port(
-                    NSNetService::alloc(),
-                    &NSString::from_str(DNS_SD_LOCAL_DOMAIN),
-                    &NSString::from_str(&service_type),
-                    &NSString::from_str(""),
-                    port,
-                );
-                // SAFETY: the service and retained advertiser delegate live for the entire run-loop
-                // thread, and the protocol object has NSNetServiceDelegate's runtime type.
-                unsafe { service.setDelegate(Some(advertiser_proto)) };
-                service.setIncludesPeerToPeer(true);
-                if let Some(data) = build_txt(&txt) {
-                    service.setTXTRecordData(Some(&data));
-                }
-                service.publish();
+                let tcp_advertiser =
+                    AdvertiserDelegate::new(tcp_ready_sender, Arc::clone(&backend_failed));
+                let udp_advertiser =
+                    AdvertiserDelegate::new(udp_ready_sender, Arc::clone(&backend_failed));
+                let tcp_service = publish_service(&tcp_publication, &tcp_advertiser, &txt);
+                let udp_service = publish_service(&udp_publication, &udp_advertiser, &txt);
 
                 let resolver = ResolveDelegate::new(Arc::clone(&snapshot_state));
-                let browser_delegate = BrowserDelegate::new(resolver, snapshot_state);
-                let browser_proto = ProtocolObject::from_ref(&*browser_delegate);
-                let browser = NSNetServiceBrowser::new();
-                // SAFETY: the browser and retained browser delegate live for the entire run-loop
-                // thread, and the protocol object has NSNetServiceBrowserDelegate's runtime type.
-                unsafe { browser.setDelegate(Some(browser_proto)) };
-                browser.setIncludesPeerToPeer(true);
-                browser.searchForServicesOfType_inDomain(
-                    &NSString::from_str(&service_type),
-                    &NSString::from_str(DNS_SD_LOCAL_DOMAIN),
+                let browser_delegate = BrowserDelegate::new(
+                    resolver,
+                    snapshot_state,
+                    local_service_names,
+                    Arc::clone(&backend_failed),
                 );
+                let tcp_browser = browse_for_services(DiscoveryTransport::Tcp, &browser_delegate);
+                let udp_browser = browse_for_services(DiscoveryTransport::Udp, &browser_delegate);
 
-                while matches!(shutdown_rx.try_recv(), Err(sync_mpsc::TryRecvError::Empty)) {
+                while !backend_failed.load(Ordering::Acquire)
+                    && matches!(shutdown_rx.try_recv(), Err(sync_mpsc::TryRecvError::Empty))
+                {
                     // SAFETY: the process-global default run-loop mode has static lifetime.
                     let mode = unsafe { kCFRunLoopDefaultMode };
                     let _ = CFRunLoop::run_in_mode(mode, 0.1, false);
                 }
-                service.stop();
-                browser.stop();
-                drop((service, advertiser, browser, browser_delegate));
+                tcp_service.stop();
+                udp_service.stop();
+                tcp_browser.stop();
+                udp_browser.stop();
+                drop((
+                    tcp_service,
+                    udp_service,
+                    tcp_advertiser,
+                    udp_advertiser,
+                    tcp_browser,
+                    udp_browser,
+                    browser_delegate,
+                ));
             })
             .map_err(|_| MdnsError::Closed)?;
         let native_thread = NativeMdnsThread {
@@ -396,18 +544,26 @@ impl AppleServiceDiscoveryBackend {
             join: Some(join),
         };
 
-        match tokio::time::timeout(PUBLISH_TIMEOUT, ready_receiver).await {
-            Ok(Ok(PublicationOutcome::Published)) => {
+        let publication_result = tokio::time::timeout(
+            PUBLISH_TIMEOUT,
+            wait_for_publications(tcp_ready_receiver, udp_ready_receiver),
+        )
+        .await;
+        match publication_result {
+            Ok(Ok(())) => {
                 crate::diagnostic_log::debug!(
-                    "mdns: advertising + browsing {TCP_DNS_SD_BASE_SERVICE_TYPE} on port {port}"
+                    "mdns: advertising + browsing {} on port {} and {} on port {}",
+                    TCP_DNS_SD_BASE_SERVICE_TYPE,
+                    TCP_RENDEZVOUS_PORT,
+                    UDP_DNS_SD_BASE_SERVICE_TYPE,
+                    UNICAST_DISCOVERY_PORT,
                 );
                 Ok(Self {
                     snapshot_receiver,
                     _native_thread: native_thread,
                 })
             }
-            Ok(Ok(PublicationOutcome::Rejected)) => Err(MdnsError::PublishFailed),
-            Ok(Err(_)) => Err(MdnsError::Closed),
+            Ok(Err(publication_error)) => Err(publication_error),
             Err(_) => Err(MdnsError::PublishTimeout),
         }
     }
@@ -527,7 +683,8 @@ fn resolved_service_advertisement(
     service: &NSNetService,
     addresses: &NSArray<NSData>,
 ) -> Result<ServiceAdvertisement, ServiceRecordRejection> {
-    if u16::try_from(service.port()) != Ok(TCP_RENDEZVOUS_PORT) {
+    let discovery_transport = service_name.transport();
+    if u16::try_from(service.port()) != Ok(discovery_transport.port()) {
         return Err(ServiceRecordRejection::WrongPort);
     }
     discovery_version(service).map_err(ServiceRecordRejection::InvalidVersion)?;
@@ -537,7 +694,9 @@ fn resolved_service_advertisement(
         let Some(socket_address) = parse_sockaddr(&address.to_vec()) else {
             continue;
         };
-        if let Ok(discovery_endpoint) = DiscoveryEndpoint::tcp(socket_address) {
+        if let Ok(discovery_endpoint) =
+            DiscoveryEndpoint::try_from((discovery_transport, socket_address))
+        {
             discovery_endpoints.insert(discovery_endpoint);
         }
     }
@@ -566,14 +725,12 @@ fn resolved_service_advertisement(
 fn discovery_service_name(
     service: &NSNetService,
 ) -> Result<DiscoveryServiceName, ServiceRecordRejection> {
-    let expected_service_type = format!("{TCP_DNS_SD_BASE_SERVICE_TYPE}.");
-    if !service
-        .r#type()
-        .to_string()
-        .eq_ignore_ascii_case(&expected_service_type)
-    {
-        return Err(ServiceRecordRejection::WrongServiceType);
-    }
+    let discovery_transport = match classify_apple_service_type(&service.r#type().to_string()) {
+        AppleServiceTypeClassification::Supported(discovery_transport) => discovery_transport,
+        AppleServiceTypeClassification::Unsupported => {
+            return Err(ServiceRecordRejection::WrongServiceType);
+        }
+    };
     if !service
         .domain()
         .to_string()
@@ -581,8 +738,23 @@ fn discovery_service_name(
     {
         return Err(ServiceRecordRejection::WrongDomain);
     }
-    DiscoveryServiceName::from_instance(&service.name().to_string(), DiscoveryTransport::Tcp)
+    DiscoveryServiceName::from_instance(&service.name().to_string(), discovery_transport)
         .map_err(ServiceRecordRejection::InvalidServiceName)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AppleServiceTypeClassification {
+    Supported(DiscoveryTransport),
+    Unsupported,
+}
+
+fn classify_apple_service_type(service_type: &str) -> AppleServiceTypeClassification {
+    for discovery_transport in [DiscoveryTransport::Tcp, DiscoveryTransport::Udp] {
+        if service_type.eq_ignore_ascii_case(&apple_service_type(discovery_transport)) {
+            return AppleServiceTypeClassification::Supported(discovery_transport);
+        }
+    }
+    AppleServiceTypeClassification::Unsupported
 }
 
 fn discovery_version(service: &NSNetService) -> Result<DiscoveryVersion, DiscoveryVersionError> {
@@ -672,12 +844,17 @@ mod native_thread_tests {
     }
 
     const SOCKADDR_V4_LENGTH: u8 = 16;
+    const SOCKADDR_V6_LENGTH: u8 = 28;
 
-    fn apple_service(instance_name: &str, port: u16) -> Retained<NSNetService> {
+    fn apple_service(
+        discovery_transport: DiscoveryTransport,
+        instance_name: &str,
+        port: u16,
+    ) -> Retained<NSNetService> {
         NSNetService::initWithDomain_type_name_port(
             NSNetService::alloc(),
             &NSString::from_str(DNS_SD_LOCAL_DOMAIN),
-            &NSString::from_str(&format!("{TCP_DNS_SD_BASE_SERVICE_TYPE}.")),
+            &NSString::from_str(&apple_service_type(discovery_transport)),
             &NSString::from_str(instance_name),
             core::ffi::c_int::from(port),
         )
@@ -703,13 +880,25 @@ mod native_thread_tests {
         NSData::with_bytes(&bytes)
     }
 
+    fn ipv6_sockaddr_data(ip_address: Ipv6Addr, port: u16, scope_id: u32) -> Retained<NSData> {
+        let mut bytes = vec![0u8; usize::from(SOCKADDR_V6_LENGTH)];
+        bytes[0] = SOCKADDR_V6_LENGTH;
+        bytes[1] = AF_INET6;
+        bytes[2..4].copy_from_slice(&port.to_be_bytes());
+        bytes[8..24].copy_from_slice(&ip_address.octets());
+        bytes[24..28].copy_from_slice(&scope_id.to_ne_bytes());
+        NSData::with_bytes(&bytes)
+    }
+
     fn service_advertisement(
+        discovery_transport: DiscoveryTransport,
         service_name: &str,
         socket_address: &str,
     ) -> Result<ServiceAdvertisement, Box<dyn std::error::Error>> {
         let discovery_service_name =
-            DiscoveryServiceName::from_instance(service_name, DiscoveryTransport::Tcp)?;
-        let discovery_endpoint = DiscoveryEndpoint::tcp(socket_address.parse()?)?;
+            DiscoveryServiceName::from_instance(service_name, discovery_transport)?;
+        let discovery_endpoint =
+            DiscoveryEndpoint::try_from((discovery_transport, socket_address.parse()?))?;
         let mut service_advertisement = ServiceAdvertisement::new(discovery_service_name);
         let _ = service_advertisement.insert(discovery_endpoint);
         Ok(service_advertisement)
@@ -736,10 +925,129 @@ mod native_thread_tests {
     }
 
     #[test]
+    fn apple_publications_use_independent_shared_names_and_transport_contracts(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let tcp_instance_name = EphemeralDiscoveryInstanceName::from_random_bytes(
+            [0x11; EPHEMERAL_DISCOVERY_INSTANCE_RANDOM_BYTES],
+        );
+        let udp_instance_name = EphemeralDiscoveryInstanceName::from_random_bytes(
+            [0x22; EPHEMERAL_DISCOVERY_INSTANCE_RANDOM_BYTES],
+        );
+        let tcp_publication = ApplePublication::new(DiscoveryTransport::Tcp, tcp_instance_name)?;
+        let udp_publication = ApplePublication::new(DiscoveryTransport::Udp, udp_instance_name)?;
+
+        assert_ne!(
+            tcp_publication.instance_name.as_str(),
+            udp_publication.instance_name.as_str()
+        );
+        assert_eq!(
+            (
+                apple_service_type(tcp_publication.transport),
+                tcp_publication.transport.port(),
+                tcp_publication.service_name.transport(),
+            ),
+            (
+                format!("{TCP_DNS_SD_BASE_SERVICE_TYPE}."),
+                TCP_RENDEZVOUS_PORT,
+                DiscoveryTransport::Tcp,
+            )
+        );
+        assert_eq!(
+            (
+                apple_service_type(udp_publication.transport),
+                udp_publication.transport.port(),
+                udp_publication.service_name.transport(),
+            ),
+            (
+                format!("{UDP_DNS_SD_BASE_SERVICE_TYPE}."),
+                UNICAST_DISCOVERY_PORT,
+                DiscoveryTransport::Udp,
+            )
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn backend_readiness_requires_both_publications() {
+        let (tcp_ready_sender, tcp_ready_receiver) = oneshot::channel();
+        let (udp_ready_sender, udp_ready_receiver) = oneshot::channel();
+        assert_eq!(tcp_ready_sender.send(PublicationOutcome::Published), Ok(()));
+        assert_eq!(udp_ready_sender.send(PublicationOutcome::Published), Ok(()));
+        assert_eq!(
+            wait_for_publications(tcp_ready_receiver, udp_ready_receiver).await,
+            Ok(())
+        );
+
+        let (tcp_ready_sender, tcp_ready_receiver) = oneshot::channel();
+        let (udp_ready_sender, udp_ready_receiver) = oneshot::channel();
+        assert_eq!(tcp_ready_sender.send(PublicationOutcome::Published), Ok(()));
+        assert_eq!(udp_ready_sender.send(PublicationOutcome::Rejected), Ok(()));
+        assert_eq!(
+            wait_for_publications(tcp_ready_receiver, udp_ready_receiver).await,
+            Err(MdnsError::PublishFailed)
+        );
+    }
+
+    #[test]
+    fn tcp_and_udp_resolutions_share_one_snapshot_and_remove_independently(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let discovery_capacity = NonZeroU8::new(2).ok_or("invalid test capacity")?;
+        let (snapshot_state, snapshot_receiver) = SnapshotState::channel(discovery_capacity);
+        let tcp_service = apple_service(DiscoveryTransport::Tcp, "tcp-peer", TCP_RENDEZVOUS_PORT);
+        let udp_service =
+            apple_service(DiscoveryTransport::Udp, "udp-peer", UNICAST_DISCOVERY_PORT);
+        let tcp_addresses = NSArray::from_retained_slice(&[ipv4_sockaddr_data(
+            "192.168.1.8".parse()?,
+            TCP_RENDEZVOUS_PORT,
+        )]);
+        let udp_addresses = NSArray::from_retained_slice(&[ipv6_sockaddr_data(
+            "fe80::8".parse()?,
+            UNICAST_DISCOVERY_PORT,
+            7,
+        )]);
+
+        assert_eq!(
+            apply_resolved_service(&snapshot_state, &tcp_service, &tcp_addresses),
+            ServiceResolutionOutcome::SnapshotChanged
+        );
+        assert_eq!(
+            apply_resolved_service(&snapshot_state, &udp_service, &udp_addresses),
+            ServiceResolutionOutcome::SnapshotChanged
+        );
+
+        let tcp_service_name =
+            DiscoveryServiceName::from_instance("tcp-peer", DiscoveryTransport::Tcp)?;
+        let udp_service_name =
+            DiscoveryServiceName::from_instance("udp-peer", DiscoveryTransport::Udp)?;
+        let snapshot = snapshot_receiver.borrow().clone();
+        assert_eq!(snapshot.len(), 2);
+        assert_eq!(
+            snapshot
+                .get(&tcp_service_name)
+                .map(ServiceAdvertisement::endpoints),
+            Some(&[DiscoveryEndpoint::tcp("192.168.1.8:42699".parse()?)?][..])
+        );
+        assert_eq!(
+            snapshot
+                .get(&udp_service_name)
+                .map(ServiceAdvertisement::endpoints),
+            Some(&[DiscoveryEndpoint::udp("[fe80::8%7]:29717".parse()?)?][..])
+        );
+
+        assert_eq!(
+            snapshot_state.remove(&udp_service_name),
+            SnapshotRemoval::Changed
+        );
+        assert_eq!(snapshot_receiver.borrow().len(), 1);
+        assert!(snapshot_receiver.borrow().get(&tcp_service_name).is_some());
+        Ok(())
+    }
+
+    #[test]
     fn snapshot_state_is_bounded_and_known_service_updates_win(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let (snapshot_state, snapshot_receiver) = SnapshotState::channel(NonZeroU8::MIN);
-        let initial = service_advertisement("first", "192.168.1.2:42699")?;
+        let initial = service_advertisement(DiscoveryTransport::Tcp, "first", "192.168.1.2:42699")?;
         assert_eq!(
             snapshot_state.resolve(initial.clone()),
             SnapshotResolution::Changed
@@ -749,11 +1057,16 @@ mod native_thread_tests {
             SnapshotResolution::Unchanged
         );
         assert_eq!(
-            snapshot_state.resolve(service_advertisement("overflow", "192.168.1.3:42699")?),
+            snapshot_state.resolve(service_advertisement(
+                DiscoveryTransport::Udp,
+                "overflow",
+                "[fe80::3%7]:29717",
+            )?),
             SnapshotResolution::RejectedAtCapacity
         );
 
-        let replacement = service_advertisement("first", "192.168.1.4:42699")?;
+        let replacement =
+            service_advertisement(DiscoveryTransport::Tcp, "first", "192.168.1.4:42699")?;
         let first_service_name = replacement.service().clone();
         assert_eq!(
             snapshot_state.resolve(replacement),
@@ -800,7 +1113,7 @@ mod native_thread_tests {
     fn resolved_service_versions_update_and_remove_one_bounded_snapshot(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let (snapshot_state, snapshot_receiver) = SnapshotState::channel(NonZeroU8::MIN);
-        let service = apple_service("peer", TCP_RENDEZVOUS_PORT);
+        let service = apple_service(DiscoveryTransport::Tcp, "peer", TCP_RENDEZVOUS_PORT);
         let addresses = NSArray::from_retained_slice(&[
             ipv4_sockaddr_data("192.168.1.8".parse()?, TCP_RENDEZVOUS_PORT),
             ipv4_sockaddr_data("10.0.0.8".parse()?, TCP_RENDEZVOUS_PORT),
