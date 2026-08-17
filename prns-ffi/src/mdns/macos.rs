@@ -91,11 +91,18 @@ impl AdvertiserDelegate {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SnapshotMutation {
+#[derive(Debug, PartialEq, Eq)]
+enum SnapshotResolution {
     Changed,
     Unchanged,
     RejectedAtCapacity,
+    StateUnavailable,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum SnapshotRemoval {
+    Changed,
+    Unchanged,
     StateUnavailable,
 }
 
@@ -119,31 +126,31 @@ impl SnapshotState {
         )
     }
 
-    fn resolve(&self, service_advertisement: ServiceAdvertisement) -> SnapshotMutation {
+    fn resolve(&self, service_advertisement: ServiceAdvertisement) -> SnapshotResolution {
         let Ok(mut visible_snapshot) = self.visible.lock() else {
-            return SnapshotMutation::StateUnavailable;
+            return SnapshotResolution::StateUnavailable;
         };
         if visible_snapshot.get(service_advertisement.service()) == Some(&service_advertisement) {
-            return SnapshotMutation::Unchanged;
+            return SnapshotResolution::Unchanged;
         }
         match visible_snapshot.insert(service_advertisement) {
             AdvertisementInsertion::Inserted | AdvertisementInsertion::Replaced => {
                 self.snapshot_sender.send_replace(visible_snapshot.clone());
-                SnapshotMutation::Changed
+                SnapshotResolution::Changed
             }
-            AdvertisementInsertion::AtCapacity => SnapshotMutation::RejectedAtCapacity,
+            AdvertisementInsertion::AtCapacity => SnapshotResolution::RejectedAtCapacity,
         }
     }
 
-    fn remove(&self, service_name: &DiscoveryServiceName) -> SnapshotMutation {
+    fn remove(&self, service_name: &DiscoveryServiceName) -> SnapshotRemoval {
         let Ok(mut visible_snapshot) = self.visible.lock() else {
-            return SnapshotMutation::StateUnavailable;
+            return SnapshotRemoval::StateUnavailable;
         };
         if visible_snapshot.remove(service_name) {
             self.snapshot_sender.send_replace(visible_snapshot.clone());
-            SnapshotMutation::Changed
+            SnapshotRemoval::Changed
         } else {
-            SnapshotMutation::Unchanged
+            SnapshotRemoval::Unchanged
         }
     }
 }
@@ -165,18 +172,24 @@ define_class!(
             let Some(addresses) = sender.addresses() else {
                 return;
             };
-            match resolved_service_advertisement(sender, &addresses) {
-                Ok(service_advertisement) => {
-                    let mutation = self.ivars().snapshot_state.resolve(service_advertisement);
-                    if mutation == SnapshotMutation::RejectedAtCapacity {
-                        crate::diagnostic_log::debug!(
-                            "mdns: rejecting newly resolved service at Apple discovery capacity"
-                        );
-                    }
-                }
-                Err(service_rejection) => {
+            match apply_resolved_service(&self.ivars().snapshot_state, sender, &addresses) {
+                ServiceResolutionOutcome::SnapshotChanged
+                | ServiceResolutionOutcome::SnapshotUnchanged => {}
+                ServiceResolutionOutcome::RejectedAtCapacity => {
                     crate::diagnostic_log::debug!(
-                        "mdns: rejected resolved Apple service: {service_rejection:?}"
+                        "mdns: rejecting newly resolved service at Apple discovery capacity"
+                    );
+                }
+                ServiceResolutionOutcome::StateUnavailable => {
+                    crate::diagnostic_log::debug!("mdns: Apple discovery state is unavailable");
+                }
+                ServiceResolutionOutcome::RejectedRecord {
+                    rejection,
+                    visible_advertisement,
+                } => {
+                    crate::diagnostic_log::debug!(
+                        "mdns: rejected resolved Apple service: {rejection:?}; \
+                         previous advertisement: {visible_advertisement:?}"
                     );
                 }
             }
@@ -186,7 +199,12 @@ define_class!(
         fn did_not_resolve(&self, sender: &NSNetService, error: &NSDictionary<NSString, NSNumber>) {
             crate::diagnostic_log::debug!("mdns: resolve failed: {error:?}");
             if let Ok(service_name) = discovery_service_name(sender) {
-                let _ = self.ivars().snapshot_state.remove(&service_name);
+                match self.ivars().snapshot_state.remove(&service_name) {
+                    SnapshotRemoval::Changed | SnapshotRemoval::Unchanged => {}
+                    SnapshotRemoval::StateUnavailable => {
+                        crate::diagnostic_log::debug!("mdns: Apple discovery state is unavailable");
+                    }
+                }
             }
         }
     }
@@ -267,7 +285,12 @@ define_class!(
             let Ok(service_name) = discovery_service_name(service) else {
                 return;
             };
-            let _ = self.ivars().snapshot_state.remove(&service_name);
+            match self.ivars().snapshot_state.remove(&service_name) {
+                SnapshotRemoval::Changed | SnapshotRemoval::Unchanged => {}
+                SnapshotRemoval::StateUnavailable => {
+                    crate::diagnostic_log::debug!("mdns: Apple discovery state is unavailable");
+                }
+            }
             self.ivars().resolving.borrow_mut().retain(|candidate| {
                 discovery_service_name(candidate).as_ref() != Ok(&service_name)
             });
@@ -439,11 +462,68 @@ enum ServiceRecordRejection {
     NoEligibleEndpoints,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum RejectedRecordCleanup {
+    Removed,
+    NotPresent,
+    IdentityUnavailable,
+    StateUnavailable,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ServiceResolutionOutcome {
+    SnapshotChanged,
+    SnapshotUnchanged,
+    RejectedAtCapacity,
+    StateUnavailable,
+    RejectedRecord {
+        rejection: ServiceRecordRejection,
+        visible_advertisement: RejectedRecordCleanup,
+    },
+}
+
+fn apply_resolved_service(
+    snapshot_state: &SnapshotState,
+    service: &NSNetService,
+    addresses: &NSArray<NSData>,
+) -> ServiceResolutionOutcome {
+    let service_name = match discovery_service_name(service) {
+        Ok(service_name) => service_name,
+        Err(rejection) => {
+            return ServiceResolutionOutcome::RejectedRecord {
+                rejection,
+                visible_advertisement: RejectedRecordCleanup::IdentityUnavailable,
+            };
+        }
+    };
+    let service_advertisement =
+        match resolved_service_advertisement(service_name.clone(), service, addresses) {
+            Ok(service_advertisement) => service_advertisement,
+            Err(rejection) => {
+                let visible_advertisement = match snapshot_state.remove(&service_name) {
+                    SnapshotRemoval::Changed => RejectedRecordCleanup::Removed,
+                    SnapshotRemoval::Unchanged => RejectedRecordCleanup::NotPresent,
+                    SnapshotRemoval::StateUnavailable => RejectedRecordCleanup::StateUnavailable,
+                };
+                return ServiceResolutionOutcome::RejectedRecord {
+                    rejection,
+                    visible_advertisement,
+                };
+            }
+        };
+    match snapshot_state.resolve(service_advertisement) {
+        SnapshotResolution::Changed => ServiceResolutionOutcome::SnapshotChanged,
+        SnapshotResolution::Unchanged => ServiceResolutionOutcome::SnapshotUnchanged,
+        SnapshotResolution::RejectedAtCapacity => ServiceResolutionOutcome::RejectedAtCapacity,
+        SnapshotResolution::StateUnavailable => ServiceResolutionOutcome::StateUnavailable,
+    }
+}
+
 fn resolved_service_advertisement(
+    service_name: DiscoveryServiceName,
     service: &NSNetService,
     addresses: &NSArray<NSData>,
 ) -> Result<ServiceAdvertisement, ServiceRecordRejection> {
-    let service_name = discovery_service_name(service)?;
     if u16::try_from(service.port()) != Ok(TCP_RENDEZVOUS_PORT) {
         return Err(ServiceRecordRejection::WrongPort);
     }
@@ -498,12 +578,56 @@ fn discovery_version(service: &NSNetService) -> Result<DiscoveryVersion, Discove
     let Some(txt_record_data) = service.TXTRecordData() else {
         return DiscoveryVersion::parse(None);
     };
-    let txt_dictionary = NSNetService::dictionaryFromTXTRecordData(&txt_record_data);
-    let version_key = NSString::from_str(TXT_VERSION_KEY);
-    match txt_dictionary.objectForKey(&version_key) {
-        Some(version_value) => DiscoveryVersion::parse(Some(&version_value.to_vec())),
-        None => DiscoveryVersion::parse(None),
+    let txt_record = txt_record_data.to_vec();
+    match txt_version_metadata(&txt_record)? {
+        TxtVersionMetadata::Missing => DiscoveryVersion::parse(None),
+        TxtVersionMetadata::Value(version) => DiscoveryVersion::parse(Some(version)),
     }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum TxtVersionMetadata<'record> {
+    Missing,
+    Value(&'record [u8]),
+}
+
+fn txt_version_metadata(
+    txt_record: &[u8],
+) -> Result<TxtVersionMetadata<'_>, DiscoveryVersionError> {
+    let mut remaining_record = txt_record;
+    let mut version_metadata = TxtVersionMetadata::Missing;
+    while let Some((&entry_length, remaining_after_length)) = remaining_record.split_first() {
+        let entry_length = usize::from(entry_length);
+        if remaining_after_length.len() < entry_length {
+            return Err(DiscoveryVersionError::Malformed);
+        }
+        if entry_length == 0 {
+            remaining_record = remaining_after_length;
+            continue;
+        }
+        let (entry, remaining_after_entry) = remaining_after_length.split_at(entry_length);
+        remaining_record = remaining_after_entry;
+        let key_end = match entry.iter().position(|byte| *byte == b'=') {
+            Some(separator_index) => separator_index,
+            None => entry.len(),
+        };
+        let key = &entry[..key_end];
+        if key.is_empty() {
+            return Err(DiscoveryVersionError::Malformed);
+        }
+        if !key.eq_ignore_ascii_case(TXT_VERSION_KEY.as_bytes()) {
+            continue;
+        }
+        version_metadata = match version_metadata {
+            TxtVersionMetadata::Missing => TxtVersionMetadata::Value(if key_end == entry.len() {
+                &[]
+            } else {
+                &entry[key_end + 1..]
+            }),
+            TxtVersionMetadata::Value(_) => return Err(DiscoveryVersionError::Malformed),
+        };
+    }
+    Ok(version_metadata)
 }
 
 fn build_txt(pairs: &[(String, Vec<u8>)]) -> Option<Retained<NSData>> {
@@ -529,6 +653,44 @@ mod native_thread_tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum TxtAssignment {
+        Accepted,
+        Rejected,
+    }
+
+    const SOCKADDR_V4_LENGTH: u8 = 16;
+
+    fn apple_service(instance_name: &str, port: u16) -> Retained<NSNetService> {
+        NSNetService::initWithDomain_type_name_port(
+            NSNetService::alloc(),
+            &NSString::from_str(DNS_SD_LOCAL_DOMAIN),
+            &NSString::from_str(&format!("{DNS_SD_BASE_SERVICE_TYPE}.")),
+            &NSString::from_str(instance_name),
+            core::ffi::c_int::from(port),
+        )
+    }
+
+    fn assign_txt_version(service: &NSNetService, version: &[u8]) -> TxtAssignment {
+        let version_key = NSString::from_str(TXT_VERSION_KEY);
+        let version_value = NSData::with_bytes(version);
+        let txt_dictionary = NSDictionary::from_slices(&[&*version_key], &[&*version_value]);
+        let txt_record = NSNetService::dataFromTXTRecordDictionary(&txt_dictionary);
+        match service.setTXTRecordData(Some(&txt_record)) {
+            true => TxtAssignment::Accepted,
+            false => TxtAssignment::Rejected,
+        }
+    }
+
+    fn ipv4_sockaddr_data(ip_address: Ipv4Addr, port: u16) -> Retained<NSData> {
+        let mut bytes = vec![0u8; usize::from(SOCKADDR_V4_LENGTH)];
+        bytes[0] = SOCKADDR_V4_LENGTH;
+        bytes[1] = AF_INET;
+        bytes[2..4].copy_from_slice(&port.to_be_bytes());
+        bytes[4..8].copy_from_slice(&ip_address.octets());
+        NSData::with_bytes(&bytes)
+    }
 
     fn service_advertisement(
         service_name: &str,
@@ -568,26 +730,121 @@ mod native_thread_tests {
         let initial = service_advertisement("first", "192.168.1.2:42699")?;
         assert_eq!(
             snapshot_state.resolve(initial.clone()),
-            SnapshotMutation::Changed
+            SnapshotResolution::Changed
         );
-        assert_eq!(snapshot_state.resolve(initial), SnapshotMutation::Unchanged);
+        assert_eq!(
+            snapshot_state.resolve(initial),
+            SnapshotResolution::Unchanged
+        );
         assert_eq!(
             snapshot_state.resolve(service_advertisement("overflow", "192.168.1.3:42699")?),
-            SnapshotMutation::RejectedAtCapacity
+            SnapshotResolution::RejectedAtCapacity
         );
 
         let replacement = service_advertisement("first", "192.168.1.4:42699")?;
         let first_service_name = replacement.service().clone();
         assert_eq!(
             snapshot_state.resolve(replacement),
-            SnapshotMutation::Changed
+            SnapshotResolution::Changed
         );
         assert_eq!(snapshot_receiver.borrow().len(), 1);
         assert_eq!(
             snapshot_state.remove(&first_service_name),
-            SnapshotMutation::Changed
+            SnapshotRemoval::Changed
+        );
+        assert_eq!(
+            snapshot_state.remove(&first_service_name),
+            SnapshotRemoval::Unchanged
         );
         assert!(snapshot_receiver.borrow().is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn txt_scanner_distinguishes_missing_present_and_malformed_versions() {
+        assert_eq!(
+            [
+                txt_version_metadata(&[]),
+                txt_version_metadata(&[3, b'v', b'=', b'1']),
+                txt_version_metadata(&[3, b'x', b'=', b'a', 3, b'V', b'=', b'1']),
+                txt_version_metadata(&[1, b'v']),
+                txt_version_metadata(&[4, b'v', b'=', b'1']),
+                txt_version_metadata(&[3, b'v', b'=', b'1', 3, b'V', b'=', b'1']),
+                txt_version_metadata(&[0]),
+            ],
+            [
+                Ok(TxtVersionMetadata::Missing),
+                Ok(TxtVersionMetadata::Value(b"1")),
+                Ok(TxtVersionMetadata::Value(b"1")),
+                Ok(TxtVersionMetadata::Value(b"")),
+                Err(DiscoveryVersionError::Malformed),
+                Err(DiscoveryVersionError::Malformed),
+                Ok(TxtVersionMetadata::Missing),
+            ]
+        );
+    }
+
+    #[test]
+    fn resolved_service_versions_update_and_remove_one_bounded_snapshot(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let (snapshot_state, snapshot_receiver) = SnapshotState::channel(NonZeroU8::MIN);
+        let service = apple_service("peer", TCP_RENDEZVOUS_PORT);
+        let addresses = NSArray::from_retained_slice(&[
+            ipv4_sockaddr_data("192.168.1.8".parse()?, TCP_RENDEZVOUS_PORT),
+            ipv4_sockaddr_data("10.0.0.8".parse()?, TCP_RENDEZVOUS_PORT),
+            ipv4_sockaddr_data("8.8.8.8".parse()?, TCP_RENDEZVOUS_PORT),
+        ]);
+
+        assert_eq!(
+            apply_resolved_service(&snapshot_state, &service, &addresses),
+            ServiceResolutionOutcome::SnapshotChanged
+        );
+        let mut expected_advertisement =
+            ServiceAdvertisement::new(DiscoveryServiceName::from_instance("peer")?);
+        assert_eq!(
+            expected_advertisement.insert(DiscoveryEndpoint::new("10.0.0.8:42699".parse()?,)?),
+            CandidateInsertion::Inserted
+        );
+        assert_eq!(
+            expected_advertisement.insert(DiscoveryEndpoint::new("192.168.1.8:42699".parse()?,)?),
+            CandidateInsertion::Inserted
+        );
+        let mut expected_snapshot = DiscoverySnapshot::new(NonZeroU8::MIN);
+        assert_eq!(
+            expected_snapshot.insert(expected_advertisement),
+            AdvertisementInsertion::Inserted
+        );
+        assert_eq!(snapshot_receiver.borrow().clone(), expected_snapshot);
+
+        assert_eq!(
+            assign_txt_version(&service, TXT_VERSION_VALUE.as_bytes()),
+            TxtAssignment::Accepted
+        );
+        assert_eq!(
+            apply_resolved_service(&snapshot_state, &service, &addresses),
+            ServiceResolutionOutcome::SnapshotUnchanged
+        );
+
+        assert_eq!(assign_txt_version(&service, b"2"), TxtAssignment::Accepted);
+        assert_eq!(
+            apply_resolved_service(&snapshot_state, &service, &addresses),
+            ServiceResolutionOutcome::RejectedRecord {
+                rejection: ServiceRecordRejection::InvalidVersion(
+                    DiscoveryVersionError::Unsupported(2),
+                ),
+                visible_advertisement: RejectedRecordCleanup::Removed,
+            }
+        );
+        assert!(snapshot_receiver.borrow().is_empty());
+        assert_eq!(
+            apply_resolved_service(&snapshot_state, &service, &addresses),
+            ServiceResolutionOutcome::RejectedRecord {
+                rejection: ServiceRecordRejection::InvalidVersion(
+                    DiscoveryVersionError::Unsupported(2),
+                ),
+                visible_advertisement: RejectedRecordCleanup::NotPresent,
+            }
+        );
         Ok(())
     }
 
