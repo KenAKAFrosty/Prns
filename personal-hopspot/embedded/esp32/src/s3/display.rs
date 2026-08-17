@@ -35,7 +35,6 @@ fn classify_card(
         };
         Some((screen::CardKind::Tcp, label))
     } else {
-        #[cfg(feature = "bluetooth-auto")]
         if id == BLE_SUPERVISOR_ID {
             return Some((screen::CardKind::Ble, screen::card_label("BLE")));
         }
@@ -76,13 +75,11 @@ pub(super) fn build_snapshots(
     espnow: Option<&EmbassyInterfaceStatus>,
 ) -> HVec<InterfaceSnapshot, 8> {
     use personal_rns::interfaces::InterfaceStatus;
-    #[cfg(feature = "bluetooth-auto")]
     let ble = BluetoothAutoStatus::new(&BLE_SHARED);
     let mut entries: HVec<(&dyn InterfaceStatus, Membership), 8> = HVec::new();
     if let Some(lora) = lora {
         let _ = entries.push((lora, Membership::Independent));
     }
-    #[cfg(feature = "bluetooth-auto")]
     {
         let _ = entries.push((&ble, Membership::Independent));
     }
@@ -103,7 +100,6 @@ pub(super) fn build_snapshots(
             let _ = entries.push((member, Membership::FleetMember { supervisor_id }));
         }
     }
-    #[cfg(feature = "bluetooth-auto")]
     {
         let supervisor_id = ble.id();
         for member in ble.members() {
@@ -177,11 +173,9 @@ fn egress_pressure_events(id: InterfaceId) -> u32 {
         }
         #[cfg(feature = "lora")]
         Some(InterfaceKind::LoRa) => LORA_MANIFOLD_LANE.egress_pressure_events(),
-        #[cfg(feature = "bluetooth-auto")]
         Some(InterfaceKind::BluetoothAuto | InterfaceKind::BluetoothPeer) => {
             BLE_MANIFOLD_LANE.egress_pressure_events()
         }
-        #[cfg(feature = "esp-now")]
         Some(InterfaceKind::EspNow) => ESPNOW_MANIFOLD_LANE.egress_pressure_events(),
         _ => 0,
     }
@@ -196,11 +190,9 @@ fn ingress_pressure_events(id: InterfaceId) -> u32 {
         }
         #[cfg(feature = "lora")]
         Some(InterfaceKind::LoRa) => LORA_MANIFOLD_LANE.ingress_pressure_events(),
-        #[cfg(feature = "bluetooth-auto")]
         Some(InterfaceKind::BluetoothAuto | InterfaceKind::BluetoothPeer) => BLE_MANIFOLD_LANE
             .ingress_pressure_events()
             .saturating_add(BluetoothAutoStatus::new(&BLE_SHARED).ingress_pressure_events()),
-        #[cfg(feature = "esp-now")]
         Some(InterfaceKind::EspNow) => ESPNOW_MANIFOLD_LANE.ingress_pressure_events(),
         _ => 0,
     }
@@ -211,7 +203,6 @@ pub(super) fn add_manifold_pressure(
     selected_card: Option<&screen::Card>,
 ) {
     if let Some(card) = selected_card {
-        #[cfg(feature = "bluetooth-auto")]
         if matches!(
             card.id().kind(),
             Some(InterfaceKind::BluetoothAuto | InterfaceKind::BluetoothPeer)
@@ -225,8 +216,6 @@ pub(super) fn add_manifold_pressure(
         } else {
             details.push_ingress_pressure(ingress_pressure_events(card.id()));
         }
-        #[cfg(not(feature = "bluetooth-auto"))]
-        details.push_ingress_pressure(ingress_pressure_events(card.id()));
         details.push_egress_pressure(egress_pressure_events(card.id()));
     }
 }
@@ -254,7 +243,6 @@ pub(super) fn add_lora_spectrum(
     });
 }
 
-#[cfg(feature = "wifi-auto")]
 pub(super) fn build_interface_menu_details(
     selected_card: Option<&screen::Card>,
     snapshots: &[InterfaceSnapshot],

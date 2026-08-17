@@ -1,18 +1,13 @@
-#[cfg(feature = "wifi-auto")]
 use super::captive_portal::station_wifi_mode;
-#[cfg(feature = "wifi-auto")]
 use super::captive_portal::{
     build_ap_netif, dhcp_server_task, dns_server_task, http_server_task, HTTP_SERVER_WORKERS,
 };
 use super::*;
-#[cfg(feature = "wifi-auto")]
 use crate::wifi_data_path_recovery::{
     StationDataPathAction, StationDataPathRecovery, StationDataPathWindow,
 };
-#[cfg(feature = "wifi-auto")]
 use alloc::boxed::Box;
 
-#[cfg(feature = "wifi-auto")]
 fn psram_udp_socket<
     const RX_META: usize,
     const RX_BYTES: usize,
@@ -30,54 +25,32 @@ fn psram_udp_socket<
     )
 }
 
-#[cfg(feature = "wifi-auto")]
 const WIFI_STATIC_RX_BUFFERS: u8 = 10;
-#[cfg(feature = "wifi-auto")]
 const WIFI_DYNAMIC_RX_BUFFERS: u16 = 32;
-#[cfg(feature = "wifi-auto")]
 const WIFI_RX_BA_WINDOW: u8 = 6;
-#[cfg(feature = "wifi-auto")]
 const WIFI_RX_QUEUE_FRAMES: usize = WIFI_DYNAMIC_RX_BUFFERS as usize;
-#[cfg(feature = "wifi-auto")]
 const WIFI_TX_QUEUE_FRAMES: usize = 3;
-#[cfg(feature = "wifi-auto")]
 const WIFI_STATIC_TX_BUFFERS: u8 = 16;
-#[cfg(feature = "wifi-auto")]
 const WIFI_DYNAMIC_TX_BUFFERS: u16 = 0;
-#[cfg(feature = "wifi-auto")]
 const WIFI_DATA_SOCKET_BUFFER_BYTES: usize = 4 * 1_024;
-#[cfg(feature = "wifi-auto")]
 const WIFI_DATA_SOCKET_METADATA: usize = 8;
-#[cfg(feature = "wifi-auto")]
 const WIFI_AUTO_DISCOVERY_SOCKET_METADATA: usize = 8;
-#[cfg(feature = "wifi-auto")]
 const WIFI_AUTO_DISCOVERY_SOCKET_BYTES: usize = 128;
-#[cfg(feature = "wifi-auto")]
 const WIFI_AUTO_SOFT_AP_DISCOVERY_SOCKET_METADATA: usize = 8;
-#[cfg(feature = "wifi-auto")]
 const WIFI_AUTO_SOFT_AP_DISCOVERY_SOCKET_BYTES: usize = 512;
-#[cfg(feature = "wifi-auto")]
 const WIFI_AUTO_UNICAST_DISCOVERY_TX_QUEUED_PACKETS: usize = 2;
-#[cfg(feature = "wifi-auto")]
 const WIFI_AUTO_UNICAST_DISCOVERY_TX_SOCKET_METADATA: usize =
     WIFI_AUTO_UNICAST_DISCOVERY_TX_QUEUED_PACKETS + 1;
-#[cfg(feature = "wifi-auto")]
 const WIFI_AUTO_UNICAST_DISCOVERY_TX_SOCKET_BYTES: usize =
     wifi_auto_contract::PEERING_TOKEN_BYTES * WIFI_AUTO_UNICAST_DISCOVERY_TX_QUEUED_PACKETS;
-#[cfg(feature = "wifi-auto")]
 const DHCP_CLIENT_SOCKET_COUNT: usize = 1;
-#[cfg(feature = "wifi-auto")]
 const WIFI_AUTO_DATAGRAM_SOCKET_COUNT: usize = 3;
-#[cfg(feature = "wifi-auto")]
 const CONFIGURED_TCP_CLIENT_SOCKET_COUNT: usize = 1;
-#[cfg(feature = "wifi-auto")]
 const STATION_STACK_SOCKET_CAPACITY: usize = DHCP_CLIENT_SOCKET_COUNT
     + WIFI_AUTO_DATAGRAM_SOCKET_COUNT
     + CONFIGURED_TCP_CLIENT_SOCKET_COUNT
     + UDP_SERVICE_DISCOVERY_SOCKET_COUNT as usize;
-#[cfg(feature = "wifi-auto")]
 const WIFI_HEALTH_SAMPLES_BETWEEN_REPORTS: u8 = 4;
-#[cfg(feature = "wifi-auto")]
 fn wifi_auto_station_multicast_discovery_socket(stack: Stack<'static>) -> UdpSocket<'static> {
     psram_udp_socket::<
         WIFI_AUTO_DISCOVERY_SOCKET_METADATA,
@@ -87,7 +60,6 @@ fn wifi_auto_station_multicast_discovery_socket(stack: Stack<'static>) -> UdpSoc
     >(stack)
 }
 
-#[cfg(feature = "wifi-auto")]
 fn wifi_auto_soft_ap_multicast_discovery_socket(stack: Stack<'static>) -> UdpSocket<'static> {
     psram_udp_socket::<
         WIFI_AUTO_SOFT_AP_DISCOVERY_SOCKET_METADATA,
@@ -97,7 +69,6 @@ fn wifi_auto_soft_ap_multicast_discovery_socket(stack: Stack<'static>) -> UdpSoc
     >(stack)
 }
 
-#[cfg(feature = "wifi-auto")]
 fn wifi_auto_unicast_discovery_socket(stack: Stack<'static>) -> UdpSocket<'static> {
     psram_udp_socket::<
         WIFI_AUTO_DISCOVERY_SOCKET_METADATA,
@@ -107,7 +78,6 @@ fn wifi_auto_unicast_discovery_socket(stack: Stack<'static>) -> UdpSocket<'stati
     >(stack)
 }
 
-#[cfg(feature = "wifi-auto")]
 fn wifi_auto_data_socket(stack: Stack<'static>) -> UdpSocket<'static> {
     psram_udp_socket::<
         WIFI_DATA_SOCKET_METADATA,
@@ -117,7 +87,6 @@ fn wifi_auto_data_socket(stack: Stack<'static>) -> UdpSocket<'static> {
     >(stack)
 }
 
-#[cfg(feature = "wifi-auto")]
 fn udp_service_discovery_socket(stack: Stack<'static>) -> UdpSocket<'static> {
     psram_udp_socket::<
         UDP_SERVICE_DISCOVERY_RX_SOCKET_METADATA,
@@ -127,24 +96,17 @@ fn udp_service_discovery_socket(stack: Stack<'static>) -> UdpSocket<'static> {
     >(stack)
 }
 
-#[cfg(feature = "wifi-auto")]
 const _: () = assert!(WIFI_STATIC_RX_BUFFERS >= WIFI_RX_BA_WINDOW);
-#[cfg(feature = "wifi-auto")]
 const _: () = assert!(WIFI_DYNAMIC_RX_BUFFERS > WIFI_RX_BA_WINDOW as u16);
-#[cfg(feature = "wifi-auto")]
 const _: () = assert!(WIFI_STATIC_TX_BUFFERS >= WIFI_TX_QUEUE_FRAMES as u8);
-#[cfg(feature = "wifi-auto")]
 const _: () = assert!(
     WIFI_AUTO_UNICAST_DISCOVERY_TX_SOCKET_METADATA > WIFI_AUTO_UNICAST_DISCOVERY_TX_QUEUED_PACKETS
 );
-#[cfg(feature = "wifi-auto")]
 const _: () = assert!(
     WIFI_AUTO_UNICAST_DISCOVERY_TX_SOCKET_BYTES
         == wifi_auto_contract::PEERING_TOKEN_BYTES * WIFI_AUTO_UNICAST_DISCOVERY_TX_QUEUED_PACKETS
 );
-#[cfg(feature = "wifi-auto")]
 const _: () = assert!(WIFI_AUTO_DISCOVERY_SOCKET_BYTES >= wifi_auto_contract::PEERING_TOKEN_BYTES);
-#[cfg(feature = "wifi-auto")]
 const _: () =
     assert!(WIFI_AUTO_SOFT_AP_DISCOVERY_SOCKET_BYTES >= wifi_auto_contract::PEERING_TOKEN_BYTES);
 
@@ -203,7 +165,6 @@ pub(super) fn build_tcp(
     Some((tcp, status, id))
 }
 
-#[cfg(feature = "wifi-auto")]
 pub(super) fn build_wifi(
     spawner: &Spawner,
     wifi: esp_hal::peripherals::WIFI<'static>,
@@ -297,7 +258,6 @@ pub(super) fn build_wifi(
     // in as the opportunistic secondary. The AP link-local is the station MAC + 1 (build_ap_netif
     // derives it from `mac`), and the supervisor hashes its peering token over that AP link-local, so
     // it takes `ap_mac`.
-    #[cfg(feature = "wifi-auto")]
     if ap_enabled {
         let mut ap_mac = mac;
         ap_mac[5] = ap_mac[5].wrapping_add(1);
@@ -372,7 +332,6 @@ pub(super) fn build_wifi(
     }
 }
 
-#[cfg(feature = "wifi-auto")]
 fn start_udp_service_discovery(
     spawner: &Spawner,
     stack: Stack<'static>,
@@ -399,19 +358,16 @@ fn start_udp_service_discovery(
     spawner.spawn(task);
 }
 
-#[cfg(feature = "wifi-auto")]
 #[embassy_executor::task]
 async fn tcp_rendezvous_task(server: TcpRendezvousServer<'static>) -> ! {
     server.run().await
 }
 
-#[cfg(feature = "wifi-auto")]
 #[embassy_executor::task]
 async fn udp_service_discovery_task(service_discovery: UdpServiceDiscovery<'static, MEMBERS>) -> ! {
     service_discovery.run().await
 }
 
-#[cfg(feature = "wifi-auto")]
 /// Hold the Wi-Fi controller alive with no AP association — dropping it would stop the radio — so
 /// ESP-NOW keeps the Wi-Fi MAC up on a fixed channel when no SSID is configured. The radio was started
 /// synchronously by [`build_wifi`] before this task takes the controller.
@@ -426,7 +382,6 @@ async fn wifi_radio_keepalive_task(_controller: WifiController<'static>) -> ! {
 /// side of the boundary, the way the SX1262 driver sits behind `SpiDevice`. Broadcast-only; a
 /// transient `NO_MEM` while the radio is off serving a BLE connection event is retried a few times
 /// before the frame is dropped for the engine to resend.
-#[cfg(feature = "wifi-auto")]
 pub(super) struct EspNowAdapter {
     manager: EspNowManager<'static>,
     sender: EspNowSender<'static>,
@@ -434,11 +389,8 @@ pub(super) struct EspNowAdapter {
     rate_applied: bool,
 }
 
-#[cfg(feature = "wifi-auto")]
 const ESPNOW_SEND_RETRIES: u8 = 8;
-#[cfg(feature = "wifi-auto")]
 const ESPNOW_SEND_RETRY_DELAY: Duration = Duration::from_millis(5);
-#[cfg(feature = "wifi-auto")]
 pub(super) struct EspNowPhySettings {
     pub(super) driver_rate: WifiPhyRate,
     pub(super) bitrate: BitrateBps,
@@ -453,13 +405,11 @@ pub(super) struct EspNowPhySettings {
 /// gap programs the rate one slot below its name (`Rate12m` -> C 24M). The discriminant of `Rate6m`
 /// (10) equals C `WIFI_PHY_RATE_12M`, so `Rate6m` is what actually selects g-12M. This one spot
 /// localizes the workaround; TODO: patch esp-radio's enum upstream and return `Rate12m`.
-#[cfg(feature = "wifi-auto")]
 pub(super) const ESPNOW_PHY: EspNowPhySettings = EspNowPhySettings {
     driver_rate: WifiPhyRate::Rate6m,
     bitrate: BitrateBps::guess(12_000_000),
 };
 
-#[cfg(feature = "wifi-auto")]
 impl EspNowAdapter {
     pub(super) fn new(esp_now: EspNow<'static>) -> Self {
         let (manager, sender, receiver) = esp_now.split();
@@ -482,7 +432,6 @@ impl EspNowAdapter {
     }
 }
 
-#[cfg(feature = "wifi-auto")]
 impl espnow_core::EspNowRadio for EspNowAdapter {
     fn set_channel(&mut self, channel: EspNowChannel) {
         let _ = self.manager.set_channel(channel.as_u8());
@@ -516,7 +465,6 @@ impl espnow_core::EspNowRadio for EspNowAdapter {
 /// A node pinned to a Wi-Fi access point is channel-locked to it (ESP-NOW must follow the station's
 /// channel, never retune and break the association); a node with no Wi-Fi configured is free to sit on
 /// the default rendezvous channel. The locked/free seam a future scan-and-follow layer extends.
-#[cfg(feature = "wifi-auto")]
 pub(super) fn espnow_channel_policy(station_configured: bool) -> ChannelPolicy {
     if station_configured {
         ChannelPolicy::FollowStation
@@ -525,13 +473,11 @@ pub(super) fn espnow_channel_policy(station_configured: bool) -> ChannelPolicy {
     }
 }
 
-#[cfg(feature = "wifi-auto")]
 #[embassy_executor::task(pool_size = 2)]
 pub(super) async fn net_task(mut runner: Runner<'static, WifiStaDevice<'static>>) -> ! {
     runner.run().await
 }
 
-#[cfg(feature = "wifi-auto")]
 #[embassy_executor::task]
 async fn network_ready_task(stack: Stack<'static>) -> ! {
     let mut previous_state = None;
@@ -617,40 +563,27 @@ async fn network_ready_task(stack: Stack<'static>) -> ! {
     }
 }
 
-#[cfg(feature = "wifi-auto")]
 const WIFI_LINK_CHECK_INTERVAL: Duration = Duration::from_secs(2);
-#[cfg(feature = "wifi-auto")]
 const WIFI_INTER_CHANNEL_DELAY: Duration = Duration::from_millis(25);
-#[cfg(feature = "wifi-auto")]
 const WIFI_CHANNEL_SCAN_TIMEOUT: Duration = Duration::from_millis(500);
-#[cfg(feature = "wifi-auto")]
 const WIFI_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
-#[cfg(feature = "wifi-auto")]
 const WIFI_SCAN_MIN_DWELL: HalDuration = HalDuration::from_millis(5);
-#[cfg(feature = "wifi-auto")]
 const WIFI_SCAN_MAX_DWELL: HalDuration = HalDuration::from_millis(20);
-#[cfg(feature = "wifi-auto")]
 const DRIVER_STOP_RETRY_DELAY: Duration = Duration::from_millis(25);
-#[cfg(feature = "wifi-auto")]
 const ESP_OK: i32 = 0;
-#[cfg(feature = "wifi-auto")]
 const ESP_ERR_WIFI_NOT_INIT: i32 = 12_289;
-#[cfg(feature = "wifi-auto")]
 const ESP_ERR_WIFI_NOT_STARTED: i32 = 12_290;
 
-#[cfg(feature = "wifi-auto")]
 struct StationCredentials {
     ssid: String,
     password: String,
 }
 
-#[cfg(feature = "wifi-auto")]
 extern "C" {
     fn esp_wifi_disconnect_internal() -> i32;
     fn esp_wifi_scan_stop() -> i32;
 }
 
-#[cfg(feature = "wifi-auto")]
 #[allow(clippy::undocumented_unsafe_blocks)]
 async fn stop_station_connection() {
     let mut reported = None;
@@ -670,7 +603,6 @@ async fn stop_station_connection() {
     }
 }
 
-#[cfg(feature = "wifi-auto")]
 #[allow(clippy::undocumented_unsafe_blocks)]
 async fn stop_station_scan() {
     let mut reported = None;
@@ -690,7 +622,6 @@ async fn stop_station_scan() {
     }
 }
 
-#[cfg(feature = "wifi-auto")]
 #[embassy_executor::task]
 async fn wifi_connect_task(
     mut controller: WifiController<'static>,
@@ -961,7 +892,6 @@ async fn wifi_connect_task(
     }
 }
 
-#[cfg(feature = "wifi-auto")]
 fn classify_connection_failure(error: WifiError) -> ConnectionFailure {
     match error {
         WifiError::InvalidPassword => ConnectionFailure::Authentication,
@@ -989,7 +919,6 @@ fn classify_connection_failure(error: WifiError) -> ConnectionFailure {
     }
 }
 
-#[cfg(feature = "wifi-auto")]
 async fn apply_station_yield(next: StationYield, status: &AutoWifiStatus<MEMBERS>) {
     match next {
         StationYield::Continue | StationYield::MonitorLink | StationYield::Disabled => {}

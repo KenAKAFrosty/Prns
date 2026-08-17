@@ -24,9 +24,7 @@ pub(crate) struct S3InterfaceHardware {
     pub(crate) usb_device: USB_DEVICE<'static>,
     #[cfg(feature = "lora")]
     pub(crate) lora_radio: LoraRadio,
-    #[cfg(feature = "wifi-auto")]
     pub(crate) wifi: esp_hal::peripherals::WIFI<'static>,
-    #[cfg(feature = "bluetooth-auto")]
     pub(crate) bluetooth: esp_hal::peripherals::BT<'static>,
 }
 

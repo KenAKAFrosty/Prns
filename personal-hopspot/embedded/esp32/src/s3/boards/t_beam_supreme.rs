@@ -314,7 +314,6 @@ impl Esp32S3Board for TBeamSupremeBoard {
             let _ = display.flush();
         }
 
-        #[cfg(feature = "lora")]
         let lora_radio = {
             let lora_spi = Spi::new(
                 p.SPI2,
@@ -363,11 +362,8 @@ impl Esp32S3Board for TBeamSupremeBoard {
             },
             interface_hardware: S3InterfaceHardware {
                 usb_device: p.USB_DEVICE,
-                #[cfg(feature = "lora")]
                 lora_radio,
-                #[cfg(feature = "wifi-auto")]
                 wifi: p.WIFI,
-                #[cfg(feature = "bluetooth-auto")]
                 bluetooth: p.BT,
             },
             manifold: S3ManifoldHardware {
