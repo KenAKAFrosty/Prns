@@ -246,8 +246,7 @@ mod display;
 use captive_portal::ap_ssid;
 use configuration::{hopspot_wifi_config, HopspotWifiConfig};
 use configuration::{HopspotTcpClientConfig, HopspotTcpClientHost};
-use connectivity::build_tcp;
-use connectivity::{build_wifi, espnow_channel_policy, EspNowAdapter, ESPNOW_PHY};
+use connectivity::{build_tcp, build_wifi, espnow_channel_policy, EspNowAdapter, ESPNOW_PHY};
 use display::build_interface_menu_details;
 use display::{build_cards, build_snapshots, button_task};
 
