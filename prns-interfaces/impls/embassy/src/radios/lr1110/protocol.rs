@@ -9,6 +9,7 @@ pub(super) mod op {
     pub const GET_VERSION: u16 = 0x0101;
     pub const WRITE_BUFFER8: u16 = 0x0109;
     pub const READ_BUFFER8: u16 = 0x010a;
+    pub const CLEAR_ERRORS: u16 = 0x010e;
     pub const CALIBRATE: u16 = 0x010f;
     pub const SET_REG_MODE: u16 = 0x0110;
     pub const SET_DIO_AS_RF_SWITCH: u16 = 0x0112;

@@ -20,7 +20,7 @@ use super::radio::board_config;
 bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
     CLOCK_POWER => usb::vbus_detect::InterruptHandler;
-    SPIM3 => spim::InterruptHandler<peripherals::SPI3>;
+    SPI2 => spim::InterruptHandler<peripherals::SPI2>;
 });
 
 type T1000eSpiDevice = ExclusiveDevice<Spim<'static>, Output<'static>, Delay>;
@@ -64,7 +64,7 @@ impl T1000eBoard {
         let mut radio_spim_config = spim::Config::default();
         radio_spim_config.frequency = spim::Frequency::M4;
         let radio_bus = Spim::new(
-            peripherals.SPI3,
+            peripherals.SPI2,
             Irqs,
             peripherals.P0_11,
             peripherals.P1_08,

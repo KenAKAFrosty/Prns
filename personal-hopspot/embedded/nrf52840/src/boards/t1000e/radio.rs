@@ -85,7 +85,7 @@ const fn high_power(duty_cycle: u8, high_power_selection: u8) -> PowerAmplifierC
 pub(super) fn board_config() -> BoardConfig {
     BoardConfig {
         reference_clock: ReferenceClock::Tcxo {
-            voltage: TcxoVoltage::V3_0,
+            voltage: TcxoVoltage::V1_6,
             startup_time: TcxoStartupTime::from_rtc_ticks(TCXO_STARTUP_RTC_TICKS),
         },
         regulator: RegulatorMode::Dcdc,

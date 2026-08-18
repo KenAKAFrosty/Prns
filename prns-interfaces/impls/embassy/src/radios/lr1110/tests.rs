@@ -575,8 +575,17 @@ fn command_stream_matches_lr1110_protocol_and_board_policy() {
             .filter(|candidate| candidate.as_slice() == command)
             .count()
     };
+    let position = |command: &[u8]| {
+        state
+            .commands
+            .iter()
+            .position(|candidate| candidate.as_slice() == command)
+            .expect("command")
+    };
 
     assert!(has(&[0x01, 0x1c, 0x00]));
+    assert!(has(&[0x01, 0x0e]));
+    assert!(has(&[0x01, 0x14, 0x00, 0xc0, 0x04, 0xfc]));
     assert!(has(&[0x01, 0x10, 0x01]));
     assert!(has(&[
         0x01, 0x12, 0x0f, 0x00, 0x09, 0x0b, 0x0a, 0x00, 0x04, 0x00
@@ -601,6 +610,11 @@ fn command_stream_matches_lr1110_protocol_and_board_policy() {
     assert_eq!(count(&[0x02, 0x0f, 0x09, 0x05, 0x01, 0x00]), 1);
     assert_eq!(count(&[0x02, 0x15, 0x01, 0x01, 0x05, 0x07]), 1);
     assert_eq!(count(&[0x02, 0x11, 22, 0x02]), 1);
+    assert!(position(&[0x01, 0x0e]) < position(&[0x01, 0x17, 0x00, 0x00, 0x00, 0xa4]));
+    assert!(
+        position(&[0x01, 0x14, 0x00, 0xc0, 0x04, 0xfc])
+            < position(&[0x01, 0x17, 0x00, 0x00, 0x00, 0xa4])
+    );
     assert!(state.all_read_clocks_were_zero);
     for (index, event) in state.trace.iter().enumerate() {
         if *event == TraceEvent::Spi {

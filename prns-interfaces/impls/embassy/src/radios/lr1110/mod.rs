@@ -255,6 +255,8 @@ where
         self.hard_reset().await?;
         let firmware = self.wait_for_lr1110().await?;
         self.set_standby().await?;
+        self.write_command(&opcode(op::CLEAR_ERRORS)).await?;
+        self.clear_irq(irq::RADIO_EVENTS).await?;
         self.set_regulator().await?;
         self.set_rf_switch().await?;
         self.set_reference_clock().await?;
