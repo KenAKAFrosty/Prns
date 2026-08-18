@@ -9,6 +9,7 @@ use crate::{
 };
 
 const CATALOG_JSON: &str = include_str!("../../release/flash/boards.json");
+const BOARD_CATALOG_SCHEMA: u32 = 3;
 const SHIPPING_BOARD_SLUGS: [&str; 5] = [
     "heltec-v4",
     "heltec-v4-r8",
@@ -97,7 +98,7 @@ pub struct TcpClientProvisioningDescriptor {
 pub enum BoardBuild {
     Esp(EspBuild),
     Uf2(Uf2Build),
-    NrfSerialDfu(NrfSerialDfuBuild),
+    NrfSerialDfu(Box<NrfSerialDfuBuild>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -119,6 +120,7 @@ pub struct NrfSerialDfuBuild {
 #[serde(deny_unknown_fields)]
 pub struct NrfSerialDfuSerialTransport {
     pub touch_application_and_bootloader: NrfSerialDfuTouchApplicationAndBootloader,
+    pub recovery_bootloader: NrfSerialDfuRecoveryBootloader,
     pub managed_application: NrfSerialDfuControlApplication,
 }
 
@@ -128,6 +130,14 @@ pub struct NrfSerialDfuTouchApplicationAndBootloader {
     pub usb: UsbVendorProductId,
     pub touch_baud_rate: u32,
     pub transfer_baud_rate: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NrfSerialDfuRecoveryBootloader {
+    pub usb: UsbVendorProductId,
+    pub manufacturer: String,
+    pub product: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -160,7 +170,11 @@ pub enum NrfSerialDfuSerialTransportError {
         "managed application USB vendor/product identity is not canonical nonzero hexadecimal"
     )]
     InvalidManagedApplicationUsb,
-    #[error("managed application and serial DFU USB identities must differ")]
+    #[error(
+        "recovery bootloader USB vendor/product identity is not canonical nonzero hexadecimal"
+    )]
+    InvalidRecoveryBootloaderUsb,
+    #[error("Nordic serial DFU USB identities must be distinct")]
     IndistinguishableUsbModes,
     #[error("application bootloader-touch baud rate must be nonzero")]
     ZeroTouchBaudRate,
@@ -176,6 +190,8 @@ pub enum NrfSerialDfuSerialTransportError {
     ManagedApplicationContractMismatch,
     #[error("managed application USB strings must be nonempty printable ASCII")]
     InvalidManagedApplicationStrings,
+    #[error("recovery bootloader USB strings must be nonempty printable ASCII")]
+    InvalidRecoveryBootloaderStrings,
 }
 
 impl NrfSerialDfuSerialTransport {
@@ -187,7 +203,12 @@ impl NrfSerialDfuSerialTransport {
                 .ok_or(NrfSerialDfuSerialTransportError::InvalidTouchApplicationAndBootloaderUsb)?;
         let managed_application_usb = parse_usb_vendor_product_id(&self.managed_application.usb)
             .ok_or(NrfSerialDfuSerialTransportError::InvalidManagedApplicationUsb)?;
-        if touch_application_and_bootloader_usb == managed_application_usb {
+        let recovery_bootloader_usb = parse_usb_vendor_product_id(&self.recovery_bootloader.usb)
+            .ok_or(NrfSerialDfuSerialTransportError::InvalidRecoveryBootloaderUsb)?;
+        if touch_application_and_bootloader_usb == managed_application_usb
+            || touch_application_and_bootloader_usb == recovery_bootloader_usb
+            || managed_application_usb == recovery_bootloader_usb
+        {
             return Err(NrfSerialDfuSerialTransportError::IndistinguishableUsbModes);
         }
         if self.touch_application_and_bootloader.touch_baud_rate == 0 {
@@ -201,6 +222,11 @@ impl NrfSerialDfuSerialTransport {
             || !valid_usb_string(&self.managed_application.serial_number)
         {
             return Err(NrfSerialDfuSerialTransportError::InvalidManagedApplicationStrings);
+        }
+        if !valid_usb_string(&self.recovery_bootloader.manufacturer)
+            || !valid_usb_string(&self.recovery_bootloader.product)
+        {
+            return Err(NrfSerialDfuSerialTransportError::InvalidRecoveryBootloaderStrings);
         }
         let request = parse_hex_u8(&self.managed_application.request)
             .ok_or(NrfSerialDfuSerialTransportError::InvalidManagedApplicationRequest)?;
@@ -222,6 +248,9 @@ impl NrfSerialDfuSerialTransport {
         }
         Ok(ValidatedNrfSerialDfuSerialTransport {
             touch_application_and_bootloader_usb,
+            recovery_bootloader_usb,
+            recovery_bootloader_manufacturer: self.recovery_bootloader.manufacturer,
+            recovery_bootloader_product: self.recovery_bootloader.product,
             touch_baud_rate: self.touch_application_and_bootloader.touch_baud_rate,
             managed_application_usb,
             managed_application_manufacturer: self.managed_application.manufacturer,
@@ -332,7 +361,7 @@ impl BoardCatalog {
     }
 
     pub fn validate(&self) -> Result<(), CatalogError> {
-        if self.schema_version != 2 {
+        if self.schema_version != BOARD_CATALOG_SCHEMA {
             return Err(CatalogError::Schema(self.schema_version));
         }
         let mut slugs = std::collections::BTreeSet::new();
@@ -822,6 +851,13 @@ mod tests {
                 .touch_baud_rate,
             1200
         );
+        assert_eq!(build.serial.recovery_bootloader.usb.vendor_id, "0x239a");
+        assert_eq!(build.serial.recovery_bootloader.usb.product_id, "0x8029");
+        assert_eq!(
+            build.serial.recovery_bootloader.manufacturer,
+            "Seeed Studio"
+        );
+        assert_eq!(build.serial.recovery_bootloader.product, "T1000-E-BOOT");
         assert_eq!(build.serial.managed_application.usb.vendor_id, "0x1209");
         assert_eq!(build.serial.managed_application.usb.product_id, "0x0001");
         assert_eq!(
@@ -858,6 +894,35 @@ mod tests {
         assert_eq!(build.recovery.mount_label, "T1000-E");
         assert_eq!(build.recovery.board_id_prefix, "nrf52840-t1000-e-v1");
         assert_eq!(build.recovery.family_id, "0xada52840");
+        Ok(())
+    }
+
+    #[test]
+    fn nrf_recovery_bootloader_identity_is_distinct_and_exact() -> Result<(), CatalogError> {
+        let catalog = board_catalog()?;
+        let board = catalog
+            .board("t1000-e")
+            .ok_or_else(|| CatalogError::InvalidBoard {
+                board: "t1000-e".to_string(),
+                message: "missing qualification target".to_string(),
+            })?;
+        let BoardBuild::NrfSerialDfu(build) = &board.build else {
+            return Err(invalid(board, "expected Nordic serial DFU build"));
+        };
+
+        let mut colliding = build.serial.clone();
+        colliding.recovery_bootloader.usb = colliding.touch_application_and_bootloader.usb.clone();
+        assert_eq!(
+            colliding.into_validated(),
+            Err(NrfSerialDfuSerialTransportError::IndistinguishableUsbModes)
+        );
+
+        let mut unnamed = build.serial.clone();
+        unnamed.recovery_bootloader.product.clear();
+        assert_eq!(
+            unnamed.into_validated(),
+            Err(NrfSerialDfuSerialTransportError::InvalidRecoveryBootloaderStrings)
+        );
         Ok(())
     }
 

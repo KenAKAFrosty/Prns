@@ -104,7 +104,7 @@ impl PreparedTarget {
                 Ok(Self::NrfSerialDfu(PreparedNrfSerialDfuTarget::bind(
                     version,
                     board_id,
-                    target,
+                    *target,
                     application,
                     init_packet,
                 )?))

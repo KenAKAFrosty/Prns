@@ -10,8 +10,8 @@ mod uf2;
 pub use catalog::{
     board_catalog, BoardAvailability, BoardBuild, BoardCatalog, BoardCatalogEntry, CatalogError,
     EspBuild, NrfDfuApplicationVersion, NrfDfuBankLayout, NrfSerialDfuBuild,
-    NrfSerialDfuCompatibility, NrfSerialDfuControlApplication, NrfSerialDfuRecoveryBuild,
-    NrfSerialDfuSerialTransport, NrfSerialDfuSerialTransportError,
+    NrfSerialDfuCompatibility, NrfSerialDfuControlApplication, NrfSerialDfuRecoveryBootloader,
+    NrfSerialDfuRecoveryBuild, NrfSerialDfuSerialTransport, NrfSerialDfuSerialTransportError,
     NrfSerialDfuTouchApplicationAndBootloader, ProvisioningDescriptor,
     TcpClientProvisioningDescriptor, Transport, Uf2Build, Uf2BuildVariant, UsbVendorProductId,
 };

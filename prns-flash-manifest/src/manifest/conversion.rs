@@ -387,14 +387,14 @@ fn convert_target(target: TargetManifest) -> Result<ReleaseTarget, ManifestError
                     FlashPartKind::Uf2,
                 )?,
             };
-            Ok(ReleaseTarget::NrfSerialDfu(NrfSerialDfuTarget {
+            Ok(ReleaseTarget::NrfSerialDfu(Box::new(NrfSerialDfuTarget {
                 identity,
                 serial_transport,
                 compatibility,
                 application,
                 init_packet,
                 recovery,
-            }))
+            })))
         }
     }
 }

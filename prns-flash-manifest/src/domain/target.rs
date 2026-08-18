@@ -316,6 +316,9 @@ impl UsbVidPid {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ValidatedNrfSerialDfuSerialTransport {
     pub(crate) touch_application_and_bootloader_usb: UsbVidPid,
+    pub(crate) recovery_bootloader_usb: UsbVidPid,
+    pub(crate) recovery_bootloader_manufacturer: String,
+    pub(crate) recovery_bootloader_product: String,
     pub(crate) touch_baud_rate: u32,
     pub(crate) managed_application_usb: UsbVidPid,
     pub(crate) managed_application_manufacturer: String,
@@ -331,6 +334,18 @@ pub struct ValidatedNrfSerialDfuSerialTransport {
 impl ValidatedNrfSerialDfuSerialTransport {
     pub const fn touch_application_and_bootloader_usb(&self) -> UsbVidPid {
         self.touch_application_and_bootloader_usb
+    }
+
+    pub const fn recovery_bootloader_usb(&self) -> UsbVidPid {
+        self.recovery_bootloader_usb
+    }
+
+    pub fn recovery_bootloader_manufacturer(&self) -> &str {
+        &self.recovery_bootloader_manufacturer
+    }
+
+    pub fn recovery_bootloader_product(&self) -> &str {
+        &self.recovery_bootloader_product
     }
 
     pub const fn touch_baud_rate(&self) -> u32 {
@@ -630,7 +645,7 @@ impl Uf2Target {
 pub enum ReleaseTarget {
     EspSerial(EspSerialTarget),
     Uf2(Uf2Target),
-    NrfSerialDfu(NrfSerialDfuTarget),
+    NrfSerialDfu(Box<NrfSerialDfuTarget>),
 }
 
 impl ReleaseTarget {
@@ -807,6 +822,23 @@ impl ReleaseTarget {
                                 touch_baud_rate: target.serial_transport.touch_baud_rate,
                                 transfer_baud_rate: target.serial_transport.transfer_baud_rate,
                             },
+                        recovery_bootloader: crate::NrfSerialDfuRecoveryBootloader {
+                            usb: crate::UsbVendorProductId {
+                                vendor_id: format!(
+                                    "0x{:04x}",
+                                    target.serial_transport.recovery_bootloader_usb.vendor_id
+                                ),
+                                product_id: format!(
+                                    "0x{:04x}",
+                                    target.serial_transport.recovery_bootloader_usb.product_id
+                                ),
+                            },
+                            manufacturer: target
+                                .serial_transport
+                                .recovery_bootloader_manufacturer
+                                .clone(),
+                            product: target.serial_transport.recovery_bootloader_product.clone(),
+                        },
                         managed_application: crate::NrfSerialDfuControlApplication {
                             usb: crate::UsbVendorProductId {
                                 vendor_id: format!(

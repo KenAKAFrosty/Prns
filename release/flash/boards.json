@@ -1,5 +1,5 @@
 {
-  "schema": 2,
+  "schema": 3,
   "boards": [
     {
       "availability": "shipping",
@@ -215,6 +215,14 @@
             },
             "touch_baud_rate": 1200,
             "transfer_baud_rate": 115200
+          },
+          "recovery_bootloader": {
+            "usb": {
+              "vendor_id": "0x239a",
+              "product_id": "0x8029"
+            },
+            "manufacturer": "Seeed Studio",
+            "product": "T1000-E-BOOT"
           },
           "managed_application": {
             "usb": {

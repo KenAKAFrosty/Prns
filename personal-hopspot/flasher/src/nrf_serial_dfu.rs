@@ -14,6 +14,7 @@ use prns_nrf_dfu::{
 use serde::Serialize;
 use serialport::{
     ClearBuffer, DataBits, FlowControl, Parity, SerialPortInfo, SerialPortType, StopBits,
+    UsbPortInfo,
 };
 use thiserror::Error;
 
@@ -148,8 +149,14 @@ pub(crate) enum AcknowledgementReceiveError {
     Cancelled,
 }
 
+#[derive(Clone)]
+struct SelectedSerialDevice {
+    port: SerialPortInfo,
+    usb: UsbPortInfo,
+}
+
 enum SelectedDevice {
-    TouchApplicationOrBootloader(SerialPortInfo),
+    TouchApplicationOrBootloader(SelectedSerialDevice),
     ManagedApplication(DeviceInfo),
 }
 
@@ -163,8 +170,15 @@ impl SelectedDevice {
 
     fn connection_name(&self) -> String {
         match self {
-            Self::TouchApplicationOrBootloader(port) => port.port_name.clone(),
+            Self::TouchApplicationOrBootloader(device) => device.port.port_name.clone(),
             Self::ManagedApplication(device) => managed_device_name(device),
+        }
+    }
+
+    fn observed_usb_identity(&self) -> (u16, u16) {
+        match self {
+            Self::TouchApplicationOrBootloader(device) => (device.usb.vid, device.usb.pid),
+            Self::ManagedApplication(device) => (device.vendor_id(), device.product_id()),
         }
     }
 }
@@ -191,17 +205,12 @@ pub(crate) fn doctor(
     let selected = select_device(&ports, &managed_applications, requested_port, &transport)
         .map_err(map_preflight_error)?;
     let mode = selected.mode();
-    let identity = match mode {
-        DeviceMode::TouchApplicationOrBootloader => {
-            transport.touch_application_and_bootloader_usb()
-        }
-        DeviceMode::ManagedApplication => transport.managed_application_usb(),
-    };
+    let (vendor_id, product_id) = selected.observed_usb_identity();
     Ok(DoctorReport {
         port_name: selected.connection_name(),
         mode,
-        vendor_id: identity.vendor_id(),
-        product_id: identity.product_id(),
+        vendor_id,
+        product_id,
     })
 }
 
@@ -223,20 +232,21 @@ pub(crate) fn flash(
     let selected = select_device(&ports, &managed_applications, requested_port, transport)
         .map_err(map_preflight_error)?;
     let bootloader = match selected {
-        SelectedDevice::TouchApplicationOrBootloader(port) => {
+        SelectedDevice::TouchApplicationOrBootloader(device) => {
             reporter.phase(
                 Phase::Resetting,
                 Some(&board.slug),
                 "Ensuring the exact device is in its Nordic serial bootloader…",
             );
-            touch_application(&port, transport.touch_baud_rate()).map_err(map_preflight_error)?;
-            let expected = match usb_serial_number(&port) {
+            touch_application(&device.port, transport.touch_baud_rate())
+                .map_err(map_preflight_error)?;
+            let expected = match device.usb.serial_number.as_deref() {
                 Some(serial_number) => {
                     ExpectedBootloader::UsbSerialNumber(serial_number.to_string())
                 }
                 None => ExpectedBootloader::UniqueExactDevice,
             };
-            await_bootloader(&port.port_name, expected, transport)
+            await_bootloader(&device.port.port_name, expected, transport)
                 .map_err(AppError::nrf_serial_dfu)?
         }
         SelectedDevice::ManagedApplication(device) => {
@@ -346,21 +356,20 @@ fn select_device(
                 port: requested_port.to_string(),
             });
         };
-        if !usb_matches(
-            usb.vid,
-            usb.pid,
-            transport.touch_application_and_bootloader_usb(),
-        ) {
+        if !serial_usb_matches(usb, transport) {
             return Err(SerialDfuError::RequestedPortIdentity {
                 port: requested_port.to_string(),
                 vendor_id: usb.vid,
                 product_id: usb.pid,
             });
         }
-        return Ok(SelectedDevice::TouchApplicationOrBootloader(port));
+        let usb = usb.clone();
+        return Ok(SelectedDevice::TouchApplicationOrBootloader(
+            SelectedSerialDevice { port, usb },
+        ));
     }
 
-    let serial_devices = matching_ports(ports, transport.touch_application_and_bootloader_usb());
+    let serial_devices = matching_selectable_ports(ports, transport);
     let match_count = serial_devices.len() + managed_applications.len();
     if match_count == 0 {
         return Err(SerialDfuError::DeviceMissing);
@@ -368,7 +377,7 @@ fn select_device(
     if match_count > 1 {
         let mut devices = serial_devices
             .iter()
-            .map(|port| format!("touch application or bootloader {}", port.port_name))
+            .map(|device| format!("touch application or bootloader {}", device.port.port_name))
             .chain(
                 managed_applications
                     .iter()
@@ -380,7 +389,7 @@ fn select_device(
     }
     if let [serial_device] = serial_devices.as_slice() {
         return Ok(SelectedDevice::TouchApplicationOrBootloader(
-            (*serial_device).clone(),
+            serial_device.clone(),
         ));
     }
     let [managed_application] = managed_applications else {
@@ -410,6 +419,34 @@ fn matching_ports(ports: &[SerialPortInfo], identity: UsbVidPid) -> Vec<&SerialP
             )
         })
         .collect()
+}
+
+fn matching_selectable_ports(
+    ports: &[SerialPortInfo],
+    transport: &ValidatedNrfSerialDfuSerialTransport,
+) -> Vec<SelectedSerialDevice> {
+    ports
+        .iter()
+        .filter_map(|port| {
+            let SerialPortType::UsbPort(usb) = &port.port_type else {
+                return None;
+            };
+            serial_usb_matches(usb, transport).then(|| SelectedSerialDevice {
+                port: port.clone(),
+                usb: usb.clone(),
+            })
+        })
+        .collect()
+}
+
+fn serial_usb_matches(usb: &UsbPortInfo, transport: &ValidatedNrfSerialDfuSerialTransport) -> bool {
+    usb_matches(
+        usb.vid,
+        usb.pid,
+        transport.touch_application_and_bootloader_usb(),
+    ) || (usb_matches(usb.vid, usb.pid, transport.recovery_bootloader_usb())
+        && usb.manufacturer.as_deref() == Some(transport.recovery_bootloader_manufacturer())
+        && usb.product.as_deref() == Some(transport.recovery_bootloader_product()))
 }
 
 fn matching_managed_applications(
@@ -471,13 +508,6 @@ fn touch_application(port: &SerialPortInfo, baud_rate: u32) -> Result<(), Serial
         Err(SerialDfuError::Cancelled)
     } else {
         Ok(())
-    }
-}
-
-fn usb_serial_number(port: &SerialPortInfo) -> Option<&str> {
-    match &port.port_type {
-        SerialPortType::UsbPort(usb) => usb.serial_number.as_deref(),
-        SerialPortType::PciPort | SerialPortType::BluetoothPort | SerialPortType::Unknown => None,
     }
 }
 
@@ -770,8 +800,8 @@ mod tests {
     use std::rc::Rc;
 
     use prns_flash_manifest::{
-        NrfSerialDfuControlApplication, NrfSerialDfuSerialTransport,
-        NrfSerialDfuTouchApplicationAndBootloader, UsbVendorProductId,
+        NrfSerialDfuControlApplication, NrfSerialDfuRecoveryBootloader,
+        NrfSerialDfuSerialTransport, NrfSerialDfuTouchApplicationAndBootloader, UsbVendorProductId,
         ValidatedNrfSerialDfuSerialTransport,
     };
     use prns_nrf_dfu::{
@@ -825,6 +855,14 @@ mod tests {
                 touch_baud_rate: 1_200,
                 transfer_baud_rate: 115_200,
             },
+            recovery_bootloader: NrfSerialDfuRecoveryBootloader {
+                usb: UsbVendorProductId {
+                    vendor_id: "0x239a".to_string(),
+                    product_id: "0x8029".to_string(),
+                },
+                manufacturer: "Seeed Studio".to_string(),
+                product: "T1000-E-BOOT".to_string(),
+            },
             managed_application: NrfSerialDfuControlApplication {
                 usb: UsbVendorProductId {
                     vendor_id: "0x1209".to_string(),
@@ -852,6 +890,19 @@ mod tests {
                 serial_number: Some(format!("serial-{name}")),
                 manufacturer: None,
                 product: None,
+            }),
+        }
+    }
+
+    fn recovery_bootloader_port(name: &str) -> SerialPortInfo {
+        SerialPortInfo {
+            port_name: name.to_string(),
+            port_type: SerialPortType::UsbPort(UsbPortInfo {
+                vid: 0x239a,
+                pid: 0x8029,
+                serial_number: Some(format!("serial-{name}")),
+                manufacturer: Some("Seeed Studio".to_string()),
+                product: Some("T1000-E-BOOT".to_string()),
             }),
         }
     }
@@ -889,7 +940,58 @@ mod tests {
         let ports = vec![usb_port("serial", 0x2886, 0x0057)];
         assert!(matches!(
             select_device(&ports, &[], None, &transport()),
-            Ok(SelectedDevice::TouchApplicationOrBootloader(port)) if port == ports[0]
+            Ok(SelectedDevice::TouchApplicationOrBootloader(device)) if device.port == ports[0]
+        ));
+    }
+
+    #[test]
+    fn exact_recovery_bootloader_is_selected() {
+        let ports = vec![recovery_bootloader_port("recovery")];
+        assert!(matches!(
+            select_device(&ports, &[], None, &transport()),
+            Ok(SelectedDevice::TouchApplicationOrBootloader(device)) if device.port == ports[0]
+        ));
+    }
+
+    #[test]
+    fn shared_recovery_usb_pair_requires_exact_strings() {
+        let ports = vec![usb_port("other", 0x239a, 0x8029)];
+        assert!(matches!(
+            select_device(&ports, &[], None, &transport()),
+            Err(SerialDfuError::DeviceMissing)
+        ));
+    }
+
+    #[test]
+    fn doctor_reports_the_observed_recovery_identity() {
+        let catalog = prns_flash_manifest::board_catalog().expect("catalog");
+        let board = catalog.board("t1000-e").expect("T1000-E");
+        let report = doctor(
+            board,
+            vec![recovery_bootloader_port("recovery")],
+            Some("recovery"),
+        )
+        .expect("recovery doctor report");
+        assert_eq!(
+            report,
+            DoctorReport {
+                port_name: "recovery".to_string(),
+                mode: DeviceMode::TouchApplicationOrBootloader,
+                vendor_id: 0x239a,
+                product_id: 0x8029,
+            }
+        );
+    }
+
+    #[test]
+    fn canonical_and_recovery_devices_are_ambiguous_together() {
+        let ports = vec![
+            usb_port("canonical", 0x2886, 0x0057),
+            recovery_bootloader_port("recovery"),
+        ];
+        assert!(matches!(
+            select_device(&ports, &[], None, &transport()),
+            Err(SerialDfuError::AmbiguousDevices { .. })
         ));
     }
 
