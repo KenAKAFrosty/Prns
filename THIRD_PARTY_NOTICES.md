@@ -1728,7 +1728,7 @@ License: BSD 3-Clause "New" or "Revised" License
 
 Used by: `subtle 2.6.1`
 
-Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840
+Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
 
 ```text
 Copyright (c) 2016-2017 Isis Agora Lovecruft, Henry de Valence. All rights reserved.
@@ -1768,7 +1768,7 @@ License: BSD 3-Clause "New" or "Revised" License
 
 Used by: `curve25519-dalek 4.1.3`, `nrf-pac 0.3.0`
 
-Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, iOS, nRF52840
+Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
 
 ```text
 Copyright (c) <year> <owner>.
@@ -1790,7 +1790,7 @@ License: BSD 3-Clause "New" or "Revised" License
 
 Used by: `ed25519-dalek 2.2.0`
 
-Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, iOS, nRF52840
+Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
 
 ```text
 Copyright (c) 2017-2019 isis agora lovecruft. All rights reserved.
@@ -1829,7 +1829,7 @@ License: BSD 3-Clause "New" or "Revised" License
 
 Used by: `x25519-dalek 2.0.1`
 
-Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, iOS, nRF52840
+Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
 
 ```text
 Copyright (c) 2017-2021 isis agora lovecruft. All rights reserved.
@@ -2361,7 +2361,7 @@ SOFTWARE.
 
 License: MIT License
 
-Used by: `bitfield-macros 0.19.4`, `block2 0.5.1`, `block2 0.6.2`, `bluez-async 0.8.2`, `bluez-generated 0.4.0`, `btleplug 0.12.0`, `btuuid 0.1.1`, `cesu8 1.1.0`, `const-serialize 0.7.2`, `const-serialize 0.8.0-alpha.0`, `const-serialize-macro 0.7.2`, `const-serialize-macro 0.8.0-alpha.0`, `cortex-m-rt 0.7.5`, `cortex-m-rt-macros 0.7.5`, `custom_debug 0.6.2`, `custom_debug_derive 0.6.2`, `deku_derive 0.18.1`, `delegate 0.13.5`, `dioxus 0.7.5`, `dioxus-asset-resolver 0.7.9`, `dioxus-cli-config 0.7.9`, `dioxus-config-macro 0.7.9`, `dioxus-config-macros 0.7.9`, `dioxus-core 0.7.9`, `dioxus-core-macro 0.7.9`, `dioxus-core-types 0.7.9`, `dioxus-devtools 0.7.9`, `dioxus-devtools-types 0.7.9`, `dioxus-document 0.7.9`, `dioxus-history 0.7.9`, `dioxus-hooks 0.7.9`, `dioxus-html 0.7.9`, `dioxus-html-internal-macro 0.7.9`, `dioxus-interpreter-js 0.7.9`, `dioxus-logger 0.7.9`, `dioxus-router 0.7.9`, `dioxus-router-macro 0.7.9`, `dioxus-rsx 0.7.9`, `dioxus-signals 0.7.9`, `dioxus-stores 0.7.9`, `dioxus-stores-macro 0.7.9`, `dioxus-web 0.7.9`, `dispatch 0.2.0`, `dispatch2 0.3.1`, `dlopen2 0.8.2`, `docs 0.1.0`, `docsplay-macros 0.1.2`, `dpi 0.1.2`, `embassy-embedded-hal 0.6.0`, `embassy-executor 0.10.0`, `embassy-executor-macros 0.8.0`, `embassy-executor-timer-queue 0.1.0`, `embassy-futures 0.1.2`, `embassy-hal-internal 0.4.0`, `embassy-hal-internal 0.5.0`, `embassy-net 0.9.1`, `embassy-net-driver 0.2.0`, `embassy-net-driver-channel 0.4.0`, `embassy-nrf 0.10.0`, `embassy-sync 0.6.2`, `embassy-sync 0.7.2`, `embassy-sync 0.8.0`, `embassy-time 0.5.1`, `embassy-time-driver 0.2.2`, `embassy-time-queue-utils 0.3.2`, `embassy-usb 0.6.0`, `embassy-usb-driver 0.2.2`, `embassy-usb-synopsys-otg 0.3.3`, `embedded-graphics-core 0.4.1`, `embedded-nal-async 0.9.0`, `esp-alloc 0.10.0`, `esp-backtrace 0.19.0`, `esp-bootloader-esp-idf 0.5.0`, `esp-config 0.7.0`, `esp-hal 1.1.1`, `esp-hal-procmacros 0.22.0`, `esp-metadata-generated 0.4.0`, `esp-phy 0.2.0`, `esp-println 0.17.0`, `esp-radio-rtos-driver 0.3.0`, `esp-riscv-rt 0.14.0`, `esp-rom-sys 0.1.4`, `esp-rtos 0.3.0`, `esp-sync 0.2.1`, `esp-wifi-sys-esp32c6 0.2.0`, `esp-wifi-sys-esp32s3 0.2.0`, `esp32c6 0.23.2`, `esp32s3 0.35.2`, `fluent-langneg 0.13.1`, `generational-box 0.7.9`, `gloo-timers 0.3.0`, `hopspot-flash 0.3.6`, `hopspot-heltec-v4 0.1.0`, `hopspot-heltec-v4-r8 0.1.0`, `hopspot-t-beam-supreme 0.1.0`, `hopspot-xiao-esp32-c6 0.1.0`, `intl_pluralrules 7.0.2`, `jni-sys-macros 0.4.1`, `lazy-js-bundle 0.7.9`, `macaddr 1.0.1`, `manganis 0.7.9`, `manganis-core 0.7.9`, `manganis-macro 0.7.9`, `minisign-verify 0.2.5`, `napi 3.11.0`, `napi-build 2.3.2`, `napi-derive 3.6.0`, `napi-derive-backend 6.0.0`, `napi-sys 3.3.0`, `ndk-context 0.1.1`, `netlink-packet-core 0.8.1`, `netlink-sys 0.8.8`, `nrf-softdevice 0.1.0-prns.1`, `nrf-softdevice-macro 0.1.0`, `objc-sys 0.3.5`, `objc2 0.5.2`, `objc2 0.6.4`, `objc2-app-kit 0.2.2`, `objc2-app-kit 0.3.2`, `objc2-core-bluetooth 0.2.2`, `objc2-core-bluetooth 0.3.2`, `objc2-core-foundation 0.3.2`, `objc2-core-graphics 0.3.2`, `objc2-core-wlan 0.3.2`, `objc2-encode 4.1.0`, `objc2-foundation 0.2.2`, `objc2-foundation 0.3.2`, `objc2-io-kit 0.3.2`, `objc2-security 0.3.2`, `objc2-security-foundation 0.3.2`, `objc2-system-configuration 0.3.2`, `ouroboros 0.18.5`, `ouroboros_macro 0.18.5`, `parse_int 0.9.0`, `personal-hopspot-android 0.1.0`, `personal-hopspot-core 0.1.0`, `personal-hopspot-desktop 0.1.0`, `personal-hopspot-ios 0.1.0`, `personal-rns 0.3.6`, `portable_atomic_enum 0.3.1`, `portable_atomic_enum_macros 0.2.1`, `prns-config 0.3.6`, `prns-core 0.3.6`, `prns-ffi 0.3.6`, `prns-flash-manifest 0.1.0`, `prns-host 0.3.6`, `prns-host-cooperative 0.3.6`, `prns-host-native 0.3.6`, `prns-interfaces-embassy 0.3.6`, `prns-interfaces-tokio 0.3.6`, `prns-macros 0.3.6`, `prns-runtime 0.3.6`, `prns-runtime-embassy 0.3.6`, `prns-runtime-tokio 0.3.6`, `prns-tools-command 0.1.0`, `prns-wasm 0.3.6`, `prnsd 0.3.6`, `prnsd-control 0.1.0`, `reticulum-site 0.1.0`, `riscv-macros 0.3.0`, `riscv-rt-macros 0.6.1`, `rlsf 0.2.2`, `sledgehammer_bindgen 0.6.0`, `sledgehammer_bindgen_macro 0.6.5`, `sledgehammer_utils 0.3.1`, `subsecond 0.7.9`, `subsecond-types 0.7.9`, `tokio-udev 0.9.1`, `trouble-host 0.6.0`, `trouble-host-macros 0.4.0`, `type-map 0.5.1`, `ufmt-write 0.1.0`, `usbd-hid-descriptors 0.10.0`, `usbd-hid-macros 0.10.0`, `void 1.0.2`, `warnings 0.2.1`, `warnings-macro 0.2.0`, `windows 0.58.0`, `windows 0.62.2`, `windows-collections 0.3.2`, `windows-core 0.58.0`, `windows-core 0.62.2`, `windows-future 0.3.2`, `windows-implement 0.58.0`, `windows-implement 0.60.2`, `windows-interface 0.58.0`, `windows-interface 0.59.3`, `windows-link 0.2.1`, `windows-numerics 0.3.1`, `windows-result 0.2.0`, `windows-result 0.4.1`, `windows-strings 0.1.0`, `windows-strings 0.5.1`, `windows-sys 0.52.0`, `windows-sys 0.59.0`, `windows-sys 0.61.2`, `windows-targets 0.52.6`, `windows-threading 0.2.1`, `windows_x86_64_msvc 0.52.6`, `xtensa-lx 0.13.0`, `xtensa-lx-rt 0.22.0`, `xtensa-lx-rt-proc-macros 0.5.0`
+Used by: `bitfield-macros 0.19.4`, `block2 0.5.1`, `block2 0.6.2`, `bluez-async 0.8.2`, `bluez-generated 0.4.0`, `btleplug 0.12.0`, `btuuid 0.1.1`, `cesu8 1.1.0`, `const-serialize 0.7.2`, `const-serialize 0.8.0-alpha.0`, `const-serialize-macro 0.7.2`, `const-serialize-macro 0.8.0-alpha.0`, `cortex-m-rt 0.7.5`, `cortex-m-rt-macros 0.7.5`, `custom_debug 0.6.2`, `custom_debug_derive 0.6.2`, `deku_derive 0.18.1`, `delegate 0.13.5`, `dioxus 0.7.5`, `dioxus-asset-resolver 0.7.9`, `dioxus-cli-config 0.7.9`, `dioxus-config-macro 0.7.9`, `dioxus-config-macros 0.7.9`, `dioxus-core 0.7.9`, `dioxus-core-macro 0.7.9`, `dioxus-core-types 0.7.9`, `dioxus-devtools 0.7.9`, `dioxus-devtools-types 0.7.9`, `dioxus-document 0.7.9`, `dioxus-history 0.7.9`, `dioxus-hooks 0.7.9`, `dioxus-html 0.7.9`, `dioxus-html-internal-macro 0.7.9`, `dioxus-interpreter-js 0.7.9`, `dioxus-logger 0.7.9`, `dioxus-router 0.7.9`, `dioxus-router-macro 0.7.9`, `dioxus-rsx 0.7.9`, `dioxus-signals 0.7.9`, `dioxus-stores 0.7.9`, `dioxus-stores-macro 0.7.9`, `dioxus-web 0.7.9`, `dispatch 0.2.0`, `dispatch2 0.3.1`, `dlopen2 0.8.2`, `docs 0.1.0`, `docsplay-macros 0.1.2`, `dpi 0.1.2`, `embassy-embedded-hal 0.6.0`, `embassy-executor 0.10.0`, `embassy-executor-macros 0.8.0`, `embassy-executor-timer-queue 0.1.0`, `embassy-futures 0.1.2`, `embassy-hal-internal 0.4.0`, `embassy-hal-internal 0.5.0`, `embassy-net 0.9.1`, `embassy-net-driver 0.2.0`, `embassy-net-driver-channel 0.4.0`, `embassy-nrf 0.10.0`, `embassy-sync 0.6.2`, `embassy-sync 0.7.2`, `embassy-sync 0.8.0`, `embassy-time 0.5.1`, `embassy-time-driver 0.2.2`, `embassy-time-queue-utils 0.3.2`, `embassy-usb 0.6.0`, `embassy-usb-driver 0.2.2`, `embassy-usb-synopsys-otg 0.3.3`, `embedded-graphics-core 0.4.1`, `embedded-nal-async 0.9.0`, `esp-alloc 0.10.0`, `esp-backtrace 0.19.0`, `esp-bootloader-esp-idf 0.5.0`, `esp-config 0.7.0`, `esp-hal 1.1.1`, `esp-hal-procmacros 0.22.0`, `esp-metadata-generated 0.4.0`, `esp-phy 0.2.0`, `esp-println 0.17.0`, `esp-radio-rtos-driver 0.3.0`, `esp-riscv-rt 0.14.0`, `esp-rom-sys 0.1.4`, `esp-rtos 0.3.0`, `esp-sync 0.2.1`, `esp-wifi-sys-esp32c6 0.2.0`, `esp-wifi-sys-esp32s3 0.2.0`, `esp32c6 0.23.2`, `esp32s3 0.35.2`, `fluent-langneg 0.13.1`, `generational-box 0.7.9`, `gloo-timers 0.3.0`, `hopspot-flash 0.3.6`, `hopspot-heltec-v4 0.1.0`, `hopspot-heltec-v4-r8 0.1.0`, `hopspot-t-beam-supreme 0.1.0`, `hopspot-xiao-esp32-c6 0.1.0`, `intl_pluralrules 7.0.2`, `jni-sys-macros 0.4.1`, `lazy-js-bundle 0.7.9`, `macaddr 1.0.1`, `manganis 0.7.9`, `manganis-core 0.7.9`, `manganis-macro 0.7.9`, `minisign-verify 0.2.5`, `napi 3.11.0`, `napi-build 2.3.2`, `napi-derive 3.6.0`, `napi-derive-backend 6.0.0`, `napi-sys 3.3.0`, `ndk-context 0.1.1`, `netlink-packet-core 0.8.1`, `netlink-sys 0.8.8`, `nrf-softdevice 0.1.0-prns.1`, `nrf-softdevice-macro 0.1.0`, `objc-sys 0.3.5`, `objc2 0.5.2`, `objc2 0.6.4`, `objc2-app-kit 0.2.2`, `objc2-app-kit 0.3.2`, `objc2-core-bluetooth 0.2.2`, `objc2-core-bluetooth 0.3.2`, `objc2-core-foundation 0.3.2`, `objc2-core-graphics 0.3.2`, `objc2-core-wlan 0.3.2`, `objc2-encode 4.1.0`, `objc2-foundation 0.2.2`, `objc2-foundation 0.3.2`, `objc2-io-kit 0.3.2`, `objc2-security 0.3.2`, `objc2-security-foundation 0.3.2`, `objc2-system-configuration 0.3.2`, `ouroboros 0.18.5`, `ouroboros_macro 0.18.5`, `parse_int 0.9.0`, `personal-hopspot-android 0.1.0`, `personal-hopspot-core 0.1.0`, `personal-hopspot-desktop 0.1.0`, `personal-hopspot-ios 0.1.0`, `personal-rns 0.3.6`, `portable_atomic_enum 0.3.1`, `portable_atomic_enum_macros 0.2.1`, `prns-config 0.3.6`, `prns-core 0.3.6`, `prns-ffi 0.3.6`, `prns-flash-manifest 0.1.0`, `prns-host 0.3.6`, `prns-host-cooperative 0.3.6`, `prns-host-native 0.3.6`, `prns-interfaces-embassy 0.3.6`, `prns-interfaces-tokio 0.3.6`, `prns-macros 0.3.6`, `prns-nrf-dfu 0.1.0`, `prns-runtime 0.3.6`, `prns-runtime-embassy 0.3.6`, `prns-runtime-tokio 0.3.6`, `prns-tools-command 0.1.0`, `prns-wasm 0.3.6`, `prnsd 0.3.6`, `prnsd-control 0.1.0`, `reticulum-site 0.1.0`, `riscv-macros 0.3.0`, `riscv-rt-macros 0.6.1`, `rlsf 0.2.2`, `sledgehammer_bindgen 0.6.0`, `sledgehammer_bindgen_macro 0.6.5`, `sledgehammer_utils 0.3.1`, `subsecond 0.7.9`, `subsecond-types 0.7.9`, `tokio-udev 0.9.1`, `trouble-host 0.6.0`, `trouble-host-macros 0.4.0`, `type-map 0.5.1`, `ufmt-write 0.1.0`, `usbd-hid-descriptors 0.10.0`, `usbd-hid-macros 0.10.0`, `void 1.0.2`, `warnings 0.2.1`, `warnings-macro 0.2.0`, `windows 0.58.0`, `windows 0.62.2`, `windows-collections 0.3.2`, `windows-core 0.58.0`, `windows-core 0.62.2`, `windows-future 0.3.2`, `windows-implement 0.58.0`, `windows-implement 0.60.2`, `windows-interface 0.58.0`, `windows-interface 0.59.3`, `windows-link 0.2.1`, `windows-numerics 0.3.1`, `windows-result 0.2.0`, `windows-result 0.4.1`, `windows-strings 0.1.0`, `windows-strings 0.5.1`, `windows-sys 0.52.0`, `windows-sys 0.59.0`, `windows-sys 0.61.2`, `windows-targets 0.52.6`, `windows-threading 0.2.1`, `windows_x86_64_msvc 0.52.6`, `xtensa-lx 0.13.0`, `xtensa-lx-rt 0.22.0`, `xtensa-lx-rt-proc-macros 0.5.0`
 
 Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
 
@@ -2520,7 +2520,7 @@ License: MIT License
 
 Used by: `zeroize_derive 1.5.0`
 
-Release graphs: Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, desktop Linux, desktop Windows, desktop macOS
+Release graphs: Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, desktop Linux, desktop Windows, desktop macOS, website Rust/WASM
 
 ```text
 Copyright (c) 2019-2026 The RustCrypto Project Developers
@@ -3261,7 +3261,7 @@ License: MIT License
 
 Used by: `hkdf 0.13.0`
 
-Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, iOS, nRF52840
+Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
 
 ```text
 Copyright (c) 2015-2018 Vlad Filippov
@@ -3551,7 +3551,7 @@ License: MIT License
 
 Used by: `aes 0.8.4`
 
-Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, iOS, nRF52840
+Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
 
 ```text
 Copyright (c) 2018 Artyom Pavlov
@@ -4105,7 +4105,7 @@ License: MIT License
 
 Used by: `hash32 0.3.1`, `panic-halt 1.0.0`
 
-Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, iOS, nRF52840
+Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
 
 ```text
 Copyright (c) 2018 Jorge Aparicio
@@ -4243,7 +4243,7 @@ License: MIT License
 
 Used by: `ctutils 0.4.2`
 
-Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, iOS, nRF52840
+Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
 
 ```text
 Copyright (c) 2025-2026 The RustCrypto Project Developers
@@ -4469,7 +4469,7 @@ License: MIT License
 
 Used by: `zeroize_derive 1.4.3`
 
-Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, daemon Linux, daemon Windows, daemon macOS, engine, iOS, nRF52840
+Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, daemon Linux, daemon Windows, daemon macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840
 
 ```text
 MIT License
@@ -4631,7 +4631,7 @@ License: MIT License
 
 Used by: `md-5 0.11.0`, `sha2 0.11.0`
 
-Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840
+Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
 
 ```text
 Copyright (c) 2016-2026 The RustCrypto Project Developers
@@ -5361,7 +5361,7 @@ License: MIT License
 
 Used by: `inout 0.1.4`
 
-Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, iOS, nRF52840
+Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
 
 ```text
 Copyright (c) 2022 The RustCrypto Project Developers
@@ -5499,7 +5499,7 @@ License: MIT License
 
 Used by: `block-buffer 0.12.1`
 
-Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840
+Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
 
 ```text
 Copyright (c) 2018-2025 The RustCrypto Project Developers
@@ -5675,7 +5675,7 @@ License: MIT License
 
 Used by: `ed25519 2.2.3`, `signature 2.2.0`
 
-Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, iOS, nRF52840
+Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
 
 ```text
 Copyright (c) 2018-2023 RustCrypto Developers
@@ -6214,7 +6214,7 @@ License: MIT License
 
 Used by: `bare-metal 0.2.5`, `fugit 0.3.9`, `heapless 0.8.0`, `heapless 0.9.3`, `nb 0.1.3`, `nb 1.1.0`, `vcell 0.1.3`
 
-Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, iOS, nRF52840
+Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
 
 ```text
 Copyright (c) 2017 Jorge Aparicio
@@ -6348,7 +6348,7 @@ License: MIT License
 
 Used by: `lock_api 0.4.14`, `parking_lot 0.12.5`, `parking_lot_core 0.9.12`, `rustc_version 0.2.3`, `rustc_version 0.4.1`, `thread_local 1.1.10`, `thread_local 1.1.9`
 
-Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, iOS, nRF52840, website Rust/WASM
+Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
 
 ```text
 Copyright (c) 2016 The Rust Project Developers
@@ -6551,7 +6551,7 @@ License: MIT License
 
 Used by: `cipher 0.4.4`
 
-Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, iOS, nRF52840
+Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
 
 ```text
 Copyright (c) 2016-2020 RustCrypto Developers
@@ -7131,9 +7131,9 @@ DEALINGS IN THE SOFTWARE.
 
 License: MIT License
 
-Used by: `cmov 0.5.4`, `hybrid-array 0.4.12`, `hybrid-array 0.4.13`
+Used by: `cmov 0.5.4`, `hybrid-array 0.4.12`, `hybrid-array 0.4.13`, `hybrid-array 0.4.14`
 
-Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840
+Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
 
 ```text
 Copyright (c) 2022-2026 The RustCrypto Project Developers
@@ -8383,7 +8383,7 @@ License: MIT License
 
 Used by: `digest 0.11.3`
 
-Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840
+Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
 
 ```text
 Copyright (c) 2017-2025 RustCrypto Developers
@@ -8540,7 +8540,7 @@ License: MIT License
 
 Used by: `rand 0.9.5`, `rand_chacha 0.9.0`, `rand_core 0.6.4`, `rand_core 0.9.5`
 
-Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, iOS, nRF52840
+Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
 
 ```text
 Copyright 2018 Developers of the Rand project
@@ -9049,7 +9049,7 @@ License: MIT License
 
 Used by: `crypto-common 0.2.2`
 
-Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840
+Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
 
 ```text
 Copyright (c) 2021-2026 RustCrypto Developers
@@ -9085,7 +9085,7 @@ License: MIT License
 
 Used by: `zeroize 1.8.2`
 
-Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, daemon Linux, daemon Windows, daemon macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840
+Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, daemon Linux, daemon Windows, daemon macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
 
 ```text
 MIT License
@@ -9373,7 +9373,7 @@ License: MIT License
 
 Used by: `cbc 0.1.2`
 
-Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, iOS, nRF52840
+Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
 
 ```text
 Copyright (c) 2018-2022 RustCrypto Developers
