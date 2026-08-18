@@ -2,6 +2,8 @@
 mod bluetooth_auto;
 #[cfg(feature = "board-t-echo")]
 mod bluetooth_gatt_server;
+#[cfg(any(feature = "board-t114", feature = "board-t1000e"))]
+mod bootloader_entry;
 mod entropy;
 #[cfg(feature = "board-t-echo")]
 mod firmware;

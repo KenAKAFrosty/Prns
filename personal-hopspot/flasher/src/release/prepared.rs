@@ -1,7 +1,13 @@
 use prns_flash_manifest::{
-    sha256_hex, validate_uf2_artifact, BoardId, EspFlashPart, ImmutableArtifactPath, ReleaseTarget,
-    ReleaseVersion, Sha256Digest, SoftdeviceIdentity, Uf2ArtifactError, Uf2Compatibility, Uf2Part,
-    Uf2Variant,
+    sha256_hex, validate_uf2_artifact, BoardId, EspFlashPart, ImmutableArtifactPath,
+    NrfDfuApplicationVersion, NrfDfuBankLayout, NrfSerialDfuArtifact, NrfSerialDfuTarget,
+    ReleaseTarget, ReleaseVersion, Sha256Digest, SoftdeviceIdentity, Uf2ArtifactError,
+    Uf2Compatibility, Uf2Part, Uf2Variant, ValidatedNrfSerialDfuSerialTransport,
+};
+use prns_nrf_dfu::{
+    ApplicationInitPacket, ApplicationInitPacketSpec, ApplicationVersion, DfuBankLayout,
+    DfuDeviceRevision, DfuDeviceType, DfuImage, DfuImageError, SoftdeviceFirmwareId,
+    SoftdeviceRequirements,
 };
 use thiserror::Error;
 
@@ -39,14 +45,18 @@ pub(crate) enum PreparedArtifactError {
         path: ImmutableArtifactPath,
         source: Uf2ArtifactError,
     },
-    #[error("Nordic serial DFU delivery is not available for signed target {0}")]
-    NrfSerialDfuDeliveryUnavailable(BoardId),
+    #[error("artifact {path} is not a valid Nordic serial DFU image: {source}")]
+    NrfSerialDfu {
+        path: ImmutableArtifactPath,
+        source: DfuImageError,
+    },
 }
 
 #[derive(Debug)]
 pub(crate) enum PreparedTarget {
     EspSerial(PreparedEspTarget),
     Uf2(PreparedUf2Target),
+    NrfSerialDfu(PreparedNrfSerialDfuTarget),
 }
 
 impl PreparedTarget {
@@ -81,9 +91,24 @@ impl PreparedTarget {
                 let _ = (version, target, artifacts);
                 Err(PreparedArtifactError::CompatibilityRequired(board_id))
             }
-            ReleaseTarget::NrfSerialDfu(_) => Err(
-                PreparedArtifactError::NrfSerialDfuDeliveryUnavailable(board_id),
-            ),
+            ReleaseTarget::NrfSerialDfu(target) => {
+                verify_artifact_count(&board_id, 2, artifacts.len())?;
+                let [application, init_packet] =
+                    <[Vec<u8>; 2]>::try_from(artifacts).map_err(|artifacts| {
+                        PreparedArtifactError::Count {
+                            board_id: board_id.clone(),
+                            expected: 2,
+                            actual: artifacts.len(),
+                        }
+                    })?;
+                Ok(Self::NrfSerialDfu(PreparedNrfSerialDfuTarget::bind(
+                    version,
+                    board_id,
+                    target,
+                    application,
+                    init_packet,
+                )?))
+            }
         }
     }
 
@@ -115,6 +140,7 @@ impl PreparedTarget {
         match self {
             Self::EspSerial(target) => target.version(),
             Self::Uf2(target) => target.version(),
+            Self::NrfSerialDfu(target) => target.version(),
         }
     }
 
@@ -122,7 +148,89 @@ impl PreparedTarget {
         match self {
             Self::EspSerial(target) => target.board_id(),
             Self::Uf2(target) => target.board_id(),
+            Self::NrfSerialDfu(target) => target.board_id(),
         }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct PreparedNrfSerialDfuTarget {
+    version: ReleaseVersion,
+    board_id: BoardId,
+    serial_transport: ValidatedNrfSerialDfuSerialTransport,
+    bank_layout: DfuBankLayout,
+    application: Vec<u8>,
+    init_packet: ApplicationInitPacket,
+}
+
+impl PreparedNrfSerialDfuTarget {
+    fn bind(
+        version: ReleaseVersion,
+        board_id: BoardId,
+        target: NrfSerialDfuTarget,
+        application: Vec<u8>,
+        init_packet: Vec<u8>,
+    ) -> Result<Self, PreparedArtifactError> {
+        verify_nrf_serial_dfu_artifact(target.application(), &application)?;
+        verify_nrf_serial_dfu_artifact(target.init_packet(), &init_packet)?;
+        let compatibility = target.compatibility();
+        let required_softdevice =
+            SoftdeviceFirmwareId::new(compatibility.fwid()).map_err(|source| {
+                PreparedArtifactError::NrfSerialDfu {
+                    path: target.init_packet().path().clone(),
+                    source,
+                }
+            })?;
+        let softdevices = SoftdeviceRequirements::new(required_softdevice, std::iter::empty())
+            .map_err(|source| PreparedArtifactError::NrfSerialDfu {
+                path: target.init_packet().path().clone(),
+                source,
+            })?;
+        let spec = ApplicationInitPacketSpec {
+            device_type: DfuDeviceType::new(compatibility.device_type()),
+            device_revision: DfuDeviceRevision::new(compatibility.device_revision()),
+            application_version: match compatibility.application_version() {
+                NrfDfuApplicationVersion::NotEnforced => ApplicationVersion::NotEnforced,
+            },
+            softdevices,
+        };
+        let init_packet = ApplicationInitPacket::from_artifacts(&application, &init_packet, &spec)
+            .map_err(|source| PreparedArtifactError::NrfSerialDfu {
+                path: target.init_packet().path().clone(),
+                source,
+            })?;
+        let bank_layout = match compatibility.bank_layout() {
+            NrfDfuBankLayout::Single => DfuBankLayout::Single,
+            NrfDfuBankLayout::Dual => DfuBankLayout::Dual,
+        };
+        Ok(Self {
+            version,
+            board_id,
+            serial_transport: target.serial_transport().clone(),
+            bank_layout,
+            application,
+            init_packet,
+        })
+    }
+
+    pub(crate) fn version(&self) -> &ReleaseVersion {
+        &self.version
+    }
+
+    pub(crate) fn board_id(&self) -> &BoardId {
+        &self.board_id
+    }
+
+    pub(crate) fn serial_transport(&self) -> &ValidatedNrfSerialDfuSerialTransport {
+        &self.serial_transport
+    }
+
+    pub(crate) const fn bank_layout(&self) -> DfuBankLayout {
+        self.bank_layout
+    }
+
+    pub(crate) fn image(&self) -> Result<DfuImage<'_>, DfuImageError> {
+        DfuImage::new(&self.application, self.init_packet.clone())
     }
 }
 
@@ -269,4 +377,16 @@ fn verify_prepared_artifact(
         });
     }
     Ok(())
+}
+
+fn verify_nrf_serial_dfu_artifact(
+    descriptor: &NrfSerialDfuArtifact,
+    bytes: &[u8],
+) -> Result<(), PreparedArtifactError> {
+    verify_prepared_artifact(
+        descriptor.path(),
+        descriptor.size(),
+        descriptor.sha256(),
+        bytes,
+    )
 }

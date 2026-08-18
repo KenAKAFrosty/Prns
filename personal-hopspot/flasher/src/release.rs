@@ -20,7 +20,9 @@ use crate::events::{Phase, Reporter};
 
 #[cfg(test)]
 use prepared::PreparedArtifactError;
-pub(crate) use prepared::{PreparedEspTarget, PreparedTarget, PreparedUf2Target};
+pub(crate) use prepared::{
+    PreparedEspTarget, PreparedNrfSerialDfuTarget, PreparedTarget, PreparedUf2Target,
+};
 #[cfg(test)]
 use source::cached_channel_paths;
 use source::{
@@ -349,13 +351,16 @@ fn selected_target_parts<'a>(
             })?;
             Ok(vec![ReleasePartRef::Uf2(variant.part())])
         }
-        ReleaseTarget::NrfSerialDfu(_) => {
+        ReleaseTarget::NrfSerialDfu(target) => {
             if softdevice.is_some() {
                 return Err(AppError::trust_identity(
                     "Nordic serial DFU target cannot use a UF2 compatibility selection",
                 ));
             }
-            Ok(target.parts())
+            Ok(vec![
+                ReleasePartRef::NrfSerialDfu(target.application()),
+                ReleasePartRef::NrfSerialDfu(target.init_packet()),
+            ])
         }
     }
 }
@@ -410,8 +415,13 @@ fn verify_hash(bytes: &[u8], expected: &str, label: &str) -> Result<(), AppError
 mod tests {
     use super::*;
     use prns_flash_manifest::{
-        board_catalog, BoardBuild, FlashPart, FlashPartKind, ReleaseTarget, ReleaseVersion,
-        SoftdeviceIdentity, TargetManifest, Uf2VariantManifest,
+        board_catalog, BoardBuild, FlashPart, FlashPartKind, NrfSerialDfuManifest,
+        NrfSerialDfuRecoveryManifest, ReleaseTarget, ReleaseVersion, SoftdeviceIdentity,
+        TargetManifest, Uf2VariantManifest,
+    };
+    use prns_nrf_dfu::{
+        ApplicationInitPacket, ApplicationInitPacketSpec, ApplicationVersion, DfuDeviceRevision,
+        DfuDeviceType, SoftdeviceFirmwareId, SoftdeviceRequirements,
     };
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -526,6 +536,79 @@ mod tests {
         .expect("typed UF2 target");
         let softdevice = SoftdeviceIdentity::parse("s140", "7.3.0").expect("identity");
         (version, target, softdevice, artifacts[1].clone())
+    }
+
+    fn nrf_target() -> (ReleaseVersion, ReleaseTarget, Vec<u8>, Vec<u8>) {
+        let catalog = board_catalog().expect("catalog");
+        let board = catalog.board("t1000-e").expect("T1000-E catalog entry");
+        let BoardBuild::NrfSerialDfu(build) = &board.build else {
+            panic!("T1000-E must use the Nordic serial DFU build");
+        };
+        let version = ReleaseVersion::parse("0.2.6").expect("release version");
+        let application = vec![0x5a; 513];
+        let fwid = SoftdeviceFirmwareId::new(0x0123).expect("FWID");
+        let init_packet = ApplicationInitPacket::build(
+            &application,
+            &ApplicationInitPacketSpec {
+                device_type: DfuDeviceType::new(0x0052),
+                device_revision: DfuDeviceRevision::new(52840),
+                application_version: ApplicationVersion::NotEnforced,
+                softdevices: SoftdeviceRequirements::new(fwid, std::iter::empty())
+                    .expect("SoftDevice requirements"),
+            },
+        )
+        .expect("init packet")
+        .bytes()
+        .to_vec();
+        let artifact = |kind, name: &str, bytes: &[u8]| FlashPart {
+            kind,
+            path: format!("firmware/hopspot/t1000-e/0.2.6/{name}"),
+            offset: None,
+            size: bytes.len() as u64,
+            sha256: sha256_hex(bytes),
+        };
+        let recovery = b"recovery";
+        let target = TargetManifest {
+            board_slug: board.slug.clone(),
+            display_name: board.display_name.clone(),
+            silicon: board.silicon.clone(),
+            interfaces: board.interfaces.clone(),
+            transport: board.transport,
+            expected_chip: None,
+            flash_size: None,
+            flash_mode: None,
+            flash_frequency: None,
+            before_reset: None,
+            after_reset: None,
+            preparation_profile: board.preparation_profile.clone(),
+            parts: Vec::new(),
+            variants: Vec::new(),
+            nrf_serial_dfu: Some(NrfSerialDfuManifest {
+                serial: build.serial.clone(),
+                compatibility: build.compatibility.clone(),
+                application: artifact(
+                    FlashPartKind::DfuApplication,
+                    &build.application_filename,
+                    &application,
+                ),
+                init_packet: artifact(
+                    FlashPartKind::DfuInitPacket,
+                    &build.init_packet_filename,
+                    &init_packet,
+                ),
+                recovery: NrfSerialDfuRecoveryManifest {
+                    mount_label: build.recovery.mount_label.clone(),
+                    board_id_prefix: build.recovery.board_id_prefix.clone(),
+                    family_id: build.recovery.family_id.clone(),
+                    artifact: artifact(FlashPartKind::Uf2, &build.recovery.filename, recovery),
+                },
+            }),
+            provisioning: None,
+            source: None,
+        }
+        .into_validated(board, &version)
+        .expect("typed Nordic serial DFU target");
+        (version, target, application, init_packet)
     }
 
     fn test_uf2(base: u32, family: u32, seed: u8) -> Vec<u8> {
@@ -652,6 +735,23 @@ mod tests {
             PreparedTarget::bind(version, target, vec![bytes]),
             Err(PreparedArtifactError::CompatibilityRequired(_))
         ));
+    }
+
+    #[test]
+    fn prepared_nordic_target_binds_only_the_delivery_artifacts() {
+        let (version, target, application, init_packet) = nrf_target();
+        let parts = selected_target_parts(&target, None).expect("selected artifacts");
+        assert_eq!(
+            parts.iter().map(|part| part.kind()).collect::<Vec<_>>(),
+            [FlashPartKind::DfuApplication, FlashPartKind::DfuInitPacket]
+        );
+        let prepared =
+            PreparedTarget::bind(version, target, vec![application.clone(), init_packet])
+                .expect("prepared Nordic serial DFU target");
+        let PreparedTarget::NrfSerialDfu(prepared) = prepared else {
+            panic!("expected Nordic serial DFU target");
+        };
+        assert_eq!(prepared.image().expect("DFU image").firmware(), application);
     }
 
     #[test]

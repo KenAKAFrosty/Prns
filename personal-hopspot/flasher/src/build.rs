@@ -660,6 +660,7 @@ fn build_nrf_serial_dfu(
         AppError::developer_artifact(format!("could not read recovery UF2: {error}"))
     })?;
     let dfu_manifest = NrfSerialDfuManifest {
+        serial: build.serial.clone(),
         compatibility: build.compatibility.clone(),
         application: release_artifact(
             board,
@@ -694,15 +695,17 @@ fn build_nrf_serial_dfu(
     );
     write_target_record(&output_dir, &target)?;
     write_source_capability_record(&output_dir, board)?;
-    let (_, target) = validated_prepared_target(board, version, target)?;
-    let ReleaseTarget::NrfSerialDfu(target) = target else {
+    let (version, target) = validated_prepared_target(board, version, target)?;
+    let ReleaseTarget::NrfSerialDfu(validated_target) = &target else {
         return Err(AppError::developer_manifest(
             "built target did not validate as Nordic serial DFU",
         ));
     };
     DfuImage::from_artifacts(&application, &init_packet, &init_packet_spec)
         .map_err(|error| AppError::developer_artifact(error.to_string()))?;
-    validate_nrf_serial_dfu_recovery_artifact(&target, &application, &recovery_uf2)
+    validate_nrf_serial_dfu_recovery_artifact(validated_target, &application, &recovery_uf2)
+        .map_err(|error| AppError::developer_artifact(error.to_string()))?;
+    let prepared = PreparedTarget::bind(version, target, vec![application, init_packet])
         .map_err(|error| AppError::developer_artifact(error.to_string()))?;
     reporter.phase(
         Phase::ArtifactReady,
@@ -711,7 +714,7 @@ fn build_nrf_serial_dfu(
     );
     let target_record = output_dir.join("target.json");
     Ok(BuildOutput {
-        prepared: None,
+        prepared: Some(prepared),
         output_dir,
         target_record,
     })

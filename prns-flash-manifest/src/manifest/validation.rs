@@ -249,7 +249,8 @@ fn validate_nrf_serial_dfu(
         .nrf_serial_dfu
         .as_ref()
         .ok_or_else(|| mismatch(target, "Nordic serial DFU artifact contract"))?;
-    if manifest.compatibility != build.compatibility
+    if manifest.serial != build.serial
+        || manifest.compatibility != build.compatibility
         || manifest.recovery.mount_label != build.recovery.mount_label
         || manifest.recovery.board_id_prefix != build.recovery.board_id_prefix
         || manifest.recovery.family_id != build.recovery.family_id

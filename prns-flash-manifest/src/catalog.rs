@@ -4,7 +4,8 @@ use thiserror::Error;
 use crate::{
     AfterResetStrategy, BeforeResetStrategy, BoardId, ChipFamily, ImmutableArtifactPath,
     PreparationProfile, ProvisioningFormat, SoftdeviceIdentity, Uf2BoardIdPrefix, Uf2MountLabel,
-    CONFIG_OFFSET, CONFIG_PASSWORD_MAX_BYTES, CONFIG_SIZE, CONFIG_SSID_MAX_BYTES, CONFIG_VERSION,
+    UsbVidPid, ValidatedNrfSerialDfuSerialTransport, CONFIG_OFFSET, CONFIG_PASSWORD_MAX_BYTES,
+    CONFIG_SIZE, CONFIG_SSID_MAX_BYTES, CONFIG_VERSION,
 };
 
 const CATALOG_JSON: &str = include_str!("../../release/flash/boards.json");
@@ -109,8 +110,142 @@ pub struct NrfSerialDfuBuild {
     pub target_directory: String,
     pub application_filename: String,
     pub init_packet_filename: String,
+    pub serial: NrfSerialDfuSerialTransport,
     pub compatibility: NrfSerialDfuCompatibility,
     pub recovery: NrfSerialDfuRecoveryBuild,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NrfSerialDfuSerialTransport {
+    pub stock_application: NrfSerialDfuSerialTouchApplication,
+    pub managed_application: NrfSerialDfuControlApplication,
+    pub bootloader: NrfSerialDfuSerialBootloader,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NrfSerialDfuSerialTouchApplication {
+    pub usb: UsbVendorProductId,
+    pub touch_baud_rate: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NrfSerialDfuControlApplication {
+    pub usb: UsbVendorProductId,
+    pub manufacturer: String,
+    pub product: String,
+    pub serial_number: String,
+    pub interface_number: u8,
+    pub request: String,
+    pub value: String,
+    pub index: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NrfSerialDfuSerialBootloader {
+    pub usb: UsbVendorProductId,
+    pub transfer_baud_rate: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UsbVendorProductId {
+    pub vendor_id: String,
+    pub product_id: String,
+}
+
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+pub enum NrfSerialDfuSerialTransportError {
+    #[error("stock application USB vendor/product identity is not canonical nonzero hexadecimal")]
+    InvalidStockApplicationUsb,
+    #[error(
+        "managed application USB vendor/product identity is not canonical nonzero hexadecimal"
+    )]
+    InvalidManagedApplicationUsb,
+    #[error("bootloader USB vendor/product identity is not canonical nonzero hexadecimal")]
+    InvalidBootloaderUsb,
+    #[error("stock application, managed application, and bootloader USB identities must differ")]
+    IndistinguishableUsbModes,
+    #[error("stock application bootloader-touch baud rate must be nonzero")]
+    ZeroTouchBaudRate,
+    #[error("bootloader DFU baud rate must be nonzero")]
+    ZeroTransferBaudRate,
+    #[error("managed application bootloader-entry request is not canonical hexadecimal")]
+    InvalidManagedApplicationRequest,
+    #[error("managed application bootloader-entry control value is not canonical hexadecimal")]
+    InvalidManagedApplicationValue,
+    #[error("managed application bootloader-entry control index is not canonical hexadecimal")]
+    InvalidManagedApplicationIndex,
+    #[error("managed application bootloader-entry control contract differs from USB Auto")]
+    ManagedApplicationContractMismatch,
+    #[error("managed application USB strings must be nonempty printable ASCII")]
+    InvalidManagedApplicationStrings,
+}
+
+impl NrfSerialDfuSerialTransport {
+    pub fn into_validated(
+        self,
+    ) -> Result<ValidatedNrfSerialDfuSerialTransport, NrfSerialDfuSerialTransportError> {
+        let stock_application_usb = parse_usb_vendor_product_id(&self.stock_application.usb)
+            .ok_or(NrfSerialDfuSerialTransportError::InvalidStockApplicationUsb)?;
+        let managed_application_usb = parse_usb_vendor_product_id(&self.managed_application.usb)
+            .ok_or(NrfSerialDfuSerialTransportError::InvalidManagedApplicationUsb)?;
+        let bootloader_usb = parse_usb_vendor_product_id(&self.bootloader.usb)
+            .ok_or(NrfSerialDfuSerialTransportError::InvalidBootloaderUsb)?;
+        if stock_application_usb == managed_application_usb
+            || stock_application_usb == bootloader_usb
+            || managed_application_usb == bootloader_usb
+        {
+            return Err(NrfSerialDfuSerialTransportError::IndistinguishableUsbModes);
+        }
+        if self.stock_application.touch_baud_rate == 0 {
+            return Err(NrfSerialDfuSerialTransportError::ZeroTouchBaudRate);
+        }
+        if self.bootloader.transfer_baud_rate == 0 {
+            return Err(NrfSerialDfuSerialTransportError::ZeroTransferBaudRate);
+        }
+        if !valid_usb_string(&self.managed_application.manufacturer)
+            || !valid_usb_string(&self.managed_application.product)
+            || !valid_usb_string(&self.managed_application.serial_number)
+        {
+            return Err(NrfSerialDfuSerialTransportError::InvalidManagedApplicationStrings);
+        }
+        let request = parse_hex_u8(&self.managed_application.request)
+            .ok_or(NrfSerialDfuSerialTransportError::InvalidManagedApplicationRequest)?;
+        let value = parse_hex_u16(&self.managed_application.value)
+            .ok_or(NrfSerialDfuSerialTransportError::InvalidManagedApplicationValue)?;
+        let index = parse_hex_u16(&self.managed_application.index)
+            .ok_or(NrfSerialDfuSerialTransportError::InvalidManagedApplicationIndex)?;
+        use prns_core::interfaces::usb_auto::{
+            BOOTLOADER_ENTRY_CONTROL_INDEX, BOOTLOADER_ENTRY_CONTROL_REQUEST,
+            BOOTLOADER_ENTRY_CONTROL_VALUE, WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID,
+        };
+        if managed_application_usb.vendor_id != WEBUSB_VENDOR_ID
+            || managed_application_usb.product_id != WEBUSB_PRODUCT_ID
+            || request != BOOTLOADER_ENTRY_CONTROL_REQUEST
+            || value != BOOTLOADER_ENTRY_CONTROL_VALUE
+            || index != BOOTLOADER_ENTRY_CONTROL_INDEX
+        {
+            return Err(NrfSerialDfuSerialTransportError::ManagedApplicationContractMismatch);
+        }
+        Ok(ValidatedNrfSerialDfuSerialTransport {
+            stock_application_usb,
+            stock_application_touch_baud_rate: self.stock_application.touch_baud_rate,
+            managed_application_usb,
+            managed_application_manufacturer: self.managed_application.manufacturer,
+            managed_application_product: self.managed_application.product,
+            managed_application_serial_number: self.managed_application.serial_number,
+            managed_application_interface_number: self.managed_application.interface_number,
+            managed_application_request: request,
+            managed_application_value: value,
+            managed_application_index: index,
+            bootloader_usb,
+            bootloader_transfer_baud_rate: self.bootloader.transfer_baud_rate,
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -386,6 +521,16 @@ fn parse_hex_u16(value: &str) -> Option<u16> {
     .flatten()
 }
 
+fn parse_hex_u8(value: &str) -> Option<u8> {
+    let digits = value.strip_prefix("0x")?;
+    (digits.len() == 2
+        && digits
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()))
+    .then(|| u8::from_str_radix(digits, 16).ok())
+    .flatten()
+}
+
 fn parse_hex_u32(value: &str) -> Option<u32> {
     let digits = value.strip_prefix("0x")?;
     (digits.len() == 8
@@ -459,6 +604,7 @@ fn valid_nrf_serial_dfu_build(build: &NrfSerialDfuBuild) -> bool {
         && valid_artifact_filename(&build.application_filename, ".bin")
         && valid_artifact_filename(&build.init_packet_filename, ".dat")
         && build.application_filename != build.init_packet_filename
+        && build.serial.clone().into_validated().is_ok()
         && SoftdeviceIdentity::parse(
             &compatibility.softdevice_family,
             compatibility.softdevice_version.clone(),
@@ -474,6 +620,22 @@ fn valid_nrf_serial_dfu_build(build: &NrfSerialDfuBuild) -> bool {
         && valid_artifact_filename(&recovery.filename, ".uf2")
         && recovery.filename != build.application_filename
         && recovery.filename != build.init_packet_filename
+}
+
+fn parse_usb_vendor_product_id(identity: &UsbVendorProductId) -> Option<UsbVidPid> {
+    let vendor_id = parse_hex_u16(&identity.vendor_id).filter(|value| *value != 0)?;
+    let product_id = parse_hex_u16(&identity.product_id).filter(|value| *value != 0)?;
+    Some(UsbVidPid {
+        vendor_id,
+        product_id,
+    })
+}
+
+fn valid_usb_string(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_graphic() || byte == b' ')
 }
 
 fn valid_cargo_name(value: &str) -> bool {
@@ -656,6 +818,30 @@ mod tests {
         assert_eq!(build.package, "t-echo");
         assert_eq!(build.binary, "t1000e");
         assert_eq!(build.cargo_feature, "board-t1000e");
+        assert_eq!(build.serial.stock_application.usb.vendor_id, "0x2886");
+        assert_eq!(build.serial.stock_application.usb.product_id, "0x0057");
+        assert_eq!(build.serial.stock_application.touch_baud_rate, 1200);
+        assert_eq!(build.serial.managed_application.usb.vendor_id, "0x1209");
+        assert_eq!(build.serial.managed_application.usb.product_id, "0x0001");
+        assert_eq!(
+            build.serial.managed_application.manufacturer,
+            "Stay Personal"
+        );
+        assert_eq!(
+            build.serial.managed_application.product,
+            "Personal Hopspot (T1000-E)"
+        );
+        assert_eq!(
+            build.serial.managed_application.serial_number,
+            "PERSONAL-RNS-T1000E-HOP"
+        );
+        assert_eq!(build.serial.managed_application.interface_number, 0);
+        assert_eq!(build.serial.managed_application.request, "0x50");
+        assert_eq!(build.serial.managed_application.value, "0x5052");
+        assert_eq!(build.serial.managed_application.index, "0x4e53");
+        assert_eq!(build.serial.bootloader.usb.vendor_id, "0x239a");
+        assert_eq!(build.serial.bootloader.usb.product_id, "0x8029");
+        assert_eq!(build.serial.bootloader.transfer_baud_rate, 115200);
         assert_eq!(build.compatibility.softdevice_family, "s140");
         assert_eq!(build.compatibility.softdevice_version, "7.3.0");
         assert_eq!(build.compatibility.fwid, "0x0123");

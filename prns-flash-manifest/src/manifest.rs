@@ -86,6 +86,7 @@ pub struct TargetManifest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NrfSerialDfuManifest {
+    pub serial: crate::NrfSerialDfuSerialTransport,
     pub compatibility: crate::NrfSerialDfuCompatibility,
     pub application: FlashPart,
     pub init_packet: FlashPart,
@@ -431,6 +432,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 Some(NrfSerialDfuManifest {
+                    serial: build.serial.clone(),
                     compatibility: build.compatibility.clone(),
                     application: part(
                         board,

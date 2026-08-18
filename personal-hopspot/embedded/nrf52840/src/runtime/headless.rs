@@ -1,5 +1,5 @@
 use embassy_executor::Spawner;
-use embassy_futures::join::{join, join3};
+use embassy_futures::join::{join, join4};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Timer};
@@ -142,7 +142,7 @@ pub async fn run(spawner: Spawner) -> ! {
     static USB_STATE: StaticCell<WebUsbAutoState> = StaticCell::new();
     let class = WebUsbAutoClass::new(
         &mut builder,
-        USB_STATE.init(WebUsbAutoState::new()),
+        USB_STATE.init(WebUsbAutoState::new(super::bootloader_entry::webusb_entry())),
         WEBUSB_AUTO_PACKET_SIZE,
     );
     let mut usb = builder.build();
@@ -232,7 +232,12 @@ pub async fn run(spawner: Spawner) -> ! {
             Timer::after(Duration::from_millis(900)).await;
         }
     };
-    let io = join3(usb.run(), usb_device.run(usb_seam), heartbeat);
+    let io = join4(
+        usb.run(),
+        usb_device.run(usb_seam),
+        heartbeat,
+        super::bootloader_entry::wait(),
+    );
     join(io, lora.run(lora_seam)).await;
     core::future::pending().await
 }

@@ -8,8 +8,9 @@ use crate::{
     ProvisioningDescriptor, ProvisioningFormat, ProvisioningSlot, ReleaseTarget, ReleaseVersion,
     Sha256Digest, SoftdeviceIdentity, Transport, Uf2BoardIdPrefix, Uf2Compatibility, Uf2MountLabel,
     Uf2Part, Uf2Target, Uf2Variant, ValidatedChannelDescriptor, ValidatedFlashManifest,
-    ValidatedNrfSerialDfuCompatibility, ValidatedOfflineKeySigningInfo, ValidatedReleaseInfo,
-    CONFIG_OFFSET, CONFIG_PASSWORD_MAX_BYTES, CONFIG_SIZE, CONFIG_SSID_MAX_BYTES, CONFIG_VERSION,
+    ValidatedNrfSerialDfuCompatibility, ValidatedNrfSerialDfuSerialTransport,
+    ValidatedOfflineKeySigningInfo, ValidatedReleaseInfo, CONFIG_OFFSET, CONFIG_PASSWORD_MAX_BYTES,
+    CONFIG_SIZE, CONFIG_SSID_MAX_BYTES, CONFIG_VERSION,
 };
 
 use super::validation::{validate_target, validate_uf2_target_variant};
@@ -344,6 +345,11 @@ fn convert_target(target: TargetManifest) -> Result<ReleaseTarget, ManifestError
                 board: board_slug.clone(),
                 field: "Nordic serial DFU target has no artifact contract".to_string(),
             })?;
+            let serial_transport = convert_nrf_serial_dfu_serial_transport(
+                &board_slug,
+                &manifest.application.path,
+                manifest.serial,
+            )?;
             let compatibility = convert_nrf_serial_dfu_compatibility(
                 &board_slug,
                 &manifest.application.path,
@@ -383,6 +389,7 @@ fn convert_target(target: TargetManifest) -> Result<ReleaseTarget, ManifestError
             };
             Ok(ReleaseTarget::NrfSerialDfu(NrfSerialDfuTarget {
                 identity,
+                serial_transport,
                 compatibility,
                 application,
                 init_packet,
@@ -390,6 +397,16 @@ fn convert_target(target: TargetManifest) -> Result<ReleaseTarget, ManifestError
             }))
         }
     }
+}
+
+fn convert_nrf_serial_dfu_serial_transport(
+    board: &str,
+    path: &str,
+    serial: crate::NrfSerialDfuSerialTransport,
+) -> Result<ValidatedNrfSerialDfuSerialTransport, ManifestError> {
+    serial
+        .into_validated()
+        .map_err(|error| invalid_part_values(board, path, &error.to_string()))
 }
 
 fn convert_nrf_serial_dfu_compatibility(

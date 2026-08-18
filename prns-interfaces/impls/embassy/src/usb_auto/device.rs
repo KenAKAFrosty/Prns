@@ -1,10 +1,17 @@
 use core::mem::MaybeUninit;
 
 use ::embassy_usb::driver::{
-    Driver as UsbDriver, Endpoint as UsbEndpoint, EndpointError, EndpointIn, EndpointOut,
+    Direction, Driver as UsbDriver, Endpoint as UsbEndpoint, EndpointError, EndpointIn, EndpointOut,
 };
 use ::embassy_usb::types::StringIndex;
-use ::embassy_usb::{msos, Builder, Handler};
+use ::embassy_usb::{
+    control::{OutResponse, Recipient, Request, RequestType},
+    msos, Builder, Handler,
+};
+use prns_core::interfaces::usb_auto::{
+    BOOTLOADER_ENTRY_CONTROL_INDEX, BOOTLOADER_ENTRY_CONTROL_REQUEST,
+    BOOTLOADER_ENTRY_CONTROL_VALUE,
+};
 
 pub const WEBUSB_AUTO_PACKET_SIZE: u16 = 64;
 pub const WEBUSB_AUTO_CONTROL_BUFFER_BYTES: usize = 128;
@@ -27,31 +34,58 @@ impl embedded_io_async::Error for WebUsbAutoError {
 
 pub struct WebUsbAutoState {
     control: MaybeUninit<WebUsbAutoControl>,
+    bootloader_entry: WebUsbBootloaderEntry,
 }
 
 impl WebUsbAutoState {
     #[must_use]
-    pub const fn new() -> Self {
+    pub const fn new(bootloader_entry: WebUsbBootloaderEntry) -> Self {
         Self {
             control: MaybeUninit::uninit(),
+            bootloader_entry,
         }
     }
 }
 
-impl Default for WebUsbAutoState {
-    fn default() -> Self {
-        Self::new()
-    }
+#[derive(Clone, Copy)]
+pub enum WebUsbBootloaderEntry {
+    Unsupported,
+    Supported { request: fn() },
 }
 
 struct WebUsbAutoControl {
     iface_string: StringIndex,
+    bootloader_entry: WebUsbBootloaderEntry,
 }
 
 impl Handler for WebUsbAutoControl {
     fn get_string(&mut self, index: StringIndex, _lang_id: u16) -> Option<&str> {
         (index == self.iface_string).then_some("Personal Hopspot WebUSB Auto")
     }
+
+    fn control_out(&mut self, request: Request, data: &[u8]) -> Option<OutResponse> {
+        if !is_bootloader_entry_request(request, data) {
+            return None;
+        }
+        match self.bootloader_entry {
+            WebUsbBootloaderEntry::Unsupported => Some(OutResponse::Rejected),
+            WebUsbBootloaderEntry::Supported { request } => {
+                request();
+                Some(OutResponse::Accepted)
+            }
+        }
+    }
+}
+
+fn is_bootloader_entry_request(request: Request, data: &[u8]) -> bool {
+    request.direction == Direction::Out
+        && request.request_type == RequestType::Vendor
+        && request.recipient == Recipient::Device
+        && request.request == BOOTLOADER_ENTRY_CONTROL_REQUEST
+        && request.value == BOOTLOADER_ENTRY_CONTROL_VALUE
+        && request.index == BOOTLOADER_ENTRY_CONTROL_INDEX
+        && request.length == 0
+        && data.is_empty()
 }
 
 pub struct WebUsbAutoClass<'d, D: UsbDriver<'d>> {
@@ -80,7 +114,10 @@ impl<'d, D: UsbDriver<'d>> WebUsbAutoClass<'d, D> {
         let write_ep = alt.endpoint_bulk_in(None, max_packet_size);
         drop(function);
 
-        builder.handler(state.control.write(WebUsbAutoControl { iface_string }));
+        builder.handler(state.control.write(WebUsbAutoControl {
+            iface_string,
+            bootloader_entry: state.bootloader_entry,
+        }));
 
         Self { read_ep, write_ep }
     }
@@ -151,6 +188,29 @@ impl<'d, D: UsbDriver<'d>> embedded_io_async::Write for WebUsbAutoTx<'d, D> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn bootloader_entry_request() -> Request {
+        Request {
+            direction: Direction::Out,
+            request_type: RequestType::Vendor,
+            recipient: Recipient::Device,
+            request: BOOTLOADER_ENTRY_CONTROL_REQUEST,
+            value: BOOTLOADER_ENTRY_CONTROL_VALUE,
+            index: BOOTLOADER_ENTRY_CONTROL_INDEX,
+            length: 0,
+        }
+    }
+
+    #[test]
+    fn bootloader_entry_requires_the_exact_control_contract() {
+        let request = bootloader_entry_request();
+        assert!(is_bootloader_entry_request(request, &[]));
+
+        let mut wrong_value = request;
+        wrong_value.value ^= 1;
+        assert!(!is_bootloader_entry_request(wrong_value, &[]));
+        assert!(!is_bootloader_entry_request(request, &[0]));
+    }
 
     #[test]
     fn zero_length_usb_packets_are_transport_idle_not_stream_eof() {

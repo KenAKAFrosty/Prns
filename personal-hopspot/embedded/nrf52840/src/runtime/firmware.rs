@@ -29,7 +29,7 @@ use personal_rns::runtime::{
 use personal_rns::storage::StorageLayout;
 use personal_rns::usb_auto::{UsbAutoDevice, UsbAutoDeviceInput};
 use personal_rns::usb_auto::{
-    WebUsbAutoClass, WebUsbAutoState, WEBUSB_AUTO_CONTROL_BUFFER_BYTES,
+    WebUsbAutoClass, WebUsbAutoState, WebUsbBootloaderEntry, WEBUSB_AUTO_CONTROL_BUFFER_BYTES,
     WEBUSB_AUTO_MSOS_DESCRIPTOR_BYTES, WEBUSB_AUTO_PACKET_SIZE,
 };
 
@@ -114,7 +114,7 @@ pub async fn run(spawner: Spawner) -> ! {
     static USB_STATE: StaticCell<WebUsbAutoState> = StaticCell::new();
     let class = WebUsbAutoClass::new(
         &mut builder,
-        USB_STATE.init(WebUsbAutoState::new()),
+        USB_STATE.init(WebUsbAutoState::new(WebUsbBootloaderEntry::Unsupported)),
         WEBUSB_AUTO_PACKET_SIZE,
     );
     let mut usb = builder.build();

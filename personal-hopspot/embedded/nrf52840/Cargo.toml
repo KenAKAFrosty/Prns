@@ -62,7 +62,7 @@ panic-halt = "1.0"
 
 embassy-executor = { version = "0.10", features = ["platform-cortex-m", "executor-thread"] }
 embassy-time = { version = "0.5" }
-embassy-nrf = { version = "0.10", features = ["nrf52840", "time-driver-rtc1", "gpiote"] }
+embassy-nrf = { version = "0.10", features = ["nrf52840", "time-driver-rtc1", "gpiote", "unstable-pac"] }
 embassy-usb = { version = "0.6" }
 embassy-futures = "0.1"
 embassy-sync = "0.8"
