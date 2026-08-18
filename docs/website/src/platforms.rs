@@ -383,6 +383,12 @@ pub const PLATFORMS: &[Platform] = &[
         icon: Some("semtech"),
     },
     Platform {
+        name: "LR1110",
+        group: Group::Microcontroller,
+        tier: Tier::Shipping,
+        icon: Some("semtech"),
+    },
+    Platform {
         name: "Raspberry Pi RP3A0",
         group: Group::SingleBoardComputer,
         tier: Tier::BringUp,
@@ -597,6 +603,10 @@ pub const LANDING_PLATFORM_CHIPS: &[LandingPlatformChip] = &[
     },
     LandingPlatformChip {
         name: "SX1262",
+        icon: Some("semtech"),
+    },
+    LandingPlatformChip {
+        name: "LR1110",
         icon: Some("semtech"),
     },
     LandingPlatformChip {
