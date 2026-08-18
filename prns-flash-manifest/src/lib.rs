@@ -11,9 +11,9 @@ pub use catalog::{
     board_catalog, BoardAvailability, BoardBuild, BoardCatalog, BoardCatalogEntry, CatalogError,
     EspBuild, NrfDfuApplicationVersion, NrfDfuBankLayout, NrfSerialDfuBuild,
     NrfSerialDfuCompatibility, NrfSerialDfuControlApplication, NrfSerialDfuRecoveryBuild,
-    NrfSerialDfuSerialBootloader, NrfSerialDfuSerialTouchApplication, NrfSerialDfuSerialTransport,
-    NrfSerialDfuSerialTransportError, ProvisioningDescriptor, TcpClientProvisioningDescriptor,
-    Transport, Uf2Build, Uf2BuildVariant, UsbVendorProductId,
+    NrfSerialDfuSerialTransport, NrfSerialDfuSerialTransportError,
+    NrfSerialDfuTouchApplicationAndBootloader, ProvisioningDescriptor,
+    TcpClientProvisioningDescriptor, Transport, Uf2Build, Uf2BuildVariant, UsbVendorProductId,
 };
 pub use domain::{
     AfterResetStrategy, BeforeResetStrategy, BoardId, ChipFamily, DomainValueError, EspFlashPart,

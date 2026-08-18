@@ -118,16 +118,16 @@ pub struct NrfSerialDfuBuild {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NrfSerialDfuSerialTransport {
-    pub stock_application: NrfSerialDfuSerialTouchApplication,
+    pub touch_application_and_bootloader: NrfSerialDfuTouchApplicationAndBootloader,
     pub managed_application: NrfSerialDfuControlApplication,
-    pub bootloader: NrfSerialDfuSerialBootloader,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct NrfSerialDfuSerialTouchApplication {
+pub struct NrfSerialDfuTouchApplicationAndBootloader {
     pub usb: UsbVendorProductId,
     pub touch_baud_rate: u32,
+    pub transfer_baud_rate: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -145,13 +145,6 @@ pub struct NrfSerialDfuControlApplication {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct NrfSerialDfuSerialBootloader {
-    pub usb: UsbVendorProductId,
-    pub transfer_baud_rate: u32,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct UsbVendorProductId {
     pub vendor_id: String,
     pub product_id: String,
@@ -159,17 +152,17 @@ pub struct UsbVendorProductId {
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum NrfSerialDfuSerialTransportError {
-    #[error("stock application USB vendor/product identity is not canonical nonzero hexadecimal")]
-    InvalidStockApplicationUsb,
+    #[error(
+        "touch application and bootloader USB vendor/product identity is not canonical nonzero hexadecimal"
+    )]
+    InvalidTouchApplicationAndBootloaderUsb,
     #[error(
         "managed application USB vendor/product identity is not canonical nonzero hexadecimal"
     )]
     InvalidManagedApplicationUsb,
-    #[error("bootloader USB vendor/product identity is not canonical nonzero hexadecimal")]
-    InvalidBootloaderUsb,
-    #[error("stock application, managed application, and bootloader USB identities must differ")]
+    #[error("managed application and serial DFU USB identities must differ")]
     IndistinguishableUsbModes,
-    #[error("stock application bootloader-touch baud rate must be nonzero")]
+    #[error("application bootloader-touch baud rate must be nonzero")]
     ZeroTouchBaudRate,
     #[error("bootloader DFU baud rate must be nonzero")]
     ZeroTransferBaudRate,
@@ -189,22 +182,18 @@ impl NrfSerialDfuSerialTransport {
     pub fn into_validated(
         self,
     ) -> Result<ValidatedNrfSerialDfuSerialTransport, NrfSerialDfuSerialTransportError> {
-        let stock_application_usb = parse_usb_vendor_product_id(&self.stock_application.usb)
-            .ok_or(NrfSerialDfuSerialTransportError::InvalidStockApplicationUsb)?;
+        let touch_application_and_bootloader_usb =
+            parse_usb_vendor_product_id(&self.touch_application_and_bootloader.usb)
+                .ok_or(NrfSerialDfuSerialTransportError::InvalidTouchApplicationAndBootloaderUsb)?;
         let managed_application_usb = parse_usb_vendor_product_id(&self.managed_application.usb)
             .ok_or(NrfSerialDfuSerialTransportError::InvalidManagedApplicationUsb)?;
-        let bootloader_usb = parse_usb_vendor_product_id(&self.bootloader.usb)
-            .ok_or(NrfSerialDfuSerialTransportError::InvalidBootloaderUsb)?;
-        if stock_application_usb == managed_application_usb
-            || stock_application_usb == bootloader_usb
-            || managed_application_usb == bootloader_usb
-        {
+        if touch_application_and_bootloader_usb == managed_application_usb {
             return Err(NrfSerialDfuSerialTransportError::IndistinguishableUsbModes);
         }
-        if self.stock_application.touch_baud_rate == 0 {
+        if self.touch_application_and_bootloader.touch_baud_rate == 0 {
             return Err(NrfSerialDfuSerialTransportError::ZeroTouchBaudRate);
         }
-        if self.bootloader.transfer_baud_rate == 0 {
+        if self.touch_application_and_bootloader.transfer_baud_rate == 0 {
             return Err(NrfSerialDfuSerialTransportError::ZeroTransferBaudRate);
         }
         if !valid_usb_string(&self.managed_application.manufacturer)
@@ -232,8 +221,8 @@ impl NrfSerialDfuSerialTransport {
             return Err(NrfSerialDfuSerialTransportError::ManagedApplicationContractMismatch);
         }
         Ok(ValidatedNrfSerialDfuSerialTransport {
-            stock_application_usb,
-            stock_application_touch_baud_rate: self.stock_application.touch_baud_rate,
+            touch_application_and_bootloader_usb,
+            touch_baud_rate: self.touch_application_and_bootloader.touch_baud_rate,
             managed_application_usb,
             managed_application_manufacturer: self.managed_application.manufacturer,
             managed_application_product: self.managed_application.product,
@@ -242,8 +231,7 @@ impl NrfSerialDfuSerialTransport {
             managed_application_request: request,
             managed_application_value: value,
             managed_application_index: index,
-            bootloader_usb,
-            bootloader_transfer_baud_rate: self.bootloader.transfer_baud_rate,
+            transfer_baud_rate: self.touch_application_and_bootloader.transfer_baud_rate,
         })
     }
 }
@@ -633,6 +621,7 @@ fn parse_usb_vendor_product_id(identity: &UsbVendorProductId) -> Option<UsbVidPi
 
 fn valid_usb_string(value: &str) -> bool {
     !value.is_empty()
+        && value.trim() == value
         && value
             .bytes()
             .all(|byte| byte.is_ascii_graphic() || byte == b' ')
@@ -818,9 +807,21 @@ mod tests {
         assert_eq!(build.package, "t-echo");
         assert_eq!(build.binary, "t1000e");
         assert_eq!(build.cargo_feature, "board-t1000e");
-        assert_eq!(build.serial.stock_application.usb.vendor_id, "0x2886");
-        assert_eq!(build.serial.stock_application.usb.product_id, "0x0057");
-        assert_eq!(build.serial.stock_application.touch_baud_rate, 1200);
+        assert_eq!(
+            build.serial.touch_application_and_bootloader.usb.vendor_id,
+            "0x2886"
+        );
+        assert_eq!(
+            build.serial.touch_application_and_bootloader.usb.product_id,
+            "0x0057"
+        );
+        assert_eq!(
+            build
+                .serial
+                .touch_application_and_bootloader
+                .touch_baud_rate,
+            1200
+        );
         assert_eq!(build.serial.managed_application.usb.vendor_id, "0x1209");
         assert_eq!(build.serial.managed_application.usb.product_id, "0x0001");
         assert_eq!(
@@ -839,9 +840,13 @@ mod tests {
         assert_eq!(build.serial.managed_application.request, "0x50");
         assert_eq!(build.serial.managed_application.value, "0x5052");
         assert_eq!(build.serial.managed_application.index, "0x4e53");
-        assert_eq!(build.serial.bootloader.usb.vendor_id, "0x239a");
-        assert_eq!(build.serial.bootloader.usb.product_id, "0x8029");
-        assert_eq!(build.serial.bootloader.transfer_baud_rate, 115200);
+        assert_eq!(
+            build
+                .serial
+                .touch_application_and_bootloader
+                .transfer_baud_rate,
+            115200
+        );
         assert_eq!(build.compatibility.softdevice_family, "s140");
         assert_eq!(build.compatibility.softdevice_version, "7.3.0");
         assert_eq!(build.compatibility.fwid, "0x0123");

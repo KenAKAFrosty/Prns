@@ -315,8 +315,8 @@ impl UsbVidPid {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ValidatedNrfSerialDfuSerialTransport {
-    pub(crate) stock_application_usb: UsbVidPid,
-    pub(crate) stock_application_touch_baud_rate: u32,
+    pub(crate) touch_application_and_bootloader_usb: UsbVidPid,
+    pub(crate) touch_baud_rate: u32,
     pub(crate) managed_application_usb: UsbVidPid,
     pub(crate) managed_application_manufacturer: String,
     pub(crate) managed_application_product: String,
@@ -325,17 +325,16 @@ pub struct ValidatedNrfSerialDfuSerialTransport {
     pub(crate) managed_application_request: u8,
     pub(crate) managed_application_value: u16,
     pub(crate) managed_application_index: u16,
-    pub(crate) bootloader_usb: UsbVidPid,
-    pub(crate) bootloader_transfer_baud_rate: u32,
+    pub(crate) transfer_baud_rate: u32,
 }
 
 impl ValidatedNrfSerialDfuSerialTransport {
-    pub const fn stock_application_usb(&self) -> UsbVidPid {
-        self.stock_application_usb
+    pub const fn touch_application_and_bootloader_usb(&self) -> UsbVidPid {
+        self.touch_application_and_bootloader_usb
     }
 
-    pub const fn stock_application_touch_baud_rate(&self) -> u32 {
-        self.stock_application_touch_baud_rate
+    pub const fn touch_baud_rate(&self) -> u32 {
+        self.touch_baud_rate
     }
 
     pub const fn managed_application_usb(&self) -> UsbVidPid {
@@ -370,12 +369,8 @@ impl ValidatedNrfSerialDfuSerialTransport {
         self.managed_application_index
     }
 
-    pub const fn bootloader_usb(&self) -> UsbVidPid {
-        self.bootloader_usb
-    }
-
-    pub const fn bootloader_transfer_baud_rate(&self) -> u32 {
-        self.bootloader_transfer_baud_rate
+    pub const fn transfer_baud_rate(&self) -> u32 {
+        self.transfer_baud_rate
     }
 }
 
@@ -791,21 +786,27 @@ impl ReleaseTarget {
                 variants: Vec::new(),
                 nrf_serial_dfu: Some(crate::NrfSerialDfuManifest {
                     serial: crate::NrfSerialDfuSerialTransport {
-                        stock_application: crate::NrfSerialDfuSerialTouchApplication {
-                            usb: crate::UsbVendorProductId {
-                                vendor_id: format!(
-                                    "0x{:04x}",
-                                    target.serial_transport.stock_application_usb.vendor_id
-                                ),
-                                product_id: format!(
-                                    "0x{:04x}",
-                                    target.serial_transport.stock_application_usb.product_id
-                                ),
+                        touch_application_and_bootloader:
+                            crate::NrfSerialDfuTouchApplicationAndBootloader {
+                                usb: crate::UsbVendorProductId {
+                                    vendor_id: format!(
+                                        "0x{:04x}",
+                                        target
+                                            .serial_transport
+                                            .touch_application_and_bootloader_usb
+                                            .vendor_id
+                                    ),
+                                    product_id: format!(
+                                        "0x{:04x}",
+                                        target
+                                            .serial_transport
+                                            .touch_application_and_bootloader_usb
+                                            .product_id
+                                    ),
+                                },
+                                touch_baud_rate: target.serial_transport.touch_baud_rate,
+                                transfer_baud_rate: target.serial_transport.transfer_baud_rate,
                             },
-                            touch_baud_rate: target
-                                .serial_transport
-                                .stock_application_touch_baud_rate,
-                        },
                         managed_application: crate::NrfSerialDfuControlApplication {
                             usb: crate::UsbVendorProductId {
                                 vendor_id: format!(
@@ -841,21 +842,6 @@ impl ReleaseTarget {
                                 "0x{:04x}",
                                 target.serial_transport.managed_application_index
                             ),
-                        },
-                        bootloader: crate::NrfSerialDfuSerialBootloader {
-                            usb: crate::UsbVendorProductId {
-                                vendor_id: format!(
-                                    "0x{:04x}",
-                                    target.serial_transport.bootloader_usb.vendor_id
-                                ),
-                                product_id: format!(
-                                    "0x{:04x}",
-                                    target.serial_transport.bootloader_usb.product_id
-                                ),
-                            },
-                            transfer_baud_rate: target
-                                .serial_transport
-                                .bootloader_transfer_baud_rate,
                         },
                     },
                     compatibility: crate::NrfSerialDfuCompatibility {

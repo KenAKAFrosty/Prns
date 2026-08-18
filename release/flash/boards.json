@@ -190,7 +190,7 @@
       "availability": "qualification",
       "slug": "t1000-e",
       "display_name": "Seeed SenseCAP T1000-E",
-      "silicon": "nRF52840 + SX1262",
+      "silicon": "nRF52840 + LR1110",
       "interfaces": ["LoRa", "USB Auto"],
       "icon": "nordicsemiconductor",
       "transport": "nrf-serial-dfu",
@@ -208,12 +208,13 @@
         "application_filename": "t1000e.bin",
         "init_packet_filename": "t1000e.dat",
         "serial": {
-          "stock_application": {
+          "touch_application_and_bootloader": {
             "usb": {
               "vendor_id": "0x2886",
               "product_id": "0x0057"
             },
-            "touch_baud_rate": 1200
+            "touch_baud_rate": 1200,
+            "transfer_baud_rate": 115200
           },
           "managed_application": {
             "usb": {
@@ -227,13 +228,6 @@
             "request": "0x50",
             "value": "0x5052",
             "index": "0x4e53"
-          },
-          "bootloader": {
-            "usb": {
-              "vendor_id": "0x239a",
-              "product_id": "0x8029"
-            },
-            "transfer_baud_rate": 115200
           }
         },
         "compatibility": {

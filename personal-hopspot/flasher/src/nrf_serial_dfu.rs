@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::fmt;
 use std::io;
 use std::time::{Duration, Instant};
@@ -28,8 +27,6 @@ const BOOTLOADER_INITIALIZATION_WAIT: Duration = Duration::from_millis(1_500);
 const BOOTLOADER_ENUMERATION_TIMEOUT: Duration = Duration::from_secs(10);
 const BOOTLOADER_ENUMERATION_INTERVAL: Duration = Duration::from_millis(100);
 const BOOTLOADER_PORT_OPEN_WAIT: Duration = Duration::from_millis(100);
-const BOOTLOADER_DTR_RELEASE_WAIT: Duration = Duration::from_millis(50);
-const BOOTLOADER_DTR_ASSERT_WAIT: Duration = Duration::from_millis(100);
 const ACKNOWLEDGEMENT_TIMEOUT: Duration = Duration::from_secs(1);
 const BOOTLOADER_ENTRY_CONTROL_TIMEOUT: Duration = Duration::from_secs(1);
 const CANCELLABLE_WAIT_INTERVAL: Duration = Duration::from_millis(25);
@@ -37,17 +34,17 @@ const CANCELLABLE_WAIT_INTERVAL: Duration = Duration::from_millis(25);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum DeviceMode {
-    StockApplication,
+    TouchApplicationOrBootloader,
     ManagedApplication,
-    Bootloader,
 }
 
 impl fmt::Display for DeviceMode {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::StockApplication => formatter.write_str("stock application"),
+            Self::TouchApplicationOrBootloader => {
+                formatter.write_str("touch application or bootloader")
+            }
             Self::ManagedApplication => formatter.write_str("managed application"),
-            Self::Bootloader => formatter.write_str("bootloader"),
         }
     }
 }
@@ -70,7 +67,7 @@ pub(crate) enum SerialDfuError {
         vendor_id: u16,
         product_id: u16,
     },
-    #[error("no exact stock application, managed application, or bootloader device is connected")]
+    #[error("no exact touch application, managed application, or bootloader device is connected")]
     DeviceMissing,
     #[error("multiple matching devices are connected: {devices:?}; select a serial one with --port or disconnect the extras")]
     AmbiguousDevices { devices: Vec<String> },
@@ -99,11 +96,6 @@ pub(crate) enum SerialDfuError {
     },
     #[error("could not open bootloader serial port {port:?}: {source}")]
     BootloaderOpen {
-        port: String,
-        source: serialport::Error,
-    },
-    #[error("could not set bootloader DTR on {port:?}: {source}")]
-    BootloaderDtr {
         port: String,
         source: serialport::Error,
     },
@@ -157,23 +149,21 @@ pub(crate) enum AcknowledgementReceiveError {
 }
 
 enum SelectedDevice {
-    StockApplication(SerialPortInfo),
+    TouchApplicationOrBootloader(SerialPortInfo),
     ManagedApplication(DeviceInfo),
-    Bootloader(SerialPortInfo),
 }
 
 impl SelectedDevice {
     const fn mode(&self) -> DeviceMode {
         match self {
-            Self::StockApplication(_) => DeviceMode::StockApplication,
+            Self::TouchApplicationOrBootloader(_) => DeviceMode::TouchApplicationOrBootloader,
             Self::ManagedApplication(_) => DeviceMode::ManagedApplication,
-            Self::Bootloader(_) => DeviceMode::Bootloader,
         }
     }
 
     fn connection_name(&self) -> String {
         match self {
-            Self::StockApplication(port) | Self::Bootloader(port) => port.port_name.clone(),
+            Self::TouchApplicationOrBootloader(port) => port.port_name.clone(),
             Self::ManagedApplication(device) => managed_device_name(device),
         }
     }
@@ -202,9 +192,10 @@ pub(crate) fn doctor(
         .map_err(map_preflight_error)?;
     let mode = selected.mode();
     let identity = match mode {
-        DeviceMode::StockApplication => transport.stock_application_usb(),
+        DeviceMode::TouchApplicationOrBootloader => {
+            transport.touch_application_and_bootloader_usb()
+        }
         DeviceMode::ManagedApplication => transport.managed_application_usb(),
-        DeviceMode::Bootloader => transport.bootloader_usb(),
     };
     Ok(DoctorReport {
         port_name: selected.connection_name(),
@@ -231,21 +222,22 @@ pub(crate) fn flash(
     };
     let selected = select_device(&ports, &managed_applications, requested_port, transport)
         .map_err(map_preflight_error)?;
-    let (bootloader, bootloader_was_already_present) = match selected {
-        SelectedDevice::Bootloader(port) => (port, true),
-        SelectedDevice::StockApplication(port) => {
+    let bootloader = match selected {
+        SelectedDevice::TouchApplicationOrBootloader(port) => {
             reporter.phase(
                 Phase::Resetting,
                 Some(&board.slug),
-                "Entering the exact Nordic serial bootloader…",
+                "Ensuring the exact device is in its Nordic serial bootloader…",
             );
-            touch_application(&port, transport.stock_application_touch_baud_rate())
-                .map_err(map_preflight_error)?;
-            let application_serial = usb_serial_number(&port);
-            let bootloader =
-                await_bootloader(&port.port_name, application_serial, &ports, transport)
-                    .map_err(AppError::nrf_serial_dfu)?;
-            (bootloader, false)
+            touch_application(&port, transport.touch_baud_rate()).map_err(map_preflight_error)?;
+            let expected = match usb_serial_number(&port) {
+                Some(serial_number) => {
+                    ExpectedBootloader::UsbSerialNumber(serial_number.to_string())
+                }
+                None => ExpectedBootloader::UniqueExactDevice,
+            };
+            await_bootloader(&port.port_name, expected, transport)
+                .map_err(AppError::nrf_serial_dfu)?
         }
         SelectedDevice::ManagedApplication(device) => {
             reporter.phase(
@@ -255,9 +247,12 @@ pub(crate) fn flash(
             );
             let application = managed_device_name(&device);
             request_managed_bootloader(&device, transport).map_err(map_preflight_error)?;
-            let bootloader = await_bootloader(&application, None, &ports, transport)
-                .map_err(AppError::nrf_serial_dfu)?;
-            (bootloader, false)
+            await_bootloader(
+                &application,
+                ExpectedBootloader::UniqueExactDevice,
+                transport,
+            )
+            .map_err(AppError::nrf_serial_dfu)?
         }
     };
     if crate::esp::cancelled() {
@@ -268,12 +263,8 @@ pub(crate) fn flash(
         Some(&board.slug),
         &format!("Opening Nordic bootloader {}…", bootloader.port_name),
     );
-    let mut port = open_bootloader(
-        &bootloader.port_name,
-        transport.bootloader_transfer_baud_rate(),
-        bootloader_was_already_present,
-    )
-    .map_err(AppError::nrf_serial_dfu)?;
+    let mut port = open_bootloader(&bootloader.port_name, transport.transfer_baud_rate())
+        .map_err(AppError::nrf_serial_dfu)?;
     let image = target
         .image()
         .map_err(|error| AppError::trust_artifact(error.to_string()))?;
@@ -355,35 +346,29 @@ fn select_device(
                 port: requested_port.to_string(),
             });
         };
-        let selected = if usb_matches(usb.vid, usb.pid, transport.bootloader_usb()) {
-            SelectedDevice::Bootloader(port)
-        } else if usb_matches(usb.vid, usb.pid, transport.stock_application_usb()) {
-            SelectedDevice::StockApplication(port)
-        } else {
+        if !usb_matches(
+            usb.vid,
+            usb.pid,
+            transport.touch_application_and_bootloader_usb(),
+        ) {
             return Err(SerialDfuError::RequestedPortIdentity {
                 port: requested_port.to_string(),
                 vendor_id: usb.vid,
                 product_id: usb.pid,
             });
-        };
-        return Ok(selected);
+        }
+        return Ok(SelectedDevice::TouchApplicationOrBootloader(port));
     }
 
-    let bootloaders = matching_ports(ports, transport.bootloader_usb());
-    let applications = matching_ports(ports, transport.stock_application_usb());
-    let match_count = bootloaders.len() + applications.len() + managed_applications.len();
+    let serial_devices = matching_ports(ports, transport.touch_application_and_bootloader_usb());
+    let match_count = serial_devices.len() + managed_applications.len();
     if match_count == 0 {
         return Err(SerialDfuError::DeviceMissing);
     }
     if match_count > 1 {
-        let mut devices = bootloaders
+        let mut devices = serial_devices
             .iter()
-            .map(|port| format!("bootloader {}", port.port_name))
-            .chain(
-                applications
-                    .iter()
-                    .map(|port| format!("stock application {}", port.port_name)),
-            )
+            .map(|port| format!("touch application or bootloader {}", port.port_name))
             .chain(
                 managed_applications
                     .iter()
@@ -393,11 +378,10 @@ fn select_device(
         devices.sort();
         return Err(SerialDfuError::AmbiguousDevices { devices });
     }
-    if let [bootloader] = bootloaders.as_slice() {
-        return Ok(SelectedDevice::Bootloader((*bootloader).clone()));
-    }
-    if let [application] = applications.as_slice() {
-        return Ok(SelectedDevice::StockApplication((*application).clone()));
+    if let [serial_device] = serial_devices.as_slice() {
+        return Ok(SelectedDevice::TouchApplicationOrBootloader(
+            (*serial_device).clone(),
+        ));
     }
     let [managed_application] = managed_applications else {
         return Err(SerialDfuError::DeviceMissing);
@@ -537,16 +521,16 @@ fn request_managed_bootloader(
         .map_err(SerialDfuError::ManagedApplicationControl)
 }
 
+enum ExpectedBootloader {
+    UsbSerialNumber(String),
+    UniqueExactDevice,
+}
+
 fn await_bootloader(
     application: &str,
-    application_serial: Option<&str>,
-    ports_before_entry: &[SerialPortInfo],
+    expected: ExpectedBootloader,
     transport: &ValidatedNrfSerialDfuSerialTransport,
 ) -> Result<SerialPortInfo, SerialDfuError> {
-    let previous_bootloader_ports = matching_ports(ports_before_entry, transport.bootloader_usb())
-        .into_iter()
-        .map(|port| port.port_name.clone())
-        .collect::<BTreeSet<_>>();
     cancellable_sleep(BOOTLOADER_INITIALIZATION_WAIT, &crate::esp::cancelled)?;
     let deadline = Instant::now() + BOOTLOADER_ENUMERATION_TIMEOUT;
     loop {
@@ -554,40 +538,29 @@ fn await_bootloader(
             return Err(SerialDfuError::Cancelled);
         }
         let ports = serialport::available_ports().map_err(SerialDfuError::PortEnumeration)?;
-        let bootloaders = matching_ports(&ports, transport.bootloader_usb());
-        if let Some(serial_number) = application_serial {
-            let same_serial = bootloaders
+        let exact_devices =
+            matching_ports(&ports, transport.touch_application_and_bootloader_usb());
+        let bootloaders = match &expected {
+            ExpectedBootloader::UsbSerialNumber(serial_number) => exact_devices
                 .iter()
                 .filter(|port| {
                     matches!(
                         &port.port_type,
                         SerialPortType::UsbPort(usb)
-                            if usb.serial_number.as_deref() == Some(serial_number)
+                            if usb.serial_number.as_deref() == Some(serial_number.as_str())
                     )
                 })
                 .copied()
-                .collect::<Vec<_>>();
-            if let [bootloader] = same_serial.as_slice() {
-                return Ok((*bootloader).clone());
-            }
-            if same_serial.len() > 1 {
-                return Err(SerialDfuError::AmbiguousBootloadersAfterEntry {
-                    application: application.to_string(),
-                    ports: port_names(&same_serial),
-                });
-            }
-        }
-        let newly_visible = bootloaders
-            .into_iter()
-            .filter(|port| !previous_bootloader_ports.contains(&port.port_name))
-            .collect::<Vec<_>>();
-        match newly_visible.as_slice() {
+                .collect::<Vec<_>>(),
+            ExpectedBootloader::UniqueExactDevice => exact_devices,
+        };
+        match bootloaders.as_slice() {
             [bootloader] => return Ok((*bootloader).clone()),
             [] => {}
             _ => {
                 return Err(SerialDfuError::AmbiguousBootloadersAfterEntry {
                     application: application.to_string(),
-                    ports: port_names(&newly_visible),
+                    ports: port_names(&bootloaders),
                 });
             }
         }
@@ -612,9 +585,8 @@ fn serial_builder(port: &str, baud_rate: u32) -> serialport::SerialPortBuilder {
 fn open_bootloader(
     port_name: &str,
     baud_rate: u32,
-    bootloader_was_already_present: bool,
 ) -> Result<Box<dyn serialport::SerialPort>, SerialDfuError> {
-    let mut port = serial_builder(port_name, baud_rate)
+    let port = serial_builder(port_name, baud_rate)
         .dtr_on_open(true)
         .open()
         .map_err(|source| SerialDfuError::BootloaderOpen {
@@ -622,20 +594,6 @@ fn open_bootloader(
             source,
         })?;
     cancellable_sleep(BOOTLOADER_PORT_OPEN_WAIT, &crate::esp::cancelled)?;
-    if bootloader_was_already_present {
-        port.write_data_terminal_ready(false)
-            .map_err(|source| SerialDfuError::BootloaderDtr {
-                port: port_name.to_string(),
-                source,
-            })?;
-        cancellable_sleep(BOOTLOADER_DTR_RELEASE_WAIT, &crate::esp::cancelled)?;
-        port.write_data_terminal_ready(true)
-            .map_err(|source| SerialDfuError::BootloaderDtr {
-                port: port_name.to_string(),
-                source,
-            })?;
-        cancellable_sleep(BOOTLOADER_DTR_ASSERT_WAIT, &crate::esp::cancelled)?;
-    }
     port.clear(ClearBuffer::All)
         .map_err(|source| SerialDfuError::BootloaderClear {
             port: port_name.to_string(),
@@ -792,13 +750,15 @@ fn map_preflight_error(error: SerialDfuError) -> AppError {
         | SerialDfuError::RequestedPortNotUsb { .. }
         | SerialDfuError::DeviceMissing
         | SerialDfuError::AmbiguousDevices { .. } => AppError::device_identity(error.to_string()),
-        SerialDfuError::PortEnumeration(_)
-        | SerialDfuError::UsbEnumeration(_)
-        | SerialDfuError::RequestedPortMissing { .. }
-        | SerialDfuError::TouchOpen { .. }
+        SerialDfuError::UsbEnumeration(_)
         | SerialDfuError::ManagedApplicationOpen { .. }
         | SerialDfuError::ManagedApplicationInterface { .. }
-        | SerialDfuError::ManagedApplicationControl(_) => AppError::serial_port(error.to_string()),
+        | SerialDfuError::ManagedApplicationControl(_) => {
+            AppError::host_preflight(error.to_string())
+        }
+        SerialDfuError::PortEnumeration(_)
+        | SerialDfuError::RequestedPortMissing { .. }
+        | SerialDfuError::TouchOpen { .. } => AppError::serial_port(error.to_string()),
         error => AppError::nrf_serial_dfu(error),
     }
 }
@@ -810,8 +770,8 @@ mod tests {
     use std::rc::Rc;
 
     use prns_flash_manifest::{
-        NrfSerialDfuControlApplication, NrfSerialDfuSerialBootloader,
-        NrfSerialDfuSerialTouchApplication, NrfSerialDfuSerialTransport, UsbVendorProductId,
+        NrfSerialDfuControlApplication, NrfSerialDfuSerialTransport,
+        NrfSerialDfuTouchApplicationAndBootloader, UsbVendorProductId,
         ValidatedNrfSerialDfuSerialTransport,
     };
     use prns_nrf_dfu::{
@@ -857,12 +817,13 @@ mod tests {
 
     fn transport() -> ValidatedNrfSerialDfuSerialTransport {
         NrfSerialDfuSerialTransport {
-            stock_application: NrfSerialDfuSerialTouchApplication {
+            touch_application_and_bootloader: NrfSerialDfuTouchApplicationAndBootloader {
                 usb: UsbVendorProductId {
                     vendor_id: "0x2886".to_string(),
                     product_id: "0x0057".to_string(),
                 },
                 touch_baud_rate: 1_200,
+                transfer_baud_rate: 115_200,
             },
             managed_application: NrfSerialDfuControlApplication {
                 usb: UsbVendorProductId {
@@ -876,13 +837,6 @@ mod tests {
                 request: "0x50".to_string(),
                 value: "0x5052".to_string(),
                 index: "0x4e53".to_string(),
-            },
-            bootloader: NrfSerialDfuSerialBootloader {
-                usb: UsbVendorProductId {
-                    vendor_id: "0x239a".to_string(),
-                    product_id: "0x8029".to_string(),
-                },
-                transfer_baud_rate: 115_200,
             },
         }
         .into_validated()
@@ -921,8 +875,8 @@ mod tests {
     #[test]
     fn multiple_exact_devices_are_never_selected_implicitly() {
         let ports = vec![
-            usb_port("application", 0x2886, 0x0057),
-            usb_port("bootloader", 0x239a, 0x8029),
+            usb_port("first", 0x2886, 0x0057),
+            usb_port("second", 0x2886, 0x0057),
         ];
         assert!(matches!(
             select_device(&ports, &[], None, &transport()),
@@ -931,11 +885,11 @@ mod tests {
     }
 
     #[test]
-    fn one_exact_bootloader_is_selected() {
-        let ports = vec![usb_port("bootloader", 0x239a, 0x8029)];
+    fn one_exact_touch_application_or_bootloader_is_selected() {
+        let ports = vec![usb_port("serial", 0x2886, 0x0057)];
         assert!(matches!(
             select_device(&ports, &[], None, &transport()),
-            Ok(SelectedDevice::Bootloader(port)) if port == ports[0]
+            Ok(SelectedDevice::TouchApplicationOrBootloader(port)) if port == ports[0]
         ));
     }
 
