@@ -55,6 +55,17 @@ entrypoint = ["bash", "tools/build/android.sh"]
 requires = ["bash", "cargo"]
 
 [[task]]
+id = "build.hopspot.t114"
+summary = "Build the headless Heltec T114 firmware and package its recovery-compatible developer UF2."
+domain = "build"
+effect = "workspace-write"
+platforms = ["linux", "macos"]
+audience = ["developer", "ci"]
+entrypoint = ["bash", "tools/build/hopspot-t114.sh"]
+requires = ["bash", "cargo", "python3", "rustc"]
+setup = "Install Rust with rustup so the nRF52840 target and llvm-tools-preview component declared by the firmware workspace are available."
+
+[[task]]
 id = "guide.rust-basics"
 summary = "Rust quickstart: run the bounded two-node API contract over an isolated localhost TCP connection."
 domain = "guide"

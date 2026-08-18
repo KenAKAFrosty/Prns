@@ -37,6 +37,7 @@ fn main() {
         fs::copy(memory, out.join("memory.x")).unwrap();
     }
     println!("cargo:rustc-link-search={}", out.display());
+    println!("cargo:rustc-link-arg=-Tlink.x");
     println!("cargo:rerun-if-changed=memory-s140-v6.x");
     println!("cargo:rerun-if-changed=memory-s140-v7.x");
     println!("cargo:rerun-if-changed=memory-t114.x");

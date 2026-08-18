@@ -59,6 +59,21 @@ T-Echo firmware:
 
     ./tools/prns device techo flash
 
+Heltec T114 developer firmware:
+
+    ./tools/prns build hopspot t114
+
+The T114 task builds the current working tree and writes
+`target/hopspot-t114/heltec-t114.bin` and
+`target/hopspot-t114/heltec-t114.uf2`. The UF2 begins at the vector table from
+the linked image, preserving the stock MBR, S140 recovery foundation, and UF2
+bootloader; the application does not link or enable S140. On a stock T114 Rev
+2.x, double-press Reset to mount `HT-n5262`, then copy the UF2 to that volume.
+This developer image has build and layout validation but is not yet in the
+signed release catalog; exact-image USB and LoRa qualification on hardware is
+still required. Its current radio profile is fixed at 915 MHz, so only exercise
+LoRa where that profile is permitted.
+
 ## Embedded flash-layout upgrade
 
 LoRa-capable firmware persists the selected radio profile in a dedicated two-page store. Reset records a durable choice to follow the firmware default, while an explicitly saved profile remains fixed across updates. Sparse firmware updates preserve the profile store; a full-chip erase clears it.

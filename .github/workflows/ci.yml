@@ -294,6 +294,7 @@ jobs:
           submodules: false
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
+          components: llvm-tools-preview
           targets: riscv32imac-unknown-none-elf, thumbv7em-none-eabihf
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
       - run: bash validation/platforms/no-std-esp-build.sh
@@ -312,6 +313,8 @@ jobs:
             --features board-t-echo,softdevice-s140-v7 \
             --target-dir target/s140-v7
         working-directory: personal-hopspot/embedded/nrf52840
+      - name: heltec t114 firmware — build recovery-compatible developer UF2
+        run: ./tools/prns build hopspot t114
 
   android-service:
     # Android is now more than a foreground Activity shell: the Hopspot app packages a foreground

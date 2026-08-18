@@ -24,5 +24,6 @@ cargo build \
         --features board-t-echo,softdevice-s140-v7 \
         --target-dir target/s140-v7
 )
+./tools/prns build hopspot t114
 
 echo "EMBEDDED_BUILD_GATE_OK"
