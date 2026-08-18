@@ -113,11 +113,11 @@ use crate::storage::EngineStorageType;
 
 use personal_hopspot_core as screen;
 
+#[cfg(feature = "lora")]
+pub(crate) use board::LoraRadio;
 pub(crate) use board::{
     BoardDisplay, BoardFace, Esp32S3Board, S3BoardHardware, S3InterfaceHardware, S3ManifoldHardware,
 };
-#[cfg(feature = "lora")]
-pub(crate) use board::LoraRadio;
 
 esp_app_desc!();
 

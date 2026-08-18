@@ -11,8 +11,8 @@ pub(crate) use crate::storage::Nrf52840Storage as Storage;
 pub(crate) use display::{frame_hash, EinkScreen};
 pub(crate) use hardware::{
     TechoBoard as Board, TechoControls as Controls, TechoDisplayHardware as DisplayHardware,
-    TechoEarlyHardware as EarlyHardware, TechoFaceHardware as FaceHardware,
-    TechoRadio as Radio, TechoRuntimeHardware as RuntimeHardware, TechoUsbHardware as UsbHardware,
+    TechoEarlyHardware as EarlyHardware, TechoFaceHardware as FaceHardware, TechoRadio as Radio,
+    TechoRuntimeHardware as RuntimeHardware, TechoUsbHardware as UsbHardware,
 };
 pub(crate) use identity::{
     bootstrap_ble_identity, bootstrap_node_identity, startup_notice as identity_startup_notice,
