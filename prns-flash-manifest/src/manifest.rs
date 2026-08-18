@@ -136,8 +136,7 @@ impl ManifestTargetSetPolicy {
     pub fn all_shipping_targets(catalog: &BoardCatalog) -> Self {
         Self {
             expected: catalog
-                .boards
-                .iter()
+                .shipping_boards()
                 .map(|board| board.slug.clone())
                 .collect(),
         }

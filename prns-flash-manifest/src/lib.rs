@@ -8,8 +8,9 @@ mod trust;
 mod uf2;
 
 pub use catalog::{
-    board_catalog, BoardBuild, BoardCatalog, BoardCatalogEntry, CatalogError, EspBuild,
-    ProvisioningDescriptor, TcpClientProvisioningDescriptor, Transport, Uf2Build, Uf2BuildVariant,
+    board_catalog, BoardAvailability, BoardBuild, BoardCatalog, BoardCatalogEntry, CatalogError,
+    EspBuild, ProvisioningDescriptor, TcpClientProvisioningDescriptor, Transport, Uf2Build,
+    Uf2BuildVariant,
 };
 pub use domain::{
     AfterResetStrategy, BeforeResetStrategy, BoardId, ChipFamily, DomainValueError, EspFlashPart,

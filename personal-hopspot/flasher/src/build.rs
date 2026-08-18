@@ -122,7 +122,7 @@ pub(crate) fn assemble_manifest(
     let (version, boards, policy) = match target_profile {
         ManifestTargetProfile::Production => (
             release_version(repo)?,
-            catalog.boards.iter().collect::<Vec<_>>(),
+            catalog.shipping_boards().collect::<Vec<_>>(),
             ManifestTargetSetPolicy::all_shipping_targets(catalog),
         ),
         ManifestTargetProfile::LocalDevelopment {

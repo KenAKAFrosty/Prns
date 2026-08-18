@@ -1,7 +1,8 @@
 {
-  "schema": 1,
+  "schema": 2,
   "boards": [
     {
+      "availability": "shipping",
       "slug": "heltec-v4",
       "display_name": "Heltec LoRa 32 V4 (S3R2)",
       "silicon": "ESP32-S3R2 + SX1262 (Quad PSRAM)",
@@ -40,6 +41,7 @@
       }
     },
     {
+      "availability": "shipping",
       "slug": "heltec-v4-r8",
       "display_name": "Heltec LoRa 32 V4 (S3R8)",
       "silicon": "ESP32-S3R8 + SX1262 (Octal PSRAM)",
@@ -78,6 +80,7 @@
       }
     },
     {
+      "availability": "shipping",
       "slug": "t-beam-supreme",
       "display_name": "LilyGO T-Beam Supreme",
       "silicon": "ESP32-S3 + SX1262 + AXP2101",
@@ -116,6 +119,7 @@
       }
     },
     {
+      "availability": "shipping",
       "slug": "xiao-esp32-c6",
       "display_name": "Seeed XIAO ESP32-C6",
       "silicon": "ESP32-C6",
@@ -141,6 +145,7 @@
       }
     },
     {
+      "availability": "shipping",
       "slug": "t-echo",
       "display_name": "LilyGO T-Echo",
       "silicon": "nRF52840 + SX1262",

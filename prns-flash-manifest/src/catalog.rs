@@ -16,21 +16,18 @@ const SHIPPING_BOARD_SLUGS: [&str; 5] = [
     "t-echo",
 ];
 
-/// Complete, versioned catalog of publicly supported boards.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BoardCatalog {
     /// Catalog schema version.
     pub schema: u32,
-    /// Shipping boards.
     pub boards: Vec<BoardCatalogEntry>,
 }
 
-/// A shipping board and everything needed to build and flash it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BoardCatalogEntry {
-    /// Stable public board identifier.
+    pub availability: BoardAvailability,
     pub slug: String,
     /// User-facing board name.
     pub display_name: String,
@@ -40,7 +37,6 @@ pub struct BoardCatalogEntry {
     pub interfaces: Vec<String>,
     /// Website icon identifier.
     pub icon: String,
-    /// Public flashing transport.
     pub transport: Transport,
     /// Expected Espressif chip, or `None` for UF2 targets.
     pub expected_chip: Option<String>,
@@ -52,6 +48,13 @@ pub struct BoardCatalogEntry {
     pub provisioning: Option<ProvisioningDescriptor>,
     /// Developer-build inputs.
     pub build: BoardBuild,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BoardAvailability {
+    Shipping,
+    Qualification,
 }
 
 impl BoardCatalogEntry {
@@ -211,7 +214,7 @@ impl BoardCatalog {
 
     /// Validate catalog-wide and per-board invariants.
     pub fn validate(&self) -> Result<(), CatalogError> {
-        if self.schema != 1 {
+        if self.schema != 2 {
             return Err(CatalogError::Schema(self.schema));
         }
         let mut slugs = std::collections::BTreeSet::new();
@@ -224,10 +227,14 @@ impl BoardCatalog {
             validate_provisioning(board)?;
         }
         validate_uf2_board_id_prefixes(&self.boards)?;
+        let shipping = self
+            .shipping_boards()
+            .map(|board| board.slug.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
         let expected = SHIPPING_BOARD_SLUGS
             .into_iter()
             .collect::<std::collections::BTreeSet<_>>();
-        if slugs != expected {
+        if shipping != expected {
             return Err(CatalogError::InvalidBoard {
                 board: "catalog".to_string(),
                 message: format!("shipping board set must be exactly {expected:?}"),
@@ -239,6 +246,12 @@ impl BoardCatalog {
     /// Find a board by stable slug.
     pub fn board(&self, slug: &str) -> Option<&BoardCatalogEntry> {
         self.boards.iter().find(|board| board.slug == slug)
+    }
+
+    pub fn shipping_boards(&self) -> impl Iterator<Item = &BoardCatalogEntry> {
+        self.boards
+            .iter()
+            .filter(|board| board.availability == BoardAvailability::Shipping)
     }
 }
 
@@ -466,8 +479,7 @@ mod tests {
     fn embedded_catalog_has_all_shipping_boards() -> Result<(), CatalogError> {
         let catalog = board_catalog()?;
         let slugs = catalog
-            .boards
-            .iter()
+            .shipping_boards()
             .map(|board| board.slug.as_str())
             .collect::<Vec<_>>();
         assert_eq!(
@@ -480,6 +492,22 @@ mod tests {
                 "t-echo"
             ]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn qualification_boards_are_absent_from_the_shipping_view() -> Result<(), CatalogError> {
+        let mut catalog = board_catalog()?;
+        catalog.boards[0].availability = BoardAvailability::Qualification;
+        let shipping = catalog
+            .shipping_boards()
+            .map(|board| board.slug.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            shipping,
+            ["heltec-v4-r8", "t-beam-supreme", "xiao-esp32-c6", "t-echo"]
+        );
+        assert!(catalog.board("heltec-v4").is_some());
         Ok(())
     }
 
