@@ -23,6 +23,9 @@ from typing import Iterator, Sequence
 ROOT = Path(__file__).resolve().parents[2]
 WEBSITE = ROOT / "docs" / "website"
 BOARD_CATALOG = ROOT / "release" / "flash" / "boards.json"
+BOARD_CATALOG_SCHEMA = 3
+SHIPPING_BOARD_AVAILABILITY = "shipping"
+BOARD_AVAILABILITIES = frozenset((SHIPPING_BOARD_AVAILABILITY, "qualification"))
 PINNED_MINISIGN = ROOT / ".build" / "toolchains" / "minisign" / "0.12" / "minisign"
 MINISIGN_INSTALL_COMMAND = (
     "./tools/prns run release.toolchain.minisign.install -- "
@@ -222,14 +225,25 @@ def require_unquarantined_source(identity: SourceIdentity) -> None:
 
 def shipping_boards() -> tuple[str, ...]:
     document = json.loads(BOARD_CATALOG.read_text(encoding="utf-8"))
-    if document.get("schema") != 1 or not isinstance(document.get("boards"), list):
+    if document.get("schema") != BOARD_CATALOG_SCHEMA or not isinstance(
+        document.get("boards"), list
+    ):
         raise DeveloperFlasherError("shipping board catalog is invalid")
-    boards = tuple(board.get("slug") for board in document["boards"])
-    if not boards or not all(isinstance(board, str) and board for board in boards):
+    entries = document["boards"]
+    if not entries or not all(isinstance(board, dict) for board in entries):
+        raise DeveloperFlasherError("shipping board catalog is invalid")
+    if not all(board.get("availability") in BOARD_AVAILABILITIES for board in entries):
+        raise DeveloperFlasherError("shipping board catalog contains an invalid availability")
+    slugs = tuple(board.get("slug") for board in entries)
+    if not all(isinstance(board, str) and board for board in slugs):
         raise DeveloperFlasherError("shipping board catalog contains an invalid slug")
-    if len(set(boards)) != len(boards):
+    if len(set(slugs)) != len(slugs):
         raise DeveloperFlasherError("shipping board catalog contains duplicate slugs")
-    return boards
+    return tuple(
+        board["slug"]
+        for board in entries
+        if board.get("availability") == SHIPPING_BOARD_AVAILABILITY
+    )
 
 
 def parse_port(value: str) -> int:

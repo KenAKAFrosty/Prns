@@ -169,7 +169,11 @@ COUNT_CONTRACTS = (
 
 def physical_row_count(root: Path) -> int:
     boards = json.loads((root / "release" / "flash" / "boards.json").read_text(encoding="utf-8"))
-    transports = {board["slug"]: board["transport"] for board in boards["boards"]}
+    transports = {
+        board["slug"]: board["transport"]
+        for board in boards["boards"]
+        if board["availability"] == "shipping"
+    }
     if set(transports) != set(SHIPPING_BOARDS):
         raise ValueError(
             "release/flash/boards.json does not state exactly the shipping board set"
