@@ -307,6 +307,11 @@ fn collect_eligible_ip_addresses(
         }
         eligible_ip_addresses.insert(ip_address);
     }
+    eligible_ip_addresses.extend(
+        super::link_local_nics(auto_wifi_device_policy)
+            .into_iter()
+            .map(|network_interface| IpAddr::V6(network_interface.link_local)),
+    );
     Ok(eligible_ip_addresses)
 }
 
