@@ -112,6 +112,7 @@ pub struct UdpServiceDiscovery<'a, const TARGETS: usize> {
     status: AutoWifiStatus<TARGETS>,
     storage: &'a mut UdpServiceDiscoveryStorage<TARGETS>,
     fill_random: fn(&mut [u8]),
+    query_cursor: super::RoundRobinCursor,
 }
 
 impl<'a, const TARGETS: usize> UdpServiceDiscovery<'a, TARGETS> {
@@ -133,6 +134,7 @@ impl<'a, const TARGETS: usize> UdpServiceDiscovery<'a, TARGETS> {
             status,
             storage,
             fill_random,
+            query_cursor: super::RoundRobinCursor::new(),
         })
     }
 
@@ -301,30 +303,57 @@ impl<'a, const TARGETS: usize> UdpServiceDiscovery<'a, TARGETS> {
 
     fn clear_targets(&mut self) {
         self.storage.catalog.clear();
+        self.query_cursor.reset();
         self.status
             .publish_discovery_targets(super::EmbeddedDiscoveryTargets::new());
     }
 
-    async fn send_browse_queries(&self) {
-        let mut query_packet = [0u8; UDP_SERVICE_DISCOVERY_PACKET_BYTES];
+    async fn send_browse_queries(&mut self) {
         let Ok(service_name) = encoded_name(&SERVICE_LABELS) else {
             return;
         };
-        if let Ok(query_length) = build_query_packet(&mut query_packet, &service_name, DNS_TYPE_PTR)
-        {
-            let _ = self.send(&query_packet[..query_length]).await;
-        }
-        let queries = self
-            .storage
-            .catalog
-            .resolution_queries(Instant::now().as_millis());
-        for query in queries {
-            let Ok(query_length) =
-                build_query_packet(&mut query_packet, &query.name, query.record_type)
-            else {
-                continue;
-            };
-            let _ = self.send(&query_packet[..query_length]).await;
+        let query_count = self.storage.catalog.len().saturating_add(1);
+        let now_ms = Instant::now().as_millis();
+        let sends = with_timeout(SEND_TIMEOUT, async {
+            let mut query_packet = [0u8; UDP_SERVICE_DISCOVERY_PACKET_BYTES];
+            for _ in 0..query_count {
+                let super::RoundRobinPosition::Item(index) = self.query_cursor.advance(query_count)
+                else {
+                    return;
+                };
+                let query = if index == 0 {
+                    ResolutionQuery {
+                        name: service_name.clone(),
+                        record_type: DNS_TYPE_PTR,
+                    }
+                } else {
+                    let Some(query) = self.storage.catalog.resolution_query_at(index - 1, now_ms)
+                    else {
+                        continue;
+                    };
+                    query
+                };
+                let Ok(query_length) =
+                    build_query_packet(&mut query_packet, &query.name, query.record_type)
+                else {
+                    continue;
+                };
+                let _send_result = self
+                    .socket
+                    .send_to(
+                        &query_packet[..query_length],
+                        (IpAddress::Ipv6(MDNS_IPV6_GROUP), MDNS_PORT),
+                    )
+                    .await;
+            }
+        });
+        match sends.await {
+            Ok(()) => {}
+            Err(_timeout) => {
+                crate::diagnostic_log::debug!(
+                    "wifi-auto: embedded UDP DNS-SD query budget exhausted"
+                );
+            }
         }
     }
 
@@ -842,34 +871,31 @@ impl<const TARGETS: usize> ServiceCatalog<TARGETS> {
         targets
     }
 
-    fn resolution_queries(&self, now_ms: u64) -> Vec<ResolutionQuery, TARGETS> {
-        let mut queries = Vec::new();
-        for service in &self.services {
-            if service.expires_at_ms <= now_ms
-                || service.version == RecordCompatibility::Incompatible
-                || service.port == RecordCompatibility::Incompatible
-            {
-                continue;
-            }
-            let query = if service.port == RecordCompatibility::Awaiting || service.host.is_none() {
-                ResolutionQuery {
-                    name: service.instance.clone(),
-                    record_type: DNS_TYPE_ANY,
-                }
-            } else if service.address.is_none() {
-                let Some(host) = service.host.clone() else {
-                    continue;
-                };
-                ResolutionQuery {
-                    name: host,
-                    record_type: DNS_TYPE_AAAA,
-                }
-            } else {
-                continue;
-            };
-            let _ = queries.push(query);
+    fn len(&self) -> usize {
+        self.services.len()
+    }
+
+    fn resolution_query_at(&self, index: usize, now_ms: u64) -> Option<ResolutionQuery> {
+        let service = self.services.get(index)?;
+        if service.expires_at_ms <= now_ms
+            || service.version == RecordCompatibility::Incompatible
+            || service.port == RecordCompatibility::Incompatible
+        {
+            return None;
         }
-        queries
+        if service.port == RecordCompatibility::Awaiting || service.host.is_none() {
+            return Some(ResolutionQuery {
+                name: service.instance.clone(),
+                record_type: DNS_TYPE_ANY,
+            });
+        }
+        if service.address.is_none() {
+            return service.host.clone().map(|name| ResolutionQuery {
+                name,
+                record_type: DNS_TYPE_AAAA,
+            });
+        }
+        None
     }
 
     fn prune(&mut self, now_ms: u64) {
@@ -1326,6 +1352,38 @@ mod tests {
             CatalogUpdate::Applied
         );
         assert_eq!(catalog.services.len(), 1);
+    }
+
+    #[test]
+    fn resolution_query_lookup_returns_one_bounded_work_item() {
+        let peer_instance = DiscoveryInstance::from_random_bytes([0x22; 8]);
+        let instance_name =
+            encoded_name(&peer_instance.service_labels()).expect("instance name fits");
+        let host_name = encoded_name(&peer_instance.host_labels()).expect("host name fits");
+        let mut catalog = ServiceCatalog::<2>::new();
+        catalog
+            .services
+            .push(BrowsedService::new(instance_name.clone(), 10_000))
+            .expect("one service fits");
+
+        assert_eq!(
+            catalog.resolution_query_at(0, 1_000),
+            Some(ResolutionQuery {
+                name: instance_name,
+                record_type: DNS_TYPE_ANY,
+            })
+        );
+
+        catalog.services[0].port = RecordCompatibility::Compatible;
+        catalog.services[0].host = Some(host_name.clone());
+        assert_eq!(
+            catalog.resolution_query_at(0, 1_000),
+            Some(ResolutionQuery {
+                name: host_name,
+                record_type: DNS_TYPE_AAAA,
+            })
+        );
+        assert_eq!(catalog.resolution_query_at(1, 1_000), None);
     }
 
     #[test]

@@ -199,12 +199,47 @@ impl<const TARGETS: usize> EmbeddedDiscoveryTargets<TARGETS> {
         let _ = self.addresses.insert(index, address);
     }
 
+    fn address_at(&self, index: usize) -> Option<Ipv6Addr> {
+        self.addresses.get(index).copied()
+    }
+
+    #[cfg(test)]
     fn iter(&self) -> impl Iterator<Item = Ipv6Addr> + '_ {
         self.addresses.iter().copied()
     }
 
     fn len(&self) -> usize {
         self.addresses.len()
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum RoundRobinPosition {
+    Item(usize),
+    Empty,
+}
+
+struct RoundRobinCursor {
+    next: usize,
+}
+
+impl RoundRobinCursor {
+    const fn new() -> Self {
+        Self { next: 0 }
+    }
+
+    fn advance(&mut self, length: usize) -> RoundRobinPosition {
+        if length == 0 {
+            self.next = 0;
+            return RoundRobinPosition::Empty;
+        }
+        let current = self.next % length;
+        self.next = (current + 1) % length;
+        RoundRobinPosition::Item(current)
+    }
+
+    fn reset(&mut self) {
+        self.next = 0;
     }
 }
 
@@ -566,6 +601,7 @@ struct AutoWifiRunState<const MEMBERS: usize> {
     consecutive_beacon_failures: u8,
     beacon_cycle: u32,
     discovered_targets: EmbeddedDiscoveryTargets<MEMBERS>,
+    discovery_probe_cursor: RoundRobinCursor,
 }
 
 impl<const MEMBERS: usize> AutoWifiRunState<MEMBERS> {
@@ -589,6 +625,7 @@ impl<const MEMBERS: usize> AutoWifiRunState<MEMBERS> {
             consecutive_beacon_failures: 0,
             beacon_cycle: 0,
             discovered_targets: EmbeddedDiscoveryTargets::new(),
+            discovery_probe_cursor: RoundRobinCursor::new(),
         }
     }
 
@@ -651,6 +688,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
         )
         .await;
         state.discovered_targets = EmbeddedDiscoveryTargets::new();
+        state.discovery_probe_cursor.reset();
         self.status.wait_until_enabled().await;
     }
 
@@ -714,8 +752,12 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                     &state.primary_token,
                 )
                 .await;
-                send_peering_token_reply(&self.primary.unicast_discovery, peering_token_reply)
-                    .await;
+                send_peering_token_reply(
+                    &self.primary.unicast_discovery,
+                    peering_token_reply,
+                    self.status,
+                )
+                .await;
             }
         }
     }
@@ -783,8 +825,12 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                 )
                 .await;
                 if let Some(secondary) = self.secondary.as_ref() {
-                    send_peering_token_reply(&secondary.unicast_discovery, peering_token_reply)
-                        .await;
+                    send_peering_token_reply(
+                        &secondary.unicast_discovery,
+                        peering_token_reply,
+                        self.status,
+                    )
+                    .await;
                 }
             }
         }
@@ -859,6 +905,8 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                 &self.primary.unicast_discovery,
                 &state.discovered_targets,
                 &self.brain,
+                &mut state.discovery_probe_cursor,
+                self.status,
             )
             .await;
         }
@@ -909,6 +957,8 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
             &self.primary.unicast_discovery,
             &state.discovered_targets,
             &self.brain,
+            &mut state.discovery_probe_cursor,
+            self.status,
         )
         .await;
     }
@@ -1371,9 +1421,10 @@ fn peering_token_reply(
     }
 }
 
-async fn send_peering_token_reply(
+async fn send_peering_token_reply<const MEMBERS: usize>(
     unicast_discovery_socket: &UdpSocket<'_>,
     peering_token_reply: PeeringTokenReply,
+    status: AutoWifiStatus<MEMBERS>,
 ) {
     let PeeringTokenReply::Send {
         address,
@@ -1382,31 +1433,60 @@ async fn send_peering_token_reply(
     else {
         return;
     };
-    let _ = unicast_discovery_socket
-        .send_to(
+    let send = with_timeout(
+        SEND_TIMEOUT,
+        unicast_discovery_socket.send_to(
             &peering_token,
             (IpAddress::Ipv6(address), contract::UNICAST_DISCOVERY_PORT),
-        )
-        .await;
+        ),
+    );
+    match select(status.wait_until_disabled(), send).await {
+        Either::First(()) | Either::Second(Ok(Ok(()))) => {}
+        Either::Second(Ok(Err(error))) => {
+            crate::diagnostic_log::debug!("wifi-auto: reciprocal peering reply failed: {error:?}");
+        }
+        Either::Second(Err(_timeout)) => {
+            crate::diagnostic_log::debug!("wifi-auto: reciprocal peering reply timed out");
+        }
+    }
 }
 
-async fn send_discovery_probes<const TARGETS: usize, const PEERS: usize>(
+async fn send_discovery_probes<const MEMBERS: usize>(
     unicast_discovery_socket: &UdpSocket<'_>,
-    discovery_targets: &EmbeddedDiscoveryTargets<TARGETS>,
-    brain: &contract::FixedAutoInterfaceProtocol<PEERS>,
+    discovery_targets: &EmbeddedDiscoveryTargets<MEMBERS>,
+    brain: &contract::FixedAutoInterfaceProtocol<MEMBERS>,
+    cursor: &mut RoundRobinCursor,
+    status: AutoWifiStatus<MEMBERS>,
 ) {
     let token = brain.our_peering_token();
-    for address in discovery_targets.iter().filter(|address| {
-        !brain
-            .known_peer_addresses()
-            .any(|known_peer| known_peer == *address)
-    }) {
-        let _ = unicast_discovery_socket
-            .send_to(
-                token.as_bytes(),
-                (IpAddress::Ipv6(address), contract::UNICAST_DISCOVERY_PORT),
-            )
-            .await;
+    let target_count = discovery_targets.len();
+    let send = with_timeout(SEND_TIMEOUT, async {
+        for _ in 0..target_count {
+            let RoundRobinPosition::Item(index) = cursor.advance(target_count) else {
+                return;
+            };
+            let Some(address) = discovery_targets.address_at(index) else {
+                continue;
+            };
+            if brain
+                .known_peer_addresses()
+                .any(|known_peer| known_peer == address)
+            {
+                continue;
+            }
+            let _send_result = unicast_discovery_socket
+                .send_to(
+                    token.as_bytes(),
+                    (IpAddress::Ipv6(address), contract::UNICAST_DISCOVERY_PORT),
+                )
+                .await;
+        }
+    });
+    match select(status.wait_until_disabled(), send).await {
+        Either::First(()) | Either::Second(Ok(())) => {}
+        Either::Second(Err(_timeout)) => {
+            crate::diagnostic_log::debug!("wifi-auto: discovery probe budget exhausted");
+        }
     }
 }
 
@@ -1533,6 +1613,18 @@ mod tests {
             ConnectionState::Degraded
         );
         assert!(TopologyState::SecondaryUnavailable.requires_secondary_health());
+    }
+
+    #[test]
+    fn bounded_work_resumes_at_the_next_round_robin_position() {
+        let mut cursor = RoundRobinCursor::new();
+
+        assert_eq!(cursor.advance(3), RoundRobinPosition::Item(0));
+        assert_eq!(cursor.advance(3), RoundRobinPosition::Item(1));
+        assert_eq!(cursor.advance(3), RoundRobinPosition::Item(2));
+        assert_eq!(cursor.advance(3), RoundRobinPosition::Item(0));
+        assert_eq!(cursor.advance(0), RoundRobinPosition::Empty);
+        assert_eq!(cursor.advance(2), RoundRobinPosition::Item(0));
     }
 
     #[test]
