@@ -187,6 +187,10 @@ pub struct BoardConfig {
     /// Receive-path gain ahead of the SX126x, removed from RSSI reports so callers see the signal
     /// level at the antenna rather than the amplified level at the transceiver input.
     pub external_rx_gain_db: u8,
+    /// Optional external PA/LNA switch into transmit. Invoked immediately before `SetTx`.
+    pub enter_transmit: Option<fn()>,
+    /// Optional external PA/LNA switch into receive. Invoked immediately before `SetRx`.
+    pub enter_receive: Option<fn()>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -467,7 +471,9 @@ where
         self.command(&[op::CALIBRATE_IMAGE, image_cal_a, image_cal_b])
             .await?;
         self.configure().await?;
-        self.route_irqs_and_tune_rx().await
+        self.route_irqs_and_tune_rx().await?;
+        invoke_frontend(self.config.enter_receive);
+        Ok(())
     }
 
     /// Apply the channel config (modulation, frequency, TX power, packet shape). The SX1262 RETAINS these registers across SetStandby / SetTx / SetRx (only Sleep or reset clears them), so this runs ONCE from [`init`](Self::init) and again only on a discrete channel change, never per packet; the per-packet path only restamps the payload length.
@@ -511,6 +517,7 @@ where
         // EasyDMA (and most SPI DMA) can only source from RAM; the caller's payload may be flash-resident (`&'static`), so stage it through the RAM `tx_staging` field.
         self.tx_staging[..len].copy_from_slice(payload);
 
+        invoke_frontend(self.config.enter_transmit);
         self.standby().await?;
         self.set_packet_params(len as u8).await?;
         self.write_tx_payload(len).await?;
@@ -539,6 +546,7 @@ where
 
     /// Arm continuous RX: restamp the RX-side max payload length, clear stale IRQs, enter SetRx continuous. [`read_frame`](Self::read_frame) waits WITHOUT re-arming, so a host-side select that cancels the read mid-listen leaves the radio receiving (the RxDone IRQ latches) rather than guillotining an in-flight multi-hundred-ms LoRa frame.
     pub async fn arm_rx(&mut self) -> Result<(), Error> {
+        invoke_frontend(self.config.enter_receive);
         self.standby().await?;
         self.set_packet_params(0xFF).await?;
         self.clear_irq(irq::ALL).await?;
@@ -743,6 +751,12 @@ fn image_calibration_pair(frequency_hz: u32) -> [u8; 2] {
 
 fn decode_rssi_dbm(encoded: u8) -> i16 {
     -i16::from(encoded) / 2
+}
+
+fn invoke_frontend(hook: Option<fn()>) {
+    if let Some(enter) = hook {
+        enter();
+    }
 }
 
 fn antenna_referred_rssi_dbm(encoded: u8, external_rx_gain_db: u8) -> i16 {
@@ -989,6 +1003,8 @@ mod tests {
             rx_boost: true,
             dio2_as_rf_switch: true,
             external_rx_gain_db: 0,
+            enter_transmit: None,
+            enter_receive: None,
         }
     }
 
@@ -1012,6 +1028,8 @@ mod tests {
             rx_boost: true,
             dio2_as_rf_switch: true,
             external_rx_gain_db: 0,
+            enter_transmit: None,
+            enter_receive: None,
         };
         let mut radio = Sx126x::new(
             MockSpi { log: log.clone() },

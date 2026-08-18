@@ -293,6 +293,7 @@ pub(super) fn softdevice_config() -> nrf_softdevice::Config {
     }
 }
 
+#[cfg_attr(not(feature = "board-t-echo"), allow(dead_code))]
 pub(super) fn usb_vbus_present() -> bool {
     let mut status = 0u32;
     // SAFETY: `status` is a live, aligned u32 out-parameter for the duration of the synchronous

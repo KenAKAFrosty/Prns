@@ -74,6 +74,19 @@ signed release catalog; exact-image USB and LoRa qualification on hardware is
 still required. Its current radio profile is fixed at 915 MHz, so only exercise
 LoRa where that profile is permitted.
 
+Heltec MeshTower V2 developer firmware:
+
+    ./tools/prns build hopspot mesh-tower-v2
+
+The MeshTower V2 task writes `target/hopspot-mesh-tower-v2/heltec-mesh-tower-v2.bin`
+and `target/hopspot-mesh-tower-v2/heltec-mesh-tower-v2.uf2`. The UF2 begins at
+`0x26000` and enables the stock S140 6.1.1 SoftDevice already present on
+`HT-n5262` so Bluetooth Auto can run with USB and LoRa. Open the case and
+double-press RST to mount the UF2 volume. The image drives the KCT8103L
+frontend and pets the external watchdog; GPS stays powered off. The user
+button (P1.10, active-low) announces `nomadnetwork.node` on every interface.
+It is not in the signed release catalog. The radio profile is fixed at 915 MHz.
+
 ## Embedded flash-layout upgrade
 
 LoRa-capable firmware persists the selected radio profile in a dedicated two-page store. Reset records a durable choice to follow the firmware default, while an explicitly saved profile remains fixed across updates. Sparse firmware updates preserve the profile store; a full-chip erase clears it.

@@ -213,6 +213,8 @@ impl Esp32S3Board for HeltecV4R8Board {
                     rx_boost: true,
                     dio2_as_rf_switch: true,
                     external_rx_gain_db: lora_rx_gain_db,
+                    enter_transmit: None,
+                    enter_receive: None,
                 },
             )
         };

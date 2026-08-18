@@ -344,6 +344,8 @@ impl Esp32S3Board for TBeamSupremeBoard {
                     rx_boost: true,
                     dio2_as_rf_switch: true,
                     external_rx_gain_db: 0,
+                    enter_transmit: None,
+                    enter_receive: None,
                 },
             )
         };

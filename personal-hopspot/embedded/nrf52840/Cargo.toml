@@ -19,6 +19,7 @@ default = ["board-t-echo", "softdevice-s140-v7"]
 board-t-echo = []
 board-t096 = []
 board-t114 = ["cortex-m/critical-section-single-core"]
+board-mesh-tower-v2 = ["embassy-nrf/nfc-pins-as-gpio"]
 softdevice-s140-v6 = ["dep:nrf-softdevice", "nrf-softdevice/s140-v6"]
 softdevice-s140-v7 = ["dep:nrf-softdevice", "nrf-softdevice/s140-v7"]
 
@@ -40,6 +41,11 @@ required-features = ["board-t096"]
 name = "heltec-t114"
 path = "src/bin/heltec_t114.rs"
 required-features = ["board-t114"]
+
+[[bin]]
+name = "heltec-mesh-tower-v2"
+path = "src/bin/heltec_mesh_tower_v2.rs"
+required-features = ["board-mesh-tower-v2", "softdevice-s140-v6"]
 
 [dependencies]
 personal-rns = { path = "../../../personal-rns", default-features = false, features = ["embassy-host", "flash", "lora", "bluetooth-auto", "usb"] }
