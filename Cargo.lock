@@ -3108,6 +3108,13 @@ name = "prns-macros"
 version = "0.3.6"
 
 [[package]]
+name = "prns-nrf-dfu"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "prns-runtime"
 version = "0.3.6"
 dependencies = [
