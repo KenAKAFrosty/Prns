@@ -4662,7 +4662,8 @@
           "gpiote",
           "nrf52840",
           "rt",
-          "time-driver-rtc1"
+          "time-driver-rtc1",
+          "unstable-pac"
         ]
       },
       "name": "embassy-nrf",
