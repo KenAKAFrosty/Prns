@@ -36,6 +36,9 @@ pub(crate) fn generate() {
                 "BoardFlashTarget::Uf2MassStorage {{ mount_label: {:?}, board_id_prefix: {:?} }}",
                 build.mount_label, build.board_id_prefix
             ),
+            (Transport::NrfSerialDfu, BoardBuild::NrfSerialDfu(_)) => {
+                panic!("qualification target entered the shipping website catalog")
+            }
             _ => panic!("validated catalog transport and build recipe disagree"),
         };
         generated.push_str("    BoardTarget {\n");

@@ -1,5 +1,3 @@
-//! Bind already-verified bytes to typed ESP and UF2 part descriptors.
-
 use prns_flash_manifest::{
     sha256_hex, validate_uf2_artifact, BoardId, EspFlashPart, ImmutableArtifactPath, ReleaseTarget,
     ReleaseVersion, Sha256Digest, SoftdeviceIdentity, Uf2ArtifactError, Uf2Compatibility, Uf2Part,
@@ -41,6 +39,8 @@ pub(crate) enum PreparedArtifactError {
         path: ImmutableArtifactPath,
         source: Uf2ArtifactError,
     },
+    #[error("Nordic serial DFU delivery is not available for signed target {0}")]
+    NrfSerialDfuDeliveryUnavailable(BoardId),
 }
 
 #[derive(Debug)]
@@ -81,6 +81,9 @@ impl PreparedTarget {
                 let _ = (version, target, artifacts);
                 Err(PreparedArtifactError::CompatibilityRequired(board_id))
             }
+            ReleaseTarget::NrfSerialDfu(_) => Err(
+                PreparedArtifactError::NrfSerialDfuDeliveryUnavailable(board_id),
+            ),
         }
     }
 

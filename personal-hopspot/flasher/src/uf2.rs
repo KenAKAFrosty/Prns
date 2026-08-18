@@ -73,6 +73,9 @@ impl<'a> CatalogedUf2Board<'a> {
             BoardBuild::Esp(_) => Err(AppError::unsupported_operation(
                 "ESP board cannot use the UF2 bootloader engine",
             )),
+            BoardBuild::NrfSerialDfu(_) => Err(AppError::unsupported_operation(
+                "Nordic serial DFU board cannot use the direct UF2 engine",
+            )),
         }
     }
 
@@ -401,12 +404,10 @@ fn sync_mount_directory(_mount: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Mounts that identify as the selected board, and only that board.
 fn detect_mounts_for(board: &CatalogedUf2Board<'_>) -> Vec<PathBuf> {
     scan(&[board.board_id_prefix()], Some(board.mount_label()))
 }
 
-/// Every cataloged UF2 bootloader, for diagnostics that have no selected board.
 pub(crate) fn detect_any_uf2_mounts(catalog: &BoardCatalog) -> Vec<PathBuf> {
     let prefixes = catalog
         .boards
@@ -414,6 +415,7 @@ pub(crate) fn detect_any_uf2_mounts(catalog: &BoardCatalog) -> Vec<PathBuf> {
         .filter_map(|board| match &board.build {
             BoardBuild::Uf2(build) => Some(build.board_id_prefix.as_str()),
             BoardBuild::Esp(_) => None,
+            BoardBuild::NrfSerialDfu(build) => Some(build.recovery.board_id_prefix.as_str()),
         })
         .collect::<Vec<_>>();
     scan(&prefixes, None)

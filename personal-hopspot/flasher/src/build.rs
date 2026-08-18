@@ -6,10 +6,16 @@ use espflash::flasher::{FlashData, FlashFrequency, FlashMode, FlashSettings, Fla
 use espflash::image_format::{idf::IdfBootloaderFormat, ImageFormat};
 use espflash::target::{Chip, XtalFrequency};
 use prns_flash_manifest::{
-    sha256_hex, validate_uf2_artifact, BoardBuild, BoardCatalog, BoardCatalogEntry, FlashManifest,
-    FlashPart, FlashPartKind, ManifestTargetSetPolicy, ReleaseChannel, ReleaseInfo, ReleaseTarget,
-    ReleaseVersion, SigningInfo, SoftdeviceIdentity, TargetManifest, Uf2VariantManifest,
+    sha256_hex, validate_nrf_serial_dfu_recovery_artifact, validate_uf2_artifact, BoardBuild,
+    BoardCatalog, BoardCatalogEntry, FlashManifest, FlashPart, FlashPartKind,
+    ManifestTargetSetPolicy, NrfDfuApplicationVersion, NrfSerialDfuManifest,
+    NrfSerialDfuRecoveryManifest, OfflineKeySigningInfo, ReleaseChannel, ReleaseInfo,
+    ReleaseTarget, ReleaseVersion, SoftdeviceIdentity, TargetManifest, Uf2VariantManifest,
     FLASH_MANIFEST_SCHEMA,
+};
+use prns_nrf_dfu::{
+    ApplicationInitPacket, ApplicationInitPacketSpec, ApplicationVersion, DfuDeviceRevision,
+    DfuDeviceType, DfuImage, SoftdeviceFirmwareId, SoftdeviceRequirements,
 };
 
 use crate::cli::ChannelArg;
@@ -84,6 +90,9 @@ pub(crate) fn build_board(
             Uf2BuildSelection::AllVariants,
             reporter,
         ),
+        BoardBuild::NrfSerialDfu(build) => {
+            build_nrf_serial_dfu(board, build, repo, out_root, &version, reporter)
+        }
     }
 }
 
@@ -107,6 +116,9 @@ pub(crate) fn build_board_for_flash(
             Uf2BuildSelection::Compatible(softdevice),
             reporter,
         ),
+        BoardBuild::NrfSerialDfu(_) => Err(AppError::developer_build(
+            "Nordic serial DFU build does not accept a UF2 SoftDevice selection",
+        )),
     }
 }
 
@@ -181,7 +193,7 @@ pub(crate) fn assemble_manifest(
         source_capabilities.push(capability);
     }
     let manifest = FlashManifest {
-        schema: FLASH_MANIFEST_SCHEMA,
+        schema_version: FLASH_MANIFEST_SCHEMA,
         release: ReleaseInfo {
             version: version.clone(),
             channel: match channel {
@@ -190,7 +202,7 @@ pub(crate) fn assemble_manifest(
             },
             commit: commit.clone(),
         },
-        signing: SigningInfo { key_id },
+        signing: OfflineKeySigningInfo { key_id },
         targets,
     };
     manifest
@@ -258,8 +270,7 @@ fn build_esp(
     }
     let target = target_record(
         board,
-        parts.iter().map(|part| part.descriptor.clone()).collect(),
-        Vec::new(),
+        BuiltTargetArtifacts::Esp(parts.iter().map(|part| part.descriptor.clone()).collect()),
     );
     write_target_record(&output_dir, &target)?;
     write_source_capability_record(&output_dir, board)?;
@@ -484,7 +495,7 @@ fn build_uf2(
         });
         artifacts.push(bytes);
     }
-    let target = target_record(board, Vec::new(), descriptors);
+    let target = target_record(board, BuiltTargetArtifacts::Uf2(descriptors));
     write_target_record(&output_dir, &target)?;
     write_source_capability_record(&output_dir, board)?;
     let (version, target) = match selected_softdevice {
@@ -534,6 +545,242 @@ fn build_uf2(
     })
 }
 
+fn build_nrf_serial_dfu(
+    board: &BoardCatalogEntry,
+    build: &prns_flash_manifest::NrfSerialDfuBuild,
+    repo: &Path,
+    out_root: &Path,
+    version: &str,
+    reporter: Reporter,
+) -> Result<BuildOutput, AppError> {
+    reporter.phase(
+        Phase::Building,
+        Some(&board.slug),
+        &format!("Building {} developer firmware…", board.display_name),
+    );
+    let crate_dir = repo
+        .join("personal-hopspot")
+        .join("embedded")
+        .join("nrf52840");
+    let target_directory = crate_dir.join(&build.target_directory);
+    let mut cargo = embedded_cargo_command();
+    cargo
+        .arg("build")
+        .arg("--release")
+        .arg("--locked")
+        .arg("--no-default-features")
+        .arg("--features")
+        .arg(&build.cargo_feature)
+        .arg("--package")
+        .arg(&build.package)
+        .arg("--bin")
+        .arg(&build.binary)
+        .arg("--target")
+        .arg(&build.rust_target)
+        .arg("--target-dir")
+        .arg(&target_directory)
+        .env("PRNS_BUILD_VERSION", version)
+        .current_dir(&crate_dir);
+    run_status(&mut cargo, "Nordic serial DFU cargo build")?;
+
+    let output_dir = board_output(out_root, &board.slug, version);
+    fs::create_dir_all(&output_dir).map_err(|error| {
+        AppError::developer_artifact(format!(
+            "could not create {}: {error}",
+            output_dir.display()
+        ))
+    })?;
+    let work_dir = repo
+        .join("target")
+        .join("flash-artifacts")
+        .join("work")
+        .join(&board.slug);
+    fs::create_dir_all(&work_dir).map_err(|error| {
+        AppError::developer_artifact(format!("could not create work directory: {error}"))
+    })?;
+    let elf = target_directory
+        .join(&build.rust_target)
+        .join("release")
+        .join(&build.binary);
+    let application_path = work_dir.join(&build.application_filename);
+    run_status(
+        Command::new(llvm_objcopy()?.as_os_str())
+            .arg("-O")
+            .arg("binary")
+            .arg(&elf)
+            .arg(&application_path),
+        "llvm-objcopy",
+    )?;
+    let application = fs::read(&application_path).map_err(|error| {
+        AppError::developer_artifact(format!(
+            "could not read {}: {error}",
+            application_path.display()
+        ))
+    })?;
+    let application_base =
+        parse_catalog_hex_u32("application base", &build.compatibility.application_base)?;
+    let application_end_exclusive = parse_catalog_hex_u32(
+        "exclusive application end",
+        &build.compatibility.application_end_exclusive,
+    )?;
+    let maximum_application_bytes = application_end_exclusive
+        .checked_sub(application_base)
+        .ok_or_else(|| {
+            AppError::developer_manifest(format!(
+                "{} application region is empty",
+                board.display_name
+            ))
+        })?;
+    if application.len() as u64 > u64::from(maximum_application_bytes) {
+        return Err(AppError::developer_artifact(format!(
+            "{} application is {} bytes; serial DFU accepts at most {maximum_application_bytes}",
+            board.display_name,
+            application.len()
+        )));
+    }
+    let init_packet_spec = nrf_init_packet_spec(&build.compatibility)?;
+    let init_packet = ApplicationInitPacket::build(&application, &init_packet_spec)
+        .map_err(|error| AppError::developer_artifact(error.to_string()))?
+        .bytes()
+        .to_vec();
+    atomic_write(&output_dir.join(&build.application_filename), &application)?;
+    atomic_write(&output_dir.join(&build.init_packet_filename), &init_packet)?;
+
+    let recovery_path = output_dir.join(&build.recovery.filename);
+    run_status(
+        Command::new(if cfg!(windows) { "python" } else { "python3" })
+            .arg(repo.join("tools").join("device").join("bin2uf2.py"))
+            .arg(&application_path)
+            .arg(&recovery_path)
+            .arg(&build.compatibility.application_base)
+            .arg(&build.recovery.family_id),
+        "bin2uf2.py",
+    )?;
+    let recovery_uf2 = fs::read(&recovery_path).map_err(|error| {
+        AppError::developer_artifact(format!("could not read recovery UF2: {error}"))
+    })?;
+    let dfu_manifest = NrfSerialDfuManifest {
+        compatibility: build.compatibility.clone(),
+        application: release_artifact(
+            board,
+            version,
+            &build.application_filename,
+            FlashPartKind::DfuApplication,
+            &application,
+        ),
+        init_packet: release_artifact(
+            board,
+            version,
+            &build.init_packet_filename,
+            FlashPartKind::DfuInitPacket,
+            &init_packet,
+        ),
+        recovery: NrfSerialDfuRecoveryManifest {
+            mount_label: build.recovery.mount_label.clone(),
+            board_id_prefix: build.recovery.board_id_prefix.clone(),
+            family_id: build.recovery.family_id.clone(),
+            artifact: release_artifact(
+                board,
+                version,
+                &build.recovery.filename,
+                FlashPartKind::Uf2,
+                &recovery_uf2,
+            ),
+        },
+    };
+    let target = target_record(
+        board,
+        BuiltTargetArtifacts::NrfSerialDfu(Box::new(dfu_manifest)),
+    );
+    write_target_record(&output_dir, &target)?;
+    write_source_capability_record(&output_dir, board)?;
+    let (_, target) = validated_prepared_target(board, version, target)?;
+    let ReleaseTarget::NrfSerialDfu(target) = target else {
+        return Err(AppError::developer_manifest(
+            "built target did not validate as Nordic serial DFU",
+        ));
+    };
+    DfuImage::from_artifacts(&application, &init_packet, &init_packet_spec)
+        .map_err(|error| AppError::developer_artifact(error.to_string()))?;
+    validate_nrf_serial_dfu_recovery_artifact(&target, &application, &recovery_uf2)
+        .map_err(|error| AppError::developer_artifact(error.to_string()))?;
+    reporter.phase(
+        Phase::ArtifactReady,
+        Some(&board.slug),
+        "Nordic serial DFU and recovery artifacts are ready.",
+    );
+    let target_record = output_dir.join("target.json");
+    Ok(BuildOutput {
+        prepared: None,
+        output_dir,
+        target_record,
+    })
+}
+
+fn nrf_init_packet_spec(
+    compatibility: &prns_flash_manifest::NrfSerialDfuCompatibility,
+) -> Result<ApplicationInitPacketSpec, AppError> {
+    let fwid = SoftdeviceFirmwareId::new(parse_catalog_hex_u16("FWID", &compatibility.fwid)?)
+        .map_err(|error| AppError::developer_manifest(error.to_string()))?;
+    Ok(ApplicationInitPacketSpec {
+        device_type: DfuDeviceType::new(parse_catalog_hex_u16(
+            "device type",
+            &compatibility.device_type,
+        )?),
+        device_revision: DfuDeviceRevision::new(compatibility.device_revision),
+        application_version: match compatibility.application_version {
+            NrfDfuApplicationVersion::NotEnforced => ApplicationVersion::NotEnforced,
+        },
+        softdevices: SoftdeviceRequirements::new(fwid, std::iter::empty())
+            .map_err(|error| AppError::developer_manifest(error.to_string()))?,
+    })
+}
+
+fn parse_catalog_hex_u16(label: &str, value: &str) -> Result<u16, AppError> {
+    let digits = value.strip_prefix("0x").ok_or_else(|| {
+        AppError::developer_manifest(format!("invalid Nordic DFU {label} {value:?}"))
+    })?;
+    u16::from_str_radix(digits, 16).map_err(|error| {
+        AppError::developer_manifest(format!("invalid Nordic DFU {label} {value:?}: {error}"))
+    })
+}
+
+fn parse_catalog_hex_u32(label: &str, value: &str) -> Result<u32, AppError> {
+    let digits = value.strip_prefix("0x").ok_or_else(|| {
+        AppError::developer_manifest(format!("invalid Nordic DFU {label} {value:?}"))
+    })?;
+    u32::from_str_radix(digits, 16).map_err(|error| {
+        AppError::developer_manifest(format!("invalid Nordic DFU {label} {value:?}: {error}"))
+    })
+}
+
+fn release_artifact(
+    board: &BoardCatalogEntry,
+    version: &str,
+    filename: &str,
+    kind: FlashPartKind,
+    bytes: &[u8],
+) -> FlashPart {
+    FlashPart {
+        kind,
+        path: release_part_path(&board.slug, version, filename),
+        offset: None,
+        size: bytes.len() as u64,
+        sha256: sha256_hex(bytes),
+    }
+}
+
+fn llvm_objcopy() -> Result<PathBuf, AppError> {
+    let host_triple = rust_host_triple()?;
+    let sysroot = capture_stdout(Command::new("rustc").arg("--print").arg("sysroot"), "rustc")?;
+    Ok(Path::new(sysroot.trim())
+        .join("lib")
+        .join("rustlib")
+        .join(host_triple.trim())
+        .join("bin")
+        .join("llvm-objcopy"))
+}
+
 fn compatible_uf2_build_variants<'a>(
     build: &'a prns_flash_manifest::Uf2Build,
     softdevice: Option<&SoftdeviceIdentity>,
@@ -572,14 +819,22 @@ fn write_source_capability_record(
     )
 }
 
-fn target_record(
-    board: &BoardCatalogEntry,
-    parts: Vec<FlashPart>,
-    variants: Vec<Uf2VariantManifest>,
-) -> TargetManifest {
+enum BuiltTargetArtifacts {
+    Esp(Vec<FlashPart>),
+    Uf2(Vec<Uf2VariantManifest>),
+    NrfSerialDfu(Box<NrfSerialDfuManifest>),
+}
+
+fn target_record(board: &BoardCatalogEntry, artifacts: BuiltTargetArtifacts) -> TargetManifest {
     let esp = match &board.build {
         BoardBuild::Esp(build) => Some(build),
         BoardBuild::Uf2(_) => None,
+        BoardBuild::NrfSerialDfu(_) => None,
+    };
+    let (parts, variants, nrf_serial_dfu) = match artifacts {
+        BuiltTargetArtifacts::Esp(parts) => (parts, Vec::new(), None),
+        BuiltTargetArtifacts::Uf2(variants) => (Vec::new(), variants, None),
+        BuiltTargetArtifacts::NrfSerialDfu(manifest) => (Vec::new(), Vec::new(), Some(*manifest)),
     };
     TargetManifest {
         board_slug: board.slug.clone(),
@@ -596,6 +851,7 @@ fn target_record(
         preparation_profile: board.preparation_profile.clone(),
         parts,
         variants,
+        nrf_serial_dfu,
         provisioning: board.provisioning.clone(),
         source: None,
     }
@@ -783,12 +1039,13 @@ mod tests {
     #[test]
     fn all_catalog_boards_have_a_build_recipe() -> Result<(), Box<dyn std::error::Error>> {
         let catalog = prns_flash_manifest::board_catalog()?;
-        assert_eq!(catalog.boards.len(), 5);
+        assert_eq!(catalog.boards.len(), 6);
         assert!(catalog.boards.iter().all(|board| {
             matches!(
                 (&board.transport, &board.build),
                 (Transport::EspSerial, BoardBuild::Esp(_))
                     | (Transport::Uf2MassStorage, BoardBuild::Uf2(_))
+                    | (Transport::NrfSerialDfu, BoardBuild::NrfSerialDfu(_))
             )
         }));
         Ok(())

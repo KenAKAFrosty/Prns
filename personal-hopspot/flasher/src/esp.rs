@@ -150,6 +150,11 @@ fn real_session(
                 "UF2 board cannot use the ESP engine",
             ));
         }
+        prns_flash_manifest::BoardBuild::NrfSerialDfu(_) => {
+            return Err(AppError::unsupported_operation(
+                "Nordic serial DFU board cannot use the ESP engine",
+            ));
+        }
     };
     Ok(EspflashSession::new(
         selected,

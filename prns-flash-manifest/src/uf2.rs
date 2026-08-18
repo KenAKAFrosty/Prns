@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use thiserror::Error;
 
-use crate::{SoftdeviceIdentity, Uf2BoardIdPrefix, Uf2Variant};
+use crate::{NrfSerialDfuTarget, SoftdeviceIdentity, Uf2BoardIdPrefix, Uf2Variant};
 
 const MAX_INFO_UF2_BYTES: usize = 4096;
 const MAX_INFO_UF2_LINE_BYTES: usize = 512;
@@ -123,14 +123,16 @@ impl Uf2BootloaderIdentity {
     }
 
     pub fn matches_board(&self, prefix: &Uf2BoardIdPrefix) -> bool {
-        self.board_id
-            .strip_prefix(prefix.as_str())
-            .is_some_and(|revision| {
-                !revision.is_empty()
-                    && revision
-                        .bytes()
-                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'.')
-            })
+        self.board_id == prefix.as_str()
+            || self
+                .board_id
+                .strip_prefix(prefix.as_str())
+                .is_some_and(|revision| {
+                    !revision.is_empty()
+                        && revision
+                            .bytes()
+                            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'.')
+                })
     }
 }
 
@@ -178,13 +180,68 @@ pub enum Uf2IdentityError {
 }
 
 pub fn validate_uf2_artifact(variant: &Uf2Variant, bytes: &[u8]) -> Result<(), Uf2ArtifactError> {
+    validate_uf2_bytes(
+        variant.compatibility().application_base(),
+        T_ECHO_APPLICATION_FLASH_END,
+        variant.compatibility().family_id(),
+        bytes,
+    )
+}
+
+pub fn validate_nrf_serial_dfu_recovery_artifact(
+    target: &NrfSerialDfuTarget,
+    application: &[u8],
+    recovery: &[u8],
+) -> Result<(), Uf2ArtifactError> {
+    validate_uf2_bytes(
+        target.compatibility().application_base(),
+        target.compatibility().application_end_exclusive(),
+        target.recovery().family_id(),
+        recovery,
+    )?;
+    validate_recovery_application(application, recovery)
+}
+
+fn validate_recovery_application(
+    application: &[u8],
+    recovery: &[u8],
+) -> Result<(), Uf2ArtifactError> {
+    let expected_blocks = application.len().div_ceil(UF2_PAYLOAD_BYTES as usize);
+    let actual_blocks = recovery.len() / UF2_BLOCK_BYTES;
+    if application.is_empty() || actual_blocks != expected_blocks {
+        return Err(Uf2ArtifactError::ApplicationLength {
+            application_bytes: application.len(),
+            uf2_blocks: actual_blocks,
+        });
+    }
+    for (index, block) in recovery.chunks_exact(UF2_BLOCK_BYTES).enumerate() {
+        let application_offset = index * UF2_PAYLOAD_BYTES as usize;
+        let application_end =
+            (application_offset + UF2_PAYLOAD_BYTES as usize).min(application.len());
+        let expected = &application[application_offset..application_end];
+        let payload = &block[UF2_DATA_OFFSET..UF2_DATA_OFFSET + UF2_PAYLOAD_BYTES as usize];
+        if payload[..expected.len()] != *expected
+            || payload[expected.len()..].iter().any(|byte| *byte != 0)
+        {
+            return Err(Uf2ArtifactError::ApplicationData(index as u32));
+        }
+    }
+    Ok(())
+}
+
+fn validate_uf2_bytes(
+    application_base: u32,
+    application_end_exclusive: u32,
+    family_id: u32,
+    bytes: &[u8],
+) -> Result<(), Uf2ArtifactError> {
     if bytes.is_empty() || !bytes.len().is_multiple_of(UF2_BLOCK_BYTES) {
         return Err(Uf2ArtifactError::Length(bytes.len()));
     }
     let block_count = bytes.len() / UF2_BLOCK_BYTES;
     let declared_blocks =
         u32::try_from(block_count).map_err(|_| Uf2ArtifactError::Length(bytes.len()))?;
-    let mut expected_address = variant.compatibility().application_base();
+    let mut expected_address = application_base;
     for (index, block) in bytes.chunks_exact(UF2_BLOCK_BYTES).enumerate() {
         let block_number =
             u32::try_from(index).map_err(|_| Uf2ArtifactError::Length(bytes.len()))?;
@@ -200,7 +257,7 @@ pub fn validate_uf2_artifact(variant: &Uf2Variant, bytes: &[u8]) -> Result<(), U
         if word(block, 20) != block_number || word(block, 24) != declared_blocks {
             return Err(Uf2ArtifactError::Order(block_number));
         }
-        if word(block, 28) != variant.compatibility().family_id() {
+        if word(block, 28) != family_id {
             return Err(Uf2ArtifactError::Family(block_number));
         }
         let address = word(block, 12);
@@ -214,7 +271,7 @@ pub fn validate_uf2_artifact(variant: &Uf2Variant, bytes: &[u8]) -> Result<(), U
         let end = address
             .checked_add(payload)
             .ok_or(Uf2ArtifactError::Bounds(block_number))?;
-        if end > T_ECHO_APPLICATION_FLASH_END {
+        if end > application_end_exclusive {
             return Err(Uf2ArtifactError::Bounds(block_number));
         }
         expected_address = end;
@@ -257,6 +314,13 @@ pub enum Uf2ArtifactError {
     Bounds(u32),
     #[error("UF2 block {0} has nonzero bytes outside its payload")]
     Padding(u32),
+    #[error("UF2 recovery has {uf2_blocks} blocks for a {application_bytes}-byte application")]
+    ApplicationLength {
+        application_bytes: usize,
+        uf2_blocks: usize,
+    },
+    #[error("UF2 block {0} does not contain the exact application bytes")]
+    ApplicationData(u32),
 }
 
 #[cfg(test)]
@@ -329,6 +393,10 @@ mod tests {
             assert_eq!(identity.softdevice().version().as_str(), version);
             assert_eq!(identity.bootloader_version(), "0.6.1-2-g1224915");
         }
+        let prefix = Uf2BoardIdPrefix::parse("nrf52840-t1000-e-v1".to_string()).expect("prefix");
+        let identity = Uf2BootloaderIdentity::parse(&info("\n", "nRF52840-T1000-E-v1", "7.3.0"))
+            .expect("valid descriptor");
+        assert!(identity.matches_board(&prefix));
     }
 
     #[test]
@@ -399,5 +467,33 @@ mod tests {
             validate_uf2_artifact(&v7, &padding),
             Err(Uf2ArtifactError::Padding(0))
         ));
+    }
+
+    #[test]
+    fn recovery_uf2_contains_the_exact_application() {
+        let application = (0..300).map(|value| value as u8).collect::<Vec<_>>();
+        let mut recovery = artifact(0x27000, 0xada5_2840, 2);
+        recovery[UF2_DATA_OFFSET..UF2_DATA_OFFSET + 256].copy_from_slice(&application[..256]);
+        recovery[UF2_BLOCK_BYTES + UF2_DATA_OFFSET
+            ..UF2_BLOCK_BYTES + UF2_DATA_OFFSET + application.len() - 256]
+            .copy_from_slice(&application[256..]);
+        assert_eq!(
+            validate_recovery_application(&application, &recovery),
+            Ok(())
+        );
+
+        let mut altered = recovery.clone();
+        altered[UF2_BLOCK_BYTES + UF2_DATA_OFFSET] ^= 1;
+        assert_eq!(
+            validate_recovery_application(&application, &altered),
+            Err(Uf2ArtifactError::ApplicationData(1))
+        );
+
+        let mut padded = recovery;
+        padded[UF2_BLOCK_BYTES + UF2_DATA_OFFSET + application.len() - 256] = 1;
+        assert_eq!(
+            validate_recovery_application(&application, &padded),
+            Err(Uf2ArtifactError::ApplicationData(1))
+        );
     }
 }

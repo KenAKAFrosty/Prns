@@ -234,6 +234,7 @@ fn execute_flash(
         let detected_uf2 = match board.transport {
             Transport::EspSerial => None,
             Transport::Uf2MassStorage => Some(uf2::detect_device(board, request.mount)?),
+            Transport::NrfSerialDfu => None,
         };
         let repo = repo_root()?;
         let prepared = match &detected_uf2 {
@@ -272,6 +273,7 @@ fn execute_flash(
         let detected_uf2 = match board.transport {
             Transport::EspSerial => None,
             Transport::Uf2MassStorage => Some(uf2::detect_device(board, request.mount)?),
+            Transport::NrfSerialDfu => None,
         };
         let prepared = verified.prepare(
             detected_uf2.as_ref().map(|device| device.softdevice()),
@@ -330,8 +332,8 @@ fn guided(catalog: &BoardCatalog, reporter: Reporter) -> Result<(), AppError> {
         ));
     }
     ui::print_header();
-    let labels = catalog
-        .boards
+    let boards = catalog.shipping_boards().collect::<Vec<_>>();
+    let labels = boards
         .iter()
         .map(|board| {
             format!(
@@ -346,8 +348,7 @@ fn guided(catalog: &BoardCatalog, reporter: Reporter) -> Result<(), AppError> {
     else {
         return Ok(());
     };
-    let board = catalog
-        .boards
+    let board = boards
         .get(index)
         .ok_or_else(|| AppError::configuration("board selection is out of range"))?;
     println!();
@@ -449,13 +450,14 @@ fn confirm_pinned_version(
 }
 
 fn list_boards(catalog: &BoardCatalog, json: bool) -> Result<(), AppError> {
+    let boards = catalog.shipping_boards().collect::<Vec<_>>();
     if json {
         #[derive(Serialize)]
         struct BoardListEvent<'a> {
             schema: u8,
             event: &'static str,
             phase: &'static str,
-            boards: &'a [BoardCatalogEntry],
+            boards: &'a [&'a BoardCatalogEntry],
         }
         println!(
             "{}",
@@ -463,11 +465,11 @@ fn list_boards(catalog: &BoardCatalog, json: bool) -> Result<(), AppError> {
                 schema: 1,
                 event: "board_list",
                 phase: "complete",
-                boards: &catalog.boards,
+                boards: &boards,
             })?
         );
     } else {
-        for board in &catalog.boards {
+        for board in boards {
             println!(
                 "{:<20} {:<12} {}",
                 board.slug,
@@ -758,6 +760,7 @@ const fn transport_label(transport: Transport) -> &'static str {
     match transport {
         Transport::EspSerial => "ESP serial",
         Transport::Uf2MassStorage => "UF2",
+        Transport::NrfSerialDfu => "Nordic serial DFU",
     }
 }
 

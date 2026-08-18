@@ -776,7 +776,8 @@ mod tests {
     use super::*;
     use prns_flash_manifest::{
         board_catalog, BoardBuild, ChannelDescriptor, FlashManifest, FlashPart, FlashPartKind,
-        ReleaseInfo, SigningInfo, TargetManifest, Uf2VariantManifest, FLASH_MANIFEST_SCHEMA,
+        OfflineKeySigningInfo, ReleaseInfo, TargetManifest, Uf2VariantManifest,
+        FLASH_MANIFEST_SCHEMA,
     };
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -839,8 +840,7 @@ mod tests {
         let catalog = board_catalog().expect("catalog");
         let mut application_path = None;
         let targets = catalog
-            .boards
-            .iter()
+            .shipping_boards()
             .map(|board| {
                 let (flash_mode, flash_frequency, before_reset, after_reset, recipes) =
                     match &board.build {
@@ -859,7 +859,9 @@ mod tests {
                                 (FlashPartKind::Application, "application.bin", Some(0x10000)),
                             ],
                         ),
-                        BoardBuild::Uf2(_) => (None, None, None, None, Vec::new()),
+                        BoardBuild::Uf2(_) | BoardBuild::NrfSerialDfu(_) => {
+                            (None, None, None, None, Vec::new())
+                        }
                     };
                 let parts = recipes
                     .into_iter()
@@ -904,6 +906,7 @@ mod tests {
                             }
                         })
                         .collect(),
+                    BoardBuild::NrfSerialDfu(_) => Vec::new(),
                 };
                 TargetManifest {
                     board_slug: board.slug.clone(),
@@ -920,19 +923,20 @@ mod tests {
                     preparation_profile: board.preparation_profile.clone(),
                     parts,
                     variants,
+                    nrf_serial_dfu: None,
                     provisioning: board.provisioning.clone(),
                     source: None,
                 }
             })
             .collect();
         let manifest = FlashManifest {
-            schema: FLASH_MANIFEST_SCHEMA,
+            schema_version: FLASH_MANIFEST_SCHEMA,
             release: ReleaseInfo {
                 version: version.to_string(),
                 channel: ReleaseChannel::Preview,
                 commit: "0123456789abcdef0123456789abcdef01234567".to_string(),
             },
-            signing: SigningInfo {
+            signing: OfflineKeySigningInfo {
                 key_id: "1FB2CA18B2C25E1F".to_string(),
             },
             targets,
@@ -948,7 +952,7 @@ mod tests {
         sign_fixture(directory.path(), "flash-manifest.json");
 
         let descriptor = ChannelDescriptor {
-            schema: 1,
+            schema_version: 1,
             channel: ReleaseChannel::Preview,
             version: version.to_string(),
             manifest_url: format!("https://reticulum.rs/releases/{version}/flash-manifest.json"),

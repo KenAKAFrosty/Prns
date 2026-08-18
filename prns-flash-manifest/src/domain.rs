@@ -2,9 +2,11 @@ mod target;
 mod values;
 
 pub use target::{
-    EspFlashPart, EspSerialTarget, ReleasePartRef, ReleaseTarget, SoftdeviceFamily,
-    SoftdeviceIdentity, SoftdeviceVersion, Uf2Compatibility, Uf2Part, Uf2Target, Uf2Variant,
-    ValidatedChannelDescriptor, ValidatedFlashManifest, ValidatedReleaseInfo, ValidatedSigningInfo,
+    EspFlashPart, EspSerialTarget, NrfSerialDfuArtifact, NrfSerialDfuRecovery, NrfSerialDfuTarget,
+    ReleasePartRef, ReleaseTarget, SoftdeviceFamily, SoftdeviceIdentity, SoftdeviceVersion,
+    Uf2Compatibility, Uf2Part, Uf2Target, Uf2Variant, ValidatedChannelDescriptor,
+    ValidatedFlashManifest, ValidatedNrfSerialDfuCompatibility, ValidatedOfflineKeySigningInfo,
+    ValidatedReleaseInfo,
 };
 pub use values::{
     AfterResetStrategy, BeforeResetStrategy, BoardId, ChipFamily, DomainValueError, FlashFrequency,

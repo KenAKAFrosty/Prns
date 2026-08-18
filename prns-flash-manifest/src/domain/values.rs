@@ -7,7 +7,6 @@ use crate::{ProvisioningDescriptor, TcpClientProvisioningDescriptor};
 const UF2_MOUNT_LABEL_MAX_BYTES: usize = 32;
 const UF2_BOARD_ID_PREFIX_MAX_BYTES: usize = 128;
 
-/// Failure to construct one of the validated release-domain values.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum DomainValueError {
     #[error("board ID {0:?} must use lowercase ASCII, digits, and hyphens")]
@@ -47,7 +46,6 @@ pub enum DomainValueError {
 macro_rules! validated_string {
     ($name:ident) => {
         impl $name {
-            /// Borrow the canonical wire spelling.
             pub fn as_str(&self) -> &str {
                 &self.0
             }
@@ -67,12 +65,10 @@ macro_rules! validated_string {
     };
 }
 
-/// Validated stable board identifier.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BoardId(String);
 
 impl BoardId {
-    /// Validate a public board identifier.
     pub fn parse(value: impl Into<String>) -> Result<Self, DomainValueError> {
         let value = value.into();
         let valid = !value.is_empty()
@@ -87,12 +83,10 @@ impl BoardId {
 
 validated_string!(BoardId);
 
-/// Validated UF2 bootloader volume label.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Uf2MountLabel(String);
 
 impl Uf2MountLabel {
-    /// Validate the cross-platform mount-label shape accepted by the browser bridge.
     pub fn parse(value: impl Into<String>) -> Result<Self, DomainValueError> {
         let value = value.into();
         let valid = (1..=UF2_MOUNT_LABEL_MAX_BYTES).contains(&value.len())
@@ -116,12 +110,10 @@ validated_string!(Uf2MountLabel);
 pub struct Uf2BoardIdPrefix(String);
 
 impl Uf2BoardIdPrefix {
-    /// Fold a bootloader-reported identity into the one spelling the catalog stores.
     pub fn normalize(value: &str) -> String {
         value.trim().to_ascii_lowercase().replace('_', "-")
     }
 
-    /// Require the catalog to store one bounded, already-normalized ASCII prefix.
     pub fn parse(value: impl Into<String>) -> Result<Self, DomainValueError> {
         let value = value.into();
         let valid = (1..=UF2_BOARD_ID_PREFIX_MAX_BYTES).contains(&value.len())
@@ -146,7 +138,6 @@ validated_string!(Uf2BoardIdPrefix);
 pub struct ReleaseVersion(String);
 
 impl ReleaseVersion {
-    /// Validate a version suitable for immutable release paths.
     pub fn parse(value: impl Into<String>) -> Result<Self, DomainValueError> {
         let value = value.into();
         let valid = !value.is_empty()
@@ -169,7 +160,6 @@ validated_string!(ReleaseVersion);
 pub struct KeyId(String);
 
 impl KeyId {
-    /// Validate and canonicalize a Minisign key identifier.
     pub fn parse(value: impl Into<String>) -> Result<Self, DomainValueError> {
         let value = value.into();
         if value.len() == 16 && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
@@ -187,7 +177,6 @@ validated_string!(KeyId);
 pub struct Sha256Digest(String);
 
 impl Sha256Digest {
-    /// Validate a lowercase SHA-256 wire value.
     pub fn parse(value: impl Into<String>) -> Result<Self, DomainValueError> {
         let value = value.into();
         if value.len() == 64
@@ -209,7 +198,6 @@ validated_string!(Sha256Digest);
 pub struct ImmutableArtifactPath(String);
 
 impl ImmutableArtifactPath {
-    /// Reject absolute, escaping, mutable, and URL-like artifact paths.
     pub fn parse(value: impl Into<String>) -> Result<Self, DomainValueError> {
         let value = value.into();
         let valid = !value.is_empty()
@@ -230,17 +218,13 @@ impl ImmutableArtifactPath {
 
 validated_string!(ImmutableArtifactPath);
 
-/// Espressif silicon families supported by public flash plans.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum ChipFamily {
-    /// ESP32-S3.
     Esp32S3,
-    /// ESP32-C6.
     Esp32C6,
 }
 
 impl ChipFamily {
-    /// Parse the catalog/manifest wire spelling.
     pub fn parse(value: &str) -> Result<Self, DomainValueError> {
         match value {
             "esp32s3" => Ok(Self::Esp32S3),
@@ -249,7 +233,6 @@ impl ChipFamily {
         }
     }
 
-    /// Return the canonical wire spelling.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Esp32S3 => "esp32s3",
@@ -264,30 +247,28 @@ impl fmt::Display for ChipFamily {
     }
 }
 
-/// Stable preparation-instruction profile.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum PreparationProfile {
-    /// Espressif USB serial bootloader preparation.
     EspUsbBoot,
-    /// T-Echo UF2 bootloader preparation.
     TechoUf2,
+    T1000eNrfDfu,
 }
 
 impl PreparationProfile {
-    /// Parse the catalog/manifest wire spelling.
     pub fn parse(value: &str) -> Result<Self, DomainValueError> {
         match value {
             "esp-usb-boot" => Ok(Self::EspUsbBoot),
             "techo-uf2" => Ok(Self::TechoUf2),
+            "t1000e-nrf-dfu" => Ok(Self::T1000eNrfDfu),
             _ => Err(DomainValueError::PreparationProfile(value.to_string())),
         }
     }
 
-    /// Return the canonical wire spelling.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::EspUsbBoot => "esp-usb-boot",
             Self::TechoUf2 => "techo-uf2",
+            Self::T1000eNrfDfu => "t1000e-nrf-dfu",
         }
     }
 }
@@ -295,14 +276,11 @@ impl PreparationProfile {
 /// Reset strategy used before an ESP connection.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum BeforeResetStrategy {
-    /// Conventional serial reset.
     DefaultReset,
-    /// Native USB reset.
     UsbReset,
 }
 
 impl BeforeResetStrategy {
-    /// Parse the catalog/manifest wire spelling.
     pub fn parse(value: &str) -> Result<Self, DomainValueError> {
         match value {
             "default-reset" => Ok(Self::DefaultReset),
@@ -311,7 +289,6 @@ impl BeforeResetStrategy {
         }
     }
 
-    /// Return the canonical wire spelling.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::DefaultReset => "default-reset",
@@ -323,14 +300,11 @@ impl BeforeResetStrategy {
 /// Reset strategy used only after every ESP part verifies.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum AfterResetStrategy {
-    /// Hardware reset.
     HardReset,
-    /// Watchdog reset.
     WatchdogReset,
 }
 
 impl AfterResetStrategy {
-    /// Parse the catalog/manifest wire spelling.
     pub fn parse(value: &str) -> Result<Self, DomainValueError> {
         match value {
             "hard-reset" => Ok(Self::HardReset),
@@ -339,7 +313,6 @@ impl AfterResetStrategy {
         }
     }
 
-    /// Return the canonical wire spelling.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::HardReset => "hard-reset",
@@ -348,10 +321,8 @@ impl AfterResetStrategy {
     }
 }
 
-/// Supported ESP flash mode.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum FlashMode {
-    /// Dual I/O.
     Dio,
 }
 
@@ -363,16 +334,13 @@ impl FlashMode {
         }
     }
 
-    /// Return the canonical wire spelling.
     pub const fn as_str(self) -> &'static str {
         "dio"
     }
 }
 
-/// Supported ESP flash frequency.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum FlashFrequency {
-    /// 40 MHz.
     Mhz40,
 }
 
@@ -384,21 +352,17 @@ impl FlashFrequency {
         }
     }
 
-    /// Return the canonical wire spelling.
     pub const fn as_str(self) -> &'static str {
         "40m"
     }
 }
 
-/// Supported local provisioning wire format.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum ProvisioningFormat {
-    /// HSPCFG1 versioned 4 KiB slot.
     Hspcfg1,
 }
 
 impl ProvisioningFormat {
-    /// Parse the provisioning format wire spelling.
     pub fn parse(value: &str) -> Result<Self, DomainValueError> {
         match value {
             "HSPCFG1" => Ok(Self::Hspcfg1),
@@ -406,7 +370,6 @@ impl ProvisioningFormat {
         }
     }
 
-    /// Return the canonical wire spelling.
     pub const fn as_str(self) -> &'static str {
         "HSPCFG1"
     }
@@ -441,12 +404,10 @@ impl ProvisioningSlot {
         self.reserved_size_bytes
     }
 
-    /// Maximum encoded SSID bytes.
     pub const fn ssid_max_bytes(&self) -> usize {
         self.ssid_max_bytes
     }
 
-    /// Maximum encoded password bytes.
     pub const fn password_max_bytes(&self) -> usize {
         self.password_max_bytes
     }

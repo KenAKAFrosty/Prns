@@ -349,6 +349,14 @@ fn selected_target_parts<'a>(
             })?;
             Ok(vec![ReleasePartRef::Uf2(variant.part())])
         }
+        ReleaseTarget::NrfSerialDfu(_) => {
+            if softdevice.is_some() {
+                return Err(AppError::trust_identity(
+                    "Nordic serial DFU target cannot use a UF2 compatibility selection",
+                ));
+            }
+            Ok(target.parts())
+        }
     }
 }
 
@@ -445,6 +453,7 @@ mod tests {
             preparation_profile: board.preparation_profile.clone(),
             parts,
             variants: Vec::new(),
+            nrf_serial_dfu: None,
             provisioning: board.provisioning.clone(),
             source: None,
         }
@@ -509,6 +518,7 @@ mod tests {
                     sha256: sha256_hex(bytes),
                 })
                 .collect(),
+            nrf_serial_dfu: None,
             provisioning: None,
             source: None,
         }
