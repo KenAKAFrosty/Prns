@@ -165,6 +165,7 @@ impl BoardTarget {
             "t-beam-supreme" => Some(&board_images::T_BEAM_SUPREME),
             "xiao-esp32-c6" => Some(&board_images::XIAO_ESP32_C6),
             "t-echo" => Some(&board_images::T_ECHO),
+            "seeed-card-tracker-t1000-e" => Some(&board_images::SEEED_CARD_TRACKER_T1000_E),
             _ => None,
         }
     }
@@ -219,16 +220,6 @@ pub const UPCOMING_BOARD_TARGETS: &[BoardTarget] = &[
         tier: Tier::BringUp,
         interfaces: &[],
         icon: Some("raspberrypi"),
-        preparation_profile: None,
-        flash_target: None,
-    },
-    BoardTarget {
-        name: "SenseCAP Card Tracker T1000-E",
-        slug: "seeed-card-tracker-t1000-e",
-        silicon: "nRF52840 + LR1110",
-        tier: Tier::BringUp,
-        interfaces: &[],
-        icon: Some("nordicsemiconductor"),
         preparation_profile: None,
         flash_target: None,
     },
@@ -698,7 +689,6 @@ mod tests {
                 "Heltec Mesh Node T096",
                 "Heltec Wireless Stick Lite V3",
                 "Raspberry Pi Zero 2 W",
-                "SenseCAP Card Tracker T1000-E",
                 "RAK WisBlock Starter Kit",
             ]
         );

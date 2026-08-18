@@ -25,6 +25,7 @@ transparent background inside a dark "slot" (`.flash-board-slot--inset` in
 | LilyGO T-Beam Supreme | https://lilygo.cc/products/t-beam-supreme | https://cdn.shopify.com/s/files/1/0617/7190/7253/files/LILYGO-T-BEAM_10_3bb84be5-da09-4626-8b93-99be997d49b8.jpg | white-knockout | vendor catalog image, nominative use |
 | Seeed XIAO ESP32-C6 | https://www.seeedstudio.com/Seeed-Studio-XIAO-ESP32C6-p-5884.html | https://media-cdn.seeedstudio.com/media/catalog/product/cache/bb49d3ec4ee05b6f018e93f896b8a25d/1/-/1-113991254-seeedxiao-esp32c6-45font_1.jpg | white-knockout | vendor catalog image, nominative use |
 | LilyGO T-Echo | https://lilygo.cc/products/t-echo-lilygo | https://cdn.shopify.com/s/files/1/0617/7190/7253/products/K142_3.jpg | white-knockout | vendor catalog image, nominative use |
+| SenseCAP Card Tracker T1000-E | https://www.seeedstudio.com/SenseCAP-Card-Tracker-T1000-E-for-Meshtastic-p-5913.html | https://media-cdn.seeedstudio.com/media/catalog/product/3/-/3-114993369-sensecap-card-tracker-t1000-e-for-meshtastic-45font.jpg | white-knockout (key 0.16: the 0.13 key left a gray studio-shadow halo; the dark shell tolerates the wider key and the silkscreen survives) | vendor catalog image, nominative use |
 
 All product images are shown nominatively, only to identify hardware (no
 endorsement implied); see the site footer disclaimer.
