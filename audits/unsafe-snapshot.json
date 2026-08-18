@@ -7378,6 +7378,7 @@
         ],
         "engine": [
           "alloc",
+          "default",
           "std"
         ],
         "esp32-c6": [
@@ -10092,11 +10093,17 @@
         ],
         "engine": [
           "auxvec",
+          "default",
           "elf",
           "errno",
           "general",
+          "if_ether",
           "ioctl",
-          "no_std"
+          "net",
+          "netlink",
+          "no_std",
+          "std",
+          "xdp"
         ],
         "host-c-linux": [
           "auxvec",
@@ -11375,13 +11382,13 @@
           "default",
           "evt-max-size-512",
           "macros",
-          "nrf-softdevice-s140",
           "nrf52840",
-          "s140"
+          "s140",
+          "s140-v7"
         ]
       },
       "name": "nrf-softdevice",
-      "source": "git+https://github.com/embassy-rs/nrf-softdevice?rev=47d6121c6e823120e8b883a7ac75f44ce7daa3aa#47d6121c6e823120e8b883a7ac75f44ce7daa3aa",
+      "source": "personal-hopspot/embedded/nrf52840/vendor/nrf-softdevice/nrf-softdevice",
       "unsafe": {
         "blocks": 123,
         "externs": 3,
@@ -11389,14 +11396,14 @@
         "impls": 14,
         "tokens": 159
       },
-      "version": "0.1.0"
+      "version": "0.1.0-prns.1"
     },
     {
       "graphs": {
         "nrf52840": []
       },
       "name": "nrf-softdevice-macro",
-      "source": "git+https://github.com/embassy-rs/nrf-softdevice?rev=47d6121c6e823120e8b883a7ac75f44ce7daa3aa#47d6121c6e823120e8b883a7ac75f44ce7daa3aa",
+      "source": "personal-hopspot/embedded/nrf52840/vendor/nrf-softdevice/nrf-softdevice-macro",
       "unsafe": {
         "blocks": 2,
         "externs": 0,
@@ -11410,8 +11417,8 @@
       "graphs": {
         "nrf52840": []
       },
-      "name": "nrf-softdevice-s140",
-      "source": "git+https://github.com/embassy-rs/nrf-softdevice?rev=47d6121c6e823120e8b883a7ac75f44ce7daa3aa#47d6121c6e823120e8b883a7ac75f44ce7daa3aa",
+      "name": "nrf-softdevice-s140-v7",
+      "source": "personal-hopspot/embedded/nrf52840/vendor/nrf-softdevice/nrf-softdevice-s140-v7",
       "unsafe": {
         "blocks": 676,
         "externs": 5,
@@ -11419,7 +11426,7 @@
         "impls": 0,
         "tokens": 822
       },
-      "version": "0.1.2"
+      "version": "0.1.2-prns.1"
     },
     {
       "graphs": {
@@ -16932,8 +16939,12 @@
         "engine": [
           "alloc",
           "default",
+          "event",
           "fs",
-          "std"
+          "mm",
+          "net",
+          "std",
+          "time"
         ],
         "host-c-linux": [
           "alloc",
@@ -18380,6 +18391,7 @@
           "std"
         ],
         "engine": [
+          "default",
           "std"
         ],
         "esp32-c6": [
@@ -19643,17 +19655,18 @@
       "graphs": {
         "nrf52840": [
           "board-t-echo",
-          "default"
+          "default",
+          "softdevice-s140-v7"
         ]
       },
       "name": "t-echo",
       "source": "personal-hopspot/embedded/nrf52840",
       "unsafe": {
-        "blocks": 4,
-        "externs": 0,
-        "functions": 1,
-        "impls": 1,
-        "tokens": 6
+        "blocks": 1475,
+        "externs": 13,
+        "functions": 298,
+        "impls": 15,
+        "tokens": 1802
       },
       "version": "0.1.0"
     },
