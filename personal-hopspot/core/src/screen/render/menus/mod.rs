@@ -22,7 +22,7 @@ use crate::screen::state::{
 
 use super::glyphs::{draw_global_icon, draw_interface_icon, draw_menu_cursor};
 use super::layout::*;
-use super::metrics::{fmt_bytes, fmt_rate_bytes_per_sec};
+use super::metrics::{fmt_bytes, fmt_count, fmt_rate_bytes_per_sec};
 use super::primitives::{fill, line};
 
 fn menu_item_backing_width(label: &str) -> u32 {
@@ -247,7 +247,12 @@ fn fmt_limit_value(value: LimitValue) -> HString<12> {
     let mut s = HString::new();
     match value {
         LimitValue::Count(value) => {
-            let _ = write!(s, "{value}");
+            // Every other number on this face is compacted, and this one was
+            // not: 500,000 packet hashes came out as six raw digits, which is
+            // two characters more than a 64 pixel panel can draw. fmt_count
+            // leaves anything under a thousand alone, so no board-sized
+            // capacity changes.
+            let _ = write!(s, "{}", fmt_count(value));
         }
         LimitValue::Bytes(value) => {
             let _ = write!(s, "{}", fmt_bytes(value));
@@ -266,9 +271,18 @@ fn fmt_limit_value(value: LimitValue) -> HString<12> {
     s
 }
 
+/// The exact string a limits row draws. Shared with the test that asserts
+/// every row fits, so the check cannot drift from the drawing.
+pub(in crate::screen) fn limits_row_text(row: LimitRow) -> HString<16> {
+    let mut s = HString::new();
+    let _ = write!(s, "{} {}", row.label, fmt_limit_value(row.value));
+    s
+}
+
 fn draw_limits_text<D: DrawTarget<Color = BinaryColor>>(display: &mut D, y: i32, text: &str) {
     let style = MonoTextStyle::new(&FONT_5X8, BinaryColor::On);
-    let _ = Text::with_baseline(text, Point::new(2, y), style, Baseline::Top).draw(display);
+    let _ =
+        Text::with_baseline(text, Point::new(LIMITS_TEXT_X, y), style, Baseline::Top).draw(display);
 }
 
 pub(super) fn draw_limits_page<D: DrawTarget<Color = BinaryColor>>(
@@ -296,9 +310,7 @@ pub(super) fn draw_limits_page<D: DrawTarget<Color = BinaryColor>>(
 
     let start = page * LIMITS_PER_PAGE;
     for (offset, row) in rows.iter().skip(start).take(LIMITS_PER_PAGE).enumerate() {
-        let value = fmt_limit_value(row.value);
-        let mut line_buf: HString<16> = HString::new();
-        let _ = write!(line_buf, "{} {value}", row.label);
+        let line_buf = limits_row_text(*row);
         draw_limits_text(display, CARD_TOP + 29 + offset as i32 * 11, &line_buf);
     }
 }
