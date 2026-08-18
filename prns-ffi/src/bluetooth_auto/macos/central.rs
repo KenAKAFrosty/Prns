@@ -27,6 +27,36 @@ use super::{
     PeripheralTable, RestoredPeripherals, SendCharacteristicRef, SendPeripheral,
 };
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum DiscoverDisposition {
+    Adopt,
+    Ignore,
+    CancelStale,
+}
+
+/// Decide what a CoreBluetooth advertisement means when the OS still has a link.
+///
+/// MeshTower (and other hopspots) stop advertising while connected, so an advertisement from a
+/// peripheral that CoreBluetooth still reports as connected *and that we no longer have a session
+/// for* is a reboot: the radio came back up before the Mac dropped the zombie GATT link. Cancelling
+/// that link lets the next advertisement be adopted instead of waiting for the supervision timeout
+/// or a daemon restart.
+///
+/// Duplicate ads while we still own the session are normal (`allowDuplicates`) and must be ignored,
+/// or a healthy connection is torn down a second after handshake.
+pub(super) const fn discover_disposition(
+    disconnected: bool,
+    has_session: bool,
+) -> DiscoverDisposition {
+    if disconnected {
+        DiscoverDisposition::Adopt
+    } else if has_session {
+        DiscoverDisposition::Ignore
+    } else {
+        DiscoverDisposition::CancelStale
+    }
+}
+
 pub(super) fn is_system_connected(
     central: &CBCentralManager,
     peer_id: CoreBluetoothPeerId,
@@ -326,15 +356,31 @@ define_class!(
         #[unsafe(method(centralManager:didDiscoverPeripheral:advertisementData:RSSI:))]
         fn did_discover(
             &self,
-            _central: &CBCentralManager,
+            central: &CBCentralManager,
             peripheral: &CBPeripheral,
             _advertisement_data: &NSDictionary<NSString, AnyObject>,
             rssi: &NSNumber,
         ) {
+            let peer_id = core_bluetooth_peer_id(peripheral);
             // SAFETY: CoreBluetooth supplied this live peripheral to its delegate on the manager
             // queue, so querying immutable framework state is valid.
-            if unsafe { peripheral.state() } != CBPeripheralState::Disconnected {
-                return;
+            let state = unsafe { peripheral.state() };
+            match discover_disposition(
+                state == CBPeripheralState::Disconnected,
+                self.ivars().sessions.borrow().contains_key(&peer_id),
+            ) {
+                DiscoverDisposition::Ignore => return,
+                DiscoverDisposition::CancelStale => {
+                    crate::diagnostic_log::debug!(
+                        "bluetooth: {:02x?} is advertising while CoreBluetooth still holds a link — cancelling the stale connection",
+                        peer_id.address().octets()
+                    );
+                    // SAFETY: `central` and `peripheral` are the live objects for this callback,
+                    // delivered on the manager's serial queue.
+                    unsafe { central.cancelPeripheralConnection(peripheral) };
+                    return;
+                }
+                DiscoverDisposition::Adopt => {}
             }
             let dbm = rssi.integerValue();
             let rssi = if dbm == 127 {
@@ -342,7 +388,6 @@ define_class!(
             } else {
                 i8::try_from(dbm).ok()
             };
-            let peer_id = core_bluetooth_peer_id(peripheral);
             let address = peer_id.address();
             if let Ok(mut map) = self.ivars().peripherals.lock() {
                 map.insert(peer_id, (SendPeripheral(peripheral.retain()), rssi));

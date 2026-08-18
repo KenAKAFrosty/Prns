@@ -675,14 +675,21 @@ impl PeripheralDelegate {
             // SAFETY: this authoritative CoreBluetooth state query runs on the retained manager's
             // serial dispatch queue.
             let is_advertising = unsafe { manager.isAdvertising() };
-            if mode.is_on() && !is_advertising {
-                let uuid = service_uuid();
-                let services = NSArray::from_slice(&[&*uuid]);
-                let data = advertisement_data(&services);
-                // SAFETY: the retained manager is messaged on its serial dispatch queue and the
-                // advertisement dictionary remains live for the synchronous call.
-                unsafe { manager.startAdvertising(Some(&data)) };
-            } else if !mode.is_on() && is_advertising {
+            if mode.is_on() {
+                let restart = cfg!(target_os = "macos") && is_advertising;
+                if restart {
+                    // SAFETY: the retained manager is messaged only on its serial dispatch queue.
+                    unsafe { manager.stopAdvertising() };
+                }
+                if restart || !is_advertising {
+                    let uuid = service_uuid();
+                    let services = NSArray::from_slice(&[&*uuid]);
+                    let data = advertisement_data(&services);
+                    // SAFETY: the retained manager is messaged on its serial dispatch queue and the
+                    // advertisement dictionary remains live for the synchronous call.
+                    unsafe { manager.startAdvertising(Some(&data)) };
+                }
+            } else if is_advertising {
                 // SAFETY: the retained manager is messaged only on its serial dispatch queue.
                 unsafe { manager.stopAdvertising() };
                 crate::diagnostic_log::debug!(

@@ -34,6 +34,7 @@ use super::{
 
 const POWER_ON_TIMEOUT: Duration = Duration::from_secs(10);
 const DIAL_TIMEOUT: Duration = Duration::from_secs(15);
+const RADIO_REFRESH_INTERVAL: Duration = Duration::from_secs(20);
 
 #[derive(Default)]
 pub(super) struct StartupReadiness {
@@ -81,6 +82,29 @@ fn cancel_connection(central: &SendCentralManager, peripheral: &SendPeripheral) 
     // SAFETY: both retained objects remain alive through this call and are messaged only on the
     // CoreBluetooth serial dispatch queue.
     unsafe { central.0.cancelPeripheralConnection(&peripheral.0) };
+}
+
+fn apply_scanning(central: SendCentralManager, enabled: bool, restart: bool) {
+    // SAFETY: this authoritative CoreBluetooth state query runs on the retained manager's
+    // serial dispatch queue.
+    let is_scanning = unsafe { central.0.isScanning() };
+    if enabled {
+        if is_scanning && restart {
+            // SAFETY: the retained central manager is only messaged on its serial dispatch queue.
+            unsafe { central.0.stopScan() };
+            start_scan(&central.0);
+            crate::diagnostic_log::debug!(
+                "bluetooth: restarted Prns scan so late-arriving peers can be sighted"
+            );
+        } else if !is_scanning {
+            start_scan(&central.0);
+            crate::diagnostic_log::debug!("bluetooth: scanning for Prns peers");
+        }
+    } else if is_scanning {
+        // SAFETY: the retained central manager is only messaged on its serial dispatch queue.
+        unsafe { central.0.stopScan() };
+        crate::diagnostic_log::debug!("bluetooth: scanning stopped — at connection capacity");
+    }
 }
 
 fn begin_dial(command: DialCommand) {
@@ -143,6 +167,9 @@ pub struct MacosBleBackend {
     restored: RestoredPeripherals,
     dials: JoinSet<DialTaskOutcome>,
     queue: DispatchRetained<DispatchQueue>,
+    scan_enabled: bool,
+    advertise_enabled: bool,
+    radio_refresh_at: tokio::time::Instant,
 }
 
 struct NativeThread {
@@ -349,6 +376,9 @@ impl PreparedMacosBleBackend {
             restored: self.restored,
             dials: JoinSet::new(),
             queue,
+            scan_enabled: false,
+            advertise_enabled: false,
+            radio_refresh_at: tokio::time::Instant::now() + RADIO_REFRESH_INTERVAL,
         })
     }
 }
@@ -358,29 +388,17 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
     type Link = GattLink;
 
     async fn set_advertising(&mut self, mode: AdvertisingMode) -> Result<(), MacosBleError> {
+        self.advertise_enabled = mode.is_on();
         self.peripheral_delegate.0.set_advertising(mode);
         Ok(())
     }
 
     async fn set_scanning(&mut self, mode: ScanningMode) -> Result<(), MacosBleError> {
-        let enabled = mode.is_on();
+        self.scan_enabled = mode.is_on();
+        let restart = cfg!(target_os = "macos") && self.scan_enabled;
         let central = SendCentralManager(self.central.0.clone());
         self.queue.exec_async(move || {
-            let central = central;
-            // SAFETY: this authoritative CoreBluetooth state query runs on the retained manager's
-            // serial dispatch queue.
-            let is_scanning = unsafe { central.0.isScanning() };
-            if enabled && !is_scanning {
-                start_scan(&central.0);
-                crate::diagnostic_log::debug!("bluetooth: scanning for Prns peers");
-            } else if !enabled && is_scanning {
-                // SAFETY: the retained central manager is only messaged on its serial dispatch
-                // queue.
-                unsafe { central.0.stopScan() };
-                crate::diagnostic_log::debug!(
-                    "bluetooth: scanning stopped — at connection capacity"
-                );
-            }
+            apply_scanning(central, mode.is_on(), restart);
         });
         Ok(())
     }
@@ -399,6 +417,8 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
                 };
             }
             let pending_dials = !self.dials.is_empty();
+            let refresh_radio =
+                cfg!(target_os = "macos") && (self.scan_enabled || self.advertise_enabled);
             tokio::select! {
                 event = self.events.recv() => match event {
                     Some(Event::Sighting { address, rssi }) => {
@@ -426,6 +446,22 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
                         }
                         Err(_) => continue,
                     }
+                }
+                _ = tokio::time::sleep_until(self.radio_refresh_at), if refresh_radio => {
+                    if self.scan_enabled {
+                        let central = SendCentralManager(self.central.0.clone());
+                        self.queue.exec_async(move || {
+                            apply_scanning(central, true, true);
+                        });
+                    }
+                    if self.advertise_enabled {
+                        self.peripheral_delegate
+                            .0
+                            .set_advertising(AdvertisingMode::On);
+                    }
+                    self.radio_refresh_at =
+                        tokio::time::Instant::now() + RADIO_REFRESH_INTERVAL;
+                    continue;
                 }
             }
         }

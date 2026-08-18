@@ -5,7 +5,7 @@ use prns_core::interfaces::bluetooth_auto::{
 use tokio::sync::{mpsc, oneshot};
 
 use super::backend::{dial_admission, DialAdmission, StartupReadiness};
-use super::central::CentralPeerSession;
+use super::central::{discover_disposition, CentralPeerSession, DiscoverDisposition};
 use super::gatt_link::{
     gatt_inbound_channel, gatt_inbound_channel_with_budget, GattInboundSendError,
 };
@@ -30,6 +30,31 @@ fn startup_requires_central_gatt_and_l2cap_readiness() {
 fn dial_yields_only_when_peer_is_already_system_connected() {
     assert_eq!(dial_admission(true), DialAdmission::YieldToSystemConnection);
     assert_eq!(dial_admission(false), DialAdmission::AttachCentralSession);
+}
+
+#[test]
+fn discovery_adopts_a_disconnected_peripheral() {
+    assert_eq!(
+        discover_disposition(true, false),
+        DiscoverDisposition::Adopt
+    );
+    assert_eq!(discover_disposition(true, true), DiscoverDisposition::Adopt);
+}
+
+#[test]
+fn discovery_ignores_duplicate_ads_once_we_own_the_link() {
+    assert_eq!(
+        discover_disposition(false, true),
+        DiscoverDisposition::Ignore
+    );
+}
+
+#[test]
+fn discovery_cancels_a_zombie_link_when_the_peer_advertises_again() {
+    assert_eq!(
+        discover_disposition(false, false),
+        DiscoverDisposition::CancelStale
+    );
 }
 
 #[test]
