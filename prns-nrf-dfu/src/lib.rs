@@ -15,8 +15,8 @@ pub use framing::{
     ReliableFrameEncoder,
 };
 pub use image::{
-    ApplicationInitPacket, ApplicationVersion, DfuDeviceRevision, DfuDeviceType, DfuImage,
-    DfuImageError, SoftdeviceFirmwareId, SoftdeviceRequirements,
+    ApplicationInitPacket, ApplicationInitPacketSpec, ApplicationVersion, DfuDeviceRevision,
+    DfuDeviceType, DfuImage, DfuImageError, SoftdeviceFirmwareId, SoftdeviceRequirements,
 };
 pub use transfer::{
     DfuBankLayout, DfuTransfer, PendingTransferFrame, RequiredWait, TransferError,

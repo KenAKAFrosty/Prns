@@ -89,30 +89,24 @@ pub struct ApplicationInitPacket {
     firmware_crc: crate::FirmwareCrc,
 }
 
-impl ApplicationInitPacket {
-    pub fn build(
-        firmware: &[u8],
-        device_type: DfuDeviceType,
-        device_revision: DfuDeviceRevision,
-        application_version: ApplicationVersion,
-        softdevices: &SoftdeviceRequirements,
-    ) -> Result<Self, DfuImageError> {
-        if firmware.is_empty() {
-            return Err(DfuImageError::EmptyFirmware);
-        }
-        if firmware.len() > u32::MAX as usize {
-            return Err(DfuImageError::FirmwareTooLarge {
-                actual: firmware.len(),
-                maximum: u32::MAX as usize,
-            });
-        }
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ApplicationInitPacketSpec {
+    pub device_type: DfuDeviceType,
+    pub device_revision: DfuDeviceRevision,
+    pub application_version: ApplicationVersion,
+    pub softdevices: SoftdeviceRequirements,
+}
 
-        let mut bytes = Vec::with_capacity(12 + softdevices.values.len() * 2);
-        bytes.extend_from_slice(&device_type.0.to_le_bytes());
-        bytes.extend_from_slice(&device_revision.0.to_le_bytes());
-        bytes.extend_from_slice(&application_version.wire_value().to_le_bytes());
-        bytes.extend_from_slice(&(softdevices.values.len() as u16).to_le_bytes());
-        for softdevice in &softdevices.values {
+impl ApplicationInitPacket {
+    pub fn build(firmware: &[u8], spec: &ApplicationInitPacketSpec) -> Result<Self, DfuImageError> {
+        sanity_check_firmware_size(firmware)?;
+
+        let mut bytes = Vec::with_capacity(12 + spec.softdevices.values.len() * 2);
+        bytes.extend_from_slice(&spec.device_type.0.to_le_bytes());
+        bytes.extend_from_slice(&spec.device_revision.0.to_le_bytes());
+        bytes.extend_from_slice(&spec.application_version.wire_value().to_le_bytes());
+        bytes.extend_from_slice(&(spec.softdevices.values.len() as u16).to_le_bytes());
+        for softdevice in &spec.softdevices.values {
             bytes.extend_from_slice(&softdevice.0.to_le_bytes());
         }
         let firmware_crc = firmware_crc(firmware);
@@ -120,6 +114,51 @@ impl ApplicationInitPacket {
         Ok(Self {
             bytes,
             firmware_crc,
+        })
+    }
+
+    pub fn from_artifacts(
+        firmware: &[u8],
+        init_packet: &[u8],
+        spec: &ApplicationInitPacketSpec,
+    ) -> Result<Self, DfuImageError> {
+        let expected = Self::build(firmware, spec)?;
+        if init_packet.len() != expected.bytes.len() {
+            return Err(DfuImageError::InitPacketLengthMismatch {
+                expected: expected.bytes.len(),
+                actual: init_packet.len(),
+            });
+        }
+
+        let firmware_crc_offset = init_packet.len() - size_of::<u16>();
+        for (offset, (actual, expected)) in init_packet[..firmware_crc_offset]
+            .iter()
+            .zip(&expected.bytes)
+            .enumerate()
+        {
+            if actual != expected {
+                return Err(DfuImageError::InitPacketMetadataMismatch {
+                    offset,
+                    expected: *expected,
+                    actual: *actual,
+                });
+            }
+        }
+
+        let init_packet_crc = u16::from_le_bytes([
+            init_packet[firmware_crc_offset],
+            init_packet[firmware_crc_offset + 1],
+        ]);
+        if init_packet_crc != expected.firmware_crc.get() {
+            return Err(DfuImageError::InitPacketFirmwareMismatch {
+                init_packet_crc,
+                firmware_crc: expected.firmware_crc.get(),
+            });
+        }
+
+        Ok(Self {
+            bytes: init_packet.to_vec(),
+            firmware_crc: expected.firmware_crc,
         })
     }
 
@@ -139,15 +178,7 @@ impl<'a> DfuImage<'a> {
         firmware: &'a [u8],
         init_packet: ApplicationInitPacket,
     ) -> Result<Self, DfuImageError> {
-        if firmware.is_empty() {
-            return Err(DfuImageError::EmptyFirmware);
-        }
-        if firmware.len() > u32::MAX as usize {
-            return Err(DfuImageError::FirmwareTooLarge {
-                actual: firmware.len(),
-                maximum: u32::MAX as usize,
-            });
-        }
+        sanity_check_firmware_size(firmware)?;
         let actual_firmware_crc = firmware_crc(firmware);
         if init_packet.firmware_crc != actual_firmware_crc {
             return Err(DfuImageError::InitPacketFirmwareMismatch {
@@ -161,6 +192,15 @@ impl<'a> DfuImage<'a> {
         })
     }
 
+    pub fn from_artifacts(
+        firmware: &'a [u8],
+        init_packet: &[u8],
+        spec: &ApplicationInitPacketSpec,
+    ) -> Result<Self, DfuImageError> {
+        let init_packet = ApplicationInitPacket::from_artifacts(firmware, init_packet, spec)?;
+        Self::new(firmware, init_packet)
+    }
+
     pub fn firmware(&self) -> &[u8] {
         self.firmware
     }
@@ -168,6 +208,19 @@ impl<'a> DfuImage<'a> {
     pub fn init_packet(&self) -> &ApplicationInitPacket {
         &self.init_packet
     }
+}
+
+fn sanity_check_firmware_size(firmware: &[u8]) -> Result<(), DfuImageError> {
+    if firmware.is_empty() {
+        return Err(DfuImageError::EmptyFirmware);
+    }
+    if firmware.len() > u32::MAX as usize {
+        return Err(DfuImageError::FirmwareTooLarge {
+            actual: firmware.len(),
+            maximum: u32::MAX as usize,
+        });
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -180,6 +233,16 @@ pub enum DfuImageError {
     TooManySoftdeviceRequirements { actual: usize, maximum: usize },
     #[error("DFU SoftDevice compatibility must name an exact FWID, not the 0xfffe wildcard")]
     WildcardSoftdeviceRequirement,
+    #[error("DFU init packet is {actual} bytes; expected exactly {expected}")]
+    InitPacketLengthMismatch { expected: usize, actual: usize },
+    #[error(
+        "DFU init packet metadata differs at byte {offset}: expected 0x{expected:02x}, found 0x{actual:02x}"
+    )]
+    InitPacketMetadataMismatch {
+        offset: usize,
+        expected: u8,
+        actual: u8,
+    },
     #[error(
         "DFU init packet firmware CRC 0x{init_packet_crc:04x} does not match image CRC 0x{firmware_crc:04x}"
     )]
@@ -192,21 +255,23 @@ pub enum DfuImageError {
 #[cfg(test)]
 mod tests {
     use super::{
-        ApplicationInitPacket, ApplicationVersion, DfuDeviceRevision, DfuDeviceType, DfuImage,
-        DfuImageError, SoftdeviceFirmwareId, SoftdeviceRequirements,
+        ApplicationInitPacket, ApplicationInitPacketSpec, ApplicationVersion, DfuDeviceRevision,
+        DfuDeviceType, DfuImage, DfuImageError, SoftdeviceFirmwareId, SoftdeviceRequirements,
     };
+
+    fn t1000e_spec() -> Result<ApplicationInitPacketSpec, DfuImageError> {
+        let fwid = SoftdeviceFirmwareId::new(0x0123)?;
+        Ok(ApplicationInitPacketSpec {
+            device_type: DfuDeviceType::new(0x0052),
+            device_revision: DfuDeviceRevision::new(52840),
+            application_version: ApplicationVersion::NotEnforced,
+            softdevices: SoftdeviceRequirements::new(fwid, std::iter::empty())?,
+        })
+    }
 
     #[test]
     fn init_packet_matches_adafruit_nrfutil_reference() -> Result<(), DfuImageError> {
-        let fwid = SoftdeviceFirmwareId::new(0x0123)?;
-        let requirements = SoftdeviceRequirements::new(fwid, std::iter::empty())?;
-        let packet = ApplicationInitPacket::build(
-            &[1, 2, 3],
-            DfuDeviceType::new(0x0052),
-            DfuDeviceRevision::new(52840),
-            ApplicationVersion::NotEnforced,
-            &requirements,
-        )?;
+        let packet = ApplicationInitPacket::build(&[1, 2, 3], &t1000e_spec()?)?;
         assert_eq!(
             packet.bytes(),
             &[0x52, 0x00, 0x68, 0xce, 0xff, 0xff, 0xff, 0xff, 0x01, 0x00, 0x23, 0x01, 0xad, 0xad]
@@ -225,17 +290,55 @@ mod tests {
 
     #[test]
     fn image_rejects_an_init_packet_for_different_firmware() -> Result<(), DfuImageError> {
-        let fwid = SoftdeviceFirmwareId::new(0x0123)?;
-        let requirements = SoftdeviceRequirements::new(fwid, std::iter::empty())?;
-        let packet = ApplicationInitPacket::build(
-            &[1, 2, 3],
-            DfuDeviceType::new(0x0052),
-            DfuDeviceRevision::new(52840),
-            ApplicationVersion::NotEnforced,
-            &requirements,
-        )?;
+        let packet = ApplicationInitPacket::build(&[1, 2, 3], &t1000e_spec()?)?;
         assert_eq!(
             DfuImage::new(&[1, 2, 4], packet),
+            Err(DfuImageError::InitPacketFirmwareMismatch {
+                init_packet_crc: 0xadad,
+                firmware_crc: 0xdd4a,
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn image_accepts_matching_external_artifacts() -> Result<(), DfuImageError> {
+        let firmware = [1, 2, 3];
+        let init_packet = [
+            0x52, 0x00, 0x68, 0xce, 0xff, 0xff, 0xff, 0xff, 0x01, 0x00, 0x23, 0x01, 0xad, 0xad,
+        ];
+        let image = DfuImage::from_artifacts(&firmware, &init_packet, &t1000e_spec()?)?;
+        assert_eq!(image.firmware(), firmware);
+        assert_eq!(image.init_packet().bytes(), init_packet);
+        Ok(())
+    }
+
+    #[test]
+    fn external_init_packet_must_match_the_device_specification() -> Result<(), DfuImageError> {
+        let firmware = [1, 2, 3];
+        let mut init_packet = [
+            0x52, 0x00, 0x68, 0xce, 0xff, 0xff, 0xff, 0xff, 0x01, 0x00, 0x23, 0x01, 0xad, 0xad,
+        ];
+        init_packet[0] = 0x53;
+        assert_eq!(
+            DfuImage::from_artifacts(&firmware, &init_packet, &t1000e_spec()?),
+            Err(DfuImageError::InitPacketMetadataMismatch {
+                offset: 0,
+                expected: 0x52,
+                actual: 0x53,
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn external_init_packet_must_match_the_firmware() -> Result<(), DfuImageError> {
+        let firmware = [1, 2, 4];
+        let init_packet = [
+            0x52, 0x00, 0x68, 0xce, 0xff, 0xff, 0xff, 0xff, 0x01, 0x00, 0x23, 0x01, 0xad, 0xad,
+        ];
+        assert_eq!(
+            DfuImage::from_artifacts(&firmware, &init_packet, &t1000e_spec()?),
             Err(DfuImageError::InitPacketFirmwareMismatch {
                 init_packet_crc: 0xadad,
                 firmware_crc: 0xdd4a,

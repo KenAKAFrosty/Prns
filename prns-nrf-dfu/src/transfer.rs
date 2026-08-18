@@ -268,8 +268,8 @@ mod tests {
     use std::{boxed::Box, error::Error};
 
     use crate::{
-        ApplicationInitPacket, ApplicationVersion, DfuDeviceRevision, DfuDeviceType, DfuImage,
-        DfuImageError, SoftdeviceFirmwareId, SoftdeviceRequirements,
+        ApplicationInitPacket, ApplicationInitPacketSpec, ApplicationVersion, DfuDeviceRevision,
+        DfuDeviceType, DfuImage, DfuImageError, SoftdeviceFirmwareId, SoftdeviceRequirements,
     };
 
     use super::{DfuBankLayout, DfuTransfer, TransferState};
@@ -277,13 +277,13 @@ mod tests {
     fn image(firmware: &[u8]) -> Result<DfuImage<'_>, DfuImageError> {
         let fwid = SoftdeviceFirmwareId::new(0x0123)?;
         let requirements = SoftdeviceRequirements::new(fwid, std::iter::empty())?;
-        let init_packet = ApplicationInitPacket::build(
-            firmware,
-            DfuDeviceType::new(0x0052),
-            DfuDeviceRevision::new(52840),
-            ApplicationVersion::NotEnforced,
-            &requirements,
-        )?;
+        let spec = ApplicationInitPacketSpec {
+            device_type: DfuDeviceType::new(0x0052),
+            device_revision: DfuDeviceRevision::new(52840),
+            application_version: ApplicationVersion::NotEnforced,
+            softdevices: requirements,
+        };
+        let init_packet = ApplicationInitPacket::build(firmware, &spec)?;
         DfuImage::new(firmware, init_packet)
     }
 
