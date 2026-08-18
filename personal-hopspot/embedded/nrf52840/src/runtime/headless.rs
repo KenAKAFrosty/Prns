@@ -115,7 +115,7 @@ pub async fn run(spawner: Spawner) -> ! {
     let Hardware {
         usb: usb_driver,
         radio,
-        mut led,
+        mut status_led,
     } = hardware;
 
     let mut usb_config = UsbConfig::new(WEBUSB_VENDOR_ID, WEBUSB_PRODUCT_ID);
@@ -226,9 +226,9 @@ pub async fn run(spawner: Spawner) -> ! {
     let usb_seam = usb_lane.into_seam(NOTIFY.sender(), runtime_entropy);
     let heartbeat = async move {
         loop {
-            led.set_low();
+            status_led.illuminate();
             Timer::after(Duration::from_millis(100)).await;
-            led.set_high();
+            status_led.extinguish();
             Timer::after(Duration::from_millis(900)).await;
         }
     };

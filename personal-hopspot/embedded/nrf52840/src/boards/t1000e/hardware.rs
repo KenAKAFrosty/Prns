@@ -11,36 +11,38 @@ use embassy_nrf::{bind_interrupts, config, peripherals, usb};
 use embassy_time::{Delay, Timer};
 use embedded_hal_bus::spi::ExclusiveDevice;
 use personal_rns::lora::LoRaInterface;
-use personal_rns::radios::sx126x::{BoardConfig, Sx126x, TcxoVoltage};
+use personal_rns::radios::lr1110::Lr1110;
 
 use crate::boards::status_led::StatusLed;
+
+use super::radio::board_config;
 
 bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
     CLOCK_POWER => usb::vbus_detect::InterruptHandler;
-    TWISPI0 => spim::InterruptHandler<peripherals::TWISPI0>;
+    SPIM3 => spim::InterruptHandler<peripherals::SPI3>;
 });
 
-type T114SpiDevice = ExclusiveDevice<Spim<'static>, Output<'static>, Delay>;
+type T1000eSpiDevice = ExclusiveDevice<Spim<'static>, Output<'static>, Delay>;
 
-type T114Radio = Sx126x<T114SpiDevice, Input<'static>, Input<'static>, Output<'static>, Delay>;
+type T1000eRadio = Lr1110<T1000eSpiDevice, Input<'static>, Input<'static>, Output<'static>, Delay>;
 
-pub(crate) type T114LoraInterface = LoRaInterface<'static, T114Radio>;
+pub(crate) type T1000eLoraInterface = LoRaInterface<'static, T1000eRadio>;
 
-type T114UsbDriver = Driver<'static, HardwareVbusDetect>;
+type T1000eUsbDriver = Driver<'static, HardwareVbusDetect>;
 
-pub(crate) struct T114Hardware {
-    pub(crate) usb: T114UsbDriver,
-    pub(crate) radio: T114Radio,
+pub(crate) struct T1000eHardware {
+    pub(crate) usb: T1000eUsbDriver,
+    pub(crate) radio: T1000eRadio,
     pub(crate) status_led: StatusLed,
 }
 
-pub(crate) struct T114Board;
+pub(crate) struct T1000eBoard;
 
-impl T114Board {
+impl T1000eBoard {
     pub(crate) async fn initialize<R>(
         bootstrap: impl FnOnce(&mut Nvmc<'static>, &mut Rng<'static, Blocking>) -> R,
-    ) -> (R, T114Hardware) {
+    ) -> (R, T1000eHardware) {
         let mut nrf_config = config::Config::default();
         nrf_config.hfclk_source = HfclkSource::ExternalXtal;
         nrf_config.gpiote_interrupt_priority = Priority::P2;
@@ -56,50 +58,42 @@ impl T114Board {
         interrupt::USBD.set_priority(Priority::P2);
         let usb = Driver::new(peripherals.USBD, Irqs, HardwareVbusDetect::new(Irqs));
 
+        let mut radio_reset = Output::new(peripherals.P1_10, Level::Low, OutputDrive::Standard);
+        Timer::after_millis(500).await;
+
         let mut radio_spim_config = spim::Config::default();
         radio_spim_config.frequency = spim::Frequency::M4;
-        let radio_sck = peripherals.P0_19;
-        let radio_miso = peripherals.P0_23;
-        let radio_mosi = peripherals.P0_22;
         let radio_bus = Spim::new(
-            peripherals.TWISPI0,
+            peripherals.SPI3,
             Irqs,
-            radio_sck,
-            radio_miso,
-            radio_mosi,
+            peripherals.P0_11,
+            peripherals.P1_08,
+            peripherals.P1_09,
             radio_spim_config,
         );
-        let radio_cs = Output::new(peripherals.P0_24, Level::High, OutputDrive::Standard);
+        let radio_cs = Output::new(peripherals.P0_12, Level::High, OutputDrive::Standard);
         let radio_spi = ExclusiveDevice::new(radio_bus, radio_cs, Delay).unwrap();
-        let radio_busy = Input::new(peripherals.P0_17, Pull::None);
-        let radio_dio1 = Input::new(peripherals.P0_20, Pull::None);
-        let mut radio_reset = Output::new(peripherals.P0_25, Level::Low, OutputDrive::Standard);
-        Timer::after_millis(2).await;
+        let radio_busy = Input::new(peripherals.P0_07, Pull::None);
+        let radio_dio1 = Input::new(peripherals.P1_01, Pull::Down);
         radio_reset.set_high();
-        let radio = Sx126x::new(
+        let radio = Lr1110::new(
             radio_spi,
             radio_busy,
             radio_dio1,
             radio_reset,
             Delay,
-            BoardConfig {
-                tcxo_voltage: Some(TcxoVoltage::V1_8),
-                use_dcdc: true,
-                rx_boost: true,
-                dio2_as_rf_switch: true,
-                external_rx_gain_db: 0,
-            },
+            board_config(),
         );
 
-        let status_led = StatusLed::active_low(Output::new(
-            peripherals.P1_03,
-            Level::High,
+        let status_led = StatusLed::active_high(Output::new(
+            peripherals.P0_24,
+            Level::Low,
             OutputDrive::Standard,
         ));
 
         (
             identity,
-            T114Hardware {
+            T1000eHardware {
                 usb,
                 radio,
                 status_led,

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 publish = false
-description = "Personal Hopspot firmware for supported nRF52840 and SX1262 boards."
+description = "Personal Hopspot firmware for supported nRF52840 boards."
 
 [workspace]
 exclude = [
@@ -19,6 +19,7 @@ default = ["board-t-echo", "softdevice-s140-v7"]
 board-t-echo = []
 board-t096 = []
 board-t114 = ["cortex-m/critical-section-single-core"]
+board-t1000e = ["cortex-m/critical-section-single-core"]
 softdevice-s140-v6 = ["dep:nrf-softdevice", "nrf-softdevice/s140-v6"]
 softdevice-s140-v7 = ["dep:nrf-softdevice", "nrf-softdevice/s140-v7"]
 
@@ -40,6 +41,11 @@ required-features = ["board-t096"]
 name = "heltec-t114"
 path = "src/bin/heltec_t114.rs"
 required-features = ["board-t114"]
+
+[[bin]]
+name = "t1000e"
+path = "src/bin/t1000e.rs"
+required-features = ["board-t1000e"]
 
 [dependencies]
 personal-rns = { path = "../../../personal-rns", default-features = false, features = ["embassy-host", "flash", "lora", "bluetooth-auto", "usb"] }

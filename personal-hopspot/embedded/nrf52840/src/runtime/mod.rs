@@ -5,7 +5,7 @@ mod bluetooth_gatt_server;
 mod entropy;
 #[cfg(feature = "board-t-echo")]
 mod firmware;
-#[cfg(feature = "board-t114")]
+#[cfg(any(feature = "board-t114", feature = "board-t1000e"))]
 mod headless;
 #[cfg(feature = "board-t-echo")]
 mod interface_cards;
@@ -14,5 +14,5 @@ pub(crate) mod node;
 
 #[cfg(feature = "board-t-echo")]
 pub use firmware::run;
-#[cfg(feature = "board-t114")]
+#[cfg(any(feature = "board-t114", feature = "board-t1000e"))]
 pub use headless::run;

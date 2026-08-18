@@ -1,0 +1,49 @@
+use embassy_nrf::gpio::Output;
+
+enum Polarity {
+    #[cfg(feature = "board-t1000e")]
+    ActiveHigh,
+    #[cfg(feature = "board-t114")]
+    ActiveLow,
+}
+
+pub(crate) struct StatusLed {
+    output: Output<'static>,
+    polarity: Polarity,
+}
+
+impl StatusLed {
+    #[cfg(feature = "board-t1000e")]
+    pub(crate) fn active_high(output: Output<'static>) -> Self {
+        Self {
+            output,
+            polarity: Polarity::ActiveHigh,
+        }
+    }
+
+    #[cfg(feature = "board-t114")]
+    pub(crate) fn active_low(output: Output<'static>) -> Self {
+        Self {
+            output,
+            polarity: Polarity::ActiveLow,
+        }
+    }
+
+    pub(crate) fn illuminate(&mut self) {
+        match self.polarity {
+            #[cfg(feature = "board-t1000e")]
+            Polarity::ActiveHigh => self.output.set_high(),
+            #[cfg(feature = "board-t114")]
+            Polarity::ActiveLow => self.output.set_low(),
+        }
+    }
+
+    pub(crate) fn extinguish(&mut self) {
+        match self.polarity {
+            #[cfg(feature = "board-t1000e")]
+            Polarity::ActiveHigh => self.output.set_low(),
+            #[cfg(feature = "board-t114")]
+            Polarity::ActiveLow => self.output.set_high(),
+        }
+    }
+}
