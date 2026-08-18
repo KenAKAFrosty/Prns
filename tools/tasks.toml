@@ -61,7 +61,18 @@ domain = "build"
 effect = "workspace-write"
 platforms = ["linux", "macos"]
 audience = ["developer", "ci"]
-entrypoint = ["bash", "tools/build/hopspot-t114.sh"]
+entrypoint = ["bash", "tools/build/hopspot-nrf52840.sh", "t114"]
+requires = ["bash", "cargo", "python3", "rustc"]
+setup = "Install Rust with rustup so the nRF52840 target and llvm-tools-preview component declared by the firmware workspace are available."
+
+[[task]]
+id = "build.hopspot.t1000e"
+summary = "Build the headless T1000-E firmware and package its recovery-compatible developer UF2."
+domain = "build"
+effect = "workspace-write"
+platforms = ["linux", "macos"]
+audience = ["developer", "ci"]
+entrypoint = ["bash", "tools/build/hopspot-nrf52840.sh", "t1000e"]
 requires = ["bash", "cargo", "python3", "rustc"]
 setup = "Install Rust with rustup so the nRF52840 target and llvm-tools-preview component declared by the firmware workspace are available."
 
@@ -185,6 +196,16 @@ platforms = ["macos"]
 audience = ["developer", "operator"]
 entrypoint = ["bash", "tools/device/techo-flash.sh"]
 requires = ["bash", "cargo", "python3", "rustc"]
+
+[[task]]
+id = "device.t1000e.probe"
+summary = "Identify attached T1000-E bootloaders and report their read-only USB transport state."
+domain = "device"
+effect = "read-only"
+platforms = ["linux"]
+audience = ["developer", "operator"]
+entrypoint = ["python", "tools/device/t1000e_probe.py"]
+requires = []
 
 [[task]]
 id = "device.uf2.convert"

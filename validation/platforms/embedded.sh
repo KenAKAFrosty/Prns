@@ -23,11 +23,8 @@ cargo build \
     cargo build --release --locked --no-default-features \
         --features board-t-echo,softdevice-s140-v7 \
         --target-dir target/s140-v7
-    cargo build --release --locked --no-default-features \
-        --features board-t1000e \
-        --bin t1000e \
-        --target-dir target/t1000e
 )
+./tools/prns build hopspot t1000e
 ./tools/prns build hopspot t114
 
 echo "EMBEDDED_BUILD_GATE_OK"
