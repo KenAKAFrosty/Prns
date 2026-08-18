@@ -198,16 +198,6 @@ entrypoint = ["bash", "tools/device/techo-flash.sh"]
 requires = ["bash", "cargo", "python3", "rustc"]
 
 [[task]]
-id = "device.t1000e.probe"
-summary = "Identify attached T1000-E bootloaders and report their read-only USB transport state."
-domain = "device"
-effect = "read-only"
-platforms = ["linux"]
-audience = ["developer", "operator"]
-entrypoint = ["python", "tools/device/t1000e_probe.py"]
-requires = []
-
-[[task]]
 id = "device.uf2.convert"
 summary = "Convert a raw firmware binary into a UF2 image."
 domain = "device"

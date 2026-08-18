@@ -58,6 +58,7 @@ cargo_manifests = [
     "prns-interfaces/impls/tokio/Cargo.toml",
     "prns-macros/Cargo.toml",
     "prns-napi/Cargo.toml",
+    "prns-nrf-dfu/Cargo.toml",
     "prns-runtime/core/Cargo.toml",
     "prns-runtime/impls/embassy/Cargo.toml",
     "prns-runtime/impls/tokio/Cargo.toml",
