@@ -791,6 +791,9 @@ mod tests {
                         vec![prns_flash_manifest::ReleasePartRef::Uf2(variant.part())],
                     )
                 }
+                ReleaseTarget::NrfSerialDfu(_) => {
+                    return Err("the website does not support Nordic serial DFU".into())
+                }
             };
             let request = BridgeRequest::from_target(
                 target,
@@ -885,6 +888,9 @@ mod tests {
                     };
                     assert_eq!(part["kind"], "uf2");
                     assert!(part["offset"].is_null());
+                }
+                ReleaseTarget::NrfSerialDfu(_) => {
+                    return Err("the website does not support Nordic serial DFU".into())
                 }
             }
         }
