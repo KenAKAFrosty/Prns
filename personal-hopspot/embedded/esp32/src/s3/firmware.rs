@@ -94,13 +94,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     #[cfg(not(feature = "lora"))]
     let profile_startup_notice: Option<screen::UiNotice> = None;
     #[cfg(feature = "lora")]
-    let lora_id = LoRaInterface::<
-        ExclusiveDevice<Spi<'static, esp_hal::Async>, Output<'static>, Delay>,
-        Input<'static>,
-        Input<'static>,
-        Output<'static>,
-        Delay,
-    >::interface_id(&lora_profile);
+    let lora_id = LoRaInterface::<LoraRadio>::interface_id(&lora_profile);
     #[cfg(feature = "lora")]
     let lora_status: &'static EmbassyInterfaceStatus = mk_static!(
         EmbassyInterfaceStatus,

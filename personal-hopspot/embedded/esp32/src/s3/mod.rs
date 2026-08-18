@@ -116,6 +116,8 @@ use personal_hopspot_core as screen;
 pub(crate) use board::{
     BoardDisplay, BoardFace, Esp32S3Board, S3BoardHardware, S3InterfaceHardware, S3ManifoldHardware,
 };
+#[cfg(feature = "lora")]
+pub(crate) use board::LoraRadio;
 
 esp_app_desc!();
 
@@ -193,14 +195,7 @@ type Mtx = CriticalSectionRawMutex;
 type Handle = PrnsNodeHandle<'static, Mtx, COMMANDS_CAP, COMPLETIONS_CAP>;
 type UsbSeam = EmbassyInterfaceSeam<'static, Mtx, NOTIFY_CAP, EMBEDDED_MAX_WIRE_FRAME_LEN>;
 #[cfg(feature = "lora")]
-type S3LoraInterface = LoRaInterface<
-    'static,
-    ExclusiveDevice<Spi<'static, esp_hal::Async>, Output<'static>, Delay>,
-    Input<'static>,
-    Input<'static>,
-    Output<'static>,
-    Delay,
->;
+type S3LoraInterface = LoRaInterface<'static, LoraRadio>;
 #[cfg(feature = "lora")]
 type S3LoraSeam = EmbassyInterfaceSeam<'static, Mtx, NOTIFY_CAP, LORA_MAX_PAYLOAD>;
 type S3EspNowInterface = EspNowInterface<'static, EspNowAdapter>;

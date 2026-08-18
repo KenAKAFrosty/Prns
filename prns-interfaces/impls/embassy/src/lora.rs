@@ -40,18 +40,14 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::DynamicSender;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, Timer};
-use embedded_hal::digital::OutputPin;
-use embedded_hal_async::delay::DelayNs;
-use embedded_hal_async::digital::Wait;
-use embedded_hal_async::spi::SpiDevice;
 use heapless::Vec as HeaplessVec;
 use portable_atomic::{AtomicU32, Ordering};
 
 use prns_core::engine::InstantMillis;
 use prns_core::interfaces::lora::{
-    self, air_frame_count, encode_air_frame_part, AirtimePolicy, AirtimePolicyError, CodingRate,
-    LoRaReassembler, LoraBandwidth, Modulation, RadioProfile, RadioProfileError, SpreadingFactor,
-    CHANNEL_TAG_CAP, LORA_MAX_PAYLOAD, LORA_SINGLE_FRAME_MAX, RNODE_LORA_SYNC_WORD,
+    self, air_frame_count, encode_air_frame_part, AirFrameError, AirtimePolicy, AirtimePolicyError,
+    LoRaReassembler, RadioProfile, RadioProfileCompatibilityError, RadioProfileError,
+    SpreadingFactor, CHANNEL_TAG_CAP, LORA_MAX_PAYLOAD, LORA_SINGLE_FRAME_MAX,
 };
 use prns_core::interfaces::{
     AirtimeDutyCycle, ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind,
@@ -64,7 +60,7 @@ use prns_runtime::manifold::interface_seam::{
 };
 use prns_runtime::manifold::throughput::ThroughputLedger;
 
-use crate::radios::sx126x::{self, RadioEvent, Sx126x};
+use crate::radios::{LoRaRadio, RadioEvent, RadioRecovery};
 
 mod airtime_quantum;
 mod channel_access;
@@ -353,7 +349,7 @@ fn decoded_peer_airtime_us(event: RadioEvent, profile: &RadioProfile) -> Option<
         | RadioEvent::HeaderError
         | RadioEvent::CrcError
         | RadioEvent::Timeout
-        | RadioEvent::Other => None,
+        | RadioEvent::SpuriousInterrupt => None,
     }
 }
 
@@ -436,7 +432,7 @@ async fn observe_radio_event<Seam: InterfaceSeam>(
             receive.activity.frame_finished();
             ChannelObservation::Unknown
         }
-        RadioEvent::Other => ChannelObservation::Unknown,
+        RadioEvent::SpuriousInterrupt => ChannelObservation::Unknown,
     };
     receive.spectrum.record_channel(observation, None);
     ChannelEvidence {
@@ -445,20 +441,13 @@ async fn observe_radio_event<Seam: InterfaceSeam>(
     }
 }
 
-async fn sample_channel<SPI, BUSY, DIO1, RST, DLY>(
-    radio: &mut Sx126x<SPI, BUSY, DIO1, RST, DLY>,
+async fn sample_channel<R: LoRaRadio>(
+    radio: &mut R,
     now: InstantMillis,
     activity: &mut DemodulatorActivity,
     spectrum: &LoRaSpectrumStatus,
     noise: &mut NoiseFloor,
-) -> Result<ChannelObservation, sx126x::Error>
-where
-    SPI: SpiDevice,
-    BUSY: Wait,
-    DIO1: Wait,
-    RST: OutputPin,
-    DLY: DelayNs,
-{
+) -> Result<ChannelObservation, R::Error> {
     let (demodulator_busy, false_preamble) = activity.observe(now.0);
     if false_preamble {
         spectrum.add_false_preamble();
@@ -551,51 +540,6 @@ impl Default for LoRaControl {
     }
 }
 
-fn sx126x_config(profile: &RadioProfile) -> sx126x::RadioConfig {
-    let Modulation::Lora {
-        spreading_factor,
-        bandwidth,
-        coding_rate,
-    } = profile.modulation;
-    let spreading_factor = match spreading_factor {
-        SpreadingFactor::Sf5 => sx126x::SpreadingFactor::Sf5,
-        SpreadingFactor::Sf6 => sx126x::SpreadingFactor::Sf6,
-        SpreadingFactor::Sf7 => sx126x::SpreadingFactor::Sf7,
-        SpreadingFactor::Sf8 => sx126x::SpreadingFactor::Sf8,
-        SpreadingFactor::Sf9 => sx126x::SpreadingFactor::Sf9,
-        SpreadingFactor::Sf10 => sx126x::SpreadingFactor::Sf10,
-        SpreadingFactor::Sf11 => sx126x::SpreadingFactor::Sf11,
-        SpreadingFactor::Sf12 => sx126x::SpreadingFactor::Sf12,
-    };
-    let bandwidth = match bandwidth {
-        LoraBandwidth::Bw125kHz => sx126x::Bandwidth::Bw125,
-        LoraBandwidth::Bw250kHz => sx126x::Bandwidth::Bw250,
-        LoraBandwidth::Bw500kHz => sx126x::Bandwidth::Bw500,
-    };
-    let coding_rate = match coding_rate {
-        CodingRate::Cr45 => sx126x::CodingRate::Cr4_5,
-        CodingRate::Cr46 => sx126x::CodingRate::Cr4_6,
-        CodingRate::Cr47 => sx126x::CodingRate::Cr4_7,
-        CodingRate::Cr48 => sx126x::CodingRate::Cr4_8,
-    };
-    sx126x::RadioConfig {
-        frequency_hz: profile.frequency.hz(),
-        modulation: sx126x::Modulation::Lora {
-            spreading_factor,
-            bandwidth,
-            coding_rate,
-        },
-        packet: sx126x::LoraPacket {
-            preamble_symbols: profile.preamble.count(),
-            explicit_header: true,
-            crc_on: true,
-            invert_iq: false,
-        },
-        sync_word: RNODE_LORA_SYNC_WORD,
-        tx_power_dbm: profile.tx_power.dbm(),
-    }
-}
-
 /// The [`Retag`](InterfaceLifecycle::Retag) a reconfigure to `new_profile` warrants, or `None` when the change leaves the channel identity untouched — a local knob like transmit power or preamble. The channel_tag (frequency + modulation) is what mints the id, so only a change to it re-keys.
 fn retag_message(
     current_id: InterfaceId,
@@ -640,8 +584,8 @@ fn take_contention_priority(
     clippy::too_many_arguments,
     reason = "embedded serve-loop internals pass the loop's split-borrowed locals; bundling awaits an on-hardware validation pass"
 )]
-async fn transmit_packet<SPI, BUSY, DIO1, RST, DLY>(
-    radio: &mut Sx126x<SPI, BUSY, DIO1, RST, DLY>,
+async fn transmit_packet<R: LoRaRadio>(
+    radio: &mut R,
     packet: &[u8],
     seq: &mut u8,
     airtime: &mut AirtimeLedger,
@@ -650,27 +594,20 @@ async fn transmit_packet<SPI, BUSY, DIO1, RST, DLY>(
     profile: &RadioProfile,
     started: &Instant,
     tx_frame: &mut [u8; LORA_SINGLE_FRAME_MAX],
-) -> Result<(), sx126x::Error>
-where
-    SPI: SpiDevice,
-    BUSY: Wait,
-    DIO1: Wait,
-    RST: OutputPin,
-    DLY: DelayNs,
-{
+) -> Result<(), LoRaTransmitError<R::Error>> {
     for index in 0..air_frame_count(packet.len()) {
         let n = match encode_air_frame_part(packet, *seq, index, tx_frame) {
             Ok(n) => n,
             Err(e) => {
                 crate::diagnostic_log::debug!("RNS_LORA frame {index} encode failed: {e:?}");
                 *seq = seq.wrapping_add(0x10);
-                return Err(sx126x::Error::BufferTooSmall);
+                return Err(LoRaTransmitError::Framing(e));
             }
         };
         if let Err(e) = radio.transmit(&tx_frame[..n]).await {
             crate::diagnostic_log::debug!("RNS_LORA tx failed: {e:?}");
             *seq = seq.wrapping_add(0x10);
-            return Err(e);
+            return Err(LoRaTransmitError::Radio(e));
         }
         let completed_at = InstantMillis(started.elapsed().as_millis());
         status.add_tx(n as u64);
@@ -682,48 +619,42 @@ where
     Ok(())
 }
 
-fn is_radio_fault(e: &sx126x::Error) -> bool {
-    matches!(
-        e,
-        sx126x::Error::Busy
-            | sx126x::Error::Dio1
-            | sx126x::Error::Spi
-            | sx126x::Error::Timeout
-            | sx126x::Error::Reset
-    )
+#[derive(Debug, PartialEq, Eq)]
+pub enum LoRaTransmitError<E> {
+    Framing(AirFrameError),
+    Radio(E),
 }
 
-async fn reinit_radio<SPI, BUSY, DIO1, RST, DLY>(
-    radio: &mut Sx126x<SPI, BUSY, DIO1, RST, DLY>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RadioReinitialization {
+    Recovered,
+    Failed,
+}
+
+async fn reinit_radio<R: LoRaRadio>(
+    radio: &mut R,
     profile: &RadioProfile,
     spectrum: &LoRaSpectrumStatus,
-) -> bool
-where
-    SPI: SpiDevice,
-    BUSY: Wait,
-    DIO1: Wait,
-    RST: OutputPin,
-    DLY: DelayNs,
-{
-    if let Err(e) = radio.init(sx126x_config(profile)).await {
+) -> RadioReinitialization {
+    if let Err(e) = radio.initialize(*profile).await {
         crate::diagnostic_log::warn!("RNS_LORA hard re-init failed: {e:?}");
-        return false;
+        return RadioReinitialization::Failed;
     }
     if let Err(e) = radio.arm_rx().await {
         crate::diagnostic_log::warn!("RNS_LORA re-init RX arm failed: {e:?}");
-        return false;
+        return RadioReinitialization::Failed;
     }
     crate::diagnostic_log::warn!("RNS_LORA radio recovered via hard re-init");
     spectrum.add_radio_recovery();
-    true
+    RadioReinitialization::Recovered
 }
 
 #[expect(
     clippy::too_many_arguments,
     reason = "transactional radio reconfiguration owns the full old/new policy boundary"
 )]
-async fn apply_profile<SPI, BUSY, DIO1, RST, DLY>(
-    radio: &mut Sx126x<SPI, BUSY, DIO1, RST, DLY>,
+async fn apply_profile<R: LoRaRadio>(
+    radio: &mut R,
     requested: RadioProfile,
     airtime_policy: AirtimePolicy,
     profile: &mut RadioProfile,
@@ -732,16 +663,13 @@ async fn apply_profile<SPI, BUSY, DIO1, RST, DLY>(
     status: &EmbassyInterfaceStatus,
     spectrum: &LoRaSpectrumStatus,
     lifecycle: DynamicSender<'_, InterfaceLifecycle>,
-) -> bool
-where
-    SPI: SpiDevice,
-    BUSY: Wait,
-    DIO1: Wait,
-    RST: OutputPin,
-    DLY: DelayNs,
-{
+) -> bool {
     if requested.validate().is_err() {
         crate::diagnostic_log::warn!("RNS_LORA rejected invalid profile");
+        return false;
+    }
+    if radio.validate_profile(requested).is_err() {
+        crate::diagnostic_log::warn!("RNS_LORA rejected radio-incompatible profile");
         return false;
     }
     let requested_duty = match airtime_policy.resolve(requested.region) {
@@ -756,11 +684,14 @@ where
     }
 
     let previous = *profile;
-    if let Err(error) = radio.init(sx126x_config(&requested)).await {
+    if let Err(error) = radio.initialize(requested).await {
         crate::diagnostic_log::warn!(
             "RNS_LORA reconfigure init failed: {error:?}; restoring prior profile"
         );
-        if !reinit_radio(radio, &previous, spectrum).await {
+        if matches!(
+            reinit_radio(radio, &previous, spectrum).await,
+            RadioReinitialization::Failed
+        ) {
             status.set_connection(ConnectionState::Disconnected);
         }
         return false;
@@ -769,7 +700,10 @@ where
         crate::diagnostic_log::warn!(
             "RNS_LORA reconfigure RX arm failed: {error:?}; restoring prior profile"
         );
-        if !reinit_radio(radio, &previous, spectrum).await {
+        if matches!(
+            reinit_radio(radio, &previous, spectrum).await,
+            RadioReinitialization::Failed
+        ) {
             status.set_connection(ConnectionState::Disconnected);
         }
         return false;
@@ -796,11 +730,12 @@ where
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoRaConfigError {
     Profile(RadioProfileError),
+    RadioCompatibility(RadioProfileCompatibilityError),
     AirtimePolicy(AirtimePolicyError),
 }
 
-pub struct LoRaInterfaceInput<'a, SPI, BUSY, DIO1, RST, DLY> {
-    pub radio: Sx126x<SPI, BUSY, DIO1, RST, DLY>,
+pub struct LoRaInterfaceInput<'a, R: LoRaRadio> {
+    pub radio: R,
     pub profile: RadioProfile,
     pub airtime_policy: AirtimePolicy,
     pub tx_queue: &'a mut [u8],
@@ -810,9 +745,9 @@ pub struct LoRaInterfaceInput<'a, SPI, BUSY, DIO1, RST, DLY> {
     pub lifecycle: DynamicSender<'a, InterfaceLifecycle>,
 }
 
-pub struct LoRaInterface<'a, SPI, BUSY, DIO1, RST, DLY> {
+pub struct LoRaInterface<'a, R: LoRaRadio> {
     id: InterfaceId,
-    radio: Sx126x<SPI, BUSY, DIO1, RST, DLY>,
+    radio: R,
     profile: RadioProfile,
     airtime_policy: AirtimePolicy,
     duty: Option<AirtimeDutyCycle>,
@@ -824,16 +759,14 @@ pub struct LoRaInterface<'a, SPI, BUSY, DIO1, RST, DLY> {
     lifecycle: DynamicSender<'a, InterfaceLifecycle>,
 }
 
-impl<'a, SPI, BUSY, DIO1, RST, DLY> LoRaInterface<'a, SPI, BUSY, DIO1, RST, DLY> {
+impl<'a, R: LoRaRadio> LoRaInterface<'a, R> {
     /// The id a radio on `profile` will carry — for the caller that stands its [`EmbassyInterfaceStatus`] up under the same key before building the interface.
     #[must_use]
     pub fn interface_id(profile: &RadioProfile) -> InterfaceId {
         InterfaceId::from_channel_tag(InterfaceKind::LoRa, &lora::channel_tag(profile))
     }
 
-    pub fn new(
-        input: LoRaInterfaceInput<'a, SPI, BUSY, DIO1, RST, DLY>,
-    ) -> Result<Self, LoRaConfigError> {
+    pub fn new(input: LoRaInterfaceInput<'a, R>) -> Result<Self, LoRaConfigError> {
         let LoRaInterfaceInput {
             radio,
             profile,
@@ -845,6 +778,9 @@ impl<'a, SPI, BUSY, DIO1, RST, DLY> LoRaInterface<'a, SPI, BUSY, DIO1, RST, DLY>
             lifecycle,
         } = input;
         profile.validate().map_err(LoRaConfigError::Profile)?;
+        radio
+            .validate_profile(profile)
+            .map_err(LoRaConfigError::RadioCompatibility)?;
         let tag = lora::channel_tag(&profile);
         let id = Self::interface_id(&profile);
         let duty = airtime_policy
@@ -871,14 +807,7 @@ impl<'a, SPI, BUSY, DIO1, RST, DLY> LoRaInterface<'a, SPI, BUSY, DIO1, RST, DLY>
     }
 }
 
-impl<SPI, BUSY, DIO1, RST, DLY> Interface for LoRaInterface<'_, SPI, BUSY, DIO1, RST, DLY>
-where
-    SPI: SpiDevice,
-    BUSY: Wait,
-    DIO1: Wait,
-    RST: OutputPin,
-    DLY: DelayNs,
-{
+impl<R: LoRaRadio> Interface for LoRaInterface<'_, R> {
     const HW_MTU: usize = LORA_MAX_PAYLOAD;
     const KIND: InterfaceKind = InterfaceKind::LoRa;
 
@@ -906,7 +835,7 @@ where
         } = self;
         let mut current_id = id;
 
-        if let Err(e) = radio.init(sx126x_config(&profile)).await {
+        if let Err(e) = radio.initialize(profile).await {
             crate::diagnostic_log::error!("RNS_LORA radio init failed: {e:?}; interface offline");
             status.set_connection(ConnectionState::Disconnected);
             return;
@@ -953,7 +882,7 @@ where
                 status.set_connection(ConnectionState::Connected);
                 if let Err(e) = radio.arm_rx().await {
                     crate::diagnostic_log::debug!("RNS_LORA RX re-arm after enable failed: {e:?}");
-                    if is_radio_fault(&e) {
+                    if matches!(R::recovery(&e), RadioRecovery::Reinitialize) {
                         reinit_radio(&mut radio, &profile, spectrum).await;
                     }
                 }
@@ -1107,7 +1036,7 @@ where
                     Either5::Third(Err(error)) => {
                         crate::diagnostic_log::debug!("RNS_LORA rx event error: {error:?}");
                         activity.frame_finished();
-                        if is_radio_fault(&error) {
+                        if matches!(R::recovery(&error), RadioRecovery::Reinitialize) {
                             reinit_radio(&mut radio, &profile, spectrum).await;
                         }
                         if !access_suspended {
@@ -1138,7 +1067,7 @@ where
                                     "RNS_LORA channel sample failed: {error:?}"
                                 );
                                 activity.frame_finished();
-                                if is_radio_fault(&error) {
+                                if matches!(R::recovery(&error), RadioRecovery::Reinitialize) {
                                     reinit_radio(&mut radio, &profile, spectrum).await;
                                 }
                                 noise.fail_closed()
@@ -1219,7 +1148,7 @@ where
                                     "RNS_LORA final channel check failed: {error:?}"
                                 );
                                 activity.frame_finished();
-                                if is_radio_fault(&error) {
+                                if matches!(R::recovery(&error), RadioRecovery::Reinitialize) {
                                     reinit_radio(&mut radio, &profile, spectrum).await;
                                 }
                                 ChannelEvidence {
@@ -1233,7 +1162,7 @@ where
                                 "RNS_LORA final IRQ check failed: {error:?}"
                             );
                             activity.frame_finished();
-                            if is_radio_fault(&error) {
+                            if matches!(R::recovery(&error), RadioRecovery::Reinitialize) {
                                 reinit_radio(&mut radio, &profile, spectrum).await;
                             }
                             ChannelEvidence {
@@ -1302,11 +1231,17 @@ where
                                         txop_airtime_us.saturating_add(packet_airtime_us);
                                     OutboundDisposition::Sent
                                 }
-                                Err(error) => {
+                                Err(LoRaTransmitError::Radio(error)) => {
                                     transmission_failed = true;
-                                    if is_radio_fault(&error) {
+                                    if matches!(R::recovery(&error), RadioRecovery::Reinitialize) {
                                         reinit_radio(&mut radio, &profile, spectrum).await;
                                     }
+                                    OutboundDisposition::Dropped(
+                                        OutboundDropReason::TransportFailure,
+                                    )
+                                }
+                                Err(LoRaTransmitError::Framing(_)) => {
+                                    transmission_failed = true;
                                     OutboundDisposition::Dropped(
                                         OutboundDropReason::TransportFailure,
                                     )
@@ -1328,7 +1263,7 @@ where
                             crate::diagnostic_log::debug!(
                                 "RNS_LORA RX re-arm after tx failed: {error:?}"
                             );
-                            if is_radio_fault(&error) {
+                            if matches!(R::recovery(&error), RadioRecovery::Reinitialize) {
                                 reinit_radio(&mut radio, &profile, spectrum).await;
                             }
                         }
@@ -1436,7 +1371,7 @@ where
                     Either4::Third(Err(e)) => {
                         crate::diagnostic_log::debug!("RNS_LORA rx event error: {e:?}");
                         activity.frame_finished();
-                        if is_radio_fault(&e) {
+                        if matches!(R::recovery(&e), RadioRecovery::Reinitialize) {
                             reinit_radio(&mut radio, &profile, spectrum).await;
                         }
                     }
@@ -1470,7 +1405,7 @@ where
                                 "RNS_LORA idle channel sample failed: {error:?}"
                             );
                             activity.frame_finished();
-                            if is_radio_fault(&error) {
+                            if matches!(R::recovery(&error), RadioRecovery::Reinitialize) {
                                 reinit_radio(&mut radio, &profile, spectrum).await;
                             }
                         }
@@ -1487,9 +1422,13 @@ mod tests {
     use core::future::Future;
     use core::task::{Context, Poll};
     use embassy_futures::join::join;
-    use prns_core::interfaces::lora::{PreambleSymbols, TxPower, DEFAULT_915_PROFILE};
+    use prns_core::interfaces::lora::{
+        CodingRate, LoraBandwidth, Modulation, PreambleSymbols, TxPower, DEFAULT_915_PROFILE,
+    };
     use std::boxed::Box;
     use std::task::Waker;
+
+    use crate::radios::ReceivedAirFrame;
 
     fn block_on<F: Future>(future: F) -> F::Output {
         let mut context = Context::from_waker(Waker::noop());
@@ -1583,13 +1522,13 @@ mod tests {
             RadioEvent::HeaderError,
             RadioEvent::CrcError,
             RadioEvent::Timeout,
-            RadioEvent::Other,
+            RadioEvent::SpuriousInterrupt,
         ] {
             assert_eq!(decoded_peer_airtime_us(event, &DEFAULT_915_PROFILE), None);
         }
         assert_eq!(
             decoded_peer_airtime_us(
-                RadioEvent::Frame(sx126x::ReceivedAirFrame {
+                RadioEvent::Frame(ReceivedAirFrame {
                     len: 100,
                     phy: PacketPhyStats::default(),
                 }),
@@ -1671,12 +1610,6 @@ mod tests {
         assert!(access.is_expired(activated_at_ms + ttl_ms));
         assert!(backlog.active.clear());
         assert!(!backlog.activate_next(&current_profile, activated_at_ms + ttl_ms));
-    }
-
-    #[test]
-    fn sx126x_packet_uses_the_rnode_sync_word() {
-        let config = sx126x_config(&DEFAULT_915_PROFILE);
-        assert_eq!(config.sync_word, RNODE_LORA_SYNC_WORD);
     }
 
     #[test]

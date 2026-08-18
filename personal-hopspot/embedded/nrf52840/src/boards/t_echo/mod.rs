@@ -12,7 +12,7 @@ pub(crate) use display::{frame_hash, EinkScreen};
 pub(crate) use hardware::{
     TechoBoard as Board, TechoControls as Controls, TechoDisplayHardware as DisplayHardware,
     TechoEarlyHardware as EarlyHardware, TechoFaceHardware as FaceHardware,
-    TechoRuntimeHardware as RuntimeHardware, TechoUsbHardware as UsbHardware,
+    TechoRadio as Radio, TechoRuntimeHardware as RuntimeHardware, TechoUsbHardware as UsbHardware,
 };
 pub(crate) use identity::{
     bootstrap_ble_identity, bootstrap_node_identity, startup_notice as identity_startup_notice,

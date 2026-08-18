@@ -23,8 +23,7 @@ type T114SpiDevice = ExclusiveDevice<Spim<'static>, Output<'static>, Delay>;
 
 type T114Radio = Sx126x<T114SpiDevice, Input<'static>, Input<'static>, Output<'static>, Delay>;
 
-pub(crate) type T114LoraInterface =
-    LoRaInterface<'static, T114SpiDevice, Input<'static>, Input<'static>, Output<'static>, Delay>;
+pub(crate) type T114LoraInterface = LoRaInterface<'static, T114Radio>;
 
 type T114UsbDriver = Driver<'static, HardwareVbusDetect>;
 
