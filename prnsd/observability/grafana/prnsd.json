@@ -3193,6 +3193,209 @@
     },
     {
       "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Path requests this node recursed onto the network (recursive or boundary forwarding). Stays at 0 unless an interface opts in via a discovery mode (gateway, access point, roaming, internal) or recursive_prs; anything above 0 deserves a look at the interface config.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 5,
+        "x": 0,
+        "y": 95
+      },
+      "id": 44,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(prns_path_requests_ingress_total{outcome=~\"relayed_recursive|relayed_across_boundary\"}) or vector(0)",
+          "legendFormat": "recursed",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Recursed path requests · since up",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Raw packet counts since the daemon started: everything the engine ingested, and every frame enqueued to an outbound lane. The live per-second view is the Engine throughput panel.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "noValue": "0",
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 4,
+        "x": 5,
+        "y": 95
+      },
+      "id": 45,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max(prns_engine_packets_total) or vector(0)",
+          "legendFormat": "↓ Packets in",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max(prns_egress_frames_total{outcome=\"enqueued\"}) or vector(0)",
+          "legendFormat": "↑ Frames out",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Packets since up",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Raw packet flow over time: everything the engine ingests and every frame enqueued to an outbound lane. The load view: announce storms, relay bursts, and quiet hours all show up here first.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "unit": "pps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 15,
+        "x": 9,
+        "y": 95
+      },
+      "id": 46,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(prns_engine_packets_total[$__rate_interval])) or vector(0)",
+          "legendFormat": "↓ packets in",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(prns_egress_frames_total{outcome=\"enqueued\"}[$__rate_interval])) or vector(0)",
+          "legendFormat": "↑ frames out",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Packet flow",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
         "type": "loki",
         "uid": "loki"
       },
@@ -3201,7 +3404,7 @@
         "h": 10,
         "w": 8,
         "x": 0,
-        "y": 95
+        "y": 102
       },
       "id": 17,
       "options": {
@@ -3241,7 +3444,7 @@
         "h": 10,
         "w": 16,
         "x": 8,
-        "y": 95
+        "y": 102
       },
       "id": 18,
       "options": {
