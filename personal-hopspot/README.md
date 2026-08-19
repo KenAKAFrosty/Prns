@@ -48,6 +48,14 @@ On Windows the desktop build compiles SDL2 from the bundled source and links it
 statically, which requires CMake and the Visual Studio Build Tools C++ workload
 (MSVC). On macOS it links Homebrew's `sdl2` (`brew install sdl2`).
 
+Native USB Auto discovers CDC, Prns WebUSB, already-enumerated Android Open
+Accessory devices, and managed iOS devices. Set `PRNS_USB_AUTO_ANDROID_ACCESSORY`
+to allow an ordinary Android device to be switched into accessory mode. An
+explicit usbmux endpoint can be supplied through `PRNS_USB_AUTO_USBMUX_TARGET`,
+or `PRNS_USB_AUTO_USBMUX_AUTO` can select `127.0.0.1:42700`. The older
+`HOPSPOT_USBMUX_TARGET` and `HOPSPOT_USBMUX_AUTO` names remain lower-precedence
+compatibility aliases.
+
 ESP32 firmware, from `embedded/esp32/` with the board on USB:
 
     cargo heltec-v4-flash
@@ -69,10 +77,18 @@ The T114 task builds the current working tree and writes
 the linked image, preserving the stock MBR, S140 recovery foundation, and UF2
 bootloader; the application does not link or enable S140. On a stock T114 Rev
 2.x, double-press Reset to mount `HT-n5262`, then copy the UF2 to that volume.
-This developer image has build and layout validation but is not yet in the
-signed release catalog; exact-image USB and LoRa qualification on hardware is
-still required. Its current radio profile is fixed at 915 MHz, so only exercise
-LoRa where that profile is permitted.
+The stock layout starts the application at `0x26000`. Do not flash this UF2 onto
+a board re-bootloadered for S140 7.3 and its `0x27000` application layout; the
+bootloader will jump four KiB above the image and the application will not run.
+
+The exact image built from `c40e8cb0` was independently confirmed on stock T114
+Rev. 2.x hardware: it booted, bound to WinUSB, retained UF2 recovery, completed
+USB Auto over its vendor-class interface, and carried LoRa traffic in both
+directions against a known-good RNode. The developer image is not yet in the
+signed release catalog. Its current radio profile is fixed at 915 MHz, so only
+exercise LoRa where that profile is permitted. The focused
+[T114 qualification receipt](../validation/t114-qualification.md) records the
+tested boundary and remaining limitations.
 
 ## Embedded flash-layout upgrade
 

@@ -5,8 +5,9 @@ use prns_runtime::interfaces::{ConfiguredInterfacePolicy, EffectiveInterfacePoli
 use prns_runtime::runtime::{Attachable, AttachedInterface, PrnsNodeHandle};
 use tokio::sync::Notify;
 
-use super::{UsbAutoCandidate, UsbAutoHost, UsbAutoIncarnation};
-use crate::serial::{open_host_serial, scan_usb_serial_ports};
+use super::{
+    open_native_usb_auto_target, scan_native_usb_auto_targets, UsbAutoCandidate, UsbAutoHost,
+};
 
 pub const DEFAULT_USB_AUTO_ID: InterfaceId = InterfaceId::new([0xD0; 8]);
 pub const DEFAULT_USB_BAUD: u32 = 115_200;
@@ -47,28 +48,15 @@ impl AutoUsb {
     }
 }
 
-fn scan_cdc_targets() -> Vec<UsbAutoCandidate> {
-    scan_usb_serial_ports()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|port| {
-            UsbAutoCandidate::unclassified_attachment(
-                port.path(),
-                UsbAutoIncarnation::new(port.incarnation()),
-            )
-        })
-        .collect()
-}
-
 impl Attachable for AutoUsb {
     type Attached = AttachedInterface;
     fn attach_to(self, handle: &PrnsNodeHandle) -> AttachedInterface {
         let baud = self.baud;
         handle.add_interface(UsbAutoHost::with_policy(
             DEFAULT_USB_AUTO_ID,
-            scan_cdc_targets,
+            scan_native_usb_auto_targets,
             move |candidate: UsbAutoCandidate| async move {
-                open_host_serial(candidate.locator(), baud)
+                open_native_usb_auto_target(candidate, baud).await
             },
             self.rescan,
             self.policy,
@@ -85,9 +73,9 @@ impl Attachable for AutoUsb {
         handle.add_interface_with_ifac_name(
             UsbAutoHost::with_policy(
                 DEFAULT_USB_AUTO_ID,
-                scan_cdc_targets,
+                scan_native_usb_auto_targets,
                 move |candidate: UsbAutoCandidate| async move {
-                    open_host_serial(candidate.locator(), baud)
+                    open_native_usb_auto_target(candidate, baud).await
                 },
                 self.rescan,
                 self.policy,

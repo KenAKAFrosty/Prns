@@ -1,5 +1,4 @@
 use core::fmt::Write as _;
-use std::io;
 use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
 
@@ -16,7 +15,10 @@ use personal_rns::shared_instance::rns_rpc::{
 use personal_rns::shared_instance::SharedInstanceServer;
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::TcpClientInterface;
-use personal_rns::usb_auto::{UsbAutoCandidate, UsbAutoHost};
+use personal_rns::usb_auto::{
+    open_native_usb_auto_target, scan_native_usb_auto_targets, NativeUsbAutoStream,
+    UsbAutoCandidate, UsbAutoHost,
+};
 #[cfg(target_os = "macos")]
 use personal_rns::wifi_auto::apple_service_discovery;
 use personal_rns::wifi_auto::{AutoWifi, AutoWifiStatus};
@@ -27,8 +29,6 @@ use personal_hopspot_core::{
     self as screen, load_host_ble_identity, load_host_node_identity, CardKind,
     HopspotDestinationSet, IdentityPersistence, BLE_IDENTITY_STORAGE, NODE_IDENTITY_STORAGE,
 };
-
-use crate::host_usb::{open_usb_auto_target, scan_usb_auto_targets, HostUsb};
 
 use super::persistence;
 use super::ui::run_window;
@@ -206,8 +206,8 @@ fn run_node(ready_tx: Sender<(WindowHandles, persistence::ShutdownFlush)>) {
         let rescan = Arc::new(Notify::new());
         let usb = UsbAutoHost::new(
             USB_INTERFACE_ID,
-            scan_usb_auto_targets,
-            open_usb_auto_target_with_baud,
+            scan_native_usb_auto_targets,
+            open_native_usb_auto_target_with_baud,
             rescan.clone(),
         );
         let usb_status = usb.status();
@@ -323,8 +323,10 @@ fn run_node(ready_tx: Sender<(WindowHandles, persistence::ShutdownFlush)>) {
     });
 }
 
-async fn open_usb_auto_target_with_baud(candidate: UsbAutoCandidate) -> io::Result<HostUsb> {
-    open_usb_auto_target(candidate, USB_BAUD).await
+async fn open_native_usb_auto_target_with_baud(
+    candidate: UsbAutoCandidate,
+) -> std::io::Result<NativeUsbAutoStream> {
+    open_native_usb_auto_target(candidate, USB_BAUD).await
 }
 
 #[cfg(target_os = "linux")]
