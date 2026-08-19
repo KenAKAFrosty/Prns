@@ -1,6 +1,6 @@
 use personal_rns::engine::{
     AnnounceCommandOutcome, AnnounceIngressOutcome, AnnounceOrigin, AnnounceSourceKind,
-    IgnoreReasonKind,
+    IgnoreReasonKind, PathRequestIngressOutcome, PathRequestRelayOutcome,
 };
 use personal_rns::interfaces::InterfaceKind;
 use personal_rns::node_introspection::InterfaceInventoryEntry;
@@ -204,6 +204,33 @@ pub(super) fn link_closure_name(reason: RuntimeLinkClosure) -> &'static str {
     }
 }
 
+pub(super) fn path_request_ingress_outcome_name(outcome: PathRequestIngressOutcome) -> &'static str {
+    match outcome {
+        PathRequestIngressOutcome::Answered => "answered",
+        PathRequestIngressOutcome::AnswerScheduled => "answer_scheduled",
+        PathRequestIngressOutcome::AnswerScheduleRejected => "answer_schedule_rejected",
+        PathRequestIngressOutcome::RelayedRecursive => "relayed_recursive",
+        PathRequestIngressOutcome::RelayedAcrossBoundary => "relayed_across_boundary",
+        PathRequestIngressOutcome::RelayedToTransports => "relayed_to_transports",
+        PathRequestIngressOutcome::OfferedToLocalClients => "offered_to_local_clients",
+        PathRequestIngressOutcome::IgnoredMalformed => "ignored_malformed",
+        PathRequestIngressOutcome::IgnoredDuplicate => "ignored_duplicate",
+        PathRequestIngressOutcome::IgnoredLoopPrevented => "ignored_loop_prevented",
+        PathRequestIngressOutcome::IgnoredRouteUnresponsive => "ignored_route_unresponsive",
+        PathRequestIngressOutcome::IgnoredRateLimited => "ignored_rate_limited",
+        PathRequestIngressOutcome::IgnoredSuperseded => "ignored_superseded",
+        PathRequestIngressOutcome::IgnoredNotForUs => "ignored_not_for_us",
+        PathRequestIngressOutcome::IgnoredOther => "ignored_other",
+    }
+}
+
+pub(super) fn path_request_relay_outcome_name(outcome: PathRequestRelayOutcome) -> &'static str {
+    match outcome {
+        PathRequestRelayOutcome::Sent => "sent",
+        PathRequestRelayOutcome::RateLimited => "rate_limited",
+    }
+}
+
 pub(super) fn route_removal_name(cause: RuntimeRouteRemoval) -> &'static str {
     match cause {
         RuntimeRouteRemoval::Expired => "expired",
@@ -236,6 +263,12 @@ mod tests {
         }
         for reason in IgnoreReasonKind::ALL {
             assert!(!ignore_reason_name(reason).is_empty());
+        }
+        for outcome in PathRequestIngressOutcome::ALL {
+            assert!(!path_request_ingress_outcome_name(outcome).is_empty());
+        }
+        for outcome in PathRequestRelayOutcome::ALL {
+            assert!(!path_request_relay_outcome_name(outcome).is_empty());
         }
         for kind in InterfaceKind::ALL {
             assert!(!interface_kind_name(kind).is_empty());

@@ -4,7 +4,7 @@ use crate::interfaces::InterfaceId;
 use crate::interfaces::InterfaceKind;
 use crate::routing::announce::held::HeldDropCause;
 use crate::routing::announce::schedule::ScheduledAnnounceQueue;
-use crate::routing::ingress::{AnnounceIngest, IgnoreReason};
+use crate::routing::ingress::{AnnounceIngest, IgnoreReason, IngestPacketOutcome};
 use crate::routing::links::handshake::LinkRttError;
 use crate::storage::StorageLayout;
 
@@ -210,6 +210,151 @@ pub struct EngineAnnounceMetricsSnapshot {
 prns_macros::iterable_enum! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     #[repr(u8)]
+    pub enum PathRequestIngressOutcome {
+        Answered,
+        AnswerScheduled,
+        AnswerScheduleRejected,
+        RelayedRecursive,
+        RelayedAcrossBoundary,
+        RelayedToTransports,
+        OfferedToLocalClients,
+        IgnoredMalformed,
+        IgnoredDuplicate,
+        IgnoredLoopPrevented,
+        IgnoredRouteUnresponsive,
+        IgnoredRateLimited,
+        IgnoredSuperseded,
+        IgnoredNotForUs,
+        IgnoredOther,
+    }
+}
+
+impl PathRequestIngressOutcome {
+    const fn index(self) -> usize {
+        self as usize
+    }
+
+    pub(crate) fn from_classification(outcome: &IngestPacketOutcome<'_>) -> Option<Self> {
+        match outcome {
+            IngestPacketOutcome::AnswerPathRequest { .. } => Some(Self::Answered),
+            IngestPacketOutcome::ScheduledPathResponse { .. } => Some(Self::AnswerScheduled),
+            IngestPacketOutcome::PathResponseScheduleRejected { .. } => {
+                Some(Self::AnswerScheduleRejected)
+            }
+            IngestPacketOutcome::ForwardRecursivePathRequest { .. } => Some(Self::RelayedRecursive),
+            IngestPacketOutcome::ForwardBoundaryPathRequest { .. } => {
+                Some(Self::RelayedAcrossBoundary)
+            }
+            IngestPacketOutcome::ForwardLocalClientPathRequest { .. } => {
+                Some(Self::RelayedToTransports)
+            }
+            IngestPacketOutcome::RelayPathRequestToLocalClients { .. } => {
+                Some(Self::OfferedToLocalClients)
+            }
+            IngestPacketOutcome::Ignored(IgnoreReason::Malformed) => Some(Self::IgnoredMalformed),
+            IngestPacketOutcome::Ignored(IgnoreReason::Duplicate) => Some(Self::IgnoredDuplicate),
+            IngestPacketOutcome::Ignored(IgnoreReason::LoopPrevented) => {
+                Some(Self::IgnoredLoopPrevented)
+            }
+            IngestPacketOutcome::Ignored(IgnoreReason::RouteUnresponsive) => {
+                Some(Self::IgnoredRouteUnresponsive)
+            }
+            IngestPacketOutcome::Ignored(IgnoreReason::RateLimited) => {
+                Some(Self::IgnoredRateLimited)
+            }
+            IngestPacketOutcome::Ignored(IgnoreReason::Superseded) => Some(Self::IgnoredSuperseded),
+            IngestPacketOutcome::Ignored(IgnoreReason::NotForUs) => Some(Self::IgnoredNotForUs),
+            IngestPacketOutcome::Ignored(_) => Some(Self::IgnoredOther),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PathRequestIngressCounts {
+    counts: [u64; PathRequestIngressOutcome::ALL.len()],
+}
+
+impl Default for PathRequestIngressCounts {
+    fn default() -> Self {
+        Self {
+            counts: [0; PathRequestIngressOutcome::ALL.len()],
+        }
+    }
+}
+
+impl PathRequestIngressCounts {
+    pub const fn get(&self, outcome: PathRequestIngressOutcome) -> u64 {
+        self.counts[outcome.index()]
+    }
+
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = (PathRequestIngressOutcome, u64)> + '_ {
+        PathRequestIngressOutcome::ALL
+            .into_iter()
+            .map(|outcome| (outcome, self.get(outcome)))
+    }
+
+    pub(crate) fn record(&mut self, outcome: PathRequestIngressOutcome) {
+        let count = &mut self.counts[outcome.index()];
+        *count = count.saturating_add(1);
+    }
+}
+
+prns_macros::iterable_enum! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[repr(u8)]
+    pub enum PathRequestRelayOutcome {
+        Sent,
+        RateLimited,
+    }
+}
+
+impl PathRequestRelayOutcome {
+    const fn index(self) -> usize {
+        self as usize
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PathRequestRelayCounts {
+    counts: [u64; PathRequestRelayOutcome::ALL.len()],
+}
+
+impl Default for PathRequestRelayCounts {
+    fn default() -> Self {
+        Self {
+            counts: [0; PathRequestRelayOutcome::ALL.len()],
+        }
+    }
+}
+
+impl PathRequestRelayCounts {
+    pub const fn get(&self, outcome: PathRequestRelayOutcome) -> u64 {
+        self.counts[outcome.index()]
+    }
+
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = (PathRequestRelayOutcome, u64)> + '_ {
+        PathRequestRelayOutcome::ALL
+            .into_iter()
+            .map(|outcome| (outcome, self.get(outcome)))
+    }
+
+    pub(crate) fn record(&mut self, outcome: PathRequestRelayOutcome) {
+        let count = &mut self.counts[outcome.index()];
+        *count = count.saturating_add(1);
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EnginePathRequestMetricsSnapshot {
+    pub ingress: PathRequestIngressCounts,
+    pub relays: PathRequestRelayCounts,
+    pub pending_discoveries: u32,
+}
+
+prns_macros::iterable_enum! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[repr(u8)]
     pub enum IgnoreReasonKind {
         Consumed,
         Malformed,
@@ -323,6 +468,7 @@ pub struct EngineMetricsSnapshot {
     pub ingested_commands: u64,
     pub ignored_packets: IgnoreReasonCounts,
     pub announces: EngineAnnounceMetricsSnapshot,
+    pub path_requests: EnginePathRequestMetricsSnapshot,
     pub route_count: u32,
     pub link_count: u32,
     pub transported_link_count: u32,
@@ -494,6 +640,12 @@ impl<S: StorageLayout> EngineState<S> {
 
     pub(crate) fn record_announce_command(&mut self, outcome: AnnounceCommandOutcome) {
         self.announce_command_counts.record(outcome);
+    }
+
+    pub(crate) fn record_path_request_ingress(&mut self, outcome: &IngestPacketOutcome<'_>) {
+        if let Some(classified) = PathRequestIngressOutcome::from_classification(outcome) {
+            self.path_request_ingress_counts.record(classified);
+        }
     }
 }
 

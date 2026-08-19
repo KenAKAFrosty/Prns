@@ -107,6 +107,19 @@ impl<S: StorageLayout> EngineState<S> {
         now: InstantMillis,
         interfaces: AttachedInterfaces<'_>,
     ) -> IngestPacketOutcome<'p> {
+        let outcome = self.classify_path_request(data, source_interface, now, interfaces);
+        #[cfg(feature = "runtime-metrics")]
+        self.record_path_request_ingress(&outcome);
+        outcome
+    }
+
+    fn classify_path_request<'p>(
+        &mut self,
+        data: &DataPacket<'_>,
+        source_interface: InterfaceId,
+        now: InstantMillis,
+        interfaces: AttachedInterfaces<'_>,
+    ) -> IngestPacketOutcome<'p> {
         let Ok(request) = PathRequest::parse(data.payload) else {
             return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         };
@@ -1026,6 +1039,44 @@ mod tests {
         }
 
         assert_eq!(sent, 6);
+        #[cfg(feature = "runtime-metrics")]
+        {
+            use crate::engine::PathRequestRelayOutcome;
+            let counts = relay.metrics_snapshot().path_requests.relays;
+            assert_eq!(counts.get(PathRequestRelayOutcome::Sent), 6);
+            assert_eq!(counts.get(PathRequestRelayOutcome::RateLimited), 1);
+        }
+    }
+
+    #[cfg(feature = "runtime-metrics")]
+    #[test]
+    fn path_request_ingress_outcomes_are_counted() {
+        use crate::engine::PathRequestIngressOutcome;
+
+        let (mut relay, cached) = relay_holding_a_cached_route();
+        for _ in 0..2 {
+            let mut wire = path_request_wire(cached);
+            let _ = relay.ingest_packet_with(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: iface(0xA1),
+                    bytes: &mut wire,
+                },
+                &mut |_| {},
+                AttachedInterfaces::new(&transporting_interfaces()),
+                &mut |_| {},
+                None,
+            );
+        }
+
+        let counts = relay.metrics_snapshot().path_requests.ingress;
+        assert_eq!(counts.get(PathRequestIngressOutcome::AnswerScheduled), 1);
+        assert_eq!(counts.get(PathRequestIngressOutcome::IgnoredDuplicate), 1);
+        assert_eq!(
+            counts.iter().map(|(_, count)| count).sum::<u64>(),
+            2,
+            "every path request lands in exactly one ingress outcome",
+        );
     }
 
     #[test]

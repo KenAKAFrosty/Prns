@@ -321,6 +321,34 @@ impl MetricsReporter {
         self.instruments
             .announce_scheduled
             .record(u64::from(snapshot.engine.announces.scheduled_depth), &[]);
+        for (outcome, current) in snapshot.engine.path_requests.ingress.iter() {
+            let prior = previous.map(|metrics| metrics.path_requests.ingress.get(outcome));
+            add_delta(
+                &self.instruments.path_request_ingress,
+                current,
+                prior,
+                &[KeyValue::new(
+                    "outcome",
+                    path_request_ingress_outcome_name(outcome),
+                )],
+            );
+        }
+        for (outcome, current) in snapshot.engine.path_requests.relays.iter() {
+            let prior = previous.map(|metrics| metrics.path_requests.relays.get(outcome));
+            add_delta(
+                &self.instruments.path_request_relays,
+                current,
+                prior,
+                &[KeyValue::new(
+                    "outcome",
+                    path_request_relay_outcome_name(outcome),
+                )],
+            );
+        }
+        self.instruments.path_request_pending_discoveries.record(
+            u64::from(snapshot.engine.path_requests.pending_discoveries),
+            &[],
+        );
     }
 
     fn record_egress(&self, snapshot: &RuntimeMetricsSnapshot) {

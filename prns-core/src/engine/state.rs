@@ -178,6 +178,10 @@ pub struct EngineState<S: StorageLayout> {
     pub(crate) announce_interface_metrics: Vec<super::InterfaceAnnounceMetricsSnapshot>,
     #[cfg(feature = "runtime-metrics")]
     pub(crate) interface_metric_groups: Vec<super::metrics::InterfaceMetricGroup>,
+    #[cfg(feature = "runtime-metrics")]
+    pub(crate) path_request_ingress_counts: super::PathRequestIngressCounts,
+    #[cfg(feature = "runtime-metrics")]
+    pub(crate) path_request_relay_counts: super::PathRequestRelayCounts,
     pub(crate) routing_table: EngineRoutingTable<S>,
     pub(crate) route_evidence_id_issuer: RouteEvidenceIdIssuer,
     pub(crate) destination_identities:
@@ -235,6 +239,10 @@ impl<S: StorageLayout> Default for EngineState<S> {
             announce_interface_metrics: Vec::new(),
             #[cfg(feature = "runtime-metrics")]
             interface_metric_groups: Vec::new(),
+            #[cfg(feature = "runtime-metrics")]
+            path_request_ingress_counts: Default::default(),
+            #[cfg(feature = "runtime-metrics")]
+            path_request_relay_counts: Default::default(),
             routing_table: Default::default(),
             route_evidence_id_issuer: RouteEvidenceIdIssuer::default(),
             destination_identities: DestinationIdentities::default(),
@@ -434,6 +442,12 @@ impl<S: StorageLayout> EngineState<S> {
                 scheduled_depth: u32::try_from(self.scheduled_announces.scheduled_count())
                     .unwrap_or(u32::MAX),
                 interfaces: self.interface_announce_metrics_snapshot(),
+            },
+            path_requests: super::EnginePathRequestMetricsSnapshot {
+                ingress: self.path_request_ingress_counts,
+                relays: self.path_request_relay_counts,
+                pending_discoveries: u32::try_from(self.recursive_path_requests.in_flight_count())
+                    .unwrap_or(u32::MAX),
             },
             route_count: u32::try_from(self.routing_table.route_count()).unwrap_or(u32::MAX),
             link_count: u32::try_from(self.links.active_link_count()).unwrap_or(u32::MAX),

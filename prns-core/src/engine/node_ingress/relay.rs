@@ -1,5 +1,5 @@
 #[cfg(feature = "runtime-metrics")]
-use crate::engine::AnnounceOrigin;
+use crate::engine::{AnnounceOrigin, PathRequestRelayOutcome};
 use crate::engine::{
     Directive, EngineReaction, EngineState, InstantMillis, PathRequestIdBytes, ReemitAnnounce,
 };
@@ -61,6 +61,9 @@ impl<S: StorageLayout> EngineState<S> {
                         descriptor.common.path_request_egress,
                     )
                 {
+                    #[cfg(feature = "runtime-metrics")]
+                    self.path_request_relay_counts
+                        .record(PathRequestRelayOutcome::RateLimited);
                     continue;
                 }
                 match audience {
@@ -68,6 +71,9 @@ impl<S: StorageLayout> EngineState<S> {
                         let mut record_egress = || {
                             self.egress_path_request_limits
                                 .record_egress(descriptor.id, now);
+                            #[cfg(feature = "runtime-metrics")]
+                            self.path_request_relay_counts
+                                .record(PathRequestRelayOutcome::Sent);
                         };
                         sink(EngineReaction::Directive(Directive::SendIfOnline {
                             target: descriptor.id,
@@ -78,12 +84,18 @@ impl<S: StorageLayout> EngineState<S> {
                     RelayAudience::Transports => {
                         self.egress_path_request_limits
                             .record_egress(descriptor.id, now);
+                        #[cfg(feature = "runtime-metrics")]
+                        self.path_request_relay_counts
+                            .record(PathRequestRelayOutcome::Sent);
                         sink(EngineReaction::Directive(Directive::Send {
                             target: descriptor.id,
                             bytes: &buf[..wire_bytes],
                         }));
                     }
                     RelayAudience::LocalClients => {
+                        #[cfg(feature = "runtime-metrics")]
+                        self.path_request_relay_counts
+                            .record(PathRequestRelayOutcome::Sent);
                         sink(EngineReaction::Directive(Directive::Send {
                             target: descriptor.id,
                             bytes: &buf[..wire_bytes],

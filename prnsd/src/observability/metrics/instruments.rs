@@ -32,6 +32,9 @@ pub(super) struct Instruments {
     pub(super) announce_held: Gauge<u64>,
     pub(super) announce_scheduled: Gauge<u64>,
     pub(super) announce_pacer_queue_depth: Gauge<u64>,
+    pub(super) path_request_ingress: Counter<u64>,
+    pub(super) path_request_relays: Counter<u64>,
+    pub(super) path_request_pending_discoveries: Gauge<u64>,
     pub(super) crypto_jobs: Counter<u64>,
     pub(super) crypto_queue_depth: Gauge<u64>,
     pub(super) crypto_maximum_queue_depth: Gauge<u64>,
@@ -90,6 +93,11 @@ impl Instruments {
             announce_held: meter.u64_gauge("prns.announces.held").build(),
             announce_scheduled: meter.u64_gauge("prns.announces.scheduled").build(),
             announce_pacer_queue_depth: meter.u64_gauge("prns.announces.pacer_queue_depth").build(),
+            path_request_ingress: meter.u64_counter("prns.path_requests.ingress").build(),
+            path_request_relays: meter.u64_counter("prns.path_requests.relays").build(),
+            path_request_pending_discoveries: meter
+                .u64_gauge("prns.path_requests.pending_discoveries")
+                .build(),
             crypto_jobs: meter.u64_counter("prns.crypto.jobs").build(),
             crypto_queue_depth: meter.u64_gauge("prns.crypto.queue_depth").build(),
             crypto_maximum_queue_depth: meter.u64_gauge("prns.crypto.maximum_queue_depth").build(),
