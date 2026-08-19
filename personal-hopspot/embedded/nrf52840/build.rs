@@ -6,6 +6,7 @@ const BOARD_T_ECHO_FEATURE: &str = "CARGO_FEATURE_BOARD_T_ECHO";
 const BOARD_T096_FEATURE: &str = "CARGO_FEATURE_BOARD_T096";
 const BOARD_T114_FEATURE: &str = "CARGO_FEATURE_BOARD_T114";
 const BOARD_T1000E_FEATURE: &str = "CARGO_FEATURE_BOARD_T1000E";
+const BOARD_MESH_TOWER_V2_FEATURE: &str = "CARGO_FEATURE_BOARD_MESH_TOWER_V2";
 const S140_V6_FEATURE: &str = "CARGO_FEATURE_SOFTDEVICE_S140_V6";
 const S140_V7_FEATURE: &str = "CARGO_FEATURE_SOFTDEVICE_S140_V7";
 
@@ -14,6 +15,7 @@ enum Board {
     T096,
     T114,
     T1000e,
+    MeshTowerV2,
 }
 
 enum Softdevice {
@@ -32,8 +34,15 @@ fn main() {
         (Board::T096, None) => None,
         (Board::T114, None) => Some("memory-t114.x"),
         (Board::T1000e, None) => Some("memory-t1000e.x"),
+        (Board::MeshTowerV2, Some(Softdevice::S140V6)) => Some("memory-mesh-tower-v2.x"),
+        (Board::MeshTowerV2, None) => {
+            panic!("MeshTower V2 requires softdevice-s140-v6")
+        }
+        (Board::MeshTowerV2, Some(Softdevice::S140V7)) => {
+            panic!("MeshTower V2 does not support S140 7.x")
+        }
         (Board::T096 | Board::T114 | Board::T1000e, Some(_)) => {
-            panic!("only T-Echo supports S140 compatibility features")
+            panic!("only T-Echo and MeshTower V2 support S140 compatibility features")
         }
     };
     if let Some(memory) = memory {
@@ -45,6 +54,7 @@ fn main() {
     println!("cargo:rerun-if-changed=memory-s140-v7.x");
     println!("cargo:rerun-if-changed=memory-t114.x");
     println!("cargo:rerun-if-changed=memory-t1000e.x");
+    println!("cargo:rerun-if-changed=memory-mesh-tower-v2.x");
     println!("cargo:rerun-if-changed=build.rs");
 }
 
@@ -54,12 +64,14 @@ fn selected_board() -> Board {
         env::var_os(BOARD_T096_FEATURE).is_some(),
         env::var_os(BOARD_T114_FEATURE).is_some(),
         env::var_os(BOARD_T1000E_FEATURE).is_some(),
+        env::var_os(BOARD_MESH_TOWER_V2_FEATURE).is_some(),
     ) {
-        (true, false, false, false) => Board::TEcho,
-        (false, true, false, false) => Board::T096,
-        (false, false, true, false) => Board::T114,
-        (false, false, false, true) => Board::T1000e,
-        (false, false, false, false) => panic!("select exactly one nRF52840 board feature"),
+        (true, false, false, false, false) => Board::TEcho,
+        (false, true, false, false, false) => Board::T096,
+        (false, false, true, false, false) => Board::T114,
+        (false, false, false, true, false) => Board::T1000e,
+        (false, false, false, false, true) => Board::MeshTowerV2,
+        (false, false, false, false, false) => panic!("select exactly one nRF52840 board feature"),
         _ => panic!("nRF52840 board features are mutually exclusive"),
     }
 }

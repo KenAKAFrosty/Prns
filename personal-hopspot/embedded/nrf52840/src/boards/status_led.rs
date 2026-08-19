@@ -3,7 +3,7 @@ use embassy_nrf::gpio::Output;
 enum Polarity {
     #[cfg(feature = "board-t1000e")]
     ActiveHigh,
-    #[cfg(feature = "board-t114")]
+    #[cfg(any(feature = "board-t114", feature = "board-mesh-tower-v2"))]
     ActiveLow,
 }
 
@@ -21,7 +21,7 @@ impl StatusLed {
         }
     }
 
-    #[cfg(feature = "board-t114")]
+    #[cfg(any(feature = "board-t114", feature = "board-mesh-tower-v2"))]
     pub(crate) fn active_low(output: Output<'static>) -> Self {
         Self {
             output,
@@ -33,7 +33,7 @@ impl StatusLed {
         match self.polarity {
             #[cfg(feature = "board-t1000e")]
             Polarity::ActiveHigh => self.output.set_high(),
-            #[cfg(feature = "board-t114")]
+            #[cfg(any(feature = "board-t114", feature = "board-mesh-tower-v2"))]
             Polarity::ActiveLow => self.output.set_low(),
         }
     }
@@ -42,7 +42,7 @@ impl StatusLed {
         match self.polarity {
             #[cfg(feature = "board-t1000e")]
             Polarity::ActiveHigh => self.output.set_low(),
-            #[cfg(feature = "board-t114")]
+            #[cfg(any(feature = "board-t114", feature = "board-mesh-tower-v2"))]
             Polarity::ActiveLow => self.output.set_high(),
         }
     }

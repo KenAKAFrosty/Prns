@@ -15,3 +15,5 @@ pub(crate) const USB_SERIAL_NUMBER: &str = "PERSONAL-RNS-T114-HOP";
 pub(crate) const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"t114-usb");
 pub(crate) const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x15Personal Hopspot T114\xc0";
 pub(crate) const NODE_ANNOUNCE_APP_DATA: &[u8] = b"Personal Hopspot T114";
+
+pub(crate) async fn maintain() {}

@@ -34,14 +34,14 @@ pub trait PacerQueue<M = ()>: Default {
         now: InstantMillis,
         metadata: M,
     ) -> Result<(), PacerReject>;
-    fn take_next_with<R>(&mut self, f: impl FnOnce(&[u8], M) -> R) -> Option<R>;
+    fn take_next_with<R>(&mut self, f: impl FnOnce(&[u8], u8, M) -> R) -> Option<R>;
     fn evict_stale(&mut self, now: InstantMillis, life_ms: u64);
     fn is_empty(&self) -> bool;
     fn len(&self) -> usize;
 
     fn clear(&mut self) -> usize {
         let mut removed = 0;
-        while self.take_next_with(|_, _| ()).is_some() {
+        while self.take_next_with(|_, _, _| ()).is_some() {
             removed += 1;
         }
         removed
@@ -103,7 +103,7 @@ impl<const DEPTH: usize, M: Copy> PacerQueue<M> for FixedPacerQueue<DEPTH, M> {
             .map_err(|_| PacerReject::QueueFull)
     }
 
-    fn take_next_with<R>(&mut self, f: impl FnOnce(&[u8], M) -> R) -> Option<R> {
+    fn take_next_with<R>(&mut self, f: impl FnOnce(&[u8], u8, M) -> R) -> Option<R> {
         let index = self
             .entries
             .iter()
@@ -111,7 +111,7 @@ impl<const DEPTH: usize, M: Copy> PacerQueue<M> for FixedPacerQueue<DEPTH, M> {
             .min_by_key(|(_, entry)| (entry.hops, entry.queued_at.0))
             .map(|(index, _)| index)?;
         let entry = self.entries.swap_remove(index);
-        Some(f(entry.frame.as_slice(), entry.metadata))
+        Some(f(entry.frame.as_slice(), entry.hops, entry.metadata))
     }
 
     fn evict_stale(&mut self, now: InstantMillis, life_ms: u64) {
@@ -172,7 +172,7 @@ mod heap {
             Ok(())
         }
 
-        fn take_next_with<R>(&mut self, f: impl FnOnce(&[u8], M) -> R) -> Option<R> {
+        fn take_next_with<R>(&mut self, f: impl FnOnce(&[u8], u8, M) -> R) -> Option<R> {
             let index = self
                 .entries
                 .iter()
@@ -180,7 +180,7 @@ mod heap {
                 .min_by_key(|(_, entry)| (entry.hops, entry.queued_at.0))
                 .map(|(index, _)| index)?;
             let entry = self.entries.swap_remove(index);
-            Some(f(&entry.frame, entry.metadata))
+            Some(f(&entry.frame, entry.hops, entry.metadata))
         }
 
         fn evict_stale(&mut self, now: InstantMillis, life_ms: u64) {
@@ -205,6 +205,7 @@ where
     cap: AnnounceBandwidthCap,
     bitrate: BitrateBps,
     allowed_at: InstantMillis,
+    last_emitted_hops: u8,
     queue: Q,
     metadata: core::marker::PhantomData<fn(M)>,
 }
@@ -225,9 +226,26 @@ where
             cap,
             bitrate,
             allowed_at,
+            last_emitted_hops: 0,
             queue: Q::default(),
             metadata: core::marker::PhantomData,
         }
+    }
+
+    fn emit(
+        &mut self,
+        bytes: &[u8],
+        hops: u8,
+        now: InstantMillis,
+        metadata: M,
+        send: impl FnOnce(&[u8], M),
+    ) {
+        send(bytes, metadata);
+        self.allowed_at = InstantMillis(
+            now.0
+                .saturating_add(self.cap.cooldown_after_send_ms(self.bitrate, bytes.len())),
+        );
+        self.last_emitted_hops = hops;
     }
 
     pub fn offer_tagged(
@@ -239,12 +257,11 @@ where
         send: impl FnOnce(&[u8], M),
     ) -> PacerOffer {
         self.queue.evict_stale(now, QUEUED_ANNOUNCE_LIFE_MS);
-        if self.queue.is_empty() && self.allowed_at.0 <= now.0 {
-            send(bytes, metadata);
-            self.allowed_at = InstantMillis(
-                now.0
-                    .saturating_add(self.cap.cooldown_after_send_ms(self.bitrate, bytes.len())),
-            );
+        let idle = self.queue.is_empty() && self.allowed_at.0 <= now.0;
+        let origin_preempts_forwarded =
+            hops == 0 && self.last_emitted_hops > 0 && !self.cap.blocks_all();
+        if idle || origin_preempts_forwarded {
+            self.emit(bytes, hops, now, metadata, send);
             PacerOffer::Sent
         } else {
             match self.queue.insert(bytes, hops, now, metadata) {
@@ -265,12 +282,13 @@ where
         self.queue.evict_stale(now, QUEUED_ANNOUNCE_LIFE_MS);
         let cap = self.cap;
         let bitrate = self.bitrate;
-        match self.queue.take_next_with(|bytes, metadata| {
+        match self.queue.take_next_with(|bytes, hops, metadata| {
             send(bytes, metadata);
-            cap.cooldown_after_send_ms(bitrate, bytes.len())
+            (cap.cooldown_after_send_ms(bitrate, bytes.len()), hops)
         }) {
-            Some(spacing) => {
+            Some((spacing, hops)) => {
                 self.allowed_at = InstantMillis(now.0.saturating_add(spacing));
+                self.last_emitted_hops = hops;
                 PacerRelease::Released
             }
             None => PacerRelease::Idle,
@@ -588,5 +606,26 @@ mod tests {
         );
         assert_eq!(sent, std::vec![frame(0).to_vec()]);
         assert!(pacer.is_idle(), "the stale entry was swept from the queue");
+    }
+
+    #[test]
+    fn a_locally_originated_announce_preempts_rebroadcast_cooldown() {
+        let mut pacer = AnnouncePacer::<FixedPacerQueue<4>>::new(SLOW, SLOW_BITRATE);
+        let mut sent = capture();
+        assert_eq!(
+            pacer.offer(&frame(1), 1, InstantMillis(0), |b| sent.push(b.to_vec())),
+            PacerOffer::Sent,
+        );
+        assert_eq!(
+            pacer.offer(&frame(0), 0, InstantMillis(1), |b| sent.push(b.to_vec())),
+            PacerOffer::Sent,
+            "hop-0 does not wait for leftover rebroadcast bandwidth",
+        );
+        assert_eq!(
+            pacer.offer(&frame(2), 0, InstantMillis(2), |b| sent.push(b.to_vec())),
+            PacerOffer::Queued,
+            "a second origin announce still respects the cap",
+        );
+        assert_eq!(sent, std::vec![frame(1).to_vec(), frame(0).to_vec()]);
     }
 }

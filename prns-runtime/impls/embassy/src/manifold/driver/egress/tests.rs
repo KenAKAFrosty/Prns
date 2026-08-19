@@ -199,3 +199,49 @@ fn a_pacer_retains_back_to_back_announces_for_a_one_slot_fleet_lane() {
     assert_eq!(second.frame(), b"node");
     consumer.release();
 }
+
+#[test]
+fn a_locally_originated_announce_does_not_wait_for_rebroadcast_cooldown() {
+    let id = InterfaceId::new([0x57; 8]);
+    const FRAME: usize = EMBEDDED_MAX_WIRE_FRAME_LEN;
+    let (producer, mut consumer) = leaked_grant_lane::<FRAME>(2);
+    let mut egress: PooledEgress<1> = PooledEgress::new();
+    let _ = egress.push(id, std::boxed::Box::leak(std::boxed::Box::new(producer)));
+    let mut pacers = [InterfacePacer::from_descriptor(id, &paced_descriptor(id))];
+
+    route_reaction(
+        EngineReaction::Directive(Directive::SendAnnounce {
+            target: id,
+            bytes: b"forwarded",
+            hops: 1,
+        }),
+        &mut egress,
+        &[],
+        &mut pacers,
+        InstantMillis(0),
+        &mut |_| {},
+    );
+    route_reaction(
+        EngineReaction::Directive(Directive::SendAnnounce {
+            target: id,
+            bytes: b"origin",
+            hops: 0,
+        }),
+        &mut egress,
+        &[],
+        &mut pacers,
+        InstantMillis(1),
+        &mut |_| {},
+    );
+
+    let first = consumer
+        .try_peek()
+        .expect("the forwarded announce enters egress");
+    assert_eq!(first.frame(), b"forwarded");
+    consumer.release();
+    let second = consumer
+        .try_peek()
+        .expect("the origin announce does not wait for rebroadcast cooldown");
+    assert_eq!(second.frame(), b"origin");
+    consumer.release();
+}

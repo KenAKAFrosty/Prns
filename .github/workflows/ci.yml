@@ -315,6 +315,8 @@ jobs:
         working-directory: personal-hopspot/embedded/nrf52840
       - name: heltec t114 firmware — build recovery-compatible developer UF2
         run: ./tools/prns build hopspot t114
+      - name: heltec meshtower v2 firmware — build recovery-compatible developer UF2
+        run: ./tools/prns build hopspot mesh-tower-v2
 
   android-service:
     # Android is now more than a foreground Activity shell: the Hopspot app packages a foreground
